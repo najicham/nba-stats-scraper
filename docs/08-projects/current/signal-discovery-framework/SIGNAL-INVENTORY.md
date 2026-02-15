@@ -1,7 +1,7 @@
 # Signal Inventory — Complete List
 
-**Last Updated:** 2026-02-14 (Session 255)
-**Total Signals:** 23 (8 existing + 15 new)
+**Last Updated:** 2026-02-15 (Session 259)
+**Total Signals:** 23 registered (8 core + 3 combo + 12 prototype)
 
 ---
 
@@ -17,22 +17,31 @@ These signals are already deployed or in the existing registry:
 | 4 | `3pt_bounce` | Cold 3PT shooter regression | ✅ PRODUCTION |
 | 5 | `minutes_surge` | Minutes last 3 > season + 3 | ✅ PRODUCTION |
 | 6 | `pace_mismatch` | Pace-based signal | ⏸️ DEFER (0 picks) |
-| 7 | `cold_snap` | Mean reversion signal | ⚠️ DEPRECATED (research disproved) |
-| 8 | `blowout_recovery` | Low minutes in blowout → OVER next | ✅ TESTING |
+| 7 | `cold_snap` | Mean reversion signal — **HOME-ONLY** (93.3% home vs 31.3% away) | ✅ PRODUCTION (Session 258, filtered) |
+| 8 | `blowout_recovery` | Low minutes in blowout → OVER next — **No Centers, No B2B** | ✅ PRODUCTION (Session 258, filtered) |
 
 ---
 
-## New Signals - Batch 1: Prototype (5)
+## Combo Signals (Session 258) (3)
 
-Implemented Session 255. Core validation signals across key categories.
+Implemented from Sessions 256-257 comprehensive testing.
 
-| # | Signal Tag | Category | Expected HR | Notes |
+| # | Signal Tag | Criteria | Backtest HR | Status |
+|---|------------|----------|-------------|--------|
+| 9 | `combo_he_ms` | Edge >= 5 + minutes surge >= 3 + OVER | 68.8% (N=16) | ✅ PRODUCTION |
+| 10 | `combo_3way` | Edge >= 5 + surge >= 3 + ESO quality gate | 88.9% (N=17) | ✅ PRODUCTION (premium) |
+| 11 | `edge_spread_optimal` | Edge >= 5, conf 70%+, exclude 88-90% tier | 47.4% standalone | ⚠️ COMBO-ONLY (anti-pattern detection) |
+
+---
+
+## Prototype Signals - Batch 1 (Session 255) (4)
+
+| # | Signal Tag | Category | Backtest HR | Notes |
 |---|------------|----------|-------------|-------|
-| 9 | `hot_streak_3` | Streak | 65-70% | 3+ consecutive line beats, context-aware |
-| 10 | `cold_continuation_2` | Streak | **90%** | 2+ consecutive misses → continuation (research-backed) |
-| 11 | `b2b_fatigue_under` | Rest/Fatigue | 65% | High-minute players on B2B → UNDER |
-| 12 | `edge_spread_optimal` | Model Behavior | 75% | Edge 5+ excluding 88-90% problem tier |
-| 13 | `rest_advantage_2d` | Rest/Fatigue | 60% | Player rested 2+ days vs fatigued opponent |
+| 12 | `hot_streak_3` | Streak | TBD | 3+ consecutive line beats, context-aware |
+| 13 | `cold_continuation_2` | Streak | TBD | 2+ consecutive misses → continuation |
+| 14 | `b2b_fatigue_under` | Rest/Fatigue | TBD | High-minute players on B2B → UNDER |
+| 15 | `rest_advantage_2d` | Rest/Fatigue | TBD | Player rested 2+ days vs fatigued opponent |
 
 ---
 
@@ -285,5 +294,34 @@ When testing a new signal:
 
 ---
 
-**Last Updated:** 2026-02-14, Session 255
-**Next Review:** After Batch 3-4 implementation
+## Session 259 Findings: Data Coverage Constraints
+
+### Signals Blocked by Data Coverage
+
+| Signal | Blocker | Status | Re-test When |
+|--------|---------|--------|-------------|
+| `v9_v12_both_high_edge` | V12 only 12 days of graded data (from Feb 1) | N=1 in backtest | Late March 2026 |
+| `v9_v12_disagree_strong` | V12 only 12 days of graded data | N=8, 37.5% HR (promising as veto) | Late March 2026 |
+| `vegas_line_move_with` | Feature 27 is 93% NULL in feature store | N=7 in backtest | After pipeline fix |
+| `vegas_line_move_against` | Same as above | Not tested | After pipeline fix |
+
+### Signal Killed
+
+| Signal | Result | Reason |
+|--------|--------|--------|
+| `v9_confident_v12_edge` | 50.0% HR (N=28) | Dead flat coin flip. Flat across all dimensions. No alpha. |
+
+### Why NOT to Use Last Season (2024-25) Data for V9 Signal Validation
+
+**We have 17,455 graded V8 predictions from last season.** We investigated and decided against using them:
+
+1. **Different model = different distributions.** V8 had 74.2% HR vs V9's ~55%. "Edge >= 5" means fundamentally different things. A signal calibrated for V9 can't be validated on V8 data — good V8 results don't confirm V9 value, and bad V8 results don't disprove it.
+
+2. **Survivor bias risk.** V8's high baseline HR means most signals would appear to "work" — but they'd be riding baseline, not adding alpha.
+
+3. **What last season IS good for:** Testing raw basketball hypotheses (e.g., "do players bounce back after blowout games?") using player_game_summary independent of any model. 28,240 game rows available.
+
+---
+
+**Last Updated:** 2026-02-15, Session 259
+**Next Review:** After V12 accumulates 2+ months of data (late March)

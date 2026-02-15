@@ -3,6 +3,20 @@
 **Date:** 2026-02-15
 **Goal:** Systematically test every signal, combo, and filter permutation across every available dimension. Find the profitable needles in the haystack.
 
+**Status:** PARTIALLY EXECUTED. Cross-model + vegas signals tested first — all blocked by data coverage (see SESSION-259-FOCUSED-BACKTEST-RESULTS.md). Plan revised with data-awareness annotations below.
+
+---
+
+## Lessons Learned from Initial Testing
+
+Before executing any more of this plan, three critical constraints:
+
+1. **V12 predictions only exist from Feb 1, 2026.** Any signal requiring V12 data has at most 12 days of graded predictions. Cross-model signals (21-23) are untestable until late March.
+2. **Feature 27 (vegas_line_move) is 93% NULL.** Pipeline barely populates this field. Vegas signals need an upstream fix before testing.
+3. **Last season (V8) data cannot validate V9 signals.** V8 had 74.2% HR vs V9's ~55% — different distributions, different edge characteristics. Use last season for basketball hypothesis validation only, not signal calibration.
+
+**Revised priority:** Focus on signals that use well-populated data (features 0-24, player_game_summary stats, streak data). Skip anything dependent on sparse features until pipeline fixes.
+
 ---
 
 ## Philosophy
@@ -27,8 +41,8 @@ These use data already in the backtest query but not yet exploited by any signal
 | 6 | `fatigue_score_high` | Fatigue score top 20% + UNDER | Feature 5 (fatigue_score) | Tired players underperform |
 | 7 | `usage_spike` | Usage spike score > threshold + OVER | Feature 7 (usage_spike_score) | More shots = more points |
 | 8 | `matchup_history_good` | avg_points_vs_opponent > season avg + OVER | Features 29-30 | Player historically good vs this team |
-| 9 | `vegas_line_move_with` | Vegas line moved toward our prediction + edge >= 3 | Feature 27 (vegas_line_move) | Sharp money agrees with model |
-| 10 | `vegas_line_move_against` | Vegas line moved AGAINST our prediction + edge >= 5 | Feature 27 | Contrarian when model has strong conviction |
+| 9 | `vegas_line_move_with` | Vegas line moved toward our prediction + edge >= 3 | Feature 27 (vegas_line_move) | Sharp money agrees with model | **BLOCKED: feature 93% NULL. N=7 in backtest. Needs pipeline fix.** |
+| 10 | `vegas_line_move_against` | Vegas line moved AGAINST our prediction + edge >= 5 | Feature 27 | Contrarian when model has strong conviction | **BLOCKED: same as signal 9** |
 | 11 | `ppm_efficient` | Points per minute last 10 > season avg + minutes surge | Feature 32 (ppm_avg_last_10) | Efficient AND getting more time |
 | 12 | `scoring_trend_up` | pts_slope_10g > 0 + edge >= 3 + OVER | Feature 34 | Mathematical uptrend in scoring |
 | 13 | `scoring_trend_down` | pts_slope_10g < 0 + edge >= 3 + UNDER | Feature 34 | Mathematical downtrend |
@@ -49,9 +63,9 @@ These use data already in the backtest query but not yet exploited by any signal
 
 | # | Signal Name | Logic | Data Source | Hypothesis |
 |---|------------|-------|-------------|------------|
-| 21 | `v9_v12_both_high_edge` | Both V9 and V12 edge >= 5 + same direction | V9 + V12 predictions | Two independent models very confident |
-| 22 | `v9_v12_disagree_strong` | V9 edge >= 5 but V12 says opposite | V12 predictions | Model disagreement = uncertainty = skip |
-| 23 | `v9_confident_v12_edge` | V9 confidence >= 80% + V12 edge >= 3 | Both models | Confidence + independent edge |
+| 21 | `v9_v12_both_high_edge` | Both V9 and V12 edge >= 5 + same direction | V9 + V12 predictions | Two independent models very confident | **BLOCKED: N=1 in backtest. V12 only 12 days of data. Re-test April.** |
+| 22 | `v9_v12_disagree_strong` | V9 edge >= 5 but V12 says opposite | V12 predictions | Model disagreement = uncertainty = skip | **PROMISING but N=8. 37.5% HR suggests veto value. Re-test April.** |
+| 23 | `v9_confident_v12_edge` | V9 confidence >= 80% + V12 edge >= 3 | Both models | Confidence + independent edge | **KILLED: 50.0% HR (N=28). Dead flat coin flip. No alpha.** |
 
 ---
 

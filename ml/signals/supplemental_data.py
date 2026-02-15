@@ -7,22 +7,31 @@ to avoid duplicating the 50-line SQL.
 """
 
 import logging
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from google.cloud import bigquery
+
+from shared.config.model_selection import get_best_bets_model_id
 
 logger = logging.getLogger(__name__)
 
 PROJECT_ID = 'nba-props-platform'
-SYSTEM_ID = 'catboost_v9'
 
 
-def query_model_health(bq_client: bigquery.Client) -> Dict[str, Any]:
+def query_model_health(
+    bq_client: bigquery.Client,
+    system_id: Optional[str] = None,
+) -> Dict[str, Any]:
     """Query rolling 7-day hit rate for edge 3+ picks.
+
+    Args:
+        bq_client: BigQuery client.
+        system_id: Model to check health for. Defaults to best bets model.
 
     Returns:
         Dict with hit_rate_7d_edge3 (float or None), graded_count (int).
     """
+    model_id = system_id or get_best_bets_model_id()
     query = f"""
     SELECT
       COUNTIF(prediction_correct) as wins,
@@ -32,7 +41,7 @@ def query_model_health(bq_client: bigquery.Client) -> Dict[str, Any]:
     FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy`
     WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
       AND game_date < CURRENT_DATE()
-      AND system_id = '{SYSTEM_ID}'
+      AND system_id = '{model_id}'
       AND ABS(predicted_points - line_value) >= 3.0
       AND prediction_correct IS NOT NULL
       AND is_voided IS NOT TRUE
@@ -52,12 +61,19 @@ def query_model_health(bq_client: bigquery.Client) -> Dict[str, Any]:
 def query_predictions_with_supplements(
     bq_client: bigquery.Client,
     target_date: str,
+    system_id: Optional[str] = None,
 ) -> Tuple[List[Dict], Dict[str, Dict]]:
     """Query active predictions with supplemental signal data.
+
+    Args:
+        bq_client: BigQuery client.
+        target_date: Date string in YYYY-MM-DD format.
+        system_id: Model to query predictions for. Defaults to best bets model.
 
     Returns:
         Tuple of (predictions list, supplemental_map keyed by player_lookup).
     """
+    model_id = system_id or get_best_bets_model_id()
     query = f"""
     WITH preds AS (
       SELECT
@@ -75,7 +91,7 @@ def query_predictions_with_supplements(
         CAST(p.confidence_score AS FLOAT64) AS confidence_score
       FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions` p
       WHERE p.game_date = @target_date
-        AND p.system_id = '{SYSTEM_ID}'
+        AND p.system_id = '{model_id}'
         AND p.is_active = TRUE
         AND p.recommendation IN ('OVER', 'UNDER')
         AND p.line_source IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS')
@@ -135,7 +151,7 @@ def query_predictions_with_supplements(
         SELECT *
         FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy`
         WHERE game_date >= '2025-10-22'
-          AND system_id = '{SYSTEM_ID}'
+          AND system_id = '{model_id}'
           AND prediction_correct IS NOT NULL
           AND is_voided IS NOT TRUE
           AND line_source IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS')
@@ -265,13 +281,21 @@ def query_predictions_with_supplements(
 def query_streak_data(
     bq_client: bigquery.Client,
     start_date: str,
-    end_date: str
+    end_date: str,
+    system_id: Optional[str] = None,
 ) -> Dict[str, Dict]:
     """Query consecutive line beats/misses for each player-game.
+
+    Args:
+        bq_client: BigQuery client.
+        start_date: Start date for streak calculation window.
+        end_date: End date for streak calculation window.
+        system_id: Model to query streak data for. Defaults to best bets model.
 
     Returns:
         Dict keyed by 'player_lookup::game_date' with streak information.
     """
+    model_id = system_id or get_best_bets_model_id()
     query = f"""
     WITH graded_predictions AS (
       SELECT
@@ -287,7 +311,7 @@ def query_streak_data(
         END as actual_direction
       FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy` pa
       WHERE pa.game_date BETWEEN DATE_SUB(@start_date, INTERVAL 30 DAY) AND @end_date
-        AND pa.system_id = '{SYSTEM_ID}'
+        AND pa.system_id = '{model_id}'
         AND pa.prediction_correct IS NOT NULL
         AND pa.is_voided IS NOT TRUE
       QUALIFY ROW_NUMBER() OVER (

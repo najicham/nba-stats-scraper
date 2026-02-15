@@ -23,11 +23,13 @@ from google.cloud import bigquery
 
 from shared.clients.bigquery_pool import get_bigquery_client
 from shared.config.gcp_config import get_project_id
+from shared.config.model_selection import get_best_bets_model_id
 from shared.config.subset_public_names import get_public_name
 from ml.signals.registry import build_default_registry
 from ml.signals.aggregator import BestBetsAggregator
 from ml.signals.combo_registry import load_combo_registry, match_combo
 from ml.signals.model_health import BREAKEVEN_HR
+from ml.signals.signal_health import get_signal_health_summary
 from ml.signals.supplemental_data import (
     query_model_health,
     query_predictions_with_supplements,
@@ -38,7 +40,6 @@ logger = logging.getLogger(__name__)
 PROJECT_ID = get_project_id()
 TABLE_ID = f'{PROJECT_ID}.nba_predictions.pick_signal_tags'
 SUBSET_TABLE_ID = f'{PROJECT_ID}.nba_predictions.current_subset_picks'
-SYSTEM_ID = 'catboost_v9'
 SIGNAL_PICKS_SUBSET_ID = 'best_bets'
 
 
@@ -139,12 +140,16 @@ class SignalAnnotator:
         with_signals = sum(1 for r in rows_to_write if r['signal_count'] > 0)
         self._write_rows(rows_to_write)
 
+        # 4b. Get signal health for aggregator weighting
+        signal_health = get_signal_health_summary(self.bq_client, target_date)
+
         # 5. Bridge: run aggregator and write Signal Picks subset
         signal_picks_count = 0
         if health_status != 'blocked':
             signal_picks_count = self._bridge_signal_picks(
                 predictions, signal_results_map, target_date,
                 version_id, health_status, combo_registry,
+                signal_health=signal_health,
             )
 
         logger.info(
@@ -193,13 +198,17 @@ class SignalAnnotator:
         version_id: Optional[str],
         health_status: str,
         combo_registry=None,
+        signal_health: Optional[Dict] = None,
     ) -> int:
         """Bridge aggregator's top picks into current_subset_picks as Signal Picks subset.
 
         Returns:
             Number of signal picks written.
         """
-        aggregator = BestBetsAggregator(combo_registry=combo_registry)
+        aggregator = BestBetsAggregator(
+            combo_registry=combo_registry,
+            signal_health=signal_health,
+        )
         top_picks = aggregator.aggregate(predictions, signal_results_map)
 
         if not top_picks:
@@ -220,7 +229,7 @@ class SignalAnnotator:
                 'game_id': pick.get('game_id'),
                 'rank_in_subset': pick.get('rank'),
                 'warning_tags': warning_tags,
-                'system_id': pick.get('system_id', SYSTEM_ID),
+                'system_id': pick.get('system_id', get_best_bets_model_id()),
                 'version_id': version_id or f"v_{computed_at.strftime('%Y%m%d_%H%M%S')}",
                 'computed_at': computed_at.isoformat(),
                 'trigger_source': 'signal_annotator',

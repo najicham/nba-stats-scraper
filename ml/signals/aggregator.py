@@ -5,23 +5,36 @@ Session 259: Registry-based combo scoring, signal count floor, improved formula.
     - Edge contribution capped at /7.0 (diminishing returns past 7 pts)
     - Signal count multiplier capped at 3 (4+ doesn't improve HR)
     - Combo bonuses/penalties driven by combo_registry instead of hardcoded
+
+Session 260: Signal health weighting (LIVE).
+    - HOT regime signals get 1.2x weight multiplier
+    - COLD regime signals get 0.5x weight multiplier
+    - NORMAL regime signals unchanged (1.0x)
+    - Multiplier applied to each signal's contribution to signal_multiplier
 """
 
 import logging
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from ml.signals.base_signal import SignalResult
 from ml.signals.combo_registry import ComboEntry, load_combo_registry, match_combo
 
 logger = logging.getLogger(__name__)
 
+# Signal health regime → weight multiplier
+HEALTH_MULTIPLIERS = {
+    'HOT': 1.2,
+    'NORMAL': 1.0,
+    'COLD': 0.5,
+}
+
 
 class BestBetsAggregator:
     """Aggregates signal results into a ranked best-bets list.
 
-    Scoring (Session 259):
+    Scoring (Session 259, updated Session 260):
         edge_score = min(1.0, abs(edge) / 7.0)       # capped at 7 pts
-        effective_signals = min(signal_count, 3)       # capped at 3
+        effective_signals = sum of health-weighted qualifying signals (capped at 3.0)
         signal_multiplier = 1.0 + 0.3 * (effective_signals - 1)  # max 1.6x
         base_score = edge_score * signal_multiplier
         composite_score = base_score + combo_registry_weight
@@ -34,16 +47,23 @@ class BestBetsAggregator:
     MAX_PICKS_PER_DAY = 5
     MIN_SIGNAL_COUNT = 2
 
-    def __init__(self, combo_registry: Optional[Dict[str, ComboEntry]] = None):
+    def __init__(
+        self,
+        combo_registry: Optional[Dict[str, ComboEntry]] = None,
+        signal_health: Optional[Dict[str, Dict[str, Any]]] = None,
+    ):
         """Initialize aggregator.
 
         Args:
             combo_registry: Pre-loaded combo registry. If None, loads fallback.
+            signal_health: Dict keyed by signal_tag with 'regime' field.
+                Example: {'high_edge': {'regime': 'HOT', 'hr_7d': 75.0, ...}}
         """
         if combo_registry is not None:
             self._registry = combo_registry
         else:
             self._registry = load_combo_registry(bq_client=None)
+        self._signal_health = signal_health or {}
 
     def aggregate(self, predictions: List[Dict],
                   signal_results: Dict[str, List[SignalResult]]) -> List[Dict]:
@@ -93,7 +113,8 @@ class BestBetsAggregator:
             edge = abs(pred.get('edge') or 0)
             edge_score = min(1.0, edge / 7.0)  # Cap at 7 pts (was /10.0)
 
-            effective_signals = min(len(qualifying), 3)  # Cap at 3
+            # Health-weighted effective signal count (Session 260)
+            effective_signals = self._weighted_signal_count(tags)
             signal_multiplier = 1.0 + 0.3 * (effective_signals - 1)  # Max 1.6x
 
             base_score = edge_score * signal_multiplier
@@ -128,3 +149,33 @@ class BestBetsAggregator:
             pick['rank'] = i + 1
 
         return scored[:self.MAX_PICKS_PER_DAY]
+
+    def _weighted_signal_count(self, tags: List[str]) -> float:
+        """Compute health-weighted effective signal count, capped at 3.0.
+
+        Each signal contributes its health multiplier (HOT=1.2, NORMAL=1.0,
+        COLD=0.5) instead of a flat 1.0. Result is capped at 3.0 to match
+        the existing diminishing-returns cap.
+        """
+        total = 0.0
+        for tag in tags:
+            mult = self._get_health_multiplier(tag)
+            total += mult
+        return min(total, 3.0)
+
+    def _get_health_multiplier(self, signal_tag: str) -> float:
+        """Get health-based weight multiplier for a signal.
+
+        Returns:
+            1.2 for HOT, 1.0 for NORMAL/unknown, 0.5 for COLD.
+        """
+        health = self._signal_health.get(signal_tag)
+        if not health:
+            return 1.0
+        regime = health.get('regime', 'NORMAL')
+        mult = HEALTH_MULTIPLIERS.get(regime, 1.0)
+        if mult != 1.0:
+            logger.debug(
+                f"Signal '{signal_tag}' health multiplier: {mult}x ({regime})"
+            )
+        return mult

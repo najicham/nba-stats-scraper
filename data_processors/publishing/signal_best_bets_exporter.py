@@ -28,11 +28,11 @@ from ml.signals.supplemental_data import (
     query_model_health,
     query_predictions_with_supplements,
 )
+from shared.config.model_selection import get_best_bets_model_id
 
 logger = logging.getLogger(__name__)
 
 PROJECT_ID = 'nba-props-platform'
-SYSTEM_ID = 'catboost_v9'
 
 
 class SignalBestBetsExporter(BaseExporter):
@@ -121,13 +121,16 @@ class SignalBestBetsExporter(BaseExporter):
                 results_for_pred.append(result)
             signal_results[key] = results_for_pred
 
-        # Step 5: Aggregate to top picks (with combo registry)
-        combo_registry = load_combo_registry(bq_client=self.bq_client)
-        aggregator = BestBetsAggregator(combo_registry=combo_registry)
-        top_picks = aggregator.aggregate(predictions, signal_results)
-
-        # Step 6: Get signal health summary (non-blocking — empty if table doesn't exist yet)
+        # Step 5: Get signal health (non-blocking — empty if table doesn't exist yet)
         signal_health = get_signal_health_summary(self.bq_client, target_date)
+
+        # Step 6: Aggregate to top picks (with combo registry + signal health weighting)
+        combo_registry = load_combo_registry(bq_client=self.bq_client)
+        aggregator = BestBetsAggregator(
+            combo_registry=combo_registry,
+            signal_health=signal_health,
+        )
+        top_picks = aggregator.aggregate(predictions, signal_results)
 
         # Step 7: Format for JSON
         picks_json = []
@@ -232,12 +235,13 @@ class SignalBestBetsExporter(BaseExporter):
         table_ref = f'{PROJECT_ID}.nba_predictions.signal_best_bets_picks'
 
         rows_to_insert = []
+        model_id = get_best_bets_model_id()
         for pick in picks:
             rows_to_insert.append({
                 'player_lookup': pick['player_lookup'],
                 'game_id': pick.get('game_id', ''),
                 'game_date': target_date,
-                'system_id': SYSTEM_ID,
+                'system_id': model_id,
                 'player_name': pick.get('player', ''),
                 'team_abbr': pick.get('team', ''),
                 'opponent_team_abbr': pick.get('opponent', ''),
