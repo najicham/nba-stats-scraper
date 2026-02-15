@@ -83,8 +83,9 @@ from data_processors.publishing.calendar_exporter import CalendarExporter
 from data_processors.publishing.season_game_counts_exporter import SeasonGameCountsExporter
 # Consolidated trends tonight (Session 226)
 from data_processors.publishing.trends_tonight_exporter import TrendsTonightExporter
-# Signal best bets (Session 254)
+# Signal best bets + signal annotator (Session 254)
 from data_processors.publishing.signal_best_bets_exporter import SignalBestBetsExporter
+from data_processors.publishing.signal_annotator import SignalAnnotator
 
 # Configure logging
 logging.basicConfig(
@@ -257,22 +258,39 @@ def export_date(
 
     # Subset picks exporter (all groups in one file)
     # Session 153: Materialize subsets to BigQuery first, then export to GCS
+    # Session 254: Signal annotation + bridge runs between materialization and export
+    mat_version_id = None
     if 'subset-picks' in export_types:
         try:
             # Step 1: Materialize subsets to BigQuery (creates queryable entity)
             materializer = SubsetMaterializer()
             mat_result = materializer.materialize(target_date, trigger_source='export')
+            mat_version_id = mat_result.get('version_id')
             logger.info(
                 f"  Subset Materialization: {mat_result.get('total_picks', 0)} picks "
                 f"across {len(mat_result.get('subsets', {}))} subsets "
-                f"(version={mat_result.get('version_id')})"
+                f"(version={mat_version_id})"
             )
         except Exception as e:
             # Non-fatal: if materialization fails, export will use fallback
             logger.warning(f"  Subset Materialization failed (export will use fallback): {e}")
 
         try:
-            # Step 2: Export to GCS (reads from materialized table or falls back)
+            # Step 2: Signal annotation — evaluate signals on ALL predictions,
+            # write to pick_signal_tags, and bridge top picks into current_subset_picks
+            annotator = SignalAnnotator()
+            ann_result = annotator.annotate(target_date, version_id=mat_version_id)
+            logger.info(
+                f"  Signal Annotation: {ann_result.get('with_signals', 0)}/{ann_result.get('annotated', 0)} "
+                f"with signals, {ann_result.get('signal_picks', 0)} signal picks, "
+                f"health={ann_result.get('model_health')}"
+            )
+        except Exception as e:
+            # Non-fatal: if annotation fails, picks export without signal badges
+            logger.warning(f"  Signal Annotation failed (picks will export without signals): {e}")
+
+        try:
+            # Step 3: Export to GCS (reads from materialized table + signal tags)
             exporter = AllSubsetsPicksExporter()
             path = exporter.export(target_date)
             result['paths']['subset_picks'] = path

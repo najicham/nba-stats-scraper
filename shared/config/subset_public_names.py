@@ -40,6 +40,8 @@ SUBSET_PUBLIC_NAMES = {
     'q43_all_predictions': {'id': '23', 'name': 'All Predictions'},
     'q45_all_predictions': {'id': '24', 'name': 'All Predictions'},
     'nova_all_predictions': {'id': '25', 'name': 'All Predictions'},
+    # Signal Picks — curated by Signal Discovery Framework (Session 254)
+    'signal_picks': {'id': '26', 'name': 'Signal Picks'},
 }
 
 # Reverse lookup

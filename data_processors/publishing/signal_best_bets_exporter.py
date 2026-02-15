@@ -22,14 +22,15 @@ from data_processors.publishing.base_exporter import BaseExporter
 from ml.signals.registry import build_default_registry
 from ml.signals.aggregator import BestBetsAggregator
 from ml.signals.model_health import BREAKEVEN_HR
+from ml.signals.supplemental_data import (
+    query_model_health,
+    query_predictions_with_supplements,
+)
 
 logger = logging.getLogger(__name__)
 
 PROJECT_ID = 'nba-props-platform'
 SYSTEM_ID = 'catboost_v9'
-
-# Signals that require supplemental data (skip if data unavailable)
-SUPPLEMENTAL_SIGNALS = {'3pt_bounce', 'minutes_surge', 'dual_agree', 'pace_up'}
 
 
 class SignalBestBetsExporter(BaseExporter):
@@ -193,161 +194,18 @@ class SignalBestBetsExporter(BaseExporter):
 
     def _query_model_health(self) -> Dict[str, Any]:
         """Query rolling 7-day hit rate for edge 3+ picks."""
-        query = f"""
-        SELECT
-          COUNTIF(prediction_correct) as wins,
-          COUNT(*) as graded_count,
-          ROUND(100.0 * COUNTIF(prediction_correct) / NULLIF(COUNT(*), 0), 1)
-            AS hit_rate_7d_edge3
-        FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy`
-        WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
-          AND game_date < CURRENT_DATE()
-          AND system_id = '{SYSTEM_ID}'
-          AND ABS(predicted_points - line_value) >= 3.0
-          AND prediction_correct IS NOT NULL
-          AND is_voided IS NOT TRUE
-        """
+        return query_model_health(self.bq_client)
 
-        results = self.query_to_list(query)
-        if results and results[0].get('graded_count', 0) > 0:
-            return results[0]
-
-        return {'hit_rate_7d_edge3': None, 'graded_count': 0}
-
-    def _query_predictions_and_supplements(
-        self, target_date: str
-    ) -> tuple:
-        """
-        Query today's active predictions with supplemental signal data.
-
-        Returns:
-            Tuple of (predictions list, supplemental_map keyed by player_lookup)
-        """
-        query = f"""
-        WITH preds AS (
-          SELECT
-            p.player_lookup,
-            p.game_id,
-            p.game_date,
-            p.system_id,
-            p.player_name,
-            p.team_abbr,
-            p.opponent_team_abbr,
-            CAST(p.predicted_points AS FLOAT64) AS predicted_points,
-            CAST(p.line_value AS FLOAT64) AS line_value,
-            p.recommendation,
-            CAST(p.predicted_points - p.line_value AS FLOAT64) AS edge,
-            CAST(p.confidence_score AS FLOAT64) AS confidence_score
-          FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions` p
-          WHERE p.game_date = @target_date
-            AND p.system_id = '{SYSTEM_ID}'
-            AND p.is_active = TRUE
-            AND p.recommendation IN ('OVER', 'UNDER')
-            AND p.line_source IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS')
-        ),
-
-        -- Rolling stats for 3PT and minutes signals
-        game_stats AS (
-          SELECT
-            player_lookup,
-            game_date,
-            -- 3PT rolling (exclude current game via 1 PRECEDING)
-            AVG(SAFE_DIVIDE(three_pt_makes, NULLIF(three_pt_attempts, 0)))
-              OVER (PARTITION BY player_lookup ORDER BY game_date
-                    ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING) AS three_pct_last_3,
-            AVG(SAFE_DIVIDE(three_pt_makes, NULLIF(three_pt_attempts, 0)))
-              OVER (PARTITION BY player_lookup ORDER BY game_date
-                    ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS three_pct_season,
-            STDDEV(SAFE_DIVIDE(three_pt_makes, NULLIF(three_pt_attempts, 0)))
-              OVER (PARTITION BY player_lookup ORDER BY game_date
-                    ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS three_pct_std,
-            AVG(CAST(three_pt_attempts AS FLOAT64))
-              OVER (PARTITION BY player_lookup ORDER BY game_date
-                    ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS three_pa_per_game,
-            -- Minutes rolling
-            AVG(minutes_played)
-              OVER (PARTITION BY player_lookup ORDER BY game_date
-                    ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING) AS minutes_avg_last_3,
-            AVG(minutes_played)
-              OVER (PARTITION BY player_lookup ORDER BY game_date
-                    ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS minutes_avg_season
-          FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
-          WHERE game_date >= '2025-10-22'
-            AND minutes_played > 0
-        ),
-
-        latest_stats AS (
-          SELECT gs.*
-          FROM game_stats gs
-          INNER JOIN preds p ON gs.player_lookup = p.player_lookup
-          WHERE gs.game_date < @target_date
-          QUALIFY ROW_NUMBER() OVER (
-            PARTITION BY gs.player_lookup ORDER BY gs.game_date DESC
-          ) = 1
-        )
-
-        SELECT
-          p.*,
-          ls.three_pct_last_3,
-          ls.three_pct_season,
-          ls.three_pct_std,
-          ls.three_pa_per_game,
-          ls.minutes_avg_last_3,
-          ls.minutes_avg_season
-        FROM preds p
-        LEFT JOIN latest_stats ls ON ls.player_lookup = p.player_lookup
-        ORDER BY p.player_lookup
-        """
-
-        params = [
-            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
-        ]
-
-        rows = self.query_to_list(query, params)
-
-        predictions = []
-        supplemental_map: Dict[str, Dict] = {}
-
-        for row in rows:
-            pred = {
-                'player_lookup': row['player_lookup'],
-                'game_id': row['game_id'],
-                'game_date': row['game_date'],
-                'system_id': row['system_id'],
-                'player_name': row.get('player_name', ''),
-                'team_abbr': row.get('team_abbr', ''),
-                'opponent_team_abbr': row.get('opponent_team_abbr', ''),
-                'predicted_points': row['predicted_points'],
-                'line_value': row['line_value'],
-                'recommendation': row['recommendation'],
-                'edge': row['edge'],
-                'confidence_score': row['confidence_score'],
-            }
-            predictions.append(pred)
-
-            # Build supplemental data
-            supp: Dict[str, Any] = {}
-
-            if row.get('three_pct_last_3') is not None:
-                supp['three_pt_stats'] = {
-                    'three_pct_last_3': float(row['three_pct_last_3']),
-                    'three_pct_season': float(row.get('three_pct_season') or 0),
-                    'three_pct_std': float(row.get('three_pct_std') or 0),
-                    'three_pa_per_game': float(row.get('three_pa_per_game') or 0),
-                }
-
-            if row.get('minutes_avg_last_3') is not None:
-                supp['minutes_stats'] = {
-                    'minutes_avg_last_3': float(row['minutes_avg_last_3']),
-                    'minutes_avg_season': float(row.get('minutes_avg_season') or 0),
-                }
-
-            supplemental_map[row['player_lookup']] = supp
-
-        return predictions, supplemental_map
+    def _query_predictions_and_supplements(self, target_date: str) -> tuple:
+        """Query today's active predictions with supplemental signal data."""
+        return query_predictions_with_supplements(self.bq_client, target_date)
 
     def _write_to_bigquery(self, target_date: str, picks: List[Dict]) -> None:
-        """Write signal best bets to BigQuery for grading tracking."""
+        """Write signal best bets to BigQuery using batch load (not streaming).
+
+        Uses load_table_from_json with WRITE_APPEND to avoid 90-min streaming
+        buffer that blocks DML operations (codebase best practice).
+        """
         table_ref = f'{PROJECT_ID}.nba_predictions.signal_best_bets_picks'
 
         rows_to_insert = []
@@ -376,16 +234,18 @@ class SignalBestBetsExporter(BaseExporter):
             return
 
         try:
-            errors = self.bq_client.insert_rows_json(table_ref, rows_to_insert)
-            if errors:
-                logger.error(
-                    f"BigQuery insert errors for signal_best_bets_picks: {errors}"
-                )
-            else:
-                logger.info(
-                    f"Inserted {len(rows_to_insert)} rows into {table_ref} "
-                    f"for {target_date}"
-                )
+            job_config = bigquery.LoadJobConfig(
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                create_disposition=bigquery.CreateDisposition.CREATE_NEVER,
+            )
+            load_job = self.bq_client.load_table_from_json(
+                rows_to_insert, table_ref, job_config=job_config
+            )
+            load_job.result(timeout=60)
+            logger.info(
+                f"Batch-loaded {len(rows_to_insert)} rows into {table_ref} "
+                f"for {target_date}"
+            )
         except Exception as e:
             logger.error(
                 f"Failed to write signal best bets to BigQuery: {e}",

@@ -118,7 +118,8 @@ class AllSubsetsPicksExporter(BaseExporter):
           csp.composite_score,
           p.created_at as prediction_created_at,
           pgs.points as actual_points,
-          gb.player_status as gamebook_status
+          gb.player_status as gamebook_status,
+          pst.signal_tags
         FROM `nba_predictions.current_subset_picks` csp
         LEFT JOIN `nba_predictions.player_prop_predictions` p
           ON csp.prediction_id = p.prediction_id
@@ -129,6 +130,10 @@ class AllSubsetsPicksExporter(BaseExporter):
         LEFT JOIN `nba_raw.nbac_gamebook_player_stats` gb
           ON csp.player_lookup = gb.player_lookup
           AND csp.game_date = gb.game_date
+        LEFT JOIN `nba_predictions.pick_signal_tags` pst
+          ON csp.player_lookup = pst.player_lookup
+          AND csp.game_date = pst.game_date
+          AND csp.system_id = pst.system_id
         WHERE csp.game_date = @target_date
           AND csp.version_id = (
             SELECT MAX(version_id)
@@ -204,6 +209,7 @@ class AllSubsetsPicksExporter(BaseExporter):
                         'prediction': round(pick['predicted_points'], 1),
                         'line': round(pick['current_points_line'], 1),
                         'direction': pick['recommendation'],
+                        'signals': pick.get('signal_tags') or [],
                     }
                     created_at = pick.get('prediction_created_at')
                     if created_at and hasattr(created_at, 'isoformat'):
