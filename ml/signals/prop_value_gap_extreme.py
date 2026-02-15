@@ -1,9 +1,17 @@
 """Prop Value Gap Extreme Signal — Model predicts 10+ points away from line.
 
-STATUS: REJECTED (Session 255 backfill)
-  - 12.5% HR on 8 graded picks, -76.1% ROI
-  - Extreme edge picks are often model errors, not market inefficiency
-  - NOT registered in build_default_registry()
+STATUS: COMBO-ONLY (Session 256 comprehensive analysis)
+  - Standalone: 46.7% HR (60 picks), below breakeven
+  - **Combo (high_edge + prop_value):** 73.7% HR (38 picks), +11.7% synergy
+  - **Best segment:** 89.3% HR on line < 15 + OVER (28 picks)
+  - **Verdict:** Beneficial refinement filter for high_edge
+  - Appears as strict subset (never standalone, only with high_edge)
+  - Identifies top 16% of high_edge picks with +11.7% HR improvement
+  - Detects all-stars with underpriced lines (LeBron @ 7.9, Embiid @ 8.4)
+  - TOXIC on UNDER (16.7% HR) and mid-tier 15-25 line (6.5% HR)
+  - NOT registered in build_default_registry() — combo-only logic in Best Bets aggregator
+
+See: docs/08-projects/current/signal-discovery-framework/COMPREHENSIVE-SIGNAL-ANALYSIS.md
 """
 
 from typing import Dict, Optional

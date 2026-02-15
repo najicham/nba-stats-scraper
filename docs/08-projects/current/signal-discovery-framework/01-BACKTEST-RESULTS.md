@@ -89,20 +89,73 @@ W4 (Feb 1-13) crashed across model-dependent signals — `high_edge`, `minutes_s
 - Model health gate would block all Signal Picks during W4, preventing losses
 - Player-behavior signals are inherently more decay-resistant than model-quality signals
 
-## Signal Verdicts
+## Session 256: Combo-Only Signals Discovery
+
+**Critical finding:** Signals removed for poor standalone performance are actually **beneficial combo-only filters**:
+
+### Combo-Only Signals
+
+**`prop_value_gap_extreme`**
+- Removed in Session 255 for 12.5% HR standalone (misleading — was test data)
+- **Session 256 analysis:** 46.7% HR standalone (60 picks) BUT:
+  - **With high_edge:** 73.7% HR (38 picks), +11.7% synergy
+  - **Best segment:** 89.3% HR on line < 15 + OVER (28 picks)
+  - **Verdict:** COMBO-ONLY (refinement filter for high_edge)
+  - Never appears standalone (strict subset)
+  - Identifies top 16% of high_edge picks
+
+**`edge_spread_optimal`**
+- Removed in Session 255 for 47.4% HR standalone
+- **Session 256 analysis:** 47.4% HR confirmed (217 picks) BUT:
+  - **3-way combo:** 88.2% HR (high_edge + minutes_surge + edge_spread), +19.4% synergy
+  - **2-way combo:** 31.3% HR (high_edge + edge_spread), -37.4% ROI — **ANTI-PATTERN**
+  - **Verdict:** COMBO-ONLY (quality gate, 3-way only)
+  - Never appears standalone (strict subset)
+  - Only works with minutes_surge gate (mechanism unclear)
+
+### Production-Ready Combo
+
+**`high_edge + minutes_surge`**
+- **79.4% HR, +58.8% ROI, 34 picks**
+- +31.2% synergy above best individual signal
+- Expected monthly EV: ~$1,646 at $100/pick
+- **Status:** PRODUCTION READY (immediate deployment recommended)
+
+**Pattern:** High edge (value exists) + minutes surge (opportunity is real) = validation on both dimensions
+
+### Signal Families Discovered
+
+**Family 1: Universal Amplifiers**
+- `minutes_surge` — Boosts ANY edge signal via increased opportunity
+
+**Family 2: Value Signals**
+- `high_edge`, `prop_value_gap_extreme` — Identify mispricing but REQUIRE validation
+
+**Family 3: Bounce-Back Signals**
+- `cold_snap`, `blowout_recovery`, `3pt_bounce` — Mean reversion, double bounce-back = 100% HR
+
+**Family 4: Redundancy Traps**
+- `high_edge + edge_spread` (2-way) — Both measure confidence, no synergy
+
+**See:** `docs/08-projects/current/signal-discovery-framework/COMBO-SIGNALS-GUIDE.md`
+
+## Signal Verdicts (Updated Session 256)
 
 | Signal | Verdict | Rationale |
 |--------|---------|-----------|
-| `high_edge` | **SHIP** | Strong standalone, excellent in overlaps |
+| `high_edge` | **SHIP (combo-only)** | 43.8% HR standalone, 79.4% HR with minutes_surge (+31.2% synergy) |
 | `3pt_bounce` | **SHIP** | Consistently high HR, great overlap partner |
 | `cold_snap` | **SHIP** | 64.3% HR, decay-resistant, regression-to-mean play (Session 255) |
 | `blowout_recovery` | **SHIP** | 56.4% HR, decay-resistant, bounce-back play (Session 255) |
-| `minutes_surge` | **OVERLAP-ONLY** | Mediocre standalone but excellent overlap booster |
+| `minutes_surge` | **SHIP (combo-only)** | 48.2% HR standalone, 79.4% HR with high_edge (universal amplifier) |
 | `model_health` | **SHIP** | Gate signal — prevents W4-style losses |
 | `dual_agree` | **DEFER** | Insufficient V12 data; revisit after 30+ days |
 | `pace_up` | **DROP** | 0 qualifying picks — thresholds too restrictive |
 | `hot_streak` | **REJECTED** | 47.5% HR, no profitable tier, model already captures streaks (Session 255) |
 | `rest_advantage` | **REJECTED** | 50.8% HR, inconsistent across windows, market prices rest well (Session 255) |
+| **`prop_value_gap_extreme`** | **COMBO-ONLY** | 46.7% HR standalone, 73.7% HR with high_edge (+11.7% synergy) (Session 256) |
+| **`edge_spread_optimal`** | **COMBO-ONLY** | 47.4% HR standalone, 88.2% HR in 3-way combo (+19.4% synergy) (Session 256) |
+| `triple_stack` | **REMOVED** | Meta-signal with broken logic (Session 256) |
 
 ## Dead Ends (Don't Revisit)
 
@@ -111,6 +164,15 @@ W4 (Feb 1-13) crashed across model-dependent signals — `high_edge`, `minutes_s
 | `hot_streak` | 47.5% HR. Model rolling features already capture momentum. No segment profitable. | 255 |
 | `rest_advantage` | 50.8% HR. W2 promising (60.2%) but collapsed W3/W4. Market efficient on rest. | 255 |
 | `pace_up` | 0 qualifying picks. Threshold too restrictive. Consider redesigning thresholds. | 254 |
+| `triple_stack` | Meta-signal always returns not qualified by design. Broken logic, not fixable. | 256 |
+| `high_edge + edge_spread` (2-way) | 31.3% HR, -37.4% ROI, 179 picks. Largest anti-pattern (redundancy trap). | 256 |
+
+## Anti-Patterns (Never Use)
+
+| Combo | HR | ROI | Why It Fails |
+|-------|-----|-----|--------------|
+| `high_edge + edge_spread_optimal` (2-way) | 31.3% | -37.4% | Both measure confidence → pure redundancy, 179 picks |
+| `minutes_surge + blowout_recovery` | 42.9% | -14.3% | Contradictory signals (surge vs recovery), worse than either alone |
 
 ## Methodology
 

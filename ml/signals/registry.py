@@ -50,7 +50,7 @@ def build_default_registry() -> SignalRegistry:
     from ml.signals.three_pt_volume_surge import ThreePtVolumeSurgeSignal
     from ml.signals.model_consensus_v9_v12 import ModelConsensusV9V12Signal
     from ml.signals.fg_cold_continuation import FGColdContinuationSignal
-    from ml.signals.triple_stack import TripleStackSignal
+    # TripleStackSignal REMOVED — meta-signal with broken logic (Session 256)
     from ml.signals.scoring_acceleration import ScoringAccelerationSignal
 
     registry = SignalRegistry()
@@ -79,7 +79,7 @@ def build_default_registry() -> SignalRegistry:
     registry.register(ThreePtVolumeSurgeSignal())
     registry.register(ModelConsensusV9V12Signal())
     registry.register(FGColdContinuationSignal())
-    registry.register(TripleStackSignal())
+    # TripleStackSignal removed (meta-signal, broken logic)
     registry.register(ScoringAccelerationSignal())
 
     return registry

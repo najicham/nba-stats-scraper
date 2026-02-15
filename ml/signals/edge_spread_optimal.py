@@ -1,9 +1,16 @@
 """Edge Spread Optimal Signal — High edge with optimal confidence band (excludes 88-90% problem tier).
 
-STATUS: REJECTED (Session 255 backfill)
-  - 47.4% HR on 78 graded picks, -9.4% ROI
-  - Below 52.4% breakeven — the confidence band filtering doesn't add value
-  - NOT registered in build_default_registry()
+STATUS: COMBO-ONLY (Session 256 comprehensive analysis)
+  - Standalone: 47.4% HR (217 picks), -9.4% ROI — below breakeven
+  - **3-way combo (high_edge + minutes_surge + edge_spread):** 88.2% HR (17 picks), +19.4% synergy
+  - **2-way combo (high_edge + edge_spread):** 31.3% HR (179 picks), -37.4% ROI — ANTI-PATTERN
+  - **Verdict:** Beneficial filter ONLY in 3-way combo with minutes_surge gate
+  - Appears as strict subset (never standalone)
+  - Agent analysis: Premium quality gate (+19.4% HR boost when all 3 present)
+  - NEVER use in 2-way combo with high_edge alone (redundancy trap)
+  - NOT registered in build_default_registry() — combo-only logic in Best Bets aggregator
+
+See: docs/08-projects/current/signal-discovery-framework/COMPREHENSIVE-SIGNAL-ANALYSIS.md
 """
 
 from typing import Dict, Optional
