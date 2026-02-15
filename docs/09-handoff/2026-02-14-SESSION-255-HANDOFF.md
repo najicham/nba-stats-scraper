@@ -77,9 +77,13 @@ VALUES ('best_bets', 'Best Bets', 'catboost_v9', TRUE, 0, 5, TRUE)
 
 ## What's NOT Done
 
-### Review Prototype Signals in Registry
+### Review Remaining Prototype Signals
 
-`build_default_registry()` has 23 signals total (8 core + 15 prototypes from a prior Session 255 run). Some prototypes (e.g., `prop_value_gap_extreme` at 12.5% HR) are actively harmful. Next session should review the backfill results in `v_signal_performance` and remove low-performers.
+`build_default_registry()` has 21 signals total (8 core + 13 remaining prototypes). Two harmful prototypes were already removed from the registry this session:
+- `prop_value_gap_extreme` — 12.5% HR, -76.1% ROI (REMOVED, file marked REJECTED)
+- `edge_spread_optimal` — 47.4% HR, -9.4% ROI (REMOVED, file marked REJECTED)
+
+The remaining 13 prototypes mostly had 0 qualifying picks during backfill (missing supplemental data like player_tier, is_home, FG% stats). They're harmless but untested. Next session should add missing supplemental data and evaluate them, or remove any that can't be tested.
 
 ### Cloud Function Redeploy
 
@@ -177,6 +181,9 @@ ORDER BY game_date DESC, rank;
 | `ml/signals/supplemental_data.py` | Added streak, prev_minutes, rest_days queries |
 | `ml/experiments/signal_backtest.py` | Added streak_data CTE, rest/recovery wiring |
 | `docs/08-projects/current/signal-discovery-framework/01-BACKTEST-RESULTS.md` | Full update |
+| `docs/08-projects/current/signal-discovery-framework/02-ARCHITECTURE.md` | Updated naming + checklist |
+| `docs/02-operations/system-features.md` | Added Signal Framework section |
+| `ml/experiments/quick_retrain.py` | Added --min-ppg, --max-ppg, --lines-only-train (Session 253) |
 
 ### Created
 | File | Purpose |
@@ -198,11 +205,53 @@ ORDER BY game_date DESC, rank;
 
 ---
 
+## Best Bets Performance Over Time
+
+Run this query to see how picks performed day by day:
+
+```sql
+SELECT
+  game_date,
+  COUNT(*) AS picks,
+  COUNTIF(prediction_correct) AS wins,
+  COUNT(*) - COUNTIF(prediction_correct) AS losses,
+  ROUND(100.0 * COUNTIF(prediction_correct) / COUNT(*), 1) AS hit_rate,
+  ROUND(100.0 * (COUNTIF(prediction_correct) * 100
+    - (COUNT(*) - COUNTIF(prediction_correct)) * 110) / (COUNT(*) * 110), 1) AS roi,
+  -- Cumulative
+  SUM(COUNTIF(prediction_correct)) OVER (ORDER BY game_date) AS cum_wins,
+  SUM(COUNT(*)) OVER (ORDER BY game_date) AS cum_picks,
+  ROUND(100.0 * SUM(COUNTIF(prediction_correct)) OVER (ORDER BY game_date)
+    / SUM(COUNT(*)) OVER (ORDER BY game_date), 1) AS cum_hit_rate
+FROM nba_predictions.signal_best_bets_picks
+WHERE prediction_correct IS NOT NULL
+GROUP BY game_date
+ORDER BY game_date;
+```
+
+Weekly summary:
+```sql
+SELECT
+  DATE_TRUNC(game_date, WEEK(MONDAY)) AS week_start,
+  COUNT(*) AS picks,
+  COUNTIF(prediction_correct) AS wins,
+  ROUND(100.0 * COUNTIF(prediction_correct) / COUNT(*), 1) AS hit_rate,
+  ROUND(100.0 * (COUNTIF(prediction_correct) * 100
+    - (COUNT(*) - COUNTIF(prediction_correct)) * 110) / (COUNT(*) * 110), 1) AS roi
+FROM nba_predictions.signal_best_bets_picks
+WHERE prediction_correct IS NOT NULL
+GROUP BY 1 ORDER BY 1;
+```
+
+---
+
 ## Dead Ends (Don't Revisit)
 
 | Signal | Why It Failed | Session |
 |--------|---------------|---------|
 | `hot_streak` | 47.5% HR. Model features capture momentum. No segment profitable. | 255 |
 | `rest_advantage` | 50.8% HR. Market prices rest efficiently. Inconsistent. | 255 |
+| `prop_value_gap_extreme` | 12.5% HR, -76.1% ROI. Extreme edge = model error, not market inefficiency. | 255 |
+| `edge_spread_optimal` | 47.4% HR, -9.4% ROI. Confidence band filtering doesn't add value. | 255 |
 | `pace_up` | 0 qualifying picks. Threshold too restrictive. | 254 |
 | Edge Classifier (Model 2) | AUC < 0.50. Pre-game features can't discriminate edges. | 230 |
