@@ -68,8 +68,10 @@ python bin/monitoring/grading_gap_detector.py        # Grading gaps (auto: daily
 - Auto-heals stalled batches (>90% complete, stalled 15+ min), tracks root cause
 - Quality gates block bad data at Phase 2→3 transition (`shared.validation.phase2_quality_gate`)
 - Grading gap detector checks gradable predictions only (excludes NO_PROP_LINE)
+- **Decay detection** (Session 262-263): `decay-detection` CF runs daily 11 AM ET, monitors `model_performance_daily`, Slack alerts for state transitions + challenger outperformance
+- **Model performance auto-compute** (Session 263): `post_grading_export` CF computes model_performance_daily after grading (same non-blocking pattern as signal_health)
 
-**Slack:** `#deployment-alerts` (2h), `#canary-alerts` (30min), `#nba-alerts` (self-healing, grading gaps)
+**Slack:** `#deployment-alerts` (2h), `#canary-alerts` (30min), `#nba-alerts` (self-healing, grading gaps, decay alerts)
 
 ## Using Agents [Keyword: AGENTS]
 
@@ -245,7 +247,8 @@ PYTHONPATH=. python ml/experiments/breakout_experiment_runner.py --name "PROD_V2
 | live-freshness-monitor | HTTP (Cloud Scheduler) | Live game data freshness monitoring |
 | self-heal-predictions | HTTP (Cloud Scheduler) | Auto-heal stalled/missing predictions |
 | grading-readiness-monitor | HTTP (Cloud Scheduler) | Post-game grading readiness monitor |
-| post-grading-export | Pub/Sub: `nba-grading-complete` | Re-exports picks with actuals after grading |
+| post-grading-export | Pub/Sub: `nba-grading-complete` | Re-exports picks with actuals + computes model_performance_daily |
+| decay-detection | HTTP (Cloud Scheduler 11 AM ET) | Model decay monitoring + Slack alerts (Session 262-263) |
 
 phase2-to-phase3-orchestrator REMOVED (Session 205).
 
@@ -282,6 +285,9 @@ gcloud run services describe SERVICE --region=us-west2 --format="value(metadata.
 | `prediction_grades` | DEPRECATED - do not use |
 | `nba_reference.nba_schedule` | Clean view, use for queries |
 | `nba_raw.nbac_schedule` | Requires partition filter |
+| `model_performance_daily` | Daily rolling HR/state per model (Session 262). Auto-populated by post_grading_export |
+| `signal_health_daily` | Signal regime (HOT/NORMAL/COLD) per timeframe (Session 259) |
+| `signal_combo_registry` | 7 validated combos: 5 SYNERGISTIC, 2 ANTI_PATTERN (Session 259) |
 
 **Game Status:** 1=Scheduled, 2=In Progress, 3=Final
 
@@ -389,7 +395,7 @@ ORDER BY 1 DESC;
 | Low feature quality | `matchup_quality_pct < 50` | Check which processor didn't run via `missing_processors` field |
 | Zero tolerance blocking | `zero_tolerance_defaults_N` in logs | Normal. Fix by ensuring Phase 4 processors run. Never relax. |
 | Stale batch blocks `/start` | `already_running` response | Check `/status`, then `/reset` the stale batch |
-| Model decay | Hit rate declining weekly | Monitor QUANT_43 shadow, promote when validated. Q43 60% edge 3+ on Feb 8-10. |
+| Model decay | Hit rate declining weekly | **Auto-monitored** by `decay-detection` CF (11 AM ET daily). State machine: HEALTHY→WATCH→DEGRADING→BLOCKED. Slack alerts on transitions + challenger outperformance. Session 262-263. |
 | Shadow model gap | Shadow model 0 predictions | **Auto-healed by pipeline canary** (Session 210). Also detected by `reconcile-yesterday` Phase 9 and `validate-daily` Phase 0.486. If auto-heal fails, manual: `/start` with BACKFILL mode. |
 | BDL scraper not running | 0 BDL records | EXPECTED: BDL intentionally disabled. 60-70% minutes coverage is normal. |
 | Orchestrator not triggering | Phase 2 complete, `_triggered=False` | NOT a bug. Phase 3 uses direct Pub/Sub, not orchestrator. |
