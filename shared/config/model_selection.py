@@ -11,6 +11,15 @@ import os
 
 CHAMPION_MODEL_ID = 'catboost_v9'
 
+# Per-model configuration for best bets filtering.
+# V12 confidence 0.87 tier has 41.7% HR (below 52.4% breakeven).
+# V12 confidence 0.90+ has 60.5% HR. Clean boundary — only 4 discrete values.
+MODEL_CONFIG = {
+    'catboost_v12': {
+        'min_confidence': 0.90,
+    },
+}
+
 
 def get_best_bets_model_id() -> str:
     """Return the model ID to use for best bets and signal evaluation.
@@ -18,6 +27,19 @@ def get_best_bets_model_id() -> str:
     Reads BEST_BETS_MODEL_ID env var. Falls back to champion model.
     """
     return os.environ.get('BEST_BETS_MODEL_ID', CHAMPION_MODEL_ID)
+
+
+def get_model_config(model_id: str) -> dict:
+    """Return model-specific config dict. Empty dict if no config."""
+    return MODEL_CONFIG.get(model_id, {})
+
+
+def get_min_confidence(model_id: str) -> float:
+    """Return minimum confidence score for best bets filtering.
+
+    Returns 0.0 (no filter) if model has no confidence floor configured.
+    """
+    return get_model_config(model_id).get('min_confidence', 0.0)
 
 
 def get_champion_model_id() -> str:

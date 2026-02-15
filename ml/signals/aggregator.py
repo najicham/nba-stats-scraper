@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 
 from ml.signals.base_signal import SignalResult
 from ml.signals.combo_registry import ComboEntry, load_combo_registry, match_combo
+from shared.config.model_selection import get_min_confidence
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,7 @@ class BestBetsAggregator:
 
     Filters:
         - MIN_SIGNAL_COUNT = 2 (eliminates 1-signal picks)
+        - Confidence floor: model-specific (V12: >= 0.90, excludes 41.7% HR tier)
         - ANTI_PATTERN combos are blocked entirely
     """
 
@@ -51,6 +53,7 @@ class BestBetsAggregator:
         self,
         combo_registry: Optional[Dict[str, ComboEntry]] = None,
         signal_health: Optional[Dict[str, Dict[str, Any]]] = None,
+        model_id: Optional[str] = None,
     ):
         """Initialize aggregator.
 
@@ -58,12 +61,14 @@ class BestBetsAggregator:
             combo_registry: Pre-loaded combo registry. If None, loads fallback.
             signal_health: Dict keyed by signal_tag with 'regime' field.
                 Example: {'high_edge': {'regime': 'HOT', 'hr_7d': 75.0, ...}}
+            model_id: Model ID for model-specific config (e.g. confidence floor).
         """
         if combo_registry is not None:
             self._registry = combo_registry
         else:
             self._registry = load_combo_registry(bq_client=None)
         self._signal_health = signal_health or {}
+        self._min_confidence = get_min_confidence(model_id or '')
 
     def aggregate(self, predictions: List[Dict],
                   signal_results: Dict[str, List[SignalResult]]) -> List[Dict]:
@@ -98,6 +103,12 @@ class BestBetsAggregator:
             # Signal count floor: skip 1-signal picks (43.8% HR)
             if len(qualifying) < self.MIN_SIGNAL_COUNT:
                 continue
+
+            # Confidence floor: model-specific (V12: 0.87 tier has 41.7% HR)
+            if self._min_confidence > 0:
+                confidence = pred.get('confidence_score') or 0
+                if confidence < self._min_confidence:
+                    continue
 
             tags = [r.source_tag for r in qualifying]
             warning_tags: List[str] = []

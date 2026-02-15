@@ -1853,6 +1853,47 @@ FROM rolling"
 
 **Reference**: Session 220 model decay investigation, CLAUDE.md MODEL section
 
+### Phase 0.58: Model Performance Dashboard (Session 262 - NEW)
+
+**IMPORTANT**: Quick dashboard view of all model states from the `model_performance_daily` table. This replaces the inline query from Phase 0.56 when the table has data.
+
+**Why this matters**: Pre-computed rolling metrics with state tracking make model health visible at a glance. Consecutive-day tracking enables threshold-based alerting.
+
+**When to run**: ALWAYS (automated)
+
+**What to check**:
+
+```bash
+bq query --use_legacy_sql=false "
+SELECT
+  model_id,
+  rolling_hr_7d,
+  rolling_n_7d,
+  rolling_hr_14d,
+  rolling_n_14d,
+  state,
+  consecutive_days_below_watch,
+  days_since_training,
+  action,
+  action_reason
+FROM nba_predictions.model_performance_daily
+WHERE game_date = (SELECT MAX(game_date) FROM nba_predictions.model_performance_daily)
+ORDER BY model_id"
+```
+
+**Thresholds**:
+
+| State | Meaning | Action |
+|-------|---------|--------|
+| HEALTHY | 7d HR >= 58% | No action needed |
+| WATCH | 7d HR < 58% for 2+ days | Monitor closely |
+| DEGRADING | 7d HR < 55% for 3+ days | Check challengers, consider switch |
+| BLOCKED | 7d HR < 52.4% | Model losing money — switch or retrain |
+
+**If best bets model is BLOCKED**: Run `/compare-models` to find alternative. Consider `/replay --compare` to evaluate switching strategies.
+
+**Reference**: Session 262, `ml/analysis/model_performance.py`
+
 ### Phase 0.6: Orchestrator Health (CRITICAL)
 
 **IMPORTANT**: Check orchestrator health BEFORE other validations. If ANY Phase 0.6 check fails, this is a P1 CRITICAL issue - STOP and report immediately.

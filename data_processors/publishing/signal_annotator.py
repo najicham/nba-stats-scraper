@@ -208,6 +208,7 @@ class SignalAnnotator:
         aggregator = BestBetsAggregator(
             combo_registry=combo_registry,
             signal_health=signal_health,
+            model_id=get_best_bets_model_id(),
         )
         top_picks = aggregator.aggregate(predictions, signal_results_map)
 
