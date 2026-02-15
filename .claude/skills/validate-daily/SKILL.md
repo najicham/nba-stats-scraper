@@ -1853,6 +1853,47 @@ FROM rolling"
 
 **Reference**: Session 220 model decay investigation, CLAUDE.md MODEL section
 
+### Phase 0.57: Directional Concentration Monitor (Session 266 - NEW)
+
+**IMPORTANT**: Detect when the model's edge 3+ picks are overwhelmingly in one direction (OVER or UNDER). On Feb 2, 94% of V9 picks were UNDER — a red flag that was only visible day-of.
+
+**Why this matters**: When the model is systematically biased toward one direction, it often signals a data issue or regime shift. High concentration correlates with poor hit rates.
+
+**When to run**: ALWAYS for today's pre-game checks (automated)
+
+**What to check**:
+
+```bash
+bq query --use_legacy_sql=false "
+-- Directional concentration for today's edge 3+ picks
+SELECT
+  recommendation,
+  COUNT(*) as picks,
+  ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER(), 1) as pct
+FROM nba_predictions.player_prop_predictions
+WHERE game_date = CURRENT_DATE()
+  AND system_id = 'catboost_v9'
+  AND ABS(predicted_points - current_points_line) >= 3.0
+  AND is_active = TRUE
+GROUP BY 1
+ORDER BY 2 DESC"
+```
+
+**Thresholds**:
+
+| Concentration | Status | Action |
+|---------------|--------|--------|
+| ≤80% same direction | PASS | Normal variance |
+| 80-90% same direction | WARNING | Flag in summary — may be one-direction market |
+| >90% same direction | CRITICAL | Investigate model bias or data issue immediately |
+
+**If WARNING or CRITICAL**:
+1. Check if the same pattern existed in recent days (is it persistent or one-off?)
+2. Compare with other models — if moving_average also shows the same skew, it's the lines, not the model
+3. Check for a major injury or rest news that could shift many lines in one direction
+
+**Reference**: Session 266, Feb 2 post-mortem (94% UNDER picks)
+
 ### Phase 0.58: Model Performance Dashboard (Session 262 - NEW)
 
 **IMPORTANT**: Quick dashboard view of all model states from the `model_performance_daily` table. This replaces the inline query from Phase 0.56 when the table has data.
@@ -1892,7 +1933,55 @@ ORDER BY model_id"
 
 **If best bets model is BLOCKED**: Run `/compare-models` to find alternative. Consider `/replay --compare` to evaluate switching strategies.
 
-**Reference**: Session 262, `ml/analysis/model_performance.py`
+**Baseline comparison** (Session 266): After showing the dashboard, also check if the best bets model is underperforming the `moving_average` baseline:
+
+```bash
+bq query --use_legacy_sql=false "
+-- Compare best bets model vs moving_average baseline over recent days
+WITH daily AS (
+  SELECT
+    game_date,
+    model_id,
+    rolling_hr_7d,
+    rolling_n_7d
+  FROM nba_predictions.model_performance_daily
+  WHERE game_date >= (
+    SELECT DATE_SUB(MAX(game_date), INTERVAL 7 DAY)
+    FROM nba_predictions.model_performance_daily
+  )
+  AND model_id IN ('catboost_v9', 'moving_average')
+),
+comparison AS (
+  SELECT
+    d.game_date,
+    MAX(CASE WHEN d.model_id = 'catboost_v9' THEN d.rolling_hr_7d END) as champion_hr,
+    MAX(CASE WHEN d.model_id = 'moving_average' THEN d.rolling_hr_7d END) as baseline_hr
+  FROM daily d
+  GROUP BY 1
+)
+SELECT
+  game_date,
+  champion_hr,
+  baseline_hr,
+  ROUND(champion_hr - baseline_hr, 1) as delta,
+  CASE WHEN champion_hr < baseline_hr THEN 'BELOW BASELINE' ELSE 'OK' END as status
+FROM comparison
+WHERE champion_hr IS NOT NULL AND baseline_hr IS NOT NULL
+ORDER BY game_date DESC
+LIMIT 7"
+```
+
+**Thresholds for baseline comparison**:
+
+| Pattern | Status | Action |
+|---------|--------|--------|
+| Champion above baseline | PASS | System adding value |
+| Champion below baseline 1-2 days | INFO | Normal variance |
+| Champion below baseline 3+ consecutive days | WARNING | Model may not be adding value — investigate |
+
+**If champion below baseline for 3+ days**: The complex model isn't outperforming a simple moving average. Check for data issues (stale features, missing processors) before considering retrain. This is a stronger signal than decay alone.
+
+**Reference**: Session 262, Session 266 (baseline comparison), `ml/analysis/model_performance.py`
 
 ### Phase 0.6: Orchestrator Health (CRITICAL)
 

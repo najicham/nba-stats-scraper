@@ -14,6 +14,7 @@ Thresholds:
     BLOCK: 7d rolling HR < 52.4% (breakeven at -110 odds)
 
 Created: 2026-02-15 (Session 262)
+Updated: 2026-02-15 (Session 266) - Added cross-model crash detector
 """
 
 import functions_framework
@@ -116,6 +117,105 @@ def find_best_alternative(models: List[Dict], exclude_model: str) -> Optional[Di
     if not candidates:
         return None
     return max(candidates, key=lambda m: m['rolling_hr_7d'])
+
+
+def detect_cross_model_crash(models: List[Dict]) -> Optional[Dict]:
+    """Detect when 2+ models crash on the same day (market disruption, not model decay).
+
+    If multiple models have daily_hr < 40% simultaneously, the cause is likely
+    a market event (unusual game outcomes), not individual model problems.
+    The recommended response differs: halt all betting vs switch models.
+
+    Returns:
+        Slack payload if crash detected, None otherwise.
+    """
+    CRASH_THRESHOLD = 40.0
+    MIN_MODELS_FOR_CRASH = 2
+
+    crashed = [
+        m for m in models
+        if m.get('daily_hr') is not None
+        and m.get('daily_picks', 0) >= 5
+        and m['daily_hr'] < CRASH_THRESHOLD
+    ]
+
+    if len(crashed) < MIN_MODELS_FOR_CRASH:
+        return None
+
+    game_date = models[0]['game_date'] if models else 'unknown'
+
+    crash_lines = []
+    for m in crashed:
+        crash_lines.append(
+            f"• *{m['model_id']}*: {m['daily_hr']:.1f}% "
+            f"({m.get('daily_wins', 0)}/{m.get('daily_picks', 0)} picks)"
+        )
+
+    non_crashed = [m for m in models if m not in crashed and m.get('daily_hr') is not None]
+    context_lines = []
+    for m in non_crashed:
+        context_lines.append(
+            f"• {m['model_id']}: {m['daily_hr']:.1f}% "
+            f"({m.get('daily_wins', 0)}/{m.get('daily_picks', 0)} picks)"
+        )
+
+    blocks = [
+        {
+            'type': 'header',
+            'text': {
+                'type': 'plain_text',
+                'text': '🌊 MARKET DISRUPTION — Multi-Model Crash',
+                'emoji': True,
+            }
+        },
+        {
+            'type': 'section',
+            'text': {
+                'type': 'mrkdwn',
+                'text': (
+                    f"*{len(crashed)} models crashed below {CRASH_THRESHOLD:.0f}% on {game_date}*\n"
+                    "This is likely a market event (unusual game outcomes), not model-specific decay.\n\n"
+                    "*Crashed models:*\n" + '\n'.join(crash_lines)
+                )
+            }
+        },
+    ]
+
+    if context_lines:
+        blocks.append({
+            'type': 'section',
+            'text': {
+                'type': 'mrkdwn',
+                'text': '*Other models:*\n' + '\n'.join(context_lines)
+            }
+        })
+
+    blocks.append({
+        'type': 'section',
+        'text': {
+            'type': 'mrkdwn',
+            'text': (
+                '*Recommended action:* Pause betting for 1 day. '
+                'Do NOT switch models — all are affected. '
+                'Check if unusual game outcomes (blowouts, OT, injuries) explain the miss.'
+            )
+        }
+    })
+
+    blocks.append({
+        'type': 'context',
+        'elements': [{
+            'type': 'mrkdwn',
+            'text': f"Date: {game_date} | Run: {datetime.now(timezone.utc).strftime('%H:%M UTC')}"
+        }]
+    })
+
+    return {
+        'attachments': [{
+            'color': '#8B0000',
+            'blocks': blocks
+        }]
+    }
 
 
 def build_alert_payload(models: List[Dict], transitions: List[Dict],
@@ -355,13 +455,20 @@ def decay_detection(request: Request):
         from shared.config.model_selection import get_best_bets_model_id
         best_bets_model = get_best_bets_model_id()
 
-        # Build and send alert if needed
+        # Check for cross-model crash (market disruption)
+        cross_model_crash = detect_cross_model_crash(models)
+        crash_alert_sent = False
+        if cross_model_crash:
+            crash_alert_sent = send_slack_alert(cross_model_crash)
+            logger.info(f"Cross-model crash alert sent: {crash_alert_sent}")
+
+        # Build and send decay alert if needed (skip if crash already alerted)
         payload = build_alert_payload(models, transitions, best_bets_model)
         alert_sent = False
-        if payload:
+        if payload and not cross_model_crash:
             alert_sent = send_slack_alert(payload)
             logger.info(f"Alert sent: {alert_sent}, transitions: {len(transitions)}")
-        else:
+        elif not payload and not cross_model_crash:
             logger.info("No alert needed — all models healthy, no transitions")
 
         # Build response
@@ -380,6 +487,7 @@ def decay_detection(request: Request):
             'models': model_summary,
             'transitions': transitions,
             'alert_sent': alert_sent,
+            'crash_alert_sent': crash_alert_sent,
             'best_bets_model': best_bets_model,
             'timestamp': datetime.now(timezone.utc).isoformat()
         }), 200, {'Content-Type': 'application/json'}

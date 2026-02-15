@@ -11,9 +11,9 @@ This function performs comprehensive health checks:
 
 Results are sent to Slack and logged to Cloud Logging.
 
-Version: 1.1 - Added R-009 game completeness validation
+Version: 1.2 - Added meta-monitoring (monitor the monitors)
 Created: 2026-01-19
-Updated: 2026-01-19
+Updated: 2026-02-15
 """
 
 import functions_framework
@@ -289,6 +289,100 @@ def check_bigquery_quota() -> Tuple[str, str]:
     except Exception as e:
         logger.warning(f"Error checking BigQuery quota: {e}")
         return ('warn', f'Could not check quota: {str(e)[:80]}')
+
+
+def check_monitoring_freshness() -> List[Tuple[str, str, str]]:
+    """
+    Meta-monitoring: verify that monitoring tables are being populated.
+
+    If model_performance_daily or signal_health_daily stop being computed,
+    the decay detection system has stale data and won't alert properly.
+
+    Returns:
+        List of (check_name, status, message) tuples
+    """
+    checks = []
+
+    # Check 1: model_performance_daily freshness
+    try:
+        query = f"""
+            SELECT
+              MAX(game_date) as latest,
+              DATE_DIFF(CURRENT_DATE(), MAX(game_date), DAY) as days_stale
+            FROM `{PROJECT_ID}.nba_predictions.model_performance_daily`
+        """
+        results = list(bq.query(query).result())
+        if results and results[0].latest is not None:
+            days_stale = results[0].days_stale
+            latest = results[0].latest
+            if days_stale <= 2:
+                checks.append(('Meta: model_performance_daily', 'pass',
+                               f'Fresh (latest: {latest}, {days_stale}d ago)'))
+            elif days_stale <= 4:
+                checks.append(('Meta: model_performance_daily', 'warn',
+                               f'Stale ({days_stale}d since {latest}) — may be All-Star break'))
+            else:
+                checks.append(('Meta: model_performance_daily', 'fail',
+                               f'STALE ({days_stale}d since {latest}) — decay detection has stale data'))
+        else:
+            checks.append(('Meta: model_performance_daily', 'fail',
+                           'No data found — decay detection will not work'))
+    except Exception as e:
+        checks.append(('Meta: model_performance_daily', 'warn',
+                       f'Error checking freshness: {str(e)[:100]}'))
+
+    # Check 2: signal_health_daily freshness
+    try:
+        query = f"""
+            SELECT
+              MAX(game_date) as latest,
+              DATE_DIFF(CURRENT_DATE(), MAX(game_date), DAY) as days_stale
+            FROM `{PROJECT_ID}.nba_predictions.signal_health_daily`
+        """
+        results = list(bq.query(query).result())
+        if results and results[0].latest is not None:
+            days_stale = results[0].days_stale
+            latest = results[0].latest
+            if days_stale <= 2:
+                checks.append(('Meta: signal_health_daily', 'pass',
+                               f'Fresh (latest: {latest}, {days_stale}d ago)'))
+            elif days_stale <= 4:
+                checks.append(('Meta: signal_health_daily', 'warn',
+                               f'Stale ({days_stale}d since {latest}) — may be break'))
+            else:
+                checks.append(('Meta: signal_health_daily', 'fail',
+                               f'STALE ({days_stale}d since {latest}) — signal system has stale data'))
+        else:
+            checks.append(('Meta: signal_health_daily', 'fail',
+                           'No data found — signal health not computing'))
+    except Exception as e:
+        checks.append(('Meta: signal_health_daily', 'warn',
+                       f'Error checking freshness: {str(e)[:100]}'))
+
+    # Check 3: decay-detection scheduler job ran recently
+    try:
+        from google.cloud import scheduler_v1
+        scheduler_client = scheduler_v1.CloudSchedulerClient()
+        job_name = f"projects/{PROJECT_ID}/locations/us-west2/jobs/decay-detection-daily"
+        job = scheduler_client.get_job(name=job_name)
+
+        last_attempt = job.last_attempt_time
+        if last_attempt and last_attempt.timestamp() > 0:
+            hours_ago = (datetime.now(timezone.utc) - last_attempt).total_seconds() / 3600
+            if hours_ago <= 25:
+                checks.append(('Meta: decay-detection job', 'pass',
+                               f'Ran {hours_ago:.0f}h ago'))
+            else:
+                checks.append(('Meta: decay-detection job', 'warn',
+                               f'Last run {hours_ago:.0f}h ago (>25h)'))
+        else:
+            checks.append(('Meta: decay-detection job', 'warn',
+                           'No attempt time recorded'))
+    except Exception as e:
+        checks.append(('Meta: decay-detection job', 'warn',
+                       f'Could not check scheduler: {str(e)[:100]}'))
+
+    return checks
 
 
 def check_game_completeness(game_date: str) -> Tuple[str, str]:
@@ -594,6 +688,15 @@ def daily_health_check(request):
 
     status, message = check_bigquery_quota()
     results.add("BigQuery Quota", status, message)
+
+    # ========================================================================
+    # CHECK 6: Meta-Monitoring (monitor the monitors)
+    # ========================================================================
+    logger.info("Checking monitoring system freshness...")
+
+    meta_checks = check_monitoring_freshness()
+    for check_name, status, message in meta_checks:
+        results.add(check_name, status, message)
 
     # ========================================================================
     # Send Results

@@ -68,7 +68,9 @@ python bin/monitoring/grading_gap_detector.py        # Grading gaps (auto: daily
 - Auto-heals stalled batches (>90% complete, stalled 15+ min), tracks root cause
 - Quality gates block bad data at Phase 2→3 transition (`shared.validation.phase2_quality_gate`)
 - Grading gap detector checks gradable predictions only (excludes NO_PROP_LINE)
-- **Decay detection** (Session 262-263): `decay-detection` CF runs daily 11 AM ET, monitors `model_performance_daily`, Slack alerts for state transitions + challenger outperformance
+- **Decay detection** (Session 262-263, 266): `decay-detection` CF runs daily 11 AM ET, monitors `model_performance_daily`, Slack alerts for state transitions + challenger outperformance + **cross-model crash detection** (2+ models < 40% = market disruption alert)
+- **Meta-monitoring** (Session 266): `daily-health-check` CF verifies `model_performance_daily` and `signal_health_daily` freshness + `decay-detection` scheduler job recency
+- **Directional concentration** (Session 266): `validate-daily` Phase 0.57 flags when >80% of edge 3+ picks are in same direction (OVER/UNDER)
 - **Model performance auto-compute** (Session 263): `post_grading_export` CF computes model_performance_daily after grading (same non-blocking pattern as signal_health)
 
 **Slack:** `#deployment-alerts` (2h), `#canary-alerts` (30min), `#nba-alerts` (self-healing, grading gaps, decay alerts)
