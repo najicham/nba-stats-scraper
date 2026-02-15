@@ -86,6 +86,9 @@ from data_processors.publishing.trends_tonight_exporter import TrendsTonightExpo
 # Signal best bets + signal annotator (Session 254)
 from data_processors.publishing.signal_best_bets_exporter import SignalBestBetsExporter
 from data_processors.publishing.signal_annotator import SignalAnnotator
+# Signal health + model health exports (Session 267)
+from data_processors.publishing.signal_health_exporter import SignalHealthExporter
+from data_processors.publishing.model_health_exporter import ModelHealthExporter
 
 # Configure logging
 logging.basicConfig(
@@ -113,6 +116,8 @@ EXPORT_TYPES = [
     'subset-picks', 'daily-signals', 'subset-performance', 'subset-definitions', 'season-subsets',
     # Signal best bets (Session 254)
     'signal-best-bets',
+    # Signal health + model health (Session 267)
+    'signal-health', 'model-health',
     # Consolidated trends
     'trends-tonight',
     # Shorthand groups
@@ -353,6 +358,28 @@ def export_date(
         except Exception as e:
             result['errors'].append(f"signal-best-bets: {e}")
             logger.error(f"  Signal Best Bets error: {e}")
+
+    # Signal health exporter (Session 267 - per-signal HOT/COLD/NORMAL for frontend)
+    if 'signal-health' in export_types:
+        try:
+            exporter = SignalHealthExporter()
+            path = exporter.export(target_date)
+            result['paths']['signal_health'] = path
+            logger.info(f"  Signal Health: {path}")
+        except Exception as e:
+            result['errors'].append(f"signal-health: {e}")
+            logger.error(f"  Signal Health error: {e}")
+
+    # Model health exporter (Session 267 - model state + blocked banner for frontend)
+    if 'model-health' in export_types:
+        try:
+            exporter = ModelHealthExporter()
+            path = exporter.export(target_date)
+            result['paths']['model_health'] = path
+            logger.info(f"  Model Health: {path}")
+        except Exception as e:
+            result['errors'].append(f"model-health: {e}")
+            logger.error(f"  Model Health error: {e}")
 
     # === SLOW EXPORTS (tonight-players processes 200+ individual files) ===
 

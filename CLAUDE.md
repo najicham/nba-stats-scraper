@@ -198,6 +198,7 @@ PYTHONPATH=. python ml/experiments/quick_retrain.py --name "Q43" --quantile-alph
 3. Pipeline canary auto-heal (`pipeline_canary_queries.py`) — automated detection every 30 min + auto-triggers BACKFILL
 
 **Promote:** Update `CATBOOST_V9_MODEL_PATH` env var. **Retire:** Set `enabled: False` in config.
+**Model steering:** See `docs/02-operations/runbooks/model-steering-playbook.md` for when to switch, retrain, or pause.
 **See:** `docs/08-projects/current/retrain-infrastructure/03-PARALLEL-MODELS-GUIDE.md`, `docs/08-projects/current/session-179-validation-and-retrain/05-SESSION-186-QUANTILE-DISCOVERY.md`
 
 ## Breakout Classifier [Keyword: BREAKOUT]
@@ -499,6 +500,9 @@ Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
 **Key API Endpoints** (auto-generated daily, 6 AM ET):
 - `v1/schedule/game-counts.json` - Season game counts for calendar
 - `v1/status.json` - System status + active break detection (All-Star, holidays)
+- `v1/systems/signal-health.json` - Per-signal HOT/COLD/NORMAL regime (Session 267)
+- `v1/systems/model-health.json` - Model state + blocked banner (Session 267)
+- `v1/signal-best-bets/{date}.json` - Top 5 signal-curated picks (Session 254)
 
 ## Documentation Index [Keyword: DOCS]
 
