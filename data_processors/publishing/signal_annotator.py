@@ -144,13 +144,12 @@ class SignalAnnotator:
         signal_health = get_signal_health_summary(self.bq_client, target_date)
 
         # 5. Bridge: run aggregator and write Signal Picks subset
-        signal_picks_count = 0
-        if health_status != 'blocked':
-            signal_picks_count = self._bridge_signal_picks(
-                predictions, signal_results_map, target_date,
-                version_id, health_status, combo_registry,
-                signal_health=signal_health,
-            )
+        # Note: Health gate removed (Session 270) — always produce signal picks
+        signal_picks_count = self._bridge_signal_picks(
+            predictions, signal_results_map, target_date,
+            version_id, health_status, combo_registry,
+            signal_health=signal_health,
+        )
 
         logger.info(
             f"Annotated {len(rows_to_write)} predictions for {target_date}: "
@@ -221,7 +220,6 @@ class SignalAnnotator:
 
         subset_rows = []
         for pick in top_picks:
-            warning_tags = pick.get('warning_tags', [])
             subset_rows.append({
                 'game_date': target_date,
                 'subset_id': SIGNAL_PICKS_SUBSET_ID,
@@ -229,7 +227,6 @@ class SignalAnnotator:
                 'prediction_id': None,
                 'game_id': pick.get('game_id'),
                 'rank_in_subset': pick.get('rank'),
-                'warning_tags': warning_tags,
                 'system_id': pick.get('system_id', get_best_bets_model_id()),
                 'version_id': version_id or f"v_{computed_at.strftime('%Y%m%d_%H%M%S')}",
                 'computed_at': computed_at.isoformat(),
@@ -245,6 +242,14 @@ class SignalAnnotator:
                 'confidence_score': pick.get('confidence_score'),
                 'edge': pick.get('edge'),
                 'composite_score': pick.get('composite_score'),
+                # Signal context (Session 270: why this pick was selected)
+                'signal_tags': pick.get('signal_tags', []),
+                'signal_count': pick.get('signal_count', 0),
+                'matched_combo_id': pick.get('matched_combo_id'),
+                'combo_classification': pick.get('combo_classification'),
+                'combo_hit_rate': pick.get('combo_hit_rate'),
+                'model_health_status': health_status,
+                'warning_tags': pick.get('warning_tags', []),
                 # Quality provenance (not available here, set to None)
                 'feature_quality_score': None,
                 'default_feature_count': None,

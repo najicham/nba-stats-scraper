@@ -1,11 +1,12 @@
-"""Model Health gate signal — blocks picks when champion model is decaying.
+"""Model Health signal — reports champion model decay state.
 
-This is a GATE, not a pick signal. When the champion model's rolling 7-day
-hit rate on edge 3+ picks drops below breakeven (52.4%), the gate blocks
-ALL signal best bets for that day.
+Tracks the champion model's rolling 7-day hit rate on edge 3+ picks.
+Always qualifies (does not block picks) — the 2-signal minimum and
+combo registry provide sufficient quality filtering even during decay.
 
-Impact: In W4 (Feb 1-13), champion HR was ~39.9%. This gate would have
-produced 0 signal best bets, preventing all losses from model decay.
+Session 270: Removed gate behavior. Replay showed the health gate cost
+$1,110 in profit (Jan 9 – Feb 12) while the signal system's 2-signal
+minimum kept quality high (58.2% HR without gate vs 57.0% with gate).
 """
 
 from typing import Dict, Optional
@@ -21,7 +22,7 @@ WARNING_HR = 58.0
 
 class ModelHealthSignal(BaseSignal):
     tag = "model_health"
-    description = "Gate: blocks picks when champion model HR below breakeven"
+    description = "Reports champion model health state (informational, does not block)"
 
     def evaluate(self, prediction: Dict,
                  features: Optional[Dict] = None,
@@ -41,8 +42,8 @@ class ModelHealthSignal(BaseSignal):
 
         if hr_7d < BREAKEVEN_HR:
             return SignalResult(
-                qualifies=False,
-                confidence=0.0,
+                qualifies=True,
+                confidence=0.3,
                 source_tag=self.tag,
                 metadata={
                     'health_tier': 'blocked',

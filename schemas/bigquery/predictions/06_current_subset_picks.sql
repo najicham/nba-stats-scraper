@@ -49,6 +49,15 @@ CREATE TABLE IF NOT EXISTS nba_predictions.current_subset_picks (
     edge FLOAT64,
     composite_score FLOAT64,
 
+    -- Signal context (Session 270: why this pick was selected)
+    signal_tags ARRAY<STRING>,             -- Qualifying signal tags, e.g. ['high_edge', 'dual_agree']
+    signal_count INT64,                    -- Number of qualifying signals
+    matched_combo_id STRING,               -- Best matching combo from combo_registry
+    combo_classification STRING,           -- SYNERGISTIC | ANTI_PATTERN | NEUTRAL
+    combo_hit_rate FLOAT64,                -- Historical hit rate of matched combo
+    model_health_status STRING,            -- 'healthy', 'watch', 'blocked' at pick time
+    warning_tags ARRAY<STRING>,            -- ['contradictory_signals', ...]
+
     -- Data quality provenance (from prediction at materialization time)
     feature_quality_score FLOAT64,      -- Overall quality 0-100
     default_feature_count INT64,        -- Should be 0 (zero tolerance), tracked for audit

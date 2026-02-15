@@ -398,7 +398,7 @@ ORDER BY 1 DESC;
 | Low feature quality | `matchup_quality_pct < 50` | Check which processor didn't run via `missing_processors` field |
 | Zero tolerance blocking | `zero_tolerance_defaults_N` in logs | Normal. Fix by ensuring Phase 4 processors run. Never relax. |
 | Stale batch blocks `/start` | `already_running` response | Check `/status`, then `/reset` the stale batch |
-| Model decay | Hit rate declining weekly | **Auto-monitored** by `decay-detection` CF (11 AM ET daily). State machine: HEALTHY→WATCH→DEGRADING→BLOCKED. Slack alerts on transitions + challenger outperformance. Session 262-263. |
+| Model decay | Hit rate declining weekly | **Auto-monitored** by `decay-detection` CF (11 AM ET daily). State machine: HEALTHY→WATCH→DEGRADING→BLOCKED. Slack alerts on transitions + challenger outperformance. Session 262-263. **Health gate removed** (Session 270): signal best bets produced regardless of decay state — 2-signal minimum provides quality filtering. |
 | Shadow model gap | Shadow model 0 predictions | **Auto-healed by pipeline canary** (Session 210). Also detected by `reconcile-yesterday` Phase 9 and `validate-daily` Phase 0.486. If auto-heal fails, manual: `/start` with BACKFILL mode. |
 | BDL scraper not running | 0 BDL records | EXPECTED: BDL intentionally disabled. 60-70% minutes coverage is normal. |
 | Orchestrator not triggering | Phase 2 complete, `_triggered=False` | NOT a bug. Phase 3 uses direct Pub/Sub, not orchestrator. |

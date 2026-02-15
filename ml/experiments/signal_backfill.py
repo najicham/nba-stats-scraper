@@ -281,38 +281,37 @@ def evaluate_and_build(rows: List[Dict], registry, combo_reg=None) -> Tuple[
             'version_id': f'backfill_{str(pred["game_date"])}',
         })
 
-    # Build best bets (only if model healthy)
+    # Build best bets (health gate removed, Session 270)
     best_bets_rows = []
-    if health_status != 'blocked':
-        aggregator = BestBetsAggregator(combo_registry=combo_reg)
-        top_picks = aggregator.aggregate(predictions, signal_results_map)
+    aggregator = BestBetsAggregator(combo_registry=combo_reg)
+    top_picks = aggregator.aggregate(predictions, signal_results_map)
 
-        for pick in top_picks:
-            best_bets_rows.append({
-                'player_lookup': pick['player_lookup'],
-                'game_id': pick.get('game_id', ''),
-                'game_date': str(pick['game_date']),
-                'system_id': SYSTEM_ID,
-                'player_name': pick.get('player_name', ''),
-                'team_abbr': pick.get('team_abbr', ''),
-                'opponent_team_abbr': pick.get('opponent_team_abbr', ''),
-                'predicted_points': pick.get('predicted_points'),
-                'line_value': pick.get('line_value'),
-                'recommendation': pick.get('recommendation', ''),
-                'edge': pick.get('edge'),
-                'confidence_score': pick.get('confidence_score'),
-                'signal_tags': pick.get('signal_tags', []),
-                'signal_count': pick.get('signal_count', 0),
-                'composite_score': pick.get('composite_score'),
-                'matched_combo_id': pick.get('matched_combo_id'),
-                'combo_classification': pick.get('combo_classification'),
-                'combo_hit_rate': pick.get('combo_hit_rate'),
-                'warning_tags': pick.get('warning_tags', []),
-                'rank': pick.get('rank'),
-                'actual_points': pick.get('actual_points'),
-                'prediction_correct': pick.get('prediction_correct'),
-                'created_at': now,
-            })
+    for pick in top_picks:
+        best_bets_rows.append({
+            'player_lookup': pick['player_lookup'],
+            'game_id': pick.get('game_id', ''),
+            'game_date': str(pick['game_date']),
+            'system_id': SYSTEM_ID,
+            'player_name': pick.get('player_name', ''),
+            'team_abbr': pick.get('team_abbr', ''),
+            'opponent_team_abbr': pick.get('opponent_team_abbr', ''),
+            'predicted_points': pick.get('predicted_points'),
+            'line_value': pick.get('line_value'),
+            'recommendation': pick.get('recommendation', ''),
+            'edge': pick.get('edge'),
+            'confidence_score': pick.get('confidence_score'),
+            'signal_tags': pick.get('signal_tags', []),
+            'signal_count': pick.get('signal_count', 0),
+            'composite_score': pick.get('composite_score'),
+            'matched_combo_id': pick.get('matched_combo_id'),
+            'combo_classification': pick.get('combo_classification'),
+            'combo_hit_rate': pick.get('combo_hit_rate'),
+            'warning_tags': pick.get('warning_tags', []),
+            'rank': pick.get('rank'),
+            'actual_points': pick.get('actual_points'),
+            'prediction_correct': pick.get('prediction_correct'),
+            'created_at': now,
+        })
 
     return tag_rows, best_bets_rows, health_status
 

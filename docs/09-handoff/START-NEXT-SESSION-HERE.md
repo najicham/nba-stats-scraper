@@ -1,7 +1,7 @@
 # Start Your Next Session Here
 
-**Updated:** 2026-02-15 (Session 268 — daily steering skill + backfill)
-**Status:** All automation + monitoring features deployed. Games resume Feb 19. System ready.
+**Updated:** 2026-02-15 (Session 270 — health gate removed from signal best bets)
+**Status:** All automation + monitoring features deployed. Games resume Feb 19. System ready. Health gate removed — signal best bets now produced every game day.
 
 ---
 
@@ -32,6 +32,8 @@
 - **Directional concentration:** validate-daily Phase 0.57 flags >80% same direction on edge 3+ picks
 - **model_performance_daily:** Auto-computed by post_grading_export after grading. 47 rows backfilled.
 - **Replay engine:** BUILT — `ml/analysis/replay_cli.py` with 4 strategies + `--min-confidence` filter
+- **Steering replay:** BUILT — `ml/analysis/steering_replay.py` backtests full signal pipeline (Session 269). Health gate OFF by default (Session 270).
+- **Health gate:** REMOVED (Session 270). Signal best bets produced every game day. 2-signal minimum provides quality filtering. Monitoring/decay alerts unchanged.
 - **Combo registry:** 7 combos (5 SYNERGISTIC, 2 ANTI_PATTERN). FROZEN — validate on post-Feb-19 data before changes.
 - **Signal health weighting:** LIVE (HOT=1.2x, NORMAL=1.0x, COLD behavioral=0.5x, COLD model-dependent=0.0x)
 - **Games resume:** Feb 19 (All-Star break ends)
@@ -55,7 +57,7 @@
 - Monitor first decay-detection Slack alert (should be "no alert needed" or INSUFFICIENT_DATA)
 - Check `picks/{date}.json` has Best Bets subset (id=26) with signal tags
 
-### Priority 2: Post-Break Validation (was Priority 4)
+### Priority 2: Post-Break Validation
 - Validate combo registry on post-Feb-19 out-of-sample data (still FROZEN)
 - Calibrate INSUFFICIENT_DATA state for V12's lower pick volume
 - Decide: switch BEST_BETS_MODEL_ID from V9 to V12?
@@ -65,6 +67,7 @@
 - Optional: `v1/systems/combo-registry.json` for combo explanations
 
 ### Completed Priorities
+- ~~Health gate policy decision~~ — **DONE Session 270** (gate removed, +$1,110 recovered)
 - ~~COLD model-dependent signals at 0.0x~~ — **DONE Session 264**
 - ~~Surface moving_average/V8 baselines in daily dashboard~~ — **DONE Session 266**
 - ~~Directional concentration monitor~~ — **DONE Session 266**
@@ -81,7 +84,19 @@
 
 ---
 
-## Replay Results (Session 262 Calibration)
+## Replay Results
+
+### Steering Replay — Full Signal Pipeline (Session 269)
+
+| Strategy | Picks | W-L | HR% | P&L | ROI |
+|----------|-------|-----|-----|-----|-----|
+| **Steering (production)** | 93 | 53-40 | 57.0% | **$+900** | +8.8% |
+| **No health gate** | 165 | 96-69 | 58.2% | **$+2,010** | +11.1% |
+| **V12 only** | 36 | 21-15 | 58.3% | **$+450** | +11.4% |
+
+Signal system profitable across all strategies. Health gate conservatively cost $1,110. Feb BLOCKED days had 62% signal-filtered HR.
+
+### Raw Edge Replay — Model Selection (Session 262)
 
 | Strategy | HR | ROI | P&L |
 |----------|-----|-----|------|
@@ -95,6 +110,8 @@ Blocking bad days > picking best model. Thresholds **validated** across V8's 4-s
 ---
 
 **Handoffs:**
+- Session 270: Health gate removed from signal best bets (5 files changed)
+- Session 269: Steering replay system + first full backtest results
 - Session 268: `/daily-steering` skill, signal annotator fix, best bets backfill
 - Session 267: `docs/08-projects/current/signal-discovery-framework/SESSION-267-FORWARD-PLAN.md` **(comprehensive forward plan)**
 - Session 265: `docs/08-projects/current/signal-discovery-framework/V8-MULTI-SEASON-REPLAY-RESULTS.md`

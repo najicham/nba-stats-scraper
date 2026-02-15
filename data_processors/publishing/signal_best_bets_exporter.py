@@ -63,27 +63,15 @@ class SignalBestBetsExporter(BaseExporter):
             else:
                 health_status = 'healthy'
 
-        # Step 2: Check if model health gate blocks all picks
+        # Note: Health gate removed (Session 270). Model health is informational
+        # only — the 2-signal minimum provides sufficient quality filtering.
         if health_status == 'blocked':
-            logger.warning(
-                f"Model health gate BLOCKED for {target_date}: "
-                f"HR 7d = {hr_7d:.1f}% < {BREAKEVEN_HR}% breakeven"
+            logger.info(
+                f"Model health below breakeven for {target_date}: "
+                f"HR 7d = {hr_7d:.1f}% < {BREAKEVEN_HR}% — picks still generated"
             )
-            return {
-                'date': target_date,
-                'generated_at': self.get_generated_at(),
-                'model_health': {
-                    'status': health_status,
-                    'hit_rate_7d': hr_7d,
-                    'graded_count': model_health.get('graded_count', 0),
-                },
-                'picks': [],
-                'total_picks': 0,
-                'signals_evaluated': [],
-                'blocked_reason': 'model_decay',
-            }
 
-        # Step 3: Query predictions and supplemental data
+        # Step 2: Query predictions and supplemental data
         predictions, supplemental_map = self._query_predictions_and_supplements(
             target_date
         )
