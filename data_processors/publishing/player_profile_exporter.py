@@ -323,7 +323,9 @@ class PlayerProfileExporter(BaseExporter):
             CASE
                 WHEN g.points_line IS NOT NULL THEN g.points - g.points_line
                 ELSE NULL
-            END as margin
+            END as margin,
+            g.is_dnp,
+            g.dnp_reason
         FROM `nba-props-platform.nba_analytics.player_game_summary` g
         WHERE g.player_lookup = @player_lookup
         ORDER BY g.game_date DESC
@@ -361,7 +363,9 @@ class PlayerProfileExporter(BaseExporter):
                 'turnovers': r.get('turnovers'),
                 'line': safe_float(r.get('points_line')),
                 'over_under': r.get('over_under_result'),
-                'margin': safe_float(r.get('margin'))
+                'margin': safe_float(r.get('margin')),
+                'did_not_play': bool(r.get('is_dnp')) if r.get('is_dnp') is not None else False,
+                'dnp_reason': r.get('dnp_reason'),
             })
         return formatted
 

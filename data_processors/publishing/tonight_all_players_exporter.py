@@ -195,6 +195,25 @@ class TonightAllPlayersExporter(BaseExporter):
             )
             GROUP BY player_lookup
         ),
+        last_30d_stats AS (
+            -- Get last 30 calendar days scoring average
+            SELECT
+                player_lookup,
+                ROUND(AVG(points), 1) as last_30d_ppg
+            FROM `nba-props-platform.nba_analytics.player_game_summary`
+            WHERE game_date >= DATE_SUB(@target_date, INTERVAL 30 DAY)
+              AND game_date < @target_date
+            GROUP BY player_lookup
+        ),
+        actuals AS (
+            -- Get actual points scored (populated after games finish)
+            SELECT
+                player_lookup,
+                game_date,
+                points as actual_points
+            FROM `nba-props-platform.nba_analytics.player_game_summary`
+            WHERE game_date = @target_date
+        ),
         game_context AS (
             -- Get game context (team, opponent, rest days, etc.)
             SELECT
@@ -268,6 +287,10 @@ class TonightAllPlayersExporter(BaseExporter):
 
             -- Recent form
             l5.last_5_ppg,
+            l30.last_30d_ppg,
+
+            -- Actuals (populated after games finish)
+            act.actual_points,
 
             -- Betting odds (for props array)
             bo.over_odds,
@@ -283,6 +306,8 @@ class TonightAllPlayersExporter(BaseExporter):
         LEFT JOIN injuries i ON gc.player_lookup = i.player_lookup
         LEFT JOIN season_stats ss ON gc.player_lookup = ss.player_lookup
         LEFT JOIN last_5_stats l5 ON gc.player_lookup = l5.player_lookup
+        LEFT JOIN last_30d_stats l30 ON gc.player_lookup = l30.player_lookup
+        LEFT JOIN actuals act ON gc.player_lookup = act.player_lookup
         LEFT JOIN best_odds bo ON gc.player_lookup = bo.player_lookup
             AND ROUND(p.current_points_line, 1) = ROUND(bo.points_line, 1)
         LEFT JOIN feature_data fd ON gc.player_lookup = fd.player_lookup
@@ -496,7 +521,12 @@ class TonightAllPlayersExporter(BaseExporter):
                     'season_mpg': safe_float(p.get('season_mpg')),
                     'minutes_avg': safe_float(p.get('season_mpg')),
                     'last_5_ppg': safe_float(p.get('last_5_ppg')),
+                    'last_30d_ppg': safe_float(p.get('last_30d_ppg')),
                     'games_played': games_played,
+
+                    # Actuals (populated after games finish)
+                    'actual_points': safe_int(p.get('actual_points')),
+                    'result': None,  # Set below for players with lines
 
                     # Edge case flags
                     'limited_data': games_played < 10,
@@ -558,6 +588,21 @@ class TonightAllPlayersExporter(BaseExporter):
                         'over_odds': safe_odds(p.get('over_odds')),
                         'under_odds': safe_odds(p.get('under_odds')),
                     }]
+
+                    # Compute result (WIN/LOSS/PUSH) from actuals vs line
+                    actual = player_data.get('actual_points')
+                    rec = p.get('recommendation')
+                    if actual is not None and line_value is not None and rec:
+                        if actual == line_value:
+                            player_data['result'] = 'PUSH'
+                        elif rec == 'OVER':
+                            player_data['result'] = 'WIN' if actual > line_value else 'LOSS'
+                        elif rec == 'UNDER':
+                            player_data['result'] = 'WIN' if actual < line_value else 'LOSS'
+                        else:
+                            player_data['result'] = None
+                    else:
+                        player_data['result'] = None
 
                     # Build feature data dict
                     player_feature_data = {
