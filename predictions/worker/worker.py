@@ -299,11 +299,17 @@ def get_prediction_systems() -> tuple:
             logger.info("Loading CatBoost V8 (historical training)...")
             _catboost = CatBoostV8()  # CatBoost v8: 5.36 MAE
 
-        # Load monthly models (Session 68)
-        logger.info("Loading monthly models...")
+        # Load monthly models (Session 68, Session 273: DB-driven from model_registry)
+        logger.info("Loading monthly models (registry + dict fallback)...")
         _monthly_models = get_enabled_monthly_models()
         if _monthly_models:
-            logger.info(f"Loaded {len(_monthly_models)} monthly model(s): {[m.model_id for m in _monthly_models]}")
+            registry_count = sum(1 for m in _monthly_models if m.config.get('source') == 'registry')
+            dict_count = len(_monthly_models) - registry_count
+            logger.info(
+                f"Loaded {len(_monthly_models)} monthly model(s) "
+                f"({registry_count} from registry, {dict_count} from dict): "
+                f"{[m.model_id for m in _monthly_models]}"
+            )
         else:
             logger.info("No monthly models enabled")
 

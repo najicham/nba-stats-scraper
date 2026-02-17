@@ -267,6 +267,13 @@ def parse_args():
     parser.add_argument('--dry-run', action='store_true', help='Show plan only')
     parser.add_argument('--skip-register', action='store_true', help='Skip ml_experiments')
     parser.add_argument('--force', action='store_true', help='Force retrain even if duplicate training dates exist')
+
+    # Auto-upload and auto-register (Session 273: Model Management Overhaul)
+    parser.add_argument('--skip-auto-upload', action='store_true',
+                       help='Skip automatic GCS upload after training')
+    parser.add_argument('--skip-auto-register', action='store_true',
+                       help='Skip automatic model_registry INSERT after training')
+
     return parser.parse_args()
 
 
@@ -2054,6 +2061,147 @@ def run_hyperparam_search(X_train, y_train, X_val, y_val, lines_val, w_train=Non
     return best['params']
 
 
+# =============================================================================
+# Auto-Upload and Auto-Register (Session 273: Model Management Overhaul)
+# =============================================================================
+
+def compute_model_family(feature_set: str, no_vegas: bool, quantile_alpha: float = None,
+                         loss_function: str = None) -> str:
+    """Compute model_family string from training parameters.
+
+    Convention: {feature_set}_{loss} where:
+      - feature_set: v9, v12_noveg, etc.
+      - loss: mae, q43, q45, rmse, etc.
+    """
+    if no_vegas and not feature_set.endswith('_noveg'):
+        fs = f"{feature_set}_noveg"
+    else:
+        fs = feature_set
+
+    if quantile_alpha:
+        alpha_str = str(quantile_alpha).replace('0.', 'q')
+        return f"{fs}_{alpha_str}"
+    elif loss_function and loss_function.upper() != 'MAE':
+        loss_short = loss_function.split(':')[0].lower()
+        return f"{fs}_{loss_short}"
+    else:
+        return f"{fs}_mae"
+
+
+def auto_upload_to_gcs(model_path: Path, feature_set: str, no_vegas: bool,
+                       model_version: str = 'v9') -> str:
+    """Upload model to GCS with standard naming convention.
+
+    Returns the GCS path.
+    """
+    from google.cloud import storage
+
+    bucket_name = 'nba-props-platform-models'
+
+    # Determine GCS directory based on feature set
+    if no_vegas or 'noveg' in feature_set:
+        gcs_dir = f"catboost/{feature_set.replace('_noveg', '')}/monthly"
+    else:
+        gcs_dir = f"catboost/{model_version}/monthly"
+
+    gcs_path = f"gs://{bucket_name}/{gcs_dir}/{model_path.name}"
+
+    print(f"\n  Uploading to GCS: {gcs_path}")
+    client = storage.Client(project=PROJECT_ID)
+    bucket = client.bucket(bucket_name)
+    blob = bucket.blob(f"{gcs_dir}/{model_path.name}")
+    blob.upload_from_filename(str(model_path))
+    print(f"  Upload complete: {gcs_path}")
+
+    return gcs_path
+
+
+def auto_register_in_model_registry(
+    bq_client,
+    model_id: str,
+    model_version: str,
+    gcs_path: str,
+    feature_count: int,
+    feature_set: str,
+    model_family: str,
+    loss_function: str,
+    quantile_alpha: float,
+    training_start: str,
+    training_end: str,
+    training_samples: int,
+    mae: float,
+    hr_all: float,
+    hr_edge3: float,
+    hr_edge5: float,
+    n_edge3: int,
+    model_sha256: str,
+    experiment_id: str,
+    strengths_json: str = None,
+    hyperparameters: dict = None,
+    notes: str = None,
+):
+    """Insert model into model_registry with full metadata.
+
+    Sets enabled=FALSE by default — user reviews and enables after verification.
+    """
+    import subprocess
+
+    git_commit = 'unknown'
+    try:
+        result = subprocess.run(['git', 'rev-parse', '--short', 'HEAD'],
+                              capture_output=True, text=True)
+        if result.returncode == 0:
+            git_commit = result.stdout.strip()
+    except Exception:
+        pass
+
+    row = {
+        'model_id': model_id,
+        'model_version': model_version,
+        'model_type': 'catboost',
+        'gcs_path': gcs_path,
+        'feature_count': feature_count,
+        'training_start_date': training_start,
+        'training_end_date': training_end,
+        'training_samples': training_samples,
+        'evaluation_mae': round(mae, 4),
+        'evaluation_hit_rate': round(hr_all, 2) if hr_all else None,
+        'evaluation_hit_rate_edge_3plus': round(hr_edge3, 2) if hr_edge3 else None,
+        'evaluation_hit_rate_edge_5plus': round(hr_edge5, 2) if hr_edge5 else None,
+        'evaluation_n_edge_3plus': n_edge3,
+        'experiment_id': experiment_id,
+        'git_commit': git_commit,
+        'status': 'active',
+        'is_production': False,
+        'notes': notes or f'Auto-registered by quick_retrain.py',
+        'created_at': datetime.now(timezone.utc).isoformat(),
+        'created_by': 'quick_retrain',
+        'model_family': model_family,
+        'feature_set': feature_set,
+        'loss_function': loss_function,
+        'quantile_alpha': quantile_alpha,
+        'enabled': False,  # User reviews and enables
+        'strengths_json': strengths_json,
+    }
+
+    # Add hyperparameters as training_config_json
+    if hyperparameters:
+        row['training_config_json'] = json.dumps(
+            {k: v for k, v in hyperparameters.items() if k != 'verbose'}
+        )
+
+    table_id = f"{PROJECT_ID}.nba_predictions.model_registry"
+    errors = bq_client.insert_rows_json(table_id, [row])
+    if errors:
+        print(f"  WARNING: model_registry insert errors: {errors}")
+        return False
+
+    print(f"  Registered in model_registry: {model_id}")
+    print(f"    family={model_family}, feature_set={feature_set}, loss={loss_function}")
+    print(f"    enabled=FALSE (enable after review)")
+    return True
+
+
 def main():
     args = parse_args()
     dates = get_dates(args)
@@ -2708,14 +2856,95 @@ def main():
         print("ALL GATES PASSED — model eligible for shadow testing")
         print()
 
+        # Compute model family (Session 273)
+        model_family = compute_model_family(
+            args.feature_set, args.no_vegas, args.quantile_alpha, args.loss_function
+        )
+
+        # Build strengths JSON from segmented analysis
+        strengths = {}
+        if best_segments:
+            strengths['best_segments'] = [
+                {'name': s[0], 'hr': s[1], 'n': s[2]} for s in best_segments[:5]
+            ]
+        if directional.get('over_hit_rate') and directional.get('under_hit_rate'):
+            if directional['over_hit_rate'] > directional['under_hit_rate'] + 5:
+                strengths['direction'] = 'OVER'
+            elif directional['under_hit_rate'] > directional['over_hit_rate'] + 5:
+                strengths['direction'] = 'UNDER'
+            else:
+                strengths['direction'] = 'balanced'
+        strengths_json_str = json.dumps(strengths) if strengths else None
+
+        # --- Auto-upload to GCS (Session 273) ---
+        gcs_path_uploaded = None
+        if not args.skip_auto_upload:
+            try:
+                gcs_path_uploaded = auto_upload_to_gcs(
+                    model_path, args.feature_set, args.no_vegas,
+                    model_version=args.feature_set.split('_')[0]  # v9, v12, etc.
+                )
+            except Exception as e:
+                print(f"\n  WARNING: Auto-upload failed: {e}")
+                print(f"  Manual: gsutil cp {model_path} gs://nba-props-platform-models/catboost/{args.feature_set}/monthly/{model_path.name}")
+
+        # --- Auto-register in model_registry (Session 273) ---
+        if not args.skip_auto_register and gcs_path_uploaded:
+            try:
+                # Build system_id for registry
+                train_start_short = dates['train_start'].replace('-', '')[4:]
+                train_end_short = dates['train_end'].replace('-', '')[4:]
+                registry_model_id = f"catboost_{args.feature_set}_train{train_start_short}_{train_end_short}"
+                if args.quantile_alpha:
+                    alpha_str = str(args.quantile_alpha).replace('0.', 'q')
+                    registry_model_id = f"catboost_{args.feature_set}_{alpha_str}_train{train_start_short}_{train_end_short}"
+                if args.no_vegas and '_noveg' not in registry_model_id:
+                    registry_model_id = registry_model_id.replace(f'catboost_{args.feature_set}',
+                                                                   f'catboost_{args.feature_set}_noveg')
+
+                loss_fn = 'MAE'
+                if args.quantile_alpha:
+                    loss_fn = f'Quantile:alpha={args.quantile_alpha}'
+                elif args.loss_function:
+                    loss_fn = args.loss_function
+
+                auto_register_in_model_registry(
+                    bq_client=client,
+                    model_id=registry_model_id,
+                    model_version=args.feature_set,
+                    gcs_path=gcs_path_uploaded,
+                    feature_count=n_features,
+                    feature_set=args.feature_set if not args.no_vegas else f"{args.feature_set}_noveg",
+                    model_family=model_family,
+                    loss_function=loss_fn,
+                    quantile_alpha=args.quantile_alpha,
+                    training_start=dates['train_start'],
+                    training_end=dates['train_end'],
+                    training_samples=len(df_train),
+                    mae=mae,
+                    hr_all=hr_all,
+                    hr_edge3=hr_edge3,
+                    hr_edge5=hr_edge5,
+                    n_edge3=bets_edge3,
+                    model_sha256=model_sha256,
+                    experiment_id=exp_id,
+                    strengths_json=strengths_json_str,
+                    hyperparameters=hp,
+                    notes=f'{args.name} — auto-registered',
+                )
+            except Exception as e:
+                print(f"\n  WARNING: Auto-register failed: {e}")
+
         # Generate ready-to-paste MONTHLY_MODELS config snippet (Session 177)
+        # Still useful as fallback reference even with auto-register
         train_start_short = dates['train_start'].replace('-', '')[4:]  # MMDD
         train_end_short = dates['train_end'].replace('-', '')[4:]      # MMDD
         system_id_suggestion = f"catboost_v9_train{train_start_short}_{train_end_short}"
-        gcs_monthly_path = f"gs://nba-props-platform-models/catboost/v9/monthly/{model_path.name}"
+        gcs_monthly_path = gcs_path_uploaded or f"gs://nba-props-platform-models/catboost/v9/monthly/{model_path.name}"
 
+        print()
         print("=" * 70)
-        print(" MONTHLY_MODELS CONFIG (paste into catboost_monthly.py)")
+        print(" MONTHLY_MODELS CONFIG (legacy reference — now auto-registered)")
         print("=" * 70)
         print(f'    "{system_id_suggestion}": {{')
         print(f'        "model_path": "{gcs_monthly_path}",')
@@ -2730,12 +2959,20 @@ def main():
         print(f'    }},')
         print()
 
-        print("Next steps:")
-        print(f"  1. Upload: gsutil cp {model_path} {gcs_monthly_path}")
-        print(f"  2. Paste config above into catboost_monthly.py MONTHLY_MODELS dict")
-        print(f"  3. Deploy worker (push to main)")
-        print(f"  4. Monitor: python bin/compare-model-performance.py {system_id_suggestion}")
-        print(f"  5. After 2+ days shadow: promote or retire")
+        if gcs_path_uploaded:
+            print("Next steps:")
+            print(f"  1. Model auto-uploaded to GCS: {gcs_path_uploaded}")
+            print(f"  2. Model auto-registered in model_registry (enabled=FALSE)")
+            print(f"  3. Enable: bq query 'UPDATE nba_predictions.model_registry SET enabled=TRUE WHERE model_id=\"{registry_model_id}\"'")
+            print(f"  4. Deploy worker (push to main — worker reads registry at startup)")
+            print(f"  5. Monitor: python bin/compare-model-performance.py {registry_model_id}")
+        else:
+            print("Next steps (manual):")
+            print(f"  1. Upload: gsutil cp {model_path} {gcs_monthly_path}")
+            print(f"  2. Register in model_registry or paste config into catboost_monthly.py")
+            print(f"  3. Deploy worker (push to main)")
+            print(f"  4. Monitor: python bin/compare-model-performance.py {system_id_suggestion}")
+            print(f"  5. After 2+ days shadow: promote or retire")
     else:
         print("GATES FAILED — do NOT deploy this model")
         print("Fix the failing gates or try different training parameters")

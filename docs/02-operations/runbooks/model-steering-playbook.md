@@ -2,7 +2,15 @@
 
 **When to switch models, retrain, or pause — a decision guide.**
 
-Updated: 2026-02-15 (Session 267)
+Updated: 2026-02-15 (Session 271)
+
+---
+
+## How the System Works Now
+
+Signal best bets are **always produced** regardless of model health (health gate removed, Session 270). The 2-signal minimum provides baseline quality filtering. The website's blocked banner (`model-health.json`) still shows when the champion is below breakeven, but picks are still generated.
+
+**Your job:** Run `/daily-steering` each morning. Act on the recommendation. Most days it says ALL CLEAR and you're done in 2 minutes. See `daily-checklist.md` for the step-by-step routine.
 
 ---
 
@@ -58,24 +66,24 @@ Updated: 2026-02-15 (Session 267)
 **Alert:** "MODEL DECAY — BLOCKED" Slack message
 **Meaning:** Champion 7d HR dropped below 52.4% (breakeven). Losing money.
 
+**Important:** Signal best bets are still produced (health gate removed, Session 270). The 2-signal minimum provides quality filtering, but the model driving edge calculations is below breakeven. Website shows "sitting out" via `model-health.json` → `show_blocked_banner: true`.
+
 **Action (urgent):**
-- [ ] Signal best bets exporter automatically blocks all picks (model health gate)
-- [ ] Website will show "sitting out" via `model-health.json` → `show_blocked_banner: true`
-- [ ] Switch to best available challenger immediately:
+- [ ] Check challengers for a viable replacement:
   ```bash
-  # Check who's healthy
   bq query --use_legacy_sql=false "
   SELECT model_id, state, rolling_hr_7d, rolling_n_7d
   FROM nba_predictions.model_performance_daily
   WHERE game_date = (SELECT MAX(game_date) FROM nba_predictions.model_performance_daily)
   ORDER BY rolling_hr_7d DESC"
   ```
-- [ ] If a challenger is HEALTHY with 56%+ HR and N >= 30:
+- [ ] If a challenger is HEALTHY with 56%+ HR and N >= 30: **Switch immediately**
   ```bash
   gcloud run services update prediction-worker --region=us-west2 \
     --update-env-vars="BEST_BETS_MODEL_ID=<challenger_model_id>"
   ```
-- [ ] If NO viable challenger: Keep blocked, begin retrain (Scenario 5)
+- [ ] If NO viable challenger: Begin retrain planning (Scenario 5)
+- [ ] If BLOCKED persists 3+ days with no switch option: Consider pausing picks manually or warning users via site copy
 
 ---
 
@@ -200,7 +208,7 @@ PYTHONPATH=. python ml/experiments/quick_retrain.py \
 |-----------|-------|---------|
 | WATCH | 58.0% 7d HR | Elevated monitoring |
 | DEGRADING | 55.0% 7d HR | Consider switching |
-| BLOCKED | 52.4% 7d HR | Below breakeven, auto-blocked |
+| BLOCKED | 52.4% 7d HR | Below breakeven, banner shown (picks still produced) |
 | Challenger min | 56.0% 7d HR, N >= 30 | Minimum to consider switching to |
 | Outperformance alert | 5+ pp margin, N >= 30 | Slack alert fires |
 | Retrain staleness | 30+ days since training | Consider monthly retrain |

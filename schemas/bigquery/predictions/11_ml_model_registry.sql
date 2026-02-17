@@ -53,7 +53,16 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.ml_model_registry
 
   -- Training Configuration (optional, for reproducibility)
   hyperparameters JSON,                        -- Model hyperparameters
-  training_script STRING                       -- Path to training script
+  training_script STRING,                      -- Path to training script
+
+  -- Model Family & Feature Metadata (Session 273: Model Management Overhaul)
+  model_family STRING,                         -- Family grouping: 'v9_mae', 'v9_q43', 'v12_noveg_mae'
+  feature_set STRING,                          -- Feature contract: 'v9', 'v12_noveg' (maps to get_contract())
+  loss_function STRING,                        -- CatBoost loss: 'MAE', 'Quantile:alpha=0.43'
+  quantile_alpha FLOAT64,                      -- NULL for MAE, 0.43 for Q43, etc.
+  strengths_json STRING,                       -- JSON: direction, tiers, line_range, edge_bucket
+  evaluation_hr_edge_3plus FLOAT64,            -- Hit rate for edge >= 3 predictions
+  evaluation_n_edge_3plus INT64                -- Sample size for edge >= 3 evaluation
 )
 OPTIONS(
   description="Registry of ML models for experimentation. Add new models here to run them in the ML experiment pipeline."

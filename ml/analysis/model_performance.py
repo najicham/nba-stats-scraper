@@ -27,27 +27,54 @@ WATCH_THRESHOLD = 58.0
 ALERT_THRESHOLD = 55.0
 BLOCK_THRESHOLD = 52.4
 
-# Known active models
-ACTIVE_MODELS = [
+# Fallback active models — used only if model_registry query fails
+_FALLBACK_ACTIVE_MODELS = [
     'catboost_v9',
     'catboost_v12',
     'catboost_v9_q43',
     'catboost_v9_q45',
 ]
 
-# Training end dates (for days_since_training calculation)
-TRAINING_END_DATES = {
+_FALLBACK_TRAINING_END_DATES = {
     'catboost_v9': date(2026, 1, 8),
     'catboost_v12': date(2026, 1, 31),
     'catboost_v9_q43': date(2026, 1, 31),
     'catboost_v9_q45': date(2026, 1, 31),
 }
 
+
+def get_active_models_from_registry(bq_client: bigquery.Client) -> tuple:
+    """Load active models and training end dates from model_registry.
+
+    Returns:
+        (active_model_ids: list[str], training_end_dates: dict[str, date])
+    """
+    try:
+        query = """
+        SELECT model_id, training_end_date
+        FROM `nba-props-platform.nba_predictions.model_registry`
+        WHERE enabled = TRUE AND status IN ('active', 'production')
+        """
+        results = list(bq_client.query(query).result())
+        if not results:
+            logger.warning("No enabled models in model_registry, using fallback")
+            return _FALLBACK_ACTIVE_MODELS, _FALLBACK_TRAINING_END_DATES
+
+        model_ids = [r.model_id for r in results]
+        training_dates = {r.model_id: r.training_end_date for r in results}
+        logger.info(f"Loaded {len(model_ids)} active models from model_registry")
+        return model_ids, training_dates
+    except Exception as e:
+        logger.warning(f"Failed to query model_registry: {e}. Using fallback models.")
+        return _FALLBACK_ACTIVE_MODELS, _FALLBACK_TRAINING_END_DATES
+
 TABLE_ID = 'nba-props-platform.nba_predictions.model_performance_daily'
 
 
 def compute_for_date(bq_client: bigquery.Client, target_date: date,
-                     prev_day_states: Optional[Dict] = None) -> List[dict]:
+                     prev_day_states: Optional[Dict] = None,
+                     active_models: List[str] = None,
+                     training_end_dates: Dict = None) -> List[dict]:
     """Compute model performance metrics for a single date.
 
     Args:
@@ -55,10 +82,15 @@ def compute_for_date(bq_client: bigquery.Client, target_date: date,
         target_date: Date to compute metrics for.
         prev_day_states: Previous day's state dict (model_id -> row dict)
             for consecutive-day tracking. If None, queries BQ for previous day.
+        active_models: List of active model IDs. If None, loads from registry.
+        training_end_dates: Dict of model_id -> training_end_date. If None, loads from registry.
 
     Returns:
         List of row dicts ready for BQ insert.
     """
+    if active_models is None or training_end_dates is None:
+        active_models, training_end_dates = get_active_models_from_registry(bq_client)
+
     # Query rolling metrics for all models on this date
     query = """
     WITH daily_results AS (
@@ -104,7 +136,7 @@ def compute_for_date(bq_client: bigquery.Client, target_date: date,
         query_parameters=[
             bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
             bigquery.ScalarQueryParameter('window_start', 'DATE', window_start),
-            bigquery.ArrayQueryParameter('model_ids', 'STRING', ACTIVE_MODELS),
+            bigquery.ArrayQueryParameter('model_ids', 'STRING', active_models),
         ]
     )
 
@@ -160,7 +192,7 @@ def compute_for_date(bq_client: bigquery.Client, target_date: date,
                 action_reason = f'7d HR {hr_7d:.1f}% recovered above {WATCH_THRESHOLD}%'
 
         # Days since training
-        train_end = TRAINING_END_DATES.get(model_id)
+        train_end = training_end_dates.get(model_id)
         days_since = (target_date - train_end).days if train_end else None
 
         daily_hr = None
@@ -261,11 +293,16 @@ def backfill(bq_client: bigquery.Client, start_date: date,
 
     logger.info(f"Backfilling {len(dates)} dates from {dates[0]} to {dates[-1]}")
 
+    # Load active models once for the entire backfill
+    active_models, training_end_dates = get_active_models_from_registry(bq_client)
+
     total_rows = 0
     prev_states: Dict[str, dict] = {}
 
     for d in dates:
-        rows = compute_for_date(bq_client, d, prev_day_states=prev_states)
+        rows = compute_for_date(bq_client, d, prev_day_states=prev_states,
+                               active_models=active_models,
+                               training_end_dates=training_end_dates)
         if rows:
             write_rows(bq_client, rows)
             total_rows += len(rows)

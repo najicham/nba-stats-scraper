@@ -142,5 +142,47 @@
     "type": "STRING",
     "mode": "NULLABLE",
     "description": "Who created this entry"
+  },
+  {
+    "name": "model_family",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Model family grouping (e.g., v9_mae, v9_q43, v12_noveg_mae)"
+  },
+  {
+    "name": "feature_set",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Feature set used (e.g., v9, v12_noveg). Maps to feature_contract.get_contract()"
+  },
+  {
+    "name": "loss_function",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "CatBoost loss function (e.g., MAE, Quantile:alpha=0.43)"
+  },
+  {
+    "name": "quantile_alpha",
+    "type": "FLOAT64",
+    "mode": "NULLABLE",
+    "description": "Quantile alpha if quantile loss (NULL for MAE models)"
+  },
+  {
+    "name": "enabled",
+    "type": "BOOL",
+    "mode": "NULLABLE",
+    "description": "Whether this model generates daily predictions"
+  },
+  {
+    "name": "strengths_json",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "JSON: model strengths (direction, tiers, line_range, edge_bucket)"
+  },
+  {
+    "name": "evaluation_n_edge_3plus",
+    "type": "INT64",
+    "mode": "NULLABLE",
+    "description": "Number of edge 3+ bets in evaluation"
   }
 ]
