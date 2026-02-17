@@ -122,17 +122,19 @@ nba-stats-scraper/
 | Property | Value |
 |----------|-------|
 | System ID | `catboost_v9` |
-| Production Model | `catboost_v9_33features_20260201_011018` |
-| Training | 2025-11-02 to 2026-01-08 |
-| **Medium Quality (3+ edge)** | **71.2% hit rate** (at launch; see decay note) |
-| **High Quality (5+ edge)** | **79.0% hit rate, +50.9% ROI** (at launch) |
-| MAE | 4.82 |
-| SHA256 (prefix) | `5b3a187b1b6d` |
-| Status | PRODUCTION (since 2026-02-08) — **DECAYING** |
+| Production Model | `catboost_v9_train1102_0205` |
+| Training | 2025-11-02 to 2026-02-05 |
+| **Walkforward HR 3+ (W1)** | **81.2%** |
+| **Walkforward HR 3+ (W2)** | **60.0%** |
+| MAE | 4.77 |
+| SHA256 (prefix) | `56b766426bf1` |
+| Status | PRODUCTION (since 2026-02-16) — **FRESH** |
+
+**Shadow models (5):** V12 MAE (69.2% HR), V9 Q43 (62.6%), V9 Q45 (62.9%), V12 Q43 (61.6%), V12 Q45 (61.2%). All passed governance gates.
 
 **CRITICAL:** Use edge >= 3 filter. 73% of predictions have edge < 3 and lose money.
 
-**MODEL DECAY (Session 220):** Champion has decayed from 71.2% → 39.9% edge 3+ HR (35+ days stale). Well below 52.4% breakeven. Q43 quantile challenger at 48.3% (29/50 picks, not ready for promotion). Monthly retrain warranted. Monitor with `validate-daily` Phase 0.56.
+**RETRAIN SPRINT (Session 276):** All-Star break retrain. V9 champion promoted, 5 shadow models deployed. V12+Quantile trained for first time ever. All 4 quantile models passed all governance gates with n=97-125.
 
 ### Model Governance
 
@@ -185,17 +187,20 @@ Setup: `./bin/infrastructure/setup_retrain_reminder.sh`
 
 Shadow challengers run alongside champion. Each gets own `system_id`, graded independently, no user-facing impact.
 
-**Active challengers:** `catboost_v9_train1102_0108`, `_0131_tuned`, `_q43_train1102_0131`, `_q45_train1102_0131`
-**Key finding:** Quantile alpha=0.43 achieves 65.8% HR 3+ when fresh (vs 33.3% baseline). First model to solve retrain paradox. Champion decaying (71.2% → 47.9%, 33+ days stale).
-**Session 210 results (Feb 8-10):** Q43 60.0% edge 3+ HR (10 picks), Q45 60.0% (5 picks), vs champion 38.1% (21 picks). Awaiting 50+ edge 3+ graded for promotion decision.
+**Active challengers (Session 276):** 5 shadow models, all fresh:
+- `catboost_v12_noveg_train1102_0205` (V12 MAE, 69.23% HR 3+)
+- `catboost_v9_q43_train1102_0125` (V9 Q43, 62.61% HR 3+, n=115)
+- `catboost_v9_q45_train1102_0125` (V9 Q45, 62.89% HR 3+, n=97)
+- `catboost_v12_noveg_q43_train1102_0125` (V12 Q43, 61.6% HR 3+, n=125) — **FIRST EVER**
+- `catboost_v12_noveg_q45_train1102_0125` (V12 Q45, 61.22% HR 3+, n=98) — **FIRST EVER**
 
-**Dead ends (don't revisit):** Grow policy, NO_VEG+quantile, CHAOS+quantile, residual mode, two-stage pipeline, **Edge Classifier (Model 2)** (Session 230: AUC < 0.50, pre-game features cannot discriminate winning edges from losing ones).
+**Key finding:** V12+Quantile (50 features + quantile loss) passes all governance gates on first attempt. V12 Q43 has highest N (125) of any quantile model.
 
-**V12 Model 1 (Session 228-230):** Vegas-free CatBoost, 50 features, MAE loss. Avg 67% HR edge 3+ across 4 eval windows. Best: 78.7% Jan 2026. Ready for production deployment. See `docs/08-projects/current/model-improvement-analysis/22-PHASE1B-RESULTS.md`.
+**Dead ends (don't revisit):** Grow policy, CHAOS+quantile, residual mode, two-stage pipeline, **Edge Classifier (Model 2)** (Session 230: AUC < 0.50).
 
 ```bash
-PYTHONPATH=. python bin/compare-model-performance.py catboost_v9_q43_train1102_0131 --days 7  # Monitor
-PYTHONPATH=. python ml/experiments/quick_retrain.py --name "Q43" --quantile-alpha 0.43 --train-start 2025-11-02 --train-end 2026-01-31 --walkforward --force  # Train quantile
+PYTHONPATH=. python bin/compare-model-performance.py catboost_v9_q43_train1102_0125 --days 7  # Monitor
+./bin/retrain.sh --family v9_q43 --train-end 2026-02-12 --eval-days 7  # Retrain quantile
 ```
 
 **Cross-model monitoring (Session 210):** 3 layers prevent shadow models from silently failing:

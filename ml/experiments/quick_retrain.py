@@ -273,6 +273,8 @@ def parse_args():
                        help='Skip automatic GCS upload after training')
     parser.add_argument('--skip-auto-register', action='store_true',
                        help='Skip automatic model_registry INSERT after training')
+    parser.add_argument('--enable', action='store_true',
+                       help='Set enabled=TRUE on auto-registered model (skip manual enable step)')
 
     return parser.parse_args()
 
@@ -2139,10 +2141,13 @@ def auto_register_in_model_registry(
     strengths_json: str = None,
     hyperparameters: dict = None,
     notes: str = None,
+    enabled: bool = False,
 ):
     """Insert model into model_registry with full metadata.
 
-    Sets enabled=FALSE by default — user reviews and enables after verification.
+    Uses DML INSERT (not streaming insert) so rows are immediately updatable.
+    Session 276: Fixed streaming buffer issue — streaming inserts block UPDATEs
+    for up to 30 minutes. DML inserts are immediately consistent.
     """
     import subprocess
 
@@ -2155,50 +2160,48 @@ def auto_register_in_model_registry(
     except Exception:
         pass
 
-    row = {
-        'model_id': model_id,
-        'model_version': model_version,
-        'model_type': 'catboost',
-        'gcs_path': gcs_path,
-        'feature_count': feature_count,
-        'training_start_date': training_start,
-        'training_end_date': training_end,
-        'training_samples': training_samples,
-        'evaluation_mae': round(mae, 4),
-        'evaluation_hit_rate': round(hr_all, 2) if hr_all else None,
-        'evaluation_hit_rate_edge_3plus': round(hr_edge3, 2) if hr_edge3 else None,
-        'evaluation_hit_rate_edge_5plus': round(hr_edge5, 2) if hr_edge5 else None,
-        'evaluation_n_edge_3plus': n_edge3,
-        'experiment_id': experiment_id,
-        'git_commit': git_commit,
-        'status': 'active',
-        'is_production': False,
-        'notes': notes or f'Auto-registered by quick_retrain.py',
-        'created_at': datetime.now(timezone.utc).isoformat(),
-        'created_by': 'quick_retrain',
-        'model_family': model_family,
-        'feature_set': feature_set,
-        'loss_function': loss_function,
-        'quantile_alpha': quantile_alpha,
-        'enabled': False,  # User reviews and enables
-        'strengths_json': strengths_json,
-    }
-
-    # Add hyperparameters as training_config_json
+    training_config_json = None
     if hyperparameters:
-        row['training_config_json'] = json.dumps(
+        training_config_json = json.dumps(
             {k: v for k, v in hyperparameters.items() if k != 'verbose'}
         )
 
-    table_id = f"{PROJECT_ID}.nba_predictions.model_registry"
-    errors = bq_client.insert_rows_json(table_id, [row])
-    if errors:
-        print(f"  WARNING: model_registry insert errors: {errors}")
-        return False
+    # Use DML INSERT instead of streaming insert to avoid streaming buffer issues
+    # Streaming inserts (insert_rows_json) create rows that can't be UPDATEd for ~30 min
+    hr_all_val = f"{round(hr_all, 2)}" if hr_all else "NULL"
+    hr_edge3_val = f"{round(hr_edge3, 2)}" if hr_edge3 else "NULL"
+    hr_edge5_val = f"{round(hr_edge5, 2)}" if hr_edge5 else "NULL"
+    qa_val = f"{quantile_alpha}" if quantile_alpha else "NULL"
+    strengths_val = f"'{strengths_json}'" if strengths_json else "NULL"
+    config_val = f"'{training_config_json}'" if training_config_json else "NULL"
+    notes_val = f"'{(notes or 'Auto-registered by quick_retrain.py').replace(chr(39), chr(39)+chr(39))}'"
 
+    query = f"""
+    INSERT INTO `{PROJECT_ID}.nba_predictions.model_registry`
+    (model_id, model_version, model_type, gcs_path, feature_count,
+     training_start_date, training_end_date, training_samples,
+     evaluation_mae, evaluation_hit_rate, evaluation_hit_rate_edge_3plus,
+     evaluation_hit_rate_edge_5plus, evaluation_n_edge_3plus,
+     experiment_id, git_commit, status, is_production, notes,
+     created_at, created_by, model_family, feature_set, loss_function,
+     quantile_alpha, enabled, strengths_json, training_config_json)
+    VALUES
+    ('{model_id}', '{model_version}', 'catboost', '{gcs_path}', {feature_count},
+     '{training_start}', '{training_end}', {training_samples},
+     {round(mae, 4)}, {hr_all_val}, {hr_edge3_val},
+     {hr_edge5_val}, {n_edge3},
+     '{experiment_id}', '{git_commit}', 'active', FALSE, {notes_val},
+     CURRENT_TIMESTAMP(), 'quick_retrain', '{model_family}', '{feature_set}',
+     '{loss_function}', {qa_val}, {str(enabled).upper()}, {strengths_val}, {config_val})
+    """
+
+    job = bq_client.query(query)
+    job.result()  # Wait for completion
+
+    enabled_str = "TRUE" if enabled else "FALSE"
     print(f"  Registered in model_registry: {model_id}")
     print(f"    family={model_family}, feature_set={feature_set}, loss={loss_function}")
-    print(f"    enabled=FALSE (enable after review)")
+    print(f"    enabled={enabled_str}")
     return True
 
 
@@ -2931,6 +2934,7 @@ def main():
                     strengths_json=strengths_json_str,
                     hyperparameters=hp,
                     notes=f'{args.name} — auto-registered',
+                    enabled=getattr(args, 'enable', False),
                 )
             except Exception as e:
                 print(f"\n  WARNING: Auto-register failed: {e}")

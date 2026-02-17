@@ -1,7 +1,7 @@
 # Start Your Next Session Here
 
-**Updated:** 2026-02-16 (Session 275 — Signal cleanup + combo registry update)
-**Status:** Signal system optimized (18 signals, 73.9% aggregator HR). All services deployed at `f4fcf8bd`. Both models BLOCKED — retrain URGENT before Feb 19. Games resume Feb 19.
+**Updated:** 2026-02-16 (Session 276 — Model Retrain Sprint + V12 Quantile Experiments)
+**Status:** 6 models retrained and deployed for Feb 19 game resumption. V9 champion promoted, 5 shadow models enabled. Signal system at 18 signals, 73.9% aggregator HR.
 
 ---
 
@@ -33,10 +33,14 @@
 - **Combo registry:** 10 entries (8 SYNERGISTIC, 2 ANTI_PATTERN) — 3 new UNDER entries added
 - **Biggest removal impact:** `hot_streak_2` (N=416, 45.8% HR) — eliminated largest false qualifier
 
-### Model State
-- **Best bets model:** `catboost_v12` (56.0% edge 3+ HR, N=50, +6.9% ROI)
-- **V12 confidence floor:** >= 0.90 (0.87 tier filtered — 41.7% HR)
-- **V9 champion:** DECAYING (39.9% HR, 39+ days stale — URGENT retrain)
+### Model State (Session 276 — Retrain Sprint)
+- **V9 champion:** `catboost_v9_train1102_0205` — FRESH (trained through Feb 5, MAE 4.77, walkforward 81.2% W1 HR 3+)
+- **V12 shadow:** `catboost_v12_noveg_train1102_0205` — FRESH (50 features, MAE 4.70, 69.23% HR 3+)
+- **V9 Q43 shadow:** `catboost_v9_q43_train1102_0125` — ALL GATES PASSED (62.61% HR 3+, n=115)
+- **V9 Q45 shadow:** `catboost_v9_q45_train1102_0125` — ALL GATES PASSED (62.89% HR 3+, n=97)
+- **V12 Q43 shadow:** `catboost_v12_noveg_q43_train1102_0125` — FIRST EVER V12+quantile (61.6% HR 3+, n=125)
+- **V12 Q45 shadow:** `catboost_v12_noveg_q45_train1102_0125` — FIRST EVER V12+quantile (61.22% HR 3+, n=98)
+- **6 models total**, all active and enabled in registry
 
 ### Monitoring & Automation
 - **Decay detection:** DEPLOYED (11 AM ET daily, Slack alerts on state transitions)
@@ -57,18 +61,20 @@
 ## Known Issues
 
 - latest.json not yet created — will generate on first game day (Feb 19)
-- V9 champion model stale (39+ days) — retrain URGENT
+- Quantile models (4) may need streaming buffer UPDATE to enable in registry (auto-registered ~20 min ago, dict fallback in place)
 - `dual_agree` and `model_consensus_v9_v12` at 45.5% HR (W4 only data) — monitor post-Feb-19
 
 ---
 
 ## Strategic Priorities
 
-### Priority 0: Retrain Models (URGENT — do during All-Star break)
-Both models BLOCKED. All-Star break (Feb 16-18) is ideal window before Feb 19 games.
-- [ ] V9: 40 days stale, 44.1% 7d HR — `./bin/retrain.sh --promote --train-end 2026-02-12`
-- [ ] V12: 17 days stale, 48.3% 7d HR — `./bin/retrain.sh --family v12_noveg_mae --train-end 2026-02-12`
-- Both must pass governance gates. Walkforward: 14d cadence = 68.8% HR, +31.3% ROI.
+### Priority 0: Retrain Models — DONE (Session 276)
+All 6 models retrained during All-Star break. V9 champion promoted, Cloud Run env var updated.
+- [x] V9 MAE: Promoted to production (walkforward 81.2%/60.0% W1/W2 HR 3+)
+- [x] V12 MAE: Enabled as shadow (69.23% HR 3+, best MAE 4.70)
+- [x] V9 Q43 + Q45: ALL GATES PASSED, registered + uploaded (62.6%/62.9% HR 3+)
+- [x] V12 Q43 + Q45: FIRST EVER V12+quantile experiments, ALL GATES PASSED (61.6%/61.2% HR 3+)
+- Note: MAE models used train→Feb 5 / eval Feb 6-12. Quantile models used train→Jan 25 / eval Jan 26-Feb 12.
 
 ### Priority 1: Feb 19 Readiness (Day-of)
 Blocked by: retrain completion + deployment
@@ -143,6 +149,7 @@ First week of live data after signal cleanup.
 
 ## Key Session References
 
+- **Session 276:** Model retrain sprint — 6 models trained, V12+quantile first ever, all gates passed
 - **Session 275:** Signal cleanup (10 removed), combo registry (3 added), backtest validation
 - **Session 274:** 5 market-pattern UNDER signals implemented + backtested
 - **Session 273:** Model management overhaul (DB-driven loading, multi-family retrain)

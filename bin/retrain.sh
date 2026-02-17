@@ -272,6 +272,13 @@ for FAMILY_NAME in "${FAMILIES_TO_TRAIN[@]}"; do
     fi
 
     # Train the model
+    # Pass --enable to quick_retrain.py so it registers with enabled=TRUE directly
+    # This avoids the BQ streaming buffer issue where UPDATE fails for ~30 min
+    ENABLE_ARG=""
+    if [ "$ENABLE_AFTER" = true ]; then
+        ENABLE_ARG="--enable"
+    fi
+
     echo ""
     echo "Training $FAMILY_NAME..."
     if PYTHONPATH=. python ml/experiments/quick_retrain.py \
@@ -280,26 +287,11 @@ for FAMILY_NAME in "${FAMILIES_TO_TRAIN[@]}"; do
         --train-end "$TRAIN_END" \
         --eval-days "$EVAL_DAYS" \
         --force \
+        $ENABLE_ARG \
         $RETRAIN_ARGS; then
 
         echo "$FAMILY_NAME: Training complete"
         TRAINED_MODELS+=("$FAMILY_NAME")
-
-        # Enable if requested
-        if [ "$ENABLE_AFTER" = true ]; then
-            echo "  Enabling latest model for family $FAMILY_NAME..."
-            bq query --use_legacy_sql=false "
-            UPDATE \`${PROJECT}.nba_predictions.model_registry\`
-            SET enabled = TRUE
-            WHERE model_family = '$FAMILY_NAME'
-              AND status = 'active'
-              AND enabled = FALSE
-              AND created_at = (
-                SELECT MAX(created_at) FROM \`${PROJECT}.nba_predictions.model_registry\`
-                WHERE model_family = '$FAMILY_NAME' AND status = 'active'
-              )"
-            echo "  Enabled."
-        fi
     else
         echo "WARNING: $FAMILY_NAME training failed!"
         FAILED_FAMILIES+=("$FAMILY_NAME")
