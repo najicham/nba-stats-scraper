@@ -297,7 +297,7 @@ gcloud run services describe SERVICE --region=us-west2 --format="value(metadata.
 | `nba_raw.nbac_schedule` | Requires partition filter |
 | `model_performance_daily` | Daily rolling HR/state per model (Session 262). Auto-populated by post_grading_export |
 | `signal_health_daily` | Signal regime (HOT/NORMAL/COLD) per timeframe (Session 259) |
-| `signal_combo_registry` | 7 validated combos: 5 SYNERGISTIC, 2 ANTI_PATTERN (Session 259) |
+| `signal_combo_registry` | 10 validated combos: 8 SYNERGISTIC, 2 ANTI_PATTERN (Session 275) |
 
 **Game Status:** 1=Scheduled, 2=In Progress, 3=Final
 
@@ -524,6 +524,42 @@ Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
 | Runbooks | `docs/02-operations/runbooks/` |
 | Development guides | `docs/05-development/` |
 | Monthly summaries | `docs/08-projects/summaries/` |
+
+## Signal System [Keyword: SIGNALS]
+
+**18 active signals** (10 removed Session 275). Aggregator requires MIN_SIGNAL_COUNT=2 (model_health always fires, so effectively 1 real signal minimum).
+
+### Active Signals (18)
+
+| Signal | Category | Direction | AVG HR | Status | Notes |
+|--------|----------|-----------|--------|--------|-------|
+| `model_health` | Meta | BOTH | 52.6% | PRODUCTION | Always fires, baseline qualifier |
+| `high_edge` | Edge | BOTH | 66.7% | Standalone BLOCKED | Combo OK (combo_he_ms 94.9%) |
+| `edge_spread_optimal` | Edge | BOTH | 67.2% | PRODUCTION | Anti-pattern detection in aggregator |
+| `combo_he_ms` | Combo | OVER | 94.9% | PRODUCTION | Best combo: HE+MS |
+| `combo_3way` | Combo | BOTH | 78.1% | PRODUCTION | ESO+HE+MS |
+| `bench_under` | Market-Pattern | UNDER | 76.9% | PRODUCTION | Top standalone signal (N=156) |
+| `3pt_bounce` | Bounce | OVER | 74.9% | CONDITIONAL | Guards + Home |
+| `b2b_fatigue_under` | Market-Pattern | UNDER | 85.7% | CONDITIONAL | Small N (14) |
+| `high_ft_under` | Market-Pattern | UNDER | 64.1% | CONDITIONAL | FTA >= 7 |
+| `rest_advantage_2d` | Context | BOTH | 64.8% | CONDITIONAL | W4 decay to 45.2% |
+| `self_creator_under` | Market-Pattern | UNDER | 61.8% | WATCH | |
+| `volatile_under` | Market-Pattern | UNDER | 60.0% | WATCH | |
+| `high_usage_under` | Market-Pattern | UNDER | 58.7% | WATCH | |
+| `blowout_recovery` | Bounce | OVER | 56.9% | WATCH | Stable 55-58% |
+| `minutes_surge` | Volume | BOTH | 53.7% | WATCH | W4 decay |
+| `dual_agree` | Consensus | BOTH | 45.5% | WATCH | Small sample (W4 only) |
+| `model_consensus_v9_v12` | Consensus | BOTH | 45.5% | WATCH | Small sample (W4 only) |
+| `cold_snap` | Bounce | OVER | N/A | CONDITIONAL | N=0 in backtest windows |
+
+### Removed Signals (10, Session 275)
+
+**Below breakeven:** `hot_streak_2` (45.8%, N=416), `hot_streak_3` (47.5%, N=182), `cold_continuation_2` (45.8%, N=130), `fg_cold_continuation` (49.6%)
+**Never fire:** `pace_mismatch`, `points_surge_3`, `home_dog`, `minutes_surge_5`, `three_pt_volume_surge`, `scoring_acceleration`
+
+### Post-Cleanup Backtest (Session 275)
+
+Aggregator top-5 simulation: **73.9% AVG HR** (up from 60.3% pre-cleanup). W2: 80.0%, W3: 78.5%, W4: 63.2%.
 
 ## Feature References
 

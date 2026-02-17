@@ -73,16 +73,16 @@ _FALLBACK_REGISTRY: Dict[str, ComboEntry] = {
         display_name='3PT Bounce (Guards + Home)',
         signals=['3pt_bounce'],
         cardinality=1, classification='SYNERGISTIC', status='CONDITIONAL',
-        direction_filter='OVER_ONLY', hit_rate=69.0, roi=None, sample_size=29,
-        score_weight=1.0, notes=None,
+        direction_filter='OVER_ONLY', hit_rate=74.9, roi=None, sample_size=28,
+        score_weight=1.0, notes='Session 275: Updated stats from 3-window backtest',
     ),
     'blowout_recovery': ComboEntry(
         combo_id='blowout_recovery',
         display_name='Blowout Recovery (No C, No B2B)',
         signals=['blowout_recovery'],
         cardinality=1, classification='SYNERGISTIC', status='WATCH',
-        direction_filter='OVER_ONLY', hit_rate=58.0, roi=None, sample_size=50,
-        score_weight=0.5, notes=None,
+        direction_filter='OVER_ONLY', hit_rate=56.9, roi=None, sample_size=112,
+        score_weight=0.5, notes='Session 275: Updated stats from 3-window backtest',
     ),
     'edge_spread_optimal+high_edge': ComboEntry(
         combo_id='edge_spread_optimal+high_edge',
@@ -99,6 +99,31 @@ _FALLBACK_REGISTRY: Dict[str, ComboEntry] = {
         cardinality=1, classification='ANTI_PATTERN', status='BLOCKED',
         direction_filter='BOTH', hit_rate=43.8, roi=None, sample_size=16,
         score_weight=-1.0, notes=None,
+    ),
+    # Market-pattern UNDER signals (Session 275)
+    'bench_under': ComboEntry(
+        combo_id='bench_under',
+        display_name='Bench Player Under',
+        signals=['bench_under'],
+        cardinality=1, classification='SYNERGISTIC', status='PRODUCTION',
+        direction_filter='UNDER_ONLY', hit_rate=76.9, roi=46.7, sample_size=156,
+        score_weight=1.5, notes='Session 275: 76.9% AVG HR across 3 eval windows',
+    ),
+    'high_ft_under': ComboEntry(
+        combo_id='high_ft_under',
+        display_name='High FT Volume Under',
+        signals=['high_ft_under'],
+        cardinality=1, classification='SYNERGISTIC', status='CONDITIONAL',
+        direction_filter='UNDER_ONLY', hit_rate=64.1, roi=22.3, sample_size=74,
+        score_weight=0.5, notes='Session 275: 64.1% AVG HR, FTA >= 7',
+    ),
+    'b2b_fatigue_under': ComboEntry(
+        combo_id='b2b_fatigue_under',
+        display_name='B2B Fatigue Under',
+        signals=['b2b_fatigue_under'],
+        cardinality=1, classification='SYNERGISTIC', status='CONDITIONAL',
+        direction_filter='UNDER_ONLY', hit_rate=85.7, roi=63.6, sample_size=14,
+        score_weight=1.0, notes='Session 275: 85.7% AVG HR, small sample (N=14)',
     ),
 }
 

@@ -487,25 +487,48 @@ ORDER BY roi DESC
 
 ## Signal Discovery Framework & Best Bets
 
-**Implemented:** Sessions 253-255 (Feb 14, 2026)
-**Purpose:** Curate a daily "Best Bets" list (up to 5 picks) by evaluating independent signal sources on top of CatBoost V9 predictions.
+**Implemented:** Sessions 253-275 (Feb 14-16, 2026)
+**Purpose:** Curate a daily "Best Bets" list (up to 5 picks) by evaluating independent signal sources on top of CatBoost predictions.
 
 ### Architecture
 
 Two-layer system:
-1. **Signal Annotation** — Every prediction is evaluated against all registered signals. Results stored in `pick_signal_tags`.
-2. **Best Bets Curation** — Top 5 picks by composite score (signal count + edge), gated by model health. Stored in `signal_best_bets_picks`.
+1. **Signal Annotation** — Every prediction is evaluated against all 18 registered signals. Results stored in `pick_signal_tags`.
+2. **Best Bets Curation** — Top 5 picks by composite score (signal count + edge + combo weight). MIN_SIGNAL_COUNT=2 (model_health always fires, so effectively 1 real signal). Stored in `signal_best_bets_picks`.
+3. **Combo Registry** — 10 validated entries (8 SYNERGISTIC boost score, 2 ANTI_PATTERN block). Loaded from BQ, Python fallback.
+4. **Signal Health** — Per-signal HOT/NORMAL/COLD regime. HOT=1.2x, NORMAL=1.0x, COLD behavioral=0.5x, COLD model-dependent=0.0x.
+5. **Health Gate** — REMOVED (Session 270). Best bets produced every game day. 2-signal minimum provides quality filtering.
 
-### Production Signals
+### Active Signals (18)
 
-| Signal | Tag | Logic | Backtest HR |
-|--------|-----|-------|------------|
-| Model Health Gate | `model_health` | Blocks all picks if 7d edge 3+ HR < 52.4% | N/A (gate) |
-| High Edge | `high_edge` | Edge >= 5 points | 66.7% |
-| 3PT Bounce | `3pt_bounce` | Cold 3PT shooter (below avg - 1 std), high volume | 74.9% |
-| Minutes Surge | `minutes_surge` | Recent minutes 3+ above season avg | 53.7% |
-| Cold Snap | `cold_snap` | Player UNDER line 3+ consecutive games, regression to mean | 64.3% |
-| Blowout Recovery | `blowout_recovery` | Previous game minutes 6+ below season avg, bounce back | 56.4% |
+| Signal | Tag | Direction | AVG HR | Status |
+|--------|-----|-----------|--------|--------|
+| Model Health | `model_health` | BOTH | 52.6% | PRODUCTION (always fires) |
+| High Edge | `high_edge` | BOTH | 66.7% | Standalone BLOCKED, combo OK |
+| Edge Spread Optimal | `edge_spread_optimal` | BOTH | 67.2% | PRODUCTION (anti-pattern detect) |
+| Combo HE+MS | `combo_he_ms` | OVER | **94.9%** | PRODUCTION (best combo) |
+| Combo 3-Way | `combo_3way` | BOTH | 78.1% | PRODUCTION (premium) |
+| 3PT Bounce | `3pt_bounce` | OVER | 74.9% | CONDITIONAL |
+| Cold Snap | `cold_snap` | OVER | 93.3% (home) | CONDITIONAL |
+| Blowout Recovery | `blowout_recovery` | OVER | 56.9% | WATCH |
+| Minutes Surge | `minutes_surge` | BOTH | 53.7% | WATCH |
+| Rest Advantage 2D | `rest_advantage_2d` | BOTH | 64.8% | CONDITIONAL |
+| Dual Agree | `dual_agree` | BOTH | 45.5% | WATCH |
+| Model Consensus | `model_consensus_v9_v12` | BOTH | 45.5% | WATCH |
+| **Bench Under** | `bench_under` | UNDER | **76.9%** | PRODUCTION |
+| **High FT Under** | `high_ft_under` | UNDER | 64.1% | CONDITIONAL |
+| **B2B Fatigue Under** | `b2b_fatigue_under` | UNDER | **85.7%** | CONDITIONAL (N=14) |
+| Self-Creator Under | `self_creator_under` | UNDER | 61.8% | WATCH |
+| Volatile Under | `volatile_under` | UNDER | 60.0% | WATCH |
+| High Usage Under | `high_usage_under` | UNDER | 58.7% | WATCH |
+
+**10 signals removed Session 275:** hot_streak_2 (45.8% HR, N=416), hot_streak_3, cold_continuation_2, fg_cold_continuation (all below breakeven), plus 6 never-fire signals.
+
+**Direction balance:** 5 OVER + 6 UNDER + 7 BOTH (OVER bias resolved Session 274-275).
+
+### Post-Cleanup Backtest (Session 275)
+
+Aggregator top-5 simulation: **73.9% AVG HR** (up from 60.3% pre-cleanup). W2: 80.0%, W3: 78.5%, W4: 63.2%.
 
 ### BQ Tables
 
@@ -513,6 +536,8 @@ Two-layer system:
 |-------|---------|
 | `nba_predictions.pick_signal_tags` | Signal annotations on ALL predictions |
 | `nba_predictions.signal_best_bets_picks` | Curated top 5 best bets per day |
+| `nba_predictions.signal_combo_registry` | 10 combo entries (8 SYNERGISTIC, 2 ANTI_PATTERN) |
+| `nba_predictions.signal_health_daily` | Per-signal HOT/NORMAL/COLD regime |
 | `nba_predictions.v_signal_performance` | View: per-signal hit rate and ROI (30d rolling) |
 
 ### Subset Definition
@@ -532,18 +557,23 @@ GROUP BY game_date ORDER BY game_date;
 
 -- Per-signal performance (30d rolling)
 SELECT * FROM nba_predictions.v_signal_performance ORDER BY hit_rate DESC;
+
+-- Combo registry
+SELECT combo_id, classification, status, hit_rate, score_weight
+FROM nba_predictions.signal_combo_registry ORDER BY score_weight DESC;
 ```
 
 ### Key Files
 
 | File | Purpose |
 |------|---------|
-| `ml/signals/registry.py` | Signal registration |
+| `ml/signals/registry.py` | Signal registration (18 signals) |
+| `ml/signals/combo_registry.py` | Combo registry loader + Python fallback |
 | `ml/signals/supplemental_data.py` | Production data queries for signals |
 | `data_processors/publishing/signal_annotator.py` | Production annotator + Best Bets writer |
 | `ml/experiments/signal_backtest.py` | Backtest harness |
 
-**References:** `docs/08-projects/current/signal-discovery-framework/`
+**References:** `docs/08-projects/current/signal-discovery-framework/SIGNAL-INVENTORY.md`
 
 ---
 
