@@ -85,13 +85,13 @@ PYTHONPATH=. pytest tests/unit/signals/test_player_blacklist.py -v
 
 ---
 
-## Still Pending
+## Also Implemented (Commit 3)
 
-| Item | P&L Impact | How |
-|------|-----------|-----|
-| 7-day retrain cadence | +$7,670 | Cloud Scheduler + retrain.sh |
-| 42-day rolling training window | +$5,370 | retrain.sh TRAINING_START |
-| V12 quantile min edge to 4 | HR +5.1pp | worker.py |
+| Item | P&L Impact | Change |
+|------|-----------|--------|
+| 42-day rolling training window | +$5,370 | `bin/retrain.sh` — `ROLLING_WINDOW_DAYS=42` replaces fixed start |
+| 7-day retrain cadence | +$7,670 | `retrain_reminder/main.py` — thresholds 7/10/14 (was 10/14/21) |
+| V12 quantile min edge to 4 | HR +5.1pp | `catboost_monthly.py` — quantile models use edge >= 4 |
 
 ---
 

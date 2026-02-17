@@ -416,10 +416,15 @@ class CatBoostMonthly(CatBoostV8):
             confidence += 5
 
         # Generate recommendation
+        # V12 quantile models use edge >= 4 (Session 284: HR +5.1pp at edge 4+)
+        # V12 MAE models keep edge >= 3
+        qa = self.config.get('quantile_alpha')
+        min_edge = 4 if qa and qa != 'null' else 3
+
         recommendation = 'HOLD'
         if betting_line is not None:
             edge = predicted_points - betting_line
-            if abs(edge) >= 3:
+            if abs(edge) >= min_edge:
                 recommendation = 'OVER' if edge > 0 else 'UNDER'
 
         warnings = []

@@ -5,15 +5,17 @@ Queries model_registry for per-family training age and model_performance_daily f
 
 Session 272: Initial implementation (single production model).
 Session 273: Model Management Overhaul — per-family staleness reporting from model_registry.
-    Reports all families that are >= 10 days old, not just the production champion.
+    Reports all families that are >= 7 days old, not just the production champion.
+Session 284: Switched to 7-day cadence (from 14-day). Replay proved +$7,670 P&L.
+    Thresholds: 7d ROUTINE, 10d OVERDUE, 14d URGENT.
 
 Triggered by Cloud Scheduler every Monday at 9 AM ET. Skips alert if ALL families
-are < 10 days old (effectively biweekly with 14-day retrain cadence).
+are < 7 days old (weekly with 7-day retrain cadence).
 
 Urgency levels:
-    ROUTINE (10-14 days old) - Normal biweekly reminder
-    OVERDUE (15-21 days old) - Model aging, performance declining
-    URGENT  (22+ days old)   - Stale model, likely losing money
+    ROUTINE (7-10 days old)  - Normal weekly reminder
+    OVERDUE (11-14 days old) - Model aging, should retrain soon
+    URGENT  (15+ days old)   - Stale model, likely losing money
 """
 
 import functions_framework
@@ -43,11 +45,11 @@ def _get_bq_client():
 SLACK_WEBHOOK_URL = os.environ.get('SLACK_WEBHOOK_URL_ALERTS')
 PROJECT_ID = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
 
-# Model age thresholds (days)
-SKIP_THRESHOLD = 10      # Don't alert if model is newer than this
-ROUTINE_MAX = 14          # 10-14 days = ROUTINE
-OVERDUE_MAX = 21          # 15-21 days = OVERDUE
-                          # 22+ days = URGENT
+# Model age thresholds (days) — Session 284: 7-day cadence
+SKIP_THRESHOLD = 7        # Don't alert if model is newer than this
+ROUTINE_MAX = 10          # 7-10 days = ROUTINE
+OVERDUE_MAX = 14          # 11-14 days = OVERDUE
+                          # 15+ days = URGENT
 
 
 def get_stale_families() -> List[Dict]:
@@ -223,7 +225,7 @@ def build_slack_payload(
                 'text': (
                     f"Run: {datetime.now(timezone.utc).strftime('%H:%M UTC')} | "
                     f"Urgency: {overall_urgency} | "
-                    f"14d cadence = 68.8% HR, +31.3% ROI"
+                    f"7d cadence (Session 284) — replay proved +$7,670 P&L"
                 )
             }]
         },

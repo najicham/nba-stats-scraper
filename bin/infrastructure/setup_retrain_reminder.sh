@@ -10,9 +10,9 @@
 #   1. Cloud Build trigger - auto-deploys CF on push to main
 #   2. Cloud Scheduler job - runs every Monday at 9 AM ET
 #
-# The CF itself runs weekly but skips alerts if the model is < 10 days old,
-# effectively producing biweekly reminders on the 14-day retrain cadence.
-# This also catches mid-cycle decay (if model degrades before 14 days).
+# The CF runs weekly and alerts if any model is >= 7 days old,
+# matching the 7-day retrain cadence (Session 284: +$7,670 P&L).
+# Urgency: ROUTINE (7-10d), OVERDUE (11-14d), URGENT (15d+).
 #
 # Prerequisites:
 #   - gcloud CLI authenticated with nba-props-platform project
@@ -168,8 +168,8 @@ echo ""
 echo "How it works:"
 echo "  - Cloud Scheduler fires every Monday 9 AM ET"
 echo "  - CF checks model age via model_registry"
-echo "  - If model >= 10 days old: sends Slack + SMS alert"
-echo "  - If model < 10 days old: skips (recently retrained)"
+echo "  - If model >= 7 days old: sends Slack + SMS alert"
+echo "  - If model < 7 days old: skips (recently retrained)"
 echo ""
 echo "Env vars needed on the CF (set via GCP Console or gcloud):"
 echo "  SLACK_WEBHOOK_URL_ALERTS  - Slack webhook for #nba-alerts"

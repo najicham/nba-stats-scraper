@@ -1,7 +1,7 @@
 # Start Your Next Session Here
 
 **Updated:** 2026-02-17 (Session 284 — Production Implementation of Replay Findings)
-**Status:** 3 of 6 replay findings deployed to production. Player blacklist, avoid-familiar filter, rel_edge filter removal, high-conviction angle all LIVE in code. Remaining: retrain cadence/window changes, V12 quantile edge threshold.
+**Status:** ALL 6 replay findings deployed. Player blacklist, avoid-familiar, rel_edge removal, high-conviction angle, 42-day rolling window, 7-day cadence, V12 quantile edge>=4 — all LIVE in code. Ready for Feb 19 games.
 
 ---
 
@@ -47,13 +47,13 @@
 - `ml/signals/pick_angle_builder.py` — high-conviction edge>=5 angle
 - `ml/signals/__init__.py` — new export
 
-### Still Pending from Replay (Priority 0)
+### Also Deployed (Commit 3)
 
-| Change | P&L Impact | How |
-|--------|-----------|-----|
-| 7-day retrain cadence | +$7,670 | Update Cloud Scheduler + `bin/retrain.sh` |
-| 42-day rolling training window | +$5,370 | Modify `bin/retrain.sh` TRAINING_START calculation |
-| Raise V12 quantile min edge to 4 | HR +5.1pp | `predictions/worker/worker.py` |
+| Change | P&L Impact | Status |
+|--------|-----------|--------|
+| 42-day rolling training window | +$5,370 | DEPLOYED in `bin/retrain.sh` |
+| 7-day retrain cadence | +$7,670 | DEPLOYED in `retrain_reminder/main.py` |
+| V12 quantile min edge to 4 | HR +5.1pp | DEPLOYED in `catboost_monthly.py` |
 
 ### Season Replay Summary (Sessions 280-283)
 
@@ -99,10 +99,14 @@ Full findings: `docs/08-projects/current/season-replay-analysis/00-FINDINGS.md`
 
 ## Strategic Priorities
 
-### Priority 0: Remaining Replay Implementations (Before Feb 19)
-- [ ] **Switch to 7-day retrain cadence** — Update Cloud Scheduler + `bin/retrain.sh`
-- [ ] **Switch to 42-day rolling training window** — Modify `bin/retrain.sh` TRAINING_START
-- [ ] Raise V12 quantile min edge to 4 in production (`predictions/worker/worker.py`)
+### Priority 0: Replay Implementations — ALL DONE
+- [x] **Player blacklist** — `ml/signals/player_blacklist.py` + aggregator pre-filter
+- [x] **Avoid-familiar filter** — 6+ games vs opponent → skip
+- [x] **Remove rel_edge>=30% filter** — was blocking 62.8% HR picks
+- [x] **High-conviction edge>=5 angle** — pick angle builder
+- [x] **42-day rolling training window** — `bin/retrain.sh` ROLLING_WINDOW_DAYS=42
+- [x] **7-day retrain cadence** — `retrain_reminder` thresholds 7/10/14
+- [x] **V12 quantile min edge to 4** — `catboost_monthly.py`
 
 ### Priority 1: Feb 19 Validation (Day-of)
 - [ ] Run `/validate-daily` on Feb 19 morning
@@ -129,10 +133,7 @@ Full findings: `docs/08-projects/current/season-replay-analysis/00-FINDINGS.md`
 - [ ] Investigate feature_3_value (pts_std) narrow distribution
 
 ### Completed Priorities
-- ~~Player blacklist~~ — **DONE Session 284** (aggregator pre-filter)
-- ~~Avoid-familiar filter~~ — **DONE Session 284** (6+ games vs opponent)
-- ~~Remove rel_edge>=30% filter~~ — **DONE Session 284** (was blocking 62.8% HR picks)
-- ~~High-conviction edge>=5 angle~~ — **DONE Session 284** (pick angle builder)
+- ~~ALL replay findings~~ — **DONE Session 284** (blacklist, avoid-familiar, rel_edge removal, rolling window, 7d cadence, V12 edge>=4)
 - ~~Parameter sweeps + combo optimization~~ — **DONE Session 283**
 - ~~Experiment filters + cross-season validation~~ — **DONE Session 282**
 - ~~Adaptive mode + rolling training~~ — **DONE Session 281**

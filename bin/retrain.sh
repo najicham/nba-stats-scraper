@@ -1,8 +1,9 @@
 #!/bin/bash
 # Multi-Family Model Retraining Script
 #
-# Automates the biweekly (14-day) retraining workflow for one or all model families.
+# Automates the weekly (7-day) retraining workflow for one or all model families.
 # Model families are loaded from model_registry (BQ), not hardcoded.
+# Session 284: Switched to 42-day rolling window (from fixed start) and 7-day cadence.
 #
 # Session 273: Model Management Overhaul — multi-family support, DB-driven families.
 #
@@ -29,7 +30,7 @@ set -e
 PROJECT="nba-props-platform"
 REGION="us-west2"
 GCS_BUCKET="gs://nba-props-platform-models"
-TRAINING_START="2025-11-02"  # Start of current season
+ROLLING_WINDOW_DAYS=42  # Rolling training window (Session 284: +$5,370 P&L vs expanding)
 
 # Parse arguments
 DRY_RUN=false
@@ -119,6 +120,10 @@ MONTH_NAME=$(date +%b | tr '[:lower:]' '[:upper:]')
 if [ -z "$TRAIN_END" ]; then
     TRAIN_END=$(date -d "yesterday" +%Y-%m-%d)
 fi
+
+# Rolling training window: TRAIN_END - ROLLING_WINDOW_DAYS
+# Session 284: 42-day rolling beats expanding window by +$5,370 P&L
+TRAINING_START=$(date -d "$TRAIN_END - $ROLLING_WINDOW_DAYS days" +%Y-%m-%d)
 
 # ============================================================================
 # Query model_registry for family configurations
