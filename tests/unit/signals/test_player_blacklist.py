@@ -460,3 +460,45 @@ class TestHighConvictionAngle:
         angle = _high_conviction_angle(pick)
         assert angle is not None
         assert '6.0' in angle
+
+
+class TestDirectionHealthWarning:
+    """Test direction health warning angles."""
+
+    def test_over_below_breakeven_warns(self):
+        """OVER pick with low OVER HR should get warning."""
+        from ml.signals.pick_angle_builder import build_pick_angles
+
+        pick = {
+            'recommendation': 'OVER',
+            'edge': 4.0,
+            'confidence_score': 0.90,
+            'line_value': 20.0,
+            'signal_tags': ['model_health', 'high_edge'],
+            'warning_tags': [],
+            'qualifying_subsets': [],
+        }
+        direction_health = {'over_hr_14d': 42.0, 'under_hr_14d': 58.0,
+                            'over_n': 20, 'under_n': 25}
+        angles = build_pick_angles(pick, [], {}, direction_health=direction_health)
+
+        assert any('OVER direction' in a and 'below breakeven' in a for a in angles)
+
+    def test_healthy_direction_no_warning(self):
+        """OVER pick with healthy OVER HR should NOT get warning."""
+        from ml.signals.pick_angle_builder import build_pick_angles
+
+        pick = {
+            'recommendation': 'OVER',
+            'edge': 4.0,
+            'confidence_score': 0.90,
+            'line_value': 20.0,
+            'signal_tags': ['model_health', 'high_edge'],
+            'warning_tags': [],
+            'qualifying_subsets': [],
+        }
+        direction_health = {'over_hr_14d': 65.0, 'under_hr_14d': 55.0,
+                            'over_n': 20, 'under_n': 25}
+        angles = build_pick_angles(pick, [], {}, direction_health=direction_health)
+
+        assert not any('below breakeven' in a for a in angles)

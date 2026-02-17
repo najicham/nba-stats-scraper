@@ -189,6 +189,7 @@ def build_pick_angles(
     pick: Dict[str, Any],
     signal_results: List,
     cross_model_factors: Dict[str, Any],
+    direction_health: Dict[str, Any] | None = None,
 ) -> List[str]:
     """Build human-readable angles explaining why a pick was selected.
 
@@ -196,6 +197,7 @@ def build_pick_angles(
         pick: Pick dict from aggregator (includes signal_tags, warning_tags, etc.)
         signal_results: List of SignalResult objects for this pick.
         cross_model_factors: Cross-model consensus factors for this pick.
+        direction_health: Optional dict with over_hr_14d, under_hr_14d rolling HRs.
 
     Returns:
         List of up to MAX_ANGLES angle strings, ordered by importance.
@@ -234,5 +236,21 @@ def build_pick_angles(
     # 7. Warning angles (always last)
     warn_angles = _warning_angles(pick)
     angles.extend(warn_angles)
+
+    # 8. Direction health warning (Session 284)
+    if direction_health:
+        direction = pick.get('recommendation')
+        if direction == 'OVER' and direction_health.get('over_hr_14d') is not None:
+            hr = direction_health['over_hr_14d']
+            if hr < 50.0:
+                angles.append(
+                    f"Warning: OVER direction at {hr:.0f}% HR last 14d — below breakeven"
+                )
+        elif direction == 'UNDER' and direction_health.get('under_hr_14d') is not None:
+            hr = direction_health['under_hr_14d']
+            if hr < 50.0:
+                angles.append(
+                    f"Warning: UNDER direction at {hr:.0f}% HR last 14d — below breakeven"
+                )
 
     return angles[:MAX_ANGLES]

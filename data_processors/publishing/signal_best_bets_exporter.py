@@ -161,6 +161,16 @@ class SignalBestBetsExporter(BaseExporter):
         except Exception as e:
             logger.warning(f"Games vs opponent enrichment failed (non-fatal): {e}")
 
+        # Step 5f: Query direction health — OVER vs UNDER rolling HR (Session 284)
+        # Observation-only: adds data to JSON output for monitoring.
+        # Replay showed OVER flips between seasons (39.5% → 79.3%).
+        direction_health = {'over_hr_14d': None, 'under_hr_14d': None,
+                            'over_n': 0, 'under_n': 0}
+        try:
+            direction_health = self._query_direction_health(target_date)
+        except Exception as e:
+            logger.warning(f"Direction health query failed (non-fatal): {e}")
+
         # Step 6: Aggregate to top picks (with combo registry + signal health weighting + consensus)
         combo_registry = load_combo_registry(bq_client=self.bq_client)
         aggregator = BestBetsAggregator(
@@ -173,11 +183,12 @@ class SignalBestBetsExporter(BaseExporter):
         )
         top_picks = aggregator.aggregate(predictions, signal_results)
 
-        # Step 6b: Build pick angles (Session 278)
+        # Step 6b: Build pick angles (Session 278, 284: direction health)
         for pick in top_picks:
             key = f"{pick['player_lookup']}::{pick['game_id']}"
             pick['pick_angles'] = build_pick_angles(
-                pick, signal_results.get(key, []), cross_model_factors.get(key, {})
+                pick, signal_results.get(key, []), cross_model_factors.get(key, {}),
+                direction_health=direction_health,
             )
 
         # Step 7: Format for JSON
@@ -241,6 +252,7 @@ class SignalBestBetsExporter(BaseExporter):
                 'min_picks': 8,
                 'players': blacklist_players_capped,
             },
+            'direction_health': direction_health,
             'picks': picks_json,
             'total_picks': len(picks_json),
             'signals_evaluated': [
@@ -365,6 +377,55 @@ class SignalBestBetsExporter(BaseExporter):
                 f"Failed to write signal best bets to BigQuery: {e}",
                 exc_info=True,
             )
+
+    def _query_direction_health(self, target_date: str) -> Dict[str, Any]:
+        """Query 14-day rolling hit rate by direction (OVER vs UNDER).
+
+        Returns dict with over_hr_14d, under_hr_14d, over_n, under_n.
+        Observation-only (Session 284): monitors direction stability.
+        """
+        model_id = get_best_bets_model_id()
+
+        query = f"""
+        SELECT
+            recommendation,
+            COUNT(*) AS n,
+            ROUND(100.0 * COUNTIF(is_correct = TRUE) / COUNT(*), 1) AS hr
+        FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy`
+        WHERE game_date >= DATE_SUB(@target_date, INTERVAL 14 DAY)
+          AND game_date < @target_date
+          AND system_id = @model_id
+          AND ABS(edge) >= 3
+          AND is_voided = FALSE
+          AND recommendation IN ('OVER', 'UNDER')
+        GROUP BY recommendation
+        """
+
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+                bigquery.ScalarQueryParameter('model_id', 'STRING', model_id),
+            ]
+        )
+
+        result = self.bq_client.query(query, job_config=job_config).result(timeout=30)
+
+        health = {'over_hr_14d': None, 'under_hr_14d': None,
+                  'over_n': 0, 'under_n': 0}
+        for row in result:
+            if row.recommendation == 'OVER':
+                health['over_hr_14d'] = float(row.hr) if row.hr else None
+                health['over_n'] = row.n
+            elif row.recommendation == 'UNDER':
+                health['under_hr_14d'] = float(row.hr) if row.hr else None
+                health['under_n'] = row.n
+
+        logger.info(
+            f"Direction health 14d: OVER={health['over_hr_14d']}% "
+            f"(N={health['over_n']}), UNDER={health['under_hr_14d']}% "
+            f"(N={health['under_n']})"
+        )
+        return health
 
     def _query_games_vs_opponent(self, target_date: str) -> Dict[tuple, int]:
         """Query season games played per player-opponent pair.
