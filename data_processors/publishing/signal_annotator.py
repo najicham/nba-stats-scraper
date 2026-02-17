@@ -30,6 +30,7 @@ from ml.signals.aggregator import BestBetsAggregator
 from ml.signals.combo_registry import load_combo_registry, match_combo
 from ml.signals.model_health import BREAKEVEN_HR
 from ml.signals.signal_health import get_signal_health_summary
+from ml.signals.cross_model_scorer import CrossModelScorer
 from ml.signals.supplemental_data import (
     query_model_health,
     query_predictions_with_supplements,
@@ -143,12 +144,23 @@ class SignalAnnotator:
         # 4b. Get signal health for aggregator weighting
         signal_health = get_signal_health_summary(self.bq_client, target_date)
 
+        # 4c. Compute cross-model consensus factors (Session 277)
+        cross_model_factors = {}
+        try:
+            scorer = CrossModelScorer()
+            cross_model_factors = scorer.compute_factors(
+                self.bq_client, target_date, self.project_id
+            )
+        except Exception as e:
+            logger.warning(f"Cross-model scoring failed (non-fatal): {e}")
+
         # 5. Bridge: run aggregator and write Signal Picks subset
         # Note: Health gate removed (Session 270) — always produce signal picks
         signal_picks_count = self._bridge_signal_picks(
             predictions, signal_results_map, target_date,
             version_id, health_status, combo_registry,
             signal_health=signal_health,
+            cross_model_factors=cross_model_factors,
         )
 
         logger.info(
@@ -198,6 +210,7 @@ class SignalAnnotator:
         health_status: str,
         combo_registry=None,
         signal_health: Optional[Dict] = None,
+        cross_model_factors: Optional[Dict] = None,
     ) -> int:
         """Bridge aggregator's top picks into current_subset_picks as Signal Picks subset.
 
@@ -208,6 +221,7 @@ class SignalAnnotator:
             combo_registry=combo_registry,
             signal_health=signal_health,
             model_id=get_best_bets_model_id(),
+            cross_model_factors=cross_model_factors,
         )
         top_picks = aggregator.aggregate(predictions, signal_results_map)
 

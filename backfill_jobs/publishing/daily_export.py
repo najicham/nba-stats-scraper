@@ -86,6 +86,8 @@ from data_processors.publishing.trends_tonight_exporter import TrendsTonightExpo
 # Signal best bets + signal annotator (Session 254)
 from data_processors.publishing.signal_best_bets_exporter import SignalBestBetsExporter
 from data_processors.publishing.signal_annotator import SignalAnnotator
+# Cross-model observation subsets (Session 277)
+from data_processors.publishing.cross_model_subset_materializer import CrossModelSubsetMaterializer
 # Signal health + model health exports (Session 267)
 from data_processors.publishing.signal_health_exporter import SignalHealthExporter
 from data_processors.publishing.model_health_exporter import ModelHealthExporter
@@ -279,6 +281,23 @@ def export_date(
         except Exception as e:
             # Non-fatal: if materialization fails, export will use fallback
             logger.warning(f"  Subset Materialization failed (export will use fallback): {e}")
+
+        try:
+            # Step 1b: Cross-model observation subsets (Session 277)
+            # Queries all 6 models' predictions, computes consensus patterns
+            xm_materializer = CrossModelSubsetMaterializer()
+            xm_result = xm_materializer.materialize(
+                target_date,
+                version_id=mat_version_id or f"v_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                trigger_source='export',
+            )
+            logger.info(
+                f"  Cross-Model Subsets: {xm_result.get('total_picks', 0)} picks "
+                f"across {len(xm_result.get('subsets', {}))} subsets"
+            )
+        except Exception as e:
+            # Non-fatal: cross-model subsets are observation-only
+            logger.warning(f"  Cross-Model Subset materialization failed (non-fatal): {e}")
 
         try:
             # Step 2: Signal annotation — evaluate signals on ALL predictions,

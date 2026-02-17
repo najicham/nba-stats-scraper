@@ -24,6 +24,7 @@ from ml.signals.aggregator import BestBetsAggregator
 from ml.signals.combo_registry import load_combo_registry
 from ml.signals.model_health import BREAKEVEN_HR
 from ml.signals.signal_health import get_signal_health_summary
+from ml.signals.cross_model_scorer import CrossModelScorer
 from ml.signals.supplemental_data import (
     query_model_health,
     query_predictions_with_supplements,
@@ -112,12 +113,23 @@ class SignalBestBetsExporter(BaseExporter):
         # Step 5: Get signal health (non-blocking — empty if table doesn't exist yet)
         signal_health = get_signal_health_summary(self.bq_client, target_date)
 
-        # Step 6: Aggregate to top picks (with combo registry + signal health weighting)
+        # Step 5b: Compute cross-model consensus factors (Session 277)
+        cross_model_factors = {}
+        try:
+            scorer = CrossModelScorer()
+            cross_model_factors = scorer.compute_factors(
+                self.bq_client, target_date, PROJECT_ID
+            )
+        except Exception as e:
+            logger.warning(f"Cross-model scoring failed (non-fatal): {e}")
+
+        # Step 6: Aggregate to top picks (with combo registry + signal health weighting + consensus)
         combo_registry = load_combo_registry(bq_client=self.bq_client)
         aggregator = BestBetsAggregator(
             combo_registry=combo_registry,
             signal_health=signal_health,
             model_id=get_best_bets_model_id(),
+            cross_model_factors=cross_model_factors,
         )
         top_picks = aggregator.aggregate(predictions, signal_results)
 
@@ -143,6 +155,10 @@ class SignalBestBetsExporter(BaseExporter):
                 'combo_classification': pick.get('combo_classification'),
                 'combo_hit_rate': pick.get('combo_hit_rate'),
                 'warnings': pick.get('warning_tags', []),
+                'model_agreement': pick.get('model_agreement_count', 0),
+                'feature_diversity': pick.get('feature_set_diversity', 0),
+                'consensus_bonus': pick.get('consensus_bonus', 0),
+                'quantile_under_consensus': pick.get('quantile_consensus_under', False),
                 'actual': None,
                 'result': None,
             })
@@ -247,6 +263,10 @@ class SignalBestBetsExporter(BaseExporter):
                 'combo_hit_rate': pick.get('combo_hit_rate'),
                 'warning_tags': pick.get('warnings', []),
                 'rank': pick.get('rank'),
+                'model_agreement_count': pick.get('model_agreement', 0),
+                'feature_set_diversity': pick.get('feature_diversity', 0),
+                'consensus_bonus': pick.get('consensus_bonus', 0),
+                'quantile_consensus_under': pick.get('quantile_under_consensus', False),
                 'created_at': datetime.now(timezone.utc).isoformat(),
             })
 

@@ -202,6 +202,27 @@ def query_predictions_with_supplements(
       QUALIFY ROW_NUMBER() OVER (
         PARTITION BY sd.player_lookup ORDER BY sd.game_date DESC
       ) = 1
+    ),
+
+    -- V12 predictions for dual_agree / model_consensus signals
+    -- Dedup: if multiple V12 MAE models exist, pick the one with latest system_id
+    v12_preds AS (
+      SELECT
+        p2.player_lookup,
+        p2.game_id,
+        p2.recommendation AS v12_recommendation,
+        CAST(p2.predicted_points - p2.current_points_line AS FLOAT64) AS v12_edge,
+        CAST(p2.predicted_points AS FLOAT64) AS v12_predicted_points,
+        CAST(p2.confidence_score AS FLOAT64) AS v12_confidence
+      FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions` p2
+      WHERE p2.game_date = @target_date
+        AND p2.system_id LIKE 'catboost_v12_noveg%'
+        AND p2.system_id NOT LIKE '%_q4%'
+        AND p2.is_active = TRUE
+        AND p2.recommendation IN ('OVER', 'UNDER')
+      QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY p2.player_lookup, p2.game_id ORDER BY p2.system_id DESC
+      ) = 1
     )
 
     SELECT
@@ -229,10 +250,15 @@ def query_predictions_with_supplements(
       lsk.prev_correct_1, lsk.prev_correct_2, lsk.prev_correct_3,
       lsk.prev_correct_4, lsk.prev_correct_5,
       lsk.prev_over_1, lsk.prev_over_2, lsk.prev_over_3,
-      lsk.prev_over_4, lsk.prev_over_5
+      lsk.prev_over_4, lsk.prev_over_5,
+      v12.v12_recommendation,
+      v12.v12_edge,
+      v12.v12_predicted_points,
+      v12.v12_confidence
     FROM preds p
     LEFT JOIN latest_stats ls ON ls.player_lookup = p.player_lookup
     LEFT JOIN latest_streak lsk ON lsk.player_lookup = p.player_lookup
+    LEFT JOIN v12_preds v12 ON v12.player_lookup = p.player_lookup AND v12.game_id = p.game_id
     ORDER BY p.player_lookup
     """
 
@@ -384,6 +410,15 @@ def query_predictions_with_supplements(
             'unassisted_fg_season': float(row_dict.get('unassisted_fg_season') or 0),
             'points_std_last_5': float(row_dict.get('points_std_last_5') or 0),
         }
+
+        # V12 prediction (for dual_agree / model_consensus_v9_v12 signals)
+        if row_dict.get('v12_recommendation'):
+            supp['v12_prediction'] = {
+                'recommendation': row_dict['v12_recommendation'],
+                'edge': float(row_dict.get('v12_edge') or 0),
+                'predicted_points': float(row_dict.get('v12_predicted_points') or 0),
+                'confidence': float(row_dict.get('v12_confidence') or 0),
+            }
 
         # Copy player profile fields to prediction dict for signals that check pred directly
         pred['starter_flag'] = row_dict.get('starter_flag')

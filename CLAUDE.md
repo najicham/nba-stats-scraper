@@ -553,8 +553,8 @@ Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
 | `high_usage_under` | Market-Pattern | UNDER | 58.7% | WATCH | |
 | `blowout_recovery` | Bounce | OVER | 56.9% | WATCH | Stable 55-58% |
 | `minutes_surge` | Volume | BOTH | 53.7% | WATCH | W4 decay |
-| `dual_agree` | Consensus | BOTH | 45.5% | WATCH | Small sample (W4 only) |
-| `model_consensus_v9_v12` | Consensus | BOTH | 45.5% | WATCH | Small sample (W4 only) |
+| `dual_agree` | Consensus | BOTH | 45.5% | WATCH | V12 data gap FIXED (Session 277) — now fires in production |
+| `model_consensus_v9_v12` | Consensus | BOTH | 45.5% | WATCH | V12 data gap FIXED (Session 277) — now fires in production |
 | `cold_snap` | Bounce | OVER | N/A | CONDITIONAL | N=0 in backtest windows |
 
 ### Removed Signals (10, Session 275)
@@ -565,6 +565,31 @@ Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
 ### Post-Cleanup Backtest (Session 275)
 
 Aggregator top-5 simulation: **73.9% AVG HR** (up from 60.3% pre-cleanup). W2: 80.0%, W3: 78.5%, W4: 63.2%.
+
+## Multi-Model Best Bets [Keyword: MULTIMODEL]
+
+**Session 277:** 3-layer architecture using all 6 models for improved best bets.
+
+**Layers:**
+1. **Per-model subsets** — each model tracked independently (26 existing + 4 new V12-quantile = 30)
+2. **Cross-model observation subsets** — 5 `xm_*` subsets track consensus patterns (IDs 31-35)
+3. **Consensus scoring** — `consensus_bonus` (max 0.36) added to aggregator composite score
+
+**Key fixes:** `dual_agree` and `model_consensus_v9_v12` signals were never firing because `supplemental_data.py` didn't query V12 predictions. Fixed with V12 CTE in the BigQuery query.
+
+**Cross-model subsets:** `xm_consensus_3plus`, `xm_consensus_5plus`, `xm_quantile_agreement_under`, `xm_mae_plus_quantile_over`, `xm_diverse_agreement`. All observation-only, graded by existing `SubsetGradingProcessor`.
+
+**Consensus bonus formula:**
+```
+agreement_base = 0.05 * (n_agreeing - 2) if n >= 3 else 0
+diversity_mult = 1.3 if V9+V12 agree else 1.0
+quantile_bonus = 0.10 if UNDER + all quantile agree else 0
+consensus_bonus = agreement_base * diversity_mult + quantile_bonus  # max 0.36
+```
+
+**New files:** `ml/signals/cross_model_scorer.py`, `shared/config/cross_model_subsets.py`, `data_processors/publishing/cross_model_subset_materializer.py`
+
+**See:** `docs/08-projects/current/multi-model-best-bets/00-ARCHITECTURE.md`
 
 ## Feature References
 

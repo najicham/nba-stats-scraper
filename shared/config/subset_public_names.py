@@ -42,6 +42,17 @@ SUBSET_PUBLIC_NAMES = {
     'nova_all_predictions': {'id': '25', 'name': 'All Predictions'},
     # Best Bets — curated by Signal Discovery Framework (Session 254-255)
     'best_bets': {'id': '26', 'name': 'Best Bets'},
+    # V12-Quantile subsets (Session 277)
+    'v12q43_under_top3': {'id': '27', 'name': 'V12 Q43 UNDER Top 3'},
+    'v12q43_all_picks': {'id': '28', 'name': 'V12 Q43 All Picks'},
+    'v12q45_under_top3': {'id': '29', 'name': 'V12 Q45 UNDER Top 3'},
+    'v12q45_all_picks': {'id': '30', 'name': 'V12 Q45 All Picks'},
+    # Cross-model observation subsets (Session 277)
+    'xm_consensus_3plus': {'id': '31', 'name': 'Cross-Model 3+ Agree'},
+    'xm_consensus_5plus': {'id': '32', 'name': 'Cross-Model 5+ Agree'},
+    'xm_quantile_agreement_under': {'id': '33', 'name': 'Quantile Consensus UNDER'},
+    'xm_mae_plus_quantile_over': {'id': '34', 'name': 'MAE + Quantile OVER'},
+    'xm_diverse_agreement': {'id': '35', 'name': 'V9 + V12 Diverse Agree'},
 }
 
 # Reverse lookup

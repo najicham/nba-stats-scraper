@@ -38,6 +38,12 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.signal_best_bets_
   combo_hit_rate FLOAT64,                -- Historical hit rate of matched combo
   warning_tags ARRAY<STRING>,            -- ['redundancy_trap', 'contradictory_signals', ...]
 
+  -- Cross-model consensus fields (Session 277)
+  model_agreement_count INT64,           -- How many models agree on direction (0-6)
+  feature_set_diversity INT64,           -- Feature set diversity (1=same, 2=V9+V12)
+  consensus_bonus NUMERIC(5, 4),         -- Scoring adjustment from cross-model consensus
+  quantile_consensus_under BOOLEAN,      -- All 4 quantile models agree UNDER
+
   -- Outcome (populated after grading)
   actual_points INT64,
   prediction_correct BOOLEAN,

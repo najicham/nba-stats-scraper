@@ -60,6 +60,7 @@ class BestBetsAggregator:
         combo_registry: Optional[Dict[str, ComboEntry]] = None,
         signal_health: Optional[Dict[str, Dict[str, Any]]] = None,
         model_id: Optional[str] = None,
+        cross_model_factors: Optional[Dict[str, Dict[str, Any]]] = None,
     ):
         """Initialize aggregator.
 
@@ -68,6 +69,9 @@ class BestBetsAggregator:
             signal_health: Dict keyed by signal_tag with 'regime' field.
                 Example: {'high_edge': {'regime': 'HOT', 'hr_7d': 75.0, ...}}
             model_id: Model ID for model-specific config (e.g. confidence floor).
+            cross_model_factors: Dict keyed by 'player_lookup::game_id' with
+                consensus factors from CrossModelScorer. If None, no consensus
+                bonus is applied.
         """
         if combo_registry is not None:
             self._registry = combo_registry
@@ -75,6 +79,7 @@ class BestBetsAggregator:
             self._registry = load_combo_registry(bq_client=None)
         self._signal_health = signal_health or {}
         self._min_confidence = get_min_confidence(model_id or '')
+        self._cross_model_factors = cross_model_factors or {}
 
     def aggregate(self, predictions: List[Dict],
                   signal_results: Dict[str, List[SignalResult]]) -> List[Dict]:
@@ -145,7 +150,17 @@ class BestBetsAggregator:
             if 'minutes_surge' in tags and 'blowout_recovery' in tags:
                 warning_tags.append('contradictory_signals')
 
-            composite_score = round(base_score + combo_adjustment, 4)
+            # Cross-model consensus bonus (Session 277)
+            consensus_bonus = 0.0
+            xm_factors = self._cross_model_factors.get(key, {})
+            model_agreement = xm_factors.get('model_agreement_count', 0)
+            feature_diversity = xm_factors.get('feature_set_diversity', 0)
+            quantile_under = xm_factors.get('quantile_consensus_under', False)
+
+            if xm_factors and pred.get('recommendation') == xm_factors.get('majority_direction'):
+                consensus_bonus = xm_factors.get('consensus_bonus', 0)
+
+            composite_score = round(base_score + combo_adjustment + consensus_bonus, 4)
 
             scored.append({
                 **pred,
@@ -156,6 +171,10 @@ class BestBetsAggregator:
                 'combo_classification': matched.classification if matched else None,
                 'combo_hit_rate': matched.hit_rate if matched else None,
                 'warning_tags': warning_tags,
+                'model_agreement_count': model_agreement,
+                'feature_set_diversity': feature_diversity,
+                'consensus_bonus': consensus_bonus,
+                'quantile_consensus_under': quantile_under,
             })
 
         # Sort descending by composite score
