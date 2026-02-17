@@ -27,6 +27,7 @@ from ml.signals.model_health import BREAKEVEN_HR
 from ml.signals.signal_health import get_signal_health_summary
 from ml.signals.cross_model_scorer import CrossModelScorer
 from ml.signals.pick_angle_builder import build_pick_angles
+from ml.signals.player_blacklist import compute_player_blacklist
 from ml.signals.subset_membership_lookup import lookup_qualifying_subsets
 from ml.signals.aggregator import ALGORITHM_VERSION
 from ml.signals.supplemental_data import (
@@ -138,6 +139,16 @@ class SignalBestBetsExporter(BaseExporter):
             except Exception as e:
                 logger.warning(f"Qualifying subsets lookup failed (non-fatal): {e}")
 
+        # Step 5d: Compute player blacklist (Session 284)
+        player_blacklist = set()
+        blacklist_stats = {'evaluated': 0, 'blacklisted': 0, 'players': []}
+        try:
+            player_blacklist, blacklist_stats = compute_player_blacklist(
+                self.bq_client, target_date
+            )
+        except Exception as e:
+            logger.warning(f"Player blacklist computation failed (non-fatal): {e}")
+
         # Step 6: Aggregate to top picks (with combo registry + signal health weighting + consensus)
         combo_registry = load_combo_registry(bq_client=self.bq_client)
         aggregator = BestBetsAggregator(
@@ -146,6 +157,7 @@ class SignalBestBetsExporter(BaseExporter):
             model_id=get_best_bets_model_id(),
             cross_model_factors=cross_model_factors,
             qualifying_subsets=qual_subsets,
+            player_blacklist=player_blacklist,
         )
         top_picks = aggregator.aggregate(predictions, signal_results)
 
@@ -194,6 +206,11 @@ class SignalBestBetsExporter(BaseExporter):
         # Step 8: Get best_bets record (season/month/week HR)
         record = self._get_best_bets_record(target_date)
 
+        # Cap player list in output to top 10 worst (avoid bloating JSON)
+        blacklist_players_capped = [
+            p['player_lookup'] for p in blacklist_stats.get('players', [])[:10]
+        ]
+
         return {
             'date': target_date,
             'generated_at': self.get_generated_at(),
@@ -205,6 +222,13 @@ class SignalBestBetsExporter(BaseExporter):
                 'graded_count': model_health.get('graded_count', 0),
             },
             'signal_health': signal_health,
+            'player_blacklist': {
+                'count': blacklist_stats.get('blacklisted', 0),
+                'evaluated': blacklist_stats.get('evaluated', 0),
+                'hr_threshold': 40.0,
+                'min_picks': 8,
+                'players': blacklist_players_capped,
+            },
             'picks': picks_json,
             'total_picks': len(picks_json),
             'signals_evaluated': [

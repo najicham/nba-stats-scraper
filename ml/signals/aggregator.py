@@ -22,11 +22,15 @@ Session 279: Pick provenance — qualifying_subsets + algorithm_version.
       the player-game already appeared in) and qualifying_subset_count.
     - ALGORITHM_VERSION tag for scoring formula traceability.
     - Phase 1: observation only (store, don't score on subset membership).
+
+Session 284: Player blacklist — blocks chronically losing players.
+    - Players with <40% HR on 8+ graded edge-3+ picks are excluded.
+    - Checked FIRST in aggregate loop (before signal evaluation, for efficiency).
+    - Season replay proved +$10,450 P&L improvement.
 """
 
-import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from ml.signals.base_signal import SignalResult
 from ml.signals.combo_registry import ComboEntry, load_combo_registry, match_combo
@@ -36,7 +40,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v279_qualifying_subsets'
+ALGORITHM_VERSION = 'v284_player_blacklist'
 
 # Signal health regime → weight multiplier
 HEALTH_MULTIPLIERS = {
@@ -75,6 +79,7 @@ class BestBetsAggregator:
         model_id: Optional[str] = None,
         cross_model_factors: Optional[Dict[str, Dict[str, Any]]] = None,
         qualifying_subsets: Optional[Dict[str, List[Dict]]] = None,
+        player_blacklist: Optional[Set[str]] = None,
     ):
         """Initialize aggregator.
 
@@ -89,6 +94,8 @@ class BestBetsAggregator:
             qualifying_subsets: Dict keyed by 'player_lookup::game_id' with
                 list of Level 1/2 subsets the player already appears in.
                 From subset_membership_lookup. Phase 1: observation only.
+            player_blacklist: Set of player_lookup strings to exclude.
+                Players with <40% HR on 8+ picks. Session 284.
         """
         if combo_registry is not None:
             self._registry = combo_registry
@@ -98,6 +105,7 @@ class BestBetsAggregator:
         self._min_confidence = get_min_confidence(model_id or '')
         self._cross_model_factors = cross_model_factors or {}
         self._qualifying_subsets = qualifying_subsets or {}
+        self._player_blacklist = player_blacklist or set()
 
     def aggregate(self, predictions: List[Dict],
                   signal_results: Dict[str, List[SignalResult]]) -> List[Dict]:
@@ -121,7 +129,14 @@ class BestBetsAggregator:
                 - rank: 1-based rank
         """
         scored = []
+        blacklist_skip_count = 0
         for pred in predictions:
+            # Player blacklist: FIRST filter (Session 284)
+            # Blocks chronically losing players before any signal evaluation
+            if pred['player_lookup'] in self._player_blacklist:
+                blacklist_skip_count += 1
+                continue
+
             key = f"{pred['player_lookup']}::{pred['game_id']}"
             results = signal_results.get(key, [])
             qualifying = [r for r in results if r.qualifies]
@@ -226,6 +241,12 @@ class BestBetsAggregator:
                 'qualifying_subset_count': len(subsets_for_storage),
                 'algorithm_version': ALGORITHM_VERSION,
             })
+
+        if blacklist_skip_count > 0:
+            logger.info(
+                f"Player blacklist: skipped {blacklist_skip_count} predictions "
+                f"({len(self._player_blacklist)} players on blacklist)"
+            )
 
         # Sort descending by composite score
         scored.sort(key=lambda x: x['composite_score'], reverse=True)
