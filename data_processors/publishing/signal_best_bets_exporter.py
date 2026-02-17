@@ -149,6 +149,18 @@ class SignalBestBetsExporter(BaseExporter):
         except Exception as e:
             logger.warning(f"Player blacklist computation failed (non-fatal): {e}")
 
+        # Step 5e: Enrich predictions with games_vs_opponent (Session 284)
+        # Avoid-familiar filter: players with 6+ games vs opponent regress
+        try:
+            gvo_map = self._query_games_vs_opponent(target_date)
+            for pred in predictions:
+                opp = pred.get('opponent_team_abbr', '')
+                pred['games_vs_opponent'] = gvo_map.get(
+                    (pred['player_lookup'], opp), 0
+                )
+        except Exception as e:
+            logger.warning(f"Games vs opponent enrichment failed (non-fatal): {e}")
+
         # Step 6: Aggregate to top picks (with combo registry + signal health weighting + consensus)
         combo_registry = load_combo_registry(bq_client=self.bq_client)
         aggregator = BestBetsAggregator(
@@ -353,6 +365,36 @@ class SignalBestBetsExporter(BaseExporter):
                 f"Failed to write signal best bets to BigQuery: {e}",
                 exc_info=True,
             )
+
+    def _query_games_vs_opponent(self, target_date: str) -> Dict[tuple, int]:
+        """Query season games played per player-opponent pair.
+
+        Returns dict keyed by (player_lookup, opponent_team_abbr) → count.
+        Used by avoid-familiar filter in aggregator (Session 284).
+        """
+        query = f"""
+        SELECT player_lookup, opponent_team_abbr, COUNT(*) as games_played
+        FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
+        WHERE game_date >= '2025-10-22'
+          AND game_date < @target_date
+          AND minutes_played > 0
+        GROUP BY 1, 2
+        """
+
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+            ]
+        )
+
+        result = self.bq_client.query(query, job_config=job_config).result(timeout=60)
+
+        gvo_map = {}
+        for row in result:
+            gvo_map[(row.player_lookup, row.opponent_team_abbr)] = row.games_played
+
+        logger.info(f"Loaded games_vs_opponent for {len(gvo_map)} player-opponent pairs")
+        return gvo_map
 
     def _get_best_bets_record(self, target_date: str) -> Dict[str, Any]:
         """Query W-L record for the best_bets subset across season/month/week.

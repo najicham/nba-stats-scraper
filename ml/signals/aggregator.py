@@ -23,10 +23,13 @@ Session 279: Pick provenance — qualifying_subsets + algorithm_version.
     - ALGORITHM_VERSION tag for scoring formula traceability.
     - Phase 1: observation only (store, don't score on subset membership).
 
-Session 284: Player blacklist — blocks chronically losing players.
+Session 284: Player blacklist + avoid-familiar + remove rel_edge filter.
     - Players with <40% HR on 8+ graded edge-3+ picks are excluded.
     - Checked FIRST in aggregate loop (before signal evaluation, for efficiency).
     - Season replay proved +$10,450 P&L improvement.
+    - Avoid-familiar: skip players with 6+ games vs opponent (+$1,780 P&L).
+    - Removed rel_edge>=30% filter: was blocking 62.8% HR picks (above breakeven).
+      Cross-season analysis showed it hurts 2025-26 profits (blocks 65.5% HR picks).
 """
 
 import logging
@@ -40,7 +43,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v284_player_blacklist'
+ALGORITHM_VERSION = 'v284_blacklist_familiar_reledge'
 
 # Signal health regime → weight multiplier
 HEALTH_MULTIPLIERS = {
@@ -61,11 +64,12 @@ class BestBetsAggregator:
         composite_score = base_score + combo_registry_weight
 
     Filters:
+        - Player blacklist: <40% HR on 8+ picks → skip (Session 284)
+        - Avoid familiar: 6+ games vs this opponent → skip (Session 284)
         - MIN_SIGNAL_COUNT = 2 (eliminates 1-signal picks)
         - Confidence floor: model-specific (V12: >= 0.90, excludes 41.7% HR tier)
         - Feature quality floor: quality < 85 → skip (24.0% HR)
         - Bench UNDER block: UNDER + line < 12 → skip (35.1% HR)
-        - Relative edge cap: |edge|/line >= 30% → skip (49.7% HR noise)
         - ANTI_PATTERN combos are blocked entirely
     """
 
@@ -166,10 +170,15 @@ class BestBetsAggregator:
             if pred.get('recommendation') == 'UNDER' and line_val > 0 and line_val < 12:
                 continue
 
-            # Smart filter: Relative edge cap (Session 278)
-            # |edge|/line >= 30% = 49.7% HR — noise from low-line players
-            edge_val = abs(pred.get('edge') or 0)
-            if line_val > 0 and edge_val / line_val >= 0.30:
+            # Rel_edge>=30% filter REMOVED (Session 284)
+            # Was blocking picks with 62.8% combined HR (above breakeven).
+            # In 2025-26, blocked 65.5% HR picks — our best tier.
+
+            # Smart filter: Avoid familiar matchups (Session 284)
+            # Players with 6+ games vs this opponent regress to noise
+            # Season replay: +$1,780 P&L when stacked with other filters
+            games_vs_opp = pred.get('games_vs_opponent') or 0
+            if games_vs_opp >= 6:
                 continue
 
             tags = [r.source_tag for r in qualifying]

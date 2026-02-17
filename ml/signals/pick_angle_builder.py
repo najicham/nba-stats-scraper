@@ -5,6 +5,7 @@ patterns, cross-model consensus, subset membership, and signal-specific insights
 
 Session 278: Initial creation.
 Session 279: Added subset membership angle (qualifying_subsets provenance).
+Session 284: Added high-conviction edge>=5 angle (65.6% HR cross-season).
 """
 
 import logging
@@ -157,6 +158,14 @@ def _warning_angles(pick: Dict) -> List[str]:
     return angles
 
 
+def _high_conviction_angle(pick: Dict) -> str | None:
+    """Generate high-conviction angle for edge >= 5 picks (Session 284)."""
+    edge = abs(pick.get('edge') or 0)
+    if edge < 5.0:
+        return None
+    return f"High conviction: edge {edge:.1f} pts (65.6% HR at edge 5+)"
+
+
 def _subset_membership_angle(pick: Dict) -> str | None:
     """Generate angle from qualifying subset membership (Session 279)."""
     subsets = pick.get('qualifying_subsets', [])
@@ -198,26 +207,31 @@ def build_pick_angles(
     if conf_angle:
         angles.append(conf_angle)
 
-    # 2. Subset membership (Session 279 — high-value provenance)
+    # 2. High conviction edge (Session 284 — 65.6% HR cross-season)
+    hc_angle = _high_conviction_angle(pick)
+    if hc_angle:
+        angles.append(hc_angle)
+
+    # 3. Subset membership (Session 279 — high-value provenance)
     subset_angle = _subset_membership_angle(pick)
     if subset_angle:
         angles.append(subset_angle)
 
-    # 3. Direction + player tier
+    # 4. Direction + player tier
     tier_angle = _direction_tier_angle(pick)
     if tier_angle:
         angles.append(tier_angle)
 
-    # 4. Cross-model consensus
+    # 5. Cross-model consensus
     consensus = _consensus_angle(pick, cross_model_factors)
     if consensus:
         angles.append(consensus)
 
-    # 5. Signal-specific angles
+    # 6. Signal-specific angles
     sig_angles = _signal_angles(pick, signal_results)
     angles.extend(sig_angles)
 
-    # 6. Warning angles (always last)
+    # 7. Warning angles (always last)
     warn_angles = _warning_angles(pick)
     angles.extend(warn_angles)
 

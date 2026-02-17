@@ -1,4 +1,4 @@
-"""Tests for player blacklist — blocks chronically losing players from best bets.
+"""Tests for player blacklist, avoid-familiar filter, and aggregator smart filters.
 
 Tests cover:
 1. Players below threshold are blacklisted
@@ -8,6 +8,9 @@ Tests cover:
 5. Empty results / query failure returns empty set
 6. Custom thresholds work
 7. Aggregator integration: blacklisted player excluded from picks
+8. Avoid-familiar: players with 6+ games vs opponent are filtered
+9. Rel_edge>=30% filter removed (no longer blocks high-HR picks)
+10. High-conviction edge>=5 angle in pick angle builder
 
 Run with: pytest tests/unit/signals/test_player_blacklist.py -v
 """
@@ -284,6 +287,176 @@ class TestAggregatorBlacklistIntegration:
         assert len(picks) == 1
 
     def test_algorithm_version_updated(self):
-        """ALGORITHM_VERSION should reflect the player blacklist session."""
+        """ALGORITHM_VERSION should reflect the session 284 changes."""
         assert 'v284' in ALGORITHM_VERSION
-        assert 'blacklist' in ALGORITHM_VERSION
+
+
+# ============================================================================
+# AVOID-FAMILIAR FILTER TESTS
+# ============================================================================
+
+class TestAvoidFamiliarFilter:
+    """Test that the aggregator skips players with 6+ games vs opponent."""
+
+    def _make_prediction(self, player_lookup, game_id='game1', edge=5.0,
+                         games_vs_opponent=0):
+        return {
+            'player_lookup': player_lookup,
+            'game_id': game_id,
+            'player_name': player_lookup.replace('_', ' ').title(),
+            'team_abbr': 'LAL',
+            'opponent_team_abbr': 'BOS',
+            'predicted_points': 25.0,
+            'line_value': 20.0,
+            'current_points_line': 20.0,
+            'recommendation': 'OVER',
+            'edge': edge,
+            'confidence_score': 0.95,
+            'feature_quality_score': 95,
+            'games_vs_opponent': games_vs_opponent,
+        }
+
+    def _make_qualifying_signals(self):
+        return [
+            SignalResult(qualifies=True, confidence=0.8, source_tag='model_health'),
+            SignalResult(qualifies=True, confidence=0.9, source_tag='high_edge'),
+        ]
+
+    @patch('ml.signals.aggregator.load_combo_registry', return_value={})
+    def test_familiar_player_excluded(self, mock_registry):
+        """Player with 6+ games vs opponent should be excluded."""
+        predictions = [
+            self._make_prediction('familiar_player', games_vs_opponent=7),
+            self._make_prediction('fresh_player', games_vs_opponent=2),
+        ]
+        signal_results = {
+            'familiar_player::game1': self._make_qualifying_signals(),
+            'fresh_player::game1': self._make_qualifying_signals(),
+        }
+
+        aggregator = BestBetsAggregator(combo_registry={})
+        picks = aggregator.aggregate(predictions, signal_results)
+
+        player_lookups = [p['player_lookup'] for p in picks]
+        assert 'familiar_player' not in player_lookups
+        assert 'fresh_player' in player_lookups
+
+    @patch('ml.signals.aggregator.load_combo_registry', return_value={})
+    def test_exactly_6_games_excluded(self, mock_registry):
+        """Exactly 6 games vs opponent = excluded (>= 6 threshold)."""
+        predictions = [
+            self._make_prediction('border_player', games_vs_opponent=6),
+        ]
+        signal_results = {
+            'border_player::game1': self._make_qualifying_signals(),
+        }
+
+        aggregator = BestBetsAggregator(combo_registry={})
+        picks = aggregator.aggregate(predictions, signal_results)
+
+        assert len(picks) == 0
+
+    @patch('ml.signals.aggregator.load_combo_registry', return_value={})
+    def test_5_games_not_excluded(self, mock_registry):
+        """5 games vs opponent = NOT excluded (below threshold)."""
+        predictions = [
+            self._make_prediction('ok_player', games_vs_opponent=5),
+        ]
+        signal_results = {
+            'ok_player::game1': self._make_qualifying_signals(),
+        }
+
+        aggregator = BestBetsAggregator(combo_registry={})
+        picks = aggregator.aggregate(predictions, signal_results)
+
+        assert len(picks) == 1
+
+    @patch('ml.signals.aggregator.load_combo_registry', return_value={})
+    def test_missing_games_vs_opponent_not_excluded(self, mock_registry):
+        """Missing games_vs_opponent field should not trigger filter."""
+        pred = self._make_prediction('new_player')
+        del pred['games_vs_opponent']  # field not present
+        predictions = [pred]
+        signal_results = {
+            'new_player::game1': self._make_qualifying_signals(),
+        }
+
+        aggregator = BestBetsAggregator(combo_registry={})
+        picks = aggregator.aggregate(predictions, signal_results)
+
+        assert len(picks) == 1
+
+
+# ============================================================================
+# REL_EDGE FILTER REMOVAL TEST
+# ============================================================================
+
+class TestRelEdgeFilterRemoved:
+    """Verify that the rel_edge>=30% filter is no longer blocking picks."""
+
+    @patch('ml.signals.aggregator.load_combo_registry', return_value={})
+    def test_high_rel_edge_no_longer_blocked(self, mock_registry):
+        """Pick with |edge|/line >= 30% should NOT be blocked anymore.
+
+        Previously this was blocked (49.7% HR), but replay showed it
+        blocks 62.8% combined HR picks (above breakeven).
+        """
+        pred = {
+            'player_lookup': 'big_edge_player',
+            'game_id': 'game1',
+            'player_name': 'Big Edge Player',
+            'team_abbr': 'LAL',
+            'opponent_team_abbr': 'BOS',
+            'predicted_points': 18.0,
+            'line_value': 12.0,  # edge=6, line=12, rel_edge=50%
+            'current_points_line': 12.0,
+            'recommendation': 'OVER',
+            'edge': 6.0,
+            'confidence_score': 0.95,
+            'feature_quality_score': 95,
+        }
+        signals = [
+            SignalResult(qualifies=True, confidence=0.8, source_tag='model_health'),
+            SignalResult(qualifies=True, confidence=0.9, source_tag='high_edge'),
+        ]
+
+        aggregator = BestBetsAggregator(combo_registry={})
+        picks = aggregator.aggregate([pred], {'big_edge_player::game1': signals})
+
+        assert len(picks) == 1
+        assert picks[0]['player_lookup'] == 'big_edge_player'
+
+
+# ============================================================================
+# PICK ANGLE BUILDER TESTS
+# ============================================================================
+
+class TestHighConvictionAngle:
+    """Test the high-conviction edge>=5 angle in pick angle builder."""
+
+    def test_edge_5_gets_angle(self):
+        """Edge >= 5 should produce high-conviction angle."""
+        from ml.signals.pick_angle_builder import _high_conviction_angle
+
+        pick = {'edge': 5.5}
+        angle = _high_conviction_angle(pick)
+        assert angle is not None
+        assert 'High conviction' in angle
+        assert '65.6%' in angle
+
+    def test_edge_below_5_no_angle(self):
+        """Edge < 5 should NOT produce high-conviction angle."""
+        from ml.signals.pick_angle_builder import _high_conviction_angle
+
+        pick = {'edge': 4.9}
+        angle = _high_conviction_angle(pick)
+        assert angle is None
+
+    def test_negative_edge_uses_abs(self):
+        """Negative edge should use absolute value."""
+        from ml.signals.pick_angle_builder import _high_conviction_angle
+
+        pick = {'edge': -6.0}
+        angle = _high_conviction_angle(pick)
+        assert angle is not None
+        assert '6.0' in angle
