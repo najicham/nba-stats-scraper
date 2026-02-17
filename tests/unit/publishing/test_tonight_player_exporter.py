@@ -297,11 +297,17 @@ class TestStreakComputation:
                 assert streak['length'] == 0
 
 
-class TestTonightsFactors:
-    """Test suite for tonight's factors building"""
+class TestCandidateAngles:
+    """Test suite for candidate angles building"""
 
-    def test_back_to_back_factor(self):
-        """Test that B2B factor is added"""
+    # Shared defaults for new params that most old tests don't care about
+    _defaults = dict(
+        recent_form=[], quick_numbers={'season_ppg': 24.0, 'season_mpg': 34.0},
+        prediction=None, streak={'type': None, 'length': 0}
+    )
+
+    def test_back_to_back_angle(self):
+        """Test that B2B angle is produced with correct direction"""
         with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
@@ -313,21 +319,27 @@ class TestTonightsFactors:
                     'opponent_team_abbr': 'GSW',
                     'days_rest': 1
                 }
-                fatigue = {'level': 'normal'}
                 splits = {
                     'b2b_ppg': 22.5,
                     'non_b2b_ppg': 25.0,
-                    'b2b_vs_line_pct': 0.45
+                    'b2b_games': 5,
+                    'home_ppg': 25.0,
+                    'away_ppg': 23.0,
+                    'home_games': 10,
                 }
 
-                factors = exporter._build_tonights_factors(context, fatigue, splits)
+                angles = exporter._build_candidate_angles(
+                    context, {'level': 'normal'}, splits, None, **self._defaults
+                )
 
-                b2b_factor = next((f for f in factors if f['factor'] == 'back_to_back'), None)
-                assert b2b_factor is not None
-                assert b2b_factor['direction'] == 'negative'
+                b2b = next((a for a in angles if a['id'] == 'b2b'), None)
+                assert b2b is not None
+                assert b2b['direction'] == 'negative'
+                assert 0 < b2b['magnitude'] <= 1.0
+                assert 'id' in b2b and 'factor' in b2b and 'description' in b2b
 
-    def test_fatigue_factor_when_tired(self):
-        """Test that fatigue factor is added when tired"""
+    def test_fatigue_angle_when_tired(self):
+        """Test that fatigue angle is produced when tired"""
         with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
@@ -335,21 +347,22 @@ class TestTonightsFactors:
 
                 context = {
                     'back_to_back': False,
-                    'home_game': True,
+                    'home_game': None,
                     'opponent_team_abbr': 'GSW',
                     'days_rest': 2
                 }
-                fatigue = {'level': 'tired', 'score': 60}
-                splits = {}
 
-                factors = exporter._build_tonights_factors(context, fatigue, splits)
+                angles = exporter._build_candidate_angles(
+                    context, {'level': 'tired', 'score': 60}, {}, None, **self._defaults
+                )
 
-                fatigue_factor = next((f for f in factors if f['factor'] == 'fatigue'), None)
-                assert fatigue_factor is not None
-                assert fatigue_factor['direction'] == 'negative'
+                fat = next((a for a in angles if a['id'] == 'fatigue'), None)
+                assert fat is not None
+                assert fat['direction'] == 'negative'
+                assert fat['magnitude'] > 0
 
-    def test_opponent_defense_factor(self):
-        """Test opponent defense factor"""
+    def test_opponent_defense_angle(self):
+        """Test opponent defense angle for elite defense"""
         with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
@@ -357,24 +370,164 @@ class TestTonightsFactors:
 
                 context = {
                     'back_to_back': False,
-                    'home_game': True,
+                    'home_game': None,
                     'opponent_team_abbr': 'BOS',
                     'days_rest': 2
                 }
-                fatigue = {'level': 'normal'}
-                splits = {}
                 defense_tier = {
                     'rank': 3,
                     'tier_label': 'elite',
                     'ppg_allowed': 105.5
                 }
 
-                factors = exporter._build_tonights_factors(context, fatigue, splits, defense_tier)
+                angles = exporter._build_candidate_angles(
+                    context, {'level': 'normal'}, {}, defense_tier, **self._defaults
+                )
 
-                def_factor = next((f for f in factors if f['factor'] == 'opponent_defense'), None)
-                assert def_factor is not None
-                assert def_factor['direction'] == 'negative'
-                assert def_factor['defense_tier'] == 'elite'
+                d = next((a for a in angles if a['id'] == 'opponent_defense'), None)
+                assert d is not None
+                assert d['direction'] == 'negative'
+
+    def test_returns_max_4_angles(self):
+        """Test that at most 4 angles are returned even with many candidates"""
+        with patch('google.cloud.bigquery.Client'):
+            with patch('data_processors.publishing.base_exporter.storage.Client'):
+                from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
+                exporter = TonightPlayerExporter()
+
+                context = {
+                    'back_to_back': True,
+                    'home_game': True,
+                    'opponent_team_abbr': 'BOS',
+                    'days_rest': 1
+                }
+                splits = {
+                    'b2b_ppg': 20.0, 'non_b2b_ppg': 26.0, 'b2b_games': 5,
+                    'home_ppg': 27.0, 'away_ppg': 21.0, 'home_games': 15,
+                    'vs_opponent_ppg': 30.0, 'vs_opponent_games': 3,
+                }
+                defense_tier = {'rank': 2, 'tier_label': 'elite', 'ppg_allowed': 104.0}
+                qn = {'season_ppg': 24.0, 'season_mpg': 34.0, 'last_5_ppg': 30.0, 'last_10_ppg': 25.0, 'last_5_mpg': 38.0}
+
+                angles = exporter._build_candidate_angles(
+                    context, {'level': 'tired', 'score': 55}, splits, defense_tier,
+                    recent_form=[], quick_numbers=qn, prediction={'current_points_line': 20.0},
+                    streak={'type': None, 'length': 0}
+                )
+
+                assert len(angles) <= 4
+
+    def test_angles_sorted_by_magnitude(self):
+        """Test that returned angles are sorted by magnitude descending"""
+        with patch('google.cloud.bigquery.Client'):
+            with patch('data_processors.publishing.base_exporter.storage.Client'):
+                from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
+                exporter = TonightPlayerExporter()
+
+                context = {
+                    'back_to_back': True,
+                    'home_game': True,
+                    'opponent_team_abbr': 'BOS',
+                    'days_rest': 1
+                }
+                splits = {
+                    'b2b_ppg': 20.0, 'non_b2b_ppg': 26.0, 'b2b_games': 5,
+                    'home_ppg': 27.0, 'away_ppg': 21.0, 'home_games': 15,
+                }
+                qn = {'season_ppg': 24.0, 'season_mpg': 34.0, 'last_5_ppg': 30.0}
+
+                angles = exporter._build_candidate_angles(
+                    context, {'level': 'tired', 'score': 55}, splits, None,
+                    recent_form=[], quick_numbers=qn, prediction=None,
+                    streak={'type': None, 'length': 0}
+                )
+
+                magnitudes = [a['magnitude'] for a in angles]
+                assert magnitudes == sorted(magnitudes, reverse=True)
+
+    def test_scoring_trend_angle(self):
+        """Test scoring trend angle when last 5 diverges from season"""
+        with patch('google.cloud.bigquery.Client'):
+            with patch('data_processors.publishing.base_exporter.storage.Client'):
+                from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
+                exporter = TonightPlayerExporter()
+
+                context = {'back_to_back': False, 'home_game': None, 'opponent_team_abbr': 'MIA', 'days_rest': 2}
+                qn = {'season_ppg': 22.0, 'season_mpg': 32.0, 'last_5_ppg': 28.0}
+
+                angles = exporter._build_candidate_angles(
+                    context, {'level': 'normal'}, {}, None,
+                    recent_form=[], quick_numbers=qn, prediction=None,
+                    streak={'type': None, 'length': 0}
+                )
+
+                trend = next((a for a in angles if a['id'] == 'scoring_trend'), None)
+                assert trend is not None
+                assert trend['direction'] == 'positive'
+                assert 'Surge' in trend['factor']
+                assert '28.0' in trend['description']
+
+    def test_streak_angle(self):
+        """Test streak angle when player has 4+ straight OVERs"""
+        with patch('google.cloud.bigquery.Client'):
+            with patch('data_processors.publishing.base_exporter.storage.Client'):
+                from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
+                exporter = TonightPlayerExporter()
+
+                context = {'back_to_back': False, 'home_game': None, 'opponent_team_abbr': 'CHI', 'days_rest': 2}
+                recent = [
+                    {'over_under': 'OVER', 'is_dnp': False},
+                    {'over_under': 'OVER', 'is_dnp': False},
+                    {'over_under': 'OVER', 'is_dnp': False},
+                    {'over_under': 'OVER', 'is_dnp': False},
+                    {'over_under': 'UNDER', 'is_dnp': False},
+                ]
+
+                angles = exporter._build_candidate_angles(
+                    context, {'level': 'normal'}, {}, None,
+                    recent_form=recent, quick_numbers={'season_ppg': 20.0, 'season_mpg': 30.0},
+                    prediction=None, streak={'type': 'over', 'length': 4}
+                )
+
+                s = next((a for a in angles if a['id'] == 'streak'), None)
+                assert s is not None
+                assert s['direction'] == 'positive'
+                assert '4 straight OVERs' in s['description']
+
+    def test_fg_efficiency_angle(self):
+        """Test FG efficiency angle from recent_form fg strings"""
+        with patch('google.cloud.bigquery.Client'):
+            with patch('data_processors.publishing.base_exporter.storage.Client'):
+                from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
+                exporter = TonightPlayerExporter()
+
+                context = {'back_to_back': False, 'home_game': None, 'opponent_team_abbr': 'DEN', 'days_rest': 2}
+                # Last 5: 10/18 each = 55.6%, All 10: first 5 at 10/18, last 5 at 5/18 = 41.7% overall
+                recent = []
+                for _ in range(5):
+                    recent.append({'fg': '10/18', 'is_dnp': False, 'over_under': 'OVER'})
+                for _ in range(5):
+                    recent.append({'fg': '5/18', 'is_dnp': False, 'over_under': 'UNDER'})
+
+                angles = exporter._build_candidate_angles(
+                    context, {'level': 'normal'}, {}, None,
+                    recent_form=recent, quick_numbers={'season_ppg': 20.0, 'season_mpg': 30.0},
+                    prediction=None, streak={'type': None, 'length': 0}
+                )
+
+                fg = next((a for a in angles if a['id'] == 'fg_efficiency'), None)
+                assert fg is not None
+                assert fg['direction'] == 'positive'
+                assert 'Shooting Hot' in fg['factor']
+
+    def test_parse_fg_helper(self):
+        """Test FG string parsing"""
+        from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
+        assert TonightPlayerExporter._parse_fg('10/18') == (10, 18)
+        assert TonightPlayerExporter._parse_fg('0/5') == (0, 5)
+        assert TonightPlayerExporter._parse_fg(None) is None
+        assert TonightPlayerExporter._parse_fg('') is None
+        assert TonightPlayerExporter._parse_fg('bad') is None
 
 
 class TestLineMovementFormatting:

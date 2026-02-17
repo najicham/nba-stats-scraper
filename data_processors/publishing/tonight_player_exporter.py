@@ -96,8 +96,11 @@ class TonightPlayerExporter(BaseExporter):
         if context.get('days_rest') is None and fatigue and isinstance(fatigue.get('context'), dict):
             context['days_rest'] = fatigue['context'].get('days_rest')
 
-        # Build tonight's factors (only relevant ones)
-        tonights_factors = self._build_tonights_factors(context, fatigue, splits, defense_tier)
+        # Build tonight's factors (ranked candidate angles, top 4)
+        tonights_factors = self._build_candidate_angles(
+            context, fatigue, splits, defense_tier,
+            recent_form, quick_numbers, prediction, streak
+        )
 
         # Enrich recent_form with vs_avg (O/U vs season average)
         season_ppg = quick_numbers.get('season_ppg')
@@ -618,134 +621,281 @@ class TonightPlayerExporter(BaseExporter):
             'favorable': favorable,
         }
 
-    def _build_tonights_factors(
+    @staticmethod
+    def _parse_fg(fg_str: Optional[str]):
+        """Parse 'makes/attempts' string into (makes, attempts) or None."""
+        if not fg_str or '/' not in fg_str:
+            return None
+        try:
+            makes, attempts = fg_str.split('/')
+            return int(makes), int(attempts)
+        except (ValueError, TypeError):
+            return None
+
+    def _build_candidate_angles(
         self,
         context: Dict,
         fatigue: Dict,
         splits: Dict,
-        defense_tier: Optional[Dict] = None
+        defense_tier: Optional[Dict],
+        recent_form: List[Dict],
+        quick_numbers: Dict,
+        prediction: Optional[Dict],
+        streak: Dict
     ) -> List[Dict]:
-        """Build list of relevant factors for tonight's game."""
-        factors = []
+        """Build ranked candidate angles for tonight's game.
 
-        # Back-to-back factor
+        Computes ~11 candidate angles from existing data, scores each by
+        magnitude (0-1), and returns the top 4 most interesting ones.
+        """
+        candidates = []
+        season_ppg = quick_numbers.get('season_ppg')
+        season_mpg = quick_numbers.get('season_mpg')
+
+        # 1. Back-to-back
         if context.get('back_to_back'):
             b2b_ppg = splits.get('b2b_ppg')
             non_b2b_ppg = splits.get('non_b2b_ppg')
-            b2b_vs_line = splits.get('b2b_vs_line_pct')
+            b2b_games = splits.get('b2b_games', 0)
             if b2b_ppg is not None and non_b2b_ppg is not None:
                 impact = round(b2b_ppg - non_b2b_ppg, 1)
-                desc = f"B2B: averages {b2b_ppg} vs {non_b2b_ppg} normally ({impact:+.1f})"
-                if b2b_vs_line is not None:
-                    desc += f", {b2b_vs_line:.0%} OVER"
-                factors.append({
-                    'factor': 'back_to_back',
-                    'direction': 'negative' if impact < 0 else 'positive',
-                    'impact': impact,
-                    'vs_line_pct': b2b_vs_line,
+                mag = min(abs(impact) / 8, 1.0)
+                if b2b_games < 3:
+                    mag *= 0.7
+                direction = 'negative' if impact < 0 else 'positive'
+                desc = f"Averages {b2b_ppg} on back-to-backs vs {non_b2b_ppg} normally ({impact:+.1f})"
+                candidates.append({
+                    'id': 'b2b',
+                    'factor': 'Back-to-Back',
+                    'direction': direction,
+                    'magnitude': round(mag, 2),
                     'description': desc
                 })
 
-        # Home/Away factor
+        # 2. Location (home/away)
         is_home = context.get('home_game')
         if is_home is not None:
             if is_home:
-                ppg = splits.get('home_ppg')
-                games = splits.get('home_games', 0)
-                vs_line = splits.get('home_vs_line_pct')
-                label = 'home'
+                loc_ppg = splits.get('home_ppg')
+                loc_games = splits.get('home_games', 0)
+                other_ppg = splits.get('away_ppg')
+                label = 'at home'
             else:
-                ppg = splits.get('away_ppg')
-                games = splits.get('away_games', 0)
-                vs_line = splits.get('away_vs_line_pct')
-                label = 'away'
+                loc_ppg = splits.get('away_ppg')
+                loc_games = splits.get('away_games', 0)
+                other_ppg = splits.get('home_ppg')
+                label = 'on the road'
 
-            if ppg and games >= 3:
-                desc = f"Averages {ppg} on the {label} ({games} games)"
-                if vs_line is not None:
-                    desc += f", {vs_line:.0%} OVER"
-                factors.append({
-                    'factor': 'location',
-                    'direction': 'neutral',
-                    'vs_line_pct': vs_line,
+            if loc_ppg is not None and other_ppg is not None and loc_games >= 3:
+                diff = round(loc_ppg - other_ppg, 1)
+                mag = min(abs(diff) / 5, 1.0)
+                direction = 'positive' if diff > 0 else ('negative' if diff < 0 else 'neutral')
+                desc = f"Scores {loc_ppg} {label} vs {other_ppg} {'on the road' if is_home else 'at home'}"
+                candidates.append({
+                    'id': 'location',
+                    'factor': 'Home' if is_home else 'Away',
+                    'direction': direction,
+                    'magnitude': round(mag, 2),
                     'description': desc
                 })
 
-        # vs Opponent factor
+        # 3. vs Opponent
         vs_opp_ppg = splits.get('vs_opponent_ppg')
         vs_opp_games = splits.get('vs_opponent_games', 0)
-        vs_opp_line = splits.get('vs_opponent_vs_line_pct')
-        if vs_opp_ppg and vs_opp_games >= 1:
-            desc = f"Averages {vs_opp_ppg} vs {context.get('opponent_team_abbr')} ({vs_opp_games} games)"
-            if vs_opp_line is not None:
-                desc += f", {vs_opp_line:.0%} OVER"
-            factors.append({
-                'factor': 'vs_opponent',
-                'direction': 'neutral',
-                'vs_line_pct': vs_opp_line,
+        opponent = context.get('opponent_team_abbr')
+        if vs_opp_ppg is not None and vs_opp_games >= 1 and season_ppg:
+            diff = round(vs_opp_ppg - season_ppg, 1)
+            mag = min(abs(diff) / 6, 1.0)
+            if vs_opp_games == 1:
+                mag *= 0.6
+            direction = 'positive' if diff > 0 else ('negative' if diff < 0 else 'neutral')
+            game_word = 'game' if vs_opp_games == 1 else 'games'
+            desc = f"Averages {vs_opp_ppg} vs {opponent} ({vs_opp_games} {game_word}), season avg {season_ppg}"
+            candidates.append({
+                'id': 'vs_opponent',
+                'factor': f'vs {opponent}',
+                'direction': direction,
+                'magnitude': round(mag, 2),
                 'description': desc
             })
 
-        # Well-rested factor
+        # 4. Rest advantage
         days_rest = context.get('days_rest')
-        if days_rest and days_rest >= 3:
+        if days_rest is not None and days_rest >= 3:
             rested_ppg = splits.get('rested_ppg')
-            rested_vs_line = splits.get('rested_vs_line_pct')
-            if rested_ppg:
-                desc = f"{days_rest} days rest: averages {rested_ppg} when rested"
-                if rested_vs_line is not None:
-                    desc += f", {rested_vs_line:.0%} OVER"
-                factors.append({
-                    'factor': 'well_rested',
-                    'direction': 'positive',
-                    'vs_line_pct': rested_vs_line,
+            if rested_ppg is not None and season_ppg:
+                diff = round(rested_ppg - season_ppg, 1)
+                mag = min(abs(diff) / 5 * 0.8, 1.0)
+                direction = 'positive' if diff > 0 else ('negative' if diff < 0 else 'neutral')
+                desc = f"{days_rest} days rest — averages {rested_ppg} when rested vs {season_ppg} season"
+                candidates.append({
+                    'id': 'rest',
+                    'factor': 'Extra Rest',
+                    'direction': direction,
+                    'magnitude': round(mag, 2),
                     'description': desc
                 })
 
-        # Fatigue factor
-        if fatigue.get('level') == 'tired':
-            factors.append({
-                'factor': 'fatigue',
+        # 5. Fatigue
+        fatigue_level = fatigue.get('level')
+        fatigue_score = fatigue.get('score')
+        if fatigue_level == 'tired' and fatigue_score is not None:
+            mag = min((100 - fatigue_score) / 100 * 0.7, 1.0)
+            desc = f"Elevated fatigue (score {fatigue_score}) — heavier recent workload"
+            candidates.append({
+                'id': 'fatigue',
+                'factor': 'Fatigue',
                 'direction': 'negative',
-                'description': f"Elevated fatigue (score: {fatigue.get('score')})"
+                'magnitude': round(mag, 2),
+                'description': desc
             })
-        elif fatigue.get('level') == 'fresh':
-            factors.append({
-                'factor': 'fresh',
+        elif fatigue_level == 'fresh':
+            mag = 0.3
+            desc = f"Well-rested (fatigue score {fatigue_score}) — light recent workload"
+            candidates.append({
+                'id': 'fatigue',
+                'factor': 'Fresh Legs',
                 'direction': 'positive',
-                'description': f"Well-rested (fatigue score: {fatigue.get('score')})"
+                'magnitude': mag,
+                'description': desc
             })
 
-        # Defense tier factor
+        # 6. Opponent defense
         if defense_tier:
             rank = defense_tier.get('rank')
             tier_label = defense_tier.get('tier_label')
             ppg_allowed = defense_tier.get('ppg_allowed')
-            opponent = context.get('opponent_team_abbr')
 
-            if tier_label in ('elite', 'good'):
-                # Strong defense = negative for scoring
-                direction = 'negative'
-                desc = f"vs {opponent} ({tier_label} defense, #{rank}, allows {ppg_allowed} PPG)"
-            elif tier_label == 'weak':
-                # Weak defense = positive for scoring
-                direction = 'positive'
-                desc = f"vs {opponent} ({tier_label} defense, #{rank}, allows {ppg_allowed} PPG)"
-            else:
-                # Average defense = neutral
-                direction = 'neutral'
-                desc = f"vs {opponent} (#{rank} defense, allows {ppg_allowed} PPG)"
+            if tier_label in ('elite', 'good') or tier_label == 'weak':
+                if tier_label == 'elite':
+                    mag = min((30 - (rank or 15)) / 30, 1.0) * 0.9
+                elif tier_label == 'good':
+                    mag = min((30 - (rank or 15)) / 30, 1.0) * 0.7
+                else:  # weak
+                    mag = min(((rank or 15) - 1) / 30, 1.0) * 0.7
 
-            factors.append({
-                'factor': 'opponent_defense',
+                direction = 'negative' if tier_label in ('elite', 'good') else 'positive'
+                desc = f"vs {opponent} #{rank} defense ({tier_label}, allows {ppg_allowed} PPG)"
+                candidates.append({
+                    'id': 'opponent_defense',
+                    'factor': 'Opponent Defense',
+                    'direction': direction,
+                    'magnitude': round(mag, 2),
+                    'description': desc
+                })
+
+        # 7. Scoring trend (last 5 vs season)
+        last_5_ppg = quick_numbers.get('last_5_ppg')
+        if last_5_ppg is not None and season_ppg is not None:
+            diff = round(last_5_ppg - season_ppg, 1)
+            if abs(diff) >= 2:
+                mag = min(abs(diff) / 6, 1.0)
+                direction = 'positive' if diff > 0 else 'negative'
+                trend_word = 'up' if diff > 0 else 'down'
+                desc = f"Averaging {last_5_ppg} over last 5, {trend_word} {abs(diff)} from his {season_ppg} season mark"
+                candidates.append({
+                    'id': 'scoring_trend',
+                    'factor': 'Scoring Surge' if diff > 0 else 'Scoring Dip',
+                    'direction': direction,
+                    'magnitude': round(mag, 2),
+                    'description': desc
+                })
+
+        # 8. Line vs recent average
+        line = prediction.get('current_points_line') if prediction else None
+        last_10_ppg = quick_numbers.get('last_10_ppg')
+        if line is not None and last_10_ppg is not None:
+            diff = round(line - last_10_ppg, 1)
+            if abs(diff) >= 2:
+                mag = min(abs(diff) / 5 * 0.9, 1.0)
+                direction = 'positive' if diff < 0 else 'negative'  # low line vs avg = positive (easier over)
+                relation = 'below' if diff < 0 else 'above'
+                desc = f"Line of {line} is {abs(diff)} {relation} his last 10 average of {last_10_ppg}"
+                candidates.append({
+                    'id': 'line_vs_avg',
+                    'factor': 'Line Gap',
+                    'direction': direction,
+                    'magnitude': round(mag, 2),
+                    'description': desc
+                })
+
+        # 9. Minutes trend
+        last_5_mpg = quick_numbers.get('last_5_mpg')
+        if last_5_mpg is not None and season_mpg is not None:
+            diff = round(last_5_mpg - season_mpg, 1)
+            if abs(diff) >= 3:
+                mag = min(abs(diff) / 6 * 0.7, 1.0)
+                direction = 'positive' if diff > 0 else 'negative'
+                trend_word = 'up' if diff > 0 else 'down'
+                desc = f"Playing {last_5_mpg} MPG over last 5, {trend_word} {abs(diff)} from {season_mpg} season"
+                candidates.append({
+                    'id': 'minutes_trend',
+                    'factor': 'Minutes Up' if diff > 0 else 'Minutes Down',
+                    'direction': direction,
+                    'magnitude': round(mag, 2),
+                    'description': desc
+                })
+
+        # 10. Streak
+        streak_type = streak.get('type')
+        streak_length = streak.get('length', 0)
+        if streak_type and streak_length >= 3:
+            mag = min(streak_length / 6 * 0.8, 1.0)
+            direction = 'positive' if streak_type == 'over' else 'negative'
+            # Compute over rate from recent_form
+            played_games = [g for g in recent_form if not g.get('is_dnp') and g.get('over_under') in ('OVER', 'UNDER')]
+            over_count = sum(1 for g in played_games if g.get('over_under') == 'OVER')
+            total_ou = len(played_games)
+            over_str = f", {over_count}-of-{total_ou} over rate in last {len(recent_form)}" if total_ou > 0 else ''
+            desc = f"{streak_length} straight {streak_type.upper()}s{over_str}"
+            candidates.append({
+                'id': 'streak',
+                'factor': f'{streak_type.upper()} Streak',
                 'direction': direction,
-                'defense_rank': rank,
-                'defense_tier': tier_label,
-                'ppg_allowed': ppg_allowed,
+                'magnitude': round(mag, 2),
                 'description': desc
             })
 
-        return factors
+        # 11. FG efficiency trend (last 5 vs last 10)
+        played_games = [g for g in recent_form if not g.get('is_dnp')]
+        if len(played_games) >= 5:
+            last_5_games = played_games[:5]
+            last_5_makes = 0
+            last_5_att = 0
+            for g in last_5_games:
+                parsed = self._parse_fg(g.get('fg'))
+                if parsed:
+                    last_5_makes += parsed[0]
+                    last_5_att += parsed[1]
+
+            all_makes = 0
+            all_att = 0
+            for g in played_games:
+                parsed = self._parse_fg(g.get('fg'))
+                if parsed:
+                    all_makes += parsed[0]
+                    all_att += parsed[1]
+
+            if last_5_att >= 20 and all_att >= 20:
+                last_5_pct = round(last_5_makes / last_5_att * 100, 1)
+                all_pct = round(all_makes / all_att * 100, 1)
+                diff = round(last_5_pct - all_pct, 1)
+                if abs(diff) >= 3:
+                    mag = min(abs(diff) / 8 * 0.6, 1.0)
+                    direction = 'positive' if diff > 0 else 'negative'
+                    trend_word = 'up' if diff > 0 else 'down'
+                    desc = f"Shooting {last_5_pct}% over last 5, {trend_word} from {all_pct}% over last {len(played_games)}"
+                    candidates.append({
+                        'id': 'fg_efficiency',
+                        'factor': 'Shooting Hot' if diff > 0 else 'Shooting Cold',
+                        'direction': direction,
+                        'magnitude': round(mag, 2),
+                        'description': desc
+                    })
+
+        # Sort by magnitude descending, return top 4
+        candidates.sort(key=lambda c: c['magnitude'], reverse=True)
+        return candidates[:4]
 
     def _format_prediction(self, prediction: Dict) -> Dict[str, Any]:
         """Format prediction data for output."""
