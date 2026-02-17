@@ -371,7 +371,7 @@ def export_date(
     if 'signal-best-bets' in export_types:
         try:
             exporter = SignalBestBetsExporter()
-            path = exporter.export(target_date)
+            path = exporter.export(target_date, version_id=mat_version_id)
             result['paths']['signal_best_bets'] = path
             logger.info(f"  Signal Best Bets: {path}")
         except Exception as e:

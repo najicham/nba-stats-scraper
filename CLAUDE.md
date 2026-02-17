@@ -596,6 +596,8 @@ consensus_bonus = agreement_base * diversity_mult + quantile_bonus  # max 0.36
 
 **New files:** `ml/signals/cross_model_scorer.py`, `shared/config/cross_model_subsets.py`, `data_processors/publishing/cross_model_subset_materializer.py`
 
+**Pick Provenance (Session 279):** Each best bet now includes `qualifying_subsets` — which Level 1/2 subsets the player-game already appeared in before the aggregator ran. Plus `algorithm_version` for scoring traceability. Phase 1 is observation-only (store, don't score on subset membership). New file: `ml/signals/subset_membership_lookup.py`.
+
 **See:** `docs/08-projects/current/multi-model-best-bets/00-ARCHITECTURE.md`
 
 ## Feature References

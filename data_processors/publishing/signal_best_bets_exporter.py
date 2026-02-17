@@ -12,6 +12,7 @@ Version: 1.0
 Created: 2026-02-14 (Session 254)
 """
 
+import json
 import logging
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -26,6 +27,8 @@ from ml.signals.model_health import BREAKEVEN_HR
 from ml.signals.signal_health import get_signal_health_summary
 from ml.signals.cross_model_scorer import CrossModelScorer
 from ml.signals.pick_angle_builder import build_pick_angles
+from ml.signals.subset_membership_lookup import lookup_qualifying_subsets
+from ml.signals.aggregator import ALGORITHM_VERSION
 from ml.signals.supplemental_data import (
     query_model_health,
     query_predictions_with_supplements,
@@ -124,6 +127,17 @@ class SignalBestBetsExporter(BaseExporter):
         except Exception as e:
             logger.warning(f"Cross-model scoring failed (non-fatal): {e}")
 
+        # Step 5c: Look up qualifying subsets (Session 279 — pick provenance)
+        qual_subsets = {}
+        version_id = kwargs.get('version_id')
+        if version_id:
+            try:
+                qual_subsets = lookup_qualifying_subsets(
+                    self.bq_client, target_date, version_id, PROJECT_ID
+                )
+            except Exception as e:
+                logger.warning(f"Qualifying subsets lookup failed (non-fatal): {e}")
+
         # Step 6: Aggregate to top picks (with combo registry + signal health weighting + consensus)
         combo_registry = load_combo_registry(bq_client=self.bq_client)
         aggregator = BestBetsAggregator(
@@ -131,6 +145,7 @@ class SignalBestBetsExporter(BaseExporter):
             signal_health=signal_health,
             model_id=get_best_bets_model_id(),
             cross_model_factors=cross_model_factors,
+            qualifying_subsets=qual_subsets,
         )
         top_picks = aggregator.aggregate(predictions, signal_results)
 
@@ -169,6 +184,9 @@ class SignalBestBetsExporter(BaseExporter):
                 'feature_diversity': pick.get('feature_set_diversity', 0),
                 'consensus_bonus': pick.get('consensus_bonus', 0),
                 'quantile_under_consensus': pick.get('quantile_consensus_under', False),
+                'qualifying_subsets': pick.get('qualifying_subsets', []),
+                'qualifying_subset_count': pick.get('qualifying_subset_count', 0),
+                'algorithm_version': pick.get('algorithm_version', ALGORITHM_VERSION),
                 'actual': None,
                 'result': None,
             })
@@ -194,17 +212,18 @@ class SignalBestBetsExporter(BaseExporter):
             ],
         }
 
-    def export(self, target_date: str) -> str:
+    def export(self, target_date: str, version_id: str = None) -> str:
         """
         Generate signal best bets, write to BigQuery, and upload to GCS.
 
         Args:
             target_date: Date string in YYYY-MM-DD format
+            version_id: Optional version_id for qualifying subset lookup.
 
         Returns:
             GCS path where file was uploaded
         """
-        json_data = self.generate_json(target_date)
+        json_data = self.generate_json(target_date, version_id=version_id)
 
         # Write picks to BigQuery for grading tracking
         if json_data['picks']:
@@ -283,6 +302,9 @@ class SignalBestBetsExporter(BaseExporter):
                 'consensus_bonus': pick.get('consensus_bonus', 0),
                 'quantile_consensus_under': pick.get('quantile_under_consensus', False),
                 'pick_angles': pick.get('angles', []),
+                'qualifying_subsets': json.dumps(pick.get('qualifying_subsets', [])),
+                'qualifying_subset_count': pick.get('qualifying_subset_count', 0),
+                'algorithm_version': pick.get('algorithm_version', ALGORITHM_VERSION),
                 'created_at': datetime.now(timezone.utc).isoformat(),
             })
 

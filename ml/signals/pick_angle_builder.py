@@ -1,13 +1,16 @@
 """Pick Angle Builder — generates human-readable reasoning for each pick.
 
 Angles explain WHY a pick was selected: confidence context, player tier
-patterns, cross-model consensus, and signal-specific insights.
+patterns, cross-model consensus, subset membership, and signal-specific insights.
 
 Session 278: Initial creation.
+Session 279: Added subset membership angle (qualifying_subsets provenance).
 """
 
 import logging
 from typing import Any, Dict, List
+
+from shared.config.subset_public_names import SUBSET_PUBLIC_NAMES
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +157,25 @@ def _warning_angles(pick: Dict) -> List[str]:
     return angles
 
 
+def _subset_membership_angle(pick: Dict) -> str | None:
+    """Generate angle from qualifying subset membership (Session 279)."""
+    subsets = pick.get('qualifying_subsets', [])
+    if len(subsets) < 2:
+        return None
+
+    # Use public names where available, fall back to subset_id
+    names = []
+    for s in subsets:
+        sid = s.get('subset_id', '')
+        public = SUBSET_PUBLIC_NAMES.get(sid)
+        if public:
+            names.append(public['name'])
+        else:
+            names.append(sid)
+
+    return f"Appears in {len(subsets)} subsets: {', '.join(names)}"
+
+
 def build_pick_angles(
     pick: Dict[str, Any],
     signal_results: List,
@@ -176,21 +198,26 @@ def build_pick_angles(
     if conf_angle:
         angles.append(conf_angle)
 
-    # 2. Direction + player tier
+    # 2. Subset membership (Session 279 — high-value provenance)
+    subset_angle = _subset_membership_angle(pick)
+    if subset_angle:
+        angles.append(subset_angle)
+
+    # 3. Direction + player tier
     tier_angle = _direction_tier_angle(pick)
     if tier_angle:
         angles.append(tier_angle)
 
-    # 3. Cross-model consensus
+    # 4. Cross-model consensus
     consensus = _consensus_angle(pick, cross_model_factors)
     if consensus:
         angles.append(consensus)
 
-    # 4. Signal-specific angles
+    # 5. Signal-specific angles
     sig_angles = _signal_angles(pick, signal_results)
     angles.extend(sig_angles)
 
-    # 5. Warning angles (always last)
+    # 6. Warning angles (always last)
     warn_angles = _warning_angles(pick)
     angles.extend(warn_angles)
 

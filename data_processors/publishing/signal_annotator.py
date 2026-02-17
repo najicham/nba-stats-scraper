@@ -15,6 +15,7 @@ Version: 1.0
 Created: 2026-02-14 (Session 254)
 """
 
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -32,6 +33,8 @@ from ml.signals.model_health import BREAKEVEN_HR
 from ml.signals.signal_health import get_signal_health_summary
 from ml.signals.cross_model_scorer import CrossModelScorer
 from ml.signals.pick_angle_builder import build_pick_angles
+from ml.signals.subset_membership_lookup import lookup_qualifying_subsets
+from ml.signals.aggregator import ALGORITHM_VERSION
 from ml.signals.supplemental_data import (
     query_model_health,
     query_predictions_with_supplements,
@@ -155,6 +158,16 @@ class SignalAnnotator:
         except Exception as e:
             logger.warning(f"Cross-model scoring failed (non-fatal): {e}")
 
+        # 4d. Look up qualifying subsets (Session 279 — pick provenance)
+        qual_subsets = {}
+        if version_id:
+            try:
+                qual_subsets = lookup_qualifying_subsets(
+                    self.bq_client, target_date, version_id, self.project_id
+                )
+            except Exception as e:
+                logger.warning(f"Qualifying subsets lookup failed (non-fatal): {e}")
+
         # 5. Bridge: run aggregator and write Signal Picks subset
         # Note: Health gate removed (Session 270) — always produce signal picks
         signal_picks_count = self._bridge_signal_picks(
@@ -162,6 +175,7 @@ class SignalAnnotator:
             version_id, health_status, combo_registry,
             signal_health=signal_health,
             cross_model_factors=cross_model_factors,
+            qualifying_subsets=qual_subsets,
         )
 
         logger.info(
@@ -212,6 +226,7 @@ class SignalAnnotator:
         combo_registry=None,
         signal_health: Optional[Dict] = None,
         cross_model_factors: Optional[Dict] = None,
+        qualifying_subsets: Optional[Dict] = None,
     ) -> int:
         """Bridge aggregator's top picks into current_subset_picks as Signal Picks subset.
 
@@ -223,6 +238,7 @@ class SignalAnnotator:
             signal_health=signal_health,
             model_id=get_best_bets_model_id(),
             cross_model_factors=cross_model_factors,
+            qualifying_subsets=qualifying_subsets,
         )
         top_picks = aggregator.aggregate(predictions, signal_results_map)
 
@@ -274,6 +290,10 @@ class SignalAnnotator:
                 'model_health_status': health_status,
                 'warning_tags': pick.get('warning_tags', []),
                 'pick_angles': pick.get('pick_angles', []),
+                # Qualifying subsets provenance (Session 279)
+                'qualifying_subsets': json.dumps(pick.get('qualifying_subsets', [])),
+                'qualifying_subset_count': pick.get('qualifying_subset_count', 0),
+                'algorithm_version': pick.get('algorithm_version', ALGORITHM_VERSION),
                 # Quality provenance (not available here, set to None)
                 'feature_quality_score': None,
                 'default_feature_count': None,

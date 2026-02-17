@@ -1,6 +1,6 @@
 # Session 279: Pick Provenance & Hierarchical Layers
 
-**Status:** PLAN — Review and implement
+**Status:** DONE — Implemented and deployed
 **Context:** Sessions 277-278 built 3-layer multi-model best bets + smart filters + pick angles. But the "layers" are actually 3 parallel tracks. This session wires them into a true hierarchy and adds full provenance.
 
 ---

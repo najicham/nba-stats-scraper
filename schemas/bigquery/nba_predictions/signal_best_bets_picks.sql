@@ -48,6 +48,11 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.signal_best_bets_
   -- Pick angles (Session 278)
   pick_angles ARRAY<STRING>,             -- Human-readable pick reasoning
 
+  -- Pick provenance (Session 279)
+  qualifying_subsets STRING,              -- JSON array of {subset_id, system_id} dicts
+  qualifying_subset_count INT64,          -- Number of Level 1/2 subsets this pick appears in
+  algorithm_version STRING,               -- Scoring algorithm version (e.g. 'v279_qualifying_subsets')
+
   -- Outcome (populated after grading)
   actual_points INT64,
   prediction_correct BOOLEAN,

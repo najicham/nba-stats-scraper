@@ -59,6 +59,11 @@ CREATE TABLE IF NOT EXISTS nba_predictions.current_subset_picks (
     warning_tags ARRAY<STRING>,            -- ['contradictory_signals', ...]
     pick_angles ARRAY<STRING>,             -- Human-readable pick reasoning (Session 278)
 
+    -- Pick provenance (Session 279)
+    qualifying_subsets STRING,              -- JSON array of {subset_id, system_id} dicts
+    qualifying_subset_count INT64,          -- Number of Level 1/2 subsets this pick appears in
+    algorithm_version STRING,               -- Scoring algorithm version (e.g. 'v279_qualifying_subsets')
+
     -- Data quality provenance (from prediction at materialization time)
     feature_quality_score FLOAT64,      -- Overall quality 0-100
     default_feature_count INT64,        -- Should be 0 (zero tolerance), tracked for audit

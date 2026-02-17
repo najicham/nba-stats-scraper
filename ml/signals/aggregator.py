@@ -16,8 +16,15 @@ Session 264: COLD model-dependent signals → 0.0x weight.
     - Model-dependent signals (high_edge, edge_spread_optimal, etc.) are
       downstream of model predictions — broken model means broken signals.
     - COLD behavioral signals (minutes_surge, cold_snap, etc.) keep 0.5x.
+
+Session 279: Pick provenance — qualifying_subsets + algorithm_version.
+    - Each scored pick now includes qualifying_subsets (which Level 1/2 subsets
+      the player-game already appeared in) and qualifying_subset_count.
+    - ALGORITHM_VERSION tag for scoring formula traceability.
+    - Phase 1: observation only (store, don't score on subset membership).
 """
 
+import json
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -27,6 +34,9 @@ from ml.signals.signal_health import MODEL_DEPENDENT_SIGNALS
 from shared.config.model_selection import get_min_confidence
 
 logger = logging.getLogger(__name__)
+
+# Bump whenever scoring formula, filters, or combo weights change
+ALGORITHM_VERSION = 'v279_qualifying_subsets'
 
 # Signal health regime → weight multiplier
 HEALTH_MULTIPLIERS = {
@@ -64,6 +74,7 @@ class BestBetsAggregator:
         signal_health: Optional[Dict[str, Dict[str, Any]]] = None,
         model_id: Optional[str] = None,
         cross_model_factors: Optional[Dict[str, Dict[str, Any]]] = None,
+        qualifying_subsets: Optional[Dict[str, List[Dict]]] = None,
     ):
         """Initialize aggregator.
 
@@ -75,6 +86,9 @@ class BestBetsAggregator:
             cross_model_factors: Dict keyed by 'player_lookup::game_id' with
                 consensus factors from CrossModelScorer. If None, no consensus
                 bonus is applied.
+            qualifying_subsets: Dict keyed by 'player_lookup::game_id' with
+                list of Level 1/2 subsets the player already appears in.
+                From subset_membership_lookup. Phase 1: observation only.
         """
         if combo_registry is not None:
             self._registry = combo_registry
@@ -83,6 +97,7 @@ class BestBetsAggregator:
         self._signal_health = signal_health or {}
         self._min_confidence = get_min_confidence(model_id or '')
         self._cross_model_factors = cross_model_factors or {}
+        self._qualifying_subsets = qualifying_subsets or {}
 
     def aggregate(self, predictions: List[Dict],
                   signal_results: Dict[str, List[SignalResult]]) -> List[Dict]:
@@ -185,6 +200,14 @@ class BestBetsAggregator:
 
             composite_score = round(base_score + combo_adjustment + consensus_bonus, 4)
 
+            # Qualifying subsets from Level 1/2 (Session 279)
+            player_subsets = self._qualifying_subsets.get(key, [])
+            # Strip rank_in_subset for JSON storage (keep subset_id + system_id)
+            subsets_for_storage = [
+                {'subset_id': s['subset_id'], 'system_id': s['system_id']}
+                for s in player_subsets
+            ]
+
             scored.append({
                 **pred,
                 'signal_tags': tags,
@@ -199,6 +222,9 @@ class BestBetsAggregator:
                 'consensus_bonus': consensus_bonus,
                 'quantile_consensus_under': quantile_under,
                 'agreeing_model_ids': agreeing_model_ids,
+                'qualifying_subsets': subsets_for_storage,
+                'qualifying_subset_count': len(subsets_for_storage),
+                'algorithm_version': ALGORITHM_VERSION,
             })
 
         # Sort descending by composite score
