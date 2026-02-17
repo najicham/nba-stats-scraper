@@ -109,11 +109,13 @@ class CrossModelSubsetMaterializer:
                     'recommendation': pick['majority_direction'],
                     'confidence_score': pick.get('confidence_score'),
                     'edge': pick.get('representative_edge'),
-                    'composite_score': None,
-                    # Signal context (not applicable for cross-model)
-                    'signal_tags': [],
-                    'signal_count': 0,
-                    'matched_combo_id': None,
+                    'composite_score': pick.get('avg_edge'),
+                    # Cross-model provenance: repurpose signal columns
+                    # signal_tags = list of agreeing model system_ids
+                    # signal_count = number of agreeing models
+                    'signal_tags': pick.get('agreeing_models', []),
+                    'signal_count': pick.get('agreement_count', 0),
+                    'matched_combo_id': f"feature_diversity_{pick.get('feature_set_diversity', 0)}",
                     'combo_classification': None,
                     'combo_hit_rate': None,
                     'model_health_status': None,
