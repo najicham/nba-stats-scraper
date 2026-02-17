@@ -1,7 +1,7 @@
 # Start Your Next Session Here
 
 **Updated:** 2026-02-16 (Session 275 — Signal cleanup + combo registry update)
-**Status:** Signal system optimized (18 signals, 73.9% aggregator HR). Games resume Feb 19. System ready.
+**Status:** Signal system optimized (18 signals, 73.9% aggregator HR). All services deployed at `f4fcf8bd`. Both models BLOCKED — retrain URGENT before Feb 19. Games resume Feb 19.
 
 ---
 
@@ -64,33 +64,46 @@
 
 ## Strategic Priorities
 
+### Priority 0: Retrain Models (URGENT — do during All-Star break)
+Both models BLOCKED. All-Star break (Feb 16-18) is ideal window before Feb 19 games.
+- [ ] V9: 40 days stale, 44.1% 7d HR — `./bin/retrain.sh --promote --train-end 2026-02-12`
+- [ ] V12: 17 days stale, 48.3% 7d HR — `./bin/retrain.sh --family v12_noveg_mae --train-end 2026-02-12`
+- Both must pass governance gates. Walkforward: 14d cadence = 68.8% HR, +31.3% ROI.
+
 ### Priority 1: Feb 19 Readiness (Day-of)
-- Run `/validate-daily` on Feb 19 morning
-- Verify V12 predictions generate (check BEST_BETS_MODEL_ID env var)
-- Monitor first decay-detection Slack alert
-- Check `picks/{date}.json` has Best Bets subset (id=26) with signal tags
-- **Verify signal tags no longer include removed signals** (hot_streak_2, etc.)
+Blocked by: retrain completion + deployment
+- [ ] Run `/validate-daily` on Feb 19 morning
+- [ ] Verify predictions generate for all 10 games
+- [ ] Check signal tags do NOT include removed signals (hot_streak_2, etc.)
+- [ ] Verify `bench_under` appears in pick_signal_tags
+- [ ] Check `picks/{date}.json` has Best Bets subset (id=26) with signal tags
+- [ ] Monitor first decay-detection Slack alert
+- [ ] Verify latest.json gets created
 
-### Priority 2: Post-Break Validation (Feb 19-28)
-- Monitor signal best bets performance daily for first week
-- Validate `bench_under` standalone performance on live data
-- Calibrate INSUFFICIENT_DATA state for V12's lower pick volume
-- Decide: switch BEST_BETS_MODEL_ID from V9 to V12?
+### Priority 2: Post-Break Signal Monitoring (Feb 19-28)
+First week of live data after signal cleanup.
+- [ ] Track aggregator top-5 HR daily (target: 73.9% from backtest)
+- [ ] Validate `bench_under` standalone HR (backtest: 76.9%)
+- [ ] Confirm UNDER signals appear in top-5 picks (new direction coverage)
+- [ ] Check signal tag distribution (no removed signals)
+- [ ] Monitor signal health regime transitions (HOT/COLD/NORMAL)
 
-### Priority 3: Retrain Models (URGENT)
-- V9: 39+ days stale, well below breakeven — `./bin/retrain.sh --promote`
-- V12: 16+ days stale — retrain with updated data
-- Both enabled families need fresh training data through Feb 2026
+### Priority 3: Model Selection Decision (after 1 week)
+- [ ] Decide: switch BEST_BETS_MODEL_ID from V9 to V12?
+- [ ] Compare retrained model HRs on live data
+- [ ] Calibrate INSUFFICIENT_DATA state for V12's lower pick volume
 
-### Priority 4: Signal System Monitoring
-- Re-evaluate WATCH signals after 2+ weeks of live data
-- Consider promoting `self_creator_under` and `volatile_under` if they stabilize above 60%
-- Track whether UNDER signals actually appear in top-5 picks (new direction coverage)
+### Priority 4: Re-evaluate WATCH Signals (after 2+ weeks)
+6 signals in WATCH: self_creator_under (61.8%), volatile_under (60.0%), high_usage_under (58.7%), blowout_recovery (56.9%), minutes_surge (53.7%), dual_agree/model_consensus (45.5%)
+- [ ] Promote to CONDITIONAL if stable above 60%
+- [ ] Remove if consistently below breakeven
+- [ ] dual_agree and model_consensus need more sample (W4 only)
 
-### Priority 5: Optional Enhancements
-- Multi-model aggregation — Route UNDER signals to Q43/Q45 for model-aware scoring
-- `v1/systems/combo-registry.json` API endpoint for combo explanations
-- V12-Q43/Q45 experiments after retrain
+### Priority 5: Multi-Model Aggregation (longer term)
+- [ ] Route UNDER signals to Q43/Q45 for model-aware scoring
+- [ ] Per-family signal profiles (option C from Session 273)
+- [ ] Requires Q43/Q45 retrain first
+- [ ] `v1/systems/combo-registry.json` API endpoint
 
 ### Completed Priorities
 - ~~Signal system OVER bias~~ — **DONE Session 274-275** (6 UNDER signals added)
