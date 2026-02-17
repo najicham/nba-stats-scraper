@@ -47,6 +47,7 @@ class CrossModelScorer:
                 quantile_consensus_under: bool (all 4 quantile models agree UNDER)
                 avg_edge_agreeing: float (avg edge of agreeing models)
                 consensus_bonus: float (pre-computed score adjustment)
+                agreeing_model_ids: list[str] (system_ids of agreeing models)
         """
         predictions = self._query_predictions(bq_client, target_date, project_id)
         if not predictions:
@@ -179,4 +180,5 @@ class CrossModelScorer:
             'quantile_consensus_under': quantile_under,
             'avg_edge_agreeing': round(avg_edge, 2),
             'consensus_bonus': consensus_bonus,
+            'agreeing_model_ids': agreeing,
         }

@@ -13,7 +13,7 @@ Created: 2026-02-14 (Session 254)
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from google.cloud import bigquery
@@ -165,6 +165,7 @@ class SignalBestBetsExporter(BaseExporter):
                 'warnings': pick.get('warning_tags', []),
                 'angles': pick.get('pick_angles', []),
                 'model_agreement': pick.get('model_agreement_count', 0),
+                'agreeing_models': pick.get('agreeing_model_ids', []),
                 'feature_diversity': pick.get('feature_set_diversity', 0),
                 'consensus_bonus': pick.get('consensus_bonus', 0),
                 'quantile_under_consensus': pick.get('quantile_consensus_under', False),
@@ -172,10 +173,14 @@ class SignalBestBetsExporter(BaseExporter):
                 'result': None,
             })
 
+        # Step 8: Get best_bets record (season/month/week HR)
+        record = self._get_best_bets_record(target_date)
+
         return {
             'date': target_date,
             'generated_at': self.get_generated_at(),
             'min_signal_count': BestBetsAggregator.MIN_SIGNAL_COUNT,
+            'record': record,
             'model_health': {
                 'status': health_status,
                 'hit_rate_7d': hr_7d,
@@ -273,6 +278,7 @@ class SignalBestBetsExporter(BaseExporter):
                 'warning_tags': pick.get('warnings', []),
                 'rank': pick.get('rank'),
                 'model_agreement_count': pick.get('model_agreement', 0),
+                'agreeing_model_ids': pick.get('agreeing_models', []),
                 'feature_set_diversity': pick.get('feature_diversity', 0),
                 'consensus_bonus': pick.get('consensus_bonus', 0),
                 'quantile_consensus_under': pick.get('quantile_under_consensus', False),
@@ -301,3 +307,89 @@ class SignalBestBetsExporter(BaseExporter):
                 f"Failed to write signal best bets to BigQuery: {e}",
                 exc_info=True,
             )
+
+    def _get_best_bets_record(self, target_date: str) -> Dict[str, Any]:
+        """Query W-L record for the best_bets subset across season/month/week.
+
+        Uses the same v_dynamic_subset_performance view as AllSubsetsPicksExporter
+        but filtered to subset_id='best_bets' only.
+
+        Returns:
+            Dict with season/month/week windows, each having wins/losses/pct.
+        """
+        empty_window = {'wins': 0, 'losses': 0, 'pct': 0.0}
+        empty_record = {
+            'season': empty_window.copy(),
+            'month': empty_window.copy(),
+            'week': empty_window.copy(),
+        }
+
+        target = date.fromisoformat(target_date) if isinstance(target_date, str) else target_date
+
+        # Calendar-aligned windows (same logic as AllSubsetsPicksExporter)
+        season_start_year = target.year if target.month >= 11 else target.year - 1
+        season_start = date(season_start_year, 11, 1)
+        month_start = target.replace(day=1)
+        week_start = target - timedelta(days=target.weekday())
+
+        query = """
+        WITH base AS (
+          SELECT game_date, wins, graded_picks
+          FROM `nba_predictions.v_dynamic_subset_performance`
+          WHERE subset_id = 'best_bets'
+            AND game_date >= @season_start
+            AND game_date < @end_date
+        )
+        SELECT
+          SUM(wins) as season_wins,
+          SUM(graded_picks - wins) as season_losses,
+          ROUND(100.0 * SUM(wins) / NULLIF(SUM(graded_picks), 0), 1) as season_pct,
+          SUM(CASE WHEN game_date >= @month_start THEN wins ELSE 0 END) as month_wins,
+          SUM(CASE WHEN game_date >= @month_start THEN graded_picks - wins ELSE 0 END) as month_losses,
+          ROUND(100.0 *
+            SUM(CASE WHEN game_date >= @month_start THEN wins ELSE 0 END) /
+            NULLIF(SUM(CASE WHEN game_date >= @month_start THEN graded_picks ELSE 0 END), 0),
+          1) as month_pct,
+          SUM(CASE WHEN game_date >= @week_start THEN wins ELSE 0 END) as week_wins,
+          SUM(CASE WHEN game_date >= @week_start THEN graded_picks - wins ELSE 0 END) as week_losses,
+          ROUND(100.0 *
+            SUM(CASE WHEN game_date >= @week_start THEN wins ELSE 0 END) /
+            NULLIF(SUM(CASE WHEN game_date >= @week_start THEN graded_picks ELSE 0 END), 0),
+          1) as week_pct
+        FROM base
+        """
+
+        params = [
+            bigquery.ScalarQueryParameter('season_start', 'DATE', season_start.isoformat()),
+            bigquery.ScalarQueryParameter('month_start', 'DATE', month_start.isoformat()),
+            bigquery.ScalarQueryParameter('week_start', 'DATE', week_start.isoformat()),
+            bigquery.ScalarQueryParameter('end_date', 'DATE', target_date),
+        ]
+
+        try:
+            results = self.query_to_list(query, params)
+        except Exception as e:
+            logger.warning(f"Failed to query best_bets record: {e}")
+            return empty_record
+
+        if not results or results[0].get('season_wins') is None:
+            return empty_record
+
+        r = results[0]
+        return {
+            'season': {
+                'wins': int(r.get('season_wins') or 0),
+                'losses': int(r.get('season_losses') or 0),
+                'pct': float(r.get('season_pct') or 0),
+            },
+            'month': {
+                'wins': int(r.get('month_wins') or 0),
+                'losses': int(r.get('month_losses') or 0),
+                'pct': float(r.get('month_pct') or 0),
+            },
+            'week': {
+                'wins': int(r.get('week_wins') or 0),
+                'losses': int(r.get('week_losses') or 0),
+                'pct': float(r.get('week_pct') or 0),
+            },
+        }

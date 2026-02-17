@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.signal_best_bets_
   feature_set_diversity INT64,           -- Feature set diversity (1=same, 2=V9+V12)
   consensus_bonus NUMERIC(5, 4),         -- Scoring adjustment from cross-model consensus
   quantile_consensus_under BOOLEAN,      -- All 4 quantile models agree UNDER
+  agreeing_model_ids ARRAY<STRING>,      -- System IDs of models that agree on direction
 
   -- Pick angles (Session 278)
   pick_angles ARRAY<STRING>,             -- Human-readable pick reasoning

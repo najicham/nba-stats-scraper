@@ -181,6 +181,8 @@ class BestBetsAggregator:
             if xm_factors and pred.get('recommendation') == xm_factors.get('majority_direction'):
                 consensus_bonus = xm_factors.get('consensus_bonus', 0)
 
+            agreeing_model_ids = xm_factors.get('agreeing_model_ids', [])
+
             composite_score = round(base_score + combo_adjustment + consensus_bonus, 4)
 
             scored.append({
@@ -196,6 +198,7 @@ class BestBetsAggregator:
                 'feature_set_diversity': feature_diversity,
                 'consensus_bonus': consensus_bonus,
                 'quantile_consensus_under': quantile_under,
+                'agreeing_model_ids': agreeing_model_ids,
             })
 
         # Sort descending by composite score
