@@ -31,6 +31,7 @@ from ml.signals.combo_registry import load_combo_registry, match_combo
 from ml.signals.model_health import BREAKEVEN_HR
 from ml.signals.signal_health import get_signal_health_summary
 from ml.signals.cross_model_scorer import CrossModelScorer
+from ml.signals.pick_angle_builder import build_pick_angles
 from ml.signals.supplemental_data import (
     query_model_health,
     query_predictions_with_supplements,
@@ -229,6 +230,14 @@ class SignalAnnotator:
             logger.info(f"No signal picks to bridge for {target_date}")
             return 0
 
+        # Build pick angles (Session 278)
+        for pick in top_picks:
+            key = f"{pick['player_lookup']}::{pick['game_id']}"
+            xm = cross_model_factors.get(key, {}) if cross_model_factors else {}
+            pick['pick_angles'] = build_pick_angles(
+                pick, signal_results_map.get(key, []), xm
+            )
+
         public = get_public_name(SIGNAL_PICKS_SUBSET_ID)
         computed_at = datetime.now(timezone.utc)
 
@@ -264,6 +273,7 @@ class SignalAnnotator:
                 'combo_hit_rate': pick.get('combo_hit_rate'),
                 'model_health_status': health_status,
                 'warning_tags': pick.get('warning_tags', []),
+                'pick_angles': pick.get('pick_angles', []),
                 # Quality provenance (not available here, set to None)
                 'feature_quality_score': None,
                 'default_feature_count': None,

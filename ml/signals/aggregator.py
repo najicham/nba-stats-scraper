@@ -49,6 +49,9 @@ class BestBetsAggregator:
     Filters:
         - MIN_SIGNAL_COUNT = 2 (eliminates 1-signal picks)
         - Confidence floor: model-specific (V12: >= 0.90, excludes 41.7% HR tier)
+        - Feature quality floor: quality < 85 → skip (24.0% HR)
+        - Bench UNDER block: UNDER + line < 12 → skip (35.1% HR)
+        - Relative edge cap: |edge|/line >= 30% → skip (49.7% HR noise)
         - ANTI_PATTERN combos are blocked entirely
     """
 
@@ -120,6 +123,24 @@ class BestBetsAggregator:
                 confidence = pred.get('confidence_score') or 0
                 if confidence < self._min_confidence:
                     continue
+
+            # Smart filter: Feature quality floor (Session 278)
+            # Picks with quality < 85 have 24.0% HR — worse than random
+            quality = pred.get('feature_quality_score') or 0
+            if quality > 0 and quality < 85:
+                continue
+
+            # Smart filter: Bench UNDER block (Session 278)
+            # Bench UNDER (line < 12) = 35.1% HR — catastrophic
+            line_val = pred.get('line_value') or 0
+            if pred.get('recommendation') == 'UNDER' and line_val > 0 and line_val < 12:
+                continue
+
+            # Smart filter: Relative edge cap (Session 278)
+            # |edge|/line >= 30% = 49.7% HR — noise from low-line players
+            edge_val = abs(pred.get('edge') or 0)
+            if line_val > 0 and edge_val / line_val >= 0.30:
+                continue
 
             tags = [r.source_tag for r in qualifying]
             warning_tags: List[str] = []

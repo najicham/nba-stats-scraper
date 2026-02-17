@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS nba_predictions.current_subset_picks (
     combo_hit_rate FLOAT64,                -- Historical hit rate of matched combo
     model_health_status STRING,            -- 'healthy', 'watch', 'blocked' at pick time
     warning_tags ARRAY<STRING>,            -- ['contradictory_signals', ...]
+    pick_angles ARRAY<STRING>,             -- Human-readable pick reasoning (Session 278)
 
     -- Data quality provenance (from prediction at materialization time)
     feature_quality_score FLOAT64,      -- Overall quality 0-100

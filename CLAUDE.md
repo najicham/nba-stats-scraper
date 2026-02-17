@@ -534,6 +534,13 @@ Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
 
 **18 active signals** (10 removed Session 275). Aggregator requires MIN_SIGNAL_COUNT=2 (model_health always fires, so effectively 1 real signal minimum).
 
+**Smart Filters (Session 278):** 3 filters in aggregator BEFORE combo matching:
+1. Feature quality floor: `quality < 85` → skip (24.0% HR)
+2. Bench UNDER block: `UNDER + line < 12` → skip (35.1% HR)
+3. Relative edge cap: `|edge|/line >= 30%` → skip (49.7% HR noise)
+
+**Pick Angles (Session 278):** Each pick includes `pick_angles` — human-readable reasoning (confidence tier, player tier, cross-model consensus, signal-specific). Max 5 angles per pick. See `ml/signals/pick_angle_builder.py`.
+
 ### Active Signals (18)
 
 | Signal | Category | Direction | AVG HR | Status | Notes |

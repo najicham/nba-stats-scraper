@@ -25,6 +25,7 @@ from ml.signals.combo_registry import load_combo_registry
 from ml.signals.model_health import BREAKEVEN_HR
 from ml.signals.signal_health import get_signal_health_summary
 from ml.signals.cross_model_scorer import CrossModelScorer
+from ml.signals.pick_angle_builder import build_pick_angles
 from ml.signals.supplemental_data import (
     query_model_health,
     query_predictions_with_supplements,
@@ -133,6 +134,13 @@ class SignalBestBetsExporter(BaseExporter):
         )
         top_picks = aggregator.aggregate(predictions, signal_results)
 
+        # Step 6b: Build pick angles (Session 278)
+        for pick in top_picks:
+            key = f"{pick['player_lookup']}::{pick['game_id']}"
+            pick['pick_angles'] = build_pick_angles(
+                pick, signal_results.get(key, []), cross_model_factors.get(key, {})
+            )
+
         # Step 7: Format for JSON
         picks_json = []
         for pick in top_picks:
@@ -155,6 +163,7 @@ class SignalBestBetsExporter(BaseExporter):
                 'combo_classification': pick.get('combo_classification'),
                 'combo_hit_rate': pick.get('combo_hit_rate'),
                 'warnings': pick.get('warning_tags', []),
+                'angles': pick.get('pick_angles', []),
                 'model_agreement': pick.get('model_agreement_count', 0),
                 'feature_diversity': pick.get('feature_set_diversity', 0),
                 'consensus_bonus': pick.get('consensus_bonus', 0),
@@ -267,6 +276,7 @@ class SignalBestBetsExporter(BaseExporter):
                 'feature_set_diversity': pick.get('feature_diversity', 0),
                 'consensus_bonus': pick.get('consensus_bonus', 0),
                 'quantile_consensus_under': pick.get('quantile_under_consensus', False),
+                'pick_angles': pick.get('angles', []),
                 'created_at': datetime.now(timezone.utc).isoformat(),
             })
 

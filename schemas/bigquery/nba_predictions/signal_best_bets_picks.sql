@@ -44,6 +44,9 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.signal_best_bets_
   consensus_bonus NUMERIC(5, 4),         -- Scoring adjustment from cross-model consensus
   quantile_consensus_under BOOLEAN,      -- All 4 quantile models agree UNDER
 
+  -- Pick angles (Session 278)
+  pick_angles ARRAY<STRING>,             -- Human-readable pick reasoning
+
   -- Outcome (populated after grading)
   actual_points INT64,
   prediction_correct BOOLEAN,
