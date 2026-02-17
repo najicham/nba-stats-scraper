@@ -58,6 +58,13 @@ def build_default_registry() -> SignalRegistry:
     # TripleStackSignal REMOVED — meta-signal with broken logic (Session 256)
     from ml.signals.scoring_acceleration import ScoringAccelerationSignal
 
+    # Market-pattern UNDER signals (Session 274)
+    from ml.signals.bench_under import BenchUnderSignal
+    from ml.signals.high_usage_under import HighUsageUnderSignal
+    from ml.signals.volatile_under import VolatileUnderSignal
+    from ml.signals.high_ft_under import HighFTUnderSignal
+    from ml.signals.self_creator_under import SelfCreatorUnderSignal
+
     registry = SignalRegistry()
     registry.register(ModelHealthSignal())
     registry.register(HighEdgeSignal())
@@ -91,5 +98,12 @@ def build_default_registry() -> SignalRegistry:
     registry.register(FGColdContinuationSignal())
     # TripleStackSignal removed (meta-signal, broken logic)
     registry.register(ScoringAccelerationSignal())
+
+    # Market-pattern UNDER signals (Session 274)
+    registry.register(BenchUnderSignal())
+    registry.register(HighUsageUnderSignal())
+    registry.register(VolatileUnderSignal())
+    registry.register(HighFTUnderSignal())
+    registry.register(SelfCreatorUnderSignal())
 
     return registry

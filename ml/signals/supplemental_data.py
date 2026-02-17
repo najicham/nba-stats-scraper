@@ -120,7 +120,35 @@ def query_predictions_with_supplements(
                 ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING) AS minutes_avg_last_3,
         AVG(minutes_played)
           OVER (PARTITION BY player_lookup ORDER BY game_date
-                ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS minutes_avg_season
+                ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS minutes_avg_season,
+        -- FG% rolling stats (for fg_cold_continuation signal)
+        SAFE_DIVIDE(fg_makes, NULLIF(fg_attempts, 0)) AS fg_pct,
+        AVG(SAFE_DIVIDE(fg_makes, NULLIF(fg_attempts, 0)))
+          OVER (PARTITION BY player_lookup ORDER BY game_date
+                ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING) AS fg_pct_last_3,
+        AVG(SAFE_DIVIDE(fg_makes, NULLIF(fg_attempts, 0)))
+          OVER (PARTITION BY player_lookup ORDER BY game_date
+                ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS fg_pct_season,
+        STDDEV(SAFE_DIVIDE(fg_makes, NULLIF(fg_attempts, 0)))
+          OVER (PARTITION BY player_lookup ORDER BY game_date
+                ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS fg_pct_std,
+        -- Player profile stats (for market-pattern UNDER signals, Session 274)
+        starter_flag,
+        AVG(CAST(points AS FLOAT64))
+          OVER (PARTITION BY player_lookup ORDER BY game_date
+                ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS points_avg_season,
+        AVG(usage_rate)
+          OVER (PARTITION BY player_lookup ORDER BY game_date
+                ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS usage_avg_season,
+        AVG(CAST(ft_attempts AS FLOAT64))
+          OVER (PARTITION BY player_lookup ORDER BY game_date
+                ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS fta_season,
+        AVG(CAST(unassisted_fg_makes AS FLOAT64))
+          OVER (PARTITION BY player_lookup ORDER BY game_date
+                ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS unassisted_fg_season,
+        STDDEV(CAST(points AS FLOAT64))
+          OVER (PARTITION BY player_lookup ORDER BY game_date
+                ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING) AS points_std_last_5
       FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
       WHERE game_date >= '2025-10-22'
         AND minutes_played > 0
@@ -136,11 +164,16 @@ def query_predictions_with_supplements(
       ) = 1
     ),
 
-    -- Streak data: prior actual over/under outcomes (for cold_snap signal)
+    -- Streak data: prior actual over/under outcomes + prediction correctness
     streak_data AS (
       SELECT
         player_lookup,
         game_date,
+        LAG(CAST(prediction_correct AS INT64), 1) OVER w AS prev_correct_1,
+        LAG(CAST(prediction_correct AS INT64), 2) OVER w AS prev_correct_2,
+        LAG(CAST(prediction_correct AS INT64), 3) OVER w AS prev_correct_3,
+        LAG(CAST(prediction_correct AS INT64), 4) OVER w AS prev_correct_4,
+        LAG(CAST(prediction_correct AS INT64), 5) OVER w AS prev_correct_5,
         LAG(CASE WHEN actual_points > line_value THEN 1 ELSE 0 END, 1) OVER w AS prev_over_1,
         LAG(CASE WHEN actual_points > line_value THEN 1 ELSE 0 END, 2) OVER w AS prev_over_2,
         LAG(CASE WHEN actual_points > line_value THEN 1 ELSE 0 END, 3) OVER w AS prev_over_3,
@@ -183,7 +216,18 @@ def query_predictions_with_supplements(
       ls.minutes_avg_last_3,
       ls.minutes_avg_season,
       ls.minutes_played AS prev_minutes,
+      ls.fg_pct_last_3,
+      ls.fg_pct_season,
+      ls.fg_pct_std,
+      ls.starter_flag,
+      ls.points_avg_season,
+      ls.usage_avg_season,
+      ls.fta_season,
+      ls.unassisted_fg_season,
+      ls.points_std_last_5,
       DATE_DIFF(@target_date, ls.game_date, DAY) AS rest_days,
+      lsk.prev_correct_1, lsk.prev_correct_2, lsk.prev_correct_3,
+      lsk.prev_correct_4, lsk.prev_correct_5,
       lsk.prev_over_1, lsk.prev_over_2, lsk.prev_over_3,
       lsk.prev_over_4, lsk.prev_over_5
     FROM preds p
@@ -231,6 +275,7 @@ def query_predictions_with_supplements(
             'edge': row_dict['edge'],
             'confidence_score': row_dict['confidence_score'],
             'is_home': is_home,
+            'rest_days': row_dict.get('rest_days'),
         }
         predictions.append(pred)
 
@@ -255,17 +300,57 @@ def query_predictions_with_supplements(
                 'minutes_avg_season': float(row_dict.get('minutes_avg_season') or 0),
             }
 
-        # Streak stats (for cold_snap)
+        # Streak stats (for cold_snap, cold_continuation_2)
         if row_dict.get('prev_over_1') is not None:
+            prev_correct = [
+                row_dict.get('prev_correct_1'),
+                row_dict.get('prev_correct_2'),
+                row_dict.get('prev_correct_3'),
+                row_dict.get('prev_correct_4'),
+                row_dict.get('prev_correct_5'),
+            ]
+            prev_over = [
+                row_dict.get('prev_over_1'),
+                row_dict.get('prev_over_2'),
+                row_dict.get('prev_over_3'),
+                row_dict.get('prev_over_4'),
+                row_dict.get('prev_over_5'),
+            ]
+
+            # Calculate consecutive beats/misses from most recent backwards
+            consecutive_beats = 0
+            for val in prev_correct:
+                if val == 1:
+                    consecutive_beats += 1
+                else:
+                    break
+
+            consecutive_misses = 0
+            last_miss_direction = None
+            for i, val in enumerate(prev_correct):
+                if val == 0:
+                    consecutive_misses += 1
+                    if i < len(prev_over) and prev_over[i] is not None:
+                        last_miss_direction = 'OVER' if prev_over[i] == 1 else 'UNDER'
+                else:
+                    break
+
             supp['streak_stats'] = {
-                'prev_correct': [],  # not available in production query
-                'prev_over': [
-                    row_dict.get('prev_over_1'),
-                    row_dict.get('prev_over_2'),
-                    row_dict.get('prev_over_3'),
-                    row_dict.get('prev_over_4'),
-                    row_dict.get('prev_over_5'),
-                ],
+                'prev_correct': prev_correct,
+                'prev_over': prev_over,
+                'consecutive_line_beats': consecutive_beats,
+                'consecutive_line_misses': consecutive_misses,
+                'last_miss_direction': last_miss_direction,
+            }
+
+            # Also provide streak_data in backtest format for cold_continuation_2
+            player_key = f"{row_dict['player_lookup']}::{row_dict['game_date']}"
+            supp['streak_data'] = {
+                player_key: {
+                    'consecutive_line_beats': consecutive_beats,
+                    'consecutive_line_misses': consecutive_misses,
+                    'last_miss_direction': last_miss_direction,
+                }
             }
 
         # Recovery stats (for blowout_recovery)
@@ -276,11 +361,37 @@ def query_predictions_with_supplements(
                 'minutes_avg_season': float(row_dict['minutes_avg_season']),
             }
 
-        # Rest stats (for future signals)
+        # FG% stats (for fg_cold_continuation)
+        if row_dict.get('fg_pct_last_3') is not None:
+            supp['fg_stats'] = {
+                'fg_pct_last_3': float(row_dict['fg_pct_last_3']),
+                'fg_pct_season': float(row_dict.get('fg_pct_season') or 0),
+                'fg_pct_std': float(row_dict.get('fg_pct_std') or 0),
+            }
+
+        # Rest stats (for b2b_fatigue_under)
         if row_dict.get('rest_days') is not None:
             supp['rest_stats'] = {
                 'rest_days': int(row_dict['rest_days']),
             }
+
+        # Player profile stats (for market-pattern UNDER signals, Session 274)
+        supp['player_profile'] = {
+            'starter_flag': row_dict.get('starter_flag'),
+            'points_avg_season': float(row_dict.get('points_avg_season') or 0),
+            'usage_avg_season': float(row_dict.get('usage_avg_season') or 0),
+            'fta_season': float(row_dict.get('fta_season') or 0),
+            'unassisted_fg_season': float(row_dict.get('unassisted_fg_season') or 0),
+            'points_std_last_5': float(row_dict.get('points_std_last_5') or 0),
+        }
+
+        # Copy player profile fields to prediction dict for signals that check pred directly
+        pred['starter_flag'] = row_dict.get('starter_flag')
+        pred['points_avg_season'] = float(row_dict.get('points_avg_season') or 0)
+        pred['usage_avg_season'] = float(row_dict.get('usage_avg_season') or 0)
+        pred['fta_season'] = float(row_dict.get('fta_season') or 0)
+        pred['unassisted_fg_season'] = float(row_dict.get('unassisted_fg_season') or 0)
+        pred['points_std_last_5'] = float(row_dict.get('points_std_last_5') or 0)
 
         supplemental_map[row_dict['player_lookup']] = supp
 

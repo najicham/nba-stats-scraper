@@ -14,9 +14,11 @@ class B2BFatigueUnderSignal(BaseSignal):
                  features: Optional[Dict] = None,
                  supplemental: Optional[Dict] = None) -> SignalResult:
 
-        # Must be back-to-back (0 rest days)
+        # Must be back-to-back (1 rest day = DATE_DIFF of consecutive days)
         rest_days = prediction.get('rest_days')
-        if rest_days is None or rest_days != 0:
+        if rest_days is None and supplemental:
+            rest_days = (supplemental.get('rest_stats') or {}).get('rest_days')
+        if rest_days is None or rest_days != 1:
             return self._no_qualify()
 
         # Must be UNDER recommendation
@@ -47,7 +49,7 @@ class B2BFatigueUnderSignal(BaseSignal):
             source_tag=self.tag,
             metadata={
                 'minutes_avg_season': round(minutes_avg, 1),
-                'rest_days': 0,
+                'rest_days': 1,
                 'player_tier': tier
             }
         )

@@ -72,6 +72,7 @@ python bin/monitoring/grading_gap_detector.py        # Grading gaps (auto: daily
 - **Meta-monitoring** (Session 266): `daily-health-check` CF verifies `model_performance_daily` and `signal_health_daily` freshness + `decay-detection` scheduler job recency
 - **Directional concentration** (Session 266): `validate-daily` Phase 0.57 flags when >80% of edge 3+ picks are in same direction (OVER/UNDER)
 - **Model performance auto-compute** (Session 263): `post_grading_export` CF computes model_performance_daily after grading (same non-blocking pattern as signal_health)
+- **Retrain reminders** (Session 272): `retrain-reminder` CF runs weekly Mon 9 AM ET, sends Slack + SMS when model >= 10 days old. Urgency: ROUTINE (10-14d), OVERDUE (15-21d), URGENT (22d+). Setup: `./bin/infrastructure/setup_retrain_reminder.sh`
 
 **Slack:** `#deployment-alerts` (2h), `#canary-alerts` (30min), `#nba-alerts` (self-healing, grading gaps, decay alerts)
 
@@ -166,14 +167,19 @@ nba-stats-scraper/
 
 **IMPORTANT:** After updating `manifest.json` in GCS, run `./bin/model-registry.sh sync` to update BigQuery registry.
 
-### Monthly Retraining
+### Biweekly Retraining (14-day cadence)
+
+Walkforward results: 14d cadence = 68.8% HR, +31.3% ROI. Each day of delay costs ~$30-50.
+
 ```bash
-PYTHONPATH=. python ml/experiments/quick_retrain.py \
-    --name "V9_MAR_RETRAIN" \
-    --train-start 2025-11-02 \
-    --train-end 2026-02-28
+./bin/retrain.sh --promote              # Full retrain + promote pipeline
+./bin/retrain.sh --dry-run              # Preview what would happen
+./bin/retrain.sh --promote --eval-days 14  # Custom eval window
 # Script outputs ALL GATES PASSED/FAILED — do NOT deploy without passing
 ```
+
+**Automated reminders:** `retrain-reminder` CF runs weekly (Monday 9 AM ET), sends Slack + SMS when model >= 10 days old.
+Setup: `./bin/infrastructure/setup_retrain_reminder.sh`
 
 ### Parallel Models & Quantile Discovery
 
@@ -252,6 +258,7 @@ PYTHONPATH=. python ml/experiments/breakout_experiment_runner.py --name "PROD_V2
 | grading-readiness-monitor | HTTP (Cloud Scheduler) | Post-game grading readiness monitor |
 | post-grading-export | Pub/Sub: `nba-grading-complete` | Re-exports picks with actuals + computes model_performance_daily |
 | decay-detection | HTTP (Cloud Scheduler 11 AM ET) | Model decay monitoring + Slack alerts (Session 262-263) |
+| retrain-reminder | HTTP (Cloud Scheduler Mon 9 AM ET) | Biweekly retrain Slack + SMS reminders (Session 272) |
 
 phase2-to-phase3-orchestrator REMOVED (Session 205).
 

@@ -159,12 +159,37 @@ game_stats AS (
     AVG(minutes_played)
       OVER (PARTITION BY player_lookup ORDER BY game_date
             ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS minutes_avg_season,
+    -- FG% rolling (exclude current game: 1 PRECEDING)
+    SAFE_DIVIDE(fg_makes, NULLIF(fg_attempts, 0)) AS fg_pct,
+    AVG(SAFE_DIVIDE(fg_makes, NULLIF(fg_attempts, 0)))
+      OVER (PARTITION BY player_lookup ORDER BY game_date
+            ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING) AS fg_pct_last_3,
+    AVG(SAFE_DIVIDE(fg_makes, NULLIF(fg_attempts, 0)))
+      OVER (PARTITION BY player_lookup ORDER BY game_date
+            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS fg_pct_season,
+    STDDEV(SAFE_DIVIDE(fg_makes, NULLIF(fg_attempts, 0)))
+      OVER (PARTITION BY player_lookup ORDER BY game_date
+            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS fg_pct_std,
     -- Rest days and previous game minutes (for rest_advantage, blowout_recovery)
     DATE_DIFF(game_date,
       LAG(game_date, 1) OVER (PARTITION BY player_lookup ORDER BY game_date),
       DAY) AS rest_days,
     LAG(minutes_played, 1)
-      OVER (PARTITION BY player_lookup ORDER BY game_date) AS prev_minutes
+      OVER (PARTITION BY player_lookup ORDER BY game_date) AS prev_minutes,
+    -- Player profile stats (for market-pattern UNDER signals, Session 274)
+    starter_flag,
+    AVG(usage_rate)
+      OVER (PARTITION BY player_lookup ORDER BY game_date
+            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS usage_avg_season,
+    AVG(CAST(ft_attempts AS FLOAT64))
+      OVER (PARTITION BY player_lookup ORDER BY game_date
+            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS fta_season,
+    AVG(CAST(unassisted_fg_makes AS FLOAT64))
+      OVER (PARTITION BY player_lookup ORDER BY game_date
+            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS unassisted_fg_season,
+    STDDEV(CAST(points AS FLOAT64))
+      OVER (PARTITION BY player_lookup ORDER BY game_date
+            ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING) AS points_std_last_5
   FROM `nba-props-platform.nba_analytics.player_game_summary`
   WHERE game_date >= '2025-10-22'
     AND minutes_played > 0
@@ -196,8 +221,16 @@ SELECT
   gs.three_pa_per_game,
   gs.minutes_avg_last_3,
   gs.minutes_avg_season,
+  gs.fg_pct_last_3,
+  gs.fg_pct_season,
+  gs.fg_pct_std,
   gs.rest_days,
   gs.prev_minutes,
+  gs.starter_flag,
+  gs.usage_avg_season,
+  gs.fta_season,
+  gs.unassisted_fg_season,
+  gs.points_std_last_5,
   sd.prev_correct_1, sd.prev_correct_2, sd.prev_correct_3,
   sd.prev_correct_4, sd.prev_correct_5,
   sd.prev_over_1, sd.prev_over_2, sd.prev_over_3,
@@ -259,6 +292,11 @@ def evaluate_signals(rows: List[Dict], registry) -> Tuple[
             'rest_days': row.get('rest_days'),  # For context-aware signals
             'player_tier': row.get('player_tier', 'unknown'),  # For context-aware signals
             'points_avg_season': float(row.get('points_avg_season') or 0),
+            'starter_flag': row.get('starter_flag'),
+            'usage_avg_season': float(row.get('usage_avg_season') or 0),
+            'fta_season': float(row.get('fta_season') or 0),
+            'unassisted_fg_season': float(row.get('unassisted_fg_season') or 0),
+            'points_std_last_5': float(row.get('points_std_last_5') or 0),
         }
         predictions.append(pred)
 
@@ -300,6 +338,14 @@ def evaluate_signals(rows: List[Dict], registry) -> Tuple[
             supplemental['pace_thresholds'] = {
                 'opp_pace_top5': float(row['opp_pace_top5']),
                 'team_pace_bottom15': float(row['team_pace_bottom15']),
+            }
+
+        # FG% stats (for fg_cold_continuation)
+        if row.get('fg_pct_last_3') is not None:
+            supplemental['fg_stats'] = {
+                'fg_pct_last_3': float(row['fg_pct_last_3']),
+                'fg_pct_season': float(row['fg_pct_season'] or 0),
+                'fg_pct_std': float(row['fg_pct_std'] or 0),
             }
 
         # Streak stats (for hot_streak, cold_snap, cold_continuation)
@@ -360,6 +406,16 @@ def evaluate_signals(rows: List[Dict], registry) -> Tuple[
             supplemental['rest_stats'] = {
                 'rest_days': int(row['rest_days']),
             }
+
+        # Player profile stats (for market-pattern UNDER signals, Session 274)
+        supplemental['player_profile'] = {
+            'starter_flag': row.get('starter_flag'),
+            'points_avg_season': float(row.get('points_avg_season') or 0),
+            'usage_avg_season': float(row.get('usage_avg_season') or 0),
+            'fta_season': float(row.get('fta_season') or 0),
+            'unassisted_fg_season': float(row.get('unassisted_fg_season') or 0),
+            'points_std_last_5': float(row.get('points_std_last_5') or 0),
+        }
 
         # Recovery stats (for blowout_recovery)
         if (row.get('prev_minutes') is not None

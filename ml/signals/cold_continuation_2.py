@@ -14,11 +14,21 @@ class ColdContinuation2Signal(BaseSignal):
                  features: Optional[Dict] = None,
                  supplemental: Optional[Dict] = None) -> SignalResult:
 
-        if not supplemental or 'streak_data' not in supplemental:
+        if not supplemental:
             return self._no_qualify()
 
-        player_key = f"{prediction['player_lookup']}::{prediction['game_date']}"
-        streak_info = supplemental['streak_data'].get(player_key, {})
+        # Try backtest format first: streak_data[player_key]
+        streak_info = {}
+        if 'streak_data' in supplemental:
+            player_key = f"{prediction['player_lookup']}::{prediction['game_date']}"
+            streak_info = supplemental['streak_data'].get(player_key, {})
+
+        # Fallback: production flat streak_stats format
+        if not streak_info and 'streak_stats' in supplemental:
+            streak_info = supplemental['streak_stats']
+
+        if not streak_info:
+            return self._no_qualify()
 
         consecutive_misses = streak_info.get('consecutive_line_misses', 0)
         last_direction = streak_info.get('last_miss_direction', None)  # 'UNDER' or 'OVER'
