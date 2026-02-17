@@ -535,12 +535,14 @@ Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
 
 **18 active signals** (10 removed Session 275). Aggregator requires MIN_SIGNAL_COUNT=2 (model_health always fires, so effectively 1 real signal minimum).
 
-**Smart Filters (Session 278):** 3 filters in aggregator BEFORE combo matching:
-1. Feature quality floor: `quality < 85` → skip (24.0% HR)
-2. Bench UNDER block: `UNDER + line < 12` → skip (35.1% HR)
-3. Relative edge cap: `|edge|/line >= 30%` → skip (49.7% HR noise)
+**Pre-Filters (Session 278, updated 284):** Applied in aggregator BEFORE signal scoring:
+1. Player blacklist: `<40% HR on 8+ edge-3+ picks` → skip (+$10,450 P&L, Session 284)
+2. Avoid familiar: `6+ games vs this opponent` → skip (+$1,780 P&L, Session 284)
+3. Feature quality floor: `quality < 85` → skip (24.0% HR)
+4. Bench UNDER block: `UNDER + line < 12` → skip (35.1% HR)
+5. ~~Relative edge cap~~: REMOVED Session 284 — was blocking 62.8% HR picks (above breakeven)
 
-**Pick Angles (Session 278):** Each pick includes `pick_angles` — human-readable reasoning (confidence tier, player tier, cross-model consensus, signal-specific). Max 5 angles per pick. See `ml/signals/pick_angle_builder.py`.
+**Pick Angles (Session 278, 284):** Each pick includes `pick_angles` — human-readable reasoning (confidence tier, high-conviction edge>=5, player tier, cross-model consensus, signal-specific). Max 5 angles per pick. See `ml/signals/pick_angle_builder.py`.
 
 ### Active Signals (18)
 
