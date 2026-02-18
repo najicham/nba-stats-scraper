@@ -39,8 +39,8 @@ DATASET = 'nba_predictions'
 TABLE = 'ml_feature_store_v2'
 FULL_TABLE = f'{PROJECT_ID}.{DATASET}.{TABLE}'
 
-# f47 injury data only available from Jan 2026
-F47_EARLIEST = date(2026, 1, 1)
+# f47 injury data backfilled from Nov 2025 (Session 289)
+F47_EARLIEST = date(2025, 11, 1)
 # Full season start
 SEASON_START = date(2025, 11, 4)
 # Don't backfill future dates
