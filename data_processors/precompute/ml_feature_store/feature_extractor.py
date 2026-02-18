@@ -1457,16 +1457,16 @@ class FeatureExtractor:
         WITH injured_players AS (
             SELECT DISTINCT
                 ir.player_lookup,
-                ir.team_tricode
+                ir.team
             FROM `{self.project_id}.nba_raw.nbac_injury_report` ir
             WHERE ir.report_date = '{game_date}'
-              AND ir.game_status IN ('Out', 'Doubtful')
+              AND LOWER(ir.injury_status) IN ('out', 'doubtful')
               AND ir.player_lookup IS NOT NULL
         ),
         injured_usage AS (
             SELECT
                 ip.player_lookup,
-                ip.team_tricode,
+                ip.team,
                 AVG(pgs.usage_rate) as avg_usage_rate
             FROM injured_players ip
             JOIN `{self.project_id}.nba_analytics.player_game_summary` pgs
@@ -1475,21 +1475,21 @@ class FeatureExtractor:
               AND pgs.game_date < '{game_date}'
               AND pgs.usage_rate IS NOT NULL
               AND pgs.minutes_played > 10
-            GROUP BY ip.player_lookup, ip.team_tricode
+            GROUP BY ip.player_lookup, ip.team
         ),
         team_freed_usage AS (
             SELECT
-                team_tricode,
+                team,
                 SUM(avg_usage_rate) as total_freed_usage
             FROM injured_usage
-            GROUP BY team_tricode
+            GROUP BY team
         )
         SELECT
             upcg.player_lookup,
             tfu.total_freed_usage
         FROM `{self.project_id}.nba_analytics.upcoming_player_game_context` upcg
         JOIN team_freed_usage tfu
-            ON upcg.team_abbr = tfu.team_tricode
+            ON upcg.team_abbr = tfu.team
         WHERE upcg.game_date = '{game_date}'
           AND upcg.player_lookup NOT IN (
               SELECT player_lookup FROM injured_players
