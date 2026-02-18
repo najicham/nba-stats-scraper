@@ -1864,21 +1864,23 @@ class MLFeatureStoreProcessor(
         minutes_ppm_data = self.feature_extractor.get_minutes_ppm(player_lookup) if player_lookup else {}
 
         minutes_avg = minutes_ppm_data.get('minutes_avg_last_10')
-        if minutes_avg is None:
-            # Fall back to phase4_data which includes cache miss fallback values
-            minutes_avg = phase4_data.get('minutes_avg_last_10', 28.0)
-        features.append(float(minutes_avg) if minutes_avg is not None else 28.0)
-        feature_sources[31] = 'minutes_ppm' if minutes_ppm_data.get('minutes_avg_last_10') is not None else (
-            'phase4' if phase4_data.get('minutes_avg_last_10') is not None else 'default'
+        if not self._is_valid_value(minutes_avg):
+            minutes_avg = phase4_data.get('minutes_avg_last_10')
+        if not self._is_valid_value(minutes_avg):
+            minutes_avg = 28.0
+        features.append(float(minutes_avg))
+        feature_sources[31] = 'minutes_ppm' if self._is_valid_value(minutes_ppm_data.get('minutes_avg_last_10')) else (
+            'phase4' if self._is_valid_value(phase4_data.get('minutes_avg_last_10')) else 'default'
         )
 
         ppm_avg = minutes_ppm_data.get('ppm_avg_last_10')
-        if ppm_avg is None:
-            # Fall back to phase4_data which includes cache miss fallback values
-            ppm_avg = phase4_data.get('ppm_avg_last_10', 0.4)
-        features.append(float(ppm_avg) if ppm_avg is not None else 0.4)
-        feature_sources[32] = 'minutes_ppm' if minutes_ppm_data.get('ppm_avg_last_10') is not None else (
-            'phase4' if phase4_data.get('ppm_avg_last_10') is not None else 'default'
+        if not self._is_valid_value(ppm_avg):
+            ppm_avg = phase4_data.get('ppm_avg_last_10')
+        if not self._is_valid_value(ppm_avg):
+            ppm_avg = 0.4
+        features.append(float(ppm_avg))
+        feature_sources[32] = 'minutes_ppm' if self._is_valid_value(minutes_ppm_data.get('ppm_avg_last_10')) else (
+            'phase4' if self._is_valid_value(phase4_data.get('ppm_avg_last_10')) else 'default'
         )
 
         # Feature 33: DNP Rate (v2.1 - gamebook-based DNP pattern detection)
@@ -2032,30 +2034,29 @@ class MLFeatureStoreProcessor(
 
         return features, feature_sources
     
-    def _get_feature_with_fallback(self, index: int, field_name: str, 
+    @staticmethod
+    def _is_valid_value(val) -> bool:
+        """Check if a value is non-None and non-NaN (handles pandas NaN from BQ NULL)."""
+        if val is None:
+            return False
+        if isinstance(val, float) and math.isnan(val):
+            return False
+        return True
+
+    def _get_feature_with_fallback(self, index: int, field_name: str,
                                    phase4_data: Dict, phase3_data: Dict,
                                    default: float, feature_sources: Dict) -> float:
         """
         Get feature with Phase 4 → Phase 3 → default fallback.
-        
-        Args:
-            index: Feature index (0-24)
-            field_name: Field name in source dicts
-            phase4_data: Phase 4 data dict
-            phase3_data: Phase 3 data dict
-            default: Default value if all sources missing
-            feature_sources: Dict to track source (mutated)
-            
-        Returns:
-            float: Feature value
+        NaN-safe: BQ NULL → pandas NaN is treated as missing.
         """
         # Try Phase 4 first
-        if field_name in phase4_data and phase4_data[field_name] is not None:
+        if field_name in phase4_data and self._is_valid_value(phase4_data[field_name]):
             feature_sources[index] = 'phase4'
             return float(phase4_data[field_name])
-        
+
         # Fallback to Phase 3
-        if field_name in phase3_data and phase3_data[field_name] is not None:
+        if field_name in phase3_data and self._is_valid_value(phase3_data[field_name]):
             feature_sources[index] = 'phase3'
             return float(phase3_data[field_name])
 
@@ -2068,31 +2069,15 @@ class MLFeatureStoreProcessor(
                               feature_sources: Dict) -> Optional[float]:
         """
         Get feature value, returning None if not available (no default fallback).
-
-        Used for features where NULL is meaningful (e.g., missing shot zone data).
-        Allows ML models to distinguish "average value" from "data unavailable".
-
-        Args:
-            index: Feature index
-            field_name: Field name in source dicts
-            phase4_data: Phase 4 data dict
-            phase3_data: Phase 3 data dict
-            feature_sources: Dict to track source (mutated)
-
-        Returns:
-            float or None: Feature value if available, None if missing
-
-        Example:
-            >>> paint_rate = self._get_feature_nullable(18, 'paint_rate_last_10', ...)
-            >>> # Returns None instead of 30.0 default when data unavailable
+        NaN-safe: BQ NULL → pandas NaN is treated as missing.
         """
         # Try Phase 4 first
-        if field_name in phase4_data and phase4_data[field_name] is not None:
+        if field_name in phase4_data and self._is_valid_value(phase4_data[field_name]):
             feature_sources[index] = 'phase4'
             return float(phase4_data[field_name])
 
         # Fallback to Phase 3
-        if field_name in phase3_data and phase3_data[field_name] is not None:
+        if field_name in phase3_data and self._is_valid_value(phase3_data[field_name]):
             feature_sources[index] = 'phase3'
             return float(phase3_data[field_name])
 
@@ -2200,18 +2185,9 @@ class MLFeatureStoreProcessor(
                                  feature_sources: Dict) -> float:
         """
         Get feature from Phase 4 ONLY (no Phase 3 fallback).
-
-        Args:
-            index: Feature index (5-8)
-            field_name: Field name in Phase 4 dict
-            phase4_data: Phase 4 data dict
-            default: Default value if Phase 4 missing
-            feature_sources: Dict to track source (mutated)
-
-        Returns:
-            float: Feature value
+        NaN-safe: BQ NULL → pandas NaN is treated as missing.
         """
-        if field_name in phase4_data and phase4_data[field_name] is not None:
+        if field_name in phase4_data and self._is_valid_value(phase4_data[field_name]):
             feature_sources[index] = 'phase4'
             return float(phase4_data[field_name])
 
