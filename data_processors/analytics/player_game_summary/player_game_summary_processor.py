@@ -1498,17 +1498,15 @@ class PlayerGameSummaryProcessor(
             logger.error(f"Unexpected error parsing minutes: {repr(minutes_str)}, error: {e}")
             return None
     
-    def _parse_plus_minus(self, plus_minus_str: str) -> Optional[int]:
-        """Parse plus/minus string to integer (+7 → 7)."""
-        if pd.isna(plus_minus_str) or not plus_minus_str or plus_minus_str == '-':
+    def _parse_plus_minus(self, plus_minus_val) -> Optional[int]:
+        """Parse plus/minus value to integer (+7 → 7, -4.0 → -4)."""
+        if pd.isna(plus_minus_val):
             return None
-            
+
         try:
-            cleaned = str(plus_minus_str).replace('+', '')
-            return int(cleaned)
-            
+            return int(float(plus_minus_val))
         except (ValueError, TypeError) as e:
-            logger.debug(f"Could not parse plus/minus: {plus_minus_str}: {e}")
+            logger.debug(f"Could not parse plus/minus: {plus_minus_val}: {e}")
             return None
     
     def get_analytics_stats(self) -> Dict:

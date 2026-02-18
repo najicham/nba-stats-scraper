@@ -936,32 +936,44 @@ class TonightPlayerExporter(BaseExporter):
             'prediction': None
         }
 
-    def export(self, player_lookup: str, target_date: str) -> str:
+    def export(self, player_lookup: str, target_date: str, update_latest: bool = True) -> str:
         """
         Generate and upload tonight's player detail JSON.
+
+        Outputs up to TWO files:
+        - tonight/player/{date}/{lookup}.json (date-specific, long cache)
+        - tonight/player/{lookup}.json (always latest, short cache) — if update_latest
 
         Args:
             player_lookup: Player identifier
             target_date: Date string in YYYY-MM-DD format
+            update_latest: If True, also write the latest (non-date-keyed) path
 
         Returns:
-            GCS path of the exported file
+            GCS path of the date-specific exported file
         """
         logger.info(f"Exporting tonight detail for {player_lookup} on {target_date}")
 
         json_data = self.generate_json(player_lookup, target_date)
 
-        path = f'tonight/player/{player_lookup}.json'
-        gcs_path = self.upload_to_gcs(json_data, path, 'public, max-age=300')
+        # Date-keyed path (long cache, preserved for historical browsing)
+        date_path = f'tonight/player/{target_date}/{player_lookup}.json'
+        gcs_path = self.upload_to_gcs(json_data, date_path, 'public, max-age=86400')
+
+        # Latest path (short cache, backwards compat)
+        if update_latest:
+            latest_path = f'tonight/player/{player_lookup}.json'
+            self.upload_to_gcs(json_data, latest_path, 'public, max-age=300')
 
         return gcs_path
 
-    def export_all_for_date(self, target_date: str) -> List[str]:
+    def export_all_for_date(self, target_date: str, update_latest: bool = True) -> List[str]:
         """
         Export tonight details for all players with games on the date.
 
         Args:
             target_date: Date string in YYYY-MM-DD format
+            update_latest: If True, also write the latest (non-date-keyed) path
 
         Returns:
             List of GCS paths
@@ -985,7 +997,7 @@ class TonightPlayerExporter(BaseExporter):
             player_lookup = p['player_lookup']
             try:
                 logger.info(f"[{i+1}/{len(players)}] Exporting {player_lookup}")
-                path = self.export(player_lookup, target_date)
+                path = self.export(player_lookup, target_date, update_latest=update_latest)
                 paths.append(path)
             except Exception as e:
                 logger.error(

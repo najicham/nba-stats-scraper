@@ -331,7 +331,13 @@ class TonightAllPlayersExporter(BaseExporter):
                 over_under_result,
                 points,
                 is_dnp,
-                points_line
+                points_line,
+                minutes_played,
+                fg_makes,
+                fg_attempts,
+                three_pt_makes,
+                three_pt_attempts,
+                plus_minus
             FROM `nba-props-platform.nba_analytics.player_game_summary`
             WHERE game_date < @before_date
               AND player_lookup IN UNNEST(@player_lookups)
@@ -340,7 +346,8 @@ class TonightAllPlayersExporter(BaseExporter):
         SELECT
             player_lookup,
             ARRAY_AGG(
-                STRUCT(over_under_result, points, is_dnp, points_line)
+                STRUCT(over_under_result, points, is_dnp, points_line, minutes_played,
+                       fg_makes, fg_attempts, three_pt_makes, three_pt_attempts, plus_minus)
                 ORDER BY game_date DESC
             ) as last_10
         FROM recent_games
@@ -362,34 +369,71 @@ class TonightAllPlayersExporter(BaseExporter):
             results_list = []
             points_list = []
             lines_list = []
+            minutes_list = []
+            fg_pct_list = []
+            three_pct_list = []
+            plus_minus_list = []
             for g in games:
                 if isinstance(g, dict):
                     ou = g.get('over_under_result')
                     pts = g.get('points')
                     dnp = g.get('is_dnp', False)
                     line = g.get('points_line')
+                    mins = g.get('minutes_played')
+                    fgm = g.get('fg_makes')
+                    fga = g.get('fg_attempts')
+                    tpm = g.get('three_pt_makes')
+                    tpa = g.get('three_pt_attempts')
+                    pm = g.get('plus_minus')
                 else:
                     ou = getattr(g, 'over_under_result', None)
                     pts = getattr(g, 'points', None)
                     dnp = getattr(g, 'is_dnp', False)
                     line = getattr(g, 'points_line', None)
+                    mins = getattr(g, 'minutes_played', None)
+                    fgm = getattr(g, 'fg_makes', None)
+                    fga = getattr(g, 'fg_attempts', None)
+                    tpm = getattr(g, 'three_pt_makes', None)
+                    tpa = getattr(g, 'three_pt_attempts', None)
+                    pm = getattr(g, 'plus_minus', None)
+
+                # Compute shooting percentages (null if 0 attempts)
+                fg_pct = round(fgm / fga, 3) if fga and fgm is not None else None
+                three_pct = round(tpm / tpa, 3) if tpa and tpm is not None else None
+                pm_val = int(pm) if pm is not None else None
 
                 if dnp:
                     results_list.append('DNP')
                     points_list.append(None)
                     lines_list.append(None)
+                    minutes_list.append(None)
+                    fg_pct_list.append(None)
+                    three_pct_list.append(None)
+                    plus_minus_list.append(None)
                 elif ou == 'OVER':
                     results_list.append('O')
                     points_list.append(int(pts) if pts is not None else None)
                     lines_list.append(float(line) if line is not None else None)
+                    minutes_list.append(int(round(mins)) if mins is not None else None)
+                    fg_pct_list.append(fg_pct)
+                    three_pct_list.append(three_pct)
+                    plus_minus_list.append(pm_val)
                 elif ou == 'UNDER':
                     results_list.append('U')
                     points_list.append(int(pts) if pts is not None else None)
                     lines_list.append(float(line) if line is not None else None)
+                    minutes_list.append(int(round(mins)) if mins is not None else None)
+                    fg_pct_list.append(fg_pct)
+                    three_pct_list.append(three_pct)
+                    plus_minus_list.append(pm_val)
                 else:
                     results_list.append('-')
                     points_list.append(int(pts) if pts is not None else None)
                     lines_list.append(float(line) if line is not None else None)
+                    minutes_list.append(int(round(mins)) if mins is not None else None)
+                    fg_pct_list.append(fg_pct)
+                    three_pct_list.append(three_pct)
+                    plus_minus_list.append(pm_val)
 
             # Calculate record (only O/U count, not DNP or -)
             overs = results_list.count('O')
@@ -399,6 +443,10 @@ class TonightAllPlayersExporter(BaseExporter):
                 'results': results_list,
                 'points': points_list,
                 'lines': lines_list,
+                'minutes': minutes_list,
+                'fg_pct': fg_pct_list,
+                'three_pct': three_pct_list,
+                'plus_minus': plus_minus_list,
                 'record': f"{overs}-{unders}" if (overs + unders) > 0 else None
             }
 
@@ -551,6 +599,14 @@ class TonightAllPlayersExporter(BaseExporter):
 
                 # Add last_10_lines for ALL players (null where line was missing)
                 player_data['last_10_lines'] = last_10.get('lines', [])
+
+                # Add last_10_minutes for ALL players (null for DNP)
+                player_data['last_10_minutes'] = last_10.get('minutes', [])
+
+                # Add last_10_fg_pct, last_10_three_pct, last_10_plus_minus
+                player_data['last_10_fg_pct'] = last_10.get('fg_pct', [])
+                player_data['last_10_three_pct'] = last_10.get('three_pct', [])
+                player_data['last_10_plus_minus'] = last_10.get('plus_minus', [])
 
                 # Add last_10_results (vs line) for ALL players
                 player_data['last_10_results'] = last_10.get('results', [])

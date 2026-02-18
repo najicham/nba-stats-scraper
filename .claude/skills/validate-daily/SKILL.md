@@ -4450,6 +4450,66 @@ ORDER BY usage_rate_pct ASC"
 - Processor now emits DATA_QUALITY_OK/WARNING/CRITICAL logs after each run
 - Historical data available in `nba_analytics.data_quality_history` table
 
+#### 1A4. Box Score Column Completeness Check (Session 290)
+
+**IMPORTANT**: This check was added after `plus_minus` went 98% NULL for the entire season without detection. The `_parse_plus_minus()` bug silently returned None for every value. This check catches silent data loss in any box score column by comparing `player_game_summary` against the raw source.
+
+```bash
+GAME_DATE=$(date -d "yesterday" +%Y-%m-%d)
+
+bq query --use_legacy_sql=false "
+WITH pgs AS (
+  SELECT
+    COUNT(*) as total,
+    COUNTIF(NOT is_dnp) as active,
+    COUNTIF(NOT is_dnp AND points IS NOT NULL) as has_points,
+    COUNTIF(NOT is_dnp AND fg_makes IS NOT NULL) as has_fg,
+    COUNTIF(NOT is_dnp AND three_pt_makes IS NOT NULL) as has_three,
+    COUNTIF(NOT is_dnp AND ft_makes IS NOT NULL) as has_ft,
+    COUNTIF(NOT is_dnp AND total_rebounds IS NOT NULL) as has_reb,
+    COUNTIF(NOT is_dnp AND assists IS NOT NULL) as has_ast,
+    COUNTIF(NOT is_dnp AND plus_minus IS NOT NULL) as has_pm
+  FROM \`nba-props-platform.nba_analytics.player_game_summary\`
+  WHERE game_date = DATE('${GAME_DATE}')
+)
+SELECT
+  active,
+  ROUND(100.0 * has_points / NULLIF(active, 0), 1) as points_pct,
+  ROUND(100.0 * has_fg / NULLIF(active, 0), 1) as fg_pct,
+  ROUND(100.0 * has_three / NULLIF(active, 0), 1) as three_pct,
+  ROUND(100.0 * has_ft / NULLIF(active, 0), 1) as ft_pct,
+  ROUND(100.0 * has_reb / NULLIF(active, 0), 1) as reb_pct,
+  ROUND(100.0 * has_ast / NULLIF(active, 0), 1) as ast_pct,
+  ROUND(100.0 * has_pm / NULLIF(active, 0), 1) as pm_pct,
+  CASE
+    WHEN LEAST(
+      ROUND(100.0 * has_points / NULLIF(active, 0), 1),
+      ROUND(100.0 * has_fg / NULLIF(active, 0), 1),
+      ROUND(100.0 * has_pm / NULLIF(active, 0), 1)
+    ) >= 85 THEN 'OK'
+    WHEN LEAST(
+      ROUND(100.0 * has_points / NULLIF(active, 0), 1),
+      ROUND(100.0 * has_fg / NULLIF(active, 0), 1),
+      ROUND(100.0 * has_pm / NULLIF(active, 0), 1)
+    ) >= 50 THEN 'WARNING'
+    ELSE 'CRITICAL'
+  END as status
+FROM pgs"
+```
+
+**Thresholds** (based on lowest column):
+- **>=85%**: OK - Expected coverage for all box score columns
+- **50-84%**: WARNING - A column is partially populated, investigate
+- **<50%**: CRITICAL - A column is mostly NULL, likely a parser bug
+
+**If WARNING or CRITICAL**:
+1. Identify which column is low (the query shows per-column percentages)
+2. Compare against raw source: `bq query "SELECT COUNTIF(plus_minus IS NOT NULL) as has_pm, COUNT(*) FROM nba_raw.nbac_gamebook_player_stats WHERE game_date = '${GAME_DATE}' AND player_status = 'active'"`
+3. If raw has data but analytics doesn't → Parser bug in `player_game_summary_processor.py` (check `_parse_plus_minus`, numeric cleaning at line 1300-1303)
+4. If raw also missing → Scraper didn't extract the field
+
+**History**: Session 290 found `_parse_plus_minus()` silently dropped ALL values because `int(str(-4.0))` raises ValueError and `not 0.0` is True in Python. The bug went undetected for the entire season because no validation checked column-level completeness.
+
 #### 1B. Prediction Grading Complete
 
 Verify predictions were graded against actual results:
