@@ -51,7 +51,7 @@ FEATURE_GROUPS = {
             31: 'minutes_avg_last_10', 32: 'ppm_avg_last_10'
         },
         'source_table': 'nba_precompute.player_daily_cache',
-        'description': 'Player rolling stats from daily cache (14-day fallback window)',
+        'description': 'Player rolling stats from daily cache (exact date match)',
         'validation_sql': """
             SELECT
                 fs.game_date,
@@ -68,7 +68,7 @@ FEATURE_GROUPS = {
                 WHERE cache_date >= '{start_date}'
             ) pdc
             ON fs.player_lookup = pdc.player_lookup
-                AND pdc.cache_date BETWEEN DATE_SUB(fs.game_date, INTERVAL 14 DAY) AND fs.game_date
+                AND pdc.cache_date = fs.game_date
             WHERE fs.game_date BETWEEN '{start_date}' AND '{end_date}'
                 AND fs.feature_{feature_idx}_value IS NULL
             GROUP BY 1
@@ -132,7 +132,7 @@ FEATURE_GROUPS = {
         'features': [13, 14],
         'names': {13: 'opponent_def_rating', 14: 'opponent_pace'},
         'source_table': 'nba_precompute.team_defense_zone_analysis',
-        'description': 'Opponent defense stats (7-day fallback, needs 15+ team games)',
+        'description': 'Opponent defense stats (exact date match)',
         'validation_sql': """
             SELECT
                 fs.game_date,
@@ -151,7 +151,7 @@ FEATURE_GROUPS = {
                 WHERE analysis_date >= '{start_date}'
             ) tdz
                 ON upcg.opponent_team_abbr = tdz.team_abbr
-                AND tdz.analysis_date BETWEEN DATE_SUB(fs.game_date, INTERVAL 7 DAY) AND fs.game_date
+                AND tdz.analysis_date = fs.game_date
             WHERE fs.game_date BETWEEN '{start_date}' AND '{end_date}'
                 AND fs.feature_{feature_idx}_value IS NULL
             GROUP BY 1
@@ -161,7 +161,7 @@ FEATURE_GROUPS = {
         'features': [18, 19, 20],
         'names': {18: 'pct_paint', 19: 'pct_mid_range', 20: 'pct_three'},
         'source_table': 'nba_precompute.player_shot_zone_analysis',
-        'description': 'Shot zone distribution (14-day fallback, intentionally nullable)',
+        'description': 'Shot zone distribution (exact date match)',
         'validation_sql': """
             SELECT
                 fs.game_date,
@@ -178,7 +178,7 @@ FEATURE_GROUPS = {
                 WHERE analysis_date >= '{start_date}'
             ) psz
                 ON fs.player_lookup = psz.player_lookup
-                AND psz.analysis_date BETWEEN DATE_SUB(fs.game_date, INTERVAL 14 DAY) AND fs.game_date
+                AND psz.analysis_date = fs.game_date
             WHERE fs.game_date BETWEEN '{start_date}' AND '{end_date}'
                 AND fs.feature_{feature_idx}_value IS NULL
             GROUP BY 1
