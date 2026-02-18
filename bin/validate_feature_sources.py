@@ -161,7 +161,7 @@ FEATURE_GROUPS = {
         'features': [18, 19, 20],
         'names': {18: 'pct_paint', 19: 'pct_mid_range', 20: 'pct_three'},
         'source_table': 'nba_precompute.player_shot_zone_analysis',
-        'description': 'Shot zone distribution (exact date match)',
+        'description': 'Shot zone distribution (exact date match, non-NULL values)',
         'validation_sql': """
             SELECT
                 fs.game_date,
@@ -176,6 +176,7 @@ FEATURE_GROUPS = {
                 SELECT DISTINCT player_lookup, analysis_date
                 FROM `{project}.nba_precompute.player_shot_zone_analysis`
                 WHERE analysis_date >= '{start_date}'
+                    AND paint_rate_last_10 IS NOT NULL
             ) psz
                 ON fs.player_lookup = psz.player_lookup
                 AND psz.analysis_date = fs.game_date

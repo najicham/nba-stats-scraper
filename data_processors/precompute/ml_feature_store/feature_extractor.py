@@ -479,14 +479,15 @@ class FeatureExtractor:
         """
         Batch extract player_composite_factors for all players.
 
-        Session 99 FIX: Matchup-specific factors (shot_zone_mismatch, pace_score)
-        MUST NOT use data from wrong opponents. If exact date not available:
-        - fatigue_score: OK to use recent data (player-specific, stable)
-        - usage_spike_score: OK to use recent data (player-specific)
-        - shot_zone_mismatch_score: Use 0.0 (neutral) - WRONG opponent would be misleading
-        - pace_score: Use 0.0 (neutral) - WRONG opponent would be misleading
+        Session 291 Fix: Exact-date-only query. No fallback window.
+        If a player doesn't have composite factors for this exact date, they won't
+        be in the lookup → feature stays NULL → quality scorer catches it.
+
+        Previous bug: All-or-nothing fallback masked missing data as source='phase4',
+        bypassing quality scoring. Exact-date-only ensures proper source tracking.
+        Matchup-specific factors (pace_score, shot_zone_mismatch) are opponent-dependent
+        and MUST NOT use wrong-opponent data anyway.
         """
-        # First try exact date match (has correct opponent matchup data)
         query = f"""
         SELECT
             player_lookup,
@@ -497,60 +498,18 @@ class FeatureExtractor:
         FROM `{self.project_id}.nba_precompute.player_composite_factors`
         WHERE game_date = '{game_date}'
         """
-        result = self._safe_query(query, "batch_extract_exact_date")
+        result = self._safe_query(query, "batch_extract_composite_factors")
 
         if not result.empty:
-            # Exact date match - all factors are correct for today's matchups
             self._composite_factors_source = 'exact_date'
             self._matchup_data_available = True
             for record in result.to_dict('records'):
-                record['_source'] = 'exact_date'
-                record['_matchup_valid'] = True
                 self._composite_factors_lookup[record['player_lookup']] = record
-            logger.info(f"Loaded {len(self._composite_factors_lookup)} composite_factors from exact date match")
         else:
-            # No exact date - need fallback for player-specific factors only
-            # Matchup-specific factors (shot_zone_mismatch, pace) MUST use neutral defaults
-            self._composite_factors_source = 'partial_fallback'
+            self._composite_factors_source = 'none'
             self._matchup_data_available = False
-            self._fallback_reasons.append('composite_factors_missing_matchup_data')
-            logger.warning(f"MATCHUP_DATA_UNAVAILABLE: No composite_factors for {game_date}")
-            logger.warning("Using fallback for player-specific factors, neutral defaults for matchup-specific")
 
-            # Get recent data for player-specific factors only
-            query = f"""
-            WITH ranked AS (
-                SELECT
-                    player_lookup,
-                    fatigue_score,
-                    usage_spike_score,
-                    ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY game_date DESC) as rn
-                FROM `{self.project_id}.nba_precompute.player_composite_factors`
-                WHERE game_date <= '{game_date}'
-                  AND game_date >= DATE_SUB('{game_date}', INTERVAL 7 DAY)
-            )
-            SELECT player_lookup, fatigue_score, usage_spike_score FROM ranked WHERE rn = 1
-            """
-            result = self._safe_query(query, "batch_extract_player_specific_only")
-
-            if not result.empty:
-                for record in result.to_dict('records'):
-                    self._composite_factors_lookup[record['player_lookup']] = {
-                        'player_lookup': record['player_lookup'],
-                        # Player-specific: use fallback data
-                        'fatigue_score': record['fatigue_score'],
-                        'usage_spike_score': record['usage_spike_score'],
-                        # Matchup-specific: use NEUTRAL DEFAULTS (not wrong opponent data!)
-                        'shot_zone_mismatch_score': 0.0,
-                        'pace_score': 0.0,
-                        # Provenance tracking
-                        '_source': 'partial_fallback',
-                        '_matchup_valid': False,
-                        '_fallback_reason': 'matchup_data_unavailable'
-                    }
-                logger.info(f"Loaded {len(self._composite_factors_lookup)} composite_factors (partial fallback - matchup factors defaulted)")
-            else:
-                logger.warning(f"No composite_factors found even with fallback for {game_date}")
+        logger.debug(f"Batch composite_factors: {len(self._composite_factors_lookup)} rows")
 
     def _batch_extract_shot_zone(self, game_date: date) -> None:
         """

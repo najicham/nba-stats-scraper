@@ -26,6 +26,7 @@ Date: November 6, 2025
 
 import logging
 import json
+import math
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -1828,14 +1829,35 @@ class MLFeatureStoreProcessor(
         opponent_data = self.feature_extractor.get_opponent_history(player_lookup, opponent) if player_lookup and opponent else {}
 
         # Use player's season average as fallback for avg_points_vs_opponent
-        season_avg_fallback = phase4_data.get('points_avg_season') or phase3_data.get('points_avg_season') or 10.0
-        avg_points_vs_opp = opponent_data.get('avg_points_vs_opponent', season_avg_fallback)
-        features.append(float(avg_points_vs_opp) if avg_points_vs_opp is not None else float(season_avg_fallback))
-        feature_sources[29] = 'opponent_history' if opponent_data else 'fallback'
+        # NaN-safe: pandas NaN is truthy, so `or` chain won't catch it
+        def _safe_float(val, default=10.0):
+            if val is None or (isinstance(val, float) and math.isnan(val)):
+                return None
+            return float(val)
 
-        games_vs_opp = opponent_data.get('games_vs_opponent', 0.0)
-        features.append(float(games_vs_opp) if games_vs_opp is not None else 0.0)
-        feature_sources[30] = 'opponent_history' if opponent_data else 'fallback'
+        season_avg_fallback = (
+            _safe_float(phase4_data.get('points_avg_season'))
+            or _safe_float(phase3_data.get('points_avg_season'))
+            or 10.0
+        )
+
+        # Session 291 Fix: Handle pandas NaN from BQ NULL (LEFT JOIN with no matches).
+        # BQ NULL → pandas NaN → NaN passes `is not None` check → sanitizer converts to None
+        # for feature_N_value column but 0.0 for features array → inconsistency.
+        # Fix: explicitly check for NaN before using the value.
+        avg_points_vs_opp = _safe_float(opponent_data.get('avg_points_vs_opponent'))
+        if avg_points_vs_opp is None:
+            avg_points_vs_opp = season_avg_fallback
+            feature_sources[29] = 'calculated'  # Season avg is a valid calculated fallback
+        else:
+            feature_sources[29] = 'opponent_history'
+        features.append(float(avg_points_vs_opp))
+
+        games_vs_opp = _safe_float(opponent_data.get('games_vs_opponent'), default=0.0)
+        if games_vs_opp is None:
+            games_vs_opp = 0.0
+        features.append(float(games_vs_opp))
+        feature_sources[30] = 'opponent_history' if opponent_data else 'calculated'
 
         # Features 31-32: Minutes/PPM (HIGH IMPORTANCE: 14.6% + 10.9%)
         # Session 156: Try dedicated lookup first, fall back to phase4_data (cache fallback)
