@@ -440,11 +440,15 @@ class FeatureExtractor:
         """
         Batch extract player_daily_cache for all players.
 
-        Session 95 Fix: For upcoming games (today), use the most recent cache_date
-        available for each player (their stats after their last game) rather than
-        requiring cache_date = game_date which won't exist for upcoming games.
+        Session 290 Fix: Exact-date-only query. No fallback window.
+        If a player doesn't have cache data for this exact date, they won't be
+        in the lookup. The per-player extraction chain handles the gap:
+        extract_phase4_data → _compute_cache_fields_from_games (from last 10 games)
+        → default (source='default', blocked by zero tolerance).
+
+        Previous bug: All-or-nothing fallback masked missing data as source='phase4',
+        bypassing quality scoring. Exact-date-only ensures proper source tracking.
         """
-        # First try exact date match (for completed games or backfill)
         query = f"""
         SELECT
             player_lookup,
@@ -463,36 +467,7 @@ class FeatureExtractor:
         FROM `{self.project_id}.nba_precompute.player_daily_cache`
         WHERE cache_date = '{game_date}'
         """
-        result = self._safe_query(query, "batch_extract_exact_date")
-
-        # If no results, use most recent cache for each player (Session 95)
-        # This handles upcoming games where cache_date won't match game_date
-        if result.empty:
-            logger.info(f"No daily_cache for exact date {game_date}, using most recent per player")
-            query = f"""
-            WITH ranked AS (
-                SELECT
-                    player_lookup,
-                    points_avg_last_5,
-                    points_avg_last_10,
-                    points_avg_season,
-                    points_std_last_10,
-                    games_in_last_7_days,
-                    paint_rate_last_10,
-                    three_pt_rate_last_10,
-                    assisted_rate_last_10,
-                    team_pace_last_10,
-                    team_off_rating_last_10,
-                    minutes_avg_last_10,
-                    player_age,
-                    ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY cache_date DESC) as rn
-                FROM `{self.project_id}.nba_precompute.player_daily_cache`
-                WHERE cache_date <= '{game_date}'
-                  AND cache_date >= DATE_SUB('{game_date}', INTERVAL 14 DAY)
-            )
-            SELECT * EXCEPT(rn) FROM ranked WHERE rn = 1
-            """
-            result = self._safe_query(query, "batch_extract_most_recent")
+        result = self._safe_query(query, "batch_extract_daily_cache")
 
         # Use efficient to_dict instead of iterrows (3x faster)
         if not result.empty:
@@ -581,10 +556,13 @@ class FeatureExtractor:
         """
         Batch extract player_shot_zone_analysis for all players.
 
-        Session 95 Fix: For upcoming games, use the most recent shot zone analysis
-        available for each player.
+        Session 290 Fix: Exact-date-only query. No fallback window.
+        If a player doesn't have shot zone data for this exact date, they won't
+        be in the lookup → feature stays NULL → quality scorer catches it.
+
+        Previous bug: All-or-nothing fallback masked missing data as source='phase4',
+        bypassing quality scoring. Exact-date-only ensures proper source tracking.
         """
-        # First try exact date match (for completed games or backfill)
         query = f"""
         SELECT
             player_lookup,
@@ -594,26 +572,7 @@ class FeatureExtractor:
         FROM `{self.project_id}.nba_precompute.player_shot_zone_analysis`
         WHERE analysis_date = '{game_date}'
         """
-        result = self._safe_query(query, "batch_extract_exact_date")
-
-        # If no results, use most recent analysis per player (Session 95)
-        if result.empty:
-            logger.warning(f"FALLBACK: No shot_zone for exact date {game_date}, using most recent per player")
-            query = f"""
-            WITH ranked AS (
-                SELECT
-                    player_lookup,
-                    paint_rate_last_10,
-                    mid_range_rate_last_10,
-                    three_pt_rate_last_10,
-                    ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY analysis_date DESC) as rn
-                FROM `{self.project_id}.nba_precompute.player_shot_zone_analysis`
-                WHERE analysis_date <= '{game_date}'
-                  AND analysis_date >= DATE_SUB('{game_date}', INTERVAL 14 DAY)
-            )
-            SELECT * EXCEPT(rn) FROM ranked WHERE rn = 1
-            """
-            result = self._safe_query(query, "batch_extract_most_recent")
+        result = self._safe_query(query, "batch_extract_shot_zone")
 
         # Use efficient to_dict instead of iterrows (3x faster)
         if not result.empty:
@@ -625,13 +584,16 @@ class FeatureExtractor:
         """
         Batch extract team_defense_zone_analysis for all opponent teams.
 
-        Session 95 Fix: For upcoming games, use the most recent defense analysis
-        available for each team.
+        Session 290 Fix: Exact-date-only query. No fallback window.
+        If a team doesn't have defense data for this exact date, they won't
+        be in the lookup → feature stays NULL → quality scorer catches it.
+
+        Previous bug: All-or-nothing fallback masked missing data as source='phase4',
+        bypassing quality scoring. Exact-date-only ensures proper source tracking.
         """
         if not team_abbrs:
             return
 
-        # First try exact date match (for completed games or backfill)
         query = f"""
         SELECT
             team_abbr,
@@ -640,25 +602,7 @@ class FeatureExtractor:
         FROM `{self.project_id}.nba_precompute.team_defense_zone_analysis`
         WHERE analysis_date = '{game_date}'
         """
-        result = self._safe_query(query, "batch_extract_exact_date")
-
-        # If no results, use most recent analysis per team (Session 95)
-        if result.empty:
-            logger.warning(f"FALLBACK: No team_defense for exact date {game_date}, using most recent per team")
-            query = f"""
-            WITH ranked AS (
-                SELECT
-                    team_abbr,
-                    defensive_rating_last_15 AS opponent_def_rating,
-                    opponent_pace,
-                    ROW_NUMBER() OVER (PARTITION BY team_abbr ORDER BY analysis_date DESC) as rn
-                FROM `{self.project_id}.nba_precompute.team_defense_zone_analysis`
-                WHERE analysis_date <= '{game_date}'
-                  AND analysis_date >= DATE_SUB('{game_date}', INTERVAL 7 DAY)
-            )
-            SELECT * EXCEPT(rn) FROM ranked WHERE rn = 1
-            """
-            result = self._safe_query(query, "batch_extract_most_recent")
+        result = self._safe_query(query, "batch_extract_team_defense")
 
         # Use efficient to_dict instead of iterrows (3x faster)
         if not result.empty:
