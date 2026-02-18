@@ -49,16 +49,6 @@ def validate_features(client: bigquery.Client, game_date: str) -> dict:
     Returns dict with validation results.
     """
     query = f"""
-    WITH feature_check AS (
-        SELECT
-            player_lookup,
-            feature_count,
-            feature_version,
-            ARRAY_LENGTH(features) as actual_feature_count,
-            features
-        FROM `nba_predictions.ml_feature_store_v2`
-        WHERE game_date = @game_date
-    )
     SELECT
         COUNT(*) as total_players,
         COUNTIF(feature_count = 33) as players_with_33_features,
@@ -66,11 +56,12 @@ def validate_features(client: bigquery.Client, game_date: str) -> dict:
         COUNTIF(feature_count != 33 AND feature_count != 25) as players_with_other,
         MAX(feature_version) as feature_version,
 
-        -- Check for NULL values in extra features (indices 25-32)
-        COUNTIF(ARRAY_LENGTH(features) >= 33 AND features[OFFSET(25)] IS NOT NULL) as has_vegas_line,
-        COUNTIF(ARRAY_LENGTH(features) >= 33 AND features[OFFSET(29)] IS NOT NULL) as has_opponent_avg,
-        COUNTIF(ARRAY_LENGTH(features) >= 33 AND features[OFFSET(31)] IS NOT NULL) as has_minutes_avg
-    FROM feature_check
+        -- Check for NULL values in extra features using individual columns
+        COUNTIF(feature_25_value IS NOT NULL) as has_vegas_line,
+        COUNTIF(feature_29_value IS NOT NULL) as has_opponent_avg,
+        COUNTIF(feature_31_value IS NOT NULL) as has_minutes_avg
+    FROM `nba_predictions.ml_feature_store_v2`
+    WHERE game_date = @game_date
     """
 
     job_config = bigquery.QueryJobConfig(

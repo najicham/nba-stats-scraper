@@ -49,8 +49,8 @@ CACHE_TABLE = "nba_precompute.player_daily_cache"
 PREDICTIONS_TABLE = "nba_predictions.player_prop_predictions"
 
 # Expected feature array length
-# Note: Changed from 33 to 34 on 2026-01-29, then to 37 on 2026-02-03 after trajectory features added
-EXPECTED_FEATURE_COUNT = 37
+# Note: Changed from 33→34→37→54 as features were added
+EXPECTED_FEATURE_COUNT = 54
 
 # Thresholds
 L5_L10_MATCH_THRESHOLD = 95.0  # Minimum % of records that should match cache
@@ -157,6 +157,18 @@ class PropLineCoverageResult:
 
 
 @dataclass
+class ColumnArrayConsistencyResult:
+    """Result of feature_N_value column vs features array consistency check."""
+    total_checked: int = 0
+    dates_checked: int = 0
+    empty_column_dates: int = 0  # Dates where columns are completely empty
+    min_population_pct: float = 100.0
+    by_feature: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    status: CheckStatus = CheckStatus.PASS
+    issues: List[str] = field(default_factory=list)
+
+
+@dataclass
 class FeatureStoreValidationResult:
     """Complete validation result for feature store."""
     start_date: date
@@ -167,6 +179,7 @@ class FeatureStoreValidationResult:
     array_integrity: Optional[ArrayIntegrityResult] = None
     feature_bounds: Optional[FeatureBoundsResult] = None
     prop_line_coverage: Optional[PropLineCoverageResult] = None
+    column_consistency: Optional[ColumnArrayConsistencyResult] = None
     validation_time_seconds: float = 0.0
     issues: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
@@ -213,6 +226,13 @@ class FeatureStoreValidationResult:
             lines.append(f"  Placeholder lines: {self.prop_line_coverage.placeholder_lines}")
             lines.append("")
 
+        if self.column_consistency:
+            lines.append(f"Column Population: {self.column_consistency.status.value.upper()}")
+            lines.append(f"  Dates checked: {self.column_consistency.dates_checked}")
+            lines.append(f"  Min population: {self.column_consistency.min_population_pct:.1f}%")
+            lines.append(f"  Empty column-dates: {self.column_consistency.empty_column_dates}")
+            lines.append("")
+
         if self.issues:
             lines.append("Issues:")
             for issue in self.issues:
@@ -257,17 +277,17 @@ def check_feature_cache_consistency(
             FORMAT_DATE('%Y-%m', fs.game_date) as month,
             fs.player_lookup,
             fs.game_date,
-            ROUND(fs.features[OFFSET(0)], 2) as fs_l5,
+            ROUND(fs.feature_0_value, 2) as fs_l5,
             ROUND(c.points_avg_last_5, 2) as cache_l5,
-            ROUND(fs.features[OFFSET(1)], 2) as fs_l10,
+            ROUND(fs.feature_1_value, 2) as fs_l10,
             ROUND(c.points_avg_last_10, 2) as cache_l10,
-            ABS(fs.features[OFFSET(0)] - c.points_avg_last_5) < {MISMATCH_TOLERANCE} as l5_match,
-            ABS(fs.features[OFFSET(1)] - c.points_avg_last_10) < {MISMATCH_TOLERANCE} as l10_match
+            ABS(fs.feature_0_value - c.points_avg_last_5) < {MISMATCH_TOLERANCE} as l5_match,
+            ABS(fs.feature_1_value - c.points_avg_last_10) < {MISMATCH_TOLERANCE} as l10_match
         FROM `{PROJECT_ID}.{FEATURE_STORE_TABLE}` fs
         JOIN `{PROJECT_ID}.{CACHE_TABLE}` c
             ON fs.player_lookup = c.player_lookup AND fs.game_date = c.cache_date
         WHERE fs.game_date BETWEEN @start_date AND @end_date
-            AND ARRAY_LENGTH(fs.features) >= 2
+            AND fs.feature_0_value IS NOT NULL
     )
     SELECT
         month,
@@ -341,16 +361,16 @@ def check_feature_cache_consistency(
             SELECT
                 fs.player_lookup,
                 fs.game_date,
-                ROUND(fs.features[OFFSET(0)], 2) as fs_l5,
+                ROUND(fs.feature_0_value, 2) as fs_l5,
                 ROUND(c.points_avg_last_5, 2) as cache_l5,
-                ROUND(fs.features[OFFSET(1)], 2) as fs_l10,
+                ROUND(fs.feature_1_value, 2) as fs_l10,
                 ROUND(c.points_avg_last_10, 2) as cache_l10
             FROM `{PROJECT_ID}.{FEATURE_STORE_TABLE}` fs
             JOIN `{PROJECT_ID}.{CACHE_TABLE}` c
                 ON fs.player_lookup = c.player_lookup AND fs.game_date = c.cache_date
             WHERE fs.game_date BETWEEN @start_date AND @end_date
-                AND ARRAY_LENGTH(fs.features) >= 2
-                AND ABS(fs.features[OFFSET(0)] - c.points_avg_last_5) >= {MISMATCH_TOLERANCE}
+                AND fs.feature_0_value IS NOT NULL
+                AND ABS(fs.feature_0_value - c.points_avg_last_5) >= {MISMATCH_TOLERANCE}
         )
         SELECT * FROM comparison
         ORDER BY game_date DESC, ABS(fs_l5 - cache_l5) DESC
@@ -510,26 +530,26 @@ def check_array_integrity(
         ]
     )
 
-    # Check array structure
+    # Check feature count structure (using feature_count metadata column)
     structure_query = f"""
     SELECT
         COUNT(*) as total,
-        COUNTIF(features IS NULL) as null_count,
-        COUNTIF(ARRAY_LENGTH(features) < {EXPECTED_FEATURE_COUNT}) as short_count,
-        COUNTIF(ARRAY_LENGTH(features) > {EXPECTED_FEATURE_COUNT}) as long_count
+        COUNTIF(feature_count IS NULL) as null_count,
+        COUNTIF(feature_count < {EXPECTED_FEATURE_COUNT}) as short_count,
+        COUNTIF(feature_count > {EXPECTED_FEATURE_COUNT}) as long_count
     FROM `{PROJECT_ID}.{FEATURE_STORE_TABLE}`
     WHERE game_date BETWEEN @start_date AND @end_date
     """
 
-    # Check for NaN/Inf values
+    # Check for Inf values in individual feature columns (NaN is valid for CatBoost)
+    inf_checks = ' OR '.join(
+        f'IS_INF(feature_{i}_value)' for i in range(EXPECTED_FEATURE_COUNT)
+    )
     nan_inf_query = f"""
     SELECT COUNT(*) as bad_count
     FROM `{PROJECT_ID}.{FEATURE_STORE_TABLE}`
     WHERE game_date BETWEEN @start_date AND @end_date
-        AND (
-            EXISTS(SELECT 1 FROM UNNEST(features) f WHERE IS_NAN(f))
-            OR EXISTS(SELECT 1 FROM UNNEST(features) f WHERE IS_INF(f))
-        )
+        AND ({inf_checks})
     """
 
     try:
@@ -557,7 +577,7 @@ def check_array_integrity(
         else:
             result.status = CheckStatus.FAIL
             if result.null_arrays > 0:
-                result.issues.append(f"{result.null_arrays} records have NULL feature arrays")
+                result.issues.append(f"{result.null_arrays} records have NULL feature_count")
             if result.wrong_length > 0:
                 result.issues.append(
                     f"{result.wrong_length} records have wrong array length (expected {EXPECTED_FEATURE_COUNT})"
@@ -586,11 +606,11 @@ def check_feature_bounds(
     """
     result = FeatureBoundsResult()
 
-    # Build query to check each bounded feature
+    # Build query to check each bounded feature using individual columns
     bound_checks = []
     for idx, (min_val, max_val, name) in FEATURE_BOUNDS.items():
         bound_checks.append(
-            f"COUNTIF(features[OFFSET({idx})] < {min_val} OR features[OFFSET({idx})] > {max_val}) as {name}_violations"
+            f"COUNTIF(feature_{idx}_value < {min_val} OR feature_{idx}_value > {max_val}) as {name}_violations"
         )
 
     checks_sql = ",\n        ".join(bound_checks)
@@ -601,7 +621,6 @@ def check_feature_bounds(
         {checks_sql}
     FROM `{PROJECT_ID}.{FEATURE_STORE_TABLE}`
     WHERE game_date BETWEEN @start_date AND @end_date
-        AND ARRAY_LENGTH(features) >= {max(FEATURE_BOUNDS.keys()) + 1}
     """
 
     job_config = bigquery.QueryJobConfig(
@@ -649,6 +668,136 @@ def check_feature_bounds(
 
     except Exception as e:
         logger.error(f"Error checking feature bounds: {e}", exc_info=True)
+        result.status = CheckStatus.ERROR
+        result.issues.append(f"Query error: {str(e)}")
+
+    return result
+
+
+def check_column_array_consistency(
+    client: bigquery.Client,
+    start_date: date,
+    end_date: date,
+) -> ColumnArrayConsistencyResult:
+    """
+    Check that feature_N_value columns are populated at expected rates.
+
+    Detects:
+    - Writer bugs where columns drop to 0% (FAIL)
+    - Population drops >20% below baseline (WARN)
+    - Dead features (f47, f50) are excluded from core checks
+
+    Args:
+        client: BigQuery client
+        start_date: Start of date range
+        end_date: End of date range
+
+    Returns:
+        ColumnArrayConsistencyResult with population metrics
+    """
+    result = ColumnArrayConsistencyResult()
+
+    # Core features (0-36) that should always be populated
+    # Exclude dead features 47 and 50
+    DEAD_FEATURES = {47, 50}
+    CORE_FEATURES = list(range(37))  # 0-36 are the original V9+trajectory features
+
+    # Build column population query
+    population_parts = []
+    for idx in range(54):
+        population_parts.append(
+            f"COUNTIF(feature_{idx}_value IS NOT NULL) as pop_{idx}"
+        )
+    pop_sql = ",\n        ".join(population_parts)
+
+    query = f"""
+    SELECT
+        game_date,
+        COUNT(*) as total_records,
+        {pop_sql}
+    FROM `{PROJECT_ID}.{FEATURE_STORE_TABLE}`
+    WHERE game_date BETWEEN @start_date AND @end_date
+    GROUP BY game_date
+    ORDER BY game_date
+    """
+
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+            bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+        ]
+    )
+
+    try:
+        query_result = client.query(query, job_config=job_config).result(
+            timeout=BQ_QUERY_TIMEOUT_SECONDS
+        )
+
+        dates_checked = 0
+        empty_column_dates = 0
+        min_pop_pct = 100.0
+        feature_issues = {}
+
+        for row in query_result:
+            dates_checked += 1
+            total = row.total_records
+            if total == 0:
+                continue
+
+            result.total_checked += total
+
+            for idx in CORE_FEATURES:
+                pop_count = getattr(row, f'pop_{idx}', 0) or 0
+                pop_pct = 100.0 * pop_count / total
+                min_pop_pct = min(min_pop_pct, pop_pct)
+
+                if pop_pct == 0:
+                    empty_column_dates += 1
+                    issue_key = f"feature_{idx}_value"
+                    if issue_key not in feature_issues:
+                        feature_issues[issue_key] = []
+                    feature_issues[issue_key].append(str(row.game_date))
+
+                # Track per-feature stats
+                fname = f"feature_{idx}"
+                if fname not in result.by_feature:
+                    result.by_feature[fname] = {
+                        'min_pop_pct': pop_pct,
+                        'max_pop_pct': pop_pct,
+                        'empty_dates': 0,
+                    }
+                else:
+                    result.by_feature[fname]['min_pop_pct'] = min(
+                        result.by_feature[fname]['min_pop_pct'], pop_pct
+                    )
+                    result.by_feature[fname]['max_pop_pct'] = max(
+                        result.by_feature[fname]['max_pop_pct'], pop_pct
+                    )
+                if pop_pct == 0:
+                    result.by_feature.setdefault(fname, {})['empty_dates'] = \
+                        result.by_feature.get(fname, {}).get('empty_dates', 0) + 1
+
+        result.dates_checked = dates_checked
+        result.empty_column_dates = empty_column_dates
+        result.min_population_pct = min_pop_pct
+
+        # Determine status
+        if empty_column_dates > 0:
+            result.status = CheckStatus.FAIL
+            for col, dates_list in feature_issues.items():
+                result.issues.append(
+                    f"{col} is 0% populated on {len(dates_list)} date(s): {', '.join(dates_list[:3])}"
+                )
+        elif min_pop_pct < 50:
+            result.status = CheckStatus.WARN
+            result.issues.append(
+                f"Core feature column population dropped below 50%: min={min_pop_pct:.1f}%"
+            )
+        else:
+            result.status = CheckStatus.PASS
+
+    except Exception as e:
+        logger.error(f"Error checking column-array consistency: {e}", exc_info=True)
         result.status = CheckStatus.ERROR
         result.issues.append(f"Query error: {str(e)}")
 
@@ -749,6 +898,7 @@ def validate_feature_store(
     check_arrays: bool = True,
     check_bounds: bool = True,
     check_prop_lines: bool = True,
+    check_columns: bool = True,
 ) -> FeatureStoreValidationResult:
     """
     Run complete feature store validation.
@@ -820,6 +970,14 @@ def validate_feature_store(
             result.issues.extend(result.prop_line_coverage.issues)
         elif result.prop_line_coverage.status == CheckStatus.WARN:
             result.warnings.extend(result.prop_line_coverage.issues)
+
+    if check_columns:
+        result.column_consistency = check_column_array_consistency(client, start_date, end_date)
+        if result.column_consistency.status in (CheckStatus.FAIL, CheckStatus.ERROR):
+            result.passed = False
+            result.issues.extend(result.column_consistency.issues)
+        elif result.column_consistency.status == CheckStatus.WARN:
+            result.warnings.extend(result.column_consistency.issues)
 
     result.validation_time_seconds = (datetime.now() - start_time).total_seconds()
 

@@ -266,7 +266,7 @@ class PredictionQualityTracker:
         query = f"""
         SELECT
             COUNT(*) as cnt,
-            COUNTIF(features[SAFE_OFFSET(18)] IS NOT NULL) as with_paint
+            COUNTIF(feature_18_value IS NOT NULL) as with_paint
         FROM `{self.project_id}.nba_predictions.ml_feature_store_v2`
         WHERE game_date = '{self.game_date}'
         """

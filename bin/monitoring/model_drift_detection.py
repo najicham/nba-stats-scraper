@@ -122,7 +122,7 @@ def get_star_performance_deviation(client: bigquery.Client, end_date: str = None
         pgs.player_lookup,
         pgs.game_date,
         pgs.points as actual_points,
-        mf.features[1] as points_avg_last_10  -- Feature index for points_avg_last_10
+        mf.feature_1_value as points_avg_last_10  -- Individual column for points_avg_last_10
       FROM nba_analytics.player_game_summary pgs
       INNER JOIN star_players sp ON pgs.player_lookup = sp.player_lookup
       LEFT JOIN nba_predictions.ml_feature_store_v2 mf
@@ -165,14 +165,14 @@ def get_surprise_game_rate(client: bigquery.Client, end_date: str = None) -> dic
         pgs.player_lookup,
         pgs.game_date,
         pgs.points as actual_points,
-        mf.features[0] as points_avg_last_5  -- Feature index for points_avg_last_5
+        mf.feature_0_value as points_avg_last_5  -- Individual column for points_avg_last_5
       FROM nba_analytics.player_game_summary pgs
       LEFT JOIN nba_predictions.ml_feature_store_v2 mf
         ON pgs.player_lookup = mf.player_lookup AND pgs.game_date = mf.game_date
       WHERE pgs.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)
         {date_filter}
         AND pgs.minutes_played > 10
-        AND mf.features[0] IS NOT NULL
+        AND mf.feature_0_value IS NOT NULL
     )
     SELECT
       COUNT(*) as total_games,

@@ -158,11 +158,11 @@ class ScoringTierProcessor:
         """
         query = f"""
         WITH player_season_avg AS (
-          -- Get season average from ML feature store (features[2] = points_avg_season)
+          -- Get season average from ML feature store (feature_2_value = points_avg_season)
           SELECT
             player_lookup,
             game_date,
-            features[OFFSET(2)] as season_avg
+            feature_2_value as season_avg
           FROM `nba-props-platform.nba_predictions.ml_feature_store_v2`
           WHERE game_date > DATE_SUB('{as_of_date}', INTERVAL {self.lookback_days} DAY)
             AND game_date <= '{as_of_date}'

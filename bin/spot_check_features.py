@@ -36,6 +36,7 @@ Purpose: Validate feature calculations before/after backfills
 
 import argparse
 import logging
+import math
 import os
 import sys
 from datetime import date, datetime, timedelta
@@ -82,8 +83,8 @@ def get_feature_record(client, player_lookup: str, game_date: date) -> Optional[
     SELECT
         player_lookup,
         game_date,
-        features,
-        feature_names,
+        feature_0_value,
+        feature_1_value,
         historical_completeness.games_found,
         historical_completeness.games_expected,
         historical_completeness.is_complete,
@@ -357,66 +358,59 @@ def validate_player(client, player_lookup: str, game_date: date, verbose: bool =
     # NOTE: The feature store uses Phase 4 (player_daily_cache) when available,
     # which may differ slightly from raw Phase 3 (player_game_summary) data.
     # We check against Phase 4 cache first, then raw data as fallback.
+    # Uses individual feature_N_value columns (Session 287 migration).
+    # feature_1_value = points_avg_last_10
     # =========================================================================
-    features_arr = feature.get('features', [])
-    feature_names_arr = feature.get('feature_names', [])
-    # Handle numpy/pandas arrays
-    if hasattr(features_arr, 'tolist'):
-        features_arr = features_arr.tolist()
-    if hasattr(feature_names_arr, 'tolist'):
-        feature_names_arr = feature_names_arr.tolist()
+    points_avg_raw = feature.get('feature_1_value')
+    has_points_avg = points_avg_raw is not None and not (isinstance(points_avg_raw, float) and math.isnan(points_avg_raw))
 
-    if features_arr and feature_names_arr and len(features_arr) > 0 and len(feature_names_arr) > 0:
-        features_dict = dict(zip(feature_names_arr, features_arr))
+    if has_points_avg:
+        actual_avg = float(points_avg_raw)
 
-        # Check points_avg_last_10
-        if 'points_avg_last_10' in features_dict:
-            actual_avg = features_dict['points_avg_last_10']
+        # Try to get Phase 4 cache value (primary source)
+        phase4_cache = get_phase4_cache_value(client, player_lookup, game_date)
 
-            # Try to get Phase 4 cache value (primary source)
-            phase4_cache = get_phase4_cache_value(client, player_lookup, game_date)
+        if phase4_cache and phase4_cache.get('points_avg_last_10') is not None:
+            expected_avg = float(phase4_cache['points_avg_last_10'])
+            source = 'Phase 4 cache'
+        elif raw_games:
+            expected_avg = calculate_expected_avg(raw_games, 'points', min(10, len(raw_games)))
+            source = 'Phase 3 raw'
+        else:
+            expected_avg = None
+            source = None
 
-            if phase4_cache and phase4_cache.get('points_avg_last_10') is not None:
-                expected_avg = float(phase4_cache['points_avg_last_10'])
-                source = 'Phase 4 cache'
-            elif raw_games:
-                expected_avg = calculate_expected_avg(raw_games, 'points', min(10, len(raw_games)))
-                source = 'Phase 3 raw'
+        if expected_avg is not None:
+            diff = abs(expected_avg - actual_avg)
+            pct_diff = diff / max(expected_avg, 0.01) * 100
+
+            if pct_diff <= TOLERANCE * 100:
+                results['checks'].append({
+                    'name': 'points_avg_last_10 calculation',
+                    'status': 'PASS',
+                    'message': f'{actual_avg:.2f} matches {source} {expected_avg:.2f} (diff: {pct_diff:.2f}%)'
+                })
+                results['passed'] += 1
             else:
-                expected_avg = None
-                source = None
-
-            if expected_avg is not None:
-                diff = abs(expected_avg - actual_avg)
-                pct_diff = diff / max(expected_avg, 0.01) * 100
-
-                if pct_diff <= TOLERANCE * 100:
+                # Not a failure if it matches Phase 4 but not Phase 3
+                if source == 'Phase 3 raw' and phase4_cache:
                     results['checks'].append({
                         'name': 'points_avg_last_10 calculation',
-                        'status': 'PASS',
-                        'message': f'{actual_avg:.2f} matches {source} {expected_avg:.2f} (diff: {pct_diff:.2f}%)'
+                        'status': 'WARN',
+                        'message': f'Differs from Phase 3 raw ({expected_avg:.2f}) but may match Phase 4 cache',
+                        'expected': expected_avg,
+                        'actual': actual_avg
                     })
-                    results['passed'] += 1
+                    results['warnings'] += 1
                 else:
-                    # Not a failure if it matches Phase 4 but not Phase 3
-                    if source == 'Phase 3 raw' and phase4_cache:
-                        results['checks'].append({
-                            'name': 'points_avg_last_10 calculation',
-                            'status': 'WARN',
-                            'message': f'Differs from Phase 3 raw ({expected_avg:.2f}) but may match Phase 4 cache',
-                            'expected': expected_avg,
-                            'actual': actual_avg
-                        })
-                        results['warnings'] += 1
-                    else:
-                        results['checks'].append({
-                            'name': 'points_avg_last_10 calculation',
-                            'status': 'FAIL',
-                            'message': f'Expected {expected_avg:.2f} ({source}), got {actual_avg:.2f} (diff: {pct_diff:.2f}%)',
-                            'expected': expected_avg,
-                            'actual': actual_avg
-                        })
-                        results['failed'] += 1
+                    results['checks'].append({
+                        'name': 'points_avg_last_10 calculation',
+                        'status': 'FAIL',
+                        'message': f'Expected {expected_avg:.2f} ({source}), got {actual_avg:.2f} (diff: {pct_diff:.2f}%)',
+                        'expected': expected_avg,
+                        'actual': actual_avg
+                    })
+                    results['failed'] += 1
 
     # Calculate overall status
     if results['failed'] > 0:

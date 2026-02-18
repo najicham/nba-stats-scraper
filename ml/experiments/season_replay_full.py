@@ -492,6 +492,257 @@ def compute_dimensions(preds, actuals, lines, eval_df):
         'Line Down + UNDER': (line_move <= -1.0) & (edges <= -3),
     }
 
+    # =========================================================================
+    # SESSION 285 — Player Archetype & Group Pattern Dimensions
+    # =========================================================================
+
+    # Load additional features for archetype slicing
+    pct_three = _safe_feature(eval_df, 'feature_20_value', 0.30)
+    pct_paint = _safe_feature(eval_df, 'feature_18_value', 0.35)
+    pct_mid = _safe_feature(eval_df, 'feature_19_value', 0.15)
+    usage_rate = _safe_feature(eval_df, 'feature_49_value', 20.0)
+    pts_slope = _safe_feature(eval_df, 'feature_34_value', 0.0)
+    star_out = _safe_feature(eval_df, 'feature_37_value', 0.0)
+    min_avg = _safe_feature(eval_df, 'feature_31_value', 25.0)
+    team_pace = _safe_feature(eval_df, 'feature_22_value', 100.0)
+    multi_book_std = _safe_feature(eval_df, 'feature_50_value', 0.5)
+    consec_below = _safe_feature(eval_df, 'feature_47_value', 0.0)
+    pts_avg_3 = _safe_feature(eval_df, 'feature_43_value', 15.0)
+    line_vs_avg = _safe_feature(eval_df, 'feature_53_value', 0.0)
+    usage_spike = _safe_feature(eval_df, 'feature_8_value', 0.0)
+    ppm = _safe_feature(eval_df, 'feature_32_value', 0.5)
+    game_total = _safe_feature(eval_df, 'feature_38_value', 220.0)
+    spread_mag = _safe_feature(eval_df, 'feature_41_value', 5.0)
+    days_rest_f = _safe_feature(eval_df, 'feature_39_value', 1.0)
+    breakout = _safe_feature(eval_df, 'feature_36_value', 0.0)
+
+    # --- 24. Shooting Profile ---
+    dimensions['Shooting Profile'] = {
+        '3PT Heavy (>40%)': edge3 & (pct_three > 0.40),
+        '3PT Moderate (25-40%)': edge3 & (pct_three >= 0.25) & (pct_three <= 0.40),
+        'Paint Dominant (>45%)': edge3 & (pct_paint > 0.45),
+        'Mid-Range Heavy (>25%)': edge3 & (pct_mid > 0.25),
+        'Balanced': edge3 & (pct_three >= 0.20) & (pct_three <= 0.35) & (pct_paint >= 0.25) & (pct_paint <= 0.45),
+    }
+
+    # --- 25. Shooting Profile x Direction ---
+    dimensions['Shot Profile x Direction'] = {
+        '3PT Heavy OVER': (pct_three > 0.40) & (edges >= 3),
+        '3PT Heavy UNDER': (pct_three > 0.40) & (edges <= -3),
+        'Paint Dom OVER': (pct_paint > 0.45) & (edges >= 3),
+        'Paint Dom UNDER': (pct_paint > 0.45) & (edges <= -3),
+        'Balanced OVER': (pct_three >= 0.20) & (pct_three <= 0.35) & (pct_paint >= 0.25) & (edges >= 3),
+        'Balanced UNDER': (pct_three >= 0.20) & (pct_three <= 0.35) & (pct_paint >= 0.25) & (edges <= -3),
+    }
+
+    # --- 26. Usage Rate Tiers ---
+    dimensions['Usage Tier'] = {
+        'High Usage (28%+)': edge3 & (usage_rate >= 28),
+        'Medium Usage (20-28%)': edge3 & (usage_rate >= 20) & (usage_rate < 28),
+        'Low Usage (<20%)': edge3 & (usage_rate < 20),
+    }
+
+    # --- 27. Usage x Direction ---
+    dimensions['Usage x Direction'] = {
+        'High Usage OVER': (usage_rate >= 28) & (edges >= 3),
+        'High Usage UNDER': (usage_rate >= 28) & (edges <= -3),
+        'Med Usage OVER': (usage_rate >= 20) & (usage_rate < 28) & (edges >= 3),
+        'Med Usage UNDER': (usage_rate >= 20) & (usage_rate < 28) & (edges <= -3),
+        'Low Usage OVER': (usage_rate < 20) & (edges >= 3),
+        'Low Usage UNDER': (usage_rate < 20) & (edges <= -3),
+    }
+
+    # --- 28. Consistency Archetype ---
+    dimensions['Consistency Archetype'] = {
+        'Ultra Consistent (std<3)': edge3 & (pts_std < 3),
+        'Consistent (std 3-5)': edge3 & (pts_std >= 3) & (pts_std < 5),
+        'Average (std 5-7)': edge3 & (pts_std >= 5) & (pts_std < 7),
+        'Volatile (std 7-10)': edge3 & (pts_std >= 7) & (pts_std < 10),
+        'Wild Card (std 10+)': edge3 & (pts_std >= 10),
+    }
+
+    # --- 29. Consistency x Direction ---
+    dimensions['Consistency x Direction'] = {
+        'Consistent UNDER (std<5)': (pts_std < 5) & (edges <= -3),
+        'Consistent OVER (std<5)': (pts_std < 5) & (edges >= 3),
+        'Volatile UNDER (std>7)': (pts_std > 7) & (edges <= -3),
+        'Volatile OVER (std>7)': (pts_std > 7) & (edges >= 3),
+    }
+
+    # --- 30. Star 3PT Shooter (line 25+ and 3PT heavy) ---
+    star_3pt = (lines >= 25) & (pct_three > 0.35)
+    dimensions['Star 3PT Archetype'] = {
+        'Star 3PT OVER': star_3pt & (edges >= 3),
+        'Star 3PT UNDER': star_3pt & (edges <= -3),
+        'Star Non-3PT OVER': (lines >= 25) & (pct_three <= 0.35) & (edges >= 3),
+        'Star Non-3PT UNDER': (lines >= 25) & (pct_three <= 0.35) & (edges <= -3),
+    }
+
+    # --- 31. Role Change / Minutes Trajectory ---
+    dimensions['Role Trajectory'] = {
+        'Rising Role OVER': (min_change >= 3) & (edges >= 3),
+        'Rising Role UNDER': (min_change >= 3) & (edges <= -3),
+        'Declining Role OVER': (min_change <= -3) & (edges >= 3),
+        'Declining Role UNDER': (min_change <= -3) & (edges <= -3),
+        'Stable High Min (30+)': edge3 & (min_avg >= 30) & (min_change > -3) & (min_change < 3),
+        'Stable Low Min (<22)': edge3 & (min_avg < 22) & (min_change > -3) & (min_change < 3),
+    }
+
+    # --- 32. Star Teammate Out (opportunity) ---
+    dimensions['Star Teammate Out'] = {
+        'No Stars Out': edge3 & (star_out < 0.5),
+        '1 Star Out': edge3 & (star_out >= 0.5) & (star_out < 1.5),
+        '2+ Stars Out': edge3 & (star_out >= 1.5),
+    }
+
+    # --- 33. Star Out x Direction ---
+    dimensions['Star Out x Direction'] = {
+        '1+ Star Out OVER': (star_out >= 0.5) & (edges >= 3),
+        '1+ Star Out UNDER': (star_out >= 0.5) & (edges <= -3),
+        'No Stars Out OVER': (star_out < 0.5) & (edges >= 3),
+        'No Stars Out UNDER': (star_out < 0.5) & (edges <= -3),
+    }
+
+    # --- 34. Team Pace x Usage ---
+    fast_pace = team_pace >= 101
+    slow_pace = team_pace < 98
+    dimensions['Pace x Usage'] = {
+        'Fast Pace + High Usage': edge3 & fast_pace & (usage_rate >= 28),
+        'Fast Pace + Low Usage': edge3 & fast_pace & (usage_rate < 20),
+        'Slow Pace + High Usage': edge3 & slow_pace & (usage_rate >= 28),
+        'Slow Pace + Low Usage': edge3 & slow_pace & (usage_rate < 20),
+    }
+
+    # --- 35. Book Disagreement (multi-book line std) ---
+    dimensions['Book Disagreement'] = {
+        'Sharp Consensus (std<0.5)': edge3 & (multi_book_std < 0.5),
+        'Mild Disagreement (0.5-1)': edge3 & (multi_book_std >= 0.5) & (multi_book_std < 1.0),
+        'High Disagreement (1+)': edge3 & (multi_book_std >= 1.0),
+    }
+
+    # --- 36. Book Disagreement x Direction ---
+    dimensions['Book Disagree x Direction'] = {
+        'High Disagree OVER': (multi_book_std >= 1.0) & (edges >= 3),
+        'High Disagree UNDER': (multi_book_std >= 1.0) & (edges <= -3),
+        'Consensus OVER': (multi_book_std < 0.5) & (edges >= 3),
+        'Consensus UNDER': (multi_book_std < 0.5) & (edges <= -3),
+    }
+
+    # --- 37. Cold Streak Length ---
+    dimensions['Cold Streak'] = {
+        'No Streak (0)': edge3 & (consec_below < 1),
+        'Short Cold (1-2 games)': edge3 & (consec_below >= 1) & (consec_below < 3),
+        'Extended Cold (3+)': edge3 & (consec_below >= 3),
+    }
+
+    # --- 38. Cold Streak x Direction ---
+    dimensions['Cold Streak x Direction'] = {
+        'Cold 3+ OVER (bounce)': (consec_below >= 3) & (edges >= 3),
+        'Cold 3+ UNDER (continue)': (consec_below >= 3) & (edges <= -3),
+        'Hot (0 below) OVER': (consec_below < 1) & (edges >= 3),
+        'Hot (0 below) UNDER': (consec_below < 1) & (edges <= -3),
+    }
+
+    # --- 39. Line vs Season Average (market pricing) ---
+    dimensions['Line vs Season Avg'] = {
+        'Overpriced (line 3+ above avg)': edge3 & (line_vs_avg >= 3),
+        'Fair (within 3)': edge3 & (line_vs_avg > -3) & (line_vs_avg < 3),
+        'Underpriced (line 3+ below avg)': edge3 & (line_vs_avg <= -3),
+    }
+
+    # --- 40. Line Pricing x Direction ---
+    dimensions['Line Pricing x Direction'] = {
+        'Overpriced UNDER': (line_vs_avg >= 3) & (edges <= -3),
+        'Overpriced OVER': (line_vs_avg >= 3) & (edges >= 3),
+        'Underpriced OVER': (line_vs_avg <= -3) & (edges >= 3),
+        'Underpriced UNDER': (line_vs_avg <= -3) & (edges <= -3),
+    }
+
+    # --- 41. Game Environment ---
+    dimensions['Game Environment'] = {
+        'High Total (228+)': edge3 & (game_total >= 228),
+        'Normal Total (216-228)': edge3 & (game_total >= 216) & (game_total < 228),
+        'Low Total (<216)': edge3 & (game_total < 216),
+        'Blowout Spread (10+)': edge3 & (spread_mag >= 10),
+        'Close Game (<4)': edge3 & (spread_mag < 4),
+    }
+
+    # --- 42. Game Environment x Direction ---
+    dimensions['Game Env x Direction'] = {
+        'High Total OVER': (game_total >= 228) & (edges >= 3),
+        'High Total UNDER': (game_total >= 228) & (edges <= -3),
+        'Low Total OVER': (game_total < 216) & (edges >= 3),
+        'Low Total UNDER': (game_total < 216) & (edges <= -3),
+        'Blowout UNDER': (spread_mag >= 10) & (edges <= -3),
+        'Blowout OVER': (spread_mag >= 10) & (edges >= 3),
+    }
+
+    # --- 43. Efficiency Archetype (PPM = points per minute) ---
+    dimensions['Efficiency'] = {
+        'Elite Efficiency (ppm>0.7)': edge3 & (ppm > 0.7),
+        'Good Efficiency (0.5-0.7)': edge3 & (ppm >= 0.5) & (ppm <= 0.7),
+        'Low Efficiency (<0.5)': edge3 & (ppm < 0.5),
+    }
+
+    # --- 44. Compound Archetypes (multi-feature player groups) ---
+    # Star + consistent + UNDER = highest conviction
+    consistent_star_under = (lines >= 25) & (pts_std < 5) & (edges <= -3)
+    # Bench + volatile + rising role
+    volatile_bench_rising = (lines < 15) & (pts_std > 7) & (min_change >= 3)
+    # High usage on fast team
+    pace_usage_combo = (usage_rate >= 28) & (team_pace >= 101) & edge3
+    # 3PT shooter vs weak defense
+    shooter_vs_weak = (pct_three > 0.35) & (opp_def >= 114) & (edges >= 3)
+    # Trending up + underpriced
+    trending_underpriced = (pts_slope > 0.3) & (line_vs_avg <= -2) & (edges >= 3)
+    # B2B + high fatigue + UNDER
+    tired_under = (b2b >= 0.5) & (fatigue >= 60) & (edges <= -3)
+    # Opportunity spike (star out + breakout flag)
+    opportunity = (star_out >= 0.5) & (breakout >= 0.5) & edge3
+
+    dimensions['Compound Archetypes'] = {
+        'Consistent Star UNDER': consistent_star_under,
+        'Volatile Bench Rising': volatile_bench_rising & edge3,
+        'Pace+Usage Combo': pace_usage_combo,
+        '3PT vs Weak Def OVER': shooter_vs_weak,
+        'Trending Up + Underpriced': trending_underpriced,
+        'Tired UNDER (B2B+Fatigue)': tired_under,
+        'Opportunity Spike': opportunity,
+    }
+
+    # --- 45. Signal Combo Simulations ---
+    # Combos of existing signals that might be synergistic
+    bench_under_mask = (lines < 15) & (edges <= -3)
+    rest_adv_mask = (rest_adv > 0.5) & edge3
+    weak_def_mask = (opp_def >= 114) & (edges >= 3)
+    strong_def_mask = (opp_def <= 108) & (edges <= -3)
+    consistent_mask = (pts_std <= 4)
+    volatile_mask = (pts_std >= 7)
+    trending_up_mask = (pts_avg_5 > pts_avg_10 * 1.05) & (edges >= 3)
+
+    dimensions['Signal Combos'] = {
+        'bench_under + rest_adv': bench_under_mask & (rest_adv > 0.5),
+        'bench_under + consistent': bench_under_mask & consistent_mask,
+        'high_edge + weak_def': (abs_edges >= 5) & (opp_def >= 114),
+        'high_edge + consistent': (abs_edges >= 5) & consistent_mask,
+        'volatile + UNDER': volatile_mask & (edges <= -3),
+        'volatile + strong_def UNDER': volatile_mask & strong_def_mask,
+        'trending_up + weak_def': trending_up_mask & (opp_def >= 114),
+        'rest_adv + OVER': (rest_adv > 0.5) & (edges >= 3),
+        'b2b + strong_def UNDER': (b2b >= 0.5) & strong_def_mask,
+        'consistent + home OVER': consistent_mask & (home >= 0.5) & (edges >= 3),
+        '3pt_heavy + cold_snap OVER': (pct_three > 0.35) & (pts_avg_5 < season_nz * 0.85) & (edges >= 3),
+        'star + high_edge UNDER': (lines >= 25) & (abs_edges >= 5) & (edges <= -3),
+    }
+
+    # --- 46. Points Per Minute x Tier ---
+    dimensions['PPM x Tier'] = {
+        'Star Elite PPM (>0.7)': (lines >= 25) & (ppm > 0.7) & edge3,
+        'Star Low PPM (<0.6)': (lines >= 25) & (ppm < 0.6) & edge3,
+        'Bench High PPM (>0.6)': (lines < 15) & (ppm > 0.6) & edge3,
+        'Bench Low PPM (<0.4)': (lines < 15) & (ppm < 0.4) & edge3,
+    }
+
     return dimensions
 
 
@@ -862,8 +1113,6 @@ class FullSeasonReplay:
         SELECT
           mf.player_lookup,
           mf.game_date,
-          mf.features,
-          mf.feature_names,
           {feature_value_columns},
           mf.feature_quality_score,
           mf.required_default_count,
@@ -893,8 +1142,6 @@ class FullSeasonReplay:
         SELECT
           mf.player_lookup,
           mf.game_date,
-          mf.features,
-          mf.feature_names,
           {feature_value_columns},
           pgs.points as actual_points,
           l.line as vegas_line

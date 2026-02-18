@@ -143,61 +143,32 @@ def prepare_features(df, contract=V9_CONTRACT, exclude_features=None):
     active_features = [f for f in contract.feature_names if f not in exclude_set]
 
     store_name_to_idx = {name: i for i, name in enumerate(FEATURE_STORE_NAMES)}
-    use_individual_columns = 'feature_0_value' in df.columns
 
     rows = []
     for _, row in df.iterrows():
         row_data = {}
 
-        if use_individual_columns:
-            arr_dict = {}
-            feature_values = row.get('features')
-            feature_names_arr = row.get('feature_names')
-            if feature_values is not None and feature_names_arr is not None:
-                min_len = min(len(feature_values), len(feature_names_arr))
-                arr_dict = dict(zip(feature_names_arr[:min_len], feature_values[:min_len]))
-
-            for name in active_features:
-                idx = store_name_to_idx.get(name)
-                if idx is not None:
-                    val = row.get(f'feature_{idx}_value')
-                    if val is not None and not pd.isna(val):
-                        row_data[name] = float(val)
-                    elif name in arr_dict and arr_dict[name] is not None:
-                        row_data[name] = float(arr_dict[name])
-                    else:
-                        row_data[name] = np.nan
+        # Read from individual feature_N_value columns (Session 287 migration).
+        # NULL means no real data → np.nan (CatBoost handles natively).
+        for name in active_features:
+            idx = store_name_to_idx.get(name)
+            if idx is not None:
+                val = row.get(f'feature_{idx}_value')
+                if val is not None and not pd.isna(val):
+                    row_data[name] = float(val)
                 else:
                     row_data[name] = np.nan
-        else:
-            feature_values = row['features']
-            feature_names_arr = row['feature_names']
-
-            if len(feature_values) != len(feature_names_arr):
-                min_len = min(len(feature_values), len(feature_names_arr))
-                feature_values = feature_values[:min_len]
-                feature_names_arr = feature_names_arr[:min_len]
-
-            features_dict = dict(zip(feature_names_arr, feature_values))
-
-            for name in active_features:
-                if name in features_dict and features_dict[name] is not None:
-                    row_data[name] = float(features_dict[name])
-                elif name in FEATURE_DEFAULTS and FEATURE_DEFAULTS[name] is not None:
-                    row_data[name] = float(FEATURE_DEFAULTS[name])
-                else:
-                    row_data[name] = np.nan
+            else:
+                row_data[name] = np.nan
 
         rows.append(row_data)
 
     X = pd.DataFrame(rows, columns=active_features)
 
-    if use_individual_columns:
-        nan_pct = X.isna().mean().mean() * 100
-        if nan_pct > 0:
-            print(f"  Feature matrix: {X.shape[0]} rows x {X.shape[1]} cols, {nan_pct:.1f}% NaN (CatBoost native)")
-    else:
-        X = X.fillna(X.median())
+    # CatBoost handles NaN natively — no imputation needed.
+    nan_pct = X.isna().mean().mean() * 100
+    if nan_pct > 0:
+        print(f"  Feature matrix: {X.shape[0]} rows x {X.shape[1]} cols, {nan_pct:.1f}% NaN (CatBoost native)")
 
     y = df['actual_points'].astype(float)
     return X, y

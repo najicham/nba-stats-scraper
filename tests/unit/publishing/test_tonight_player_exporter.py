@@ -360,6 +360,31 @@ class TestCandidateAngles:
                 assert fat is not None
                 assert fat['direction'] == 'negative'
                 assert fat['magnitude'] > 0
+                assert 'score' not in fat['description'].lower()  # No raw fatigue score shown
+
+    def test_fresh_fatigue_deduped_when_rest_present(self):
+        """Test that fresh fatigue angle is dropped when rest angle exists"""
+        with patch('google.cloud.bigquery.Client'):
+            with patch('data_processors.publishing.base_exporter.storage.Client'):
+                from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
+                exporter = TonightPlayerExporter()
+
+                context = {
+                    'back_to_back': False,
+                    'home_game': None,
+                    'opponent_team_abbr': 'GSW',
+                    'days_rest': 4  # triggers rest angle
+                }
+                splits = {'rested_ppg': 26.0}
+
+                angles = exporter._build_candidate_angles(
+                    context, {'level': 'fresh', 'score': 100}, splits, None, **self._defaults
+                )
+
+                rest = next((a for a in angles if a['id'] == 'rest'), None)
+                fatigue = next((a for a in angles if a['id'] == 'fatigue'), None)
+                assert rest is not None
+                assert fatigue is None  # deduped
 
     def test_opponent_defense_angle(self):
         """Test opponent defense angle for elite defense"""

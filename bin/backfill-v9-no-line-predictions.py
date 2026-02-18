@@ -92,8 +92,6 @@ def query_missing_players(client, system_id, start_date, end_date):
         mf.player_lookup,
         mf.game_date,
         {feature_cols},
-        mf.features,
-        mf.feature_names,
         mf.feature_quality_score,
         mf.default_feature_count,
         mf.default_feature_indices,
@@ -122,25 +120,13 @@ def extract_v9_features(row):
 
     Uses individual columns (feature_N_value) for NULL-aware reads.
     NULLs correctly become NaN for CatBoost (handles missing natively).
-    Falls back to features array if individual columns not available.
     """
     # Build name→value dict from individual columns (NULL-aware)
     features_dict = {}
-    has_individual = hasattr(row, 'feature_0_value') or 'feature_0_value' in row.index
-    if has_individual:
-        for i, name in enumerate(FEATURE_STORE_NAMES):
-            val = row.get(f'feature_{i}_value')
-            if val is not None and not (isinstance(val, float) and pd.isna(val)):
-                features_dict[name] = float(val)
-    else:
-        # Fallback: use features array
-        feature_values = row['features']
-        feature_names = row['feature_names']
-        if len(feature_values) != len(feature_names):
-            min_len = min(len(feature_values), len(feature_names))
-            feature_values = feature_values[:min_len]
-            feature_names = feature_names[:min_len]
-        features_dict = dict(zip(feature_names, feature_values))
+    for i, name in enumerate(FEATURE_STORE_NAMES):
+        val = row.get(f'feature_{i}_value')
+        if val is not None and not (isinstance(val, float) and pd.isna(val)):
+            features_dict[name] = float(val)
 
     # Build V9 vector in exact V8_FEATURES order (V9 = same features as V8)
     vector = []
@@ -211,11 +197,12 @@ def generate_predictions(model, df, system_id, model_file_name, model_sha256, tr
     for i, (_, row) in enumerate(df.iterrows()):
         pred = float(max(0, min(60, predicted_points_raw[i])))
 
-        # Build features dict for confidence calculation
-        feature_values = row['features']
-        feature_names = row['feature_names']
-        min_len = min(len(feature_values), len(feature_names))
-        features_dict = dict(zip(feature_names[:min_len], feature_values[:min_len]))
+        # Build features dict for confidence calculation from individual columns
+        features_dict = {}
+        for idx, name in enumerate(FEATURE_STORE_NAMES):
+            val = row.get(f'feature_{idx}_value')
+            if val is not None and not (isinstance(val, float) and pd.isna(val)):
+                features_dict[name] = float(val)
         features_dict['feature_quality_score'] = row.get('feature_quality_score')
 
         confidence = compute_confidence(features_dict)

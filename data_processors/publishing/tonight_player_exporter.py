@@ -736,12 +736,13 @@ class TonightPlayerExporter(BaseExporter):
                     'description': desc
                 })
 
-        # 5. Fatigue
+        # 5. Fatigue (skip "fresh" when rest angle already covers it)
+        has_rest_angle = any(c['id'] == 'rest' for c in candidates)
         fatigue_level = fatigue.get('level')
         fatigue_score = fatigue.get('score')
         if fatigue_level == 'tired' and fatigue_score is not None:
             mag = min((100 - fatigue_score) / 100 * 0.7, 1.0)
-            desc = f"Elevated fatigue (score {fatigue_score}) — heavier recent workload"
+            desc = "Heavy recent workload, elevated fatigue risk"
             candidates.append({
                 'id': 'fatigue',
                 'factor': 'Fatigue',
@@ -749,9 +750,13 @@ class TonightPlayerExporter(BaseExporter):
                 'magnitude': round(mag, 2),
                 'description': desc
             })
-        elif fatigue_level == 'fresh':
+        elif fatigue_level == 'fresh' and not has_rest_angle:
             mag = 0.3
-            desc = f"Well-rested (fatigue score {fatigue_score}) — light recent workload"
+            rest_days = context.get('days_rest')
+            if rest_days:
+                desc = f"Fully rested, {rest_days} days off"
+            else:
+                desc = "Light recent workload, fully rested"
             candidates.append({
                 'id': 'fatigue',
                 'factor': 'Fresh Legs',
@@ -775,7 +780,8 @@ class TonightPlayerExporter(BaseExporter):
                     mag = min(((rank or 15) - 1) / 30, 1.0) * 0.7
 
                 direction = 'negative' if tier_label in ('elite', 'good') else 'positive'
-                desc = f"vs {opponent} #{rank} defense ({tier_label}, allows {ppg_allowed} PPG)"
+                ppg_display = round(ppg_allowed, 1) if ppg_allowed is not None else ppg_allowed
+                desc = f"{opponent} rank #{rank} in defense ({tier_label}), allowing {ppg_display} PPG"
                 candidates.append({
                     'id': 'opponent_defense',
                     'factor': 'Opponent Defense',

@@ -139,13 +139,13 @@ def audit_features(client: bigquery.Client, start_date: str, end_date: str,
     for idx, name, min_val, max_val, allow_null, check_const, const_thresh in FEATURE_SPECS:
         feature_stats_parts.append(f"""
         -- Feature {idx}: {name}
-        COUNT(CASE WHEN features[OFFSET({idx})] IS NULL THEN 1 END) as null_{idx},
-        MIN(CAST(features[OFFSET({idx})] AS FLOAT64)) as min_{idx},
-        MAX(CAST(features[OFFSET({idx})] AS FLOAT64)) as max_{idx},
-        AVG(CAST(features[OFFSET({idx})] AS FLOAT64)) as avg_{idx},
-        STDDEV(CAST(features[OFFSET({idx})] AS FLOAT64)) as std_{idx},
-        COUNTIF(CAST(features[OFFSET({idx})] AS FLOAT64) < {min_val}
-                OR CAST(features[OFFSET({idx})] AS FLOAT64) > {max_val}) as oor_{idx}
+        COUNT(CASE WHEN feature_{idx}_value IS NULL THEN 1 END) as null_{idx},
+        MIN(feature_{idx}_value) as min_{idx},
+        MAX(feature_{idx}_value) as max_{idx},
+        AVG(feature_{idx}_value) as avg_{idx},
+        STDDEV(feature_{idx}_value) as std_{idx},
+        COUNTIF(feature_{idx}_value < {min_val}
+                OR feature_{idx}_value > {max_val}) as oor_{idx}
         """)
 
     query = f"""
@@ -225,7 +225,7 @@ def check_constant_values(client: bigquery.Client, start_date: str, end_date: st
         if check_const and name in KNOWN_DEFAULTS:
             default_val = KNOWN_DEFAULTS[name]
             checks.append(f"""
-            COUNTIF(ABS(CAST(features[OFFSET({idx})] AS FLOAT64) - {default_val}) < 0.01) as const_{idx},
+            COUNTIF(ABS(feature_{idx}_value - {default_val}) < 0.01) as const_{idx},
             COUNT(*) as total_{idx}
             """)
 
@@ -261,8 +261,8 @@ def check_leakage(client: bigquery.Client, start_date: str, end_date: str,
     query = f"""
     WITH joined AS (
         SELECT
-            CAST(mf.features[OFFSET(0)] AS FLOAT64) as points_avg_last_5,
-            CAST(mf.features[OFFSET(1)] AS FLOAT64) as points_avg_last_10,
+            mf.feature_0_value as points_avg_last_5,
+            mf.feature_1_value as points_avg_last_10,
             pgs.points as actual_points
         FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2` mf
         JOIN `{PROJECT_ID}.nba_analytics.player_game_summary` pgs

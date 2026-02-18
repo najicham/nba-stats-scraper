@@ -1966,9 +1966,10 @@ class MLFeatureStoreProcessor(
         features.append(float(consec) if consec is not None else float('nan'))
         feature_sources[46] = 'calculated' if consec is not None else 'missing'
 
-        # Feature 47: teammate_usage_available — dead feature, NaN
-        features.append(float('nan'))
-        feature_sources[47] = 'missing'
+        # Feature 47: teammate_usage_available
+        teammate_usage = self.feature_extractor.get_teammate_usage_available(player_lookup) if player_lookup else None
+        features.append(float(teammate_usage) if teammate_usage is not None else float('nan'))
+        feature_sources[47] = 'calculated' if teammate_usage is not None else 'missing'
 
         # Feature 48: usage_rate_last_5
         usage = rolling_stats.get('usage_rate_last_5')
@@ -1980,9 +1981,10 @@ class MLFeatureStoreProcessor(
         features.append(float(gsc) if gsc is not None else float('nan'))
         feature_sources[49] = 'calculated' if gsc is not None else 'missing'
 
-        # Feature 50: multi_book_line_std — dead feature, NaN
-        features.append(float('nan'))
-        feature_sources[50] = 'missing'
+        # Feature 50: multi_book_line_std
+        line_std = self.feature_extractor.get_multi_book_line_std(player_lookup) if player_lookup else None
+        features.append(float(line_std) if line_std is not None else float('nan'))
+        feature_sources[50] = 'vegas' if line_std is not None else 'missing'
 
         # Feature 51: prop_over_streak (from UPCG)
         streaks = self.feature_extractor.get_prop_streaks(player_lookup) if player_lookup else {}
@@ -2101,10 +2103,10 @@ class MLFeatureStoreProcessor(
             WITH latest_features AS (
               SELECT
                 player_lookup,
-                features[OFFSET(2)] as season_ppg
+                feature_2_value as season_ppg
               FROM `nba_predictions.ml_feature_store_v2`
               WHERE game_date = '{prev_date.isoformat()}'
-                AND features[OFFSET(2)] > 0  -- Only players with PPG
+                AND feature_2_value > 0  -- Only players with PPG
             ),
             injured_players AS (
               SELECT DISTINCT
@@ -2138,10 +2140,10 @@ class MLFeatureStoreProcessor(
             WITH latest_features AS (
               SELECT
                 player_lookup,
-                features[OFFSET(2)] as season_ppg
+                feature_2_value as season_ppg
               FROM `nba_predictions.ml_feature_store_v2`
               WHERE game_date = '{prev_date.isoformat()}'
-                AND features[OFFSET(2)] > 0
+                AND feature_2_value > 0
             ),
             injured_players AS (
               SELECT DISTINCT

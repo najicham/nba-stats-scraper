@@ -35,7 +35,11 @@ from datetime import datetime, date, timedelta, timezone
 from google.cloud import bigquery
 
 from predictions.worker.prediction_systems.catboost_monthly import MONTHLY_MODELS
-from shared.ml.feature_contract import V9_CONTRACT, V9_FEATURE_NAMES, FEATURE_DEFAULTS
+from shared.ml.feature_contract import (
+    V9_CONTRACT, V9_FEATURE_NAMES, FEATURE_DEFAULTS,
+    FEATURE_STORE_FEATURE_COUNT, FEATURE_STORE_NAMES,
+    build_feature_array_from_columns,
+)
 
 PROJECT_ID = "nba-props-platform"
 TABLE_ID = f"{PROJECT_ID}.nba_predictions.player_prop_predictions"
@@ -106,6 +110,10 @@ def query_features_and_lines(client, start_date, end_date):
     Uses production catboost_v9 predictions as the line source — same lines
     the champion used, so grading is apples-to-apples.
     """
+    # Build individual column list for NULL-aware feature reads
+    feature_cols = ', '.join(
+        f'mf.feature_{i}_value' for i in range(FEATURE_STORE_FEATURE_COUNT)
+    )
     query = f"""
     WITH prod_lines AS (
         SELECT player_lookup, game_date, game_id, current_points_line,
@@ -125,8 +133,7 @@ def query_features_and_lines(client, start_date, end_date):
     SELECT
         mf.player_lookup,
         mf.game_date,
-        mf.features,
-        mf.feature_names,
+        {feature_cols},
         mf.feature_quality_score,
         mf.default_feature_count,
         mf.default_feature_indices,
@@ -154,16 +161,16 @@ def query_features_and_lines(client, start_date, end_date):
 
 
 def extract_features(row, contract=V9_CONTRACT):
-    """Extract feature vector from a single row, matching V9 contract order."""
-    feature_values = row['features']
-    feature_names = row['feature_names']
+    """Extract feature vector from a single row, matching V9 contract order.
 
-    if len(feature_values) != len(feature_names):
-        min_len = min(len(feature_values), len(feature_names))
-        feature_values = feature_values[:min_len]
-        feature_names = feature_names[:min_len]
-
-    features_dict = dict(zip(feature_names, feature_values))
+    Uses individual feature_N_value columns (Session 287 migration).
+    """
+    # Build name→value dict from individual columns
+    features_dict = {}
+    for i, name in enumerate(FEATURE_STORE_NAMES):
+        val = row.get(f'feature_{i}_value')
+        if val is not None and not (isinstance(val, float) and pd.isna(val)):
+            features_dict[name] = float(val)
 
     result = []
     for name in contract.feature_names:
@@ -212,16 +219,15 @@ def generate_predictions(model, df, model_id, model_file_name, model_sha256, con
         confidence = compute_confidence(abs(edge))
         is_actionable = abs(edge) >= ACTIONABLE_EDGE
 
-        # Build features snapshot
-        feature_values = row['features']
-        feature_names = row['feature_names']
-        if len(feature_values) == len(feature_names):
-            features_snapshot = json.dumps(dict(zip(
-                [str(n) for n in feature_names[:33]],
-                [float(v) if v is not None else None for v in feature_values[:33]]
-            )))
-        else:
-            features_snapshot = None
+        # Build features snapshot from individual columns
+        snapshot_dict = {}
+        for i, name in enumerate(V9_FEATURE_NAMES):
+            val = row.get(f'feature_{i}_value')
+            if val is not None and not (isinstance(val, float) and pd.isna(val)):
+                snapshot_dict[name] = float(val)
+            else:
+                snapshot_dict[name] = None
+        features_snapshot = json.dumps(snapshot_dict)
 
         record = {
             'prediction_id': str(uuid.uuid4()),

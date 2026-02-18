@@ -664,10 +664,9 @@ class ContinuousValidator:
         today = date.today()
         query = f"""
         SELECT
-            ROUND(100.0 * COUNTIF(features[OFFSET(25)] > 0) / COUNT(*), 1) as vegas_line_pct
+            ROUND(100.0 * COUNTIF(feature_25_value > 0) / COUNT(*), 1) as vegas_line_pct
         FROM nba_predictions.ml_feature_store_v2
         WHERE game_date = '{today}'
-            AND ARRAY_LENGTH(features) >= 33
         """
         try:
             result = list(self.bq_client.query(query).result())[0]

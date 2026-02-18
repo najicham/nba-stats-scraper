@@ -39,8 +39,8 @@ feature_cache_check AS (
         fs.game_date as check_date,
         'feature_cache_match' as check_name,
         COUNT(*) as total_records,
-        COUNTIF(ABS(fs.features[OFFSET(0)] - c.points_avg_last_5) < 0.1) as passing_records,
-        ROUND(100.0 * COUNTIF(ABS(fs.features[OFFSET(0)] - c.points_avg_last_5) < 0.1) / NULLIF(COUNT(*), 0), 1) as value,
+        COUNTIF(ABS(fs.feature_0_value - c.points_avg_last_5) < 0.1) as passing_records,
+        ROUND(100.0 * COUNTIF(ABS(fs.feature_0_value - c.points_avg_last_5) < 0.1) / NULLIF(COUNT(*), 0), 1) as value,
         95.0 as threshold,
         'pct' as unit,
         'L5/L10 match rate between feature store and cache' as description
@@ -48,7 +48,7 @@ feature_cache_check AS (
     JOIN `nba-props-platform.nba_precompute.player_daily_cache` c
         ON fs.player_lookup = c.player_lookup AND fs.game_date = c.cache_date
     WHERE fs.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
-        AND ARRAY_LENGTH(fs.features) >= 2
+        AND fs.feature_0_value IS NOT NULL
     GROUP BY fs.game_date
 ),
 
@@ -74,18 +74,18 @@ duplicate_check AS (
     )
 ),
 
--- Check 3: Invalid feature arrays
--- Note: Changed from 33 to 34 on 2026-01-29 after new feature was added
-array_check AS (
+-- Check 3: Invalid feature count
+-- Note: Changed from 33→34→37→54 as features were added
+feature_count_check AS (
     SELECT
         game_date as check_date,
-        'invalid_arrays' as check_name,
+        'invalid_feature_count' as check_name,
         COUNT(*) as total_records,
-        COUNTIF(features IS NOT NULL AND ARRAY_LENGTH(features) = 34) as passing_records,
-        CAST(COUNTIF(features IS NULL OR ARRAY_LENGTH(features) != 34) AS FLOAT64) as value,
+        COUNTIF(feature_count = 54) as passing_records,
+        CAST(COUNTIF(feature_count IS NULL OR feature_count != 54) AS FLOAT64) as value,
         0.0 as threshold,
         'count' as unit,
-        'Feature arrays with NULL or wrong length (expected 34)' as description
+        'Records with NULL or wrong feature_count (expected 54)' as description
     FROM `nba-props-platform.nba_predictions.ml_feature_store_v2`
     WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
     GROUP BY game_date
@@ -135,7 +135,7 @@ all_checks AS (
     UNION ALL
     SELECT * FROM duplicate_check
     UNION ALL
-    SELECT * FROM array_check
+    SELECT * FROM feature_count_check
     UNION ALL
     SELECT * FROM nan_inf_check
     UNION ALL

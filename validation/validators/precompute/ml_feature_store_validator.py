@@ -99,6 +99,9 @@ class MLFeatureStoreValidator(BaseValidator):
         # Check 13: Shot zone distribution drift (NEW - Session 38)
         self._validate_shot_zone_distribution(start_date, end_date)
 
+        # Check 14: Column population check (NEW - Session 285)
+        self._validate_column_population(start_date, end_date)
+
         logger.info("Completed ML Feature Store V2 validations")
 
     def _validate_player_count(self, start_date: str, end_date: str):
@@ -192,15 +195,13 @@ class MLFeatureStoreValidator(BaseValidator):
         SELECT
             game_date,
             player_lookup,
-            ARRAY_LENGTH(features) as feature_count,
             feature_count as metadata_count
         FROM `{self.project_id}.nba_predictions.ml_feature_store_v2`
         WHERE game_date >= '{start_date}'
           AND game_date <= '{end_date}'
           AND (
-            features IS NULL OR
-            ARRAY_LENGTH(features) != 37 OR
-            feature_count != 37
+            feature_count IS NULL OR
+            feature_count != 54
           )
         ORDER BY game_date DESC
         LIMIT 50
@@ -208,18 +209,18 @@ class MLFeatureStoreValidator(BaseValidator):
 
         try:
             result = self._execute_query(query, start_date, end_date)
-            invalid = [(str(row.game_date), row.player_lookup, row.feature_count) for row in result]
+            invalid = [(str(row.game_date), row.player_lookup, row.metadata_count) for row in result]
 
             passed = len(invalid) == 0
             duration = time.time() - check_start
 
             self.results.append(ValidationResult(
-                check_name="feature_array",
+                check_name="feature_count",
                 check_type="data_integrity",
                 layer="bigquery",
                 passed=passed,
                 severity="critical" if not passed else "info",
-                message=f"Found {len(invalid)} records with incorrect feature count (expected 37)" if not passed else "All feature arrays have 37 elements",
+                message=f"Found {len(invalid)} records with incorrect feature count (expected 54)" if not passed else "All records have 54 features",
                 affected_count=len(invalid),
                 affected_items=invalid[:10],
                 execution_duration=duration
@@ -279,29 +280,27 @@ class MLFeatureStoreValidator(BaseValidator):
 
         check_start = time.time()
 
-        # Check key features: 0-4 (points), 5-8 (composite), 13-14 (opponent), 18-21 (shot zones)
+        # Check key features using individual columns
         query = f"""
         SELECT
             game_date,
             player_lookup,
-            features[OFFSET(0)] as points_avg_last_5,
-            features[OFFSET(5)] as fatigue_score,
-            features[OFFSET(13)] as opp_pace,
-            features[OFFSET(18)] as paint_rate
+            feature_0_value as points_avg_last_5,
+            feature_5_value as fatigue_score,
+            feature_13_value as opp_pace,
+            feature_18_value as paint_rate
         FROM `{self.project_id}.nba_predictions.ml_feature_store_v2`
         WHERE game_date >= '{start_date}'
           AND game_date <= '{end_date}'
-          AND features IS NOT NULL
-          AND ARRAY_LENGTH(features) = 33
           AND (
             -- Points avg should be 0-60
-            (features[OFFSET(0)] < 0 OR features[OFFSET(0)] > 60) OR
+            (feature_0_value < 0 OR feature_0_value > 60) OR
             -- Fatigue score 0-100
-            (features[OFFSET(5)] < 0 OR features[OFFSET(5)] > 100) OR
+            (feature_5_value < 0 OR feature_5_value > 100) OR
             -- Opponent pace 80-120
-            (features[OFFSET(13)] < 70 OR features[OFFSET(13)] > 130) OR
+            (feature_13_value < 70 OR feature_13_value > 130) OR
             -- Shot zone rates 0-1
-            (features[OFFSET(18)] < 0 OR features[OFFSET(18)] > 1)
+            (feature_18_value < 0 OR feature_18_value > 1)
           )
         ORDER BY game_date DESC
         LIMIT 50
@@ -645,11 +644,9 @@ class MLFeatureStoreValidator(BaseValidator):
         FROM `{self.project_id}.nba_predictions.ml_feature_store_v2` t
         WHERE game_date >= '{start_date}'
           AND game_date <= '{end_date}'
-          AND features IS NOT NULL
-          AND ARRAY_LENGTH(features) >= 21
-          AND features[SAFE_OFFSET(18)] = 0
-          AND features[SAFE_OFFSET(19)] = 0
-          AND features[SAFE_OFFSET(20)] = 0
+          AND feature_18_value = 0
+          AND feature_19_value = 0
+          AND feature_20_value = 0
         GROUP BY game_date
         HAVING COUNT(*) > 5
         ORDER BY game_date DESC
@@ -703,23 +700,21 @@ class MLFeatureStoreValidator(BaseValidator):
         query = f"""
         SELECT
             game_date,
-            ROUND(AVG(features[SAFE_OFFSET(18)]), 3) as avg_paint,
-            ROUND(AVG(features[SAFE_OFFSET(19)]), 3) as avg_mid,
-            ROUND(AVG(features[SAFE_OFFSET(20)]), 3) as avg_three,
+            ROUND(AVG(feature_18_value), 3) as avg_paint,
+            ROUND(AVG(feature_19_value), 3) as avg_mid,
+            ROUND(AVG(feature_20_value), 3) as avg_three,
             COUNT(*) as record_count
         FROM `{self.project_id}.nba_predictions.ml_feature_store_v2`
         WHERE game_date >= '{start_date}'
           AND game_date <= '{end_date}'
-          AND features IS NOT NULL
-          AND ARRAY_LENGTH(features) >= 21
         GROUP BY game_date
         HAVING
             -- Average paint rate should be 0.25-0.50 (stricter than individual bounds)
-            AVG(features[SAFE_OFFSET(18)]) < 0.20 OR AVG(features[SAFE_OFFSET(18)]) > 0.55 OR
+            AVG(feature_18_value) < 0.20 OR AVG(feature_18_value) > 0.55 OR
             -- Average mid-range rate should be 0.10-0.30
-            AVG(features[SAFE_OFFSET(19)]) < 0.08 OR AVG(features[SAFE_OFFSET(19)]) > 0.35 OR
+            AVG(feature_19_value) < 0.08 OR AVG(feature_19_value) > 0.35 OR
             -- Average three-point rate should be 0.25-0.50
-            AVG(features[SAFE_OFFSET(20)]) < 0.20 OR AVG(features[SAFE_OFFSET(20)]) > 0.55
+            AVG(feature_20_value) < 0.20 OR AVG(feature_20_value) > 0.55
         ORDER BY game_date DESC
         LIMIT 30
         """
@@ -752,6 +747,76 @@ class MLFeatureStoreValidator(BaseValidator):
         except Exception as e:
             logger.error(f"Failed shot zone distribution validation: {e}")
             self._add_error_result("shot_zone_distribution", str(e))
+
+    def _validate_column_population(self, start_date: str, end_date: str):
+        """
+        Check 14: Verify feature_N_value columns are populated at expected rates.
+
+        Core features (0-36) should have >50% population on every date.
+        0% population on any date indicates a writer bug.
+        Added Session 285 as part of features array migration.
+        """
+        check_start = time.time()
+
+        # Check core features (0-36) population per date
+        pop_parts = []
+        for idx in range(37):
+            pop_parts.append(
+                f"ROUND(100.0 * COUNTIF(feature_{idx}_value IS NOT NULL) / COUNT(*), 1) as pop_{idx}"
+            )
+        pop_sql = ",\n            ".join(pop_parts)
+
+        query = f"""
+        SELECT
+            game_date,
+            COUNT(*) as total_records,
+            {pop_sql}
+        FROM `{self.project_id}.nba_predictions.ml_feature_store_v2`
+        WHERE game_date >= '{start_date}'
+          AND game_date <= '{end_date}'
+        GROUP BY game_date
+        ORDER BY game_date DESC
+        """
+
+        try:
+            result = list(self._execute_query(query, start_date, end_date))
+
+            empty_features = []
+            low_features = []
+
+            for row in result:
+                for idx in range(37):
+                    pop_pct = getattr(row, f'pop_{idx}', 0) or 0
+                    if pop_pct == 0:
+                        empty_features.append((str(row.game_date), f"feature_{idx}_value", f"{pop_pct}%"))
+                    elif pop_pct < 50:
+                        low_features.append((str(row.game_date), f"feature_{idx}_value", f"{pop_pct}%"))
+
+            passed = len(empty_features) == 0
+            duration = time.time() - check_start
+
+            severity = "critical" if not passed else ("warning" if low_features else "info")
+            msg_parts = []
+            if empty_features:
+                msg_parts.append(f"{len(empty_features)} column-date pairs at 0% population")
+            if low_features:
+                msg_parts.append(f"{len(low_features)} column-date pairs below 50%")
+
+            self.results.append(ValidationResult(
+                check_name="column_population",
+                check_type="data_quality",
+                layer="bigquery",
+                passed=passed,
+                severity=severity,
+                message="; ".join(msg_parts) if msg_parts else "All core feature columns adequately populated",
+                affected_count=len(empty_features) + len(low_features),
+                affected_items=(empty_features + low_features)[:10],
+                execution_duration=duration
+            ))
+
+        except Exception as e:
+            logger.error(f"Failed column population validation: {e}")
+            self._add_error_result("column_population", str(e))
 
     def _add_error_result(self, check_name: str, error_msg: str):
         """Add an error result for failed checks"""

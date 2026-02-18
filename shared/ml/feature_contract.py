@@ -580,7 +580,7 @@ for _idx in FEATURES_COMPUTED_V12:
 for _idx in FEATURES_FROM_ODDS_V12:
     FEATURE_SOURCE_MAP[_idx] = 'vegas'
 for _idx in FEATURES_FROM_INJURY_V12:
-    FEATURE_SOURCE_MAP[_idx] = 'calculated'
+    FEATURE_SOURCE_MAP[_idx] = 'injury_context'
 
 
 # =============================================================================
@@ -674,6 +674,44 @@ FEATURE_DEFAULTS: Dict[str, float] = {
     "three_pct_last_5": 0.36,
     "fg_cold_streak": 0.0,       # Not cold by default
 }
+
+
+# =============================================================================
+# COLUMN-BASED UTILITIES
+# =============================================================================
+
+def build_feature_array_from_columns(row, num_features: int = 54) -> List[float]:
+    """Reconstruct feature array from individual feature_N_value columns.
+
+    Used by training/augmentation code that needs an ordered list of features
+    when migrating off the features ARRAY column.
+
+    Args:
+        row: A BigQuery Row, pandas Series, or any object with attribute/key access
+             for feature_N_value columns.
+        num_features: Number of features to extract (default 54 for full feature store).
+
+    Returns:
+        List of floats with NaN for NULL/missing columns (CatBoost compatible).
+    """
+    import math
+    result = []
+    for i in range(num_features):
+        col_name = f'feature_{i}_value'
+        # Support both attribute access (BQ Row) and dict/Series access
+        val = None
+        if hasattr(row, col_name):
+            val = getattr(row, col_name, None)
+        elif hasattr(row, '__getitem__'):
+            try:
+                val = row[col_name]
+            except (KeyError, IndexError):
+                pass
+        if val is None or (isinstance(val, float) and math.isnan(val)):
+            result.append(float('nan'))
+        else:
+            result.append(float(val))
+    return result
 
 
 # =============================================================================

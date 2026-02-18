@@ -329,6 +329,21 @@ GROUP BY 1 ORDER BY 1 DESC;
 **Audit:** `default_feature_count` and `default_feature_indices` in `player_prop_predictions`. See `shared/ml/feature_contract.py` for `FEATURE_SOURCE_MAP`.
 **See:** `docs/08-projects/current/feature-quality-visibility/`, `docs/08-projects/current/zero-tolerance-defaults/`
 
+### Feature Store Column Migration (Session 286)
+
+**Status:** Phases 1-4 DONE. All production/monitoring code uses `feature_N_value` columns. `features` array still dual-written but no longer read by production code.
+
+**CRITICAL:** When querying `ml_feature_store_v2`, use `feature_N_value` columns (e.g., `feature_0_value`, `feature_2_value`), NOT `features[OFFSET(N)]`. The array column is deprecated and will be removed.
+
+**Helper for training code:** `build_feature_array_from_columns(row)` in `shared/ml/feature_contract.py` reconstructs an ordered list from individual columns (NULL→NaN for CatBoost compatibility). Use this instead of `list(row['features'])`.
+
+**Implemented features (Session 287):** f47 (`teammate_usage_available`) queries injury report + usage rates; f50 (`multi_book_line_std`) queries odds_api for cross-book line stddev. Both populate `feature_N_value` columns in production.
+
+**Remaining migration work:**
+- Phase 8: Remove `features` array column from schema (deferred — requires 2+ weeks stability)
+
+**See:** `docs/09-handoff/2026-02-17-SESSION-286-HANDOFF.md`
+
 ## Phase 3 Health Check [Keyword: PHASE3]
 
 ```bash
@@ -428,6 +443,7 @@ ORDER BY 1 DESC;
 | Phase 4 same-day failure | 0% coverage for today's games | FIXED: Defensive checks auto-skip for `analysis_date >= today`. No longer need `strict_mode: false`. Session 220. |
 | Auto-retry infinite loop | 100s of retries for same processor | Check `failed_processor_queue`. 4xx now marks `failed_permanent`. Validate with Phase 0.695. Session 220. |
 | Champion model decay | Hit rate below breakeven (52.4%) | Monitor with validate-daily Phase 0.56. Champion at 39.9% (35+ days stale). Consider retrain. Session 220. |
+| `features[OFFSET(N)]` in new code | Using deprecated array access | **Use `feature_N_value` columns instead.** Sessions 286-287 migrated ALL production, tool, training, and validation code. `features` array is deprecated (dual-written, removal in Phase 8). Use `build_feature_array_from_columns(row)` helper for training code that needs ordered lists. |
 
 **Full troubleshooting:** See `docs/02-operations/session-learnings.md`
 

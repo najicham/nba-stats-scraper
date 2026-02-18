@@ -155,10 +155,10 @@ class ResultsExporter(BaseExporter):
                 game_id,
                 is_home,
                 days_rest,
-                -- Extract points_avg_season from features array (index 2)
-                SAFE_CAST(features[OFFSET(2)] AS FLOAT64) as points_avg_season,
-                -- Extract back_to_back from features array (index 16)
-                CASE WHEN features[OFFSET(16)] > 0.5 THEN TRUE ELSE FALSE END as is_back_to_back
+                -- Extract points_avg_season from individual column
+                SAFE_CAST(feature_2_value AS FLOAT64) as points_avg_season,
+                -- Extract back_to_back from individual column
+                CASE WHEN feature_16_value > 0.5 THEN TRUE ELSE FALSE END as is_back_to_back
             FROM `nba-props-platform.nba_predictions.ml_feature_store_v2`
             WHERE game_date = @target_date
         )

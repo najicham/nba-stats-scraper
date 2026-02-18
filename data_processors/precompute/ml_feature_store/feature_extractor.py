@@ -63,6 +63,12 @@ class FeatureExtractor:
         # V12 Feature Store Extension: rolling stats for scoring trends/usage
         self._player_rolling_stats_lookup: Dict[str, Dict] = {}
 
+        # Feature 47: teammate_usage_available — freed usage from injured teammates
+        self._teammate_usage_lookup: Dict[str, float] = {}
+
+        # Feature 50: multi_book_line_std — line disagreement across sportsbooks
+        self._multi_book_std_lookup: Dict[str, float] = {}
+
         # Data Provenance Tracking (Session 99 - Feb 2026)
         # Track which sources were used and why fallbacks occurred
         self._fallback_reasons: List[str] = []
@@ -327,6 +333,10 @@ class FeatureExtractor:
             ('minutes_ppm', timed_task('minutes_ppm', lambda: self._batch_extract_minutes_ppm(game_date, all_players))),
             # V12 Feature Store Extension
             ('rolling_stats', timed_task('rolling_stats', lambda: self._batch_extract_player_rolling_stats(game_date))),
+            # Feature 47: teammate_usage_available
+            ('teammate_usage', timed_task('teammate_usage', lambda: self._batch_extract_teammate_usage(game_date))),
+            # Feature 50: multi_book_line_std
+            ('multi_book_std', timed_task('multi_book_std', lambda: self._batch_extract_multi_book_line_std(game_date))),
         ]
 
         # Auto-retry logic for transient network/BigQuery errors
@@ -420,6 +430,9 @@ class FeatureExtractor:
         self._minutes_ppm_lookup = {}
         # V12 rolling stats
         self._player_rolling_stats_lookup = {}
+        # Feature 47/50
+        self._teammate_usage_lookup = {}
+        self._multi_book_std_lookup = {}
         # Historical Completeness Tracking
         self._total_games_available_lookup = {}
 
@@ -1282,6 +1295,14 @@ class FeatureExtractor:
         """Get cached V12 rolling stats for a player."""
         return self._player_rolling_stats_lookup.get(player_lookup, {})
 
+    def get_teammate_usage_available(self, player_lookup: str) -> Optional[float]:
+        """Get total freed usage from OUT/DOUBTFUL teammates (feature 47)."""
+        return self._teammate_usage_lookup.get(player_lookup)
+
+    def get_multi_book_line_std(self, player_lookup: str) -> Optional[float]:
+        """Get std dev of player points prop line across sportsbooks (feature 50)."""
+        return self._multi_book_std_lookup.get(player_lookup)
+
     # ========================================================================
     # V12 ROLLING STATS EXTRACTION
     # ========================================================================
@@ -1416,6 +1437,119 @@ class FeatureExtractor:
             }
 
         logger.debug(f"Batch rolling_stats: {len(self._player_rolling_stats_lookup)} players")
+
+    # ========================================================================
+    # FEATURE 47: TEAMMATE USAGE AVAILABLE (Session 287)
+    # ========================================================================
+
+    def _batch_extract_teammate_usage(self, game_date: date) -> None:
+        """Batch extract freed usage from OUT/DOUBTFUL teammates (feature 47).
+
+        For each team with injured players on game_date, sums the recent usage_rate
+        of OUT/DOUBTFUL players. Each remaining player on that team gets this value,
+        representing how much "freed" offensive opportunity is available.
+
+        Sources:
+        - nba_raw.nbac_injury_report: OUT/DOUBTFUL players for game_date
+        - nba_analytics.player_game_summary: Recent usage_rate for injured players
+        """
+        query = f"""
+        WITH injured_players AS (
+            SELECT DISTINCT
+                ir.player_lookup,
+                ir.team_tricode
+            FROM `{self.project_id}.nba_raw.nbac_injury_report` ir
+            WHERE ir.report_date = '{game_date}'
+              AND ir.game_status IN ('Out', 'Doubtful')
+              AND ir.player_lookup IS NOT NULL
+        ),
+        injured_usage AS (
+            SELECT
+                ip.player_lookup,
+                ip.team_tricode,
+                AVG(pgs.usage_rate) as avg_usage_rate
+            FROM injured_players ip
+            JOIN `{self.project_id}.nba_analytics.player_game_summary` pgs
+                ON ip.player_lookup = pgs.player_lookup
+            WHERE pgs.game_date >= DATE_SUB('{game_date}', INTERVAL 30 DAY)
+              AND pgs.game_date < '{game_date}'
+              AND pgs.usage_rate IS NOT NULL
+              AND pgs.minutes_played > 10
+            GROUP BY ip.player_lookup, ip.team_tricode
+        ),
+        team_freed_usage AS (
+            SELECT
+                team_tricode,
+                SUM(avg_usage_rate) as total_freed_usage
+            FROM injured_usage
+            GROUP BY team_tricode
+        )
+        SELECT
+            upcg.player_lookup,
+            tfu.total_freed_usage
+        FROM `{self.project_id}.nba_analytics.upcoming_player_game_context` upcg
+        JOIN team_freed_usage tfu
+            ON upcg.team_abbr = tfu.team_tricode
+        WHERE upcg.game_date = '{game_date}'
+          AND upcg.player_lookup NOT IN (
+              SELECT player_lookup FROM injured_players
+          )
+        """
+        result = self._safe_query(query, "batch_extract_teammate_usage")
+
+        if not result.empty:
+            for record in result.to_dict('records'):
+                val = record.get('total_freed_usage')
+                if val is not None:
+                    self._teammate_usage_lookup[record['player_lookup']] = float(val)
+
+        logger.debug(f"Batch teammate_usage: {len(self._teammate_usage_lookup)} players")
+
+    # ========================================================================
+    # FEATURE 50: MULTI-BOOK LINE STD (Session 287)
+    # ========================================================================
+
+    def _batch_extract_multi_book_line_std(self, game_date: date) -> None:
+        """Batch extract std dev of player points prop lines across sportsbooks (feature 50).
+
+        Computes STDDEV(points_line) grouped by player, requiring at least 2 distinct
+        bookmakers. High std = books disagree on the line (potential edge signal).
+
+        Source: nba_raw.odds_api_player_points_props
+        """
+        query = f"""
+        WITH latest_per_book AS (
+            SELECT
+                player_lookup,
+                bookmaker,
+                points_line,
+                ROW_NUMBER() OVER (
+                    PARTITION BY player_lookup, bookmaker
+                    ORDER BY snapshot_timestamp DESC
+                ) as rn
+            FROM `{self.project_id}.nba_raw.odds_api_player_points_props`
+            WHERE game_date = '{game_date}'
+              AND points_line IS NOT NULL
+              AND points_line > 0
+        )
+        SELECT
+            player_lookup,
+            STDDEV(points_line) as line_std,
+            COUNT(DISTINCT bookmaker) as book_count
+        FROM latest_per_book
+        WHERE rn = 1
+        GROUP BY player_lookup
+        HAVING COUNT(DISTINCT bookmaker) >= 2
+        """
+        result = self._safe_query(query, "batch_extract_multi_book_line_std")
+
+        if not result.empty:
+            for record in result.to_dict('records'):
+                val = record.get('line_std')
+                if val is not None:
+                    self._multi_book_std_lookup[record['player_lookup']] = float(val)
+
+        logger.debug(f"Batch multi_book_std: {len(self._multi_book_std_lookup)} players")
 
     # ========================================================================
     # HISTORICAL COMPLETENESS TRACKING (Data Cascade Architecture - Jan 2026)

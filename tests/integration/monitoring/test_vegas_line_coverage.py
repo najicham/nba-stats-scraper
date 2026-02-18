@@ -40,13 +40,13 @@ def test_vegas_line_coverage_above_threshold(bq_client):
     query = """
     SELECT
       game_date,
-      ROUND(100.0 * COUNTIF(features[OFFSET(25)] > 0) / COUNT(*), 1) as coverage_pct,
+      ROUND(100.0 * COUNTIF(feature_25_value > 0) / COUNT(*), 1) as coverage_pct,
       COUNT(*) as total_records,
-      COUNTIF(features[OFFSET(25)] > 0) as with_vegas_lines
+      COUNTIF(feature_25_value > 0) as with_vegas_lines
     FROM nba_predictions.ml_feature_store_v2
     WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 3 DAY)
       AND game_date < CURRENT_DATE()
-      AND ARRAY_LENGTH(features) >= 33
+      AND feature_count >= 33
     GROUP BY game_date
     ORDER BY game_date DESC
     """
@@ -177,11 +177,11 @@ def test_feature_store_structure(bq_client):
     """
     Verify ml_feature_store_v2 has correct structure.
 
-    Features array should have 33+ elements with Vegas line at index 25.
+    Feature count should be 54 with Vegas line at feature_25_value.
     """
     query = """
     SELECT
-      ARRAY_LENGTH(features) as feature_count,
+      feature_count,
       COUNT(*) as record_count
     FROM nba_predictions.ml_feature_store_v2
     WHERE game_date = CURRENT_DATE() - 1
@@ -197,11 +197,11 @@ def test_feature_store_structure(bq_client):
         "Phase 3/4 processors may not be running."
     )
 
-    # Most common feature count should be 33
+    # Most common feature count should be 54
     most_common = results[0]
-    assert most_common.feature_count == 33, (
+    assert most_common.feature_count == 54, (
         f"Feature store has unexpected feature count: {most_common.feature_count}. "
-        f"Expected 33 features. Schema may have changed."
+        f"Expected 54 features. Schema may have changed."
     )
 
 
@@ -260,10 +260,10 @@ def test_end_to_end_vegas_pipeline(bq_client):
     fs_query = f"""
     SELECT
       COUNT(*) as total,
-      COUNTIF(features[OFFSET(25)] > 0) as with_vegas
+      COUNTIF(feature_25_value > 0) as with_vegas
     FROM nba_predictions.ml_feature_store_v2
     WHERE game_date = DATE('{test_date}')
-      AND ARRAY_LENGTH(features) >= 33
+      AND feature_count >= 33
     """
     fs_result = list(bq_client.query(fs_query).result())[0]
     fs_total = fs_result.total

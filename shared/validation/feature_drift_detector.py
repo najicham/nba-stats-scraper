@@ -210,17 +210,16 @@ def get_feature_stats(
         query = f"""
         SELECT
             COUNT(*) as cnt,
-            AVG(features[OFFSET({idx})]) as mean_val,
-            STDDEV(features[OFFSET({idx})]) as std_val,
-            MIN(features[OFFSET({idx})]) as min_val,
-            MAX(features[OFFSET({idx})]) as max_val,
-            APPROX_QUANTILES(features[OFFSET({idx})], 4)[OFFSET(1)] as p25,
-            APPROX_QUANTILES(features[OFFSET({idx})], 4)[OFFSET(2)] as p50,
-            APPROX_QUANTILES(features[OFFSET({idx})], 4)[OFFSET(3)] as p75,
-            COUNTIF(features[OFFSET({idx})] IS NULL OR IS_NAN(features[OFFSET({idx})])) as null_cnt
+            AVG(feature_{idx}_value) as mean_val,
+            STDDEV(feature_{idx}_value) as std_val,
+            MIN(feature_{idx}_value) as min_val,
+            MAX(feature_{idx}_value) as max_val,
+            APPROX_QUANTILES(feature_{idx}_value, 4)[OFFSET(1)] as p25,
+            APPROX_QUANTILES(feature_{idx}_value, 4)[OFFSET(2)] as p50,
+            APPROX_QUANTILES(feature_{idx}_value, 4)[OFFSET(3)] as p75,
+            COUNTIF(feature_{idx}_value IS NULL) as null_cnt
         FROM `{PROJECT_ID}.{FEATURE_STORE_TABLE}`
         WHERE game_date BETWEEN @start_date AND @end_date
-            AND ARRAY_LENGTH(features) > {idx}
         """
 
         job_config = bigquery.QueryJobConfig(

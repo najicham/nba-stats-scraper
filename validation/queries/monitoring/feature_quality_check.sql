@@ -7,8 +7,8 @@
 -- Author: Claude Opus 4.5
 
 WITH feature_definitions AS (
-  -- All 37 ML feature store features with expected ranges
-  -- Indices match ml_feature_store_v2.features array
+  -- Core 37 ML feature store features with expected ranges
+  -- Indices match ml_feature_store_v2.feature_N_value columns
   SELECT * FROM UNNEST([
     STRUCT(0 AS idx, 'points_avg_last_5' AS name, 0.0 AS min_val, 80.0 AS max_val, 15.0 AS typical_mean),
     STRUCT(1, 'points_avg_last_10', 0.0, 80.0, 15.0),
@@ -50,48 +50,82 @@ WITH feature_definitions AS (
   ])
 ),
 
+-- Unpivot feature columns into rows for baseline window
+baseline_raw AS (
+  SELECT game_date, idx, val
+  FROM `nba_predictions.ml_feature_store_v2`
+  CROSS JOIN UNNEST([
+    STRUCT(0 AS idx, feature_0_value AS val), STRUCT(1, feature_1_value), STRUCT(2, feature_2_value),
+    STRUCT(3, feature_3_value), STRUCT(4, feature_4_value), STRUCT(5, feature_5_value),
+    STRUCT(6, feature_6_value), STRUCT(7, feature_7_value), STRUCT(8, feature_8_value),
+    STRUCT(9, feature_9_value), STRUCT(10, feature_10_value), STRUCT(11, feature_11_value),
+    STRUCT(12, feature_12_value), STRUCT(13, feature_13_value), STRUCT(14, feature_14_value),
+    STRUCT(15, feature_15_value), STRUCT(16, feature_16_value), STRUCT(17, feature_17_value),
+    STRUCT(18, feature_18_value), STRUCT(19, feature_19_value), STRUCT(20, feature_20_value),
+    STRUCT(21, feature_21_value), STRUCT(22, feature_22_value), STRUCT(23, feature_23_value),
+    STRUCT(24, feature_24_value), STRUCT(25, feature_25_value), STRUCT(26, feature_26_value),
+    STRUCT(27, feature_27_value), STRUCT(28, feature_28_value), STRUCT(29, feature_29_value),
+    STRUCT(30, feature_30_value), STRUCT(31, feature_31_value), STRUCT(32, feature_32_value),
+    STRUCT(33, feature_33_value), STRUCT(34, feature_34_value), STRUCT(35, feature_35_value),
+    STRUCT(36, feature_36_value)
+  ])
+  WHERE game_date BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL 33 DAY)
+                      AND DATE_SUB(CURRENT_DATE(), INTERVAL 3 DAY)
+),
+
 baseline AS (
-  -- Historical baseline: last 30 days (excluding last 3)
-  -- Gives stable reference for comparison
   SELECT
     fd.idx,
     fd.name AS feature_name,
     fd.min_val,
     fd.max_val,
     fd.typical_mean,
-    AVG(SAFE_CAST(features[SAFE_OFFSET(fd.idx)] AS FLOAT64)) AS baseline_mean,
-    STDDEV(SAFE_CAST(features[SAFE_OFFSET(fd.idx)] AS FLOAT64)) AS baseline_stddev,
-    APPROX_QUANTILES(SAFE_CAST(features[SAFE_OFFSET(fd.idx)] AS FLOAT64), 100)[OFFSET(5)] AS p5,
-    APPROX_QUANTILES(SAFE_CAST(features[SAFE_OFFSET(fd.idx)] AS FLOAT64), 100)[OFFSET(50)] AS p50,
-    APPROX_QUANTILES(SAFE_CAST(features[SAFE_OFFSET(fd.idx)] AS FLOAT64), 100)[OFFSET(95)] AS p95,
+    AVG(br.val) AS baseline_mean,
+    STDDEV(br.val) AS baseline_stddev,
+    APPROX_QUANTILES(br.val, 100)[OFFSET(5)] AS p5,
+    APPROX_QUANTILES(br.val, 100)[OFFSET(50)] AS p50,
+    APPROX_QUANTILES(br.val, 100)[OFFSET(95)] AS p95,
     COUNT(*) AS baseline_samples
-  FROM `nba_predictions.ml_feature_store_v2`
-  CROSS JOIN feature_definitions fd
-  WHERE game_date BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL 33 DAY)
-                      AND DATE_SUB(CURRENT_DATE(), INTERVAL 3 DAY)
-    AND features IS NOT NULL
-    AND ARRAY_LENGTH(features) > fd.idx
+  FROM baseline_raw br
+  JOIN feature_definitions fd ON br.idx = fd.idx
+  WHERE br.val IS NOT NULL
   GROUP BY fd.idx, fd.name, fd.min_val, fd.max_val, fd.typical_mean
 ),
 
-recent AS (
-  -- Recent window: last 3 days
-  -- Short window to catch sudden changes quickly
-  SELECT
-    fd.idx,
-    AVG(SAFE_CAST(features[SAFE_OFFSET(fd.idx)] AS FLOAT64)) AS recent_mean,
-    MIN(SAFE_CAST(features[SAFE_OFFSET(fd.idx)] AS FLOAT64)) AS recent_min,
-    MAX(SAFE_CAST(features[SAFE_OFFSET(fd.idx)] AS FLOAT64)) AS recent_max,
-    STDDEV(SAFE_CAST(features[SAFE_OFFSET(fd.idx)] AS FLOAT64)) AS recent_stddev,
-    COUNT(*) AS recent_samples,
-    COUNTIF(SAFE_CAST(features[SAFE_OFFSET(fd.idx)] AS FLOAT64) = 0) AS zero_count,
-    COUNTIF(features[SAFE_OFFSET(fd.idx)] IS NULL) AS null_count
+-- Unpivot feature columns into rows for recent window
+recent_raw AS (
+  SELECT game_date, idx, val
   FROM `nba_predictions.ml_feature_store_v2`
-  CROSS JOIN feature_definitions fd
+  CROSS JOIN UNNEST([
+    STRUCT(0 AS idx, feature_0_value AS val), STRUCT(1, feature_1_value), STRUCT(2, feature_2_value),
+    STRUCT(3, feature_3_value), STRUCT(4, feature_4_value), STRUCT(5, feature_5_value),
+    STRUCT(6, feature_6_value), STRUCT(7, feature_7_value), STRUCT(8, feature_8_value),
+    STRUCT(9, feature_9_value), STRUCT(10, feature_10_value), STRUCT(11, feature_11_value),
+    STRUCT(12, feature_12_value), STRUCT(13, feature_13_value), STRUCT(14, feature_14_value),
+    STRUCT(15, feature_15_value), STRUCT(16, feature_16_value), STRUCT(17, feature_17_value),
+    STRUCT(18, feature_18_value), STRUCT(19, feature_19_value), STRUCT(20, feature_20_value),
+    STRUCT(21, feature_21_value), STRUCT(22, feature_22_value), STRUCT(23, feature_23_value),
+    STRUCT(24, feature_24_value), STRUCT(25, feature_25_value), STRUCT(26, feature_26_value),
+    STRUCT(27, feature_27_value), STRUCT(28, feature_28_value), STRUCT(29, feature_29_value),
+    STRUCT(30, feature_30_value), STRUCT(31, feature_31_value), STRUCT(32, feature_32_value),
+    STRUCT(33, feature_33_value), STRUCT(34, feature_34_value), STRUCT(35, feature_35_value),
+    STRUCT(36, feature_36_value)
+  ])
   WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 3 DAY)
-    AND features IS NOT NULL
-    AND ARRAY_LENGTH(features) > fd.idx
-  GROUP BY fd.idx
+),
+
+recent AS (
+  SELECT
+    rr.idx,
+    AVG(rr.val) AS recent_mean,
+    MIN(rr.val) AS recent_min,
+    MAX(rr.val) AS recent_max,
+    STDDEV(rr.val) AS recent_stddev,
+    COUNT(*) AS recent_samples,
+    COUNTIF(rr.val = 0) AS zero_count,
+    COUNTIF(rr.val IS NULL) AS null_count
+  FROM recent_raw rr
+  GROUP BY rr.idx
 ),
 
 analysis AS (

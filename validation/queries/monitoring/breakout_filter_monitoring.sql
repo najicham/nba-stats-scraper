@@ -44,16 +44,16 @@ WITH role_player_games AS (
     pgs.opponent_team_abbr,
     pgs.points,
     -- Get season average from feature store
-    fs.features[OFFSET(2)] as season_avg,
-    CASE WHEN pgs.points >= fs.features[OFFSET(2)] * 1.5 THEN 1 ELSE 0 END as is_breakout
+    fs.feature_2_value as season_avg,
+    CASE WHEN pgs.points >= fs.feature_2_value * 1.5 THEN 1 ELSE 0 END as is_breakout
   FROM `nba-props-platform.nba_analytics.player_game_summary` pgs
   JOIN `nba-props-platform.nba_predictions.ml_feature_store_v2` fs
     ON pgs.player_lookup = fs.player_lookup
     AND pgs.game_date = fs.game_date
   WHERE pgs.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 60 DAY)
-    AND fs.features[OFFSET(2)] BETWEEN 8 AND 16  -- Role players
+    AND fs.feature_2_value BETWEEN 8 AND 16  -- Role players
     AND pgs.minutes_played >= 15
-    AND ARRAY_LENGTH(fs.features) >= 37
+    AND fs.feature_2_value IS NOT NULL
 )
 SELECT
   opponent_team_abbr,
@@ -77,9 +77,9 @@ WITH player_breakouts AS (
     pgs.player_lookup,
     pgs.team_abbr,
     COUNT(*) as total_games,
-    COUNTIF(pgs.points >= fs.features[OFFSET(2)] * 1.5) as breakout_games,
-    AVG(fs.features[OFFSET(2)]) as avg_season_ppg,
-    AVG(fs.features[OFFSET(3)]) as avg_std_dev,
+    COUNTIF(pgs.points >= fs.feature_2_value * 1.5) as breakout_games,
+    AVG(fs.feature_2_value) as avg_season_ppg,
+    AVG(fs.feature_3_value) as avg_std_dev,
     MAX(pgs.points) as max_points,
     AVG(pgs.points) as avg_points
   FROM `nba-props-platform.nba_analytics.player_game_summary` pgs
@@ -87,9 +87,9 @@ WITH player_breakouts AS (
     ON pgs.player_lookup = fs.player_lookup
     AND pgs.game_date = fs.game_date
   WHERE pgs.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 60 DAY)
-    AND fs.features[OFFSET(2)] BETWEEN 8 AND 16  -- Role players
+    AND fs.feature_2_value BETWEEN 8 AND 16  -- Role players
     AND pgs.minutes_played >= 15
-    AND ARRAY_LENGTH(fs.features) >= 37
+    AND fs.feature_2_value IS NOT NULL
   GROUP BY 1, 2
   HAVING COUNT(*) >= 10
 )
@@ -122,19 +122,19 @@ WITH hot_players AS (
     pgs.game_date,
     pgs.player_lookup,
     pgs.points as actual_points,
-    fs.features[OFFSET(0)] as l5_avg,
-    fs.features[OFFSET(2)] as season_avg,
-    fs.features[OFFSET(35)] as zscore,  -- pts_vs_season_zscore
-    fs.features[OFFSET(36)] as breakout_flag,
-    CASE WHEN pgs.points >= fs.features[OFFSET(2)] * 1.5 THEN 1 ELSE 0 END as had_breakout
+    fs.feature_0_value as l5_avg,
+    fs.feature_2_value as season_avg,
+    fs.feature_35_value as zscore,  -- pts_vs_season_zscore
+    fs.feature_36_value as breakout_flag,
+    CASE WHEN pgs.points >= fs.feature_2_value * 1.5 THEN 1 ELSE 0 END as had_breakout
   FROM `nba-props-platform.nba_analytics.player_game_summary` pgs
   JOIN `nba-props-platform.nba_predictions.ml_feature_store_v2` fs
     ON pgs.player_lookup = fs.player_lookup
     AND pgs.game_date = fs.game_date
   WHERE pgs.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
-    AND fs.features[OFFSET(2)] BETWEEN 8 AND 16  -- Role players
+    AND fs.feature_2_value BETWEEN 8 AND 16  -- Role players
     AND pgs.minutes_played >= 15
-    AND ARRAY_LENGTH(fs.features) >= 37
+    AND fs.feature_2_value IS NOT NULL
 )
 SELECT
   CASE
@@ -197,10 +197,10 @@ WITH games_with_injuries AS (
     pgs.game_date,
     pgs.player_lookup,
     pgs.points,
-    fs.features[OFFSET(2)] as season_avg,
+    fs.feature_2_value as season_avg,
     -- Check if teammate usage boost feature indicates injury opportunity
     COALESCE(pp.teammate_usage_boost, 0) as usage_boost,
-    CASE WHEN pgs.points >= fs.features[OFFSET(2)] * 1.5 THEN 1 ELSE 0 END as had_breakout
+    CASE WHEN pgs.points >= fs.feature_2_value * 1.5 THEN 1 ELSE 0 END as had_breakout
   FROM `nba-props-platform.nba_analytics.player_game_summary` pgs
   JOIN `nba-props-platform.nba_predictions.ml_feature_store_v2` fs
     ON pgs.player_lookup = fs.player_lookup
@@ -211,9 +211,9 @@ WITH games_with_injuries AS (
     AND pp.system_id = 'catboost_v9'
     AND pp.is_active = true
   WHERE pgs.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 60 DAY)
-    AND fs.features[OFFSET(2)] BETWEEN 8 AND 16  -- Role players
+    AND fs.feature_2_value BETWEEN 8 AND 16  -- Role players
     AND pgs.minutes_played >= 15
-    AND ARRAY_LENGTH(fs.features) >= 37
+    AND fs.feature_2_value IS NOT NULL
 )
 SELECT
   CASE

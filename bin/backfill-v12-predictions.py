@@ -7,7 +7,8 @@ Session 239: Generates V12 predictions on historical dates where the feature sto
 V9 lines. Writes to player_prop_predictions so grading picks them up automatically.
 
 V12 is vegas-free (50 features, excludes indices 25-28). Only processes rows with
-ARRAY_LENGTH(features) >= 54 to ensure V12-specific features (37-53) are available.
+feature_count >= 54 to ensure V12-specific features (37-53) are available.
+Uses individual feature_N_value columns (Session 287 migration).
 
 Usage:
     # Dry run — show what would be backfilled
@@ -96,8 +97,6 @@ def query_features_and_lines(client, start_date, end_date):
         mf.player_lookup,
         mf.game_date,
         {feature_cols},
-        mf.features,
-        mf.feature_names,
         mf.feature_quality_score,
         mf.default_feature_count,
         mf.default_feature_indices,
@@ -119,7 +118,7 @@ def query_features_and_lines(client, start_date, end_date):
     LEFT JOIN existing_v12 ev
         ON mf.player_lookup = ev.player_lookup AND mf.game_date = ev.game_date
     WHERE mf.game_date BETWEEN '{start_date}' AND '{end_date}'
-      AND ARRAY_LENGTH(mf.features) >= 54
+      AND mf.feature_count >= 54
       AND COALESCE(mf.required_default_count, mf.default_feature_count, 0) = 0
       AND mf.feature_quality_score >= 70
       AND ev.player_lookup IS NULL
@@ -133,26 +132,14 @@ def extract_v12_features(row):
 
     Uses individual columns (feature_N_value) for NULL-aware reads.
     NULLs correctly become NaN for CatBoost (handles missing natively).
-    Falls back to features array if individual columns not available.
     """
     # Build name→value dict from individual columns (NULL-aware)
     features_dict = {}
-    has_individual = hasattr(row, 'feature_0_value') or 'feature_0_value' in row.index
-    if has_individual:
-        for i, name in enumerate(FEATURE_STORE_NAMES):
-            val = row.get(f'feature_{i}_value')
-            if val is not None and not (isinstance(val, float) and pd.isna(val)):
-                features_dict[name] = float(val)
-            # NULL/NaN → not in dict → prediction system handles as missing
-    else:
-        # Fallback: use features array (legacy path)
-        feature_values = row['features']
-        feature_names = row['feature_names']
-        if len(feature_values) != len(feature_names):
-            min_len = min(len(feature_values), len(feature_names))
-            feature_values = feature_values[:min_len]
-            feature_names = feature_names[:min_len]
-        features_dict = dict(zip(feature_names, feature_values))
+    for i, name in enumerate(FEATURE_STORE_NAMES):
+        val = row.get(f'feature_{i}_value')
+        if val is not None and not (isinstance(val, float) and pd.isna(val)):
+            features_dict[name] = float(val)
+        # NULL/NaN → not in dict → prediction system handles as missing
 
     vector = []
     for name in V12_NOVEG_FEATURES:
@@ -239,14 +226,15 @@ def generate_predictions(model, df, model_file_name, model_sha256):
             has_prop_line = False
             line_source = 'NO_PROP_LINE'
 
-        # Build features dict for confidence calculation
-        feature_values = row['features']
-        feature_names = row['feature_names']
-        min_len = min(len(feature_values), len(feature_names))
-        features_dict = dict(zip(feature_names[:min_len], feature_values[:min_len]))
-        features_dict['feature_quality_score'] = row.get('feature_quality_score')
+        # Build features dict for confidence calculation from individual columns
+        conf_dict = {}
+        for i, name in enumerate(FEATURE_STORE_NAMES):
+            val = row.get(f'feature_{i}_value')
+            if val is not None and not (isinstance(val, float) and pd.isna(val)):
+                conf_dict[name] = float(val)
+        conf_dict['feature_quality_score'] = row.get('feature_quality_score')
 
-        confidence = compute_v12_confidence(features_dict)
+        confidence = compute_v12_confidence(conf_dict)
 
         # Actionable only if we have a line and sufficient edge
         is_actionable = has_line and abs(pred - line) >= ACTIONABLE_EDGE
@@ -382,7 +370,7 @@ def main():
         LEFT JOIN v9_lines v9
             ON mf.player_lookup = v9.player_lookup AND mf.game_date = v9.game_date
         WHERE mf.game_date BETWEEN '{start_date}' AND '{end_date}'
-          AND ARRAY_LENGTH(mf.features) >= 54
+          AND mf.feature_count >= 54
           AND COALESCE(mf.required_default_count, mf.default_feature_count, 0) = 0
           AND mf.feature_quality_score >= 70
           AND ev.player_lookup IS NULL

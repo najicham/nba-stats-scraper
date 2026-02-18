@@ -278,10 +278,10 @@ SELECT
   mf.game_date,
   mf.features,
   mf.feature_count,
-  -- Extract vegas_points_line from features array (index 25)
-  mf.features[OFFSET(25)] as vegas_points_line,
-  -- Extract has_vegas_line flag (index 28) - 1.0 = real line, 0.0 = imputed
-  mf.features[OFFSET(28)] as has_vegas_line,
+  -- Extract vegas_points_line from individual column
+  mf.feature_25_value as vegas_points_line,
+  -- Extract has_vegas_line flag - 1.0 = real line, 0.0 = imputed
+  mf.feature_28_value as has_vegas_line,
   pgs.points as actual_points
 FROM `nba-props-platform.nba_predictions.ml_feature_store_v2` mf
 INNER JOIN `nba-props-platform.nba_analytics.player_game_summary` pgs
@@ -289,7 +289,6 @@ INNER JOIN `nba-props-platform.nba_analytics.player_game_summary` pgs
   AND mf.game_date = pgs.game_date
 WHERE mf.game_date BETWEEN '{eval_start}' AND '{eval_end}'
   AND mf.feature_count >= {min_feature_count}
-  AND ARRAY_LENGTH(mf.features) >= {min_feature_count}
   AND pgs.points IS NOT NULL
   -- Session 157: Zero tolerance quality gate (via shared.ml.training_data_loader)
   AND COALESCE(mf.required_default_count, mf.default_feature_count, 0) = 0
@@ -355,7 +354,6 @@ INNER JOIN real_prop_lines vl
   AND mf.game_date = vl.game_date
 WHERE mf.game_date BETWEEN '{eval_start}' AND '{eval_end}'
   AND mf.feature_count >= {min_feature_count}
-  AND ARRAY_LENGTH(mf.features) >= {min_feature_count}
   AND pgs.points IS NOT NULL
   -- Session 157: Zero tolerance quality gate (via shared.ml.training_data_loader)
   AND COALESCE(mf.required_default_count, mf.default_feature_count, 0) = 0

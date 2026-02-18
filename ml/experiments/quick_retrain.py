@@ -71,7 +71,9 @@ from shared.ml.feature_contract import (
     V14_CONTRACT,
     V14_FEATURE_NAMES,
     FEATURE_DEFAULTS,
+    FEATURE_STORE_FEATURE_COUNT,
     FEATURE_STORE_NAMES,
+    build_feature_array_from_columns,
     get_contract,
     validate_all_contracts,
 )
@@ -433,15 +435,15 @@ def load_train_data(client, start, end, min_quality_score=70,
 
     # Session 107: Exclude records where pts_avg_last_5 is default 10.0 but pts_avg_last_10
     # shows the player should be higher. These are cold start errors (only 15 records total).
-    bad_default_filter = "NOT (mf.features[OFFSET(0)] = 10.0 AND mf.features[OFFSET(1)] > 15)"
+    bad_default_filter = "NOT (mf.feature_0_value = 10.0 AND mf.feature_1_value > 15)"
 
     # Session 253: Build additional WHERE clauses for tier/population filtering
     where_parts = [bad_default_filter]
     if min_ppg is not None:
-        # features[OFFSET(2)] = points_avg_season
-        where_parts.append(f"mf.features[OFFSET(2)] >= {min_ppg}")
+        # feature_2_value = points_avg_season
+        where_parts.append(f"mf.feature_2_value >= {min_ppg}")
     if max_ppg is not None:
-        where_parts.append(f"mf.features[OFFSET(2)] < {max_ppg}")
+        where_parts.append(f"mf.feature_2_value < {max_ppg}")
 
     additional_where = " AND ".join(where_parts)
 
@@ -498,17 +500,19 @@ def load_eval_data_from_production(client, start, end, system_id='catboost_v9'):
             ORDER BY line_value DESC
         ) = 1
     )
-    SELECT mf.player_lookup, mf.features, mf.feature_names,
+    SELECT mf.*,
            CAST(pl.actual_points AS FLOAT64) as actual_points,
-           CAST(pl.line_value AS FLOAT64) as vegas_line,
-           mf.game_date
+           CAST(pl.line_value AS FLOAT64) as vegas_line
     FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2` mf
     JOIN production_lines pl
         ON mf.player_lookup = pl.player_lookup AND mf.game_date = pl.game_date
     WHERE mf.game_date BETWEEN '{start}' AND '{end}'
       AND {quality_clause}
     """
-    return client.query(query).to_dataframe()
+    df = client.query(query).to_dataframe()
+    # Reconstruct features column from individual feature_N_value columns
+    df['features'] = df.apply(lambda row: build_feature_array_from_columns(row), axis=1)
+    return df
 
 
 def load_eval_data(client, start, end, line_source='draftkings'):
@@ -549,8 +553,7 @@ def load_eval_data(client, start, end, line_source='draftkings'):
         AND game_date BETWEEN '{start}' AND '{end}'
       QUALIFY ROW_NUMBER() OVER (PARTITION BY game_date, player_lookup ORDER BY processed_at DESC) = 1
     )
-    SELECT mf.player_lookup, mf.features, mf.feature_names, pgs.points as actual_points, l.line as vegas_line,
-           mf.game_date
+    SELECT mf.*, pgs.points as actual_points, l.line as vegas_line
     FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2` mf
     JOIN `{PROJECT_ID}.nba_analytics.player_game_summary` pgs
       ON mf.player_lookup = pgs.player_lookup AND mf.game_date = pgs.game_date
@@ -560,7 +563,10 @@ def load_eval_data(client, start, end, line_source='draftkings'):
       AND pgs.points IS NOT NULL
       AND (l.line - FLOOR(l.line)) IN (0, 0.5)
     """
-    return client.query(query).to_dataframe()
+    df = client.query(query).to_dataframe()
+    # Reconstruct features column from individual feature_N_value columns
+    df['features'] = df.apply(lambda row: build_feature_array_from_columns(row), axis=1)
+    return df
 
 
 def load_eval_data_all_players(client, start, end):
@@ -570,7 +576,8 @@ def load_eval_data_all_players(client, start, end):
     lines so we can measure prediction accuracy on all players, not just those
     with betting lines.
 
-    Returns DataFrame with: player_lookup, features, feature_names, actual_points, game_date
+    Returns DataFrame with: player_lookup, feature_N_value columns, feature_names, actual_points, game_date
+    plus reconstructed 'features' column from individual feature_N_value columns.
     (no vegas_line column — not all players have lines)
     """
     from shared.ml.training_data_loader import get_quality_where_clause
@@ -578,8 +585,7 @@ def load_eval_data_all_players(client, start, end):
     quality_clause = get_quality_where_clause("mf")
 
     query = f"""
-    SELECT mf.player_lookup, mf.features, mf.feature_names, pgs.points as actual_points,
-           mf.game_date
+    SELECT mf.*, pgs.points as actual_points
     FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2` mf
     JOIN `{PROJECT_ID}.nba_analytics.player_game_summary` pgs
       ON mf.player_lookup = pgs.player_lookup AND mf.game_date = pgs.game_date
@@ -587,7 +593,10 @@ def load_eval_data_all_players(client, start, end):
       AND {quality_clause}
       AND pgs.points IS NOT NULL
     """
-    return client.query(query).to_dataframe()
+    df = client.query(query).to_dataframe()
+    # Reconstruct features column from individual feature_N_value columns
+    df['features'] = df.apply(lambda row: build_feature_array_from_columns(row), axis=1)
+    return df
 
 
 def analyze_training_line_coverage(client, start, end):
@@ -703,8 +712,8 @@ def augment_v11_features(client, df):
 
     for idx in range(len(df)):
         row = df.iloc[idx]
-        features = list(row['features'])
-        feature_names = list(row['feature_names'])
+        features = build_feature_array_from_columns(row)
+        feature_names = list(FEATURE_STORE_NAMES)
         game_date_str = pd.to_datetime(row['game_date']).strftime('%Y-%m-%d')
         key = (row['player_lookup'], game_date_str)
 
@@ -732,7 +741,11 @@ def augment_v11_features(client, df):
 
         if changed:
             df.at[df.index[idx], 'features'] = features
-            df.at[df.index[idx], 'feature_names'] = feature_names
+            # Also update individual columns so build_features_dataframe sees them
+            sto_idx = feature_names.index('star_teammates_out')
+            df.at[df.index[idx], f'feature_{sto_idx}_value'] = features[sto_idx]
+            gtl_idx = feature_names.index('game_total_line')
+            df.at[df.index[idx], f'feature_{gtl_idx}_value'] = features[gtl_idx]
 
     print(f"  V11 augmentation: {augmented_count}/{len(df)} rows matched ({100*augmented_count/len(df):.0f}%)")
     return df
@@ -1048,8 +1061,8 @@ def augment_v12_features(client, df):
     }
     for idx in range(len(df)):
         row = df.iloc[idx]
-        features = list(row['features'])
-        feature_names = list(row['feature_names'])
+        features = build_feature_array_from_columns(row)
+        feature_names = list(FEATURE_STORE_NAMES)
         game_date_str = pd.to_datetime(row['game_date']).strftime('%Y-%m-%d')
         key = (row['player_lookup'], game_date_str)
 
@@ -1104,7 +1117,11 @@ def augment_v12_features(client, df):
                 features.append(float(fval) if fval is not None and not (isinstance(fval, float) and np.isnan(fval)) else np.nan)
 
         df.at[df.index[idx], 'features'] = features
-        df.at[df.index[idx], 'feature_names'] = feature_names
+        # Also update individual columns so build_features_dataframe sees them
+        for fname, fval in v12_features:
+            fidx_in_store = FEATURE_STORE_NAMES.index(fname) if fname in FEATURE_STORE_NAMES else None
+            if fidx_in_store is not None:
+                df.at[df.index[idx], f'feature_{fidx_in_store}_value'] = float(fval) if fval is not None and not (isinstance(fval, float) and np.isnan(fval)) else np.nan
 
     total = len(df)
     print(f"  V12 augmentation coverage:")
@@ -1272,8 +1289,8 @@ def augment_v13_features(client, df):
     matched = 0
     for idx in range(len(df)):
         row = df.iloc[idx]
-        features = list(row['features'])
-        feature_names = list(row['feature_names'])
+        features = build_feature_array_from_columns(row)
+        feature_names = list(FEATURE_STORE_NAMES)
         game_date_str = pd.to_datetime(row['game_date']).strftime('%Y-%m-%d')
         key = (row['player_lookup'], game_date_str)
 
@@ -1480,8 +1497,8 @@ def augment_v14_features(client, df):
     matched = 0
     for idx in range(len(df)):
         row = df.iloc[idx]
-        features = list(row['features'])
-        feature_names = list(row['feature_names'])
+        features = build_feature_array_from_columns(row)
+        feature_names = list(FEATURE_STORE_NAMES)
         game_date_str = pd.to_datetime(row['game_date']).strftime('%Y-%m-%d')
         key = (row['player_lookup'], game_date_str)
 
@@ -1550,72 +1567,34 @@ def prepare_features(df, contract=V9_CONTRACT, exclude_features=None):
     exclude_set = set(exclude_features or [])
     active_features = [f for f in contract.feature_names if f not in exclude_set]
 
-    # Session 238: Build name→column_index mapping for individual columns
+    # Build name→column_index mapping for individual columns
     store_name_to_idx = {name: i for i, name in enumerate(FEATURE_STORE_NAMES)}
-    use_individual_columns = 'feature_0_value' in df.columns
 
     rows = []
     for _, row in df.iterrows():
         row_data = {}
 
-        if use_individual_columns:
-            # New path: prefer individual columns (NULL-aware).
-            # NULL means no real data → np.nan (CatBoost handles natively).
-            # Fallback to array for features where individual column is NULL
-            # but array has a value (handles backfill gap for pre-source-tracking rows).
-            arr_dict = {}
-            feature_values = row.get('features')
-            feature_names_arr = row.get('feature_names')
-            if feature_values is not None and feature_names_arr is not None:
-                min_len = min(len(feature_values), len(feature_names_arr))
-                arr_dict = dict(zip(feature_names_arr[:min_len], feature_values[:min_len]))
-
-            for name in active_features:
-                idx = store_name_to_idx.get(name)
-                if idx is not None:
-                    val = row.get(f'feature_{idx}_value')
-                    if val is not None and not pd.isna(val):
-                        row_data[name] = float(val)
-                    elif name in arr_dict and arr_dict[name] is not None:
-                        # Backfill gap: column NULL but array has value.
-                        # Zero-tolerance ensures required features are real.
-                        row_data[name] = float(arr_dict[name])
-                    else:
-                        row_data[name] = np.nan
+        # Read from individual feature_N_value columns (Session 287 migration).
+        # NULL means no real data → np.nan (CatBoost handles natively).
+        for name in active_features:
+            idx = store_name_to_idx.get(name)
+            if idx is not None:
+                val = row.get(f'feature_{idx}_value')
+                if val is not None and not pd.isna(val):
+                    row_data[name] = float(val)
                 else:
                     row_data[name] = np.nan
-        else:
-            # Legacy path: read from arrays (backward compat for older data)
-            feature_values = row['features']
-            feature_names = row['feature_names']
-
-            if len(feature_values) != len(feature_names):
-                min_len = min(len(feature_values), len(feature_names))
-                feature_values = feature_values[:min_len]
-                feature_names = feature_names[:min_len]
-
-            features_dict = dict(zip(feature_names, feature_values))
-
-            for name in active_features:
-                if name in features_dict and features_dict[name] is not None:
-                    row_data[name] = float(features_dict[name])
-                elif name in FEATURE_DEFAULTS and FEATURE_DEFAULTS[name] is not None:
-                    row_data[name] = float(FEATURE_DEFAULTS[name])
-                else:
-                    row_data[name] = np.nan
+            else:
+                row_data[name] = np.nan
 
         rows.append(row_data)
 
     X = pd.DataFrame(rows, columns=active_features)
 
-    if use_individual_columns:
-        # CatBoost handles NaN natively — no imputation needed for new data.
-        # For rows with array fallback, values are real (zero-tolerance enforced).
-        nan_pct = X.isna().mean().mean() * 100
-        if nan_pct > 0:
-            print(f"  Feature matrix: {X.shape[0]} rows x {X.shape[1]} cols, {nan_pct:.1f}% NaN (CatBoost native)")
-    else:
-        X = X.fillna(X.median())
+    # CatBoost handles NaN natively — no imputation needed.
+    nan_pct = X.isna().mean().mean() * 100
+    if nan_pct > 0:
+        print(f"  Feature matrix: {X.shape[0]} rows x {X.shape[1]} cols, {nan_pct:.1f}% NaN (CatBoost native)")
 
     y = df['actual_points'].astype(float)
     return X, y
@@ -2715,8 +2694,8 @@ def main():
         if len(df_all) > 0:
             feature_names_all = df_all.iloc[0]['feature_names']
             X_all = pd.DataFrame(
-                df_all['features'].tolist(),
-                columns=feature_names_all[:len(df_all['features'].iloc[0])]
+                [build_feature_array_from_columns(row) for _, row in df_all.iterrows()],
+                columns=feature_names_all[:FEATURE_STORE_FEATURE_COUNT]
             )
             # Use same active features as training
             missing_cols = set(active_feature_names) - set(X_all.columns)

@@ -201,8 +201,6 @@ def load_clean_training_data(
     SELECT
       mf.player_lookup,
       mf.game_date,
-      mf.features,
-      mf.feature_names,
       {feature_value_columns},
       mf.feature_quality_score,
       mf.required_default_count,
