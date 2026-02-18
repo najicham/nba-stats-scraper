@@ -337,7 +337,8 @@ class TonightAllPlayersExporter(BaseExporter):
                 fg_attempts,
                 three_pt_makes,
                 three_pt_attempts,
-                plus_minus
+                plus_minus,
+                ft_attempts
             FROM `nba-props-platform.nba_analytics.player_game_summary`
             WHERE game_date < @before_date
               AND player_lookup IN UNNEST(@player_lookups)
@@ -347,7 +348,8 @@ class TonightAllPlayersExporter(BaseExporter):
             player_lookup,
             ARRAY_AGG(
                 STRUCT(over_under_result, points, is_dnp, points_line, minutes_played,
-                       fg_makes, fg_attempts, three_pt_makes, three_pt_attempts, plus_minus)
+                       fg_makes, fg_attempts, three_pt_makes, three_pt_attempts, plus_minus,
+                       ft_attempts)
                 ORDER BY game_date DESC
             ) as last_10
         FROM recent_games
@@ -373,6 +375,7 @@ class TonightAllPlayersExporter(BaseExporter):
             fg_pct_list = []
             three_pct_list = []
             plus_minus_list = []
+            fta_list = []
             for g in games:
                 if isinstance(g, dict):
                     ou = g.get('over_under_result')
@@ -385,6 +388,7 @@ class TonightAllPlayersExporter(BaseExporter):
                     tpm = g.get('three_pt_makes')
                     tpa = g.get('three_pt_attempts')
                     pm = g.get('plus_minus')
+                    fta = g.get('ft_attempts')
                 else:
                     ou = getattr(g, 'over_under_result', None)
                     pts = getattr(g, 'points', None)
@@ -396,11 +400,13 @@ class TonightAllPlayersExporter(BaseExporter):
                     tpm = getattr(g, 'three_pt_makes', None)
                     tpa = getattr(g, 'three_pt_attempts', None)
                     pm = getattr(g, 'plus_minus', None)
+                    fta = getattr(g, 'ft_attempts', None)
 
                 # Compute shooting percentages (null if 0 attempts)
                 fg_pct = round(fgm / fga, 3) if fga and fgm is not None else None
                 three_pct = round(tpm / tpa, 3) if tpa and tpm is not None else None
                 pm_val = int(pm) if pm is not None else None
+                fta_val = int(fta) if fta is not None else None
 
                 if dnp:
                     results_list.append('DNP')
@@ -410,6 +416,7 @@ class TonightAllPlayersExporter(BaseExporter):
                     fg_pct_list.append(None)
                     three_pct_list.append(None)
                     plus_minus_list.append(None)
+                    fta_list.append(None)
                 elif ou == 'OVER':
                     results_list.append('O')
                     points_list.append(int(pts) if pts is not None else None)
@@ -418,6 +425,7 @@ class TonightAllPlayersExporter(BaseExporter):
                     fg_pct_list.append(fg_pct)
                     three_pct_list.append(three_pct)
                     plus_minus_list.append(pm_val)
+                    fta_list.append(fta_val)
                 elif ou == 'UNDER':
                     results_list.append('U')
                     points_list.append(int(pts) if pts is not None else None)
@@ -426,6 +434,7 @@ class TonightAllPlayersExporter(BaseExporter):
                     fg_pct_list.append(fg_pct)
                     three_pct_list.append(three_pct)
                     plus_minus_list.append(pm_val)
+                    fta_list.append(fta_val)
                 else:
                     results_list.append('-')
                     points_list.append(int(pts) if pts is not None else None)
@@ -434,6 +443,7 @@ class TonightAllPlayersExporter(BaseExporter):
                     fg_pct_list.append(fg_pct)
                     three_pct_list.append(three_pct)
                     plus_minus_list.append(pm_val)
+                    fta_list.append(fta_val)
 
             # Calculate record (only O/U count, not DNP or -)
             overs = results_list.count('O')
@@ -447,6 +457,7 @@ class TonightAllPlayersExporter(BaseExporter):
                 'fg_pct': fg_pct_list,
                 'three_pct': three_pct_list,
                 'plus_minus': plus_minus_list,
+                'fta': fta_list,
                 'record': f"{overs}-{unders}" if (overs + unders) > 0 else None
             }
 
@@ -603,10 +614,11 @@ class TonightAllPlayersExporter(BaseExporter):
                 # Add last_10_minutes for ALL players (null for DNP)
                 player_data['last_10_minutes'] = last_10.get('minutes', [])
 
-                # Add last_10_fg_pct, last_10_three_pct, last_10_plus_minus
+                # Add last_10_fg_pct, last_10_three_pct, last_10_plus_minus, last_10_fta
                 player_data['last_10_fg_pct'] = last_10.get('fg_pct', [])
                 player_data['last_10_three_pct'] = last_10.get('three_pct', [])
                 player_data['last_10_plus_minus'] = last_10.get('plus_minus', [])
+                player_data['last_10_fta'] = last_10.get('fta', [])
 
                 # Add last_10_results (vs line) for ALL players
                 player_data['last_10_results'] = last_10.get('results', [])
