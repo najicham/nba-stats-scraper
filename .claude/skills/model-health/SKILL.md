@@ -374,3 +374,68 @@ Recommendations:
 | MODEL_DRIFT | Model performance degrading | Retrain on recent data |
 | DATA_QUALITY | Pipeline/feature issues | Check `ml_feature_store_v2` quality fields: `is_quality_ready`, `matchup_quality_pct`, `quality_alert_level` |
 | NORMAL_VARIANCE | Expected fluctuation | Monitor, no action |
+
+## Model Comparison (Landscape View)
+
+Compare all challenger models against the champion. Use when asked "how are shadow models doing?" or "model landscape".
+
+### Quick Comparison Script
+
+```bash
+# All models at once
+PYTHONPATH=. python bin/compare-model-performance.py --all --days 7
+
+# With segment breakdowns (direction, tier, line range)
+PYTHONPATH=. python bin/compare-model-performance.py --all --segments --days 7
+
+# Single challenger
+PYTHONPATH=. python bin/compare-model-performance.py catboost_v9_q43_train1102_0125 --segments --days 7
+
+# List models with strength profiles
+PYTHONPATH=. python bin/compare-model-performance.py --list
+```
+
+### Champion vs Challengers SQL
+
+```sql
+SELECT system_id,
+    COUNT(*) as n_graded,
+    ROUND(100.0 * COUNTIF(prediction_correct) / COUNT(*), 1) as hit_rate_all,
+    ROUND(100.0 * COUNTIF(prediction_correct AND ABS(predicted_margin) >= 3)
+        / NULLIF(COUNTIF(ABS(predicted_margin) >= 3), 0), 1) as hit_rate_3plus,
+    COUNTIF(ABS(predicted_margin) >= 3) as n_edge_3plus,
+    ROUND(AVG(ABS(predicted_points - actual_points)), 3) as mae,
+    ROUND(AVG(predicted_points - line_value), 2) as vegas_bias
+FROM nba_predictions.prediction_accuracy
+WHERE system_id IN ('catboost_v9', 'catboost_v12_noveg_train1102_0205',
+                     'catboost_v9_q43_train1102_0125', 'catboost_v9_q45_train1102_0125',
+                     'catboost_v12_noveg_q43_train1102_0125', 'catboost_v12_noveg_q45_train1102_0125')
+  AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+  AND prediction_correct IS NOT NULL
+GROUP BY 1
+ORDER BY hit_rate_all DESC;
+```
+
+### Interpreting Results
+
+**Expected gaps:** Backtest metrics are always 3-5pp higher than production (pre-computed features, no timing drift, no line movement).
+
+**Promotion decision framework:**
+
+| Model Type | Key Metric | Promotion Threshold |
+|------------|-----------|-------------------|
+| RMSE (standard) | HR Edge 3+ | 3+ pp better than champion, 5+ game days |
+| Quantile (alpha < 0.5) | UNDER HR + HR Edge 3+ | 55%+ HR in production, UNDER-heavy expected |
+
+**Red flags:** Vegas bias > +/-1.5 (RMSE), directional imbalance, MAE >1.0 higher than backtest, zero predictions.
+
+### Files
+
+| File | Purpose |
+|------|---------|
+| `bin/compare-model-performance.py` | Main comparison script |
+| `predictions/worker/prediction_systems/catboost_monthly.py` | MONTHLY_MODELS config |
+| `docs/08-projects/current/retrain-infrastructure/03-PARALLEL-MODELS-GUIDE.md` | Parallel models guide |
+
+---
+*Updated: Session 290 - Merged compare-models skill (landscape view, comparison queries)*

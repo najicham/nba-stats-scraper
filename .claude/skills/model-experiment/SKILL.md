@@ -927,6 +927,90 @@ They are different if ANY of the following differ:
 
 The dynamic model_version (e.g., `v9_20260201_011018`) distinguishes different model files in prediction data. The SHA256 hash in each prediction provides an immutable audit trail.
 
+## Experiment Tracking & Comparison
+
+Query the experiment registry to list, compare, and find past experiments.
+
+### List Recent Experiments
+
+```sql
+SELECT
+  experiment_id,
+  experiment_name,
+  experiment_type,
+  status,
+  STRUCT(train_period.start_date, train_period.end_date) as training,
+  STRUCT(eval_period.start_date, eval_period.end_date) as evaluation,
+  ROUND(CAST(JSON_VALUE(results_json, '$.overall.hit_rate') AS FLOAT64), 1) as hit_rate,
+  ROUND(CAST(JSON_VALUE(results_json, '$.overall.mae') AS FLOAT64), 2) as mae,
+  tags,
+  created_at
+FROM `nba-props-platform.nba_predictions.ml_experiments`
+WHERE created_at >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+ORDER BY created_at DESC
+LIMIT 20
+```
+
+### Compare Top Experiments
+
+```sql
+SELECT
+  experiment_name,
+  status,
+  JSON_VALUE(results_json, '$.overall.hit_rate') as hit_rate,
+  JSON_VALUE(results_json, '$.overall.mae') as mae,
+  JSON_VALUE(results_json, '$.overall.roi') as roi,
+  JSON_VALUE(results_json, '$.by_edge.edge_3plus.hit_rate') as edge_3plus_hit_rate
+FROM `nba-props-platform.nba_predictions.ml_experiments`
+WHERE status IN ('completed', 'promoted')
+ORDER BY CAST(JSON_VALUE(results_json, '$.overall.hit_rate') AS FLOAT64) DESC
+LIMIT 10
+```
+
+### Find Best Experiment (Last 60 Days)
+
+```sql
+SELECT
+  experiment_name,
+  experiment_id,
+  CAST(JSON_VALUE(results_json, '$.overall.hit_rate') AS FLOAT64) as hit_rate,
+  CAST(JSON_VALUE(results_json, '$.overall.mae') AS FLOAT64) as mae,
+  model_path,
+  eval_period.start_date as eval_start,
+  eval_period.end_date as eval_end
+FROM `nba-props-platform.nba_predictions.ml_experiments`
+WHERE status = 'completed'
+  AND eval_period.end_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 60 DAY)
+ORDER BY CAST(JSON_VALUE(results_json, '$.overall.hit_rate') AS FLOAT64) DESC
+LIMIT 5
+```
+
+### Quality Context for Experiments
+
+When reviewing results, check training data quality:
+
+```sql
+SELECT
+  ROUND(100.0 * COUNTIF(is_quality_ready = TRUE) / COUNT(*), 1) as pct_quality_ready,
+  ROUND(AVG(feature_quality_score), 1) as avg_feature_quality_score,
+  COUNTIF(quality_alert_level = 'red') as red_alert_count,
+  COUNT(*) as total_rows
+FROM `nba-props-platform.nba_predictions.ml_feature_store_v2`
+WHERE game_date BETWEEN @train_start AND @train_end
+```
+
+Include `pct_quality_ready` alongside hit rate and MAE when comparing experiments. A model trained on 90%+ quality-ready data is more trustworthy than one trained on 60%.
+
+### Python Registry API
+
+```python
+from ml.experiment_registry import ExperimentRegistry
+
+registry = ExperimentRegistry()
+experiments = registry.list_experiments(status="completed", limit=10)
+best = registry.get_best_experiment(metric="hit_rate")
+```
+
 ---
 *Created: Session 58*
 *Updated: Session 125 - Added breakout classifier support*
@@ -935,4 +1019,5 @@ The dynamic model_version (e.g., `v9_20260201_011018`) distinguishes different m
 *Updated: Session 176 - New flags (--tune, --recency-weight, --walkforward), date overlap guard, survivorship bias warning*
 *Updated: Session 177 - Parallel models shadow mode, MONTHLY_MODELS config snippet output, comparison tooling*
 *Updated: Session 179 - Alternative experiment modes (--no-vegas, --residual, --two-stage, --quantile-alpha, --exclude-features)*
+*Updated: Session 290 - Merged experiment-tracker skill (queries, registry API)*
 *Part of: Monthly Retraining Infrastructure*
