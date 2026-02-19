@@ -3842,8 +3842,9 @@ def publish_batch_summary_from_firestore(batch_id: str):
                     'batch_id': batch_id,
                     'expected_players': batch_state.expected_players,
                     'completed_players': len(batch_state.completed_players),
+                    'completed_predictions': len(batch_state.completed_players),
                     'total_predictions': batch_state.total_predictions,
-                    'completion_percentage': batch_state.get_completion_percentage()
+                    'completion_pct': batch_state.get_completion_percentage()
                 }
             )
             logger.info(f"Phase 5 completion published for batch: {batch_id}")

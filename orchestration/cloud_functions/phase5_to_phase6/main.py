@@ -196,6 +196,17 @@ def orchestrate_phase5_to_phase6(cloud_event):
         )
         return  # Acknowledge message
 
+    # If coordinator says success with real predictions but completion_pct is missing/zero,
+    # trust the status=success signal. This happens on manually re-triggered batches where
+    # start_batch was never called, so run_history doesn't compute completion_pct correctly.
+    if status == 'success' and completed_predictions > 0 and completion_pct < MIN_COMPLETION_PCT:
+        logger.warning(
+            f"[{correlation_id}] completion_pct={completion_pct:.1f}% is below threshold but "
+            f"status=success with {completed_predictions} predictions — overriding to 100.0% "
+            f"(likely re-triggered batch with incomplete run_history tracking)"
+        )
+        completion_pct = 100.0
+
     # Skip if completion too low - permanent, don't retry
     if completion_pct < MIN_COMPLETION_PCT:
         logger.warning(
