@@ -70,7 +70,7 @@ class BestBetsAggregator:
         - Confidence floor: model-specific (V12: >= 0.90, excludes 41.7% HR tier)
         - Feature quality floor: quality < 85 → skip (24.0% HR)
         - Bench UNDER block: UNDER + line < 12 → skip (35.1% HR)
-        - Line jumped OVER block: OVER + line jumped 3+ → skip (28.6% HR, Session 294)
+        - Line jumped UNDER block: UNDER + line jumped 3+ → skip (47.4% HR, Session 294)
         - Line dropped UNDER block: UNDER + line dropped 3+ → skip (41.0% HR, Session 294)
         - Neg +/- streak UNDER block: UNDER + 3+ neg +/- games → skip (13.1% HR, Session 294)
         - ANTI_PATTERN combos are blocked entirely
@@ -184,13 +184,14 @@ class BestBetsAggregator:
             if games_vs_opp >= 6:
                 continue
 
-            # Smart filter: Block OVER when line jumped 3+ (Session 294)
-            # OVER + line jumped 3+ from previous game = 28.6% HR (anti-signal)
-            # Market raised the line reactively after a big game, creates UNDER value
+            # Smart filter: Block UNDER when line jumped 3+ (Session 294)
+            # UNDER + line jumped 3+ = 47.4% HR (N=627) — below breakeven
+            # Market raised the line after a big game, our UNDER calls lose edge
+            # Note: OVER + line jumped is fine (56.8-64.9% HR) — do NOT block
             prop_line_delta = pred.get('prop_line_delta')
             if (prop_line_delta is not None
                     and prop_line_delta >= 3.0
-                    and pred.get('recommendation') == 'OVER'):
+                    and pred.get('recommendation') == 'UNDER'):
                 continue
 
             # Smart filter: Block UNDER when line dropped 3+ (Session 294)
