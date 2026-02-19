@@ -50,7 +50,7 @@ def get_game_dates(start_date: str, end_date: str) -> list:
     return dates
 
 
-def scrape_historical_events(game_date: str, snapshot_time: str = "04:00:00Z") -> list:
+def scrape_historical_events(game_date: str, snapshot_time: str = "18:00:00Z") -> list:
     """Scrape historical events for a date and return event IDs."""
     snapshot_timestamp = f"{game_date}T{snapshot_time}"
 
@@ -61,7 +61,7 @@ def scrape_historical_events(game_date: str, snapshot_time: str = "04:00:00Z") -
         str(PROJECT_ROOT / "scrapers/oddsapi/oddsa_events_his.py"),
         "--game_date", game_date,
         "--snapshot_timestamp", snapshot_timestamp,
-        "--group", "file"  # Write to file instead of GCS for inspection
+        "--group", "dev"  # Write to /tmp file for inspection (group 'dev' matches exporter config)
     ]
 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
@@ -85,7 +85,7 @@ def scrape_historical_events(game_date: str, snapshot_time: str = "04:00:00Z") -
     return events
 
 
-def scrape_player_props_for_event(event_id: str, game_date: str, snapshot_time: str = "04:00:00Z") -> bool:
+def scrape_player_props_for_event(event_id: str, game_date: str, snapshot_time: str = "18:00:00Z") -> bool:
     """Scrape player props for a specific event."""
     snapshot_timestamp = f"{game_date}T{snapshot_time}"
 
@@ -99,7 +99,7 @@ def scrape_player_props_for_event(event_id: str, game_date: str, snapshot_time: 
         "--group", "gcs"  # Write to GCS for processing
     ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
 
     if result.returncode != 0:
         # Check if it's a 404 (event not available at timestamp)
@@ -119,6 +119,8 @@ def main():
     parser.add_argument('--delay', type=float, default=1.0, help='Delay between API calls (seconds)')
     parser.add_argument('--dry-run', action='store_true', help='Only fetch events, don\'t scrape props')
     parser.add_argument('--skip-to-date', help='Skip to this date (for resuming)')
+    parser.add_argument('--snapshot-time', default='18:00:00Z',
+                        help='UTC snapshot time for historical data (default: 18:00:00Z = 2PM ET peak)')
 
     args = parser.parse_args()
 
@@ -144,7 +146,7 @@ def main():
         logger.info(f"{'='*60}")
 
         # Get events for this date
-        events = scrape_historical_events(game_date)
+        events = scrape_historical_events(game_date, snapshot_time=args.snapshot_time)
         stats['events_found'] += len(events)
 
         if not events:
@@ -164,7 +166,7 @@ def main():
 
             logger.info(f"  Event {j+1}/{len(events)}: {away_team} @ {home_team}")
 
-            success = scrape_player_props_for_event(event_id, game_date)
+            success = scrape_player_props_for_event(event_id, game_date, snapshot_time=args.snapshot_time)
 
             if success:
                 stats['props_scraped'] += 1
