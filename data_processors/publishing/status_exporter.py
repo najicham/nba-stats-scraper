@@ -79,11 +79,14 @@ class StatusExporter(BaseExporter):
         """
         now = datetime.now(timezone.utc)
 
-        # Get status for each service
-        live_status = self._check_live_data_status()
+        # Check for active schedule breaks FIRST so service checks can use it
+        active_break = self._check_active_break()
+
+        # Get status for each service (break-aware)
+        live_status = self._check_live_data_status(active_break)
         tonight_status = self._check_tonight_data_status()
         grading_status = self._check_grading_status()
-        predictions_status = self._check_predictions_status(target_date)
+        predictions_status = self._check_predictions_status(target_date, active_break)
 
         # Determine overall status
         statuses = [
@@ -104,9 +107,6 @@ class StatusExporter(BaseExporter):
             live_status, tonight_status, grading_status, predictions_status
         )
 
-        # Check for active schedule breaks (All-Star, holidays, etc.)
-        active_break = self._check_active_break()
-
         return {
             'updated_at': now.isoformat(),
             'overall_status': overall_status,
@@ -121,9 +121,22 @@ class StatusExporter(BaseExporter):
             'active_break': active_break
         }
 
-    def _check_live_data_status(self) -> Dict[str, Any]:
+    def _check_live_data_status(self, active_break=None) -> Dict[str, Any]:
         """Check live data freshness and status."""
         try:
+            # During a schedule break, no live data expected — healthy
+            if active_break:
+                headline = active_break.get('headline', 'Schedule Break')
+                message = active_break.get('message', 'No games scheduled')
+                return {
+                    'status': 'healthy',
+                    'message': f'No games — {headline} ({message})',
+                    'last_update': None,
+                    'is_stale': False,
+                    'games_active': False,
+                    'next_update_expected': None
+                }
+
             bucket = self._get_storage_client().bucket('nba-props-platform-api')
             blob = bucket.blob('v1/live/latest.json')
 
@@ -246,7 +259,7 @@ class StatusExporter(BaseExporter):
                 'message': f'Error checking status: {str(e)}'
             }
 
-    def _check_predictions_status(self, target_date: str = None) -> Dict[str, Any]:
+    def _check_predictions_status(self, target_date: str = None, active_break=None) -> Dict[str, Any]:
         """Check if predictions exist for today/tomorrow."""
         try:
             if not target_date:
@@ -273,6 +286,15 @@ class StatusExporter(BaseExporter):
                     'status': 'healthy',
                     'message': f'{count} predictions available for {target_date}',
                     'predictions_count': count,
+                    'target_date': target_date
+                }
+            elif active_break:
+                # Zero predictions expected during a schedule break
+                headline = active_break.get('headline', 'Schedule Break')
+                return {
+                    'status': 'healthy',
+                    'message': f'No predictions expected — {headline}',
+                    'predictions_count': 0,
                     'target_date': target_date
                 }
             else:

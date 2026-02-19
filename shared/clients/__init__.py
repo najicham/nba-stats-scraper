@@ -26,37 +26,58 @@ Usage:
     doc = fs_client.collection("users").document("123").get()
 """
 
-# BigQuery pool
+# BigQuery pool (always available — core dependency for all services)
 from shared.clients.bigquery_pool import (
     get_bigquery_client,
     close_all_clients as close_all_bigquery_clients,
     get_client_count as get_bigquery_client_count,
 )
 
-# Firestore pool
-from shared.clients.firestore_pool import (
-    get_firestore_client,
-    close_all_clients as close_all_firestore_clients,
-    get_client_count as get_firestore_client_count,
-)
+# Firestore pool (optional — not all services need google-cloud-firestore)
+try:
+    from shared.clients.firestore_pool import (
+        get_firestore_client,
+        close_all_clients as close_all_firestore_clients,
+        get_client_count as get_firestore_client_count,
+    )
+except ImportError:
+    def get_firestore_client(**kwargs):
+        raise ImportError("google-cloud-firestore is not installed. Add it to requirements.txt if this service needs Firestore.")
+    def close_all_firestore_clients(): pass
+    def get_firestore_client_count(): return 0
 
-# Pub/Sub pool
-from shared.clients.pubsub_pool import (
-    get_pubsub_publisher,
-    get_pubsub_subscriber,
-    close_all_clients as close_all_pubsub_clients,
-    get_publisher_count as get_pubsub_publisher_count,
-    get_subscriber_count as get_pubsub_subscriber_count,
-)
+# Pub/Sub pool (optional — not all services need google-cloud-pubsub)
+try:
+    from shared.clients.pubsub_pool import (
+        get_pubsub_publisher,
+        get_pubsub_subscriber,
+        close_all_clients as close_all_pubsub_clients,
+        get_publisher_count as get_pubsub_publisher_count,
+        get_subscriber_count as get_pubsub_subscriber_count,
+    )
+except ImportError:
+    def get_pubsub_publisher(**kwargs):
+        raise ImportError("google-cloud-pubsub is not installed. Add it to requirements.txt if this service needs Pub/Sub.")
+    def get_pubsub_subscriber(**kwargs):
+        raise ImportError("google-cloud-pubsub is not installed. Add it to requirements.txt if this service needs Pub/Sub.")
+    def close_all_pubsub_clients(): pass
+    def get_pubsub_publisher_count(): return 0
+    def get_pubsub_subscriber_count(): return 0
 
-# Storage pool
-from shared.clients.storage_pool import (
-    get_storage_client,
-    close_all_clients as close_all_storage_clients,
-    get_client_count as get_storage_client_count,
-)
+# Storage pool (optional — not all services need google-cloud-storage)
+try:
+    from shared.clients.storage_pool import (
+        get_storage_client,
+        close_all_clients as close_all_storage_clients,
+        get_client_count as get_storage_client_count,
+    )
+except ImportError:
+    def get_storage_client(**kwargs):
+        raise ImportError("google-cloud-storage is not installed. Add it to requirements.txt if this service needs Storage.")
+    def close_all_storage_clients(): pass
+    def get_storage_client_count(): return 0
 
-# HTTP pool
+# HTTP pool (always available — uses stdlib/requests)
 from shared.clients.http_pool import (
     get_http_session,
     close_all_sessions as close_all_http_sessions,

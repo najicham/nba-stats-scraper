@@ -15,6 +15,7 @@
 #   4. live-freshness-monitor    - Live game data freshness monitoring
 #   5. self-heal-predictions     - Auto-heal stalled/missing predictions
 #   6. grading-readiness-monitor - Monitors grading readiness after games
+#   7. grading-gap-detector      - Detects incomplete grading, triggers backfills
 #
 # All use cloudbuild-functions.yaml (shared Cloud Function deploy template).
 # All are HTTP-triggered Cloud Functions invoked by Cloud Scheduler.
@@ -192,6 +193,17 @@ create_function_trigger \
     "main" \
     "orchestration/cloud_functions/grading_readiness_monitor" \
     "Auto-deploy grading-readiness-monitor Cloud Function on push to main" \
+    "512Mi" \
+    "300s"
+
+# 7. grading-gap-detector
+#    Detects incomplete grading and auto-triggers backfills (daily 9 AM ET)
+create_function_trigger \
+    "deploy-grading-gap-detector" \
+    "grading-gap-detector" \
+    "main" \
+    "orchestration/cloud_functions/grading-gap-detector" \
+    "Auto-deploy grading-gap-detector Cloud Function on push to main" \
     "512Mi" \
     "300s"
 
