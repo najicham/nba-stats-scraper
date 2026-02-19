@@ -1002,7 +1002,7 @@ def start_prediction_batch():
                 # Don't block predictions if check fails - log and continue
                 logger.warning(f"Postponement check failed (continuing anyway): {e}")
 
-        # Check if batch already running
+        # Check if batch already running on THIS instance (in-memory)
         # Session 159: Reduced stall threshold from 600s (10min) to 300s (5min)
         # to detect stuck batches faster and allow new runs sooner
         if current_tracker and not current_tracker.is_complete:
@@ -1019,6 +1019,34 @@ def start_prediction_batch():
                 reason = "forced" if force else "stalled"
                 logger.warning(f"Overriding existing batch ({reason}), starting new batch")
                 current_tracker.reset()
+
+        # Cross-instance dedup: check Firestore for an active same-date batch on ANY instance.
+        # Prevents two Cloud Run instances from independently running the same game date.
+        if not force:
+            try:
+                _sm = get_state_manager()
+                _active = _sm.get_active_batches()
+                _same_date = [b for b in _active if str(b.game_date) == game_date.isoformat()]
+                if _same_date:
+                    _b = _same_date[0]
+                    logger.warning(
+                        f"Active batch {_b.batch_id} found for {game_date} in Firestore "
+                        f"({len(_b.completed_players)}/{_b.expected_players} players completed) — "
+                        f"blocking duplicate start. Use force=true to override."
+                    )
+                    return jsonify({
+                        'status': 'already_running',
+                        'batch_id': _b.batch_id,
+                        'message': 'Batch already active (possibly on a different instance)',
+                        'progress': {
+                            'expected': _b.expected_players,
+                            'completed': len(_b.completed_players),
+                            'pct': _b.get_completion_percentage()
+                        }
+                    }), 409
+            except Exception as _e:
+                # Fail-open: allow batch to start if Firestore check fails
+                logger.warning(f"Firestore cross-instance dedup check failed (proceeding): {_e}")
         
         # Create batch ID
         batch_id = f"batch_{game_date.isoformat()}_{int(time.time())}"
@@ -2855,36 +2883,63 @@ def get_batch_status():
         Requires X-API-Key header or 'key' query parameter
     """
     global current_tracker, current_batch_id
-    
+
     requested_batch_id = request.args.get('batch_id')
-    
-    # Check if requested batch matches current batch
-    if requested_batch_id and requested_batch_id != current_batch_id:
+
+    # Case 1: This instance has an active in-memory batch that matches the request
+    if current_tracker and (not requested_batch_id or requested_batch_id == current_batch_id):
+        progress = current_tracker.get_progress()
+        is_stalled = current_tracker.is_stalled()
         return jsonify({
-            'status': 'not_found',
-            'message': f'Batch {requested_batch_id} not found',
-            'current_batch': current_batch_id
-        }), 404
-    
-    if not current_tracker:
-        return jsonify({
-            'status': 'no_active_batch',
-            'current_batch': None
+            'status': 'complete' if current_tracker.is_complete else 'in_progress',
+            'batch_id': current_batch_id,
+            'progress': progress,
+            'is_stalled': is_stalled,
+            'summary': current_tracker.get_summary() if current_tracker.is_complete else None
         }), 200
-    
-    # Get current progress
-    progress = current_tracker.get_progress()
-    
-    # Check if stalled
-    is_stalled = current_tracker.is_stalled()
-    
-    return jsonify({
-        'status': 'complete' if current_tracker.is_complete else 'in_progress',
-        'batch_id': current_batch_id,
-        'progress': progress,
-        'is_stalled': is_stalled,
-        'summary': current_tracker.get_summary() if current_tracker.is_complete else None
-    }), 200
+
+    # Case 2: No matching in-memory batch — fall back to Firestore for cross-instance visibility.
+    # This handles: (a) batch running on a different Cloud Run instance, (b) specific batch_id lookup.
+    try:
+        state_manager = get_state_manager()
+
+        if requested_batch_id:
+            # Specific batch requested — look it up in Firestore
+            batch_state = state_manager.get_batch_state(requested_batch_id)
+            if batch_state:
+                return jsonify({
+                    'status': 'complete' if batch_state.is_complete else 'in_progress',
+                    'batch_id': batch_state.batch_id,
+                    'game_date': str(batch_state.game_date),
+                    'expected_players': batch_state.expected_players,
+                    'completed_players': len(batch_state.completed_players),
+                    'completion_pct': batch_state.get_completion_percentage(),
+                    'source': 'firestore'
+                }), 200
+            return jsonify({
+                'status': 'not_found',
+                'message': f'Batch {requested_batch_id} not found',
+                'current_batch': current_batch_id
+            }), 404
+
+        # No specific batch requested — check for any active batch (any instance)
+        active_batches = state_manager.get_active_batches()
+        if active_batches:
+            batch = active_batches[0]
+            return jsonify({
+                'status': 'in_progress',
+                'batch_id': batch.batch_id,
+                'game_date': str(batch.game_date),
+                'expected_players': batch.expected_players,
+                'completed_players': len(batch.completed_players),
+                'completion_pct': batch.get_completion_percentage(),
+                'note': 'Batch processing on a different instance',
+                'source': 'firestore'
+            }), 200
+    except Exception as e:
+        logger.warning(f"/status Firestore fallback failed: {e}")
+
+    return jsonify({'status': 'no_active_batch', 'current_batch': None}), 200
 
 
 def _track_batch_cleanup_event(stalled_count: int, results: list) -> None:
