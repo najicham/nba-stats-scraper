@@ -2,8 +2,11 @@
 
 SESSION 257 FINDING: 88.9% HR (17 picks), +19.4% synergy over 2-way combo
   - Edge >= 5 AND minutes surge >= 3 AND ESO-quality gate (confidence >= 70%, not in 88-90% problem tier)
-  - PREMIUM signal — no direction filter needed (robust across all dimensions)
   - The ESO gate acts as a quality filter that eliminates false positives
+
+SESSION 295 FIX: OVER-only direction filter.
+  - OVER: 95.5% HR (N=22), UNDER: 20.0% HR (N=5) — catastrophic gap.
+  - Full-season audit confirmed UNDER picks with this combo are anti-pattern.
 
 See: docs/08-projects/current/signal-testing/SESSION-257-RESULTS.md
 """
@@ -25,6 +28,10 @@ class ThreeWayComboSignal(BaseSignal):
     def evaluate(self, prediction: Dict,
                  features: Optional[Dict] = None,
                  supplemental: Optional[Dict] = None) -> SignalResult:
+        # Session 295: OVER-only — UNDER = 20.0% HR (N=5), catastrophic
+        if prediction.get('recommendation') != 'OVER':
+            return self._no_qualify()
+
         # Check edge >= 5
         edge = abs(prediction.get('edge') or 0)
         if edge < self.MIN_EDGE:

@@ -49,8 +49,8 @@ _FALLBACK_REGISTRY: Dict[str, ComboEntry] = {
         display_name='Edge Spread + High Edge + Minutes Surge (3-Way)',
         signals=['edge_spread_optimal', 'high_edge', 'minutes_surge'],
         cardinality=3, classification='SYNERGISTIC', status='PRODUCTION',
-        direction_filter='BOTH', hit_rate=88.9, roi=None, sample_size=17,
-        score_weight=2.5, notes=None,
+        direction_filter='OVER_ONLY', hit_rate=95.5, roi=None, sample_size=22,
+        score_weight=2.5, notes='Session 295: OVER_ONLY (UNDER=20.0% N=5). Updated HR from full-season audit.',
     ),
     'high_edge+minutes_surge': ComboEntry(
         combo_id='high_edge+minutes_surge',
@@ -124,6 +124,31 @@ _FALLBACK_REGISTRY: Dict[str, ComboEntry] = {
         cardinality=1, classification='SYNERGISTIC', status='CONDITIONAL',
         direction_filter='UNDER_ONLY', hit_rate=85.7, roi=63.6, sample_size=14,
         score_weight=1.0, notes='Session 275: 85.7% AVG HR, small sample (N=14)',
+    ),
+    # Session 295: Added performing UNDER signals from full-season audit
+    'volatile_under': ComboEntry(
+        combo_id='volatile_under',
+        display_name='Volatile Scorer Under',
+        signals=['volatile_under'],
+        cardinality=1, classification='SYNERGISTIC', status='PRODUCTION',
+        direction_filter='UNDER_ONLY', hit_rate=73.1, roi=37.3, sample_size=26,
+        score_weight=1.0, notes='Session 295: 73.1% HR (N=26) full-season audit',
+    ),
+    'high_usage_under': ComboEntry(
+        combo_id='high_usage_under',
+        display_name='High Usage Under',
+        signals=['high_usage_under'],
+        cardinality=1, classification='SYNERGISTIC', status='PRODUCTION',
+        direction_filter='UNDER_ONLY', hit_rate=68.1, roi=26.4, sample_size=47,
+        score_weight=0.5, notes='Session 295: 68.1% HR (N=47) full-season audit',
+    ),
+    'prop_line_drop_over': ComboEntry(
+        combo_id='prop_line_drop_over',
+        display_name='Prop Line Drop Over',
+        signals=['prop_line_drop_over'],
+        cardinality=1, classification='SYNERGISTIC', status='PRODUCTION',
+        direction_filter='OVER_ONLY', hit_rate=79.1, roi=50.0, sample_size=67,
+        score_weight=1.0, notes='Session 295: 79.1% HR (N=67) full-season audit',
     ),
 }
 

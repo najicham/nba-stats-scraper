@@ -303,7 +303,7 @@ gcloud run services describe SERVICE --region=us-west2 --format="value(metadata.
 | `nba_raw.nbac_schedule` | Requires partition filter |
 | `model_performance_daily` | Daily rolling HR/state per model (Session 262). Auto-populated by post_grading_export |
 | `signal_health_daily` | Signal regime (HOT/NORMAL/COLD) per timeframe (Session 259) |
-| `signal_combo_registry` | 10 validated combos: 8 SYNERGISTIC, 2 ANTI_PATTERN (Session 275) |
+| `signal_combo_registry` | 13 validated combos: 11 SYNERGISTIC, 2 ANTI_PATTERN (Session 295) |
 
 **Game Status:** 1=Scheduled, 2=In Progress, 3=Final
 
@@ -568,7 +568,7 @@ Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
 | `high_edge` | Edge | BOTH | 66.7% | Standalone BLOCKED | Combo OK (combo_he_ms 94.9%) |
 | `edge_spread_optimal` | Edge | BOTH | 67.2% | PRODUCTION | Anti-pattern detection in aggregator |
 | `combo_he_ms` | Combo | OVER | 94.9% | PRODUCTION | Best combo: HE+MS |
-| `combo_3way` | Combo | BOTH | 78.1% | PRODUCTION | ESO+HE+MS |
+| `combo_3way` | Combo | OVER | 95.5% | PRODUCTION | ESO+HE+MS (OVER-only, Session 295) |
 | `bench_under` | Market-Pattern | UNDER | 76.9% | PRODUCTION | Top standalone signal (N=156) |
 | `3pt_bounce` | Bounce | OVER | 74.9% | CONDITIONAL | Guards + Home |
 | `b2b_fatigue_under` | Market-Pattern | UNDER | 85.7% | CONDITIONAL | Small N (14) |

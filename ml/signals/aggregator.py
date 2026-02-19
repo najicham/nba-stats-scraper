@@ -43,7 +43,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v294_prop_line_delta'
+ALGORITHM_VERSION = 'v295_direction_alignment'
 
 # Signal health regime → weight multiplier
 HEALTH_MULTIPLIERS = {
