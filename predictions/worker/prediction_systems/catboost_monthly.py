@@ -151,6 +151,19 @@ MONTHLY_MODELS = {
         "feature_set": "v12",
         "description": "V12_NOVEG_Q45_FEB — first V12+quantile, ALL GATES PASSED",
     },
+    # === V9 Low-Vegas MAE (33 features, 0.25x vegas weight) — Shadow ===
+    "catboost_v9_low_vegas_train0106_0205": {
+        "model_path": "gs://nba-props-platform-models/catboost/v9/monthly/catboost_v9_33f_wt_train20260106-20260205_20260218_231928.cbm",
+        "train_start": "2026-01-06",
+        "train_end": "2026-02-05",
+        "backtest_mae": 5.06,
+        "backtest_hit_rate_all": 53.8,
+        "backtest_hit_rate_edge_3plus": 56.3,
+        "backtest_n_edge_3plus": 48,
+        "enabled": True,
+        "feature_set": "v9",
+        "description": "V9_LOW_VEGAS — 0.25x vegas weight, 5x more edge picks, UNDER 61.1%",
+    },
 }
 
 

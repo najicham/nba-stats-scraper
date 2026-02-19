@@ -59,6 +59,12 @@ MODEL_FAMILIES = {
         'feature_set': 'v12',
         'loss': 'quantile',
     },
+    'v9_low_vegas': {
+        'pattern': 'catboost_v9_low_vegas_',
+        'exact': False,
+        'feature_set': 'v9',
+        'loss': 'mae',
+    },
 }
 
 
