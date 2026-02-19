@@ -40,6 +40,7 @@ steps:
         cp -r shared /workspace/deploy_pkg/
         cp -r predictions /workspace/deploy_pkg/
         cp -r backfill_jobs /workspace/deploy_pkg/
+        cp -r ml /workspace/deploy_pkg/
         mkdir -p /workspace/deploy_pkg/bin
         cp -r bin/monitoring /workspace/deploy_pkg/bin/
         # NOTE: Do NOT copy orchestration/ — it contains other Cloud Functions
