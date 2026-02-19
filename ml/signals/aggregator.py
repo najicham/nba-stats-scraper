@@ -43,7 +43,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v284_blacklist_familiar_reledge'
+ALGORITHM_VERSION = 'v294_prop_line_delta'
 
 # Signal health regime → weight multiplier
 HEALTH_MULTIPLIERS = {
@@ -70,6 +70,9 @@ class BestBetsAggregator:
         - Confidence floor: model-specific (V12: >= 0.90, excludes 41.7% HR tier)
         - Feature quality floor: quality < 85 → skip (24.0% HR)
         - Bench UNDER block: UNDER + line < 12 → skip (35.1% HR)
+        - Line jumped OVER block: OVER + line jumped 3+ → skip (28.6% HR, Session 294)
+        - Line dropped UNDER block: UNDER + line dropped 3+ → skip (41.0% HR, Session 294)
+        - Neg +/- streak UNDER block: UNDER + 3+ neg +/- games → skip (13.1% HR, Session 294)
         - ANTI_PATTERN combos are blocked entirely
     """
 
@@ -179,6 +182,28 @@ class BestBetsAggregator:
             # Season replay: +$1,780 P&L when stacked with other filters
             games_vs_opp = pred.get('games_vs_opponent') or 0
             if games_vs_opp >= 6:
+                continue
+
+            # Smart filter: Block OVER when line jumped 3+ (Session 294)
+            # OVER + line jumped 3+ from previous game = 28.6% HR (anti-signal)
+            # Market raised the line reactively after a big game, creates UNDER value
+            prop_line_delta = pred.get('prop_line_delta')
+            if (prop_line_delta is not None
+                    and prop_line_delta >= 3.0
+                    and pred.get('recommendation') == 'OVER'):
+                continue
+
+            # Smart filter: Block UNDER when line dropped 3+ (Session 294)
+            # UNDER + line dropped 3+ = 41.0% HR (N=188) — market already priced the decline
+            if (prop_line_delta is not None
+                    and prop_line_delta <= -3.0
+                    and pred.get('recommendation') == 'UNDER'):
+                continue
+
+            # Smart filter: Block UNDER when neg +/- streak 3+ games (Session 294)
+            # 13.1% HR (N=84) — players in losing lineups bounce back, UNDER is a trap
+            neg_pm_streak = pred.get('neg_pm_streak') or 0
+            if neg_pm_streak >= 3 and pred.get('recommendation') == 'UNDER':
                 continue
 
             tags = [r.source_tag for r in qualifying]

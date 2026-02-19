@@ -57,7 +57,72 @@ Good N (494). Double cold is stronger than either alone.
 | Minutes trend (lagged) | 47-54% OVER | Lines already account for minutes role |
 | Points vs line streak | 43-50% OVER | No persistence in beating/missing the line |
 
-## Untested Ideas (Priority for Next Session)
+## Session 294 Backtests (2026-02-18)
+
+### 4. Prop Line Delta — Market Overreaction
+
+**Definition:** Current game's line minus previous game's line (from `player_prop_predictions`).
+
+| Pattern | Direction | HR (edge 3+) | N | Avg Over Line |
+|---------|-----------|-------------|---|---------------|
+| Line dropped 3+ | OVER | **72.2%** | **370** | +6.9 |
+| Line stable | OVER | 56.6% | 2087 | +1.9 |
+| Line stable | UNDER | 56.4% | 5041 | -0.8 |
+| Line jumped 3+ | OVER | 64.9% | 77 | +2.7 |
+| Line jumped 3+ | UNDER | **46.3%** | 630 | -0.6 |
+| Line dropped 3+ | UNDER | **41.0%** | 188 | +2.0 |
+
+**Key finding:** When the market drops a player's line 3+ points (bad last game), OVER is a 72.2% HR signal with the largest N of any signal we've found. The opposite directions are anti-patterns.
+
+**Implemented:**
+- Signal: `prop_line_drop_over` (OVER + line dropped 3+ = qualify)
+- Pre-filter: Block OVER + line jumped 3+ (anti-signal)
+- Pre-filter: Block UNDER + line dropped 3+ (anti-signal)
+- Feature: `prop_line_delta` (f54) added to feature store
+
+### 5. Plus/Minus Streak — Negative +/- UNDER Anti-Pattern
+
+**Definition:** Player's plus/minus was negative for N consecutive previous games.
+
+| Pattern | Direction | HR (edge 3+) | N |
+|---------|-----------|-------------|---|
+| neg_3plus + OVER | OVER | 59.1% | 22 |
+| neg_3plus + UNDER | UNDER | **13.1%** | **84** |
+| neg_2 + OVER | OVER | 61.0% | 41 |
+| neg_2 + UNDER | UNDER | 42.9% | 42 |
+| neg_1 + OVER | OVER | 61.1% | 72 |
+
+**Key finding:** The 13.1% HR on neg_3plus + UNDER (N=84) is the most catastrophic anti-pattern we've found. Players on 3+ game losing lineup streaks go OVER by +5.5 points on average. They're bounce-back candidates, not decline candidates.
+
+**Implemented:** Pre-filter blocking UNDER + 3+ neg +/- streak.
+
+### 6. EFG% Cold Streak
+
+| Streak | Overall HR | OVER HR | OVER N |
+|--------|-----------|---------|--------|
+| 0 (not cold) | 45.5% | 63.7% | 204 |
+| 1 game cold | 59.4% | **81.4%** | 43 |
+| 2 games cold | 50.0% | 72.7% | 11 |
+
+Bounce-back effect strongest at 1 cold game. Small N at 2+.
+
+### 7. 3PA Volume Drop — Dramatic but Small N
+
+When 3PA dropped 3+ from 10-game avg last game: **82.4% HR both OVER and UNDER** (N=17 each). The model becomes highly accurate on these players. Too small to act on now, monitor.
+
+### 8. Self-Creation Rate — UNDER Anti-Pattern
+
+Low self-creation (low unassisted FG% vs average) + UNDER = **22.2% HR (N=36)**. Players who relied more on teammates last game tend to bounce back. Small N, monitor.
+
+### 9. Turnover Streak — Mild OVER Signal
+
+High TOs (above avg) for 2+ games + OVER = 71.4% HR but N=14. High TO players are still engaged/aggressive. Too small.
+
+### 10. Rebound Streak — Too Small
+
+Low rebounds 3+ games: 100% OVER HR but N=5. Not actionable.
+
+## Untested Ideas (Remaining)
 
 ### High Priority (likely signal based on validated patterns)
 

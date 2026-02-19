@@ -239,6 +239,7 @@ ML_FEATURE_RANGES = {
     51: (0, 20, False, 'prop_over_streak'),        # Consecutive overs
     52: (0, 20, False, 'prop_under_streak'),       # Consecutive unders
     53: (-30, 30, False, 'line_vs_season_avg'),    # Line - season avg
+    54: (-20, 20, False, 'prop_line_delta'),       # Line change from prev game (Session 294)
 }
 
 
@@ -1722,7 +1723,7 @@ class MLFeatureStoreProcessor(
     def _extract_all_features(self, phase4_data: Dict, phase3_data: Dict,
                                player_lookup: str = None, opponent: str = None) -> tuple:
         """
-        Extract all 54 features with Phase 4 → Phase 3 → Default fallback.
+        Extract all 55 features with Phase 4 → Phase 3 → Default fallback.
 
         Args:
             phase4_data: Dict with Phase 4 table data
@@ -2031,6 +2032,11 @@ class MLFeatureStoreProcessor(
         else:
             features.append(float('nan'))
             feature_sources[53] = 'missing'
+
+        # Feature 54: prop_line_delta (Session 294)
+        line_delta = self.feature_extractor.get_prop_line_delta(player_lookup) if player_lookup else None
+        features.append(float(line_delta) if line_delta is not None else float('nan'))
+        feature_sources[54] = 'vegas' if line_delta is not None else 'missing'
 
         return features, feature_sources
     

@@ -65,6 +65,9 @@ def build_default_registry() -> SignalRegistry:
     from ml.signals.high_ft_under import HighFTUnderSignal
     from ml.signals.self_creator_under import SelfCreatorUnderSignal
 
+    # Prop line delta signal (Session 294)
+    from ml.signals.prop_line_drop_over import PropLineDropOverSignal
+
     registry = SignalRegistry()
     registry.register(ModelHealthSignal())
     registry.register(HighEdgeSignal())
@@ -95,5 +98,8 @@ def build_default_registry() -> SignalRegistry:
     registry.register(VolatileUnderSignal())
     registry.register(HighFTUnderSignal())
     registry.register(SelfCreatorUnderSignal())
+
+    # Prop line delta signal (Session 294)
+    registry.register(PropLineDropOverSignal())
 
     return registry

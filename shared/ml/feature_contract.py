@@ -22,8 +22,8 @@ from dataclasses import dataclass
 # FEATURE STORE CONFIGURATION
 # =============================================================================
 
-CURRENT_FEATURE_STORE_VERSION = "v2_54features"
-FEATURE_STORE_FEATURE_COUNT = 54
+CURRENT_FEATURE_STORE_VERSION = "v2_55features"
+FEATURE_STORE_FEATURE_COUNT = 55
 
 # Canonical feature names in the feature store, IN ORDER
 # Position matters! New features must be APPENDED, never inserted.
@@ -109,6 +109,9 @@ FEATURE_STORE_NAMES: List[str] = [
     "prop_over_streak",
     "prop_under_streak",
     "line_vs_season_avg",
+
+    # 54: Prop Line Delta (Session 294 — market overreaction signal)
+    "prop_line_delta",                # current_line - previous_game_line
 ]
 
 # Validate feature store list length matches expected count
@@ -541,7 +544,7 @@ FEATURES_FROM_PHASE3_V11 = [37, 38]
 # game_total_line (38) depends on odds data availability.
 # These features are still tracked as defaults for visibility, but don't block predictions.
 # Scraper health monitoring separately alerts when star players are missing lines.
-FEATURES_OPTIONAL = set(FEATURES_VEGAS) | {38, 41, 42, 47, 50, 51, 52, 53}
+FEATURES_OPTIONAL = set(FEATURES_VEGAS) | {38, 41, 42, 47, 50, 51, 52, 53, 54}
 
 # Session 152: Vegas line source values
 # Stored in ml_feature_store_v2.vegas_line_source and player_prop_predictions.vegas_line_source
@@ -581,6 +584,9 @@ for _idx in FEATURES_FROM_ODDS_V12:
     FEATURE_SOURCE_MAP[_idx] = 'vegas'
 for _idx in FEATURES_FROM_INJURY_V12:
     FEATURE_SOURCE_MAP[_idx] = 'injury_context'
+
+# Feature 54: prop_line_delta (Session 294)
+FEATURE_SOURCE_MAP[54] = 'vegas'
 
 
 # =============================================================================
@@ -666,6 +672,9 @@ FEATURE_DEFAULTS: Dict[str, float] = {
     "prop_under_streak": 0.0,
     "line_vs_season_avg": 0.0,
 
+    # Feature 54 (Session 294)
+    "prop_line_delta": 0.0,  # No change = neutral default
+
     # V13 features (experiment-only - shooting efficiency)
     "fg_pct_last_3": 0.45,       # League average FG%
     "fg_pct_last_5": 0.45,
@@ -680,7 +689,7 @@ FEATURE_DEFAULTS: Dict[str, float] = {
 # COLUMN-BASED UTILITIES
 # =============================================================================
 
-def build_feature_array_from_columns(row, num_features: int = 54) -> List[float]:
+def build_feature_array_from_columns(row, num_features: int = FEATURE_STORE_FEATURE_COUNT) -> List[float]:
     """Reconstruct feature array from individual feature_N_value columns.
 
     Used by training/augmentation code that needs an ordered list of features

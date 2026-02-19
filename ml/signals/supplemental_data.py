@@ -148,7 +148,15 @@ def query_predictions_with_supplements(
                 ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS unassisted_fg_season,
         STDDEV(CAST(points AS FLOAT64))
           OVER (PARTITION BY player_lookup ORDER BY game_date
-                ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING) AS points_std_last_5
+                ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING) AS points_std_last_5,
+        -- Plus/minus streak (Session 294 — neg_pm_under anti-pattern)
+        plus_minus,
+        LAG(CASE WHEN plus_minus < 0 THEN 1 ELSE 0 END, 1)
+          OVER (PARTITION BY player_lookup ORDER BY game_date) AS neg_pm_1,
+        LAG(CASE WHEN plus_minus < 0 THEN 1 ELSE 0 END, 2)
+          OVER (PARTITION BY player_lookup ORDER BY game_date) AS neg_pm_2,
+        LAG(CASE WHEN plus_minus < 0 THEN 1 ELSE 0 END, 3)
+          OVER (PARTITION BY player_lookup ORDER BY game_date) AS neg_pm_3
       FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
       WHERE game_date >= '2025-10-22'
         AND minutes_played > 0
@@ -223,6 +231,24 @@ def query_predictions_with_supplements(
       QUALIFY ROW_NUMBER() OVER (
         PARTITION BY p2.player_lookup, p2.game_id ORDER BY p2.system_id DESC
       ) = 1
+    ),
+
+    -- Previous game prop line for line delta signal (Session 294)
+    -- Gets the most recent previous line for each player from the same model
+    prev_prop_lines AS (
+      SELECT
+        pp.player_lookup,
+        CAST(pp.current_points_line AS FLOAT64) AS prev_line_value,
+        pp.game_date AS prev_line_date
+      FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions` pp
+      WHERE pp.game_date >= DATE_SUB(@target_date, INTERVAL 14 DAY)
+        AND pp.game_date < @target_date
+        AND pp.system_id = '{model_id}'
+        AND pp.is_active = TRUE
+        AND pp.line_source IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS')
+      QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY pp.player_lookup ORDER BY pp.game_date DESC
+      ) = 1
     )
 
     SELECT
@@ -240,6 +266,9 @@ def query_predictions_with_supplements(
       ls.fg_pct_last_3,
       ls.fg_pct_season,
       ls.fg_pct_std,
+      ls.neg_pm_1,
+      ls.neg_pm_2,
+      ls.neg_pm_3,
       ls.starter_flag,
       ls.points_avg_season,
       ls.usage_avg_season,
@@ -254,11 +283,14 @@ def query_predictions_with_supplements(
       v12.v12_recommendation,
       v12.v12_edge,
       v12.v12_predicted_points,
-      v12.v12_confidence
+      v12.v12_confidence,
+      ppl.prev_line_value,
+      ppl.prev_line_date
     FROM preds p
     LEFT JOIN latest_stats ls ON ls.player_lookup = p.player_lookup
     LEFT JOIN latest_streak lsk ON lsk.player_lookup = p.player_lookup
     LEFT JOIN v12_preds v12 ON v12.player_lookup = p.player_lookup AND v12.game_id = p.game_id
+    LEFT JOIN prev_prop_lines ppl ON ppl.player_lookup = p.player_lookup
     ORDER BY p.player_lookup
     """
 
@@ -420,6 +452,16 @@ def query_predictions_with_supplements(
                 'confidence': float(row_dict.get('v12_confidence') or 0),
             }
 
+        # Prop line delta stats (for prop_line_drop_over signal, Session 294)
+        if row_dict.get('prev_line_value') is not None:
+            current_line = float(row_dict.get('line_value') or 0)
+            prev_line = float(row_dict['prev_line_value'])
+            supp['prop_line_stats'] = {
+                'prev_line_value': prev_line,
+                'current_line_value': current_line,
+                'line_delta': round(current_line - prev_line, 1),
+            }
+
         # Copy player profile fields to prediction dict for signals that check pred directly
         pred['starter_flag'] = row_dict.get('starter_flag')
         pred['points_avg_season'] = float(row_dict.get('points_avg_season') or 0)
@@ -427,6 +469,23 @@ def query_predictions_with_supplements(
         pred['fta_season'] = float(row_dict.get('fta_season') or 0)
         pred['unassisted_fg_season'] = float(row_dict.get('unassisted_fg_season') or 0)
         pred['points_std_last_5'] = float(row_dict.get('points_std_last_5') or 0)
+
+        # Copy prop line delta for aggregator pre-filter (Session 294)
+        if row_dict.get('prev_line_value') is not None:
+            current_line = float(row_dict.get('line_value') or 0)
+            prev_line = float(row_dict['prev_line_value'])
+            pred['prop_line_delta'] = round(current_line - prev_line, 1)
+
+        # Compute consecutive negative +/- streak for pre-filter (Session 294)
+        # neg_3plus + UNDER = 13.1% HR (N=84) — catastrophic anti-pattern
+        neg_pm_streak = 0
+        for lag_val in [row_dict.get('neg_pm_1'), row_dict.get('neg_pm_2'), row_dict.get('neg_pm_3')]:
+            if lag_val == 1:
+                neg_pm_streak += 1
+            else:
+                break
+        if neg_pm_streak > 0:
+            pred['neg_pm_streak'] = neg_pm_streak
 
         supplemental_map[row_dict['player_lookup']] = supp
 

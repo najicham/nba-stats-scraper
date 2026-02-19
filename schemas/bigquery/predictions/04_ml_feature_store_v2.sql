@@ -414,6 +414,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.ml_feature_store_
   feature_51_value FLOAT64 OPTIONS(description='Value for feature 51 (prop_over_streak). NULL if default.'),
   feature_52_value FLOAT64 OPTIONS(description='Value for feature 52 (prop_under_streak). NULL if default.'),
   feature_53_value FLOAT64 OPTIONS(description='Value for feature 53 (line_vs_season_avg). NULL if default.'),
+  feature_54_value FLOAT64 OPTIONS(description='Value for feature 54 (prop_line_delta). Line change from previous game. NULL if no prev line.'),
 
   -- Section 5: Per-Feature Details JSON (6 fields)
   -- Additional per-feature attributes as JSON strings. Used for deep investigation (~10% of queries).
@@ -982,7 +983,8 @@ ADD COLUMN IF NOT EXISTS feature_49_value FLOAT64 OPTIONS (description='Value fo
 ADD COLUMN IF NOT EXISTS feature_50_value FLOAT64 OPTIONS (description='Value for feature 50 (multi_book_line_std). NULL (dead feature).'),
 ADD COLUMN IF NOT EXISTS feature_51_value FLOAT64 OPTIONS (description='Value for feature 51 (prop_over_streak). NULL if default.'),
 ADD COLUMN IF NOT EXISTS feature_52_value FLOAT64 OPTIONS (description='Value for feature 52 (prop_under_streak). NULL if default.'),
-ADD COLUMN IF NOT EXISTS feature_53_value FLOAT64 OPTIONS (description='Value for feature 53 (line_vs_season_avg). NULL if default.');
+ADD COLUMN IF NOT EXISTS feature_53_value FLOAT64 OPTIONS (description='Value for feature 53 (line_vs_season_avg). NULL if default.'),
+ADD COLUMN IF NOT EXISTS feature_54_value FLOAT64 OPTIONS (description='Value for feature 54 (prop_line_delta). Line change from previous game. NULL if no prev line.');
 
 -- ============================================================================
 -- MONITORING VIEW: Feature Quality Unpivot (Session 134)

@@ -69,6 +69,9 @@ class FeatureExtractor:
         # Feature 50: multi_book_line_std — line disagreement across sportsbooks
         self._multi_book_std_lookup: Dict[str, float] = {}
 
+        # Feature 54: prop_line_delta — line change from previous game (Session 294)
+        self._prop_line_delta_lookup: Dict[str, float] = {}
+
         # Data Provenance Tracking (Session 99 - Feb 2026)
         # Track which sources were used and why fallbacks occurred
         self._fallback_reasons: List[str] = []
@@ -337,6 +340,8 @@ class FeatureExtractor:
             ('teammate_usage', timed_task('teammate_usage', lambda: self._batch_extract_teammate_usage(game_date))),
             # Feature 50: multi_book_line_std
             ('multi_book_std', timed_task('multi_book_std', lambda: self._batch_extract_multi_book_line_std(game_date))),
+            # Feature 54: prop_line_delta (Session 294)
+            ('prop_line_delta', timed_task('prop_line_delta', lambda: self._batch_extract_prop_line_delta(game_date))),
         ]
 
         # Auto-retry logic for transient network/BigQuery errors
@@ -430,9 +435,10 @@ class FeatureExtractor:
         self._minutes_ppm_lookup = {}
         # V12 rolling stats
         self._player_rolling_stats_lookup = {}
-        # Feature 47/50
+        # Feature 47/50/54
         self._teammate_usage_lookup = {}
         self._multi_book_std_lookup = {}
+        self._prop_line_delta_lookup = {}
         # Historical Completeness Tracking
         self._total_games_available_lookup = {}
 
@@ -1206,6 +1212,10 @@ class FeatureExtractor:
         """Get std dev of player points prop line across sportsbooks (feature 50)."""
         return self._multi_book_std_lookup.get(player_lookup)
 
+    def get_prop_line_delta(self, player_lookup: str) -> Optional[float]:
+        """Get prop line delta from previous game (feature 54, Session 294)."""
+        return self._prop_line_delta_lookup.get(player_lookup)
+
     # ========================================================================
     # V12 ROLLING STATS EXTRACTION
     # ========================================================================
@@ -1453,6 +1463,71 @@ class FeatureExtractor:
                     self._multi_book_std_lookup[record['player_lookup']] = float(val)
 
         logger.debug(f"Batch multi_book_std: {len(self._multi_book_std_lookup)} players")
+
+    def _batch_extract_prop_line_delta(self, game_date: date) -> None:
+        """Batch extract prop line delta from previous game (feature 54, Session 294).
+
+        Computes the difference between today's consensus points line and the player's
+        most recent previous game's consensus line. A negative delta (line dropped)
+        indicates the market reacted to a bad game — OVER bets on these players hit
+        at 79.0% (N=81). A positive delta (line jumped) after a big game creates
+        poor OVER value (28.6% HR).
+
+        Source: nba_raw.odds_api_player_points_props
+        """
+        query = f"""
+        WITH daily_consensus AS (
+            -- Get consensus (median) line per player per game date
+            SELECT
+                player_lookup,
+                game_date,
+                APPROX_QUANTILES(points_line, 2)[OFFSET(1)] as consensus_line
+            FROM (
+                SELECT
+                    player_lookup,
+                    game_date,
+                    bookmaker,
+                    points_line,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY player_lookup, game_date, bookmaker
+                        ORDER BY snapshot_timestamp DESC
+                    ) as rn
+                FROM `{self.project_id}.nba_raw.odds_api_player_points_props`
+                WHERE game_date >= DATE_SUB('{game_date}', INTERVAL 14 DAY)
+                  AND game_date <= '{game_date}'
+                  AND points_line IS NOT NULL
+                  AND points_line > 0
+            )
+            WHERE rn = 1
+            GROUP BY player_lookup, game_date
+            HAVING COUNT(DISTINCT bookmaker) >= 1
+        ),
+        with_prev AS (
+            SELECT
+                player_lookup,
+                game_date,
+                consensus_line,
+                LAG(consensus_line) OVER (
+                    PARTITION BY player_lookup ORDER BY game_date
+                ) as prev_consensus_line
+            FROM daily_consensus
+        )
+        SELECT
+            player_lookup,
+            consensus_line - prev_consensus_line as line_delta
+        FROM with_prev
+        WHERE game_date = '{game_date}'
+          AND prev_consensus_line IS NOT NULL
+        """
+        result = self._safe_query(query, "batch_extract_prop_line_delta")
+
+        if not result.empty:
+            for record in result.to_dict('records'):
+                val = record.get('line_delta')
+                if val is not None:
+                    self._prop_line_delta_lookup[record['player_lookup']] = round(float(val), 1)
+
+        logger.debug(f"Batch prop_line_delta: {len(self._prop_line_delta_lookup)} players")
 
     # ========================================================================
     # HISTORICAL COMPLETENESS TRACKING (Data Cascade Architecture - Jan 2026)
