@@ -332,7 +332,30 @@ class TonightAllPlayersExporter(BaseExporter):
             return {}
 
         query = """
-        WITH recent_games AS (
+        WITH deduped_games AS (
+            -- Deduplicate: player_game_summary can have duplicate rows per game
+            SELECT
+                player_lookup,
+                game_date,
+                game_id,
+                over_under_result,
+                points,
+                is_dnp,
+                points_line,
+                minutes_played,
+                fg_makes,
+                fg_attempts,
+                three_pt_makes,
+                three_pt_attempts,
+                plus_minus,
+                ft_attempts,
+                team_abbr
+            FROM `nba-props-platform.nba_analytics.player_game_summary`
+            WHERE game_date < @before_date
+              AND player_lookup IN UNNEST(@player_lookups)
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY player_lookup, game_id ORDER BY game_date DESC) = 1
+        ),
+        recent_games AS (
             SELECT
                 player_lookup,
                 game_date,
@@ -351,9 +374,7 @@ class TonightAllPlayersExporter(BaseExporter):
                     PARTITION BY player_lookup ORDER BY game_date ASC
                 ), DAY) - 1 as days_rest,
                 (team_abbr = SPLIT(game_id, '_')[OFFSET(2)]) as is_home
-            FROM `nba-props-platform.nba_analytics.player_game_summary`
-            WHERE game_date < @before_date
-              AND player_lookup IN UNNEST(@player_lookups)
+            FROM deduped_games
             QUALIFY ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY game_date DESC) <= 10
         )
         SELECT
@@ -426,7 +447,7 @@ class TonightAllPlayersExporter(BaseExporter):
                 pm_val = int(pm) if pm is not None else None
                 fta_val = int(fta) if fta is not None else None
 
-                dr_val = int(dr) if dr is not None else None
+                dr_val = int(dr) if dr is not None and dr >= 0 else None
 
                 if dnp:
                     results_list.append('DNP')
