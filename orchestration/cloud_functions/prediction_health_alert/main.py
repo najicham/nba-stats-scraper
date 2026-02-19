@@ -299,8 +299,21 @@ def check_prediction_health(request):
 
         logger.info(f"Checking prediction health for {game_date} (dry_run={dry_run})")
 
-        # Get health metrics
+        # Session 299: Skip health check on break days (no regular-season games)
+        from shared.utils.schedule_guard import has_regular_season_games
         bq_client = get_bigquery_client(project_id=PROJECT_ID)
+        if not has_regular_season_games(game_date.isoformat(), bq_client=bq_client):
+            logger.info(f"No regular-season games for {game_date} — skipping health check (break day)")
+            return {
+                'game_date': game_date.isoformat(),
+                'status': 'OK',
+                'message': 'No regular-season games scheduled — break day',
+                'health': {},
+                'alert_sent': False,
+                'dry_run': dry_run
+            }, 200
+
+        # Get health metrics
         health = get_prediction_health(bq_client, game_date)
 
         logger.info(f"Health metrics: {health}")

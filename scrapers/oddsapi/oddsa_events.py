@@ -320,24 +320,30 @@ class GetOddsApiEvents(ScraperBase, ScraperFlaskMixin):
             "events": events,
         }
         
-        # Check for no events returned
+        # Check for no events — only warn if regular-season games were expected (Session 299)
         if len(events) == 0:
-            try:
-                notify_warning(
-                    title="No Events Available",
-                    message="Odds API returned zero events",
-                    details={
-                        'scraper': 'oddsa_events',
-                        'sport': self.opts.get('sport', 'unknown'),
-                        'game_date': self.opts.get('game_date', 'not specified'),
-                        'commence_time_from': self.opts.get('commenceTimeFrom', 'not specified'),
-                        'commence_time_to': self.opts.get('commenceTimeTo', 'not specified'),
-                        'note': 'May be expected if no games scheduled in specified time range'
-                    },
-                    processor_name=self.__class__.__name__
-                )
-            except Exception as notify_ex:
-                logger.warning(f"Failed to send notification: {notify_ex}")
+            game_date_str = self.opts.get('game_date', 'unknown')
+            from shared.utils.schedule_guard import has_regular_season_games
+            games_expected = game_date_str == 'unknown' or has_regular_season_games(game_date_str)
+            if games_expected:
+                try:
+                    notify_warning(
+                        title="No Events Available",
+                        message="Odds API returned zero events",
+                        details={
+                            'scraper': 'oddsa_events',
+                            'sport': self.opts.get('sport', 'unknown'),
+                            'game_date': game_date_str,
+                            'commence_time_from': self.opts.get('commenceTimeFrom', 'not specified'),
+                            'commence_time_to': self.opts.get('commenceTimeTo', 'not specified'),
+                            'note': 'May be expected if no games scheduled in specified time range'
+                        },
+                        processor_name=self.__class__.__name__
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+            else:
+                logger.info("No events for %s — confirmed no games scheduled (break day)", game_date_str)
         else:
             # Success! Send info notification with metrics
             try:

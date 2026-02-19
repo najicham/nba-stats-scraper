@@ -561,32 +561,34 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
                 raise DownloadDataException(error_msg)
                 
             if not games:
-                logger.warning("No games on %s (possible off‑day).", self.opts["gamedate"])
-                # This is a warning, not an error - NBA has off-days
-                # Only notify if it's unusual (e.g., during regular season)
-                # Check if it's a typical off-day (Monday or day after Sunday)
+                logger.warning("No games on %s (possible off-day).", self.opts["gamedate"])
+                # Session 299: Use schedule check instead of day-of-week heuristic
                 try:
-                    from datetime import datetime
-                    game_date = datetime.strptime(self.opts["gamedate"], "%Y%m%d")
-                    day_of_week = game_date.weekday()  # Monday=0, Sunday=6
-                    
-                    # Only alert if it's NOT a typical off-day (Tuesday-Saturday)
-                    if day_of_week not in [0, 6]:  # Not Monday or Sunday
+                    from datetime import datetime as _dt
+                    game_date_str = _dt.strptime(self.opts["gamedate"], "%Y%m%d").strftime("%Y-%m-%d")
+                    from shared.utils.schedule_guard import has_regular_season_games
+                    if has_regular_season_games(game_date_str):
+                        # Games were expected but scoreboard returned 0 — genuine issue
                         try:
                             notify_warning(
                                 title="NBA.com Scoreboard V2 No Games",
-                                message=f"No games found for gamedate {self.opts['gamedate']} (unusual for this day of week)",
+                                message=f"No games found for {self.opts['gamedate']} (games were scheduled)",
                                 details={
                                     'gamedate': self.opts['gamedate'],
-                                    'day_of_week': ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][day_of_week],
-                                    'url': self.url
+                                    'url': self.url,
+                                    'note': 'Scoreboard returned 0 games despite schedule showing games'
                                 },
                                 processor_name=self.__class__.__name__
                             )
                         except Exception as notify_ex:
                             logger.warning(f"Failed to send notification: {notify_ex}")
-                except Exception as date_ex:
-                    logger.debug("Could not parse date for off-day check: %s", date_ex)
+                    else:
+                        logger.info(
+                            "No games for %s — confirmed no regular-season games scheduled",
+                            self.opts["gamedate"]
+                        )
+                except Exception as e:
+                    logger.debug("Could not perform schedule check: %s", e)
             else:
                 logger.info("Validation passed: %d games found", len(games))
                 

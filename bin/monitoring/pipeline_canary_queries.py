@@ -653,14 +653,35 @@ def check_scheduler_health() -> Tuple[bool, Dict, Optional[str]]:
         return False, {}, f"Scheduler health check error: {e}"
 
 
+def _is_break_window(client) -> bool:
+    """Return True if no regular-season games in the last 3 days (i.e., we're in a break)."""
+    from shared.utils.schedule_guard import has_regular_season_games
+    for days_ago in range(1, 4):
+        d = (date.today() - timedelta(days=days_ago)).isoformat()
+        if has_regular_season_games(d, bq_client=client):
+            return False  # Found a game — not in a break
+    return True
+
+
 def main():
     """Main entry point."""
     logger.info("Starting pipeline canary queries")
 
     client = bigquery.Client(project=PROJECT_ID)
 
+    # Session 299: Skip Phase 1/2 checks on break days (no regular-season games in last 3 days)
+    is_break = _is_break_window(client)
+    if is_break:
+        logger.info("Break day detected — Phase 1/2 canary checks will be skipped")
+    BREAK_DAY_SKIP_PHASES = {'phase1_scrapers', 'phase2_raw_processing'}
+
     results = []
     for check in CANARY_CHECKS:
+        if is_break and check.phase in BREAK_DAY_SKIP_PHASES:
+            logger.info(f"{check.name}: ⏭️  SKIPPED (break day — no recent regular-season games)")
+            results.append((check, True, {'skipped': True, 'reason': 'break_day'}, None))
+            continue
+
         passed, metrics, error = run_canary_query(client, check)
 
         status = "✅ PASS" if passed else "❌ FAIL"
@@ -686,27 +707,30 @@ def main():
         logger.warning(f"  Error: {sched_error}")
     results.append((scheduler_check, sched_passed, sched_metrics, sched_error))
 
-    # Session 210: Auto-heal shadow model gaps
-    for check, passed, metrics, error in results:
-        if check.phase == "phase5_shadow_coverage" and not passed:
-            yesterday = (date.today() - timedelta(days=1)).isoformat()
-            logger.info(f"Shadow model gap detected — auto-triggering BACKFILL for {yesterday}")
+    # Session 210: Auto-heal shadow model gaps (Session 299: skip on break days)
+    if not is_break:
+        for check, passed, metrics, error in results:
+            if check.phase == "phase5_shadow_coverage" and not passed:
+                yesterday = (date.today() - timedelta(days=1)).isoformat()
+                logger.info(f"Shadow model gap detected — auto-triggering BACKFILL for {yesterday}")
 
-            backfill_ok = auto_backfill_shadow_models(yesterday)
+                backfill_ok = auto_backfill_shadow_models(yesterday)
 
-            heal_msg = (
-                f"Auto-heal {'triggered' if backfill_ok else 'FAILED'}: "
-                f"BACKFILL for {yesterday} "
-                f"(missing_models={metrics.get('missing_models', '?')}, "
-                f"critical_models={metrics.get('critical_models', '?')})"
-            )
-            logger.info(heal_msg)
+                heal_msg = (
+                    f"Auto-heal {'triggered' if backfill_ok else 'FAILED'}: "
+                    f"BACKFILL for {yesterday} "
+                    f"(missing_models={metrics.get('missing_models', '?')}, "
+                    f"critical_models={metrics.get('critical_models', '?')})"
+                )
+                logger.info(heal_msg)
 
-            send_slack_alert(
-                message=f"{'🔧' if backfill_ok else '🚨'} *Shadow Model Auto-Heal*\n{heal_msg}",
-                channel="#nba-alerts",
-                alert_type="SHADOW_MODEL_AUTO_HEAL"
-            )
+                send_slack_alert(
+                    message=f"{'🔧' if backfill_ok else '🚨'} *Shadow Model Auto-Heal*\n{heal_msg}",
+                    channel="#nba-alerts",
+                    alert_type="SHADOW_MODEL_AUTO_HEAL"
+                )
+    else:
+        logger.info("Break day — skipping shadow model auto-heal")
 
     # Check if any failures
     failures = [r for r in results if not r[1]]

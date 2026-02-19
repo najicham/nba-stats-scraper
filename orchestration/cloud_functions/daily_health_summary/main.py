@@ -109,14 +109,21 @@ class HealthChecker:
             return []
 
     def check_schedule(self, date: str) -> Dict:
-        """Check schedule status for a date."""
+        """Check schedule status for a date (regular-season + playoffs only).
+
+        Session 299: Switched from nba_raw.v_nbac_schedule_latest (includes All-Star games)
+        to nba_reference.nba_schedule with game_id filter so break days correctly show
+        total_games=0 and all downstream guards behave correctly.
+        Note: nba_reference.nba_schedule uses numeric game_status (3=Final), not game_status_text.
+        """
         query = f"""
         SELECT
             COUNT(*) as total_games,
-            COUNTIF(game_status_text = 'Final') as final_games,
-            COUNTIF(game_status_text != 'Final') as pending_games
-        FROM `{PROJECT_ID}.nba_raw.v_nbac_schedule_latest`
+            COUNTIF(game_status = 3) as final_games,
+            COUNTIF(game_status != 3) as pending_games
+        FROM `{PROJECT_ID}.nba_reference.nba_schedule`
         WHERE game_date = '{date}'
+          AND (game_id LIKE '002%' OR game_id LIKE '004%')
         """
         results = self.run_query(query)
         if results:

@@ -323,22 +323,28 @@ class BettingProsEvents(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
         
-        # Check for no events
+        # Check for no events — only warn if regular-season games were expected (Session 299)
         if len(events) == 0:
-            try:
-                notify_warning(
-                    title="No Events Available",
-                    message="BettingPros API returned zero events for date",
-                    details={
-                        'scraper': 'bp_events',
-                        'date': self.opts.get('date', 'unknown'),
-                        'sport': self.opts.get('sport', 'NBA'),
-                        'note': 'May be expected if no games scheduled for this date'
-                    },
-                    processor_name=self.__class__.__name__
-                )
-            except Exception as notify_ex:
-                logger.warning(f"Failed to send notification: {notify_ex}")
+            date_str = self.opts.get('date', 'unknown')
+            from shared.utils.schedule_guard import has_regular_season_games
+            games_expected = date_str == 'unknown' or has_regular_season_games(date_str)
+            if games_expected:
+                try:
+                    notify_warning(
+                        title="No Events Available",
+                        message="BettingPros API returned zero events for date",
+                        details={
+                            'scraper': 'bp_events',
+                            'date': date_str,
+                            'sport': self.opts.get('sport', 'NBA'),
+                            'note': 'May be expected if no games scheduled for this date'
+                        },
+                        processor_name=self.__class__.__name__
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+            else:
+                logger.info("No events for %s — confirmed no regular-season games (break day)", date_str)
         
         logger.info("Validation passed: %d events found for %s", 
                    len(events), self.opts["date"])
