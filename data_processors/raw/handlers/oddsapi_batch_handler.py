@@ -39,7 +39,8 @@ class OddsAPIBatchHandler:
         file_path: str,
         bucket: str,
         project_id: str,
-        execution_id: str
+        execution_id: str,
+        _is_retry: bool = False
     ) -> dict:
         """
         Process OddsAPI file with Firestore locking and timeout protection.
@@ -49,6 +50,7 @@ class OddsAPIBatchHandler:
             bucket: GCS bucket name
             project_id: GCP project ID
             execution_id: Execution ID for tracking
+            _is_retry: Internal flag to prevent infinite recursion
 
         Returns:
             Response dict with status and details
@@ -162,6 +164,28 @@ class OddsAPIBatchHandler:
             # Check if it's an "already exists" error (another processor got the lock)
             error_str = str(lock_error)
             if 'already exists' in error_str.lower() or 'ALREADY_EXISTS' in error_str or isinstance(lock_error, AlreadyExistsError):
+                # Check if the existing lock is from a completed/failed batch.
+                # If so, delete it and re-process (new files may have arrived since last batch).
+                # Only retry once to prevent infinite recursion.
+                if not _is_retry:
+                    try:
+                        db = get_firestore_client()
+                        lock_ref = db.collection('batch_processing_locks').document(lock_id)
+                        existing_lock = lock_ref.get()
+                        if existing_lock.exists:
+                            lock_status = existing_lock.to_dict().get('status', 'unknown')
+                            if lock_status in ('complete', 'failed', 'timeout', 'error'):
+                                logger.info(
+                                    f"🔄 OddsAPI {endpoint_type} batch lock for {game_date} "
+                                    f"has status '{lock_status}', deleting and re-processing"
+                                )
+                                lock_ref.delete()
+                                return self.process_with_lock(
+                                    file_path, bucket, project_id, execution_id, _is_retry=True
+                                )
+                    except Exception as check_error:
+                        logger.warning(f"⚠️ Error checking existing lock status: {check_error}")
+
                 logger.info(
                     f"🔓 OddsAPI {endpoint_type} batch for {game_date} "
                     f"already being processed by another instance, skipping"
