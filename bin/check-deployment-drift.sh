@@ -218,8 +218,14 @@ try:
     manifest = json.load(sys.stdin)
     prod_model = manifest.get('production_model', '')
     if prod_model:
-        # Construct full GCS path
-        print(f'gs://nba-props-platform-models/catboost/v9/{prod_model}.cbm')
+        # Use gcs_path from model entry (not hardcoded prefix — models may live in different GCS subdirs)
+        model_entry = manifest.get('models', {}).get(prod_model, {})
+        gcs_path = model_entry.get('gcs_path', '')
+        if gcs_path:
+            print(gcs_path)
+        else:
+            # Fallback: construct path from legacy location
+            print(f'gs://nba-props-platform-models/catboost/v9/{prod_model}.cbm')
 except:
     pass
 " || echo "")
