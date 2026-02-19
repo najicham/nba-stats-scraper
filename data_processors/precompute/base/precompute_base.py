@@ -619,7 +619,7 @@ class PrecomputeProcessorBase(
             publisher = UnifiedPubSubPublisher(project_id=self.project_id)
 
             # Get the data date
-            data_date = self.opts.get('data_date') or self.opts.get('end_date')
+            data_date = self.opts.get('analysis_date') or self.opts.get('data_date') or self.opts.get('end_date')
             if isinstance(data_date, date):
                 data_date = data_date.strftime('%Y-%m-%d')
 

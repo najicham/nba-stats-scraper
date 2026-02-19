@@ -64,7 +64,7 @@ def scrape_historical_events(game_date: str, snapshot_time: str = "18:00:00Z") -
         "--group", "dev"  # Write to /tmp file for inspection (group 'dev' matches exporter config)
     ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
 
     if result.returncode != 0:
         logger.error(f"Events scraper failed: {result.stderr}")
