@@ -49,6 +49,7 @@ SIGNAL_ANGLE_MAP = {
     'volatile_under': "Volatile player UNDER: 60.0% HR",
     'high_usage_under': "High usage UNDER: 58.7% HR",
     'cold_snap': "Cold snap bounce-back",
+    'book_disagreement': "Sportsbooks disagree on line: 93.0% edge 3+ HR (WATCH)",
 }
 
 # Warning tag → warning angle

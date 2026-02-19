@@ -68,6 +68,9 @@ def build_default_registry() -> SignalRegistry:
     # Prop line delta signal (Session 294)
     from ml.signals.prop_line_drop_over import PropLineDropOverSignal
 
+    # Book disagreement signal (Session 303)
+    from ml.signals.book_disagreement import BookDisagreementSignal
+
     registry = SignalRegistry()
     registry.register(ModelHealthSignal())
     registry.register(HighEdgeSignal())
@@ -100,5 +103,8 @@ def build_default_registry() -> SignalRegistry:
 
     # Prop line delta signal (Session 294)
     registry.register(PropLineDropOverSignal())
+
+    # Book disagreement signal (Session 303)
+    registry.register(BookDisagreementSignal())
 
     return registry

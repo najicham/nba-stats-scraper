@@ -233,6 +233,18 @@ def query_predictions_with_supplements(
       ) = 1
     ),
 
+    -- Multi-book line std for book disagreement signal (Session 303)
+    book_stats AS (
+      SELECT
+        player_lookup,
+        game_date,
+        feature_50_value AS multi_book_line_std,
+        feature_50_source AS book_std_source
+      FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2`
+      WHERE game_date = @target_date
+        AND feature_50_value IS NOT NULL
+    ),
+
     -- Previous game prop line for line delta signal (Session 294)
     -- Gets the most recent previous line for each player from the same model
     prev_prop_lines AS (
@@ -285,12 +297,15 @@ def query_predictions_with_supplements(
       v12.v12_predicted_points,
       v12.v12_confidence,
       ppl.prev_line_value,
-      ppl.prev_line_date
+      ppl.prev_line_date,
+      bs.multi_book_line_std,
+      bs.book_std_source
     FROM preds p
     LEFT JOIN latest_stats ls ON ls.player_lookup = p.player_lookup
     LEFT JOIN latest_streak lsk ON lsk.player_lookup = p.player_lookup
     LEFT JOIN v12_preds v12 ON v12.player_lookup = p.player_lookup AND v12.game_id = p.game_id
     LEFT JOIN prev_prop_lines ppl ON ppl.player_lookup = p.player_lookup
+    LEFT JOIN book_stats bs ON bs.player_lookup = p.player_lookup AND bs.game_date = p.game_date
     ORDER BY p.player_lookup
     """
 
@@ -450,6 +465,13 @@ def query_predictions_with_supplements(
                 'edge': float(row_dict.get('v12_edge') or 0),
                 'predicted_points': float(row_dict.get('v12_predicted_points') or 0),
                 'confidence': float(row_dict.get('v12_confidence') or 0),
+            }
+
+        # Book disagreement stats (for book_disagreement signal, Session 303)
+        if row_dict.get('multi_book_line_std') is not None:
+            supp['book_stats'] = {
+                'multi_book_line_std': float(row_dict['multi_book_line_std']),
+                'book_std_source': row_dict.get('book_std_source', ''),
             }
 
         # Prop line delta stats (for prop_line_drop_over signal, Session 294)
