@@ -407,6 +407,28 @@ CANARY_CHECKS = [
         },
         description="Session 209: Validates exported subset picks contain only green quality predictions"
     ),
+
+    CanaryCheck(
+        name="Phase 3 - Player Game Summary Duplicates",
+        phase="phase3_duplicates",
+        query="""
+        -- Detect duplicate rows in player_game_summary (same player + game)
+        -- Session 294: Duplicates caused -1 days_rest in tonight exports
+        SELECT
+            COUNT(*) as duplicate_player_games
+        FROM (
+            SELECT player_lookup, game_id
+            FROM `nba-props-platform.nba_analytics.player_game_summary`
+            WHERE game_date >= CURRENT_DATE() - 14
+            GROUP BY player_lookup, game_id
+            HAVING COUNT(*) > 1
+        )
+        """,
+        thresholds={
+            'duplicate_player_games': {'max': 0},  # FAIL if any duplicates
+        },
+        description="Session 294: Detects duplicate rows that cause -1 days_rest in exports"
+    ),
 ]
 
 
