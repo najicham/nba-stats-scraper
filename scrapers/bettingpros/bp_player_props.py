@@ -215,7 +215,11 @@ class BettingProsPlayerProps(ScraperBase, ScraperFlaskMixin):
         # If date provided, fetch event IDs first
         if self.opts.get("date"):
             self._fetch_event_ids_from_date()
-        
+
+        # No-game day: skip remaining setup (event_ids validation, URL build, download)
+        if self.opts.get("_no_games_expected"):
+            return
+
         # If using event_ids without date, set a reasonable date for filenames
         if self.opts.get("event_ids") and not self.opts.get("date"):
             from datetime import datetime
@@ -272,6 +276,25 @@ class BettingProsPlayerProps(ScraperBase, ScraperFlaskMixin):
                 len(self.opts["event_ids_list"]), self.opts["sport"], 
                 market_type, self.opts["market_id"])
     
+    def _no_games_scheduled(self, date: str) -> bool:
+        """Return True if nba_reference.nba_schedule has no regular-season games on date.
+
+        Fails open (returns False) on errors so that real game days are never suppressed.
+        """
+        try:
+            from google.cloud import bigquery as bq
+            client = bq.Client(project='nba-props-platform')
+            query = """
+            SELECT COUNT(*) as cnt FROM `nba_reference.nba_schedule`
+            WHERE game_date = @date AND (game_id LIKE '002%' OR game_id LIKE '004%')
+            """
+            params = [bq.ScalarQueryParameter("date", "DATE", date)]
+            result = list(client.query(query, job_config=bq.QueryJobConfig(query_parameters=params)))
+            return result[0].cnt == 0 if result else False
+        except Exception as e:
+            logger.warning(f"Schedule pre-check failed: {e}. Will attempt scraping anyway.")
+            return False  # Fail open — don't suppress real errors
+
     def _fetch_event_ids_from_date(self) -> None:
         """
         Fetch event IDs using the events scraper with retry logic.
@@ -281,6 +304,12 @@ class BettingProsPlayerProps(ScraperBase, ScraperFlaskMixin):
         """
         date = self.opts["date"]
         logger.info("Fetching event IDs for date: %s", date)
+
+        # Pre-check: skip entirely on confirmed no-game days (avoids 3 retries + Slack alert)
+        if self._no_games_scheduled(date):
+            logger.info("No regular-season games scheduled for %s — skipping BettingPros fetch", date)
+            self.opts["_no_games_expected"] = True
+            return
 
         last_exception = None
 
@@ -344,6 +373,10 @@ class BettingProsPlayerProps(ScraperBase, ScraperFlaskMixin):
     
     def set_url(self) -> None:
         """Build the first page URL - we'll modify this for pagination"""
+        if self.opts.get("_no_games_expected"):
+            self.url = ""
+            return
+
         event_ids_str = ":".join(self.opts["event_ids_list"])
         
         params = {
@@ -366,6 +399,12 @@ class BettingProsPlayerProps(ScraperBase, ScraperFlaskMixin):
     
     def download_and_decode(self) -> None:
         """Override to handle pagination with better error handling"""
+        if self.opts.get("_no_games_expected"):
+            self._no_data_success = True  # Tells validation_mixin to accept 0 rows
+            self.decoded_data = {"all_offers": []}
+            self.data = {}
+            return
+
         logger.info("Starting paginated download of player props")
         
         all_offers = []

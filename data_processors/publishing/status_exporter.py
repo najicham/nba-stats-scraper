@@ -84,7 +84,7 @@ class StatusExporter(BaseExporter):
 
         # Get status for each service (break-aware)
         live_status = self._check_live_data_status(active_break)
-        tonight_status = self._check_tonight_data_status()
+        tonight_status = self._check_tonight_data_status(active_break)
         grading_status = self._check_grading_status()
         predictions_status = self._check_predictions_status(target_date, active_break)
 
@@ -195,9 +195,19 @@ class StatusExporter(BaseExporter):
                 'is_stale': None
             }
 
-    def _check_tonight_data_status(self) -> Dict[str, Any]:
+    def _check_tonight_data_status(self, active_break=None) -> Dict[str, Any]:
         """Check tonight's predictions data status."""
         try:
+            if active_break:
+                headline = active_break.get('headline', 'Schedule Break')
+                message = active_break.get('message', 'No games scheduled')
+                return {
+                    'status': 'healthy',
+                    'message': f'No games — {headline} ({message})',
+                    'last_update': None,
+                    'is_stale': False
+                }
+
             bucket = self._get_storage_client().bucket('nba-props-platform-api')
             blob = bucket.blob('v1/tonight/all-players.json')
 
@@ -367,22 +377,27 @@ class StatusExporter(BaseExporter):
             today = datetime.now(et).date()
             today_str = today.strftime('%Y-%m-%d')
 
-            # Query schedule for last and next game dates
+            # Query schedule for last and next game dates.
+            # Use nba_reference.nba_schedule (clean view) with regular-season/playoff filter
+            # to exclude All-Star exhibitions that otherwise shrink the apparent gap.
             query = """
             WITH game_dates AS (
                 SELECT DISTINCT game_date
-                FROM `nba_raw.nbac_schedule`
-                WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
-                  AND game_date <= DATE_ADD(CURRENT_DATE(), INTERVAL 14 DAY)
-                ORDER BY game_date
+                FROM `nba_reference.nba_schedule`
+                WHERE game_date >= DATE_SUB(@today, INTERVAL 7 DAY)
+                  AND game_date <= DATE_ADD(@today, INTERVAL 14 DAY)
+                  AND (game_id LIKE '002%' OR game_id LIKE '004%')
             )
             SELECT
-                MAX(CASE WHEN game_date <= CURRENT_DATE() THEN game_date END) as last_game_date,
-                MIN(CASE WHEN game_date > CURRENT_DATE() THEN game_date END) as next_game_date
+                MAX(CASE WHEN game_date <= @today THEN game_date END) as last_game_date,
+                MIN(CASE WHEN game_date > @today THEN game_date END) as next_game_date
             FROM game_dates
             """
-
-            result = list(self._get_bq_client().query(query))
+            params = [bigquery.ScalarQueryParameter("today", "DATE", today_str)]
+            result = list(self._get_bq_client().query(
+                query,
+                job_config=bigquery.QueryJobConfig(query_parameters=params)
+            ))
             if not result:
                 return None
 

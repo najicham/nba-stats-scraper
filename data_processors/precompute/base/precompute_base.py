@@ -340,6 +340,10 @@ class PrecomputeProcessorBase(
             if self.stats.get('processing_decision') == 'skipped_early_season':
                 return self._complete_early_season_skip()
 
+            # Check if no-games skip was triggered (e.g. All-Star break)
+            if self.stats.get('processing_decision') == 'skipped_no_games':
+                return self._complete_early_season_skip()
+
             # Validate
             if self.validate_on_extract:
                 self.validate_extracted_data()
@@ -544,6 +548,29 @@ class PrecomputeProcessorBase(
         from shared.config.gcp_config import get_project_id
         self.project_id = self.opts.get("project_id") or get_project_id()
         self.bq_client = get_bigquery_client(project_id=self.project_id)
+
+    def _has_games_on_date(self, analysis_date: str) -> bool:
+        """Return True if nba_reference.nba_schedule has regular-season games on this date.
+
+        Fails open (returns True) on BigQuery errors so that real game-day errors still surface.
+        """
+        try:
+            from google.cloud import bigquery as _bq
+            query = """
+            SELECT COUNT(*) as cnt
+            FROM `nba_reference.nba_schedule`
+            WHERE game_date = @analysis_date
+              AND (game_id LIKE '002%' OR game_id LIKE '004%')
+            """
+            params = [_bq.ScalarQueryParameter("analysis_date", "DATE", str(analysis_date))]
+            result = list(self.bq_client.query(
+                query,
+                job_config=_bq.QueryJobConfig(query_parameters=params)
+            ))
+            return result[0].cnt > 0 if result else False
+        except Exception as e:
+            logger.warning(f"Schedule check failed, assuming games exist: {e}")
+            return True  # Fail open — don't suppress real errors
 
     def validate_extracted_data(self) -> None:
         """Validate extracted data - child classes override if needed."""

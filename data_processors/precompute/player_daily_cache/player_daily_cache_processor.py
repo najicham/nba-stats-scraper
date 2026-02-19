@@ -651,6 +651,11 @@ class PlayerDailyCacheProcessor(
         Overrides base class to check upcoming_context_data instead of raw_data.
         """
         if self.upcoming_context_data is None or self.upcoming_context_data.empty:
+            analysis_date = self.opts.get('analysis_date')
+            if analysis_date and not self._has_games_on_date(analysis_date):
+                logger.info(f"No regular-season games scheduled for {analysis_date}, skipping gracefully")
+                self.stats['processing_decision'] = 'skipped_no_games'
+                return
             raise ValueError("No upcoming player context data extracted")
 
         # Log extraction summary

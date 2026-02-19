@@ -815,6 +815,11 @@ class MLFeatureStoreProcessor(
         self._extract_source_hashes(analysis_date)
 
         if len(self.players_with_games) == 0:
+            if not self._has_games_on_date(analysis_date):
+                logger.info(f"No regular-season games scheduled for {analysis_date}, skipping gracefully")
+                self.stats['processing_decision'] = 'skipped_no_games'
+                self.raw_data = self.players_with_games
+                return
             raise ValueError(f"No players found with games on {analysis_date}")
 
         # BATCH EXTRACTION (20x speedup for backfill!)
