@@ -75,12 +75,12 @@ SELECT
   days_in_current_regime,
   status
 FROM \`nba-props-platform.nba_predictions.signal_health_daily\`
-WHERE game_date = (
-  SELECT MAX(game_date) FROM \`nba-props-platform.nba_predictions.signal_health_daily\`
-)
-ORDER BY regime DESC, signal_tag
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 3 DAY)
+ORDER BY game_date DESC, regime DESC, signal_tag
 "
 ```
+
+Note: Use `game_date >= DATE_SUB(...)` not a subquery — `signal_health_daily` requires a literal partition filter. Results will include multiple dates; use only the most recent game_date rows.
 
 **Present as:**
 

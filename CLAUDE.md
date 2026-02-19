@@ -122,13 +122,12 @@ nba-stats-scraper/
 | Property | Value |
 |----------|-------|
 | System ID | `catboost_v9` |
-| Production Model | `catboost_v9_train1102_0205` |
-| Training | 2025-11-02 to 2026-02-05 |
-| **Walkforward HR 3+ (W1)** | **81.2%** |
-| **Walkforward HR 3+ (W2)** | **60.0%** |
-| MAE | 4.77 |
-| SHA256 (prefix) | `56b766426bf1` |
-| Status | PRODUCTION (since 2026-02-16) — **FRESH** |
+| Production Model | `catboost_v9_33f_train20260106-20260205_20260218_223530` |
+| Training | 2026-01-06 to 2026-02-05 (42-day rolling window) |
+| MAE | 4.83 |
+| Vegas Bias | -0.14 (clean) |
+| SHA256 (prefix) | `b7e37922de18` |
+| Status | PRODUCTION (since 2026-02-19) — **FRESH** (ASB retrain; sample size gate N=10 < 50, manual promotion) |
 
 **Shadow models (5):** V12 MAE (69.2% HR), V9 Q43 (62.6%), V9 Q45 (62.9%), V12 Q43 (61.6%), V12 Q45 (61.2%). All passed governance gates.
 
