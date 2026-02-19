@@ -212,7 +212,7 @@ def query_predictions_with_supplements(
       ) = 1
     ),
 
-    -- V12 predictions for dual_agree / model_consensus signals
+    -- V12 predictions for cross-model consensus scoring
     -- Dedup: if multiple V12 MAE models exist, pick the one with latest system_id
     v12_preds AS (
       SELECT
@@ -443,7 +443,7 @@ def query_predictions_with_supplements(
             'points_std_last_5': float(row_dict.get('points_std_last_5') or 0),
         }
 
-        # V12 prediction (for dual_agree / model_consensus_v9_v12 signals)
+        # V12 prediction (for cross-model consensus scoring)
         if row_dict.get('v12_recommendation'):
             supp['v12_prediction'] = {
                 'recommendation': row_dict['v12_recommendation'],

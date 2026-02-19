@@ -1,6 +1,6 @@
 """Cross-Model Subset Materializer for Phase 6 Publishing.
 
-Queries all 6 models' predictions for a game date, pivots by
+Queries all active models' predictions for a game date, pivots by
 (player_lookup, game_id) to see how models agree/disagree, and writes
 cross-model observation subsets to current_subset_picks.
 
@@ -8,6 +8,7 @@ Design: observation-only subsets (system_id='cross_model').
 Grading handled by existing SubsetGradingProcessor (agnostic to system_id).
 
 Session 277: Initial creation.
+Session 296: Dynamic model discovery — no more hardcoded system_ids.
 """
 
 import logging
@@ -20,12 +21,10 @@ from shared.clients.bigquery_pool import get_bigquery_client
 from shared.config.gcp_config import get_project_id
 from shared.config.subset_public_names import get_public_name
 from shared.config.cross_model_subsets import (
-    ALL_MODELS,
-    MAE_MODELS,
-    QUANTILE_MODELS,
-    V9_FEATURE_SET,
-    V12_FEATURE_SET,
     CROSS_MODEL_SUBSETS,
+    DiscoveredModels,
+    build_system_id_sql_filter,
+    discover_models,
 )
 
 logger = logging.getLogger(__name__)
@@ -59,25 +58,36 @@ class CrossModelSubsetMaterializer:
         """
         computed_at = datetime.now(timezone.utc)
 
-        # 1. Query all models' predictions for this date
-        all_predictions = self._query_all_model_predictions(game_date)
+        # 1. Discover which models are active for this date
+        discovered = discover_models(self.bq_client, game_date, self.project_id)
+        if discovered.family_count < 2:
+            logger.warning(
+                f"Only {discovered.family_count} model families found for "
+                f"{game_date} — need at least 2 for cross-model analysis. "
+                f"Found: {sorted(discovered.family_to_id.keys())}"
+            )
+            return {'total_picks': 0, 'subsets': {}}
+
+        # 2. Query all models' predictions for this date
+        all_predictions = self._query_all_model_predictions(game_date, discovered)
         if not all_predictions:
             logger.info(f"No cross-model predictions for {game_date}")
             return {'total_picks': 0, 'subsets': {}}
 
-        # 2. Pivot by (player_lookup, game_id) → list of model predictions
+        # 3. Pivot by (player_lookup, game_id) → list of model predictions
         player_models = self._pivot_by_player(all_predictions)
         logger.info(
             f"Cross-model: {len(player_models)} player-games across "
-            f"{len(all_predictions)} predictions"
+            f"{len(all_predictions)} predictions from "
+            f"{discovered.family_count} model families"
         )
 
-        # 3. Apply each cross-model filter
+        # 4. Apply each cross-model filter
         rows = []
         subsets_summary = {}
 
         for subset_id, config in CROSS_MODEL_SUBSETS.items():
-            matching = self._apply_filter(subset_id, config, player_models)
+            matching = self._apply_filter(subset_id, config, player_models, discovered)
 
             # Apply top_n limit if specified (rank by avg_edge descending)
             top_n = config.get('top_n')
@@ -144,7 +154,7 @@ class CrossModelSubsetMaterializer:
                     f"  {subset_id}: {len(matching)} picks"
                 )
 
-        # 4. Write to BigQuery
+        # 5. Write to BigQuery
         if rows:
             self._write_rows(rows)
 
@@ -160,11 +170,10 @@ class CrossModelSubsetMaterializer:
         }
 
     def _query_all_model_predictions(
-        self, game_date: str,
+        self, game_date: str, discovered: DiscoveredModels,
     ) -> List[Dict[str, Any]]:
-        """Query all 6 models' active predictions for a game date."""
-        # Build IN clause for model IDs
-        model_list = ', '.join(f"'{m}'" for m in ALL_MODELS)
+        """Query all discovered models' active predictions for a game date."""
+        sql_filter = build_system_id_sql_filter()
 
         query = f"""
         SELECT
@@ -175,13 +184,10 @@ class CrossModelSubsetMaterializer:
             CAST(current_points_line AS FLOAT64) AS line_value,
             recommendation,
             CAST(predicted_points - current_points_line AS FLOAT64) AS edge,
-            CAST(confidence_score AS FLOAT64) AS confidence_score,
-            player_full_name,
-            team_abbr,
-            opponent_team_abbr
+            CAST(confidence_score AS FLOAT64) AS confidence_score
         FROM `{self.project_id}.nba_predictions.player_prop_predictions`
         WHERE game_date = @game_date
-          AND system_id IN ({model_list})
+          AND {sql_filter}
           AND is_active = TRUE
           AND recommendation IN ('OVER', 'UNDER')
         """
@@ -215,12 +221,20 @@ class CrossModelSubsetMaterializer:
         for pred in predictions:
             key = f"{pred['player_lookup']}::{pred['game_id']}"
             if key not in pivot:
+                # Derive team/opponent from game_id (format: YYYYMMDD_AWAY_HOME)
+                game_id = pred.get('game_id', '')
+                parts = game_id.split('_') if game_id else []
+                away_team = parts[1] if len(parts) >= 3 else ''
+                home_team = parts[2] if len(parts) >= 3 else ''
+
                 pivot[key] = {
                     'player_lookup': pred['player_lookup'],
-                    'game_id': pred['game_id'],
-                    'player_name': pred.get('player_full_name', ''),
-                    'team': pred.get('team_abbr', ''),
-                    'opponent': pred.get('opponent_team_abbr', ''),
+                    'game_id': game_id,
+                    'player_name': pred['player_lookup'],  # Best available
+                    'team': '',
+                    'opponent': '',
+                    'away_team': away_team,
+                    'home_team': home_team,
                     'models': {},
                 }
             pivot[key]['models'][pred['system_id']] = {
@@ -238,6 +252,7 @@ class CrossModelSubsetMaterializer:
         subset_id: str,
         config: Dict[str, Any],
         player_models: Dict[str, Dict[str, Any]],
+        discovered: DiscoveredModels,
     ) -> List[Dict[str, Any]]:
         """Apply a cross-model filter and return qualifying picks."""
         results = []
@@ -276,23 +291,25 @@ class CrossModelSubsetMaterializer:
             if len(agreeing) < min_agreeing:
                 continue
 
-            # Required models filter (all must be present and agree)
-            required = config.get('required_models')
-            if required:
-                if not all(m in agreeing for m in required):
+            # All available quantile models must agree
+            if config.get('require_all_quantile'):
+                available_quantile = discovered.quantile_ids
+                if len(available_quantile) < 2:
+                    continue  # Need at least 2 quantile models
+                if not all(m in agreeing for m in available_quantile):
                     continue
 
-            # MAE + Quantile cross-loss requirement
+            # MAE + Quantile cross-loss requirement (family-based)
             if config.get('require_mae_and_quantile'):
-                has_mae = any(m in agreeing for m in MAE_MODELS)
-                has_quantile = any(m in agreeing for m in QUANTILE_MODELS)
+                has_mae = any(m in discovered.mae_ids for m in agreeing)
+                has_quantile = any(m in discovered.quantile_ids for m in agreeing)
                 if not (has_mae and has_quantile):
                     continue
 
             # Feature diversity requirement (V9 and V12 feature sets)
             if config.get('require_feature_diversity'):
-                has_v9 = any(m in V9_FEATURE_SET for m in agreeing)
-                has_v12 = any(m in V12_FEATURE_SET for m in agreeing)
+                has_v9 = any(m in discovered.v9_ids for m in agreeing)
+                has_v12 = any(m in discovered.v12_ids for m in agreeing)
                 if not (has_v9 and has_v12):
                     continue
 
@@ -305,9 +322,9 @@ class CrossModelSubsetMaterializer:
             # Feature set diversity count
             feature_sets = set()
             for m in agreeing:
-                if m in V9_FEATURE_SET:
+                if m in discovered.v9_ids:
                     feature_sets.add('v9')
-                if m in V12_FEATURE_SET:
+                if m in discovered.v12_ids:
                     feature_sets.add('v12')
 
             # Use first available model's prediction for representative data

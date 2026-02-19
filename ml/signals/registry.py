@@ -26,7 +26,7 @@ class SignalRegistry:
 def build_default_registry() -> SignalRegistry:
     """Build registry with all production signals."""
     from ml.signals.high_edge import HighEdgeSignal
-    from ml.signals.dual_agree import DualAgreeSignal
+    # DualAgreeSignal REMOVED — 44.8% HR, below breakeven (Session 296)
     from ml.signals.three_pt_bounce import ThreePtBounceSignal
     from ml.signals.minutes_surge import MinutesSurgeSignal
     # PaceMismatchSignal REMOVED — N=0 all windows, never fires (Session 275)
@@ -53,7 +53,7 @@ def build_default_registry() -> SignalRegistry:
     # PropValueGapExtremeSignal REMOVED — 12.5% HR, -76.1% ROI (Session 255)
     # MinutesSurge5Signal REMOVED — N=0 all windows, never fires (Session 275)
     # ThreePtVolumeSurgeSignal REMOVED — N=0 all windows, never fires (Session 275)
-    from ml.signals.model_consensus_v9_v12 import ModelConsensusV9V12Signal
+    # ModelConsensusV9V12Signal REMOVED — 45.5% HR, below breakeven (Session 296)
     # FGColdContinuationSignal REMOVED — 49.6% AVG HR, catastrophic decay (Session 275)
     # TripleStackSignal REMOVED — meta-signal with broken logic (Session 256)
     # ScoringAccelerationSignal REMOVED — N=0 all windows, never fires (Session 275)
@@ -71,7 +71,7 @@ def build_default_registry() -> SignalRegistry:
     registry = SignalRegistry()
     registry.register(ModelHealthSignal())
     registry.register(HighEdgeSignal())
-    registry.register(DualAgreeSignal())
+    # DualAgreeSignal removed (Session 296)
     registry.register(ThreePtBounceSignal())
     registry.register(MinutesSurgeSignal())
     # PaceMismatchSignal removed (Session 275)
@@ -89,8 +89,7 @@ def build_default_registry() -> SignalRegistry:
     registry.register(B2BFatigueUnderSignal())
     registry.register(RestAdvantage2DSignal())
 
-    # Prototype signals - Batch 2 (6 removed Session 275, see import comments)
-    registry.register(ModelConsensusV9V12Signal())
+    # Prototype signals - Batch 2 (8 removed Sessions 275+296, see import comments)
 
     # Market-pattern UNDER signals (Session 274)
     registry.register(BenchUnderSignal())

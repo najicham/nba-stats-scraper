@@ -35,8 +35,7 @@ DIRECTION_TIER_HR = {
 SIGNAL_ANGLE_MAP = {
     'high_edge': "High edge: model predicts {edge:.1f} pts from line",
     'bench_under': "Bench UNDER pattern: 76.6% historical rate",
-    'dual_agree': "V9 + V12 both say {direction}",
-    'model_consensus_v9_v12': "V9 + V12 both say {direction}",
+    # dual_agree, model_consensus_v9_v12 REMOVED (Session 296)
     'combo_he_ms': "High edge + minutes surge combo: 94.9% HR",
     'combo_3way': "Triple combo (ESO+HE+MS): 78.1% HR",
     'b2b_fatigue_under': "Back-to-back fatigue: 85.7% UNDER HR",

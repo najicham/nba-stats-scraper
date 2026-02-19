@@ -39,7 +39,6 @@ TABLE_ID = f'{PROJECT_ID}.nba_predictions.signal_health_daily'
 # Signals that depend on model accuracy (decay with model staleness)
 MODEL_DEPENDENT_SIGNALS = frozenset({
     'high_edge', 'edge_spread_optimal', 'combo_he_ms', 'combo_3way',
-    'dual_agree', 'model_consensus_v9_v12',
 })
 
 # Regime thresholds (Session 257 analysis)

@@ -549,7 +549,7 @@ Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
 
 ## Signal System [Keyword: SIGNALS]
 
-**18 active signals** (10 removed Session 275). Aggregator requires MIN_SIGNAL_COUNT=2 (model_health always fires, so effectively 1 real signal minimum).
+**15 active signals** (14 removed Sessions 275+296). Aggregator requires MIN_SIGNAL_COUNT=2 (model_health always fires, so effectively 1 real signal minimum).
 
 **Pre-Filters (Session 278, updated 284):** Applied in aggregator BEFORE signal scoring:
 1. Player blacklist: `<40% HR on 8+ edge-3+ picks` → skip (+$10,450 P&L, Session 284)
@@ -560,7 +560,7 @@ Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
 
 **Pick Angles (Session 278, 284):** Each pick includes `pick_angles` — human-readable reasoning (confidence tier, high-conviction edge>=5, player tier, cross-model consensus, signal-specific). Max 5 angles per pick. See `ml/signals/pick_angle_builder.py`.
 
-### Active Signals (18)
+### Active Signals (17)
 
 | Signal | Category | Direction | AVG HR | Status | Notes |
 |--------|----------|-----------|--------|--------|-------|
@@ -574,18 +574,17 @@ Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
 | `b2b_fatigue_under` | Market-Pattern | UNDER | 85.7% | CONDITIONAL | Small N (14) |
 | `high_ft_under` | Market-Pattern | UNDER | 64.1% | CONDITIONAL | FTA >= 7 |
 | `rest_advantage_2d` | Context | BOTH | 64.8% | CONDITIONAL | W4 decay to 45.2% |
+| `prop_line_drop_over` | Market-Pattern | OVER | 79.1% | PRODUCTION | Line dropped from open (Session 294) |
 | `self_creator_under` | Market-Pattern | UNDER | 61.8% | WATCH | |
 | `volatile_under` | Market-Pattern | UNDER | 60.0% | WATCH | |
 | `high_usage_under` | Market-Pattern | UNDER | 58.7% | WATCH | |
 | `blowout_recovery` | Bounce | OVER | 56.9% | WATCH | Stable 55-58% |
 | `minutes_surge` | Volume | BOTH | 53.7% | WATCH | W4 decay |
-| `dual_agree` | Consensus | BOTH | 45.5% | WATCH | V12 data gap FIXED (Session 277) — now fires in production |
-| `model_consensus_v9_v12` | Consensus | BOTH | 45.5% | WATCH | V12 data gap FIXED (Session 277) — now fires in production |
 | `cold_snap` | Bounce | OVER | N/A | CONDITIONAL | N=0 in backtest windows |
 
-### Removed Signals (10, Session 275)
+### Removed Signals (14, Sessions 275+296)
 
-**Below breakeven:** `hot_streak_2` (45.8%, N=416), `hot_streak_3` (47.5%, N=182), `cold_continuation_2` (45.8%, N=130), `fg_cold_continuation` (49.6%)
+**Below breakeven:** `hot_streak_2` (45.8%, N=416), `hot_streak_3` (47.5%, N=182), `cold_continuation_2` (45.8%, N=130), `fg_cold_continuation` (49.6%), `dual_agree` (44.8%, N=11), `model_consensus_v9_v12` (45.5%, N=11)
 **Never fire:** `pace_mismatch`, `points_surge_3`, `home_dog`, `minutes_surge_5`, `three_pt_volume_surge`, `scoring_acceleration`
 
 ### Post-Cleanup Backtest (Session 275)
@@ -594,14 +593,21 @@ Aggregator top-5 simulation: **73.9% AVG HR** (up from 60.3% pre-cleanup). W2: 8
 
 ## Multi-Model Best Bets [Keyword: MULTIMODEL]
 
-**Session 277:** 3-layer architecture using all 6 models for improved best bets.
+**Session 277:** 3-layer architecture using all active models for improved best bets.
+**Session 296:** Dynamic model discovery — cross-model system no longer uses hardcoded system_ids. Models classified by family pattern at runtime (`shared/config/cross_model_subsets.py`).
 
 **Layers:**
 1. **Per-model subsets** — each model tracked independently (26 existing + 4 new V12-quantile = 30)
 2. **Cross-model observation subsets** — 5 `xm_*` subsets track consensus patterns (IDs 31-35)
 3. **Consensus scoring** — `consensus_bonus` (max 0.36) added to aggregator composite score
 
-**Key fixes:** `dual_agree` and `model_consensus_v9_v12` signals were never firing because `supplemental_data.py` didn't query V12 predictions. Fixed with V12 CTE in the BigQuery query.
+**Note:** V12 CTE in `supplemental_data.py` provides cross-model data for consensus scoring (not signals — `dual_agree` and `model_consensus_v9_v12` removed Session 296).
+
+**Dynamic Model Discovery (Session 296):** Models classified into 6 families by pattern matching:
+- `v9_mae` (exact: `catboost_v9`), `v12_mae` (exact: `catboost_v12`)
+- `v9_q43` (prefix: `catboost_v9_q43_*`), `v9_q45`, `v12_q43`, `v12_q45`
+- `discover_models()` queries BQ for active system_ids on a game date, classifies them
+- Survives retrains automatically — no code changes needed when model names change
 
 **Cross-model subsets:** `xm_consensus_3plus`, `xm_consensus_5plus`, `xm_quantile_agreement_under`, `xm_mae_plus_quantile_over`, `xm_diverse_agreement`. All observation-only, graded by existing `SubsetGradingProcessor`.
 
@@ -609,11 +615,11 @@ Aggregator top-5 simulation: **73.9% AVG HR** (up from 60.3% pre-cleanup). W2: 8
 ```
 agreement_base = 0.05 * (n_agreeing - 2) if n >= 3 else 0
 diversity_mult = 1.3 if V9+V12 agree else 1.0
-quantile_bonus = 0.10 if UNDER + all quantile agree else 0
+quantile_bonus = 0.10 if UNDER + all available quantile agree else 0
 consensus_bonus = agreement_base * diversity_mult + quantile_bonus  # max 0.36
 ```
 
-**New files:** `ml/signals/cross_model_scorer.py`, `shared/config/cross_model_subsets.py`, `data_processors/publishing/cross_model_subset_materializer.py`
+**Key files:** `ml/signals/cross_model_scorer.py`, `shared/config/cross_model_subsets.py`, `data_processors/publishing/cross_model_subset_materializer.py`
 
 **Pick Provenance (Session 279):** Each best bet now includes `qualifying_subsets` — which Level 1/2 subsets the player-game already appeared in before the aggregator ran. Plus `algorithm_version` for scoring traceability. Phase 1 is observation-only (store, don't score on subset membership). New file: `ml/signals/subset_membership_lookup.py`.
 

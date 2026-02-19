@@ -747,7 +747,25 @@ def audit_consensus_bonus(predictions, signal_results, all_model_data):
             'edge': float(row['edge'] or 0),
         }
 
-    from shared.config.cross_model_subsets import V9_FEATURE_SET, V12_FEATURE_SET, QUANTILE_MODELS as QM_LIST
+    from shared.config.cross_model_subsets import classify_system_id, MODEL_FAMILIES
+
+    # Classify all system_ids found in the data
+    all_sids = set()
+    for models in model_by_player.values():
+        all_sids.update(models.keys())
+
+    id_to_family = {}
+    for sid in all_sids:
+        fam = classify_system_id(sid)
+        if fam:
+            id_to_family[sid] = fam
+
+    v9_ids = {sid for sid, fam in id_to_family.items()
+              if MODEL_FAMILIES.get(fam, {}).get('feature_set') == 'v9'}
+    v12_ids = {sid for sid, fam in id_to_family.items()
+               if MODEL_FAMILIES.get(fam, {}).get('feature_set') == 'v12'}
+    quantile_ids = {sid for sid, fam in id_to_family.items()
+                    if MODEL_FAMILIES.get(fam, {}).get('loss') == 'quantile'}
 
     factors = {}
     for key, models in model_by_player.items():
@@ -772,13 +790,14 @@ def audit_consensus_bonus(predictions, signal_results, all_model_data):
             agreeing = under_models
 
         n_agreeing = len(agreeing)
-        has_v9 = any(m in V9_FEATURE_SET for m in agreeing)
-        has_v12 = any(m in V12_FEATURE_SET for m in agreeing)
+        has_v9 = any(m in v9_ids for m in agreeing)
+        has_v12 = any(m in v12_ids for m in agreeing)
         feature_diversity = (1 if has_v9 else 0) + (1 if has_v12 else 0)
 
         quantile_under = (
             majority_dir == 'UNDER'
-            and all(m in agreeing for m in QM_LIST)
+            and len(quantile_ids) >= 2
+            and all(m in agreeing for m in quantile_ids)
         )
 
         agreeing_edges = [abs(models[m]['edge']) for m in agreeing if m in models]

@@ -1,10 +1,12 @@
-"""Cross-Model Scorer — computes consensus factors from all 6 models.
+"""Cross-Model Scorer — computes consensus factors from all active models.
 
 Runs ONCE at the start of the aggregator pipeline. Single batch query
 returns all models' predictions for the target date, then computes
 per-player consensus factors used by the aggregator for scoring.
 
 Session 277: Initial creation.
+Session 296: Dynamic model discovery — queries actual system_ids
+  instead of relying on hardcoded lists that go stale after retrains.
 """
 
 import logging
@@ -13,11 +15,9 @@ from typing import Any, Dict, List, Optional
 from google.cloud import bigquery
 
 from shared.config.cross_model_subsets import (
-    ALL_MODELS,
-    MAE_MODELS,
-    QUANTILE_MODELS,
-    V9_FEATURE_SET,
-    V12_FEATURE_SET,
+    DiscoveredModels,
+    build_system_id_sql_filter,
+    discover_models,
 )
 
 logger = logging.getLogger(__name__)
@@ -44,12 +44,23 @@ class CrossModelScorer:
                 model_agreement_count: int (how many models agree on majority dir)
                 majority_direction: str ('OVER' or 'UNDER')
                 feature_set_diversity: int (1 or 2 feature sets represented)
-                quantile_consensus_under: bool (all 4 quantile models agree UNDER)
+                quantile_consensus_under: bool (all available quantile models agree UNDER)
                 avg_edge_agreeing: float (avg edge of agreeing models)
                 consensus_bonus: float (pre-computed score adjustment)
                 agreeing_model_ids: list[str] (system_ids of agreeing models)
         """
-        predictions = self._query_predictions(bq_client, target_date, project_id)
+        # Discover which models are active for this date
+        discovered = discover_models(bq_client, target_date, project_id)
+        if discovered.family_count < 2:
+            logger.warning(
+                f"Only {discovered.family_count} model families for "
+                f"{target_date} — skipping cross-model scoring"
+            )
+            return {}
+
+        predictions = self._query_predictions(
+            bq_client, target_date, project_id,
+        )
         if not predictions:
             return {}
 
@@ -59,7 +70,7 @@ class CrossModelScorer:
         # Compute factors for each player-game
         factors = {}
         for key, data in pivoted.items():
-            factor = self._compute_player_factor(data)
+            factor = self._compute_player_factor(data, discovered)
             if factor:
                 factors[key] = factor
 
@@ -67,7 +78,8 @@ class CrossModelScorer:
             with_bonus = sum(1 for f in factors.values() if f['consensus_bonus'] > 0)
             logger.info(
                 f"Cross-model factors: {len(factors)} player-games, "
-                f"{with_bonus} with consensus bonus"
+                f"{with_bonus} with consensus bonus "
+                f"({discovered.family_count} model families)"
             )
 
         return factors
@@ -78,8 +90,8 @@ class CrossModelScorer:
         target_date: str,
         project_id: str,
     ) -> List[Dict]:
-        """Query all models' predictions for target date."""
-        model_list = ', '.join(f"'{m}'" for m in ALL_MODELS)
+        """Query all known model families' predictions for target date."""
+        sql_filter = build_system_id_sql_filter()
 
         query = f"""
         SELECT
@@ -91,7 +103,7 @@ class CrossModelScorer:
             CAST(confidence_score AS FLOAT64) AS confidence_score
         FROM `{project_id}.nba_predictions.player_prop_predictions`
         WHERE game_date = @target_date
-          AND system_id IN ({model_list})
+          AND {sql_filter}
           AND is_active = TRUE
           AND recommendation IN ('OVER', 'UNDER')
         """
@@ -122,7 +134,9 @@ class CrossModelScorer:
             }
         return pivoted
 
-    def _compute_player_factor(self, data: Dict) -> Optional[Dict[str, Any]]:
+    def _compute_player_factor(
+        self, data: Dict, discovered: DiscoveredModels,
+    ) -> Optional[Dict[str, Any]]:
         """Compute consensus factors for a single player-game."""
         models = data['models']
         if len(models) < 2:
@@ -152,15 +166,17 @@ class CrossModelScorer:
 
         n_agreeing = len(agreeing)
 
-        # Feature set diversity
-        has_v9 = any(m in V9_FEATURE_SET for m in agreeing)
-        has_v12 = any(m in V12_FEATURE_SET for m in agreeing)
+        # Feature set diversity (using discovered classifications)
+        has_v9 = any(m in discovered.v9_ids for m in agreeing)
+        has_v12 = any(m in discovered.v12_ids for m in agreeing)
         feature_diversity = (1 if has_v9 else 0) + (1 if has_v12 else 0)
 
-        # Quantile consensus UNDER
+        # Quantile consensus UNDER — all *available* quantile models agree
+        available_quantile = discovered.quantile_ids
         quantile_under = (
             majority_dir == 'UNDER'
-            and all(m in agreeing for m in QUANTILE_MODELS)
+            and len(available_quantile) >= 2
+            and all(m in agreeing for m in available_quantile)
         )
 
         # Average edge of agreeing models
