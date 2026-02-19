@@ -173,6 +173,10 @@ class TonightAllPlayersExporter(BaseExporter):
                 player_lookup,
                 ROUND(AVG(points), 1) as season_ppg,
                 ROUND(AVG(minutes_played), 1) as season_mpg,
+                ROUND(SAFE_DIVIDE(SUM(fg_makes), SUM(fg_attempts)), 3) as season_fg_pct,
+                ROUND(SAFE_DIVIDE(SUM(three_pt_makes), SUM(three_pt_attempts)), 3) as season_three_pct,
+                ROUND(AVG(plus_minus), 1) as season_plus_minus,
+                ROUND(AVG(ft_attempts), 1) as season_fta,
                 COUNT(*) as games_played
             FROM `nba-props-platform.nba_analytics.player_game_summary`
             WHERE season_year = CASE
@@ -283,6 +287,10 @@ class TonightAllPlayersExporter(BaseExporter):
             -- Season stats
             ss.season_ppg,
             ss.season_mpg,
+            ss.season_fg_pct,
+            ss.season_three_pct,
+            ss.season_plus_minus,
+            ss.season_fta,
             ss.games_played,
 
             -- Recent form
@@ -600,6 +608,10 @@ class TonightAllPlayersExporter(BaseExporter):
                     # Season stats
                     'season_ppg': safe_float(p.get('season_ppg')),
                     'season_mpg': safe_float(p.get('season_mpg')),
+                    'season_fg_pct': safe_float(p.get('season_fg_pct')),
+                    'season_three_pct': safe_float(p.get('season_three_pct')),
+                    'season_plus_minus': safe_float(p.get('season_plus_minus')),
+                    'season_fta': safe_float(p.get('season_fta')),
                     'minutes_avg': safe_float(p.get('season_mpg')),
                     'last_5_ppg': safe_float(p.get('last_5_ppg')),
                     'last_30d_ppg': safe_float(p.get('last_30d_ppg')),

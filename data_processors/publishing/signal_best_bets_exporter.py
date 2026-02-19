@@ -2,7 +2,8 @@
 Signal Best Bets Exporter for Phase 6 Publishing
 
 Runs the Signal Discovery Framework against today's predictions and exports
-a curated list of up to 5 best bets to GCS. Also writes picks to
+edge-first best bets to GCS. Natural sizing — all picks passing edge 5+ floor
+and negative filters are included. Also writes picks to
 the `signal_best_bets_picks` BigQuery table for grading.
 
 Pipeline: Phase 5 → Phase 6 Export → signal-best-bets
@@ -49,7 +50,7 @@ class SignalBestBetsExporter(BaseExporter):
     1. Query model health (rolling 7d HR)
     2. If model healthy, query today's predictions + supplemental data
     3. Run all signals via registry
-    4. Aggregate to top 5 picks
+    4. Aggregate picks (edge-first, natural sizing)
     5. Write to BigQuery `signal_best_bets_picks`
     6. Export to GCS `v1/signal-best-bets/{date}.json`
     """

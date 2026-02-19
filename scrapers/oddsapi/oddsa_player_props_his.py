@@ -213,7 +213,7 @@ class GetOddsApiHistoricalEventOdds(ScraperBase, ScraperFlaskMixin):
         if not self.opts.get("markets"):
             self.opts["markets"] = "player_points"
         if not self.opts.get("bookmakers"):
-            self.opts["bookmakers"] = "draftkings,fanduel"
+            self.opts["bookmakers"] = "draftkings,fanduel,betmgm,williamhill_us,betrivers,bovada,fanatics,espnbet,hardrockbet,ballybet,fliff,betus,lowvig"
 
     # ------------------------------------------------------------------ #
     # URL & headers                                                      #

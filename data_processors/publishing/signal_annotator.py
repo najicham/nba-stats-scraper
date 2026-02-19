@@ -305,7 +305,7 @@ class SignalAnnotator:
                 'subset_name': public['name'],
                 'min_edge': None,
                 'min_confidence': None,
-                'top_n': BestBetsAggregator.MAX_PICKS_PER_DAY,
+                'top_n': None,  # Natural sizing (Session 298)
                 # Version-level context
                 'daily_signal': None,
                 'pct_over': None,

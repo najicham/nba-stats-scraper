@@ -14,6 +14,10 @@ Session 297: MAJOR ARCHITECTURE CHANGE — edge-first selection.
       5. Negative filters (blacklist, familiar, quality) still applied
     Projected: 71% HR (up from 59.8%)
 
+Session 298: Natural sizing — removed MAX_PICKS_PER_DAY=5 hard cap.
+    Let edge floor + negative filters determine the natural pick count.
+    Some days 2 picks, some days 8 — that's honest.
+
 Prior history (Sessions 259-296):
     Session 259: Registry-based combo scoring, MIN_SIGNAL_COUNT=2.
     Session 260: Signal health weighting (HOT/COLD multipliers).
@@ -36,7 +40,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v297_edge_first'
+ALGORITHM_VERSION = 'v298_natural_sizing'
 
 # Signal health regime → weight multiplier (used for pick angles context)
 HEALTH_MULTIPLIERS = {
@@ -49,11 +53,11 @@ HEALTH_MULTIPLIERS = {
 class BestBetsAggregator:
     """Edge-first best bets selection with signal-based filtering.
 
-    Selection (Session 297):
+    Selection (Session 297-298):
         1. Filter: edge >= 5.0 (edge <5 hits 57%, edge 5+ hits 71%)
         2. Filter: negative filters (blacklist, quality, UNDER blocks)
         3. Rank: by edge descending (model confidence = primary signal)
-        4. Return: top MAX_PICKS_PER_DAY picks
+        4. Return: all qualifying picks (natural sizing, Session 298)
         5. Annotate: signal tags attached for pick angles (explanations)
 
     Negative Filters:
@@ -69,7 +73,6 @@ class BestBetsAggregator:
         - ANTI_PATTERN combos → skip
     """
 
-    MAX_PICKS_PER_DAY = 5
     MIN_SIGNAL_COUNT = 2
     MIN_EDGE = 5.0  # Edge 5+ = 71.1% HR (Session 297 analysis)
 
@@ -242,18 +245,17 @@ class BestBetsAggregator:
         # Rank by edge descending (model confidence = primary signal)
         scored.sort(key=lambda x: x['composite_score'], reverse=True)
 
-        # Assign ranks and return top N
-        for i, pick in enumerate(scored[:self.MAX_PICKS_PER_DAY]):
+        # Assign ranks — natural sizing (Session 298: no artificial cap)
+        for i, pick in enumerate(scored):
             pick['rank'] = i + 1
 
-        picked = scored[:self.MAX_PICKS_PER_DAY]
-        if picked:
+        if scored:
             logger.info(
-                f"Selected {len(picked)} picks (edge range: "
-                f"{picked[-1]['composite_score']:.1f}-{picked[0]['composite_score']:.1f})"
+                f"Selected {len(scored)} picks (edge range: "
+                f"{scored[-1]['composite_score']:.1f}-{scored[0]['composite_score']:.1f})"
             )
 
-        return picked
+        return scored
 
     def _weighted_signal_count(self, tags: List[str]) -> float:
         """Compute health-weighted effective signal count, capped at 3.0.

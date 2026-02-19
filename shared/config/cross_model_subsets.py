@@ -229,11 +229,11 @@ CROSS_MODEL_SUBSETS = {
         'top_n': None,      # No limit
     },
     'xm_consensus_4plus': {
-        'description': '4+ models agree on direction, top 5 picks by avg edge',
+        'description': '4+ models agree on direction, all with edge >= 3',
         'min_agreeing_models': 4,
         'min_edge': 3.0,
         'direction': None,
-        'top_n': 5,
+        'top_n': None,  # Natural sizing (Session 298)
     },
     'xm_quantile_agreement_under': {
         'description': 'All available quantile models agree UNDER, edge >= 3',
