@@ -549,14 +549,19 @@ Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
 
 ## Signal System [Keyword: SIGNALS]
 
-**15 active signals** (14 removed Sessions 275+296). Aggregator requires MIN_SIGNAL_COUNT=2 (model_health always fires, so effectively 1 real signal minimum).
+**15 active signals** (14 removed Sessions 275+296). **Session 297: Edge-first architecture** — signals are for pick angles (explanations), not selection. Picks ranked by edge, not composite score.
 
-**Pre-Filters (Session 278, updated 284):** Applied in aggregator BEFORE signal scoring:
-1. Player blacklist: `<40% HR on 8+ edge-3+ picks` → skip (+$10,450 P&L, Session 284)
-2. Avoid familiar: `6+ games vs this opponent` → skip (+$1,780 P&L, Session 284)
-3. Feature quality floor: `quality < 85` → skip (24.0% HR)
-4. Bench UNDER block: `UNDER + line < 12` → skip (35.1% HR)
-5. ~~Relative edge cap~~: REMOVED Session 284 — was blocking 62.8% HR picks (above breakeven)
+**Best Bets Selection (Session 297):** `edge 5+ → negative filters → rank by edge → top 5`
+- Edge 5+ baseline: 71.1% HR (up from 59.8% with signal-scored selection)
+- Signals used for FILTERING (remove bad picks) and ANNOTATION (pick angles), not scoring
+
+**Negative Filters (Session 278, updated 284, 297):**
+1. Player blacklist: `<40% HR on 8+ edge-3+ picks` → skip (Session 284)
+2. Avoid familiar: `6+ games vs this opponent` → skip (Session 284)
+3. **Edge floor: `edge < 5.0` → skip (57% HR). Edge 5-7=69.4%, 7+=84.5% OVER (Session 297)**
+4. **UNDER edge 7+ block: `UNDER + edge >= 7` → skip (40.7% HR — catastrophic, Session 297)**
+5. Feature quality floor: `quality < 85` → skip (24.0% HR)
+6. Bench UNDER block: `UNDER + line < 12` → skip (35.1% HR)
 
 **Pick Angles (Session 278, 284):** Each pick includes `pick_angles` — human-readable reasoning (confidence tier, high-conviction edge>=5, player tier, cross-model consensus, signal-specific). Max 5 angles per pick. See `ml/signals/pick_angle_builder.py`.
 
@@ -595,11 +600,12 @@ Aggregator top-5 simulation: **73.9% AVG HR** (up from 60.3% pre-cleanup). W2: 8
 
 **Session 277:** 3-layer architecture using all active models for improved best bets.
 **Session 296:** Dynamic model discovery — cross-model system no longer uses hardcoded system_ids. Models classified by family pattern at runtime (`shared/config/cross_model_subsets.py`).
+**Session 297:** Edge floor (MIN_EDGE=3.0), consensus bonus fix, triple-write bug fix.
 
 **Layers:**
 1. **Per-model subsets** — each model tracked independently (26 existing + 4 new V12-quantile = 30)
 2. **Cross-model observation subsets** — 5 `xm_*` subsets track consensus patterns (IDs 31-35)
-3. **Consensus scoring** — `consensus_bonus` (max 0.36) added to aggregator composite score
+3. **Consensus scoring** — `consensus_bonus` (max 0.15) added to aggregator composite score
 
 **Note:** V12 CTE in `supplemental_data.py` provides cross-model data for consensus scoring (not signals — `dual_agree` and `model_consensus_v9_v12` removed Session 296).
 
@@ -609,15 +615,19 @@ Aggregator top-5 simulation: **73.9% AVG HR** (up from 60.3% pre-cleanup). W2: 8
 - `discover_models()` queries BQ for active system_ids on a game date, classifies them
 - Survives retrains automatically — no code changes needed when model names change
 
-**Cross-model subsets:** `xm_consensus_3plus`, `xm_consensus_5plus`, `xm_quantile_agreement_under`, `xm_mae_plus_quantile_over`, `xm_diverse_agreement`. All observation-only, graded by existing `SubsetGradingProcessor`.
+**Cross-model subsets:** `xm_consensus_3plus`, `xm_consensus_4plus`, `xm_quantile_agreement_under`, `xm_mae_plus_quantile_over`, `xm_diverse_agreement`. All observation-only, graded by existing `SubsetGradingProcessor`.
 
-**Consensus bonus formula:**
+**Consensus bonus formula (Session 297: diversity_mult removed):**
 ```
 agreement_base = 0.05 * (n_agreeing - 2) if n >= 3 else 0
-diversity_mult = 1.3 if V9+V12 agree else 1.0
 quantile_bonus = 0.10 if UNDER + all available quantile agree else 0
-consensus_bonus = agreement_base * diversity_mult + quantile_bonus  # max 0.36
+consensus_bonus = agreement_base + quantile_bonus  # max 0.15 (was 0.36)
 ```
+
+**CRITICAL (Session 297):** V9+V12 agreement is ANTI-correlated with winning:
+- OVER + V12 agrees: 33.3% HR vs V12 no pick: 66.8%
+- UNDER + V12 agrees: 46.5% HR vs V12 no pick: 53.5%
+- The `diversity_mult = 1.3` was removed because it rewarded a harmful pattern.
 
 **Key files:** `ml/signals/cross_model_scorer.py`, `shared/config/cross_model_subsets.py`, `data_processors/publishing/cross_model_subset_materializer.py`
 

@@ -154,8 +154,10 @@ class CrossModelSubsetMaterializer:
                     f"  {subset_id}: {len(matching)} picks"
                 )
 
-        # 5. Write to BigQuery
+        # 5. Delete existing cross-model rows for this date, then write new ones
+        #    Prevents duplicate accumulation on re-runs (Session 297).
         if rows:
+            self._delete_existing(game_date)
             self._write_rows(rows)
 
         total = len(rows)
@@ -351,6 +353,31 @@ class CrossModelSubsetMaterializer:
         # Sort by avg_edge descending
         results.sort(key=lambda x: x['avg_edge'], reverse=True)
         return results
+
+    def _delete_existing(self, game_date: str) -> None:
+        """Delete existing cross-model subset rows for this date."""
+        try:
+            query = f"""
+            DELETE FROM `{SUBSET_TABLE_ID}`
+            WHERE game_date = @game_date
+              AND system_id = 'cross_model'
+            """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter('game_date', 'DATE', game_date),
+                ]
+            )
+            job = self.bq_client.query(query, job_config=job_config)
+            job.result(timeout=30)
+            deleted = job.num_dml_affected_rows or 0
+            if deleted > 0:
+                logger.info(
+                    f"Deleted {deleted} existing cross-model rows for {game_date}"
+                )
+        except Exception as e:
+            logger.warning(
+                f"Failed to delete existing cross-model rows for {game_date}: {e}"
+            )
 
     def _write_rows(self, rows: List[Dict[str, Any]]) -> None:
         """Write cross-model subset rows using streaming insert."""

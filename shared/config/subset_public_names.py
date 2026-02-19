@@ -49,7 +49,7 @@ SUBSET_PUBLIC_NAMES = {
     'v12q45_all_picks': {'id': '30', 'name': 'V12 Q45 All Picks'},
     # Cross-model observation subsets (Session 277)
     'xm_consensus_3plus': {'id': '31', 'name': 'Cross-Model 3+ Agree'},
-    'xm_consensus_5plus': {'id': '32', 'name': 'Cross-Model 5+ Agree'},
+    'xm_consensus_4plus': {'id': '32', 'name': 'Cross-Model 4+ Agree'},
     'xm_quantile_agreement_under': {'id': '33', 'name': 'Quantile Consensus UNDER'},
     'xm_mae_plus_quantile_over': {'id': '34', 'name': 'MAE + Quantile OVER'},
     'xm_diverse_agreement': {'id': '35', 'name': 'V9 + V12 Diverse Agree'},

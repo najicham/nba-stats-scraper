@@ -228,9 +228,9 @@ CROSS_MODEL_SUBSETS = {
         'direction': None,  # ANY direction
         'top_n': None,      # No limit
     },
-    'xm_consensus_5plus': {
-        'description': '5+ models agree, top 5 picks by avg edge',
-        'min_agreeing_models': 5,
+    'xm_consensus_4plus': {
+        'description': '4+ models agree on direction, top 5 picks by avg edge',
+        'min_agreeing_models': 4,
         'min_edge': 3.0,
         'direction': None,
         'top_n': 5,

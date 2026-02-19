@@ -183,11 +183,14 @@ class CrossModelScorer:
         agreeing_edges = [abs(models[m]['edge']) for m in agreeing]
         avg_edge = sum(agreeing_edges) / len(agreeing_edges) if agreeing_edges else 0
 
-        # Consensus bonus formula
+        # Consensus bonus formula (Session 297: removed diversity_mult)
+        # V9+V12 agreement is ANTI-correlated with winning:
+        #   OVER + V12 agrees: 33.3% HR vs V12 no pick: 66.8%
+        #   UNDER + V12 agrees: 46.5% HR vs V12 no pick: 53.5%
+        # Agreement bonus is only for model COUNT, not feature-set diversity.
         agreement_base = 0.05 * (n_agreeing - 2) if n_agreeing >= 3 else 0
-        diversity_mult = 1.3 if (has_v9 and has_v12) else 1.0
         quantile_bonus = 0.10 if quantile_under else 0
-        consensus_bonus = round(agreement_base * diversity_mult + quantile_bonus, 4)
+        consensus_bonus = round(agreement_base + quantile_bonus, 4)
 
         return {
             'model_agreement_count': n_agreeing,

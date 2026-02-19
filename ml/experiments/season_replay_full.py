@@ -904,7 +904,7 @@ def compute_cross_model_consensus(
     # Tally consensus subsets
     consensus_data = {
         'xm_consensus_3plus': {'wins': 0, 'losses': 0, 'pushes': 0},
-        'xm_consensus_5plus': {'wins': 0, 'losses': 0, 'pushes': 0},
+        'xm_consensus_4plus': {'wins': 0, 'losses': 0, 'pushes': 0},
         'xm_quantile_agreement_under': {'wins': 0, 'losses': 0, 'pushes': 0},
         'xm_mae_plus_quantile_over': {'wins': 0, 'losses': 0, 'pushes': 0},
         'xm_diverse_agreement': {'wins': 0, 'losses': 0, 'pushes': 0},
@@ -945,8 +945,8 @@ def compute_cross_model_consensus(
             outcome = _outcome(best_direction)
             if best_count >= 3:
                 consensus_data['xm_consensus_3plus'][outcome] += 1
-            if best_count >= 5:
-                consensus_data['xm_consensus_5plus'][outcome] += 1
+            if best_count >= 4:
+                consensus_data['xm_consensus_4plus'][outcome] += 1
 
         # --- xm_quantile_agreement_under ---
         # All 4 quantile models must be active and agree UNDER with edge >= min_edge

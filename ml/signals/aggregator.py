@@ -1,35 +1,28 @@
-"""Best Bets Aggregator — selects top picks from multiple signal sources.
+"""Best Bets Aggregator — edge-first selection with signal-based filtering.
 
-Session 259: Registry-based combo scoring, signal count floor, improved formula.
-    - MIN_SIGNAL_COUNT = 2 (1-signal picks hit 43.8%, harmful)
-    - Edge contribution capped at /7.0 (diminishing returns past 7 pts)
-    - Signal count multiplier capped at 3 (4+ doesn't improve HR)
-    - Combo bonuses/penalties driven by combo_registry instead of hardcoded
+Session 297: MAJOR ARCHITECTURE CHANGE — edge-first selection.
+    Analysis showed the model's edge IS the signal:
+      - green_light subset (edge 5+, signal day): 78.0% HR, +$69 units
+      - ultra_high_edge (edge 7+): 80.2% HR, +$43 units
+      - signal-scored best bets: 59.8% HR, +$17 units
+    Signals were SELECTING low-edge picks via composite scoring, diluting
+    the model's high-edge winners. Now:
+      1. Edge 5+ is the primary filter (was no floor, then 3.0)
+      2. UNDER edge 7+ blocked (40.7% HR — catastrophic)
+      3. Picks ranked by edge (not composite score)
+      4. Signals used for pick angles (explanations) only
+      5. Negative filters (blacklist, familiar, quality) still applied
+    Projected: 71% HR (up from 59.8%)
 
-Session 260: Signal health weighting (LIVE).
-    - HOT regime signals get 1.2x weight multiplier
-    - COLD regime signals get 0.5x weight multiplier
-    - NORMAL regime signals unchanged (1.0x)
-    - Multiplier applied to each signal's contribution to signal_multiplier
-
-Session 264: COLD model-dependent signals → 0.0x weight.
-    - Model-dependent signals (high_edge, edge_spread_optimal, etc.) are
-      downstream of model predictions — broken model means broken signals.
-    - COLD behavioral signals (minutes_surge, cold_snap, etc.) keep 0.5x.
-
-Session 279: Pick provenance — qualifying_subsets + algorithm_version.
-    - Each scored pick now includes qualifying_subsets (which Level 1/2 subsets
-      the player-game already appeared in) and qualifying_subset_count.
-    - ALGORITHM_VERSION tag for scoring formula traceability.
-    - Phase 1: observation only (store, don't score on subset membership).
-
-Session 284: Player blacklist + avoid-familiar + remove rel_edge filter.
-    - Players with <40% HR on 8+ graded edge-3+ picks are excluded.
-    - Checked FIRST in aggregate loop (before signal evaluation, for efficiency).
-    - Season replay proved +$10,450 P&L improvement.
-    - Avoid-familiar: skip players with 6+ games vs opponent (+$1,780 P&L).
-    - Removed rel_edge>=30% filter: was blocking 62.8% HR picks (above breakeven).
-      Cross-season analysis showed it hurts 2025-26 profits (blocks 65.5% HR picks).
+Prior history (Sessions 259-296):
+    Session 259: Registry-based combo scoring, MIN_SIGNAL_COUNT=2.
+    Session 260: Signal health weighting (HOT/COLD multipliers).
+    Session 264: COLD model-dependent signals → 0.0x weight.
+    Session 279: Pick provenance (qualifying_subsets + algorithm_version).
+    Session 284: Player blacklist, avoid-familiar, remove rel_edge filter.
+    Session 294: UNDER line-jump/line-drop/neg-pm blocks.
+    Session 297 early: Edge floor 3.0, consensus bonus diversity fix.
+    Session 297 late: Edge-first architecture (this version).
 """
 
 import logging
@@ -43,9 +36,9 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v296_remove_consensus_signals'
+ALGORITHM_VERSION = 'v297_edge_first'
 
-# Signal health regime → weight multiplier
+# Signal health regime → weight multiplier (used for pick angles context)
 HEALTH_MULTIPLIERS = {
     'HOT': 1.2,
     'NORMAL': 1.0,
@@ -54,30 +47,31 @@ HEALTH_MULTIPLIERS = {
 
 
 class BestBetsAggregator:
-    """Aggregates signal results into a ranked best-bets list.
+    """Edge-first best bets selection with signal-based filtering.
 
-    Scoring (Session 259, updated Session 260):
-        edge_score = min(1.0, abs(edge) / 7.0)       # capped at 7 pts
-        effective_signals = sum of health-weighted qualifying signals (capped at 3.0)
-        signal_multiplier = 1.0 + 0.3 * (effective_signals - 1)  # max 1.6x
-        base_score = edge_score * signal_multiplier
-        composite_score = base_score + combo_registry_weight
+    Selection (Session 297):
+        1. Filter: edge >= 5.0 (edge <5 hits 57%, edge 5+ hits 71%)
+        2. Filter: negative filters (blacklist, quality, UNDER blocks)
+        3. Rank: by edge descending (model confidence = primary signal)
+        4. Return: top MAX_PICKS_PER_DAY picks
+        5. Annotate: signal tags attached for pick angles (explanations)
 
-    Filters:
+    Negative Filters:
         - Player blacklist: <40% HR on 8+ picks → skip (Session 284)
         - Avoid familiar: 6+ games vs this opponent → skip (Session 284)
-        - MIN_SIGNAL_COUNT = 2 (eliminates 1-signal picks)
-        - Confidence floor: model-specific (V12: >= 0.90, excludes 41.7% HR tier)
+        - MIN_EDGE = 5.0: edge <5 hits only 57% (Session 297)
+        - UNDER edge 7+ block: 40.7% HR — catastrophic (Session 297)
         - Feature quality floor: quality < 85 → skip (24.0% HR)
         - Bench UNDER block: UNDER + line < 12 → skip (35.1% HR)
-        - Line jumped UNDER block: UNDER + line jumped 3+ → skip (47.4% HR, Session 294)
-        - Line dropped UNDER block: UNDER + line dropped 3+ → skip (41.0% HR, Session 294)
-        - Neg +/- streak UNDER block: UNDER + 3+ neg +/- games → skip (13.1% HR, Session 294)
-        - ANTI_PATTERN combos are blocked entirely
+        - Line jumped UNDER block: UNDER + line jumped 3+ → skip (47.4% HR)
+        - Line dropped UNDER block: UNDER + line dropped 3+ → skip (41.0% HR)
+        - Neg +/- streak UNDER block: UNDER + 3+ neg games → skip (13.1% HR)
+        - ANTI_PATTERN combos → skip
     """
 
     MAX_PICKS_PER_DAY = 5
     MIN_SIGNAL_COUNT = 2
+    MIN_EDGE = 5.0  # Edge 5+ = 71.1% HR (Session 297 analysis)
 
     def __init__(
         self,
@@ -88,22 +82,6 @@ class BestBetsAggregator:
         qualifying_subsets: Optional[Dict[str, List[Dict]]] = None,
         player_blacklist: Optional[Set[str]] = None,
     ):
-        """Initialize aggregator.
-
-        Args:
-            combo_registry: Pre-loaded combo registry. If None, loads fallback.
-            signal_health: Dict keyed by signal_tag with 'regime' field.
-                Example: {'high_edge': {'regime': 'HOT', 'hr_7d': 75.0, ...}}
-            model_id: Model ID for model-specific config (e.g. confidence floor).
-            cross_model_factors: Dict keyed by 'player_lookup::game_id' with
-                consensus factors from CrossModelScorer. If None, no consensus
-                bonus is applied.
-            qualifying_subsets: Dict keyed by 'player_lookup::game_id' with
-                list of Level 1/2 subsets the player already appears in.
-                From subset_membership_lookup. Phase 1: observation only.
-            player_blacklist: Set of player_lookup strings to exclude.
-                Players with <40% HR on 8+ picks. Session 284.
-        """
         if combo_registry is not None:
             self._registry = combo_registry
         else:
@@ -118,141 +96,115 @@ class BestBetsAggregator:
                   signal_results: Dict[str, List[SignalResult]]) -> List[Dict]:
         """Select top picks for a single game date.
 
-        Args:
-            predictions: List of prediction dicts (one per player-game).
-            signal_results: Mapping from prediction key
-                (player_lookup::game_id) to list of qualifying SignalResults.
-
-        Returns:
-            Ranked list of up to MAX_PICKS_PER_DAY picks, each with:
-                - All original prediction fields
-                - signal_tags: list of qualifying signal tags
-                - signal_count: number of qualifying signals
-                - composite_score: ranking score
-                - matched_combo_id: best matching combo from registry
-                - combo_classification: SYNERGISTIC | ANTI_PATTERN | NEUTRAL
-                - combo_hit_rate: historical hit rate of matched combo
-                - warning_tags: list of warning labels
-                - rank: 1-based rank
+        Edge-first: picks are ranked by edge (model confidence), not by
+        signal composite score. Signals are attached for pick angles only.
         """
         scored = []
         blacklist_skip_count = 0
+        edge_skip_count = 0
+        under7_skip_count = 0
+
         for pred in predictions:
-            # Player blacklist: FIRST filter (Session 284)
-            # Blocks chronically losing players before any signal evaluation
+            # --- Negative filters (order: cheapest checks first) ---
+
+            # Player blacklist (Session 284)
             if pred['player_lookup'] in self._player_blacklist:
                 blacklist_skip_count += 1
                 continue
 
-            key = f"{pred['player_lookup']}::{pred['game_id']}"
-            results = signal_results.get(key, [])
-            qualifying = [r for r in results if r.qualifies]
-
-            if not qualifying:
+            # Edge floor: edge <5 hits 57%, edge 5+ hits 71% (Session 297)
+            pred_edge = abs(pred.get('edge') or 0)
+            if pred_edge < self.MIN_EDGE:
+                edge_skip_count += 1
                 continue
 
-            # Signal count floor: skip 1-signal picks (43.8% HR)
-            if len(qualifying) < self.MIN_SIGNAL_COUNT:
+            # UNDER at edge 7+ block: 40.7% HR — catastrophic (Session 297)
+            if pred.get('recommendation') == 'UNDER' and pred_edge >= 7.0:
+                under7_skip_count += 1
                 continue
 
-            # Confidence floor: model-specific (V12: 0.87 tier has 41.7% HR)
-            if self._min_confidence > 0:
-                confidence = pred.get('confidence_score') or 0
-                if confidence < self._min_confidence:
-                    continue
-
-            # Smart filter: Feature quality floor (Session 278)
-            # Picks with quality < 85 have 24.0% HR — worse than random
-            quality = pred.get('feature_quality_score') or 0
-            if quality > 0 and quality < 85:
-                continue
-
-            # Smart filter: Bench UNDER block (Session 278)
-            # Bench UNDER (line < 12) = 35.1% HR — catastrophic
-            line_val = pred.get('line_value') or 0
-            if pred.get('recommendation') == 'UNDER' and line_val > 0 and line_val < 12:
-                continue
-
-            # Rel_edge>=30% filter REMOVED (Session 284)
-            # Was blocking picks with 62.8% combined HR (above breakeven).
-            # In 2025-26, blocked 65.5% HR picks — our best tier.
-
-            # Smart filter: Avoid familiar matchups (Session 284)
-            # Players with 6+ games vs this opponent regress to noise
-            # Season replay: +$1,780 P&L when stacked with other filters
+            # Avoid familiar matchups (Session 284)
             games_vs_opp = pred.get('games_vs_opponent') or 0
             if games_vs_opp >= 6:
                 continue
 
-            # Smart filter: Block UNDER when line jumped 3+ (Session 294)
-            # UNDER + line jumped 3+ = 47.4% HR (N=627) — below breakeven
-            # Market raised the line after a big game, our UNDER calls lose edge
-            # Note: OVER + line jumped is fine (56.8-64.9% HR) — do NOT block
+            # Feature quality floor (Session 278): quality < 85 = 24.0% HR
+            quality = pred.get('feature_quality_score') or 0
+            if quality > 0 and quality < 85:
+                continue
+
+            # Bench UNDER block (Session 278): line < 12 = 35.1% HR
+            line_val = pred.get('line_value') or 0
+            if pred.get('recommendation') == 'UNDER' and line_val > 0 and line_val < 12:
+                continue
+
+            # Line jumped UNDER block (Session 294): 47.4% HR
             prop_line_delta = pred.get('prop_line_delta')
             if (prop_line_delta is not None
                     and prop_line_delta >= 3.0
                     and pred.get('recommendation') == 'UNDER'):
                 continue
 
-            # Smart filter: Block UNDER when line dropped 3+ (Session 294)
-            # UNDER + line dropped 3+ = 41.0% HR (N=188) — market already priced the decline
+            # Line dropped UNDER block (Session 294): 41.0% HR
             if (prop_line_delta is not None
                     and prop_line_delta <= -3.0
                     and pred.get('recommendation') == 'UNDER'):
                 continue
 
-            # Smart filter: Block UNDER when neg +/- streak 3+ games (Session 294)
-            # 13.1% HR (N=84) — players in losing lineups bounce back, UNDER is a trap
+            # Neg +/- streak UNDER block (Session 294): 13.1% HR
             neg_pm_streak = pred.get('neg_pm_streak') or 0
             if neg_pm_streak >= 3 and pred.get('recommendation') == 'UNDER':
                 continue
 
+            # --- Signal evaluation (for annotations, not selection) ---
+
+            key = f"{pred['player_lookup']}::{pred['game_id']}"
+            results = signal_results.get(key, [])
+            qualifying = [r for r in results if r.qualifies]
+
+            # Still require MIN_SIGNAL_COUNT (model_health + 1 real signal)
+            # This ensures we only pick players the signal system has context on
+            if len(qualifying) < self.MIN_SIGNAL_COUNT:
+                continue
+
+            # Confidence floor: model-specific
+            if self._min_confidence > 0:
+                confidence = pred.get('confidence_score') or 0
+                if confidence < self._min_confidence:
+                    continue
+
             tags = [r.source_tag for r in qualifying]
             warning_tags: List[str] = []
 
-            # Match combo from registry
+            # Combo matching (for annotation)
             matched = match_combo(tags, self._registry)
 
-            # Block ANTI_PATTERN combos entirely
+            # Block ANTI_PATTERN combos
             if matched and matched.classification == 'ANTI_PATTERN':
                 continue
 
-            # Compute composite score with improved formula
-            edge = abs(pred.get('edge') or 0)
-            edge_score = min(1.0, edge / 7.0)  # Cap at 7 pts (was /10.0)
-
-            # Health-weighted effective signal count (Session 260)
-            effective_signals = self._weighted_signal_count(tags)
-            signal_multiplier = 1.0 + 0.3 * (effective_signals - 1)  # Max 1.6x
-
-            base_score = edge_score * signal_multiplier
-
-            # Registry-driven combo adjustment
-            combo_adjustment = 0.0
-            if matched and matched.classification == 'SYNERGISTIC':
-                combo_adjustment = matched.score_weight
-
-            # Legacy warning: contradictory signals
+            # Warning: contradictory signals
             if 'minutes_surge' in tags and 'blowout_recovery' in tags:
                 warning_tags.append('contradictory_signals')
 
-            # Cross-model consensus bonus (Session 277)
-            consensus_bonus = 0.0
+            # Cross-model factors (for annotation, not scoring)
             xm_factors = self._cross_model_factors.get(key, {})
             model_agreement = xm_factors.get('model_agreement_count', 0)
             feature_diversity = xm_factors.get('feature_set_diversity', 0)
             quantile_under = xm_factors.get('quantile_consensus_under', False)
+            agreeing_model_ids = xm_factors.get('agreeing_model_ids', [])
 
+            # Consensus bonus (kept for data tracking, but not used for ranking)
+            consensus_bonus = 0.0
             if xm_factors and pred.get('recommendation') == xm_factors.get('majority_direction'):
                 consensus_bonus = xm_factors.get('consensus_bonus', 0)
 
-            agreeing_model_ids = xm_factors.get('agreeing_model_ids', [])
+            # Composite score = edge (primary ranking signal)
+            # Signal/combo context is tracked but doesn't influence ranking
+            composite_score = round(pred_edge, 4)
 
-            composite_score = round(base_score + combo_adjustment + consensus_bonus, 4)
-
-            # Qualifying subsets from Level 1/2 (Session 279)
+            # Qualifying subsets (Session 279)
             player_subsets = self._qualifying_subsets.get(key, [])
-            # Strip rank_in_subset for JSON storage (keep subset_id + system_id)
             subsets_for_storage = [
                 {'subset_id': s['subset_id'], 'system_id': s['system_id']}
                 for s in player_subsets
@@ -282,22 +234,31 @@ class BestBetsAggregator:
                 f"Player blacklist: skipped {blacklist_skip_count} predictions "
                 f"({len(self._player_blacklist)} players on blacklist)"
             )
+        if edge_skip_count > 0:
+            logger.info(f"Edge floor ({self.MIN_EDGE}): skipped {edge_skip_count} predictions")
+        if under7_skip_count > 0:
+            logger.info(f"UNDER edge 7+ block: skipped {under7_skip_count} predictions")
 
-        # Sort descending by composite score
+        # Rank by edge descending (model confidence = primary signal)
         scored.sort(key=lambda x: x['composite_score'], reverse=True)
 
         # Assign ranks and return top N
         for i, pick in enumerate(scored[:self.MAX_PICKS_PER_DAY]):
             pick['rank'] = i + 1
 
-        return scored[:self.MAX_PICKS_PER_DAY]
+        picked = scored[:self.MAX_PICKS_PER_DAY]
+        if picked:
+            logger.info(
+                f"Selected {len(picked)} picks (edge range: "
+                f"{picked[-1]['composite_score']:.1f}-{picked[0]['composite_score']:.1f})"
+            )
+
+        return picked
 
     def _weighted_signal_count(self, tags: List[str]) -> float:
         """Compute health-weighted effective signal count, capped at 3.0.
 
-        Each signal contributes its health multiplier (HOT=1.2, NORMAL=1.0,
-        COLD=0.5) instead of a flat 1.0. Result is capped at 3.0 to match
-        the existing diminishing-returns cap.
+        Used for pick angle context, not for ranking.
         """
         total = 0.0
         for tag in tags:
@@ -306,33 +267,17 @@ class BestBetsAggregator:
         return min(total, 3.0)
 
     def _get_health_multiplier(self, signal_tag: str) -> float:
-        """Get health-based weight multiplier for a signal.
-
-        Returns:
-            1.2 for HOT, 1.0 for NORMAL/unknown, 0.5 for COLD behavioral,
-            0.0 for COLD model-dependent (Session 264).
-        """
+        """Get health-based weight multiplier for a signal."""
         health = self._signal_health.get(signal_tag)
         if not health:
             return 1.0
         regime = health.get('regime', 'NORMAL')
 
         if regime == 'COLD':
-            # Model-dependent signals are downstream of predictions —
-            # broken model means broken signal. Zero them out.
             is_model_dep = health.get('is_model_dependent')
             if is_model_dep is None:
-                # Fallback: use static set if BQ field missing
                 is_model_dep = signal_tag in MODEL_DEPENDENT_SIGNALS
             if is_model_dep:
-                logger.debug(
-                    f"Signal '{signal_tag}' zeroed: COLD + model-dependent"
-                )
                 return 0.0
 
-        mult = HEALTH_MULTIPLIERS.get(regime, 1.0)
-        if mult != 1.0:
-            logger.debug(
-                f"Signal '{signal_tag}' health multiplier: {mult}x ({regime})"
-            )
-        return mult
+        return HEALTH_MULTIPLIERS.get(regime, 1.0)

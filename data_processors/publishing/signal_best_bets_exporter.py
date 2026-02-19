@@ -315,10 +315,40 @@ class SignalBestBetsExporter(BaseExporter):
     def _write_to_bigquery(self, target_date: str, picks: List[Dict]) -> None:
         """Write signal best bets to BigQuery using batch load (not streaming).
 
+        Deletes existing rows for the target date first to prevent duplicate
+        accumulation on re-runs (Session 297: fixed triple-write bug).
+
         Uses load_table_from_json with WRITE_APPEND to avoid 90-min streaming
         buffer that blocks DML operations (codebase best practice).
         """
         table_ref = f'{PROJECT_ID}.nba_predictions.signal_best_bets_picks'
+
+        # Delete existing rows for this date to prevent duplicates on re-runs
+        try:
+            delete_query = f"""
+            DELETE FROM `{table_ref}`
+            WHERE game_date = @target_date
+            """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter(
+                        'target_date', 'DATE', target_date
+                    ),
+                ]
+            )
+            delete_job = self.bq_client.query(delete_query, job_config=job_config)
+            result = delete_job.result(timeout=30)
+            deleted = delete_job.num_dml_affected_rows or 0
+            if deleted > 0:
+                logger.info(
+                    f"Deleted {deleted} existing rows for {target_date} "
+                    f"from {table_ref}"
+                )
+        except Exception as e:
+            logger.warning(
+                f"Failed to delete existing rows for {target_date} "
+                f"(will append anyway): {e}"
+            )
 
         rows_to_insert = []
         model_id = get_best_bets_model_id()
