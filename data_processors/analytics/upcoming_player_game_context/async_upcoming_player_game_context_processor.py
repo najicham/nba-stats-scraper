@@ -442,7 +442,7 @@ class AsyncUpcomingPlayerGameContextProcessor(
             points,
             minutes,
             assists,
-            rebounds,
+            total_rebounds as rebounds,
             field_goals_made,
             field_goals_attempted,
             three_pointers_made,
