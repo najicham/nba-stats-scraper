@@ -184,6 +184,89 @@ def health_check():
     }), 200
 
 
+@app.route('/sweep-odds', methods=['POST'])
+def sweep_odds():
+    """
+    Re-process any missing odds API snapshot files for a date.
+
+    Deletes the Firestore batch lock (if completed) and re-runs the batch
+    processor, which picks up ALL files in GCS including any that arrived
+    after the initial batch run.
+
+    Called nightly by Cloud Scheduler at 1 AM ET.
+
+    Request body:
+        {"game_date": "2026-02-19"}  (optional, defaults to today)
+    """
+    from .handlers import OddsAPIBatchHandler
+
+    try:
+        body = request.get_json(silent=True) or {}
+        game_date = body.get('game_date')
+
+        if not game_date:
+            # Default to today (ET)
+            from zoneinfo import ZoneInfo
+            et_now = datetime.now(ZoneInfo('America/New_York'))
+            game_date = et_now.strftime('%Y-%m-%d')
+
+        logger.info(f"🧹 Sweep-odds triggered for {game_date}")
+
+        # Delete existing completed locks so batch processor can re-run
+        db = firestore.Client()
+        locks_deleted = 0
+        for endpoint_type in ('player-props', 'game-lines'):
+            lock_id = f"oddsapi_{endpoint_type}_batch_{game_date}"
+            lock_ref = db.collection('batch_processing_locks').document(lock_id)
+            lock_doc = lock_ref.get()
+            if lock_doc.exists:
+                lock_data = lock_doc.to_dict()
+                status = lock_data.get('status', 'unknown')
+                if status in ('complete', 'failed', 'timeout', 'error'):
+                    lock_ref.delete()
+                    locks_deleted += 1
+                    logger.info(f"  Deleted {endpoint_type} lock (was: {status})")
+                else:
+                    logger.info(f"  Skipping {endpoint_type} lock (status: {status})")
+
+        if locks_deleted == 0:
+            logger.info(f"  No completed locks to clear for {game_date}")
+            return jsonify({
+                "status": "skipped",
+                "game_date": game_date,
+                "reason": "no_completed_locks"
+            }), 200
+
+        # Trigger batch re-processing for props
+        # Use a synthetic file path to trigger the batch handler
+        project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
+        bucket = 'nba-scraped-data'
+        handler = OddsAPIBatchHandler()
+
+        results = []
+        for endpoint_type in ('player-props',):
+            synthetic_path = f"odds-api/{endpoint_type}/{game_date}/sweep-trigger/sweep.json"
+            result = handler.process_with_lock(
+                file_path=synthetic_path,
+                bucket=bucket,
+                project_id=project_id,
+                execution_id=f"sweep-{game_date}"
+            )
+            results.append(result)
+
+        logger.info(f"✅ Sweep-odds complete for {game_date}: {results}")
+        return jsonify({
+            "status": "success",
+            "game_date": game_date,
+            "locks_cleared": locks_deleted,
+            "results": results
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Sweep-odds failed: {e}", exc_info=True)
+        return jsonify({"status": "error", "error": str(e)}), 500
+
+
 @app.route('/monitoring/boxscore-completeness', methods=['POST'])
 def check_boxscore_completeness():
     """
