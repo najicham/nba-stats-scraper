@@ -18,6 +18,7 @@ from datetime import date, timedelta
 from google.cloud import bigquery
 
 from .base_exporter import BaseExporter
+from shared.config.cross_model_subsets import classify_system_id
 from shared.config.model_codenames import get_model_codename, get_model_display_info, CHAMPION_CODENAME
 from shared.config.subset_public_names import get_public_name
 from shared.utils.quality_filter import should_include_prediction  # Session 209
@@ -289,6 +290,12 @@ class AllSubsetsPicksExporter(BaseExporter):
         records = records or {}
         subsets = self._query_subset_definitions()
         daily_signal = self._query_daily_signal(target_date)
+
+        # Session 311B: Resolve stale system_ids in fallback path
+        # Same fix as SubsetMaterializer — definitions may reference old model names
+        active_ids = self._query_active_system_ids(target_date)
+        if active_ids:
+            subsets = self._resolve_stale_system_ids(subsets, active_ids)
 
         # Group definitions by system_id
         subsets_by_model = defaultdict(list)
@@ -601,6 +608,58 @@ class AllSubsetsPicksExporter(BaseExporter):
             filtered = filtered[:top_n]
 
         return filtered
+
+    # ========================================================================
+    # STALE SYSTEM_ID RESOLUTION (Session 311B - Fallback path)
+    # ========================================================================
+
+    def _query_active_system_ids(self, game_date: str) -> List[str]:
+        """Query distinct system_ids with predictions for this date (fallback path)."""
+        query = """
+        SELECT DISTINCT system_id
+        FROM `nba_predictions.player_prop_predictions`
+        WHERE game_date = @target_date
+          AND is_active = TRUE
+          AND recommendation IN ('OVER', 'UNDER')
+        """
+        params = [
+            bigquery.ScalarQueryParameter('target_date', 'DATE', game_date),
+        ]
+        try:
+            return [r['system_id'] for r in self.query_to_list(query, params)]
+        except Exception as e:
+            logger.warning(f"Failed to query active system_ids: {e}")
+            return []
+
+    def _resolve_stale_system_ids(
+        self,
+        subsets: List[Dict[str, Any]],
+        active_system_ids: List[str],
+    ) -> List[Dict[str, Any]]:
+        """Resolve stale system_ids in definitions to currently active ones.
+
+        Session 311B: Same logic as SubsetMaterializer._resolve_stale_system_ids.
+        """
+        family_to_active = {}
+        for sid in active_system_ids:
+            family = classify_system_id(sid)
+            if family:
+                family_to_active[family] = sid
+
+        active_set = set(active_system_ids)
+        for subset in subsets:
+            def_sid = subset['system_id']
+            if def_sid in active_set:
+                continue
+            family = classify_system_id(def_sid)
+            if family and family in family_to_active:
+                new_sid = family_to_active[family]
+                logger.info(
+                    f"Fallback: resolved stale system_id '{def_sid}' → '{new_sid}' "
+                    f"for subset '{subset['subset_id']}'"
+                )
+                subset['system_id'] = new_sid
+        return subsets
 
     # ========================================================================
     # SIGNAL + RECORDS (Session 158 - Consolidated Export)

@@ -58,6 +58,7 @@ class SubsetMaterializer:
         game_date: str,
         trigger_source: str = 'unknown',
         batch_id: str = None,
+        active_system_ids: List[str] = None,
     ) -> Dict[str, Any]:
         """
         Compute and write subset picks to BigQuery.
@@ -69,6 +70,7 @@ class SubsetMaterializer:
             game_date: Date string in YYYY-MM-DD format
             trigger_source: What triggered this ('overnight', 'same_day', 'line_check', 'manual', 'export')
             batch_id: Optional prediction batch ID
+            active_system_ids: Pre-discovered active system_ids (avoids redundant BQ query)
 
         Returns:
             Dictionary with version_id, total_picks, subsets summary
@@ -97,7 +99,8 @@ class SubsetMaterializer:
         #    Definitions may reference old model names (e.g. *_train1102_0131)
         #    while predictions use newer names (e.g. *_train1102_0125).
         #    Fix: classify both into families, map definition → active system_id.
-        active_system_ids = self._query_active_system_ids(game_date)
+        if active_system_ids is None:
+            active_system_ids = self._query_active_system_ids(game_date)
         if active_system_ids:
             subsets = self._resolve_stale_system_ids(subsets, active_system_ids)
 

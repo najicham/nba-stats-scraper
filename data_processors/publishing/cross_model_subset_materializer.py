@@ -45,6 +45,7 @@ class CrossModelSubsetMaterializer:
         game_date: str,
         version_id: str,
         trigger_source: str = 'export',
+        discovered_models: DiscoveredModels = None,
     ) -> Dict[str, Any]:
         """Compute cross-model subsets and write to current_subset_picks.
 
@@ -52,6 +53,7 @@ class CrossModelSubsetMaterializer:
             game_date: Date string YYYY-MM-DD.
             version_id: Version ID from SubsetMaterializer (same batch).
             trigger_source: What triggered this materialization.
+            discovered_models: Pre-discovered models (avoids redundant BQ query).
 
         Returns:
             Dict with subset counts summary.
@@ -59,7 +61,7 @@ class CrossModelSubsetMaterializer:
         computed_at = datetime.now(timezone.utc)
 
         # 1. Discover which models are active for this date
-        discovered = discover_models(self.bq_client, game_date, self.project_id)
+        discovered = discovered_models or discover_models(self.bq_client, game_date, self.project_id)
         if discovered.family_count < 2:
             logger.warning(
                 f"Only {discovered.family_count} model families found for "

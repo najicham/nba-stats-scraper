@@ -88,6 +88,8 @@ from data_processors.publishing.signal_best_bets_exporter import SignalBestBetsE
 from data_processors.publishing.signal_annotator import SignalAnnotator
 # Cross-model observation subsets (Session 277)
 from data_processors.publishing.cross_model_subset_materializer import CrossModelSubsetMaterializer
+# Shared model discovery (Session 311B — query once, pass to both materializers)
+from shared.config.cross_model_subsets import discover_models
 # Signal health + model health exports (Session 267)
 from data_processors.publishing.signal_health_exporter import SignalHealthExporter
 from data_processors.publishing.model_health_exporter import ModelHealthExporter
@@ -268,10 +270,27 @@ def export_date(
     # Session 254: Signal annotation + bridge runs between materialization and export
     mat_version_id = None
     if 'subset-picks' in export_types:
+        # Session 311B: Discover active models once, share across materializers
+        # (saves 1 redundant BQ query per export run)
+        try:
+            from shared.clients.bigquery_pool import get_bigquery_client
+            _bq = get_bigquery_client()
+            discovered = discover_models(_bq, target_date)
+            active_system_ids = discovered.all_system_ids
+            logger.info(f"  Model Discovery: {discovered.family_count} families — {sorted(discovered.family_to_id.keys())}")
+        except Exception as e:
+            logger.warning(f"  Model discovery failed (materializers will self-discover): {e}")
+            discovered = None
+            active_system_ids = None
+
         try:
             # Step 1: Materialize subsets to BigQuery (creates queryable entity)
             materializer = SubsetMaterializer()
-            mat_result = materializer.materialize(target_date, trigger_source='export')
+            mat_result = materializer.materialize(
+                target_date,
+                trigger_source='export',
+                active_system_ids=active_system_ids,
+            )
             mat_version_id = mat_result.get('version_id')
             logger.info(
                 f"  Subset Materialization: {mat_result.get('total_picks', 0)} picks "
@@ -290,6 +309,7 @@ def export_date(
                 target_date,
                 version_id=mat_version_id or f"v_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
                 trigger_source='export',
+                discovered_models=discovered,
             )
             logger.info(
                 f"  Cross-Model Subsets: {xm_result.get('total_picks', 0)} picks "

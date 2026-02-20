@@ -325,6 +325,64 @@ if [ "$DRY_RUN" = true ]; then
 fi
 
 # ============================================================================
+# Update subset definitions (Session 311B)
+# After training, update dynamic_subset_definitions to point to the new
+# model's system_id. This prevents definition staleness at the source.
+# The SubsetMaterializer also has runtime resolution as a safety net.
+# ============================================================================
+for FAMILY_NAME in "${TRAINED_MODELS[@]}"; do
+    # Get the new model's system_id (= model_id in registry)
+    NEW_SYSTEM_ID=$(bq query --use_legacy_sql=false --format=csv --quiet \
+        --project_id="$PROJECT" "
+    SELECT model_id FROM \`${PROJECT}.nba_predictions.model_registry\`
+    WHERE model_family = '$FAMILY_NAME' AND status IN ('active', 'production')
+    ORDER BY created_at DESC, model_id DESC LIMIT 1" | tail -1)
+
+    if [ -z "$NEW_SYSTEM_ID" ] || [ "$NEW_SYSTEM_ID" = "model_id" ]; then
+        echo "  Subset definitions: skipped for $FAMILY_NAME (no model_id found)"
+        continue
+    fi
+
+    # Build the LIKE pattern for this family's old system_ids
+    case "$FAMILY_NAME" in
+        v9_mae)
+            # Champion uses exact 'catboost_v9' — definitions don't go stale
+            echo "  Subset definitions: skipped for v9_mae (champion uses fixed system_id)"
+            continue
+            ;;
+        v9_q43)  PATTERN="catboost_v9_q43_%" ;;
+        v9_q45)  PATTERN="catboost_v9_q45_%" ;;
+        v9_low_vegas)  PATTERN="catboost_v9_low_vegas_%" ;;
+        v12_mae|v12_noveg_mae)  PATTERN="catboost_v12_noveg_train%" ;;
+        v12_q43|v12_noveg_q43)  PATTERN="catboost_v12_noveg_q43_%" ;;
+        v12_q45|v12_noveg_q45)  PATTERN="catboost_v12_noveg_q45_%" ;;
+        *)
+            echo "  Subset definitions: skipped for $FAMILY_NAME (unknown pattern)"
+            continue
+            ;;
+    esac
+
+    # Count affected definitions
+    AFFECTED=$(bq query --use_legacy_sql=false --format=csv --quiet \
+        --project_id="$PROJECT" "
+    SELECT COUNT(*) FROM \`${PROJECT}.nba_predictions.dynamic_subset_definitions\`
+    WHERE system_id LIKE '$PATTERN' AND system_id != '$NEW_SYSTEM_ID' AND is_active = TRUE" | tail -1)
+
+    if [ "$AFFECTED" = "0" ] || [ -z "$AFFECTED" ]; then
+        echo "  Subset definitions: $FAMILY_NAME already up-to-date ($NEW_SYSTEM_ID)"
+        continue
+    fi
+
+    # Update definitions
+    bq query --use_legacy_sql=false --project_id="$PROJECT" "
+    UPDATE \`${PROJECT}.nba_predictions.dynamic_subset_definitions\`
+    SET system_id = '$NEW_SYSTEM_ID'
+    WHERE system_id LIKE '$PATTERN' AND system_id != '$NEW_SYSTEM_ID' AND is_active = TRUE"
+
+    echo "  Subset definitions: updated $AFFECTED rows for $FAMILY_NAME → $NEW_SYSTEM_ID"
+done
+
+# ============================================================================
 # Filter Validation (Session 311)
 # Checks model-specific negative filters against the new model's eval window.
 # Filters are INHERITED — never auto-removed. Report flags issues for review.
