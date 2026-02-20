@@ -5,6 +5,9 @@ The market drops lines reactively after bad games, creating OVER value when play
 revert to their mean. This is a market inefficiency signal, not a model signal.
 
 Session 294: Implemented as signal + aggregator pre-filter (block OVER + line jumped 3+).
+Session 305: Threshold lowered from 3.0 to 2.0. At edge 3+: 71.6% HR (N=109) vs
+77.9% HR (N=86) at 3.0 — 27% more qualifying picks with HR still well above breakeven.
+Previous threshold produced zero production firings (too restrictive).
 """
 
 from typing import Dict, Optional
@@ -13,10 +16,10 @@ from ml.signals.base_signal import BaseSignal, SignalResult
 
 class PropLineDropOverSignal(BaseSignal):
     tag = "prop_line_drop_over"
-    description = "OVER pick where prop line dropped 3+ pts from previous game — 79.0% HR (N=81)"
+    description = "OVER pick where prop line dropped 2+ pts from previous game — 71.6% HR (N=109, edge 3+)"
 
-    MIN_LINE_DROP = 3.0  # Line must have dropped by at least 3 points
-    CONFIDENCE = 0.90  # Strong backtest evidence
+    MIN_LINE_DROP = 2.0  # Line must have dropped by at least 2 points (Session 305: lowered from 3.0)
+    CONFIDENCE = 0.85  # Adjusted for lower threshold
 
     def evaluate(self, prediction: Dict,
                  features: Optional[Dict] = None,
@@ -41,7 +44,7 @@ class PropLineDropOverSignal(BaseSignal):
             return self._no_qualify()
 
         drop_size = abs(line_delta)
-        # Scale confidence with drop size (3pt drop = 0.90, 5+ = 1.0)
+        # Scale confidence with drop size (2pt drop = 0.85, 5+ = 1.0)
         confidence = min(1.0, self.CONFIDENCE + (drop_size - self.MIN_LINE_DROP) * 0.05)
 
         metadata = {

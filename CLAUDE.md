@@ -578,7 +578,7 @@ Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
 | `b2b_fatigue_under` | Market-Pattern | UNDER | 85.7% | CONDITIONAL | Small N (14) |
 | `high_ft_under` | Market-Pattern | UNDER | 64.1% | CONDITIONAL | FTA >= 7 |
 | `rest_advantage_2d` | Context | BOTH | 64.8% | CONDITIONAL | W4 decay to 45.2% |
-| `prop_line_drop_over` | Market-Pattern | OVER | 79.1% | PRODUCTION | Line dropped from open (Session 294) |
+| `prop_line_drop_over` | Market-Pattern | OVER | 71.6% | PRODUCTION | Line dropped 2+ pts from prev game (Session 305: threshold 3→2, N=109) |
 | `self_creator_under` | Market-Pattern | UNDER | 61.8% | WATCH | |
 | `volatile_under` | Market-Pattern | UNDER | 60.0% | WATCH | |
 | `high_usage_under` | Market-Pattern | UNDER | 58.7% | WATCH | |

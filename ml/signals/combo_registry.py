@@ -147,8 +147,8 @@ _FALLBACK_REGISTRY: Dict[str, ComboEntry] = {
         display_name='Prop Line Drop Over',
         signals=['prop_line_drop_over'],
         cardinality=1, classification='SYNERGISTIC', status='PRODUCTION',
-        direction_filter='OVER_ONLY', hit_rate=79.1, roi=50.0, sample_size=67,
-        score_weight=1.0, notes='Session 295: 79.1% HR (N=67) full-season audit',
+        direction_filter='OVER_ONLY', hit_rate=71.6, roi=35.0, sample_size=109,
+        score_weight=1.0, notes='Session 305: Threshold 3.0→2.0. 71.6% HR (N=109, edge 3+). Was 0 production firings at 3.0.',
     ),
 }
 
