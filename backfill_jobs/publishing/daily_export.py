@@ -297,7 +297,12 @@ def export_date(
             )
         except Exception as e:
             # Non-fatal: cross-model subsets are observation-only
-            logger.warning(f"  Cross-Model Subset materialization failed (non-fatal): {e}")
+            # Session 310: Log full traceback — silent failures here caused xm_* subsets
+            # to never be written, making Layer 2 cross-model analysis impossible
+            logger.warning(
+                f"  Cross-Model Subset materialization failed (non-fatal): {e}",
+                exc_info=True
+            )
 
         try:
             # Step 2: Signal annotation — evaluate signals on ALL predictions,

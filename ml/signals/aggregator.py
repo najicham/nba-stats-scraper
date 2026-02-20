@@ -132,8 +132,9 @@ class BestBetsAggregator:
                 continue
 
             # Feature quality floor (Session 278): quality < 85 = 24.0% HR
+            # Session 310: quality=0 (missing) must also be blocked, not passed through
             quality = pred.get('feature_quality_score') or 0
-            if quality > 0 and quality < 85:
+            if quality < 85:
                 continue
 
             # Bench UNDER block (Session 278): line < 12 = 35.1% HR

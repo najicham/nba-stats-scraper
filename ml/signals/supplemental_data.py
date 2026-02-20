@@ -130,7 +130,7 @@ def query_predictions_with_supplements(
         ON mc.player_lookup = amp.player_lookup AND mc.game_id = amp.game_id
       QUALIFY ROW_NUMBER() OVER (
         PARTITION BY amp.player_lookup, amp.game_id
-        ORDER BY ABS(amp.edge) DESC
+        ORDER BY ABS(amp.edge) DESC, amp.system_id DESC
       ) = 1
     ),"""
     else:

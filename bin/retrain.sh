@@ -328,7 +328,7 @@ if [ "$PROMOTE" = true ] && [ ${#FAMILIES_TO_TRAIN[@]} -eq 1 ]; then
         LATEST_MODEL=$(bq query --use_legacy_sql=false --format=csv --quiet "
         SELECT model_id FROM \`${PROJECT}.nba_predictions.model_registry\`
         WHERE model_family = '$FAMILY_NAME' AND status = 'active'
-        ORDER BY created_at DESC LIMIT 1" | tail -1)
+        ORDER BY created_at DESC, model_id DESC LIMIT 1" | tail -1)
 
         LATEST_GCS=$(bq query --use_legacy_sql=false --format=csv --quiet "
         SELECT gcs_path FROM \`${PROJECT}.nba_predictions.model_registry\`
