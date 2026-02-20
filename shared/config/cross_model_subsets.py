@@ -90,6 +90,10 @@ def classify_system_id(system_id: str) -> Optional[str]:
         else:
             if system_id.startswith(info['pattern']):
                 return family_key
+    # Fallback: V9 MAE catch-all for registry names like
+    # 'catboost_v9_33f_train...' that don't match specific V9 variants
+    if system_id.startswith('catboost_v9'):
+        return 'v9_mae'
     return None
 
 

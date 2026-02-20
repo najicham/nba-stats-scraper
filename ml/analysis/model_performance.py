@@ -27,46 +27,117 @@ WATCH_THRESHOLD = 58.0
 ALERT_THRESHOLD = 55.0
 BLOCK_THRESHOLD = 52.4
 
-# Fallback active models — used only if model_registry query fails
+# Fallback active models — used only if discovery query fails
 _FALLBACK_ACTIVE_MODELS = [
     'catboost_v9',
     'catboost_v12',
-    'catboost_v9_q43',
-    'catboost_v9_q45',
+    'catboost_v9_q43_train1102_0131',
+    'catboost_v9_q45_train1102_0131',
 ]
 
 _FALLBACK_TRAINING_END_DATES = {
-    'catboost_v9': date(2026, 1, 8),
-    'catboost_v12': date(2026, 1, 31),
-    'catboost_v9_q43': date(2026, 1, 31),
-    'catboost_v9_q45': date(2026, 1, 31),
+    'catboost_v9': date(2026, 2, 5),
+    'catboost_v12': date(2026, 2, 5),
+    'catboost_v9_q43_train1102_0131': date(2026, 1, 31),
+    'catboost_v9_q45_train1102_0131': date(2026, 1, 31),
 }
 
 
-def get_active_models_from_registry(bq_client: bigquery.Client) -> tuple:
-    """Load active models and training end dates from model_registry.
+def discover_active_models(bq_client: bigquery.Client,
+                           ref_date: date) -> tuple:
+    """Discover active models from prediction_accuracy grading data.
+
+    Two-step approach:
+      1. Find runtime system_ids that have graded predictions near ref_date
+      2. Map training_end_date from model_registry via family classification
+
+    Args:
+        bq_client: BigQuery client.
+        ref_date: Reference date — discover models active around this date.
 
     Returns:
         (active_model_ids: list[str], training_end_dates: dict[str, date])
     """
+    from shared.config.cross_model_subsets import (
+        build_system_id_sql_filter,
+        classify_system_id,
+    )
+
+    # Step A: Discover runtime system_ids from prediction_accuracy
+    sql_filter = build_system_id_sql_filter()
+    discovery_query = f"""
+    SELECT DISTINCT system_id
+    FROM `nba-props-platform.nba_predictions.prediction_accuracy`
+    WHERE game_date BETWEEN DATE_SUB(@ref_date, INTERVAL 30 DAY) AND @ref_date
+      AND {sql_filter}
+      AND prediction_correct IS NOT NULL
+    """
+    try:
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter('ref_date', 'DATE', ref_date),
+            ]
+        )
+        rows = list(bq_client.query(discovery_query, job_config=job_config).result())
+        model_ids = [r.system_id for r in rows]
+    except Exception as e:
+        logger.warning(f"Discovery query failed: {e}. Using fallback models.")
+        return _FALLBACK_ACTIVE_MODELS, dict(_FALLBACK_TRAINING_END_DATES)
+
+    if not model_ids:
+        logger.warning(f"No models found in prediction_accuracy near {ref_date}, using fallback")
+        return _FALLBACK_ACTIVE_MODELS, dict(_FALLBACK_TRAINING_END_DATES)
+
+    logger.info(f"Discovered {len(model_ids)} runtime models from prediction_accuracy: {sorted(model_ids)}")
+
+    # Step B: Map training_end_date from registry via family classification
+    training_end_dates = _map_training_dates_from_registry(bq_client, model_ids)
+
+    return model_ids, training_end_dates
+
+
+def _map_training_dates_from_registry(bq_client: bigquery.Client,
+                                      runtime_ids: List[str]) -> Dict[str, date]:
+    """Map runtime system_ids to training_end_date via family classification.
+
+    Queries model_registry for all entries with training_end_date, classifies
+    each into a family, builds family -> most_recent_training_end_date, then
+    maps each runtime ID to its family's training date.
+    """
+    from shared.config.cross_model_subsets import classify_system_id
+
+    training_dates: Dict[str, date] = {}
+
     try:
         query = """
         SELECT model_id, training_end_date
         FROM `nba-props-platform.nba_predictions.model_registry`
-        WHERE enabled = TRUE AND status IN ('active', 'production')
+        WHERE training_end_date IS NOT NULL
         """
-        results = list(bq_client.query(query).result())
-        if not results:
-            logger.warning("No enabled models in model_registry, using fallback")
-            return _FALLBACK_ACTIVE_MODELS, _FALLBACK_TRAINING_END_DATES
+        rows = list(bq_client.query(query).result())
 
-        model_ids = [r.model_id for r in results]
-        training_dates = {r.model_id: r.training_end_date for r in results}
-        logger.info(f"Loaded {len(model_ids)} active models from model_registry")
-        return model_ids, training_dates
+        # Build family -> most recent training_end_date
+        family_dates: Dict[str, date] = {}
+        for row in rows:
+            family = classify_system_id(row.model_id)
+            if family:
+                existing = family_dates.get(family)
+                if existing is None or row.training_end_date > existing:
+                    family_dates[family] = row.training_end_date
+
+        logger.info(f"Registry family training dates: {family_dates}")
+
+        # Map each runtime system_id to its family's training date
+        for sid in runtime_ids:
+            family = classify_system_id(sid)
+            if family and family in family_dates:
+                training_dates[sid] = family_dates[family]
+            else:
+                logger.warning(f"No training_end_date for {sid} (family={family})")
     except Exception as e:
-        logger.warning(f"Failed to query model_registry: {e}. Using fallback models.")
-        return _FALLBACK_ACTIVE_MODELS, _FALLBACK_TRAINING_END_DATES
+        logger.warning(f"Failed to query model_registry for training dates: {e}")
+
+    return training_dates
 
 TABLE_ID = 'nba-props-platform.nba_predictions.model_performance_daily'
 
@@ -89,7 +160,7 @@ def compute_for_date(bq_client: bigquery.Client, target_date: date,
         List of row dicts ready for BQ insert.
     """
     if active_models is None or training_end_dates is None:
-        active_models, training_end_dates = get_active_models_from_registry(bq_client)
+        active_models, training_end_dates = discover_active_models(bq_client, target_date)
 
     # Query rolling metrics for all models on this date
     query = """
@@ -293,16 +364,22 @@ def backfill(bq_client: bigquery.Client, start_date: date,
 
     logger.info(f"Backfilling {len(dates)} dates from {dates[0]} to {dates[-1]}")
 
-    # Load active models once for the entire backfill
-    active_models, training_end_dates = get_active_models_from_registry(bq_client)
-
+    # Discover models per-date so backfill picks up the right models for each day.
+    # Training dates change less often, so we cache the registry mapping.
     total_rows = 0
     prev_states: Dict[str, dict] = {}
+    cached_training_dates: Optional[Dict] = None
 
     for d in dates:
+        active_models, training_end_dates = discover_active_models(bq_client, d)
+        if cached_training_dates is None:
+            cached_training_dates = training_end_dates
+        else:
+            # Merge any new training date mappings
+            cached_training_dates.update(training_end_dates)
         rows = compute_for_date(bq_client, d, prev_day_states=prev_states,
                                active_models=active_models,
-                               training_end_dates=training_end_dates)
+                               training_end_dates=cached_training_dates)
         if rows:
             write_rows(bq_client, rows)
             total_rows += len(rows)

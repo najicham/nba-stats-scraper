@@ -43,7 +43,7 @@ Added `book_disagreement` signal (Session 303, was registered in code but missin
 
 ## Known Issues (Not Fixed This Session)
 
-1. **model_performance_daily registry mismatch** — Model registry uses full deployment names but grading uses runtime `system_id` (`catboost_v9`). The daily state machine can't compute. Blocks Phase B trust-weighted scoring.
+1. ~~**model_performance_daily registry mismatch**~~ — **FIXED Session 309.** Discovery-based lookup from `prediction_accuracy` replaces registry lookup.
 
 2. **Redundant pick storage** — `signal_best_bets_picks` and `current_subset_picks (subset_id='best_bets')` store the same picks with two grading paths.
 
