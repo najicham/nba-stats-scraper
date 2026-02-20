@@ -22,17 +22,15 @@ logger = logging.getLogger(__name__)
 # Model family definitions (pattern-based, not exact system_id)
 # ---------------------------------------------------------------------------
 
+# IMPORTANT: Order matters for classify_system_id() — more specific patterns
+# must come BEFORE broader patterns within the same prefix family.
+# e.g. v12_q43 ('catboost_v12_noveg_q43_') before v12_mae ('catboost_v12')
 MODEL_FAMILIES = {
+    # V9 family — exact match for champion, prefix for variants
     'v9_mae': {
         'pattern': 'catboost_v9',
         'exact': True,
         'feature_set': 'v9',
-        'loss': 'mae',
-    },
-    'v12_mae': {
-        'pattern': 'catboost_v12',
-        'exact': True,
-        'feature_set': 'v12',
         'loss': 'mae',
     },
     'v9_q43': {
@@ -47,6 +45,14 @@ MODEL_FAMILIES = {
         'feature_set': 'v9',
         'loss': 'quantile',
     },
+    'v9_low_vegas': {
+        'pattern': 'catboost_v9_low_vegas_',
+        'exact': False,
+        'feature_set': 'v9',
+        'loss': 'mae',
+    },
+    # V12 family — quantile patterns FIRST (more specific), then broad v12_mae.
+    # v12_mae matches both legacy 'catboost_v12' and monthly 'catboost_v12_noveg_train*'.
     'v12_q43': {
         'pattern': 'catboost_v12_noveg_q43_',
         'exact': False,
@@ -59,10 +65,10 @@ MODEL_FAMILIES = {
         'feature_set': 'v12',
         'loss': 'quantile',
     },
-    'v9_low_vegas': {
-        'pattern': 'catboost_v9_low_vegas_',
-        'exact': False,
-        'feature_set': 'v9',
+    'v12_mae': {
+        'pattern': 'catboost_v12',
+        'exact': False,  # Prefix match: catches 'catboost_v12' AND 'catboost_v12_noveg_train*'
+        'feature_set': 'v12',
         'loss': 'mae',
     },
 }

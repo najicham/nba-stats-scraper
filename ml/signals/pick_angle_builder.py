@@ -1,11 +1,13 @@
 """Pick Angle Builder — generates human-readable reasoning for each pick.
 
-Angles explain WHY a pick was selected: confidence context, player tier
-patterns, cross-model consensus, subset membership, and signal-specific insights.
+Angles explain WHY a pick was selected: player tier patterns, cross-model
+consensus, subset membership, and signal-specific insights.
 
 Session 278: Initial creation.
 Session 279: Added subset membership angle (qualifying_subsets provenance).
 Session 284: Added high-conviction edge>=5 angle (65.6% HR cross-season).
+Session 308: Removed confidence angle (Session 306 proved confidence doesn't
+  separate good from bad for V9 — all tiers cluster 46-55% HR).
 """
 
 import logging
@@ -16,12 +18,6 @@ from shared.config.subset_public_names import SUBSET_PUBLIC_NAMES
 logger = logging.getLogger(__name__)
 
 MAX_ANGLES = 5
-
-# Historical hit rates by confidence tier (from Session 277 analysis)
-CONFIDENCE_HR_MAP = {
-    95: 55.4, 92: 47.5, 90: 52.7, 89: 54.8,
-    87: 50.9, 85: 51.2, 82: 49.8, 79: 48.1, 77: 46.5,
-}
 
 # Historical hit rates by direction + player tier
 DIRECTION_TIER_HR = {
@@ -68,20 +64,6 @@ def _classify_tier(line_value: float) -> str:
         return 'role'
     else:
         return 'bench'
-
-
-def _confidence_angle(pick: Dict) -> str | None:
-    """Generate confidence context angle."""
-    confidence = pick.get('confidence_score')
-    if not confidence:
-        return None
-
-    # Find closest matching tier
-    conf_pct = int(round(confidence * 100))
-    closest_tier = min(CONFIDENCE_HR_MAP.keys(), key=lambda t: abs(t - conf_pct))
-    hr = CONFIDENCE_HR_MAP[closest_tier]
-
-    return f"Confidence {confidence:.2f} ({hr:.1f}% HR at this tier)"
 
 
 def _direction_tier_angle(pick: Dict) -> str | None:
@@ -150,11 +132,6 @@ def _warning_angles(pick: Dict) -> List[str]:
         if angle:
             angles.append(angle)
 
-    # Special warning for 0.92 confidence tier
-    confidence = pick.get('confidence_score')
-    if confidence and 0.915 <= confidence <= 0.925:
-        angles.append("Warning: 0.92 confidence tier has 47.5% HR — worst tier")
-
     return angles
 
 
@@ -204,40 +181,35 @@ def build_pick_angles(
     """
     angles: List[str] = []
 
-    # 1. Confidence context (always first if available)
-    conf_angle = _confidence_angle(pick)
-    if conf_angle:
-        angles.append(conf_angle)
-
-    # 2. High conviction edge (Session 284 — 65.6% HR cross-season)
+    # 1. High conviction edge (Session 284 — 65.6% HR cross-season)
     hc_angle = _high_conviction_angle(pick)
     if hc_angle:
         angles.append(hc_angle)
 
-    # 3. Subset membership (Session 279 — high-value provenance)
+    # 2. Subset membership (Session 279 — high-value provenance)
     subset_angle = _subset_membership_angle(pick)
     if subset_angle:
         angles.append(subset_angle)
 
-    # 4. Direction + player tier
+    # 3. Direction + player tier
     tier_angle = _direction_tier_angle(pick)
     if tier_angle:
         angles.append(tier_angle)
 
-    # 5. Cross-model consensus
+    # 4. Cross-model consensus
     consensus = _consensus_angle(pick, cross_model_factors)
     if consensus:
         angles.append(consensus)
 
-    # 6. Signal-specific angles
+    # 5. Signal-specific angles
     sig_angles = _signal_angles(pick, signal_results)
     angles.extend(sig_angles)
 
-    # 7. Warning angles (always last)
+    # 6. Warning angles (always last)
     warn_angles = _warning_angles(pick)
     angles.extend(warn_angles)
 
-    # 8. Direction health warning (Session 284)
+    # 7. Direction health warning (Session 284)
     if direction_health:
         direction = pick.get('recommendation')
         if direction == 'OVER' and direction_health.get('over_hr_14d') is not None:
