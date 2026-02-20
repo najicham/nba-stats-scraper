@@ -61,10 +61,10 @@ def compute_player_blacklist(
         query = f"""
         SELECT
             player_lookup,
-            COUNTIF(is_correct = TRUE) AS wins,
-            COUNTIF(is_correct = FALSE) AS losses,
+            COUNTIF(prediction_correct = TRUE) AS wins,
+            COUNTIF(prediction_correct = FALSE) AS losses,
             COUNT(*) AS total_picks,
-            ROUND(100.0 * COUNTIF(is_correct = TRUE) / COUNT(*), 1) AS hit_rate
+            ROUND(100.0 * COUNTIF(prediction_correct = TRUE) / COUNT(*), 1) AS hit_rate
         FROM `{project_id}.nba_predictions.prediction_accuracy`
         WHERE game_date >= @season_start
           AND game_date < @target_date

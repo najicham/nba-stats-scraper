@@ -400,7 +400,10 @@ class SignalBestBetsExporter(BaseExporter):
                 'source_model_id': pick.get('source_model'),
                 'source_model_family': pick.get('source_model_family'),
                 'n_models_eligible': pick.get('n_models_eligible'),
-                'champion_edge': pick.get('champion_edge'),
+                'champion_edge': (
+                    round(float(pick['champion_edge']), 1)
+                    if pick.get('champion_edge') is not None else None
+                ),
                 'direction_conflict': pick.get('direction_conflict'),
                 'created_at': datetime.now(timezone.utc).isoformat(),
             })
@@ -439,7 +442,7 @@ class SignalBestBetsExporter(BaseExporter):
         SELECT
             recommendation,
             COUNT(*) AS n,
-            ROUND(100.0 * COUNTIF(is_correct = TRUE) / COUNT(*), 1) AS hr
+            ROUND(100.0 * COUNTIF(prediction_correct = TRUE) / COUNT(*), 1) AS hr
         FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy`
         WHERE game_date >= DATE_SUB(@target_date, INTERVAL 14 DAY)
           AND game_date < @target_date
