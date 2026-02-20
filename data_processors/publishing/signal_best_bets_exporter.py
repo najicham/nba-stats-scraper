@@ -377,8 +377,8 @@ class SignalBestBetsExporter(BaseExporter):
                 'predicted_points': pick.get('prediction'),
                 'line_value': pick.get('line'),
                 'recommendation': pick.get('direction', ''),
-                'edge': pick.get('edge'),
-                'confidence_score': pick.get('confidence'),
+                'edge': round(float(pick.get('edge') or 0), 1),
+                'confidence_score': round(min(float(pick.get('confidence') or 0), 9.999), 3),
                 'signal_tags': pick.get('signals', []),
                 'signal_count': pick.get('signal_count', 0),
                 'composite_score': pick.get('composite_score'),
@@ -444,7 +444,7 @@ class SignalBestBetsExporter(BaseExporter):
         WHERE game_date >= DATE_SUB(@target_date, INTERVAL 14 DAY)
           AND game_date < @target_date
           AND system_id = @model_id
-          AND ABS(edge) >= 3
+          AND ABS(predicted_points - line_value) >= 3
           AND is_voided = FALSE
           AND recommendation IN ('OVER', 'UNDER')
         GROUP BY recommendation

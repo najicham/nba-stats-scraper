@@ -69,7 +69,7 @@ def compute_player_blacklist(
         WHERE game_date >= @season_start
           AND game_date < @target_date
           AND system_id = @system_id
-          AND ABS(edge) >= 3
+          AND ABS(predicted_points - line_value) >= 3
           AND is_voided = FALSE
         GROUP BY player_lookup
         HAVING COUNT(*) >= @min_picks
