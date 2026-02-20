@@ -24,6 +24,7 @@ from typing import Dict, List, Any, Optional
 from google.cloud import bigquery
 
 from shared.clients.bigquery_pool import get_bigquery_client
+from shared.config.cross_model_subsets import classify_system_id
 from shared.config.gcp_config import get_project_id
 from shared.config.subset_public_names import get_public_name
 from shared.utils.quality_filter import should_include_prediction  # Session 209
@@ -92,17 +93,25 @@ class SubsetMaterializer:
                 'status': 'no_definitions',
             }
 
-        # 2. Group definitions by system_id
+        # 2. Resolve stale system_ids in definitions (Session 311)
+        #    Definitions may reference old model names (e.g. *_train1102_0131)
+        #    while predictions use newer names (e.g. *_train1102_0125).
+        #    Fix: classify both into families, map definition → active system_id.
+        active_system_ids = self._query_active_system_ids(game_date)
+        if active_system_ids:
+            subsets = self._resolve_stale_system_ids(subsets, active_system_ids)
+
+        # 3. Group definitions by system_id
         subsets_by_model = defaultdict(list)
         for subset in subsets:
             subsets_by_model[subset['system_id']].append(subset)
 
-        # 3. Load daily signal (champion model — signal is about market conditions)
+        # 4. Load daily signal (champion model — signal is about market conditions)
         daily_signal = self._query_daily_signal(game_date)
         signal_value = daily_signal.get('daily_signal') if daily_signal else None
         pct_over_value = daily_signal.get('pct_over') if daily_signal else None
 
-        # 4. Process each model's subsets
+        # 5. Process each model's subsets
         rows = []
         subsets_summary = {}
         total_predictions_available = 0
@@ -141,7 +150,7 @@ class SubsetMaterializer:
                 else:
                     logger.info(f"No unfiltered predictions for {game_date} from {system_id}")
 
-        # 5. Write to BigQuery (append-only, no deletes or updates)
+        # 6. Write to BigQuery (append-only, no deletes or updates)
         if rows:
             self._write_rows(rows)
 
@@ -203,6 +212,72 @@ class SubsetMaterializer:
         job_config = bigquery.QueryJobConfig()
         result = self.bq_client.query(query, job_config=job_config).result(timeout=60)
         return [dict(row) for row in result]
+
+    def _query_active_system_ids(self, game_date: str) -> List[str]:
+        """Query distinct system_ids that have predictions for this game date."""
+        query = """
+        SELECT DISTINCT system_id
+        FROM `nba_predictions.player_prop_predictions`
+        WHERE game_date = @game_date
+          AND is_active = TRUE
+          AND recommendation IN ('OVER', 'UNDER')
+        """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter('game_date', 'DATE', game_date),
+            ]
+        )
+        try:
+            result = self.bq_client.query(query, job_config=job_config).result(timeout=30)
+            return [row['system_id'] for row in result]
+        except Exception as e:
+            logger.error(f"Failed to query active system_ids: {e}")
+            return []
+
+    def _resolve_stale_system_ids(
+        self,
+        subsets: List[Dict[str, Any]],
+        active_system_ids: List[str],
+    ) -> List[Dict[str, Any]]:
+        """Resolve stale system_ids in definitions to currently active ones.
+
+        Uses family-based classification: if a definition references
+        'catboost_v9_q43_train1102_0131' but predictions use
+        'catboost_v9_q43_train1102_0125', both classify to family 'v9_q43',
+        so the definition is updated to use the active system_id.
+
+        Session 311: Fixes Q43/Q45 subsets silently producing 0 picks.
+        """
+        # Build family → active_system_id map
+        family_to_active = {}
+        for sid in active_system_ids:
+            family = classify_system_id(sid)
+            if family:
+                family_to_active[family] = sid
+
+        active_set = set(active_system_ids)
+        resolved_count = 0
+
+        for subset in subsets:
+            def_sid = subset['system_id']
+            if def_sid in active_set:
+                continue  # Already matches an active system_id
+
+            # Classify the definition's system_id to a family
+            family = classify_system_id(def_sid)
+            if family and family in family_to_active:
+                new_sid = family_to_active[family]
+                logger.info(
+                    f"Resolved stale system_id '{def_sid}' → '{new_sid}' "
+                    f"(family={family}) for subset '{subset['subset_id']}'"
+                )
+                subset['system_id'] = new_sid
+                resolved_count += 1
+
+        if resolved_count:
+            logger.info(f"Resolved {resolved_count} stale system_id(s) in subset definitions")
+
+        return subsets
 
     def _query_all_predictions(self, game_date: str, system_id: str = CHAMPION_SYSTEM_ID, min_quality: float = None) -> List[Dict[str, Any]]:
         """
