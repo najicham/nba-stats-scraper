@@ -231,8 +231,8 @@ class QualityScorer:
         counted = 0
         for feature_idx in range(num_features):
             source = feature_sources.get(feature_idx, 'default')
-            if source == 'missing' and feature_idx in OPTIONAL_FEATURES:
-                continue  # Don't penalize optional missing features
+            if source in ('missing', 'default', 'fallback') and feature_idx in OPTIONAL_FEATURES:
+                continue  # Don't penalize optional unavailable features (Session 305)
             weight = SOURCE_WEIGHTS.get(source, 40)
             total_weight += weight
             counted += 1
