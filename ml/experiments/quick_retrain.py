@@ -740,8 +740,8 @@ def augment_v11_features(client, df):
             changed = True
 
         if changed:
-            df.at[df.index[idx], 'features'] = features
-            # Also update individual columns so build_features_dataframe sees them
+            # Session 311B: Write to individual feature_N_value columns only
+            # (features array column is deprecated, Session 286-287)
             sto_idx = feature_names.index('star_teammates_out')
             df.at[df.index[idx], f'feature_{sto_idx}_value'] = features[sto_idx]
             gtl_idx = feature_names.index('game_total_line')
@@ -1116,8 +1116,8 @@ def augment_v12_features(client, df):
                 feature_names.append(fname)
                 features.append(float(fval) if fval is not None and not (isinstance(fval, float) and np.isnan(fval)) else np.nan)
 
-        df.at[df.index[idx], 'features'] = features
-        # Also update individual columns so build_features_dataframe sees them
+        # Session 311B: Write to individual feature_N_value columns only
+        # (features array column is deprecated, Session 286-287)
         for fname, fval in v12_features:
             fidx_in_store = FEATURE_STORE_NAMES.index(fname) if fname in FEATURE_STORE_NAMES else None
             if fidx_in_store is not None:
@@ -1318,8 +1318,12 @@ def augment_v13_features(client, df):
                 feature_names.append(fname)
                 features.append(float(fval) if fval is not None and not (isinstance(fval, float) and np.isnan(fval)) else np.nan)
 
-        df.at[df.index[idx], 'features'] = features
-        df.at[df.index[idx], 'feature_names'] = feature_names
+        # Session 311B: Write to individual feature_N_value columns only
+        # (features array column is deprecated, Session 286-287)
+        for fname, fval in v13_features:
+            fidx_in_store = FEATURE_STORE_NAMES.index(fname) if fname in FEATURE_STORE_NAMES else None
+            if fidx_in_store is not None:
+                df.at[df.index[idx], f'feature_{fidx_in_store}_value'] = float(fval) if fval is not None and not (isinstance(fval, float) and np.isnan(fval)) else np.nan
 
     total = len(df)
     print(f"  V13 augmentation: {matched}/{total} ({100*matched/total:.0f}%) rows matched FG% data")
@@ -1533,8 +1537,12 @@ def augment_v14_features(client, df):
                 feature_names.append(fname)
                 features.append(float(fval) if fval is not None and not (isinstance(fval, float) and np.isnan(fval)) else np.nan)
 
-        df.at[df.index[idx], 'features'] = features
-        df.at[df.index[idx], 'feature_names'] = feature_names
+        # Session 311B: Write to individual feature_N_value columns only
+        # (features array column is deprecated, Session 286-287)
+        for fname, fval in v14_features:
+            fidx_in_store = FEATURE_STORE_NAMES.index(fname) if fname in FEATURE_STORE_NAMES else None
+            if fidx_in_store is not None:
+                df.at[df.index[idx], f'feature_{fidx_in_store}_value'] = float(fval) if fval is not None and not (isinstance(fval, float) and np.isnan(fval)) else np.nan
 
     total = len(df)
     print(f"  V14 augmentation: {matched}/{total} ({100*matched/total:.0f}%) rows matched V14 data")
