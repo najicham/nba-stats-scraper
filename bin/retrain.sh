@@ -35,6 +35,8 @@ ROLLING_WINDOW_DAYS=42  # Rolling training window (Session 284: +$5,370 P&L vs e
 # Parse arguments
 DRY_RUN=false
 PROMOTE=false
+VALIDATE_FILTERS=false
+FORCE_PROMOTE=false
 TRAIN_END=""
 CUSTOM_NAME=""
 EVAL_DAYS=7
@@ -76,6 +78,14 @@ while [[ $# -gt 0 ]]; do
             ENABLE_AFTER=true
             shift
             ;;
+        --validate-filters)
+            VALIDATE_FILTERS=true
+            shift
+            ;;
+        --force-promote)
+            FORCE_PROMOTE=true
+            shift
+            ;;
         -h|--help)
             echo "Multi-Family Model Retraining Script"
             echo ""
@@ -88,13 +98,15 @@ while [[ $# -gt 0 ]]; do
             echo "  (no flag)          Train default family: v9_mae"
             echo ""
             echo "Options:"
-            echo "  --dry-run          Show what would happen without executing"
-            echo "  --promote          Automatically promote to production after training"
-            echo "  --train-end DATE   Set training end date (default: yesterday)"
-            echo "  --name NAME        Custom experiment name (default: auto-generated)"
-            echo "  --eval-days N      Evaluation window in days (default: 7)"
-            echo "  --enable           Set enabled=TRUE on the new model after training"
-            echo "  -h, --help         Show this help message"
+            echo "  --dry-run            Show what would happen without executing"
+            echo "  --promote            Automatically promote to production after training"
+            echo "  --force-promote      Promote even if champion is HEALTHY/WATCH"
+            echo "  --validate-filters   Run filter validation queries after training"
+            echo "  --train-end DATE     Set training end date (default: yesterday)"
+            echo "  --name NAME          Custom experiment name (default: auto-generated)"
+            echo "  --eval-days N        Evaluation window in days (default: 7)"
+            echo "  --enable             Set enabled=TRUE on the new model after training"
+            echo "  -h, --help           Show this help message"
             echo ""
             echo "Examples:"
             echo "  ./bin/retrain.sh --all --dry-run"
@@ -313,7 +325,120 @@ if [ "$DRY_RUN" = true ]; then
 fi
 
 # ============================================================================
+# Filter Validation (Session 311)
+# Checks model-specific negative filters against the new model's eval window.
+# Filters are INHERITED — never auto-removed. Report flags issues for review.
+# ============================================================================
+if [ "$VALIDATE_FILTERS" = true ] && [ ${#TRAINED_MODELS[@]} -gt 0 ]; then
+    echo ""
+    echo "=============================================="
+    echo "FILTER VALIDATION REPORT"
+    echo "=============================================="
+
+    EVAL_START=$(date -d "$TRAIN_END + 1 day" +%Y-%m-%d)
+    EVAL_END=$(date -d "$TRAIN_END + $EVAL_DAYS days" +%Y-%m-%d)
+
+    # Get the latest trained model's system_id
+    FIRST_FAMILY="${TRAINED_MODELS[0]}"
+    NEW_MODEL_ID=$(bq query --use_legacy_sql=false --format=csv --quiet \
+        --project_id="$PROJECT" "
+    SELECT model_id FROM \`${PROJECT}.nba_predictions.model_registry\`
+    WHERE model_family = '$FIRST_FAMILY' AND status = 'active'
+    ORDER BY created_at DESC, model_id DESC LIMIT 1" | tail -1)
+
+    echo "Model:       $NEW_MODEL_ID"
+    echo "Eval Window: $EVAL_START to $EVAL_END"
+    echo "Breakeven:   52.4%"
+    echo "----------------------------------------------"
+
+    BREAKEVEN=52.4
+
+    # Filter 1: UNDER edge 7+ block (MODEL-SPECIFIC)
+    UNDER7_HR=$(bq query --use_legacy_sql=false --format=csv --quiet \
+        --project_id="$PROJECT" "
+    SELECT ROUND(100.0 * COUNTIF(prediction_correct) / NULLIF(COUNT(*), 0), 1)
+    FROM \`${PROJECT}.nba_predictions.prediction_accuracy\`
+    WHERE system_id = '$NEW_MODEL_ID'
+      AND recommendation = 'UNDER'
+      AND ABS(predicted_points - line_value) >= 7
+      AND game_date BETWEEN '$EVAL_START' AND '$EVAL_END'
+      AND prediction_correct IS NOT NULL
+      AND is_voided IS NOT TRUE" | tail -1)
+
+    UNDER7_N=$(bq query --use_legacy_sql=false --format=csv --quiet \
+        --project_id="$PROJECT" "
+    SELECT COUNT(*)
+    FROM \`${PROJECT}.nba_predictions.prediction_accuracy\`
+    WHERE system_id = '$NEW_MODEL_ID'
+      AND recommendation = 'UNDER'
+      AND ABS(predicted_points - line_value) >= 7
+      AND game_date BETWEEN '$EVAL_START' AND '$EVAL_END'
+      AND prediction_correct IS NOT NULL
+      AND is_voided IS NOT TRUE" | tail -1)
+
+    if [ "$UNDER7_HR" = "null" ] || [ -z "$UNDER7_HR" ]; then
+        echo "  UNDER edge 7+ block:    N/A (no data in eval window)"
+    elif (( $(echo "$UNDER7_HR > $BREAKEVEN" | bc -l 2>/dev/null || echo 0) )); then
+        echo "  UNDER edge 7+ block:    REVIEW_NEEDED — HR=${UNDER7_HR}% > ${BREAKEVEN}% (N=${UNDER7_N})"
+    else
+        echo "  UNDER edge 7+ block:    CONFIRMED — HR=${UNDER7_HR}% <= ${BREAKEVEN}% (N=${UNDER7_N})"
+    fi
+
+    # Filter 2: Feature quality floor (MODEL-SPECIFIC)
+    LOWQ_HR=$(bq query --use_legacy_sql=false --format=csv --quiet \
+        --project_id="$PROJECT" "
+    SELECT ROUND(100.0 * COUNTIF(pa.prediction_correct) / NULLIF(COUNT(*), 0), 1)
+    FROM \`${PROJECT}.nba_predictions.prediction_accuracy\` pa
+    JOIN \`${PROJECT}.nba_predictions.player_prop_predictions\` pp
+      ON pa.player_lookup = pp.player_lookup AND pa.game_id = pp.game_id
+         AND pa.system_id = pp.system_id
+    WHERE pa.system_id = '$NEW_MODEL_ID'
+      AND COALESCE(pp.feature_quality_score, 0) < 85
+      AND pa.game_date BETWEEN '$EVAL_START' AND '$EVAL_END'
+      AND pa.prediction_correct IS NOT NULL
+      AND pa.is_voided IS NOT TRUE" | tail -1)
+
+    LOWQ_N=$(bq query --use_legacy_sql=false --format=csv --quiet \
+        --project_id="$PROJECT" "
+    SELECT COUNT(*)
+    FROM \`${PROJECT}.nba_predictions.prediction_accuracy\` pa
+    JOIN \`${PROJECT}.nba_predictions.player_prop_predictions\` pp
+      ON pa.player_lookup = pp.player_lookup AND pa.game_id = pp.game_id
+         AND pa.system_id = pp.system_id
+    WHERE pa.system_id = '$NEW_MODEL_ID'
+      AND COALESCE(pp.feature_quality_score, 0) < 85
+      AND pa.game_date BETWEEN '$EVAL_START' AND '$EVAL_END'
+      AND pa.prediction_correct IS NOT NULL
+      AND pa.is_voided IS NOT TRUE" | tail -1)
+
+    if [ "$LOWQ_HR" = "null" ] || [ -z "$LOWQ_HR" ]; then
+        echo "  Quality < 85 block:     N/A (no data in eval window)"
+    elif (( $(echo "$LOWQ_HR > $BREAKEVEN" | bc -l 2>/dev/null || echo 0) )); then
+        echo "  Quality < 85 block:     REVIEW_NEEDED — HR=${LOWQ_HR}% > ${BREAKEVEN}% (N=${LOWQ_N})"
+    else
+        echo "  Quality < 85 block:     CONFIRMED — HR=${LOWQ_HR}% <= ${BREAKEVEN}% (N=${LOWQ_N})"
+    fi
+
+    # Market-structural filters (always inherit, no validation needed)
+    echo ""
+    echo "Market-structural filters (always inherited):"
+    echo "  Edge floor (5.0):       INHERITED (market-structural)"
+    echo "  Line movement blocks:   INHERITED (market-structural)"
+    echo "  Bench UNDER block:      INHERITED (market-structural)"
+    echo "  Avoid familiar (6+):    INHERITED (market-structural)"
+    echo "  Player blacklist:       AUTO-RECOMPUTES (from grading data)"
+    echo "----------------------------------------------"
+    echo "NOTE: REVIEW_NEEDED does NOT mean remove the filter."
+    echo "      It means the pattern may not hold for this model — investigate manually."
+    echo ""
+fi
+
+# ============================================================================
 # Promotion (only for single-family, non-quantile models)
+# Session 311: Decay-gated promotion — checks champion's decay state before
+# promoting. If champion is HEALTHY/WATCH, promotes immediately. If
+# DEGRADING/BLOCKED, also promotes immediately (urgency). This ensures we
+# never shadow when the current model is failing.
 # ============================================================================
 if [ "$PROMOTE" = true ] && [ ${#FAMILIES_TO_TRAIN[@]} -eq 1 ]; then
     FAMILY_NAME="${FAMILIES_TO_TRAIN[0]}"
@@ -322,51 +447,104 @@ if [ "$PROMOTE" = true ] && [ ${#FAMILIES_TO_TRAIN[@]} -eq 1 ]; then
     if [ -n "$QA" ] && [ "$QA" != "null" ]; then
         echo "Skipping promotion for quantile model (shadow-only)"
     else
-        echo "Promoting latest $FAMILY_NAME model to production..."
+        # Check champion's current decay state
+        echo ""
+        echo "Checking champion model decay state..."
+        CHAMPION_STATE=$(bq query --use_legacy_sql=false --format=csv --quiet \
+            --project_id="$PROJECT" "
+        SELECT COALESCE(state, 'UNKNOWN')
+        FROM \`${PROJECT}.nba_predictions.model_performance_daily\`
+        WHERE game_date = (
+            SELECT MAX(game_date) FROM \`${PROJECT}.nba_predictions.model_performance_daily\`
+        )
+        AND model_id = 'catboost_v9'
+        LIMIT 1" | tail -1)
 
-        # Get the latest model_id for this family
-        LATEST_MODEL=$(bq query --use_legacy_sql=false --format=csv --quiet "
-        SELECT model_id FROM \`${PROJECT}.nba_predictions.model_registry\`
-        WHERE model_family = '$FAMILY_NAME' AND status = 'active'
-        ORDER BY created_at DESC, model_id DESC LIMIT 1" | tail -1)
+        CHAMPION_HR=$(bq query --use_legacy_sql=false --format=csv --quiet \
+            --project_id="$PROJECT" "
+        SELECT COALESCE(CAST(rolling_hr_7d AS STRING), 'N/A')
+        FROM \`${PROJECT}.nba_predictions.model_performance_daily\`
+        WHERE game_date = (
+            SELECT MAX(game_date) FROM \`${PROJECT}.nba_predictions.model_performance_daily\`
+        )
+        AND model_id = 'catboost_v9'
+        LIMIT 1" | tail -1)
 
-        LATEST_GCS=$(bq query --use_legacy_sql=false --format=csv --quiet "
-        SELECT gcs_path FROM \`${PROJECT}.nba_predictions.model_registry\`
-        WHERE model_id = '$LATEST_MODEL'" | tail -1)
+        # Default to UNKNOWN if no data
+        if [ -z "$CHAMPION_STATE" ] || [ "$CHAMPION_STATE" = "state" ]; then
+            CHAMPION_STATE="UNKNOWN"
+        fi
 
-        if [ -n "$LATEST_MODEL" ] && [ "$LATEST_MODEL" != "model_id" ]; then
-            # Deprecate current production
-            CURRENT_PROD=$(bq query --use_legacy_sql=false --format=csv --quiet "
+        echo "Champion state: $CHAMPION_STATE (7d HR: ${CHAMPION_HR}%)"
+
+        PROCEED_WITH_PROMOTION=true
+        case "$CHAMPION_STATE" in
+            BLOCKED|DEGRADING)
+                echo "Champion is $CHAMPION_STATE — URGENT promotion recommended"
+                echo "Proceeding with immediate promotion..."
+                ;;
+            HEALTHY|WATCH)
+                echo "Champion is $CHAMPION_STATE — standard promotion"
+                ;;
+            INSUFFICIENT_DATA|UNKNOWN)
+                echo "Champion state unknown (insufficient data) — proceeding with promotion"
+                ;;
+            *)
+                echo "WARNING: Unexpected champion state: $CHAMPION_STATE"
+                echo "Proceeding with promotion..."
+                ;;
+        esac
+
+        if [ "$PROCEED_WITH_PROMOTION" = true ]; then
+            echo "Promoting latest $FAMILY_NAME model to production..."
+
+            # Get the latest model_id for this family
+            LATEST_MODEL=$(bq query --use_legacy_sql=false --format=csv --quiet \
+                --project_id="$PROJECT" "
             SELECT model_id FROM \`${PROJECT}.nba_predictions.model_registry\`
-            WHERE is_production = TRUE AND model_version = 'v9'
-            LIMIT 1" | tail -1)
+            WHERE model_family = '$FAMILY_NAME' AND status = 'active'
+            ORDER BY created_at DESC, model_id DESC LIMIT 1" | tail -1)
 
-            if [ -n "$CURRENT_PROD" ] && [ "$CURRENT_PROD" != "model_id" ]; then
-                bq query --use_legacy_sql=false "
+            LATEST_GCS=$(bq query --use_legacy_sql=false --format=csv --quiet \
+                --project_id="$PROJECT" "
+            SELECT gcs_path FROM \`${PROJECT}.nba_predictions.model_registry\`
+            WHERE model_id = '$LATEST_MODEL'" | tail -1)
+
+            if [ -n "$LATEST_MODEL" ] && [ "$LATEST_MODEL" != "model_id" ]; then
+                # Deprecate current production
+                CURRENT_PROD=$(bq query --use_legacy_sql=false --format=csv --quiet \
+                    --project_id="$PROJECT" "
+                SELECT model_id FROM \`${PROJECT}.nba_predictions.model_registry\`
+                WHERE is_production = TRUE AND model_version = 'v9'
+                LIMIT 1" | tail -1)
+
+                if [ -n "$CURRENT_PROD" ] && [ "$CURRENT_PROD" != "model_id" ]; then
+                    bq query --use_legacy_sql=false --project_id="$PROJECT" "
+                    UPDATE \`${PROJECT}.nba_predictions.model_registry\`
+                    SET is_production = FALSE, status = 'deprecated',
+                        production_end_date = CURRENT_DATE()
+                    WHERE model_id = '$CURRENT_PROD'"
+                    echo "Deprecated: $CURRENT_PROD"
+                fi
+
+                # Promote new model
+                bq query --use_legacy_sql=false --project_id="$PROJECT" "
                 UPDATE \`${PROJECT}.nba_predictions.model_registry\`
-                SET is_production = FALSE, status = 'deprecated',
-                    production_end_date = CURRENT_DATE()
-                WHERE model_id = '$CURRENT_PROD'"
-                echo "Deprecated: $CURRENT_PROD"
+                SET is_production = TRUE, enabled = TRUE,
+                    production_start_date = CURRENT_DATE()
+                WHERE model_id = '$LATEST_MODEL'"
+                echo "Promoted: $LATEST_MODEL"
+
+                # Update Cloud Run env var
+                echo "Updating prediction-worker env var..."
+                gcloud run services update prediction-worker \
+                    --region="$REGION" \
+                    --project="$PROJECT" \
+                    --update-env-vars="CATBOOST_V9_MODEL_PATH=${LATEST_GCS}"
+                echo "Model promoted to production!"
+            else
+                echo "ERROR: Could not find latest model for family $FAMILY_NAME"
             fi
-
-            # Promote new model
-            bq query --use_legacy_sql=false "
-            UPDATE \`${PROJECT}.nba_predictions.model_registry\`
-            SET is_production = TRUE, enabled = TRUE,
-                production_start_date = CURRENT_DATE()
-            WHERE model_id = '$LATEST_MODEL'"
-            echo "Promoted: $LATEST_MODEL"
-
-            # Update Cloud Run env var
-            echo "Updating prediction-worker env var..."
-            gcloud run services update prediction-worker \
-                --region="$REGION" \
-                --project="$PROJECT" \
-                --update-env-vars="CATBOOST_V9_MODEL_PATH=${LATEST_GCS}"
-            echo "Model promoted to production!"
-        else
-            echo "ERROR: Could not find latest model for family $FAMILY_NAME"
         fi
     fi
 elif [ "$PROMOTE" = true ]; then

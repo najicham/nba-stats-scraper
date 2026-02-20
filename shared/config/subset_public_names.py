@@ -53,6 +53,11 @@ SUBSET_PUBLIC_NAMES = {
     'xm_quantile_agreement_under': {'id': '33', 'name': 'Quantile Consensus UNDER'},
     'xm_mae_plus_quantile_over': {'id': '34', 'name': 'MAE + Quantile OVER'},
     'xm_diverse_agreement': {'id': '35', 'name': 'V9 + V12 Diverse Agree'},
+    # Signal-based subsets (Session 311)
+    'signal_combo_he_ms': {'id': '36', 'name': 'Combo HE+MS'},
+    'signal_combo_3way': {'id': '37', 'name': 'Combo 3-Way'},
+    'signal_bench_under': {'id': '38', 'name': 'Bench UNDER Signal'},
+    'signal_high_count': {'id': '39', 'name': 'High Signal Count (4+)'},
 }
 
 # Reverse lookup

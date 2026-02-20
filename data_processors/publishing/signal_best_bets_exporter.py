@@ -31,6 +31,7 @@ from ml.signals.pick_angle_builder import build_pick_angles
 from ml.signals.player_blacklist import compute_player_blacklist
 from ml.signals.subset_membership_lookup import lookup_qualifying_subsets
 from ml.signals.aggregator import ALGORITHM_VERSION
+from data_processors.publishing.signal_subset_materializer import SignalSubsetMaterializer
 from ml.signals.supplemental_data import (
     query_model_health,
     query_predictions_with_supplements,
@@ -116,6 +117,24 @@ class SignalBestBetsExporter(BaseExporter):
                 results_for_pred.append(result)
             signal_results[key] = results_for_pred
 
+        # Step 4b: Materialize signal subsets (Session 311)
+        # Writes signal-based subset picks to current_subset_picks for grading
+        version_id = kwargs.get('version_id')
+        try:
+            signal_mat = SignalSubsetMaterializer()
+            signal_mat_result = signal_mat.materialize(
+                game_date=target_date,
+                version_id=version_id or f"v_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                predictions=predictions,
+                signal_results=signal_results,
+            )
+            logger.info(
+                f"Signal subsets: {signal_mat_result.get('total_picks', 0)} picks "
+                f"across {len([v for v in signal_mat_result.get('subsets', {}).values() if v > 0])} subsets"
+            )
+        except Exception as e:
+            logger.warning(f"Signal subset materialization failed (non-fatal): {e}", exc_info=True)
+
         # Step 5: Get signal health (non-blocking — empty if table doesn't exist yet)
         signal_health = get_signal_health_summary(self.bq_client, target_date)
 
@@ -131,7 +150,6 @@ class SignalBestBetsExporter(BaseExporter):
 
         # Step 5c: Look up qualifying subsets (Session 279 — pick provenance)
         qual_subsets = {}
-        version_id = kwargs.get('version_id')
         if version_id:
             try:
                 qual_subsets = lookup_qualifying_subsets(

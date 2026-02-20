@@ -93,7 +93,8 @@ def query_predictions_with_supplements(
         CAST(p.current_points_line AS FLOAT64) AS line_value,
         p.recommendation,
         CAST(p.predicted_points - p.current_points_line AS FLOAT64) AS edge,
-        CAST(p.confidence_score AS FLOAT64) AS confidence_score
+        CAST(p.confidence_score AS FLOAT64) AS confidence_score,
+        COALESCE(p.feature_quality_score, 0) AS feature_quality_score
       FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions` p
       WHERE p.game_date = @target_date
         AND {system_filter}
@@ -145,7 +146,8 @@ def query_predictions_with_supplements(
         CAST(p.current_points_line AS FLOAT64) AS line_value,
         p.recommendation,
         CAST(p.predicted_points - p.current_points_line AS FLOAT64) AS edge,
-        CAST(p.confidence_score AS FLOAT64) AS confidence_score
+        CAST(p.confidence_score AS FLOAT64) AS confidence_score,
+        COALESCE(p.feature_quality_score, 0) AS feature_quality_score
       FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions` p
       WHERE p.game_date = @target_date
         AND p.system_id = '{model_id}'
@@ -411,6 +413,7 @@ def query_predictions_with_supplements(
             'confidence_score': row_dict['confidence_score'],
             'is_home': is_home,
             'rest_days': row_dict.get('rest_days'),
+            'feature_quality_score': row_dict.get('feature_quality_score') or 0,
         }
 
         # Multi-source attribution (Session 307)
