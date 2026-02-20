@@ -2,6 +2,7 @@
 
 **Date:** 2026-02-20
 **Focus:** End-to-end best bets system review, 4 bug fixes, model transition strategy, filter transferability analysis, signal/subset architecture clarification
+**Project docs:** `docs/08-projects/current/best-bets-v2/`
 
 ---
 
@@ -173,9 +174,32 @@ Top offenders: isaiahjackson (0%, N=12), devincarter (0%, N=13), baylorscheierma
 
 ---
 
+## Known Issues / Gaps
+
+### CRITICAL: Layer 2 Cross-Model Subsets Are Broken (Zero Data)
+
+The 5 cross-model observation subsets (`xm_consensus_3plus`, `xm_consensus_4plus`, `xm_quantile_agreement_under`, `xm_mae_plus_quantile_over`, `xm_diverse_agreement`) have **zero rows in BigQuery since December 2025**. This means:
+- Layer 2 of the 3-layer multi-model architecture is completely non-functional
+- No grading data exists for any cross-model consensus pattern
+- We cannot evaluate whether model consensus predicts outcomes
+- The `qualifying_subsets` field on best bets picks never includes xm_* entries
+
+**Root cause:** `CrossModelSubsetMaterializer.materialize()` throws an exception during the daily export pipeline. The exception was silently caught and ignored (`non-fatal` handler with no traceback). This session added `exc_info=True` so the actual error will appear in production logs after next deploy.
+
+**Most likely failure point:** `discover_models()` in `shared/config/cross_model_subsets.py` queries `prediction_accuracy` (grading data) for active system_ids. If a model has no graded predictions on a date, it won't be discovered. With < 2 model families found, the materializer returns early with 0 picks (line 63-69 of `cross_model_subset_materializer.py`).
+
+**To fix:**
+1. Deploy the exc_info change and check Cloud Logging for the actual exception
+2. If it's the family_count < 2 issue, consider querying `player_prop_predictions` (prediction data) instead of `prediction_accuracy` (grading data) for model discovery — predictions exist same-day, grading lags by 1+ days
+3. Verify the fix produces xm_* rows, then backfill recent dates
+
+**Code path:** `backfill_jobs/publishing/daily_export.py` (line 285-300) → `data_processors/publishing/cross_model_subset_materializer.py` → `shared/config/cross_model_subsets.py:discover_models()`
+
+---
+
 ## Priority Order for Next Session
 
-1. **Fix xm_* materialization** — Check production logs for the actual exception now that exc_info=True is deployed. Fix the underlying issue (likely `discover_models()` not finding enough families).
+1. **Fix xm_* materialization (CRITICAL)** — Layer 2 is completely broken. Check production logs for the actual exception now that exc_info=True is deployed. Fix the underlying issue (likely `discover_models()` not finding enough families). See "Known Issues" section above.
 2. **Create signal subsets** — Build 4-6 curated signal subsets for top-performing signals. Grade them. This is the long-requested feature.
 3. **Add filter validation to retrain.sh** — `--validate-filters` flag that checks model-specific filters against eval window.
 4. **Implement decay-gated promotion** — Check champion's decay state before promoting.
