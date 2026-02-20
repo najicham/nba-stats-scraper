@@ -51,7 +51,14 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.signal_best_bets_
   -- Pick provenance (Session 279)
   qualifying_subsets STRING,              -- JSON array of {subset_id, system_id} dicts
   qualifying_subset_count INT64,          -- Number of Level 1/2 subsets this pick appears in
-  algorithm_version STRING,               -- Scoring algorithm version (e.g. 'v279_qualifying_subsets')
+  algorithm_version STRING,               -- Scoring algorithm version (e.g. 'v307_multi_source')
+
+  -- Multi-source attribution (Session 307)
+  source_model_id STRING,                 -- Which model's prediction won dedup (e.g. 'catboost_v9_q43_...')
+  source_model_family STRING,             -- Family classification (e.g. 'v9_q43')
+  n_models_eligible INT64,                -- How many models had edge 5+ for this player
+  champion_edge NUMERIC(5, 1),            -- Champion model (V9 MAE) edge for comparison
+  direction_conflict BOOLEAN,             -- True if models with edge 5+ disagreed on direction
 
   -- Outcome (populated after grading)
   actual_points INT64,

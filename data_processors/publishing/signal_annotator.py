@@ -195,9 +195,32 @@ class SignalAnnotator:
         }
 
     def _write_rows(self, rows: List[Dict[str, Any]]) -> None:
-        """Write annotation rows using batch load."""
+        """Write annotation rows using DELETE + INSERT for idempotency.
+
+        Prevents duplicate rows when annotate() is called multiple times
+        for the same date (retries, manual reruns, backfills).
+        """
         if not rows:
             return
+
+        # Extract target_date from first row for DELETE scope
+        target_date = rows[0].get('game_date')
+        if not target_date:
+            logger.error("Cannot determine game_date from rows, skipping delete")
+        else:
+            try:
+                delete_query = f"""
+                DELETE FROM `{TABLE_ID}`
+                WHERE game_date = '{target_date}'
+                """
+                delete_job = self.bq_client.query(delete_query)
+                delete_job.result(timeout=60)
+                logger.info(f"Deleted existing signal annotations for {target_date}")
+            except Exception as e:
+                logger.warning(
+                    f"Failed to delete existing annotations for {target_date}: {e}. "
+                    "Proceeding with append (may create duplicates)."
+                )
 
         try:
             job_config = bigquery.LoadJobConfig(

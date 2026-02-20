@@ -40,7 +40,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v298_natural_sizing'
+ALGORITHM_VERSION = 'v307_multi_source'
 
 # Signal health regime → weight multiplier (used for pick angles context)
 HEALTH_MULTIPLIERS = {
@@ -67,8 +67,8 @@ class BestBetsAggregator:
         - UNDER edge 7+ block: 40.7% HR — catastrophic (Session 297)
         - Feature quality floor: quality < 85 → skip (24.0% HR)
         - Bench UNDER block: UNDER + line < 12 → skip (35.1% HR)
-        - Line jumped UNDER block: UNDER + line jumped 3+ → skip (47.4% HR)
-        - Line dropped UNDER block: UNDER + line dropped 3+ → skip (41.0% HR)
+        - Line jumped UNDER block: UNDER + line jumped 2+ → skip (38.2% HR, Session 306)
+        - Line dropped UNDER block: UNDER + line dropped 2+ → skip (35.2% HR, Session 306)
         - Neg +/- streak UNDER block: UNDER + 3+ neg games → skip (13.1% HR)
         - ANTI_PATTERN combos → skip
     """
@@ -141,16 +141,16 @@ class BestBetsAggregator:
             if pred.get('recommendation') == 'UNDER' and line_val > 0 and line_val < 12:
                 continue
 
-            # Line jumped UNDER block (Session 294): 47.4% HR
+            # Line jumped UNDER block (Session 294, lowered 306): 38.2% HR at 2.0 (N=272)
             prop_line_delta = pred.get('prop_line_delta')
             if (prop_line_delta is not None
-                    and prop_line_delta >= 3.0
+                    and prop_line_delta >= 2.0
                     and pred.get('recommendation') == 'UNDER'):
                 continue
 
-            # Line dropped UNDER block (Session 294): 41.0% HR
+            # Line dropped UNDER block (Session 294, lowered 306): 35.2% HR at 2.0 (N=108)
             if (prop_line_delta is not None
-                    and prop_line_delta <= -3.0
+                    and prop_line_delta <= -2.0
                     and pred.get('recommendation') == 'UNDER'):
                 continue
 

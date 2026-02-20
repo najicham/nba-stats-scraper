@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from google.cloud import bigquery
 
+from shared.config.cross_model_subsets import build_system_id_sql_filter, classify_system_id
 from shared.config.model_selection import get_best_bets_model_id
 
 logger = logging.getLogger(__name__)
@@ -62,6 +63,7 @@ def query_predictions_with_supplements(
     bq_client: bigquery.Client,
     target_date: str,
     system_id: Optional[str] = None,
+    multi_model: bool = False,
 ) -> Tuple[List[Dict], Dict[str, Dict]]:
     """Query active predictions with supplemental signal data.
 
@@ -69,12 +71,70 @@ def query_predictions_with_supplements(
         bq_client: BigQuery client.
         target_date: Date string in YYYY-MM-DD format.
         system_id: Model to query predictions for. Defaults to best bets model.
+        multi_model: If True, query all CatBoost families and pick highest-edge
+            prediction per player. Adds source_model_id, n_models_eligible,
+            champion_edge, direction_conflict to each prediction dict.
 
     Returns:
         Tuple of (predictions list, supplemental_map keyed by player_lookup).
     """
     model_id = system_id or get_best_bets_model_id()
-    query = f"""
+
+    if multi_model:
+        system_filter = build_system_id_sql_filter('p')
+        preds_cte = f"""
+    WITH all_model_preds AS (
+      SELECT
+        p.player_lookup,
+        p.game_id,
+        p.game_date,
+        p.system_id,
+        CAST(p.predicted_points AS FLOAT64) AS predicted_points,
+        CAST(p.current_points_line AS FLOAT64) AS line_value,
+        p.recommendation,
+        CAST(p.predicted_points - p.current_points_line AS FLOAT64) AS edge,
+        CAST(p.confidence_score AS FLOAT64) AS confidence_score
+      FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions` p
+      WHERE p.game_date = @target_date
+        AND {system_filter}
+        AND p.is_active = TRUE
+        AND p.recommendation IN ('OVER', 'UNDER')
+        AND p.line_source IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS')
+    ),
+
+    -- Per-player model counts: how many models have edge 5+ for this player
+    model_counts AS (
+      SELECT
+        player_lookup,
+        game_id,
+        COUNT(*) AS n_models_eligible,
+        MAX(CASE WHEN system_id = '{model_id}' THEN edge END) AS champion_edge,
+        COUNTIF(recommendation = 'OVER' AND ABS(edge) >= 5.0) AS n_over,
+        COUNTIF(recommendation = 'UNDER' AND ABS(edge) >= 5.0) AS n_under
+      FROM all_model_preds
+      WHERE ABS(edge) >= 5.0
+      GROUP BY player_lookup, game_id
+    ),
+
+    preds AS (
+      SELECT
+        amp.*,
+        mc.n_models_eligible,
+        mc.champion_edge,
+        CASE
+          WHEN mc.n_over > 0 AND mc.n_under > 0 THEN TRUE
+          ELSE FALSE
+        END AS direction_conflict
+      FROM all_model_preds amp
+      LEFT JOIN model_counts mc
+        ON mc.player_lookup = amp.player_lookup AND mc.game_id = amp.game_id
+      QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY amp.player_lookup, amp.game_id
+        ORDER BY ABS(amp.edge) DESC
+      ) = 1
+    ),"""
+    else:
+        preds_cte = f"""
     WITH preds AS (
       SELECT
         p.player_lookup,
@@ -92,7 +152,9 @@ def query_predictions_with_supplements(
         AND p.is_active = TRUE
         AND p.recommendation IN ('OVER', 'UNDER')
         AND p.line_source IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS')
-    ),
+    ),"""
+
+    query = f"""{preds_cte}
 
     -- Rolling stats for 3PT and minutes signals
     game_stats AS (
@@ -350,6 +412,17 @@ def query_predictions_with_supplements(
             'is_home': is_home,
             'rest_days': row_dict.get('rest_days'),
         }
+
+        # Multi-source attribution (Session 307)
+        if multi_model:
+            source_sid = row_dict['system_id']
+            pred['source_model_id'] = source_sid
+            pred['source_model_family'] = classify_system_id(source_sid)
+            pred['n_models_eligible'] = row_dict.get('n_models_eligible') or 0
+            champ_edge = row_dict.get('champion_edge')
+            pred['champion_edge'] = float(champ_edge) if champ_edge is not None else None
+            pred['direction_conflict'] = bool(row_dict.get('direction_conflict'))
+
         predictions.append(pred)
 
         supp: Dict[str, Any] = {}

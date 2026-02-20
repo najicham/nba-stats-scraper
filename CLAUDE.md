@@ -54,6 +54,7 @@ Phases connected via **Pub/Sub event triggers**. Daily workflow starts ~6 AM ET.
 /daily-steering                             # 1. Morning steering report
 /validate-daily                             # 2. Run daily validation
 ./bin/check-deployment-drift.sh --verbose   # 3. Check deployment drift
+/best-bets-config                           # 4. Review best bets thresholds/models/signals
 ```
 
 ## Monitoring & Self-Healing [Keyword: MONITOR]
@@ -554,13 +555,15 @@ Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
 - Edge 5+ baseline: 71.1% HR (up from 59.8% with signal-scored selection)
 - Signals used for FILTERING (remove bad picks) and ANNOTATION (pick angles), not scoring
 
-**Negative Filters (Session 278, updated 284, 297):**
+**Negative Filters (Session 278, updated 284, 297, 306):**
 1. Player blacklist: `<40% HR on 8+ edge-3+ picks` → skip (Session 284)
 2. Avoid familiar: `6+ games vs this opponent` → skip (Session 284)
 3. **Edge floor: `edge < 5.0` → skip (57% HR). Edge 5-7=69.4%, 7+=84.5% OVER (Session 297)**
 4. **UNDER edge 7+ block: `UNDER + edge >= 7` → skip (40.7% HR — catastrophic, Session 297)**
 5. Feature quality floor: `quality < 85` → skip (24.0% HR)
 6. Bench UNDER block: `UNDER + line < 12` → skip (35.1% HR)
+7. **UNDER + line jumped 2+: `UNDER + prop_line_delta >= 2.0` → skip (38.2% HR, N=272, Session 306)**
+8. **UNDER + line dropped 2+: `UNDER + prop_line_delta <= -2.0` → skip (35.2% HR, N=108, Session 306)**
 
 **Pick Angles (Session 278, 284):** Each pick includes `pick_angles` — human-readable reasoning (confidence tier, high-conviction edge>=5, player tier, cross-model consensus, signal-specific). Max 5 angles per pick. See `ml/signals/pick_angle_builder.py`.
 
@@ -600,6 +603,7 @@ Aggregator top-5 simulation: **73.9% AVG HR** (up from 60.3% pre-cleanup). W2: 8
 **Session 277:** 3-layer architecture using all active models for improved best bets.
 **Session 296:** Dynamic model discovery — cross-model system no longer uses hardcoded system_ids. Models classified by family pattern at runtime (`shared/config/cross_model_subsets.py`).
 **Session 297:** Edge floor (MIN_EDGE=3.0), consensus bonus fix, triple-write bug fix.
+**Session 307 Phase A:** Multi-source candidate generation — best bets exporter now queries ALL CatBoost families (not just champion V9), picks highest-edge prediction per player. Adds 5 attribution columns to `signal_best_bets_picks`: `source_model_id`, `source_model_family`, `n_models_eligible`, `champion_edge`, `direction_conflict`. Algorithm version: `v307_multi_source`.
 
 **Layers:**
 1. **Per-model subsets** — each model tracked independently (26 existing + 4 new V12-quantile = 30)

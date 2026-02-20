@@ -223,6 +223,12 @@ class SignalBestBetsExporter(BaseExporter):
                 'qualifying_subsets': pick.get('qualifying_subsets', []),
                 'qualifying_subset_count': pick.get('qualifying_subset_count', 0),
                 'algorithm_version': pick.get('algorithm_version', ALGORITHM_VERSION),
+                # Multi-source attribution (Session 307)
+                'source_model': pick.get('source_model_id'),
+                'source_model_family': pick.get('source_model_family'),
+                'n_models_eligible': pick.get('n_models_eligible', 0),
+                'champion_edge': pick.get('champion_edge'),
+                'direction_conflict': pick.get('direction_conflict', False),
                 'actual': None,
                 'result': None,
             })
@@ -310,8 +316,14 @@ class SignalBestBetsExporter(BaseExporter):
         return query_model_health(self.bq_client)
 
     def _query_predictions_and_supplements(self, target_date: str) -> tuple:
-        """Query today's active predictions with supplemental signal data."""
-        return query_predictions_with_supplements(self.bq_client, target_date)
+        """Query today's active predictions with supplemental signal data.
+
+        Uses multi_model=True to query all CatBoost families and pick the
+        highest-edge prediction per player (Session 307 Phase A).
+        """
+        return query_predictions_with_supplements(
+            self.bq_client, target_date, multi_model=True,
+        )
 
     def _write_to_bigquery(self, target_date: str, picks: List[Dict]) -> None:
         """Write signal best bets to BigQuery using batch load (not streaming).
@@ -384,6 +396,12 @@ class SignalBestBetsExporter(BaseExporter):
                 'qualifying_subsets': json.dumps(pick.get('qualifying_subsets', [])),
                 'qualifying_subset_count': pick.get('qualifying_subset_count', 0),
                 'algorithm_version': pick.get('algorithm_version', ALGORITHM_VERSION),
+                # Multi-source attribution (Session 307)
+                'source_model_id': pick.get('source_model'),
+                'source_model_family': pick.get('source_model_family'),
+                'n_models_eligible': pick.get('n_models_eligible'),
+                'champion_edge': pick.get('champion_edge'),
+                'direction_conflict': pick.get('direction_conflict'),
                 'created_at': datetime.now(timezone.utc).isoformat(),
             })
 

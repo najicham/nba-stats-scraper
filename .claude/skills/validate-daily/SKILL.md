@@ -1983,6 +1983,86 @@ LIMIT 7"
 
 **Reference**: Session 262, Session 266 (baseline comparison), `ml/analysis/model_performance.py`
 
+### Phase 0.59: Per-Signal Firing Rate Monitor (Session 306 - NEW)
+
+**IMPORTANT**: Detects signals that silently stop firing. The `prop_line_drop_over` signal had **zero production firings for weeks** undetected until Session 305 manual audit. This phase prevents that from recurring.
+
+**Why this matters**: Signal-based filtering and annotation depends on signals actually firing. If a threshold is too restrictive, a data source changes, or a bug is introduced, a signal can go silent with no alert. `signal_health_daily` can't detect this because it only measures performance of picks that exist.
+
+**When to run**: ALWAYS (automated) — only meaningful on game days
+
+**What to check**:
+
+```bash
+bq query --use_legacy_sql=false --project_id=nba-props-platform "
+WITH signal_firings AS (
+  SELECT
+    pst.game_date,
+    signal_tag,
+    COUNT(DISTINCT pst.player_lookup) as picks_with_signal
+  FROM \`nba-props-platform.nba_predictions.pick_signal_tags\` pst
+  CROSS JOIN UNNEST(pst.signal_tags) AS signal_tag
+  WHERE pst.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+    AND pst.system_id = 'catboost_v9'
+  GROUP BY pst.game_date, signal_tag
+),
+daily_games AS (
+  SELECT game_date, COUNT(*) as game_count
+  FROM nba_reference.nba_schedule
+  WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+    AND game_status = 3
+  GROUP BY 1
+),
+summary AS (
+  SELECT
+    sf.signal_tag,
+    COUNT(DISTINCT sf.game_date) as days_fired,
+    SUM(sf.picks_with_signal) as total_picks,
+    ROUND(AVG(sf.picks_with_signal), 1) as avg_picks_per_day
+  FROM signal_firings sf
+  JOIN daily_games dg ON sf.game_date = dg.game_date
+  GROUP BY 1
+)
+SELECT
+  signal_tag,
+  days_fired,
+  total_picks,
+  avg_picks_per_day,
+  CASE
+    WHEN days_fired = 0 THEN 'SILENT'
+    WHEN avg_picks_per_day < 2 THEN 'LOW_FIRE'
+    ELSE 'ACTIVE'
+  END as status
+FROM summary
+ORDER BY total_picks DESC"
+```
+
+Also check for expected signals NOT firing at all (absent from results):
+
+```bash
+# Expected production signals that should fire regularly:
+# edge_spread_optimal, bench_under, prop_line_drop_over, model_health
+# If any of these are MISSING from the output above, they are SILENT
+```
+
+**Expected Result**: All PRODUCTION signals should show `ACTIVE` or `LOW_FIRE`. No signal should be `SILENT` for 3+ consecutive game days.
+
+**Thresholds**:
+
+| Status | Meaning | Action |
+|--------|---------|--------|
+| ACTIVE (avg >= 2/day) | Normal firing | No action |
+| LOW_FIRE (avg < 2/day) | Reduced firing | Monitor — may be normal for conditional signals |
+| SILENT (0 days fired) | Not firing at all | INVESTIGATE — check signal threshold, data source, code path |
+
+**If SILENT signal detected**:
+1. Check if the signal is CONDITIONAL (only fires on specific conditions) — `3pt_bounce`, `b2b_fatigue_under`, `rest_advantage_2d` may legitimately be silent for stretches
+2. For PRODUCTION signals (`edge_spread_optimal`, `bench_under`, `prop_line_drop_over`, `combo_he_ms`, `combo_3way`): investigate immediately
+3. Check signal code for threshold changes, data source issues, or broken queries
+4. Verify `supplemental_data.py` is populating the data the signal needs
+
+**Reference**: Session 305 (prop_line_drop_over zero firings discovery), Session 306 (monitoring added)
+
 ### Phase 0.6: Orchestrator Health (CRITICAL)
 
 **IMPORTANT**: Check orchestrator health BEFORE other validations. If ANY Phase 0.6 check fails, this is a P1 CRITICAL issue - STOP and report immediately.
