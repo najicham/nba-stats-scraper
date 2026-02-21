@@ -104,6 +104,7 @@ def load_players_for_date(client: bigquery.Client, game_date: date) -> List[Dict
         WHERE game_date = @game_date
           AND bookmaker = 'BettingPros Consensus'
           AND bet_side = 'over'
+          AND market_type = 'points'
         QUALIFY ROW_NUMBER() OVER (
             PARTITION BY player_lookup
             ORDER BY processed_at DESC

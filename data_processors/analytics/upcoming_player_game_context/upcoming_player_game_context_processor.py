@@ -1468,6 +1468,7 @@ class UpcomingPlayerGameContextProcessor(
         SELECT COUNT(DISTINCT player_lookup) as player_count
         FROM `{self.project_id}.nba_raw.bettingpros_player_points_props`
         WHERE game_date = @target_date AND is_active = TRUE
+          AND market_type = 'points'
         """
 
         job_config = bigquery.QueryJobConfig(

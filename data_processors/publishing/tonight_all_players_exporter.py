@@ -252,6 +252,7 @@ class TonightAllPlayersExporter(BaseExporter):
                 MAX(CASE WHEN bet_side = 'under' THEN odds_american END) as under_odds
             FROM `nba-props-platform.nba_raw.bettingpros_player_points_props`
             WHERE game_date = @target_date
+              AND market_type = 'points'
               AND is_best_line = TRUE
             GROUP BY player_lookup, points_line
         )

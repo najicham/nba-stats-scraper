@@ -195,6 +195,7 @@ class DataFreshnessValidator:
                 FROM `{self.project_id}.nba_raw.bettingpros_player_points_props`
                 WHERE game_date = '{game_date.isoformat()}'
                   AND points_line IS NOT NULL
+                  AND market_type = 'points'
             )
             SELECT
                 (SELECT COUNT(*) FROM players_expected) as total_players,

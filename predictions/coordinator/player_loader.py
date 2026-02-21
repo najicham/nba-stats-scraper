@@ -1491,6 +1491,7 @@ class PlayerLoader:
                 created_at
             FROM `{project}.nba_raw.bettingpros_player_points_props`
             WHERE game_date = @game_date
+              AND market_type = 'points'
               AND bet_side = 'over'
               AND is_active = TRUE
               AND points_line IS NOT NULL
