@@ -1,102 +1,115 @@
 # Session 319 Handoff
 
 **Date:** 2026-02-21
-**Focus:** Frontend data design, daily ops checklist, backend endpoints + schema fixes
+**Commits:** `8d61df29` → `3e657734` (6 commits on main, all pushed + deployed)
+**Focus:** Frontend data design, admin dashboard, daily ops, schema fixes
 
-## What Was Done
+---
 
-### Infrastructure (Earlier This Session)
-- Added `ml/**` to 3 Cloud Build triggers (phase6-export, live-export, post-grading-export)
-- Created missing `deploy-post-grading-export` trigger
-- Pushed Session 318 commits to origin (were never pushed)
-- All 3 Cloud Functions rebuilt with `0bfb9d3` — Session 318 signal cleanup now LIVE
-- Verified: 16 signals deployed, UNDER 7+ unconditional block, rest_advantage week 15 cap
+## What Was Built
 
-### C1: prediction_accuracy Schema Fix
-- Added `feature_quality_score FLOAT64` and `data_quality_tier STRING` to `prediction_accuracy.sql`
-- Columns already existed in production BQ (previously added via ALTER TABLE)
-- Schema SQL now matches production — grading processor already writes these (lines 827-828)
+### New GCS Endpoints (5 new exporters)
 
-### C2: `v1/best-bets/today.json` Endpoint (NEW)
-- **New file:** `data_processors/publishing/today_best_bets_exporter.py`
-- Strips internal metadata (composite_score, signal_tags, model IDs)
-- Keeps: player, team, opponent, direction, line, edge, pick_angles (max 3), rank
-- Integrated into `daily_export.py` as `best-bets-today` export type
-- **Superseded by `all.json`** — kept for backwards compatibility
+| Endpoint | Exporter File | Audience | Content |
+|----------|--------------|----------|---------|
+| `v1/best-bets/all.json` | `best_bets_all_exporter.py` | **End user (PRIMARY)** | Record + streak + today's picks + full history. Single file, ~200KB max. |
+| `v1/best-bets/today.json` | `today_best_bets_exporter.py` | End user (backup) | Clean picks only. Superseded by all.json. |
+| `v1/admin/dashboard.json` | `admin_dashboard_exporter.py` | **Admin** | Model health + signal health + subset performance + picks + filter funnel |
+| `v1/admin/picks/{date}.json` | `admin_picks_exporter.py` | Admin | Per-date deep dive with all candidates + filter_summary |
+| (existing endpoints unchanged) | | | |
 
-### C3: `v1/admin/picks/{date}.json` Endpoint (NEW)
-- **New file:** `data_processors/publishing/admin_picks_exporter.py`
-- Full metadata: all signal tags, composite scores, model provenance, filter_summary
-- Includes ALL candidates (not just top picks) with edge and quality scores
-- Per-date deep dive for debugging "why was player X picked/not picked?"
+All wired into `backfill_jobs/publishing/daily_export.py` as export types: `best-bets-all`, `best-bets-today`, `admin-dashboard`, `admin-picks`.
 
-### C4: filter_summary in BQ
-- Added `filter_summary STRING` to `signal_best_bets_picks.sql` schema + production BQ table
-- `SignalBestBetsExporter` now writes JSON-serialized filter_summary with each pick
-- Enables historical analysis of filtering decisions
+### Schema Changes (applied to production BQ)
 
-### Consolidated Best Bets (`v1/best-bets/all.json`) — PRIMARY FRONTEND ENDPOINT
-- **New file:** `data_processors/publishing/best_bets_all_exporter.py`
-- Single file with record + streak + today's picks (with angles) + full history by week/day
-- Frontend team chose single-file over three separate files (~50-200 KB, one fetch)
-- Day-level `status` field: `"pending"` / `"sweep"` / `"split"` / `"miss"` for color coding
-- Today's picks appear in both `today` (hero) and `weeks` (history continuity)
+| Table | Column Added | Type |
+|-------|-------------|------|
+| `prediction_accuracy` | `feature_quality_score` | FLOAT64 |
+| `prediction_accuracy` | `data_quality_tier` | STRING |
+| `signal_best_bets_picks` | `filter_summary` | STRING (JSON) |
 
-### Admin Dashboard (`v1/admin/dashboard.json`)
-- **New file:** `data_processors/publishing/admin_dashboard_exporter.py`
-- Consolidated admin view: model health, signal health, subset performance, picks, filter funnel
-- Single file replaces need to fetch 4+ separate admin endpoints
-- Lives at `playerprops.io/admin` behind Firebase Auth (Google sign-in, email allowlist)
+The grading processor already writes `feature_quality_score` and `data_quality_tier` (lines 827-828 of prediction_accuracy_processor.py). Schema SQL now matches production. `filter_summary` is written as JSON by `SignalBestBetsExporter._write_to_bigquery()`.
 
-### Frontend Specs (Final)
-- **End-user spec:** `docs/08-projects/current/frontend-data-design/02-FRONTEND-PROMPT.md`
-  - Editorial layout, full-width pick cards, weekly accordion (no calendar)
-  - No signal tags for end users (angles only)
-  - Best Bets as first nav item / landing page
-- **Admin spec:** `docs/08-projects/current/frontend-data-design/03-ADMIN-DASHBOARD-SPEC.md`
-  - Dense dashboard: status bar, picks table, filter funnel, subset grid, model/signal health
-  - Per-date deep dive via date picker loading `admin/picks/{date}.json`
-  - Auth: Firebase + Google sign-in, 1-email allowlist
+### Admin Dashboard Data (dashboard.json contents)
 
-### Documentation
-- **Daily operations checklist:** `docs/02-operations/daily-operations-checklist.md`
+Model health entries include full lifecycle data from model_registry:
+- `model_id`, `family`, `registry_status` (production/active/deprecated)
+- `is_production`, `enabled`, `parent_model_id`
+- `production_start`, `production_end`
+- `training_start`, `training_end`, `days_since_training`
+- `eval_mae`, `eval_hr_edge3`, `feature_count`, `loss_function`, `quantile_alpha`
+- Rolling HR: 7d/14d/30d with N counts
+- Decay `state`: HEALTHY/WATCH/DEGRADING/BLOCKED/INSUFFICIENT_DATA
 
-## Files Changed
+Subset performance entries include `label` (display name from `SUBSET_PUBLIC_NAMES`) and `losses` in each window.
 
-| File | Change |
-|------|--------|
-| `schemas/bigquery/nba_predictions/prediction_accuracy.sql` | +2 columns |
-| `schemas/bigquery/nba_predictions/signal_best_bets_picks.sql` | +1 column (filter_summary) |
-| `data_processors/publishing/signal_best_bets_exporter.py` | Write filter_summary to BQ |
-| `data_processors/publishing/today_best_bets_exporter.py` | **NEW** |
-| `data_processors/publishing/admin_picks_exporter.py` | **NEW** |
-| `data_processors/publishing/best_bets_all_exporter.py` | **NEW** (primary frontend endpoint) |
-| `data_processors/publishing/admin_dashboard_exporter.py` | **NEW** |
-| `backfill_jobs/publishing/daily_export.py` | +5 export types |
-| `docs/08-projects/current/frontend-data-design/01-API-SPEC.md` | **NEW** |
-| `docs/08-projects/current/frontend-data-design/02-FRONTEND-PROMPT.md` | **NEW** (final frontend spec) |
-| `docs/08-projects/current/frontend-data-design/03-ADMIN-DASHBOARD-SPEC.md` | **NEW** (admin spec) |
-| `docs/02-operations/daily-operations-checklist.md` | **NEW** |
+`champion_model_state` at top level for status bar.
 
-## New GCS Endpoints
+`filter_summary` with stable key set (documented in spec).
 
-| Endpoint | Audience | Cache | Content |
-|----------|----------|-------|---------|
-| `v1/best-bets/all.json` | End user | 300s | Record + today + history (single file) |
-| `v1/best-bets/today.json` | End user | 300s | Today's clean picks (backup) |
-| `v1/admin/dashboard.json` | Admin | 300s | Full system state + picks + subsets |
-| `v1/admin/picks/{date}.json` | Admin | 3600s | Per-date deep dive with all candidates |
+---
 
-## Deployment Notes
+## Frontend Specs (4 docs)
 
-- Push to main → auto-deploys via Cloud Build triggers
-- New exporters run on next daily export cycle
-- BQ schema changes already applied to production
-- No re-export of historical files needed
+All at `docs/08-projects/current/frontend-data-design/`:
 
-## What's Next
+| File | Content | Status |
+|------|---------|--------|
+| `01-API-SPEC.md` | Initial API spec (two audiences) | Superseded by 02 |
+| `02-FRONTEND-PROMPT.md` | **Final end-user spec.** Single file, editorial layout, weekly accordion, no signals. | FINAL |
+| `03-ADMIN-DASHBOARD-SPEC.md` | **Admin dashboard spec.** 5 sections, filter funnel, subset table. Updated with frontend review feedback. | FINAL |
+| `04-ADMIN-DASHBOARD-FRONTEND-REVIEW.md` | Frontend team's review + feedback on admin spec | Reference |
+| `05-MODEL-LIFECYCLE-SPEC.md` | **Model lifecycle + multi-model architecture.** Families, lineage, lifecycle stages. Has 4 open questions for frontend. | AWAITING FRONTEND REVIEW |
 
-1. **Frontend:** Build Best Bets page from `02-FRONTEND-PROMPT.md`
-2. **Frontend:** Build admin dashboard from `03-ADMIN-DASHBOARD-SPEC.md`
+### Key Design Decisions (Locked)
+
+- **Single file** for end users (`all.json`) — frontend chose Option A
+- **Best Bets = landing page** — first nav item
+- **Editorial layout** — full-width pick cards, not PlayerCards
+- **Weekly accordion** — no calendar grid (too sparse)
+- **Angles only** — no signal tags for end users
+- **Admin at `/admin`** — same site, Firebase Auth, email allowlist
+
+### Open Questions (05-MODEL-LIFECYCLE-SPEC.md)
+
+1. Family-grouped vs flat table for model health?
+2. Lineage display depth (full chain vs one-liner)?
+3. Model ID truncation strategy?
+4. Stale model visual warning beyond age badge?
+
+---
+
+## Other Deliverables
+
+- **Daily ops checklist:** `docs/02-operations/daily-operations-checklist.md`
+- **Session 319 handoff:** this file
+
+---
+
+## What's NOT Done
+
+1. **Exports haven't run yet** — all.json, dashboard.json etc. will populate on next daily export cycle (~6 AM ET tomorrow). To test now: `PYTHONPATH=. python backfill_jobs/publishing/daily_export.py --date 2026-02-21 --only best-bets-all,admin-dashboard`
+2. **Frontend build** — specs are ready, frontend can start
 3. **C5 (deferred):** Signal observatory subsets for removed signals
-4. **Future:** Push notifications, shareable pick cards, per-date admin deep dive
+4. **Frontend review of 05-MODEL-LIFECYCLE-SPEC.md** — 4 open questions on model display
+
+---
+
+## Files Changed This Session
+
+**New files:**
+- `data_processors/publishing/best_bets_all_exporter.py`
+- `data_processors/publishing/today_best_bets_exporter.py`
+- `data_processors/publishing/admin_dashboard_exporter.py`
+- `data_processors/publishing/admin_picks_exporter.py`
+- `docs/08-projects/current/frontend-data-design/01-API-SPEC.md`
+- `docs/08-projects/current/frontend-data-design/02-FRONTEND-PROMPT.md`
+- `docs/08-projects/current/frontend-data-design/03-ADMIN-DASHBOARD-SPEC.md`
+- `docs/08-projects/current/frontend-data-design/05-MODEL-LIFECYCLE-SPEC.md`
+- `docs/02-operations/daily-operations-checklist.md`
+
+**Modified files:**
+- `backfill_jobs/publishing/daily_export.py` — 5 new export types
+- `data_processors/publishing/signal_best_bets_exporter.py` — writes filter_summary to BQ
+- `schemas/bigquery/nba_predictions/prediction_accuracy.sql` — +2 columns
+- `schemas/bigquery/nba_predictions/signal_best_bets_picks.sql` — +1 column
