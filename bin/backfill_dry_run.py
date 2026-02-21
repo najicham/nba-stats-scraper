@@ -20,7 +20,7 @@ import argparse
 import logging
 import sys
 import os
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
 from collections import defaultdict
 from typing import Dict, List, Optional, Tuple
 
@@ -218,6 +218,88 @@ def print_date_result(result: Dict, existing: List[Dict] = None,
                 print(f"    Added:   {', '.join(sorted(added))}")
 
 
+def write_picks_to_bigquery(bq_client: bigquery.Client, target_date: str,
+                            picks: List[Dict]) -> int:
+    """Write aggregator picks to signal_best_bets_picks with DELETE-before-INSERT.
+
+    Returns number of rows written.
+    """
+    table_ref = f'{PROJECT_ID}.nba_predictions.signal_best_bets_picks'
+
+    # Delete existing rows for this date
+    try:
+        delete_query = f"""
+        DELETE FROM `{table_ref}`
+        WHERE game_date = '{target_date}'
+        """
+        job = bq_client.query(delete_query)
+        job.result(timeout=30)
+        deleted = job.num_dml_affected_rows or 0
+        if deleted > 0:
+            logger.info(f"Deleted {deleted} existing rows for {target_date}")
+    except Exception as e:
+        logger.warning(f"Failed to delete existing rows for {target_date}: {e}")
+
+    if not picks:
+        return 0
+
+    rows = []
+    for pick in picks:
+        rows.append({
+            'player_lookup': pick['player_lookup'],
+            'game_id': pick.get('game_id', ''),
+            'game_date': target_date,
+            'system_id': pick.get('system_id', 'catboost_v9'),
+            'player_name': pick.get('player_name', ''),
+            'team_abbr': pick.get('team_abbr', ''),
+            'opponent_team_abbr': pick.get('opponent_team_abbr', ''),
+            'predicted_points': pick.get('predicted_points'),
+            'line_value': pick.get('line_value'),
+            'recommendation': pick.get('recommendation', ''),
+            'edge': round(float(abs(pick.get('edge') or 0)), 1),
+            'confidence_score': round(min(float(pick.get('confidence_score') or 0), 9.999), 3),
+            'signal_tags': pick.get('signal_tags', []),
+            'signal_count': pick.get('signal_count', 0),
+            'composite_score': pick.get('composite_score'),
+            'matched_combo_id': pick.get('matched_combo_id'),
+            'combo_classification': pick.get('combo_classification'),
+            'combo_hit_rate': pick.get('combo_hit_rate'),
+            'warning_tags': pick.get('warning_tags', []),
+            'rank': pick.get('rank'),
+            'model_agreement_count': pick.get('model_agreement_count', 0),
+            'agreeing_model_ids': pick.get('agreeing_model_ids', []),
+            'feature_set_diversity': pick.get('feature_set_diversity', 0),
+            'consensus_bonus': pick.get('consensus_bonus', 0),
+            'quantile_consensus_under': pick.get('quantile_consensus_under', False),
+            'pick_angles': pick.get('pick_angles', []),
+            'qualifying_subsets': '[]',
+            'qualifying_subset_count': pick.get('qualifying_subset_count', 0),
+            'algorithm_version': pick.get('algorithm_version', ALGORITHM_VERSION),
+            'source_model_id': pick.get('source_model_id'),
+            'source_model_family': pick.get('source_model_family'),
+            'n_models_eligible': pick.get('n_models_eligible'),
+            'champion_edge': (
+                round(float(pick['champion_edge']), 1)
+                if pick.get('champion_edge') is not None else None
+            ),
+            'direction_conflict': pick.get('direction_conflict'),
+            'created_at': datetime.now(timezone.utc).isoformat(),
+        })
+
+    try:
+        from google.cloud.bigquery import LoadJobConfig, WriteDisposition, CreateDisposition
+        job_config = LoadJobConfig(
+            write_disposition=WriteDisposition.WRITE_APPEND,
+            create_disposition=CreateDisposition.CREATE_NEVER,
+        )
+        load_job = bq_client.load_table_from_json(rows, table_ref, job_config=job_config)
+        load_job.result(timeout=60)
+        return len(rows)
+    except Exception as e:
+        logger.error(f"Failed to write picks for {target_date}: {e}")
+        return 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Simulate consolidated best bets for historical dates'
@@ -227,6 +309,8 @@ def main():
     parser.add_argument('--end', type=str, help='End date for range')
     parser.add_argument('--compare', action='store_true',
                         help='Compare against existing best_bets subset')
+    parser.add_argument('--write', action='store_true',
+                        help='Write picks to signal_best_bets_picks (DELETE old + INSERT new)')
     parser.add_argument('--verbose', '-v', action='store_true',
                         help='Show debug logging')
     args = parser.parse_args()
@@ -263,6 +347,8 @@ def main():
     daily_results = []
     filter_totals = defaultdict(int)
 
+    total_written = 0
+
     for target_date in dates:
         result = simulate_date(bq_client, target_date, combo_registry)
         picks = grade_picks(bq_client, result['picks'], target_date)
@@ -272,6 +358,10 @@ def main():
             existing = get_existing_best_bets(bq_client, target_date)
 
         print_date_result(result, existing, args.compare)
+
+        if args.write:
+            written = write_picks_to_bigquery(bq_client, target_date, result['picks'])
+            total_written += written
 
         correct = sum(1 for p in picks if p.get('prediction_correct') is True)
         wrong = sum(1 for p in picks if p.get('prediction_correct') is False)
@@ -297,8 +387,11 @@ def main():
     hr = f"{100*total_correct/total_graded:.1f}%" if total_graded else "N/A"
 
     print(f"\n{'='*70}")
-    print(f"SUMMARY — {len(dates)} days, {ALGORITHM_VERSION}")
+    mode = "BACKFILL" if args.write else "DRY RUN"
+    print(f"SUMMARY — {mode} — {len(dates)} days, {ALGORITHM_VERSION}")
     print(f"{'='*70}")
+    if args.write:
+        print(f"  Wrote {total_written} picks to signal_best_bets_picks")
     print(f"  Total picks:  {total_picks}")
     print(f"  Graded:       {total_graded} ({total_correct}W - {total_wrong}L)")
     print(f"  Hit Rate:     {hr}")
