@@ -1,0 +1,337 @@
+#!/usr/bin/env python3
+"""Backfill Dry Run — simulate what the consolidated best bets code would pick.
+
+Runs the production SignalBestBetsExporter.generate_json() for historical dates
+WITHOUT writing to BQ or GCS. Compares simulated picks against actual graded
+results to compute what the hit rate would have been.
+
+Usage:
+    # Single date dry run
+    PYTHONPATH=. python bin/backfill_dry_run.py --date 2026-02-19
+
+    # Date range with summary
+    PYTHONPATH=. python bin/backfill_dry_run.py --start 2026-02-01 --end 2026-02-19
+
+    # Compare against existing best_bets subset
+    PYTHONPATH=. python bin/backfill_dry_run.py --start 2026-01-01 --end 2026-02-19 --compare
+"""
+
+import argparse
+import logging
+import sys
+import os
+from datetime import datetime, timedelta, date
+from collections import defaultdict
+from typing import Dict, List, Optional, Tuple
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from google.cloud import bigquery
+from ml.signals.registry import build_default_registry
+from ml.signals.aggregator import BestBetsAggregator, ALGORITHM_VERSION
+from ml.signals.combo_registry import load_combo_registry
+from ml.signals.model_health import BREAKEVEN_HR
+from ml.signals.signal_health import get_signal_health_summary
+from ml.signals.supplemental_data import (
+    query_model_health,
+    query_predictions_with_supplements,
+    query_games_vs_opponent,
+)
+from ml.signals.player_blacklist import compute_player_blacklist
+
+logging.basicConfig(level=logging.WARNING, format='%(levelname)s: %(message)s')
+logger = logging.getLogger(__name__)
+
+PROJECT_ID = 'nba-props-platform'
+
+
+def simulate_date(bq_client: bigquery.Client, target_date: str,
+                  combo_registry: dict) -> Dict:
+    """Simulate what the consolidated code would pick for a single date.
+
+    Returns dict with picks, filter_summary, and comparison data.
+    """
+    # 1. Query predictions (multi_model=True, same as production)
+    predictions, supplemental_map = query_predictions_with_supplements(
+        bq_client, target_date, multi_model=True
+    )
+
+    if not predictions:
+        return {
+            'date': target_date,
+            'n_predictions': 0,
+            'picks': [],
+            'filter_summary': {'total_candidates': 0, 'passed_filters': 0, 'rejected': {}},
+        }
+
+    # 2. Evaluate signals on predictions
+    registry = build_default_registry()
+    model_health = query_model_health(bq_client)
+    hr_7d = model_health.get('hit_rate_7d_edge3')
+    signal_results_map = {}
+
+    for pred in predictions:
+        supplements = supplemental_map.get(pred['player_lookup'], {})
+        supplements['model_health'] = {'hit_rate_7d_edge3': hr_7d}
+
+        all_results = []
+        for signal in registry.all():
+            result = signal.evaluate(pred, features=None, supplemental=supplements)
+            all_results.append(result)
+
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        signal_results_map[key] = all_results
+
+    # 3. Compute blacklist and games_vs_opponent
+    player_blacklist = set()
+    try:
+        player_blacklist, _ = compute_player_blacklist(bq_client, target_date)
+    except Exception:
+        pass
+
+    try:
+        gvo_map = query_games_vs_opponent(bq_client, target_date)
+        for pred in predictions:
+            opp = pred.get('opponent_team_abbr', '')
+            pred['games_vs_opponent'] = gvo_map.get(
+                (pred['player_lookup'], opp), 0
+            )
+    except Exception:
+        pass
+
+    # 4. Get signal health
+    signal_health = get_signal_health_summary(bq_client, target_date)
+
+    # 5. Run aggregator (same as production)
+    aggregator = BestBetsAggregator(
+        combo_registry=combo_registry,
+        signal_health=signal_health,
+        player_blacklist=player_blacklist,
+    )
+    top_picks, filter_summary = aggregator.aggregate(predictions, signal_results_map)
+
+    return {
+        'date': target_date,
+        'n_predictions': len(predictions),
+        'picks': top_picks,
+        'filter_summary': filter_summary,
+    }
+
+
+def grade_picks(bq_client: bigquery.Client, picks: List[Dict],
+                target_date: str) -> List[Dict]:
+    """Look up actual results for simulated picks."""
+    if not picks:
+        return picks
+
+    players = list(set(p['player_lookup'] for p in picks))
+    placeholders = ','.join([f"'{p}'" for p in players])
+
+    query = f"""
+    SELECT player_lookup, system_id, actual_points, prediction_correct,
+           recommendation, ROUND(ABS(predicted_points - line_value), 1) as edge
+    FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy`
+    WHERE game_date = '{target_date}'
+      AND player_lookup IN ({placeholders})
+      AND is_voided = FALSE
+    """
+    rows = {(r.player_lookup, r.system_id): r
+            for r in bq_client.query(query).result(timeout=60)}
+
+    for pick in picks:
+        key = (pick['player_lookup'], pick.get('system_id', ''))
+        if key in rows:
+            r = rows[key]
+            pick['actual_points'] = r.actual_points
+            pick['prediction_correct'] = r.prediction_correct
+        else:
+            # Try matching by player only (may match different system_id)
+            player_rows = [v for k, v in rows.items() if k[0] == pick['player_lookup']]
+            if player_rows:
+                r = player_rows[0]
+                pick['actual_points'] = r.actual_points
+                pick['prediction_correct'] = r.prediction_correct
+            else:
+                pick['actual_points'] = None
+                pick['prediction_correct'] = None
+
+    return picks
+
+
+def get_existing_best_bets(bq_client: bigquery.Client,
+                           target_date: str) -> List[Dict]:
+    """Get existing best_bets subset picks for comparison."""
+    query = f"""
+    SELECT DISTINCT player_lookup, recommendation, ROUND(edge, 1) as edge,
+           system_id
+    FROM `{PROJECT_ID}.nba_predictions.current_subset_picks`
+    WHERE game_date = '{target_date}' AND subset_id = 'best_bets'
+    """
+    return [dict(r) for r in bq_client.query(query).result(timeout=60)]
+
+
+def print_date_result(result: Dict, existing: List[Dict] = None,
+                      compare: bool = False):
+    """Print results for a single date."""
+    d = result['date']
+    picks = result['picks']
+    fs = result['filter_summary']
+
+    correct = sum(1 for p in picks if p.get('prediction_correct') is True)
+    wrong = sum(1 for p in picks if p.get('prediction_correct') is False)
+    graded = correct + wrong
+    ungraded = len(picks) - graded
+
+    hr = f"{100*correct/graded:.0f}%" if graded else "N/A"
+
+    # Compact line for multi-date runs
+    rejected_str = ', '.join(f"{k}={v}" for k, v in fs.get('rejected', {}).items() if v > 0)
+    print(f"\n{'='*70}")
+    print(f"  {d}  |  {result['n_predictions']} preds → {fs['passed_filters']} passed → {len(picks)} picks  |  {correct}-{wrong} ({hr})")
+    if rejected_str:
+        print(f"  Filters: {rejected_str}")
+
+    if picks:
+        for p in picks:
+            actual = p.get('actual_points', '?')
+            mark = '✓' if p.get('prediction_correct') else ('✗' if p.get('prediction_correct') is False else '?')
+            sys_id = p.get('system_id', '?')
+            # Shorten model name
+            short_model = sys_id.replace('catboost_', '').replace('_train', 'T').replace('_noveg', '')[:20]
+            print(f"    {mark} {p['player_lookup']:25s} {p.get('recommendation','?'):5s} "
+                  f"edge={abs(p.get('edge') or p.get('composite_score') or 0):5.1f} "
+                  f"actual={actual} model={short_model}")
+
+    if compare and existing:
+        existing_players = set(e['player_lookup'] for e in existing)
+        new_players = set(p['player_lookup'] for p in picks)
+
+        added = new_players - existing_players
+        removed = existing_players - new_players
+        kept = new_players & existing_players
+
+        if added or removed:
+            print(f"  vs OLD: kept={len(kept)}, added={len(added)}, removed={len(removed)}")
+            if removed:
+                print(f"    Removed: {', '.join(sorted(removed))}")
+            if added:
+                print(f"    Added:   {', '.join(sorted(added))}")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Simulate consolidated best bets for historical dates'
+    )
+    parser.add_argument('--date', type=str, help='Single date (YYYY-MM-DD)')
+    parser.add_argument('--start', type=str, help='Start date for range')
+    parser.add_argument('--end', type=str, help='End date for range')
+    parser.add_argument('--compare', action='store_true',
+                        help='Compare against existing best_bets subset')
+    parser.add_argument('--verbose', '-v', action='store_true',
+                        help='Show debug logging')
+    args = parser.parse_args()
+
+    if args.verbose:
+        logging.getLogger().setLevel(logging.INFO)
+
+    if args.date:
+        dates = [args.date]
+    elif args.start and args.end:
+        start = datetime.strptime(args.start, '%Y-%m-%d').date()
+        end = datetime.strptime(args.end, '%Y-%m-%d').date()
+        dates = []
+        d = start
+        while d <= end:
+            dates.append(d.strftime('%Y-%m-%d'))
+            d += timedelta(days=1)
+    else:
+        parser.error('Provide --date or --start/--end')
+
+    bq_client = bigquery.Client(project=PROJECT_ID)
+    combo_registry = load_combo_registry(bq_client=bq_client)
+
+    print(f"Backfill Dry Run — Algorithm: {ALGORITHM_VERSION}")
+    print(f"Dates: {dates[0]} to {dates[-1]} ({len(dates)} days)")
+    print(f"Combo registry: {len(combo_registry)} entries "
+          f"(0 ANTI_PATTERN)")
+
+    # Accumulators for summary
+    total_picks = 0
+    total_correct = 0
+    total_wrong = 0
+    total_ungraded = 0
+    daily_results = []
+    filter_totals = defaultdict(int)
+
+    for target_date in dates:
+        result = simulate_date(bq_client, target_date, combo_registry)
+        picks = grade_picks(bq_client, result['picks'], target_date)
+
+        existing = None
+        if args.compare:
+            existing = get_existing_best_bets(bq_client, target_date)
+
+        print_date_result(result, existing, args.compare)
+
+        correct = sum(1 for p in picks if p.get('prediction_correct') is True)
+        wrong = sum(1 for p in picks if p.get('prediction_correct') is False)
+        graded = correct + wrong
+        ungraded = len(picks) - graded
+
+        total_picks += len(picks)
+        total_correct += correct
+        total_wrong += wrong
+        total_ungraded += ungraded
+        daily_results.append({
+            'date': target_date,
+            'picks': len(picks),
+            'correct': correct,
+            'wrong': wrong,
+        })
+
+        for k, v in result['filter_summary'].get('rejected', {}).items():
+            filter_totals[k] += v
+
+    # Print summary
+    total_graded = total_correct + total_wrong
+    hr = f"{100*total_correct/total_graded:.1f}%" if total_graded else "N/A"
+
+    print(f"\n{'='*70}")
+    print(f"SUMMARY — {len(dates)} days, {ALGORITHM_VERSION}")
+    print(f"{'='*70}")
+    print(f"  Total picks:  {total_picks}")
+    print(f"  Graded:       {total_graded} ({total_correct}W - {total_wrong}L)")
+    print(f"  Hit Rate:     {hr}")
+    print(f"  Ungraded:     {total_ungraded}")
+    if total_graded:
+        pnl = total_correct * 100 - total_wrong * 110
+        print(f"  Est. P&L:     ${pnl:+,d} ($110 risk / $100 win)")
+
+    if filter_totals:
+        print(f"\n  Filter rejection totals:")
+        for k, v in sorted(filter_totals.items(), key=lambda x: -x[1]):
+            if v > 0:
+                print(f"    {k:25s} {v:6d}")
+
+    # Weekly breakdown
+    if len(daily_results) > 7:
+        print(f"\n  Weekly breakdown:")
+        week_start = None
+        week_c, week_w = 0, 0
+        for dr in daily_results:
+            d = datetime.strptime(dr['date'], '%Y-%m-%d').date()
+            if week_start is None or (d - week_start).days >= 7:
+                if week_start is not None and (week_c + week_w) > 0:
+                    whr = f"{100*week_c/(week_c+week_w):.0f}%"
+                    print(f"    {week_start} — {week_c}W-{week_w}L ({whr})")
+                week_start = d
+                week_c, week_w = 0, 0
+            week_c += dr['correct']
+            week_w += dr['wrong']
+        if week_start and (week_c + week_w) > 0:
+            whr = f"{100*week_c/(week_c+week_w):.0f}%"
+            print(f"    {week_start} — {week_c}W-{week_w}L ({whr})")
+
+
+if __name__ == '__main__':
+    main()
