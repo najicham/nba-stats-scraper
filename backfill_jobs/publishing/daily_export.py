@@ -98,6 +98,10 @@ from data_processors.publishing.best_bets_record_exporter import BestBetsRecordE
 from data_processors.publishing.today_best_bets_exporter import TodayBestBetsExporter
 # Admin picks with full metadata (Session 319)
 from data_processors.publishing.admin_picks_exporter import AdminPicksExporter
+# Consolidated best bets single file (Session 319 — frontend chose Option A)
+from data_processors.publishing.best_bets_all_exporter import BestBetsAllExporter
+# Admin consolidated dashboard (Session 319)
+from data_processors.publishing.admin_dashboard_exporter import AdminDashboardExporter
 
 # Configure logging
 logging.basicConfig(
@@ -127,10 +131,10 @@ EXPORT_TYPES = [
     'signal-best-bets',
     # Signal health + model health (Session 267)
     'signal-health', 'model-health',
-    # Best bets record + history + today (Session 317/319)
-    'best-bets-record', 'best-bets-today',
-    # Admin picks with full metadata (Session 319)
-    'admin-picks',
+    # Best bets record + history + today + consolidated (Session 317/319)
+    'best-bets-record', 'best-bets-today', 'best-bets-all',
+    # Admin picks + dashboard (Session 319)
+    'admin-picks', 'admin-dashboard',
     # Consolidated trends
     'trends-tonight',
     # Shorthand groups
@@ -446,6 +450,17 @@ def export_date(
             result['errors'].append(f"best-bets-today: {e}")
             logger.error(f"  Best Bets Today error: {e}")
 
+    # Consolidated best bets single file (Session 319 — primary frontend endpoint)
+    if 'best-bets-all' in export_types:
+        try:
+            exporter = BestBetsAllExporter()
+            path = exporter.export(target_date)
+            result['paths']['best_bets_all'] = path
+            logger.info(f"  Best Bets All: {path}")
+        except Exception as e:
+            result['errors'].append(f"best-bets-all: {e}")
+            logger.error(f"  Best Bets All error: {e}")
+
     # Admin picks with full metadata (Session 319)
     if 'admin-picks' in export_types:
         try:
@@ -456,6 +471,17 @@ def export_date(
         except Exception as e:
             result['errors'].append(f"admin-picks: {e}")
             logger.error(f"  Admin Picks error: {e}")
+
+    # Admin consolidated dashboard (Session 319)
+    if 'admin-dashboard' in export_types:
+        try:
+            exporter = AdminDashboardExporter()
+            path = exporter.export(target_date)
+            result['paths']['admin_dashboard'] = path
+            logger.info(f"  Admin Dashboard: {path}")
+        except Exception as e:
+            result['errors'].append(f"admin-dashboard: {e}")
+            logger.error(f"  Admin Dashboard error: {e}")
 
     # === SLOW EXPORTS (tonight-players processes 200+ individual files) ===
 
