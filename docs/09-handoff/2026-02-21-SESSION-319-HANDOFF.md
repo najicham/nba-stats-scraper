@@ -21,57 +21,82 @@
 - **New file:** `data_processors/publishing/today_best_bets_exporter.py`
 - Strips internal metadata (composite_score, signal_tags, model IDs)
 - Keeps: player, team, opponent, direction, line, edge, pick_angles (max 3), rank
-- Includes lightweight season record summary
 - Integrated into `daily_export.py` as `best-bets-today` export type
-- **GCS path:** `v1/best-bets/today.json` (300s cache)
+- **Superseded by `all.json`** — kept for backwards compatibility
 
 ### C3: `v1/admin/picks/{date}.json` Endpoint (NEW)
 - **New file:** `data_processors/publishing/admin_picks_exporter.py`
 - Full metadata: all signal tags, composite scores, model provenance, filter_summary
 - Includes ALL candidates (not just top picks) with edge and quality scores
-- Edge distribution computed from candidates
-- Integrated into `daily_export.py` as `admin-picks` export type
-- **GCS path:** `v1/admin/picks/{date}.json` (3600s cache)
+- Per-date deep dive for debugging "why was player X picked/not picked?"
 
 ### C4: filter_summary in BQ
-- Added `filter_summary STRING` to `signal_best_bets_picks.sql` schema
-- Ran `ALTER TABLE` to add column to production BQ table
-- Updated `SignalBestBetsExporter._write_to_bigquery()` to accept and write filter_summary as JSON string
-- Same filter_summary dict written to every pick row (shared per daily run)
+- Added `filter_summary STRING` to `signal_best_bets_picks.sql` schema + production BQ table
+- `SignalBestBetsExporter` now writes JSON-serialized filter_summary with each pick
+- Enables historical analysis of filtering decisions
+
+### Consolidated Best Bets (`v1/best-bets/all.json`) — PRIMARY FRONTEND ENDPOINT
+- **New file:** `data_processors/publishing/best_bets_all_exporter.py`
+- Single file with record + streak + today's picks (with angles) + full history by week/day
+- Frontend team chose single-file over three separate files (~50-200 KB, one fetch)
+- Day-level `status` field: `"pending"` / `"sweep"` / `"split"` / `"miss"` for color coding
+- Today's picks appear in both `today` (hero) and `weeks` (history continuity)
+
+### Admin Dashboard (`v1/admin/dashboard.json`)
+- **New file:** `data_processors/publishing/admin_dashboard_exporter.py`
+- Consolidated admin view: model health, signal health, subset performance, picks, filter funnel
+- Single file replaces need to fetch 4+ separate admin endpoints
+- Lives at `playerprops.io/admin` behind Firebase Auth (Google sign-in, email allowlist)
+
+### Frontend Specs (Final)
+- **End-user spec:** `docs/08-projects/current/frontend-data-design/02-FRONTEND-PROMPT.md`
+  - Editorial layout, full-width pick cards, weekly accordion (no calendar)
+  - No signal tags for end users (angles only)
+  - Best Bets as first nav item / landing page
+- **Admin spec:** `docs/08-projects/current/frontend-data-design/03-ADMIN-DASHBOARD-SPEC.md`
+  - Dense dashboard: status bar, picks table, filter funnel, subset grid, model/signal health
+  - Per-date deep dive via date picker loading `admin/picks/{date}.json`
+  - Auth: Firebase + Google sign-in, 1-email allowlist
 
 ### Documentation
-- **Frontend data design:** `docs/08-projects/current/frontend-data-design/01-API-SPEC.md`
-  - Two-audience design (end user vs admin)
-  - Endpoint specifications with example JSON
-  - Frontend layout recommendations
 - **Daily operations checklist:** `docs/02-operations/daily-operations-checklist.md`
-  - Automated systems overview
-  - 5-min daily routine (Slack → steering → validate if needed)
-  - Skills reference table
 
 ## Files Changed
 
 | File | Change |
 |------|--------|
 | `schemas/bigquery/nba_predictions/prediction_accuracy.sql` | +2 columns |
-| `schemas/bigquery/nba_predictions/signal_best_bets_picks.sql` | +1 column |
+| `schemas/bigquery/nba_predictions/signal_best_bets_picks.sql` | +1 column (filter_summary) |
 | `data_processors/publishing/signal_best_bets_exporter.py` | Write filter_summary to BQ |
 | `data_processors/publishing/today_best_bets_exporter.py` | **NEW** |
 | `data_processors/publishing/admin_picks_exporter.py` | **NEW** |
-| `backfill_jobs/publishing/daily_export.py` | +2 export types |
+| `data_processors/publishing/best_bets_all_exporter.py` | **NEW** (primary frontend endpoint) |
+| `data_processors/publishing/admin_dashboard_exporter.py` | **NEW** |
+| `backfill_jobs/publishing/daily_export.py` | +5 export types |
 | `docs/08-projects/current/frontend-data-design/01-API-SPEC.md` | **NEW** |
+| `docs/08-projects/current/frontend-data-design/02-FRONTEND-PROMPT.md` | **NEW** (final frontend spec) |
+| `docs/08-projects/current/frontend-data-design/03-ADMIN-DASHBOARD-SPEC.md` | **NEW** (admin spec) |
 | `docs/02-operations/daily-operations-checklist.md` | **NEW** |
+
+## New GCS Endpoints
+
+| Endpoint | Audience | Cache | Content |
+|----------|----------|-------|---------|
+| `v1/best-bets/all.json` | End user | 300s | Record + today + history (single file) |
+| `v1/best-bets/today.json` | End user | 300s | Today's clean picks (backup) |
+| `v1/admin/dashboard.json` | Admin | 300s | Full system state + picks + subsets |
+| `v1/admin/picks/{date}.json` | Admin | 3600s | Per-date deep dive with all candidates |
 
 ## Deployment Notes
 
 - Push to main → auto-deploys via Cloud Build triggers
-- New exporters will run on next daily export cycle
+- New exporters run on next daily export cycle
 - BQ schema changes already applied to production
-- No re-export of historical files needed — tonight's export will produce fresh data
+- No re-export of historical files needed
 
 ## What's Next
 
-1. **Verify exports:** After next daily export, check GCS for today.json and admin picks
-2. **Frontend implementation:** Use `01-API-SPEC.md` as reference
+1. **Frontend:** Build Best Bets page from `02-FRONTEND-PROMPT.md`
+2. **Frontend:** Build admin dashboard from `03-ADMIN-DASHBOARD-SPEC.md`
 3. **C5 (deferred):** Signal observatory subsets for removed signals
-4. **Backfill feature_quality_score:** Re-grade recent dates to populate the new columns in prediction_accuracy (optional — new grades will auto-populate going forward)
+4. **Future:** Push notifications, shareable pick cards, per-date admin deep dive
