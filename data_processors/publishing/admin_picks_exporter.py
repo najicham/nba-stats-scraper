@@ -13,7 +13,15 @@ Created: 2026-02-21 (Session 319)
 
 import json
 import logging
+from datetime import date
 from typing import Any, Dict, List
+
+
+def _compute_season_label(d: date) -> str:
+    """Compute NBA season label from a date (e.g. Feb 2026 -> '2025-26')."""
+    if d.month >= 10:
+        return f"{d.year}-{str(d.year + 1)[-2:]}"
+    return f"{d.year - 1}-{str(d.year)[-2:]}"
 
 from google.cloud import bigquery
 
@@ -110,8 +118,14 @@ class AdminPicksExporter(BaseExporter):
             'max_edge': round(max(edges), 1) if edges else None,
         }
 
+        target = (
+            date.fromisoformat(target_date) if isinstance(target_date, str)
+            else target_date
+        )
+
         return {
             'date': target_date,
+            'season': _compute_season_label(target),
             'generated_at': self.get_generated_at(),
             'picks': picks,
             'total_picks': len(picks),
@@ -175,17 +189,17 @@ class AdminPicksExporter(BaseExporter):
         """Query all predictions for the date (candidates before filtering)."""
         query = """
         SELECT
-          player_name,
           player_lookup,
-          team_abbr,
+          player_lookup AS player_name,
           recommendation,
-          line_value,
-          ROUND(predicted_points - line_value, 1) AS edge,
+          current_points_line AS line_value,
+          ROUND(predicted_points - current_points_line, 1) AS edge,
           feature_quality_score
         FROM `nba-props-platform.nba_predictions.player_prop_predictions`
         WHERE game_date = @target_date
           AND is_active = TRUE
-        ORDER BY ABS(predicted_points - line_value) DESC
+          AND current_points_line IS NOT NULL
+        ORDER BY ABS(predicted_points - current_points_line) DESC
         """
 
         params = [

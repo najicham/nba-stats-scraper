@@ -78,7 +78,8 @@ PHASE6_EXPORT_TOPIC = 'nba-phase6-export-trigger'
 # - daily-signals: Market signal for today (Session 90)
 TONIGHT_EXPORT_TYPES = ['tonight', 'tonight-players', 'predictions', 'best-bets', 'streaks',
                         'subset-picks', 'season-subsets', 'daily-signals', 'signal-best-bets',
-                        'calendar']
+                        'calendar', 'best-bets-all', 'best-bets-today', 'admin-dashboard',
+                        'admin-picks']
 
 # Minimum completion percentage to trigger Phase 6
 # Don't export if predictions largely failed

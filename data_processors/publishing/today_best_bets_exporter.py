@@ -15,6 +15,13 @@ import logging
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List
 
+
+def _compute_season_label(d: date) -> str:
+    """Compute NBA season label from a date (e.g. Feb 2026 -> '2025-26')."""
+    if d.month >= 10:
+        return f"{d.year}-{str(d.year + 1)[-2:]}"
+    return f"{d.year - 1}-{str(d.year)[-2:]}"
+
 from google.cloud import bigquery
 
 from data_processors.publishing.base_exporter import BaseExporter
@@ -49,8 +56,14 @@ class TodayBestBetsExporter(BaseExporter):
                 'angles': list(angles)[:3],
             })
 
+        target = (
+            date.fromisoformat(target_date) if isinstance(target_date, str)
+            else target_date
+        )
+
         return {
             'date': target_date,
+            'season': _compute_season_label(target),
             'generated_at': self.get_generated_at(),
             'algorithm_version': ALGORITHM_VERSION,
             'record': record,

@@ -41,6 +41,19 @@ MODEL_DEPENDENT_SIGNALS = frozenset({
     'high_edge', 'edge_spread_optimal', 'combo_he_ms', 'combo_3way',
 })
 
+# Active signals — only these are included in signal_health_daily.
+# Ghost signals (removed signals with stale tags in pick_signal_tags)
+# are filtered out at query time. Updated when signals are added/removed.
+ACTIVE_SIGNALS = frozenset({
+    'model_health', 'high_edge', 'edge_spread_optimal',
+    'combo_he_ms', 'combo_3way',
+    'bench_under', '3pt_bounce', 'b2b_fatigue_under',
+    'high_ft_under', 'rest_advantage_2d',
+    'prop_line_drop_over', 'book_disagreement',
+    'self_creator_under', 'volatile_under',
+    'high_usage_under', 'blowout_recovery',
+})
+
 # Regime thresholds (Session 257 analysis)
 COLD_THRESHOLD = -10.0   # divergence_7d_vs_season < -10 → COLD
 HOT_THRESHOLD = 10.0     # divergence_7d_vs_season > +10 → HOT
@@ -118,12 +131,14 @@ def compute_signal_health(
       picks_7d, picks_14d, picks_30d, picks_season
     FROM signal_metrics
     WHERE picks_season > 0
+      AND signal_tag IN UNNEST(@active_signals)
     ORDER BY signal_tag
     """
 
     job_config = bigquery.QueryJobConfig(
         query_parameters=[
             bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+            bigquery.ArrayQueryParameter('active_signals', 'STRING', sorted(ACTIVE_SIGNALS)),
         ]
     )
 
@@ -267,10 +282,12 @@ def get_signal_health_summary(
     SELECT signal_tag, hr_7d, hr_season, regime, status, is_model_dependent
     FROM `{TABLE_ID}`
     WHERE game_date = @target_date
+      AND signal_tag IN UNNEST(@active_signals)
     """
     job_config = bigquery.QueryJobConfig(
         query_parameters=[
             bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+            bigquery.ArrayQueryParameter('active_signals', 'STRING', sorted(ACTIVE_SIGNALS)),
         ]
     )
 

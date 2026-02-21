@@ -161,14 +161,14 @@ create_topic
 # Runs at 5 AM ET (10:00 UTC) after overnight games complete
 create_job "phase6-daily-results" \
     "0 5 * * *" \
-    '{"export_types": ["results", "performance", "best-bets", "predictions"], "target_date": "yesterday", "update_latest": true}' \
+    '{"export_types": ["results", "performance", "best-bets", "predictions", "admin-dashboard", "admin-picks"], "target_date": "yesterday", "update_latest": true}' \
     "Export yesterday's prediction results to GCS (5 AM ET)"
 
 # Job 2: Tonight's Picks Export
 # Runs at 1 PM ET (18:00 UTC) after predictions run
 create_job "phase6-tonight-picks" \
     "0 13 * * *" \
-    '{"export_types": ["tonight", "tonight-players"], "target_date": "today"}' \
+    '{"export_types": ["tonight", "tonight-players", "best-bets-all", "best-bets-today"], "target_date": "today"}' \
     "Export tonight's players and predictions (1 PM ET)"
 
 # Job 3: Weekly Player Profiles

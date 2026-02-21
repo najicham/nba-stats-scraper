@@ -126,8 +126,15 @@ class SignalBestBetsExporter(BaseExporter):
 
         if not predictions:
             logger.info(f"No predictions found for {target_date}")
+            target_0 = (
+                date.fromisoformat(target_date) if isinstance(target_date, str)
+                else target_date
+            )
+            season_start_year_0 = target_0.year if target_0.month >= 10 else target_0.year - 1
+            season_label_0 = f"{season_start_year_0}-{str(season_start_year_0 + 1)[-2:]}"
             return {
                 'date': target_date,
+                'season': season_label_0,
                 'generated_at': self.get_generated_at(),
                 'min_signal_count': BestBetsAggregator.MIN_SIGNAL_COUNT,
                 'record': record,
@@ -300,8 +307,16 @@ class SignalBestBetsExporter(BaseExporter):
                 'result': None,
             })
 
+        target = (
+            date.fromisoformat(target_date) if isinstance(target_date, str)
+            else target_date
+        )
+        season_start_year = target.year if target.month >= 10 else target.year - 1
+        season_label = f"{season_start_year}-{str(season_start_year + 1)[-2:]}"
+
         return {
             'date': target_date,
+            'season': season_label,
             'generated_at': self.get_generated_at(),
             'min_signal_count': BestBetsAggregator.MIN_SIGNAL_COUNT,
             'record': record,

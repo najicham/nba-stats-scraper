@@ -16,6 +16,7 @@ Created: 2026-02-21 (Session 319)
 
 import json
 import logging
+from datetime import date
 from typing import Any, Dict, List
 
 from google.cloud import bigquery
@@ -30,6 +31,13 @@ from shared.config.subset_public_names import SUBSET_PUBLIC_NAMES
 logger = logging.getLogger(__name__)
 
 PROJECT_ID = 'nba-props-platform'
+
+
+def _compute_season_label(d: date) -> str:
+    """Compute NBA season label from a date (e.g. Feb 2026 -> '2025-26')."""
+    if d.month >= 10:
+        return f"{d.year}-{str(d.year + 1)[-2:]}"
+    return f"{d.year - 1}-{str(d.year)[-2:]}"
 
 
 class AdminDashboardExporter(BaseExporter):
@@ -62,8 +70,11 @@ class AdminDashboardExporter(BaseExporter):
                 champion_state = m.get('state', 'UNKNOWN')
                 break
 
+        target = date.fromisoformat(target_date) if isinstance(target_date, str) else target_date
+
         return {
             'date': target_date,
+            'season': _compute_season_label(target),
             'generated_at': self.get_generated_at(),
             'algorithm_version': ALGORITHM_VERSION,
             'best_bets_model': champion_id,
@@ -387,7 +398,7 @@ class AdminDashboardExporter(BaseExporter):
         """Query all predictions for candidate count and edge distribution."""
         query = """
         SELECT
-          ROUND(predicted_points - line_value, 1) AS edge
+          ROUND(predicted_points - current_points_line, 1) AS edge
         FROM `nba-props-platform.nba_predictions.player_prop_predictions`
         WHERE game_date = @target_date
           AND is_active = TRUE

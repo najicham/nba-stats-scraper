@@ -29,6 +29,13 @@ logger = logging.getLogger(__name__)
 PROJECT_ID = 'nba-props-platform'
 
 
+def _compute_season_label(d: date) -> str:
+    """Compute NBA season label from a date (e.g. Feb 2026 -> '2025-26')."""
+    if d.month >= 10:
+        return f"{d.year}-{str(d.year + 1)[-2:]}"
+    return f"{d.year - 1}-{str(d.year)[-2:]}"
+
+
 class BestBetsAllExporter(BaseExporter):
     """Export consolidated best bets (record + today + history) to one file."""
 
@@ -76,6 +83,7 @@ class BestBetsAllExporter(BaseExporter):
 
         return {
             'date': target_date,
+            'season': _compute_season_label(target),
             'generated_at': self.get_generated_at(),
             'algorithm_version': ALGORITHM_VERSION,
             'record': record,

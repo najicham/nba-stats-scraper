@@ -183,9 +183,12 @@ Compute from `model_health`:
 
 ---
 
-## Questions for Frontend
+## Frontend Decisions (Resolved)
 
-1. **Option A (family-grouped) or Option B (flat table)?** Or start with flat and add grouping later?
-2. **Lineage display:** Full parent chain, or just "replaced X on date Y" one-liner?
-3. **Model ID truncation:** The full model_id is long (`catboost_v9_33f_train20260106-20260205_20260218_223530`). Show family + status badge + truncated ID? Or tooltip on hover?
-4. **Stale model highlight:** Should models with `days_since_training > 14` have a visual warning beyond the age badge?
+1. **Option A: Family-grouped table.** Group by family with `Object.groupBy(family)`. Family header + indented rows. With 6-10 models, a flat table is a wall of similar-looking rows; grouping makes the key question instantly scannable: "how is each architecture doing, and which generation is live?"
+
+2. **One-liner lineage only.** Show "Replaced catboost_v9_...1102 on Feb 19". No full chain — the daily check-in use case doesn't need it. Data is there via `parent_model_id` if a "show full history" expander is ever needed.
+
+3. **Family badge + short ID suffix + tooltip.** Show `v9_mae` badge, then `...0218` (last 4-6 chars of the ID). Full model_id on hover/tooltip. The long ID is only useful for grep-ing logs.
+
+4. **Subtle stale highlight.** The age badge already color-codes (green/yellow/red), so no extra badge. If `days_since_training > 14`, give the entire model row a faint yellow left-border (warning stripe). Draws the eye without adding another badge. Same pattern as Key Angles on the Tonight page.
