@@ -128,10 +128,17 @@ class TestFilterTracking:
         assert summary['rejected']['edge_floor'] == 1
 
     def test_under_edge_7plus_tracked(self):
-        pred = _make_prediction(edge=8.0, recommendation='UNDER')
+        pred = _make_prediction(edge=8.0, recommendation='UNDER', line_value=20.0)
         agg = BestBetsAggregator()
         _, summary = agg.aggregate([pred], {})
         assert summary['rejected']['under_edge_7plus'] == 1
+
+    def test_under_edge_7plus_allows_star_lines(self):
+        """Session 316: UNDER edge 7+ with line >= 25 (star) should NOT be blocked."""
+        pred = _make_prediction(edge=8.0, recommendation='UNDER', line_value=27.5)
+        agg = BestBetsAggregator()
+        _, summary = agg.aggregate([pred], {})
+        assert summary['rejected']['under_edge_7plus'] == 0
 
     def test_familiar_matchup_tracked(self):
         pred = _make_prediction(games_vs_opponent=7)

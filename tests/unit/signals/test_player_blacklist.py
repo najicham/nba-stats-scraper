@@ -287,8 +287,8 @@ class TestAggregatorBlacklistIntegration:
         assert len(picks) == 1
 
     def test_algorithm_version_updated(self):
-        """ALGORITHM_VERSION should reflect the session 314 consolidation."""
-        assert 'v314' in ALGORITHM_VERSION
+        """ALGORITHM_VERSION should reflect the latest session update."""
+        assert 'v316' in ALGORITHM_VERSION
 
 
 # ============================================================================

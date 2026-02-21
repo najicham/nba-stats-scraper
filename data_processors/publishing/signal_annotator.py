@@ -369,16 +369,44 @@ class SignalAnnotator:
                 'total_predictions_available': len(predictions),
             })
 
+        # DELETE existing best_bets for this date before INSERT (idempotency)
+        # Prevents duplicate rows when annotate() is called multiple times
+        # (retries, manual reruns, backfills). Same pattern as _write_rows().
         try:
-            # Use streaming insert (same as SubsetMaterializer — append-only table)
-            errors = self.bq_client.insert_rows_json(SUBSET_TABLE_ID, subset_rows)
-            if errors:
-                logger.error(f"Errors bridging signal picks to subsets: {errors}")
-            else:
+            delete_query = f"""
+            DELETE FROM `{SUBSET_TABLE_ID}`
+            WHERE game_date = '{target_date}'
+              AND subset_id = '{SIGNAL_PICKS_SUBSET_ID}'
+            """
+            delete_job = self.bq_client.query(delete_query)
+            delete_job.result(timeout=60)
+            deleted = delete_job.num_dml_affected_rows or 0
+            if deleted > 0:
                 logger.info(
-                    f"Bridged {len(subset_rows)} signal picks to {SUBSET_TABLE_ID} "
+                    f"Deleted {deleted} existing {SIGNAL_PICKS_SUBSET_ID} picks "
                     f"for {target_date}"
                 )
+        except Exception as e:
+            logger.warning(
+                f"Failed to delete existing {SIGNAL_PICKS_SUBSET_ID} picks "
+                f"for {target_date}: {e}. Proceeding with append (may create duplicates)."
+            )
+
+        try:
+            # Use batch load (not streaming insert) to avoid 90-min DML buffer
+            # that would block the DELETE above. Same pattern as _write_rows().
+            job_config = bigquery.LoadJobConfig(
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                create_disposition=bigquery.CreateDisposition.CREATE_NEVER,
+            )
+            load_job = self.bq_client.load_table_from_json(
+                subset_rows, SUBSET_TABLE_ID, job_config=job_config
+            )
+            load_job.result(timeout=60)
+            logger.info(
+                f"Batch-loaded {len(subset_rows)} signal picks to {SUBSET_TABLE_ID} "
+                f"for {target_date}"
+            )
         except Exception as e:
             logger.error(
                 f"Failed to bridge signal picks to subsets: {e}",
