@@ -92,6 +92,8 @@ from shared.config.cross_model_subsets import discover_models
 # Signal health + model health exports (Session 267)
 from data_processors.publishing.signal_health_exporter import SignalHealthExporter
 from data_processors.publishing.model_health_exporter import ModelHealthExporter
+# Best bets record + history (Session 317)
+from data_processors.publishing.best_bets_record_exporter import BestBetsRecordExporter
 
 # Configure logging
 logging.basicConfig(
@@ -121,6 +123,8 @@ EXPORT_TYPES = [
     'signal-best-bets',
     # Signal health + model health (Session 267)
     'signal-health', 'model-health',
+    # Best bets record + history (Session 317)
+    'best-bets-record',
     # Consolidated trends
     'trends-tonight',
     # Shorthand groups
@@ -412,6 +416,18 @@ def export_date(
         except Exception as e:
             result['errors'].append(f"model-health: {e}")
             logger.error(f"  Model Health error: {e}")
+
+    # Best bets record + history (Session 317)
+    if 'best-bets-record' in export_types:
+        try:
+            exporter = BestBetsRecordExporter()
+            bb_paths = exporter.export(target_date)
+            result['paths']['best_bets_record'] = bb_paths.get('record', '')
+            result['paths']['best_bets_history'] = bb_paths.get('history', '')
+            logger.info(f"  Best Bets Record: {bb_paths}")
+        except Exception as e:
+            result['errors'].append(f"best-bets-record: {e}")
+            logger.error(f"  Best Bets Record error: {e}")
 
     # === SLOW EXPORTS (tonight-players processes 200+ individual files) ===
 

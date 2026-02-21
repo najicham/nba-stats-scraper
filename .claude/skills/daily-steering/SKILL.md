@@ -95,15 +95,14 @@ Flag COLD model-dependent signals specifically since they're effectively disable
 
 ## Step 3: Best Bets Performance
 
-Check recent best bets results from `current_subset_picks` joined with `prediction_accuracy`.
+Check recent best bets results from `signal_best_bets_picks` joined with `prediction_accuracy`.
 
 ```bash
 bq query --use_legacy_sql=false --format=pretty "
 WITH best_bets AS (
   SELECT game_date, player_lookup, system_id
-  FROM \`nba-props-platform.nba_predictions.current_subset_picks\`
-  WHERE subset_id = 'best_bets'
-    AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)
+  FROM \`nba-props-platform.nba_predictions.signal_best_bets_picks\`
+  WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)
 )
 SELECT
   bb.game_date,
@@ -128,9 +127,8 @@ Also get a rolling summary:
 bq query --use_legacy_sql=false --format=pretty "
 WITH best_bets AS (
   SELECT game_date, player_lookup, system_id
-  FROM \`nba-props-platform.nba_predictions.current_subset_picks\`
-  WHERE subset_id = 'best_bets'
-    AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+  FROM \`nba-props-platform.nba_predictions.signal_best_bets_picks\`
+  WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
 )
 SELECT
   'Last 7d' AS period,
