@@ -40,11 +40,11 @@ SIGNAL_ANGLE_MAP = {
     '3pt_bounce': "3pt bounce-back pattern: 74.9% HR",
     'high_ft_under': "High FT volume UNDER: 64.1% HR",
     'blowout_recovery': "Blowout recovery bounce: 56.9% HR",
-    'minutes_surge': "Minutes surge detected",
+    # minutes_surge REMOVED (Session 318)
     'self_creator_under': "Self-creator UNDER: 61.8% HR",
     'volatile_under': "Volatile player UNDER: 60.0% HR",
     'high_usage_under': "High usage UNDER: 58.7% HR",
-    'cold_snap': "Cold snap bounce-back",
+    # cold_snap REMOVED (Session 318)
     'book_disagreement': "Sportsbooks disagree on line: 93.0% edge 3+ HR (WATCH)",
 }
 

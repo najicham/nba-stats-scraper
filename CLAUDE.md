@@ -549,7 +549,7 @@ Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
 
 ## Signal System [Keyword: SIGNALS]
 
-**18 active signals** (14 removed Sessions 275+296, dead code deleted Session 308). **Session 297: Edge-first architecture** — signals are for pick angles (explanations), not selection. Picks ranked by edge, not composite score.
+**16 active signals** (16 removed Sessions 275+296+318, dead code deleted Sessions 308+318). **Session 297: Edge-first architecture** — signals are for pick angles (explanations), not selection. Picks ranked by edge, not composite score.
 
 **Best Bets Selection (Session 297):** `edge 5+ → negative filters → rank by edge → top 5`
 - Edge 5+ baseline: 71.1% HR (up from 59.8% with signal-scored selection)
@@ -567,7 +567,7 @@ Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
 
 **Pick Angles (Session 278, 284):** Each pick includes `pick_angles` — human-readable reasoning (confidence tier, high-conviction edge>=5, player tier, cross-model consensus, signal-specific). Max 5 angles per pick. See `ml/signals/pick_angle_builder.py`.
 
-### Active Signals (18)
+### Active Signals (16)
 
 | Signal | Category | Direction | AVG HR | Status | Notes |
 |--------|----------|-----------|--------|--------|-------|
@@ -580,21 +580,19 @@ Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
 | `3pt_bounce` | Bounce | OVER | 74.9% | CONDITIONAL | Guards + Home |
 | `b2b_fatigue_under` | Market-Pattern | UNDER | 85.7% | CONDITIONAL | Small N (14) |
 | `high_ft_under` | Market-Pattern | UNDER | 64.1% | CONDITIONAL | FTA >= 7 |
-| `rest_advantage_2d` | Context | BOTH | 64.8% | CONDITIONAL | W4 decay to 45.2% |
+| `rest_advantage_2d` | Context | BOTH | 64.8% | CONDITIONAL | Capped at season week 15 (Session 318: W6+ decays to 40%) |
 | `prop_line_drop_over` | Market-Pattern | OVER | 71.6% | PRODUCTION | Line dropped 2+ pts from prev game (Session 305: threshold 3→2, N=109) |
 | `book_disagreement` | Market | BOTH | 93.0% | WATCH | Cross-book line stddev (Session 303, small N) |
 | `self_creator_under` | Market-Pattern | UNDER | 61.8% | WATCH | |
 | `volatile_under` | Market-Pattern | UNDER | 60.0% | WATCH | |
 | `high_usage_under` | Market-Pattern | UNDER | 58.7% | WATCH | |
 | `blowout_recovery` | Bounce | OVER | 56.9% | WATCH | Stable 55-58% |
-| `minutes_surge` | Volume | BOTH | 53.7% | WATCH | W4 decay |
-| `cold_snap` | Bounce | OVER | N/A | CONDITIONAL | N=0 in backtest windows |
 
-### Removed Signals (14, Sessions 275+296)
+### Removed Signals (16, Sessions 275+296+318)
 
-**Below breakeven:** `hot_streak_2` (45.8%, N=416), `hot_streak_3` (47.5%, N=182), `cold_continuation_2` (45.8%, N=130), `fg_cold_continuation` (49.6%), `dual_agree` (44.8%, N=11), `model_consensus_v9_v12` (45.5%, N=11)
-**Never fire:** `pace_mismatch`, `points_surge_3`, `home_dog`, `minutes_surge_5`, `three_pt_volume_surge`, `scoring_acceleration`
-**Dead code removed:** Session 308 deleted 14 unused signal files + stale `signal_system_audit.py`.
+**Below breakeven:** `hot_streak_2` (45.8%, N=416), `hot_streak_3` (47.5%, N=182), `cold_continuation_2` (45.8%, N=130), `fg_cold_continuation` (49.6%), `dual_agree` (44.8%, N=11), `model_consensus_v9_v12` (45.5%, N=11), `minutes_surge` (53.7%, W4 decay — Session 318)
+**Never fire:** `pace_mismatch`, `points_surge_3`, `home_dog`, `minutes_surge_5`, `three_pt_volume_surge`, `scoring_acceleration`, `cold_snap` (N=0 all windows — Session 318)
+**Dead code removed:** Session 308 deleted 14 unused signal files + stale `signal_system_audit.py`. Session 318 deleted `minutes_surge.py`, `cold_snap.py`.
 
 ### Post-Cleanup Backtest (Session 275)
 

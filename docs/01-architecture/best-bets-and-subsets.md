@@ -1,7 +1,7 @@
 # Best Bets & Subset System Architecture
 
-**Last updated:** Session 314C (2026-02-20)
-**Algorithm version:** `v314_consolidated`
+**Last updated:** Session 318 (2026-02-21)
+**Algorithm version:** `v318_signal_cleanup_filter_tightening`
 
 ## Overview
 
@@ -88,7 +88,7 @@ The aggregator is **edge-first** (Session 297): picks ranked by prediction edge,
 |---|--------|-----------|------------|---------|
 | 1 | Player blacklist | <40% HR on 8+ edge-3+ picks | N/A | 284 |
 | 2 | Edge floor | edge < 5.0 | 57% | 297 |
-| 3 | UNDER edge 7+ block | UNDER + edge >= 7 | 40.7% | 297 |
+| 3 | UNDER edge 7+ block | UNDER + edge >= 7 (unconditional) | 40.7% | 297, 318 (star exception reverted) |
 | 4 | Familiar matchup | 6+ games vs opponent | regresses | 284 |
 | 5 | Feature quality floor | quality < 85 | 24.0% | 278 |
 | 6 | Bench UNDER block | UNDER + line < 12 | 35.1% | 278 |
@@ -97,7 +97,7 @@ The aggregator is **edge-first** (Session 297): picks ranked by prediction edge,
 | 9 | Neg +/- streak | streak >= 3 + UNDER | 13.1% | 294 |
 | 10 | Min signal count | < 2 qualifying signals | N/A | 259 |
 | 11 | Confidence floor | model-specific (V12: 0.90) | N/A | — |
-| 12 | ANTI_PATTERN combo | combo classification | varies | 259 |
+| — | ~~ANTI_PATTERN combo~~ | ~~combo classification~~ | — | Removed Session 314 |
 
 After filtering, picks are ranked by `abs(edge)` descending. No max picks cap (natural sizing).
 
@@ -194,7 +194,7 @@ All fields from current_subset_picks, plus:
 **Table:** `nba_predictions.signal_combo_registry`
 **Fallback:** `ml/signals/combo_registry.py` `_FALLBACK_REGISTRY`
 
-11 SYNERGISTIC combos (Session 295). ANTI_PATTERN entries removed (Session 314).
+8 SYNERGISTIC combos (Session 318: 3 entries removed with minutes_surge/cold_snap cleanup). ANTI_PATTERN entries removed (Session 314).
 
 Used by the aggregator to detect known-good signal combinations and boost their visibility in pick angles.
 
@@ -209,6 +209,14 @@ Used by the aggregator to detect known-good signal combinations and boost their 
 - `v12_q43`, `v12_q45`: prefix `catboost_v12_noveg_q43_*`, `catboost_v12_noveg_q45_*`
 
 Survives retrains automatically — new model names are classified by pattern.
+
+## Session 318 Changes
+
+- **Removed signals:** `minutes_surge` (53.7% HR, W4 decay), `cold_snap` (N=0 all windows). Combo signals `combo_he_ms` and `combo_3way` still fire independently.
+- **UNDER edge 7+ block:** Star-level exception removed (N=7 too small, 37.5% HR in best bets). Now unconditional.
+- **rest_advantage_2d:** Capped at season week 15 (~early Feb). W6+ decays to 40%.
+- **Daily steering:** Added MARKET REGIME section with market compression, edge distribution, direction HR split, residual bias.
+- **Active signals:** 16 (was 18).
 
 ## Performance (Backfill Simulation, v314_consolidated)
 

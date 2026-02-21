@@ -1,7 +1,14 @@
-"""Rest Advantage 2D Signal — Player on 2+ rest days while opponent fatigued."""
+"""Rest Advantage 2D Signal — Player on 2+ rest days while opponent fatigued.
 
+Session 318: Capped at MAX_SEASON_WEEKS=15 (~first week of Feb).
+    Data: W2-W3=83% HR, W6=63.6%, W7=40% — clear mid-season decay.
+    Rest advantage matters early-season, diminishes as teams settle rotations.
+"""
+
+from datetime import date
 from typing import Dict, Optional
 from ml.signals.base_signal import BaseSignal, SignalResult
+from shared.config.nba_season_dates import get_season_start_date, get_season_year_from_date
 
 
 class RestAdvantage2DSignal(BaseSignal):
@@ -10,10 +17,22 @@ class RestAdvantage2DSignal(BaseSignal):
 
     MIN_PLAYER_REST = 2
     MAX_OPPONENT_REST = 1
+    MAX_SEASON_WEEKS = 15  # ~15 weeks from season start (Oct→early Feb). W6+ decays to 40%.
 
     def evaluate(self, prediction: Dict,
                  features: Optional[Dict] = None,
                  supplemental: Optional[Dict] = None) -> SignalResult:
+
+        # Session 318: Cap at MAX_SEASON_WEEKS — signal decays mid-season
+        game_date = prediction.get('game_date')
+        if game_date:
+            if isinstance(game_date, str):
+                game_date = date.fromisoformat(game_date)
+            season_year = get_season_year_from_date(game_date)
+            season_start = get_season_start_date(season_year, use_schedule_service=False)
+            weeks_into_season = (game_date - season_start).days // 7
+            if weeks_into_season > self.MAX_SEASON_WEEKS:
+                return self._no_qualify()
 
         # Player must have 2+ days rest
         player_rest = prediction.get('rest_days')

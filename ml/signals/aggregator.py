@@ -25,8 +25,8 @@ Session 314: Consolidated best bets systems — aggregate() now returns
     (System 3) now share the same filters via this aggregator.
 
 Session 316: Refined UNDER 7+ block to allow star-level lines (25+).
-    Data: UNDER 7+ overall=40.7% HR, but UNDER 7+ with line>=25 = 71.4% HR (N=7).
-    Non-star UNDER 7+ (line<25) = 18.2-50% HR. Star UNDERs are the exception.
+    Session 318: Reverted star-level exception (N=7 too small, 37.5% HR in best bets).
+    UNDER edge 7+ is now an unconditional block again.
 
 Prior history (Sessions 259-298):
     Session 259: Registry-based combo scoring, MIN_SIGNAL_COUNT=2.
@@ -50,7 +50,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v316_star_under_refinement'
+ALGORITHM_VERSION = 'v318_signal_cleanup_filter_tightening'
 
 # Signal health regime → weight multiplier (used for pick angles context)
 HEALTH_MULTIPLIERS = {
@@ -74,7 +74,7 @@ class BestBetsAggregator:
         - Player blacklist: <40% HR on 8+ picks → skip (Session 284)
         - Avoid familiar: 6+ games vs this opponent → skip (Session 284)
         - MIN_EDGE = 5.0: edge <5 hits only 57% (Session 297)
-        - UNDER edge 7+ block (line < 25): 40.7% HR — catastrophic (Session 297, refined 316)
+        - UNDER edge 7+ block: 40.7% HR — catastrophic (Session 297, star exception reverted 318)
         - Feature quality floor: quality < 85 → skip (24.0% HR)
         - Bench UNDER block: UNDER + line < 12 → skip (35.1% HR)
         - Line jumped UNDER block: UNDER + line jumped 2+ → skip (38.2% HR, Session 306)
@@ -148,11 +148,9 @@ class BestBetsAggregator:
                 continue
 
             # UNDER at edge 7+ block: 40.7% HR — catastrophic (Session 297)
-            # Exception: star-level lines (25+) hit at 71.4% (Session 316)
-            line_for_under7 = pred.get('line_value') or 0
+            # Session 318: Removed star-level exception (N=7 too small, 37.5% HR in best bets)
             if (pred.get('recommendation') == 'UNDER'
-                    and pred_edge >= 7.0
-                    and line_for_under7 < 25):
+                    and pred_edge >= 7.0):
                 filter_counts['under_edge_7plus'] += 1
                 continue
 
@@ -227,8 +225,7 @@ class BestBetsAggregator:
                 continue
 
             # Warning: contradictory signals
-            if 'minutes_surge' in tags and 'blowout_recovery' in tags:
-                warning_tags.append('contradictory_signals')
+            # minutes_surge + blowout_recovery check removed (Session 318: minutes_surge removed)
 
             # Cross-model factors (for annotation, not scoring)
             xm_factors = self._cross_model_factors.get(key, {})

@@ -93,6 +93,127 @@ SIGNAL HEALTH:
 
 Flag COLD model-dependent signals specifically since they're effectively disabled (0.0x weight per Session 264).
 
+## Step 2.5: Market Regime Early Warning (Session 318)
+
+Detect market compression, edge distribution shifts, and directional imbalances BEFORE they show up in W-L record. This is the leading indicator; best bets HR is the lagging indicator.
+
+```bash
+bq query --use_legacy_sql=false --format=pretty "
+WITH daily_edge_stats AS (
+  SELECT
+    game_date,
+    MAX(ABS(edge)) AS max_edge,
+    COUNTIF(ABS(edge) >= 5.0) AS edge_5plus_count,
+    COUNTIF(ABS(edge) >= 3.0) AS edge_3plus_count,
+    COUNT(*) AS total_predictions
+  FROM \`nba-props-platform.nba_predictions.player_prop_predictions\`
+  WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 35 DAY)
+    AND system_id = 'catboost_v9'
+    AND is_active = TRUE
+  GROUP BY game_date
+),
+-- Market compression: 7d avg max edge / 30d avg max edge
+compression AS (
+  SELECT
+    ROUND(AVG(CASE WHEN game_date > DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY) THEN max_edge END), 2) AS avg_max_edge_7d,
+    ROUND(AVG(CASE WHEN game_date > DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY) THEN max_edge END), 2) AS avg_max_edge_30d,
+    ROUND(
+      SAFE_DIVIDE(
+        AVG(CASE WHEN game_date > DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY) THEN max_edge END),
+        AVG(CASE WHEN game_date > DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY) THEN max_edge END)
+      ), 3
+    ) AS market_compression,
+    -- Pick volume trend
+    ROUND(AVG(CASE WHEN game_date > DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY) THEN edge_5plus_count END), 1) AS avg_picks_7d,
+    ROUND(AVG(CASE WHEN game_date > DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY) THEN edge_5plus_count END), 1) AS avg_picks_30d
+  FROM daily_edge_stats
+),
+-- Directional HR split: trailing 14d
+direction_hr AS (
+  SELECT
+    ROUND(100.0 * COUNTIF(pa.prediction_correct AND p.recommendation = 'OVER')
+      / NULLIF(COUNTIF(p.recommendation = 'OVER' AND pa.prediction_correct IS NOT NULL), 0), 1) AS over_hr_14d,
+    ROUND(100.0 * COUNTIF(pa.prediction_correct AND p.recommendation = 'UNDER')
+      / NULLIF(COUNTIF(p.recommendation = 'UNDER' AND pa.prediction_correct IS NOT NULL), 0), 1) AS under_hr_14d,
+    COUNTIF(p.recommendation = 'OVER' AND pa.prediction_correct IS NOT NULL) AS over_n,
+    COUNTIF(p.recommendation = 'UNDER' AND pa.prediction_correct IS NOT NULL) AS under_n
+  FROM \`nba-props-platform.nba_predictions.signal_best_bets_picks\` p
+  LEFT JOIN \`nba-props-platform.nba_predictions.prediction_accuracy\` pa
+    ON p.player_lookup = pa.player_lookup
+    AND p.game_date = pa.game_date
+    AND p.system_id = pa.system_id
+  WHERE p.game_date > DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)
+),
+-- Model residual bias: avg(predicted - actual) over 7d
+residual AS (
+  SELECT
+    ROUND(AVG(pa.predicted_value - pa.actual_value), 2) AS residual_bias_7d,
+    COUNT(*) AS residual_n
+  FROM \`nba-props-platform.nba_predictions.prediction_accuracy\` pa
+  WHERE pa.game_date > DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+    AND pa.system_id = 'catboost_v9'
+    AND pa.predicted_value IS NOT NULL
+    AND pa.actual_value IS NOT NULL
+),
+-- 3d rolling HR (best bets)
+rolling_3d AS (
+  SELECT
+    ROUND(100.0 * COUNTIF(pa.prediction_correct) / NULLIF(COUNT(*), 0), 1) AS hr_3d,
+    COUNT(*) AS n_3d
+  FROM \`nba-props-platform.nba_predictions.signal_best_bets_picks\` p
+  LEFT JOIN \`nba-props-platform.nba_predictions.prediction_accuracy\` pa
+    ON p.player_lookup = pa.player_lookup
+    AND p.game_date = pa.game_date
+    AND p.system_id = pa.system_id
+  WHERE p.game_date > DATE_SUB(CURRENT_DATE(), INTERVAL 3 DAY)
+    AND pa.prediction_correct IS NOT NULL
+)
+SELECT
+  c.market_compression,
+  c.avg_max_edge_7d,
+  c.avg_max_edge_30d,
+  c.avg_picks_7d,
+  c.avg_picks_30d,
+  d.over_hr_14d,
+  d.under_hr_14d,
+  d.over_n,
+  d.under_n,
+  ABS(COALESCE(d.over_hr_14d, 0) - COALESCE(d.under_hr_14d, 0)) AS direction_divergence,
+  r.residual_bias_7d,
+  r.residual_n,
+  r3.hr_3d,
+  r3.n_3d
+FROM compression c, direction_hr d, residual r, rolling_3d r3
+"
+```
+
+**Present as:**
+
+```
+MARKET REGIME:
+  Compression: <ratio> (<GREEN/YELLOW/RED>)  — 7d avg max edge: <val> / 30d: <val>
+  Edge 5+ supply: <7d avg> picks/day (30d: <val>) <GREEN/YELLOW/RED>
+  3d rolling HR: <val>% (N=<n>) <GREEN/YELLOW/RED>
+  Direction split: OVER <val>% (N=<n>) | UNDER <val>% (N=<n>) — divergence: <val>pp <GREEN/YELLOW/RED>
+  Residual bias: <val> pts (7d, N=<n>)
+```
+
+**Thresholds:**
+
+| Metric | GREEN | YELLOW | RED |
+|--------|-------|--------|-----|
+| Market compression | >= 0.85 | 0.65-0.85 | < 0.65 |
+| 7d avg max edge | >= 7.0 | 5.0-7.0 | < 5.0 |
+| 3d rolling HR | >= 65% | 55-65% | < 55% |
+| Daily pick count (7d avg) | >= 3 | 1-3 | < 1 |
+| OVER/UNDER HR divergence | <= 15pp | 15-25pp | > 25pp |
+
+**Interpretation:**
+- Multiple RED = market is compressed, consider pausing or reducing activity
+- Compression RED + HR still GREEN = leading indicator, prepare for downturn
+- Direction divergence RED = one direction carrying all the weight, fragile
+- Residual bias > +2 or < -2 = model systematically over/under-predicting, may need retrain
+
 ## Step 3: Best Bets Performance
 
 Check recent best bets results from `signal_best_bets_picks` joined with `prediction_accuracy`.
@@ -271,6 +392,9 @@ Combine all sections into a clean, scannable report:
 MODEL HEALTH (as of YYYY-MM-DD):
   <model lines>
   Best Bets Model: <model_id>
+
+MARKET REGIME:
+  <compression, edge supply, direction split, bias>
 
 RECOMMENDATION: <icon> <ACTION>
   <explanation>

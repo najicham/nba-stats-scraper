@@ -138,7 +138,7 @@ Per date:
 
 Summary:
 ```
-SUMMARY — 50 days, v314_consolidated
+SUMMARY — 50 days, v318_signal_cleanup_filter_tightening
   Total picks:  185
   Graded:       180 (128W - 52L)
   Hit Rate:     71.1%
@@ -151,7 +151,7 @@ SUMMARY — 50 days, v314_consolidated
 |------|---------|
 | `bin/backfill_dry_run.py` | Dry-run simulation script |
 | `backfill_jobs/publishing/daily_export.py` | Production backfill runner |
-| `ml/signals/aggregator.py` | BestBetsAggregator (v314_consolidated) |
+| `ml/signals/aggregator.py` | BestBetsAggregator (v318_signal_cleanup_filter_tightening) |
 | `data_processors/publishing/signal_best_bets_exporter.py` | System 2 exporter |
 | `data_processors/publishing/signal_annotator.py` | System 3 annotator bridge |
 
@@ -159,10 +159,10 @@ SUMMARY — 50 days, v314_consolidated
 
 - **Always dry-run first** — never execute Phase 3 without reviewing Phase 1 results
 - The delete is irreversible for the date range, but data is fully reconstructable
-- Old picks did NOT have `algorithm_version` set (always NULL). New picks will have `v314_consolidated`
+- Old picks did NOT have `algorithm_version` set (always NULL). New picks will have `v318_signal_cleanup_filter_tightening`
 - Backfill is date-relative for all filters (blacklist, familiar matchup, signals)
 - Model health uses `CURRENT_DATE()` (not target_date) but doesn't affect selection
 
 ---
 *Created: Session 314C*
-*Algorithm: v314_consolidated*
+*Algorithm: v318_signal_cleanup_filter_tightening*

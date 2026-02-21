@@ -44,30 +44,10 @@ class ComboEntry:
 
 # Hardcoded fallback registry — used when BQ is unavailable (e.g., tests, offline)
 _FALLBACK_REGISTRY: Dict[str, ComboEntry] = {
-    'edge_spread_optimal+high_edge+minutes_surge': ComboEntry(
-        combo_id='edge_spread_optimal+high_edge+minutes_surge',
-        display_name='Edge Spread + High Edge + Minutes Surge (3-Way)',
-        signals=['edge_spread_optimal', 'high_edge', 'minutes_surge'],
-        cardinality=3, classification='SYNERGISTIC', status='PRODUCTION',
-        direction_filter='OVER_ONLY', hit_rate=95.5, roi=None, sample_size=22,
-        score_weight=2.5, notes='Session 295: OVER_ONLY (UNDER=20.0% N=5). Updated HR from full-season audit.',
-    ),
-    'high_edge+minutes_surge': ComboEntry(
-        combo_id='high_edge+minutes_surge',
-        display_name='High Edge + Minutes Surge',
-        signals=['high_edge', 'minutes_surge'],
-        cardinality=2, classification='SYNERGISTIC', status='PRODUCTION',
-        direction_filter='OVER_ONLY', hit_rate=79.4, roi=58.8, sample_size=34,
-        score_weight=2.0, notes=None,
-    ),
-    'cold_snap': ComboEntry(
-        combo_id='cold_snap',
-        display_name='Cold Snap (Home Only)',
-        signals=['cold_snap'],
-        cardinality=1, classification='SYNERGISTIC', status='CONDITIONAL',
-        direction_filter='OVER_ONLY', hit_rate=93.3, roi=None, sample_size=15,
-        score_weight=1.5, notes=None,
-    ),
+    # edge_spread_optimal+high_edge+minutes_surge REMOVED — minutes_surge standalone removed (Session 318)
+    # high_edge+minutes_surge REMOVED — minutes_surge standalone removed (Session 318)
+    # cold_snap REMOVED — N=0 in all backtest windows (Session 318)
+    # NOTE: combo_he_ms and combo_3way signals still fire independently (check supplemental data directly)
     '3pt_bounce': ComboEntry(
         combo_id='3pt_bounce',
         display_name='3PT Bounce (Guards + Home)',

@@ -79,7 +79,7 @@ Display the full set of negative filters from the aggregator. Read from `ml/sign
 |---|--------------------------|------------------|--------|---------|------------------------|
 | 1 | Player blacklist         | <40% HR, 8+ picks| varies | 284     | aggregator.py L114     |
 | 2 | Edge floor               | edge < 5.0       | 57%    | 297     | aggregator.py L120     |
-| 3 | UNDER edge 7+ block      | UNDER + edge>=7  | 40.7%  | 297     | aggregator.py L125     |
+| 3 | UNDER edge 7+ block      | UNDER + edge>=7  | 40.7%  | 297,318 | aggregator.py L125     |
 | 4 | Avoid familiar           | 6+ games vs opp  | varies | 284     | aggregator.py L130     |
 | 5 | Feature quality floor    | quality < 85     | 24.0%  | 278     | aggregator.py L135     |
 | 6 | Bench UNDER block        | UNDER + line<12  | 35.1%  | 278     | aggregator.py L140     |
@@ -87,7 +87,6 @@ Display the full set of negative filters from the aggregator. Read from `ml/sign
 | 8 | Line dropped UNDER block | UNDER + delta<=-2| 35.2%  | 306     | aggregator.py L152     |
 | 9 | Neg +/- streak UNDER     | UNDER + 3+ neg   | 13.1%  | 294     | aggregator.py L158     |
 |10 | MIN_SIGNAL_COUNT         | < 2 signals      | n/a    | 259     | aggregator.py L170     |
-|11 | ANTI_PATTERN combo       | combo match       | varies | 259     | aggregator.py L186     |
 ```
 
 ---

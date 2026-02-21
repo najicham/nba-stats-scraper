@@ -28,10 +28,10 @@ def build_default_registry() -> SignalRegistry:
     from ml.signals.high_edge import HighEdgeSignal
     # DualAgreeSignal REMOVED — 44.8% HR, below breakeven (Session 296)
     from ml.signals.three_pt_bounce import ThreePtBounceSignal
-    from ml.signals.minutes_surge import MinutesSurgeSignal
+    # MinutesSurgeSignal REMOVED — 53.7% AVG HR, W4 decay (Session 318)
     # PaceMismatchSignal REMOVED — N=0 all windows, never fires (Session 275)
     from ml.signals.model_health import ModelHealthSignal
-    from ml.signals.cold_snap import ColdSnapSignal
+    # ColdSnapSignal REMOVED — N=0 in all backtest windows (Session 318)
     from ml.signals.blowout_recovery import BlowoutRecoverySignal
 
     # Combo signals (Session 258)
@@ -76,9 +76,9 @@ def build_default_registry() -> SignalRegistry:
     registry.register(HighEdgeSignal())
     # DualAgreeSignal removed (Session 296)
     registry.register(ThreePtBounceSignal())
-    registry.register(MinutesSurgeSignal())
+    # MinutesSurgeSignal removed (Session 318)
     # PaceMismatchSignal removed (Session 275)
-    registry.register(ColdSnapSignal())
+    # ColdSnapSignal removed (Session 318)
     registry.register(BlowoutRecoverySignal())
 
     # Combo signals (Session 258)
