@@ -11,6 +11,7 @@ Source: signal_best_bets_picks + player_prop_predictions
 Created: 2026-02-21 (Session 319)
 """
 
+import json
 import logging
 from typing import Any, Dict, List
 
@@ -31,6 +32,7 @@ class AdminPicksExporter(BaseExporter):
         """Generate admin picks JSON with full metadata."""
         selected_picks = self._query_selected_picks(target_date)
         all_candidates = self._query_all_candidates(target_date)
+        filter_summary = self._query_filter_summary(target_date)
 
         # Build selected player_lookups set for marking rejection
         selected_lookups = {
@@ -115,7 +117,11 @@ class AdminPicksExporter(BaseExporter):
             'total_picks': len(picks),
             'candidates': candidates,
             'total_candidates': len(candidates),
-            'edge_distribution': edge_distribution,
+            'candidates_summary': {
+                'total': len(candidates),
+                'edge_distribution': edge_distribution,
+            },
+            'filter_summary': filter_summary,
         }
 
     def export(self, target_date: str) -> str:
@@ -191,3 +197,26 @@ class AdminPicksExporter(BaseExporter):
         except Exception as e:
             logger.warning(f"Failed to query all candidates: {e}")
             return []
+
+    def _query_filter_summary(self, target_date: str) -> Dict:
+        """Get filter_summary from that date's picks (same for all picks on a date)."""
+        query = """
+        SELECT filter_summary
+        FROM `nba-props-platform.nba_predictions.signal_best_bets_picks`
+        WHERE game_date = @target_date
+          AND filter_summary IS NOT NULL
+        LIMIT 1
+        """
+
+        params = [
+            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+        ]
+
+        try:
+            rows = self.query_to_list(query, params)
+            if rows and rows[0].get('filter_summary'):
+                return json.loads(rows[0]['filter_summary'])
+        except Exception as e:
+            logger.warning(f"Failed to query filter summary: {e}")
+
+        return {}

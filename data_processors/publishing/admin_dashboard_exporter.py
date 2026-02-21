@@ -25,6 +25,7 @@ from data_processors.publishing.exporter_utils import safe_float, safe_int
 from ml.signals.aggregator import ALGORITHM_VERSION
 from ml.signals.signal_health import get_signal_health_summary
 from shared.config.model_selection import get_best_bets_model_id
+from shared.config.subset_public_names import SUBSET_PUBLIC_NAMES
 
 logger = logging.getLogger(__name__)
 
@@ -53,11 +54,20 @@ class AdminDashboardExporter(BaseExporter):
             'max_edge': round(max(edges), 1) if edges else None,
         }
 
+        # Extract champion model state for status bar (2a: frontend request)
+        champion_id = get_best_bets_model_id()
+        champion_state = 'UNKNOWN'
+        for m in model_health:
+            if m.get('system_id') == champion_id:
+                champion_state = m.get('state', 'UNKNOWN')
+                break
+
         return {
             'date': target_date,
             'generated_at': self.get_generated_at(),
             'algorithm_version': ALGORITHM_VERSION,
-            'best_bets_model': get_best_bets_model_id(),
+            'best_bets_model': champion_id,
+            'champion_model_state': champion_state,
             'model_health': model_health,
             'signal_health': signal_health,
             'subset_performance': subset_performance,
@@ -204,11 +214,15 @@ class AdminDashboardExporter(BaseExporter):
             w30 = safe_int(r.get('wins_30d'), 0)
             t30 = safe_int(r.get('total_30d'), 0)
 
+            sid = r.get('subset_id', '')
+            pub = SUBSET_PUBLIC_NAMES.get(sid, {})
+
             subsets.append({
-                'subset_id': r.get('subset_id'),
-                '7d': {'wins': w7, 'total': t7, 'hr': hr(w7, t7)},
-                '14d': {'wins': w14, 'total': t14, 'hr': hr(w14, t14)},
-                '30d': {'wins': w30, 'total': t30, 'hr': hr(w30, t30)},
+                'subset_id': sid,
+                'label': pub.get('name', sid),
+                '7d': {'wins': w7, 'losses': t7 - w7, 'total': t7, 'hr': hr(w7, t7)},
+                '14d': {'wins': w14, 'losses': t14 - w14, 'total': t14, 'hr': hr(w14, t14)},
+                '30d': {'wins': w30, 'losses': t30 - w30, 'total': t30, 'hr': hr(w30, t30)},
             })
 
         return subsets

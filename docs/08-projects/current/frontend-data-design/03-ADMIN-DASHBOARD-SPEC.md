@@ -1,6 +1,6 @@
 # Admin Dashboard Spec — playerprops.io/admin
 
-**Status:** Spec ready for frontend implementation.
+**Status:** Final spec. Updated with frontend review feedback (Session 319).
 
 ## Access Model
 
@@ -24,6 +24,7 @@ Single file. Updates daily. 5-minute cache. ~20-50 KB.
   "generated_at": "2026-02-21T16:00:00+00:00",
   "algorithm_version": "v319_consolidated",
   "best_bets_model": "catboost_v9",
+  "champion_model_state": "HEALTHY",    // shortcut for status bar
 
   // ── MODEL HEALTH ─────────────────────────────────────────────
   // All active models with decay state and hit rates
@@ -59,21 +60,23 @@ Single file. Updates daily. 5-minute cache. ~20-50 KB.
   },
 
   // ── SUBSET PERFORMANCE ───────────────────────────────────────
-  // All subsets with rolling HR across 3 windows
+  // All subsets with rolling HR across 3 windows + display label
   "subset_performance": [
     {
       "subset_id": "best_bets",
-      "7d":  { "wins": 5, "total": 7,  "hr": 71.4 },
-      "14d": { "wins": 12, "total": 18, "hr": 66.7 },
-      "30d": { "wins": 28, "total": 40, "hr": 70.0 }
+      "label": "Best Bets",
+      "7d":  { "wins": 5, "losses": 2, "total": 7,  "hr": 71.4 },
+      "14d": { "wins": 12, "losses": 6, "total": 18, "hr": 66.7 },
+      "30d": { "wins": 28, "losses": 12, "total": 40, "hr": 70.0 }
     },
     {
-      "subset_id": "edge_5_plus",
-      "7d":  { "wins": 8, "total": 12, "hr": 66.7 },
-      "14d": { "wins": 15, "total": 22, "hr": 68.2 },
-      "30d": { "wins": 35, "total": 50, "hr": 70.0 }
+      "subset_id": "ultra_high_edge",
+      "label": "Ultra High Edge",
+      "7d":  { "wins": 8, "losses": 4, "total": 12, "hr": 66.7 },
+      "14d": { "wins": 15, "losses": 7, "total": 22, "hr": 68.2 },
+      "30d": { "wins": 35, "losses": 15, "total": 50, "hr": 70.0 }
     }
-    // ... all subsets
+    // ... ~39 subsets total
   ],
 
   // ── TODAY'S PICKS (full metadata) ────────────────────────────
@@ -251,13 +254,42 @@ Source: `model_health`, `signal_health`
 
 ## Per-Date Deep Dive: `admin/picks/{date}.json`
 
-For historical debugging, a separate per-date file exists with ALL candidates (not just selected picks).
+For historical debugging, a separate per-date file with ALL candidates + filter funnel.
 
 **URL:** `v1/admin/picks/{date}.json`
 
-Add a date picker or "browse history" link on the admin dashboard that loads this file for any past date. Shows the full candidate list with `selected: true/false` flag, quality scores, and edge values.
+```jsonc
+{
+  "date": "2026-02-10",
+  "generated_at": "...",
+  "picks": [ ... ],                     // selected picks with full metadata
+  "total_picks": 3,
+  "candidates": [                       // ALL predictions with selected flag
+    {
+      "player": "LeBron James",
+      "player_lookup": "lebron_james",
+      "team": "LAL",
+      "direction": "OVER",
+      "line": 27.5,
+      "edge": 5.2,
+      "quality_score": 95.0,
+      "selected": true
+    }
+  ],
+  "total_candidates": 87,
+  "candidates_summary": {              // same shape as dashboard.json
+    "total": 87,
+    "edge_distribution": { "total": 87, "edge_3_plus": 24, "edge_5_plus": 10, "edge_7_plus": 3, "max_edge": 8.2 }
+  },
+  "filter_summary": {                  // same shape as dashboard.json
+    "total_candidates": 87,
+    "passed_filters": 5,
+    "rejected": { "edge_floor": 42, "signal_count": 15, ... }
+  }
+}
+```
 
-This is the "why did/didn't player X get picked on date Y?" debugging tool.
+Add a date picker or "browse history" link on the admin dashboard that loads this file for any past date. Enables the "why was the funnel tighter on Feb 10?" debugging use case — full filter funnel + all candidates for any historical date.
 
 ---
 
@@ -268,3 +300,27 @@ This is the "why did/didn't player X get picked on date Y?" debugging tool.
 - **Responsive:** Not critical — admin is laptop/desktop use. But if it works on tablet, bonus.
 - **Refresh:** Manual page refresh to re-fetch dashboard.json. No auto-polling needed.
 - **Dev toggle:** The existing raw model name dev toggle could live here too, consolidating all admin tools under one route.
+
+## Stable Key Sets
+
+### `filter_summary.rejected` keys (stable — Option A)
+
+New filters may be added ~1-2x per month. Backend will flag additions. Frontend should render unknown keys as raw key name as fallback.
+
+| Key | Display Name |
+|-----|-------------|
+| `edge_floor` | Edge < 5.0 |
+| `signal_count` | < 2 qualifying signals |
+| `quality_floor` | Feature quality < 85 |
+| `bench_under` | Bench player UNDER |
+| `under_edge_7plus` | UNDER with edge 7+ |
+| `familiar_matchup` | 6+ games vs opponent |
+| `line_jumped_under` | UNDER + line jumped 2+ pts |
+| `line_dropped_under` | UNDER + line dropped 2+ pts |
+| `blacklist` | Player blacklisted (HR < 40%) |
+| `confidence` | Low confidence |
+| `anti_pattern` | Anti-pattern detected |
+
+### `subset_id` values (~39 total, semi-stable)
+
+Each subset has a `label` field in the payload. Use that for display. Full mapping maintained in `shared/config/subset_public_names.py`. New subsets are added when new models are trained (~monthly).
