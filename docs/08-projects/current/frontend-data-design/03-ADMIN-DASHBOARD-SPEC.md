@@ -27,25 +27,47 @@ Single file. Updates daily. 5-minute cache. ~20-50 KB.
   "champion_model_state": "HEALTHY",    // shortcut for status bar
 
   // ── MODEL HEALTH ─────────────────────────────────────────────
-  // All active models with decay state and hit rates
+  // All active models with decay state, hit rates, and training details
   "model_health": [
     {
-      "system_id": "catboost_v9",
-      "state": "HEALTHY",              // HEALTHY | WATCH | DEGRADING | BLOCKED
+      "model_id": "catboost_v9",
+      "family": "v9_mae",
+      "state": "HEALTHY",              // HEALTHY | WATCH | DEGRADING | BLOCKED | INSUFFICIENT_DATA
+      "is_production": true,           // champion model flag
+      "enabled": true,
       "hr_7d": 62.5,                   // 7-day rolling hit rate (edge 3+)
-      "hr_14d": 59.1,                  // 14-day rolling
-      "n_7d": 48,                      // picks graded in 7 days
+      "hr_14d": 59.1,
+      "hr_30d": 61.0,
+      "n_7d": 48,                      // picks graded in window
       "n_14d": 93,
-      "days_since_training": 3         // null if unknown
+      "n_30d": 180,
+      "days_since_training": 3,
+      "training_start": "2026-01-06",  // what data the model saw
+      "training_end": "2026-02-05",
+      "eval_mae": 4.83,               // evaluation MAE at training time
+      "eval_hr_edge3": 66.7,          // evaluation hit rate (edge 3+) at training
+      "feature_count": 33,
+      "loss_function": "RMSE"          // or "Quantile" for quantile models
     },
     {
-      "system_id": "catboost_v12_noveg_train...",
-      "state": "WATCH",
+      "model_id": "catboost_v9_q43_train1102_0125",
+      "family": "v9_q43",
+      "state": "INSUFFICIENT_DATA",
+      "is_production": false,
+      "enabled": true,
       "hr_7d": 55.2,
       "hr_14d": 57.8,
-      "n_7d": 45,
-      "n_14d": 88,
-      "days_since_training": 16
+      "hr_30d": 62.6,
+      "n_7d": 12,
+      "n_14d": 28,
+      "n_30d": 115,
+      "days_since_training": 25,
+      "training_start": "2025-11-02",
+      "training_end": "2026-01-25",
+      "eval_mae": null,
+      "eval_hr_edge3": 62.6,
+      "feature_count": 33,
+      "loss_function": "Quantile"
     }
   ],
 
@@ -229,13 +251,15 @@ Two side-by-side panels.
 
 **Models (left):**
 
-| Model | State | 7d HR | 14d HR | 7d N | Age |
-|-------|-------|-------|--------|------|-----|
-| catboost_v9 | HEALTHY | 62.5% | 59.1% | 48 | 3d |
-| catboost_v12... | WATCH | 55.2% | 57.8% | 45 | 16d |
+| Model | Family | State | 7d/14d/30d HR | 7d N | Age | Trained On | MAE | Loss |
+|-------|--------|-------|---------------|------|-----|------------|-----|------|
+| catboost_v9 | v9_mae | HEALTHY | 62.5/59.1/61.0 | 48 | 3d | Jan 6 - Feb 5 | 4.83 | RMSE |
+| catboost_v9_q43... | v9_q43 | INSUFF | 55.2/57.8/62.6 | 12 | 25d | Nov 2 - Jan 25 | — | Quantile |
 
-- State badge: green=HEALTHY, yellow=WATCH, orange=DEGRADING, red=BLOCKED
-- Age badge: green/yellow/red as above
+- State badge: green=HEALTHY, yellow=WATCH, orange=DEGRADING, red=BLOCKED, gray=INSUFFICIENT_DATA
+- Age badge: green (<7d), yellow (7-14d), red (>14d)
+- `is_production: true` row highlighted or starred
+- Training dates show what data window the model learned from
 
 **Signals (right):**
 

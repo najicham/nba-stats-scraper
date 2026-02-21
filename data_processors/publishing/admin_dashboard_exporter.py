@@ -58,7 +58,7 @@ class AdminDashboardExporter(BaseExporter):
         champion_id = get_best_bets_model_id()
         champion_state = 'UNKNOWN'
         for m in model_health:
-            if m.get('system_id') == champion_id:
+            if m.get('model_id') == champion_id:
                 champion_state = m.get('state', 'UNKNOWN')
                 break
 
@@ -102,21 +102,50 @@ class AdminDashboardExporter(BaseExporter):
     # ── Queries ──────────────────────────────────────────────────────────
 
     def _query_model_health(self, target_date: str) -> List[Dict]:
-        """Query model performance states from model_performance_daily."""
+        """Query model performance + registry details for all active models."""
         query = """
+        WITH perf AS (
+          SELECT
+            model_id,
+            game_date,
+            rolling_hr_7d,
+            rolling_hr_14d,
+            rolling_hr_30d,
+            rolling_n_7d,
+            rolling_n_14d,
+            rolling_n_30d,
+            state,
+            days_since_training,
+            ROW_NUMBER() OVER (PARTITION BY model_id ORDER BY game_date DESC) AS rn
+          FROM `nba-props-platform.nba_predictions.model_performance_daily`
+          WHERE game_date >= DATE_SUB(@target_date, INTERVAL 2 DAY)
+            AND game_date <= @target_date
+        )
         SELECT
-          system_id,
-          game_date,
-          hr_7d,
-          hr_14d,
-          n_7d,
-          n_14d,
-          state,
-          days_since_training
-        FROM `nba-props-platform.nba_predictions.model_performance_daily`
-        WHERE game_date >= DATE_SUB(@target_date, INTERVAL 1 DAY)
-          AND game_date <= @target_date
-        ORDER BY game_date DESC, system_id
+          p.model_id,
+          p.rolling_hr_7d,
+          p.rolling_hr_14d,
+          p.rolling_hr_30d,
+          p.rolling_n_7d,
+          p.rolling_n_14d,
+          p.rolling_n_30d,
+          p.state,
+          p.days_since_training,
+          r.training_start_date,
+          r.training_end_date,
+          r.evaluation_mae,
+          r.evaluation_hit_rate_edge_3plus,
+          r.feature_count,
+          r.model_family,
+          r.loss_function,
+          r.is_production,
+          r.status AS registry_status,
+          r.enabled
+        FROM perf p
+        LEFT JOIN `nba-props-platform.nba_predictions.model_registry` r
+          ON p.model_id = r.model_id
+        WHERE p.rn = 1
+        ORDER BY p.model_id
         """
 
         params = [
@@ -129,22 +158,38 @@ class AdminDashboardExporter(BaseExporter):
             logger.warning(f"Failed to query model health: {e}")
             return []
 
-        # Deduplicate — keep most recent per system_id
-        seen = set()
         models = []
         for r in rows:
-            sid = r.get('system_id')
-            if sid in seen:
-                continue
-            seen.add(sid)
+            train_start = r.get('training_start_date')
+            train_end = r.get('training_end_date')
+
             models.append({
-                'system_id': sid,
+                'model_id': r.get('model_id'),
+                'family': r.get('model_family'),
                 'state': r.get('state'),
-                'hr_7d': safe_float(r.get('hr_7d'), precision=1),
-                'hr_14d': safe_float(r.get('hr_14d'), precision=1),
-                'n_7d': safe_int(r.get('n_7d'), 0),
-                'n_14d': safe_int(r.get('n_14d'), 0),
+                'is_production': bool(r.get('is_production')),
+                'enabled': bool(r.get('enabled', True)),
+                'hr_7d': safe_float(r.get('rolling_hr_7d'), precision=1),
+                'hr_14d': safe_float(r.get('rolling_hr_14d'), precision=1),
+                'hr_30d': safe_float(r.get('rolling_hr_30d'), precision=1),
+                'n_7d': safe_int(r.get('rolling_n_7d'), 0),
+                'n_14d': safe_int(r.get('rolling_n_14d'), 0),
+                'n_30d': safe_int(r.get('rolling_n_30d'), 0),
                 'days_since_training': safe_int(r.get('days_since_training')),
+                'training_start': (
+                    train_start.isoformat() if hasattr(train_start, 'isoformat')
+                    else str(train_start) if train_start else None
+                ),
+                'training_end': (
+                    train_end.isoformat() if hasattr(train_end, 'isoformat')
+                    else str(train_end) if train_end else None
+                ),
+                'eval_mae': safe_float(r.get('evaluation_mae'), precision=2),
+                'eval_hr_edge3': safe_float(
+                    r.get('evaluation_hit_rate_edge_3plus'), precision=1
+                ),
+                'feature_count': safe_int(r.get('feature_count')),
+                'loss_function': r.get('loss_function'),
             })
 
         return models
