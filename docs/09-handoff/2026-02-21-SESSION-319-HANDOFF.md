@@ -70,12 +70,12 @@ All at `docs/08-projects/current/frontend-data-design/`:
 - **Angles only** — no signal tags for end users
 - **Admin at `/admin`** — same site, Firebase Auth, email allowlist
 
-### Open Questions (05-MODEL-LIFECYCLE-SPEC.md)
+### Model Lifecycle Questions — RESOLVED (frontend answered)
 
-1. Family-grouped vs flat table for model health?
-2. Lineage display depth (full chain vs one-liner)?
-3. Model ID truncation strategy?
-4. Stale model visual warning beyond age badge?
+1. **Family-grouped table (Option A).** Group by family with `Object.groupBy(family)`. Family header + indented rows. Matches how you think about models.
+2. **One-liner lineage only.** "Replaced catboost_v9_...1102 on Feb 19". No full chain — data is there via `parent_model_id` if ever needed later.
+3. **Family badge + short ID suffix + tooltip.** Show `v9_mae` badge, then `...0218` (last 4-6 chars). Full ID on hover.
+4. **Subtle stale highlight.** If `days_since_training > 14`, faint yellow left-border on the row (warning stripe). No extra badge — age badge color already signals green/yellow/red.
 
 ---
 
@@ -89,9 +89,9 @@ All at `docs/08-projects/current/frontend-data-design/`:
 ## What's NOT Done
 
 1. **Exports haven't run yet** — all.json, dashboard.json etc. will populate on next daily export cycle (~6 AM ET tomorrow). To test now: `PYTHONPATH=. python backfill_jobs/publishing/daily_export.py --date 2026-02-21 --only best-bets-all,admin-dashboard`
-2. **Frontend build** — specs are ready, frontend can start
+2. **Frontend build** — all specs finalized, all questions answered, frontend can build both pages
 3. **C5 (deferred):** Signal observatory subsets for removed signals
-4. **Frontend review of 05-MODEL-LIFECYCLE-SPEC.md** — 4 open questions on model display
+4. **Update 05-MODEL-LIFECYCLE-SPEC.md** with frontend's answers (family-grouped, one-liner lineage, badge+suffix, yellow border for stale)
 
 ---
 
