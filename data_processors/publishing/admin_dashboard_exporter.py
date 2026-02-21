@@ -140,7 +140,11 @@ class AdminDashboardExporter(BaseExporter):
           r.loss_function,
           r.is_production,
           r.status AS registry_status,
-          r.enabled
+          r.enabled,
+          r.parent_model_id,
+          r.production_start_date,
+          r.production_end_date,
+          r.quantile_alpha
         FROM perf p
         LEFT JOIN `nba-props-platform.nba_predictions.model_registry` r
           ON p.model_id = r.model_id
@@ -160,12 +164,15 @@ class AdminDashboardExporter(BaseExporter):
 
         models = []
         for r in rows:
-            train_start = r.get('training_start_date')
-            train_end = r.get('training_end_date')
+            def fmt_date(d):
+                if d is None:
+                    return None
+                return d.isoformat() if hasattr(d, 'isoformat') else str(d)
 
             models.append({
                 'model_id': r.get('model_id'),
                 'family': r.get('model_family'),
+                'registry_status': r.get('registry_status'),
                 'state': r.get('state'),
                 'is_production': bool(r.get('is_production')),
                 'enabled': bool(r.get('enabled', True)),
@@ -176,20 +183,18 @@ class AdminDashboardExporter(BaseExporter):
                 'n_14d': safe_int(r.get('rolling_n_14d'), 0),
                 'n_30d': safe_int(r.get('rolling_n_30d'), 0),
                 'days_since_training': safe_int(r.get('days_since_training')),
-                'training_start': (
-                    train_start.isoformat() if hasattr(train_start, 'isoformat')
-                    else str(train_start) if train_start else None
-                ),
-                'training_end': (
-                    train_end.isoformat() if hasattr(train_end, 'isoformat')
-                    else str(train_end) if train_end else None
-                ),
+                'training_start': fmt_date(r.get('training_start_date')),
+                'training_end': fmt_date(r.get('training_end_date')),
+                'production_start': fmt_date(r.get('production_start_date')),
+                'production_end': fmt_date(r.get('production_end_date')),
+                'parent_model_id': r.get('parent_model_id'),
                 'eval_mae': safe_float(r.get('evaluation_mae'), precision=2),
                 'eval_hr_edge3': safe_float(
                     r.get('evaluation_hit_rate_edge_3plus'), precision=1
                 ),
                 'feature_count': safe_int(r.get('feature_count')),
                 'loss_function': r.get('loss_function'),
+                'quantile_alpha': safe_float(r.get('quantile_alpha'), precision=2),
             })
 
         return models
