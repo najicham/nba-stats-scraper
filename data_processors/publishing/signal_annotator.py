@@ -32,7 +32,7 @@ from google.cloud import bigquery
 
 from shared.clients.bigquery_pool import get_bigquery_client
 from shared.config.gcp_config import get_project_id
-from shared.config.model_selection import get_best_bets_model_id
+
 from shared.config.subset_public_names import get_public_name
 from ml.signals.registry import build_default_registry
 from ml.signals.aggregator import BestBetsAggregator
@@ -96,9 +96,11 @@ class SignalAnnotator:
             else:
                 health_status = 'healthy'
 
-        # 2. Query predictions + supplemental data
+        # 2. Query predictions + supplemental data (multi_model=True picks
+        #    highest-edge prediction per player across all CatBoost families,
+        #    making best bets model-agnostic — Session 314C)
         predictions, supplemental_map = query_predictions_with_supplements(
-            self.bq_client, target_date
+            self.bq_client, target_date, multi_model=True
         )
 
         if not predictions:
@@ -291,7 +293,6 @@ class SignalAnnotator:
         aggregator = BestBetsAggregator(
             combo_registry=combo_registry,
             signal_health=signal_health,
-            model_id=get_best_bets_model_id(),
             cross_model_factors=cross_model_factors,
             qualifying_subsets=qualifying_subsets,
             player_blacklist=player_blacklist,
@@ -322,7 +323,7 @@ class SignalAnnotator:
                 'prediction_id': None,
                 'game_id': pick.get('game_id'),
                 'rank_in_subset': pick.get('rank'),
-                'system_id': pick.get('system_id', get_best_bets_model_id()),
+                'system_id': pick.get('system_id', 'catboost_v9'),
                 'version_id': version_id or f"v_{computed_at.strftime('%Y%m%d_%H%M%S')}",
                 'computed_at': computed_at.isoformat(),
                 'trigger_source': 'signal_annotator',

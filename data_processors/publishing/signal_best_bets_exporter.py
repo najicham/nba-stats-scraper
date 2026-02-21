@@ -245,7 +245,6 @@ class SignalBestBetsExporter(BaseExporter):
         aggregator = BestBetsAggregator(
             combo_registry=combo_registry,
             signal_health=signal_health,
-            model_id=get_best_bets_model_id(),
             cross_model_factors=cross_model_factors,
             qualifying_subsets=qual_subsets,
             player_blacklist=player_blacklist,
@@ -426,13 +425,12 @@ class SignalBestBetsExporter(BaseExporter):
             )
 
         rows_to_insert = []
-        model_id = get_best_bets_model_id()
         for pick in picks:
             rows_to_insert.append({
                 'player_lookup': pick['player_lookup'],
                 'game_id': pick.get('game_id', ''),
                 'game_date': target_date,
-                'system_id': model_id,
+                'system_id': pick.get('system_id', 'catboost_v9'),
                 'player_name': pick.get('player', ''),
                 'team_abbr': pick.get('team', ''),
                 'opponent_team_abbr': pick.get('opponent', ''),
