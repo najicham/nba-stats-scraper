@@ -84,22 +84,6 @@ _FALLBACK_REGISTRY: Dict[str, ComboEntry] = {
         direction_filter='OVER_ONLY', hit_rate=56.9, roi=None, sample_size=112,
         score_weight=0.5, notes='Session 275: Updated stats from 3-window backtest',
     ),
-    'edge_spread_optimal+high_edge': ComboEntry(
-        combo_id='edge_spread_optimal+high_edge',
-        display_name='Edge Spread + High Edge (Redundancy Trap)',
-        signals=['edge_spread_optimal', 'high_edge'],
-        cardinality=2, classification='ANTI_PATTERN', status='BLOCKED',
-        direction_filter='BOTH', hit_rate=31.3, roi=None, sample_size=16,
-        score_weight=-2.0, notes=None,
-    ),
-    'high_edge': ComboEntry(
-        combo_id='high_edge',
-        display_name='High Edge (Standalone)',
-        signals=['high_edge'],
-        cardinality=1, classification='ANTI_PATTERN', status='BLOCKED',
-        direction_filter='BOTH', hit_rate=43.8, roi=None, sample_size=16,
-        score_weight=-1.0, notes=None,
-    ),
     # Market-pattern UNDER signals (Session 275)
     'bench_under': ComboEntry(
         combo_id='bench_under',

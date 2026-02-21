@@ -421,7 +421,7 @@ def evaluate_day(
         signal_health=signal_health,
         model_id=model_id,
     )
-    top_picks = aggregator.aggregate(predictions, signal_results_map)
+    top_picks, _ = aggregator.aggregate(predictions, signal_results_map)
 
     return top_picks
 

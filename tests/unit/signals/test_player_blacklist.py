@@ -247,7 +247,7 @@ class TestAggregatorBlacklistIntegration:
             combo_registry={},
             player_blacklist={'bad_player'},
         )
-        picks = aggregator.aggregate(predictions, signal_results)
+        picks, _ = aggregator.aggregate(predictions, signal_results)
 
         player_lookups = [p['player_lookup'] for p in picks]
         assert 'bad_player' not in player_lookups
@@ -266,7 +266,7 @@ class TestAggregatorBlacklistIntegration:
         }
 
         aggregator = BestBetsAggregator(combo_registry={})
-        picks = aggregator.aggregate(predictions, signal_results)
+        picks, _ = aggregator.aggregate(predictions, signal_results)
 
         assert len(picks) == 2
 
@@ -282,13 +282,13 @@ class TestAggregatorBlacklistIntegration:
             combo_registry={},
             player_blacklist=set(),
         )
-        picks = aggregator.aggregate(predictions, signal_results)
+        picks, _ = aggregator.aggregate(predictions, signal_results)
 
         assert len(picks) == 1
 
     def test_algorithm_version_updated(self):
-        """ALGORITHM_VERSION should reflect the session 284 changes."""
-        assert 'v284' in ALGORITHM_VERSION
+        """ALGORITHM_VERSION should reflect the session 314 consolidation."""
+        assert 'v314' in ALGORITHM_VERSION
 
 
 # ============================================================================
@@ -335,7 +335,7 @@ class TestAvoidFamiliarFilter:
         }
 
         aggregator = BestBetsAggregator(combo_registry={})
-        picks = aggregator.aggregate(predictions, signal_results)
+        picks, _ = aggregator.aggregate(predictions, signal_results)
 
         player_lookups = [p['player_lookup'] for p in picks]
         assert 'familiar_player' not in player_lookups
@@ -352,7 +352,7 @@ class TestAvoidFamiliarFilter:
         }
 
         aggregator = BestBetsAggregator(combo_registry={})
-        picks = aggregator.aggregate(predictions, signal_results)
+        picks, _ = aggregator.aggregate(predictions, signal_results)
 
         assert len(picks) == 0
 
@@ -367,7 +367,7 @@ class TestAvoidFamiliarFilter:
         }
 
         aggregator = BestBetsAggregator(combo_registry={})
-        picks = aggregator.aggregate(predictions, signal_results)
+        picks, _ = aggregator.aggregate(predictions, signal_results)
 
         assert len(picks) == 1
 
@@ -382,7 +382,7 @@ class TestAvoidFamiliarFilter:
         }
 
         aggregator = BestBetsAggregator(combo_registry={})
-        picks = aggregator.aggregate(predictions, signal_results)
+        picks, _ = aggregator.aggregate(predictions, signal_results)
 
         assert len(picks) == 1
 
@@ -421,7 +421,7 @@ class TestRelEdgeFilterRemoved:
         ]
 
         aggregator = BestBetsAggregator(combo_registry={})
-        picks = aggregator.aggregate([pred], {'big_edge_player::game1': signals})
+        picks, _ = aggregator.aggregate([pred], {'big_edge_player::game1': signals})
 
         assert len(picks) == 1
         assert picks[0]['player_lookup'] == 'big_edge_player'

@@ -49,7 +49,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from google.cloud import bigquery
 from data_processors.publishing.results_exporter import ResultsExporter
 from data_processors.publishing.system_performance_exporter import SystemPerformanceExporter
-from data_processors.publishing.best_bets_exporter import BestBetsExporter
 from data_processors.publishing.predictions_exporter import PredictionsExporter
 from data_processors.publishing.player_profile_exporter import PlayerProfileExporter
 from data_processors.publishing.tonight_all_players_exporter import TonightAllPlayersExporter
@@ -105,7 +104,7 @@ PROJECT_ID = 'nba-props-platform'
 
 # Available export types
 EXPORT_TYPES = [
-    'results', 'performance', 'best-bets', 'predictions',
+    'results', 'performance', 'predictions',
     'tonight', 'tonight-players', 'streaks',
     'calendar',  # Sprint 3 - Date navigation
     'season-game-counts',  # Full season game counts for calendar and break detection
@@ -194,17 +193,6 @@ def export_date(
         except Exception as e:
             result['errors'].append(f"performance: {e}")
             logger.error(f"  Performance error: {e}")
-
-    # Best bets exporter
-    if 'best-bets' in export_types:
-        try:
-            exporter = BestBetsExporter()
-            path = exporter.export(target_date, update_latest=update_latest)
-            result['paths']['best_bets'] = path
-            logger.info(f"  Best Bets: {path}")
-        except Exception as e:
-            result['errors'].append(f"best-bets: {e}")
-            logger.error(f"  Best Bets error: {e}")
 
     # Predictions exporter
     if 'predictions' in export_types:

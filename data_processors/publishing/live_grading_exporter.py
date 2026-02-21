@@ -115,10 +115,13 @@ class LiveGradingExporter(BaseExporter):
         games_in_progress = game_status_counts.get('in_progress', 0)
 
         # 2. Source A: BigQuery for confirmed final game stats (authoritative)
-        bq_scores = {}
-        if games_final > 0 or games_in_progress > 0:
-            bq_scores, game_status_counts = self._fetch_bigquery_scores(target_date)
-            logger.info(f"BigQuery (NBA.com): {len(bq_scores)} players")
+        # Always fetch BQ scores — schedule may show "scheduled" even after games
+        # are final (stale schedule scraper, e.g. post-All-Star break).
+        bq_scores, game_status_counts = self._fetch_bigquery_scores(target_date)
+        logger.info(f"BigQuery (NBA.com): {len(bq_scores)} players")
+        # Update game counts from BQ (more reliable when schedule is stale)
+        games_final = game_status_counts.get('final', 0) or games_final
+        games_in_progress = game_status_counts.get('in_progress', 0) or games_in_progress
 
         # 3. Source B: BDL live API for real-time in-progress stats
         bdl_scores = {}
@@ -520,6 +523,11 @@ class LiveGradingExporter(BaseExporter):
                     game_status = 'in_progress'
                 else:
                     game_status = 'scheduled'
+
+                # Override stale schedule: if player has actual points,
+                # the game was played regardless of what the schedule says
+                if game_status == 'scheduled' and row.get('points') is not None:
+                    game_status = 'final'
 
                 # Count unique games
                 if game_id and game_id not in seen_games:

@@ -30,7 +30,7 @@ Prior history (Sessions 259-296):
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from ml.signals.base_signal import SignalResult
 from ml.signals.combo_registry import ComboEntry, load_combo_registry, match_combo
@@ -40,7 +40,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v307_multi_source'
+ALGORITHM_VERSION = 'v314_consolidated'
 
 # Signal health regime → weight multiplier (used for pick angles context)
 HEALTH_MULTIPLIERS = {
@@ -96,50 +96,69 @@ class BestBetsAggregator:
         self._player_blacklist = player_blacklist or set()
 
     def aggregate(self, predictions: List[Dict],
-                  signal_results: Dict[str, List[SignalResult]]) -> List[Dict]:
+                  signal_results: Dict[str, List[SignalResult]]) -> Tuple[List[Dict], Dict]:
         """Select top picks for a single game date.
 
         Edge-first: picks are ranked by edge (model confidence), not by
         signal composite score. Signals are attached for pick angles only.
+
+        Returns:
+            Tuple of (picks, filter_summary) where filter_summary tracks
+            how many candidates were rejected by each filter.
         """
         scored = []
-        blacklist_skip_count = 0
-        edge_skip_count = 0
-        under7_skip_count = 0
+        # Track all filter rejections
+        filter_counts = {
+            'blacklist': 0,
+            'edge_floor': 0,
+            'under_edge_7plus': 0,
+            'familiar_matchup': 0,
+            'quality_floor': 0,
+            'bench_under': 0,
+            'line_jumped_under': 0,
+            'line_dropped_under': 0,
+            'neg_pm_streak': 0,
+            'signal_count': 0,
+            'confidence': 0,
+            'anti_pattern': 0,
+        }
 
         for pred in predictions:
             # --- Negative filters (order: cheapest checks first) ---
 
             # Player blacklist (Session 284)
             if pred['player_lookup'] in self._player_blacklist:
-                blacklist_skip_count += 1
+                filter_counts['blacklist'] += 1
                 continue
 
             # Edge floor: edge <5 hits 57%, edge 5+ hits 71% (Session 297)
             pred_edge = abs(pred.get('edge') or 0)
             if pred_edge < self.MIN_EDGE:
-                edge_skip_count += 1
+                filter_counts['edge_floor'] += 1
                 continue
 
             # UNDER at edge 7+ block: 40.7% HR — catastrophic (Session 297)
             if pred.get('recommendation') == 'UNDER' and pred_edge >= 7.0:
-                under7_skip_count += 1
+                filter_counts['under_edge_7plus'] += 1
                 continue
 
             # Avoid familiar matchups (Session 284)
             games_vs_opp = pred.get('games_vs_opponent') or 0
             if games_vs_opp >= 6:
+                filter_counts['familiar_matchup'] += 1
                 continue
 
             # Feature quality floor (Session 278): quality < 85 = 24.0% HR
             # Session 310: quality=0 (missing) must also be blocked, not passed through
             quality = pred.get('feature_quality_score') or 0
             if quality < 85:
+                filter_counts['quality_floor'] += 1
                 continue
 
             # Bench UNDER block (Session 278): line < 12 = 35.1% HR
             line_val = pred.get('line_value') or 0
             if pred.get('recommendation') == 'UNDER' and line_val > 0 and line_val < 12:
+                filter_counts['bench_under'] += 1
                 continue
 
             # Line jumped UNDER block (Session 294, lowered 306): 38.2% HR at 2.0 (N=272)
@@ -147,17 +166,20 @@ class BestBetsAggregator:
             if (prop_line_delta is not None
                     and prop_line_delta >= 2.0
                     and pred.get('recommendation') == 'UNDER'):
+                filter_counts['line_jumped_under'] += 1
                 continue
 
             # Line dropped UNDER block (Session 294, lowered 306): 35.2% HR at 2.0 (N=108)
             if (prop_line_delta is not None
                     and prop_line_delta <= -2.0
                     and pred.get('recommendation') == 'UNDER'):
+                filter_counts['line_dropped_under'] += 1
                 continue
 
             # Neg +/- streak UNDER block (Session 294): 13.1% HR
             neg_pm_streak = pred.get('neg_pm_streak') or 0
             if neg_pm_streak >= 3 and pred.get('recommendation') == 'UNDER':
+                filter_counts['neg_pm_streak'] += 1
                 continue
 
             # --- Signal evaluation (for annotations, not selection) ---
@@ -169,12 +191,14 @@ class BestBetsAggregator:
             # Still require MIN_SIGNAL_COUNT (model_health + 1 real signal)
             # This ensures we only pick players the signal system has context on
             if len(qualifying) < self.MIN_SIGNAL_COUNT:
+                filter_counts['signal_count'] += 1
                 continue
 
             # Confidence floor: model-specific
             if self._min_confidence > 0:
                 confidence = pred.get('confidence_score') or 0
                 if confidence < self._min_confidence:
+                    filter_counts['confidence'] += 1
                     continue
 
             tags = [r.source_tag for r in qualifying]
@@ -185,6 +209,7 @@ class BestBetsAggregator:
 
             # Block ANTI_PATTERN combos
             if matched and matched.classification == 'ANTI_PATTERN':
+                filter_counts['anti_pattern'] += 1
                 continue
 
             # Warning: contradictory signals
@@ -233,15 +258,16 @@ class BestBetsAggregator:
                 'algorithm_version': ALGORITHM_VERSION,
             })
 
-        if blacklist_skip_count > 0:
+        # Log significant filter rejections
+        if filter_counts['blacklist'] > 0:
             logger.info(
-                f"Player blacklist: skipped {blacklist_skip_count} predictions "
+                f"Player blacklist: skipped {filter_counts['blacklist']} predictions "
                 f"({len(self._player_blacklist)} players on blacklist)"
             )
-        if edge_skip_count > 0:
-            logger.info(f"Edge floor ({self.MIN_EDGE}): skipped {edge_skip_count} predictions")
-        if under7_skip_count > 0:
-            logger.info(f"UNDER edge 7+ block: skipped {under7_skip_count} predictions")
+        if filter_counts['edge_floor'] > 0:
+            logger.info(f"Edge floor ({self.MIN_EDGE}): skipped {filter_counts['edge_floor']} predictions")
+        if filter_counts['under_edge_7plus'] > 0:
+            logger.info(f"UNDER edge 7+ block: skipped {filter_counts['under_edge_7plus']} predictions")
 
         # Rank by edge descending (model confidence = primary signal)
         scored.sort(key=lambda x: x['composite_score'], reverse=True)
@@ -256,7 +282,13 @@ class BestBetsAggregator:
                 f"{scored[-1]['composite_score']:.1f}-{scored[0]['composite_score']:.1f})"
             )
 
-        return scored
+        filter_summary = {
+            'total_candidates': len(predictions),
+            'passed_filters': len(scored),
+            'rejected': filter_counts,
+        }
+
+        return scored, filter_summary
 
     def _weighted_signal_count(self, tags: List[str]) -> float:
         """Compute health-weighted effective signal count, capped at 3.0.

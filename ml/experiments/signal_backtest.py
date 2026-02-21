@@ -548,7 +548,7 @@ def aggregator_simulation(signal_results: Dict, predictions: List[Dict],
             if key in signal_results:
                 day_sr[key] = signal_results[key]
 
-        picks = aggregator.aggregate(day_preds, day_sr)
+        picks, _ = aggregator.aggregate(day_preds, day_sr)
         all_picks.extend(picks)
 
     metrics = compute_metrics(all_picks)

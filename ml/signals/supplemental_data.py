@@ -735,3 +735,48 @@ def query_streak_data(
 
     logger.info(f"Loaded streak data for {len(streak_map)} player-games")
     return streak_map
+
+
+# Module-level cache for games_vs_opponent (keyed by target_date)
+_gvo_cache: Dict[str, Dict[tuple, int]] = {}
+
+
+def query_games_vs_opponent(
+    bq_client: bigquery.Client,
+    target_date: str,
+) -> Dict[tuple, int]:
+    """Query season games played per player-opponent pair.
+
+    Returns dict keyed by (player_lookup, opponent_team_abbr) -> count.
+    Used by avoid-familiar filter in aggregator (Session 284).
+
+    Results are cached per target_date within the same process.
+    """
+    if target_date in _gvo_cache:
+        logger.info(f"games_vs_opponent cache hit for {target_date}")
+        return _gvo_cache[target_date]
+
+    query = f"""
+    SELECT player_lookup, opponent_team_abbr, COUNT(*) as games_played
+    FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
+    WHERE game_date >= '2025-10-22'
+      AND game_date < @target_date
+      AND minutes_played > 0
+    GROUP BY 1, 2
+    """
+
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+        ]
+    )
+
+    result = bq_client.query(query, job_config=job_config).result(timeout=60)
+
+    gvo_map: Dict[tuple, int] = {}
+    for row in result:
+        gvo_map[(row.player_lookup, row.opponent_team_abbr)] = row.games_played
+
+    logger.info(f"Loaded games_vs_opponent for {len(gvo_map)} player-opponent pairs")
+    _gvo_cache[target_date] = gvo_map
+    return gvo_map

@@ -87,8 +87,9 @@ class StatusExporter(BaseExporter):
         tonight_status = self._check_tonight_data_status(active_break)
         grading_status = self._check_grading_status()
         predictions_status = self._check_predictions_status(target_date, active_break)
+        best_bets_status = self._check_best_bets_status(active_break)
 
-        # Determine overall status
+        # Determine overall status (best_bets excluded — 0 picks is honest, not a failure)
         statuses = [
             live_status.get('status', 'unknown'),
             tonight_status.get('status', 'unknown'),
@@ -104,7 +105,8 @@ class StatusExporter(BaseExporter):
 
         # Build known issues list
         known_issues = self._build_known_issues(
-            live_status, tonight_status, grading_status, predictions_status
+            live_status, tonight_status, grading_status, predictions_status,
+            best_bets_status
         )
 
         return {
@@ -114,7 +116,8 @@ class StatusExporter(BaseExporter):
                 'live_data': live_status,
                 'tonight_data': tonight_status,
                 'grading': grading_status,
-                'predictions': predictions_status
+                'predictions': predictions_status,
+                'best_bets': best_bets_status,
             },
             'known_issues': known_issues,
             'maintenance_windows': self._get_maintenance_windows(),
@@ -320,6 +323,87 @@ class StatusExporter(BaseExporter):
             return {
                 'status': 'unknown',
                 'message': f'Error checking status: {str(e)}'
+            }
+
+    def _check_best_bets_status(self, active_break=None) -> Dict[str, Any]:
+        """Check best bets export freshness and pick count.
+
+        Reads the latest.json from GCS to determine:
+        - Whether the file exists and is fresh (updated today)
+        - How many picks were selected
+        - 0 picks is reported honestly (healthy with message), not as degraded
+        """
+        try:
+            if active_break:
+                headline = active_break.get('headline', 'Schedule Break')
+                return {
+                    'status': 'healthy',
+                    'message': f'No best bets expected — {headline}',
+                    'total_picks': 0,
+                    'last_update': None,
+                }
+
+            bucket = self._get_storage_client().bucket('nba-props-platform-api')
+            blob = bucket.blob('v1/signal-best-bets/latest.json')
+
+            if not blob.exists():
+                return {
+                    'status': 'degraded',
+                    'message': 'Best bets file not found',
+                    'total_picks': 0,
+                    'last_update': None,
+                }
+
+            blob.reload()
+            last_update = blob.updated
+
+            # Check freshness: was it updated today (ET)?
+            from zoneinfo import ZoneInfo
+            et = ZoneInfo('America/New_York')
+            today_et = datetime.now(et).date()
+            last_update_et = last_update.astimezone(et).date()
+            is_fresh = last_update_et >= today_et
+
+            # Read the JSON to extract pick count
+            total_picks = 0
+            try:
+                content = blob.download_as_text()
+                import json
+                data = json.loads(content)
+                total_picks = data.get('total_picks', 0)
+            except Exception as e:
+                logger.warning(f"Failed to read best bets JSON content: {e}")
+
+            if not is_fresh:
+                return {
+                    'status': 'degraded',
+                    'message': f'Best bets file stale (last updated {last_update_et})',
+                    'total_picks': total_picks,
+                    'last_update': last_update.isoformat(),
+                }
+
+            if total_picks == 0:
+                return {
+                    'status': 'healthy',
+                    'message': '0 picks today — all candidates filtered out',
+                    'total_picks': 0,
+                    'last_update': last_update.isoformat(),
+                }
+
+            return {
+                'status': 'healthy',
+                'message': f'{total_picks} best bets available',
+                'total_picks': total_picks,
+                'last_update': last_update.isoformat(),
+            }
+
+        except Exception as e:
+            logger.error(f"Error checking best bets status: {e}", exc_info=True)
+            return {
+                'status': 'unknown',
+                'message': f'Error checking status: {str(e)}',
+                'total_picks': 0,
+                'last_update': None,
             }
 
     def _are_games_likely_active(self) -> bool:

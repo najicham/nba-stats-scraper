@@ -38,7 +38,9 @@ from ml.signals.aggregator import ALGORITHM_VERSION
 from ml.signals.supplemental_data import (
     query_model_health,
     query_predictions_with_supplements,
+    query_games_vs_opponent,
 )
+from ml.signals.player_blacklist import compute_player_blacklist
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +147,27 @@ class SignalAnnotator:
         with_signals = sum(1 for r in rows_to_write if r['signal_count'] > 0)
         self._write_rows(rows_to_write)
 
-        # 4b. Get signal health for aggregator weighting
+        # 4b. Compute player blacklist (Session 314: align with signal exporter)
+        player_blacklist = set()
+        try:
+            player_blacklist, _ = compute_player_blacklist(
+                self.bq_client, target_date
+            )
+        except Exception as e:
+            logger.warning(f"Player blacklist computation failed (non-fatal): {e}")
+
+        # 4b2. Enrich predictions with games_vs_opponent (Session 314)
+        try:
+            gvo_map = query_games_vs_opponent(self.bq_client, target_date)
+            for pred in predictions:
+                opp = pred.get('opponent_team_abbr', '')
+                pred['games_vs_opponent'] = gvo_map.get(
+                    (pred['player_lookup'], opp), 0
+                )
+        except Exception as e:
+            logger.warning(f"Games vs opponent enrichment failed (non-fatal): {e}")
+
+        # 4b3. Get signal health for aggregator weighting
         signal_health = get_signal_health_summary(self.bq_client, target_date)
 
         # 4c. Compute cross-model consensus factors (Session 277)
@@ -176,6 +198,7 @@ class SignalAnnotator:
             signal_health=signal_health,
             cross_model_factors=cross_model_factors,
             qualifying_subsets=qual_subsets,
+            player_blacklist=player_blacklist,
         )
 
         logger.info(
@@ -250,6 +273,7 @@ class SignalAnnotator:
         signal_health: Optional[Dict] = None,
         cross_model_factors: Optional[Dict] = None,
         qualifying_subsets: Optional[Dict] = None,
+        player_blacklist: Optional[set] = None,
     ) -> int:
         """Bridge aggregator's top picks into current_subset_picks as Signal Picks subset.
 
@@ -262,8 +286,9 @@ class SignalAnnotator:
             model_id=get_best_bets_model_id(),
             cross_model_factors=cross_model_factors,
             qualifying_subsets=qualifying_subsets,
+            player_blacklist=player_blacklist,
         )
-        top_picks = aggregator.aggregate(predictions, signal_results_map)
+        top_picks, _ = aggregator.aggregate(predictions, signal_results_map)
 
         if not top_picks:
             logger.info(f"No signal picks to bridge for {target_date}")

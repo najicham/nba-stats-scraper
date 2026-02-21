@@ -284,7 +284,7 @@ def evaluate_and_build(rows: List[Dict], registry, combo_reg=None) -> Tuple[
     # Build best bets (health gate removed, Session 270)
     best_bets_rows = []
     aggregator = BestBetsAggregator(combo_registry=combo_reg)
-    top_picks = aggregator.aggregate(predictions, signal_results_map)
+    top_picks, _ = aggregator.aggregate(predictions, signal_results_map)
 
     for pick in top_picks:
         best_bets_rows.append({

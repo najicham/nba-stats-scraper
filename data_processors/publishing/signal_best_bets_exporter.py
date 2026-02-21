@@ -35,6 +35,7 @@ from data_processors.publishing.signal_subset_materializer import SignalSubsetMa
 from ml.signals.supplemental_data import (
     query_model_health,
     query_predictions_with_supplements,
+    query_games_vs_opponent,
 )
 from shared.config.model_selection import get_best_bets_model_id
 
@@ -79,6 +80,37 @@ class SignalBestBetsExporter(BaseExporter):
                 f"HR 7d = {hr_7d:.1f}% < {BREAKEVEN_HR}% — picks still generated"
             )
 
+        # Step 1b: Query prediction-independent metadata (needed for both
+        # 0-prediction early return and full path)
+        signal_health = {}
+        try:
+            signal_health = get_signal_health_summary(self.bq_client, target_date)
+        except Exception as e:
+            logger.warning(f"Signal health query failed (non-fatal): {e}")
+
+        direction_health = {'over_hr_14d': None, 'under_hr_14d': None,
+                            'over_n': 0, 'under_n': 0}
+        try:
+            direction_health = self._query_direction_health(target_date)
+        except Exception as e:
+            logger.warning(f"Direction health query failed (non-fatal): {e}")
+
+        player_blacklist = set()
+        blacklist_stats = {'evaluated': 0, 'blacklisted': 0, 'players': []}
+        try:
+            player_blacklist, blacklist_stats = compute_player_blacklist(
+                self.bq_client, target_date
+            )
+        except Exception as e:
+            logger.warning(f"Player blacklist computation failed (non-fatal): {e}")
+
+        record = self._get_best_bets_record(target_date)
+
+        # Cap player list in output to top 10 worst (avoid bloating JSON)
+        blacklist_players_capped = [
+            p['player_lookup'] for p in blacklist_stats.get('players', [])[:10]
+        ]
+
         # Step 2: Query predictions and supplemental data
         predictions, supplemental_map = self._query_predictions_and_supplements(
             target_date
@@ -89,10 +121,33 @@ class SignalBestBetsExporter(BaseExporter):
             return {
                 'date': target_date,
                 'generated_at': self.get_generated_at(),
+                'min_signal_count': BestBetsAggregator.MIN_SIGNAL_COUNT,
+                'record': record,
                 'model_health': {
                     'status': health_status,
                     'hit_rate_7d': hr_7d,
                     'graded_count': model_health.get('graded_count', 0),
+                },
+                'signal_health': signal_health,
+                'player_blacklist': {
+                    'count': blacklist_stats.get('blacklisted', 0),
+                    'evaluated': blacklist_stats.get('evaluated', 0),
+                    'hr_threshold': 40.0,
+                    'min_picks': 8,
+                    'players': blacklist_players_capped,
+                },
+                'direction_health': direction_health,
+                'filter_summary': {
+                    'total_candidates': 0,
+                    'passed_filters': 0,
+                    'rejected': {},
+                },
+                'edge_distribution': {
+                    'total_predictions': 0,
+                    'edge_3_plus': 0,
+                    'edge_5_plus': 0,
+                    'edge_7_plus': 0,
+                    'max_edge': None,
                 },
                 'picks': [],
                 'total_picks': 0,
@@ -135,10 +190,7 @@ class SignalBestBetsExporter(BaseExporter):
         except Exception as e:
             logger.warning(f"Signal subset materialization failed (non-fatal): {e}", exc_info=True)
 
-        # Step 5: Get signal health (non-blocking — empty if table doesn't exist yet)
-        signal_health = get_signal_health_summary(self.bq_client, target_date)
-
-        # Step 5b: Compute cross-model consensus factors (Session 277)
+        # Step 5: Compute cross-model consensus factors (Session 277)
         cross_model_factors = {}
         try:
             scorer = CrossModelScorer()
@@ -148,7 +200,7 @@ class SignalBestBetsExporter(BaseExporter):
         except Exception as e:
             logger.warning(f"Cross-model scoring failed (non-fatal): {e}")
 
-        # Step 5c: Look up qualifying subsets (Session 279 — pick provenance)
+        # Step 5b: Look up qualifying subsets (Session 279 — pick provenance)
         qual_subsets = {}
         if version_id:
             try:
@@ -158,20 +210,10 @@ class SignalBestBetsExporter(BaseExporter):
             except Exception as e:
                 logger.warning(f"Qualifying subsets lookup failed (non-fatal): {e}")
 
-        # Step 5d: Compute player blacklist (Session 284)
-        player_blacklist = set()
-        blacklist_stats = {'evaluated': 0, 'blacklisted': 0, 'players': []}
-        try:
-            player_blacklist, blacklist_stats = compute_player_blacklist(
-                self.bq_client, target_date
-            )
-        except Exception as e:
-            logger.warning(f"Player blacklist computation failed (non-fatal): {e}")
-
-        # Step 5e: Enrich predictions with games_vs_opponent (Session 284)
+        # Step 5c: Enrich predictions with games_vs_opponent (Session 284)
         # Avoid-familiar filter: players with 6+ games vs opponent regress
         try:
-            gvo_map = self._query_games_vs_opponent(target_date)
+            gvo_map = query_games_vs_opponent(self.bq_client, target_date)
             for pred in predictions:
                 opp = pred.get('opponent_team_abbr', '')
                 pred['games_vs_opponent'] = gvo_map.get(
@@ -180,15 +222,15 @@ class SignalBestBetsExporter(BaseExporter):
         except Exception as e:
             logger.warning(f"Games vs opponent enrichment failed (non-fatal): {e}")
 
-        # Step 5f: Query direction health — OVER vs UNDER rolling HR (Session 284)
-        # Observation-only: adds data to JSON output for monitoring.
-        # Replay showed OVER flips between seasons (39.5% → 79.3%).
-        direction_health = {'over_hr_14d': None, 'under_hr_14d': None,
-                            'over_n': 0, 'under_n': 0}
-        try:
-            direction_health = self._query_direction_health(target_date)
-        except Exception as e:
-            logger.warning(f"Direction health query failed (non-fatal): {e}")
+        # Step 5d: Compute edge distribution before filtering
+        edges = [abs(p.get('edge') or 0) for p in predictions]
+        edge_distribution = {
+            'total_predictions': len(predictions),
+            'edge_3_plus': sum(1 for e in edges if e >= 3.0),
+            'edge_5_plus': sum(1 for e in edges if e >= 5.0),
+            'edge_7_plus': sum(1 for e in edges if e >= 7.0),
+            'max_edge': round(max(edges), 1) if edges else None,
+        }
 
         # Step 6: Aggregate to top picks (with combo registry + signal health weighting + consensus)
         combo_registry = load_combo_registry(bq_client=self.bq_client)
@@ -200,7 +242,7 @@ class SignalBestBetsExporter(BaseExporter):
             qualifying_subsets=qual_subsets,
             player_blacklist=player_blacklist,
         )
-        top_picks = aggregator.aggregate(predictions, signal_results)
+        top_picks, filter_summary = aggregator.aggregate(predictions, signal_results)
 
         # Step 6b: Build pick angles (Session 278, 284: direction health)
         for pick in top_picks:
@@ -251,14 +293,6 @@ class SignalBestBetsExporter(BaseExporter):
                 'result': None,
             })
 
-        # Step 8: Get best_bets record (season/month/week HR)
-        record = self._get_best_bets_record(target_date)
-
-        # Cap player list in output to top 10 worst (avoid bloating JSON)
-        blacklist_players_capped = [
-            p['player_lookup'] for p in blacklist_stats.get('players', [])[:10]
-        ]
-
         return {
             'date': target_date,
             'generated_at': self.get_generated_at(),
@@ -278,6 +312,8 @@ class SignalBestBetsExporter(BaseExporter):
                 'players': blacklist_players_capped,
             },
             'direction_health': direction_health,
+            'filter_summary': filter_summary,
+            'edge_distribution': edge_distribution,
             'picks': picks_json,
             'total_picks': len(picks_json),
             'signals_evaluated': [
@@ -496,36 +532,6 @@ class SignalBestBetsExporter(BaseExporter):
             f"(N={health['under_n']})"
         )
         return health
-
-    def _query_games_vs_opponent(self, target_date: str) -> Dict[tuple, int]:
-        """Query season games played per player-opponent pair.
-
-        Returns dict keyed by (player_lookup, opponent_team_abbr) → count.
-        Used by avoid-familiar filter in aggregator (Session 284).
-        """
-        query = f"""
-        SELECT player_lookup, opponent_team_abbr, COUNT(*) as games_played
-        FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
-        WHERE game_date >= '2025-10-22'
-          AND game_date < @target_date
-          AND minutes_played > 0
-        GROUP BY 1, 2
-        """
-
-        job_config = bigquery.QueryJobConfig(
-            query_parameters=[
-                bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
-            ]
-        )
-
-        result = self.bq_client.query(query, job_config=job_config).result(timeout=60)
-
-        gvo_map = {}
-        for row in result:
-            gvo_map[(row.player_lookup, row.opponent_team_abbr)] = row.games_played
-
-        logger.info(f"Loaded games_vs_opponent for {len(gvo_map)} player-opponent pairs")
-        return gvo_map
 
     def _get_best_bets_record(self, target_date: str) -> Dict[str, Any]:
         """Query W-L record for the best_bets subset across season/month/week.
