@@ -343,7 +343,10 @@ class SignalBestBetsExporter(BaseExporter):
 
         # Write picks to BigQuery for grading tracking
         if json_data['picks']:
-            self._write_to_bigquery(target_date, json_data['picks'])
+            self._write_to_bigquery(
+                target_date, json_data['picks'],
+                filter_summary=json_data.get('filter_summary'),
+            )
 
         # Upload to GCS (date-specific)
         gcs_path = self.upload_to_gcs(
@@ -386,7 +389,12 @@ class SignalBestBetsExporter(BaseExporter):
             self.bq_client, target_date, multi_model=True,
         )
 
-    def _write_to_bigquery(self, target_date: str, picks: List[Dict]) -> None:
+    def _write_to_bigquery(
+        self,
+        target_date: str,
+        picks: List[Dict],
+        filter_summary: Optional[Dict] = None,
+    ) -> None:
         """Write signal best bets to BigQuery using batch load (not streaming).
 
         Deletes existing rows for the target date first to prevent duplicate
@@ -465,6 +473,7 @@ class SignalBestBetsExporter(BaseExporter):
                     if pick.get('champion_edge') is not None else None
                 ),
                 'direction_conflict': pick.get('direction_conflict'),
+                'filter_summary': json.dumps(filter_summary) if filter_summary else None,
                 'created_at': datetime.now(timezone.utc).isoformat(),
             })
 

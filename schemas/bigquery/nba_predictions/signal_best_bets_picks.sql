@@ -60,6 +60,9 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.signal_best_bets_
   champion_edge NUMERIC(5, 1),            -- Champion model (V9 MAE) edge for comparison
   direction_conflict BOOLEAN,             -- True if models with edge 5+ disagreed on direction
 
+  -- Filter summary (Session 319 — historical analysis of filtering decisions)
+  filter_summary STRING,                    -- JSON: {total_candidates, passed_filters, rejected: {...}}
+
   -- Outcome (populated after grading)
   actual_points INT64,
   prediction_correct BOOLEAN,

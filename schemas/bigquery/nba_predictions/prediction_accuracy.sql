@@ -70,6 +70,10 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.prediction_accura
   pre_game_injury_status STRING,        -- Injury status at prediction time: 'OUT', 'DOUBTFUL', 'QUESTIONABLE', 'PROBABLE'
   injury_confirmed_postgame BOOLEAN,    -- TRUE if DNP matched a pre-game injury flag
 
+  -- Data Quality Tracking (Session 125/319 - enables hit rate by quality analysis)
+  feature_quality_score FLOAT64,          -- Feature quality score from prediction (0-100)
+  data_quality_tier STRING,               -- HIGH/MEDIUM/LOW computed from quality score
+
   -- Metadata
   model_version STRING,
   graded_at TIMESTAMP

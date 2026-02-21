@@ -94,6 +94,10 @@ from data_processors.publishing.signal_health_exporter import SignalHealthExport
 from data_processors.publishing.model_health_exporter import ModelHealthExporter
 # Best bets record + history (Session 317)
 from data_processors.publishing.best_bets_record_exporter import BestBetsRecordExporter
+# Today's clean best bets for frontend (Session 319)
+from data_processors.publishing.today_best_bets_exporter import TodayBestBetsExporter
+# Admin picks with full metadata (Session 319)
+from data_processors.publishing.admin_picks_exporter import AdminPicksExporter
 
 # Configure logging
 logging.basicConfig(
@@ -123,8 +127,10 @@ EXPORT_TYPES = [
     'signal-best-bets',
     # Signal health + model health (Session 267)
     'signal-health', 'model-health',
-    # Best bets record + history (Session 317)
-    'best-bets-record',
+    # Best bets record + history + today (Session 317/319)
+    'best-bets-record', 'best-bets-today',
+    # Admin picks with full metadata (Session 319)
+    'admin-picks',
     # Consolidated trends
     'trends-tonight',
     # Shorthand groups
@@ -428,6 +434,28 @@ def export_date(
         except Exception as e:
             result['errors'].append(f"best-bets-record: {e}")
             logger.error(f"  Best Bets Record error: {e}")
+
+    # Today's clean best bets for frontend (Session 319)
+    if 'best-bets-today' in export_types:
+        try:
+            exporter = TodayBestBetsExporter()
+            path = exporter.export(target_date)
+            result['paths']['best_bets_today'] = path
+            logger.info(f"  Best Bets Today: {path}")
+        except Exception as e:
+            result['errors'].append(f"best-bets-today: {e}")
+            logger.error(f"  Best Bets Today error: {e}")
+
+    # Admin picks with full metadata (Session 319)
+    if 'admin-picks' in export_types:
+        try:
+            exporter = AdminPicksExporter()
+            path = exporter.export(target_date)
+            result['paths']['admin_picks'] = path
+            logger.info(f"  Admin Picks: {path}")
+        except Exception as e:
+            result['errors'].append(f"admin-picks: {e}")
+            logger.error(f"  Admin Picks error: {e}")
 
     # === SLOW EXPORTS (tonight-players processes 200+ individual files) ===
 
