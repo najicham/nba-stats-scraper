@@ -303,7 +303,7 @@ gcloud run services describe SERVICE --region=us-west2 --format="value(metadata.
 | `nba_raw.nbac_schedule` | Requires partition filter |
 | `model_performance_daily` | Daily rolling HR/state per model (Session 262). Auto-populated by post_grading_export |
 | `signal_health_daily` | Signal regime (HOT/NORMAL/COLD) per timeframe (Session 259) |
-| `signal_combo_registry` | 13 validated combos: 11 SYNERGISTIC, 2 ANTI_PATTERN (Session 295) |
+| `signal_combo_registry` | 11 SYNERGISTIC combos (Session 295, ANTI_PATTERN removed Session 314) |
 
 **Game Status:** 1=Scheduled, 2=In Progress, 3=Final
 
@@ -572,8 +572,8 @@ Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
 | Signal | Category | Direction | AVG HR | Status | Notes |
 |--------|----------|-----------|--------|--------|-------|
 | `model_health` | Meta | BOTH | 52.6% | PRODUCTION | Always fires, baseline qualifier |
-| `high_edge` | Edge | BOTH | 66.7% | Standalone BLOCKED | Combo OK (combo_he_ms 94.9%) |
-| `edge_spread_optimal` | Edge | BOTH | 67.2% | PRODUCTION | Anti-pattern detection in aggregator |
+| `high_edge` | Edge | BOTH | 66.7% | PRODUCTION | ANTI_PATTERN removed Session 314 — combo OK (combo_he_ms 94.9%) |
+| `edge_spread_optimal` | Edge | BOTH | 67.2% | PRODUCTION | ANTI_PATTERN removed Session 314 |
 | `combo_he_ms` | Combo | OVER | 94.9% | PRODUCTION | Best combo: HE+MS |
 | `combo_3way` | Combo | OVER | 95.5% | PRODUCTION | ESO+HE+MS (OVER-only, Session 295) |
 | `bench_under` | Market-Pattern | UNDER | 76.9% | PRODUCTION | Top standalone signal (N=156) |
@@ -604,8 +604,9 @@ Aggregator top-5 simulation: **73.9% AVG HR** (up from 60.3% pre-cleanup). W2: 8
 
 **Session 277:** 3-layer architecture using all active models for improved best bets.
 **Session 296:** Dynamic model discovery — cross-model system no longer uses hardcoded system_ids. Models classified by family pattern at runtime (`shared/config/cross_model_subsets.py`).
-**Session 297:** Edge floor (MIN_EDGE=3.0), consensus bonus fix, triple-write bug fix.
-**Session 307 Phase A:** Multi-source candidate generation — best bets exporter now queries ALL CatBoost families (not just champion V9), picks highest-edge prediction per player. Adds 5 attribution columns to `signal_best_bets_picks`: `source_model_id`, `source_model_family`, `n_models_eligible`, `champion_edge`, `direction_conflict`. Algorithm version: `v307_multi_source`.
+**Session 297:** Edge floor (MIN_EDGE=5.0), consensus bonus fix, triple-write bug fix.
+**Session 307 Phase A:** Multi-source candidate generation — best bets exporter now queries ALL CatBoost families (not just champion V9), picks highest-edge prediction per player. Adds 5 attribution columns to `signal_best_bets_picks`: `source_model_id`, `source_model_family`, `n_models_eligible`, `champion_edge`, `direction_conflict`.
+**Session 314:** Consolidated best bets — 3 systems reduced to 2. Legacy BestBetsExporter (System 1) removed. SignalBestBetsExporter (System 2) and SignalAnnotator bridge (System 3) now share same aggregator, player blacklist, games_vs_opponent, and all negative filters. ANTI_PATTERN combo entries removed. Algorithm version: `v314_consolidated`.
 
 **Layers:**
 1. **Per-model subsets** — each model tracked independently (26 existing + 4 new V12-quantile = 30)

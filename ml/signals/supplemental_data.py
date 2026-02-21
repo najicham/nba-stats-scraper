@@ -2,8 +2,12 @@
 
 Provides the BigQuery queries and row-parsing logic needed to build
 the supplemental dicts that signals require (3PT stats, minutes stats,
-model health). Used by both SignalBestBetsExporter and SignalAnnotator
-to avoid duplicating the 50-line SQL.
+model health, games_vs_opponent). Used by both SignalBestBetsExporter
+and SignalAnnotator to avoid duplicating SQL.
+
+Session 314: Added query_games_vs_opponent() with module-level cache.
+    Previously a private method on SignalBestBetsExporter — extracted here
+    so both exporters can call it without duplicate BQ scans.
 """
 
 import logging

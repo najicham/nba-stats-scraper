@@ -12,6 +12,11 @@ Resolution order per player:
   - In-progress games: prefer BDL live API, fall back to BigQuery if BDL unavailable
   - Each prediction carries a `score_source` field for transparency
 
+Session 314: Removed schedule-gate that blocked BQ score fetching when
+    game_status showed 0 final games. Added stale status override: if
+    game_status='scheduled' but player has actual points, override to 'final'.
+    Root cause: schedule scraper hadn't updated game_status after ASB.
+
 Designed to run every 2-5 minutes during games via Cloud Scheduler.
 """
 

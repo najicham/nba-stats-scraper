@@ -1,15 +1,23 @@
 """
-Signal Best Bets Exporter for Phase 6 Publishing
+Signal Best Bets Exporter for Phase 6 Publishing (System 2)
 
 Runs the Signal Discovery Framework against today's predictions and exports
 edge-first best bets to GCS. Natural sizing — all picks passing edge 5+ floor
 and negative filters are included. Also writes picks to
 the `signal_best_bets_picks` BigQuery table for grading.
 
+Session 307: Multi-source candidate generation — queries ALL CatBoost families
+    (not just champion V9), picks highest-edge prediction per player.
+Session 314: Consolidated with SignalAnnotator (System 3). Both now share:
+    - Same BestBetsAggregator with same negative filters
+    - Same player_blacklist (from compute_player_blacklist)
+    - Same games_vs_opponent (from shared query_games_vs_opponent in supplemental_data)
+    Legacy BestBetsExporter (System 1) removed from daily_export.py.
+    Added filter_summary + edge_distribution to JSON output.
+
 Pipeline: Phase 5 → Phase 6 Export → signal-best-bets
 Output: v1/signal-best-bets/{date}.json
 
-Version: 1.0
 Created: 2026-02-14 (Session 254)
 """
 

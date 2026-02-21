@@ -1,17 +1,25 @@
 """
-Signal Annotator for Phase 6 Publishing
+Signal Annotator for Phase 6 Publishing (System 3)
 
-Evaluates signals on ALL active predictions and writes signal tags to
-the `pick_signal_tags` BigQuery table. This runs AFTER SubsetMaterializer
-and BEFORE AllSubsetsPicksExporter, so the exporter can LEFT JOIN
-signal tags onto every pick in every subset.
+Two roles:
+1. Evaluates signals on ALL active predictions and writes signal tags to
+   the `pick_signal_tags` BigQuery table. This runs AFTER SubsetMaterializer
+   and BEFORE AllSubsetsPicksExporter, so the exporter can LEFT JOIN
+   signal tags onto every pick in every subset.
+2. Bridges aggregator's top picks into `current_subset_picks` as the
+   "Signal Picks" subset (via _bridge_signal_picks).
+
+Session 314: Aligned with SignalBestBetsExporter (System 2). Both now share:
+    - Same BestBetsAggregator with same negative filters
+    - Same player_blacklist (from compute_player_blacklist)
+    - Same games_vs_opponent (from shared query_games_vs_opponent)
+    System 2 additionally uses multi_model=True for cross-model candidates.
 
 Fail-safe: if annotation fails, the exporter still works — picks just
 don't have signal badges.
 
 Design: batch load (not streaming) to avoid 90-min DML buffer.
 
-Version: 1.0
 Created: 2026-02-14 (Session 254)
 """
 

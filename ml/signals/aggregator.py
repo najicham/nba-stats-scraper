@@ -18,15 +18,21 @@ Session 298: Natural sizing — removed MAX_PICKS_PER_DAY=5 hard cap.
     Let edge floor + negative filters determine the natural pick count.
     Some days 2 picks, some days 8 — that's honest.
 
-Prior history (Sessions 259-296):
+Session 314: Consolidated best bets systems — aggregate() now returns
+    (picks, filter_summary) tuple tracking per-filter rejection counts.
+    Removed ANTI_PATTERN combo entries that blocked all edge 5+ candidates.
+    Both SignalBestBetsExporter (System 2) and SignalAnnotator bridge
+    (System 3) now share the same filters via this aggregator.
+
+Prior history (Sessions 259-298):
     Session 259: Registry-based combo scoring, MIN_SIGNAL_COUNT=2.
     Session 260: Signal health weighting (HOT/COLD multipliers).
     Session 264: COLD model-dependent signals → 0.0x weight.
     Session 279: Pick provenance (qualifying_subsets + algorithm_version).
     Session 284: Player blacklist, avoid-familiar, remove rel_edge filter.
     Session 294: UNDER line-jump/line-drop/neg-pm blocks.
-    Session 297 early: Edge floor 3.0, consensus bonus diversity fix.
-    Session 297 late: Edge-first architecture (this version).
+    Session 297: Edge-first architecture, edge floor 5.0, UNDER 7+ block.
+    Session 298: Natural sizing — removed MAX_PICKS_PER_DAY cap.
 """
 
 import logging
