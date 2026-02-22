@@ -27,6 +27,7 @@ from ml.signals.aggregator import ALGORITHM_VERSION
 from ml.signals.signal_health import get_signal_health_summary
 from shared.config.model_selection import get_best_bets_model_id
 from shared.config.subset_public_names import SUBSET_PUBLIC_NAMES
+from shared.config.cross_model_subsets import build_system_id_sql_filter, classify_system_id
 from ml.signals.ultra_bets import compute_ultra_live_hrs, parse_ultra_criteria, BACKTEST_START, BACKTEST_END
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,7 @@ class AdminDashboardExporter(BaseExporter):
         today_picks = self._query_today_picks(target_date)
         candidates = self._query_candidates(target_date)
         filter_summary = self._query_filter_summary(target_date)
+        model_candidates = self._query_model_candidates_summary(target_date, today_picks)
 
         # Edge distribution from candidates
         edges = [abs(c.get('edge') or 0) for c in candidates]
@@ -96,6 +98,7 @@ class AdminDashboardExporter(BaseExporter):
                 'total': len(candidates),
                 'edge_distribution': edge_distribution,
             },
+            'model_candidates_summary': model_candidates,
             'filter_summary': filter_summary,
         }
 
@@ -330,6 +333,7 @@ class AdminDashboardExporter(BaseExporter):
           b.filter_summary,
           b.ultra_tier,
           b.ultra_criteria,
+          b.qualifying_subsets,
           pa.actual_points,
           pa.prediction_correct
         FROM `nba-props-platform.nba_predictions.signal_best_bets_picks` b
@@ -366,6 +370,18 @@ class AdminDashboardExporter(BaseExporter):
                 except (json.JSONDecodeError, TypeError):
                     pass
 
+            # Parse qualifying_subsets JSON → flat list of subset_id strings
+            qs_raw = p.get('qualifying_subsets')
+            subsets = []
+            if isinstance(qs_raw, str):
+                try:
+                    qs_parsed = json.loads(qs_raw)
+                    subsets = [s['subset_id'] for s in qs_parsed if isinstance(s, dict) and 'subset_id' in s]
+                except (json.JSONDecodeError, TypeError, KeyError):
+                    pass
+            elif isinstance(qs_raw, list):
+                subsets = [s['subset_id'] for s in qs_raw if isinstance(s, dict) and 'subset_id' in s]
+
             picks.append({
                 'rank': safe_int(p.get('rank')),
                 'player': p.get('player_name') or '',
@@ -373,6 +389,7 @@ class AdminDashboardExporter(BaseExporter):
                 'team': p.get('team_abbr') or '',
                 'opponent': p.get('opponent_team_abbr') or '',
                 'direction': p.get('recommendation') or '',
+                'subsets': subsets,
                 'line': safe_float(p.get('line_value'), precision=1),
                 'edge': safe_float(p.get('edge'), precision=1),
                 'predicted': safe_float(p.get('predicted_points'), precision=1),
@@ -449,6 +466,66 @@ class AdminDashboardExporter(BaseExporter):
             logger.warning(f"Failed to query filter summary: {e}")
 
         return {}
+
+    def _query_model_candidates_summary(
+        self, target_date: str, today_picks: List[Dict]
+    ) -> List[Dict]:
+        """Per-model candidate funnel: total candidates, edge stats, picks selected.
+
+        Queries all CatBoost family predictions for the target date (pre-dedup),
+        then cross-references with final picks to show how many survived filtering.
+        """
+        system_filter = build_system_id_sql_filter('p')
+
+        query = f"""
+        SELECT
+          p.system_id,
+          COUNT(*) AS total_candidates,
+          COUNTIF(ABS(p.predicted_points - p.current_points_line) >= 5.0) AS edge_5_plus,
+          ROUND(AVG(ABS(p.predicted_points - p.current_points_line)), 1) AS avg_edge,
+          ROUND(MAX(ABS(p.predicted_points - p.current_points_line)), 1) AS max_edge
+        FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions` p
+        WHERE p.game_date = @target_date
+          AND {system_filter}
+          AND p.is_active = TRUE
+          AND p.recommendation IN ('OVER', 'UNDER')
+          AND p.line_source IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS')
+        GROUP BY p.system_id
+        ORDER BY total_candidates DESC
+        """
+
+        params = [
+            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+        ]
+
+        try:
+            rows = self.query_to_list(query, params)
+        except Exception as e:
+            logger.warning(f"Failed to query model candidates summary: {e}")
+            return []
+
+        # Count picks selected per source_model from today's picks
+        picks_by_model = {}
+        for pick in today_picks:
+            src = pick.get('source_model')
+            if src:
+                picks_by_model[src] = picks_by_model.get(src, 0) + 1
+
+        results = []
+        for r in rows:
+            model_id = r.get('system_id', '')
+            family = classify_system_id(model_id)
+            results.append({
+                'model_id': model_id,
+                'family': family,
+                'total_candidates': safe_int(r.get('total_candidates'), 0),
+                'edge_5_plus': safe_int(r.get('edge_5_plus'), 0),
+                'picks_selected': picks_by_model.get(model_id, 0),
+                'avg_edge': safe_float(r.get('avg_edge'), precision=1),
+                'max_edge': safe_float(r.get('max_edge'), precision=1),
+            })
+
+        return results
 
     def _query_ultra_gate(self) -> Dict[str, Any]:
         """Query ultra gate progress — OVER and UNDER HR toward public exposure.
