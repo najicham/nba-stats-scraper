@@ -27,7 +27,7 @@ from ml.signals.aggregator import ALGORITHM_VERSION
 from ml.signals.signal_health import get_signal_health_summary
 from shared.config.model_selection import get_best_bets_model_id
 from shared.config.subset_public_names import SUBSET_PUBLIC_NAMES
-from ml.signals.ultra_bets import compute_ultra_live_hrs, BACKTEST_END
+from ml.signals.ultra_bets import compute_ultra_live_hrs, parse_ultra_criteria, BACKTEST_START, BACKTEST_END
 
 logger = logging.getLogger(__name__)
 
@@ -39,20 +39,6 @@ def _compute_season_label(d: date) -> str:
     if d.month >= 10:
         return f"{d.year}-{str(d.year + 1)[-2:]}"
     return f"{d.year - 1}-{str(d.year)[-2:]}"
-
-
-def _parse_ultra_criteria(raw) -> list:
-    """Parse ultra_criteria from BQ (stored as JSON string) into a list."""
-    if not raw:
-        return []
-    if isinstance(raw, str):
-        try:
-            return json.loads(raw)
-        except (json.JSONDecodeError, TypeError):
-            return []
-    if isinstance(raw, list):
-        return raw
-    return []
 
 
 class AdminDashboardExporter(BaseExporter):
@@ -410,7 +396,7 @@ class AdminDashboardExporter(BaseExporter):
                 'algorithm_version': p.get('algorithm_version'),
                 # Ultra Bets (Session 327)
                 'ultra_tier': bool(p.get('ultra_tier')),
-                'ultra_criteria': _parse_ultra_criteria(p.get('ultra_criteria')),
+                'ultra_criteria': parse_ultra_criteria(p.get('ultra_criteria')),
                 'actual': safe_int(p.get('actual_points')),
                 'result': (
                     'WIN' if p.get('prediction_correct') is True
@@ -473,13 +459,13 @@ class AdminDashboardExporter(BaseExporter):
         TARGET_N = 50
         TARGET_HR = 80.0
 
-        query = """
+        query = f"""
         SELECT
           recommendation,
           COUNT(*) AS total,
           COUNTIF(prediction_correct = TRUE) AS wins
         FROM `nba-props-platform.nba_predictions.signal_best_bets_picks`
-        WHERE game_date >= '2026-01-09'
+        WHERE game_date >= '{BACKTEST_START}'
           AND ultra_tier = TRUE
           AND prediction_correct IS NOT NULL
         GROUP BY recommendation

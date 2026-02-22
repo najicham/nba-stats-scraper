@@ -23,8 +23,9 @@ from google.cloud import bigquery
 
 logger = logging.getLogger(__name__)
 
-# End date of the backtest window. Live HR queries start after this date.
-# Update after re-validation backtests.
+# Backtest window. Live HR queries start after BACKTEST_END.
+# Update both after re-validation backtests.
+BACKTEST_START = '2026-01-09'
 BACKTEST_END = '2026-02-21'
 
 # Each criterion: id, description, backtest_hr, backtest_n, backtest_period, backtest_date
@@ -45,14 +46,7 @@ ULTRA_CRITERIA = [
         'backtest_period': '2026-01-09 to 2026-02-21',
         'backtest_date': '2026-02-22',
     },
-    {
-        'id': 'consensus_3plus_edge_5plus',
-        'description': '3+ models agree, edge >= 5',
-        'backtest_hr': 78.9,
-        'backtest_n': 18,
-        'backtest_period': '2026-01-09 to 2026-02-21',
-        'backtest_date': '2026-02-22',
-    },
+    # consensus_3plus_edge_5plus REMOVED (Session 327): 0 live picks ever fired.
     {
         'id': 'v12_edge_4_5plus',
         'description': 'V12+vegas model, edge >= 4.5',
@@ -62,6 +56,21 @@ ULTRA_CRITERIA = [
         'backtest_date': '2026-02-22',
     },
 ]
+
+
+def parse_ultra_criteria(raw) -> list:
+    """Parse ultra_criteria from BQ (stored as JSON string) into a list."""
+    import json
+    if not raw:
+        return []
+    if isinstance(raw, str):
+        try:
+            return json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return []
+    if isinstance(raw, list):
+        return raw
+    return []
 
 
 def _check_criterion(criterion_id: str, pick: Dict[str, Any]) -> bool:
@@ -77,8 +86,7 @@ def _check_criterion(criterion_id: str, pick: Dict[str, Any]) -> bool:
     if criterion_id == 'v12_over_edge_5plus':
         return source_family.startswith('v12') and direction == 'OVER' and edge >= 5.0
 
-    if criterion_id == 'consensus_3plus_edge_5plus':
-        return model_agreement >= 3 and edge >= 5.0
+    # consensus_3plus_edge_5plus REMOVED (Session 327)
 
     if criterion_id == 'v12_edge_4_5plus':
         return source_family.startswith('v12') and edge >= 4.5

@@ -27,25 +27,11 @@ from google.cloud import bigquery
 
 from data_processors.publishing.base_exporter import BaseExporter
 from data_processors.publishing.exporter_utils import safe_float, safe_int
-from ml.signals.ultra_bets import compute_ultra_live_hrs
+from ml.signals.ultra_bets import compute_ultra_live_hrs, parse_ultra_criteria
 
 logger = logging.getLogger(__name__)
 
 PROJECT_ID = 'nba-props-platform'
-
-
-def _parse_ultra_criteria(raw) -> list:
-    """Parse ultra_criteria from BQ (stored as JSON string) into a list."""
-    if not raw:
-        return []
-    if isinstance(raw, str):
-        try:
-            return json.loads(raw)
-        except (json.JSONDecodeError, TypeError):
-            return []
-    if isinstance(raw, list):
-        return raw
-    return []
 
 
 class AdminPicksExporter(BaseExporter):
@@ -101,7 +87,7 @@ class AdminPicksExporter(BaseExporter):
                 'filter_summary': p.get('filter_summary'),
                 # Ultra Bets (Session 327 — admin-only visibility)
                 'ultra_tier': bool(p.get('ultra_tier')),
-                'ultra_criteria': _parse_ultra_criteria(p.get('ultra_criteria')),
+                'ultra_criteria': parse_ultra_criteria(p.get('ultra_criteria')),
                 'actual': safe_int(p.get('actual_points')),
                 'result': (
                     'WIN' if p.get('prediction_correct') is True

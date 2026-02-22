@@ -363,6 +363,7 @@ class SignalBestBetsExporter(BaseExporter):
                 'qualifying_subsets': pick.get('qualifying_subsets', []),
                 'qualifying_subset_count': pick.get('qualifying_subset_count', 0),
                 'algorithm_version': pick.get('algorithm_version', ALGORITHM_VERSION),
+                'system_id': pick.get('system_id'),
                 # Multi-source attribution (Session 307)
                 'source_model': pick.get('source_model_id'),
                 'source_model_family': pick.get('source_model_family'),
@@ -520,7 +521,7 @@ class SignalBestBetsExporter(BaseExporter):
                 'player_lookup': pick['player_lookup'],
                 'game_id': pick.get('game_id', ''),
                 'game_date': target_date,
-                'system_id': pick.get('system_id', 'catboost_v9'),
+                'system_id': pick.get('system_id') or pick.get('source_model') or 'catboost_v9',
                 'player_name': pick.get('player', ''),
                 'team_abbr': pick.get('team', ''),
                 'opponent_team_abbr': pick.get('opponent', ''),

@@ -636,7 +636,8 @@ Ultra = 33% of picks, **51% of profit**.
 | `v12_edge_6plus` | V12+vegas, edge >= 6 | 100% (26) | **95.2% (20-1)** | VALIDATED |
 | `v12_over_edge_5plus` | V12+vegas OVER, edge >= 5 | 100% (18) | **89.5% (17-2)** | VALIDATED |
 | `v12_edge_4_5plus` | V12+vegas, edge >= 4.5 | 77.2% (57) | **75.8% (25-8)** | VALIDATED |
-| `consensus_3plus_edge_5plus` | 3+ models agree, edge >= 5 | 78.9% (18) | **0 picks** | DEAD — never fires |
+
+`consensus_3plus_edge_5plus` REMOVED (Session 327) — 0 live picks, never fired.
 
 ### Direction Split (critical insight)
 
