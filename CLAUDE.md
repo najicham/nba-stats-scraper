@@ -130,11 +130,13 @@ nba-stats-scraper/
 | SHA256 (prefix) | `b7e37922de18` |
 | Status | PRODUCTION (since 2026-02-19) — **FRESH** (ASB retrain; sample size gate N=10 < 50, manual promotion) |
 
-**Shadow models (5):** V12 MAE (69.2% HR), V9 Q43 (62.6%), V9 Q45 (62.9%), V12 Q43 (61.6%), V12 Q45 (61.2%). All passed governance gates.
+**Shadow models (8):** V12 MAE noveg (69.2% HR), V9 Q43 (62.6%), V9 Q45 (62.9%), V12 noveg Q43 (61.6%), V12 noveg Q45 (61.2%), V9 low-vegas (56.3%), **V12+vegas MAE (75.0% HR, 54f — FIRST EVER)**, **V12+vegas Q43 (70.6% HR, 54f)**.
 
 **CRITICAL:** Use edge >= 3 filter. 73% of predictions have edge < 3 and lose money.
 
 **RETRAIN SPRINT (Session 276):** All-Star break retrain. V9 champion promoted, 5 shadow models deployed. V12+Quantile trained for first time ever. All 4 quantile models passed all governance gates with n=97-125.
+
+**V12+VEGAS (Session 324):** First-ever V12 with vegas features (54f). Dominates V9 (75% vs 40% HR 3+). Two shadows deployed with 5/6 governance gates (MAE: N=16 < 50; Q43: vegas bias -1.56, 0.06 over limit). Both are expected behaviors — MAE is conservative, Q43 inherently UNDER-biased.
 
 ### Model Governance
 
@@ -188,16 +190,19 @@ Setup: `./bin/infrastructure/setup_retrain_reminder.sh`
 
 Shadow challengers run alongside champion. Each gets own `system_id`, graded independently, no user-facing impact.
 
-**Active challengers (Session 276):** 5 shadow models, all fresh:
-- `catboost_v12_noveg_train1102_0205` (V12 MAE, 69.23% HR 3+)
+**Active challengers (Session 324):** 8 shadow models:
+- `catboost_v12_noveg_train1102_0205` (V12 MAE noveg, 69.23% HR 3+)
 - `catboost_v9_q43_train1102_0125` (V9 Q43, 62.61% HR 3+, n=115)
 - `catboost_v9_q45_train1102_0125` (V9 Q45, 62.89% HR 3+, n=97)
-- `catboost_v12_noveg_q43_train1102_0125` (V12 Q43, 61.6% HR 3+, n=125) — **FIRST EVER**
-- `catboost_v12_noveg_q45_train1102_0125` (V12 Q45, 61.22% HR 3+, n=98) — **FIRST EVER**
+- `catboost_v12_noveg_q43_train1102_0125` (V12 noveg Q43, 61.6% HR 3+, n=125)
+- `catboost_v12_noveg_q45_train1102_0125` (V12 noveg Q45, 61.22% HR 3+, n=98)
+- `catboost_v9_low_vegas_train0106_0205` (V9 low-vegas, 56.3% HR 3+, n=48)
+- `catboost_v12_train1225_0205` (V12+vegas MAE, **75.0% HR 3+**, n=16) — **FIRST EVER V12+VEGAS**
+- `catboost_v12_q43_train1225_0205` (V12+vegas Q43, **70.6% HR 3+**, n=51) — **FIRST EVER V12+VEGAS QUANTILE**
 
-**Key finding:** V12+Quantile (50 features + quantile loss) passes all governance gates on first attempt. V12 Q43 has highest N (125) of any quantile model.
+**Key finding (Session 324):** V12+vegas (54 features) massively outperforms V9 (33f) and V12 no-vegas (50f). Experiment matrix of 11 configs confirmed V12+vegas MAE as clear winner (75% vs 40% HR 3+ vs V9 baseline on same eval window).
 
-**Dead ends (don't revisit):** Grow policy, CHAOS+quantile, residual mode, two-stage pipeline, **Edge Classifier (Model 2)** (Session 230: AUC < 0.50).
+**Dead ends (don't revisit):** Grow policy, CHAOS+quantile, residual mode, two-stage pipeline, **Edge Classifier (Model 2)** (Session 230: AUC < 0.50), **Huber loss** (Session 323B: 47.4% HR), **recency weighting** (33.3% HR), **lines-only training** (20% HR), **min-PPG filter** (33.3% HR), **96-day training window** (worse than 42-day rolling).
 
 ```bash
 PYTHONPATH=. python bin/compare-model-performance.py catboost_v9_q43_train1102_0125 --days 7  # Monitor
