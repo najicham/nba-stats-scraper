@@ -130,13 +130,21 @@ nba-stats-scraper/
 | SHA256 (prefix) | `b7e37922de18` |
 | Status | PRODUCTION (since 2026-02-19) — **FRESH** (ASB retrain; sample size gate N=10 < 50, manual promotion) |
 
-**Shadow models (8):** V12 MAE noveg (69.2% HR), V9 Q43 (62.6%), V9 Q45 (62.9%), V12 noveg Q43 (61.6%), V12 noveg Q45 (61.2%), V9 low-vegas (56.3%), **V12+vegas MAE (75.0% HR, 54f — FIRST EVER)**, **V12+vegas Q43 (70.6% HR, 54f)**.
+**Shadow models (13):** V12 MAE noveg (69.2% HR), V9 Q43 (62.6%), V9 Q45 (62.9%), V12 noveg Q43 (61.6%), V12 noveg Q45 (61.2%), V9 low-vegas (56.3%), V12+vegas MAE Session 324 (75.0% HR), V12+vegas Q43 Session 324 (70.6% HR), **V12+vegas replay Dec25 (65.9% HR)**, **V12+vegas replay Jan25 (71.1% HR)**, **V9 MAE fresh (60.0% HR)**, **V12+vegas MAE fresh (64.7% HR)**, **V12+vegas Q43 fresh (59.0% HR)**.
 
 **CRITICAL:** Use edge >= 3 filter. 73% of predictions have edge < 3 and lose money.
 
 **RETRAIN SPRINT (Session 276):** All-Star break retrain. V9 champion promoted, 5 shadow models deployed. V12+Quantile trained for first time ever. All 4 quantile models passed all governance gates with n=97-125.
 
 **V12+VEGAS (Session 324):** First-ever V12 with vegas features (54f). Dominates V9 (75% vs 40% HR 3+). Two shadows deployed with 5/6 governance gates (MAE: N=16 < 50; Q43: vegas bias -1.56, 0.06 over limit). Both are expected behaviors — MAE is conservative, Q43 inherently UNDER-biased.
+
+**SESSION 325-326 FINDINGS:**
+- Walk-forward V12+vegas replay: **62.7% HR edge 3+ (N=220)** vs V9 48.3% on same period
+- Best bets backfill (V12+vegas in pool): **66.0% HR, $2,680 P&L** (100 picks, Jan 9 - Feb 21)
+- V12+vegas edge 6+: **100% HR (N=26, zero losses)** — Ultra Bets candidate
+- V12+vegas OVER edge 5+: **100% HR (N=18)** — strongest directional signal ever found
+- **4 harmful UNDER signals identified:** `high_ft_under` (33.3%), `self_creator_under` (36.4%), `volatile_under` (33.3%), `high_usage_under` (40.0%) — recommend removal
+- **UNDER edge 7+ filter is model-dependent:** V9=39.3% HR (keep blocking), V12+vegas=100% HR (should allow)
 
 ### Model Governance
 
@@ -190,17 +198,22 @@ Setup: `./bin/infrastructure/setup_retrain_reminder.sh`
 
 Shadow challengers run alongside champion. Each gets own `system_id`, graded independently, no user-facing impact.
 
-**Active challengers (Session 324):** 8 shadow models:
+**Active challengers (Session 326):** 13 shadow models:
 - `catboost_v12_noveg_train1102_0205` (V12 MAE noveg, 69.23% HR 3+)
 - `catboost_v9_q43_train1102_0125` (V9 Q43, 62.61% HR 3+, n=115)
 - `catboost_v9_q45_train1102_0125` (V9 Q45, 62.89% HR 3+, n=97)
 - `catboost_v12_noveg_q43_train1102_0125` (V12 noveg Q43, 61.6% HR 3+, n=125)
 - `catboost_v12_noveg_q45_train1102_0125` (V12 noveg Q45, 61.22% HR 3+, n=98)
 - `catboost_v9_low_vegas_train0106_0205` (V9 low-vegas, 56.3% HR 3+, n=48)
-- `catboost_v12_train1225_0205` (V12+vegas MAE, **75.0% HR 3+**, n=16) — **FIRST EVER V12+VEGAS**
-- `catboost_v12_q43_train1225_0205` (V12+vegas Q43, **70.6% HR 3+**, n=51) — **FIRST EVER V12+VEGAS QUANTILE**
+- `catboost_v12_train1225_0205` (V12+vegas MAE, 75.0% HR 3+, n=16)
+- `catboost_v12_q43_train1225_0205` (V12+vegas Q43, 70.6% HR 3+, n=51)
+- `catboost_v12_train1102_1225` (V12+vegas replay Dec25, 65.9% HR 3+, **Session 325**)
+- `catboost_v12_train1102_0125` (V12+vegas replay Jan25, 71.1% HR 3+, **Session 325**)
+- `catboost_v9_train1225_0205` (V9 MAE fresh, 60.0% HR 3+, **Session 325**)
+- `catboost_v12_train1225_0205_feb22` (V12+vegas MAE fresh, 64.7% HR 3+, **Session 325**)
+- `catboost_v12_q43_train1225_0205_feb22` (V12+vegas Q43 fresh, 59.0% HR 3+, **Session 325**)
 
-**Key finding (Session 324):** V12+vegas (54 features) massively outperforms V9 (33f) and V12 no-vegas (50f). Experiment matrix of 11 configs confirmed V12+vegas MAE as clear winner (75% vs 40% HR 3+ vs V9 baseline on same eval window).
+**Key finding (Session 324-326):** V12+vegas (54 features) massively outperforms V9 (33f) and V12 no-vegas (50f). Walk-forward replay: V12+vegas 62.7% HR 3+ vs V9 48.3% on same Jan 9 - Feb 21 period. V12+vegas edge 6+ is **100% HR (N=26)**. Best bets with V12+vegas: **66.0% HR, $2,680 P&L** (100 picks).
 
 **Dead ends (don't revisit):** Grow policy, CHAOS+quantile, residual mode, two-stage pipeline, **Edge Classifier (Model 2)** (Session 230: AUC < 0.50), **Huber loss** (Session 323B: 47.4% HR), **recency weighting** (33.3% HR), **lines-only training** (20% HR), **min-PPG filter** (33.3% HR), **96-day training window** (worse than 42-day rolling).
 
@@ -584,14 +597,14 @@ Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
 | `bench_under` | Market-Pattern | UNDER | 76.9% | PRODUCTION | Top standalone signal (N=156) |
 | `3pt_bounce` | Bounce | OVER | 74.9% | CONDITIONAL | Guards + Home |
 | `b2b_fatigue_under` | Market-Pattern | UNDER | 85.7% | CONDITIONAL | Small N (14) |
-| `high_ft_under` | Market-Pattern | UNDER | 64.1% | CONDITIONAL | FTA >= 7 |
-| `rest_advantage_2d` | Context | BOTH | 64.8% | CONDITIONAL | Capped at season week 15 (Session 318: W6+ decays to 40%) |
+| `high_ft_under` | Market-Pattern | UNDER | 64.1% | **HARMFUL** | Session 326: 33.3% HR on best bets (N=6). Recommend removal |
+| `rest_advantage_2d` | Context | BOTH | 64.8% | CONDITIONAL | Capped at season week 15 (Session 318: W6+ decays to 40%). Session 326: 74.0% HR on best bets (N=50) — STRONG |
 | `prop_line_drop_over` | Market-Pattern | OVER | 71.6% | PRODUCTION | Line dropped 2+ pts from prev game (Session 305: threshold 3→2, N=109) |
-| `book_disagreement` | Market | BOTH | 93.0% | WATCH | Cross-book line stddev (Session 303, small N) |
-| `self_creator_under` | Market-Pattern | UNDER | 61.8% | WATCH | |
-| `volatile_under` | Market-Pattern | UNDER | 60.0% | WATCH | |
-| `high_usage_under` | Market-Pattern | UNDER | 58.7% | WATCH | |
-| `blowout_recovery` | Bounce | OVER | 56.9% | WATCH | Stable 55-58% |
+| `book_disagreement` | Market | BOTH | 93.0% | WATCH | Cross-book line stddev (Session 303, small N). Session 326: 100% HR (N=6) |
+| `self_creator_under` | Market-Pattern | UNDER | 61.8% | **HARMFUL** | Session 326: 36.4% HR on best bets (N=11). Recommend removal |
+| `volatile_under` | Market-Pattern | UNDER | 60.0% | **HARMFUL** | Session 326: 33.3% HR on best bets (N=3). Recommend removal |
+| `high_usage_under` | Market-Pattern | UNDER | 58.7% | **HARMFUL** | Session 326: 40.0% HR on best bets (N=10). Recommend removal |
+| `blowout_recovery` | Bounce | OVER | 56.9% | WATCH | Stable 55-58%. Session 326: 57.1% (N=14), model-dependent (V12: 100%, V9: 40%) |
 
 ### Removed Signals (16, Sessions 275+296+318)
 
