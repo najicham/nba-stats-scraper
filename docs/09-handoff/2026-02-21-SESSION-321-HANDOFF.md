@@ -162,6 +162,113 @@ GROUP BY 1;
 
 ---
 
+## Broader Remediation: Full Season Replay + Best Bets Backfill
+
+### Context
+
+The signal best bets system (v314 consolidated algorithm) was deployed mid-January 2026. The current season record only starts from Jan 9. We want to:
+
+1. **Replay early January** as if the current algorithm was running then — backfill best bets picks from the start of the season using the current edge-first architecture (edge 5+, negative filters, all models)
+2. **Retrain all model families** for freshness (all 16+ days stale vs 7-day cadence)
+3. **Backfill shadow model best bets** — see what picks the shadow models (V12, V9 Q43/Q45, V12 Q43/Q45) would have made
+
+### How Edge Filtering Works at Cold Start (Early January)
+
+The edge-based system has **no cold start problem**:
+- **Edge calculation**: `predicted_points - line_value` — purely current-day, no history needed
+- **Edge floor (>= 5.0)**: Static threshold, not learned from data
+- **Player blacklist**: Needs 8+ edge-3+ picks at <40% HR to block. At season start, no player has enough picks → all pass
+- **Games vs opponent**: Checks historical gamebooks (box scores), not prediction history → works from first game
+- **Signals**: Fire based on current game context features, not historical predictions
+
+So the algorithm would have produced valid picks from day one. The only difference is that negative filters (especially player blacklist) wouldn't have blocked bad players until mid-season.
+
+### Replay Plan
+
+#### Phase 1: Ensure clean data (Dec 20/22/25 fix + re-grade)
+
+See Steps 1-5 above. Must be done FIRST before any backfill.
+
+#### Phase 2: Best bets backfill for full season
+
+```bash
+# Backfill signal best bets for each game date from season start
+# This re-runs the v314 consolidated algorithm (edge 5+, negative filters)
+for date in $(bq query --use_legacy_sql=false --format=csv --max_rows=200 \
+  'SELECT DISTINCT game_date FROM `nba-props-platform.nba_predictions.prediction_accuracy` WHERE game_date >= "2025-11-02" AND game_date < "2026-01-09" ORDER BY 1' \
+  | tail -n +2); do
+  echo "Backfilling $date"
+  PYTHONPATH=. python backfill_jobs/publishing/daily_export.py --date $date --only signal-best-bets
+done
+```
+
+**What this does:**
+- For each date Nov 2 → Jan 8 (before the system went live), re-runs the SignalBestBetsExporter
+- Uses edge 5+ floor, all negative filters (player blacklist, games_vs_opponent, UNDER edge 7+ block, etc.)
+- Picks up to 5 picks per day ranked by edge
+- Writes to `signal_best_bets_picks` table (idempotent — DELETE + INSERT per date)
+
+**What to watch for:**
+- Early November: Only champion V9 model was running → no cross-model consensus
+- Shadow models (V12, quantile) deployed late January → only contribute to late-season backfill
+- Player blacklist will be empty for early dates (needs accumulation) — could include players that later get blocked
+
+#### Phase 3: Multi-model backfill with shadow predictions
+
+The shadow models (V12 MAE, V9 Q43/Q45, V12 Q43/Q45, V9 low-vegas) started predicting at different dates. For the replay to be complete, we need their predictions to exist in `player_prop_predictions`. Check coverage:
+
+```sql
+SELECT
+  system_id,
+  MIN(game_date) as first_prediction,
+  MAX(game_date) as last_prediction,
+  COUNT(DISTINCT game_date) as days_active
+FROM `nba-props-platform.nba_predictions.player_prop_predictions`
+WHERE game_date >= '2025-11-01'
+  AND is_active = TRUE
+GROUP BY 1
+ORDER BY 1;
+```
+
+If shadow models don't have predictions for early dates, the best bets backfill will only use V9 champion picks for those dates (which is correct — can't backfill what didn't exist).
+
+#### Phase 4: Retrain all model families
+
+```bash
+# Champion V9 (7-day rolling window)
+./bin/retrain.sh --promote --eval-days 14
+
+# All shadow families
+./bin/retrain.sh --all --eval-days 14
+
+# Sync registry
+./bin/model-registry.sh sync
+```
+
+#### Phase 5: Re-export full season record
+
+```bash
+# After backfill, re-export the all-time best bets record
+PYTHONPATH=. python backfill_jobs/publishing/daily_export.py --date $(date +%Y-%m-%d) --only best-bets-all,admin-dashboard
+```
+
+### Expected Outcome
+
+After full backfill:
+- Season record starts Nov 2, 2025 (not Jan 9)
+- All picks use current v314 consolidated algorithm (edge 5+, negative filters)
+- Clean data (no bettingpros contamination)
+- Shadow model contributions where they existed
+- More accurate assessment of total season P&L
+
+### Key Assumptions
+
+1. **Can't retroactively create shadow model predictions** — if V12/quantile models didn't run before their deploy date, those picks don't exist
+2. **Backfilled picks may differ from what would have been live** — player blacklist wouldn't have fired early season, market conditions may have been different
+3. **The backfill is for audit/analysis** — these are "what would we have picked" results, not real P&L
+
+---
+
 ## Session Notes
 
 - Chat experienced frequent `[Tool result missing due to internal error]` from too many parallel BQ connections. **Next session: run commands sequentially.**
