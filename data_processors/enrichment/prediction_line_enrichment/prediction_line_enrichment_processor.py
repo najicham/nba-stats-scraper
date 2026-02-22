@@ -174,17 +174,35 @@ class PredictionLineEnrichmentProcessor:
         enrichable = []
         still_missing = []
 
+        MIN_POINTS_LINE = 5.0
+        rejected_low_lines = []
+
         for pred in predictions_missing:
             player_lookup = pred['player_lookup']
             if player_lookup in props:
+                line_value = props[player_lookup]['points_line']
+                if line_value < MIN_POINTS_LINE:
+                    rejected_low_lines.append((player_lookup, line_value))
+                    logger.error(
+                        f"LINE_SANITY_REJECT: {player_lookup} line {line_value} < {MIN_POINTS_LINE} — "
+                        f"likely non-points prop contamination, skipping"
+                    )
+                    still_missing.append(player_lookup)
+                    continue
                 enrichable.append({
                     'prediction_id': pred['prediction_id'],
                     'player_lookup': player_lookup,
-                    'points_line': props[player_lookup]['points_line'],
+                    'points_line': line_value,
                     'bookmaker': props[player_lookup]['bookmaker']
                 })
             else:
                 still_missing.append(player_lookup)
+
+        if rejected_low_lines:
+            logger.warning(
+                f"LINE_SANITY: Rejected {len(rejected_low_lines)} lines below {MIN_POINTS_LINE}: "
+                f"{rejected_low_lines[:5]}"
+            )
 
         logger.info(f"Can enrich {len(enrichable)} predictions, {len(still_missing)} still missing props")
 

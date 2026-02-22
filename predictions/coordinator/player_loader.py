@@ -693,8 +693,15 @@ class PlayerLoader:
             row = next(results, None)
 
             if row is not None and row.line_value is not None:
+                line_val = float(row.line_value)
+                if line_val < 5.0:
+                    logger.error(
+                        f"LINE_SANITY_REJECT: {player_lookup} odds_api {sportsbook} "
+                        f"line {line_val} < 5.0 — likely non-points prop, skipping"
+                    )
+                    return None
                 return {
-                    'line_value': float(row.line_value),
+                    'line_value': line_val,
                     'sportsbook': row.bookmaker.upper() if row.bookmaker else sportsbook.upper(),
                     'was_fallback': sportsbook.lower() != 'draftkings',
                     'line_source_api': 'ODDS_API',
@@ -761,8 +768,15 @@ class PlayerLoader:
             row = next(results, None)
 
             if row is not None and row.line_value is not None:
+                line_val = float(row.line_value)
+                if line_val < 5.0:
+                    logger.error(
+                        f"LINE_SANITY_REJECT: {player_lookup} bettingpros {sportsbook} "
+                        f"line {line_val} < 5.0 — likely non-points prop, skipping"
+                    )
+                    return None
                 return {
-                    'line_value': float(row.line_value),
+                    'line_value': line_val,
                     'sportsbook': row.bookmaker.upper() if row.bookmaker else sportsbook.upper(),
                     'was_fallback': sportsbook.lower() != 'draftkings',
                     'line_source_api': 'BETTINGPROS',
@@ -1104,11 +1118,18 @@ class PlayerLoader:
             row = next(results, None)
 
             if row is not None and row.line_value is not None:
+                line_val = float(row.line_value)
+                if line_val < 5.0:
+                    logger.error(
+                        f"LINE_SANITY_REJECT: {player_lookup} odds_api ANY "
+                        f"line {line_val} < 5.0 — likely non-points prop, skipping"
+                    )
+                    return None
                 sportsbook = row.bookmaker.upper() if row.bookmaker else 'UNKNOWN'
                 was_fallback = row.bookmaker and row.bookmaker.lower() != 'draftkings'
 
                 return {
-                    'line_value': float(row.line_value),
+                    'line_value': line_val,
                     'sportsbook': sportsbook,
                     'was_fallback': was_fallback,
                     'line_source_api': 'ODDS_API',
@@ -1178,11 +1199,18 @@ class PlayerLoader:
             row = next(results, None)
 
             if row is not None and row.line_value is not None:
+                line_val = float(row.line_value)
+                if line_val < 5.0:
+                    logger.error(
+                        f"LINE_SANITY_REJECT: {player_lookup} bettingpros ANY "
+                        f"line {line_val} < 5.0 — likely non-points prop, skipping"
+                    )
+                    return None
                 sportsbook = row.bookmaker.upper() if row.bookmaker else 'BETTINGPROS'
                 was_fallback = True  # Bettingpros is always a fallback source
 
                 return {
-                    'line_value': float(row.line_value),
+                    'line_value': line_val,
                     'sportsbook': sportsbook,
                     'was_fallback': was_fallback,
                     'line_source_api': 'BETTINGPROS',
