@@ -617,22 +617,58 @@ Aggregator top-5 simulation: **73.9% AVG HR** (up from 60.3% pre-cleanup). W2: 8
 ## Ultra Bets [Keyword: ULTRA]
 
 **Session 326:** High-confidence classification layer on top of best bets. Each pick is checked against criteria from walk-forward backtesting.
-**Session 327:** Live HR tracking + internal-only export. Ultra data written to BQ for monitoring, **stripped from public GCS JSON** until live-validated.
+**Session 327:** Live HR tracking + internal-only export. Ultra data written to BQ for monitoring, **stripped from public GCS JSON** until live-validated. Backfilled Jan 9 - Feb 21.
 
-| Criteria ID | Description | Backtest HR% | N | Filter |
-|------------|-------------|----:|--:|--------|
-| `v12_edge_6plus` | V12+vegas, edge >= 6 | 100.0 | 26 | model family + edge |
-| `v12_over_edge_5plus` | V12+vegas OVER, edge >= 5 | 100.0 | 18 | model family + edge + direction |
-| `consensus_3plus_edge_5plus` | 3+ models agree, edge >= 5 | 78.9 | 18 | model agreement + edge |
-| `v12_edge_4_5plus` | V12+vegas, edge >= 4.5 | 77.2 | 57 | model family + edge |
+### Live Performance (Jan 9 - Feb 21, N=99 best bets)
 
-**Architecture:** `ml/signals/ultra_bets.py` → called after aggregator scoring → `ultra_tier` + `ultra_criteria` fields on each pick → BQ rows (internal). JSON export has NO ultra fields.
+| Segment | Record | HR% | P&L |
+|---------|--------|-----|-----|
+| **All Best Bets** | 67-32 | 67.7% | +$3,180 |
+| **Ultra Bets** | **25-8** | **75.8%** | **+$1,620** |
+| Non-Ultra Best Bets | 42-24 | 63.6% | +$1,560 |
 
-**Live HR tracking:** `compute_ultra_live_hrs(bq_client)` queries `signal_best_bets_picks` for graded ultra picks after `BACKTEST_END` ('2026-02-21'). Live HRs are merged into `ultra_criteria` JSON in BQ. Update `BACKTEST_END` after re-validation backtests.
+Ultra = 33% of picks, **51% of profit**.
 
-**Data flow:** aggregator → ultra classification → live HR enrichment → BQ write (full ultra data) + JSON write (ultra stripped).
+### Per-Criterion Live Performance
 
-**Backtest HRs** (`backtest_hr`, `backtest_n`, `backtest_period`, `backtest_date`) are static, updated manually after retrains. Live HRs (`live_hr`, `live_n`) computed at export time from graded picks.
+| Criteria ID | Description | Backtest | Live | Status |
+|------------|-------------|----------|------|--------|
+| `v12_edge_6plus` | V12+vegas, edge >= 6 | 100% (26) | **95.2% (20-1)** | VALIDATED |
+| `v12_over_edge_5plus` | V12+vegas OVER, edge >= 5 | 100% (18) | **89.5% (17-2)** | VALIDATED |
+| `v12_edge_4_5plus` | V12+vegas, edge >= 4.5 | 77.2% (57) | **75.8% (25-8)** | VALIDATED |
+| `consensus_3plus_edge_5plus` | 3+ models agree, edge >= 5 | 78.9% (18) | **0 picks** | DEAD — never fires |
+
+### Direction Split (critical insight)
+
+| Direction | Ultra HR | Ultra Record | Non-Ultra HR |
+|-----------|----------|-------------|-------------|
+| **OVER** | **89.5%** | **17-2** | 62.8% |
+| UNDER | 57.1% | 8-6 | 65.2% |
+
+**Ultra OVER is elite (89.5%).** Ultra UNDER (57.1%) is above breakeven but not "ultra" quality. 6 of 8 ultra losses are UNDER picks. Consider direction-aware criteria in future.
+
+### Architecture
+
+`ml/signals/ultra_bets.py` → called after aggregator scoring → `ultra_tier` + `ultra_criteria` fields on each pick → BQ rows (internal). JSON export has NO ultra fields. Admin picks (`v1/admin/picks/`) include full ultra data.
+
+**Live HR tracking:** `compute_ultra_live_hrs(bq_client)` queries `signal_best_bets_picks` for graded ultra picks after `BACKTEST_END` ('2026-02-21'). Live HRs merged into `ultra_criteria` JSON in BQ. Update `BACKTEST_END` after re-validation backtests.
+
+**Data flow:** aggregator → ultra classification → live HR enrichment → BQ write (full ultra data) + JSON write (ultra stripped) + admin JSON (full ultra data).
+
+### Monitoring & Decision Triggers
+
+| Check | Trigger | Action |
+|-------|---------|--------|
+| Ultra OVER HR drops below 75% | Weekly | Investigate V12 model health |
+| Ultra UNDER HR drops below 52.4% | Weekly | Consider removing UNDER from ultra |
+| Any criterion live HR diverges >15% from backtest | Weekly | Flag for re-validation |
+| V12+vegas model decay alert | Daily (decay-detection CF) | Ultra criteria may need recalibration |
+| After model retrain | Each retrain | Re-run backtest, update `BACKTEST_END` + criteria HRs |
+| Ultra OVER N >= 50 and HR >= 80% | Milestone | Expose ultra to public JSON |
+
+### When to Expose Ultra Publicly
+
+Gate: ultra OVER must hit **N >= 50 graded picks** and maintain **HR >= 80%**. Currently 17-2 (89.5%), need ~31 more graded OVER ultra picks. At ~3 ultra OVER picks/week, expect validation by mid-March 2026.
 
 ## Multi-Model Best Bets [Keyword: MULTIMODEL]
 
