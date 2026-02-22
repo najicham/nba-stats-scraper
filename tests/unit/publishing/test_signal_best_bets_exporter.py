@@ -97,6 +97,74 @@ class TestZeroPredictionPath:
         assert result['total_picks'] == 0
 
 
+class TestHealthGate:
+    """Test that health gate blocks picks when model HR < breakeven."""
+
+    def _make_blocked_exporter(self):
+        """Create exporter with model health BLOCKED (HR below breakeven)."""
+        with patch('data_processors.publishing.signal_best_bets_exporter.get_signal_health_summary') as mock_sh, \
+             patch('data_processors.publishing.signal_best_bets_exporter.compute_player_blacklist') as mock_bl, \
+             patch('data_processors.publishing.signal_best_bets_exporter.query_model_health') as mock_mh, \
+             patch('data_processors.publishing.signal_best_bets_exporter.query_predictions_with_supplements') as mock_preds, \
+             patch('data_processors.publishing.base_exporter.storage.Client'), \
+             patch('data_processors.publishing.signal_best_bets_exporter.get_best_bets_model_id', return_value='catboost_v9'):
+
+            from data_processors.publishing.signal_best_bets_exporter import SignalBestBetsExporter
+            exporter = SignalBestBetsExporter()
+
+            # Model health BELOW breakeven (52.4%)
+            mock_mh.return_value = {'hit_rate_7d_edge3': 45.0, 'graded_count': 30}
+
+            # These should NOT be called (early return before predictions query)
+            mock_preds.return_value = (
+                [{'player_lookup': 'should_not_appear', 'game_id': 'g1',
+                  'edge': 8.0, 'recommendation': 'OVER'}],
+                {},
+            )
+
+            mock_sh.return_value = {'high_edge': {'regime': 'HOT'}}
+            mock_bl.return_value = (set(), {'evaluated': 5, 'blacklisted': 1, 'players': []})
+
+            exporter._query_direction_health = Mock(return_value={
+                'over_hr_14d': 50.0, 'under_hr_14d': 40.0, 'over_n': 10, 'under_n': 10
+            })
+            exporter._get_best_bets_record = Mock(return_value={
+                'season': {'wins': 20, 'losses': 15, 'pct': 57.1},
+                'month': {'wins': 2, 'losses': 5, 'pct': 28.6},
+                'week': {'wins': 0, 'losses': 3, 'pct': 0.0},
+            })
+
+            result = exporter.generate_json('2026-02-20')
+
+            # Verify predictions were NOT queried (early return before Step 2)
+            mock_preds.assert_not_called()
+
+        return result
+
+    def test_health_gate_returns_zero_picks(self):
+        result = self._make_blocked_exporter()
+        assert result['picks'] == []
+        assert result['total_picks'] == 0
+
+    def test_health_gate_flag_present(self):
+        result = self._make_blocked_exporter()
+        assert result['health_gate_active'] is True
+        assert 'below breakeven' in result['health_gate_reason']
+
+    def test_health_gate_preserves_metadata(self):
+        result = self._make_blocked_exporter()
+        assert result['model_health']['status'] == 'blocked'
+        assert result['model_health']['hit_rate_7d'] == 45.0
+        assert result['record']['season']['wins'] == 20
+        assert result['signal_health'] == {'high_edge': {'regime': 'HOT'}}
+        assert result['direction_health']['over_hr_14d'] == 50.0
+
+    def test_health_gate_has_empty_filter_summary(self):
+        result = self._make_blocked_exporter()
+        assert result['filter_summary']['total_candidates'] == 0
+        assert result['edge_distribution']['total_predictions'] == 0
+
+
 class TestStatusExporterBestBets:
     """Test that status.json includes best_bets service."""
 

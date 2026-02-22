@@ -80,12 +80,13 @@ class SignalBestBetsExporter(BaseExporter):
             else:
                 health_status = 'healthy'
 
-        # Note: Health gate removed (Session 270). Model health is informational
-        # only — the 2-signal minimum provides sufficient quality filtering.
+        # Session 323: Health gate RESTORED. Session 322 replay study proved
+        # blocking picks during model decay outperforms all strategies (29.9% ROI
+        # vs 17.7% oracle). When champion HR < breakeven, export 0 picks.
         if health_status == 'blocked':
-            logger.info(
-                f"Model health below breakeven for {target_date}: "
-                f"HR 7d = {hr_7d:.1f}% < {BREAKEVEN_HR}% — picks still generated"
+            logger.warning(
+                f"HEALTH GATE: Blocking picks for {target_date} — "
+                f"HR 7d = {hr_7d:.1f}% < {BREAKEVEN_HR}%"
             )
 
         # Step 1b: Query prediction-independent metadata (needed for both
@@ -118,6 +119,54 @@ class SignalBestBetsExporter(BaseExporter):
         blacklist_players_capped = [
             p['player_lookup'] for p in blacklist_stats.get('players', [])[:10]
         ]
+
+        # Session 323: Health gate early return — skip prediction queries,
+        # signal evaluation, and aggregation when model is blocked.
+        if health_status == 'blocked':
+            target_hg = (
+                date.fromisoformat(target_date) if isinstance(target_date, str)
+                else target_date
+            )
+            season_start_year_hg = target_hg.year if target_hg.month >= 10 else target_hg.year - 1
+            season_label_hg = f"{season_start_year_hg}-{str(season_start_year_hg + 1)[-2:]}"
+            return {
+                'date': target_date,
+                'season': season_label_hg,
+                'generated_at': self.get_generated_at(),
+                'min_signal_count': BestBetsAggregator.MIN_SIGNAL_COUNT,
+                'record': record,
+                'model_health': {
+                    'status': health_status,
+                    'hit_rate_7d': hr_7d,
+                    'graded_count': model_health.get('graded_count', 0),
+                },
+                'signal_health': signal_health,
+                'player_blacklist': {
+                    'count': blacklist_stats.get('blacklisted', 0),
+                    'evaluated': blacklist_stats.get('evaluated', 0),
+                    'hr_threshold': 40.0,
+                    'min_picks': 8,
+                    'players': blacklist_players_capped,
+                },
+                'direction_health': direction_health,
+                'health_gate_active': True,
+                'health_gate_reason': f'Champion model HR {hr_7d:.1f}% below breakeven {BREAKEVEN_HR}%',
+                'filter_summary': {
+                    'total_candidates': 0,
+                    'passed_filters': 0,
+                    'rejected': {},
+                },
+                'edge_distribution': {
+                    'total_predictions': 0,
+                    'edge_3_plus': 0,
+                    'edge_5_plus': 0,
+                    'edge_7_plus': 0,
+                    'max_edge': None,
+                },
+                'picks': [],
+                'total_picks': 0,
+                'signals_evaluated': [],
+            }
 
         # Step 2: Query predictions and supplemental data
         predictions, supplemental_map = self._query_predictions_and_supplements(
