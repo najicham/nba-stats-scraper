@@ -27,10 +27,25 @@ from google.cloud import bigquery
 
 from data_processors.publishing.base_exporter import BaseExporter
 from data_processors.publishing.exporter_utils import safe_float, safe_int
+from ml.signals.ultra_bets import compute_ultra_live_hrs
 
 logger = logging.getLogger(__name__)
 
 PROJECT_ID = 'nba-props-platform'
+
+
+def _parse_ultra_criteria(raw) -> list:
+    """Parse ultra_criteria from BQ (stored as JSON string) into a list."""
+    if not raw:
+        return []
+    if isinstance(raw, str):
+        try:
+            return json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return []
+    if isinstance(raw, list):
+        return raw
+    return []
 
 
 class AdminPicksExporter(BaseExporter):
@@ -84,6 +99,9 @@ class AdminPicksExporter(BaseExporter):
                 'direction_conflict': bool(p.get('direction_conflict')),
                 'algorithm_version': p.get('algorithm_version'),
                 'filter_summary': p.get('filter_summary'),
+                # Ultra Bets (Session 327 — admin-only visibility)
+                'ultra_tier': bool(p.get('ultra_tier')),
+                'ultra_criteria': _parse_ultra_criteria(p.get('ultra_criteria')),
                 'actual': safe_int(p.get('actual_points')),
                 'result': (
                     'WIN' if p.get('prediction_correct') is True
@@ -123,12 +141,38 @@ class AdminPicksExporter(BaseExporter):
             else target_date
         )
 
+        # Ultra Bets summary — admin-only (Session 327)
+        # Per-pick ultra_tier + ultra_criteria already on each pick above.
+        # Top-level summary provides aggregate stats for the status bar.
+        ultra_count = sum(1 for p in picks if p.get('ultra_tier'))
+        ultra_live_hrs = {}
+        try:
+            raw_live = compute_ultra_live_hrs(self.bq_client, PROJECT_ID)
+            # Add backtest_date for freshness visibility (frontend request)
+            from ml.signals.ultra_bets import ULTRA_CRITERIA
+            criteria_dates = {
+                c['id']: c['backtest_date'] for c in ULTRA_CRITERIA
+            }
+            for cid, stats in raw_live.items():
+                ultra_live_hrs[cid] = {
+                    **stats,
+                    'backtest_date': criteria_dates.get(cid),
+                }
+        except Exception as e:
+            logger.warning(f"Ultra live HR query failed (non-fatal): {e}")
+
+        ultra_summary = {
+            'ultra_count': ultra_count,
+            'live_hrs': ultra_live_hrs,
+        }
+
         return {
             'date': target_date,
             'season': _compute_season_label(target),
             'generated_at': self.get_generated_at(),
             'picks': picks,
             'total_picks': len(picks),
+            'ultra': ultra_summary,
             'candidates': candidates,
             'total_candidates': len(candidates),
             'candidates_summary': {

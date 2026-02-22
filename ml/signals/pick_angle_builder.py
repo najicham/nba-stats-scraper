@@ -181,15 +181,22 @@ def build_pick_angles(
     """
     angles: List[str] = []
 
-    # 0. Ultra Bets angle — highest priority (Session 326)
+    # 0. Ultra Bets angle — highest priority (Session 326, updated 327)
     ultra_criteria = pick.get('ultra_criteria', [])
     if ultra_criteria:
         # Use highest-HR criterion for the angle text
-        best = max(ultra_criteria, key=lambda c: c['hit_rate'])
-        angles.append(
-            f"ULTRA BET: {best['description']} — "
-            f"{best['hit_rate']:.1f}% HR ({best['sample_size']} picks)"
-        )
+        best = max(ultra_criteria, key=lambda c: c.get('backtest_hr', 0))
+        if best.get('live_hr') is not None and best.get('live_n', 0) > 0:
+            angles.append(
+                f"ULTRA BET: {best['description']} — "
+                f"backtest {best['backtest_hr']:.1f}% ({best['backtest_n']}), "
+                f"live {best['live_hr']:.1f}% ({best['live_n']})"
+            )
+        else:
+            angles.append(
+                f"ULTRA BET: {best['description']} — "
+                f"{best['backtest_hr']:.1f}% HR ({best['backtest_n']} picks)"
+            )
 
     # 1. High conviction edge (Session 284 — 65.6% HR cross-season)
     hc_angle = _high_conviction_angle(pick)

@@ -39,6 +39,7 @@ from ml.signals.pick_angle_builder import build_pick_angles
 from ml.signals.player_blacklist import compute_player_blacklist
 from ml.signals.subset_membership_lookup import lookup_qualifying_subsets
 from ml.signals.aggregator import ALGORITHM_VERSION
+from ml.signals.ultra_bets import compute_ultra_live_hrs
 from data_processors.publishing.signal_subset_materializer import SignalSubsetMaterializer
 from ml.signals.supplemental_data import (
     query_model_health,
@@ -315,7 +316,23 @@ class SignalBestBetsExporter(BaseExporter):
                 direction_health=direction_health,
             )
 
+        # Step 6c: Enrich ultra criteria with live HRs (Session 327)
+        # Live HRs are written to BQ for internal monitoring but stripped
+        # from the public JSON export.
+        try:
+            ultra_live = compute_ultra_live_hrs(self.bq_client, PROJECT_ID)
+            for pick in top_picks:
+                for crit in pick.get('ultra_criteria', []):
+                    live = ultra_live.get(crit['id'], {})
+                    crit['live_hr'] = live.get('live_hr')
+                    crit['live_n'] = live.get('live_n', 0)
+        except Exception as e:
+            logger.warning(f"Ultra live HR enrichment failed (non-fatal): {e}")
+
         # Step 7: Format for JSON
+        # NOTE: ultra_tier and ultra_criteria are intentionally excluded from
+        # JSON output (Session 327 — internal-only until live-validated).
+        # They are still written to BQ in _write_to_bigquery.
         picks_json = []
         for pick in top_picks:
             picks_json.append({
@@ -352,9 +369,6 @@ class SignalBestBetsExporter(BaseExporter):
                 'n_models_eligible': pick.get('n_models_eligible', 0),
                 'champion_edge': pick.get('champion_edge'),
                 'direction_conflict': pick.get('direction_conflict', False),
-                # Ultra Bets classification (Session 326)
-                'ultra_tier': pick.get('ultra_tier', False),
-                'ultra_criteria': pick.get('ultra_criteria', []),
                 'actual': None,
                 'result': None,
             })
@@ -365,9 +379,6 @@ class SignalBestBetsExporter(BaseExporter):
         )
         season_start_year = target.year if target.month >= 10 else target.year - 1
         season_label = f"{season_start_year}-{str(season_start_year + 1)[-2:]}"
-
-        # Ultra Bets top-level array (Session 326)
-        ultra_bets = [p for p in picks_json if p.get('ultra_tier')]
 
         return {
             'date': target_date,
@@ -391,8 +402,7 @@ class SignalBestBetsExporter(BaseExporter):
             'direction_health': direction_health,
             'filter_summary': filter_summary,
             'edge_distribution': edge_distribution,
-            'ultra_bets': ultra_bets,
-            'ultra_bets_count': len(ultra_bets),
+            # ultra_bets removed from JSON (Session 327 — internal-only, in BQ)
             'picks': picks_json,
             'total_picks': len(picks_json),
             'signals_evaluated': [

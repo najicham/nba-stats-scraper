@@ -3,42 +3,63 @@
 Classifies best bets picks into an "Ultra" tier based on criteria
 discovered in Session 326 backtesting. Ultra is a label ON TOP of
 best bets (not a separate exporter). Each pick is checked against
-hardcoded criteria; matches are returned with HR and sample size.
+hardcoded criteria; matches are returned with backtest HR and sample size.
 
 Criteria HRs are from Session 326 backtest (Jan 9 - Feb 21, 2026).
 Update manually after retrains.
 
+Live HR tracking added Session 327: compute_ultra_live_hrs() queries
+graded picks after BACKTEST_END to track real-world performance.
+Ultra data is internal-only (BQ); stripped from public JSON export.
+
 Created: 2026-02-22 (Session 326)
+Updated: 2026-02-22 (Session 327 — live HR, internal-only)
 """
 
-from typing import Any, Dict, List
+import logging
+from typing import Any, Dict, List, Optional
 
+from google.cloud import bigquery
 
-# Each criterion: id, description, hit_rate, sample_size, check function
+logger = logging.getLogger(__name__)
+
+# End date of the backtest window. Live HR queries start after this date.
+# Update after re-validation backtests.
+BACKTEST_END = '2026-02-21'
+
+# Each criterion: id, description, backtest_hr, backtest_n, backtest_period, backtest_date
 ULTRA_CRITERIA = [
     {
         'id': 'v12_edge_6plus',
         'description': 'V12+vegas model, edge >= 6',
-        'hit_rate': 100.0,
-        'sample_size': 26,
+        'backtest_hr': 100.0,
+        'backtest_n': 26,
+        'backtest_period': '2026-01-09 to 2026-02-21',
+        'backtest_date': '2026-02-22',
     },
     {
         'id': 'v12_over_edge_5plus',
         'description': 'V12+vegas OVER, edge >= 5',
-        'hit_rate': 100.0,
-        'sample_size': 18,
+        'backtest_hr': 100.0,
+        'backtest_n': 18,
+        'backtest_period': '2026-01-09 to 2026-02-21',
+        'backtest_date': '2026-02-22',
     },
     {
         'id': 'consensus_3plus_edge_5plus',
         'description': '3+ models agree, edge >= 5',
-        'hit_rate': 78.9,
-        'sample_size': 18,
+        'backtest_hr': 78.9,
+        'backtest_n': 18,
+        'backtest_period': '2026-01-09 to 2026-02-21',
+        'backtest_date': '2026-02-22',
     },
     {
         'id': 'v12_edge_4_5plus',
         'description': 'V12+vegas model, edge >= 4.5',
-        'hit_rate': 77.2,
-        'sample_size': 57,
+        'backtest_hr': 77.2,
+        'backtest_n': 57,
+        'backtest_period': '2026-01-09 to 2026-02-21',
+        'backtest_date': '2026-02-22',
     },
 ]
 
@@ -73,8 +94,9 @@ def classify_ultra_pick(pick: Dict[str, Any]) -> List[Dict[str, Any]]:
               recommendation, model_agreement_count).
 
     Returns:
-        List of matched criteria dicts with id, description, hit_rate,
-        sample_size. Empty list if no criteria match.
+        List of matched criteria dicts with id, description, backtest_hr,
+        backtest_n, backtest_period, backtest_date. Empty list if no
+        criteria match.
     """
     matched = []
     for criterion in ULTRA_CRITERIA:
@@ -82,7 +104,63 @@ def classify_ultra_pick(pick: Dict[str, Any]) -> List[Dict[str, Any]]:
             matched.append({
                 'id': criterion['id'],
                 'description': criterion['description'],
-                'hit_rate': criterion['hit_rate'],
-                'sample_size': criterion['sample_size'],
+                'backtest_hr': criterion['backtest_hr'],
+                'backtest_n': criterion['backtest_n'],
+                'backtest_period': criterion['backtest_period'],
+                'backtest_date': criterion['backtest_date'],
             })
     return matched
+
+
+def compute_ultra_live_hrs(
+    bq_client: bigquery.Client,
+    project_id: str = 'nba-props-platform',
+) -> Dict[str, Dict[str, Any]]:
+    """Compute live hit rates for each ultra criterion from graded picks.
+
+    Queries signal_best_bets_picks for rows after BACKTEST_END that have
+    ultra_tier=TRUE and prediction_correct IS NOT NULL. Extracts criterion
+    IDs from the ultra_criteria JSON array and computes per-criterion stats.
+
+    Args:
+        bq_client: BigQuery client.
+        project_id: GCP project ID.
+
+    Returns:
+        Dict mapping criterion_id to {'live_hr': float, 'live_n': int}.
+        Empty dict if no graded ultra picks exist yet.
+    """
+    query = f"""
+    SELECT
+      JSON_EXTRACT_SCALAR(criteria, '$.id') AS criterion_id,
+      COUNT(*) AS live_n,
+      COUNTIF(prediction_correct = TRUE) AS live_wins
+    FROM `{project_id}.nba_predictions.signal_best_bets_picks`,
+    UNNEST(JSON_EXTRACT_ARRAY(ultra_criteria, '$')) AS criteria
+    WHERE game_date > @backtest_end
+      AND ultra_tier = TRUE
+      AND prediction_correct IS NOT NULL
+    GROUP BY criterion_id
+    """
+
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter('backtest_end', 'DATE', BACKTEST_END),
+        ]
+    )
+
+    try:
+        rows = bq_client.query(query, job_config=job_config).result(timeout=30)
+        result = {}
+        for row in rows:
+            cid = row.criterion_id
+            if cid and row.live_n > 0:
+                result[cid] = {
+                    'live_hr': round(100.0 * row.live_wins / row.live_n, 1),
+                    'live_n': row.live_n,
+                }
+        logger.info(f"Ultra live HRs (post {BACKTEST_END}): {result}")
+        return result
+    except Exception as e:
+        logger.warning(f"Failed to compute ultra live HRs (non-fatal): {e}")
+        return {}

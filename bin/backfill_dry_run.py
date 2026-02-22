@@ -39,6 +39,7 @@ from ml.signals.supplemental_data import (
     query_games_vs_opponent,
 )
 from ml.signals.player_blacklist import compute_player_blacklist
+from ml.signals.ultra_bets import compute_ultra_live_hrs
 
 logging.basicConfig(level=logging.WARNING, format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
@@ -364,6 +365,16 @@ def main():
         print_date_result(result, existing, args.compare)
 
         if args.write:
+            # Enrich ultra criteria with live HRs before writing to BQ
+            try:
+                ultra_live = compute_ultra_live_hrs(bq_client, PROJECT_ID)
+                for pick in result['picks']:
+                    for crit in pick.get('ultra_criteria', []):
+                        live = ultra_live.get(crit['id'], {})
+                        crit['live_hr'] = live.get('live_hr')
+                        crit['live_n'] = live.get('live_n', 0)
+            except Exception:
+                pass
             written = write_picks_to_bigquery(bq_client, target_date, result['picks'])
             total_written += written
 

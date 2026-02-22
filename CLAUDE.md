@@ -616,18 +616,23 @@ Aggregator top-5 simulation: **73.9% AVG HR** (up from 60.3% pre-cleanup). W2: 8
 
 ## Ultra Bets [Keyword: ULTRA]
 
-**Session 326:** High-confidence classification layer on top of best bets. Each pick is checked against criteria from walk-forward backtesting. Ultra picks get `ultra_tier: true` and `ultra_criteria` in JSON output.
+**Session 326:** High-confidence classification layer on top of best bets. Each pick is checked against criteria from walk-forward backtesting.
+**Session 327:** Live HR tracking + internal-only export. Ultra data written to BQ for monitoring, **stripped from public GCS JSON** until live-validated.
 
-| Criteria ID | Description | HR% | N | Filter |
+| Criteria ID | Description | Backtest HR% | N | Filter |
 |------------|-------------|----:|--:|--------|
 | `v12_edge_6plus` | V12+vegas, edge >= 6 | 100.0 | 26 | model family + edge |
 | `v12_over_edge_5plus` | V12+vegas OVER, edge >= 5 | 100.0 | 18 | model family + edge + direction |
 | `consensus_3plus_edge_5plus` | 3+ models agree, edge >= 5 | 78.9 | 18 | model agreement + edge |
 | `v12_edge_4_5plus` | V12+vegas, edge >= 4.5 | 77.2 | 57 | model family + edge |
 
-**Architecture:** `ml/signals/ultra_bets.py` → called after aggregator scoring → `ultra_tier` + `ultra_criteria` fields on each pick → top-level `ultra_bets` array in JSON.
+**Architecture:** `ml/signals/ultra_bets.py` → called after aggregator scoring → `ultra_tier` + `ultra_criteria` fields on each pick → BQ rows (internal). JSON export has NO ultra fields.
 
-**HRs are hardcoded** (same pattern as `DIRECTION_TIER_HR`), updated manually after retrains.
+**Live HR tracking:** `compute_ultra_live_hrs(bq_client)` queries `signal_best_bets_picks` for graded ultra picks after `BACKTEST_END` ('2026-02-21'). Live HRs are merged into `ultra_criteria` JSON in BQ. Update `BACKTEST_END` after re-validation backtests.
+
+**Data flow:** aggregator → ultra classification → live HR enrichment → BQ write (full ultra data) + JSON write (ultra stripped).
+
+**Backtest HRs** (`backtest_hr`, `backtest_n`, `backtest_period`, `backtest_date`) are static, updated manually after retrains. Live HRs (`live_hr`, `live_n`) computed at export time from graded picks.
 
 ## Multi-Model Best Bets [Keyword: MULTIMODEL]
 
