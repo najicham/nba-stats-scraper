@@ -27,6 +27,7 @@ from ml.signals.aggregator import ALGORITHM_VERSION
 from ml.signals.signal_health import get_signal_health_summary
 from shared.config.model_selection import get_best_bets_model_id
 from shared.config.subset_public_names import SUBSET_PUBLIC_NAMES
+from ml.signals.ultra_bets import compute_ultra_live_hrs, BACKTEST_END
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,20 @@ def _compute_season_label(d: date) -> str:
     if d.month >= 10:
         return f"{d.year}-{str(d.year + 1)[-2:]}"
     return f"{d.year - 1}-{str(d.year)[-2:]}"
+
+
+def _parse_ultra_criteria(raw) -> list:
+    """Parse ultra_criteria from BQ (stored as JSON string) into a list."""
+    if not raw:
+        return []
+    if isinstance(raw, str):
+        try:
+            return json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return []
+    if isinstance(raw, list):
+        return raw
+    return []
 
 
 class AdminDashboardExporter(BaseExporter):
@@ -72,6 +87,11 @@ class AdminDashboardExporter(BaseExporter):
 
         target = date.fromisoformat(target_date) if isinstance(target_date, str) else target_date
 
+        # Ultra gate — progress toward public exposure (Session 327)
+        ultra_gate = self._query_ultra_gate()
+
+        ultra_count = sum(1 for p in today_picks if p.get('ultra_tier'))
+
         return {
             'date': target_date,
             'season': _compute_season_label(target),
@@ -84,6 +104,8 @@ class AdminDashboardExporter(BaseExporter):
             'subset_performance': subset_performance,
             'picks': today_picks,
             'total_picks': len(today_picks),
+            'ultra_count': ultra_count,
+            'ultra_gate': ultra_gate,
             'candidates_summary': {
                 'total': len(candidates),
                 'edge_distribution': edge_distribution,
@@ -320,6 +342,8 @@ class AdminDashboardExporter(BaseExporter):
           b.direction_conflict,
           b.algorithm_version,
           b.filter_summary,
+          b.ultra_tier,
+          b.ultra_criteria,
           pa.actual_points,
           pa.prediction_correct
         FROM `nba-props-platform.nba_predictions.signal_best_bets_picks` b
@@ -384,6 +408,9 @@ class AdminDashboardExporter(BaseExporter):
                 'champion_edge': safe_float(p.get('champion_edge'), precision=1),
                 'direction_conflict': bool(p.get('direction_conflict')),
                 'algorithm_version': p.get('algorithm_version'),
+                # Ultra Bets (Session 327)
+                'ultra_tier': bool(p.get('ultra_tier')),
+                'ultra_criteria': _parse_ultra_criteria(p.get('ultra_criteria')),
                 'actual': safe_int(p.get('actual_points')),
                 'result': (
                     'WIN' if p.get('prediction_correct') is True
@@ -436,3 +463,54 @@ class AdminDashboardExporter(BaseExporter):
             logger.warning(f"Failed to query filter summary: {e}")
 
         return {}
+
+    def _query_ultra_gate(self) -> Dict[str, Any]:
+        """Query ultra gate progress — OVER and UNDER HR toward public exposure.
+
+        Returns dict with over/under splits and target thresholds.
+        Gate: OVER must hit N >= 50 graded picks AND HR >= 80%.
+        """
+        TARGET_N = 50
+        TARGET_HR = 80.0
+
+        query = """
+        SELECT
+          recommendation,
+          COUNT(*) AS total,
+          COUNTIF(prediction_correct = TRUE) AS wins
+        FROM `nba-props-platform.nba_predictions.signal_best_bets_picks`
+        WHERE game_date >= '2026-01-09'
+          AND ultra_tier = TRUE
+          AND prediction_correct IS NOT NULL
+        GROUP BY recommendation
+        """
+
+        try:
+            rows = self.query_to_list(query)
+        except Exception as e:
+            logger.warning(f"Failed to query ultra gate: {e}")
+            return {
+                'over': {'wins': 0, 'losses': 0, 'hr': None, 'target_n': TARGET_N, 'target_hr': TARGET_HR},
+                'under': {'wins': 0, 'losses': 0, 'hr': None},
+                'backtest_end': BACKTEST_END,
+            }
+
+        gate = {
+            'over': {'wins': 0, 'losses': 0, 'hr': None, 'target_n': TARGET_N, 'target_hr': TARGET_HR},
+            'under': {'wins': 0, 'losses': 0, 'hr': None},
+            'backtest_end': BACKTEST_END,
+        }
+
+        for r in rows:
+            direction = r.get('recommendation', '')
+            wins = r.get('wins', 0)
+            total = r.get('total', 0)
+            losses = total - wins
+            hr = round(100.0 * wins / total, 1) if total > 0 else None
+            key = direction.lower()
+            if key in gate:
+                gate[key]['wins'] = wins
+                gate[key]['losses'] = losses
+                gate[key]['hr'] = hr
+
+        return gate
