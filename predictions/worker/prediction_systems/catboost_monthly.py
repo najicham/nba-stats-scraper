@@ -44,27 +44,13 @@ from predictions.worker.prediction_systems.catboost_v9 import (
 logger = logging.getLogger(__name__)
 
 
-# V12 no-vegas feature names (50 features) — same list as catboost_v12.py
-# Imported here to avoid circular imports
-V12_NOVEG_FEATURES = [
-    "points_avg_last_5", "points_avg_last_10", "points_avg_season",
-    "points_std_last_10", "games_in_last_7_days", "fatigue_score",
-    "shot_zone_mismatch_score", "pace_score", "usage_spike_score",
-    "rest_advantage", "injury_risk", "recent_trend", "minutes_change",
-    "opponent_def_rating", "opponent_pace", "home_away", "back_to_back",
-    "playoff_game", "pct_paint", "pct_mid_range", "pct_three",
-    "pct_free_throw", "team_pace", "team_off_rating", "team_win_pct",
-    "avg_points_vs_opponent", "games_vs_opponent",
-    "minutes_avg_last_10", "ppm_avg_last_10",
-    "dnp_rate", "pts_slope_10g", "pts_vs_season_zscore", "breakout_flag",
-    "star_teammates_out", "game_total_line",
-    "days_rest", "minutes_load_last_7d", "spread_magnitude",
-    "implied_team_total", "points_avg_last_3", "scoring_trend_slope",
-    "deviation_from_avg_last3", "consecutive_games_below_avg",
-    "teammate_usage_available", "usage_rate_last_5",
-    "games_since_structural_change", "multi_book_line_std",
-    "prop_over_streak", "prop_under_streak", "line_vs_season_avg",
-]
+# V12 feature names — loaded from feature_contract for consistency
+# Session 324: Dynamic feature list supports both V12 (54f with vegas)
+# and V12_NOVEG (50f without vegas) based on model's feature_set metadata.
+from shared.ml.feature_contract import (
+    V12_FEATURE_NAMES as _V12_FEATURES,
+    V12_NOVEG_FEATURE_NAMES as _V12_NOVEG_FEATURES,
+)
 
 
 # ============================================================================
@@ -96,7 +82,7 @@ MONTHLY_MODELS = {
         "backtest_hit_rate_edge_3plus": 69.23,
         "backtest_n_edge_3plus": 13,
         "enabled": True,
-        "feature_set": "v12",
+        "feature_set": "v12_noveg",
         "description": "V12_NOVEG_MAE_FEB_RETRAIN — 50-feature no-vegas, walkforward W1=69.2%",
     },
     # === V9 Quantile Q43 (33 features) — Shadow ===
@@ -135,7 +121,7 @@ MONTHLY_MODELS = {
         "backtest_hit_rate_edge_3plus": 61.6,
         "backtest_n_edge_3plus": 125,
         "enabled": True,
-        "feature_set": "v12",
+        "feature_set": "v12_noveg",
         "description": "V12_NOVEG_Q43_FEB — first V12+quantile, ALL GATES PASSED",
     },
     # === V12 No-Vegas Quantile Q45 (50 features) — Shadow (FIRST EVER) ===
@@ -148,7 +134,7 @@ MONTHLY_MODELS = {
         "backtest_hit_rate_edge_3plus": 61.22,
         "backtest_n_edge_3plus": 98,
         "enabled": True,
-        "feature_set": "v12",
+        "feature_set": "v12_noveg",
         "description": "V12_NOVEG_Q45_FEB — first V12+quantile, ALL GATES PASSED",
     },
     # === V9 Low-Vegas MAE (33 features, 0.25x vegas weight) — Shadow ===
@@ -163,6 +149,33 @@ MONTHLY_MODELS = {
         "enabled": True,
         "feature_set": "v9",
         "description": "V9_LOW_VEGAS — 0.25x vegas weight, 5x more edge picks, UNDER 61.1%",
+    },
+    # === V12+Vegas MAE (54 features) — Shadow (FIRST EVER) ===
+    "catboost_v12_train1225_0205": {
+        "model_path": "gs://nba-props-platform-models/catboost/v12/monthly/catboost_v9_54f_train20251225-20260205_20260221_224505.cbm",
+        "train_start": "2025-12-25",
+        "train_end": "2026-02-05",
+        "backtest_mae": 4.747,
+        "backtest_hit_rate_all": 60.77,
+        "backtest_hit_rate_edge_3plus": 75.0,
+        "backtest_n_edge_3plus": 16,
+        "enabled": True,
+        "feature_set": "v12",
+        "description": "V12_VEGAS_MAE — Session 324: FIRST EVER V12+vegas. 54f, HR 3+ 75.0%",
+    },
+    # === V12+Vegas Quantile Q43 (54 features) — Shadow ===
+    "catboost_v12_q43_train1225_0205": {
+        "model_path": "gs://nba-props-platform-models/catboost/v12/monthly/catboost_v9_54f_q0.43_train20251225-20260205_20260221_230420.cbm",
+        "train_start": "2025-12-25",
+        "train_end": "2026-02-05",
+        "backtest_mae": 4.797,
+        "backtest_hit_rate_all": 55.60,
+        "backtest_hit_rate_edge_3plus": 70.59,
+        "backtest_n_edge_3plus": 51,
+        "enabled": True,
+        "feature_set": "v12",
+        "quantile_alpha": 0.43,
+        "description": "V12_VEGAS_Q43 — Session 324: UNDER specialist. HR 3+ 70.59% (n=51)",
     },
 }
 
@@ -232,8 +245,9 @@ class CatBoostMonthly(CatBoostV8):
     """
     CatBoost Monthly Model - Feature-Set-Aware Shadow Model.
 
-    Loads a monthly-retrained model from GCS. Supports both V9 (33-feature)
-    and V12 (50-feature no-vegas) models based on the feature_set metadata.
+    Loads a monthly-retrained model from GCS. Supports V9 (33-feature),
+    V12 (54-feature with vegas), and V12_NOVEG (50-feature no-vegas) models
+    based on the feature_set metadata.
 
     Args:
         model_id: Unique model identifier
@@ -242,6 +256,8 @@ class CatBoostMonthly(CatBoostV8):
 
     Session 273: Made feature-set-aware. V9 models use parent class (CatBoostV8)
     feature extraction. V12 models use name-based feature extraction from store.
+    Session 324: Added V12+vegas (54f) support. Feature list loaded dynamically
+    from feature_contract.py instead of hardcoded.
     """
 
     def __init__(self, model_id: str, config: dict = None):
@@ -332,10 +348,10 @@ class CatBoostMonthly(CatBoostV8):
         Generate prediction using this monthly model.
 
         Feature-set-aware: V9 models use parent class extraction (33 features),
-        V12 models use name-based extraction (50 features, no vegas).
+        V12 models use name-based extraction (54f with vegas, 50f without).
         """
         if self._feature_set in ('v12', 'v12_noveg'):
-            # V12 path: extract 50 features by name from feature store
+            # V12 path: dynamic feature extraction (54f or 50f)
             return self._predict_v12(player_lookup, features, betting_line)
         else:
             # V9 path: use parent class (CatBoostV8) feature extraction
@@ -453,7 +469,7 @@ class CatBoostMonthly(CatBoostV8):
             'confidence_score': round(confidence, 2),
             'recommendation': recommendation,
             'model_type': 'monthly_retrain_v12',
-            'feature_count': 50,
+            'feature_count': 54 if self._feature_set == 'v12' else 50,
             'feature_version': features.get('feature_version'),
             'feature_quality_score': quality,
             'training_period': f"{self.config.get('train_start')} to {self.config.get('train_end')}",
@@ -473,12 +489,26 @@ class CatBoostMonthly(CatBoostV8):
         }
 
     def _prepare_v12_feature_vector(self, features: Dict) -> Optional[np.ndarray]:
-        """Build 50-feature vector for V12 models from feature store by name."""
+        """Build feature vector for V12 models from feature store by name.
+
+        Session 324: Dynamic — uses V12 (54f with vegas) or V12_NOVEG (50f)
+        based on self._feature_set. Supports V12+vegas models trained with
+        --feature-set v12.
+        """
         try:
             from shared.ml.feature_contract import FEATURE_DEFAULTS
 
+            # Select feature list based on model's feature_set
+            if self._feature_set == 'v12_noveg':
+                feature_names = _V12_NOVEG_FEATURES
+                expected_count = 50
+            else:
+                # 'v12' = full V12 with vegas (54 features)
+                feature_names = _V12_FEATURES
+                expected_count = 54
+
             vector = []
-            for name in V12_NOVEG_FEATURES:
+            for name in feature_names:
                 val = features.get(name)
                 if val is not None:
                     vector.append(float(val))
@@ -491,8 +521,11 @@ class CatBoostMonthly(CatBoostV8):
 
             vector = np.array(vector).reshape(1, -1)
 
-            if vector.shape[1] != 50:
-                logger.error(f"Monthly V12 feature vector has {vector.shape[1]} features, expected 50")
+            if vector.shape[1] != expected_count:
+                logger.error(
+                    f"Monthly V12 feature vector has {vector.shape[1]} features, "
+                    f"expected {expected_count} for feature_set={self._feature_set}"
+                )
                 return None
 
             return vector
@@ -513,7 +546,12 @@ class CatBoostMonthly(CatBoostV8):
 
     def get_model_info(self) -> Dict:
         """Return monthly model information for health checks and debugging."""
-        feature_count = 50 if self._feature_set in ('v12', 'v12_noveg') else 33
+        if self._feature_set == 'v12':
+            feature_count = 54
+        elif self._feature_set == 'v12_noveg':
+            feature_count = 50
+        else:
+            feature_count = 33
         return {
             "system_id": self.model_id,
             "model_version": self.model_id,

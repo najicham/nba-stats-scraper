@@ -52,22 +52,36 @@ MODEL_FAMILIES = {
         'loss': 'mae',
     },
     # V12 family — quantile patterns FIRST (more specific), then broad v12_mae.
-    # v12_mae matches both legacy 'catboost_v12' and monthly 'catboost_v12_noveg_train*'.
+    # Session 324: Added v12_vegas_q43/q45 for V12+vegas quantile models.
+    # Order: noveg quantile → vegas quantile → broad v12_mae catch-all.
     'v12_q43': {
         'pattern': 'catboost_v12_noveg_q43_',
         'exact': False,
-        'feature_set': 'v12',
+        'feature_set': 'v12_noveg',
         'loss': 'quantile',
     },
     'v12_q45': {
         'pattern': 'catboost_v12_noveg_q45_',
+        'exact': False,
+        'feature_set': 'v12_noveg',
+        'loss': 'quantile',
+    },
+    'v12_vegas_q43': {
+        'pattern': 'catboost_v12_q43_',
+        'exact': False,
+        'feature_set': 'v12',
+        'loss': 'quantile',
+    },
+    'v12_vegas_q45': {
+        'pattern': 'catboost_v12_q45_',
         'exact': False,
         'feature_set': 'v12',
         'loss': 'quantile',
     },
     'v12_mae': {
         'pattern': 'catboost_v12',
-        'exact': False,  # Prefix match: catches 'catboost_v12' AND 'catboost_v12_noveg_train*'
+        'exact': False,  # Prefix match: catches 'catboost_v12', 'catboost_v12_noveg_train*',
+                          # and 'catboost_v12_train*' (V12+vegas MAE)
         'feature_set': 'v12',
         'loss': 'mae',
     },
