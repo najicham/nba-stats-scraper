@@ -39,6 +39,8 @@ from ml.signals.supplemental_data import (
     query_games_vs_opponent,
 )
 from ml.signals.player_blacklist import compute_player_blacklist
+from ml.signals.cross_model_scorer import CrossModelScorer
+from ml.signals.pick_angle_builder import build_pick_angles
 from ml.signals.ultra_bets import compute_ultra_live_hrs
 
 logging.basicConfig(level=logging.WARNING, format='%(levelname)s: %(message)s')
@@ -111,6 +113,20 @@ def simulate_date(bq_client: bigquery.Client, target_date: str,
         player_blacklist=player_blacklist,
     )
     top_picks, filter_summary = aggregator.aggregate(predictions, signal_results_map)
+
+    # Build pick angles (was missing — caused empty angles on backfill writes)
+    cross_model_factors = {}
+    try:
+        scorer = CrossModelScorer()
+        cross_model_factors = scorer.compute_factors(bq_client, target_date, PROJECT_ID)
+    except Exception:
+        pass
+
+    for pick in top_picks:
+        key = f"{pick['player_lookup']}::{pick['game_id']}"
+        pick['pick_angles'] = build_pick_angles(
+            pick, signal_results_map.get(key, []), cross_model_factors.get(key, {}),
+        )
 
     return {
         'date': target_date,
