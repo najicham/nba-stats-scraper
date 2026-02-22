@@ -23,6 +23,7 @@ from google.cloud import bigquery
 from data_processors.publishing.base_exporter import BaseExporter
 from data_processors.publishing.exporter_utils import safe_float, safe_int
 from ml.signals.aggregator import ALGORITHM_VERSION
+from ml.signals.ultra_bets import check_ultra_over_gate
 
 logger = logging.getLogger(__name__)
 
@@ -72,8 +73,20 @@ class BestBetsAllExporter(BaseExporter):
         # Build streaks
         streak, best_streak = self._compute_streaks(all_picks)
 
+        # Check ultra OVER gate for public exposure (Session 328)
+        ultra_over_gate = {'gate_met': False, 'n': 0, 'hr': None}
+        try:
+            ultra_over_gate = check_ultra_over_gate(self.bq_client, PROJECT_ID)
+        except Exception as e:
+            logger.warning(f"Ultra OVER gate check failed (non-fatal): {e}")
+
+        # Look up game times for today's picks (Session 328)
+        game_times = self._query_game_times(target_date, today_picks)
+
         # Format today's picks (with angles, rank)
-        today_formatted = self._format_today(today_picks)
+        today_formatted = self._format_today(
+            today_picks, ultra_over_gate, game_times
+        )
 
         # Build weeks array (history + today merged in)
         weeks = self._build_weeks(all_picks)
@@ -123,6 +136,7 @@ class BestBetsAllExporter(BaseExporter):
         query = """
         SELECT
           b.game_date,
+          b.game_id,
           b.player_name,
           b.player_lookup,
           b.team_abbr,
@@ -133,6 +147,7 @@ class BestBetsAllExporter(BaseExporter):
           b.predicted_points,
           b.rank,
           b.pick_angles,
+          b.ultra_tier,
           pa.prediction_correct,
           pa.actual_points
         FROM `nba-props-platform.nba_predictions.signal_best_bets_picks` b
@@ -156,20 +171,35 @@ class BestBetsAllExporter(BaseExporter):
             logger.warning(f"Failed to query all picks: {e}")
             return []
 
-    def _format_today(self, picks: List[Dict]) -> List[Dict]:
+    def _format_today(
+        self,
+        picks: List[Dict],
+        ultra_over_gate: Dict[str, Any],
+        game_times: Dict[str, str],
+    ) -> List[Dict]:
         """Format today's picks with angles for the hero section."""
         formatted = []
         for p in sorted(picks, key=lambda x: x.get('rank') or 999):
             angles = p.get('pick_angles') or []
-            formatted.append({
+            game_id = p.get('game_id', '')
+
+            show_ultra = (
+                ultra_over_gate.get('gate_met')
+                and p.get('ultra_tier')
+                and p.get('recommendation') == 'OVER'
+            )
+
+            pick_dict = {
                 'rank': safe_int(p.get('rank')),
                 'player': p.get('player_name') or '',
                 'player_lookup': p.get('player_lookup') or '',
                 'team': p.get('team_abbr') or '',
                 'opponent': p.get('opponent_team_abbr') or '',
                 'direction': p.get('recommendation') or '',
+                'stat': 'PTS',
                 'line': safe_float(p.get('line_value'), precision=1),
                 'edge': safe_float(p.get('edge'), precision=1),
+                'game_time': game_times.get(game_id),
                 'angles': list(angles)[:3],
                 'actual': safe_int(p.get('actual_points')),
                 'result': (
@@ -177,8 +207,59 @@ class BestBetsAllExporter(BaseExporter):
                     else 'LOSS' if p.get('prediction_correct') is False
                     else None
                 ),
-            })
+            }
+
+            if show_ultra:
+                pick_dict['ultra_tier'] = True
+
+            formatted.append(pick_dict)
         return formatted
+
+    def _query_game_times(
+        self, target_date: str, picks: List[Dict]
+    ) -> Dict[str, str]:
+        """Look up game start times from schedule for today's picks.
+
+        Returns:
+            Dict mapping prediction game_id → ISO 8601 datetime string.
+        """
+        if not picks:
+            return {}
+
+        query = f"""
+        SELECT away_team_tricode, home_team_tricode, game_date_est
+        FROM `{PROJECT_ID}.nba_raw.nbac_schedule`
+        WHERE game_date = @target_date
+        """
+
+        params = [
+            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+        ]
+
+        try:
+            rows = self.bq_client.query(
+                query,
+                job_config=bigquery.QueryJobConfig(query_parameters=params),
+            ).result(timeout=30)
+
+            schedule_times = {}
+            for row in rows:
+                if row.game_date_est and hasattr(row.game_date_est, 'isoformat'):
+                    schedule_times[f"{row.away_team_tricode}_{row.home_team_tricode}"] = (
+                        row.game_date_est.isoformat()
+                    )
+
+            result = {}
+            for pick in picks:
+                gid = pick.get('game_id', '')
+                parts = gid.split('_', 1)
+                if len(parts) == 2 and parts[1] in schedule_times:
+                    result[gid] = schedule_times[parts[1]]
+
+            return result
+        except Exception as e:
+            logger.warning(f"Game times lookup failed (non-fatal): {e}")
+            return {}
 
     def _build_weeks(self, all_picks: List[Dict]) -> List[Dict]:
         """Group all picks into weeks → days (most recent first)."""
@@ -213,6 +294,7 @@ class BestBetsAllExporter(BaseExporter):
                 'team': row.get('team_abbr') or '',
                 'opponent': row.get('opponent_team_abbr') or '',
                 'direction': row.get('recommendation') or '',
+                'stat': 'PTS',
                 'line': safe_float(row.get('line_value'), precision=1),
                 'edge': safe_float(row.get('edge'), precision=1),
                 'actual': safe_int(row.get('actual_points')),

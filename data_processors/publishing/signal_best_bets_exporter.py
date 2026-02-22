@@ -39,7 +39,7 @@ from ml.signals.pick_angle_builder import build_pick_angles
 from ml.signals.player_blacklist import compute_player_blacklist
 from ml.signals.subset_membership_lookup import lookup_qualifying_subsets
 from ml.signals.aggregator import ALGORITHM_VERSION
-from ml.signals.ultra_bets import compute_ultra_live_hrs
+from ml.signals.ultra_bets import compute_ultra_live_hrs, check_ultra_over_gate
 from data_processors.publishing.signal_subset_materializer import SignalSubsetMaterializer
 from ml.signals.supplemental_data import (
     query_model_health,
@@ -329,22 +329,41 @@ class SignalBestBetsExporter(BaseExporter):
         except Exception as e:
             logger.warning(f"Ultra live HR enrichment failed (non-fatal): {e}")
 
+        # Step 6d: Check ultra OVER gate for public exposure (Session 328)
+        ultra_over_gate = {'gate_met': False, 'n': 0, 'hr': None}
+        try:
+            ultra_over_gate = check_ultra_over_gate(self.bq_client, PROJECT_ID)
+        except Exception as e:
+            logger.warning(f"Ultra OVER gate check failed (non-fatal): {e}")
+
+        # Step 6e: Look up game times from schedule (Session 328)
+        game_times = self._query_game_times(target_date, top_picks)
+
         # Step 7: Format for JSON
-        # NOTE: ultra_tier and ultra_criteria are intentionally excluded from
-        # JSON output (Session 327 — internal-only until live-validated).
-        # They are still written to BQ in _write_to_bigquery.
+        # ultra_tier included on OVER picks ONLY when the gate is met.
+        # ultra_criteria always excluded from public JSON.
         picks_json = []
         for pick in top_picks:
-            picks_json.append({
+            game_id = pick.get('game_id', '')
+
+            # Ultra tier: expose on OVER picks only when gate is met
+            show_ultra = (
+                ultra_over_gate['gate_met']
+                and pick.get('ultra_tier')
+                and pick.get('recommendation') == 'OVER'
+            )
+
+            pick_dict = {
                 'rank': pick['rank'],
                 'player': pick.get('player_name', ''),
                 'player_lookup': pick['player_lookup'],
-                'game_id': pick.get('game_id', ''),
+                'game_id': game_id,
                 'team': pick.get('team_abbr', ''),
                 'opponent': pick.get('opponent_team_abbr', ''),
                 'prediction': pick.get('predicted_points'),
                 'line': pick.get('line_value'),
                 'direction': pick.get('recommendation', ''),
+                'stat': 'PTS',
                 'edge': pick.get('edge'),
                 'confidence': pick.get('confidence_score'),
                 'signals': pick.get('signal_tags', []),
@@ -372,7 +391,17 @@ class SignalBestBetsExporter(BaseExporter):
                 'direction_conflict': pick.get('direction_conflict', False),
                 'actual': None,
                 'result': None,
-            })
+            }
+
+            # Game time from schedule (Session 328)
+            gt = game_times.get(game_id)
+            pick_dict['game_time'] = gt if gt else None
+
+            # Ultra tier: only OVER picks when gate met (Session 328)
+            if show_ultra:
+                pick_dict['ultra_tier'] = True
+
+            picks_json.append(pick_dict)
 
         target = (
             date.fromisoformat(target_date) if isinstance(target_date, str)
@@ -633,6 +662,66 @@ class SignalBestBetsExporter(BaseExporter):
             f"(N={health['under_n']})"
         )
         return health
+
+    def _query_game_times(
+        self, target_date: str, picks: List[Dict]
+    ) -> Dict[str, str]:
+        """Look up game start times from schedule for today's picks.
+
+        Joins via team tricode pairs since predictions use game_id format
+        'YYYYMMDD_AWAY_HOME' while schedule uses numeric game_id.
+
+        Returns:
+            Dict mapping prediction game_id → ISO 8601 datetime string.
+        """
+        if not picks:
+            return {}
+
+        query = f"""
+        SELECT
+          away_team_tricode,
+          home_team_tricode,
+          game_date_est
+        FROM `{PROJECT_ID}.nba_raw.nbac_schedule`
+        WHERE game_date = @target_date
+        """
+
+        params = [
+            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+        ]
+
+        try:
+            rows = self.bq_client.query(
+                query,
+                job_config=bigquery.QueryJobConfig(query_parameters=params),
+            ).result(timeout=30)
+
+            # Build lookup: "AWAY_HOME" → ISO timestamp
+            schedule_times = {}
+            for row in rows:
+                away = row.away_team_tricode
+                home = row.home_team_tricode
+                if row.game_date_est:
+                    # Format as ISO 8601 with ET offset
+                    ts = row.game_date_est
+                    if hasattr(ts, 'isoformat'):
+                        schedule_times[f"{away}_{home}"] = ts.isoformat()
+
+            # Map prediction game_ids to times
+            # game_id format: "YYYYMMDD_AWAY_HOME"
+            result = {}
+            for pick in picks:
+                gid = pick.get('game_id', '')
+                parts = gid.split('_', 1)
+                if len(parts) == 2:
+                    team_key = parts[1]  # "AWAY_HOME"
+                    if team_key in schedule_times:
+                        result[gid] = schedule_times[team_key]
+
+            return result
+        except Exception as e:
+            logger.warning(f"Game times lookup failed (non-fatal): {e}")
+            return {}
 
     def _get_best_bets_record(self, target_date: str) -> Dict[str, Any]:
         """Query W-L record for the best_bets subset across season/month/week.

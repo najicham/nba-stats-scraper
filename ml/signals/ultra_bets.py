@@ -120,6 +120,48 @@ def classify_ultra_pick(pick: Dict[str, Any]) -> List[Dict[str, Any]]:
     return matched
 
 
+def check_ultra_over_gate(
+    bq_client: bigquery.Client,
+    project_id: str = 'nba-props-platform',
+) -> Dict[str, Any]:
+    """Check if the OVER ultra gate has been met for public exposure.
+
+    Gate: graded ultra OVER picks >= 50 AND HR >= 80%.
+
+    Returns:
+        Dict with 'gate_met' (bool), 'n' (int), 'hr' (float or None).
+    """
+    TARGET_N = 50
+    TARGET_HR = 80.0
+
+    query = f"""
+    SELECT
+      COUNT(*) AS n,
+      COUNTIF(prediction_correct = TRUE) AS wins
+    FROM `{project_id}.nba_predictions.signal_best_bets_picks`
+    WHERE game_date >= '{BACKTEST_START}'
+      AND ultra_tier = TRUE
+      AND recommendation = 'OVER'
+      AND prediction_correct IS NOT NULL
+    """
+
+    try:
+        rows = list(bq_client.query(query).result(timeout=30))
+        if rows and rows[0].n > 0:
+            n = rows[0].n
+            hr = round(100.0 * rows[0].wins / n, 1)
+            gate_met = n >= TARGET_N and hr >= TARGET_HR
+            logger.info(
+                f"Ultra OVER gate: N={n}, HR={hr}%, "
+                f"gate_met={gate_met} (need N>={TARGET_N}, HR>={TARGET_HR}%)"
+            )
+            return {'gate_met': gate_met, 'n': n, 'hr': hr}
+    except Exception as e:
+        logger.warning(f"Ultra OVER gate check failed (non-fatal): {e}")
+
+    return {'gate_met': False, 'n': 0, 'hr': None}
+
+
 def compute_ultra_live_hrs(
     bq_client: bigquery.Client,
     project_id: str = 'nba-props-platform',
