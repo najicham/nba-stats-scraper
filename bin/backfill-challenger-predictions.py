@@ -37,6 +37,7 @@ from google.cloud import bigquery
 from predictions.worker.prediction_systems.catboost_monthly import MONTHLY_MODELS
 from shared.ml.feature_contract import (
     V9_CONTRACT, V9_FEATURE_NAMES, FEATURE_DEFAULTS,
+    V12_CONTRACT, V12_NOVEG_CONTRACT,
     FEATURE_STORE_FEATURE_COUNT, FEATURE_STORE_NAMES,
     build_feature_array_from_columns,
 )
@@ -200,8 +201,17 @@ def generate_predictions(model, df, model_id, model_file_name, model_sha256, con
     """Generate predictions for all rows and return list of BQ records."""
     records = []
 
+    # Select contract based on model's feature_set
+    feature_set = config.get('feature_set', 'v9')
+    if feature_set == 'v12':
+        selected_contract = V12_CONTRACT
+    elif feature_set == 'v12_noveg':
+        selected_contract = V12_NOVEG_CONTRACT
+    else:
+        selected_contract = V9_CONTRACT
+
     # Build feature matrix
-    feature_matrix = np.array([extract_features(row) for _, row in df.iterrows()])
+    feature_matrix = np.array([extract_features(row, contract=selected_contract) for _, row in df.iterrows()])
     predicted_points = model.predict(feature_matrix)
 
     for i, (_, row) in enumerate(df.iterrows()):
@@ -219,14 +229,19 @@ def generate_predictions(model, df, model_id, model_file_name, model_sha256, con
         confidence = compute_confidence(abs(edge))
         is_actionable = abs(edge) >= ACTIONABLE_EDGE
 
-        # Build features snapshot from individual columns
+        # Build features snapshot from individual columns using the model's contract
         snapshot_dict = {}
-        for i, name in enumerate(V9_FEATURE_NAMES):
-            val = row.get(f'feature_{i}_value')
-            if val is not None and not (isinstance(val, float) and pd.isna(val)):
-                snapshot_dict[name] = float(val)
+        for fname in selected_contract.feature_names:
+            # Find the feature store index for this feature name
+            if fname in FEATURE_STORE_NAMES:
+                idx = FEATURE_STORE_NAMES.index(fname)
+                val = row.get(f'feature_{idx}_value')
+                if val is not None and not (isinstance(val, float) and pd.isna(val)):
+                    snapshot_dict[fname] = float(val)
+                else:
+                    snapshot_dict[fname] = None
             else:
-                snapshot_dict[name] = None
+                snapshot_dict[fname] = None
         features_snapshot = json.dumps(snapshot_dict)
 
         record = {
@@ -251,7 +266,7 @@ def generate_predictions(model, df, model_id, model_file_name, model_sha256, con
             'model_expected_mae': config.get('backtest_mae') or config.get('mae'),
             'prediction_run_mode': 'BACKFILL',
             'prediction_made_before_game': False,
-            'feature_count': 33,
+            'feature_count': selected_contract.feature_count,
             'feature_quality_score': float(row['feature_quality_score']) if pd.notna(row.get('feature_quality_score')) else None,
             'default_feature_count': int(row['default_feature_count']) if pd.notna(row.get('default_feature_count')) else 0,
             'default_feature_indices': [int(x) for x in row['default_feature_indices']] if row.get('default_feature_indices') is not None and not (isinstance(row.get('default_feature_indices'), float) and pd.isna(row.get('default_feature_indices'))) else [],

@@ -150,6 +150,32 @@ MONTHLY_MODELS = {
         "feature_set": "v9",
         "description": "V9_LOW_VEGAS — 0.25x vegas weight, 5x more edge picks, UNDER 61.1%",
     },
+    # === V12+Vegas MAE (54 features) — Replay: Jan 1-25 coverage ===
+    "catboost_v12_train1102_1225": {
+        "model_path": "gs://nba-props-platform-models/catboost/v12/monthly/catboost_v9_54f_train20251102-20251225_20260222_100555.cbm",
+        "train_start": "2025-11-02",
+        "train_end": "2025-12-25",
+        "backtest_mae": 4.686,
+        "backtest_hit_rate_all": 59.29,
+        "backtest_hit_rate_edge_3plus": 61.4,
+        "backtest_n_edge_3plus": 57,
+        "enabled": True,
+        "feature_set": "v12",
+        "description": "V12_VEGAS_REPLAY_DEC25 — Walk-forward for Jan 1-25 replay, ALL GATES PASSED",
+    },
+    # === V12+Vegas MAE (54 features) — Replay: Jan 26 - Feb 5 coverage ===
+    "catboost_v12_train1102_0125": {
+        "model_path": "gs://nba-props-platform-models/catboost/v12/monthly/catboost_v9_54f_train20251102-20260125_20260222_094945.cbm",
+        "train_start": "2025-11-02",
+        "train_end": "2026-01-25",
+        "backtest_mae": 4.623,
+        "backtest_hit_rate_all": 58.91,
+        "backtest_hit_rate_edge_3plus": 86.96,
+        "backtest_n_edge_3plus": 23,
+        "enabled": True,
+        "feature_set": "v12",
+        "description": "V12_VEGAS_REPLAY_JAN25 — Walk-forward for Jan 26 - Feb 5 replay, 87% HR 3+",
+    },
     # === V12+Vegas MAE (54 features) — Shadow (FIRST EVER) ===
     "catboost_v12_train1225_0205": {
         "model_path": "gs://nba-props-platform-models/catboost/v12/monthly/catboost_v9_54f_train20251225-20260205_20260221_224505.cbm",
@@ -162,6 +188,46 @@ MONTHLY_MODELS = {
         "enabled": True,
         "feature_set": "v12",
         "description": "V12_VEGAS_MAE — Session 324: FIRST EVER V12+vegas. 54f, HR 3+ 75.0%",
+    },
+    # === V9 MAE (33 features) — Fresh retrain Feb 22 ===
+    "catboost_v9_train1225_0205": {
+        "model_path": "gs://nba-props-platform-models/catboost/v9/monthly/catboost_v9_33f_train20251225-20260205_20260222_111606.cbm",
+        "train_start": "2025-12-25",
+        "train_end": "2026-02-05",
+        "backtest_mae": 4.811,
+        "backtest_hit_rate_all": 54.1,
+        "backtest_hit_rate_edge_3plus": 60.0,
+        "backtest_n_edge_3plus": 10,
+        "enabled": True,
+        "feature_set": "v9",
+        "description": "V9_MAE_FEB22 — Fresh retrain, same window as V12+vegas for fair comparison",
+    },
+    # === V12+Vegas MAE (54 features) — Fresh retrain Feb 22 ===
+    "catboost_v12_train1225_0205_feb22": {
+        "model_path": "gs://nba-props-platform-models/catboost/v12/monthly/catboost_v9_54f_train20251225-20260205_20260222_111645.cbm",
+        "train_start": "2025-12-25",
+        "train_end": "2026-02-05",
+        "backtest_mae": 4.715,
+        "backtest_hit_rate_all": 56.5,
+        "backtest_hit_rate_edge_3plus": 64.71,
+        "backtest_n_edge_3plus": 17,
+        "enabled": True,
+        "feature_set": "v12",
+        "description": "V12_VEGAS_MAE_FEB22 — Fresh retrain matching V9 window, HR 3+ 64.7%",
+    },
+    # === V12+Vegas Quantile Q43 (54 features) — Fresh retrain Feb 22 ===
+    "catboost_v12_q43_train1225_0205_feb22": {
+        "model_path": "gs://nba-props-platform-models/catboost/v12/monthly/catboost_v9_54f_q0.43_train20251225-20260205_20260222_111648.cbm",
+        "train_start": "2025-12-25",
+        "train_end": "2026-02-05",
+        "backtest_mae": 4.864,
+        "backtest_hit_rate_all": 52.5,
+        "backtest_hit_rate_edge_3plus": 59.02,
+        "backtest_n_edge_3plus": 61,
+        "enabled": True,
+        "feature_set": "v12",
+        "quantile_alpha": 0.43,
+        "description": "V12_VEGAS_Q43_FEB22 — Fresh retrain UNDER specialist, HR 3+ 59.0% (n=61)",
     },
     # === V12+Vegas Quantile Q43 (54 features) — Shadow ===
     "catboost_v12_q43_train1225_0205": {
