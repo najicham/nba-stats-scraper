@@ -352,6 +352,9 @@ class SignalBestBetsExporter(BaseExporter):
                 'n_models_eligible': pick.get('n_models_eligible', 0),
                 'champion_edge': pick.get('champion_edge'),
                 'direction_conflict': pick.get('direction_conflict', False),
+                # Ultra Bets classification (Session 326)
+                'ultra_tier': pick.get('ultra_tier', False),
+                'ultra_criteria': pick.get('ultra_criteria', []),
                 'actual': None,
                 'result': None,
             })
@@ -362,6 +365,9 @@ class SignalBestBetsExporter(BaseExporter):
         )
         season_start_year = target.year if target.month >= 10 else target.year - 1
         season_label = f"{season_start_year}-{str(season_start_year + 1)[-2:]}"
+
+        # Ultra Bets top-level array (Session 326)
+        ultra_bets = [p for p in picks_json if p.get('ultra_tier')]
 
         return {
             'date': target_date,
@@ -385,6 +391,8 @@ class SignalBestBetsExporter(BaseExporter):
             'direction_health': direction_health,
             'filter_summary': filter_summary,
             'edge_distribution': edge_distribution,
+            'ultra_bets': ultra_bets,
+            'ultra_bets_count': len(ultra_bets),
             'picks': picks_json,
             'total_picks': len(picks_json),
             'signals_evaluated': [
@@ -538,6 +546,9 @@ class SignalBestBetsExporter(BaseExporter):
                 ),
                 'direction_conflict': pick.get('direction_conflict'),
                 'filter_summary': json.dumps(filter_summary) if filter_summary else None,
+                # Ultra Bets (Session 326)
+                'ultra_tier': pick.get('ultra_tier', False),
+                'ultra_criteria': json.dumps(pick.get('ultra_criteria', [])),
                 'created_at': datetime.now(timezone.utc).isoformat(),
             })
 

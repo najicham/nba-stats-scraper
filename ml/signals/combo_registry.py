@@ -73,14 +73,7 @@ _FALLBACK_REGISTRY: Dict[str, ComboEntry] = {
         direction_filter='UNDER_ONLY', hit_rate=76.9, roi=46.7, sample_size=156,
         score_weight=1.5, notes='Session 275: 76.9% AVG HR across 3 eval windows',
     ),
-    'high_ft_under': ComboEntry(
-        combo_id='high_ft_under',
-        display_name='High FT Volume Under',
-        signals=['high_ft_under'],
-        cardinality=1, classification='SYNERGISTIC', status='CONDITIONAL',
-        direction_filter='UNDER_ONLY', hit_rate=64.1, roi=22.3, sample_size=74,
-        score_weight=0.5, notes='Session 275: 64.1% AVG HR, FTA >= 7',
-    ),
+    # high_ft_under REMOVED — 33.3% HR on best bets (Session 326)
     'b2b_fatigue_under': ComboEntry(
         combo_id='b2b_fatigue_under',
         display_name='B2B Fatigue Under',
@@ -89,23 +82,8 @@ _FALLBACK_REGISTRY: Dict[str, ComboEntry] = {
         direction_filter='UNDER_ONLY', hit_rate=85.7, roi=63.6, sample_size=14,
         score_weight=1.0, notes='Session 275: 85.7% AVG HR, small sample (N=14)',
     ),
-    # Session 295: Added performing UNDER signals from full-season audit
-    'volatile_under': ComboEntry(
-        combo_id='volatile_under',
-        display_name='Volatile Scorer Under',
-        signals=['volatile_under'],
-        cardinality=1, classification='SYNERGISTIC', status='PRODUCTION',
-        direction_filter='UNDER_ONLY', hit_rate=73.1, roi=37.3, sample_size=26,
-        score_weight=1.0, notes='Session 295: 73.1% HR (N=26) full-season audit',
-    ),
-    'high_usage_under': ComboEntry(
-        combo_id='high_usage_under',
-        display_name='High Usage Under',
-        signals=['high_usage_under'],
-        cardinality=1, classification='SYNERGISTIC', status='PRODUCTION',
-        direction_filter='UNDER_ONLY', hit_rate=68.1, roi=26.4, sample_size=47,
-        score_weight=0.5, notes='Session 295: 68.1% HR (N=47) full-season audit',
-    ),
+    # volatile_under REMOVED — 33.3% HR on best bets (Session 326)
+    # high_usage_under REMOVED — 40.0% HR on best bets (Session 326)
     'prop_line_drop_over': ComboEntry(
         combo_id='prop_line_drop_over',
         display_name='Prop Line Drop Over',

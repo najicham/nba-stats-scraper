@@ -48,10 +48,10 @@ ACTIVE_SIGNALS = frozenset({
     'model_health', 'high_edge', 'edge_spread_optimal',
     'combo_he_ms', 'combo_3way',
     'bench_under', '3pt_bounce', 'b2b_fatigue_under',
-    'high_ft_under', 'rest_advantage_2d',
+    'rest_advantage_2d',
     'prop_line_drop_over', 'book_disagreement',
-    'self_creator_under', 'volatile_under',
-    'high_usage_under', 'blowout_recovery',
+    'blowout_recovery',
+    # high_ft_under, self_creator_under, volatile_under, high_usage_under REMOVED (Session 326)
 })
 
 # Regime thresholds (Session 257 analysis)

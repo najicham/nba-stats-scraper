@@ -17,6 +17,7 @@ Usage:
 """
 
 import argparse
+import json
 import logging
 import sys
 import os
@@ -283,6 +284,9 @@ def write_picks_to_bigquery(bq_client: bigquery.Client, target_date: str,
                 if pick.get('champion_edge') is not None else None
             ),
             'direction_conflict': pick.get('direction_conflict'),
+            # Ultra Bets (Session 326)
+            'ultra_tier': pick.get('ultra_tier', False),
+            'ultra_criteria': json.dumps(pick.get('ultra_criteria', [])),
             'created_at': datetime.now(timezone.utc).isoformat(),
         })
 

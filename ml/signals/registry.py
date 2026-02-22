@@ -60,10 +60,10 @@ def build_default_registry() -> SignalRegistry:
 
     # Market-pattern UNDER signals (Session 274)
     from ml.signals.bench_under import BenchUnderSignal
-    from ml.signals.high_usage_under import HighUsageUnderSignal
-    from ml.signals.volatile_under import VolatileUnderSignal
-    from ml.signals.high_ft_under import HighFTUnderSignal
-    from ml.signals.self_creator_under import SelfCreatorUnderSignal
+    # HighUsageUnderSignal REMOVED — 40.0% HR on best bets (Session 326)
+    # VolatileUnderSignal REMOVED — 33.3% HR on best bets (Session 326)
+    # HighFTUnderSignal REMOVED — 33.3% HR on best bets (Session 326)
+    # SelfCreatorUnderSignal REMOVED — 36.4% HR on best bets (Session 326)
 
     # Prop line delta signal (Session 294)
     from ml.signals.prop_line_drop_over import PropLineDropOverSignal
@@ -96,10 +96,7 @@ def build_default_registry() -> SignalRegistry:
 
     # Market-pattern UNDER signals (Session 274)
     registry.register(BenchUnderSignal())
-    registry.register(HighUsageUnderSignal())
-    registry.register(VolatileUnderSignal())
-    registry.register(HighFTUnderSignal())
-    registry.register(SelfCreatorUnderSignal())
+    # HighUsageUnderSignal, VolatileUnderSignal, HighFTUnderSignal, SelfCreatorUnderSignal removed (Session 326)
 
     # Prop line delta signal (Session 294)
     registry.register(PropLineDropOverSignal())

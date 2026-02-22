@@ -50,7 +50,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v323_health_gate'
+ALGORITHM_VERSION = 'v326_ultra_bets'
 
 # Signal health regime → weight multiplier (used for pick angles context)
 HEALTH_MULTIPLIERS = {
@@ -147,10 +147,12 @@ class BestBetsAggregator:
                 filter_counts['edge_floor'] += 1
                 continue
 
-            # UNDER at edge 7+ block: 40.7% HR — catastrophic (Session 297)
+            # UNDER at edge 7+ block: V9=39.3% HR (block), V12+vegas=100% HR (allow). Session 326.
             # Session 318: Removed star-level exception (N=7 too small, 37.5% HR in best bets)
+            source_family = pred.get('source_model_family', '')
             if (pred.get('recommendation') == 'UNDER'
-                    and pred_edge >= 7.0):
+                    and pred_edge >= 7.0
+                    and not source_family.startswith('v12')):
                 filter_counts['under_edge_7plus'] += 1
                 continue
 
@@ -279,6 +281,13 @@ class BestBetsAggregator:
             logger.info(f"Edge floor ({self.MIN_EDGE}): skipped {filter_counts['edge_floor']} predictions")
         if filter_counts['under_edge_7plus'] > 0:
             logger.info(f"UNDER edge 7+ block: skipped {filter_counts['under_edge_7plus']} predictions")
+
+        # Ultra Bets classification (Session 326)
+        from ml.signals.ultra_bets import classify_ultra_pick
+        for pick_entry in scored:
+            ultra_criteria = classify_ultra_pick(pick_entry)
+            pick_entry['ultra_tier'] = len(ultra_criteria) > 0
+            pick_entry['ultra_criteria'] = ultra_criteria
 
         # Rank by edge descending (model confidence = primary signal)
         scored.sort(key=lambda x: x['composite_score'], reverse=True)

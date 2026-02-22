@@ -38,12 +38,12 @@ SIGNAL_ANGLE_MAP = {
     'rest_advantage_2d': "2+ days rest advantage: 64.8% HR",
     'edge_spread_optimal': "Optimal edge spread: 67.2% HR",
     '3pt_bounce': "3pt bounce-back pattern: 74.9% HR",
-    'high_ft_under': "High FT volume UNDER: 64.1% HR",
+    # high_ft_under REMOVED — 33.3% HR on best bets (Session 326)
     'blowout_recovery': "Blowout recovery bounce: 56.9% HR",
     # minutes_surge REMOVED (Session 318)
-    'self_creator_under': "Self-creator UNDER: 61.8% HR",
-    'volatile_under': "Volatile player UNDER: 60.0% HR",
-    'high_usage_under': "High usage UNDER: 58.7% HR",
+    # self_creator_under REMOVED — 36.4% HR on best bets (Session 326)
+    # volatile_under REMOVED — 33.3% HR on best bets (Session 326)
+    # high_usage_under REMOVED — 40.0% HR on best bets (Session 326)
     # cold_snap REMOVED (Session 318)
     'book_disagreement': "Sportsbooks disagree on line: 93.0% edge 3+ HR (WATCH)",
 }
@@ -180,6 +180,16 @@ def build_pick_angles(
         List of up to MAX_ANGLES angle strings, ordered by importance.
     """
     angles: List[str] = []
+
+    # 0. Ultra Bets angle — highest priority (Session 326)
+    ultra_criteria = pick.get('ultra_criteria', [])
+    if ultra_criteria:
+        # Use highest-HR criterion for the angle text
+        best = max(ultra_criteria, key=lambda c: c['hit_rate'])
+        angles.append(
+            f"ULTRA BET: {best['description']} — "
+            f"{best['hit_rate']:.1f}% HR ({best['sample_size']} picks)"
+        )
 
     # 1. High conviction edge (Session 284 — 65.6% HR cross-season)
     hc_angle = _high_conviction_angle(pick)

@@ -143,8 +143,9 @@ nba-stats-scraper/
 - Best bets backfill (V12+vegas in pool): **66.0% HR, $2,680 P&L** (100 picks, Jan 9 - Feb 21)
 - V12+vegas edge 6+: **100% HR (N=26, zero losses)** — Ultra Bets candidate
 - V12+vegas OVER edge 5+: **100% HR (N=18)** — strongest directional signal ever found
-- **4 harmful UNDER signals identified:** `high_ft_under` (33.3%), `self_creator_under` (36.4%), `volatile_under` (33.3%), `high_usage_under` (40.0%) — recommend removal
-- **UNDER edge 7+ filter is model-dependent:** V9=39.3% HR (keep blocking), V12+vegas=100% HR (should allow)
+- **4 harmful UNDER signals REMOVED (Session 326):** `high_ft_under` (33.3%), `self_creator_under` (36.4%), `volatile_under` (33.3%), `high_usage_under` (40.0%)
+- **UNDER edge 7+ filter now model-aware (Session 326):** V9=39.3% HR (blocked), V12+vegas=100% HR (allowed)
+- **Ultra Bets tier implemented (Session 326):** V12+vegas edge 6+ = 100% HR (N=26), V12 OVER edge 5+ = 100% HR (N=18)
 
 ### Model Governance
 
@@ -567,7 +568,7 @@ Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
 
 ## Signal System [Keyword: SIGNALS]
 
-**16 active signals** (16 removed Sessions 275+296+318, dead code deleted Sessions 308+318). **Session 297: Edge-first architecture** — signals are for pick angles (explanations), not selection. Picks ranked by edge, not composite score.
+**12 active signals** (20 removed Sessions 275+296+318+326, dead code deleted Sessions 308+318+326). **Session 297: Edge-first architecture** — signals are for pick angles (explanations), not selection. Picks ranked by edge, not composite score.
 
 **Best Bets Selection (Session 297):** `edge 5+ → negative filters → rank by edge → top 5`
 - Edge 5+ baseline: 71.1% HR (up from 59.8% with signal-scored selection)
@@ -577,7 +578,7 @@ Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
 1. Player blacklist: `<40% HR on 8+ edge-3+ picks` → skip (Session 284)
 2. Avoid familiar: `6+ games vs this opponent` → skip (Session 284)
 3. **Edge floor: `edge < 5.0` → skip (57% HR). Edge 5-7=69.4%, 7+=84.5% OVER (Session 297)**
-4. **UNDER edge 7+ block: `UNDER + edge >= 7` → skip (40.7% HR — catastrophic, Session 297)**
+4. **UNDER edge 7+ block: `UNDER + edge >= 7 + non-V12 model` → skip (V9=39.3% HR; V12+vegas=100% HR — allowed, Session 326)**
 5. Feature quality floor: `quality < 85` → skip (24.0% HR)
 6. Bench UNDER block: `UNDER + line < 12` → skip (35.1% HR)
 7. **UNDER + line jumped 2+: `UNDER + prop_line_delta >= 2.0` → skip (38.2% HR, N=272, Session 306)**
@@ -585,7 +586,7 @@ Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
 
 **Pick Angles (Session 278, 284):** Each pick includes `pick_angles` — human-readable reasoning (confidence tier, high-conviction edge>=5, player tier, cross-model consensus, signal-specific). Max 5 angles per pick. See `ml/signals/pick_angle_builder.py`.
 
-### Active Signals (16)
+### Active Signals (12)
 
 | Signal | Category | Direction | AVG HR | Status | Notes |
 |--------|----------|-----------|--------|--------|-------|
@@ -597,24 +598,36 @@ Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
 | `bench_under` | Market-Pattern | UNDER | 76.9% | PRODUCTION | Top standalone signal (N=156) |
 | `3pt_bounce` | Bounce | OVER | 74.9% | CONDITIONAL | Guards + Home |
 | `b2b_fatigue_under` | Market-Pattern | UNDER | 85.7% | CONDITIONAL | Small N (14) |
-| `high_ft_under` | Market-Pattern | UNDER | 64.1% | **HARMFUL** | Session 326: 33.3% HR on best bets (N=6). Recommend removal |
 | `rest_advantage_2d` | Context | BOTH | 64.8% | CONDITIONAL | Capped at season week 15 (Session 318: W6+ decays to 40%). Session 326: 74.0% HR on best bets (N=50) — STRONG |
 | `prop_line_drop_over` | Market-Pattern | OVER | 71.6% | PRODUCTION | Line dropped 2+ pts from prev game (Session 305: threshold 3→2, N=109) |
 | `book_disagreement` | Market | BOTH | 93.0% | WATCH | Cross-book line stddev (Session 303, small N). Session 326: 100% HR (N=6) |
-| `self_creator_under` | Market-Pattern | UNDER | 61.8% | **HARMFUL** | Session 326: 36.4% HR on best bets (N=11). Recommend removal |
-| `volatile_under` | Market-Pattern | UNDER | 60.0% | **HARMFUL** | Session 326: 33.3% HR on best bets (N=3). Recommend removal |
-| `high_usage_under` | Market-Pattern | UNDER | 58.7% | **HARMFUL** | Session 326: 40.0% HR on best bets (N=10). Recommend removal |
 | `blowout_recovery` | Bounce | OVER | 56.9% | WATCH | Stable 55-58%. Session 326: 57.1% (N=14), model-dependent (V12: 100%, V9: 40%) |
 
-### Removed Signals (16, Sessions 275+296+318)
+### Removed Signals (20, Sessions 275+296+318+326)
 
 **Below breakeven:** `hot_streak_2` (45.8%, N=416), `hot_streak_3` (47.5%, N=182), `cold_continuation_2` (45.8%, N=130), `fg_cold_continuation` (49.6%), `dual_agree` (44.8%, N=11), `model_consensus_v9_v12` (45.5%, N=11), `minutes_surge` (53.7%, W4 decay — Session 318)
 **Never fire:** `pace_mismatch`, `points_surge_3`, `home_dog`, `minutes_surge_5`, `three_pt_volume_surge`, `scoring_acceleration`, `cold_snap` (N=0 all windows — Session 318)
-**Dead code removed:** Session 308 deleted 14 unused signal files + stale `signal_system_audit.py`. Session 318 deleted `minutes_surge.py`, `cold_snap.py`.
+**Harmful on best bets (Session 326):** `high_ft_under` (33.3% HR, N=6), `self_creator_under` (36.4% HR, N=11), `volatile_under` (33.3% HR, N=3), `high_usage_under` (40.0% HR, N=10)
+**Dead code removed:** Session 308 deleted 14 unused signal files + stale `signal_system_audit.py`. Session 318 deleted `minutes_surge.py`, `cold_snap.py`. Session 326 deleted 4 harmful UNDER signals.
 
 ### Post-Cleanup Backtest (Session 275)
 
 Aggregator top-5 simulation: **73.9% AVG HR** (up from 60.3% pre-cleanup). W2: 80.0%, W3: 78.5%, W4: 63.2%.
+
+## Ultra Bets [Keyword: ULTRA]
+
+**Session 326:** High-confidence classification layer on top of best bets. Each pick is checked against criteria from walk-forward backtesting. Ultra picks get `ultra_tier: true` and `ultra_criteria` in JSON output.
+
+| Criteria ID | Description | HR% | N | Filter |
+|------------|-------------|----:|--:|--------|
+| `v12_edge_6plus` | V12+vegas, edge >= 6 | 100.0 | 26 | model family + edge |
+| `v12_over_edge_5plus` | V12+vegas OVER, edge >= 5 | 100.0 | 18 | model family + edge + direction |
+| `consensus_3plus_edge_5plus` | 3+ models agree, edge >= 5 | 78.9 | 18 | model agreement + edge |
+| `v12_edge_4_5plus` | V12+vegas, edge >= 4.5 | 77.2 | 57 | model family + edge |
+
+**Architecture:** `ml/signals/ultra_bets.py` → called after aggregator scoring → `ultra_tier` + `ultra_criteria` fields on each pick → top-level `ultra_bets` array in JSON.
+
+**HRs are hardcoded** (same pattern as `DIRECTION_TIER_HR`), updated manually after retrains.
 
 ## Multi-Model Best Bets [Keyword: MULTIMODEL]
 
