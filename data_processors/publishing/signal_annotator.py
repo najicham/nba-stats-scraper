@@ -348,7 +348,7 @@ class SignalAnnotator:
                 'warning_tags': pick.get('warning_tags', []),
                 'pick_angles': pick.get('pick_angles', []),
                 # Qualifying subsets provenance (Session 279)
-                'qualifying_subsets': json.dumps(pick.get('qualifying_subsets', [])),
+                'qualifying_subsets': json.dumps(pick.get('qualifying_subsets', []), default=str),
                 'qualifying_subset_count': pick.get('qualifying_subset_count', 0),
                 'algorithm_version': pick.get('algorithm_version', ALGORITHM_VERSION),
                 # Quality provenance (not available here, set to None)

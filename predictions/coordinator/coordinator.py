@@ -3701,6 +3701,7 @@ def publish_batch_summary_from_firestore(batch_id: str):
 
                 # Step 1.4: Check batch PVL bias (Session 170) + skew & vegas source (Session 171)
                 try:
+                    from google.cloud import bigquery
                     from predictions.coordinator.quality_alerts import (
                         send_pvl_bias_alert, send_recommendation_skew_alert,
                         send_vegas_source_alert, send_direction_mismatch_alert
@@ -4003,6 +4004,7 @@ def publish_batch_summary(tracker: ProgressTracker, batch_id: str):
 
                 # Step 1.4: Check batch PVL bias (Session 170) + skew & vegas source (Session 171)
                 try:
+                    from google.cloud import bigquery
                     from predictions.coordinator.quality_alerts import (
                         send_pvl_bias_alert, send_recommendation_skew_alert,
                         send_vegas_source_alert, send_direction_mismatch_alert

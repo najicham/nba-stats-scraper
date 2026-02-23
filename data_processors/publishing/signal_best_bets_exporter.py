@@ -573,7 +573,7 @@ class SignalBestBetsExporter(BaseExporter):
                 'consensus_bonus': pick.get('consensus_bonus', 0),
                 'quantile_consensus_under': pick.get('quantile_under_consensus', False),
                 'pick_angles': pick.get('angles', []),
-                'qualifying_subsets': json.dumps(pick.get('qualifying_subsets', [])),
+                'qualifying_subsets': json.dumps(pick.get('qualifying_subsets', []), default=str),
                 'qualifying_subset_count': pick.get('qualifying_subset_count', 0),
                 'algorithm_version': pick.get('algorithm_version', ALGORITHM_VERSION),
                 # Multi-source attribution (Session 307)
@@ -585,10 +585,10 @@ class SignalBestBetsExporter(BaseExporter):
                     if pick.get('champion_edge') is not None else None
                 ),
                 'direction_conflict': pick.get('direction_conflict'),
-                'filter_summary': json.dumps(filter_summary) if filter_summary else None,
+                'filter_summary': json.dumps(filter_summary, default=str) if filter_summary else None,
                 # Ultra Bets (Session 326)
                 'ultra_tier': pick.get('ultra_tier', False),
-                'ultra_criteria': json.dumps(pick.get('ultra_criteria', [])),
+                'ultra_criteria': json.dumps(pick.get('ultra_criteria', []), default=str),
                 'created_at': datetime.now(timezone.utc).isoformat(),
             })
 

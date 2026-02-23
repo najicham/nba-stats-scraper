@@ -121,6 +121,10 @@ class PlayerLoader:
 
         logger.info(f"Found {len(players)} players for {game_date}")
 
+        # Session 330: Batch-fetch all betting lines in 2 queries instead of N*10
+        all_lookups = [p['player_lookup'] for p in players]
+        prefetched_lines = self._batch_fetch_all_betting_lines(game_date, all_lookups)
+
         # Create prediction requests, filtering based on mode
         requests = []
         bootstrap_skipped = 0
@@ -130,7 +134,8 @@ class PlayerLoader:
             request = self._create_request_for_player(
                 player,
                 game_date,
-                use_multiple_lines
+                use_multiple_lines,
+                _prefetched_lines=prefetched_lines
             )
             # Only skip players who need bootstrap (new players without history)
             if request.get('needs_bootstrap', False):
@@ -368,7 +373,8 @@ class PlayerLoader:
         self,
         player: Dict,
         game_date: date,
-        use_multiple_lines: bool
+        use_multiple_lines: bool,
+        _prefetched_lines: Optional[Dict[str, Dict[str, Any]]] = None
     ) -> Dict:
         """
         Create prediction request message for a single player
@@ -379,6 +385,7 @@ class PlayerLoader:
             player: Player dict from query
             game_date: Game date
             use_multiple_lines: Whether to test multiple lines
+            _prefetched_lines: Optional batch-prefetched lines (Session 330)
 
         Returns:
             Prediction request dict with line source tracking
@@ -387,7 +394,8 @@ class PlayerLoader:
         line_info = self._get_betting_lines(
             player['player_lookup'],
             game_date,
-            use_multiple_lines
+            use_multiple_lines,
+            _prefetched_lines=_prefetched_lines
         )
 
         # Session 79: Query Kalshi prediction market data
@@ -452,7 +460,8 @@ class PlayerLoader:
         self,
         player_lookup: str,
         game_date: date,
-        use_multiple_lines: bool
+        use_multiple_lines: bool,
+        _prefetched_lines: Optional[Dict[str, Dict[str, Any]]] = None
     ) -> Dict[str, Any]:
         """
         Get betting lines for player with source tracking (v3.2, v3.3)
@@ -472,6 +481,7 @@ class PlayerLoader:
             player_lookup: Player identifier
             game_date: Game date
             use_multiple_lines: Whether to generate multiple lines
+            _prefetched_lines: Optional batch-prefetched lines (Session 330)
 
         Returns:
             Dict with:
@@ -484,7 +494,7 @@ class PlayerLoader:
                 'was_line_fallback': True if not primary sportsbook (v3.3)
         """
         # Try to get actual betting line from odds data (now returns dict with sportsbook info)
-        line_result = self._query_actual_betting_line(player_lookup, game_date)
+        line_result = self._query_actual_betting_line(player_lookup, game_date, _prefetched_lines=_prefetched_lines)
 
         if line_result is not None:
             base_line = line_result['line_value']
@@ -574,10 +584,195 @@ class PlayerLoader:
             'line_minutes_before_game': line_minutes_before_game  # v3.6: How close to game time
         }
 
+    def _batch_fetch_all_betting_lines(
+        self,
+        game_date: date,
+        player_lookups: List[str]
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Session 330: Batch fetch all betting lines in 2 queries instead of N*10.
+
+        Replaces per-player sequential queries with:
+        1. Single OddsAPI query for all players (ranked by sportsbook priority)
+        2. Single BettingPros query for remaining players
+
+        Returns dict keyed by player_lookup with line info matching
+        _query_actual_betting_line() return format.
+        """
+        import time
+        t0 = time.time()
+        results = {}
+
+        if not player_lookups:
+            return results
+
+        # Query 1: OddsAPI — get best line per player with sportsbook ranking
+        odds_query = """
+        WITH ranked AS (
+            SELECT
+                player_lookup,
+                points_line as line_value,
+                bookmaker,
+                minutes_before_tipoff,
+                ROW_NUMBER() OVER (
+                    PARTITION BY player_lookup
+                    ORDER BY
+                        CASE LOWER(bookmaker)
+                            WHEN 'draftkings' THEN 1
+                            WHEN 'fanduel' THEN 2
+                            WHEN 'betmgm' THEN 3
+                            WHEN 'pointsbet' THEN 4
+                            WHEN 'caesars' THEN 5
+                            ELSE 99
+                        END,
+                        snapshot_timestamp DESC
+                ) as rn
+            FROM `{project}.nba_raw.odds_api_player_points_props`
+            WHERE game_date = @game_date
+              AND player_lookup IN UNNEST(@player_lookups)
+              AND points_line >= 5.0
+        )
+        SELECT player_lookup, line_value, bookmaker, minutes_before_tipoff
+        FROM ranked WHERE rn = 1
+        """.format(project=self.project_id)
+
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                bigquery.ArrayQueryParameter("player_lookups", "STRING", player_lookups)
+            ]
+        )
+
+        try:
+            rows = list(self.client.query(odds_query, job_config=job_config).result(timeout=60))
+            for row in rows:
+                sportsbook = row.bookmaker.upper() if row.bookmaker else 'UNKNOWN'
+                results[row.player_lookup] = {
+                    'line_value': float(row.line_value),
+                    'sportsbook': sportsbook,
+                    'was_fallback': row.bookmaker.lower() != 'draftkings' if row.bookmaker else True,
+                    'line_source_api': 'ODDS_API',
+                    'line_minutes_before_game': int(row.minutes_before_tipoff) if row.minutes_before_tipoff else None
+                }
+            logger.info(f"BATCH_LINES: OddsAPI returned lines for {len(rows)}/{len(player_lookups)} players")
+        except Exception as e:
+            logger.error(f"BATCH_LINES: OddsAPI batch query failed: {e}")
+
+        # Query 2: BettingPros — only for players NOT found in OddsAPI
+        remaining = [p for p in player_lookups if p not in results]
+        if remaining:
+            bp_query = """
+            WITH ranked AS (
+                SELECT
+                    player_lookup,
+                    points_line as line_value,
+                    bookmaker,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY player_lookup
+                        ORDER BY
+                            CASE bookmaker
+                                WHEN 'DraftKings' THEN 1
+                                WHEN 'FanDuel' THEN 2
+                                WHEN 'BetMGM' THEN 3
+                                WHEN 'Caesars' THEN 4
+                                WHEN 'PointsBet' THEN 5
+                                ELSE 99
+                            END,
+                            created_at DESC
+                    ) as rn
+                FROM `{project}.nba_raw.bettingpros_player_points_props`
+                WHERE game_date = @game_date
+                  AND player_lookup IN UNNEST(@player_lookups)
+                  AND market_type = 'points'
+                  AND bet_side = 'over'
+                  AND is_active = TRUE
+                  AND points_line >= 5.0
+            )
+            SELECT player_lookup, line_value, bookmaker
+            FROM ranked WHERE rn = 1
+            """.format(project=self.project_id)
+
+            bp_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                    bigquery.ArrayQueryParameter("player_lookups", "STRING", remaining)
+                ]
+            )
+
+            try:
+                bp_rows = list(self.client.query(bp_query, job_config=bp_config).result(timeout=60))
+                for row in bp_rows:
+                    sportsbook = row.bookmaker.upper() if row.bookmaker else 'UNKNOWN'
+                    results[row.player_lookup] = {
+                        'line_value': float(row.line_value),
+                        'sportsbook': sportsbook,
+                        'was_fallback': row.bookmaker not in ('DraftKings', 'draftkings'),
+                        'line_source_api': 'BETTINGPROS',
+                        'line_minutes_before_game': None
+                    }
+                logger.info(f"BATCH_LINES: BettingPros returned lines for {len(bp_rows)}/{len(remaining)} remaining players")
+            except Exception as e:
+                logger.error(f"BATCH_LINES: BettingPros batch query failed: {e}")
+
+        # Batch diagnostics for players with no lines
+        no_line_players = [p for p in player_lookups if p not in results]
+        if no_line_players:
+            self._batch_track_no_line_reasons(no_line_players, game_date)
+
+        elapsed = time.time() - t0
+        logger.info(
+            f"BATCH_LINES: Fetched lines for {len(results)}/{len(player_lookups)} players "
+            f"in {elapsed:.1f}s ({len(no_line_players)} without lines)"
+        )
+        return results
+
+    def _batch_track_no_line_reasons(self, player_lookups: List[str], game_date: date):
+        """
+        Session 330: Batch diagnostic for players with no betting lines.
+        Single query instead of per-player queries.
+        """
+        if not player_lookups:
+            return
+
+        query = """
+        SELECT player_lookup, COUNT(*) as cnt
+        FROM `{project}.nba_raw.odds_api_player_points_props`
+        WHERE game_date = @game_date
+          AND player_lookup IN UNNEST(@player_lookups)
+        GROUP BY player_lookup
+        """.format(project=self.project_id)
+
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                bigquery.ArrayQueryParameter("player_lookups", "STRING", player_lookups)
+            ]
+        )
+
+        try:
+            rows = {row.player_lookup: row.cnt
+                    for row in self.client.query(query, job_config=job_config).result(timeout=30)}
+
+            for pl in player_lookups:
+                cnt = rows.get(pl, 0)
+                if cnt > 0:
+                    logger.warning(
+                        f"NO_LINE_DIAGNOSTIC: {pl} has {cnt} OddsAPI rows on {game_date} "
+                        f"but none matched filters — possible line < 5.0 or bookmaker mismatch"
+                    )
+                else:
+                    logger.warning(
+                        f"NO_LINE_DIAGNOSTIC: {pl} has ZERO OddsAPI rows on {game_date} — "
+                        f"player not offered as prop or name format mismatch"
+                    )
+        except Exception as e:
+            logger.warning(f"NO_LINE_DIAGNOSTIC: Batch diagnostic failed: {e}")
+
     def _query_actual_betting_line(
         self,
         player_lookup: str,
-        game_date: date
+        game_date: date,
+        _prefetched_lines: Optional[Dict[str, Dict[str, Any]]] = None
     ) -> Optional[Dict[str, Any]]:
         """
         Query actual betting line with sportsbook-priority fallback.
@@ -592,15 +787,30 @@ class PlayerLoader:
         v3.3: Now returns dict with line_value, sportsbook, and was_fallback
         v3.8: Added bettingpros fallback when odds_api has no data
         v3.9: Sportsbook-priority fallback - DK/FD from any source before other books
+        v3.11: Session 330 — uses prefetched batch results when available
 
         Args:
             player_lookup: Player identifier
             game_date: Game date
+            _prefetched_lines: Optional batch-prefetched lines dict (Session 330)
 
         Returns:
             Dict with line_value, sportsbook, was_fallback, line_source_api
             or None if no line found
         """
+        # Session 330: Use prefetched batch results if available
+        if _prefetched_lines is not None:
+            result = _prefetched_lines.get(player_lookup)
+            if result is not None:
+                source_key = f"{result['line_source_api'].lower()}_{result['sportsbook'].lower()}"
+                self._track_line_source(source_key, player_lookup)
+                logger.debug(f"LINE_SOURCE: {player_lookup} -> {result['line_source_api']} {result['sportsbook']} (batch)")
+                return result
+            # Not in batch = no line found
+            self._track_line_source('no_line_data', player_lookup)
+            return None
+
+        # Fallback: per-player sequential queries (used when batch not available)
         # Preferred sportsbooks - try both sources before moving to next book
         preferred_sportsbooks = ['draftkings', 'fanduel']
         # Secondary sportsbooks - only try if preferred not found
