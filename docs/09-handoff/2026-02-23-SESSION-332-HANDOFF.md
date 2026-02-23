@@ -2,7 +2,7 @@
 
 **Date:** 2026-02-23
 **Focus:** V9 champion decay response — interim V12 promotion, all-family retrain
-**Status:** PARTIALLY COMPLETE — retrain done, model registration NOT finished
+**Status:** COMPLETE — all tasks from Session 332 finished in Session 333
 
 ## What Happened
 
@@ -79,69 +79,63 @@ models/catboost_v9_33f_train20260104-20260215_20260223_082743.cbm     # v9_mae d
 - `catboost_v9_50f_noveg_train20260104-20260215_20260223_082549.cbm` (v12_noveg_q43)
 - `catboost_v9_54f_train20260104-20260215_20260223_082346.cbm` (v12_mae)
 
-### NOT YET DONE — Model Registration in `model_registry`
+### DONE (Session 333) — Model Registration in `model_registry`
 
-The session ran out of context before registering these fresh models in `nba_predictions.model_registry`. **This is the critical next step.** Without registration, the prediction worker won't load these models and they won't generate shadow predictions.
+All 4 models registered in `nba_predictions.model_registry` with `enabled=TRUE, status='active'`:
 
-To register, use:
-```bash
-# Check model_registry schema
-bq show --schema nba-props-platform:nba_predictions.model_registry
+| model_id | model_family | MAE | HR 3+ | N |
+|----------|-------------|-----|-------|---|
+| `catboost_v12_vegas_q43_train0104_0215` | v12_vegas_q43 | 4.70 | 66.7% | 21 |
+| `catboost_v12_noveg_q43_train0104_0215` | v12_noveg_q43 | 4.96 | 65.7% | 35 |
+| `catboost_v12_noveg_mae_train0104_0215` | v12_noveg_mae | 4.78 | 61.5% | 26 |
+| `catboost_v12_mae_train0104_0215` | v12_mae | 4.74 | 55.6% | 18 |
 
-# Insert a new model (example for v12_vegas_q43 — the best performer)
-bq query --use_legacy_sql=false --project_id=nba-props-platform "
-INSERT INTO nba_predictions.model_registry
-(model_id, model_version, model_type, gcs_path, feature_count, ...)
-VALUES (
-  'catboost_v12_vegas_q43_train0104_0215',
-  'v12_vegas_q43',
-  'catboost',
-  'gs://nba-props-platform-models/catboost/v12/monthly/catboost_v9_54f_q0.43_train20260104-20260215_20260223_082706.cbm',
-  54,
-  ...
-)"
-
-# Or use the model-registry script if it supports add
-./bin/model-registry.sh --help
-```
+Missing v12_mae model was also uploaded to GCS (was local-only).
 
 ## Known Issues
 
-### Duplicate Model Families in Registry
-The `model_registry` has duplicate entries for `v12_mae` and `v9_mae` families, causing the retrain script to train each twice. Non-blocking but wasteful. Fix:
-```sql
-SELECT model_family, model_id, status, enabled
-FROM nba_predictions.model_registry
-WHERE model_family IN ('v12_mae', 'v9_mae') AND enabled = TRUE
-ORDER BY model_family, model_id;
--- Then disable the older/deprecated entries
-```
+### FIXED (Session 333): Duplicate Model Families in Registry
+Disabled 9 older/deprecated entries. Each family now has exactly 1 enabled model:
+- v12_mae, v12_noveg_mae, v12_noveg_q43, v12_q43, v12_vegas_q43, v9_low_vegas, v9_mae (7 families, 7 rows)
+
+### FIXED (Session 333): Hardcoded V9 References
+- `player_blacklist.py` — was defaulting to `catboost_v9` for blacklist computation. Now uses `get_best_bets_model_id()` (V12)
+- `signal_health.py` — had `SYSTEM_ID = 'catboost_v9'` hardcoded. Now uses champion dynamically
+- `supplemental_data.py` — still has hardcoded `catboost_v12_noveg%` for cross-model CTE (low priority, annotation-only)
+
+### FIXED (Session 333): Cross-Model Pattern Matching Bug
+`catboost_v12_vegas_q43_*` models were misclassified as `v12_mae` instead of `v12_vegas_q43`. Added `alt_pattern` support to `MODEL_FAMILIES` in `cross_model_subsets.py`.
+
+### FIXED (Session 333): `validation-runner` auto-deployed via push
+Cloud Function — auto-deploys via `cloudbuild-functions.yaml` on push to main.
 
 ### Scheduler Jobs Still Failing
 - `auto-retry-processor-trigger` — DEADLINE_EXCEEDED (Pub/Sub-based, different timeout mechanism)
 - `predictions-last-call` — code 2 UNKNOWN (coordinator still processing when scheduler times out; work likely completes despite error)
-
-### `validation-runner` Still 1 Commit Behind
-Non-critical service. Deploy when convenient:
-```bash
-./bin/deploy-service.sh validation-runner
-```
 
 ### Firestore Completion Records Missing
 No Phase 2/Phase 3 completion docs found for Feb 22 or Feb 23. Pipeline data IS flowing (analytics records exist), so this is a tracking gap, not a data gap. Investigate if Firestore writes are failing silently.
 
 ## Files Changed
 
+### Session 332
 - `shared/config/model_selection.py` — Champion model ID: V9 → V12
 - `CLAUDE.md` — Updated ML Model section
-- `docs/09-handoff/2026-02-23-SESSION-332-HANDOFF.md` — This file
+
+### Session 333
+- `shared/config/cross_model_subsets.py` — Added `alt_pattern` for v12_vegas_q43/q45 family classification
+- `ml/signals/player_blacklist.py` — Dynamic champion model instead of hardcoded V9
+- `ml/signals/signal_health.py` — Dynamic champion model instead of hardcoded V9
+- `docs/09-handoff/2026-02-23-SESSION-332-HANDOFF.md` — Updated with completion status
 
 ## Next Session Priorities
 
-1. **Register fresh models in `model_registry`** — CRITICAL: models are in GCS but not registered, so they won't generate predictions yet
-2. **Monitor V12 interim champion** — run `/daily-steering` to verify best bets export uses V12 correctly
-3. **Fix duplicate model families** in registry (v12_mae and v9_mae appear twice)
-4. **Deploy `validation-runner`** — still 1 commit behind
-5. **Investigate Firestore completion tracking** gap
-6. **After 2-3 days of shadow data** — evaluate fresh models with 50+ edge 3+ graded picks for permanent promotion
-7. **Top candidates for permanent champion:** v12_vegas_q43 (66.7% HR, best MAE 4.70) and v12_noveg_q43 (65.7% HR, most volume)
+1. ~~Register fresh models~~ DONE
+2. ~~Fix duplicate model families~~ DONE
+3. ~~Deploy validation-runner~~ DONE (auto-deploy on push)
+4. ~~Monitor V12 interim champion~~ DONE (HEALTHY 59.6% HR 7d, best bets 68% HR 30d)
+5. **Verify 4 new shadow models generating predictions** — check Feb 24 predictions after worker auto-deploys
+6. **Investigate Firestore completion tracking** gap (Phase 2/3 docs missing)
+7. **After 2-3 days of shadow data** — evaluate fresh models with 50+ edge 3+ graded picks for permanent promotion
+8. **Top candidates for permanent champion:** v12_vegas_q43 (66.7% HR, best MAE 4.70) and v12_noveg_q43 (65.7% HR, most volume)
+9. **Fix `supplemental_data.py` hardcoded `catboost_v12_noveg%`** — low priority, annotation-only impact
