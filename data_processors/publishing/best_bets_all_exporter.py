@@ -23,7 +23,6 @@ from google.cloud import bigquery
 from data_processors.publishing.base_exporter import BaseExporter
 from data_processors.publishing.exporter_utils import safe_float, safe_int
 from ml.signals.aggregator import ALGORITHM_VERSION
-from ml.signals.ultra_bets import check_ultra_over_gate
 
 logger = logging.getLogger(__name__)
 
@@ -69,24 +68,16 @@ class BestBetsAllExporter(BaseExporter):
 
         # Build record from graded picks only
         record = self._build_record(all_picks, target, season_start)
+        ultra_record = self._build_ultra_record(all_picks)
 
         # Build streaks
         streak, best_streak = self._compute_streaks(all_picks)
-
-        # Check ultra OVER gate for public exposure (Session 328)
-        ultra_over_gate = {'gate_met': False, 'n': 0, 'hr': None}
-        try:
-            ultra_over_gate = check_ultra_over_gate(self.bq_client, PROJECT_ID)
-        except Exception as e:
-            logger.warning(f"Ultra OVER gate check failed (non-fatal): {e}")
 
         # Look up game times for today's picks (Session 328)
         game_times = self._query_game_times(target_date, today_picks)
 
         # Format today's picks (with angles, rank)
-        today_formatted = self._format_today(
-            today_picks, ultra_over_gate, game_times
-        )
+        today_formatted = self._format_today(today_picks, game_times)
 
         # Build weeks array (history + today merged in)
         weeks = self._build_weeks(all_picks)
@@ -100,6 +91,7 @@ class BestBetsAllExporter(BaseExporter):
             'generated_at': self.get_generated_at(),
             'algorithm_version': ALGORITHM_VERSION,
             'record': record,
+            'ultra_record': ultra_record,
             'streak': streak,
             'best_streak': best_streak,
             'today': today_formatted,
@@ -174,7 +166,6 @@ class BestBetsAllExporter(BaseExporter):
     def _format_today(
         self,
         picks: List[Dict],
-        ultra_over_gate: Dict[str, Any],
         game_times: Dict[str, str],
     ) -> List[Dict]:
         """Format today's picks with angles for the hero section."""
@@ -182,12 +173,6 @@ class BestBetsAllExporter(BaseExporter):
         for p in sorted(picks, key=lambda x: x.get('rank') or 999):
             angles = p.get('pick_angles') or []
             game_id = p.get('game_id', '')
-
-            show_ultra = (
-                ultra_over_gate.get('gate_met')
-                and p.get('ultra_tier')
-                and p.get('recommendation') == 'OVER'
-            )
 
             pick_dict = {
                 'rank': safe_int(p.get('rank')),
@@ -209,7 +194,7 @@ class BestBetsAllExporter(BaseExporter):
                 ),
             }
 
-            if show_ultra:
+            if p.get('ultra_tier'):
                 pick_dict['ultra_tier'] = True
 
             formatted.append(pick_dict)
@@ -288,7 +273,7 @@ class BestBetsAllExporter(BaseExporter):
 
             angles = row.get('pick_angles') or []
 
-            weeks_map[week_key][game_date_str].append({
+            pick_dict = {
                 'player': row.get('player_name') or '',
                 'player_lookup': row.get('player_lookup') or '',
                 'team': row.get('team_abbr') or '',
@@ -300,7 +285,12 @@ class BestBetsAllExporter(BaseExporter):
                 'actual': safe_int(row.get('actual_points')),
                 'result': result,
                 'angles': list(angles)[:3],
-            })
+            }
+
+            if row.get('ultra_tier'):
+                pick_dict['ultra_tier'] = True
+
+            weeks_map[week_key][game_date_str].append(pick_dict)
 
         weeks = []
         for week_key in sorted(weeks_map.keys(), reverse=True):
@@ -439,6 +429,61 @@ class BestBetsAllExporter(BaseExporter):
                 'wins': last10_wins,
                 'losses': last10_total - last10_wins,
                 'pct': pct(last10_wins, last10_total),
+            },
+        }
+
+    def _build_ultra_record(self, all_picks: List[Dict]) -> Dict[str, Any]:
+        """Compute W-L record for ultra-tier picks (overall + OVER/UNDER splits)."""
+        totals = {'wins': 0, 'losses': 0}
+        over = {'wins': 0, 'losses': 0}
+        under = {'wins': 0, 'losses': 0}
+
+        for p in all_picks:
+            if not p.get('ultra_tier') or p.get('prediction_correct') is None:
+                continue
+
+            is_win = bool(p['prediction_correct'])
+            direction = p.get('recommendation', '')
+
+            if is_win:
+                totals['wins'] += 1
+            else:
+                totals['losses'] += 1
+
+            if direction == 'OVER':
+                if is_win:
+                    over['wins'] += 1
+                else:
+                    over['losses'] += 1
+            elif direction == 'UNDER':
+                if is_win:
+                    under['wins'] += 1
+                else:
+                    under['losses'] += 1
+
+        def pct(w, t):
+            return round(100.0 * w / t, 1) if t > 0 else None
+
+        total = totals['wins'] + totals['losses']
+        over_total = over['wins'] + over['losses']
+        under_total = under['wins'] + under['losses']
+
+        return {
+            'wins': totals['wins'],
+            'losses': totals['losses'],
+            'total': total,
+            'pct': pct(totals['wins'], total),
+            'over': {
+                'wins': over['wins'],
+                'losses': over['losses'],
+                'total': over_total,
+                'pct': pct(over['wins'], over_total),
+            },
+            'under': {
+                'wins': under['wins'],
+                'losses': under['losses'],
+                'total': under_total,
+                'pct': pct(under['wins'], under_total),
             },
         }
 

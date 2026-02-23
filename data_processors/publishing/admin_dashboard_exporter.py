@@ -80,6 +80,34 @@ class AdminDashboardExporter(BaseExporter):
 
         ultra_count = sum(1 for p in today_picks if p.get('ultra_tier'))
 
+        # Pipeline summary — quick status for frontend status bar
+        models_enabled = len([m for m in model_health if m.get('enabled')])
+        total_candidates = len(candidates)
+        edge_5_count = edge_distribution['edge_5_plus']
+        best_bets_count = len(today_picks)
+        max_edge_val = edge_distribution['max_edge']
+
+        if models_enabled == 0:
+            bottleneck = 'no_models'
+        elif total_candidates == 0:
+            bottleneck = 'no_candidates'
+        elif edge_5_count == 0:
+            bottleneck = 'edge_floor'
+        elif best_bets_count == 0:
+            bottleneck = 'filters_rejected_all'
+        else:
+            bottleneck = None
+
+        pipeline_summary = {
+            'models_enabled': models_enabled,
+            'total_candidates': total_candidates,
+            'edge_5_plus': edge_5_count,
+            'best_bets': best_bets_count,
+            'ultra': ultra_count,
+            'max_edge': max_edge_val,
+            'bottleneck': bottleneck,
+        }
+
         return {
             'date': target_date,
             'season': _compute_season_label(target),
@@ -91,7 +119,9 @@ class AdminDashboardExporter(BaseExporter):
             'signal_health': signal_health,
             'subset_performance': subset_performance,
             'picks': today_picks,
+            'today_picks': today_picks,
             'total_picks': len(today_picks),
+            'pipeline_summary': pipeline_summary,
             'ultra_count': ultra_count,
             'ultra_gate': ultra_gate,
             'candidates_summary': {
