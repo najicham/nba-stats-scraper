@@ -95,13 +95,14 @@ nba-stats-scraper/
 
 | Property | Value |
 |----------|-------|
-| System ID | `catboost_v9` |
-| Production Model | `catboost_v9_33f_train20260106-20260205_20260218_223530` |
-| Training | 2026-01-06 to 2026-02-05 (42-day rolling window) |
-| MAE | 4.83 / Vegas Bias -0.14 |
-| Status | PRODUCTION (since 2026-02-19) — **FRESH** |
+| System ID | `catboost_v12` (interim champion since 2026-02-23) |
+| Previous Champion | `catboost_v9` (BLOCKED — 47% edge 3+ HR, demoted Session 332) |
+| Production Model | `catboost_v12_50f_huber_rsm50_train20251102-20260131_20260213_213149` |
+| Training | 2025-11-02 to 2026-01-31 |
+| Edge 3+ HR | 57.1% (98 picks) / 7d: 58-60% HEALTHY |
+| Status | INTERIM CHAMPION (since 2026-02-23) — retraining all families |
 
-**13 shadow models** running. V12+vegas (54f) massively outperforms V9 (33f): 62.7% vs 48.3% HR edge 3+. V12+vegas edge 6+ = **100% HR (N=26)**. See `docs/08-projects/current/retrain-infrastructure/03-PARALLEL-MODELS-GUIDE.md` for full list.
+**18 shadow models** running. All families retraining with fresh data (Jan 11 - Feb 22 window). V12+vegas edge 6+ = **100% HR (N=25)**. See `docs/08-projects/current/retrain-infrastructure/03-PARALLEL-MODELS-GUIDE.md` for full list.
 
 **CRITICAL:** Use edge >= 3 filter. 73% of predictions have edge < 3 and lose money.
 
