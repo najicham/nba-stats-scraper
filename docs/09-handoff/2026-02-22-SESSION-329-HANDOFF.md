@@ -1,4 +1,4 @@
-# Session 329 Handoff — V12+Vegas Fix Verified, Coordinator Timeout Fixed
+# Session 329 Handoff — V12+Vegas Verified, Coordinator Timeout, Frontend Data Additions
 
 **Date:** 2026-02-22
 **Previous Session:** 328 — V12+Vegas Docker Cache Bug Found & Fixed
@@ -55,7 +55,23 @@ Deployed as revision `prediction-coordinator-00273-t5h`.
 - Re-ran backfill to restore pick_angles in BQ (Jan 9 - Feb 21): 105/105 picks now have angles
 - Removed stale `BEST_BETS_MODEL_ID=catboost_v12` from phase6-export and post-grading-export CFs
 
-### 6. Documentation updated
+### 6. Frontend data additions — 4 changes shipped to production
+
+Frontend chat reviewed our API prompt and identified 4 gaps. All shipped and verified in production export.
+
+**`best_bets_all_exporter.py` (3 changes):**
+- `ultra_record` — new top-level field with W-L record for ultra-tier picks (overall + OVER/UNDER splits). Computed from same `all_picks` data, no new BQ query.
+- `ultra_tier` on historical picks — sparse `ultra_tier: true` added to picks in `_build_weeks()`. BQ already fetched the column.
+- `ultra_tier` ungated on today's picks — removed the gate check requiring `gate_met` + OVER direction. Frontend needs the boolean for card styling regardless. Removed unused `check_ultra_over_gate` import.
+
+**`admin_dashboard_exporter.py` (1 change):**
+- `today_picks` alias + `pipeline_summary` — `today_picks` key added alongside existing `picks` for backwards compat. New `pipeline_summary` object with cascading bottleneck: `no_models → no_candidates → edge_floor → filters_rejected_all → null`.
+
+**Verified in production:** `ultra_record` shows 25-8 (75.8%), 33 historical picks tagged with `ultra_tier`, `pipeline_summary.bottleneck = "no_candidates"` (correct for pre-prediction state).
+
+See `docs/08-projects/current/frontend-data-design/08-BACKEND-RESPONSE.md` for full response to frontend.
+
+### 7. Documentation updated
 
 - `session-learnings.md`: Added coordinator backfill timeout entry, backfill angles entry, env var drift entry
 - `CLAUDE.md`: Added coordinator backfill timeout to Common Issues table
@@ -118,6 +134,9 @@ The line diagnostic phase (NO_PROP_LINE, LINE_SOURCE, LINE_SANITY_REJECT) does p
 
 | File | Change |
 |------|--------|
+| `data_processors/publishing/best_bets_all_exporter.py` | Added `ultra_record`, sparse `ultra_tier` in weeks, ungated `ultra_tier` on today |
+| `data_processors/publishing/admin_dashboard_exporter.py` | Added `today_picks` alias, `pipeline_summary` with bottleneck cascade |
+| `docs/08-projects/current/frontend-data-design/08-BACKEND-RESPONSE.md` | Response to frontend data gap review |
 | `CLAUDE.md` | Added coordinator backfill timeout to Common Issues |
 | `docs/02-operations/session-learnings.md` | Added 3 new entries (timeout, angles, env var) |
 | `docs/09-handoff/2026-02-22-SESSION-329-HANDOFF.md` | This file |
