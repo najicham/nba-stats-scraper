@@ -82,10 +82,11 @@ class BestBetsAllExporter(BaseExporter):
         # Build weeks array (history + today merged in)
         weeks = self._build_weeks(all_picks)
 
-        total_picks = len(all_picks)
+        voided = sum(1 for p in all_picks if p.get('is_voided'))
+        total_picks = len(all_picks) - voided
         graded = sum(1 for p in all_picks if p.get('prediction_correct') is not None)
 
-        return {
+        result = {
             'date': target_date,
             'season': _compute_season_label(target),
             'generated_at': self.get_generated_at(),
@@ -100,6 +101,9 @@ class BestBetsAllExporter(BaseExporter):
             'total_picks': total_picks,
             'graded': graded,
         }
+        if voided > 0:
+            result['voided'] = voided
+        return result
 
     def export(self, target_date: str) -> str:
         """Generate and upload all.json.
@@ -141,7 +145,9 @@ class BestBetsAllExporter(BaseExporter):
           b.pick_angles,
           b.ultra_tier,
           pa.prediction_correct,
-          pa.actual_points
+          pa.actual_points,
+          pa.is_voided,
+          pa.void_reason
         FROM `nba-props-platform.nba_predictions.signal_best_bets_picks` b
         LEFT JOIN `nba-props-platform.nba_predictions.prediction_accuracy` pa
           ON b.player_lookup = pa.player_lookup
@@ -188,11 +194,15 @@ class BestBetsAllExporter(BaseExporter):
                 'angles': list(angles)[:3],
                 'actual': safe_int(p.get('actual_points')),
                 'result': (
-                    'WIN' if p.get('prediction_correct') is True
+                    'VOID' if p.get('is_voided')
+                    else 'WIN' if p.get('prediction_correct') is True
                     else 'LOSS' if p.get('prediction_correct') is False
                     else None
                 ),
             }
+
+            if p.get('is_voided'):
+                pick_dict['void_reason'] = 'DNP'
 
             if p.get('ultra_tier'):
                 pick_dict['ultra_tier'] = True
@@ -267,9 +277,12 @@ class BestBetsAllExporter(BaseExporter):
             if game_date_str not in weeks_map[week_key]:
                 weeks_map[week_key][game_date_str] = []
 
-            result = None
-            if row.get('prediction_correct') is not None:
+            if row.get('is_voided'):
+                result = 'VOID'
+            elif row.get('prediction_correct') is not None:
                 result = 'WIN' if row['prediction_correct'] else 'LOSS'
+            else:
+                result = None
 
             angles = row.get('pick_angles') or []
 
@@ -286,6 +299,9 @@ class BestBetsAllExporter(BaseExporter):
                 'result': result,
                 'angles': list(angles)[:3],
             }
+
+            if row.get('is_voided'):
+                pick_dict['void_reason'] = 'DNP'
 
             if row.get('ultra_tier'):
                 pick_dict['ultra_tier'] = True
@@ -304,29 +320,38 @@ class BestBetsAllExporter(BaseExporter):
                 picks = days_map[day_key]
                 day_wins = sum(1 for p in picks if p['result'] == 'WIN')
                 day_losses = sum(1 for p in picks if p['result'] == 'LOSS')
+                day_voided = sum(1 for p in picks if p['result'] == 'VOID')
                 day_pending = sum(1 for p in picks if p['result'] is None)
                 week_wins += day_wins
                 week_losses += day_losses
                 week_pending += day_pending
 
                 # Day-level result color hint for frontend
-                if day_pending == len(picks):
+                # Voided picks don't count — a day with only voided picks is complete
+                actionable = len(picks) - day_voided
+                if actionable == 0:
+                    day_status = 'void'
+                elif day_pending == actionable:
                     day_status = 'pending'
-                elif day_wins > 0 and day_losses == 0:
+                elif day_wins > 0 and day_losses == 0 and day_pending == 0:
                     day_status = 'sweep'
-                elif day_losses > 0 and day_wins == 0:
+                elif day_losses > 0 and day_wins == 0 and day_pending == 0:
                     day_status = 'miss'
                 else:
                     day_status = 'split'
 
+                day_record = {
+                    'wins': day_wins,
+                    'losses': day_losses,
+                    'pending': day_pending,
+                }
+                if day_voided > 0:
+                    day_record['voided'] = day_voided
+
                 days.append({
                     'date': day_key,
                     'status': day_status,
-                    'record': {
-                        'wins': day_wins,
-                        'losses': day_losses,
-                        'pending': day_pending,
-                    },
+                    'record': day_record,
                     'picks': picks,
                 })
 
