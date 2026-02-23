@@ -526,6 +526,48 @@ If Phase 3 is missing data, check if Phase 2 has the raw data:
 
 ---
 
+### 2.2B - Phase 3 Partial Coverage (Some Games Missing)
+
+**Symptom:** Phase 3 analytics exist but only for SOME games. Example: 7/11 games have `player_game_summary` data, 4 are missing.
+
+**Quick Check:**
+```sql
+-- Compare final games vs games in analytics
+WITH scheduled AS (
+    SELECT game_id, away_team_tricode, home_team_tricode
+    FROM `nba-props-platform.nba_reference.nba_schedule`
+    WHERE game_date = CURRENT_DATE() - 1
+      AND game_status = 3
+),
+analytics AS (
+    SELECT DISTINCT game_id
+    FROM `nba-props-platform.nba_analytics.player_game_summary`
+    WHERE game_date = CURRENT_DATE() - 1
+)
+SELECT s.game_id, s.away_team_tricode, s.home_team_tricode,
+    CASE WHEN a.game_id IS NOT NULL THEN 'OK' ELSE 'MISSING' END as status
+FROM scheduled s LEFT JOIN analytics a ON s.game_id = a.game_id
+ORDER BY status DESC;
+```
+
+**Common Causes:**
+1. **Team boxscore zeros for in-progress games** (most common): Scraper writes 0 pts/FGA for games still in progress. Quality check filters these teams → games can't be processed until boxscores have real data. **This is expected behavior as of Session 302** — the processor now filters invalid teams and keeps valid ones.
+2. **Late game finish**: West coast games finish after Phase 3 runs. Canary auto-heal re-triggers Phase 3 within 30 minutes.
+3. **Scraper failure for specific games**: Check `nba_raw.nbac_team_boxscore` for the missing games.
+
+**Fix:**
+```bash
+# Re-trigger Phase 3 for the affected date (MERGE_UPDATE is safe to re-run)
+curl -X POST https://nba-phase3-analytics-processors-f7p3g7f6ya-wl.a.run.app/process-date-range \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  -H "Content-Type: application/json" \
+  -d '{"start_date":"YYYY-MM-DD","end_date":"YYYY-MM-DD","backfill_mode":true}'
+```
+
+**Auto-heal:** Pipeline canary (`pipeline_canary_queries.py`) checks every 30 minutes and auto-triggers Phase 3 reprocessing when partial gaps are detected.
+
+---
+
 ### 2.3 - Missing Phase 4 Precompute
 
 **Symptom:** Phase 5 can't find Phase 4 precomputed data.

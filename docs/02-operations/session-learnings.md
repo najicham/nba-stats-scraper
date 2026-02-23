@@ -430,6 +430,26 @@ gcloud run services update post-grading-export --region=us-west2 --project=nba-p
 
 ## Data Quality Issues
 
+### Phase 3 All-or-Nothing Quality Rejection (Session 302)
+
+**Problem**: `TeamOffenseGameSummaryProcessor` quality check rejected ALL team records when ANY team had zeros (points=0, fg_attempted=0). On an 11-game night with 5 late games still in progress, the scraper wrote zero-value placeholders for 10 teams. The quality check rejected all 22 teams — even the 12 valid ones from 6 completed games. This cascaded: PlayerGameSummary blocked on empty team dependency → Phase 4/5/6 all failed.
+
+**Root cause**: Quality check used `return pd.DataFrame()` (reject entire batch) instead of filtering invalid rows.
+
+**Fix**: Changed to filter-not-reject pattern:
+- Invalid teams (0 pts/FGA) are filtered out with a warning
+- Valid teams proceed normally
+- Slack `notify_warning` fires immediately listing filtered teams
+- Canary auto-heal re-triggers Phase 3 after remaining games finish
+- If ALL teams invalid, still returns empty (fallback chain activates)
+
+**Key learning**: Quality gates should filter individual bad rows, not reject entire batches. Partial success (12/22 teams) is far better than total failure (0/22 teams).
+
+**Three-layer visibility**:
+1. Processor Slack alert — immediate when teams are filtered
+2. Pipeline canary auto-heal — every 30 min, auto-re-triggers Phase 3
+3. `/validate-daily` Phase 0.35 — manual per-game coverage check
+
 ### BDL Data Quality Issues (Session 41)
 
 **Status**: BDL is DISABLED as backup source (`USE_BDL_DATA = False` in `player_game_summary_processor.py`)
