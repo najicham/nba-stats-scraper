@@ -293,6 +293,47 @@ main = backup_bigquery_tables
 
 ---
 
+### Coordinator Backfill Timeout — Player Loader Exceeds 540s (Session 328-329)
+
+**Symptom**: Coordinator `/start` backfill triggered, logs show "Found 365 players" and hundreds of `NO_LINE_DIAGNOSTIC` messages, but NO quality gate, dispatch, or completion logs. Predictions never generated.
+
+**Cause**: Cloud Run request timeout is 540s (9 min). Player loader emits per-player line diagnostic messages (NO_PROP_LINE, LINE_SOURCE, LINE_SANITY_REJECT) that each involve BQ lookups. For 365 players on an 11-game day, player loading alone takes ~12+ minutes — exceeding the timeout. The `/start` handler is killed silently before reaching quality gate or Pub/Sub dispatch.
+
+**Timeline of actual failure (Session 328)**:
+```
+23:02:25 — /start triggered (BACKFILL mode), 365 players queried
+23:02:25 to 23:15:03 — Player loader diagnostic messages (NO_LINE, etc.)
+23:11:25 — ~540s elapsed, Cloud Run kills the request
+~23:15 — Last straggling log messages, then silence
+```
+
+**Detection**:
+```bash
+# 1. Check coordinator logs for quality gate messages (should appear after player loading)
+gcloud logging read '...service_name="prediction-coordinator" AND ("QUALITY_GATE" OR "viable" OR "published")' ...
+
+# 2. If NO quality gate logs after a /start — timeout killed the request
+# 3. Check Cloud Run timeout setting
+gcloud run services describe prediction-coordinator --region=us-west2 --format="value(spec.template.spec.timeoutSeconds)"
+# Returns: 540 (9 min) — too low for large game days
+```
+
+**Fix applied**: Increase coordinator timeout to 900s (15 min):
+```bash
+gcloud run services update prediction-coordinator --region=us-west2 \
+  --update-env-vars="" --timeout=900
+```
+
+**Prevention**:
+1. Set coordinator timeout to 900s+ (15 min) for safety margin on 11+ game days
+2. Monitor for exact-timeout latencies: `latency="540.0"` in logs
+3. Consider optimizing player_loader line diagnostics — batch BQ lookups instead of per-player queries
+4. Never trigger two backfills in quick succession (causes interleaved processing, wasting time)
+
+**Related**: Session 201 "Timeout Cascade" — same pattern where fixing one bug reveals timeout as bottleneck
+
+---
+
 ### Phase 4 Same-Day Defensive Check Bypass (Session 220)
 
 **Symptom**: Phase 4 processors fail with "0% game summary coverage" for today's games
@@ -335,6 +376,36 @@ gcloud run services describe SERVICE_NAME --region=us-west2 \
 # Compare to latest main
 git log -1 --format="%h"
 ```
+
+---
+
+### Backfill Script Overwrites pick_angles (Session 327-329)
+
+**Symptom**: All BQ `signal_best_bets_picks` rows have `pick_angles: []` after running `bin/backfill_dry_run.py --write`
+
+**Cause**: The backfill script called the aggregator directly but skipped `build_pick_angles()` and `CrossModelScorer`, writing empty angles for every row.
+
+**Fix (Session 328)**: Added `build_pick_angles()` + `CrossModelScorer` to `simulate_date()` in the backfill script.
+
+**Recovery**: Re-run the full backfill: `PYTHONPATH=. python bin/backfill_dry_run.py --start 2026-01-09 --end 2026-02-21 --write` (~10 min), then trigger Phase 6 re-export.
+
+**Prevention**: Any script that writes to `signal_best_bets_picks` must include the full pick pipeline (angles, cross-model scoring, ultra classification).
+
+---
+
+### Stale BEST_BETS_MODEL_ID Env Var (Session 329)
+
+**Symptom**: Dashboard shows wrong `best_bets_model` (e.g., `catboost_v12` when champion is `catboost_v9`). Direction health and decay detection queries reference wrong model.
+
+**Cause**: `BEST_BETS_MODEL_ID` env var was set on `phase6-export` and `post-grading-export` CFs during a prior model evaluation, never cleaned up when champion changed.
+
+**Fix**: Remove the env var so CFs use the code default (`CHAMPION_MODEL_ID` in `shared/config/model_selection.py`):
+```bash
+gcloud run services update phase6-export --region=us-west2 --project=nba-props-platform --remove-env-vars="BEST_BETS_MODEL_ID"
+gcloud run services update post-grading-export --region=us-west2 --project=nba-props-platform --remove-env-vars="BEST_BETS_MODEL_ID"
+```
+
+**Prevention**: After any model champion change, audit CF env vars for stale overrides.
 
 ---
 

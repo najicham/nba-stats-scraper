@@ -238,6 +238,7 @@ WHERE game_date >= CURRENT_DATE() - 3 GROUP BY 1 ORDER BY 1 DESC;
 | BDL scraper 0 records | EXPECTED — BDL intentionally disabled |
 | Orchestrator not triggering P3 | NOT a bug — Phase 3 uses direct Pub/Sub |
 | Docker cache stale deploy | `./bin/hot-deploy.sh SERVICE` |
+| Coordinator backfill timeout | Increase timeout to 900s; player loader exceeds 540s on 11+ game days |
 
 **Full troubleshooting:** `docs/02-operations/session-learnings.md`
 
