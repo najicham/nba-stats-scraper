@@ -315,17 +315,20 @@ class CompletenessChecker:
         team_list = "', '".join(team_ids)
         entity_filter = f"(home_team_tricode IN ('{team_list}') OR away_team_tricode IN ('{team_list}'))"
 
+        # UNNEST both home and away teams so each game counts for both teams.
+        # Previous CASE WHEN only attributed games to the home team when both
+        # teams were in the list, undercounting expected games by ~50%.
+        # Fix: Session 332.
         query = f"""
         SELECT
-            CASE
-                WHEN home_team_tricode IN ('{team_list}') THEN home_team_tricode
-                ELSE away_team_tricode
-            END as entity_id,
+            team AS entity_id,
             COUNT(DISTINCT game_date) as count
-        FROM `{self.project_id}.nba_raw.v_nbac_schedule_latest`
+        FROM `{self.project_id}.nba_raw.v_nbac_schedule_latest`,
+            UNNEST([home_team_tricode, away_team_tricode]) AS team
         WHERE {date_filter}
           AND {entity_filter}
           AND game_status = 3  -- Final games only
+          AND team IN ('{team_list}')
         GROUP BY entity_id
         """
 
