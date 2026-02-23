@@ -32,8 +32,10 @@ from google.cloud import bigquery
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger(__name__)
 
+from shared.config.model_selection import get_best_bets_model_id
+
 PROJECT_ID = 'nba-props-platform'
-SYSTEM_ID = 'catboost_v9'
+SYSTEM_ID = get_best_bets_model_id()
 TABLE_ID = f'{PROJECT_ID}.nba_predictions.signal_health_daily'
 
 # Signals that depend on model accuracy (decay with model staleness)

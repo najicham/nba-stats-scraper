@@ -15,6 +15,7 @@ from typing import Any, Dict, Optional, Set, Tuple
 
 from google.cloud import bigquery
 
+from shared.config.model_selection import get_best_bets_model_id
 from shared.config.nba_season_dates import get_season_start_date, get_season_year_from_date
 
 logger = logging.getLogger(__name__)
@@ -26,7 +27,7 @@ DEFAULT_HR_THRESHOLD = 40.0
 def compute_player_blacklist(
     bq_client: bigquery.Client,
     target_date: str,
-    system_id: str = 'catboost_v9',
+    system_id: str = None,
     min_picks: int = DEFAULT_MIN_PICKS,
     hr_threshold: float = DEFAULT_HR_THRESHOLD,
     project_id: str = 'nba-props-platform',
@@ -52,6 +53,9 @@ def compute_player_blacklist(
             stats_dict: Diagnostic info (evaluated, blacklisted, worst players).
     """
     empty_result = (set(), {'evaluated': 0, 'blacklisted': 0, 'players': []})
+
+    if system_id is None:
+        system_id = get_best_bets_model_id()
 
     try:
         target = date.fromisoformat(target_date) if isinstance(target_date, str) else target_date
