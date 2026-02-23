@@ -2,6 +2,7 @@
 
 **Date:** 2026-02-23
 **Focus:** V9 champion decay response — interim V12 promotion, all-family retrain
+**Status:** PARTIALLY COMPLETE — retrain done, model registration NOT finished
 
 ## What Happened
 
@@ -24,10 +25,9 @@ V9 champion hit BLOCKED state (47.1% edge 3+ HR, 14d: 45.6%). Below 52.4% breake
 
 4. **Updated CLAUDE.md** — new champion model info
 
-5. **Kicked off full model retrain** (`./bin/retrain.sh --all --enable --train-end 2026-02-15`)
-   - Training window: Jan 4 → Feb 15 (42-day rolling)
-   - Eval window: Feb 16 → Feb 22 (7 days of graded data)
-   - 9 families: v12_mae, v12_noveg_mae, v12_noveg_q43, v12_q43, v12_vegas_q43, v9_low_vegas, v9_mae (plus duplicates — see known issue)
+5. **Full retrain completed** — all 9 families trained (see results below)
+
+6. **4 top models uploaded to GCS** (`gs://nba-props-platform-models/catboost/v12/monthly/`)
 
 ## V12 Promotion Analysis
 
@@ -40,44 +40,76 @@ V9 champion hit BLOCKED state (47.1% edge 3+ HR, 14d: 45.6%). Below 52.4% breake
 
 V12 base chosen for interim because it's the only V12 variant that is both HEALTHY and has sufficient sample size.
 
-## Retrain Status
+## Retrain Results — COMPLETE
 
-**IMPORTANT: Retrain may still be running.** Check with:
-```bash
-# Check if retrain process is running
-ps aux | grep retrain
-# Or check the latest models in GCS
-gsutil ls gs://nba-props-platform-models/catboost/v12/monthly/ | tail -10
+Training window: Jan 4 → Feb 15 (42 days). Eval: Feb 16–22. All 9 families trained, saved locally, registered in `ml_experiments`.
+
+| Family | MAE | Edge 3+ HR | N | Gates Passed | Notable |
+|--------|-----|-----------|---|-------------|---------|
+| v12_vegas_q43 | **4.70** | **66.7%** | 21 | 4/6 | Best MAE + HR |
+| v12_noveg_q43 | 4.96 | **65.7%** | 35 | 4/6 | Most edge picks, vegas bias -1.98 (marginal) |
+| v12_noveg_mae | 4.78 | **61.5%** | 26 | 5/6 | Only failed sample size |
+| v9_mae | 4.86 | 60.0% | 20 | 4/6 | Solid V9 refresh |
+| v9_low_vegas | 4.86 | 60.0% | 20 | 4/6 | Same as v9_mae |
+| v12_mae (×2) | 4.74 | 55.6% | 18 | 3/6 | UNDER direction weak |
+| v12_q43 | 4.74 | 55.6% | 18 | 3/6 | Same as v12_mae |
+
+**All models improved MAE vs baseline.** All failed governance sample-size gate (7-day eval = 18-35 picks, need 50). Real validation happens after 2-3 days of production shadow data.
+
+### Local Model Files
+
+All saved in `models/` directory:
+```
+models/catboost_v9_54f_train20260104-20260215_20260223_082346.cbm     # v12_mae (54f)
+models/catboost_v9_54f_train20260104-20260215_20260223_082428.cbm     # v12_mae dup
+models/catboost_v9_50f_noveg_train20260104-20260215_20260223_082511.cbm  # v12_noveg_mae
+models/catboost_v9_50f_noveg_train20260104-20260215_20260223_082549.cbm  # v12_noveg_q43
+models/catboost_v9_54f_train20260104-20260215_20260223_082628.cbm     # v12_vegas_q43
+models/catboost_v9_54f_q0.43_train20260104-20260215_20260223_082706.cbm  # v12_q43
+models/catboost_v9_33f_train20260104-20260215_20260223_082719.cbm     # v9_mae
+models/catboost_v9_33f_train20260104-20260215_20260223_082730.cbm     # v9_low_vegas
+models/catboost_v9_33f_train20260104-20260215_20260223_082743.cbm     # v9_mae dup
 ```
 
-**First attempt failed** (eval period Feb 23 → Mar 1 was in the future). Restarted with `--train-end 2026-02-15` so eval uses Feb 16-22 graded data.
+### GCS Upload Status
 
-**Governance gate results are expected to show FAIL** on the eval window — only ~18 edge 3+ picks in a 7-day eval period (need 50). This is normal for walkforward eval. The real validation happens after 2-3 days of production shadow picks accumulate 50+ edge 3+ graded predictions.
+4 models uploaded to `gs://nba-props-platform-models/catboost/v12/monthly/`:
+- `catboost_v9_54f_q0.43_train20260104-20260215_20260223_082706.cbm` (v12_vegas_q43)
+- `catboost_v9_50f_noveg_train20260104-20260215_20260223_082511.cbm` (v12_noveg_mae)
+- `catboost_v9_50f_noveg_train20260104-20260215_20260223_082549.cbm` (v12_noveg_q43)
+- `catboost_v9_54f_train20260104-20260215_20260223_082346.cbm` (v12_mae)
 
-First model (v12_mae) trained: MAE 4.74 vs 5.14 baseline (improved!), saved to GCS, registered in ml_experiments. Continuing through all 9 families.
+### NOT YET DONE — Model Registration in `model_registry`
 
-### After Retrain Completes
+The session ran out of context before registering these fresh models in `nba_predictions.model_registry`. **This is the critical next step.** Without registration, the prediction worker won't load these models and they won't generate shadow predictions.
 
-1. **Check which models passed governance gates:**
-   ```bash
-   bq query --use_legacy_sql=false --project_id=nba-props-platform "
-   SELECT model_id, model_family, status, enabled,
-     CAST(evaluation_metrics AS STRING) as metrics
-   FROM nba_predictions.model_registry
-   WHERE created_at >= '2026-02-23'
-   ORDER BY model_family"
-   ```
+To register, use:
+```bash
+# Check model_registry schema
+bq show --schema nba-props-platform:nba_predictions.model_registry
 
-2. **Shadow the new models for 2+ days** before promoting any as permanent champion
+# Insert a new model (example for v12_vegas_q43 — the best performer)
+bq query --use_legacy_sql=false --project_id=nba-props-platform "
+INSERT INTO nba_predictions.model_registry
+(model_id, model_version, model_type, gcs_path, feature_count, ...)
+VALUES (
+  'catboost_v12_vegas_q43_train0104_0215',
+  'v12_vegas_q43',
+  'catboost',
+  'gs://nba-props-platform-models/catboost/v12/monthly/catboost_v9_54f_q0.43_train20260104-20260215_20260223_082706.cbm',
+  54,
+  ...
+)"
 
-3. **Promote the best fresh V12 variant** when it has 50+ edge 3+ graded picks and passes all governance gates (60% HR, ±1.5 vegas bias, no tier bias >5)
+# Or use the model-registry script if it supports add
+./bin/model-registry.sh --help
+```
 
 ## Known Issues
 
 ### Duplicate Model Families in Registry
 The `model_registry` has duplicate entries for `v12_mae` and `v9_mae` families, causing the retrain script to train each twice. Non-blocking but wasteful. Fix:
 ```sql
--- Investigate duplicates
 SELECT model_family, model_id, status, enabled
 FROM nba_predictions.model_registry
 WHERE model_family IN ('v12_mae', 'v9_mae') AND enabled = TRUE
@@ -98,22 +130,18 @@ Non-critical service. Deploy when convenient:
 ### Firestore Completion Records Missing
 No Phase 2/Phase 3 completion docs found for Feb 22 or Feb 23. Pipeline data IS flowing (analytics records exist), so this is a tracking gap, not a data gap. Investigate if Firestore writes are failing silently.
 
-## Today's Game Day Context
-
-- 3 games: SAS@DET, SAC@MEM, UTA@HOU
-- **RED signal** — light slate (3 games), UNDER_HEAVY (2.7% over), 0 high-edge V9 picks
-- V12 has 7 edge 3+ picks (vs V9's 0) — new champion already adding value
-- Skip betting recommended on light slate regardless
-
 ## Files Changed
 
 - `shared/config/model_selection.py` — Champion model ID: V9 → V12
 - `CLAUDE.md` — Updated ML Model section
+- `docs/09-handoff/2026-02-23-SESSION-332-HANDOFF.md` — This file
 
 ## Next Session Priorities
 
-1. **Check retrain results** — which families passed governance gates?
-2. **Monitor V12 as champion** — verify best bets export uses V12 health correctly
-3. **Fix duplicate model families** in registry
-4. **Investigate Firestore completion tracking** gap
-5. **When fresh models have 50+ graded picks** (2-3 days), evaluate for permanent promotion
+1. **Register fresh models in `model_registry`** — CRITICAL: models are in GCS but not registered, so they won't generate predictions yet
+2. **Monitor V12 interim champion** — run `/daily-steering` to verify best bets export uses V12 correctly
+3. **Fix duplicate model families** in registry (v12_mae and v9_mae appear twice)
+4. **Deploy `validation-runner`** — still 1 commit behind
+5. **Investigate Firestore completion tracking** gap
+6. **After 2-3 days of shadow data** — evaluate fresh models with 50+ edge 3+ graded picks for permanent promotion
+7. **Top candidates for permanent champion:** v12_vegas_q43 (66.7% HR, best MAE 4.70) and v12_noveg_q43 (65.7% HR, most volume)
