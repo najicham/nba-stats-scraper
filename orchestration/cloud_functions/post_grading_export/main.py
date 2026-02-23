@@ -18,11 +18,13 @@ Actions on success:
 1. Re-export picks/{date}.json with actuals via AllSubsetsPicksExporter
 2. Refresh subsets/season.json via SeasonSubsetPicksExporter
 3. Backfill actuals into signal_best_bets_picks table
+4. Re-export tonight/all-players.json with actuals
 
-Version: 1.2
+Version: 1.3
 Created: 2026-02-13 (Session 242)
 Updated: 2026-02-14 (Session 254) - Added signal best bets grading backfill
 Updated: 2026-02-15 (Session 263) - Added model_performance_daily computation
+Updated: 2026-02-22 (Session 332) - Added tonight JSON re-export with actuals
 """
 
 import base64
@@ -278,6 +280,22 @@ def main(cloud_event):
             exc_info=True
         )
         results['model_performance_error'] = str(e)
+
+    # 6. Re-export tonight/all-players.json with actuals (Session 332)
+    try:
+        from data_processors.publishing.tonight_all_players_exporter import TonightAllPlayersExporter
+        tonight_exporter = TonightAllPlayersExporter()
+        tonight_path = tonight_exporter.export(target_date)
+        results['tonight_path'] = tonight_path
+        logger.info(
+            f"[{correlation_id}] Re-exported tonight JSON with actuals: {tonight_path}"
+        )
+    except Exception as e:
+        logger.error(
+            f"[{correlation_id}] Failed to re-export tonight JSON for {target_date}: {e}",
+            exc_info=True
+        )
+        results['tonight_error'] = str(e)
 
     duration = (datetime.now(timezone.utc) - start_time).total_seconds()
     logger.info(
