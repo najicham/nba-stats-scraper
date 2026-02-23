@@ -552,17 +552,44 @@ class TeamOffenseGameSummaryProcessor(
                 logger.info("No data returned from nbac_team_boxscore")
                 return pd.DataFrame()
 
-            # Filter out invalid rows (0 values = placeholder/incomplete data)
+            # Filter out invalid rows (0 values = placeholder/incomplete data from in-progress games)
+            # Session 302: Changed from reject-all to filter-invalid. Previously, ANY team with
+            # zeros caused ALL teams to be rejected, blocking the entire pipeline on nights with
+            # late games still in progress. Now we keep valid teams and drop only the bad ones.
             valid_mask = (df['points'] > 0) & (df['fg_attempted'] > 0)
             invalid_rows = df[~valid_mask]
 
             if len(invalid_rows) > 0:
                 invalid_teams = invalid_rows['team_abbr'].tolist()
+                valid_count = len(df) - len(invalid_rows)
                 logger.warning(
-                    f"⚠️  QUALITY CHECK: Found {len(invalid_rows)} teams with invalid data "
-                    f"(0 points or 0 FGA): {invalid_teams}. Triggering fallback to reconstruction."
+                    f"⚠️  QUALITY CHECK: Filtering {len(invalid_rows)} teams with invalid data "
+                    f"(0 points or 0 FGA): {invalid_teams}. "
+                    f"Keeping {valid_count} valid teams."
                 )
-                # Return empty to trigger fallback - ensures ALL teams come from same source
+                # Send Slack alert for visibility — partial processing needs follow-up
+                notify_warning(
+                    title="Team Offense: Partial Data — Some Teams Filtered",
+                    message=(
+                        f"Filtered {len(invalid_rows)} teams with 0 points/FGA "
+                        f"(likely in-progress games). {valid_count} valid teams kept. "
+                        f"Re-run Phase 3 after remaining games finish."
+                    ),
+                    details={
+                        'processor': 'team_offense_game_summary',
+                        'start_date': start_date,
+                        'end_date': end_date,
+                        'filtered_teams': invalid_teams,
+                        'valid_teams_kept': valid_count,
+                        'total_teams_received': len(df),
+                        'action_needed': 'Re-trigger Phase 3 after all games are final',
+                    },
+                    processor_name=self.__class__.__name__
+                )
+                df = df[valid_mask].copy()
+
+            if df.empty:
+                logger.warning("All teams had invalid data after filtering — triggering fallback")
                 return pd.DataFrame()
             # ===== END quality validation =====
 

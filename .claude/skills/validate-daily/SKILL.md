@@ -184,6 +184,52 @@ git log --oneline $DEPLOYED_SHA..HEAD -- predictions/worker/
 
 **Reference**: Sessions 82, 81, 64 handoffs
 
+### Phase 0.12: Live-Export Env Var Drift Check (Session 302 - CRITICAL)
+
+**Purpose**: Verify the `live-export` Cloud Function has its `BDL_API_KEY` env var intact. On Feb 22, a `--set-env-vars` deployment wiped BDL_API_KEY, causing live-grading to silently regenerate stale data for an entire evening.
+
+**Why this matters**: `live-export` is a Cloud Function (not Cloud Run), so standard deployment drift checks don't cover it. Without BDL_API_KEY, BDL live box score lookups fail silently and the live-grading JSON gets regenerated every 3 minutes with all-pending, zero-actual data.
+
+**What to check**:
+
+```bash
+# Check BDL_API_KEY is present in live-export env vars
+gcloud functions describe live-export \
+  --region=us-west2 \
+  --project=nba-props-platform \
+  --format="json" | jq '.environmentVariables | keys'
+
+# Run the full env var drift detector (supports Cloud Functions)
+./bin/monitoring/verify-env-vars-preserved.sh live-export
+```
+
+**Expected result**:
+- `BDL_API_KEY` present and non-empty in env vars
+- `GCP_PROJECT` present
+- `verify-env-vars-preserved.sh` shows `ALL REQUIRED VARIABLES PRESENT`
+
+**Alert thresholds**:
+- BDL_API_KEY missing: CRITICAL — live scoring is completely broken
+- GCP_PROJECT missing: CRITICAL — function may not find resources
+
+**If BDL_API_KEY missing**:
+
+```bash
+# Immediate fix: re-add BDL_API_KEY from Secret Manager
+BDL_API_KEY=$(gcloud secrets versions access latest --secret=BDL_API_KEY --project=nba-props-platform)
+gcloud functions deploy live-export \
+  --region=us-west2 \
+  --project=nba-props-platform \
+  --update-env-vars="BDL_API_KEY=$BDL_API_KEY"
+```
+
+**Also check live-freshness-monitor**:
+```bash
+./bin/monitoring/verify-env-vars-preserved.sh live-freshness-monitor
+```
+
+**Reference**: Session 302 (BDL_API_KEY wiped by --set-env-vars deployment)
+
 ### Phase 0.2: Heartbeat System Health (NEW)
 
 **IMPORTANT**: Check Firestore heartbeat collection for document proliferation.
@@ -333,6 +379,61 @@ else:
 - `prediction-coordinator` - Orchestrates prediction batches
 - `nba-phase3-analytics-processors` - Game analytics
 - `nba-phase4-precompute-processors` - ML features
+
+### Phase 0.35: Phase 3 Game-Level Coverage Check (Session 302 - NEW)
+
+**IMPORTANT**: Check if all final games have analytics data in `player_game_summary`.
+
+**Why this matters**: On Feb 22, Phase 3 processed only 6/11 games because late-finishing games had zero-value placeholders that triggered an all-or-nothing quality rejection. The existing Phase 3 gap detection only catches 0/N (complete gaps), not partial gaps like 7/11.
+
+**What to check**:
+
+```sql
+-- Compare scheduled final games vs games in analytics
+WITH scheduled AS (
+    SELECT game_id, away_team_tricode, home_team_tricode, game_status
+    FROM `nba-props-platform.nba_reference.nba_schedule`
+    WHERE game_date = '{GAME_DATE}'
+      AND game_status = 3  -- Final only
+),
+analytics AS (
+    SELECT DISTINCT game_id
+    FROM `nba-props-platform.nba_analytics.player_game_summary`
+    WHERE game_date = '{GAME_DATE}'
+)
+SELECT
+    s.game_id,
+    s.away_team_tricode,
+    s.home_team_tricode,
+    CASE WHEN a.game_id IS NOT NULL THEN 'OK' ELSE 'MISSING' END as analytics_status
+FROM scheduled s
+LEFT JOIN analytics a ON s.game_id = a.game_id
+ORDER BY analytics_status DESC, s.game_id
+```
+
+**Expected result**:
+- All rows show `analytics_status = OK`
+- Zero MISSING games
+
+**Severity**:
+
+| Scenario | Severity | Action |
+|----------|----------|--------|
+| 0 missing games | OK | All games processed |
+| 1-2 missing games | P2 | Re-trigger Phase 3 for the date |
+| 3+ missing games | P1 | Investigate scraper/boxscore data, then re-trigger |
+
+**If missing games detected — remediation**:
+
+```bash
+# Re-trigger Phase 3 for the affected date (MERGE_UPDATE is safe to re-run)
+curl -X POST https://nba-phase3-analytics-processors-f7p3g7f6ya-wl.a.run.app/process-date-range \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  -H "Content-Type: application/json" \
+  -d '{"start_date":"GAME_DATE","end_date":"GAME_DATE","backfill_mode":true}'
+```
+
+**Note**: The pipeline canary (`pipeline_canary_queries.py`) now has an auto-heal for this scenario — it will automatically re-trigger Phase 3 when partial gaps are detected. This manual check is for verification.
 
 ### Phase 0.4: Grading Completeness Check (Session 68 Fix)
 
@@ -3936,6 +4037,99 @@ ORDER BY sg.away_team_tricode
 | No lines (after enrichment) | P1 | Manual enrichment trigger, check prop scraper health |
 
 **Reference**: Session 218 (UPCG race condition caused 2/3 games missing from tonight export)
+
+### Phase 0.985: Live-Grading Content Quality Check (Session 302 - NEW)
+
+**Purpose**: Verify the live-grading JSON contains meaningful content (actual scores, graded predictions), not just a recently-updated file with stale data. This catches the Feb 22 scenario where live-grading/latest.json was regenerated every 3 minutes but contained ALL pending predictions with zero actuals because BDL_API_KEY was missing.
+
+**Why this matters**: Existing freshness checks only validate *file timestamp*. The file can be "fresh" (updated 2 min ago) but have completely stale *content* (all predictions pending, zero score sources). This check validates content quality.
+
+**Skip condition**: Skip on no-game days (no scheduled/active/final games today).
+
+**What to check**:
+
+```bash
+GAME_DATE=$(date +%Y-%m-%d)
+
+# Step 1: Check if there are games today (skip if none)
+GAME_COUNT=$(bq query --use_legacy_sql=false --format=json "
+SELECT COUNT(*) as cnt
+FROM nba_reference.nba_schedule
+WHERE game_date = '${GAME_DATE}'
+  AND game_status IN (1, 2, 3)
+" | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['cnt'])")
+
+if [ "$GAME_COUNT" = "0" ]; then
+  echo "No games today — skipping live-grading content check"
+else
+  # Step 2: Check how many games are final in BQ (ground truth)
+  echo "=== BQ Ground Truth ==="
+  bq query --use_legacy_sql=false "
+  SELECT
+    game_status,
+    COUNT(*) as games
+  FROM nba_reference.nba_schedule
+  WHERE game_date = '${GAME_DATE}'
+  GROUP BY 1
+  ORDER BY 1
+  "
+
+  # Step 3: Check live-grading JSON content quality
+  echo "=== Live-Grading Content Analysis ==="
+  gsutil cat gs://nba-props-platform-api/v1/live-grading/latest.json | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+preds = data.get('predictions', [])
+total = len(preds)
+if total == 0:
+    print('CRITICAL: Zero predictions in live-grading JSON')
+    sys.exit(1)
+
+pending = sum(1 for p in preds if p.get('grade') in (None, 'pending', 'PENDING'))
+null_actual = sum(1 for p in preds if p.get('actual') is None and p.get('actual_points') is None)
+null_source = sum(1 for p in preds if not p.get('score_source') and not p.get('actual_source'))
+graded = total - pending
+
+print(f'Total predictions: {total}')
+print(f'Graded: {graded} ({graded*100/total:.0f}%)')
+print(f'Pending: {pending} ({pending*100/total:.0f}%)')
+print(f'Null actuals: {null_actual} ({null_actual*100/total:.0f}%)')
+print(f'Null sources: {null_source} ({null_source*100/total:.0f}%)')
+
+if pending == total and null_actual == total:
+    print()
+    print('CRITICAL: ALL predictions pending with ZERO actuals')
+    print('  This indicates BDL_API_KEY is likely missing from live-export')
+    print('  Run: ./bin/monitoring/verify-env-vars-preserved.sh live-export')
+    sys.exit(1)
+elif null_source / total > 0.8:
+    print()
+    print(f'WARNING: {null_source*100/total:.0f}% of predictions have no score source')
+    sys.exit(1)
+else:
+    print()
+    print('OK: Live-grading content looks healthy')
+"
+fi
+```
+
+**Expected result**:
+- If games are in progress or final: at least some predictions should be graded with actual values
+- Null source rate < 80%
+- Not ALL predictions pending when games are active/final
+
+**Alert thresholds**:
+- ALL pending + ZERO actuals during active games: CRITICAL (BDL_API_KEY likely missing)
+- >80% null sources: WARNING (data flow issue)
+- Some pending during active games: NORMAL (games haven't started yet)
+- All pending before game time: NORMAL (expected)
+
+**If CRITICAL detected**:
+1. Check live-export env vars: `./bin/monitoring/verify-env-vars-preserved.sh live-export`
+2. If BDL_API_KEY missing, restore it (see Phase 0.12 fix)
+3. Manually trigger live-export: `curl -X POST https://us-west2-nba-props-platform.cloudfunctions.net/live-export`
+
+**Reference**: Session 302 (BDL_API_KEY wipe caused entire evening of stale live-grading)
 
 ### Phase 0.97: Phase 6 Export Health (Session 91)
 

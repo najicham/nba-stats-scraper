@@ -15,11 +15,17 @@ REGION="us-west2"
 FUNCTION_NAME="live-freshness-monitor"
 SERVICE_ACCOUNT="processor-sa@${PROJECT_ID}.iam.gserviceaccount.com"
 
-# Slack webhook URL for alerts
+# Slack webhook URL for alerts — try Secret Manager first, fall back to env var
 SLACK_WEBHOOK_URL="${SLACK_WEBHOOK_URL:-}"
 if [ -z "$SLACK_WEBHOOK_URL" ]; then
-    echo "Warning: SLACK_WEBHOOK_URL not set. Staleness alerts will be disabled."
-    echo "To enable alerts, run: export SLACK_WEBHOOK_URL=<your-webhook-url>"
+    echo "Fetching SLACK_WEBHOOK_URL from Secret Manager..."
+    SLACK_WEBHOOK_URL=$(gcloud secrets versions access latest --secret=SLACK_WEBHOOK_URL --project="$PROJECT_ID" 2>/dev/null || echo "")
+fi
+if [ -z "$SLACK_WEBHOOK_URL" ]; then
+    echo "WARNING: SLACK_WEBHOOK_URL not found in Secret Manager or environment."
+    echo "  Staleness alerts will be DISABLED. This means silent failures won't be caught!"
+    echo "  To fix: gcloud secrets create SLACK_WEBHOOK_URL --project=$PROJECT_ID"
+    echo "          echo -n '<url>' | gcloud secrets versions add SLACK_WEBHOOK_URL --data-file=-"
 fi
 
 echo "=== Live Freshness Monitor Deployment ==="

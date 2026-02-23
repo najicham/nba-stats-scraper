@@ -111,3 +111,33 @@ Users see:
 - No WIN/LOSS result indicators after games end
 
 The frontend code is correct — it displays "Waiting on Results" when `game_status === "final"` and `actual_points === null`. The data just never arrives.
+
+---
+
+## Update — 2026-02-23 ~12:15 AM ET: Fix Did Not Stick
+
+Doc 12 (`LIVE-GRADING-BUG-RESOLUTION.md`) reported that the `BDL_API_KEY` was added to the `live-export` Cloud Run service and that 51/52 predictions were graded as of ~11:15 PM ET.
+
+**However, as of 12:15 AM ET the data has reverted to fully stale:**
+
+```
+live-grading/latest.json (updated 2026-02-23T05:15:13 UTC = 12:15 AM ET):
+  game_status distribution: {'scheduled': 152}  — ALL scheduled, none final
+  score_source distribution: {None: 152}         — no BDL data
+  status distribution: {'pending': 152}           — nothing graded
+  actual: null for all 152 predictions
+```
+
+Meanwhile `tonight/all-players.json` correctly shows all 11 games as `final` (from the schedule scraper), confirming games are over. The live-grading service is writing fresh files (timestamp is current) but with completely empty score data — identical to the original bug.
+
+**The `BDL_API_KEY` env var was likely lost again.** Possible causes:
+1. The Cloud Run service was redeployed after the manual fix, wiping the env var again
+2. The fix was applied to the wrong revision and a new revision rolled out without it
+3. The deploy script fix (`deploy_live_export.sh`) wasn't used for the most recent deploy
+
+**Action needed:**
+1. Verify `BDL_API_KEY` is currently set on the **active revision** of the `live-export` Cloud Run service: `gcloud run services describe live-export --format='value(spec.template.spec.containers[0].env)'`
+2. If missing, re-add it and **verify it persists across a test redeploy** using the updated deploy script
+3. Consider moving `BDL_API_KEY` to a Secret Manager volume mount instead of an env var — volume mounts survive `--set-env-vars` wipes
+
+The frontend is fully wired and ready — `useLiveUpdates` polls every 30s, `mergeWithLiveData` correctly enriches players with live actuals. The moment the backend actually delivers data, everything will work.

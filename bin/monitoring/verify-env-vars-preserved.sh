@@ -24,6 +24,7 @@ echo "Service: $SERVICE"
 echo ""
 
 # Define required env vars per service
+IS_CLOUD_FUNCTION=false
 case "$SERVICE" in
   prediction-worker)
     REQUIRED_VARS=(
@@ -88,8 +89,15 @@ case "$SERVICE" in
     REQUIRED_VARS=(
       "GCP_PROJECT"
       "BDL_API_KEY"
-      "BUILD_COMMIT"
     )
+    IS_CLOUD_FUNCTION=true
+    ;;
+  live-freshness-monitor)
+    REQUIRED_VARS=(
+      "GCP_PROJECT"
+      "SLACK_WEBHOOK_URL"
+    )
+    IS_CLOUD_FUNCTION=true
     ;;
   *)
     echo "⚠️  WARNING: No env var requirements defined for $SERVICE"
@@ -98,12 +106,20 @@ case "$SERVICE" in
     ;;
 esac
 
-# Get deployed env vars
+# Get deployed env vars — Cloud Functions use different gcloud command and JSON path
 echo "Fetching deployed environment variables..."
-DEPLOYED_VARS=$(gcloud run services describe "$SERVICE" \
-  --region="$REGION" \
-  --project="$PROJECT" \
-  --format="json" 2>/dev/null | jq -r '.spec.template.spec.containers[0].env[]?.name // empty' 2>/dev/null)
+if [ "${IS_CLOUD_FUNCTION:-false}" = "true" ]; then
+  echo "  (detected as Cloud Function)"
+  DEPLOYED_VARS=$(gcloud functions describe "$SERVICE" \
+    --region="$REGION" \
+    --project="$PROJECT" \
+    --format="json" 2>/dev/null | jq -r '.environmentVariables // {} | keys[]' 2>/dev/null)
+else
+  DEPLOYED_VARS=$(gcloud run services describe "$SERVICE" \
+    --region="$REGION" \
+    --project="$PROJECT" \
+    --format="json" 2>/dev/null | jq -r '.spec.template.spec.containers[0].env[]?.name // empty' 2>/dev/null)
+fi
 
 if [ -z "$DEPLOYED_VARS" ]; then
   echo ""

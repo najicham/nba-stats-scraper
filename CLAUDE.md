@@ -239,6 +239,9 @@ WHERE game_date >= CURRENT_DATE() - 3 GROUP BY 1 ORDER BY 1 DESC;
 | Orchestrator not triggering P3 | NOT a bug — Phase 3 uses direct Pub/Sub |
 | Docker cache stale deploy | `./bin/hot-deploy.sh SERVICE` |
 | Coordinator backfill timeout | Increase timeout to 900s; player loader exceeds 540s on 11+ game days |
+| Phase 3 partial game processing | Quality check filters invalid teams (0 pts/FGA) instead of rejecting all. Slack alert fires + canary auto-heals. |
+| Team boxscore zeros for in-progress games | EXPECTED — scraper writes placeholders. Filtered at processing time (Session 302). |
+| Cloud Function env vars | Use `gcloud functions describe FUNC`, not `gcloud run services describe`. CFs are NOT Cloud Run services. |
 
 **Full troubleshooting:** `docs/02-operations/session-learnings.md`
 

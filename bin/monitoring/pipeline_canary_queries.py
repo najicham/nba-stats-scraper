@@ -408,6 +408,41 @@ CANARY_CHECKS = [
         description="Session 209: Validates exported subset picks contain only green quality predictions"
     ),
 
+    # Session 302: Partial game coverage detection
+    # Feb 22 had 11 games but only 6 completed when Phase 3 ran.
+    # Existing gap detection only catches 0/N, not 7/11 partial gaps.
+    CanaryCheck(
+        name="Phase 3 - Partial Game Coverage",
+        phase="phase3_partial_coverage",
+        query="""
+        WITH scheduled AS (
+            SELECT COUNT(*) as expected_games
+            FROM `nba-props-platform.nba_reference.nba_schedule`
+            WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+              AND game_status = 3
+        ),
+        actual AS (
+            SELECT COUNT(DISTINCT game_id) as actual_games
+            FROM `nba-props-platform.nba_analytics.player_game_summary`
+            WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+        )
+        SELECT
+            s.expected_games,
+            a.actual_games,
+            CASE
+                WHEN s.expected_games > 0 AND a.actual_games < s.expected_games THEN 1
+                ELSE 0
+            END as partial_gap_detected,
+            s.expected_games - a.actual_games as missing_games
+        FROM scheduled s
+        CROSS JOIN actual a
+        """,
+        thresholds={
+            'partial_gap_detected': {'max': 0},  # FAIL if ANY final game missing from analytics
+        },
+        description="Detects partial analytics gaps (some games processed but not all final games)"
+    ),
+
     CanaryCheck(
         name="Phase 3 - Player Game Summary Duplicates",
         phase="phase3_duplicates",
@@ -605,6 +640,64 @@ def auto_backfill_shadow_models(target_date: str) -> bool:
         return False
 
 
+def auto_retrigger_phase3(target_date: str) -> bool:
+    """
+    Auto-heal Phase 3 partial game coverage by re-triggering analytics processing.
+
+    Session 302: When partial gap detected (e.g., 7/11 games processed),
+    re-trigger Phase 3 for the affected date. Safe because Phase 3 uses
+    MERGE_UPDATE strategy — already-processed games are skipped or updated.
+
+    Args:
+        target_date: Date string (YYYY-MM-DD) to reprocess
+
+    Returns:
+        True if reprocessing was triggered successfully
+    """
+    import google.auth
+    import google.auth.transport.requests
+
+    phase3_url = os.environ.get(
+        "PHASE3_URL",
+        "https://nba-phase3-analytics-processors-f7p3g7f6ya-wl.a.run.app"
+    )
+
+    try:
+        # Get identity token for Cloud Run auth
+        credentials, _ = google.auth.default()
+        auth_req = google.auth.transport.requests.Request()
+        credentials.refresh(auth_req)
+
+        from google.oauth2 import id_token
+        token = id_token.fetch_id_token(auth_req, phase3_url)
+
+        import urllib.request
+        payload = json.dumps({
+            "start_date": target_date,
+            "end_date": target_date,
+            "backfill_mode": True
+        }).encode()
+
+        req = urllib.request.Request(
+            f"{phase3_url}/process-date-range",
+            data=payload,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json"
+            },
+            method="POST"
+        )
+
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read().decode())
+            logger.info(f"Phase 3 reprocessing triggered for {target_date}: {result}")
+            return True
+
+    except Exception as e:
+        logger.error(f"Failed to trigger Phase 3 reprocessing for {target_date}: {e}")
+        return False
+
+
 def check_scheduler_health() -> Tuple[bool, Dict, Optional[str]]:
     """
     Check Cloud Scheduler job health (Session 242).
@@ -651,6 +744,102 @@ def check_scheduler_health() -> Tuple[bool, Dict, Optional[str]]:
     except Exception as e:
         logger.error(f"Error checking scheduler health: {e}")
         return False, {}, f"Scheduler health check error: {e}"
+
+
+def check_live_grading_content(bq_client: bigquery.Client) -> Tuple[bool, Dict, Optional[str]]:
+    """
+    Check live-grading JSON content quality (Session 302).
+
+    Hybrid GCS+BQ check: reads yesterday's live-grading JSON from GCS,
+    compares graded count against BQ final game count.
+
+    Catches the Feb 22 scenario where live-grading file was updated every 3 min
+    but contained ALL pending predictions with zero actuals (BDL_API_KEY missing).
+
+    Returns:
+        Tuple of (passed, metrics, error_message)
+    """
+    try:
+        from google.cloud import storage
+
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
+
+        # Step 1: Check if yesterday had final games (skip if no games)
+        game_query = f"""
+        SELECT
+            COUNTIF(game_status = 3) as final_games,
+            COUNT(*) as total_games
+        FROM `nba-props-platform.nba_reference.nba_schedule`
+        WHERE game_date = '{yesterday}'
+          AND game_status IN (1, 2, 3)
+        """
+        game_result = list(bq_client.query(game_query).result(timeout=30))[0]
+        final_games = game_result.final_games or 0
+        total_games = game_result.total_games or 0
+
+        if total_games == 0:
+            return True, {'skipped': True, 'reason': 'no_games_yesterday'}, None
+
+        if final_games == 0:
+            return True, {'skipped': True, 'reason': 'no_final_games_yesterday', 'total_games': total_games}, None
+
+        # Step 2: Read live-grading JSON from GCS
+        gcs_client = storage.Client()
+        bucket = gcs_client.bucket("nba-props-platform-api")
+        blob = bucket.blob("v1/live-grading/latest.json")
+
+        if not blob.exists():
+            return False, {'final_games': final_games}, "live-grading/latest.json not found in GCS"
+
+        content = blob.download_as_text()
+        data = json.loads(content)
+
+        predictions = data.get("predictions", [])
+        game_date_in_file = data.get("game_date", "")
+        total_preds = len(predictions)
+
+        if total_preds == 0:
+            return False, {
+                'final_games': final_games,
+                'total_predictions': 0,
+                'file_game_date': game_date_in_file,
+            }, "Zero predictions in live-grading JSON"
+
+        # Step 3: Analyze content quality
+        graded = sum(1 for p in predictions if p.get("grade") not in (None, "pending", "PENDING"))
+        null_actual = sum(1 for p in predictions if p.get("actual") is None and p.get("actual_points") is None)
+        null_source = sum(1 for p in predictions if not p.get("score_source") and not p.get("actual_source"))
+
+        metrics = {
+            'final_games': final_games,
+            'total_predictions': total_preds,
+            'graded_predictions': graded,
+            'graded_pct': round(graded * 100.0 / total_preds, 1) if total_preds > 0 else 0,
+            'null_actual_count': null_actual,
+            'null_source_count': null_source,
+            'file_game_date': game_date_in_file,
+        }
+
+        # If all games were final but zero predictions graded, that's a failure
+        if final_games > 0 and graded == 0 and null_actual == total_preds:
+            return False, metrics, (
+                f"ZERO graded predictions despite {final_games} final games. "
+                f"All {total_preds} predictions have null actuals. "
+                f"Likely cause: BDL_API_KEY missing from live-export."
+            )
+
+        # If >80% null sources when games should be final, that's a warning
+        if total_preds > 0 and null_source / total_preds > 0.8 and final_games > 0:
+            return False, metrics, (
+                f"{null_source}/{total_preds} predictions ({null_source*100//total_preds}%) have no score source "
+                f"despite {final_games} final games."
+            )
+
+        return True, metrics, None
+
+    except Exception as e:
+        logger.error(f"Error checking live grading content: {e}")
+        return False, {}, f"Live grading content check error: {e}"
 
 
 def _is_break_window(client) -> bool:
@@ -707,6 +896,27 @@ def main():
         logger.warning(f"  Error: {sched_error}")
     results.append((scheduler_check, sched_passed, sched_metrics, sched_error))
 
+    # Session 302: Check live-grading content quality (hybrid GCS+BQ)
+    if not is_break:
+        grading_check = CanaryCheck(
+            name="Live-Grading Content Quality",
+            phase="live_grading_content",
+            query="",  # Not a BQ query — uses GCS + BQ hybrid
+            thresholds={},
+            description="Detects stale live-grading content (all pending, zero actuals) despite file updates (Session 302)"
+        )
+        grading_passed, grading_metrics, grading_error = check_live_grading_content(client)
+        grading_status = "✅ PASS" if grading_passed else "❌ FAIL"
+        if grading_metrics.get('skipped'):
+            logger.info(f"Live-Grading Content: ⏭️  SKIPPED ({grading_metrics.get('reason')})")
+        else:
+            logger.info(f"Live-Grading Content: {grading_status}")
+            if not grading_passed:
+                logger.warning(f"  Error: {grading_error}")
+        results.append((grading_check, grading_passed, grading_metrics, grading_error))
+    else:
+        logger.info("Break day — skipping live-grading content check")
+
     # Session 210: Auto-heal shadow model gaps (Session 299: skip on break days)
     if not is_break:
         for check, passed, metrics, error in results:
@@ -731,6 +941,33 @@ def main():
                 )
     else:
         logger.info("Break day — skipping shadow model auto-heal")
+
+    # Session 302: Auto-heal Phase 3 partial game coverage gaps
+    if not is_break:
+        for check, passed, metrics, error in results:
+            if check.phase == "phase3_partial_coverage" and not passed:
+                yesterday = (date.today() - timedelta(days=1)).isoformat()
+                missing = metrics.get('missing_games', '?')
+                logger.info(f"Phase 3 partial gap detected ({missing} missing games) — auto-triggering reprocessing for {yesterday}")
+
+                retrigger_ok = auto_retrigger_phase3(yesterday)
+
+                heal_msg = (
+                    f"Phase 3 auto-heal {'triggered' if retrigger_ok else 'FAILED'}: "
+                    f"reprocessing {yesterday} "
+                    f"(expected={metrics.get('expected_games', '?')}, "
+                    f"actual={metrics.get('actual_games', '?')}, "
+                    f"missing={missing})"
+                )
+                logger.info(heal_msg)
+
+                send_slack_alert(
+                    message=f"{'🔧' if retrigger_ok else '🚨'} *Phase 3 Partial Coverage Auto-Heal*\n{heal_msg}",
+                    channel="#nba-alerts",
+                    alert_type="PHASE3_PARTIAL_COVERAGE_AUTO_HEAL"
+                )
+    else:
+        logger.info("Break day — skipping Phase 3 partial coverage auto-heal")
 
     # Check if any failures
     failures = [r for r in results if not r[1]]

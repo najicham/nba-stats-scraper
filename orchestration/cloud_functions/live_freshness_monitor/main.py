@@ -279,32 +279,115 @@ def send_slack_alert(message: str, severity: str = "warning", context: dict = No
         return False
 
 
-def send_alert(message: str, severity: str = "warning"):
-    """Send alert via notification system and Slack."""
-    # Try Slack first (primary alert channel)
-    slack_sent = send_slack_alert(message, severity)
+def check_live_grading_freshness() -> dict:
+    """
+    Check live-grading JSON content quality (not just file freshness).
 
-    # Also try the internal notification system as backup
+    Detects silent failures where the file is updated every 3 min but contains
+    stale/useless data (e.g., all predictions pending, all games scheduled,
+    zero score sources). This catches the Feb 22 scenario where BDL_API_KEY
+    was wiped and live-grading regenerated stale data for hours.
+
+    Returns:
+        dict with content_quality, details, and diagnostics
+    """
     try:
-        from shared.utils.notification_system import notify_warning, notify_error
+        client = storage.Client()
+        bucket = client.bucket(GCS_BUCKET)
+        blob = bucket.blob("v1/live-grading/latest.json")
 
-        if severity in ("error", "critical"):
-            notify_error(
-                title="Live Data Freshness Issue",
-                message=message,
-                details={"component": "live_freshness_monitor"}
-            )
-        else:
-            notify_warning(
-                title="Live Data Freshness Warning",
-                message=message,
-                details={"component": "live_freshness_monitor"},
-            processor_name="Main"
-            )
+        if not blob.exists():
+            return {
+                "content_quality": "missing",
+                "details": "live-grading/latest.json not found"
+            }
+
+        content = blob.download_as_text()
+        data = json.loads(content)
+
+        predictions = data.get("predictions", [])
+        game_date = data.get("game_date", "")
+        total = len(predictions)
+
+        if total == 0:
+            return {
+                "content_quality": "empty",
+                "details": "Zero predictions in file",
+                "game_date": game_date
+            }
+
+        # Count diagnostic signals
+        pending_count = sum(
+            1 for p in predictions
+            if p.get("grade") in (None, "pending", "PENDING")
+        )
+        scheduled_count = sum(
+            1 for p in predictions
+            if p.get("game_status") in (None, 1, "1", "Scheduled")
+        )
+        null_actual_count = sum(
+            1 for p in predictions
+            if p.get("actual") is None and p.get("actual_points") is None
+        )
+        null_source_count = sum(
+            1 for p in predictions
+            if not p.get("score_source") and not p.get("actual_source")
+        )
+
+        pct_pending = pending_count / total * 100
+        pct_scheduled = scheduled_count / total * 100
+        pct_null_actual = null_actual_count / total * 100
+        pct_null_source = null_source_count / total * 100
+
+        diagnostics = {
+            "game_date": game_date,
+            "total_predictions": total,
+            "pending_count": pending_count,
+            "pct_pending": round(pct_pending, 1),
+            "scheduled_count": scheduled_count,
+            "pct_scheduled": round(pct_scheduled, 1),
+            "null_actual_count": null_actual_count,
+            "pct_null_actual": round(pct_null_actual, 1),
+            "null_source_count": null_source_count,
+            "pct_null_source": round(pct_null_source, 1),
+        }
+
+        # Determine content quality
+        # If games are active/final but everything is still pending with no actuals,
+        # the live-grading system is broken (likely missing BDL_API_KEY)
+        if pct_pending == 100 and pct_null_actual == 100:
+            return {
+                "content_quality": "stale_content",
+                "details": "ALL predictions pending with zero actuals — live scoring likely broken (check BDL_API_KEY)",
+                **diagnostics
+            }
+
+        if pct_scheduled == 100 and pct_null_source == 100:
+            return {
+                "content_quality": "stale_content",
+                "details": "ALL games showing scheduled with no score sources — BDL data not flowing",
+                **diagnostics
+            }
+
+        if pct_null_source > 80:
+            return {
+                "content_quality": "degraded",
+                "details": f"{pct_null_source:.0f}% of predictions have no score source",
+                **diagnostics
+            }
+
+        return {
+            "content_quality": "healthy",
+            "details": f"{total - pending_count}/{total} predictions graded",
+            **diagnostics
+        }
+
     except Exception as e:
-        # Just log if notification fails
-        if not slack_sent:
-            logger.error(f"Failed to send any alert: {e}", exc_info=True)
+        logger.error(f"Error checking live grading freshness: {e}", exc_info=True)
+        return {
+            "content_quality": "error",
+            "details": str(e)
+        }
 
 
 @functions_framework.http
@@ -323,6 +406,7 @@ def main(request):
         "timestamp": start_time.isoformat(),
         "games_active": False,
         "freshness": {},
+        "grading_freshness": {},
         "action_taken": None,
         "action_result": None
     }
@@ -359,6 +443,39 @@ def main(request):
                 }
             )
             result["processor_alert_sent"] = True
+
+    # Step 1.75: Check live-grading content quality (catches silent data failures)
+    # ADDED: 2026-02-22 Session 302 - BDL_API_KEY wipe caused stale-content loop
+    grading_freshness = check_live_grading_freshness()
+    result["grading_freshness"] = grading_freshness
+
+    if grading_freshness.get("content_quality") == "stale_content":
+        logger.error(f"STALE CONTENT: {grading_freshness.get('details')}")
+        send_slack_alert(
+            message=f"Live-grading content is STALE despite file updates!\n"
+                    f"{grading_freshness.get('details')}\n\n"
+                    f"This usually means BDL_API_KEY is missing from live-export.",
+            severity="critical",
+            context={
+                "Game Date": grading_freshness.get("game_date", "Unknown"),
+                "Total Predictions": str(grading_freshness.get("total_predictions", 0)),
+                "Pending": f"{grading_freshness.get('pct_pending', '?')}%",
+                "Null Actuals": f"{grading_freshness.get('pct_null_actual', '?')}%",
+                "Null Sources": f"{grading_freshness.get('pct_null_source', '?')}%",
+            }
+        )
+        result["grading_content_alert_sent"] = True
+    elif grading_freshness.get("content_quality") == "degraded":
+        logger.warning(f"DEGRADED CONTENT: {grading_freshness.get('details')}")
+        send_slack_alert(
+            message=f"Live-grading content quality degraded: {grading_freshness.get('details')}",
+            severity="warning",
+            context={
+                "Game Date": grading_freshness.get("game_date", "Unknown"),
+                "Total Predictions": str(grading_freshness.get("total_predictions", 0)),
+                "Null Sources": f"{grading_freshness.get('pct_null_source', '?')}%",
+            }
+        )
 
     # Step 2: Check data freshness
     freshness = check_live_data_freshness()
@@ -422,10 +539,16 @@ def main(request):
     result["action_result"] = "failed"
     result["message"] = f"Failed to refresh live data after {MAX_RETRIES} attempts"
 
-    send_alert(
-        message=f"Live data is stale and couldn't be refreshed. Age: {freshness.get('age_minutes')} min. "
+    send_slack_alert(
+        message=f"Live data is stale and couldn't be refreshed after {MAX_RETRIES} attempts.\n"
+                f"Age: {freshness.get('age_minutes')} min. "
                 f"Game date: {freshness.get('game_date')}, Expected: {freshness.get('expected_date')}",
-        severity="error"
+        severity="critical",
+        context={
+            "Age (minutes)": str(freshness.get("age_minutes", "?")),
+            "Game Date": freshness.get("game_date", "Unknown"),
+            "Expected Date": freshness.get("expected_date", "Unknown"),
+        }
     )
 
     # Always return 200: reporter, not gatekeeper. Findings are in the response body.

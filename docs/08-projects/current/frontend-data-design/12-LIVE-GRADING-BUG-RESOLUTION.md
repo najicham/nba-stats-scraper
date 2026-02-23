@@ -67,3 +67,75 @@ The key existed in GCP Secret Manager but was never wired to the Cloud Run servi
 3. **Consider using `live-grading/latest.json` as the source for actuals during game hours** — this file updates every 30 seconds with BDL live data and has `actual` values for in-progress and final games. The tonight JSON only gets actuals from BigQuery (delayed). If you want real-time actuals on the Tonight page, you could merge data from both endpoints.
 
 4. **No schema changes needed** — the JSON structures are working as documented. The `prediction.predicted` nesting is intentional.
+
+---
+
+## Live-Grading / Tonight JSON Merge Strategy
+
+The frontend has two data sources for actuals during and after games. Here's how to merge them:
+
+### Data Sources
+
+| Source | File | Update Frequency | Actuals Source | Available |
+|--------|------|-------------------|----------------|-----------|
+| Live-grading | `v1/live-grading/latest.json` | Every 30s during games | BDL API (real-time) | During + immediately after games |
+| Tonight | `v1/tonight/all-players.json` | Post-grading export (~6 AM ET) | BigQuery `player_game_summary` (NBA.com gamebook) | Next morning |
+
+### Merge Rules
+
+```
+1. During games (game_status = "in_progress"):
+   - Fetch `live-grading/latest.json` every 30 seconds
+   - Use `actual` field for real-time score
+   - Use `game_status` from live-grading (more current than tonight)
+   - Show WIN/LOSS indicators based on `status` field (correct/incorrect)
+
+2. Games just went final (game_status = "final", tonight has actual_points = null):
+   - Live-grading has immediate results from BDL
+   - Show final actual from live-grading's `actual` field
+   - Show correct/incorrect from live-grading's `status` field
+   - This covers the ~8 hour gap between game end and post-grading export
+
+3. Post-grading (tonight has actual_points !== null):
+   - tonight/all-players.json now has `actual_points` from NBA.com gamebook
+   - This is the AUTHORITATIVE source — use it, replacing BDL value
+   - NBA.com gamebook is the official scorer; BDL may differ by 1-2 points rarely
+
+4. Merge priority (highest to lowest):
+   - tonight `actual_points` !== null → USE IT (official NBA.com gamebook)
+   - live-grading `actual` !== null → USE IT (BDL real-time, good enough)
+   - Neither has actuals → show "Waiting on Results"
+```
+
+### Implementation Pattern (Pseudocode)
+
+```javascript
+function getPlayerActual(player, liveGradingPrediction) {
+  // Priority 1: Official gamebook actuals (from tonight JSON)
+  if (player.actual_points !== null && player.actual_points !== undefined) {
+    return {
+      actual: player.actual_points,
+      source: 'gamebook',      // NBA.com official
+      authoritative: true
+    };
+  }
+
+  // Priority 2: BDL live actuals (from live-grading JSON)
+  if (liveGradingPrediction?.actual !== null && liveGradingPrediction?.actual !== undefined) {
+    return {
+      actual: liveGradingPrediction.actual,
+      source: 'bdl_live',      // Real-time, may differ slightly from gamebook
+      authoritative: false
+    };
+  }
+
+  // No actuals yet
+  return { actual: null, source: null, authoritative: false };
+}
+```
+
+### Key Notes
+
+- BDL and NBA.com gamebook actuals may differ by 1-2 points in rare cases (scoring corrections). Always prefer gamebook when available.
+- During the ~8 hour gap between game end and post-grading export, BDL actuals from live-grading are the only source. They're reliable (95%+ exact match with gamebook).
+- If live-grading shows all predictions as `pending` with `actual: null` during active games, the backend has a data issue (likely BDL_API_KEY missing). The frontend can show a warning banner in this case.
