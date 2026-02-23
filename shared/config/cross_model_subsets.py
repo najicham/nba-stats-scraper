@@ -68,12 +68,14 @@ MODEL_FAMILIES = {
     },
     'v12_vegas_q43': {
         'pattern': 'catboost_v12_q43_',
+        'alt_pattern': 'catboost_v12_vegas_q43_',
         'exact': False,
         'feature_set': 'v12',
         'loss': 'quantile',
     },
     'v12_vegas_q45': {
         'pattern': 'catboost_v12_q45_',
+        'alt_pattern': 'catboost_v12_vegas_q45_',
         'exact': False,
         'feature_set': 'v12',
         'loss': 'quantile',
@@ -104,6 +106,8 @@ def classify_system_id(system_id: str) -> Optional[str]:
         else:
             if system_id.startswith(info['pattern']):
                 return family_key
+            if 'alt_pattern' in info and system_id.startswith(info['alt_pattern']):
+                return family_key
     # Fallback: V9 MAE catch-all for registry names like
     # 'catboost_v9_33f_train...' that don't match specific V9 variants
     if system_id.startswith('catboost_v9'):
@@ -130,6 +134,8 @@ def build_system_id_sql_filter(alias: str = '') -> str:
             clauses.append(f"{col} = '{info['pattern']}'")
         else:
             clauses.append(f"{col} LIKE '{info['pattern']}%'")
+            if 'alt_pattern' in info:
+                clauses.append(f"{col} LIKE '{info['alt_pattern']}%'")
     return '(' + ' OR '.join(clauses) + ')'
 
 
