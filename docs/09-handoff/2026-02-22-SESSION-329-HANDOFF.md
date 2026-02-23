@@ -89,7 +89,28 @@ Model is fully expected — V12 no-vegas family (50 features). Properly handled 
 ### ~~P3: Coordinator timeout~~ RESOLVED
 Increased 900s → 1200s (revision `prediction-coordinator-00276-8f6`). Combined with player_loader batch optimization, this provides ample headroom for 15-game days.
 
-### P4: Monitor V12+Vegas performance
+### P1: Investigate 6 ungraded picks
+
+Frontend Best Bets page shows "100 of 106 picks graded". 6 picks are missing grades. Investigate:
+- Which 6 picks are ungraded? Query `signal_best_bets_picks` LEFT JOIN `prediction_accuracy` WHERE `prediction_correct IS NULL` and game is Final (status=3)
+- Are they missing from `prediction_accuracy` entirely, or is the JOIN failing (player_lookup mismatch, system_id mismatch)?
+- Were the games postponed/cancelled?
+- Did the grading pipeline skip them?
+
+```sql
+SELECT b.game_date, b.player_name, b.player_lookup, b.team_abbr, b.recommendation,
+       pa.prediction_correct, pa.actual_points
+FROM `nba-props-platform.nba_predictions.signal_best_bets_picks` b
+LEFT JOIN `nba-props-platform.nba_predictions.prediction_accuracy` pa
+  ON b.player_lookup = pa.player_lookup
+  AND b.game_date = pa.game_date
+  AND b.system_id = pa.system_id
+WHERE b.game_date >= '2025-11-01'
+  AND pa.prediction_correct IS NULL
+ORDER BY b.game_date DESC
+```
+
+### P2: Monitor V12+Vegas performance
 
 V12+vegas is now generating predictions. Track:
 - Daily hit rates via `model_performance_daily` table
