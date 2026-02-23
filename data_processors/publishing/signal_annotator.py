@@ -49,6 +49,7 @@ from ml.signals.supplemental_data import (
     query_games_vs_opponent,
 )
 from ml.signals.player_blacklist import compute_player_blacklist
+from ml.signals.model_direction_affinity import compute_model_direction_affinities
 
 logger = logging.getLogger(__name__)
 
@@ -166,6 +167,18 @@ class SignalAnnotator:
         except Exception as e:
             logger.warning(f"Player blacklist computation failed (non-fatal): {e}")
 
+        # 4b1. Model-direction affinity (Session 330)
+        model_dir_affinities = {}
+        model_dir_blocks = set()
+        model_dir_stats = {}
+        try:
+            model_dir_affinities, model_dir_blocks, model_dir_stats = \
+                compute_model_direction_affinities(
+                    self.bq_client, target_date, self.project_id
+                )
+        except Exception as e:
+            logger.warning(f"Model-direction affinity computation failed (non-fatal): {e}")
+
         # 4b2. Enrich predictions with games_vs_opponent (Session 314)
         try:
             gvo_map = query_games_vs_opponent(self.bq_client, target_date)
@@ -209,6 +222,9 @@ class SignalAnnotator:
             cross_model_factors=cross_model_factors,
             qualifying_subsets=qual_subsets,
             player_blacklist=player_blacklist,
+            model_direction_blocks=model_dir_blocks,
+            model_direction_affinity_stats=model_dir_stats,
+            model_direction_affinities=model_dir_affinities,
         )
 
         logger.info(
@@ -284,6 +300,9 @@ class SignalAnnotator:
         cross_model_factors: Optional[Dict] = None,
         qualifying_subsets: Optional[Dict] = None,
         player_blacklist: Optional[set] = None,
+        model_direction_blocks: Optional[set] = None,
+        model_direction_affinity_stats: Optional[Dict] = None,
+        model_direction_affinities: Optional[Dict] = None,
     ) -> int:
         """Bridge aggregator's top picks into current_subset_picks as Signal Picks subset.
 
@@ -296,6 +315,8 @@ class SignalAnnotator:
             cross_model_factors=cross_model_factors,
             qualifying_subsets=qualifying_subsets,
             player_blacklist=player_blacklist,
+            model_direction_blocks=model_direction_blocks,
+            model_direction_affinity_stats=model_direction_affinity_stats,
         )
         top_picks, _ = aggregator.aggregate(predictions, signal_results_map)
 
@@ -303,12 +324,13 @@ class SignalAnnotator:
             logger.info(f"No signal picks to bridge for {target_date}")
             return 0
 
-        # Build pick angles (Session 278)
+        # Build pick angles (Session 278, 330: model-direction)
         for pick in top_picks:
             key = f"{pick['player_lookup']}::{pick['game_id']}"
             xm = cross_model_factors.get(key, {}) if cross_model_factors else {}
             pick['pick_angles'] = build_pick_angles(
-                pick, signal_results_map.get(key, []), xm
+                pick, signal_results_map.get(key, []), xm,
+                model_direction_affinities=model_direction_affinities,
             )
 
         public = get_public_name(SIGNAL_PICKS_SUBSET_ID)

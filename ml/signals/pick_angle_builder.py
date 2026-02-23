@@ -11,9 +11,10 @@ Session 308: Removed confidence angle (Session 306 proved confidence doesn't
 """
 
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from shared.config.subset_public_names import SUBSET_PUBLIC_NAMES
+from ml.signals.model_direction_affinity import get_affinity_group, _classify_edge_band
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +144,68 @@ def _high_conviction_angle(pick: Dict) -> str | None:
     return f"High conviction: edge {edge:.1f} pts (65.6% HR at edge 5+)"
 
 
+def _model_direction_angle(
+    pick: Dict,
+    model_direction_affinities: Optional[Dict] = None,
+) -> str | None:
+    """Generate model-direction context angle (Session 330).
+
+    Shows whether the pick's model is in its strong or weak direction
+    based on historical affinity data.
+    """
+    if not model_direction_affinities:
+        return None
+
+    source_family = pick.get('source_model_family', '')
+    group = get_affinity_group(source_family)
+    if not group:
+        return None
+
+    direction = pick.get('recommendation', '')
+    if direction not in ('OVER', 'UNDER'):
+        return None
+
+    edge = abs(pick.get('edge') or 0)
+    band = _classify_edge_band(edge)
+    if not band:
+        return None
+
+    # Look up the affinity data for this combo
+    group_data = model_direction_affinities.get(group, {})
+    direction_data = group_data.get(direction, {})
+    band_data = direction_data.get(band)
+
+    if not band_data:
+        return None
+
+    hr = band_data.get('hit_rate')
+    n = band_data.get('total_picks', 0)
+    if hr is None or n < 10:
+        return None
+
+    # Group display names
+    group_names = {
+        'v9': 'V9',
+        'v12_noveg': 'V12-noveg',
+        'v12_vegas': 'V12+vegas',
+    }
+    group_label = group_names.get(group, group)
+
+    band_labels = {
+        '3_5': '3-5',
+        '5_7': '5-7',
+        '7_plus': '7+',
+    }
+    band_label = band_labels.get(band, band)
+
+    if hr >= 60.0:
+        return f"Model-direction match: {group_label} {direction} edge {band_label}: {hr:.1f}% HR ({n})"
+    elif hr < 45.0:
+        return f"Model-direction caution: {group_label} {direction} edge {band_label}: {hr:.1f}% HR ({n})"
+
+    return None
+
+
 def _subset_membership_angle(pick: Dict) -> str | None:
     """Generate angle from qualifying subset membership (Session 279)."""
     subsets = pick.get('qualifying_subsets', [])
@@ -167,6 +230,7 @@ def build_pick_angles(
     signal_results: List,
     cross_model_factors: Dict[str, Any],
     direction_health: Dict[str, Any] | None = None,
+    model_direction_affinities: Optional[Dict] = None,
 ) -> List[str]:
     """Build human-readable angles explaining why a pick was selected.
 
@@ -175,6 +239,7 @@ def build_pick_angles(
         signal_results: List of SignalResult objects for this pick.
         cross_model_factors: Cross-model consensus factors for this pick.
         direction_health: Optional dict with over_hr_14d, under_hr_14d rolling HRs.
+        model_direction_affinities: Optional nested dict from compute_model_direction_affinities.
 
     Returns:
         List of up to MAX_ANGLES angle strings, ordered by importance.
@@ -213,20 +278,25 @@ def build_pick_angles(
     if tier_angle:
         angles.append(tier_angle)
 
-    # 4. Cross-model consensus
+    # 4. Model-direction affinity (Session 330)
+    mda_angle = _model_direction_angle(pick, model_direction_affinities)
+    if mda_angle:
+        angles.append(mda_angle)
+
+    # 5. Cross-model consensus
     consensus = _consensus_angle(pick, cross_model_factors)
     if consensus:
         angles.append(consensus)
 
-    # 5. Signal-specific angles
+    # 6. Signal-specific angles
     sig_angles = _signal_angles(pick, signal_results)
     angles.extend(sig_angles)
 
-    # 6. Warning angles (always last)
+    # 7. Warning angles (always last)
     warn_angles = _warning_angles(pick)
     angles.extend(warn_angles)
 
-    # 7. Direction health warning (Session 284)
+    # 8. Direction health warning (Session 284)
     if direction_health:
         direction = pick.get('recommendation')
         if direction == 'OVER' and direction_health.get('over_hr_14d') is not None:

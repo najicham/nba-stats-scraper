@@ -50,7 +50,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v326_ultra_bets'
+ALGORITHM_VERSION = 'v330_model_direction_affinity'
 
 # Signal health regime → weight multiplier (used for pick angles context)
 HEALTH_MULTIPLIERS = {
@@ -94,6 +94,8 @@ class BestBetsAggregator:
         cross_model_factors: Optional[Dict[str, Dict[str, Any]]] = None,
         qualifying_subsets: Optional[Dict[str, List[Dict]]] = None,
         player_blacklist: Optional[Set[str]] = None,
+        model_direction_blocks: Optional[Set[tuple]] = None,
+        model_direction_affinity_stats: Optional[Dict] = None,
     ):
         if combo_registry is not None:
             self._registry = combo_registry
@@ -104,6 +106,8 @@ class BestBetsAggregator:
         self._cross_model_factors = cross_model_factors or {}
         self._qualifying_subsets = qualifying_subsets or {}
         self._player_blacklist = player_blacklist or set()
+        self._model_direction_blocks = model_direction_blocks or set()
+        self._model_direction_affinity_stats = model_direction_affinity_stats
 
     def aggregate(self, predictions: List[Dict],
                   signal_results: Dict[str, List[SignalResult]]) -> Tuple[List[Dict], Dict]:
@@ -131,6 +135,7 @@ class BestBetsAggregator:
             'signal_count': 0,
             'confidence': 0,
             'anti_pattern': 0,
+            'model_direction_affinity': 0,
         }
 
         for pred in predictions:
@@ -155,6 +160,18 @@ class BestBetsAggregator:
                     and not source_family.startswith('v12')):
                 filter_counts['under_edge_7plus'] += 1
                 continue
+
+            # Model-direction affinity block (Session 330): data-driven
+            # block of model+direction+edge combos with proven poor HR.
+            # Phase 1: observation mode (threshold=0.0, nothing blocked).
+            if self._model_direction_blocks:
+                from ml.signals.model_direction_affinity import check_model_direction_block
+                block_reason = check_model_direction_block(
+                    source_family, pred.get('recommendation', ''), pred_edge,
+                    self._model_direction_blocks)
+                if block_reason:
+                    filter_counts['model_direction_affinity'] += 1
+                    continue
 
             # Avoid familiar matchups (Session 284)
             games_vs_opp = pred.get('games_vs_opponent') or 0
@@ -281,6 +298,8 @@ class BestBetsAggregator:
             logger.info(f"Edge floor ({self.MIN_EDGE}): skipped {filter_counts['edge_floor']} predictions")
         if filter_counts['under_edge_7plus'] > 0:
             logger.info(f"UNDER edge 7+ block: skipped {filter_counts['under_edge_7plus']} predictions")
+        if filter_counts['model_direction_affinity'] > 0:
+            logger.info(f"Model-direction affinity: skipped {filter_counts['model_direction_affinity']} predictions")
 
         # Ultra Bets classification (Session 326)
         from ml.signals.ultra_bets import classify_ultra_pick

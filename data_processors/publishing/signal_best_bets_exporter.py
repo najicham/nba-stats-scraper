@@ -37,6 +37,7 @@ from ml.signals.signal_health import get_signal_health_summary
 from ml.signals.cross_model_scorer import CrossModelScorer
 from ml.signals.pick_angle_builder import build_pick_angles
 from ml.signals.player_blacklist import compute_player_blacklist
+from ml.signals.model_direction_affinity import compute_model_direction_affinities
 from ml.signals.subset_membership_lookup import lookup_qualifying_subsets
 from ml.signals.aggregator import ALGORITHM_VERSION
 from ml.signals.ultra_bets import compute_ultra_live_hrs, check_ultra_over_gate
@@ -114,6 +115,20 @@ class SignalBestBetsExporter(BaseExporter):
         except Exception as e:
             logger.warning(f"Player blacklist computation failed (non-fatal): {e}")
 
+        # Model-direction affinity (Session 330): compute which model+direction
+        # +edge combos have proven poor hit rates
+        model_dir_affinities = {}
+        model_dir_blocks = set()
+        model_dir_stats = {'combos_evaluated': 0, 'combos_blocked': 0,
+                           'blocked_list': [], 'observation_mode': True}
+        try:
+            model_dir_affinities, model_dir_blocks, model_dir_stats = \
+                compute_model_direction_affinities(
+                    self.bq_client, target_date, PROJECT_ID
+                )
+        except Exception as e:
+            logger.warning(f"Model-direction affinity computation failed (non-fatal): {e}")
+
         record = self._get_best_bets_record(target_date)
 
         # Cap player list in output to top 10 worst (avoid bloating JSON)
@@ -150,6 +165,14 @@ class SignalBestBetsExporter(BaseExporter):
                     'players': blacklist_players_capped,
                 },
                 'direction_health': direction_health,
+                'model_direction_affinity': {
+                    'observation_mode': model_dir_stats.get('observation_mode', True),
+                    'combos_evaluated': model_dir_stats.get('combos_evaluated', 0),
+                    'combos_blocked': model_dir_stats.get('combos_blocked', 0),
+                    'blocked_list': model_dir_stats.get('blocked_list', []),
+                    'would_block_at_45': model_dir_stats.get('would_block_at_45', []),
+                    'affinities': model_dir_affinities,
+                },
                 'health_gate_active': True,
                 'health_gate_reason': f'Champion model HR {hr_7d:.1f}% below breakeven {BREAKEVEN_HR}%',
                 'filter_summary': {
@@ -202,6 +225,14 @@ class SignalBestBetsExporter(BaseExporter):
                     'players': blacklist_players_capped,
                 },
                 'direction_health': direction_health,
+                'model_direction_affinity': {
+                    'observation_mode': model_dir_stats.get('observation_mode', True),
+                    'combos_evaluated': model_dir_stats.get('combos_evaluated', 0),
+                    'combos_blocked': model_dir_stats.get('combos_blocked', 0),
+                    'blocked_list': model_dir_stats.get('blocked_list', []),
+                    'would_block_at_45': model_dir_stats.get('would_block_at_45', []),
+                    'affinities': model_dir_affinities,
+                },
                 'filter_summary': {
                     'total_candidates': 0,
                     'passed_filters': 0,
@@ -305,15 +336,18 @@ class SignalBestBetsExporter(BaseExporter):
             cross_model_factors=cross_model_factors,
             qualifying_subsets=qual_subsets,
             player_blacklist=player_blacklist,
+            model_direction_blocks=model_dir_blocks,
+            model_direction_affinity_stats=model_dir_stats,
         )
         top_picks, filter_summary = aggregator.aggregate(predictions, signal_results)
 
-        # Step 6b: Build pick angles (Session 278, 284: direction health)
+        # Step 6b: Build pick angles (Session 278, 284: direction health, 330: model-direction)
         for pick in top_picks:
             key = f"{pick['player_lookup']}::{pick['game_id']}"
             pick['pick_angles'] = build_pick_angles(
                 pick, signal_results.get(key, []), cross_model_factors.get(key, {}),
                 direction_health=direction_health,
+                model_direction_affinities=model_dir_affinities,
             )
 
         # Step 6c: Enrich ultra criteria with live HRs (Session 327)
@@ -430,6 +464,14 @@ class SignalBestBetsExporter(BaseExporter):
                 'players': blacklist_players_capped,
             },
             'direction_health': direction_health,
+            'model_direction_affinity': {
+                'observation_mode': model_dir_stats.get('observation_mode', True),
+                'combos_evaluated': model_dir_stats.get('combos_evaluated', 0),
+                'combos_blocked': model_dir_stats.get('combos_blocked', 0),
+                'blocked_list': model_dir_stats.get('blocked_list', []),
+                'would_block_at_45': model_dir_stats.get('would_block_at_45', []),
+                'affinities': model_dir_affinities,
+            },
             'filter_summary': filter_summary,
             'edge_distribution': edge_distribution,
             # ultra_bets removed from JSON (Session 327 — internal-only, in BQ)

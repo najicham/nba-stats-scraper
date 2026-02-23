@@ -36,6 +36,7 @@ def _make_prediction(
     prop_line_delta=None,
     neg_pm_streak=0,
     games_vs_opponent=0,
+    source_model_family='',
 ) -> dict:
     """Helper to create a prediction dict that passes all filters by default."""
     return {
@@ -53,6 +54,7 @@ def _make_prediction(
         'prop_line_delta': prop_line_delta,
         'neg_pm_streak': neg_pm_streak,
         'games_vs_opponent': games_vs_opponent,
+        'source_model_family': source_model_family,
     }
 
 
@@ -102,6 +104,7 @@ class TestAggregatorReturnType:
             'signal_count': 0,
             'confidence': 0,
             'anti_pattern': 0,
+            'model_direction_affinity': 0,
         }
 
 
@@ -133,9 +136,12 @@ class TestFilterTracking:
         _, summary = agg.aggregate([pred], {})
         assert summary['rejected']['under_edge_7plus'] == 1
 
-    def test_under_edge_7plus_allows_star_lines(self):
-        """Session 316: UNDER edge 7+ with line >= 25 (star) should NOT be blocked."""
-        pred = _make_prediction(edge=8.0, recommendation='UNDER', line_value=27.5)
+    def test_under_edge_7plus_v12_allowed(self):
+        """V12 models are exempt from the UNDER edge 7+ block (Session 326)."""
+        pred = _make_prediction(
+            edge=8.0, recommendation='UNDER', line_value=27.5,
+            source_model_family='v12_mae',
+        )
         agg = BestBetsAggregator()
         _, summary = agg.aggregate([pred], {})
         assert summary['rejected']['under_edge_7plus'] == 0
@@ -220,3 +226,93 @@ class TestMultipleFilters:
         assert summary['rejected']['under_edge_7plus'] == 1
         assert summary['rejected']['quality_floor'] == 1
         assert summary['passed_filters'] == 0
+
+
+# ============================================================================
+# MODEL-DIRECTION AFFINITY FILTER TESTS (Session 330)
+# ============================================================================
+
+class TestModelDirectionAffinityFilter:
+    """Test that model_direction_blocks parameter is respected in aggregator."""
+
+    def _make_signal_results_for(self, pred, n_qualifying=3):
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        signals = [_make_signal_result(f'signal_{i}') for i in range(n_qualifying)]
+        return {key: signals}
+
+    def test_blocked_combo_rejected(self):
+        """Prediction with blocked model+direction+edge combo is rejected."""
+        # Use V12+vegas OVER (not caught by the hardcoded UNDER 7+ block)
+        pred = _make_prediction(
+            player_lookup='player_v12_over',
+            edge=6.0,
+            recommendation='OVER',
+            source_model_family='v12_mae',
+        )
+        signals = self._make_signal_results_for(pred)
+
+        # Block v12_vegas OVER 5_7
+        blocked = {('v12_vegas', 'OVER', '5_7')}
+        agg = BestBetsAggregator(
+            model_direction_blocks=blocked,
+        )
+        picks, summary = agg.aggregate([pred], signals)
+
+        assert len(picks) == 0
+        assert summary['rejected']['model_direction_affinity'] == 1
+
+    def test_non_blocked_combo_passes(self):
+        """Prediction with non-blocked combo passes the filter."""
+        pred = _make_prediction(
+            player_lookup='player_v9_over',
+            edge=6.0,
+            recommendation='OVER',
+            source_model_family='v9_mae',
+        )
+        signals = self._make_signal_results_for(pred)
+
+        # Only block v9 UNDER 7+, not v9 OVER
+        blocked = {('v9', 'UNDER', '7_plus')}
+        agg = BestBetsAggregator(
+            model_direction_blocks=blocked,
+        )
+        picks, summary = agg.aggregate([pred], signals)
+
+        assert len(picks) == 1
+        assert summary['rejected']['model_direction_affinity'] == 0
+
+    def test_empty_blocks_no_effect(self):
+        """Empty model_direction_blocks should not filter anything."""
+        pred = _make_prediction(
+            source_model_family='v9_mae',
+        )
+        signals = self._make_signal_results_for(pred)
+
+        agg = BestBetsAggregator(
+            model_direction_blocks=set(),
+        )
+        picks, summary = agg.aggregate([pred], signals)
+
+        assert len(picks) == 1
+        assert summary['rejected']['model_direction_affinity'] == 0
+
+    def test_none_blocks_no_effect(self):
+        """None model_direction_blocks should not filter anything."""
+        pred = _make_prediction(
+            source_model_family='v9_mae',
+        )
+        signals = self._make_signal_results_for(pred)
+
+        agg = BestBetsAggregator(
+            model_direction_blocks=None,
+        )
+        picks, summary = agg.aggregate([pred], signals)
+
+        assert len(picks) == 1
+        assert summary['rejected']['model_direction_affinity'] == 0
+
+    def test_filter_counter_in_summary(self):
+        """model_direction_affinity key always present in filter summary."""
+        agg = BestBetsAggregator()
+        _, summary = agg.aggregate([], {})
+        assert 'model_direction_affinity' in summary['rejected']
