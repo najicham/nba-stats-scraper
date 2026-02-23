@@ -9,7 +9,7 @@ Created: 2026-02-15 (Session 260)
 
 import os
 
-CHAMPION_MODEL_ID = 'catboost_v9'
+CHAMPION_MODEL_ID = 'catboost_v12'
 
 # Per-model configuration for best bets filtering.
 # V12 confidence 0.87 tier has 41.7% HR (below 52.4% breakeven).
@@ -43,10 +43,10 @@ def get_min_confidence(model_id: str) -> float:
 
 
 def get_champion_model_id() -> str:
-    """Return the champion model ID (always catboost_v9).
+    """Return the champion model ID.
 
-    Use this for baseline comparisons and grading queries that
-    should always reference the champion regardless of which model
-    drives best bets.
+    Session 332: Switched from catboost_v9 (BLOCKED, 47% HR) to
+    catboost_v12 (HEALTHY, 58% HR) as interim champion while fresh
+    models retrain.
     """
     return CHAMPION_MODEL_ID
