@@ -263,8 +263,14 @@ class SignalSubsetMaterializer:
 
     def _write_rows(self, rows: List[Dict[str, Any]]) -> None:
         """Write signal subset rows using streaming insert."""
+        from decimal import Decimal
         try:
-            errors = self.bq_client.insert_rows_json(SUBSET_TABLE_ID, rows)
+            # Convert Decimal types to float for JSON serialization
+            cleaned_rows = [
+                {k: float(v) if isinstance(v, Decimal) else v for k, v in row.items()}
+                for row in rows
+            ]
+            errors = self.bq_client.insert_rows_json(SUBSET_TABLE_ID, cleaned_rows)
             if errors:
                 logger.error(f"Errors writing signal subsets: {errors}")
             else:

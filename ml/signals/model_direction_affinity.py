@@ -209,9 +209,9 @@ def compute_model_direction_affinities(
                 ABS(predicted_points - line_value) AS edge,
                 prediction_correct,
                 CASE
-                    WHEN system_id LIKE 'catboost\\_v9%' THEN 'v9'
-                    WHEN system_id LIKE 'catboost\\_v12\\_noveg%' THEN 'v12_noveg'
-                    WHEN system_id LIKE 'catboost\\_v12%' THEN 'v12_vegas'
+                    WHEN system_id LIKE 'catboost_v9%' THEN 'v9'
+                    WHEN system_id LIKE 'catboost_v12_noveg%' THEN 'v12_noveg'
+                    WHEN system_id LIKE 'catboost_v12%' THEN 'v12_vegas'
                     ELSE NULL
                 END AS affinity_group
             FROM `{project_id}.nba_predictions.prediction_accuracy`
