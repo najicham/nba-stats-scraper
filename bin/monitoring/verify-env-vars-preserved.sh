@@ -84,6 +84,13 @@ case "$SERVICE" in
       "BUILD_TIMESTAMP"
     )
     ;;
+  live-export)
+    REQUIRED_VARS=(
+      "GCP_PROJECT"
+      "BDL_API_KEY"
+      "BUILD_COMMIT"
+    )
+    ;;
   *)
     echo "⚠️  WARNING: No env var requirements defined for $SERVICE"
     echo "   Add service to case statement in this script"

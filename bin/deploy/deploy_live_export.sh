@@ -73,6 +73,13 @@ if [ "$DEPLOY_FUNCTION" = true ]; then
     touch "$FUNC_SRC/data_processors/__init__.py"
     touch "$FUNC_SRC/shared/__init__.py"
 
+    # Fetch BDL API key from Secret Manager
+    BDL_API_KEY=$(gcloud secrets versions access latest --secret=BDL_API_KEY --project="$PROJECT_ID" 2>/dev/null || echo "")
+    if [ -z "$BDL_API_KEY" ]; then
+        echo "⚠️  WARNING: BDL_API_KEY not found in Secret Manager"
+        echo "   Live box scores will not work without this key"
+    fi
+
     # Deploy as HTTP-triggered function (better for frequent calls)
     gcloud functions deploy "$FUNCTION_NAME" \
         --project="$PROJECT_ID" \
@@ -87,7 +94,7 @@ if [ "$DEPLOY_FUNCTION" = true ]; then
         --allow-unauthenticated \
         --service-account="$SERVICE_ACCOUNT" \
         --source="$FUNC_SRC" \
-        --set-env-vars="GCP_PROJECT=$PROJECT_ID,GCS_BUCKET=nba-props-platform-api" \
+        --set-env-vars="GCP_PROJECT=$PROJECT_ID,GCS_BUCKET=nba-props-platform-api,BDL_API_KEY=$BDL_API_KEY" \
         --no-gen2
 
     # Clean up copied files
