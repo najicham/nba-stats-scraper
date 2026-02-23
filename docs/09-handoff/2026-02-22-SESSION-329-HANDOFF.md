@@ -78,25 +78,16 @@ See `docs/08-projects/current/frontend-data-design/08-BACKEND-RESPONSE.md` for f
 
 ## Follow-Up (Next Session)
 
-### P1: Investigate non-fatal errors in coordinator
+### ~~P1: Coordinator bugs~~ RESOLVED
+- **bigquery import**: Fixed in commit `07b20907` — added missing import in post-consolidation quality checks
+- **Decimal serialization**: Fixed in commit `07b20907` — added `default=str` to bare `json.dumps()` calls
+- **Player loader optimization**: Fixed in commit `07b20907` — batch BQ queries replace per-player lookups (~13 min → ~1-2 min)
 
-1. **`name 'bigquery' is not defined`** in post-consolidation quality checks (23:58:51 UTC). Non-fatal but indicates a missing import in coordinator code. Check `coordinator.py` for the post-consolidation quality check function.
+### ~~P2: Unrecognized v9_50f_noveg model~~ RESOLVED
+Model is fully expected — V12 no-vegas family (50 features). Properly handled by `cross_model_subsets` classifier, `feature_contract`, and `model_registry`. No code changes needed.
 
-2. **`Decimal` JSON serialization error** in best bets export. The exporter hit `TypeError: Object of type Decimal is not JSON serializable` when writing to GCS. Non-fatal (export completed) but should be fixed with `default=str` or explicit conversion.
-
-### P2: Investigate unrecognized model
-
-`catboost_v9_50f_noveg_train20251225-20260205_20260221_211702` appeared with 42 predictions for Feb 22. This model ID doesn't match any entry in `MONTHLY_MODELS` dict — likely loaded from `model_registry` BQ table. Investigate:
-- Is it intentionally registered? Check `model_registry` table
-- Should it be in the MONTHLY_MODELS fallback dict?
-- Why only 42 predictions (vs 48-52 for other models)?
-
-### P3: Coordinator timeout — consider further optimization
-
-The 900s timeout barely fits. The batch completed at ~14:34 elapsed, and the HTTP response timed out at 15:00. On a 15-game day, it could still fail. Options:
-- Increase to 1200s (20 min) for more headroom
-- Optimize player_loader line diagnostics — batch BQ lookups instead of per-player queries
-- Make `/start` return immediately and process async (spawn background task)
+### ~~P3: Coordinator timeout~~ RESOLVED
+Increased 900s → 1200s (revision `prediction-coordinator-00276-8f6`). Combined with player_loader batch optimization, this provides ample headroom for 15-game days.
 
 ### P4: Monitor V12+Vegas performance
 
@@ -145,6 +136,6 @@ The line diagnostic phase (NO_PROP_LINE, LINE_SOURCE, LINE_SANITY_REJECT) does p
 
 | Change | Details |
 |--------|---------|
-| Coordinator timeout | 540s → 900s (revision 00273-t5h) |
-| Coordinator revision | 00273-t5h (deployed 23:33 UTC Feb 22) |
+| Coordinator timeout | 540s → 900s → 1200s (revision 00276-8f6) |
+| Coordinator revision | 00276-8f6 (latest, timeout 1200s) |
 | Worker revision | 00258-4c7 (unchanged, deployed 19:43 UTC Feb 22) |
