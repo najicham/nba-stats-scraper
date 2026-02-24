@@ -319,11 +319,86 @@ The new pre-commit hook found 10 violations. 4 were legitimate (prediction syste
 
 4. **Model registry validator uses `google.cloud.bigquery`** — not `bq` CLI, so it works in Cloud Functions. GCS check is optional (`--skip-gcs`).
 
-## What's NOT in this session (being handled elsewhere)
+## Session 334b — Infrastructure Fixes & Bad Model Cleanup
 
-- **Orchestrator cold-start fixes** (Phase 3→4 "no available instance") — other chat handling minScale=1
-- **Shadow model evaluation** — need 2-3 days of data first (check Feb 25-26)
-- **Champion promotion** — after shadow data, top candidates: v12_vegas_q43 (66.7% eval HR), v12_noveg_q43 (65.7%)
+Separate chat handled the 3 infrastructure issues from Session 333 error log audit.
+
+### FIXED: Orchestrator Cold-Start Failures (Issue 1 — HIGH)
+
+**Root cause confirmed:** All 4 orchestrators had `min-instances=0`, causing Pub/Sub retry storms when cold-starting.
+
+**Fix applied (live + code):**
+
+| Orchestrator | Before | After |
+|---|---|---|
+| phase3-to-phase4-orchestrator | min=0 | **min=1** |
+| phase4-to-phase5-orchestrator | min=0 | **min=1** |
+| phase5-to-phase6-orchestrator | min=0 | **min=1** |
+| phase3-to-grading | min=0 | **min=1** |
+
+- Updated 3 deploy scripts (`deploy_phase3_to_phase4.sh`, `deploy_phase4_to_phase5.sh`, `deploy_phase5_to_phase6.sh`) — `MIN_INSTANCES="1"`
+- Updated `detect_config_drift.py` — expects `min_instances: 1` for orchestrators
+- Added `min_instances` comparison to `compare_configs()` (was entirely missing — only checked memory, timeout, max_instances)
+- Regression now flagged as **high severity** if min_instances drops below expected
+
+**Commit:** `a18d88f3` — fix: set min-instances=1 on all orchestrators to prevent cold-start failures
+
+**Verification:** Check Feb 24 logs for zero "no available instance" errors:
+```bash
+gcloud logging read 'timestamp>="2026-02-24T06:00:00Z" AND resource.labels.service_name="phase3-to-phase4-orchestrator" AND textPayload=~"no available instance"' --project=nba-props-platform --limit=5
+```
+
+### FIXED: BQ Permission Errors (Issue 2 — MEDIUM)
+
+**Root cause:** `bdb-pbp-monitor.yml` had its cron commented out but GitHub Actions cached schedule kept running it every 30 minutes. 244 BQ errors on Feb 23 (~6 per run × 48 runs/day). `bdl-quality-monitor.yml` had same phantom schedule issue (daily).
+
+**Fix:**
+- Disabled `bdb-pbp-monitor.yml` via `gh workflow disable` — stops phantom GHA runs
+- Disabled `bdl-quality-monitor.yml` via `gh workflow disable` — same fix
+- `bigquery.jobUser` role was already granted to `github-actions-deploy` SA (by user at 01:44 UTC Feb 24)
+
+**Key learning:** Commenting out a GitHub Actions `schedule:` trigger does NOT deregister the cron. You must use `gh workflow disable` or delete the file.
+
+### FIXED: Catastrophic Shadow Models (Issue 4 — v12_q43 investigation)
+
+**Finding:** Two retrained v12_q43 models had massive backtest-to-live collapse:
+
+| Model | Backtest HR | Live HR | Picks | Gap |
+|-------|------------|---------|-------|-----|
+| `catboost_v12_q43_train1225_0205` | 70.59% | **13.6%** | 22 | -57 pts |
+| `catboost_v12_q43_train1225_0205_feb22` | 59.02% | **35.7%** | 14 | -23 pts |
+
+Both had extreme UNDER bias (100% UNDER picks at edge 3+) and were participating in multi-model consensus, inflating agreement counts for bad UNDER calls.
+
+**Fix:**
+- Disabled both in `MONTHLY_MODELS` dict (`enabled: False`)
+- Disabled `catboost_v12_q43_train1225_0205_feb22` in BQ `model_registry` (`enabled=FALSE, status='disabled'`)
+- `catboost_v12_q43_train1225_0205` was only in dict (not registry) — dict change sufficient
+
+**Commit:** `34fe75e2` — fix: disable catastrophic v12_q43 retrained models (13.6% and 35.7% live HR)
+
+**Watch:** New `v12_vegas_q43_train0104_0215` model just started shadowing from registry. Same q43 family — monitor closely for same UNDER bias pattern.
+
+### Active Registry After Cleanup
+
+| model_id | family | status |
+|----------|--------|--------|
+| `catboost_v12_mae_train0104_0215` | v12_mae | active |
+| `catboost_v12_noveg_mae_train0104_0215` | v12_noveg_mae | active |
+| `catboost_v12_noveg_q43_train0104_0215` | v12_noveg_q43 | active |
+| `catboost_v12_vegas_q43_train0104_0215` | v12_vegas_q43 | active |
+| `catboost_v9_low_vegas_train0106_0205` | v9_low_vegas | active |
+
+Plus ~13 models from static `MONTHLY_MODELS` dict (existing shadow fleet).
+
+## Next Session Priorities
+
+1. **Verify orchestrator fix** — check Feb 24 logs for zero "no available instance" errors
+2. **Verify v12_q43 models stopped predicting** — check Feb 24 predictions exclude disabled models
+3. **Monitor new train0104_0215 shadow models** — especially v12_vegas_q43 (q43 family track record)
+4. **Shadow model evaluation** — need 2-3 days of data, check Feb 25-26
+5. **Champion promotion** — after shadow data, top candidates: v12_vegas_q43 (66.7% eval HR), v12_noveg_q43 (65.7%)
+6. **Pipeline canary empty payloads** (Issue 3 — LOW) — still uninvestigated, likely benign
 
 ## Quick Start for New Chat
 
