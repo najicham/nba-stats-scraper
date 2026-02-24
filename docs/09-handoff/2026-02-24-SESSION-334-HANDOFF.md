@@ -2,7 +2,7 @@
 
 **Date:** 2026-02-24
 **Focus:** Build prevention mechanisms to catch the classes of bugs found in Sessions 332-333
-**Status:** READY FOR IMPLEMENTATION
+**Status:** COMPLETE — all 8 items implemented
 
 ## Context — What Broke and Why
 
@@ -282,45 +282,44 @@ Or add `validation-runner` to the `cloudbuild-functions.yaml` matrix if it suppo
 
 ---
 
-## Files Changed (Session 333 — for reference)
+## Implementation Results
 
-| File | Change |
-|------|--------|
-| `shared/config/cross_model_subsets.py` | Added `alt_pattern` for v12_vegas_q43/q45 family classification |
-| `ml/signals/player_blacklist.py` | Dynamic champion model via `get_best_bets_model_id()` |
-| `ml/signals/signal_health.py` | Dynamic champion model via `get_best_bets_model_id()` |
-| `.github/workflows/bdb-pbp-monitor.yml` | Disabled scheduled runs (BDL scrapers off) |
-| `.github/workflows/bdl-quality-monitor.yml` | Disabled scheduled runs (BDL scrapers off) |
+All 8 items implemented in commit `43e93d05`.
 
-## Existing Prevention Infrastructure (don't duplicate)
+| # | Item | Status | Files |
+|---|------|--------|-------|
+| 1 | Post-retrain verification gate | DONE | `ml/experiments/quick_retrain.py` |
+| 2 | Pre-commit: hardcoded model IDs | DONE | `.pre-commit-hooks/validate_model_references.py`, `.pre-commit-config.yaml` |
+| 3 | Unit tests: classify_system_id() | DONE | `tests/unit/shared/test_cross_model_subsets.py` (69 tests) |
+| 4 | Auto-deploy: nba-grading-service | DONE | `.github/workflows/auto-deploy.yml` |
+| 5 | Completion staleness monitor | DONE | `orchestration/cloud_functions/daily_health_check/main.py` |
+| 6 | Model registry consistency | DONE | `bin/validation/validate_model_registry.py` |
+| 7 | Workflow dependency validator | DONE | `bin/validation/validate_workflow_dependencies.py` |
+| 8 | Cloud Build trigger | DONE | Created `deploy-validation-runner` trigger in GCP |
 
-Already have 16 pre-commit hooks in `.pre-commit-config.yaml`:
-- `validate-schema-fields` — BQ schema alignment
-- `validate-python-syntax` — syntax errors in deploy dirs
-- `validate-deploy-safety` — dangerous `--set-env-vars`
-- `validate-dockerfile-imports` — missing COPY dirs
-- `validate-pipeline-patterns` — invalid enum, processor name gaps
-- `validate-cloud-function-imports` — missing shared modules
-- `validate-bettingpros-queries` — market_type filter
-- `validate-sql-fstrings` — missing f-prefix
-- `check-date-comparisons` — data leakage prevention
-- `validate-view-filters` — prediction table quality filters
-- `validate-sql-queries` — anti-patterns
-- ... and 5 more
+### Bonus: Fixed 6 More Hardcoded V9 References
 
-Already have monitoring in `bin/monitoring/`:
-- `deployment_drift_alerter.py` — every 2h
-- `pipeline_canary_queries.py` — every 30min
-- `analyze_healing_patterns.py` — every 15min
-- `grading_gap_detector.py` — daily 9 AM ET
+The new pre-commit hook found 10 violations. 4 were legitimate (prediction system class identity, excluded from hook). The other 6 were real bugs — still referencing V9 after V12 promotion:
 
-Already have validation in `bin/validation/`:
-- `detect_config_drift.py` — Cloud Function/Run config drift
-- `comprehensive_health_check.py` — pipeline health
-- `daily_data_completeness.py` — data gaps
-- `post_deployment_health_check.py` — post-deploy verification
+| File | Was | Now |
+|------|-----|-----|
+| `subset_materializer.py` | `CHAMPION_SYSTEM_ID = 'catboost_v9'` | `get_champion_model_id()` |
+| `all_subsets_picks_exporter.py` | `CHAMPION_SYSTEM_ID = 'catboost_v9'` | `get_champion_model_id()` |
+| `season_subset_picks_exporter.py` | `CHAMPION_SYSTEM_ID = 'catboost_v9'` | `get_champion_model_id()` |
+| `quality_gate.py` (2 methods) | `system_id: str = 'catboost_v9'` | `system_id: str = None` → dynamic |
+| `signal_calculator.py` | `system_id: str = 'catboost_v9'` | `system_id: str = None` → dynamic |
 
-## What's NOT in this plan (being handled elsewhere)
+### Key Design Decisions
+
+1. **CompletionTracker code was already correct** — it uses `logger.error()` with retry. The handoff doc's analysis was wrong. The real gap was monitoring staleness, not code changes.
+
+2. **Pre-commit hook excludes prediction system classes** — `predictions/worker/prediction_systems/` files legitimately define `SYSTEM_ID = "catboost_v9"` etc. as class identity. Also excludes `worker.py` which labels V12 predictions in its main loop.
+
+3. **36-hour staleness threshold** — accounts for off-days with no games. 24h would false-positive on days without games.
+
+4. **Model registry validator uses `google.cloud.bigquery`** — not `bq` CLI, so it works in Cloud Functions. GCS check is optional (`--skip-gcs`).
+
+## What's NOT in this session (being handled elsewhere)
 
 - **Orchestrator cold-start fixes** (Phase 3→4 "no available instance") — other chat handling minScale=1
 - **Shadow model evaluation** — need 2-3 days of data first (check Feb 25-26)
@@ -336,18 +335,7 @@ bq query --use_legacy_sql=false --project_id=nba-props-platform \
 # 2. Run daily steering
 /daily-steering
 
-# 3. Then start implementing prevention items above (start with #1-3, they're CRITICAL)
+# 3. Run the new validators
+python bin/validation/validate_model_registry.py
+python bin/validation/validate_workflow_dependencies.py
 ```
-
-## Priority Summary
-
-| # | Item | Effort | Impact |
-|---|------|--------|--------|
-| 1 | Post-retrain verification gate | 30 min | Prevents orphaned models |
-| 2 | Pre-commit: hardcoded model IDs | 30 min | Prevents stale references after promotion |
-| 3 | Unit tests: classify_system_id() | 20 min | Prevents pattern matching bugs |
-| 4 | Auto-deploy consistency check | 45 min | Prevents silent deployment drift |
-| 5 | CompletionTracker error escalation | 20 min | Makes tracking failures visible |
-| 6 | Model registry consistency monitor | 45 min | Prevents duplicates and orphans |
-| 7 | Disabled scraper workflow validation | 30 min | Prevents zombie monitoring |
-| 8 | Cloud Build trigger for validation-runner | 10 min | Prevents manual deploy drift |
