@@ -383,6 +383,22 @@ for FAMILY_NAME in "${TRAINED_MODELS[@]}"; do
 done
 
 # ============================================================================
+# Post-Retrain Registry Validation (Session 335)
+# Automatically checks registry consistency after training. Skips GCS checks
+# (slow, and the model was just uploaded).
+# ============================================================================
+if [ ${#TRAINED_MODELS[@]} -gt 0 ]; then
+    echo ""
+    echo "=============================================="
+    echo "POST-RETRAIN REGISTRY VALIDATION"
+    echo "=============================================="
+    python bin/validation/validate_model_registry.py --skip-gcs
+    if [ $? -ne 0 ]; then
+        echo "WARNING: Registry validation found issues. Review above output."
+    fi
+fi
+
+# ============================================================================
 # Filter Validation (Session 311)
 # Checks model-specific negative filters against the new model's eval window.
 # Filters are INHERITED — never auto-removed. Report flags issues for review.

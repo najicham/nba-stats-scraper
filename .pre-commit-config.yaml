@@ -120,6 +120,15 @@ repos:
         always_run: true
         verbose: true
 
+      - id: validate-auto-deploy-consistency
+        name: Check Cloud Run services have auto-deploy
+        description: Ensures Cloud Run services monitored for drift also have auto-deploy (Session 335)
+        entry: python .pre-commit-hooks/validate_auto_deploy_consistency.py
+        language: python
+        pass_filenames: false
+        files: ^(bin/check-deployment-drift\.sh|\.github/workflows/auto-deploy\.yml)$
+        verbose: true
+
       - id: validate-pipeline-patterns
         name: Validate pipeline patterns (Session 185)
         description: Catches invalid enum usage, processor name mapping gaps, unsafe get_json() calls

@@ -31,6 +31,7 @@ Created: 2026-01-23
 """
 
 import logging
+import threading
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set, Tuple, Any
 
@@ -110,27 +111,37 @@ class CompletionTracker:
         self.bq_table = bq_table
         self.aggregate_table = aggregate_table
 
-        # Lazy initialization of clients
+        # Lazy initialization of clients (Session 335: thread-safe)
         self._firestore_client: Optional[firestore.Client] = None
         self._bq_client: Optional[bigquery.Client] = None
+        self._init_lock = threading.Lock()
 
         # Track Firestore availability
         self._firestore_available = True
         self._last_firestore_check = None
-        self._firestore_check_interval_seconds = 30  # Re-check every 30 seconds
+        self._firestore_check_interval_seconds = 10  # Session 335: reduced from 30s
+
+        # Circuit breaker (Session 335): back off after consecutive failures
+        self._firestore_consecutive_failures = 0
+        self._firestore_circuit_breaker_threshold = 5
+        self._firestore_circuit_breaker_cooldown = 300  # 5 minutes
 
     @property
     def firestore_client(self):
-        """Get or create Firestore client (lazy initialization via pool)."""
+        """Get or create Firestore client (thread-safe lazy initialization)."""
         if self._firestore_client is None:
-            self._firestore_client = get_firestore_client(self.project_id)
+            with self._init_lock:
+                if self._firestore_client is None:
+                    self._firestore_client = get_firestore_client(self.project_id)
         return self._firestore_client
 
     @property
     def bq_client(self) -> bigquery.Client:
-        """Get or create BigQuery client (lazy initialization via pool)."""
+        """Get or create BigQuery client (thread-safe lazy initialization)."""
         if self._bq_client is None:
-            self._bq_client = get_bigquery_client(self.project_id)
+            with self._init_lock:
+                if self._bq_client is None:
+                    self._bq_client = get_bigquery_client(self.project_id)
         return self._bq_client
 
     def _get_firestore_collection(self, phase: str) -> str:
@@ -150,14 +161,21 @@ class CompletionTracker:
         Check if Firestore is available.
 
         Uses a cached check with periodic refresh to avoid hammering
-        Firestore when it's down.
+        Firestore when it's down. Session 335: Circuit breaker backs off
+        to 5-minute interval after 5 consecutive failures.
         """
         now = datetime.now(timezone.utc)
 
         # If we've checked recently, use cached result
         if self._last_firestore_check is not None:
             elapsed = (now - self._last_firestore_check).total_seconds()
-            if elapsed < self._firestore_check_interval_seconds:
+            # Circuit breaker: use longer cooldown after repeated failures
+            check_interval = (
+                self._firestore_circuit_breaker_cooldown
+                if self._firestore_consecutive_failures >= self._firestore_circuit_breaker_threshold
+                else self._firestore_check_interval_seconds
+            )
+            if elapsed < check_interval:
                 return self._firestore_available
 
         # Perform actual check
@@ -165,9 +183,16 @@ class CompletionTracker:
             # Simple read to verify connectivity
             self.firestore_client.collection("_health_check").document("ping").get()
             self._firestore_available = True
+            self._firestore_consecutive_failures = 0
         except Exception as e:
             logger.warning(f"Firestore unavailable: {e}")
             self._firestore_available = False
+            self._firestore_consecutive_failures += 1
+            if self._firestore_consecutive_failures >= self._firestore_circuit_breaker_threshold:
+                logger.error(
+                    f"CIRCUIT_BREAKER: Firestore down {self._firestore_consecutive_failures} "
+                    f"consecutive checks. Backing off to {self._firestore_circuit_breaker_cooldown}s."
+                )
 
         self._last_firestore_check = now
         return self._firestore_available

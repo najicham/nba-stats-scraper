@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from google.cloud import bigquery
 
-from shared.config.cross_model_subsets import build_system_id_sql_filter, classify_system_id
+from shared.config.cross_model_subsets import build_system_id_sql_filter, build_noveg_mae_sql_filter, classify_system_id
 from shared.config.model_selection import get_best_bets_model_id
 
 logger = logging.getLogger(__name__)
@@ -282,6 +282,7 @@ def query_predictions_with_supplements(
 
     -- V12 predictions for cross-model consensus scoring
     -- Dedup: if multiple V12 MAE models exist, pick the one with latest system_id
+    -- Session 335: Uses build_noveg_mae_sql_filter() instead of hardcoded pattern
     v12_preds AS (
       SELECT
         p2.player_lookup,
@@ -292,8 +293,7 @@ def query_predictions_with_supplements(
         CAST(p2.confidence_score AS FLOAT64) AS v12_confidence
       FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions` p2
       WHERE p2.game_date = @target_date
-        AND p2.system_id LIKE 'catboost_v12_noveg%'
-        AND p2.system_id NOT LIKE '%_q4%'
+        AND {build_noveg_mae_sql_filter('p2')}
         AND p2.is_active = TRUE
         AND p2.recommendation IN ('OVER', 'UNDER')
       QUALIFY ROW_NUMBER() OVER (

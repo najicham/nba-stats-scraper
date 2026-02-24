@@ -139,6 +139,19 @@ def build_system_id_sql_filter(alias: str = '') -> str:
     return '(' + ' OR '.join(clauses) + ')'
 
 
+def build_noveg_mae_sql_filter(alias: str = '') -> str:
+    """Build SQL filter for V12 noveg MAE models (excludes quantile).
+
+    Matches system_ids like 'catboost_v12_noveg_train*' but NOT
+    'catboost_v12_noveg_q43_*' or 'catboost_v12_noveg_q45_*'.
+
+    Session 335: Extracted from hardcoded pattern in supplemental_data.py.
+    """
+    prefix = f"{alias}." if alias else ""
+    col = f"{prefix}system_id"
+    return f"({col} LIKE 'catboost_v12_noveg%' AND {col} NOT LIKE '%\\_q4%')"
+
+
 # ---------------------------------------------------------------------------
 # DiscoveredModels — runtime result of querying BQ for actual system_ids
 # ---------------------------------------------------------------------------
