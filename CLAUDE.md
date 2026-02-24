@@ -13,7 +13,7 @@ Build profitable NBA player props prediction system (55%+ accuracy on over/under
 2. **Phase 2 - Raw Processing**: JSON → BigQuery raw tables
 3. **Phase 3 - Analytics**: Player/team game summaries
 4. **Phase 4 - Precompute**: Performance aggregates, matchup history
-5. **Phase 5 - Predictions**: ML models (CatBoost V9)
+5. **Phase 5 - Predictions**: ML models (CatBoost V12)
 6. **Phase 6 - Publishing**: JSON exports to GCS API
 
 Phases connected via **Pub/Sub event triggers**. Daily workflow starts ~6 AM ET.
@@ -102,7 +102,7 @@ nba-stats-scraper/
 | Edge 3+ HR | 57.1% (98 picks) / 7d: 58-60% HEALTHY |
 | Status | INTERIM CHAMPION (since 2026-02-23) — retraining all families |
 
-**18 shadow models** running. All families retraining with fresh data (Jan 11 - Feb 22 window). V12+vegas edge 6+ = **100% HR (N=25)**. See `docs/08-projects/current/retrain-infrastructure/03-PARALLEL-MODELS-GUIDE.md` for full list.
+**7 enabled model families** (4 freshly retrained Jan 4–Feb 15, registered Session 333). V12+vegas edge 6+ = **100% HR (N=25)**. See `docs/08-projects/current/retrain-infrastructure/03-PARALLEL-MODELS-GUIDE.md` for full list.
 
 **CRITICAL:** Use edge >= 3 filter. 73% of predictions have edge < 3 and lose money.
 
@@ -126,6 +126,7 @@ nba-stats-scraper/
 - **Edge Classifier (Model 2) does not add value** (AUC < 0.50)
 
 **Process:** Train → Gates pass → Upload to GCS → Register → Shadow 2+ days → Promote
+**Post-retrain verification:** `quick_retrain.py` auto-verifies registration + warns on duplicate families (Session 334). Run `python bin/validation/validate_model_registry.py` after any manual registry edits.
 **Rollback:** `gcloud run services update prediction-worker --region=us-west2 --update-env-vars="CATBOOST_V9_MODEL_PATH=gs://..."`
 
 ### Model Registry & Retraining
@@ -159,9 +160,9 @@ nba-stats-scraper/
 
 **Push to main auto-deploys changed services.** Each trigger also watches `shared/`.
 
-**Cloud Run Services:** prediction-coordinator, prediction-worker, nba-phase3-analytics-processors, nba-phase4-precompute-processors, nba-phase2-raw-processors, nba-scrapers
+**Cloud Run Services:** prediction-coordinator, prediction-worker, nba-phase3-analytics-processors, nba-phase4-precompute-processors, nba-phase2-raw-processors, nba-scrapers, nba-grading-service
 
-**Cloud Functions (auto-deploy via `cloudbuild-functions.yaml`):** phase5b-grading, phase6-export, grading-gap-detector, phase3/4/5-to-next orchestrators, enrichment-trigger, daily-health-check, transition-monitor, pipeline-health-summary, nba-grading-alerts, live-freshness-monitor, self-heal-predictions, grading-readiness-monitor, post-grading-export, decay-detection (11 AM ET), retrain-reminder (Mon 9 AM ET)
+**Cloud Functions (auto-deploy via `cloudbuild-functions.yaml`):** phase5b-grading, phase6-export, grading-gap-detector, phase3/4/5-to-next orchestrators, enrichment-trigger, daily-health-check, transition-monitor, pipeline-health-summary, nba-grading-alerts, live-freshness-monitor, self-heal-predictions, grading-readiness-monitor, post-grading-export, decay-detection (11 AM ET), retrain-reminder (Mon 9 AM ET), validation-runner
 
 ### CRITICAL: Always deploy from repo root
 ```bash
@@ -206,7 +207,7 @@ WHERE game_date >= CURRENT_DATE() - 3 GROUP BY 1
 -- Check today's signal
 SELECT daily_signal, pct_over, high_edge_picks
 FROM nba_predictions.daily_prediction_signals
-WHERE game_date = CURRENT_DATE() AND system_id = 'catboost_v9'
+WHERE game_date = CURRENT_DATE() AND system_id = 'catboost_v12'
 
 -- Check games status
 SELECT game_id, away_team_tricode, home_team_tricode, game_status
@@ -255,6 +256,7 @@ WHERE game_date >= CURRENT_DATE() - 3 GROUP BY 1 ORDER BY 1 DESC;
 - id: validate-deploy-safety        # Detects dangerous --set-env-vars
 - id: validate-dockerfile-imports   # Missing COPY dirs
 - id: validate-pipeline-patterns    # Invalid enum, processor name gaps
+- id: validate-model-references    # Hardcoded catboost_v* system_ids (Session 334)
 ```
 
 ### Cloud Function Deploy Patterns
@@ -282,7 +284,9 @@ python bin/monitoring/grading_gap_detector.py        # Grading gaps (auto: daily
 - Auto-heals stalled batches (>90% complete, stalled 15+ min)
 - Quality gates block bad data at Phase 2→3 transition
 - Decay detection: `decay-detection` CF daily 11 AM ET, state machine HEALTHY→WATCH→DEGRADING→BLOCKED
-- Meta-monitoring: `daily-health-check` CF verifies freshness of `model_performance_daily` and `signal_health_daily`
+- Meta-monitoring: `daily-health-check` CF verifies freshness of `model_performance_daily`, `signal_health_daily`, and `phase_completions`
+- Model registry: `python bin/validation/validate_model_registry.py` — checks duplicates, orphans, GCS consistency
+- Workflow health: `python bin/validation/validate_workflow_dependencies.py` — detects workflows monitoring disabled scrapers
 
 **Slack:** `#deployment-alerts` (2h), `#canary-alerts` (30min), `#nba-alerts` (self-healing, grading, decay)
 
