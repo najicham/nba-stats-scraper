@@ -58,6 +58,85 @@ MODEL HEALTH (as of YYYY-MM-DD):
 
 State icons: HEALTHY -> OK, WATCH -> eye, DEGRADING -> warning, BLOCKED -> stop, INSUFFICIENT_DATA -> question
 
+## Step 1.5: Edge 5+ Model Health — Best Bets Eligible (Session 335)
+
+Overall model health (edge 3+ HR) can diverge from high-edge performance. A model may be BLOCKED overall but still profitable at edge 5+, or vice versa. This check specifically monitors the best-bets-eligible population.
+
+```bash
+bq query --use_legacy_sql=false --format=pretty "
+WITH edge5_health AS (
+  SELECT
+    system_id,
+    COUNTIF(prediction_correct) AS wins,
+    COUNTIF(NOT prediction_correct) AS losses,
+    COUNT(*) AS total,
+    ROUND(100.0 * COUNTIF(prediction_correct) / NULLIF(COUNT(*), 0), 1) AS hr_edge5_14d,
+    ROUND(AVG(ABS(predicted_points - line_value)), 2) AS avg_edge
+  FROM \`nba-props-platform.nba_predictions.prediction_accuracy\`
+  WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)
+    AND ABS(predicted_points - line_value) >= 5.0
+    AND prediction_correct IS NOT NULL
+    AND is_voided IS NOT TRUE
+    AND (system_id LIKE 'catboost_v9%' OR system_id LIKE 'catboost_v12%')
+  GROUP BY 1
+  HAVING COUNT(*) >= 5
+),
+model_state AS (
+  SELECT model_id, state, ROUND(rolling_hr_7d, 1) AS overall_hr_7d
+  FROM \`nba-props-platform.nba_predictions.model_performance_daily\`
+  WHERE game_date = (
+    SELECT MAX(game_date) FROM \`nba-props-platform.nba_predictions.model_performance_daily\`
+  )
+  QUALIFY ROW_NUMBER() OVER (PARTITION BY model_id ORDER BY rolling_n_7d DESC) = 1
+),
+replacements AS (
+  SELECT model_family, COUNT(*) AS family_models,
+    MAX(created_at) AS newest_created
+  FROM \`nba-props-platform.nba_predictions.model_registry\`
+  WHERE enabled = TRUE AND model_family IS NOT NULL
+  GROUP BY 1
+)
+SELECT
+  e.system_id,
+  ms.state AS overall_state,
+  ms.overall_hr_7d,
+  e.hr_edge5_14d,
+  ROUND(e.hr_edge5_14d - COALESCE(ms.overall_hr_7d, 0), 1) AS edge5_premium,
+  e.total AS edge5_n,
+  e.avg_edge,
+  CASE
+    WHEN e.hr_edge5_14d >= 60 THEN 'PROFITABLE'
+    WHEN e.hr_edge5_14d >= 52.4 THEN 'MARGINAL'
+    ELSE 'LOSING'
+  END AS edge5_status
+FROM edge5_health e
+LEFT JOIN model_state ms ON e.system_id = ms.model_id
+ORDER BY e.hr_edge5_14d DESC
+"
+```
+
+**Present as:**
+
+```
+EDGE 5+ MODEL HEALTH (14d, best-bets eligible):
+  <system_id>: <edge5_status> <hr_edge5_14d>% (N=<n>, avg edge <avg_edge>) | Overall: <overall_state> <overall_hr_7d>% | Premium: <+/- edge5_premium>pp
+  ...
+  [If any model is LOSING at edge 5+:]
+    WARNING: <model> edge 5+ HR below breakeven — high-edge picks are actively losing money
+  [If edge5_premium is negative by 5+ points:]
+    NOTE: <model> performs WORSE at high edge than overall — edge magnitude is not a quality signal for this model
+```
+
+**Thresholds:**
+
+| Edge 5+ HR | Status | Interpretation |
+|------------|--------|---------------|
+| >= 60% | PROFITABLE | High-edge picks making money, model safe for best bets |
+| 52.4-60% | MARGINAL | Barely profitable, monitor closely |
+| < 52.4% | LOSING | High-edge picks losing money, consider excluding from multi-model selection |
+
+**Key insight:** If a model is BLOCKED overall but PROFITABLE at edge 5+, the best-bets filters are working. If a model is LOSING at edge 5+, no amount of filtering will save it — it should be excluded from multi-model selection once a replacement exists.
+
 ## Step 2: Signal Health Summary
 
 Query `signal_health_daily` for the latest date. Count regimes and flag COLD model-dependent signals (these are zeroed to 0.0x weight).
@@ -108,7 +187,7 @@ WITH daily_edge_stats AS (
     COUNT(*) AS total_predictions
   FROM \`nba-props-platform.nba_predictions.player_prop_predictions\`
   WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 35 DAY)
-    AND system_id = 'catboost_v9'
+    AND system_id = 'catboost_v12'
     AND is_active = TRUE
   GROUP BY game_date
 ),
@@ -147,13 +226,13 @@ direction_hr AS (
 -- Model residual bias: avg(predicted - actual) over 7d
 residual AS (
   SELECT
-    ROUND(AVG(pa.predicted_value - pa.actual_value), 2) AS residual_bias_7d,
+    ROUND(AVG(pa.predicted_points - pa.actual_points), 2) AS residual_bias_7d,
     COUNT(*) AS residual_n
   FROM \`nba-props-platform.nba_predictions.prediction_accuracy\` pa
   WHERE pa.game_date > DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
-    AND pa.system_id = 'catboost_v9'
-    AND pa.predicted_value IS NOT NULL
-    AND pa.actual_value IS NOT NULL
+    AND pa.system_id = 'catboost_v12'
+    AND pa.predicted_points IS NOT NULL
+    AND pa.actual_points IS NOT NULL
 ),
 -- 3d rolling HR (best bets)
 rolling_3d AS (
@@ -392,6 +471,9 @@ Combine all sections into a clean, scannable report:
 MODEL HEALTH (as of YYYY-MM-DD):
   <model lines>
   Best Bets Model: <model_id>
+
+EDGE 5+ MODEL HEALTH (14d):
+  <per-model edge-5+ status, premium, warnings>
 
 MARKET REGIME:
   <compression, edge supply, direction split, bias>

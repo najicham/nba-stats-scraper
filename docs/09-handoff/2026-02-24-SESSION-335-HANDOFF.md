@@ -1,8 +1,8 @@
-# Session 335 Handoff — Shadow Model Verification, Champion Evaluation, Remaining Fixes
+# Session 335 Handoff — Hardening Complete, Edge-5+ Health Check, Multi-Model Analysis
 
 **Date:** 2026-02-24
-**Focus:** Verify new models are producing predictions, evaluate for champion promotion, fix remaining items
-**Status:** READY
+**Focus:** Completed all 4 remaining hardening items from Sessions 332-334, deep-dived multi-model filter architecture, added edge-5+ health monitoring
+**Status:** COMPLETE — pushed to main, all builds SUCCESS
 
 ## Current System State
 
@@ -10,151 +10,121 @@
 |----------|-------|
 | Champion Model | `catboost_v12` (interim, promoted Session 332) |
 | Champion State | HEALTHY — 59.6% HR 7d (N=47) |
+| Champion Edge 5+ | **LOSING — 41.7% HR 14d (N=12, -16.6pp premium)** |
+| Best Bets 7d | **7-3 (70.0% HR)** |
 | Best Bets 30d | **34-16 (68.0% HR)** |
 | Shadow Models | 7 enabled families, 4 freshly retrained (Jan 4–Feb 15) |
-| Deployment Drift | ZERO — all services current |
-| Pre-commit Hooks | 17 hooks (added `validate-model-references` in Session 334) |
-| Cloud Build Triggers | All CFs have triggers including `validation-runner` (added Session 334) |
+| Deployment Drift | ZERO — all 8 builds SUCCESS after push |
+| Pre-commit Hooks | **18 hooks** (added `validate-auto-deploy-consistency`) |
 
-## What Sessions 332-334 Did
+## What This Session Did
 
-- **Session 332:** V9 demoted (47% HR BLOCKED), V12 promoted interim champion, all 9 families retrained
-- **Session 333:** Registered 4 fresh models, cleaned registry duplicates, fixed pattern matching bug, fixed hardcoded V9 refs in blacklist/signal_health, disabled BDL monitoring workflows, granted BQ roles to GitHub SA
-- **Session 334:** Built 8 prevention mechanisms (pre-commit hook, 69 unit tests, auto-deploy for grading, registry validator, workflow validator, completion staleness monitor, Cloud Build trigger, post-retrain verification gate). Fixed 6 MORE hardcoded V9 refs found by the new hook (subset_materializer, exporters, quality_gate, signal_calculator). Updated CLAUDE.md.
+### 1. Completed All 4 Remaining Hardening Items
 
-## Priority 1: Verify Shadow Models Generating Predictions
+All LOW-priority items from the Session 334/335 backlog — now shipped:
 
-The 4 fresh models were registered in `model_registry` on Feb 23 and the prediction-worker was redeployed. They should start producing predictions for Feb 24+ games.
+| Item | File(s) | Change |
+|------|---------|--------|
+| Post-retrain registry check | `bin/retrain.sh` | Auto-runs `validate_model_registry.py --skip-gcs` after training |
+| Hardcoded pattern extraction | `shared/config/cross_model_subsets.py`, `ml/signals/supplemental_data.py` | New `build_noveg_mae_sql_filter()` helper replaces hardcoded `LIKE 'catboost_v12_noveg%'` |
+| CompletionTracker improvements | `shared/utils/completion_tracker.py` | Thread-safe lazy init (double-check locking), 10s check interval (was 30s), circuit breaker (5 failures → 5min backoff) |
+| Auto-deploy consistency hook | `.pre-commit-hooks/validate_auto_deploy_consistency.py`, `.pre-commit-config.yaml` | Validates Cloud Run services in drift check have auto-deploy coverage |
+
+**Commit:** `070657bf` — all 69 existing unit tests pass, all verifications pass.
+
+### 2. Deep-Dived Multi-Model Filter Architecture
+
+Researched how filters work when multiple models exist in the same family. Key findings:
+
+- **Production uses `multi_model=True`** — all families compete per player-game
+- **Selection is purely edge-based**: `ORDER BY ABS(edge) DESC, system_id DESC`
+- **Filters apply AFTER selection**, not per-model
+- **No health weighting exists** — a BLOCKED model can win selection if it has higher edge
+- **Champion V12 only contributed 5 of 104 best-bets picks (4.8%) over 60 days** — shadow models do the heavy lifting
+
+### 3. Discovered Critical Edge-5+ Health Divergence
+
+**Edge-5+ HR is NOT decoupled from overall decay — it's often WORSE:**
+
+| Model | Overall State | Overall HR 7d | Edge 5+ HR 14d | Premium |
+|-------|--------------|---------------|----------------|---------|
+| v12_noveg_q45_0125 | BLOCKED | 46.9% | 83.3% (N=6) | +36.4pp |
+| v9_low_vegas_0205 | HEALTHY | 59.5% | 60.0% (N=15) | +0.5pp |
+| **catboost_v12** | **HEALTHY** | **58.3%** | **41.7% (N=12)** | **-16.6pp** |
+| catboost_v9 | BLOCKED | 47.1% | 41.7% (N=12) | -5.4pp |
+| v9_q43_0125 | BLOCKED | 43.8% | 40.0% (N=10) | -3.8pp |
+| v12_q43_1225_0205 | BLOCKED | 13.6% | 16.7% (N=6) | +3.1pp |
+
+**V9 weekly edge 5+ trend shows complete collapse:** 84.6% (Jan 19) → 30.2% (Feb 2) → 28.6% (Feb 16)
+
+### 4. Added Edge-5+ Health Check to Daily Steering
+
+New **Step 1.5** in `/daily-steering` skill shows per-model edge-5+ HR alongside overall health. Surfaces models that are HEALTHY overall but LOSING at high edge (like V12 champion at 41.7%).
+
+Also fixed Step 2.5 bugs: `predicted_value`/`actual_value` → `predicted_points`/`actual_points`, `catboost_v9` → `catboost_v12`.
+
+### 5. Decision: Don't Add Health-Weighted Selection
+
+After thorough analysis, decided **against** health-weighted model selection:
+- Session 323 replay proved blocking beats oracle selection (29.9% vs 17.7% ROI)
+- V9+V12 agreement is ANTI-correlated with winning (33.3% HR when both agree OVER)
+- "Two-stage pipeline" is a documented dead end
+- All predictions are already graded in `prediction_accuracy` — shadow monitoring is free
+
+**Instead:** Monitor edge-5+ health daily. If a model is LOSING at edge 5+ AND has a replacement in the same family, consider excluding it from multi-model selection. But this should be a manual decision, not automated.
+
+## Priority 1 (Next Session): Verify Fresh Models Producing Predictions
+
+The 4 fresh models registered Feb 23 should be generating predictions for today's 11-game slate:
 
 ```bash
-# Check if new models are producing predictions
 bq query --use_legacy_sql=false --project_id=nba-props-platform \
   "SELECT system_id, COUNT(*) as preds
    FROM nba_predictions.player_prop_predictions
    WHERE game_date >= '2026-02-24'
      AND system_id LIKE '%train0104_0215%'
    GROUP BY 1 ORDER BY 1"
-
-# If no results, check prediction worker logs:
-gcloud logging read 'resource.labels.service_name="prediction-worker" AND severity>=WARNING AND timestamp>="2026-02-24T00:00:00Z"' \
-  --project=nba-props-platform --limit=20 --format="table(timestamp,severity,textPayload)"
-
-# Verify the worker loaded the new models:
-gcloud logging read 'resource.labels.service_name="prediction-worker" AND textPayload=~"Loading model" AND timestamp>="2026-02-24T00:00:00Z"' \
-  --project=nba-props-platform --limit=20
 ```
 
-**Expected:** 4 new system_ids with predictions:
-- `catboost_v12_vegas_q43_train0104_0215`
-- `catboost_v12_noveg_q43_train0104_0215`
-- `catboost_v12_noveg_mae_train0104_0215`
-- `catboost_v12_mae_train0104_0215`
+## Priority 2: Monitor V9 in Best Bets
 
-**If missing:** Worker may not have restarted. Run `./bin/deploy-service.sh prediction-worker` to force a restart.
-
-## Priority 2: Evaluate Fresh Models for Champion Promotion
-
-After 2-3 days of shadow data (Feb 25-26), evaluate the top candidates. Need **50+ graded edge 3+ picks** for statistical significance.
-
-```sql
--- Check shadow model performance (run after Feb 26)
-SELECT
-  system_id,
-  COUNT(*) as total_picks,
-  COUNTIF(edge >= 3) as edge3_picks,
-  ROUND(COUNTIF(edge >= 3 AND result = 'WIN') / NULLIF(COUNTIF(edge >= 3 AND result IN ('WIN','LOSS')), 0) * 100, 1) as edge3_hr,
-  COUNTIF(edge >= 3 AND result IN ('WIN','LOSS')) as edge3_graded
-FROM nba_predictions.prediction_accuracy
-WHERE system_id LIKE '%train0104_0215%'
-  AND game_date >= '2026-02-24'
-GROUP BY 1 ORDER BY edge3_hr DESC
-```
-
-**Top candidates from training evaluation:**
-
-| Model | Family | Eval MAE | Eval HR 3+ | Eval N |
-|-------|--------|----------|-----------|--------|
-| `catboost_v12_vegas_q43_train0104_0215` | v12_vegas_q43 | 4.70 | 66.7% | 21 |
-| `catboost_v12_noveg_q43_train0104_0215` | v12_noveg_q43 | 4.96 | 65.7% | 35 |
-| `catboost_v12_noveg_mae_train0104_0215` | v12_noveg_mae | 4.78 | 61.5% | 26 |
-| `catboost_v12_mae_train0104_0215` | v12_mae | 4.74 | 55.6% | 18 |
-
-**Promotion criteria (governance gates):**
-1. Edge 3+ hit rate >= 60% on live data
-2. Sample size >= 50 graded edge 3+ picks
-3. pred_vs_vegas bias within +/- 1.5
-4. No critical tier bias (> +/- 5 points)
-5. MAE improvement vs current champion
-
-**DO NOT promote without explicit user approval.** Training ≠ deploying.
-
-## Priority 3: Run Daily Health Checks
+V9 is BLOCKED overall AND LOSING at edge 5+ (41.7%, N=12 over 14d). It still contributed 66% of best bets picks last 30 days. The fresh retrains should naturally outcompete it through higher edge, but monitor:
 
 ```bash
-# 1. Morning steering report
-/daily-steering
+# V9's contribution to best bets this week
+bq query --use_legacy_sql=false "
+SELECT system_id, COUNT(*) as picks
+FROM nba_predictions.signal_best_bets_picks
+WHERE game_date >= '2026-02-24'
+GROUP BY 1 ORDER BY 2 DESC"
+```
 
-# 2. Run the new validators from Session 334
-python bin/validation/validate_model_registry.py
-python bin/validation/validate_workflow_dependencies.py
+If V9 still dominates picks AND its edge-5+ HR stays below 52.4%, consider manual exclusion from the multi-model query.
 
-# 3. Deployment drift (should be zero)
+## Priority 3: Standard Daily Checks
+
+```bash
+/daily-steering           # Now includes edge-5+ health section
+/validate-daily
 ./bin/check-deployment-drift.sh --verbose
 ```
 
-## Priority 4: Remaining Open Items
+## Files Changed This Session
 
-### `retrain.sh` Post-Retrain Registry Check (LOW)
-
-Session 334 added verification to `quick_retrain.py` but not to `retrain.sh` (the bash wrapper that calls quick_retrain for each family). Adding a post-loop duplicate check in `retrain.sh` would catch cross-family duplicates.
-
-**Location:** `bin/retrain.sh` after line 318 (after all families trained):
-```bash
-# Post-retrain registry consistency check
-echo "Verifying registry consistency..."
-python bin/validation/validate_model_registry.py --skip-gcs
-```
-
-### `supplemental_data.py` Hardcoded `catboost_v12_noveg%` (LOW)
-
-Still has hardcoded pattern for cross-model consensus CTE. Annotation-only impact — doesn't affect best bets selection or grading.
-
-**File:** `ml/signals/supplemental_data.py`
-**Fix:** Replace hardcoded `catboost_v12_noveg%` with dynamic pattern from `build_system_id_sql_filter()`
-
-### Firestore Completion Tracker Architectural Issues (LOW)
-
-Session 333 investigation found 4 issues. Code already has proper `logger.error` + retry (Session 334 corrected the initial analysis). The staleness monitor is now in `daily-health-check`. Remaining:
-1. Lazy client initialization — potential race condition under concurrent requests
-2. 30-second Firestore availability check interval — could be reduced to 10s
-3. No circuit breaker pattern — if Firestore is down, every request still attempts connection
-
-These are non-blocking improvements. The completion tracker works correctly when the orchestrator runs.
-
-### Auto-Deploy Consistency Pre-Commit Hook (LOW)
-
-Session 334 added `nba-grading-service` to auto-deploy.yml manually. A pre-commit hook could validate that all services in `check-deployment-drift.sh` have corresponding auto-deploy triggers. Not critical since drift check catches the symptom, but would prevent drift from accumulating.
-
-## Files Changed in Sessions 332-334
-
-### Session 334 (this session)
 | File | Change |
 |------|--------|
-| `ml/experiments/quick_retrain.py` | Post-retrain verification gate |
-| `.pre-commit-hooks/validate_model_references.py` | NEW — hardcoded model ID detection |
-| `.pre-commit-config.yaml` | Added validate-model-references hook |
-| `tests/unit/shared/test_cross_model_subsets.py` | NEW — 69 tests for classify_system_id() |
-| `.github/workflows/auto-deploy.yml` | Added nba-grading-service deploy job |
-| `bin/validation/validate_model_registry.py` | NEW — registry consistency checks |
-| `bin/validation/validate_workflow_dependencies.py` | NEW — disabled scraper workflow detection |
-| `orchestration/cloud_functions/daily_health_check/main.py` | Added completion staleness check |
-| `data_processors/publishing/subset_materializer.py` | CHAMPION_SYSTEM_ID → dynamic |
-| `data_processors/publishing/all_subsets_picks_exporter.py` | CHAMPION_SYSTEM_ID → dynamic |
-| `data_processors/publishing/season_subset_picks_exporter.py` | CHAMPION_SYSTEM_ID → dynamic |
-| `predictions/coordinator/quality_gate.py` | system_id defaults → dynamic |
-| `predictions/coordinator/signal_calculator.py` | system_id default → dynamic |
-| `CLAUDE.md` | Updated V9→V12 refs, added new tools/hooks |
+| `bin/retrain.sh` | Post-retrain registry validation block |
+| `shared/config/cross_model_subsets.py` | New `build_noveg_mae_sql_filter()` helper |
+| `ml/signals/supplemental_data.py` | Replaced hardcoded v12_noveg pattern with helper |
+| `shared/utils/completion_tracker.py` | Thread-safe init, 10s interval, circuit breaker |
+| `.pre-commit-hooks/validate_auto_deploy_consistency.py` | NEW — drift/deploy consistency check |
+| `.pre-commit-config.yaml` | Added validate-auto-deploy-consistency hook |
+| `.claude/skills/daily-steering/SKILL.md` | Added Step 1.5 edge-5+ health, fixed Step 2.5 bugs |
 
-### GCP Changes (not in git)
-- Created Cloud Build trigger `deploy-validation-runner`
-- Granted `bigquery.jobUser` + `bigquery.dataViewer` to `github-actions-deploy` SA
+## Key Insights for Future Sessions
+
+1. **Edge magnitude ≠ prediction quality.** A model can produce high-edge picks that lose money. The edge-5+ premium can be negative.
+2. **Multi-model selection is edge-only.** No health, no accuracy, no recency weighting. This is by design (Session 323 validated simplicity beats sophistication).
+3. **Shadow monitoring is free.** `prediction_accuracy` grades ALL predictions from ALL models. No new infrastructure needed to check any model's performance at any edge threshold.
+4. **Best bets filters provide partial protection.** V9 best-bets HR (62.5% Feb 2 week) was much higher than V9 raw edge-5+ HR (30.2%). But the gap is closing as decay deepens.
+5. **The system may self-correct.** Fresh retrains should produce competitive edges and naturally displace decaying models in multi-model selection.
