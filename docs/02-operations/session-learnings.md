@@ -428,6 +428,50 @@ gcloud run services update post-grading-export --region=us-west2 --project=nba-p
 
 ---
 
+### minScale Drift on Cloud Run Deploy (Session 338)
+
+**Symptom**: All Cloud Run services had `minScale=0` despite expecting `minScale=1`. `phase4-to-phase5-orchestrator` had 20+ "no available instance" cold start errors in a 1-hour window.
+
+**Cause**: `gcloud run deploy` creates a new revision. If `--min-instances` is not explicitly passed, the new revision doesn't inherit the previous setting — it resets to the default (0). Both `deploy-service.sh` and `cloudbuild.yaml` were missing this flag.
+
+**Fix**: Added `--min-instances` to all deploy paths:
+- `bin/deploy-service.sh`: Per-service `get_min_instances()` function (orchestrators + prediction services → 1, others → 0)
+- `bin/hot-deploy.sh`: Same function
+- `cloudbuild.yaml`: `_MIN_INSTANCES` substitution variable (default: 0), set to 1 per-trigger for prediction-worker/coordinator
+
+**Cloud Build triggers**: Cannot use `gcloud builds triggers update` with substitutions for repository-event triggers. Use the REST API instead:
+```bash
+curl -X PATCH "https://cloudbuild.googleapis.com/v1/projects/PROJECT/locations/REGION/triggers/TRIGGER_ID" \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "Content-Type: application/json" \
+  -d @trigger_full.json
+```
+
+**Prevention**: Deploy scripts now explicitly set `--min-instances` on every deploy. Cost: ~$0.01/hr per warm instance (~$1.20/day for 5 services).
+
+---
+
+### BigQuery SQL Escape Sequence in Python f-strings (Session 338)
+
+**Symptom**: Phase 6 export fails with `Illegal escape sequence: \_ at [194:82]`. Today's best bets file not generated.
+
+**Cause**: Python f-string contained `'%\\_q4%'` — the backslash-underscore is not a valid Python escape sequence AND BigQuery LIKE patterns don't need underscore escaping.
+
+**Real Code**: `shared/config/cross_model_subsets.py` line 152:
+```python
+# WRONG — backslash before underscore
+return f"({col} NOT LIKE '%\\_q4%')"
+
+# CORRECT — no escaping needed
+return f"({col} NOT LIKE '%_q4%')"
+```
+
+**Detection**: Check Phase 6 logs for SQL compilation errors. Also run `python -W error -c "import shared.config.cross_model_subsets"` to catch DeprecationWarning on invalid escapes.
+
+**Prevention**: Pre-commit hook could check for `\_` in Python strings (unlikely to be intentional). Also, BigQuery's LIKE operator uses `%` and `_` as wildcards — the only way to escape them is with a ESCAPE clause, not backslash.
+
+---
+
 ## Data Quality Issues
 
 ### Phase 3 All-or-Nothing Quality Rejection (Session 302)

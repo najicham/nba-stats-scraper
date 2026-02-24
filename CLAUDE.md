@@ -244,6 +244,9 @@ WHERE game_date >= CURRENT_DATE() - 3 GROUP BY 1 ORDER BY 1 DESC;
 | Phase 3 partial game processing | Quality check filters invalid teams (0 pts/FGA) instead of rejecting all. Slack alert fires + canary auto-heals. |
 | Team boxscore zeros for in-progress games | EXPECTED — scraper writes placeholders. Filtered at processing time (Session 302). |
 | Cloud Function env vars | Use `gcloud functions describe FUNC`, not `gcloud run services describe`. CFs are NOT Cloud Run services. |
+| **minScale drift on deploy** | **Deploy scripts now set `--min-instances` explicitly. Orchestrators + prediction services = 1, others = 0 (Session 338).** |
+| **Phase 6 trigger message format** | Use `{"export_types": ["signal-best-bets"], "target_date": "2026-02-24"}` — NOT `game_date`. See `phase6_export/main.py`. |
+| **SQL escape `\_` in Python** | BigQuery LIKE doesn't need backslash-escaping underscores. Use `%_q4%` not `%\\_q4%`. |
 
 **Full troubleshooting:** `docs/02-operations/session-learnings.md`
 
