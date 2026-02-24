@@ -47,6 +47,23 @@ if [ -z "$SERVICE" ]; then
     exit 1
 fi
 
+# Services that need a warm instance to avoid cold-start pipeline delays.
+# Session 338: Deployments were silently resetting minScale to 0.
+get_min_instances() {
+    case "$1" in
+        prediction-coordinator|prediction-worker|\
+        phase3-to-phase4-orchestrator|phase4-to-phase5-orchestrator|\
+        phase5-to-phase6-orchestrator)
+            echo "1"
+            ;;
+        *)
+            echo "0"
+            ;;
+    esac
+}
+
+MIN_INSTANCES=$(get_min_instances "$SERVICE")
+
 # Map service names to Dockerfile paths
 case $SERVICE in
   prediction-coordinator)
@@ -115,13 +132,14 @@ echo "  Push complete"
 
 # [3/4] Deploy
 echo ""
-echo "[3/4] Deploying..."
+echo "[3/4] Deploying (min-instances=$MIN_INSTANCES)..."
 gcloud run deploy "$SERVICE" \
     --image="$REGISTRY/$SERVICE:latest" \
     --region="$REGION" \
     --project="$PROJECT" \
     --update-env-vars="BUILD_COMMIT=$BUILD_COMMIT,BUILD_TIMESTAMP=$BUILD_TIMESTAMP" \
     --update-labels="commit-sha=$BUILD_COMMIT" \
+    --min-instances="$MIN_INSTANCES" \
     --quiet 2>&1 | grep -E "(Deploying|Routing|Done|Service)" || true
 
 # [4/4] Quick health check

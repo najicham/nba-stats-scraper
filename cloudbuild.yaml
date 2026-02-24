@@ -69,6 +69,8 @@ steps:
       - '.'
 
   # Step 2: Deploy to Cloud Run
+  # Session 338: Added --min-instances to prevent cold-start drift on redeploy.
+  # Override per-trigger via _MIN_INSTANCES substitution (default: 0).
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
@@ -85,6 +87,8 @@ steps:
       - 'BUILD_COMMIT=${SHORT_SHA},BUILD_TIMESTAMP=${_BUILD_TIMESTAMP}'
       - '--update-labels'
       - 'commit-sha=${SHORT_SHA}'
+      - '--min-instances'
+      - '${_MIN_INSTANCES}'
 
 images:
   - 'us-west2-docker.pkg.dev/nba-props-platform/nba-props/${_SERVICE}:latest'
@@ -94,6 +98,7 @@ substitutions:
   _SERVICE: ''
   _DOCKERFILE: ''
   _BUILD_TIMESTAMP: ''
+  _MIN_INSTANCES: '0'
 
 timeout: 1200s
 

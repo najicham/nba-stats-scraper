@@ -149,7 +149,7 @@ def build_noveg_mae_sql_filter(alias: str = '') -> str:
     """
     prefix = f"{alias}." if alias else ""
     col = f"{prefix}system_id"
-    return f"({col} LIKE 'catboost_v12_noveg%' AND {col} NOT LIKE '%\\_q4%')"
+    return f"({col} LIKE 'catboost_v12_noveg%' AND {col} NOT LIKE '%_q4%')"
 
 
 # ---------------------------------------------------------------------------
