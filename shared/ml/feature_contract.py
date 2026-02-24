@@ -112,12 +112,17 @@ FEATURE_STORE_NAMES: List[str] = [
 
     # 54: Prop Line Delta (Session 294 — market overreaction signal)
     "prop_line_delta",                # current_line - previous_game_line
+
+    # 55-56: Player Profile Features (V15 experiment — from player_game_summary)
+    "ft_rate_season",                 # FTA / FGA season-to-date (point-in-time)
+    "starter_rate_season",            # % of games started season-to-date (point-in-time)
 ]
 
 # Validate feature store list length matches expected count
-assert len(FEATURE_STORE_NAMES) == FEATURE_STORE_FEATURE_COUNT, (
+# >= because experiment features (55+) extend beyond BQ schema (55 columns)
+assert len(FEATURE_STORE_NAMES) >= FEATURE_STORE_FEATURE_COUNT, (
     f"FEATURE_STORE_NAMES has {len(FEATURE_STORE_NAMES)} features, "
-    f"expected {FEATURE_STORE_FEATURE_COUNT}"
+    f"expected at least {FEATURE_STORE_FEATURE_COUNT}"
 )
 
 
@@ -460,6 +465,42 @@ V14_NOVEG_CONTRACT = ModelFeatureContract(
 )
 
 
+# -----------------------------------------------------------------------------
+# V15 Model Contract (56 features - V12 + player profile features)
+# Adds ft_rate_season and starter_rate_season from player_game_summary
+# Based on V12 champion (not V13/V14 shooting efficiency chain)
+# Experiment-only: does NOT change feature store schema
+# -----------------------------------------------------------------------------
+
+V15_FEATURE_NAMES: List[str] = V12_FEATURE_NAMES + [
+    # 54: Player Profile - Free throw rate (FTA/FGA season-to-date)
+    "ft_rate_season",
+
+    # 55: Player Profile - Starter rate (% games started season-to-date)
+    "starter_rate_season",
+]
+
+V15_CONTRACT = ModelFeatureContract(
+    model_version="v15",
+    feature_count=56,
+    feature_names=V15_FEATURE_NAMES,
+    description="CatBoost V15 - 56 features, V12 + ft_rate_season + starter_rate_season from player profiles"
+)
+
+V15_NOVEG_FEATURE_NAMES: List[str] = [
+    name for name in V15_FEATURE_NAMES if name not in (
+        "vegas_points_line", "vegas_opening_line", "vegas_line_move", "has_vegas_line"
+    )
+]
+
+V15_NOVEG_CONTRACT = ModelFeatureContract(
+    model_version="v15_noveg",
+    feature_count=52,
+    feature_names=V15_NOVEG_FEATURE_NAMES,
+    description="CatBoost V15 No-Vegas - 52 features (56 minus 4 vegas), with player profile features"
+)
+
+
 # =============================================================================
 # CONTRACT REGISTRY
 # =============================================================================
@@ -475,6 +516,8 @@ MODEL_CONTRACTS: Dict[str, ModelFeatureContract] = {
     "v13_noveg": V13_NOVEG_CONTRACT,
     "v14": V14_CONTRACT,
     "v14_noveg": V14_NOVEG_CONTRACT,
+    "v15": V15_CONTRACT,
+    "v15_noveg": V15_NOVEG_CONTRACT,
     "catboost_v8": V8_CONTRACT,
     "catboost_v9": V9_CONTRACT,
     "catboost_v10": V10_CONTRACT,
@@ -482,6 +525,7 @@ MODEL_CONTRACTS: Dict[str, ModelFeatureContract] = {
     "catboost_v12": V12_NOVEG_CONTRACT,
     "catboost_v13": V13_NOVEG_CONTRACT,
     "catboost_v14": V14_NOVEG_CONTRACT,
+    "catboost_v15": V15_NOVEG_CONTRACT,
 }
 
 
@@ -495,6 +539,10 @@ def get_contract(model_version: str) -> ModelFeatureContract:
         version = "v8"
     if version.startswith("v11_"):
         version = "v11"
+    if version.startswith("v15_noveg"):
+        version = "v15_noveg"
+    elif version.startswith("v15_"):
+        version = "v15"
     if version.startswith("v14_noveg"):
         version = "v14_noveg"
     elif version.startswith("v14_"):
@@ -544,7 +592,7 @@ FEATURES_FROM_PHASE3_V11 = [37, 38]
 # game_total_line (38) depends on odds data availability.
 # These features are still tracked as defaults for visibility, but don't block predictions.
 # Scraper health monitoring separately alerts when star players are missing lines.
-FEATURES_OPTIONAL = set(FEATURES_VEGAS) | {38, 41, 42, 47, 50, 51, 52, 53, 54}
+FEATURES_OPTIONAL = set(FEATURES_VEGAS) | {38, 41, 42, 47, 50, 51, 52, 53, 54, 55, 56}
 
 # Session 152: Vegas line source values
 # Stored in ml_feature_store_v2.vegas_line_source and player_prop_predictions.vegas_line_source
@@ -587,6 +635,10 @@ for _idx in FEATURES_FROM_INJURY_V12:
 
 # Feature 54: prop_line_delta (Session 294)
 FEATURE_SOURCE_MAP[54] = 'vegas'
+
+# Features 55-56: V15 player profile features (experiment-only)
+FEATURE_SOURCE_MAP[55] = 'calculated'
+FEATURE_SOURCE_MAP[56] = 'calculated'
 
 
 # =============================================================================
@@ -682,6 +734,10 @@ FEATURE_DEFAULTS: Dict[str, float] = {
     "three_pct_last_3": 0.36,    # League average 3PT%
     "three_pct_last_5": 0.36,
     "fg_cold_streak": 0.0,       # Not cold by default
+
+    # V15 features (experiment-only - player profile)
+    "ft_rate_season": 0.30,      # League average FTA/FGA ratio
+    "starter_rate_season": 0.50, # Neutral (50% starter rate)
 }
 
 

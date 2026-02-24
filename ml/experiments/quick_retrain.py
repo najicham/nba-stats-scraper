@@ -70,6 +70,8 @@ from shared.ml.feature_contract import (
     V13_FEATURE_NAMES,
     V14_CONTRACT,
     V14_FEATURE_NAMES,
+    V15_CONTRACT,
+    V15_FEATURE_NAMES,
     FEATURE_DEFAULTS,
     FEATURE_STORE_FEATURE_COUNT,
     FEATURE_STORE_NAMES,
@@ -195,8 +197,8 @@ def parse_args():
     parser.add_argument('--eval-days', type=int, default=7, help='Days of eval (default: 7)')
 
     # Feature set selection
-    parser.add_argument('--feature-set', choices=['v9', 'v10', 'v11', 'v12', 'v13', 'v14'], default='v9',
-                       help='Feature set to use (v9=33, v10=37, v11=39, v12=54, v13=60 features)')
+    parser.add_argument('--feature-set', choices=['v9', 'v10', 'v11', 'v12', 'v13', 'v14', 'v15'], default='v9',
+                       help='Feature set to use (v9=33, v10=37, v11=39, v12=54, v13=60, v14=65, v15=56 features)')
 
     # Line source for evaluation
     parser.add_argument('--use-production-lines', action='store_true', default=True,
@@ -1549,6 +1551,110 @@ def augment_v14_features(client, df):
     return df
 
 
+def augment_v15_features(client, df):
+    """
+    Augment training/eval DataFrame with V15 player profile features (2 new, indices 55-56).
+
+    Computes from player_game_summary:
+    - ft_rate_season: FTA / FGA season-to-date (point-in-time, excludes current game)
+    - starter_rate_season: % of games started season-to-date (point-in-time)
+
+    Uses window functions with ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+    for point-in-time correctness (no look-ahead bias). Requires >= 5 prior games.
+
+    Based on V12 champion — does NOT require V13/V14 augmentation.
+
+    Args:
+        client: BigQuery client
+        df: DataFrame with player_lookup, game_date columns
+            (must already have V12 features augmented)
+
+    Returns:
+        DataFrame with V15 features written to feature_55_value and feature_56_value columns
+    """
+    if df.empty:
+        return df
+
+    if 'player_lookup' not in df.columns:
+        print("  WARNING: No player_lookup column — skipping V15 augmentation")
+        return df
+
+    min_date = df['game_date'].min()
+    max_date = df['game_date'].max()
+
+    v15_query = f"""
+    WITH season_stats AS (
+        SELECT
+            player_lookup,
+            game_date,
+            SUM(ft_attempts) OVER w as cum_fta,
+            SUM(fg_attempts) OVER w as cum_fga,
+            AVG(CAST(starter_flag AS INT64)) OVER w as cum_starter_rate,
+            COUNT(*) OVER w as games_so_far
+        FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
+        WHERE game_date >= '2025-10-22'
+          AND minutes_played > 0
+        WINDOW w AS (
+            PARTITION BY player_lookup
+            ORDER BY game_date
+            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+        )
+    )
+    SELECT player_lookup, game_date,
+           SAFE_DIVIDE(cum_fta, cum_fga) as ft_rate_season,
+           cum_starter_rate as starter_rate_season
+    FROM season_stats
+    WHERE game_date BETWEEN '{min_date}' AND '{max_date}'
+      AND games_so_far >= 5
+    """
+
+    print("  V15: Querying player profile features (ft_rate, starter_rate)...")
+    v15_data = client.query(v15_query).to_dataframe()
+
+    # Build lookup dict keyed by (player_lookup, game_date_str)
+    v15_lookup = {}
+    for _, row in v15_data.iterrows():
+        key = (row['player_lookup'], pd.to_datetime(row['game_date']).strftime('%Y-%m-%d'))
+        ft_rate = float(row['ft_rate_season']) if row['ft_rate_season'] is not None and not pd.isna(row['ft_rate_season']) else np.nan
+        starter_rate = float(row['starter_rate_season']) if row['starter_rate_season'] is not None and not pd.isna(row['starter_rate_season']) else np.nan
+        v15_lookup[key] = {
+            'ft_rate_season': ft_rate,
+            'starter_rate_season': starter_rate,
+        }
+    print(f"  V15: Lookup built ({len(v15_lookup)} rows)")
+
+    # Write to feature_55_value and feature_56_value columns
+    # These indices match FEATURE_STORE_NAMES positions for ft_rate_season (55) and starter_rate_season (56)
+    ft_rate_idx = FEATURE_STORE_NAMES.index('ft_rate_season')
+    starter_rate_idx = FEATURE_STORE_NAMES.index('starter_rate_season')
+
+    matched = 0
+    for idx in range(len(df)):
+        row = df.iloc[idx]
+        game_date_str = pd.to_datetime(row['game_date']).strftime('%Y-%m-%d')
+        key = (row['player_lookup'], game_date_str)
+
+        v15 = v15_lookup.get(key, {})
+        if v15:
+            matched += 1
+
+        ft_rate = v15.get('ft_rate_season', np.nan)
+        starter_rate = v15.get('starter_rate_season', np.nan)
+
+        df.at[df.index[idx], f'feature_{ft_rate_idx}_value'] = ft_rate
+        df.at[df.index[idx], f'feature_{starter_rate_idx}_value'] = starter_rate
+
+    total = len(df)
+    print(f"  V15 augmentation: {matched}/{total} ({100*matched/total:.0f}%) rows matched player profile data")
+
+    # Report coverage stats
+    ft_non_nan = df[f'feature_{ft_rate_idx}_value'].notna().sum()
+    starter_non_nan = df[f'feature_{starter_rate_idx}_value'].notna().sum()
+    print(f"  V15 coverage: ft_rate_season={ft_non_nan}/{total}, starter_rate_season={starter_non_nan}/{total}")
+
+    return df
+
+
 def prepare_features(df, contract=V9_CONTRACT, exclude_features=None):
     """
     Prepare feature matrix using NAME-BASED extraction (not position-based).
@@ -2198,7 +2304,10 @@ def main():
     exp_id = str(uuid.uuid4())[:8]
 
     # Select feature contract based on --feature-set
-    if args.feature_set == 'v14':
+    if args.feature_set == 'v15':
+        selected_contract = V15_CONTRACT
+        selected_feature_names = V15_FEATURE_NAMES
+    elif args.feature_set == 'v14':
         selected_contract = V14_CONTRACT
         selected_feature_names = V14_FEATURE_NAMES
     elif args.feature_set == 'v13':
@@ -2422,6 +2531,18 @@ def main():
         print("\nAugmenting with V14 features (5 engineered FG% signals)...")
         df_train = augment_v14_features(client, df_train)
         df_eval = augment_v14_features(client, df_eval)
+
+    # V15: V12 augmentation first (V15 extends V12, not V13/V14), then add 2 player profile features
+    if args.feature_set == 'v15':
+        print("\nAugmenting with V11 features (star_teammates_out, game_total_line)...")
+        df_train = augment_v11_features(client, df_train)
+        df_eval = augment_v11_features(client, df_eval)
+        print("\nAugmenting with V12 features (15 new features)...")
+        df_train = augment_v12_features(client, df_train)
+        df_eval = augment_v12_features(client, df_eval)
+        print("\nAugmenting with V15 features (2 player profile features)...")
+        df_train = augment_v15_features(client, df_train)
+        df_eval = augment_v15_features(client, df_eval)
 
     if len(df_train) < 1000 or len(df_eval) < 100:
         print("ERROR: Not enough data")
