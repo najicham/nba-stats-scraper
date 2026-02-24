@@ -33,7 +33,7 @@ TRIGGER_TOPIC="nba-phase4-precompute-complete"
 MEMORY="512MB"
 TIMEOUT="60s"
 MAX_INSTANCES="10"
-MIN_INSTANCES="0"
+MIN_INSTANCES="1"
 
 SOURCE_DIR="orchestration/cloud_functions/phase4_to_phase5"
 

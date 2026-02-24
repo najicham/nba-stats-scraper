@@ -43,19 +43,19 @@ EXPECTED_CLOUD_FUNCTIONS = {# REMOVED Session 204: phase2-to-phase3-orchestrator
         'memory': '512Mi',
         'timeout': '60s',
         'max_instances': 10,
-        'min_instances': 0,
+        'min_instances': 1,
     },
     'phase4-to-phase5-orchestrator': {
         'memory': '512Mi',
         'timeout': '60s',
         'max_instances': 10,
-        'min_instances': 0,
+        'min_instances': 1,
     },
     'phase5-to-phase6-orchestrator': {
         'memory': '512Mi',
         'timeout': '60s',
         'max_instances': 10,
-        'min_instances': 0,
+        'min_instances': 1,
     },
     'auto-retry-processor': {
         'memory': '256Mi',
@@ -221,6 +221,16 @@ def compare_configs(expected: Dict, actual: Dict, name: str) -> List[Dict]:
             'expected': expected.get('max_instances'),
             'actual': actual.get('max_instances'),
             'severity': 'medium'
+        })
+
+    # Compare min_instances (Session 333: detect cold-start regression)
+    if 'min_instances' in expected and expected.get('min_instances') != actual.get('min_instances', 0):
+        drifts.append({
+            'resource': name,
+            'field': 'min_instances',
+            'expected': expected.get('min_instances'),
+            'actual': actual.get('min_instances', 0),
+            'severity': 'high' if expected.get('min_instances', 0) > actual.get('min_instances', 0) else 'medium'
         })
 
     return drifts

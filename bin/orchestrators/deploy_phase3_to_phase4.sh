@@ -26,7 +26,7 @@ TRIGGER_TOPIC="nba-phase3-analytics-complete"
 MEMORY="512MB"
 TIMEOUT="60s"
 MAX_INSTANCES="10"
-MIN_INSTANCES="0"
+MIN_INSTANCES="1"
 
 SOURCE_DIR="orchestration/cloud_functions/phase3_to_phase4"
 

@@ -26,7 +26,7 @@ TRIGGER_TOPIC="nba-phase5-predictions-complete"
 MEMORY="512MB"
 TIMEOUT="60s"
 MAX_INSTANCES="10"
-MIN_INSTANCES="0"
+MIN_INSTANCES="1"
 
 SOURCE_DIR="orchestration/cloud_functions/phase5_to_phase6"
 
