@@ -29,7 +29,8 @@ SIGNAL_MAP = {
 }
 
 # Champion model — used for signal queries
-CHAMPION_SYSTEM_ID = 'catboost_v9'
+from shared.config.model_selection import get_champion_model_id
+CHAMPION_SYSTEM_ID = get_champion_model_id()
 
 
 class SeasonSubsetPicksExporter(BaseExporter):

@@ -28,6 +28,7 @@ on:
           - nba-phase4-precompute-processors
           - prediction-coordinator
           - prediction-worker
+          - nba-grading-service
 
 jobs:
   detect-changes:
@@ -39,6 +40,7 @@ jobs:
       phase4: ${{ steps.changes.outputs.phase4 }}
       coordinator: ${{ steps.changes.outputs.coordinator }}
       worker: ${{ steps.changes.outputs.worker }}
+      grading: ${{ steps.changes.outputs.grading }}
       any_service: ${{ steps.changes.outputs.any_service }}
     steps:
       - uses: actions/checkout@v4
@@ -70,6 +72,7 @@ jobs:
           deploy_phase4=false
           deploy_coordinator=false
           deploy_worker=false
+          deploy_grading=false
 
           if [ "$DEPLOY_ALL" = "true" ] || [ "$SHARED" = "true" ]; then
             deploy_scrapers=true
@@ -78,6 +81,7 @@ jobs:
             deploy_phase4=true
             deploy_coordinator=true
             deploy_worker=true
+            deploy_grading=true
           else
             # Check individual service paths
             echo "$CHANGED" | grep -q '^scrapers/' && deploy_scrapers=true
@@ -86,17 +90,19 @@ jobs:
             echo "$CHANGED" | grep -q '^data_processors/precompute/' && deploy_phase4=true
             echo "$CHANGED" | grep -q '^predictions/coordinator/' && deploy_coordinator=true
             echo "$CHANGED" | grep -q '^predictions/worker/' && deploy_worker=true
+            echo "$CHANGED" | grep -q '^data_processors/grading/' && deploy_grading=true
             # Generic predictions/ changes deploy both coordinator and worker
             if echo "$CHANGED" | grep -q '^predictions/shared/'; then
               deploy_coordinator=true
               deploy_worker=true
+              deploy_grading=true
             fi
           fi
 
           # Override for specific service deployment
           if [ -n "$DEPLOY_SERVICE" ]; then
             deploy_scrapers=false; deploy_phase2=false; deploy_phase3=false
-            deploy_phase4=false; deploy_coordinator=false; deploy_worker=false
+            deploy_phase4=false; deploy_coordinator=false; deploy_worker=false; deploy_grading=false
             case "$DEPLOY_SERVICE" in
               nba-scrapers) deploy_scrapers=true ;;
               nba-phase2-raw-processors) deploy_phase2=true ;;
@@ -104,6 +110,7 @@ jobs:
               nba-phase4-precompute-processors) deploy_phase4=true ;;
               prediction-coordinator) deploy_coordinator=true ;;
               prediction-worker) deploy_worker=true ;;
+              nba-grading-service) deploy_grading=true ;;
             esac
           fi
 
@@ -114,11 +121,13 @@ jobs:
           echo "phase4=$deploy_phase4" >> $GITHUB_OUTPUT
           echo "coordinator=$deploy_coordinator" >> $GITHUB_OUTPUT
           echo "worker=$deploy_worker" >> $GITHUB_OUTPUT
+          echo "grading=$deploy_grading" >> $GITHUB_OUTPUT
 
           any=false
           [ "$deploy_scrapers" = "true" ] || [ "$deploy_phase2" = "true" ] || \
           [ "$deploy_phase3" = "true" ] || [ "$deploy_phase4" = "true" ] || \
-          [ "$deploy_coordinator" = "true" ] || [ "$deploy_worker" = "true" ] && any=true
+          [ "$deploy_coordinator" = "true" ] || [ "$deploy_worker" = "true" ] || \
+          [ "$deploy_grading" = "true" ] && any=true
           echo "any_service=$any" >> $GITHUB_OUTPUT
 
           echo ""
@@ -129,6 +138,7 @@ jobs:
           [ "$deploy_phase4" = "true" ] && echo "  - nba-phase4-precompute-processors" || true
           [ "$deploy_coordinator" = "true" ] && echo "  - prediction-coordinator" || true
           [ "$deploy_worker" = "true" ] && echo "  - prediction-worker" || true
+          [ "$deploy_grading" = "true" ] && echo "  - nba-grading-service" || true
           [ "$any" = "false" ] && echo "  (none - no service changes detected)" || true
 
   # Each service deploys as a separate job for parallelism and independent failure
@@ -186,8 +196,17 @@ jobs:
       dockerfile: predictions/worker/Dockerfile
     secrets: inherit
 
+  deploy-grading:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.grading == 'true'
+    uses: ./.github/workflows/deploy-service.yml
+    with:
+      service: nba-grading-service
+      dockerfile: data_processors/grading/nba/Dockerfile
+    secrets: inherit
+
   summary:
-    needs: [detect-changes, deploy-scrapers, deploy-phase2, deploy-phase3, deploy-phase4, deploy-coordinator, deploy-worker]
+    needs: [detect-changes, deploy-scrapers, deploy-phase2, deploy-phase3, deploy-phase4, deploy-coordinator, deploy-worker, deploy-grading]
     if: always() && needs.detect-changes.outputs.any_service == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -222,3 +241,4 @@ jobs:
           report_status "nba-phase4-precompute-processors" "${{ needs.deploy-phase4.result }}" "${{ needs.detect-changes.outputs.phase4 }}"
           report_status "prediction-coordinator" "${{ needs.deploy-coordinator.result }}" "${{ needs.detect-changes.outputs.coordinator }}"
           report_status "prediction-worker" "${{ needs.deploy-worker.result }}" "${{ needs.detect-changes.outputs.worker }}"
+          report_status "nba-grading-service" "${{ needs.deploy-grading.result }}" "${{ needs.detect-changes.outputs.grading }}"

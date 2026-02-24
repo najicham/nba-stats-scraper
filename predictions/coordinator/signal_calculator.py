@@ -306,7 +306,7 @@ def _send_optimal_picks_notification(game_date: str) -> dict:
         return {'slack': False, 'email': False, 'sms': False}
 
 
-def get_daily_signal(game_date: str, system_id: str = 'catboost_v9') -> Optional[dict]:
+def get_daily_signal(game_date: str, system_id: str = None) -> Optional[dict]:
     """
     Get the daily signal for a specific system and date.
 
@@ -317,6 +317,9 @@ def get_daily_signal(game_date: str, system_id: str = 'catboost_v9') -> Optional
     Returns:
         dict with signal info or None if not found
     """
+    if system_id is None:
+        from shared.config.model_selection import get_champion_model_id
+        system_id = get_champion_model_id()
     try:
         client = bigquery.Client(project=PROJECT_ID)
 

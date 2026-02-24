@@ -2925,6 +2925,34 @@ def main():
                 )
             except Exception as e:
                 print(f"\n  WARNING: Auto-register failed: {e}")
+            else:
+                # Session 334: Verify registration succeeded
+                try:
+                    verify_result = client.query(f"""
+                        SELECT model_id, enabled, status, model_family
+                        FROM `{PROJECT_ID}.nba_predictions.model_registry`
+                        WHERE model_id = '{registry_model_id}'
+                    """).result()
+                    verify_rows = list(verify_result)
+                    if verify_rows:
+                        row = verify_rows[0]
+                        print(f"  VERIFIED: {registry_model_id} in registry (enabled={row.enabled}, status={row.status})")
+                    else:
+                        print(f"\n  ERROR: {registry_model_id} NOT FOUND in registry after registration!")
+                        print(f"  Manual fix: INSERT INTO model_registry ...")
+
+                    # Check for duplicate enabled entries in this family
+                    dup_result = client.query(f"""
+                        SELECT COUNT(*) as cnt
+                        FROM `{PROJECT_ID}.nba_predictions.model_registry`
+                        WHERE model_family = '{model_family}' AND enabled = TRUE
+                    """).result()
+                    dup_count = list(dup_result)[0].cnt
+                    if dup_count > 1:
+                        print(f"\n  WARNING: {dup_count} enabled models in family '{model_family}'!")
+                        print(f"  Disable older entries to prevent double-training.")
+                except Exception as e:
+                    print(f"  Registry verification skipped: {e}")
 
         # Generate ready-to-paste MONTHLY_MODELS config snippet (Session 177)
         # Still useful as fallback reference even with auto-register

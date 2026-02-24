@@ -114,18 +114,21 @@ class QualityGate:
             self._bq_client = get_bigquery_client(self.project_id)
         return self._bq_client
 
-    def get_existing_predictions(self, game_date: date, player_lookups: List[str], system_id: str = 'catboost_v9') -> Dict[str, bool]:
+    def get_existing_predictions(self, game_date: date, player_lookups: List[str], system_id: str = None) -> Dict[str, bool]:
         """
         Check which players already have predictions for the given date and system.
 
         Args:
             game_date: Date to check predictions for
             player_lookups: List of player lookups to check
-            system_id: System ID to check predictions for (default: 'catboost_v9' for backward compat)
+            system_id: System ID to check predictions for (default: champion model)
 
         Returns:
             Dict mapping player_lookup to bool (True if prediction exists)
         """
+        if system_id is None:
+            from shared.config.model_selection import get_champion_model_id
+            system_id = get_champion_model_id()
         if not player_lookups:
             return {}
 
@@ -224,7 +227,7 @@ class QualityGate:
         game_date: date,
         player_lookups: List[str],
         mode: PredictionMode,
-        system_id: str = 'catboost_v9'
+        system_id: str = None
     ) -> Tuple[List[QualityGateResult], QualityGateSummary]:
         """
         Apply quality gate to a batch of players for a specific system.
@@ -243,11 +246,14 @@ class QualityGate:
             game_date: Date to make predictions for
             player_lookups: List of player lookups
             mode: Prediction mode (determines threshold)
-            system_id: System ID to check existing predictions for (default: 'catboost_v9')
+            system_id: System ID to check existing predictions for (default: champion model)
 
         Returns:
             Tuple of (list of QualityGateResult, QualityGateSummary)
         """
+        if system_id is None:
+            from shared.config.model_selection import get_champion_model_id
+            system_id = get_champion_model_id()
         threshold = QUALITY_THRESHOLDS.get(mode, 85.0)
 
         logger.info(f"Applying quality gate: system_id={system_id}, mode={mode.value}, threshold={threshold}%, players={len(player_lookups)}")

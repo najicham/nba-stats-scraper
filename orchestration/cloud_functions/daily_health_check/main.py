@@ -8,10 +8,11 @@ This function performs comprehensive health checks:
 2. Pipeline execution status (Phase 3→4→5 completion)
 3. Today's prediction readiness
 4. Yesterday's game completeness (R-009)
+5. Completion tracking staleness (phase_completions table)
 
 Results are sent to Slack and logged to Cloud Logging.
 
-Version: 1.2 - Added meta-monitoring (monitor the monitors)
+Version: 1.3 - Added completion tracking staleness check
 Created: 2026-01-19
 Updated: 2026-02-15
 """
@@ -385,6 +386,45 @@ def check_monitoring_freshness() -> List[Tuple[str, str, str]]:
     return checks
 
 
+def check_completion_tracking_staleness() -> Tuple[str, str]:
+    """
+    Check if the completion tracking system is recording recent completions.
+
+    Queries nba_orchestration.phase_completions for the most recent completed_at
+    timestamp. If more than 36 hours old (accounts for off-days), flag as STALE.
+
+    Returns:
+        Tuple of (status, message)
+    """
+    STALENESS_THRESHOLD_HOURS = 36
+
+    try:
+        query = f"""
+            SELECT
+              MAX(completed_at) as latest_completion,
+              TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), MAX(completed_at), HOUR) as hours_stale
+            FROM `{PROJECT_ID}.nba_orchestration.phase_completions`
+        """
+
+        results = list(bq.query(query).result())
+
+        if results and results[0].latest_completion is not None:
+            hours_stale = results[0].hours_stale
+            latest = results[0].latest_completion.strftime('%Y-%m-%d %H:%M UTC')
+
+            if hours_stale <= STALENESS_THRESHOLD_HOURS:
+                return ('pass', f'Fresh (latest: {latest}, {hours_stale}h ago)')
+            else:
+                return ('fail', f'STALE — no completions in {hours_stale}h (last: {latest}). '
+                        f'Threshold: {STALENESS_THRESHOLD_HOURS}h')
+        else:
+            return ('fail', 'No completion records found — tracking may not be writing')
+
+    except GoogleAPIError as e:
+        logger.warning(f"BigQuery error checking completion tracking staleness: {e}")
+        return ('warn', f'Error checking staleness: {str(e)[:100]}')
+
+
 def check_game_completeness(game_date: str) -> Tuple[str, str]:
     """
     Check if all expected games have complete data.
@@ -697,6 +737,14 @@ def daily_health_check(request):
     meta_checks = check_monitoring_freshness()
     for check_name, status, message in meta_checks:
         results.add(check_name, status, message)
+
+    # ========================================================================
+    # CHECK 7: Completion Tracking Staleness
+    # ========================================================================
+    logger.info("Checking completion tracking staleness...")
+
+    status, message = check_completion_tracking_staleness()
+    results.add("Completion Tracking", status, message)
 
     # ========================================================================
     # Send Results

@@ -32,7 +32,8 @@ from shared.utils.quality_filter import should_include_prediction  # Session 209
 logger = logging.getLogger(__name__)
 
 # Champion model — used as fallback for daily signal
-CHAMPION_SYSTEM_ID = 'catboost_v9'
+from shared.config.model_selection import get_champion_model_id
+CHAMPION_SYSTEM_ID = get_champion_model_id()
 
 # Minimum feature quality score for picks to be included
 # Session 94: Players with quality < 85% have 51.9% hit rate vs 56.8% for 85%+

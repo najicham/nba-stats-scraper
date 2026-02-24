@@ -26,7 +26,8 @@ from shared.utils.quality_filter import should_include_prediction  # Session 209
 logger = logging.getLogger(__name__)
 
 # Champion model — used for signal and as fallback
-CHAMPION_SYSTEM_ID = 'catboost_v9'
+from shared.config.model_selection import get_champion_model_id
+CHAMPION_SYSTEM_ID = get_champion_model_id()
 
 
 class AllSubsetsPicksExporter(BaseExporter):

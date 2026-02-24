@@ -111,6 +111,15 @@ repos:
         types: [python, sql]
         verbose: true
 
+      - id: validate-model-references
+        name: Check for hardcoded model system_ids
+        description: Prevents hardcoded catboost_v* system_ids in production code (Session 334)
+        entry: python .pre-commit-hooks/validate_model_references.py
+        language: python
+        pass_filenames: false
+        always_run: true
+        verbose: true
+
       - id: validate-pipeline-patterns
         name: Validate pipeline patterns (Session 185)
         description: Catches invalid enum usage, processor name mapping gaps, unsafe get_json() calls
