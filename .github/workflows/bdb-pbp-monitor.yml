@@ -1,9 +1,12 @@
 name: BigDataBall PBP Monitor
 
-# Run every 30 minutes to check for missing PBP data
+# DISABLED: BDL scrapers intentionally disabled (CLAUDE.md). This workflow
+# generates ~96 BQ permission errors/day against github-actions-deploy SA.
+# Re-enable if BDL data source is reactivated.
+# on:
+#   schedule:
+#     - cron: '*/30 * * * *'
 on:
-  schedule:
-    - cron: '*/30 * * * *'
   workflow_dispatch:
     inputs:
       date:

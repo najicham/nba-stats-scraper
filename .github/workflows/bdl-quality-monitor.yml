@@ -1,9 +1,12 @@
 name: BDL Data Quality Monitor
 
-# Run daily at 10 AM UTC (after overnight games are processed)
+# DISABLED: BDL scrapers intentionally disabled (CLAUDE.md). Generates
+# BQ permission errors against github-actions-deploy SA.
+# Re-enable if BDL data source is reactivated.
+# on:
+#   schedule:
+#     - cron: '0 10 * * *'
 on:
-  schedule:
-    - cron: '0 10 * * *'
   workflow_dispatch:  # Allow manual trigger
 
 jobs:
