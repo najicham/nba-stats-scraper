@@ -216,6 +216,7 @@ MONTHLY_MODELS = {
         "description": "V12_VEGAS_MAE_FEB22 — Fresh retrain matching V9 window, HR 3+ 64.7%",
     },
     # === V12+Vegas Quantile Q43 (54 features) — Fresh retrain Feb 22 ===
+    # DISABLED Session 334: Live HR 35.7% (14 picks) vs 59.0% backtest — UNDER bias
     "catboost_v12_q43_train1225_0205_feb22": {
         "model_path": "gs://nba-props-platform-models/catboost/v12/monthly/catboost_v9_54f_q0.43_train20251225-20260205_20260222_111648.cbm",
         "train_start": "2025-12-25",
@@ -224,12 +225,13 @@ MONTHLY_MODELS = {
         "backtest_hit_rate_all": 52.5,
         "backtest_hit_rate_edge_3plus": 59.02,
         "backtest_n_edge_3plus": 61,
-        "enabled": True,
+        "enabled": False,
         "feature_set": "v12",
         "quantile_alpha": 0.43,
-        "description": "V12_VEGAS_Q43_FEB22 — Fresh retrain UNDER specialist, HR 3+ 59.0% (n=61)",
+        "description": "V12_VEGAS_Q43_FEB22 — DISABLED: 35.7% live HR vs 59.0% backtest",
     },
     # === V12+Vegas Quantile Q43 (54 features) — Shadow ===
+    # DISABLED Session 334: Live HR 13.6% (22 picks) vs 70.59% backtest — catastrophic UNDER bias
     "catboost_v12_q43_train1225_0205": {
         "model_path": "gs://nba-props-platform-models/catboost/v12/monthly/catboost_v9_54f_q0.43_train20251225-20260205_20260221_230420.cbm",
         "train_start": "2025-12-25",
@@ -238,10 +240,10 @@ MONTHLY_MODELS = {
         "backtest_hit_rate_all": 55.60,
         "backtest_hit_rate_edge_3plus": 70.59,
         "backtest_n_edge_3plus": 51,
-        "enabled": True,
+        "enabled": False,
         "feature_set": "v12",
         "quantile_alpha": 0.43,
-        "description": "V12_VEGAS_Q43 — Session 324: UNDER specialist. HR 3+ 70.59% (n=51)",
+        "description": "V12_VEGAS_Q43 — DISABLED: 13.6% live HR vs 70.59% backtest",
     },
 }
 
