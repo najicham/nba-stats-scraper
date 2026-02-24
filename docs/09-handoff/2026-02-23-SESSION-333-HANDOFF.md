@@ -183,17 +183,37 @@ gcloud logging read 'timestamp>="2026-02-23T20:00:00Z" AND resource.type="cloud_
 | `ml/signals/signal_health.py` | Dynamic champion model via `get_best_bets_model_id()` |
 | `docs/09-handoff/2026-02-23-SESSION-332-HANDOFF.md` | Updated with Session 333 completions |
 
+## Additional Work — Infrastructure Fixes
+
+### FIXED: BQ Permission Errors (110/day → ~0)
+Root cause: `bdb-pbp-monitor.yml` ran every 30 min monitoring disabled BDL data (~96 errors/day). `bdl-quality-monitor.yml` ran daily (~1 error/day). Both disabled (BDL scrapers intentionally off).
+
+Remaining ~14 errors/day from `daily-source-validation.yml` and `deployment-validation.yml` — fixed by granting `roles/bigquery.jobUser` and `roles/bigquery.dataViewer` to `github-actions-deploy` SA.
+
+### INVESTIGATED: Firestore Completion Tracking Gap
+BQ backup (`nba_orchestration.phase_completions`) also stops at Feb 20 — confirms the gap is in both Firestore AND BigQuery. Root cause: Phase 3→4 orchestrator "no available instance" errors prevent the CompletionTracker from running. Data still flows through backup mechanisms.
+
+Investigation found 4 architectural issues in `shared/utils/completion_tracker.py`:
+1. Non-blocking error handling silently swallows failures
+2. Lazy client initialization race condition
+3. 30-second Firestore availability check interval too long
+4. No alerting on completion tracking failures
+
+Fix: other chat is handling orchestrator cold-start (minScale=1). Once orchestrator runs reliably, completion tracking should resume.
+
+### Deployed: `nba-grading-service` and `validation-runner`
+Both were stale — `nba-grading-service` had no Cloud Build trigger for `shared/` changes. `validation-runner` has no Cloud Build trigger at all (manual deploy only).
+
 ## Known Open Issues
 
-### Remaining from Error Log Audit
-- **Orchestrator "No Available Instance"** (HIGH) — Phase 3→4 orchestrator cold-start failures. Fix: set minScale=1 or tune Pub/Sub retry
-- **BQ Permission Errors** (MEDIUM) — `github-actions-deploy` SA missing `bigquery.jobs.create`. 110 errors/day
-- **Pipeline Canary Empty Payloads** (LOW) — likely benign audit log entries
+### Being Handled by Other Chat
+- **Orchestrator "No Available Instance"** (HIGH) — Phase 3→4 orchestrator cold-start failures
 
-### Remaining from Model Work
+### Remaining
+- **`validation-runner` has no Cloud Build trigger** — needs manual deploy or trigger creation
+- **Pipeline Canary Empty Payloads** (LOW) — likely benign audit log entries
 - **`supplemental_data.py` hardcoded `catboost_v12_noveg%`** — cross-model CTE, annotation-only impact
-- **Firestore completion tracking gap** — Phase 2/3 docs missing for Feb 22-23
-- **v12_q43_train1225_0205 at 27.3% HR on Feb 22** — now disabled in registry (was old entry), check if predictions stop
+- **Firestore completion tracking architectural issues** — non-blocking error handlers, lazy init race condition
 
 ## Next Session Priorities
 
@@ -206,7 +226,6 @@ gcloud logging read 'timestamp>="2026-02-23T20:00:00Z" AND resource.type="cloud_
 2. **After 2-3 days of shadow data** — evaluate fresh models for permanent champion promotion (need 50+ graded edge 3+ picks). Top candidates:
    - **v12_vegas_q43** (66.7% eval HR, best MAE 4.70)
    - **v12_noveg_q43** (65.7% eval HR, most volume)
-3. **Fix orchestrator cold-start** — set min instances to 1 (Issue 1)
-4. **Resolve BQ permission errors** — grant role or fix SA (Issue 2)
-5. **Investigate Firestore completion tracking** gap
-6. **Run `/daily-steering`** to confirm new models are healthy
+3. **Add Cloud Build trigger for `validation-runner`** — currently manual deploy only
+4. **Fix CompletionTracker error handling** — convert non-blocking to alerting, add backoff
+5. **Run `/daily-steering`** to confirm new models are healthy
