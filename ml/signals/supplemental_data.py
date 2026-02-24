@@ -217,6 +217,15 @@ def query_predictions_with_supplements(
         STDDEV(CAST(points AS FLOAT64))
           OVER (PARTITION BY player_lookup ORDER BY game_date
                 ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING) AS points_std_last_5,
+        -- FT rate and starter rate (Session 336 — player profile signals)
+        SAFE_DIVIDE(
+          SUM(ft_attempts) OVER (PARTITION BY player_lookup ORDER BY game_date
+            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING),
+          SUM(fg_attempts) OVER (PARTITION BY player_lookup ORDER BY game_date
+            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING)
+        ) AS ft_rate_season,
+        AVG(CAST(starter_flag AS INT64)) OVER (PARTITION BY player_lookup ORDER BY game_date
+          ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS starter_rate_season,
         -- Plus/minus streak (Session 294 — neg_pm_under anti-pattern)
         plus_minus,
         LAG(CASE WHEN plus_minus < 0 THEN 1 ELSE 0 END, 1)
@@ -355,6 +364,8 @@ def query_predictions_with_supplements(
       ls.fta_season,
       ls.unassisted_fg_season,
       ls.points_std_last_5,
+      ls.ft_rate_season,
+      ls.starter_rate_season,
       DATE_DIFF(@target_date, ls.game_date, DAY) AS rest_days,
       lsk.prev_correct_1, lsk.prev_correct_2, lsk.prev_correct_3,
       lsk.prev_correct_4, lsk.prev_correct_5,
@@ -536,6 +547,8 @@ def query_predictions_with_supplements(
             'fta_season': float(row_dict.get('fta_season') or 0),
             'unassisted_fg_season': float(row_dict.get('unassisted_fg_season') or 0),
             'points_std_last_5': float(row_dict.get('points_std_last_5') or 0),
+            'ft_rate_season': float(row_dict.get('ft_rate_season') or 0),
+            'starter_rate_season': float(row_dict.get('starter_rate_season') or 0),
         }
 
         # V12 prediction (for cross-model consensus scoring)
@@ -571,6 +584,8 @@ def query_predictions_with_supplements(
         pred['fta_season'] = float(row_dict.get('fta_season') or 0)
         pred['unassisted_fg_season'] = float(row_dict.get('unassisted_fg_season') or 0)
         pred['points_std_last_5'] = float(row_dict.get('points_std_last_5') or 0)
+        pred['ft_rate_season'] = float(row_dict.get('ft_rate_season') or 0)
+        pred['starter_rate_season'] = float(row_dict.get('starter_rate_season') or 0)
 
         # Copy prop line delta for aggregator pre-filter (Session 294)
         if row_dict.get('prev_line_value') is not None:

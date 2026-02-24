@@ -52,7 +52,7 @@ ACTIVE_SIGNALS = frozenset({
     'bench_under', '3pt_bounce', 'b2b_fatigue_under',
     'rest_advantage_2d',
     'prop_line_drop_over', 'book_disagreement',
-    'blowout_recovery',
+    'blowout_recovery', 'ft_rate_bench_over',
     # high_ft_under, self_creator_under, volatile_under, high_usage_under REMOVED (Session 326)
 })
 

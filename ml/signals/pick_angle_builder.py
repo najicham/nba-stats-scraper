@@ -47,6 +47,7 @@ SIGNAL_ANGLE_MAP = {
     # high_usage_under REMOVED — 40.0% HR on best bets (Session 326)
     # cold_snap REMOVED (Session 318)
     'book_disagreement': "Sportsbooks disagree on line: 93.0% edge 3+ HR (WATCH)",
+    'ft_rate_bench_over': "Bench OVER + high FT rate: 72.5% HR historically (WATCH)",
 }
 
 # Warning tag → warning angle

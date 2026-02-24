@@ -71,6 +71,9 @@ def build_default_registry() -> SignalRegistry:
     # Book disagreement signal (Session 303)
     from ml.signals.book_disagreement import BookDisagreementSignal
 
+    # FT rate bench over signal (Session 336)
+    from ml.signals.ft_rate_bench_over import FTRateBenchOverSignal
+
     registry = SignalRegistry()
     registry.register(ModelHealthSignal())
     registry.register(HighEdgeSignal())
@@ -103,5 +106,8 @@ def build_default_registry() -> SignalRegistry:
 
     # Book disagreement signal (Session 303)
     registry.register(BookDisagreementSignal())
+
+    # FT rate bench over signal (Session 336)
+    registry.register(FTRateBenchOverSignal())
 
     return registry
