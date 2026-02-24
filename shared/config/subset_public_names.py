@@ -58,6 +58,8 @@ SUBSET_PUBLIC_NAMES = {
     'signal_combo_3way': {'id': '37', 'name': 'Combo 3-Way'},
     'signal_bench_under': {'id': '38', 'name': 'Bench UNDER Signal'},
     'signal_high_count': {'id': '39', 'name': 'High Signal Count (4+)'},
+    # FT rate bench over signal subset (Session 336)
+    'signal_ft_rate_bench_over': {'id': '40', 'name': 'FT Rate Bench OVER'},
 }
 
 # Reverse lookup

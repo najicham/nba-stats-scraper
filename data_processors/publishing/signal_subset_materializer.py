@@ -71,6 +71,14 @@ SIGNAL_SUBSETS = {
         'direction': None,
         'top_n': None,
     },
+    'signal_ft_rate_bench_over': {
+        'name': 'FT Rate Bench OVER',
+        'description': 'Picks where ft_rate_bench_over fires (Bench OVER + high FT rate). 72.5% HR (WATCH).',
+        'required_signals': {'ft_rate_bench_over'},
+        'min_edge': 5.0,
+        'direction': 'OVER',
+        'top_n': None,
+    },
 }
 
 
