@@ -1022,30 +1022,35 @@ class BigQuerySaveOpsMixin:
                 return False
             actual_count = count_row.actual_count
 
-            # Validate count matches expected
-            count_mismatch = abs(actual_count - expected_count)
-            count_mismatch_pct = (count_mismatch / expected_count * 100) if expected_count > 0 else 0
+            # Validate count: table must have AT LEAST expected_count records.
+            # The table may have MORE records from prior Pub/Sub deliveries or
+            # earlier game completions — that's normal and expected.
+            # Session 338: Changed from exact-match to at-least check. The old
+            # logic compared "records this run wrote" vs "total in table", which
+            # always fails when multiple Pub/Sub messages process the same date.
+            # This caused 500s → Pub/Sub retries → more duplicates (feedback loop).
+            if actual_count < expected_count:
+                shortfall = expected_count - actual_count
+                shortfall_pct = (shortfall / expected_count * 100) if expected_count > 0 else 0
 
-            if count_mismatch > 0:
-                if count_mismatch_pct > 5.0:  # Allow 5% tolerance for edge cases
+                if shortfall_pct > 5.0:  # Allow 5% tolerance for streaming buffer delay
                     logger.error(
-                        f"POST_WRITE_VALIDATION FAILED: Record count mismatch! "
-                        f"Expected {expected_count}, found {actual_count} "
-                        f"(difference: {count_mismatch}, {count_mismatch_pct:.1f}%)"
+                        f"POST_WRITE_VALIDATION FAILED: Record count too low! "
+                        f"Expected at least {expected_count}, found {actual_count} "
+                        f"(missing: {shortfall}, {shortfall_pct:.1f}%)"
                     )
 
-                    # Send notification for significant mismatches
                     try:
                         notify_error(
                             title=f"Post-Write Validation Failed: {self.__class__.__name__}",
-                            message=f"Record count mismatch after write to {table_name}",
+                            message=f"Record count too low after write to {table_name}",
                             details={
                                 'processor': self.__class__.__name__,
                                 'table': table_name,
                                 'expected_count': expected_count,
                                 'actual_count': actual_count,
-                                'mismatch': count_mismatch,
-                                'mismatch_pct': f"{count_mismatch_pct:.1f}%",
+                                'missing': shortfall,
+                                'missing_pct': f"{shortfall_pct:.1f}%",
                                 'date_range': f"{start_date} to {end_date}",
                                 'issue': 'BigQuery may have dropped records or write partially failed',
                                 'remediation': 'Check BigQuery write logs and re-run processor'
@@ -1058,9 +1063,14 @@ class BigQuerySaveOpsMixin:
                     return False  # Validation failed
                 else:
                     logger.warning(
-                        f"POST_WRITE_VALIDATION: Minor count mismatch (within tolerance). "
-                        f"Expected {expected_count}, found {actual_count} (diff: {count_mismatch})"
+                        f"POST_WRITE_VALIDATION: Minor shortfall (within tolerance). "
+                        f"Expected at least {expected_count}, found {actual_count} (missing: {shortfall})"
                     )
+            elif actual_count > expected_count:
+                logger.info(
+                    f"✅ Record count verified: {actual_count} records "
+                    f"(>= expected {expected_count}, prior runs contributed {actual_count - expected_count} additional)"
+                )
             else:
                 logger.info(f"✅ Record count verified: {actual_count} records")
 
