@@ -292,7 +292,7 @@ python bin/monitoring/grading_gap_detector.py        # Grading gaps (auto: daily
 
 ## Signal System [Keyword: SIGNALS]
 
-**12 active signals** (20 removed). **Edge-first architecture** — signals are for filtering and annotation, not selection.
+**13 active signals** (20 removed). **Edge-first architecture** — signals are for filtering and annotation, not selection.
 
 **Best Bets:** `edge 5+ → negative filters → rank by edge → top 5` (71.1% HR)
 
@@ -322,6 +322,7 @@ python bin/monitoring/grading_gap_detector.py        # Grading gaps (auto: daily
 | `prop_line_drop_over` | OVER | 71.6% | PRODUCTION |
 | `book_disagreement` | BOTH | 93.0% | WATCH |
 | `blowout_recovery` | OVER | 56.9% | WATCH |
+| `ft_rate_bench_over` | OVER | 72.5% | WATCH |
 
 **Pick Angles:** Each pick includes `pick_angles` — human-readable reasoning. See `ml/signals/pick_angle_builder.py`.
 
