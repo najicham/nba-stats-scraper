@@ -552,8 +552,8 @@ def _detect_cold_snaps(players: List[Dict]) -> List[Dict]:
             drop = p['season_ppg'] - stretch_avg
             headline = f"Averaging only {stretch_avg:.1f} PPG over last 5"
             detail = (
-                f"{p['season_ppg']:.1f} season avg, "
-                f"down {drop:.1f} pts per game"
+                f"Down {drop:.1f} pts per game, "
+                f"{p['season_ppg']:.1f} season avg"
             )
             pv = round(stretch_avg, 1)
             pl = 'PPG last 5'
@@ -561,8 +561,8 @@ def _detect_cold_snaps(players: List[Dict]) -> List[Dict]:
             drop = p['season_ppg'] - recent_avg
             headline = f"Averaging only {recent_avg:.1f} PPG over last 7"
             detail = (
-                f"{p['season_ppg']:.1f} season avg, "
-                f"down {drop:.1f} pts per game"
+                f"Down {drop:.1f} pts per game, "
+                f"{p['season_ppg']:.1f} season avg"
             )
             pv = round(recent_avg, 1)
             pl = 'PPG last 7'
@@ -619,8 +619,8 @@ def _detect_breakouts(players: List[Dict]) -> List[Dict]:
             category='hot',
             headline=f"Averaging {recent_avg:.1f} PPG over last 7",
             detail=(
-                f"Up from his {p['season_ppg']:.1f} season avg, "
-                f"a {increase_pct:.0%} jump"
+                f"A {increase_pct:.0%} jump from his "
+                f"{p['season_ppg']:.1f} season avg"
             ),
             primary_value=round(recent_avg, 1),
             primary_label='PPG last 7',
@@ -927,8 +927,8 @@ def _detect_bounce_backs(players: List[Dict]) -> List[Dict]:
 
         headline = f"Scored {pts} on {fgm}-{fga} shooting last game"
         detail = (
-            f"{p['season_ppg']:.1f} season avg, played {mins} min, "
-            f"bounces back {bb_rate:.0%}"
+            f"Played {mins} min, bounces back {bb_rate:.0%}, "
+            f"{p['season_ppg']:.1f} season avg"
         )
 
         intensity = 3.0 + bb_rate * 4 + min(shortfall / 10, 2.0)
