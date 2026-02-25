@@ -29,9 +29,10 @@ from shared.config.nba_season_dates import get_season_start_date, get_season_yea
 
 logger = logging.getLogger(__name__)
 
-# Phase 1: observation mode — set to 0.0 so nothing is blocked
-# Phase 2: set to 45.0 (below breakeven after vig) to activate blocking
-BLOCK_THRESHOLD_HR = 0.0
+# Phase 2 (Session 343): Activated blocking at 45% threshold.
+# V9 UNDER 5+ = 30.7% HR (N=88) — catastrophically losing, now blocked.
+# V9_low_vegas split into own group to protect its 62.5% UNDER HR.
+BLOCK_THRESHOLD_HR = 45.0
 
 # Minimum graded picks in a combo before it can be flagged
 MIN_SAMPLE_SIZE = 15
@@ -47,7 +48,7 @@ EDGE_BANDS = [
 def get_affinity_group(source_model_family: str) -> Optional[str]:
     """Map a source_model_family key to an affinity group.
 
-    Affinity groups collapse the 10+ model families into 3 behavioral groups
+    Affinity groups collapse the 10+ model families into 4 behavioral groups
     based on direction performance patterns.
 
     Args:
@@ -55,12 +56,19 @@ def get_affinity_group(source_model_family: str) -> Optional[str]:
             (e.g. 'v9_mae', 'v12_mae', 'v12_q43').
 
     Returns:
-        Affinity group: 'v9', 'v12_noveg', or 'v12_vegas'. None if unrecognized.
+        Affinity group: 'v9', 'v9_low_vegas', 'v12_noveg', or 'v12_vegas'.
+        None if unrecognized.
     """
     if not source_model_family:
         return None
 
-    # V9 family — all V9 variants share the same direction tendencies
+    # V9 low-vegas — separate group because 0.25x vegas weight produces
+    # fundamentally different direction behavior (62.5% UNDER 5+ vs 30.7% for v9)
+    # Session 343: Split from v9 to protect from affinity blocking
+    if source_model_family == 'v9_low_vegas':
+        return 'v9_low_vegas'
+
+    # V9 family — all other V9 variants share the same direction tendencies
     if source_model_family.startswith('v9'):
         return 'v9'
 
@@ -87,10 +95,15 @@ def _get_affinity_group_from_system_id(system_id: str) -> Optional[str]:
         system_id: e.g. 'catboost_v9', 'catboost_v12_noveg_q43_train...'
 
     Returns:
-        Affinity group: 'v9', 'v12_noveg', or 'v12_vegas'. None if unrecognized.
+        Affinity group: 'v9', 'v9_low_vegas', 'v12_noveg', or 'v12_vegas'.
+        None if unrecognized.
     """
     if not system_id:
         return None
+
+    # V9 low-vegas — separate group (Session 343)
+    if system_id.startswith('catboost_v9_low_vegas'):
+        return 'v9_low_vegas'
 
     # V9 family
     if system_id.startswith('catboost_v9'):
@@ -209,6 +222,7 @@ def compute_model_direction_affinities(
                 ABS(predicted_points - line_value) AS edge,
                 prediction_correct,
                 CASE
+                    WHEN system_id LIKE 'catboost_v9_low_vegas%' THEN 'v9_low_vegas'
                     WHEN system_id LIKE 'catboost_v9%' THEN 'v9'
                     WHEN system_id LIKE 'catboost_v12_noveg%' THEN 'v12_noveg'
                     WHEN system_id LIKE 'catboost_v12%' THEN 'v12_vegas'

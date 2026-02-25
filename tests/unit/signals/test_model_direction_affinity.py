@@ -43,7 +43,8 @@ class TestGetAffinityGroup:
         assert get_affinity_group('v9_q45') == 'v9'
 
     def test_v9_low_vegas(self):
-        assert get_affinity_group('v9_low_vegas') == 'v9'
+        """Session 343: v9_low_vegas is its own group (62.5% UNDER vs 30.7% for v9)."""
+        assert get_affinity_group('v9_low_vegas') == 'v9_low_vegas'
 
     def test_v12_q43_is_noveg(self):
         """v12_q43 uses noveg feature set → v12_noveg group."""
@@ -82,6 +83,12 @@ class TestGetAffinityGroupFromSystemId:
         assert _get_affinity_group_from_system_id(
             'catboost_v9_33f_train20260106_20260218'
         ) == 'v9'
+
+    def test_v9_low_vegas(self):
+        """Session 343: v9_low_vegas is its own affinity group."""
+        assert _get_affinity_group_from_system_id(
+            'catboost_v9_low_vegas_train0106_0205'
+        ) == 'v9_low_vegas'
 
     def test_v9_q43(self):
         assert _get_affinity_group_from_system_id(
@@ -316,7 +323,8 @@ class TestComputeModelDirectionAffinities:
         assert affinities == {}
         assert blocked == set()
         assert stats['combos_evaluated'] == 0
-        assert stats['observation_mode'] is True
+        # observation_mode depends on BLOCK_THRESHOLD_HR (False when > 0)
+        assert stats['observation_mode'] == (stats.get('block_threshold_hr', 0) <= 0)
 
     def test_stats_includes_would_block(self):
         """Stats should include would_block_at_45 list for observation mode."""
@@ -351,6 +359,6 @@ class TestComputeModelDirectionAffinities:
 class TestPhase1Default:
     """Verify Phase 1 defaults are set correctly."""
 
-    def test_default_threshold_is_zero(self):
-        """Phase 1: BLOCK_THRESHOLD_HR should be 0.0."""
-        assert BLOCK_THRESHOLD_HR == 0.0
+    def test_threshold_is_active(self):
+        """Phase 2 (Session 343): BLOCK_THRESHOLD_HR = 45.0 to block losing combos."""
+        assert BLOCK_THRESHOLD_HR == 45.0

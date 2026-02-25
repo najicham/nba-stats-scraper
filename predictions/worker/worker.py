@@ -195,11 +195,7 @@ _pubsub_publisher: Optional['pubsub_v1.PublisherClient'] = None
 _player_registry: Optional['RegistryReader'] = None
 _moving_average: Optional['MovingAverageBaseline'] = None
 _zone_matchup: Optional['ZoneMatchupV1'] = None
-_similarity: Optional['SimilarityBalancedV1'] = None
-_xgboost: Optional['XGBoostV1'] = None
-_catboost: Optional['CatBoostV8'] = None
-_ensemble: Optional['EnsembleV1'] = None
-_ensemble_v1_1: Optional['EnsembleV1_1'] = None
+_catboost: Optional['CatBoostV9'] = None
 _monthly_models: Optional[list] = None  # List of CatBoostMonthly instances
 _staging_writer: Optional['BatchStagingWriter'] = None
 _injury_filter: Optional['InjuryFilter'] = None
@@ -272,32 +268,27 @@ def get_injury_filter() -> 'InjuryFilter':
     return _injury_filter
 
 def get_prediction_systems() -> tuple:
-    """Lazy-load all prediction systems on first use"""
+    """Lazy-load all prediction systems on first use.
+
+    Session 343: Decommissioned 4 zombie systems (similarity_balanced_v1,
+    xgboost_v1/catboost_v8, ensemble_v1, ensemble_v1_1) — zero best bets
+    contribution, pure compute waste. Remaining: moving_average, zone_matchup,
+    catboost_v9 (champion), monthly models (registry-driven), catboost_v12.
+    """
     from prediction_systems.moving_average_baseline import MovingAverageBaseline
     from prediction_systems.zone_matchup_v1 import ZoneMatchupV1
-    from prediction_systems.similarity_balanced_v1 import SimilarityBalancedV1
-    from prediction_systems.xgboost_v1 import XGBoostV1
-    from prediction_systems.catboost_v8 import CatBoostV8
     from prediction_systems.catboost_v9 import CatBoostV9
     from prediction_systems.catboost_monthly import get_enabled_monthly_models
-    from prediction_systems.ensemble_v1 import EnsembleV1
-    from prediction_systems.ensemble_v1_1 import EnsembleV1_1
 
-    global _moving_average, _zone_matchup, _similarity, _xgboost, _catboost, _ensemble, _ensemble_v1_1, _monthly_models
-    if _ensemble is None:
+    global _moving_average, _zone_matchup, _catboost, _monthly_models
+    if _catboost is None:
         logger.info("Initializing prediction systems...")
         _moving_average = MovingAverageBaseline()
         _zone_matchup = ZoneMatchupV1()
-        _similarity = SimilarityBalancedV1()
-        _xgboost = XGBoostV1()  # Mock XGBoost V1 (baseline)
 
-        # Load CatBoost model based on CATBOOST_VERSION env var
-        if CATBOOST_VERSION == 'v9':
-            logger.info("Loading CatBoost V9 (current season training)...")
-            _catboost = CatBoostV9()  # CatBoost v9: 4.82 MAE (Session 67)
-        else:
-            logger.info("Loading CatBoost V8 (historical training)...")
-            _catboost = CatBoostV8()  # CatBoost v8: 5.36 MAE
+        # Load CatBoost V9 champion model
+        logger.info("Loading CatBoost V9 (champion)...")
+        _catboost = CatBoostV9()
 
         # Load monthly models (Session 68, Session 273: DB-driven from model_registry)
         logger.info("Loading monthly models (registry + dict fallback)...")
@@ -312,29 +303,6 @@ def get_prediction_systems() -> tuple:
             )
         else:
             logger.info("No monthly models enabled")
-
-        _ensemble = EnsembleV1(
-            moving_average_system=_moving_average,
-            zone_matchup_system=_zone_matchup,
-            similarity_system=_similarity,
-            xgboost_system=_catboost  # Ensemble uses champion (CatBoost)
-        )
-        _ensemble_v1_1 = EnsembleV1_1(
-            moving_average_system=_moving_average,
-            zone_matchup_system=_zone_matchup,
-            similarity_system=_similarity,
-            xgboost_system=_xgboost,
-            catboost_system=_catboost
-        )
-
-        # Session 128: Breakout classifier for shadow mode
-        # Session 187: DISABLED — V1 classifier broken (8 features vs 14-feature V2 model)
-        # Session 188: Re-enabled with V1 shared module (10 features) — still suboptimal
-        # Session 189: DISABLED again — model trained with 14 V2 features, providing 10 V1
-        #   features gives misleading shadow data. Breakout needs V3 contextual features
-        #   (star_teammate_out, opponent injuries), not feature order fixes.
-        #   Re-enable after V3 model trained with proper features.
-        # global _breakout_classifier
 
         # Session 230: CatBoost V12 no-vegas shadow model
         # Try/except so V12 failure doesn't break other systems
@@ -352,12 +320,11 @@ def get_prediction_systems() -> tuple:
             logger.warning(f"CatBoost V12 failed to load (non-fatal): {e}", exc_info=True)
             _catboost_v12 = None
 
-        catboost_version = "V9" if CATBOOST_VERSION == 'v9' else "V8"
         monthly_count = len(_monthly_models) if _monthly_models else 0
         v12_loaded = _catboost_v12 is not None
-        total_systems = 7 + monthly_count + (1 if v12_loaded else 0)
-        logger.info(f"All prediction systems initialized ({total_systems} systems: XGBoost V1, CatBoost {catboost_version}, {monthly_count} monthly models, V12={'YES' if v12_loaded else 'NO'}, Ensemble V1, Ensemble V1.1, + 3 others)")
-    return _moving_average, _zone_matchup, _similarity, _xgboost, _catboost, _ensemble, _ensemble_v1_1
+        total_systems = 3 + monthly_count + (1 if v12_loaded else 0)
+        logger.info(f"All prediction systems initialized ({total_systems} systems: MovingAvg, ZoneMatchup, CatBoost V9, {monthly_count} monthly models, V12={'YES' if v12_loaded else 'NO'})")
+    return _moving_average, _zone_matchup, _catboost
 
 _circuit_breaker: Optional['SystemCircuitBreaker'] = None
 _execution_logger: Optional['ExecutionLogger'] = None
@@ -573,16 +540,13 @@ def index():
     """Health check endpoint"""
     # Get systems only if they're already loaded (don't force lazy load for health check)
     systems_info = {}
-    if _ensemble is not None:
+    if _catboost is not None:
         systems_info = {
             'moving_average': str(_moving_average),
             'zone_matchup': str(_zone_matchup),
-            'similarity': str(_similarity),
-            'xgboost_v1': str(_xgboost),
             CATBOOST_SYSTEM_ID: str(_catboost),
-            'ensemble': str(_ensemble),
-            'ensemble_v1_1': str(_ensemble_v1_1),
             'catboost_v12': str(_catboost_v12) if _catboost_v12 is not None else 'not loaded',
+            'monthly_models': len(_monthly_models) if _monthly_models else 0,
         }
     else:
         systems_info = {'status': 'not yet loaded (will lazy-load on first prediction)'}
@@ -698,7 +662,7 @@ def handle_prediction_request():
     bq_client = get_bq_client()
     pubsub_publisher = get_pubsub_publisher()
     player_registry = get_player_registry()
-    moving_average, zone_matchup, similarity, xgboost, catboost, ensemble, ensemble_v1_1 = get_prediction_systems()
+    moving_average, zone_matchup, catboost = get_prediction_systems()
     circuit_breaker = get_circuit_breaker()
     execution_logger = get_execution_logger()
 
@@ -1050,7 +1014,7 @@ def process_player_predictions(
             'estimation_method': None
         }
     # Lazy-load prediction systems
-    moving_average, zone_matchup, similarity, xgboost, catboost, ensemble, ensemble_v1_1 = get_prediction_systems()
+    moving_average, zone_matchup, catboost = get_prediction_systems()
 
     all_predictions = []
 
@@ -1595,108 +1559,10 @@ def process_player_predictions(
             metadata['system_errors'][system_id] = error_msg
             system_predictions['zone_matchup_v1'] = None
         
-        # System 3: Similarity Balanced V1 (NEEDS historical_games!)
-        system_id = 'similarity_balanced_v1'
-        metadata['systems_attempted'].append(system_id)
-        try:
-            if not historical_games:
-                logger.debug(f"Skipping Similarity for {player_lookup} - no historical games")
-                metadata['systems_failed'].append(system_id)
-                metadata['system_errors'][system_id] = 'No historical games available'
-                system_predictions['similarity_balanced_v1'] = None
-            else:
-                # Check circuit breaker
-                state, skip_reason = circuit_breaker.check_circuit(system_id)
-                if state == 'OPEN':
-                    logger.warning(f"Circuit breaker OPEN for {system_id}: {skip_reason}")
-                    metadata['circuit_breaker_triggered'] = True
-                    metadata['circuits_opened'].append(system_id)
-                    metadata['systems_failed'].append(system_id)
-                    metadata['system_errors'][system_id] = f'Circuit breaker open: {skip_reason}'
-                    system_predictions[system_id] = None
-                else:
-                    result = similarity.predict(
-                        player_lookup=player_lookup,
-                        features=features,
-                        historical_games=historical_games,
-                        betting_line=line_value
-                    )
+        # Session 343: Removed Systems 3 (similarity_balanced_v1) and 4 (xgboost_v1/catboost_v8)
+        # — zero best bets contribution, decommissioned as zombie models
 
-                    if result['predicted_points'] is not None:
-                        # Record success
-                        circuit_breaker.record_success(system_id)
-                        metadata['systems_succeeded'].append(system_id)
-
-                        system_predictions['similarity_balanced_v1'] = {
-                            'predicted_points': result['predicted_points'],
-                            'confidence': result['confidence_score'],
-                            'recommendation': result['recommendation'],
-                            'system_type': 'dict',
-                            'metadata': result  # Keep full result for component fields
-                        }
-                    else:
-                        logger.warning(f"Similarity returned None for {player_lookup}")
-                        metadata['systems_failed'].append(system_id)
-                        metadata['system_errors'][system_id] = 'Prediction returned None'
-                        system_predictions['similarity_balanced_v1'] = None
-        except Exception as e:
-            # Record failure
-            error_msg = str(e)
-            circuit_breaker.record_failure(system_id, error_msg, type(e).__name__)
-
-            logger.error(f"Similarity failed for {player_lookup}: {e}", exc_info=True)
-            metadata['systems_failed'].append(system_id)
-            metadata['system_errors'][system_id] = error_msg
-            system_predictions['similarity_balanced_v1'] = None
-        
-        # System 4: XGBoost V1 (baseline ML model)
-        system_id = 'xgboost_v1'
-        metadata['systems_attempted'].append(system_id)
-        try:
-            # Check circuit breaker
-            state, skip_reason = circuit_breaker.check_circuit(system_id)
-            if state == 'OPEN':
-                logger.warning(f"Circuit breaker OPEN for {system_id}: {skip_reason}")
-                metadata['circuit_breaker_triggered'] = True
-                metadata['circuits_opened'].append(system_id)
-                metadata['systems_failed'].append(system_id)
-                metadata['system_errors'][system_id] = f'Circuit breaker open: {skip_reason}'
-                system_predictions[system_id] = None
-            else:
-                result = xgboost.predict(
-                    player_lookup=player_lookup,
-                    features=features,
-                    betting_line=line_value
-                )
-
-                if result['predicted_points'] is not None:
-                    # Record success
-                    circuit_breaker.record_success(system_id)
-                    metadata['systems_succeeded'].append(system_id)
-
-                    system_predictions['catboost_v8'] = {
-                        'predicted_points': result['predicted_points'],
-                        'confidence': result['confidence_score'],
-                        'recommendation': result['recommendation'],
-                        'system_type': 'dict',
-                        'metadata': result
-                    }
-                else:
-                    logger.warning(f"XGBoost V1 returned None for {player_lookup}")
-                    metadata['systems_failed'].append(system_id)
-                    metadata['system_errors'][system_id] = 'Prediction returned None'
-                    system_predictions[CATBOOST_SYSTEM_ID] = None
-        except Exception as e:
-            # Record failure
-            error_msg = str(e)
-            circuit_breaker.record_failure(system_id, error_msg, type(e).__name__)
-
-            logger.error(f"XGBoost V1 failed for {player_lookup}: {e}", exc_info=True)
-            metadata['systems_failed'].append(system_id)
-            metadata['system_errors'][system_id] = error_msg
-            system_predictions['xgboost_v1'] = None
-
-        # System 5: CatBoost (champion ML model - V8 or V9 based on CATBOOST_VERSION)
+        # System 5: CatBoost V9 (champion ML model)
         system_id = CATBOOST_SYSTEM_ID
         metadata['systems_attempted'].append(system_id)
         try:
@@ -1743,89 +1609,8 @@ def process_player_predictions(
             metadata['system_errors'][system_id] = error_msg
             system_predictions['catboost_v8'] = None
         
-        # System 6: Ensemble V1 (combines 4 base systems using CatBoost as champion)
-        system_id = 'ensemble_v1'
-        metadata['systems_attempted'].append(system_id)
-        try:
-            # Check circuit breaker
-            state, skip_reason = circuit_breaker.check_circuit(system_id)
-            if state == 'OPEN':
-                logger.warning(f"Circuit breaker OPEN for {system_id}: {skip_reason}")
-                metadata['circuit_breaker_triggered'] = True
-                metadata['circuits_opened'].append(system_id)
-                metadata['systems_failed'].append(system_id)
-                metadata['system_errors'][system_id] = f'Circuit breaker open: {skip_reason}'
-                system_predictions[system_id] = None
-            else:
-                pred, conf, rec, ensemble_meta = ensemble.predict(
-                    features=features,
-                    player_lookup=player_lookup,
-                    game_date=game_date,
-                    prop_line=line_value,
-                    historical_games=historical_games if historical_games else None
-                )
-                # Record success
-                circuit_breaker.record_success(system_id)
-                metadata['systems_succeeded'].append(system_id)
-
-                system_predictions['ensemble_v1'] = {
-                    'predicted_points': pred,
-                    'confidence': conf,
-                    'recommendation': rec,
-                    'system_type': 'tuple',
-                    'metadata': ensemble_meta
-                }
-        except Exception as e:
-            # Record failure
-            error_msg = str(e)
-            circuit_breaker.record_failure(system_id, error_msg, type(e).__name__)
-
-            logger.error(f"Ensemble failed for {player_lookup}: {e}", exc_info=True)
-            metadata['systems_failed'].append(system_id)
-            metadata['system_errors'][system_id] = error_msg
-            system_predictions['ensemble_v1'] = None
-
-        # System 7: Ensemble V1.1 (performance-based weighted ensemble with CatBoost V8)
-        system_id = 'ensemble_v1_1'
-        metadata['systems_attempted'].append(system_id)
-        try:
-            # Check circuit breaker
-            state, skip_reason = circuit_breaker.check_circuit(system_id)
-            if state == 'OPEN':
-                logger.warning(f"Circuit breaker OPEN for {system_id}: {skip_reason}")
-                metadata['circuit_breaker_triggered'] = True
-                metadata['circuits_opened'].append(system_id)
-                metadata['systems_failed'].append(system_id)
-                metadata['system_errors'][system_id] = f'Circuit breaker open: {skip_reason}'
-                system_predictions[system_id] = None
-            else:
-                pred, conf, rec, ensemble_meta = ensemble_v1_1.predict(
-                    features=features,
-                    player_lookup=player_lookup,
-                    game_date=game_date,
-                    prop_line=line_value,
-                    historical_games=historical_games if historical_games else None
-                )
-                # Record success
-                circuit_breaker.record_success(system_id)
-                metadata['systems_succeeded'].append(system_id)
-
-                system_predictions['ensemble_v1_1'] = {
-                    'predicted_points': pred,
-                    'confidence': conf,
-                    'recommendation': rec,
-                    'system_type': 'tuple',
-                    'metadata': ensemble_meta
-                }
-        except Exception as e:
-            # Record failure
-            error_msg = str(e)
-            circuit_breaker.record_failure(system_id, error_msg, type(e).__name__)
-
-            logger.error(f"Ensemble V1.1 failed for {player_lookup}: {e}", exc_info=True)
-            metadata['systems_failed'].append(system_id)
-            metadata['system_errors'][system_id] = error_msg
-            system_predictions['ensemble_v1_1'] = None
+        # Session 343: Removed Systems 6 (ensemble_v1) and 7 (ensemble_v1_1)
+        # — zero best bets contribution, decommissioned as zombie models
 
         # Monthly Models (Session 68): Run all enabled monthly retrained models
         if _monthly_models:
@@ -2400,24 +2185,7 @@ def format_prediction_for_bigquery(
     record['scenario_flags'] = json.dumps(scenario_flags)
 
     # Add system-specific fields
-    if system_id == 'similarity_balanced_v1' and 'metadata' in prediction:
-        metadata = prediction['metadata']
-        adjustments = metadata.get('adjustments', {})
-
-        record.update({
-            'similarity_baseline': metadata.get('baseline_from_similar'),
-            'similar_games_count': metadata.get('similar_games_count'),
-            'avg_similarity_score': metadata.get('avg_similarity_score'),
-            'min_similarity_score': None,  # Not provided by current system
-            'fatigue_adjustment': adjustments.get('fatigue'),
-            'shot_zone_adjustment': adjustments.get('zone_matchup'),
-            'pace_adjustment': adjustments.get('pace'),
-            'usage_spike_adjustment': adjustments.get('usage'),
-            'home_away_adjustment': adjustments.get('venue'),
-            'model_version': 'v1'  # Set model version for tracking
-        })
-
-    elif system_id.startswith('catboost_') and 'metadata' in prediction:
+    if system_id.startswith('catboost_') and 'metadata' in prediction:
         # prediction['metadata'] is the full catboost result dict
         # The actual metadata fields are NESTED in result['metadata']
         # Session 88 FIX: Access nested metadata correctly
@@ -2442,57 +2210,13 @@ def format_prediction_for_bigquery(
             'model_trained_at': catboost_meta.get('model_trained_at'),
         })
     
-    elif system_id == 'ensemble_v1' and 'metadata' in prediction:
-        metadata = prediction['metadata']
-        agreement = metadata.get('agreement', {})
-
-        # Store ensemble metadata in feature_importance as JSON (schema-compatible)
-        record.update({
-            'feature_importance': json.dumps({
-                'variance': agreement.get('variance'),
-                'agreement_percentage': agreement.get('agreement_percentage'),
-                'systems_used': metadata.get('systems_used'),
-                'predictions': metadata.get('predictions'),
-                'agreement_type': agreement.get('type')
-            }),
-            'model_version': 'ensemble_v1'
-        })
-
-    elif system_id == 'ensemble_v1_1' and 'metadata' in prediction:
-        metadata = prediction['metadata']
-        agreement = metadata.get('agreement', {})
-
-        # Store ensemble V1.1 metadata in feature_importance as JSON (schema-compatible)
-        record.update({
-            'feature_importance': json.dumps({
-                'variance': agreement.get('variance'),
-                'agreement_percentage': agreement.get('agreement_percentage'),
-                'systems_used': metadata.get('systems_used'),
-                'weights_used': metadata.get('weights_used'),  # NEW: track performance-based weights
-                'predictions': metadata.get('predictions'),
-                'agreement_type': agreement.get('type')
-            }),
-            'model_version': 'ensemble_v1_1'
-        })
+    # Session 343: Removed ensemble_v1, ensemble_v1_1, xgboost_v1 metadata blocks
 
     elif system_id == 'moving_average':
-        # Set model version for tracking
-        record.update({
-            'model_version': 'v1'
-        })
+        record.update({'model_version': 'v1'})
 
     elif system_id == 'zone_matchup_v1':
-        # Set model version for tracking
-        record.update({
-            'model_version': 'v1'
-        })
-
-    elif system_id == 'xgboost_v1' and 'metadata' in prediction:
-        # xgboost has metadata field
-        metadata = prediction['metadata']
-        record.update({
-            'model_version': metadata.get('model_version', 'v1')
-        })
+        record.update({'model_version': 'v1'})
 
     # Add completeness metadata (Phase 5)
     completeness = features.get('completeness', {})

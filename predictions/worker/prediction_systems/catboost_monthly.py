@@ -60,6 +60,7 @@ from shared.ml.feature_contract import (
 # and enabled via: UPDATE model_registry SET enabled=TRUE WHERE model_id='...'
 MONTHLY_MODELS = {
     # === V9 MAE (33 features) — Champion ===
+    # DISABLED Session 343: Superseded by registry model catboost_v9_33f_train20260106-20260205
     "catboost_v9_train1102_0205": {
         "model_path": "gs://nba-props-platform-models/catboost/v9/monthly/catboost_v9_33f_train20251102-20260205_20260216_191144.cbm",
         "train_start": "2025-11-02",
@@ -68,11 +69,12 @@ MONTHLY_MODELS = {
         "backtest_hit_rate_all": 56.07,
         "backtest_hit_rate_edge_3plus": 76.19,
         "backtest_n_edge_3plus": 21,
-        "enabled": True,
+        "enabled": False,
         "feature_set": "v9",
         "description": "V9_MAE_FEB_RETRAIN — All-Star break retrain, walkforward W1=81.2%",
     },
     # === V12 No-Vegas MAE (50 features) — Shadow ===
+    # DISABLED Session 343: Superseded by registry model catboost_v12_noveg_mae_train0104_0215
     "catboost_v12_noveg_train1102_0205": {
         "model_path": "gs://nba-props-platform-models/catboost/v12/monthly/catboost_v9_50f_noveg_train20251102-20260205_20260216_191227.cbm",
         "train_start": "2025-11-02",
@@ -81,11 +83,12 @@ MONTHLY_MODELS = {
         "backtest_hit_rate_all": 59.06,
         "backtest_hit_rate_edge_3plus": 69.23,
         "backtest_n_edge_3plus": 13,
-        "enabled": True,
+        "enabled": False,
         "feature_set": "v12_noveg",
         "description": "V12_NOVEG_MAE_FEB_RETRAIN — 50-feature no-vegas, walkforward W1=69.2%",
     },
     # === V9 Quantile Q43 (33 features) — Shadow ===
+    # DISABLED Session 343: Superseded by registry, 1 ungraded pick in 30d
     "catboost_v9_q43_train1102_0125": {
         "model_path": "gs://nba-props-platform-models/catboost/v9/monthly/catboost_v9_33f_q0.43_train20251102-20260125_20260216_192000.cbm",
         "train_start": "2025-11-02",
@@ -94,11 +97,12 @@ MONTHLY_MODELS = {
         "backtest_hit_rate_all": 52.13,
         "backtest_hit_rate_edge_3plus": 62.61,
         "backtest_n_edge_3plus": 115,
-        "enabled": True,
+        "enabled": False,
         "feature_set": "v9",
         "description": "V9_Q43_FEB_RETRAIN — quantile alpha=0.43, ALL GATES PASSED",
     },
     # === V9 Quantile Q45 (33 features) — Shadow ===
+    # DISABLED Session 343: Superseded by registry, 0 picks in 30d
     "catboost_v9_q45_train1102_0125": {
         "model_path": "gs://nba-props-platform-models/catboost/v9/monthly/catboost_v9_33f_q0.45_train20251102-20260125_20260216_192001.cbm",
         "train_start": "2025-11-02",
@@ -107,11 +111,12 @@ MONTHLY_MODELS = {
         "backtest_hit_rate_all": 50.74,
         "backtest_hit_rate_edge_3plus": 62.89,
         "backtest_n_edge_3plus": 97,
-        "enabled": True,
+        "enabled": False,
         "feature_set": "v9",
         "description": "V9_Q45_FEB_RETRAIN — quantile alpha=0.45, ALL GATES PASSED",
     },
     # === V12 No-Vegas Quantile Q43 (50 features) — Shadow (FIRST EVER) ===
+    # DISABLED Session 343: Superseded by registry model catboost_v12_noveg_q43_train0104_0215
     "catboost_v12_noveg_q43_train1102_0125": {
         "model_path": "gs://nba-props-platform-models/catboost/v12/monthly/catboost_v9_50f_noveg_train20251102-20260125_20260216_192040.cbm",
         "train_start": "2025-11-02",
@@ -120,11 +125,12 @@ MONTHLY_MODELS = {
         "backtest_hit_rate_all": 53.51,
         "backtest_hit_rate_edge_3plus": 61.6,
         "backtest_n_edge_3plus": 125,
-        "enabled": True,
+        "enabled": False,
         "feature_set": "v12_noveg",
         "description": "V12_NOVEG_Q43_FEB — first V12+quantile, ALL GATES PASSED",
     },
     # === V12 No-Vegas Quantile Q45 (50 features) — Shadow (FIRST EVER) ===
+    # DISABLED Session 343: Superseded by registry, 2 picks in 30d (1 graded correct)
     "catboost_v12_noveg_q45_train1102_0125": {
         "model_path": "gs://nba-props-platform-models/catboost/v12/monthly/catboost_v9_50f_noveg_train20251102-20260125_20260216_192044.cbm",
         "train_start": "2025-11-02",
@@ -133,7 +139,7 @@ MONTHLY_MODELS = {
         "backtest_hit_rate_all": 54.21,
         "backtest_hit_rate_edge_3plus": 61.22,
         "backtest_n_edge_3plus": 98,
-        "enabled": True,
+        "enabled": False,
         "feature_set": "v12_noveg",
         "description": "V12_NOVEG_Q45_FEB — first V12+quantile, ALL GATES PASSED",
     },
@@ -151,6 +157,7 @@ MONTHLY_MODELS = {
         "description": "V9_LOW_VEGAS — 0.25x vegas weight, 5x more edge picks, UNDER 61.1%",
     },
     # === V12+Vegas MAE (54 features) — Replay: Jan 1-25 coverage ===
+    # DISABLED Session 343: Replay model, 0 picks in 30d
     "catboost_v12_train1102_1225": {
         "model_path": "gs://nba-props-platform-models/catboost/v12/monthly/catboost_v9_54f_train20251102-20251225_20260222_100555.cbm",
         "train_start": "2025-11-02",
@@ -159,11 +166,12 @@ MONTHLY_MODELS = {
         "backtest_hit_rate_all": 59.29,
         "backtest_hit_rate_edge_3plus": 61.4,
         "backtest_n_edge_3plus": 57,
-        "enabled": True,
+        "enabled": False,
         "feature_set": "v12",
         "description": "V12_VEGAS_REPLAY_DEC25 — Walk-forward for Jan 1-25 replay, ALL GATES PASSED",
     },
     # === V12+Vegas MAE (54 features) — Replay: Jan 26 - Feb 5 coverage ===
+    # DISABLED Session 343: Replay model, 4 ungraded picks in 30d (high edges 6.8-11.7)
     "catboost_v12_train1102_0125": {
         "model_path": "gs://nba-props-platform-models/catboost/v12/monthly/catboost_v9_54f_train20251102-20260125_20260222_094945.cbm",
         "train_start": "2025-11-02",
@@ -172,11 +180,12 @@ MONTHLY_MODELS = {
         "backtest_hit_rate_all": 58.91,
         "backtest_hit_rate_edge_3plus": 86.96,
         "backtest_n_edge_3plus": 23,
-        "enabled": True,
+        "enabled": False,
         "feature_set": "v12",
         "description": "V12_VEGAS_REPLAY_JAN25 — Walk-forward for Jan 26 - Feb 5 replay, 87% HR 3+",
     },
     # === V12+Vegas MAE (54 features) — Shadow (FIRST EVER) ===
+    # DISABLED Session 343: Superseded by registry, 1 ungraded pick in 30d
     "catboost_v12_train1225_0205": {
         "model_path": "gs://nba-props-platform-models/catboost/v12/monthly/catboost_v9_54f_train20251225-20260205_20260221_224505.cbm",
         "train_start": "2025-12-25",
@@ -185,11 +194,12 @@ MONTHLY_MODELS = {
         "backtest_hit_rate_all": 60.77,
         "backtest_hit_rate_edge_3plus": 75.0,
         "backtest_n_edge_3plus": 16,
-        "enabled": True,
+        "enabled": False,
         "feature_set": "v12",
         "description": "V12_VEGAS_MAE — Session 324: FIRST EVER V12+vegas. 54f, HR 3+ 75.0%",
     },
     # === V9 MAE (33 features) — Fresh retrain Feb 22 ===
+    # DISABLED Session 343: Superseded by registry, 0 picks in 30d
     "catboost_v9_train1225_0205": {
         "model_path": "gs://nba-props-platform-models/catboost/v9/monthly/catboost_v9_33f_train20251225-20260205_20260222_111606.cbm",
         "train_start": "2025-12-25",
@@ -198,11 +208,12 @@ MONTHLY_MODELS = {
         "backtest_hit_rate_all": 54.1,
         "backtest_hit_rate_edge_3plus": 60.0,
         "backtest_n_edge_3plus": 10,
-        "enabled": True,
+        "enabled": False,
         "feature_set": "v9",
         "description": "V9_MAE_FEB22 — Fresh retrain, same window as V12+vegas for fair comparison",
     },
     # === V12+Vegas MAE (54 features) — Fresh retrain Feb 22 ===
+    # DISABLED Session 343: Superseded by registry, 0 picks in 30d
     "catboost_v12_train1225_0205_feb22": {
         "model_path": "gs://nba-props-platform-models/catboost/v12/monthly/catboost_v9_54f_train20251225-20260205_20260222_111645.cbm",
         "train_start": "2025-12-25",
@@ -211,7 +222,7 @@ MONTHLY_MODELS = {
         "backtest_hit_rate_all": 56.5,
         "backtest_hit_rate_edge_3plus": 64.71,
         "backtest_n_edge_3plus": 17,
-        "enabled": True,
+        "enabled": False,
         "feature_set": "v12",
         "description": "V12_VEGAS_MAE_FEB22 — Fresh retrain matching V9 window, HR 3+ 64.7%",
     },
