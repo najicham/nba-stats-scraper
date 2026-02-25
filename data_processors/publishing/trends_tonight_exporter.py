@@ -27,6 +27,7 @@ from .base_exporter import BaseExporter
 from .exporter_utils import safe_float, safe_int
 from .whos_hot_cold_exporter import WhosHotColdExporter
 from .bounce_back_exporter import BounceBackExporter
+from .trends_v3_builder import build_trends
 from shared.utils.nba_team_mapper import get_nba_team_mapper
 
 logger = logging.getLogger(__name__)
@@ -69,6 +70,10 @@ class TrendsTonightExporter(BaseExporter):
             game_date, players_section, matchups_section
         )
 
+        # V3 trends array
+        tonight_teams = self._extract_tonight_teams(matchups_section)
+        trends_section = self._build_trends_section(game_date, tonight_teams)
+
         games_tonight = len(matchups_section)
 
         return {
@@ -76,11 +81,12 @@ class TrendsTonightExporter(BaseExporter):
                 'generated_at': self.get_generated_at(),
                 'game_date': game_date,
                 'games_tonight': games_tonight,
-                'version': '2',
+                'version': '3',
             },
             'players': players_section,
             'matchups': matchups_section,
             'insights': insights_section,
+            'trends': trends_section,
         }
 
     def export(self, game_date: str = None, **kwargs) -> str:
@@ -195,6 +201,29 @@ class TrendsTonightExporter(BaseExporter):
             'cold': cold_players,
             'bounce_back': bounce_back,
         }
+
+    # =========================================================================
+    # Section: V3 Trends
+    # =========================================================================
+
+    def _extract_tonight_teams(self, matchups: List[Dict]) -> set:
+        """Extract team abbreviations from matchup cards."""
+        teams = set()
+        for m in matchups:
+            teams.add(m.get('away_team', {}).get('abbr', ''))
+            teams.add(m.get('home_team', {}).get('abbr', ''))
+        teams.discard('')
+        return teams
+
+    def _build_trends_section(
+        self, game_date: str, tonight_teams: set
+    ) -> List[Dict]:
+        """Build V3 trends array using the trends builder."""
+        try:
+            return build_trends(self.bq_client, game_date, tonight_teams)
+        except Exception as e:
+            logger.error(f"Failed to build V3 trends: {e}")
+            return []
 
     # =========================================================================
     # Section 3: Matchups
