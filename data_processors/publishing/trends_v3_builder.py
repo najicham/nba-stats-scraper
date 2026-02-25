@@ -139,8 +139,14 @@ def _query_player_data(
             AVG(points) as season_ppg,
             AVG(offensive_rebounds + defensive_rebounds) as season_rpg,
             AVG(assists) as season_apg,
-            SAFE_DIVIDE(SUM(fg_makes), NULLIF(SUM(fg_attempts), 0)) as season_fg_pct,
-            SAFE_DIVIDE(SUM(three_pt_makes), NULLIF(SUM(three_pt_attempts), 0)) as season_3pt_pct,
+            SAFE_DIVIDE(
+                SUM(IF(fg_attempts IS NOT NULL, fg_makes, NULL)),
+                NULLIF(SUM(fg_attempts), 0)
+            ) as season_fg_pct,
+            SAFE_DIVIDE(
+                SUM(IF(three_pt_attempts IS NOT NULL, three_pt_makes, NULL)),
+                NULLIF(SUM(three_pt_attempts), 0)
+            ) as season_3pt_pct,
             AVG(minutes_played) as season_mpg
         FROM `nba-props-platform.nba_analytics.player_game_summary`
         WHERE game_date >= DATE_SUB(@game_date, INTERVAL 180 DAY)
@@ -327,27 +333,35 @@ def _cap_per_type(trends: List[Dict], max_per_type: int = MAX_PER_TYPE) -> List[
 
 
 def _interleave_types(trends: List[Dict]) -> List[Dict]:
-    """Reorder so no two consecutive trends share the same type.
+    """Reorder using round-robin across types for maximum diversity.
 
-    Picks from the highest-intensity remaining trend whose type differs
-    from the previous pick. Falls back to same-type if no alternative.
+    Groups trends by type, orders type groups by their top intensity,
+    then round-robins one from each type. Ensures each type appears
+    once before any type repeats.
     """
     if len(trends) <= 1:
         return trends
 
-    pool = sorted(trends, key=lambda x: x['intensity'], reverse=True)
-    result = [pool.pop(0)]
+    # Group by type, each group sorted by intensity desc
+    by_type: Dict[str, List[Dict]] = {}
+    for t in trends:
+        by_type.setdefault(t['type'], []).append(t)
+    for group in by_type.values():
+        group.sort(key=lambda x: x['intensity'], reverse=True)
 
-    while pool:
-        last_type = result[-1]['type']
-        # Find best candidate with a different type
-        idx = next(
-            (i for i, t in enumerate(pool) if t['type'] != last_type),
-            None,
-        )
-        if idx is None:
-            idx = 0  # All remaining are same type, just take the best
-        result.append(pool.pop(idx))
+    # Order type groups by their top intensity
+    type_order = sorted(
+        by_type.keys(),
+        key=lambda k: by_type[k][0]['intensity'],
+        reverse=True,
+    )
+
+    # Round-robin: take one from each type in order, repeat
+    result = []
+    while any(by_type[t] for t in type_order):
+        for t in type_order:
+            if by_type[t]:
+                result.append(by_type[t].pop(0))
 
     return result
 
