@@ -75,6 +75,14 @@ class TrendsTonightExporter(BaseExporter):
         tonight_teams = self._extract_tonight_teams(matchups_section)
         trends_section = self._build_trends_section(game_date, tonight_teams)
 
+        # Enrich trends with tonight's box score data
+        team_game_map = self._build_team_game_map(matchups_section)
+        tonight_boxscores = self._query_tonight_boxscores(game_date)
+        game_statuses = self._query_game_statuses(game_date)
+        self._enrich_trends_with_tonight(
+            trends_section, team_game_map, tonight_boxscores, game_statuses
+        )
+
         games_tonight = len(matchups_section)
 
         return {
@@ -203,6 +211,192 @@ class TrendsTonightExporter(BaseExporter):
             'cold': cold_players,
             'bounce_back': bounce_back,
         }
+
+    # =========================================================================
+    # Tonight's box score enrichment
+    # =========================================================================
+
+    def _query_tonight_boxscores(self, game_date: str) -> Dict[str, Dict]:
+        """Query tonight's box scores from player boxscores table.
+
+        Returns:
+            Dict mapping player_lookup → box score stats dict
+        """
+        query = """
+        SELECT
+            bs.player_lookup,
+            bs.team_abbr,
+            bs.minutes,
+            bs.points,
+            bs.total_rebounds,
+            bs.assists,
+            bs.steals,
+            bs.blocks,
+            bs.turnovers,
+            bs.field_goals_made,
+            bs.field_goals_attempted,
+            bs.field_goal_percentage,
+            bs.three_pointers_made,
+            bs.three_pointers_attempted,
+            bs.three_point_percentage,
+            bs.free_throws_made,
+            bs.free_throws_attempted,
+            bs.plus_minus
+        FROM `nba-props-platform.nba_raw.nbac_player_boxscores` bs
+        WHERE bs.game_date = @game_date
+          AND bs.minutes IS NOT NULL
+          AND bs.minutes != '0:00'
+        """
+        params = [
+            bigquery.ScalarQueryParameter('game_date', 'DATE', game_date)
+        ]
+        try:
+            rows = self.query_to_list(query, params)
+            return {
+                r['player_lookup']: r
+                for r in rows
+                if r.get('player_lookup')
+            }
+        except Exception as e:
+            logger.warning(f"Failed to query tonight's boxscores: {e}")
+            return {}
+
+    def _query_game_statuses(self, game_date: str) -> Dict[str, str]:
+        """Query game statuses per team for tonight's games.
+
+        Returns:
+            Dict mapping team_abbr → status string ('scheduled'|'in_progress'|'final')
+        """
+        query = """
+        SELECT
+            home_team_tricode as team_abbr,
+            CASE game_status
+                WHEN 1 THEN 'scheduled'
+                WHEN 2 THEN 'in_progress'
+                WHEN 3 THEN 'final'
+                ELSE 'scheduled'
+            END as status
+        FROM `nba-props-platform.nba_raw.v_nbac_schedule_latest`
+        WHERE game_date = @game_date
+        UNION ALL
+        SELECT
+            away_team_tricode,
+            CASE game_status
+                WHEN 1 THEN 'scheduled'
+                WHEN 2 THEN 'in_progress'
+                WHEN 3 THEN 'final'
+                ELSE 'scheduled'
+            END
+        FROM `nba-props-platform.nba_raw.v_nbac_schedule_latest`
+        WHERE game_date = @game_date
+        """
+        params = [
+            bigquery.ScalarQueryParameter('game_date', 'DATE', game_date)
+        ]
+        try:
+            rows = self.query_to_list(query, params)
+            return {r['team_abbr']: r['status'] for r in rows if r.get('team_abbr')}
+        except Exception as e:
+            logger.warning(f"Failed to query game statuses: {e}")
+            return {}
+
+    def _build_team_game_map(self, matchups: List[Dict]) -> Dict[str, Dict]:
+        """Map team_abbr → {opponent, home} from matchups."""
+        team_map = {}
+        for m in matchups:
+            away = m['away_team']['abbr']
+            home = m['home_team']['abbr']
+            team_map[away] = {'opponent': home, 'home': False}
+            team_map[home] = {'opponent': away, 'home': True}
+        return team_map
+
+    @staticmethod
+    def _parse_minutes(minutes_str) -> Optional[int]:
+        """Parse minutes string like '36:12' to integer minutes (36)."""
+        if not minutes_str:
+            return None
+        try:
+            return int(str(minutes_str).split(':')[0])
+        except (ValueError, IndexError):
+            return None
+
+    def _build_tonight_object(
+        self,
+        team_info: Dict,
+        boxscore_row: Optional[Dict],
+        game_status: str,
+    ) -> Dict[str, Any]:
+        """Build a tonight object for a trend item."""
+        obj: Dict[str, Any] = {
+            'status': game_status or 'scheduled',
+            'opponent': team_info['opponent'],
+            'home': team_info['home'],
+            'min': None, 'pts': None, 'reb': None, 'ast': None,
+            'stl': None, 'blk': None, 'tov': None,
+            'fg': None, 'fg_pct': None,
+            'three_pt': None, 'three_pct': None,
+            'ft': None, 'plus_minus': None,
+        }
+        if boxscore_row:
+            obj['min'] = self._parse_minutes(boxscore_row.get('minutes'))
+            obj['pts'] = safe_int(boxscore_row.get('points'))
+            obj['reb'] = safe_int(boxscore_row.get('total_rebounds'))
+            obj['ast'] = safe_int(boxscore_row.get('assists'))
+            obj['stl'] = safe_int(boxscore_row.get('steals'))
+            obj['blk'] = safe_int(boxscore_row.get('blocks'))
+            obj['tov'] = safe_int(boxscore_row.get('turnovers'))
+
+            fgm = safe_int(boxscore_row.get('field_goals_made'))
+            fga = safe_int(boxscore_row.get('field_goals_attempted'))
+            if fgm is not None and fga is not None:
+                obj['fg'] = f"{fgm}-{fga}"
+            obj['fg_pct'] = safe_float(
+                boxscore_row.get('field_goal_percentage'), precision=3
+            )
+
+            tpm = safe_int(boxscore_row.get('three_pointers_made'))
+            tpa = safe_int(boxscore_row.get('three_pointers_attempted'))
+            if tpm is not None and tpa is not None:
+                obj['three_pt'] = f"{tpm}-{tpa}"
+            obj['three_pct'] = safe_float(
+                boxscore_row.get('three_point_percentage'), precision=3
+            )
+
+            ftm = safe_int(boxscore_row.get('free_throws_made'))
+            fta = safe_int(boxscore_row.get('free_throws_attempted'))
+            if ftm is not None and fta is not None:
+                obj['ft'] = f"{ftm}-{fta}"
+
+            obj['plus_minus'] = safe_int(boxscore_row.get('plus_minus'))
+
+        return obj
+
+    def _enrich_trends_with_tonight(
+        self,
+        trends: List[Dict],
+        team_map: Dict[str, Dict],
+        boxscores: Dict[str, Dict],
+        game_statuses: Dict[str, str],
+    ) -> None:
+        """Add tonight object to each trend item whose player is playing tonight.
+
+        Modifies trends in place.
+        """
+        for trend in trends:
+            player = trend.get('player', {})
+            team = player.get('team', '')
+            lookup = player.get('lookup', '')
+
+            if team not in team_map:
+                continue
+
+            team_info = team_map[team]
+            boxscore_row = boxscores.get(lookup)
+            game_status = game_statuses.get(team, 'scheduled')
+
+            trend['tonight'] = self._build_tonight_object(
+                team_info, boxscore_row, game_status
+            )
 
     # =========================================================================
     # Section: V3 Trends

@@ -8,6 +8,7 @@ Tests cover:
 4. Insight generators (all 10) with various data scenarios
 5. Empty data / error handling
 6. Cap limits (10 hot, 10 cold, 5 bounce-back, 12 insights)
+7. Tonight box score enrichment on trend items
 """
 
 import pytest
@@ -160,7 +161,9 @@ class TestOutputSchema:
         with patch.object(exporter, '_query_prop_lines', return_value={}), \
              patch.object(exporter, '_build_players_section', return_value={'hot': [], 'cold': [], 'bounce_back': []}), \
              patch.object(exporter, '_build_matchups_section', return_value=[]), \
-             patch.object(exporter, '_build_insights_section', return_value=[]):
+             patch.object(exporter, '_build_insights_section', return_value=[]), \
+             patch.object(exporter, '_query_tonight_boxscores', return_value={}), \
+             patch.object(exporter, '_query_game_statuses', return_value={}):
 
             result = exporter.generate_json('2026-02-12')
 
@@ -176,14 +179,16 @@ class TestOutputSchema:
         with patch.object(exporter, '_query_prop_lines', return_value={}), \
              patch.object(exporter, '_build_players_section', return_value={'hot': [], 'cold': [], 'bounce_back': []}), \
              patch.object(exporter, '_build_matchups_section', return_value=[_mock_matchup(), _mock_matchup(game_id='002')]), \
-             patch.object(exporter, '_build_insights_section', return_value=[]):
+             patch.object(exporter, '_build_insights_section', return_value=[]), \
+             patch.object(exporter, '_query_tonight_boxscores', return_value={}), \
+             patch.object(exporter, '_query_game_statuses', return_value={}):
 
             result = exporter.generate_json('2026-02-12')
 
         meta = result['metadata']
         assert meta['game_date'] == '2026-02-12'
         assert meta['games_tonight'] == 2
-        assert meta['version'] == '2'
+        assert meta['version'] == '3'
         assert 'generated_at' in meta
 
 
@@ -569,7 +574,9 @@ class TestEmptyCases:
         with patch.object(exporter, '_query_prop_lines', return_value={}), \
              patch.object(exporter, '_build_players_section', return_value={'hot': [], 'cold': [], 'bounce_back': []}), \
              patch.object(exporter, '_build_matchups_section', return_value=[]), \
-             patch.object(exporter, '_build_insights_section', return_value=[]):
+             patch.object(exporter, '_build_insights_section', return_value=[]), \
+             patch.object(exporter, '_query_tonight_boxscores', return_value={}), \
+             patch.object(exporter, '_query_game_statuses', return_value={}):
 
             result = exporter.generate_json('2026-02-12')
 
@@ -608,3 +615,320 @@ class TestExport:
         mock_gen.assert_called_once_with('2026-02-12')
         mock_upload.assert_called_once_with(mock_json, 'trends/tonight.json', 'public, max-age=3600')
         assert 'tonight.json' in path
+
+
+# ============================================================================
+# Helpers for tonight enrichment tests
+# ============================================================================
+
+def _make_trend_item(player_lookup='stephencurry', team='GSW', trend_type='scoring_streak'):
+    """Build a minimal trend item matching trends_v3_builder output."""
+    return {
+        'id': f"{trend_type.replace('_', '-')}-{player_lookup}",
+        'type': trend_type,
+        'category': 'hot',
+        'player': {
+            'lookup': player_lookup,
+            'name': 'Stephen Curry',
+            'team': team,
+            'position': 'PG',
+        },
+        'headline': 'Scored 30+ in 5 straight',
+        'detail': 'Averaging 33.2 PPG in the streak, 26.1 season avg',
+        'stats': {
+            'primary_value': 5,
+            'primary_label': 'straight games',
+            'secondary_value': 33.2,
+            'secondary_label': 'PPG in streak',
+        },
+        'intensity': 7.5,
+    }
+
+
+def _make_boxscore_row(
+    player_lookup='stephencurry',
+    team_abbr='GSW',
+    minutes='36:12',
+    points=32,
+    total_rebounds=8,
+    assists=5,
+    steals=1,
+    blocks=0,
+    turnovers=3,
+    field_goals_made=12,
+    field_goals_attempted=22,
+    field_goal_percentage=0.545,
+    three_pointers_made=4,
+    three_pointers_attempted=9,
+    three_point_percentage=0.444,
+    free_throws_made=4,
+    free_throws_attempted=5,
+    plus_minus=12,
+):
+    """Build a box score row as returned by _query_tonight_boxscores."""
+    return {
+        'player_lookup': player_lookup,
+        'team_abbr': team_abbr,
+        'minutes': minutes,
+        'points': points,
+        'total_rebounds': total_rebounds,
+        'assists': assists,
+        'steals': steals,
+        'blocks': blocks,
+        'turnovers': turnovers,
+        'field_goals_made': field_goals_made,
+        'field_goals_attempted': field_goals_attempted,
+        'field_goal_percentage': field_goal_percentage,
+        'three_pointers_made': three_pointers_made,
+        'three_pointers_attempted': three_pointers_attempted,
+        'three_point_percentage': three_point_percentage,
+        'free_throws_made': free_throws_made,
+        'free_throws_attempted': free_throws_attempted,
+        'plus_minus': plus_minus,
+    }
+
+
+# ============================================================================
+# Tests: Tonight Box Score Enrichment
+# ============================================================================
+
+class TestBuildTeamGameMap:
+    """Test _build_team_game_map helper."""
+
+    def test_builds_map_from_matchups(self):
+        exporter = _make_exporter()
+        matchups = [
+            _mock_matchup(away='LAL', home='GSW'),
+            _mock_matchup(game_id='002', away='BOS', home='MIA'),
+        ]
+        team_map = exporter._build_team_game_map(matchups)
+
+        assert team_map['LAL'] == {'opponent': 'GSW', 'home': False}
+        assert team_map['GSW'] == {'opponent': 'LAL', 'home': True}
+        assert team_map['BOS'] == {'opponent': 'MIA', 'home': False}
+        assert team_map['MIA'] == {'opponent': 'BOS', 'home': True}
+
+    def test_empty_matchups_returns_empty(self):
+        exporter = _make_exporter()
+        assert exporter._build_team_game_map([]) == {}
+
+
+class TestParseMinutes:
+    """Test minutes string parsing."""
+
+    def test_standard_format(self):
+        assert TrendsTonightExporter._parse_minutes('36:12') == 36
+
+    def test_zero_minutes(self):
+        assert TrendsTonightExporter._parse_minutes('0:00') == 0
+
+    def test_single_digit(self):
+        assert TrendsTonightExporter._parse_minutes('8:45') == 8
+
+    def test_none_input(self):
+        assert TrendsTonightExporter._parse_minutes(None) is None
+
+    def test_empty_string(self):
+        assert TrendsTonightExporter._parse_minutes('') is None
+
+    def test_invalid_format(self):
+        assert TrendsTonightExporter._parse_minutes('abc') is None
+
+
+class TestBuildTonightObject:
+    """Test _build_tonight_object helper."""
+
+    def test_scheduled_game_no_boxscore(self):
+        """Pre-game: status set, all stats null."""
+        exporter = _make_exporter()
+        team_info = {'opponent': 'BOS', 'home': True}
+
+        obj = exporter._build_tonight_object(team_info, None, 'scheduled')
+
+        assert obj['status'] == 'scheduled'
+        assert obj['opponent'] == 'BOS'
+        assert obj['home'] is True
+        assert obj['pts'] is None
+        assert obj['reb'] is None
+        assert obj['fg'] is None
+        assert obj['plus_minus'] is None
+
+    def test_final_game_with_boxscore(self):
+        """Final game: all stats populated."""
+        exporter = _make_exporter()
+        team_info = {'opponent': 'BOS', 'home': True}
+        boxscore = _make_boxscore_row()
+
+        obj = exporter._build_tonight_object(team_info, boxscore, 'final')
+
+        assert obj['status'] == 'final'
+        assert obj['opponent'] == 'BOS'
+        assert obj['home'] is True
+        assert obj['min'] == 36
+        assert obj['pts'] == 32
+        assert obj['reb'] == 8
+        assert obj['ast'] == 5
+        assert obj['stl'] == 1
+        assert obj['blk'] == 0
+        assert obj['tov'] == 3
+        assert obj['fg'] == '12-22'
+        assert obj['fg_pct'] == 0.545
+        assert obj['three_pt'] == '4-9'
+        assert obj['three_pct'] == 0.444
+        assert obj['ft'] == '4-5'
+        assert obj['plus_minus'] == 12
+
+    def test_in_progress_game(self):
+        """In-progress: status set, stats populated."""
+        exporter = _make_exporter()
+        team_info = {'opponent': 'LAL', 'home': False}
+        boxscore = _make_boxscore_row(
+            minutes='18:30', points=14, total_rebounds=3,
+            assists=2, field_goals_made=5, field_goals_attempted=10,
+            field_goal_percentage=0.500,
+            three_pointers_made=2, three_pointers_attempted=4,
+            three_point_percentage=0.500,
+            free_throws_made=2, free_throws_attempted=2,
+            plus_minus=-3,
+        )
+
+        obj = exporter._build_tonight_object(team_info, boxscore, 'in_progress')
+
+        assert obj['status'] == 'in_progress'
+        assert obj['min'] == 18
+        assert obj['pts'] == 14
+        assert obj['fg'] == '5-10'
+
+    def test_null_status_defaults_to_scheduled(self):
+        exporter = _make_exporter()
+        team_info = {'opponent': 'BOS', 'home': False}
+
+        obj = exporter._build_tonight_object(team_info, None, None)
+        assert obj['status'] == 'scheduled'
+
+
+class TestEnrichTrendsWithTonight:
+    """Test the full enrichment flow on trend items."""
+
+    def test_player_playing_tonight_gets_tonight_object(self):
+        """Trend item for a player whose team is in team_map gets tonight."""
+        exporter = _make_exporter()
+        trends = [_make_trend_item(player_lookup='stephencurry', team='GSW')]
+        team_map = {'GSW': {'opponent': 'BOS', 'home': True}}
+        boxscores = {'stephencurry': _make_boxscore_row()}
+        game_statuses = {'GSW': 'final'}
+
+        exporter._enrich_trends_with_tonight(trends, team_map, boxscores, game_statuses)
+
+        assert 'tonight' in trends[0]
+        assert trends[0]['tonight']['status'] == 'final'
+        assert trends[0]['tonight']['pts'] == 32
+        assert trends[0]['tonight']['opponent'] == 'BOS'
+
+    def test_player_not_playing_tonight_no_tonight(self):
+        """Trend item for a player whose team is NOT in team_map: no tonight key."""
+        exporter = _make_exporter()
+        trends = [_make_trend_item(player_lookup='lebron', team='LAL')]
+        team_map = {'GSW': {'opponent': 'BOS', 'home': True}}
+        boxscores = {}
+        game_statuses = {'GSW': 'final'}
+
+        exporter._enrich_trends_with_tonight(trends, team_map, boxscores, game_statuses)
+
+        assert 'tonight' not in trends[0]
+
+    def test_playing_tonight_but_no_boxscore_yet(self):
+        """Player's team is playing but game hasn't started — null stats."""
+        exporter = _make_exporter()
+        trends = [_make_trend_item(player_lookup='stephencurry', team='GSW')]
+        team_map = {'GSW': {'opponent': 'BOS', 'home': True}}
+        boxscores = {}  # No box score data yet
+        game_statuses = {'GSW': 'scheduled'}
+
+        exporter._enrich_trends_with_tonight(trends, team_map, boxscores, game_statuses)
+
+        tonight = trends[0]['tonight']
+        assert tonight['status'] == 'scheduled'
+        assert tonight['pts'] is None
+        assert tonight['fg'] is None
+        assert tonight['opponent'] == 'BOS'
+        assert tonight['home'] is True
+
+    def test_multiple_trends_mixed(self):
+        """Mix of playing and not-playing trend items."""
+        exporter = _make_exporter()
+        trends = [
+            _make_trend_item(player_lookup='curry', team='GSW'),
+            _make_trend_item(player_lookup='lebron', team='LAL'),
+            _make_trend_item(player_lookup='tatum', team='BOS'),
+        ]
+        team_map = {
+            'GSW': {'opponent': 'BOS', 'home': True},
+            'BOS': {'opponent': 'GSW', 'home': False},
+        }
+        boxscores = {
+            'curry': _make_boxscore_row(player_lookup='curry', points=28),
+            'tatum': _make_boxscore_row(player_lookup='tatum', points=22),
+        }
+        game_statuses = {'GSW': 'final', 'BOS': 'final'}
+
+        exporter._enrich_trends_with_tonight(trends, team_map, boxscores, game_statuses)
+
+        assert 'tonight' in trends[0]
+        assert trends[0]['tonight']['pts'] == 28
+        assert 'tonight' not in trends[1]  # LAL not playing
+        assert 'tonight' in trends[2]
+        assert trends[2]['tonight']['pts'] == 22
+
+    def test_empty_trends_no_crash(self):
+        """Empty trends list should not crash."""
+        exporter = _make_exporter()
+        trends = []
+        exporter._enrich_trends_with_tonight(trends, {}, {}, {})
+        assert trends == []
+
+
+class TestTonightEnrichmentInGenerateJson:
+    """Test that generate_json wires up the tonight enrichment."""
+
+    def test_generate_json_calls_enrichment(self):
+        """generate_json should call enrichment methods."""
+        exporter = _make_exporter()
+
+        with patch.object(exporter, '_query_prop_lines', return_value={}), \
+             patch.object(exporter, '_build_players_section', return_value={'hot': [], 'cold': [], 'bounce_back': []}), \
+             patch.object(exporter, '_build_matchups_section', return_value=[_mock_matchup()]), \
+             patch.object(exporter, '_build_insights_section', return_value=[]), \
+             patch.object(exporter, '_build_trends_section', return_value=[_make_trend_item()]), \
+             patch.object(exporter, '_query_tonight_boxscores', return_value={}) as mock_bs, \
+             patch.object(exporter, '_query_game_statuses', return_value={}) as mock_gs, \
+             patch.object(exporter, '_enrich_trends_with_tonight') as mock_enrich:
+
+            exporter.generate_json('2026-02-12')
+
+        mock_bs.assert_called_once_with('2026-02-12')
+        mock_gs.assert_called_once_with('2026-02-12')
+        mock_enrich.assert_called_once()
+
+    def test_boxscore_query_failure_returns_trends_without_tonight(self):
+        """If box score query fails, trends should still be returned without tonight."""
+        exporter = _make_exporter()
+        trend = _make_trend_item()
+
+        with patch.object(exporter, '_query_prop_lines', return_value={}), \
+             patch.object(exporter, '_build_players_section', return_value={'hot': [], 'cold': [], 'bounce_back': []}), \
+             patch.object(exporter, '_build_matchups_section', return_value=[_mock_matchup()]), \
+             patch.object(exporter, '_build_insights_section', return_value=[]), \
+             patch.object(exporter, '_build_trends_section', return_value=[trend]), \
+             patch.object(exporter, '_query_tonight_boxscores', return_value={}), \
+             patch.object(exporter, '_query_game_statuses', return_value={}):
+
+            result = exporter.generate_json('2026-02-12')
+
+        # Trend should exist but with tonight added (scheduled, null stats)
+        # since GSW is in the matchup
+        assert len(result['trends']) == 1
+        tonight = result['trends'][0].get('tonight')
+        assert tonight is not None
+        assert tonight['status'] == 'scheduled'
+        assert tonight['pts'] is None
