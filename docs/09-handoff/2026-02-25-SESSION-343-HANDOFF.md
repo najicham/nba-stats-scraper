@@ -1,205 +1,186 @@
-# Session 343 Handoff — Zombie Decommission, Affinity Blocking, Model Evaluation Plan
+# Session 343 Handoff — Model Evaluation Plan, Q55 Discovery, Shadow Deploys
 
 **Date:** 2026-02-25
-**Focus:** Decommission zombie models, fix stale Phase 6 exports, activate direction-aware blocking, begin v9_low_vegas retrain.
+**Focus:** Comprehensive model system evaluation, v9_low_vegas retrain experiments, v12_noveg Q55 discovery, shadow model registration.
 
 ---
 
 ## What Was Done
 
-### 1. Fixed Stale Phase 6 Exports
-- **signal-health.json** and **model-health.json** hadn't updated since Feb 22
-- **Root cause:** Cloud Scheduler `phase6-daily-results` was missing these export types
-- **Fix:** Updated scheduler message to include `signal-health` and `model-health`
-- Manually triggered catch-up export — both files now current on GCS
+### 1. Comprehensive Model System Evaluation Plan
 
-### 2. Decommissioned 20 Zombie Models (Committed + Pushed)
-**Commit:** `16e341c2` — auto-deploying
+**Doc:** `docs/08-projects/current/model-system-evaluation-session-343/00-EVALUATION-PLAN.md`
 
-**4 hardcoded systems removed from `predictions/worker/worker.py`:**
-- `similarity_balanced_v1` — 0 best bets picks in 30d
-- `xgboost_v1` / `catboost_v8` — 0 best bets picks in 30d
-- `ensemble_v1` — 0 best bets picks in 30d
-- `ensemble_v1_1` — 0 best bets picks in 30d
+Wrote a 7-part evaluation plan covering:
+- Current state assessment (all models BLOCKED/DEGRADING)
+- Root cause diagnosis (staleness + UNDER bias + Vegas anchoring)
+- 8 structured investigations with SQL queries and methods
+- Retrain strategy with Phase A/B/C priorities
+- 4 architecture decisions (default architecture, quantile strategy, retrain cadence, best bets volume)
+- 4-week execution timeline
+- Success metrics
 
-**12 stale dict models disabled in `catboost_monthly.py`:**
-All set to `enabled: False` with `# DISABLED Session 343` comments. Root cause: `get_enabled_monthly_models()` loaded registry models first, then ALSO loaded dict models not in the registry. 12 dict models had `enabled: True` but weren't in the 6-model registry.
+### 2. v9_low_vegas Retrain — 4 Variants Tested
 
-**5 borderline models** (9 picks total in 30d, 2 graded both correct) were disabled too — tiny contribution from stale training windows, newer registry models will fill the gap.
+Fixed the `vegas_line:0.25` → `--category-weight "vegas=0.25"` syntax issue. Ran 4 experiments:
 
-**Result:** ~20 systems per prediction → ~8 systems. ~60% compute savings.
+| Variant | MAE | HR 3+ | N 3+ | OVER HR | UNDER HR | Gates Failed |
+|---------|-----|-------|------|---------|----------|-------------|
+| v2 (47d train) | 5.169 | **60.0%** | 45 | 63.6% | 58.8% | MAE (+0.03), N |
+| v3 (87d train) | 5.107 | 55.9% | 34 | 54.5% | 56.5% | HR, N |
+| v4 (47d + RSM 0.5) | 5.110 | 55.3% | 47 | 50.0% | 56.4% | HR, N, DIR |
+| **v12_noveg Q55** | **5.024** | **60.0%** | 20 | **80.0%** | 53.3% | N only |
 
-### 3. Activated Model-Direction Affinity Blocking (Phase 2)
-**File:** `ml/signals/model_direction_affinity.py`
+**Key findings:**
+- v2 (47-day train, Dec 25 - Feb 9) is the best v9 variant
+- v12_noveg Q55 is the standout model — best MAE, best OVER generation, best calibration
+- All models fail sample size gate (N < 50) — structural limitation of 15-day eval window
+- RSM 0.5 hurts v9_low_vegas, 87-day window dilutes signal — both added to dead ends
 
-- Changed `BLOCK_THRESHOLD_HR` from `0.0` (observation) to `45.0` (active blocking)
-- **Split `v9_low_vegas` into its own affinity group** — critical because:
-  - v9 UNDER 5+: **30.7% HR (N=88)** — catastrophic, now BLOCKED
-  - v9_low_vegas UNDER 5+: **62.5% HR (N=16)** — protected by separate group
-- Updated SQL query, Python mapping, and `_get_affinity_group_from_system_id()`
-- Updated algorithm version to `v343_affinity_blocking_active`
-- All 48 tests pass
+### 3. Shadow Model Registration
 
-### 4. v9_low_vegas Retrain — FAILED GOVERNANCE GATES
-**Attempted:** `quick_retrain.py` with `--feature-set v9 --train-start 2026-01-06 --train-end 2026-02-18 --eval-start 2026-02-19 --eval-end 2026-02-24 --feature-weights "vegas_line:0.25"`
+Both models uploaded to GCS and registered in `model_registry` with `enabled=true`, `status='shadow'`:
 
-**Results:**
-- MAE: 5.35 vs 5.14 baseline (worse)
-- Edge 3+ HR: 53.3% (need 60%, N=30 LOW)
-- Edge 5+ HR: 44.4% (N=9, too small)
-- Vegas bias: -0.35 (good, within limits)
-- Tier bias: all clean
-- **GATES FAILED — not deployed**
+| Model ID | Family | GCS Path |
+|----------|--------|----------|
+| `catboost_v9_low_vegas_train1225_0209` | v9_low_vegas | `gs://nba-props-platform-models/catboost/v9/monthly/catboost_v9_33f_wt_train20251225-20260209_20260225_100515.cbm` |
+| `catboost_v12_noveg_q55_train1225_0209` | v12_noveg_q55 | `gs://nba-props-platform-models/catboost/v12/monthly/catboost_v9_50f_noveg_train20251225-20260209_20260225_100720.cbm` |
 
-**Issues found:**
-1. Feature weight flag parsed wrong: `vegas_line:0.25` should be `vegas_line=0.25` (the `=` syntax)
-2. Eval period too short (Feb 19-24 = 6 days, only 148 samples, 30 edge 3+)
-3. Stopped by overfitting detector at iteration 125 (too few iterations)
+Added `v12_noveg_q55` family to `cross_model_subsets.py` and `model_direction_affinity.py`.
 
-**Model saved but NOT deployed:** `models/catboost_v9_33f_train20260106-20260218_20260225_084521.cbm`
+### 4. Verified Session 342 Deploys
+
+- All 4 Cloud Builds from commit `16e341c2`: SUCCESS
+- Zero deployment drift
+- prediction-worker deployed with zombie decommission
+- phase6-export deployed with affinity blocking (`v343_affinity_blocking_active`)
+- Today's predictions still show 22 system_ids (pre-deploy batch) — **tomorrow will show ~8**
+
+### 5. Code & Doc Updates
+
+- **CLAUDE.md:** Updated model section (crisis status, shadow models, dead ends, affinity blocking in negative filters)
+- **cross_model_subsets.py:** Added `v12_noveg_q55` family
+- **model_direction_affinity.py:** Added `v12_noveg_q55` to `v12_noveg` affinity group
+- **tests:** 50/50 pass including 3 new Q55 tests
+- **signal_best_bets_exporter.py:** Added `best-bets/latest.json` backward compat endpoint
+- **post_grading_export/main.py:** Added `record.json` + `history.json` re-export post-grading
 
 ---
 
 ## What Was NOT Done (Action Items for Next Session)
 
-### PRIORITY 1: Comprehensive Model System Evaluation Plan
+### PRIORITY 1: Deep-Dive Model Feature Stores + Experiment with New Tuning
 
-**User request:** "Write a plan to evaluate the entire model system and how we make picks and study some models' decline and which ones have good best bets. Then make a decision if we should change anything, find new features, or retrain any models."
+**User request:** Study all models and their feature stores — see what each model's strengths are, how feature importance profiles differ, and whether to experiment with new models/tuning.
 
-This is the PRIMARY task for next session. Here is the data gathered so far:
+**Plan:** Investigation 8 in the evaluation plan:
+1. Extract `feature_importances_` from each enabled model's .cbm file
+2. Compare top 10 features across families (v9_mae, v9_low_vegas, v12_noveg_q55, etc.)
+3. Correlate feature importance with winning predictions per model
+4. Experiment with Q57, different training windows, category weights, min-data-in-leaf
 
-#### Key Data Points Collected
+### PRIORITY 2: Grade Shadow Models (After 5+ Days)
 
-**Registry Models (6 enabled):**
+The two shadow models need 5+ days of grading data before evaluation:
+- `catboost_v12_noveg_q55_train1225_0209` — first-ever Q55, monitor OVER/UNDER split
+- `catboost_v9_low_vegas_train1225_0209` — fresh v9_low_vegas, compare to stale version
 
-| Model | Family | Days Stale | Production? |
-|-------|--------|------------|-------------|
-| catboost_v12_mae_train0104_0215 | v12_mae | 10 | No |
-| catboost_v12_noveg_mae_train0104_0215 | v12_noveg_mae | 10 | No |
-| catboost_v12_noveg_q43_train0104_0215 | v12_noveg_q43 | 10 | No |
-| catboost_v12_vegas_q43_train0104_0215 | v12_vegas_q43 | 10 | No |
-| catboost_v9_low_vegas_train0106_0205 | v9_low_vegas | 20 | No |
-| catboost_v9_33f_train20260106-20260205 | v9_mae | 20 | YES |
-
-**February Performance by Model Group (all predictions, graded):**
-
-| Group | Direction | HR | N | MAE |
-|-------|-----------|-----|---|-----|
-| v12_champion | UNDER | **53.9%** | 648 | 4.92 |
-| v12_champion | OVER | 46.2% | 169 | 5.82 |
-| v12_vegas (registry) | OVER | **53.3%** | 615 | 4.83 |
-| v12_vegas (registry) | UNDER | **53.1%** | 712 | 5.08 |
-| v12_noveg (registry) | UNDER | **55.6%** | 151 | 5.34 |
-| v9_low_vegas | UNDER | **56.3%** | 135 | 5.25 |
-| v9_low_vegas | OVER | 49.6% | 123 | 4.98 |
-| v9_champion | OVER | 49.9% | 337 | 5.49 |
-| v9_champion | UNDER | 48.2% | 529 | 5.72 |
-
-**Weekly Champion Performance (edge 3+):**
-
-| Week | Model | Dir | Picks | HR |
-|------|-------|-----|-------|----|
-| Jan 19 | v9 | OVER | 45 | **66.7%** |
-| Jan 19 | v9 | UNDER | 50 | **66.0%** |
-| Jan 26 | v9 | OVER | 34 | 58.8% |
-| Feb 2 | v9 | UNDER | 77 | **29.9%** ← collapse |
-| Feb 2 | v12 | UNDER | 28 | 53.6% |
-| Feb 9 | v9 | OVER | 28 | 46.4% |
-| Feb 16 | v12 | OVER | 9 | **66.7%** |
-| Feb 16 | v12 | UNDER | 39 | 56.4% |
-| Feb 23 | v12 | UNDER | 19 | 36.8% ← this week |
-
-**Key Observations:**
-1. **v9 collapsed week of Feb 2** — UNDER went from 66% to 29.9%, never recovered
-2. **v12 was stable through Feb 16** (56-67% HR) but dropped to 36.8% this week
-3. **v9_low_vegas UNDER is the best performer** (56.3% HR, 135 picks) — needs fresh retrain
-4. **v12_noveg UNDER** (55.6%, N=151) and **v12_vegas** (53.1-53.3%, N=1327) are the most consistent
-5. **All models have UNDER bias** — v12 champion: 648 UNDER vs 169 OVER predictions
-6. **OVER picks are rare but profitable** for v12_vegas (53.3%, N=615) and v12 champion week of Feb 16 (66.7%)
-
-#### Suggested Evaluation Framework
-
-1. **Best Bets Source Analysis:** Which models are actually sourcing winning best bets? (Only 6 graded best bets picks exist for the signal system — very sparse)
-2. **Model Decay Timeline:** When exactly did each model start declining? Correlate with training staleness and market regime changes
-3. **Feature Importance Drift:** Compare feature importance between fresh vs stale models
-4. **Direction Bias Audit:** Quantify pred_vs_vegas bias per model and track weekly
-5. **Retrain Strategy:** Which families to retrain, training windows, eval methodology
-6. **New Feature Candidates:** What signals/features could improve OVER prediction (currently weak across all models)?
-7. **Architecture Decision:** Should `noveg` variants become the default? They consistently outperform full-vegas variants
-
-### PRIORITY 2: Retry v9_low_vegas Retrain
-- Fix feature weight syntax: use `vegas_line=0.25` not `vegas_line:0.25`
-- Use wider eval window or skip walkforward
-- If gates fail again, consider adjusting training window or hyperparameters
-
-### PRIORITY 3: Retrain Other Stale Families
-- v9_mae (production): 20 days stale, collapsed since Feb 2
-- v12 families: 10 days stale, starting to decline this week
-- Consider retraining through Feb 24 data
-
-### PRIORITY 4: Verify Zombie Decommission Deploy
-- 4 Cloud Build jobs were queued when we pushed
-- After deploy, verify prediction count drops from ~20 to ~8 system_ids:
 ```sql
-SELECT DISTINCT system_id, COUNT(*)
+-- Check shadow model performance after grading
+SELECT system_id,
+       CASE WHEN predicted_points < line_value THEN 'UNDER' ELSE 'OVER' END as direction,
+       COUNT(*) as picks,
+       COUNTIF(prediction_correct) as wins,
+       ROUND(SAFE_DIVIDE(COUNTIF(prediction_correct), COUNTIF(prediction_correct IS NOT NULL)) * 100, 1) as hr
+FROM `nba-props-platform.nba_predictions.prediction_accuracy`
+WHERE game_date >= '2026-02-26'
+  AND system_id IN ('catboost_v12_noveg_q55_train1225_0209', 'catboost_v9_low_vegas_train1225_0209')
+  AND prediction_correct IS NOT NULL
+GROUP BY 1, 2
+```
+
+### PRIORITY 3: Verify Tomorrow's Prediction Count
+
+Zombie decommission should reduce system_ids from 22 to ~8 tomorrow:
+```sql
+SELECT DISTINCT system_id, COUNT(*) as picks
 FROM `nba-props-platform.nba_predictions.player_prop_predictions`
-WHERE game_date = CURRENT_DATE()
+WHERE game_date = DATE_ADD(CURRENT_DATE(), INTERVAL 1 DAY)
 GROUP BY 1 ORDER BY 1
 ```
 
-### PRIORITY 5: Monitor Affinity Blocking Impact
-- The v9 UNDER 5+ block is now active — check tonight's best bets to confirm picks are being filtered
-- Check `filter_counts['model_direction_affinity']` in export logs
+### PRIORITY 4: Decommission v12_vegas_q43
+
+20.0% HR at edge 5+ — catastrophic. Should be disabled in model_registry:
+```sql
+UPDATE `nba-props-platform.nba_predictions.model_registry`
+SET enabled = false, status = 'disabled', notes = CONCAT(notes, ' | Session 344: decommissioned, 20% HR edge 5+')
+WHERE model_id = 'catboost_v12_vegas_q43_train0104_0215'
+```
+
+### PRIORITY 5: Run Investigation 1 (Best Bets Source Attribution)
+
+See evaluation plan for full query. Key question: which model families source winning best bets?
 
 ---
 
-## Uncommitted Files
+## Commits This Session
 
-| File | Status | Action |
-|------|--------|--------|
-| `docs/08-projects/current/model-health-diagnosis-session-342/00-DIAGNOSIS.md` | Untracked | From Session 342, commit |
-| `docs/09-handoff/2026-02-25-SESSION-342-HANDOFF.md` | Untracked | From Session 342, commit |
+| Commit | Description |
+|--------|-------------|
+| `733005a6` | feat: register Q55 shadow model, add evaluation plan, update model docs |
+
+**Pushed to main** — auto-deploying. Cloud Functions will pick up the new `v12_noveg_q55` family classification.
 
 ---
 
-## Key Files Modified This Session
+## Key Files Modified
 
 | File | Change |
 |------|--------|
-| `predictions/worker/worker.py` | Removed 4 hardcoded zombie systems (-243 lines) |
-| `predictions/worker/prediction_systems/catboost_monthly.py` | Disabled 12 dict models |
-| `ml/signals/model_direction_affinity.py` | Phase 2 activation, v9_low_vegas split |
-| `ml/signals/aggregator.py` | Algorithm version bump |
-| `tests/unit/signals/test_model_direction_affinity.py` | Updated for new affinity group + threshold |
-| `docs/08-projects/current/model-health-diagnosis-session-342/01-ZOMBIE-DECOMMISSION.md` | New doc |
+| `CLAUDE.md` | Model crisis status, shadow models, dead ends, affinity blocking |
+| `shared/config/cross_model_subsets.py` | Added `v12_noveg_q55` family |
+| `ml/signals/model_direction_affinity.py` | Added Q55 to `v12_noveg` affinity group |
+| `tests/unit/signals/test_model_direction_affinity.py` | 3 new Q55 tests (50/50 pass) |
+| `data_processors/publishing/signal_best_bets_exporter.py` | best-bets/latest.json backward compat |
+| `orchestration/cloud_functions/post_grading_export/main.py` | record.json + history.json re-export |
+| `docs/08-projects/current/model-system-evaluation-session-343/00-EVALUATION-PLAN.md` | Full evaluation plan |
+
+---
+
+## Model Registry State (8 Enabled)
+
+| Model ID | Family | Feature Set | Status | Training |
+|----------|--------|-------------|--------|----------|
+| catboost_v9_33f_train20260106-20260205 | v9_mae | v9 (33f) | **PRODUCTION** | Jan 6 - Feb 5 |
+| catboost_v9_low_vegas_train0106_0205 | v9_low_vegas | v9 (33f) | active | Jan 6 - Feb 5 |
+| catboost_v12_mae_train0104_0215 | v12_mae | v12 (54f) | active | Jan 4 - Feb 15 |
+| catboost_v12_noveg_mae_train0104_0215 | v12_noveg_mae | v12_noveg (50f) | active | Jan 4 - Feb 15 |
+| catboost_v12_noveg_q43_train0104_0215 | v12_noveg_q43 | v12_noveg (50f) | active | Jan 4 - Feb 15 |
+| catboost_v12_vegas_q43_train0104_0215 | v12_vegas_q43 | v12 (54f) | active | Jan 4 - Feb 15 |
+| **catboost_v9_low_vegas_train1225_0209** | v9_low_vegas | v9 (33f) | **shadow** | Dec 25 - Feb 9 |
+| **catboost_v12_noveg_q55_train1225_0209** | v12_noveg_q55 | v12_noveg (50f) | **shadow** | Dec 25 - Feb 9 |
+
+---
 
 ## Quick Start for Next Session
 
 ```bash
-# 1. Verify deploys landed
-gcloud builds list --region=us-west2 --project=nba-props-platform --limit=5
+# 1. Verify deploys landed from push
+gcloud builds list --region=us-west2 --project=nba-props-platform --limit=8
 ./bin/check-deployment-drift.sh --verbose
 
-# 2. Verify zombie count dropped
+# 2. Check if zombie cleanup worked (tomorrow's predictions)
 bq query --use_legacy_sql=false --project_id=nba-props-platform \
   "SELECT DISTINCT system_id FROM \`nba-props-platform.nba_predictions.player_prop_predictions\` WHERE game_date = CURRENT_DATE()"
 
-# 3. Check affinity blocking in action
+# 3. Check shadow model predictions exist
 bq query --use_legacy_sql=false --project_id=nba-props-platform \
-  "SELECT * FROM \`nba-props-platform.nba_predictions.signal_best_bets_picks\` WHERE game_date = CURRENT_DATE()"
+  "SELECT system_id, COUNT(*) FROM \`nba-props-platform.nba_predictions.player_prop_predictions\` WHERE game_date = CURRENT_DATE() AND system_id IN ('catboost_v12_noveg_q55_train1225_0209', 'catboost_v9_low_vegas_train1225_0209') GROUP BY 1"
 
-# 4. START: Comprehensive model evaluation (see Priority 1 above)
-# Read the diagnosis doc first:
-cat docs/08-projects/current/model-health-diagnosis-session-342/00-DIAGNOSIS.md
+# 4. START: Deep-dive model feature stores (Priority 1)
+# Extract feature importances from each model .cbm file
+# See evaluation plan Investigation 8
 
-# 5. Retry v9_low_vegas retrain with correct syntax
-python3 ml/experiments/quick_retrain.py \
-  --name "v9_low_vegas_retrain_v2" \
-  --feature-set v9 \
-  --train-start 2026-01-14 \
-  --train-end 2026-02-22 \
-  --eval-start 2026-02-10 \
-  --eval-end 2026-02-22 \
-  --feature-weights "vegas_line=0.25" \
-  --walkforward --enable --force
+# 5. Decommission v12_vegas_q43 (Priority 4)
 ```
