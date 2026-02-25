@@ -106,7 +106,7 @@ steps:
           --memory ${_MEMORY} \
           --timeout ${_TIMEOUT} \
           --max-instances 3 \
-          --min-instances 0 \
+          --min-instances ${_MIN_INSTANCES} \
           --project nba-props-platform
 
   # Step 3: Set IAM permissions for Pub/Sub invocation (Session 205/206 - CRITICAL)
@@ -149,6 +149,7 @@ substitutions:
   _ALLOW_UNAUTHENTICATED: 'false'  # Set to 'true' for HTTP functions called by Cloud Scheduler without OIDC
   _MEMORY: '1Gi'
   _TIMEOUT: '300s'
+  _MIN_INSTANCES: '0'
   _BUILD_TIMESTAMP: '${BUILD_TIMESTAMP:-unknown}'  # Set by Cloud Build trigger
 
 timeout: 600s
