@@ -19,12 +19,14 @@ Actions on success:
 2. Refresh subsets/season.json via SeasonSubsetPicksExporter
 3. Backfill actuals into signal_best_bets_picks table
 4. Re-export tonight/all-players.json with actuals
+5. Re-export best-bets/all.json with updated ultra_record
 
-Version: 1.3
+Version: 1.4
 Created: 2026-02-13 (Session 242)
 Updated: 2026-02-14 (Session 254) - Added signal best bets grading backfill
 Updated: 2026-02-15 (Session 263) - Added model_performance_daily computation
 Updated: 2026-02-22 (Session 332) - Added tonight JSON re-export with actuals
+Updated: 2026-02-25 (Session 342) - Added best-bets/all.json re-export for fresh ultra_record
 """
 
 import base64
@@ -296,6 +298,20 @@ def main(cloud_event):
             exc_info=True
         )
         results['tonight_error'] = str(e)
+
+    # 7. Re-export best-bets/all.json with updated grading (Session 342)
+    try:
+        from data_processors.publishing.best_bets_all_exporter import BestBetsAllExporter
+        all_exporter = BestBetsAllExporter()
+        all_path = all_exporter.export(target_date)
+        results['best_bets_all_path'] = all_path
+        logger.info(f"[{correlation_id}] Re-exported best-bets/all.json: {all_path}")
+    except Exception as e:
+        logger.error(
+            f"[{correlation_id}] Failed to re-export best-bets/all.json for {target_date}: {e}",
+            exc_info=True
+        )
+        results['best_bets_all_error'] = str(e)
 
     duration = (datetime.now(timezone.utc) - start_time).total_seconds()
     logger.info(

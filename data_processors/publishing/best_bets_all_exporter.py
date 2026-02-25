@@ -199,13 +199,11 @@ class BestBetsAllExporter(BaseExporter):
                     else 'LOSS' if p.get('prediction_correct') is False
                     else None
                 ),
+                'is_ultra': bool(p.get('ultra_tier')),
             }
 
             if p.get('is_voided'):
                 pick_dict['void_reason'] = 'DNP'
-
-            if p.get('ultra_tier'):
-                pick_dict['ultra_tier'] = True
 
             formatted.append(pick_dict)
         return formatted
@@ -298,13 +296,11 @@ class BestBetsAllExporter(BaseExporter):
                 'actual': safe_int(row.get('actual_points')),
                 'result': result,
                 'angles': list(angles)[:3],
+                'is_ultra': bool(row.get('ultra_tier')),
             }
 
             if row.get('is_voided'):
                 pick_dict['void_reason'] = 'DNP'
-
-            if row.get('ultra_tier'):
-                pick_dict['ultra_tier'] = True
 
             weeks_map[week_key][game_date_str].append(pick_dict)
 
