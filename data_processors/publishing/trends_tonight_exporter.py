@@ -18,6 +18,7 @@ Sections:
 """
 
 import logging
+import os
 from typing import Dict, List, Any, Optional
 from datetime import date, datetime
 
@@ -82,6 +83,7 @@ class TrendsTonightExporter(BaseExporter):
                 'game_date': game_date,
                 'games_tonight': games_tonight,
                 'version': '3',
+                'build_commit': os.environ.get('BUILD_COMMIT', 'local'),
             },
             'players': players_section,
             'matchups': matchups_section,
