@@ -107,6 +107,9 @@ def build_trends(
     # Interleave types so no two consecutive trends are the same type
     result = _interleave_types(result)
 
+    # Validate before returning — strip any items with bad data
+    result = _validate_trends(result)
+
     tonight_count = sum(1 for t in result if t['player']['team'] in tonight_upper)
     logger.info(
         f"Final trends: {len(result)} "
@@ -364,6 +367,70 @@ def _interleave_types(trends: List[Dict]) -> List[Dict]:
                 result.append(by_type[t].pop(0))
 
     return result
+
+
+VALID_TYPES = {
+    'scoring_streak', 'cold_snap', 'breakout',
+    'double_double_machine', 'shooting_hot', 'shooting_cold',
+    'bounce_back',
+}
+VALID_CATEGORIES = {'hot', 'cold', 'interesting'}
+
+
+def _validate_trends(trends: List[Dict]) -> List[Dict]:
+    """Validate trend items and strip any with bad data.
+
+    Catches data quality issues (impossible percentages, missing fields,
+    out-of-range values) before they reach the frontend.
+    """
+    valid = []
+
+    for t in trends:
+        trend_id = t.get('id', '?')
+        player_name = t.get('player', {}).get('name', '?')
+        errors = []
+
+        # Required fields
+        if not t.get('type') or not t.get('headline') or not t.get('player', {}).get('lookup'):
+            errors.append('missing required fields')
+
+        # Type and category
+        if t.get('type') not in VALID_TYPES:
+            errors.append(f"invalid type: {t.get('type')}")
+        if t.get('category') not in VALID_CATEGORIES:
+            errors.append(f"invalid category: {t.get('category')}")
+
+        # Intensity range
+        intensity = t.get('intensity', 0)
+        if not (0 <= intensity <= 10):
+            errors.append(f"intensity {intensity} outside 0-10")
+
+        # Shooting percentage sanity (stats.secondary_value is season %)
+        stats = t.get('stats', {})
+        if t.get('type') in ('shooting_hot', 'shooting_cold'):
+            for key in ('primary_value', 'secondary_value'):
+                val = stats.get(key)
+                if val is not None and not (0 <= val <= 100):
+                    errors.append(f"stats.{key}={val} outside 0-100%")
+
+        # Headline length (mobile card limit)
+        headline = t.get('headline', '')
+        if len(headline) > 80:
+            errors.append(f"headline too long ({len(headline)} chars)")
+
+        if errors:
+            logger.warning(
+                f"Trend validation failed for {trend_id} ({player_name}): "
+                f"{'; '.join(errors)} — stripping from output"
+            )
+        else:
+            valid.append(t)
+
+    stripped = len(trends) - len(valid)
+    if stripped:
+        logger.warning(f"Stripped {stripped} invalid trend(s) from output")
+
+    return valid
 
 
 # =============================================================================
