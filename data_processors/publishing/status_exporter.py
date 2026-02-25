@@ -408,24 +408,43 @@ class StatusExporter(BaseExporter):
 
     def _are_games_likely_active(self) -> bool:
         """
-        Check if NBA games are likely in progress based on current time.
-        Games typically run 4 PM - 1 AM ET.
+        Check if NBA games are actually in progress by querying the schedule.
+
+        Returns True only when games have game_status = 2 (In Progress),
+        avoiding false-positive degradation before tipoff or after all games end.
+        Falls back to a time-based heuristic if the query fails.
         """
         try:
             from zoneinfo import ZoneInfo
-        except ImportError:
-            import pytz
-            et = pytz.timezone('America/New_York')
-            now_et = datetime.now(et)
-        else:
             et = ZoneInfo('America/New_York')
-            now_et = datetime.now(et)
+            today = datetime.now(et).strftime('%Y-%m-%d')
 
-        hour = now_et.hour
+            query = """
+            SELECT
+                COUNTIF(game_status = 2) as in_progress
+            FROM `nba_reference.nba_schedule`
+            WHERE game_date = @today
+            """
+            params = [bigquery.ScalarQueryParameter("today", "DATE", today)]
+            result = list(self._get_bq_client().query(
+                query,
+                job_config=bigquery.QueryJobConfig(query_parameters=params)
+            ))
 
-        # Games typically active from 4 PM (16) to 1 AM (1)
-        # This is a heuristic - could be improved by checking actual schedule
-        return 16 <= hour <= 23 or 0 <= hour <= 1
+            if result:
+                return result[0].in_progress > 0
+            return False
+
+        except Exception as e:
+            logger.warning(f"Schedule query failed, falling back to time heuristic: {e}")
+            # Fallback: time-based heuristic (4 PM - 1 AM ET)
+            try:
+                from zoneinfo import ZoneInfo
+                now_et = datetime.now(ZoneInfo('America/New_York'))
+            except Exception:
+                now_et = datetime.now(timezone.utc)
+            hour = now_et.hour
+            return 16 <= hour <= 23 or 0 <= hour <= 1
 
     def _build_known_issues(self, *service_statuses) -> List[Dict[str, str]]:
         """Build list of known issues from service statuses."""

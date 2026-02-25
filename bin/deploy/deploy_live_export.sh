@@ -59,15 +59,15 @@ if [ "$DEPLOY_FUNCTION" = true ]; then
     FUNC_SRC="$PROJECT_ROOT/orchestration/cloud_functions/live_export"
     echo "Preparing function source with dependencies..."
 
-    # Copy needed modules (copy entire directories to ensure all dependencies)
+    # Copy needed modules (use rsync -aL to follow symlinks)
     mkdir -p "$FUNC_SRC/data_processors"
     mkdir -p "$FUNC_SRC/shared"
 
-    # Copy entire directories (base_exporter needs shared.clients, shared.utils, shared.config)
-    cp -r "$PROJECT_ROOT/data_processors/publishing" "$FUNC_SRC/data_processors/"
-    cp -r "$PROJECT_ROOT/shared/clients" "$FUNC_SRC/shared/"
-    cp -r "$PROJECT_ROOT/shared/utils" "$FUNC_SRC/shared/"
-    cp -r "$PROJECT_ROOT/shared/config" "$FUNC_SRC/shared/"
+    rsync -aL "$PROJECT_ROOT/data_processors/publishing" "$FUNC_SRC/data_processors/"
+    rsync -aL "$PROJECT_ROOT/shared/clients" "$FUNC_SRC/shared/"
+    rsync -aL "$PROJECT_ROOT/shared/utils" "$FUNC_SRC/shared/"
+    rsync -aL "$PROJECT_ROOT/shared/config" "$FUNC_SRC/shared/"
+    rsync -aL "$PROJECT_ROOT/shared/ml" "$FUNC_SRC/shared/" 2>/dev/null || true
 
     # Ensure __init__.py files exist
     touch "$FUNC_SRC/data_processors/__init__.py"
@@ -95,7 +95,7 @@ if [ "$DEPLOY_FUNCTION" = true ]; then
         --service-account="$SERVICE_ACCOUNT" \
         --source="$FUNC_SRC" \
         --set-env-vars="GCP_PROJECT=$PROJECT_ID,GCS_BUCKET=nba-props-platform-api,BDL_API_KEY=$BDL_API_KEY" \
-        --no-gen2
+        --gen2
 
     # Clean up copied files
     echo "Cleaning up temporary files..."
