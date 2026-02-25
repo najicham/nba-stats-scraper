@@ -66,6 +66,13 @@ MODEL_FAMILIES = {
         'feature_set': 'v12_noveg',
         'loss': 'quantile',
     },
+    # Session 343: Q55 quantile — counteracts UNDER bias by predicting 55th percentile
+    'v12_noveg_q55': {
+        'pattern': 'catboost_v12_noveg_q55_',
+        'exact': False,
+        'feature_set': 'v12_noveg',
+        'loss': 'quantile',
+    },
     'v12_vegas_q43': {
         'pattern': 'catboost_v12_q43_',
         'alt_pattern': 'catboost_v12_vegas_q43_',

@@ -520,6 +520,18 @@ class SignalBestBetsExporter(BaseExporter):
         except Exception as e:
             logger.warning(f"Failed to write latest.json (non-fatal): {e}")
 
+        # Also write best-bets/latest.json for backward compatibility
+        # (legacy BestBetsExporter was decommissioned; this maintains the endpoint)
+        try:
+            self.upload_to_gcs(
+                json_data=json_data,
+                path='best-bets/latest.json',
+                cache_control='public, max-age=60',
+            )
+            logger.info("Wrote best-bets/latest.json (backward compat)")
+        except Exception as e:
+            logger.warning(f"Failed to write best-bets/latest.json (non-fatal): {e}")
+
         logger.info(
             f"Exported {json_data['total_picks']} signal best bets for {target_date} "
             f"(health={json_data['model_health']['status']}) to {gcs_path}"

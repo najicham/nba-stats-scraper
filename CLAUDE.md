@@ -99,10 +99,16 @@ nba-stats-scraper/
 | Previous Champion | `catboost_v9` (BLOCKED — 47% edge 3+ HR, demoted Session 332) |
 | Production Model | `catboost_v12_50f_huber_rsm50_train20251102-20260131_20260213_213149` |
 | Training | 2025-11-02 to 2026-01-31 |
-| Edge 3+ HR | 57.1% (98 picks) / 7d: 58-60% HEALTHY |
-| Status | INTERIM CHAMPION (since 2026-02-23) — retraining all families |
+| Edge 3+ HR | 50.7% 7d / 48.1% 14d BLOCKED (as of Feb 25) |
+| Status | ALL MODELS BLOCKED/DEGRADING — system-wide health crisis |
 
-**7 enabled model families** (4 freshly retrained Jan 4–Feb 15, registered Session 333). V12+vegas edge 6+ = **100% HR (N=25)**. See `docs/08-projects/current/retrain-infrastructure/03-PARALLEL-MODELS-GUIDE.md` for full list.
+**8 enabled model families** (6 registry + 1 dict + 1 production). Session 343: decommissioned 20 zombie models (~22→8 systems), activated direction affinity blocking, registered 2 new shadow models.
+
+**System-wide model crisis (Session 342-343):** All models BLOCKED or DEGRADING. Root causes: training staleness (10-48 days), structural UNDER bias (77-89% of predictions), Vegas feature anchoring. See `docs/08-projects/current/model-system-evaluation-session-343/00-EVALUATION-PLAN.md`.
+
+**Shadow models (Session 343):**
+- `catboost_v12_noveg_q55_train1225_0209`: NEW Q55 quantile, 60% HR edge 3+, **80% OVER HR**, best MAE (5.024), best calibration (-0.24 bias)
+- `catboost_v9_low_vegas_train1225_0209`: Fresh v9 low-vegas, 60% HR edge 3+, OVER 63.6%, UNDER 58.8%
 
 **CRITICAL:** Use edge >= 3 filter. 73% of predictions have edge < 3 and lose money.
 
@@ -141,7 +147,7 @@ nba-stats-scraper/
 
 7-day cadence, 42-day rolling window. `retrain-reminder` CF runs Mon 9 AM ET (Slack + SMS). Urgency: ROUTINE (7-10d), OVERDUE (11-14d), URGENT (15d+).
 
-**Dead ends (don't revisit):** Grow policy, CHAOS+quantile, residual mode, two-stage pipeline, Edge Classifier, Huber loss (47.4% HR), recency weighting (33.3%), lines-only training (20%), min-PPG filter (33.3%), 96-day window.
+**Dead ends (don't revisit):** Grow policy, CHAOS+quantile, residual mode, two-stage pipeline, Edge Classifier, Huber loss (47.4% HR), recency weighting (33.3%), lines-only training (20%), min-PPG filter (33.3%), 96-day window, Q43+Vegas (20% HR edge 5+, catastrophic UNDER compounding), RSM 0.5 with v9_low_vegas (hurts HR), 87-day training window (too much old data dilutes signal).
 
 ### Cross-Model Monitoring
 
@@ -303,7 +309,7 @@ python bin/monitoring/grading_gap_detector.py        # Grading gaps (auto: daily
 1. Player blacklist: `<40% HR on 8+ edge-3+ picks`
 2. Avoid familiar: `6+ games vs opponent`
 3. Edge floor: `edge < 5.0` (57% HR)
-4. UNDER edge 7+ block: non-V12 models only (V9=39.3%, V12+vegas=100%)
+4. **Model-direction affinity blocking** (Session 343): Blocks model+direction+edge combos with HR < 45% on 15+ picks. V9 UNDER 5+ = 30.7% HR (N=88) — blocked. V9_low_vegas has separate affinity group (62.5% UNDER — protected).
 5. Feature quality floor: `quality < 85` (24.0% HR)
 6. Bench UNDER block: `UNDER + line < 12` (35.1% HR)
 7. UNDER + line jumped 2+: `prop_line_delta >= 2.0` (38.2% HR)

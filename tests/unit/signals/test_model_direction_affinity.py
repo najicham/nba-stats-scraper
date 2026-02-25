@@ -53,6 +53,10 @@ class TestGetAffinityGroup:
     def test_v12_q45_is_noveg(self):
         assert get_affinity_group('v12_q45') == 'v12_noveg'
 
+    def test_v12_noveg_q55_is_noveg(self):
+        """Session 343: v12_noveg_q55 uses noveg feature set → v12_noveg group."""
+        assert get_affinity_group('v12_noveg_q55') == 'v12_noveg'
+
     def test_v12_mae_is_vegas(self):
         """v12_mae uses full v12 feature set (includes vegas)."""
         assert get_affinity_group('v12_mae') == 'v12_vegas'
@@ -103,6 +107,12 @@ class TestGetAffinityGroupFromSystemId:
     def test_v12_noveg_q43(self):
         assert _get_affinity_group_from_system_id(
             'catboost_v12_noveg_q43_train20260106'
+        ) == 'v12_noveg'
+
+    def test_v12_noveg_q55(self):
+        """Session 343: Q55 model maps to v12_noveg group."""
+        assert _get_affinity_group_from_system_id(
+            'catboost_v12_noveg_q55_train1225_0209'
         ) == 'v12_noveg'
 
     def test_v12_vegas(self):

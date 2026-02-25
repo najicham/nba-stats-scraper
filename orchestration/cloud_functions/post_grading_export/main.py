@@ -20,13 +20,15 @@ Actions on success:
 3. Backfill actuals into signal_best_bets_picks table
 4. Re-export tonight/all-players.json with actuals
 5. Re-export best-bets/all.json with updated ultra_record
+6. Re-export best-bets/record.json and history.json with graded results
 
-Version: 1.4
+Version: 1.5
 Created: 2026-02-13 (Session 242)
 Updated: 2026-02-14 (Session 254) - Added signal best bets grading backfill
 Updated: 2026-02-15 (Session 263) - Added model_performance_daily computation
 Updated: 2026-02-22 (Session 332) - Added tonight JSON re-export with actuals
 Updated: 2026-02-25 (Session 342) - Added best-bets/all.json re-export for fresh ultra_record
+Updated: 2026-02-25 (Session 343) - Added record.json + history.json re-export post-grading
 """
 
 import base64
@@ -312,6 +314,23 @@ def main(cloud_event):
             exc_info=True
         )
         results['best_bets_all_error'] = str(e)
+
+    # 8. Re-export best-bets/record.json and history.json with graded results (Session 343)
+    try:
+        from data_processors.publishing.best_bets_record_exporter import BestBetsRecordExporter
+        record_exporter = BestBetsRecordExporter()
+        record_paths = record_exporter.export(target_date)
+        results['best_bets_record_path'] = record_paths.get('record', '')
+        results['best_bets_history_path'] = record_paths.get('history', '')
+        logger.info(
+            f"[{correlation_id}] Re-exported best-bets record+history: {record_paths}"
+        )
+    except Exception as e:
+        logger.error(
+            f"[{correlation_id}] Failed to re-export best-bets record for {target_date}: {e}",
+            exc_info=True
+        )
+        results['best_bets_record_error'] = str(e)
 
     duration = (datetime.now(timezone.utc) - start_time).total_seconds()
     logger.info(
