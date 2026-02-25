@@ -24,6 +24,7 @@ from google.cloud import bigquery
 logger = logging.getLogger(__name__)
 
 MAX_TRENDS = 30
+MAX_PER_TYPE = 5
 MIN_SEASON_GAMES = 15
 TONIGHT_RATIO = 0.7
 
@@ -80,14 +81,18 @@ def build_trends(
     deduped = _deduplicate(all_candidates)
     logger.info(f"After dedup: {len(deduped)} unique player trends")
 
+    # Cap each type to MAX_PER_TYPE to prevent any single detector dominating
+    capped = _cap_per_type(deduped)
+    logger.info(f"After per-type cap ({MAX_PER_TYPE}): {len(capped)} trends")
+
     # Split tonight vs not-tonight, apply 70/30 ratio
     tonight = sorted(
-        [t for t in deduped if t['player']['team'] in tonight_upper],
+        [t for t in capped if t['player']['team'] in tonight_upper],
         key=lambda x: x['intensity'],
         reverse=True,
     )
     other = sorted(
-        [t for t in deduped if t['player']['team'] not in tonight_upper],
+        [t for t in capped if t['player']['team'] not in tonight_upper],
         key=lambda x: x['intensity'],
         reverse=True,
     )
@@ -98,6 +103,9 @@ def build_trends(
     result = tonight[:tonight_slots] + other[:other_slots]
     result.sort(key=lambda x: x['intensity'], reverse=True)
     result = result[:MAX_TRENDS]
+
+    # Interleave types so no two consecutive trends are the same type
+    result = _interleave_types(result)
 
     tonight_count = sum(1 for t in result if t['player']['team'] in tonight_upper)
     logger.info(
@@ -159,7 +167,7 @@ def _query_player_data(
             ) as game_num
         FROM `nba-props-platform.nba_analytics.player_game_summary` g
         INNER JOIN season_stats s ON g.player_lookup = s.player_lookup
-        WHERE g.game_date >= DATE_SUB(@game_date, INTERVAL 45 DAY)
+        WHERE g.game_date >= DATE_SUB(@game_date, INTERVAL 120 DAY)
           AND g.game_date < @game_date
           AND g.minutes_played >= 10
           AND g.is_active = TRUE
@@ -196,7 +204,7 @@ def _query_player_data(
     FROM season_stats s
     JOIN recent_games r ON s.player_lookup = r.player_lookup
     LEFT JOIN registry reg ON s.player_lookup = reg.player_lookup
-    WHERE r.game_num <= 15
+    WHERE r.game_num <= 30
     ORDER BY s.player_lookup, r.game_num
     """
 
@@ -303,6 +311,45 @@ def _deduplicate(candidates: List[Dict]) -> List[Dict]:
         if lookup not in best or trend['intensity'] > best[lookup]['intensity']:
             best[lookup] = trend
     return list(best.values())
+
+
+def _cap_per_type(trends: List[Dict], max_per_type: int = MAX_PER_TYPE) -> List[Dict]:
+    """Cap each trend type to max_per_type items, keeping highest intensity."""
+    by_type: Dict[str, List[Dict]] = {}
+    for t in trends:
+        by_type.setdefault(t['type'], []).append(t)
+
+    result = []
+    for type_trends in by_type.values():
+        type_trends.sort(key=lambda x: x['intensity'], reverse=True)
+        result.extend(type_trends[:max_per_type])
+    return result
+
+
+def _interleave_types(trends: List[Dict]) -> List[Dict]:
+    """Reorder so no two consecutive trends share the same type.
+
+    Picks from the highest-intensity remaining trend whose type differs
+    from the previous pick. Falls back to same-type if no alternative.
+    """
+    if len(trends) <= 1:
+        return trends
+
+    pool = sorted(trends, key=lambda x: x['intensity'], reverse=True)
+    result = [pool.pop(0)]
+
+    while pool:
+        last_type = result[-1]['type']
+        # Find best candidate with a different type
+        idx = next(
+            (i for i, t in enumerate(pool) if t['type'] != last_type),
+            None,
+        )
+        if idx is None:
+            idx = 0  # All remaining are same type, just take the best
+        result.append(pool.pop(idx))
+
+    return result
 
 
 # =============================================================================
