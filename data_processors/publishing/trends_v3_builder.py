@@ -455,7 +455,11 @@ def _detect_scoring_streaks(players: List[Dict]) -> List[Dict]:
         trend = None
 
         # Check fixed thresholds (highest first)
+        # Skip thresholds trivially below the player's average
         for threshold, base_intensity in thresholds:
+            if threshold < p['season_ppg'] - 5:
+                continue
+
             streak = 0
             for g in games:
                 if g['points'] >= threshold:
@@ -744,10 +748,7 @@ def _detect_shooting_hot(players: List[Dict]) -> List[Dict]:
                             f"Shooting {recent_pct:.0%} from 3 "
                             f"over last {window}"
                         ),
-                        detail=(
-                            f"Up {diff * 100:.0f} points from his "
-                            f"{p['season_3pt_pct']:.0%} season avg"
-                        ),
+                        detail=f"Season avg is {p['season_3pt_pct']:.0%} from 3",
                         primary_value=round(recent_pct * 100, 1),
                         primary_label=f'3PT% last {window}',
                         secondary_value=round(p['season_3pt_pct'] * 100, 1),
@@ -771,10 +772,7 @@ def _detect_shooting_hot(players: List[Dict]) -> List[Dict]:
                             f"Shooting {recent_pct:.0%} from the field "
                             f"over last {window}"
                         ),
-                        detail=(
-                            f"Up {diff * 100:.0f} points from his "
-                            f"{p['season_fg_pct']:.0%} season avg"
-                        ),
+                        detail=f"Season avg is {p['season_fg_pct']:.0%} from the field",
                         primary_value=round(recent_pct * 100, 1),
                         primary_label=f'FG% last {window}',
                         secondary_value=round(p['season_fg_pct'] * 100, 1),
@@ -830,10 +828,7 @@ def _detect_shooting_cold(players: List[Dict]) -> List[Dict]:
                             f"Shooting only {recent_pct:.0%} from 3 "
                             f"over last {window}"
                         ),
-                        detail=(
-                            f"Down {diff * 100:.0f} points from his "
-                            f"{p['season_3pt_pct']:.0%} season avg"
-                        ),
+                        detail=f"Season avg is {p['season_3pt_pct']:.0%} from 3",
                         primary_value=round(recent_pct * 100, 1),
                         primary_label=f'3PT% last {window}',
                         secondary_value=round(p['season_3pt_pct'] * 100, 1),
@@ -857,10 +852,7 @@ def _detect_shooting_cold(players: List[Dict]) -> List[Dict]:
                             f"Shooting only {recent_pct:.0%} from the field "
                             f"over last {window}"
                         ),
-                        detail=(
-                            f"Down {diff * 100:.0f} points from his "
-                            f"{p['season_fg_pct']:.0%} season avg"
-                        ),
+                        detail=f"Season avg is {p['season_fg_pct']:.0%} from the field",
                         primary_value=round(recent_pct * 100, 1),
                         primary_label=f'FG% last {window}',
                         secondary_value=round(p['season_fg_pct'] * 100, 1),
