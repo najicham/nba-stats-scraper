@@ -316,6 +316,7 @@ python bin/monitoring/grading_gap_detector.py        # Grading gaps (auto: daily
 6. Bench UNDER block: `UNDER + line < 12` (35.1% HR)
 7. UNDER + line jumped 2+: `prop_line_delta >= 2.0` (38.2% HR)
 8. UNDER + line dropped 2+: `prop_line_delta <= -2.0` (35.2% HR)
+9. Away noveg block: `v12_noveg family + AWAY game` (43-44% HR vs 57-59% HOME)
 
 ### Active Signals
 

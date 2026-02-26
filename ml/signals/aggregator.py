@@ -50,7 +50,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v343_affinity_blocking_active'
+ALGORITHM_VERSION = 'v347_away_noveg_filter'
 
 # Signal health regime → weight multiplier (used for pick angles context)
 HEALTH_MULTIPLIERS = {
@@ -80,6 +80,7 @@ class BestBetsAggregator:
         - Line jumped UNDER block: UNDER + line jumped 2+ → skip (38.2% HR, Session 306)
         - Line dropped UNDER block: UNDER + line dropped 2+ → skip (35.2% HR, Session 306)
         - Neg +/- streak UNDER block: UNDER + 3+ neg games → skip (13.1% HR)
+        - AWAY noveg block: v12_noveg + AWAY game → skip (43-44% HR vs 57-59% HOME, Session 347)
         - ANTI_PATTERN combos → skip
     """
 
@@ -136,6 +137,7 @@ class BestBetsAggregator:
             'confidence': 0,
             'anti_pattern': 0,
             'model_direction_affinity': 0,
+            'away_noveg': 0,
         }
 
         for pred in predictions:
@@ -171,6 +173,15 @@ class BestBetsAggregator:
                     self._model_direction_blocks)
                 if block_reason:
                     filter_counts['model_direction_affinity'] += 1
+                    continue
+
+            # AWAY noveg block (Session 347): v12_noveg models hit 57-59% HOME
+            # but only 43-44% AWAY — +15pp gap (N=40+ each). Structural to
+            # the no-vegas feature set.
+            if not pred.get('is_home', False):
+                from ml.signals.model_direction_affinity import get_affinity_group
+                if get_affinity_group(source_family) == 'v12_noveg':
+                    filter_counts['away_noveg'] += 1
                     continue
 
             # Avoid familiar matchups (Session 284)
@@ -300,6 +311,8 @@ class BestBetsAggregator:
             logger.info(f"UNDER edge 7+ block: skipped {filter_counts['under_edge_7plus']} predictions")
         if filter_counts['model_direction_affinity'] > 0:
             logger.info(f"Model-direction affinity: skipped {filter_counts['model_direction_affinity']} predictions")
+        if filter_counts['away_noveg'] > 0:
+            logger.info(f"AWAY noveg block: skipped {filter_counts['away_noveg']} predictions")
 
         # Ultra Bets classification (Session 326)
         from ml.signals.ultra_bets import classify_ultra_pick

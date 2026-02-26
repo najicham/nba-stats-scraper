@@ -37,6 +37,7 @@ def _make_prediction(
     neg_pm_streak=0,
     games_vs_opponent=0,
     source_model_family='',
+    is_home=True,
 ) -> dict:
     """Helper to create a prediction dict that passes all filters by default."""
     return {
@@ -55,6 +56,7 @@ def _make_prediction(
         'neg_pm_streak': neg_pm_streak,
         'games_vs_opponent': games_vs_opponent,
         'source_model_family': source_model_family,
+        'is_home': is_home,
     }
 
 
@@ -105,6 +107,7 @@ class TestAggregatorReturnType:
             'confidence': 0,
             'anti_pattern': 0,
             'model_direction_affinity': 0,
+            'away_noveg': 0,
         }
 
 
@@ -316,3 +319,103 @@ class TestModelDirectionAffinityFilter:
         agg = BestBetsAggregator()
         _, summary = agg.aggregate([], {})
         assert 'model_direction_affinity' in summary['rejected']
+
+
+# ============================================================================
+# AWAY NOVEG FILTER TESTS (Session 347)
+# ============================================================================
+
+class TestAwayNovegFilter:
+    """Test that v12_noveg AWAY predictions are blocked (Session 347).
+
+    v12_noveg models hit 57-59% HOME but only 43-44% AWAY — +15pp gap.
+    """
+
+    def _make_signal_results_for(self, pred, n_qualifying=3):
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        signals = [_make_signal_result(f'signal_{i}') for i in range(n_qualifying)]
+        return {key: signals}
+
+    def test_away_noveg_blocked(self):
+        """v12_noveg AWAY prediction is rejected."""
+        pred = _make_prediction(
+            source_model_family='v12_q43',
+            is_home=False,
+        )
+        signals = self._make_signal_results_for(pred)
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 0
+        assert summary['rejected']['away_noveg'] == 1
+
+    def test_home_noveg_allowed(self):
+        """v12_noveg HOME prediction passes the filter."""
+        pred = _make_prediction(
+            source_model_family='v12_q43',
+            is_home=True,
+        )
+        signals = self._make_signal_results_for(pred)
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 1
+        assert summary['rejected']['away_noveg'] == 0
+
+    def test_away_non_noveg_allowed(self):
+        """Non-noveg AWAY prediction is NOT blocked."""
+        pred = _make_prediction(
+            source_model_family='v9_mae',
+            is_home=False,
+        )
+        signals = self._make_signal_results_for(pred)
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 1
+        assert summary['rejected']['away_noveg'] == 0
+
+    def test_away_noveg_q45_blocked(self):
+        """v12_q45 (also noveg group) AWAY prediction is rejected."""
+        pred = _make_prediction(
+            source_model_family='v12_q45',
+            is_home=False,
+        )
+        signals = self._make_signal_results_for(pred)
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 0
+        assert summary['rejected']['away_noveg'] == 1
+
+    def test_away_noveg_q55_tw_blocked(self):
+        """v12_noveg_q55_tw (shadow model) AWAY prediction is rejected."""
+        pred = _make_prediction(
+            source_model_family='v12_noveg_q55_tw',
+            is_home=False,
+        )
+        signals = self._make_signal_results_for(pred)
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 0
+        assert summary['rejected']['away_noveg'] == 1
+
+    def test_away_v12_vegas_allowed(self):
+        """v12_mae (v12_vegas group) AWAY prediction is NOT blocked."""
+        pred = _make_prediction(
+            source_model_family='v12_mae',
+            is_home=False,
+        )
+        signals = self._make_signal_results_for(pred)
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 1
+        assert summary['rejected']['away_noveg'] == 0
+
+    def test_missing_is_home_treated_as_away(self):
+        """Prediction without is_home field is treated as AWAY (blocked)."""
+        pred = _make_prediction(
+            source_model_family='v12_q43',
+        )
+        del pred['is_home']  # Remove the field entirely
+        signals = self._make_signal_results_for(pred)
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 0
+        assert summary['rejected']['away_noveg'] == 1

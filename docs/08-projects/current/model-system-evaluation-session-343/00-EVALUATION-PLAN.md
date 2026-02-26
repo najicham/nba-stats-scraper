@@ -375,22 +375,24 @@ All four variants tested, all with eval window Feb 10-24 (15 days):
 - [x] Run Investigation 1 (best bets source attribution) — **Session 345**
 - [x] Add export freshness monitor to daily-health-check CF — **Session 345**
 - [x] Fresh training window experiment (Q55+trend_wt on Jan 5 - Feb 19) — **Session 345**
-- [ ] **Verify Feb 26 predictions show ~9 system_ids** (zombie cleanup + shadows active)
+- [x] **Verify Feb 26 predictions show 6 system_ids** (zombie cleanup done, shadows deployed same day — will appear Feb 27)
 
 ### Week 2 (Mar 2-6): Model Deep Dive + Evaluate
 
 - [x] **Study all models' feature stores**: Session 344 completed. See Investigation 4+8 results below.
-- [ ] **Grade 4 shadow models (need 3-5 days from Feb 26)**:
+- [ ] **Grade 4 shadow models (need 3-5 days from Feb 27)**:
   - `catboost_v12_noveg_q55_train1225_0209` (Q55 baseline)
   - `catboost_v12_noveg_q55_tw_train1225_0209` (Q55+trend_wt — best offline)
   - `catboost_v12_noveg_q57_train1225_0209` (Q57 — UNDER specialist)
   - `catboost_v9_low_vegas_train1225_0209` (v9_low_vegas fresh)
 - [x] Run Investigation 2 (decay timeline) — **Session 346. See results below.**
-- [ ] Run Investigation 3 (direction bias)
+- [x] Run Investigation 3 (direction bias) — **Session 347. See results below.**
 - [x] **Experiment with new tuning**: Session 344 — tested Q57, Q60, min-data-in-leaf, category weights. See results below.
 - [x] Decommission v12_vegas_q43 family permanently (Session 344)
 - [ ] **Evaluate v12_mae UNDER model-direction affinity blocking** (53.3% HR, drags best bets from 71.4% → 68.9%)
 - [ ] **Evaluate Stars UNDER negative filter** (0% HR on fresh window experiment, N=5 — need more data)
+- [x] **Evaluate AWAY negative filter for v12_noveg models** (Session 347: +15pp HOME advantage, N=40+ each) — **IMPLEMENTED Session 347**
+- [ ] **Evaluate B2B + UNDER + v12 negative filter** (Session 347: 48.8% B2B UNDER HR for v12_champion)
 
 ### Week 3 (Mar 9-13): Decide + Scale
 
@@ -643,3 +645,101 @@ Low-Vegas decays more gracefully — 57.1% edge 5+ at days 15-21 vs 31.8% for fu
 3. **Low-Vegas architecture is more decay-resistant** — supports shifting to noveg/low-vegas default
 4. **Edge 5+ collapses faster than edge 3+** — high-confidence picks are more sensitive to staleness
 5. **Current V9 champion was weak from birth** — may need investigation into training window quality
+
+---
+
+## Session 347 Findings: Direction Bias Deep Dive (Feb 26)
+
+### Investigation 3: Direction Bias Deep Dive (COMPLETED)
+
+**Question:** Is the UNDER bias getting worse over time? Does it correlate with specific game conditions?
+
+#### Core Finding: Bias Is Structural and Stable — Calibration Is What Degrades
+
+The UNDER bias does NOT deepen with staleness. V12 champion stays at -1.0 to -1.6 bias across 4 weeks. V9 oscillates near 0. What collapses is the model's ability to distinguish winning from losing UNDERs — calibration accuracy degrades while the directional lean stays constant.
+
+| Family | Bias Range (4 weeks) | HR Fresh | HR Stale | Bias Change |
+|--------|---------------------|----------|----------|-------------|
+| v12_champion | -1.09 to -1.58 | 52-56% | 45% | ~stable |
+| v12_noveg_q43 | -3.71 to -4.17 | 57% | 43% | slight deepening |
+| v12_noveg_q45 | -3.22 to -3.68 | 56% | 41% | slight deepening |
+| v9_low_vegas | -0.92 to +0.12 | 56% | 49% | shifts toward neutral |
+| v9_mae | -0.63 to +0.24 | 58% | 52% | oscillates near 0 |
+
+**Implication:** Don't try to "fix" the bias. It's a property of the loss function + feature set. Instead, retrain frequently to restore calibration.
+
+#### Finding 2: Stars UNDER Is Universally Broken
+
+Every model predicts stars (line >= 25) will underperform. 76-100% of predictions are UNDER.
+
+| Family | Stars % UNDER | Stars HR | Starters HR | Role Players HR |
+|--------|--------------|----------|-------------|-----------------|
+| v9_mae | 76.6% | 56.5% | 53.2% | 50.1% |
+| v12_champion | 94.4% | 51.4% | **58.6%** | 48.3% |
+| v12_noveg_q43 | 100% | 47.6% | **59.0%** | 38.1% |
+| v9_low_vegas | 100% | 50.0% | **58.4%** | 51.1% |
+
+**Starters (line 15-25) are the sweet spot** — 53-59% HR across all models. Role players and stars underperform.
+
+**Action:** Consider "Stars UNDER" negative filter. Need N >= 15 from live shadow data before implementing. Current live data from Session 345 shows 0% HR (N=5) — directionally alarming.
+
+#### Finding 3: HOME/AWAY Is Strongly Actionable for Noveg Models
+
+| Family | HOME HR | AWAY HR | Gap |
+|--------|---------|---------|-----|
+| v12_noveg_q43 | **57.5%** | 43.9% | **+13.6pp** |
+| v12_noveg_q45 | **59.3%** | 44.4% | **+14.9pp** |
+| v9_low_vegas | 52.4% | 54.3% | -1.9pp (no effect) |
+| v9_mae | 51.7% | 51.5% | +0.2pp (no effect) |
+
+Noveg models hit ~15pp better at HOME. V9 models show no location effect. This is the largest exploitable pattern found.
+
+**Action:** Consider AWAY penalty for v12_noveg model picks in best bets scoring, or AWAY UNDER negative filter for noveg models.
+
+#### Finding 4: B2B Hurts V12 Models Only
+
+| Family | Non-B2B HR | B2B HR | B2B UNDER HR |
+|--------|-----------|--------|-------------|
+| v12_champion | 52.3% | 50.0% | **48.8%** |
+| v12_noveg_q45 | 54.7% | **30.0%** (N=10) | 33.3% |
+| v9_low_vegas | 53.3% | 52.8% | 56.0% |
+| v9_mae | 51.1% | **53.6%** | 54.3% |
+
+V12 model B2B UNDER is below breakeven. V9 models are B2B-resilient — v9_mae actually performs BETTER on B2B.
+
+**Action:** Consider B2B + UNDER + v12 as a negative filter combo.
+
+#### Finding 5: The Extreme Bias Paradox (Confirmed)
+
+Models with the most extreme UNDER bias AND models with balanced direction both profit at edge 5+. The production champions with moderate bias LOSE. Last 16 days edge 5+ UNDER HR:
+
+| Family | Avg Bias | % UNDER | Edge 5+ UNDER HR | N |
+|--------|----------|---------|-----------------|---|
+| v12_noveg_q43 | -3.92 | 98.8% | **60.0%** | 10 |
+| v12_noveg_q45 | -3.38 | 93.7% | **62.5%** | 8 |
+| v9_low_vegas | -0.50 | 51.9% | **62.5%** | 16 |
+| v12_champion | -1.52 | 82.4% | 37.5% | 16 |
+| v9_mae | -0.12 | 49.7% | 37.5% | 8 |
+
+**Interpretation:** Extreme UNDER bias acts as a natural quality filter for the noveg models. Only their highest-conviction UNDERs cross the edge 5+ threshold. The "moderate" bias of production champions means their edge 5+ population is mixed quality.
+
+#### Finding 6: Staleness x Player Tier (V12 Champion)
+
+| Tier | Fresh HR (1-14d) | Stale HR (22d+) | Decay |
+|------|-----------------|----------------|-------|
+| Stars | 55.3% | 47.8% | -7.5pp |
+| **Starters** | **60.3%** | **55.2%** | -5.1pp |
+| Role players | 48.8% | 46.0% | -2.8pp |
+
+Starters remain profitable even when stale. Stars and role players decay below breakeven. Role players have the least decay but start weakest.
+
+#### Summary of Actionable Findings
+
+| Finding | Action | Priority | Data Needed |
+|---------|--------|----------|-------------|
+| HOME advantage for noveg models (+15pp) | AWAY negative filter for v12_noveg picks | HIGH | Ready (N=40+ each) |
+| Stars UNDER broken across all models | Stars UNDER negative filter | MEDIUM | Need N >= 15 live |
+| B2B hurts v12 UNDER | B2B + UNDER + v12 negative filter | MEDIUM | N=150 v12, N=10 noveg |
+| Starters are the sweet spot | No action needed — informational | LOW | Confirmed |
+| Bias is structural, not decaying | Retrain frequently, don't try bias correction | HIGH | Confirmed |
+| Extreme bias paradox | Keep noveg models despite bias | LOW | Confirmed |
