@@ -9,8 +9,13 @@ cold start time and prevent import errors in cloud functions.
 # Lightweight imports only - no external dependencies beyond Google Cloud SDK
 from .bigquery_client import BigQueryClient
 from .storage_client import StorageClient
-from .pubsub_client import PubSubClient
 from .auth_utils import get_service_account_credentials
+
+# PubSubClient loaded lazily — requires google-cloud-pubsub which not all CFs install
+try:
+    from .pubsub_client import PubSubClient
+except ImportError:
+    PubSubClient = None
 from .nba_team_mapper import get_nba_tricode, get_nba_tricode_fuzzy
 
 # Game ID conversion utilities (lightweight)

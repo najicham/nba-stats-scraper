@@ -393,12 +393,22 @@ All four variants tested, all with eval window Feb 10-24 (15 days):
 - [ ] **Evaluate Stars UNDER negative filter** (0% HR on fresh window experiment, N=5 — need more data)
 - [x] **Evaluate AWAY negative filter for v12_noveg models** (Session 347: +15pp HOME advantage, N=40+ each) — **IMPLEMENTED Session 347**
 - [ ] **Evaluate B2B + UNDER + v12 negative filter** (Session 347: 48.8% B2B UNDER HR for v12_champion)
+- [x] **Fix pubsub_v1 import error in post-grading-export** — Session 348: added google-cloud-pubsub to requirements.txt + made PubSubClient import lazy in shared/utils/__init__.py
+- [x] **Full decline diagnosis** — Session 348: OVER collapsed (80%→58%), Starters OVER collapsed (90%→33%), full-vegas failing (54.5%), edge quality weakened (7.2→5.4). See SESSION-348-PLAN.md.
+- [ ] **Retrain v12_noveg_q55_tw** with fresh training window (Jan 14 - Feb 24) — Session 348
+- [ ] **Retrain v9_low_vegas** with fresh training window (Jan 14 - Feb 24) — Session 348
+- [ ] **Grade Feb 26 best bets** (5 picks, all UNDER from noveg/low_vegas — games tonight)
+- [ ] **Verify shadow model full coverage** (expect ~117/shadow on Feb 27)
 
-### Week 3 (Mar 9-13): Decide + Scale
+### Week 3 (Mar 2-6): Evaluate + Decide
 
+- [ ] **Grade 4 shadow models** (need 3-5 days from Feb 27)
+- [ ] **Grade fresh retrains** (v12_noveg_q55_tw, v9_low_vegas — if registered as shadows)
 - [ ] Run Investigation 5-6 (architecture decision, quantile strategy)
 - [ ] Make Decision 1 (default architecture — noveg vs full-vegas)
 - [ ] Make Decision 2 (quantile strategy — Q55/Q57 vs MAE)
+- [ ] **Evaluate Starters OVER segment** — 33.3% Feb HR, need to determine if staleness-caused or structural
+- [ ] **Evaluate dynamic edge floor** — raise to 6+ when models >14 days stale
 - [ ] **Identify new feature candidates** from feature importance analysis
 - [ ] Retrain Phase B families if warranted
 - [ ] Update retrain cadence to 14 days

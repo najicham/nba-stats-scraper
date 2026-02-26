@@ -98,19 +98,23 @@ nba-stats-scraper/
 | System ID | `catboost_v12` (interim champion since 2026-02-23) |
 | Previous Champion | `catboost_v9` (BLOCKED — 47% edge 3+ HR, demoted Session 332) |
 | Production Model | `catboost_v12_50f_huber_rsm50_train20251102-20260131_20260213_213149` |
-| Training | 2025-11-02 to 2026-01-31 |
-| Edge 3+ HR | 50.7% 7d / 48.1% 14d BLOCKED (as of Feb 25) |
-| Status | ALL MODELS BLOCKED/DEGRADING — system-wide health crisis |
+| Training | 2025-11-02 to 2026-01-31 (**26 days stale as of Feb 26**) |
+| Edge 3+ HR | 47.2% at 22d+ staleness — BELOW BREAKEVEN |
+| Status | ALL MODELS BLOCKED/DEGRADING — retrains in progress (Session 348) |
 
-**9 enabled models** (7 registry + 2 production). Session 343: decommissioned 20 zombies (~22→8). Session 344: decommissioned v12_vegas_q43, registered 2 new shadows (Q55+trend_wt, Q57).
+**10 enabled models** (7 registry + 2 production + Session 348 retrains). Session 348: retrained v12_noveg_q55_tw + v9_low_vegas with fresh data (Jan 5 - Feb 15).
 
-**System-wide model crisis (Session 342-344):** All models BLOCKED or DEGRADING. Root causes: training staleness, structural UNDER bias, Vegas feature anchoring. **Session 344 feature analysis confirmed:** winners rely on player stats (points_avg_season 23%), losers anchor to Vegas (vegas_points_line 24%). See evaluation plan.
+**February decline diagnosis (Session 348):** Best bets HR dropped from 73.1% (Jan) to 60.5% (Feb). Root causes: (1) OVER predictions collapsed 80%→58%, specifically Starters OVER 90%→33%, (2) full-vegas architecture failing at 54.5% vs noveg at 100% (N=6), (3) edge quality weakened from 7.2→5.4, (4) all models past 21-day shelf life. See `SESSION-348-PLAN.md`.
 
-**Shadow models (4 total, Sessions 343-344):**
+**Shadow models (4 from Sessions 343-344, awaiting grading Feb 27+):**
 - `catboost_v12_noveg_q55_tw_train1225_0209`: **BEST OVERALL** — Q55 + trend weights (recent_perf=2x, derived=1.5x, matchup=0.5x). 58.6% HR edge 3+ (N=29), UNDER 60.9% (N=23)
 - `catboost_v12_noveg_q57_train1225_0209`: **UNDER specialist** — 62.5% UNDER HR (N=16), 80% edge 5+ (N=5). OVER weak (40%)
 - `catboost_v12_noveg_q55_train1225_0209`: Q55 quantile baseline. 47.6% HR edge 3+ on 15d eval (weaker than 7d eval suggested)
 - `catboost_v9_low_vegas_train1225_0209`: Fresh v9 low-vegas, 60% HR edge 3+ (7d eval)
+
+**Session 348 fresh retrains (completed, not deployed — gates failed on MAE + sample size):**
+- `v12_noveg_q55_tw` on Jan 5 - Feb 15: **68% HR edge 3+ (N=25), 87.5% OVER, 58.8% UNDER, +0.11 bias** — best directional balance seen. Pending user approval for shadow registration.
+- `v9_low_vegas` on Jan 5 - Feb 15: 56.8% HR edge 3+ (N=44), OVER 72.7%, UNDER 51.5% (below breakeven). Stars UNDER 42.9% confirms universal Stars UNDER problem.
 
 **CRITICAL:** Use edge >= 3 filter. 73% of predictions have edge < 3 and lose money.
 
@@ -149,7 +153,7 @@ nba-stats-scraper/
 
 7-day cadence, 42-day rolling window. `retrain-reminder` CF runs Mon 9 AM ET (Slack + SMS). Urgency: ROUTINE (7-10d), OVERDUE (11-14d), URGENT (15d+).
 
-**Dead ends (don't revisit):** Grow policy, CHAOS+quantile, residual mode, two-stage pipeline, Edge Classifier, Huber loss (47.4% HR), recency weighting (33.3%), lines-only training (20%), min-PPG filter (33.3%), 96-day window, Q43+Vegas (20% HR edge 5+, catastrophic UNDER compounding), RSM 0.5 with v9_low_vegas (hurts HR), 87-day training window (too much old data dilutes signal), min-data-in-leaf 25/50 (kills feature diversity, top 2 features = 64-68%), Q60 quantile (generates OVER volume but not profitably — 50% OVER HR).
+**Dead ends (don't revisit):** Grow policy, CHAOS+quantile, residual mode, two-stage pipeline, Edge Classifier, Huber loss (47.4% HR), recency weighting (33.3%), lines-only training (20%), min-PPG filter (33.3%), 96-day window, Q43+Vegas (20% HR edge 5+, catastrophic UNDER compounding), RSM 0.5 with v9_low_vegas (hurts HR), 87-day training window (too much old data dilutes signal), min-data-in-leaf 25/50 (kills feature diversity, top 2 features = 64-68%), Q60 quantile (generates OVER volume but not profitably — 50% OVER HR), health gate on raw model HR (blocked profitable multi-model filtered best bets — removed Session 347).
 
 ### Cross-Model Monitoring
 
