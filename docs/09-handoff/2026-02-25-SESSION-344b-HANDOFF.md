@@ -123,12 +123,15 @@ GROUP BY 1, 2
 ### PRIORITY 2: Verify Tomorrow's Prediction Count
 Zombie decommission + new shadows should produce ~9 system_ids.
 
-### PRIORITY 3: Investigation 1 — Best Bets Source Attribution
+### PRIORITY 3: Add Export Freshness Monitor to daily-health-check CF
+`bin/monitoring/check_export_freshness.py` currently runs manually. Should be integrated into the `daily-health-check` Cloud Function so stale exports trigger Slack alerts automatically. The CF is at `orchestration/cloud_functions/daily_health_check/`. Add a freshness check step that calls the same logic, alerting to `#nba-alerts` on STALE/MISSING.
+
+### PRIORITY 4: Investigation 1 — Best Bets Source Attribution
 Still needed to determine which model families source winning best bets.
 
-### PRIORITY 4: Investigations 2-3 — Decay Timeline + Direction Bias Deep Dive
+### PRIORITY 5: Investigations 2-3 — Decay Timeline + Direction Bias Deep Dive
 
-### PRIORITY 5: Fresh Training Window Experiment
+### PRIORITY 6: Fresh Training Window Experiment
 Test if the Q55+trend_wt recipe holds on a different training window (e.g., Jan 1 - Feb 19) to confirm it's not window-specific.
 
 ---
