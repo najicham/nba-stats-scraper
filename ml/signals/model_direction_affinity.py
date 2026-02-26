@@ -73,8 +73,8 @@ def get_affinity_group(source_model_family: str) -> Optional[str]:
         return 'v9'
 
     # V12 noveg — uses v12_noveg feature set (no vegas features)
-    # Includes: v12_q43, v12_q45, v12_noveg_q55 (noveg quantile models)
-    if source_model_family in ('v12_q43', 'v12_q45', 'v12_noveg_q55'):
+    # Includes: v12_q43, v12_q45, v12_noveg_q55, v12_noveg_q55_tw, v12_noveg_q57
+    if source_model_family in ('v12_q43', 'v12_q45', 'v12_noveg_q55', 'v12_noveg_q55_tw', 'v12_noveg_q57'):
         return 'v12_noveg'
 
     # V12+vegas — uses full v12 feature set (includes vegas)

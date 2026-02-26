@@ -66,9 +66,23 @@ MODEL_FAMILIES = {
         'feature_set': 'v12_noveg',
         'loss': 'quantile',
     },
+    # Session 344: Q55 + trend category weights — MUST come before v12_noveg_q55 (more specific)
+    'v12_noveg_q55_tw': {
+        'pattern': 'catboost_v12_noveg_q55_tw_',
+        'exact': False,
+        'feature_set': 'v12_noveg',
+        'loss': 'quantile',
+    },
     # Session 343: Q55 quantile — counteracts UNDER bias by predicting 55th percentile
     'v12_noveg_q55': {
         'pattern': 'catboost_v12_noveg_q55_',
+        'exact': False,
+        'feature_set': 'v12_noveg',
+        'loss': 'quantile',
+    },
+    # Session 344: Q57 quantile — UNDER specialist (62.5% UNDER HR)
+    'v12_noveg_q57': {
+        'pattern': 'catboost_v12_noveg_q57_',
         'exact': False,
         'feature_set': 'v12_noveg',
         'loss': 'quantile',
@@ -156,7 +170,7 @@ def build_noveg_mae_sql_filter(alias: str = '') -> str:
     """
     prefix = f"{alias}." if alias else ""
     col = f"{prefix}system_id"
-    return f"({col} LIKE 'catboost_v12_noveg%' AND {col} NOT LIKE '%_q4%')"
+    return f"({col} LIKE 'catboost_v12_noveg%' AND {col} NOT LIKE '%_q4%' AND {col} NOT LIKE '%_q5%' AND {col} NOT LIKE '%_q6%')"
 
 
 # ---------------------------------------------------------------------------

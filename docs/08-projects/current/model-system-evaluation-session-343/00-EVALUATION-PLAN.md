@@ -376,11 +376,11 @@ All four variants tested, all with eval window Feb 10-24 (15 days):
 
 ### Week 2 (Mar 2-6): Model Deep Dive + Evaluate
 
-- [ ] **Study all models' feature stores**: Examine each enabled model's feature importance, compare how each family weights features differently, identify which features drive winning vs losing predictions per model
+- [x] **Study all models' feature stores**: Session 344 completed. See Investigation 4+8 results below.
 - [ ] Grade Phase A shadow retrains (minimum 5 days grading)
-- [ ] Run Investigations 2-4 (decay timeline, direction bias, feature importance drift)
-- [ ] **Experiment with new tuning**: Test Q57, test different training windows, test different loss functions per family
-- [ ] Decommission v12_vegas_q43 family permanently
+- [ ] Run Investigations 2-3 (decay timeline, direction bias)
+- [x] **Experiment with new tuning**: Session 344 — tested Q57, Q60, min-data-in-leaf, category weights. See results below.
+- [x] Decommission v12_vegas_q43 family permanently (Session 344)
 
 ### Week 3 (Mar 9-13): Decide + Scale
 
@@ -426,3 +426,69 @@ All four variants tested, all with eval window Feb 10-24 (15 days):
 | `predictions/worker/prediction_systems/catboost_monthly.py` | Runtime model loading |
 | `shared/ml/feature_contract.py` | Feature definitions (33-56 features) |
 | `docs/08-projects/current/model-health-diagnosis-session-342/00-DIAGNOSIS.md` | Session 342 diagnosis |
+
+---
+
+## Session 344 Findings: Feature Analysis + Tuning Experiments (Feb 25)
+
+### Investigation 4+8: Feature Importance Analysis
+
+**Extracted `feature_importances_` from all 8 enabled model .cbm files.**
+
+#### Core Finding: Vegas Features Are the #1 Differentiator
+
+| Feature | Winners Avg | Losers Avg | Diff | Implication |
+|---------|------------|------------|------|-------------|
+| `vegas_points_line` | 2.7% | **23.9%** | -21.2 | Losers anchor to Vegas |
+| `points_avg_season` | **23.1%** | 8.7% | +14.4 | Winners use player stats |
+| `vegas_opening_line` | 1.2% | **10.0%** | -8.9 | Double Vegas anchor trap |
+| `points_avg_last_10` | **14.0%** | 6.4% | +7.6 | Recent form matters |
+| `line_vs_season_avg` | **8.0%** | 2.0% | +6.0 | Indirect Vegas signal |
+| `multi_book_line_std` | 2.5% | 1.4% | +1.1 | Market disagreement |
+
+**Winners** (Q55, v9_low_vegas, nv_q43, nv_mae): Form independent opinions from player stats.
+**Losers** (v9_mae, v12_mae, v12_vegas_q43): Cheap copies of Vegas.
+
+#### Feature-Value/Winning Correlation (14 days, edge 3+)
+
+| Signal | Finding | Strength |
+|--------|---------|----------|
+| `pts_std` (variance) | UNDER winners have HIGHER variance (6.5-7.4 vs 5.6-6.5) | STRONG |
+| `recent_trend` (momentum) | UNDER winners have NEGATIVE trend (-0.5 to -0.8 vs +0.4 for losers) | STRONG |
+| `multi_book_line_std` | UNDER winners: lower std (1.5-1.9 vs 3.0). OVER winners: higher std (2.1 vs 1.1) | MODERATE |
+| `line_vs_season_avg` | Extreme line inflation (>6 above season) → UNDER loses | MODERATE |
+
+### Tuning Experiments (all v12_noveg, trained Dec 25 - Feb 9, eval Feb 10-24)
+
+| Model | MAE | HR 3+ (N) | HR 5+ (N) | OVER HR (N) | UNDER HR (N) | Status |
+|-------|-----|-----------|-----------|-------------|--------------|--------|
+| **Q55+trend_wt** | 5.118 | **58.6% (29)** | 66.7% (3) | 50.0% (6) | **60.9% (23)** | **SHADOW** |
+| **Q57** | 5.089 | 53.9% (26) | **80.0% (5)** | 40.0% (10) | **62.5% (16)** | **SHADOW** |
+| Q55 baseline | 5.069 | 47.6% (21) | 50.0% (2) | 44.4% (9) | 50.0% (12) | Weaker than expected |
+| Q60 | 5.111 | 51.5% (33) | 80.0% (5) | 50.0% (24) | 55.6% (9) | Too much OVER noise |
+| Q55+minleaf25 | 5.000 | 50.0% (4) | N/A | N/A | 50.0% (4) | Kills feature diversity |
+| Q55+minleaf50 | 5.058 | 50.0% (6) | 0% (1) | N/A | 50.0% (6) | Kills feature diversity |
+
+**Q55+trend_wt config:** `--category-weight "recent_performance=2.0,derived=1.5,matchup=0.5"` — encodes feature analysis directly.
+
+### Decisions Made (Session 344)
+
+1. **v12_vegas_q43 DECOMMISSIONED** — 20% HR edge 5+, confirmed catastrophic by feature analysis (vegas_points_line at 22.8% importance).
+2. **Two new shadow models registered**: Q55+trend_wt and Q57.
+3. **Dead ends confirmed**: min-data-in-leaf > default, Q60, Q43 with Vegas.
+4. **Optimal quantile range: Q55-Q57** — Q60 adds noise, Q43 is catastrophic.
+5. **Category weights validated**: Up-weighting recent_performance (2x) and derived (1.5x) while down-weighting matchup (0.5x) improves HR by +11% at edge 3+.
+
+### Updated Model Registry (9 enabled, Session 344)
+
+| Model ID | Family | Status | Training | Notes |
+|----------|--------|--------|----------|-------|
+| catboost_v9_33f_train... | v9_mae | PRODUCTION | Jan 6 - Feb 5 | Champion |
+| catboost_v9_low_vegas_train0106_0205 | v9_low_vegas | active | Jan 6 - Feb 5 | |
+| catboost_v9_low_vegas_train1225_0209 | v9_low_vegas | shadow | Dec 25 - Feb 9 | Session 343 |
+| catboost_v12_mae_train0104_0215 | v12_mae | active | Jan 4 - Feb 15 | |
+| catboost_v12_noveg_mae_train0104_0215 | v12_noveg_mae | active | Jan 4 - Feb 15 | |
+| catboost_v12_noveg_q43_train0104_0215 | v12_noveg_q43 | active | Jan 4 - Feb 15 | |
+| catboost_v12_noveg_q55_train1225_0209 | v12_noveg_q55 | shadow | Dec 25 - Feb 9 | Session 343 |
+| **catboost_v12_noveg_q55_tw_train1225_0209** | **v12_noveg_q55_tw** | **shadow** | Dec 25 - Feb 9 | **Session 344 — best overall** |
+| **catboost_v12_noveg_q57_train1225_0209** | **v12_noveg_q57** | **shadow** | Dec 25 - Feb 9 | **Session 344 — UNDER specialist** |

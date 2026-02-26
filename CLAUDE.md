@@ -102,13 +102,15 @@ nba-stats-scraper/
 | Edge 3+ HR | 50.7% 7d / 48.1% 14d BLOCKED (as of Feb 25) |
 | Status | ALL MODELS BLOCKED/DEGRADING — system-wide health crisis |
 
-**8 enabled model families** (6 registry + 1 dict + 1 production). Session 343: decommissioned 20 zombie models (~22→8 systems), activated direction affinity blocking, registered 2 new shadow models.
+**9 enabled models** (7 registry + 2 production). Session 343: decommissioned 20 zombies (~22→8). Session 344: decommissioned v12_vegas_q43, registered 2 new shadows (Q55+trend_wt, Q57).
 
-**System-wide model crisis (Session 342-343):** All models BLOCKED or DEGRADING. Root causes: training staleness (10-48 days), structural UNDER bias (77-89% of predictions), Vegas feature anchoring. See `docs/08-projects/current/model-system-evaluation-session-343/00-EVALUATION-PLAN.md`.
+**System-wide model crisis (Session 342-344):** All models BLOCKED or DEGRADING. Root causes: training staleness, structural UNDER bias, Vegas feature anchoring. **Session 344 feature analysis confirmed:** winners rely on player stats (points_avg_season 23%), losers anchor to Vegas (vegas_points_line 24%). See evaluation plan.
 
-**Shadow models (Session 343):**
-- `catboost_v12_noveg_q55_train1225_0209`: NEW Q55 quantile, 60% HR edge 3+, **80% OVER HR**, best MAE (5.024), best calibration (-0.24 bias)
-- `catboost_v9_low_vegas_train1225_0209`: Fresh v9 low-vegas, 60% HR edge 3+, OVER 63.6%, UNDER 58.8%
+**Shadow models (4 total, Sessions 343-344):**
+- `catboost_v12_noveg_q55_tw_train1225_0209`: **BEST OVERALL** — Q55 + trend weights (recent_perf=2x, derived=1.5x, matchup=0.5x). 58.6% HR edge 3+ (N=29), UNDER 60.9% (N=23)
+- `catboost_v12_noveg_q57_train1225_0209`: **UNDER specialist** — 62.5% UNDER HR (N=16), 80% edge 5+ (N=5). OVER weak (40%)
+- `catboost_v12_noveg_q55_train1225_0209`: Q55 quantile baseline. 47.6% HR edge 3+ on 15d eval (weaker than 7d eval suggested)
+- `catboost_v9_low_vegas_train1225_0209`: Fresh v9 low-vegas, 60% HR edge 3+ (7d eval)
 
 **CRITICAL:** Use edge >= 3 filter. 73% of predictions have edge < 3 and lose money.
 
@@ -147,7 +149,7 @@ nba-stats-scraper/
 
 7-day cadence, 42-day rolling window. `retrain-reminder` CF runs Mon 9 AM ET (Slack + SMS). Urgency: ROUTINE (7-10d), OVERDUE (11-14d), URGENT (15d+).
 
-**Dead ends (don't revisit):** Grow policy, CHAOS+quantile, residual mode, two-stage pipeline, Edge Classifier, Huber loss (47.4% HR), recency weighting (33.3%), lines-only training (20%), min-PPG filter (33.3%), 96-day window, Q43+Vegas (20% HR edge 5+, catastrophic UNDER compounding), RSM 0.5 with v9_low_vegas (hurts HR), 87-day training window (too much old data dilutes signal).
+**Dead ends (don't revisit):** Grow policy, CHAOS+quantile, residual mode, two-stage pipeline, Edge Classifier, Huber loss (47.4% HR), recency weighting (33.3%), lines-only training (20%), min-PPG filter (33.3%), 96-day window, Q43+Vegas (20% HR edge 5+, catastrophic UNDER compounding), RSM 0.5 with v9_low_vegas (hurts HR), 87-day training window (too much old data dilutes signal), min-data-in-leaf 25/50 (kills feature diversity, top 2 features = 64-68%), Q60 quantile (generates OVER volume but not profitably — 50% OVER HR).
 
 ### Cross-Model Monitoring
 

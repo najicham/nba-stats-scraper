@@ -65,8 +65,6 @@ def check_freshness(max_age_override: int = None) -> dict:
         severity = config['severity']
 
         blob = bucket.blob(path)
-        blob.reload()
-
         if not blob.exists():
             missing_count += 1
             entry = {
@@ -81,6 +79,7 @@ def check_freshness(max_age_override: int = None) -> dict:
                 critical_issues.append(f"MISSING: {path}")
             continue
 
+        blob.reload()  # Fetch metadata (updated timestamp)
         updated = blob.updated
         age = now - updated
         age_hours = age.total_seconds() / 3600
