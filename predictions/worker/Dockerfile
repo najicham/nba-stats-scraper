@@ -43,6 +43,9 @@ COPY predictions/shared/ ./predictions/shared/
 # Copy worker code and dependencies
 COPY predictions/worker/ ./predictions/worker/
 
+# Copy ml module (breakout_classifier_v1 imports ml.features.breakout_features)
+COPY ml/ ./ml/
+
 # Copy V9 model files from build context (Session 70, fixed Sessions 148, 163)
 # Models are gitignored — Cloud Build downloads them from GCS in cloudbuild.yaml Step 0.
 # The code globs for catboost_v9*.cbm so filenames must match that pattern.

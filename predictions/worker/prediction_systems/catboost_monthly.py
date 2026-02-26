@@ -290,7 +290,7 @@ def get_enabled_models_from_registry() -> List[dict]:
         FROM `nba-props-platform.nba_predictions.model_registry`
         WHERE enabled = TRUE
           AND is_production = FALSE
-          AND status = 'active'
+          AND status IN ('active', 'shadow')
         ORDER BY model_family, training_end_date DESC
         """
         results = list(bq.query(query).result())

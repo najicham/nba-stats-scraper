@@ -385,7 +385,8 @@ All four variants tested, all with eval window Feb 10-24 (15 days):
   - `catboost_v12_noveg_q55_tw_train1225_0209` (Q55+trend_wt — best offline)
   - `catboost_v12_noveg_q57_train1225_0209` (Q57 — UNDER specialist)
   - `catboost_v9_low_vegas_train1225_0209` (v9_low_vegas fresh)
-- [ ] Run Investigations 2-3 (decay timeline, direction bias)
+- [x] Run Investigation 2 (decay timeline) — **Session 346. See results below.**
+- [ ] Run Investigation 3 (direction bias)
 - [x] **Experiment with new tuning**: Session 344 — tested Q57, Q60, min-data-in-leaf, category weights. See results below.
 - [x] Decommission v12_vegas_q43 family permanently (Session 344)
 - [ ] **Evaluate v12_mae UNDER model-direction affinity blocking** (53.3% HR, drags best bets from 71.4% → 68.9%)
@@ -570,10 +571,75 @@ Added CHECK 8 to `daily-health-check` CF — monitors 10 GCS export files for st
 
 ### What's Next (Prioritized Checklist)
 
-1. **Feb 26:** Verify predictions show ~9 system_ids (zombie cleanup + shadows)
+1. ~~**Feb 26:** Verify predictions show ~9 system_ids (zombie cleanup + shadows)~~ — **DONE Session 346.** Found 6 system_ids: shadow models had `status='shadow'` but loader only queried `status='active'`. Fixed and deploying.
 2. **Mar 1-3 (3-5 days):** Grade 4 shadow models — this is THE critical decision point
 3. **After grading:** If Q55+trend_wt or Q57 outperform, consider promotion path
 4. **After grading:** Evaluate v12_mae UNDER blocking (only if shadows provide replacement UNDER picks)
 5. **After grading:** Evaluate Stars UNDER filter with live data (need N >= 15)
-6. **Week of Mar 2:** Investigations 2-3 (decay timeline, direction bias deep dive)
-7. **Week of Mar 9:** Architecture decisions (noveg default, quantile strategy, retrain cadence)
+6. ~~**Week of Mar 2:** Investigation 2 (decay timeline)~~ — **DONE Session 346. See results below.**
+7. **Week of Mar 2:** Investigation 3 (direction bias deep dive)
+8. **Week of Mar 9:** Architecture decisions (noveg default, quantile strategy, retrain cadence)
+
+---
+
+## Session 346 Findings: Shadow Model Bug Fix + Decay Timeline (Feb 26)
+
+### Bug Fix: Shadow Models Not Generating Predictions
+
+**Root cause:** `get_enabled_models_from_registry()` in `catboost_monthly.py` line 293 filtered `WHERE status = 'active'`, but the 4 shadow models were registered with `status = 'shadow'`.
+
+**Fix:** Changed filter to `status IN ('active', 'shadow')`. Also added `COPY ml/ ./ml/` to prediction worker Dockerfile (pre-existing missing dependency for breakout classifier).
+
+**Impact:** Shadow models were NOT generating predictions since registration (Feb 25). First shadow predictions will come after deploy completes. Shadow grading data now expected Mar 1-3 (pushed back 1 day).
+
+### Investigation 2: Model Decay Timeline (COMPLETED)
+
+**Question:** When does each model family cross from profitable to unprofitable?
+
+**V12 Champion (trained to Jan 31, edge 3+):**
+
+| Staleness | HR edge 3+ (N) | HR edge 5+ (N) |
+|-----------|----------------|-----------------|
+| 1-7d | 54.3% (35) | 66.7% (3) |
+| 8-14d | **60.0%** (15) | **66.7%** (3) |
+| 15-21d | 56.0% (25) | 50.0% (4) |
+| 22-28d | **47.2%** (53) | **30.8%** (13) |
+
+V12 has ~21-day shelf life. Stays profitable through day 21, collapses day 22+.
+
+**Current V9 Champion (trained to Feb 5, edge 3+):**
+
+| Staleness | HR edge 3+ (N) | HR edge 5+ (N) |
+|-----------|----------------|-----------------|
+| 1-7d | 47.4% (95) | 55.6% (18) |
+| 15-21d | 35.3% (17) | 37.5% (8) |
+
+Current V9 started weak (47.4% in first week). Possible regime mismatch in training data.
+
+**Historical V9 Champion (previous production model, edge 3+):**
+
+| Staleness | HR edge 3+ (N) | HR edge 5+ (N) |
+|-----------|----------------|-----------------|
+| 0-7d | **59.6%** (99) | **79.3%** |
+| 8-14d | **61.9%** (113) | **74.1%** |
+| 15-21d | **40.9%** (115) | **31.8%** |
+| 22-28d | 46.0% (87) | 47.4% |
+
+Clear 14-day cliff: edge 5+ HR drops from 74% → 32% at day 15.
+
+**V9 Low Vegas:**
+
+| Staleness | HR edge 3+ (N) | HR edge 5+ (N) |
+|-----------|----------------|-----------------|
+| 8-14d | 71.4% (7) | 100.0% (3) |
+| 15-21d | 52.2% (46) | 57.1% (14) |
+
+Low-Vegas decays more gracefully — 57.1% edge 5+ at days 15-21 vs 31.8% for full-Vegas V9.
+
+#### Conclusions
+
+1. **Confirmed shelf life: ~14 days for full-Vegas, ~21 days for low/no-Vegas**
+2. **Retrain cadence: 14 days recommended** — captures the sweet spot, 7-day buffer before cliff
+3. **Low-Vegas architecture is more decay-resistant** — supports shifting to noveg/low-vegas default
+4. **Edge 5+ collapses faster than edge 3+** — high-confidence picks are more sensitive to staleness
+5. **Current V9 champion was weak from birth** — may need investigation into training window quality
