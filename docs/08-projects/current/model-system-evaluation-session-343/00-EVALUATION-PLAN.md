@@ -372,15 +372,24 @@ All four variants tested, all with eval window Feb 10-24 (15 days):
 - [x] Retrain v9_low_vegas with correct feature weights (4 variants tested)
 - [x] Train v12_noveg_q55 (new quantile experiment — best model trained)
 - [x] Register both shadow models in model_registry
-- [ ] Run Investigation 1 (best bets source attribution)
+- [x] Run Investigation 1 (best bets source attribution) — **Session 345**
+- [x] Add export freshness monitor to daily-health-check CF — **Session 345**
+- [x] Fresh training window experiment (Q55+trend_wt on Jan 5 - Feb 19) — **Session 345**
+- [ ] **Verify Feb 26 predictions show ~9 system_ids** (zombie cleanup + shadows active)
 
 ### Week 2 (Mar 2-6): Model Deep Dive + Evaluate
 
 - [x] **Study all models' feature stores**: Session 344 completed. See Investigation 4+8 results below.
-- [ ] Grade Phase A shadow retrains (minimum 5 days grading)
+- [ ] **Grade 4 shadow models (need 3-5 days from Feb 26)**:
+  - `catboost_v12_noveg_q55_train1225_0209` (Q55 baseline)
+  - `catboost_v12_noveg_q55_tw_train1225_0209` (Q55+trend_wt — best offline)
+  - `catboost_v12_noveg_q57_train1225_0209` (Q57 — UNDER specialist)
+  - `catboost_v9_low_vegas_train1225_0209` (v9_low_vegas fresh)
 - [ ] Run Investigations 2-3 (decay timeline, direction bias)
 - [x] **Experiment with new tuning**: Session 344 — tested Q57, Q60, min-data-in-leaf, category weights. See results below.
 - [x] Decommission v12_vegas_q43 family permanently (Session 344)
+- [ ] **Evaluate v12_mae UNDER model-direction affinity blocking** (53.3% HR, drags best bets from 71.4% → 68.9%)
+- [ ] **Evaluate Stars UNDER negative filter** (0% HR on fresh window experiment, N=5 — need more data)
 
 ### Week 3 (Mar 9-13): Decide + Scale
 
@@ -492,3 +501,79 @@ All four variants tested, all with eval window Feb 10-24 (15 days):
 | catboost_v12_noveg_q55_train1225_0209 | v12_noveg_q55 | shadow | Dec 25 - Feb 9 | Session 343 |
 | **catboost_v12_noveg_q55_tw_train1225_0209** | **v12_noveg_q55_tw** | **shadow** | Dec 25 - Feb 9 | **Session 344 — best overall** |
 | **catboost_v12_noveg_q57_train1225_0209** | **v12_noveg_q57** | **shadow** | Dec 25 - Feb 9 | **Session 344 — UNDER specialist** |
+
+---
+
+## Session 345 Findings: Best Bets Attribution + Fresh Window Experiment (Feb 25)
+
+### Investigation 1: Best Bets Source Attribution (COMPLETED)
+
+Joined `signal_best_bets_picks` with `prediction_accuracy` for Jan 1 - Feb 25.
+
+**Overall: 68.9% HR on 106 graded picks.**
+
+| Family | Direction | Graded | Wins | HR | Avg Edge |
+|--------|-----------|--------|------|----|----------|
+| **v12_mae OVER** | OVER | 20 | 18 | **90.0%** | 8.0 |
+| **v9_mae UNDER** | UNDER | 22 | 15 | **68.2%** | 5.9 |
+| v9_mae OVER | OVER | 43 | 27 | 62.8% | 7.5 |
+| v12_mae UNDER | UNDER | 15 | 8 | **53.3%** | 4.5 |
+| v12_q45 UNDER | UNDER | 2 | 2 | 100.0% | 0.1 |
+| v9_low_vegas | mixed | 2 | 2 | 100.0% | 5.7 |
+
+**Counterfactual scenarios:**
+
+| Scenario | Graded | Wins | HR |
+|----------|--------|------|-----|
+| ALL families | 106 | 73 | 68.9% |
+| **Exclude v12_mae UNDER** | **91** | **65** | **71.4%** |
+| v12_mae OVER only | 20 | 18 | 90.0% |
+
+**Key insights:**
+1. **v12_mae OVER is the crown jewel** — 90.0% HR on 20 picks
+2. **v12_mae UNDER is the only family+direction below breakeven** — 53.3% drags overall best bets
+3. **v9_low_vegas and noveg variants barely appear** — recently activated, not enough data yet
+4. **Excluding v12_mae UNDER would boost HR from 68.9% → 71.4%**
+
+**Action items:**
+- [ ] Evaluate adding v12_mae UNDER to model-direction affinity blocking (wait for shadow models to provide alternative UNDER picks first)
+- [ ] Track which families source best bets once shadows are active (expected Mar 1+)
+
+### Fresh Training Window Experiment: Q55+trend_wt on Jan 5 - Feb 19
+
+Tested if Q55+trend_wt recipe holds on a different training window.
+
+| Metric | Original (Dec 25 - Feb 9) | Fresh (Jan 5 - Feb 19) |
+|--------|---------------------------|------------------------|
+| HR edge 3+ | **58.6%** (N=29) | 48.0% (N=25) |
+| HR edge 5+ | 66.7% (N=3) | **66.7%** (N=9) |
+| OVER HR | 50.0% (N=6) | **71.4%** (N=7) |
+| UNDER HR | **60.9%** (N=23) | 38.9% (N=18) |
+| Stars HR | N/A | 0% (N=5) |
+
+**Conclusions:**
+1. **Edge 5+ is stable at 66.7% across both windows** — genuine signal
+2. **OVER improved** (71.4%) — recipe generates good OVER picks
+3. **UNDER collapsed** (38.9%) — Stars UNDER = 0% is the culprit
+4. **Recipe is partially window-sensitive** — needs guardrails for Stars UNDER
+5. **Role players remain strong** (66.7% HR) — "role player edge" confirmed
+
+**Dead end confirmed:** Q55+trend_wt on Jan 5 - Feb 19 → gates FAILED. Model NOT deployed.
+
+**Action items:**
+- [ ] Consider Stars UNDER negative filter (line > 25, edge < 5 → block)
+- [ ] Need more data from live shadow model runs to validate findings
+
+### Infrastructure: Export Freshness Monitor
+
+Added CHECK 8 to `daily-health-check` CF — monitors 10 GCS export files for staleness (12-36h thresholds). Deployed and live.
+
+### What's Next (Prioritized Checklist)
+
+1. **Feb 26:** Verify predictions show ~9 system_ids (zombie cleanup + shadows)
+2. **Mar 1-3 (3-5 days):** Grade 4 shadow models — this is THE critical decision point
+3. **After grading:** If Q55+trend_wt or Q57 outperform, consider promotion path
+4. **After grading:** Evaluate v12_mae UNDER blocking (only if shadows provide replacement UNDER picks)
+5. **After grading:** Evaluate Stars UNDER filter with live data (need N >= 15)
+6. **Week of Mar 2:** Investigations 2-3 (decay timeline, direction bias deep dive)
+7. **Week of Mar 9:** Architecture decisions (noveg default, quantile strategy, retrain cadence)
