@@ -50,7 +50,14 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v347_away_noveg_filter'
+ALGORITHM_VERSION = 'v348_signal_density_filter'
+
+# Base signals that fire on nearly every edge 5+ pick. Picks with ONLY
+# these signals hit 57.1% (N=42) vs 77.8% for picks with 4+ signals.
+# Session 348 analysis: the additional signals (rest_advantage_2d,
+# combo_he_ms, combo_3way, book_disagreement, etc.) are what separate
+# profitable picks from marginal ones.
+BASE_SIGNALS = frozenset({'model_health', 'high_edge', 'edge_spread_optimal'})
 
 # Signal health regime → weight multiplier (used for pick angles context)
 HEALTH_MULTIPLIERS = {
@@ -81,6 +88,7 @@ class BestBetsAggregator:
         - Line dropped UNDER block: UNDER + line dropped 2+ → skip (35.2% HR, Session 306)
         - Neg +/- streak UNDER block: UNDER + 3+ neg games → skip (13.1% HR)
         - AWAY noveg block: v12_noveg + AWAY game → skip (43-44% HR vs 57-59% HOME, Session 347)
+        - Signal density: base-only signals (model_health+high_edge+edge_spread) → skip (57.1% HR vs 77.8% with 4+ signals, Session 348)
         - ANTI_PATTERN combos → skip
     """
 
@@ -138,6 +146,7 @@ class BestBetsAggregator:
             'anti_pattern': 0,
             'model_direction_affinity': 0,
             'away_noveg': 0,
+            'signal_density': 0,
         }
 
         for pred in predictions:
@@ -254,6 +263,15 @@ class BestBetsAggregator:
                 filter_counts['anti_pattern'] += 1
                 continue
 
+            # Signal density filter (Session 348): picks with ONLY the base 3
+            # signals (model_health, high_edge, edge_spread_optimal) hit 57.1%
+            # (N=42). Picks with at least one additional signal hit 77.8% (N=63).
+            # Block picks where every qualifying signal is in the base set.
+            tag_set = frozenset(tags)
+            if tag_set and tag_set.issubset(BASE_SIGNALS):
+                filter_counts['signal_density'] += 1
+                continue
+
             # Warning: contradictory signals
             # minutes_surge + blowout_recovery check removed (Session 318: minutes_surge removed)
 
@@ -313,6 +331,8 @@ class BestBetsAggregator:
             logger.info(f"Model-direction affinity: skipped {filter_counts['model_direction_affinity']} predictions")
         if filter_counts['away_noveg'] > 0:
             logger.info(f"AWAY noveg block: skipped {filter_counts['away_noveg']} predictions")
+        if filter_counts['signal_density'] > 0:
+            logger.info(f"Signal density filter: skipped {filter_counts['signal_density']} base-only picks")
 
         # Ultra Bets classification (Session 326)
         from ml.signals.ultra_bets import classify_ultra_pick

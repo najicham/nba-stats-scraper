@@ -108,6 +108,7 @@ class TestAggregatorReturnType:
             'anti_pattern': 0,
             'model_direction_affinity': 0,
             'away_noveg': 0,
+            'signal_density': 0,
         }
 
 
@@ -419,3 +420,101 @@ class TestAwayNovegFilter:
         picks, summary = agg.aggregate([pred], signals)
         assert len(picks) == 0
         assert summary['rejected']['away_noveg'] == 1
+
+
+# ============================================================================
+# SIGNAL DENSITY FILTER TESTS (Session 348)
+# ============================================================================
+
+class TestSignalDensityFilter:
+    """Test that picks with only base signals are blocked (Session 348).
+
+    Base signals (model_health, high_edge, edge_spread_optimal) fire on
+    nearly every edge 5+ pick. Picks with ONLY these hit 57.1% (N=42).
+    Picks with at least one additional signal hit 77.8% (N=63).
+    """
+
+    def _make_base_only_signals(self, pred):
+        """Build signal results with only the 3 base signals."""
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        return {key: [
+            _make_signal_result('model_health'),
+            _make_signal_result('high_edge'),
+            _make_signal_result('edge_spread_optimal'),
+        ]}
+
+    def _make_rich_signals(self, pred):
+        """Build signal results with base + additional signal."""
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        return {key: [
+            _make_signal_result('model_health'),
+            _make_signal_result('high_edge'),
+            _make_signal_result('edge_spread_optimal'),
+            _make_signal_result('rest_advantage_2d'),
+        ]}
+
+    def test_base_only_signals_blocked(self):
+        """Pick with only model_health + high_edge + edge_spread_optimal is blocked."""
+        pred = _make_prediction()
+        signals = self._make_base_only_signals(pred)
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 0
+        assert summary['rejected']['signal_density'] == 1
+
+    def test_base_plus_one_signal_passes(self):
+        """Pick with base signals + rest_advantage_2d passes."""
+        pred = _make_prediction()
+        signals = self._make_rich_signals(pred)
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 1
+        assert summary['rejected']['signal_density'] == 0
+
+    def test_two_base_signals_blocked(self):
+        """Pick with subset of base signals (2 of 3) is also blocked."""
+        pred = _make_prediction()
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        signals = {key: [
+            _make_signal_result('model_health'),
+            _make_signal_result('high_edge'),
+        ]}
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 0
+        assert summary['rejected']['signal_density'] == 1
+
+    def test_non_base_signals_pass(self):
+        """Pick with non-base signals (e.g. combo signals) passes."""
+        pred = _make_prediction()
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        signals = {key: [
+            _make_signal_result('model_health'),
+            _make_signal_result('combo_he_ms'),
+            _make_signal_result('combo_3way'),
+        ]}
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 1
+        assert summary['rejected']['signal_density'] == 0
+
+    def test_filter_counter_in_summary(self):
+        """signal_density key always present in filter summary."""
+        agg = BestBetsAggregator()
+        _, summary = agg.aggregate([], {})
+        assert 'signal_density' in summary['rejected']
+
+    def test_base_plus_book_disagreement_passes(self):
+        """Pick with base + book_disagreement passes (100% HR combo)."""
+        pred = _make_prediction()
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        signals = {key: [
+            _make_signal_result('model_health'),
+            _make_signal_result('high_edge'),
+            _make_signal_result('edge_spread_optimal'),
+            _make_signal_result('book_disagreement'),
+        ]}
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 1
+        assert summary['rejected']['signal_density'] == 0
