@@ -12,9 +12,9 @@ This function performs comprehensive health checks:
 
 Results are sent to Slack and logged to Cloud Logging.
 
-Version: 1.3 - Added completion tracking staleness check
+Version: 1.4 - Added GCS export freshness monitoring
 Created: 2026-01-19
-Updated: 2026-02-15
+Updated: 2026-02-25
 """
 
 import functions_framework
@@ -26,6 +26,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Tuple
 from google.cloud import firestore, bigquery
 from google.api_core.exceptions import GoogleAPIError
+from google.cloud import storage as cloud_storage
 from shared.clients.bigquery_pool import get_bigquery_client
 from shared.utils.slack_retry import send_slack_webhook_with_retry
 
@@ -40,6 +41,22 @@ REGION = Regions.FUNCTIONS
 SLACK_WEBHOOK_URL = os.environ.get('SLACK_WEBHOOK_URL')  # #daily-orchestration
 SLACK_WEBHOOK_URL_ERROR = os.environ.get('SLACK_WEBHOOK_URL_ERROR')  # #app-error-alerts
 SLACK_WEBHOOK_URL_WARNING = os.environ.get('SLACK_WEBHOOK_URL_WARNING')  # #nba-alerts
+
+# GCS export files to monitor for freshness
+# Matches bin/monitoring/check_export_freshness.py
+GCS_API_BUCKET = 'nba-props-platform-api'
+MONITORED_EXPORTS = {
+    'v1/tonight/all-players.json': {'max_age_hours': 12, 'severity': 'critical'},
+    'v1/status.json': {'max_age_hours': 24, 'severity': 'fail'},
+    'v1/systems/signal-health.json': {'max_age_hours': 24, 'severity': 'fail'},
+    'v1/systems/model-health.json': {'max_age_hours': 24, 'severity': 'fail'},
+    'v1/best-bets/all.json': {'max_age_hours': 24, 'severity': 'fail'},
+    'v1/best-bets/today.json': {'max_age_hours': 24, 'severity': 'fail'},
+    'v1/best-bets/latest.json': {'max_age_hours': 24, 'severity': 'fail'},
+    'v1/best-bets/record.json': {'max_age_hours': 36, 'severity': 'warn'},
+    'v1/best-bets/history.json': {'max_age_hours': 36, 'severity': 'warn'},
+    'v1/signal-best-bets/latest.json': {'max_age_hours': 24, 'severity': 'critical'},
+}
 
 # Services to check
 SERVICES = [
@@ -425,6 +442,87 @@ def check_completion_tracking_staleness() -> Tuple[str, str]:
         return ('warn', f'Error checking staleness: {str(e)[:100]}')
 
 
+def check_export_freshness() -> List[Tuple[str, str, str]]:
+    """
+    Check freshness of GCS export files in the API bucket.
+
+    Detects stale or missing Phase 6 exports that would indicate
+    the publishing pipeline has failed silently.
+
+    Returns:
+        List of (check_name, status, message) tuples
+    """
+    checks = []
+
+    try:
+        gcs_client = cloud_storage.Client(project=PROJECT_ID)
+        bucket = gcs_client.bucket(GCS_API_BUCKET)
+        now = datetime.now(timezone.utc)
+
+        stale_files = []
+        missing_files = []
+
+        for path, config in MONITORED_EXPORTS.items():
+            max_hours = config['max_age_hours']
+            severity = config['severity']
+
+            blob = bucket.blob(path)
+            if not blob.exists():
+                missing_files.append(path)
+                checks.append((
+                    f"Export: {path}",
+                    severity,
+                    f'MISSING — file not found in gs://{GCS_API_BUCKET}/{path}'
+                ))
+                continue
+
+            blob.reload()
+            updated = blob.updated
+            age_hours = (now - updated).total_seconds() / 3600
+
+            if age_hours > max_hours:
+                stale_files.append(path)
+                checks.append((
+                    f"Export: {path}",
+                    severity,
+                    f'STALE — {age_hours:.1f}h old (threshold: {max_hours}h)'
+                ))
+            # Only report individual files if they're stale/missing
+            # Fresh files are counted in the summary
+
+        # Add a summary check
+        fresh_count = len(MONITORED_EXPORTS) - len(stale_files) - len(missing_files)
+        if not stale_files and not missing_files:
+            checks.append((
+                'Export Freshness',
+                'pass',
+                f'All {len(MONITORED_EXPORTS)} export files fresh'
+            ))
+        elif stale_files and not missing_files:
+            checks.append((
+                'Export Freshness Summary',
+                'warn',
+                f'{fresh_count}/{len(MONITORED_EXPORTS)} fresh, {len(stale_files)} stale'
+            ))
+        elif missing_files:
+            checks.append((
+                'Export Freshness Summary',
+                'fail',
+                f'{fresh_count}/{len(MONITORED_EXPORTS)} fresh, '
+                f'{len(stale_files)} stale, {len(missing_files)} missing'
+            ))
+
+    except Exception as e:
+        logger.warning(f"Error checking export freshness: {e}")
+        checks.append((
+            'Export Freshness',
+            'warn',
+            f'Error checking exports: {str(e)[:100]}'
+        ))
+
+    return checks
+
+
 def check_game_completeness(game_date: str) -> Tuple[str, str]:
     """
     Check if all expected games have complete data.
@@ -745,6 +843,15 @@ def daily_health_check(request):
 
     status, message = check_completion_tracking_staleness()
     results.add("Completion Tracking", status, message)
+
+    # ========================================================================
+    # CHECK 8: GCS Export Freshness
+    # ========================================================================
+    logger.info("Checking GCS export freshness...")
+
+    export_checks = check_export_freshness()
+    for check_name, status, message in export_checks:
+        results.add(check_name, status, message)
 
     # ========================================================================
     # Send Results
