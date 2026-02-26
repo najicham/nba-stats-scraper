@@ -309,7 +309,7 @@ python bin/monitoring/grading_gap_detector.py        # Grading gaps (auto: daily
 
 **13 active signals** (20 removed). **Edge-first architecture** — signals are for filtering and annotation, not selection.
 
-**Best Bets:** `edge 5+ → negative filters → rank by edge → top 5` (71.1% HR)
+**Best Bets:** `edge 5+ → negative filters → signal density → rank by edge` (76.2% HR after Session 348 filter)
 
 **Negative Filters:**
 1. Player blacklist: `<40% HR on 8+ edge-3+ picks`
@@ -321,6 +321,7 @@ python bin/monitoring/grading_gap_detector.py        # Grading gaps (auto: daily
 7. UNDER + line jumped 2+: `prop_line_delta >= 2.0` (38.2% HR)
 8. UNDER + line dropped 2+: `prop_line_delta <= -2.0` (35.2% HR)
 9. Away noveg block: `v12_noveg family + AWAY game` (43-44% HR vs 57-59% HOME)
+10. Signal density: `only base signals (model_health+high_edge+edge_spread)` (57.1% HR vs 76.2% with 4+ signals)
 
 ### Active Signals
 
