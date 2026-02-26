@@ -59,10 +59,10 @@ class SignalBestBetsExporter(BaseExporter):
     Export signal-curated best bets to GCS and BigQuery.
 
     Steps:
-    1. Query model health (rolling 7d HR)
-    2. If model healthy, query today's predictions + supplemental data
+    1. Query model health (rolling 7d HR) — informational, does not block
+    2. Query today's predictions + supplemental data
     3. Run all signals via registry
-    4. Aggregate picks (edge-first, natural sizing)
+    4. Aggregate picks (edge-first, natural sizing, 10+ negative filters)
     5. Write to BigQuery `signal_best_bets_picks`
     6. Export to GCS `v1/signal-best-bets/{date}.json`
     """
@@ -82,13 +82,19 @@ class SignalBestBetsExporter(BaseExporter):
             else:
                 health_status = 'healthy'
 
-        # Session 323: Health gate RESTORED. Session 322 replay study proved
-        # blocking picks during model decay outperforms all strategies (29.9% ROI
-        # vs 17.7% oracle). When champion HR < breakeven, export 0 picks.
+        # Session 347: Health gate REMOVED. The gate blocked ALL picks when the
+        # champion model's raw edge 3+ HR dropped below 52.4%, but the actual
+        # signal best bets (after 10+ negative filters) were hitting 62.8%
+        # (27-16 since Jan 28). The gate measured single-model raw HR to block
+        # multi-model filtered output — a category error. The filter pipeline
+        # (player blacklist, model-direction affinity, bench-under block, etc.)
+        # is the correct quality control mechanism, not a blunt system shutdown.
+        # Health status is still computed and included in JSON for transparency.
         if health_status == 'blocked':
-            logger.warning(
-                f"HEALTH GATE: Blocking picks for {target_date} — "
-                f"HR 7d = {hr_7d:.1f}% < {BREAKEVEN_HR}%"
+            logger.info(
+                f"Model health below breakeven for {target_date} — "
+                f"HR 7d = {hr_7d:.1f}% < {BREAKEVEN_HR}% "
+                f"(informational only, picks NOT blocked)"
             )
 
         # Step 1b: Query prediction-independent metadata (needed for both
@@ -135,62 +141,6 @@ class SignalBestBetsExporter(BaseExporter):
         blacklist_players_capped = [
             p['player_lookup'] for p in blacklist_stats.get('players', [])[:10]
         ]
-
-        # Session 323: Health gate early return — skip prediction queries,
-        # signal evaluation, and aggregation when model is blocked.
-        if health_status == 'blocked':
-            target_hg = (
-                date.fromisoformat(target_date) if isinstance(target_date, str)
-                else target_date
-            )
-            season_start_year_hg = target_hg.year if target_hg.month >= 10 else target_hg.year - 1
-            season_label_hg = f"{season_start_year_hg}-{str(season_start_year_hg + 1)[-2:]}"
-            return {
-                'date': target_date,
-                'season': season_label_hg,
-                'generated_at': self.get_generated_at(),
-                'min_signal_count': BestBetsAggregator.MIN_SIGNAL_COUNT,
-                'record': record,
-                'model_health': {
-                    'status': health_status,
-                    'hit_rate_7d': hr_7d,
-                    'graded_count': model_health.get('graded_count', 0),
-                },
-                'signal_health': signal_health,
-                'player_blacklist': {
-                    'count': blacklist_stats.get('blacklisted', 0),
-                    'evaluated': blacklist_stats.get('evaluated', 0),
-                    'hr_threshold': 40.0,
-                    'min_picks': 8,
-                    'players': blacklist_players_capped,
-                },
-                'direction_health': direction_health,
-                'model_direction_affinity': {
-                    'observation_mode': model_dir_stats.get('observation_mode', True),
-                    'combos_evaluated': model_dir_stats.get('combos_evaluated', 0),
-                    'combos_blocked': model_dir_stats.get('combos_blocked', 0),
-                    'blocked_list': model_dir_stats.get('blocked_list', []),
-                    'would_block_at_45': model_dir_stats.get('would_block_at_45', []),
-                    'affinities': model_dir_affinities,
-                },
-                'health_gate_active': True,
-                'health_gate_reason': f'Champion model HR {hr_7d:.1f}% below breakeven {BREAKEVEN_HR}%',
-                'filter_summary': {
-                    'total_candidates': 0,
-                    'passed_filters': 0,
-                    'rejected': {},
-                },
-                'edge_distribution': {
-                    'total_predictions': 0,
-                    'edge_3_plus': 0,
-                    'edge_5_plus': 0,
-                    'edge_7_plus': 0,
-                    'max_edge': None,
-                },
-                'picks': [],
-                'total_picks': 0,
-                'signals_evaluated': [],
-            }
 
         # Step 2: Query predictions and supplemental data
         predictions, supplemental_map = self._query_predictions_and_supplements(
@@ -472,6 +422,7 @@ class SignalBestBetsExporter(BaseExporter):
                 'would_block_at_45': model_dir_stats.get('would_block_at_45', []),
                 'affinities': model_dir_affinities,
             },
+            'health_gate_active': False,
             'filter_summary': filter_summary,
             'edge_distribution': edge_distribution,
             # ultra_bets removed from JSON (Session 327 — internal-only, in BQ)
