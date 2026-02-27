@@ -72,6 +72,9 @@ class FeatureExtractor:
         # Feature 54: prop_line_delta — line change from previous game (Session 294)
         self._prop_line_delta_lookup: Dict[str, float] = {}
 
+        # Features 55-56: V16 prop line history (Session 356)
+        self._v16_line_history_lookup: Dict[str, Dict] = {}
+
         # Data Provenance Tracking (Session 99 - Feb 2026)
         # Track which sources were used and why fallbacks occurred
         self._fallback_reasons: List[str] = []
@@ -342,6 +345,8 @@ class FeatureExtractor:
             ('multi_book_std', timed_task('multi_book_std', lambda: self._batch_extract_multi_book_line_std(game_date))),
             # Feature 54: prop_line_delta (Session 294)
             ('prop_line_delta', timed_task('prop_line_delta', lambda: self._batch_extract_prop_line_delta(game_date))),
+            # Features 55-56: V16 prop line history (Session 356)
+            ('v16_line_history', timed_task('v16_line_history', lambda: self._batch_extract_v16_line_history(game_date))),
         ]
 
         # Auto-retry logic for transient network/BigQuery errors
@@ -435,10 +440,11 @@ class FeatureExtractor:
         self._minutes_ppm_lookup = {}
         # V12 rolling stats
         self._player_rolling_stats_lookup = {}
-        # Feature 47/50/54
+        # Feature 47/50/54/55-56
         self._teammate_usage_lookup = {}
         self._multi_book_std_lookup = {}
         self._prop_line_delta_lookup = {}
+        self._v16_line_history_lookup = {}
         # Historical Completeness Tracking
         self._total_games_available_lookup = {}
 
@@ -1216,6 +1222,15 @@ class FeatureExtractor:
         """Get prop line delta from previous game (feature 54, Session 294)."""
         return self._prop_line_delta_lookup.get(player_lookup)
 
+    def get_v16_line_history(self, player_lookup: str) -> Dict:
+        """Get V16 prop line history features (features 55-56, Session 356).
+
+        Returns dict with:
+            over_rate_last_10: fraction of last 10 games where actual > prop_line
+            margin_vs_line_avg_last_5: mean(actual - prop_line) over last 5 games
+        """
+        return self._v16_line_history_lookup.get(player_lookup, {})
+
     # ========================================================================
     # V12 ROLLING STATS EXTRACTION
     # ========================================================================
@@ -1528,6 +1543,84 @@ class FeatureExtractor:
                     self._prop_line_delta_lookup[record['player_lookup']] = round(float(val), 1)
 
         logger.debug(f"Batch prop_line_delta: {len(self._prop_line_delta_lookup)} players")
+
+    def _batch_extract_v16_line_history(self, game_date: date) -> None:
+        """Batch extract V16 prop line history features (features 55-56, Session 356).
+
+        Computes per-player rolling stats from actual points vs prop line:
+        - over_rate_last_10: fraction of last 10 games where actual > prop_line
+        - margin_vs_line_avg_last_5: mean(actual - prop_line) over last 5 games
+
+        Source: player_game_summary (actual points) + prediction_accuracy (graded prop lines)
+        No leakage: only uses games strictly BEFORE game_date.
+        """
+        query = f"""
+        WITH player_line_history AS (
+            SELECT
+                pgs.player_lookup,
+                pgs.game_date,
+                pgs.points AS actual_points,
+                pa.line_value AS prop_line,
+                ROW_NUMBER() OVER (
+                    PARTITION BY pgs.player_lookup
+                    ORDER BY pgs.game_date DESC
+                ) AS games_ago
+            FROM `{self.project_id}.nba_analytics.player_game_summary` pgs
+            INNER JOIN `{self.project_id}.nba_predictions.prediction_accuracy` pa
+                ON pa.player_lookup = pgs.player_lookup
+                AND pa.game_date = pgs.game_date
+            WHERE pa.line_value > 0
+                AND pgs.points IS NOT NULL
+                AND pgs.game_date < '{game_date}'
+                AND pgs.game_date >= DATE_SUB('{game_date}', INTERVAL 60 DAY)
+        )
+        SELECT
+            player_lookup,
+            -- over_rate_last_10: fraction of last 10 where actual > line
+            SAFE_DIVIDE(
+                COUNTIF(actual_points > prop_line AND games_ago <= 10),
+                COUNTIF(games_ago <= 10)
+            ) AS over_rate_last_10,
+            -- margin_vs_line_avg_last_5: mean(actual - line) over last 5
+            AVG(CASE WHEN games_ago <= 5 THEN actual_points - prop_line END) AS margin_vs_line_avg_last_5,
+            -- Track coverage for logging
+            COUNTIF(games_ago <= 10) AS games_with_line_last_10,
+            COUNTIF(games_ago <= 5) AS games_with_line_last_5
+        FROM player_line_history
+        WHERE games_ago <= 10
+        GROUP BY player_lookup
+        """
+        result = self._safe_query(query, "batch_extract_v16_line_history")
+
+        over_rate_count = 0
+        margin_count = 0
+
+        if not result.empty:
+            for record in result.to_dict('records'):
+                player = record['player_lookup']
+                entry = {}
+                # over_rate_last_10: need at least 10 games for full window
+                # But allow partial (5+ games) for broader coverage
+                or_val = record.get('over_rate_last_10')
+                games_10 = record.get('games_with_line_last_10', 0)
+                if or_val is not None and games_10 >= 5:
+                    entry['over_rate_last_10'] = round(float(or_val), 9)
+                    over_rate_count += 1
+
+                # margin_vs_line_avg_last_5: need at least 3 games
+                ma_val = record.get('margin_vs_line_avg_last_5')
+                games_5 = record.get('games_with_line_last_5', 0)
+                if ma_val is not None and games_5 >= 3:
+                    entry['margin_vs_line_avg_last_5'] = round(float(ma_val), 9)
+                    margin_count += 1
+
+                if entry:
+                    self._v16_line_history_lookup[player] = entry
+
+        logger.info(
+            f"Batch V16 line history: {len(self._v16_line_history_lookup)} players "
+            f"(over_rate={over_rate_count}, margin={margin_count})"
+        )
 
     # ========================================================================
     # HISTORICAL COMPLETENESS TRACKING (Data Cascade Architecture - Jan 2026)

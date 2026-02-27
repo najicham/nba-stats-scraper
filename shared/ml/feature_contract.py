@@ -22,8 +22,8 @@ from dataclasses import dataclass
 # FEATURE STORE CONFIGURATION
 # =============================================================================
 
-CURRENT_FEATURE_STORE_VERSION = "v2_55features"
-FEATURE_STORE_FEATURE_COUNT = 55
+CURRENT_FEATURE_STORE_VERSION = "v2_57features"
+FEATURE_STORE_FEATURE_COUNT = 57
 
 # Canonical feature names in the feature store, IN ORDER
 # Position matters! New features must be APPENDED, never inserted.
@@ -113,9 +113,9 @@ FEATURE_STORE_NAMES: List[str] = [
     # 54: Prop Line Delta (Session 294 — market overreaction signal)
     "prop_line_delta",                # current_line - previous_game_line
 
-    # 55-56: Player Profile Features (V15 experiment — from player_game_summary)
-    "ft_rate_season",                 # FTA / FGA season-to-date (point-in-time)
-    "starter_rate_season",            # % of games started season-to-date (point-in-time)
+    # 55-56: V16 Features — Prop Line History (Session 356)
+    "over_rate_last_10",              # Fraction of last 10 games where actual > prop_line [0.0-1.0]
+    "margin_vs_line_avg_last_5",      # Mean(actual - prop_line) over last 5 games
 ]
 
 # Validate feature store list length matches expected count
@@ -501,6 +501,42 @@ V15_NOVEG_CONTRACT = ModelFeatureContract(
 )
 
 
+# -----------------------------------------------------------------------------
+# V16 Model Contract (56 features - V12 + prop line history features)
+# Adds over_rate_last_10 and margin_vs_line_avg_last_5 from prediction_accuracy
+# Session 356: Best experiment result (75% HR edge 3+, OVER 88.9%, UNDER 63.6%)
+# These ARE in the feature store schema (v2_57features)
+# -----------------------------------------------------------------------------
+
+V16_FEATURE_NAMES: List[str] = V12_FEATURE_NAMES + [
+    # 54: Prop line over rate — fraction of last 10 games where actual > prop_line
+    "over_rate_last_10",
+
+    # 55: Margin vs line — mean(actual - prop_line) over last 5 games
+    "margin_vs_line_avg_last_5",
+]
+
+V16_CONTRACT = ModelFeatureContract(
+    model_version="v16",
+    feature_count=56,
+    feature_names=V16_FEATURE_NAMES,
+    description="CatBoost V16 - 56 features, V12 + over_rate_last_10 + margin_vs_line_avg_last_5"
+)
+
+V16_NOVEG_FEATURE_NAMES: List[str] = [
+    name for name in V16_FEATURE_NAMES if name not in (
+        "vegas_points_line", "vegas_opening_line", "vegas_line_move", "has_vegas_line"
+    )
+]
+
+V16_NOVEG_CONTRACT = ModelFeatureContract(
+    model_version="v16_noveg",
+    feature_count=52,
+    feature_names=V16_NOVEG_FEATURE_NAMES,
+    description="CatBoost V16 No-Vegas - 52 features (56 minus 4 vegas), with prop line history features"
+)
+
+
 # =============================================================================
 # CONTRACT REGISTRY
 # =============================================================================
@@ -518,6 +554,8 @@ MODEL_CONTRACTS: Dict[str, ModelFeatureContract] = {
     "v14_noveg": V14_NOVEG_CONTRACT,
     "v15": V15_CONTRACT,
     "v15_noveg": V15_NOVEG_CONTRACT,
+    "v16": V16_CONTRACT,
+    "v16_noveg": V16_NOVEG_CONTRACT,
     "catboost_v8": V8_CONTRACT,
     "catboost_v9": V9_CONTRACT,
     "catboost_v10": V10_CONTRACT,
@@ -526,6 +564,7 @@ MODEL_CONTRACTS: Dict[str, ModelFeatureContract] = {
     "catboost_v13": V13_NOVEG_CONTRACT,
     "catboost_v14": V14_NOVEG_CONTRACT,
     "catboost_v15": V15_NOVEG_CONTRACT,
+    "catboost_v16": V16_NOVEG_CONTRACT,
 }
 
 
@@ -539,6 +578,10 @@ def get_contract(model_version: str) -> ModelFeatureContract:
         version = "v8"
     if version.startswith("v11_"):
         version = "v11"
+    if version.startswith("v16_noveg"):
+        version = "v16_noveg"
+    elif version.startswith("v16_"):
+        version = "v16"
     if version.startswith("v15_noveg"):
         version = "v15_noveg"
     elif version.startswith("v15_"):
@@ -636,7 +679,7 @@ for _idx in FEATURES_FROM_INJURY_V12:
 # Feature 54: prop_line_delta (Session 294)
 FEATURE_SOURCE_MAP[54] = 'vegas'
 
-# Features 55-56: V15 player profile features (experiment-only)
+# Features 55-56: V16 prop line history (Session 356)
 FEATURE_SOURCE_MAP[55] = 'calculated'
 FEATURE_SOURCE_MAP[56] = 'calculated'
 
@@ -738,6 +781,10 @@ FEATURE_DEFAULTS: Dict[str, float] = {
     # V15 features (experiment-only - player profile)
     "ft_rate_season": 0.30,      # League average FTA/FGA ratio
     "starter_rate_season": 0.50, # Neutral (50% starter rate)
+
+    # V16 features (Session 356 — prop line history)
+    "over_rate_last_10": 0.5,    # Neutral (50% over rate)
+    "margin_vs_line_avg_last_5": 0.0,  # Neutral (no margin)
 }
 
 

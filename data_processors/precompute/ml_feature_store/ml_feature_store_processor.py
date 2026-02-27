@@ -90,8 +90,8 @@ PHASE4_MAX_STALENESS_HOURS = 6
 # V9/V10 models are unaffected (name-based extraction ignores extra features).
 # v2_54features (Session 230): Extended with 15 V12 features (39-53) for
 # scoring trends, usage, fatigue, streaks, structural changes.
-FEATURE_VERSION = 'v2_54features'
-FEATURE_COUNT = 54
+FEATURE_VERSION = 'v2_57features'
+FEATURE_COUNT = 57
 
 FEATURE_NAMES = [
     # Recent Performance (0-4)
@@ -151,6 +151,13 @@ FEATURE_NAMES = [
     'prop_over_streak',               # 51: Consecutive games over prop line
     'prop_under_streak',              # 52: Consecutive games under prop line
     'line_vs_season_avg',             # 53: vegas_line - season_avg (or 0.0)
+
+    # Feature 54: prop_line_delta (Session 294)
+    'prop_line_delta',                # 54: current_line - previous_game_line
+
+    # V16 Features (55-56) - Session 356 (prop line history)
+    'over_rate_last_10',              # 55: Fraction of last 10 where actual > prop_line
+    'margin_vs_line_avg_last_5',      # 56: Mean(actual - prop_line) over last 5
 ]
 
 # ============================================================================
@@ -240,6 +247,10 @@ ML_FEATURE_RANGES = {
     52: (0, 20, False, 'prop_under_streak'),       # Consecutive unders
     53: (-30, 30, False, 'line_vs_season_avg'),    # Line - season avg
     54: (-20, 20, False, 'prop_line_delta'),       # Line change from prev game (Session 294)
+
+    # V16 Features (55-56) - Session 356
+    55: (0, 1, False, 'over_rate_last_10'),       # Rate [0.0-1.0]
+    56: (-25, 25, False, 'margin_vs_line_avg_last_5'),  # Points margin
 }
 
 
@@ -2042,6 +2053,19 @@ class MLFeatureStoreProcessor(
         line_delta = self.feature_extractor.get_prop_line_delta(player_lookup) if player_lookup else None
         features.append(float(line_delta) if line_delta is not None else float('nan'))
         feature_sources[54] = 'vegas' if line_delta is not None else 'missing'
+
+        # Features 55-56: V16 prop line history (Session 356)
+        v16_data = self.feature_extractor.get_v16_line_history(player_lookup) if player_lookup else {}
+
+        # Feature 55: over_rate_last_10
+        over_rate = v16_data.get('over_rate_last_10')
+        features.append(float(over_rate) if over_rate is not None else float('nan'))
+        feature_sources[55] = 'calculated' if over_rate is not None else 'missing'
+
+        # Feature 56: margin_vs_line_avg_last_5
+        margin_avg = v16_data.get('margin_vs_line_avg_last_5')
+        features.append(float(margin_avg) if margin_avg is not None else float('nan'))
+        feature_sources[56] = 'calculated' if margin_avg is not None else 'missing'
 
         return features, feature_sources
     

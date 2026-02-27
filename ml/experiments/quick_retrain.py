@@ -72,6 +72,8 @@ from shared.ml.feature_contract import (
     V14_FEATURE_NAMES,
     V15_CONTRACT,
     V15_FEATURE_NAMES,
+    V16_CONTRACT,
+    V16_FEATURE_NAMES,
     FEATURE_DEFAULTS,
     FEATURE_STORE_FEATURE_COUNT,
     FEATURE_STORE_NAMES,
@@ -2407,8 +2409,18 @@ def main():
     dates = get_dates(args)
     exp_id = str(uuid.uuid4())[:8]
 
+    # Session 356: --v16-features auto-upgrades feature_set to v16
+    # This ensures the model is registered with feature_set='v16_noveg' (52 features)
+    # so the worker uses the correct feature list at prediction time.
+    if args.v16_features and args.feature_set == 'v12':
+        args.feature_set = 'v16'
+        print(f"  Auto-upgraded feature_set to v16 (--v16-features)")
+
     # Select feature contract based on --feature-set
-    if args.feature_set == 'v15':
+    if args.feature_set == 'v16':
+        selected_contract = V16_CONTRACT
+        selected_feature_names = V16_FEATURE_NAMES
+    elif args.feature_set == 'v15':
         selected_contract = V15_CONTRACT
         selected_feature_names = V15_FEATURE_NAMES
     elif args.feature_set == 'v14':
