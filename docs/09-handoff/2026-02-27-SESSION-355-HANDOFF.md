@@ -1,11 +1,11 @@
-# Session 355 Handoff — Experiment Roadmap Execution
+# Session 355 Handoff — Experiment Roadmap Execution (All 5 Priorities)
 
 **Date:** 2026-02-27
 **Previous:** Session 354 — Star UNDER fix, experiment roadmap
 
 ## What Session 355 Did
 
-### 1. Prop Line Anchor Training (Priority 1) — IMPLEMENTED + TESTED
+### 1. Prop Line Anchor Training (Priority 1) — IMPLEMENTED + DEPLOYED
 
 Added `--anchor-line` flag to `quick_retrain.py`. When active:
 - Training target changes from `actual_points` to `actual_points - prop_line`
@@ -14,104 +14,127 @@ Added `--anchor-line` flag to `quick_retrain.py`. When active:
 - Prop line (`feature_25_value`) is ONLY the target anchor, never a feature
 - Model filename includes `_anchor` suffix
 
-**Key result:** Feature importance completely reshaped — no single dominant feature! `deviation_from_avg_last3` (7.8%), `ppm_avg_last_10` (4.7%), `pts_vs_season_zscore` (3.9%). Compare to normal V12 where `points_avg_season` alone = 18%+.
+**Worker support added:** `catboost_monthly.py` auto-detects anchor-line models from GCS path (`_anchor_`) and applies reverse transform at prediction time. If no prop line available for a player, returns `ANCHOR_LINE_NO_PROP_LINE` error.
 
-**HR edge 3+: 70.0% (N=10)** — promising but tiny sample. OVER: 100%, UNDER: 57.1%.
+**Results (39-day window, Jan 15 - Feb 22):**
+- Feature importance completely reshaped — no single dominant feature!
+- `deviation_from_avg_last3` (7.8%), `ppm_avg_last_10` (4.7%), `pts_vs_season_zscore` (3.9%)
+- HR edge 3+: 70.0% (N=10), OVER: 100%, UNDER: 57.1%
+- **Enabled as shadow:** `catboost_v12_noveg_q5_train0115_0222`
 
-**CRITICAL BLOCKER:** The anchor-line model cannot be deployed as shadow without worker changes. The worker expects the model to predict raw points, but this model predicts deviations. Need to add anchor-line support to the prediction worker (`predictions/worker/`) to reverse the transform: `predicted_points = prop_line + model_output`. Model is **disabled** in registry until worker support is added.
+**60-day window variant COLLAPSED:** std=0.03, 0% OVER rate. Longer training window = model converges to population median. Disabled.
 
-### 2. Differenced Features (Priority 2) — IMPLEMENTED + TESTED
+### 2. Differenced Features (Priority 2) — IMPLEMENTED
 
-Added `--diff-features` flag to `quick_retrain.py`. Adds 3 computed features:
-- `season_avg_vs_line = points_avg_season - prop_line`
-- `last5_avg_vs_line = points_avg_last_5 - prop_line`
-- `last10_avg_vs_line = points_avg_last_10 - prop_line`
+Added `--diff-features` flag: `season_avg_vs_line`, `last5_avg_vs_line`, `last10_avg_vs_line`.
+- `last5_avg_vs_line` got 5.16% importance (#4)
+- HR edge 3+: 57.14% (N=14) — below breakeven. Doesn't fix UNDER bias alone.
+- **Disabled** in registry.
 
-These are computed post-extraction from existing feature columns. NaN where no prop line exists.
+### 3. New Negative Filters (Priority 3) — DEPLOYED + LIVE
 
-**Feature importance:** `last5_avg_vs_line` got 5.16% (#4), `last10_avg_vs_line` got 4.13% (#6). Meaningful signal.
-
-**HR edge 3+: 57.14% (N=14)** — below breakeven. UNDER still 42.9%. Diff features alone don't fix UNDER bias. Model **disabled** in registry.
-
-### 3. New Negative Filters (Priority 3) — DEPLOYED
-
-Added three new filters to `ml/signals/aggregator.py`:
+Three new filters in `aggregator.py` (algorithm version `v355`):
 
 | Filter | HR | N | What |
 |--------|-----|---|------|
 | Med teammate usage UNDER | 32.0% | 25 | Blocks UNDER when teammate_usage 15-30 |
 | Starter V12 UNDER | 46.7% | 30 | Blocks V12 UNDER when season_avg 15-20 |
-| Premium signal edge floor bypass | 95%+ | — | combo_3way, combo_he_ms bypass edge floor |
+| Premium signal bypass | 95%+ | — | combo_3way, combo_he_ms bypass edge floor |
 
-- `teammate_usage_available` piped through `supplemental_data.py` → pred dict (from `feature_47_value` in feature store)
-- Premium signal bypass: edge floor check now looks for `combo_3way`/`combo_he_ms` signals before rejecting low-edge picks
-- Algorithm version bumped to `v355_usage_starter_filters_premium_bypass`
-- 11 new tests added, all 48 tests pass
+- `teammate_usage_available` piped through `supplemental_data.py`
+- 11 new tests, all 48 pass
 
-### 4. Model Training Results Summary
+### 4. Conformal Prediction Intervals (Priority 4) — TRAINED
 
-| Model | HR 3+ | N | OVER% | Deviation Std | Feature Diversity | Status |
-|-------|-------|---|-------|---------------|-------------------|--------|
-| Anchor-line (base) | 70% | 10 | 24% pred | 0.98 | Excellent | **Disabled** (needs worker) |
-| Diff-features only | 57% | 14 | — | — | Moderate | Disabled |
-| Anchor + diff | 40% | 5 | 0% pred | 0.06 | Collapsed | Disabled |
-| Anchor + catwt | 50% | 4 | 1% pred | 0.19 | Good | Disabled |
+Q20 and Q80 bracket models trained:
+- Q20: pure UNDER predictor (57.1% UNDER, N=70, 0 OVER)
+- Q80: pure OVER predictor (52.8% OVER, N=72, 0 UNDER)
 
-**Key insight:** Anchor-line model with diff-features collapses — deviation std drops to 0.06 (near-constant prediction). The diff features in deviation space are too correlated. Use anchor-line WITHOUT diff features.
+**Not deployed** — these are confidence gates, not standalone models. The conformal filter (`only UNDER when Q80 < line`, `only OVER when Q20 > line`) needs architecture work in the aggregator to run bracket models per player alongside the main model.
 
----
+### 5. V16 Features (Priority 5) — IMPLEMENTED, BEST RESULTS
 
-## What to Do Next
+Added `--v16-features` flag: `over_rate_last_10`, `margin_vs_line_avg_last_5`.
+Computed as per-player rolling stats from training data.
 
-### HIGHEST PRIORITY: Worker Anchor-Line Support
+**HR edge 3+: 75.0% (N=20)** — best of ALL experiments!
+- OVER: 88.9% (N=9), UNDER: 63.6% (N=11)
+- Both directions above breakeven
+- Vegas bias: +0.29
 
-The anchor-line approach shows the most promise (complete feature importance restructuring), but needs worker-side changes before it can run in production:
+**NOT deployable yet** — model has 52 features but worker provides 50. V16 features need to be added to the feature store pipeline (`data_processors/precompute/ml_feature_store/`) before deployment.
 
-1. In the prediction worker's model loading/prediction code, detect anchor-line models (metadata or naming convention)
-2. At prediction time: `predicted_points = prop_line + model.predict(features)` instead of just `model.predict(features)`
-3. The prop line is available in the feature store as `feature_25_value`
-4. Re-enable the anchor-line model after worker support is deployed
+### 6. Worker Anchor-Line Support — DEPLOYED
 
-**Files to modify:** `predictions/worker/` — wherever `model.predict()` is called for regression models.
-
-### Re-train Anchor-Line with More Data
-
-The 39-day window (Jan 15 - Feb 22) only yielded 3,136 training samples with valid prop lines (out of 4,178 total). Consider:
-- Extending training window to 60+ days
-- Using all available data from Nov 2025
-
-### Continue Roadmap Priorities 4-5
-
-From Session 354 handoff:
-- **Priority 4: Conformal Prediction Intervals** — Train Q20/Q80 bracket models for directional gating
-- **Priority 5: V16 Features** — `over_rate_last_10`, `margin_vs_line_avg_last_5`
-
-### Volume Increases (Priority 6)
-
-The premium signal bypass (combo_3way, combo_he_ms exempt from edge floor) should increase pick volume slightly for 95%+ HR signals. Monitor impact.
+Added to `predictions/worker/prediction_systems/catboost_monthly.py`:
+- `_is_anchor_line` detection from GCS path
+- Reverse transform in `_predict_v12()`: `predicted_points = prop_line + raw_prediction`
+- Graceful handling when no prop line available
 
 ---
 
-## Models Registered This Session
+## Experiment Results Summary
 
-| Model ID | Family | GCS Path | Status |
-|----------|--------|----------|--------|
-| `catboost_v12_noveg_q5_train0115_0222` | v12_noveg_q5 | `catboost_v12_50f_noveg_anchor_...cbm` | **Disabled** (needs worker) |
-| `catboost_v12_noveg_train0115_0222` | v12_noveg_mae | `catboost_v12_53f_noveg_diff_...cbm` | Disabled |
+| Model | HR 3+ | N | OVER | UNDER | Status |
+|-------|-------|---|------|-------|--------|
+| **V16 features** | **75.0%** | 20 | 88.9% | 63.6% | Disabled (needs feature store) |
+| Anchor-line (39d) | 70.0% | 10 | 100% | 57.1% | **Shadow** |
+| Anchor-MAE | 70.0% | 10 | 100% | 57.1% | Disabled (identical) |
+| Diff-features | 57.1% | 14 | 71.4% | 42.9% | Disabled |
+| Anchor+diff | 40.0% | 5 | 0% | 0% | Disabled |
+| Anchor+catwt | 50.0% | 4 | 1% | 0% | Disabled |
+| Anchor 60d | 40.0% | 5 | 0% | 0% | Disabled |
 
-Two additional q5 entries (anchor+diff, anchor+catwt) also disabled.
+---
+
+## What to Do Next (Priority Order)
+
+### 1. Deploy V16 Features to Feature Store (HIGHEST IMPACT)
+
+The V16 model is the clear winner (75% HR, balanced directions). To deploy it:
+1. Add `over_rate_last_10` and `margin_vs_line_avg_last_5` to `data_processors/precompute/ml_feature_store/feature_calculator.py`
+2. These require joining `player_game_summary` actual points against `prediction_accuracy` prop lines (rolling window per player)
+3. Add to `shared/ml/feature_contract.py` as features 55-56
+4. Re-enable the V16 model in registry after feature store support
+
+### 2. Monitor Anchor-Line Model in Shadow
+
+The anchor-line model is enabled as shadow. Watch for:
+- Does it produce valid predictions? (prop line availability)
+- Feature importance pattern: confirms deviation_from_avg is the real signal
+- Compare HR against other models after 2+ days of grading
+
+### 3. Conformal Prediction Integration
+
+The Q20/Q80 bracket models are local files. To use them as confidence gates:
+- Architecture option A: Run bracket models in the worker alongside main model, store Q20/Q80 predictions
+- Architecture option B: Post-processing in the aggregator using pre-computed bracket predictions
+- Filter: only UNDER when Q80 < line, only OVER when Q20 > line
+
+---
+
+## Models Currently Enabled (Shadow)
+
+| Model ID | Family | What |
+|----------|--------|------|
+| `catboost_v12_noveg_q55_train0115_0222` | v12_noveg_q55 | Session 354 Q55 TW retrain |
+| `catboost_v12_noveg_q5_train0115_0222` | v12_noveg_q5 | **Anchor-line model** (Session 355) |
+
+Plus all existing production/shadow models from prior sessions.
+
+## Dead Ends Confirmed This Session
+
+- **Anchor-line + 60-day window**: Collapses to constant (std=0.03). Quantile 0.50 + more data = population median
+- **Anchor-line + diff-features**: Collapses to constant (std=0.06). Diff features redundant in deviation space
+- **Anchor-line + category weights**: Similar collapse (std=0.19)
+- **Diff-features only**: Doesn't fix UNDER bias (42.9% UNDER HR)
 
 ## Key Files Changed
 
 | File | Changes |
 |------|---------|
-| `ml/experiments/quick_retrain.py` | `--anchor-line`, `--diff-features` flags |
-| `ml/signals/aggregator.py` | 3 new filters, premium signal bypass, algorithm version bump |
+| `ml/experiments/quick_retrain.py` | `--anchor-line`, `--diff-features`, `--v16-features` flags |
+| `ml/signals/aggregator.py` | 3 new filters, premium signal bypass |
 | `ml/signals/supplemental_data.py` | `teammate_usage_available` piped through |
-| `tests/unit/signals/test_aggregator.py` | 11 new tests for new filters |
-
-## Dead Ends Confirmed
-
-- **Anchor-line + diff-features combined**: Collapses to near-constant deviation (std=0.06). The diff features in deviation space are redundant.
-- **Anchor-line + category weights**: Similar collapse (std=0.19). Category weights don't help in deviation space.
-- **Diff-features only (MAE)**: 57% HR, doesn't fix UNDER bias.
+| `predictions/worker/prediction_systems/catboost_monthly.py` | Anchor-line reverse transform |
+| `tests/unit/signals/test_aggregator.py` | 11 new tests |
