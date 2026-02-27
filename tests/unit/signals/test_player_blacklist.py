@@ -225,10 +225,12 @@ class TestAggregatorBlacklistIntegration:
             'feature_quality_score': 95,
         }
 
-    def _make_qualifying_signals(self, source_tag1='model_health', source_tag2='high_edge'):
+    def _make_qualifying_signals(self, source_tag1='model_health', source_tag2='high_edge',
+                                    source_tag3='rest_advantage_2d'):
         return [
             SignalResult(qualifies=True, confidence=0.8, source_tag=source_tag1),
             SignalResult(qualifies=True, confidence=0.9, source_tag=source_tag2),
+            SignalResult(qualifies=True, confidence=0.7, source_tag=source_tag3),
         ]
 
     @patch('ml.signals.aggregator.load_combo_registry', return_value={})
@@ -288,7 +290,7 @@ class TestAggregatorBlacklistIntegration:
 
     def test_algorithm_version_updated(self):
         """ALGORITHM_VERSION should reflect the latest session update."""
-        assert 'v330' in ALGORITHM_VERSION
+        assert 'v348' in ALGORITHM_VERSION
 
 
 # ============================================================================
@@ -320,6 +322,7 @@ class TestAvoidFamiliarFilter:
         return [
             SignalResult(qualifies=True, confidence=0.8, source_tag='model_health'),
             SignalResult(qualifies=True, confidence=0.9, source_tag='high_edge'),
+            SignalResult(qualifies=True, confidence=0.7, source_tag='rest_advantage_2d'),
         ]
 
     @patch('ml.signals.aggregator.load_combo_registry', return_value={})
@@ -418,6 +421,7 @@ class TestRelEdgeFilterRemoved:
         signals = [
             SignalResult(qualifies=True, confidence=0.8, source_tag='model_health'),
             SignalResult(qualifies=True, confidence=0.9, source_tag='high_edge'),
+            SignalResult(qualifies=True, confidence=0.7, source_tag='rest_advantage_2d'),
         ]
 
         aggregator = BestBetsAggregator(combo_registry={})

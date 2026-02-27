@@ -60,9 +60,9 @@ _FALLBACK_REGISTRY: Dict[str, ComboEntry] = {
         combo_id='blowout_recovery',
         display_name='Blowout Recovery (No C, No B2B)',
         signals=['blowout_recovery'],
-        cardinality=1, classification='SYNERGISTIC', status='WATCH',
-        direction_filter='OVER_ONLY', hit_rate=56.9, roi=None, sample_size=112,
-        score_weight=0.5, notes='Session 275: Updated stats from 3-window backtest',
+        cardinality=1, classification='SYNERGISTIC', status='DISABLED',
+        direction_filter='OVER_ONLY', hit_rate=50.0, roi=None, sample_size=14,
+        score_weight=0.0, notes='Session 349: DISABLED — 50% HR (7-7) in best bets, 25% in Feb',
     ),
     # Market-pattern UNDER signals (Session 275)
     'bench_under': ComboEntry(

@@ -82,7 +82,7 @@ def build_default_registry() -> SignalRegistry:
     # MinutesSurgeSignal removed (Session 318)
     # PaceMismatchSignal removed (Session 275)
     # ColdSnapSignal removed (Session 318)
-    registry.register(BlowoutRecoverySignal())
+    # BlowoutRecoverySignal DISABLED (Session 349) — 50% HR, harmful signal
 
     # Combo signals (Session 258)
     registry.register(HighEdgeMinutesSurgeComboSignal())

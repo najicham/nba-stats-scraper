@@ -40,7 +40,7 @@ SIGNAL_ANGLE_MAP = {
     'edge_spread_optimal': "Optimal edge spread: 67.2% HR",
     '3pt_bounce': "3pt bounce-back pattern: 74.9% HR",
     # high_ft_under REMOVED — 33.3% HR on best bets (Session 326)
-    'blowout_recovery': "Blowout recovery bounce: 56.9% HR",
+    # blowout_recovery DISABLED (Session 349) — 50% HR, harmful signal
     # minutes_surge REMOVED (Session 318)
     # self_creator_under REMOVED — 36.4% HR on best bets (Session 326)
     # volatile_under REMOVED — 33.3% HR on best bets (Session 326)
