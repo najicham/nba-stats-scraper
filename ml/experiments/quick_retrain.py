@@ -2743,45 +2743,49 @@ def main():
     # margin_vs_line_avg_last_5: mean(actual - prop_line) over last 5 games
     if args.v16_features:
         print("\nComputing V16 features (over_rate, margin_vs_line)...")
-        for X_df, source_df, label in [
-            (X_train_full, df_train, 'train'),
-            (X_eval_full, df_eval, 'eval'),
-        ]:
-            actuals = source_df['actual_points'].values.astype(float)
-            prop_lines = source_df['feature_25_value'].fillna(0).values.astype(float)
-            player_lookups = source_df['player_lookup'].values
-            game_dates = pd.to_datetime(source_df['game_date']).values
+        # Compute on combined train+eval so eval benefits from training history
+        # No leakage: rolling features only use games BEFORE the current game
+        n_train = len(df_train)
+        combined_source = pd.concat([df_train, df_eval], ignore_index=True)
+        actuals = combined_source['actual_points'].values.astype(float)
+        prop_lines = combined_source['feature_25_value'].fillna(0).values.astype(float)
+        player_lookups = combined_source['player_lookup'].values
+        game_dates = pd.to_datetime(combined_source['game_date']).values
 
-            # Sort by player + game_date for rolling computation
-            sort_idx = np.lexsort((game_dates, player_lookups))
+        # Sort by player + game_date for rolling computation
+        sort_idx = np.lexsort((game_dates, player_lookups))
 
-            over_rate_10 = np.full(len(X_df), np.nan)
-            margin_avg_5 = np.full(len(X_df), np.nan)
+        over_rate_10 = np.full(len(combined_source), np.nan)
+        margin_avg_5 = np.full(len(combined_source), np.nan)
 
-            # Group by player and compute rolling stats
-            prev_player = None
-            player_history = []  # list of (actual - line) for games with valid lines
-            for pos in sort_idx:
-                player = player_lookups[pos]
-                if player != prev_player:
-                    player_history = []
-                    prev_player = player
+        # Group by player and compute rolling stats
+        prev_player = None
+        player_history = []  # list of (actual - line) for games with valid lines
+        for pos in sort_idx:
+            player = player_lookups[pos]
+            if player != prev_player:
+                player_history = []
+                prev_player = player
 
-                # Compute features from history BEFORE this game (no leakage)
-                if len(player_history) >= 5:
-                    margin_avg_5[pos] = np.mean(player_history[-5:])
-                if len(player_history) >= 10:
-                    over_rate_10[pos] = np.mean([1.0 if m > 0 else 0.0 for m in player_history[-10:]])
+            # Compute features from history BEFORE this game (no leakage)
+            if len(player_history) >= 5:
+                margin_avg_5[pos] = np.mean(player_history[-5:])
+            if len(player_history) >= 10:
+                over_rate_10[pos] = np.mean([1.0 if m > 0 else 0.0 for m in player_history[-10:]])
 
-                # Add this game's result to history (only if valid prop line)
-                if prop_lines[pos] > 0:
-                    player_history.append(actuals[pos] - prop_lines[pos])
+            # Add this game's result to history (only if valid prop line)
+            if prop_lines[pos] > 0:
+                player_history.append(actuals[pos] - prop_lines[pos])
 
-            X_df['over_rate_last_10'] = over_rate_10
-            X_df['margin_vs_line_avg_last_5'] = margin_avg_5
+        # Split back into train and eval
+        X_train_full['over_rate_last_10'] = over_rate_10[:n_train]
+        X_train_full['margin_vs_line_avg_last_5'] = margin_avg_5[:n_train]
+        X_eval_full['over_rate_last_10'] = over_rate_10[n_train:]
+        X_eval_full['margin_vs_line_avg_last_5'] = margin_avg_5[n_train:]
 
-            non_nan_or = np.sum(~np.isnan(over_rate_10))
-            non_nan_ma = np.sum(~np.isnan(margin_avg_5))
+        for label, X_df in [('train', X_train_full), ('eval', X_eval_full)]:
+            non_nan_or = X_df['over_rate_last_10'].notna().sum()
+            non_nan_ma = X_df['margin_vs_line_avg_last_5'].notna().sum()
             print(f"  {label}: over_rate_last_10 coverage={non_nan_or}/{len(X_df)}, "
                   f"margin_vs_line_avg_last_5 coverage={non_nan_ma}/{len(X_df)}")
 
