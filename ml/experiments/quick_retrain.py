@@ -273,6 +273,19 @@ def parse_args():
     parser.add_argument('--lines-only-train', action='store_true',
                        help='Filter training data: only players who have a prop line for that game')
 
+    # Anchor-line training (Session 355): predict deviations from prop line
+    parser.add_argument('--anchor-line', action='store_true',
+                       help='Train on (actual_points - prop_line) instead of raw points. '
+                            'Model learns deviations from the line. At eval: pred = line + model.predict(X). '
+                            'Forces quantile alpha=0.50 (median deviation). '
+                            'The prop line (feature_25_value) is NOT a feature — only the anchor.')
+
+    # Differenced features (Session 355): player avg minus prop line
+    parser.add_argument('--diff-features', action='store_true',
+                       help='Add differenced features: season_avg_vs_line, last5_avg_vs_line, '
+                            'last10_avg_vs_line (scoring avg minus prop line). '
+                            'Computed from existing feature store columns.')
+
     # Model diversity experiments (Session 350)
     parser.add_argument('--classify', action='store_true',
                        help='Train binary OVER/UNDER classifier (Logloss) instead of regression')
@@ -2508,6 +2521,7 @@ def main():
         print(f"  Flags: recency_weight={args.recency_weight}, tune={args.tune}, walkforward={args.walkforward}")
         print(f"  Modes: no_vegas={args.no_vegas}, residual={args.residual}, "
               f"two_stage={args.two_stage}, quantile_alpha={args.quantile_alpha}, "
+              f"anchor_line={args.anchor_line}, diff_features={args.diff_features}, "
               f"classify={args.classify}, framework={args.framework}, player_tier={args.player_tier}")
         if args.exclude_features:
             print(f"  Exclude: {args.exclude_features}")
@@ -2674,6 +2688,36 @@ def main():
         X_train_full, y_train_full = prepare_features(df_train, contract=selected_contract, exclude_features=exclude_features)
         X_eval_full, y_eval = prepare_features(df_eval, contract=selected_contract, exclude_features=exclude_features)
 
+    # Differenced features (Session 355): player avg minus prop line
+    # Computed post-extraction from existing feature columns. These give the model
+    # explicit "is the line above or below average?" signal instead of forcing it
+    # to learn the interaction between separate season_avg and prop_line features.
+    if args.diff_features:
+        print("\nAdding differenced features (avg - prop_line)...")
+        for X_df, label in [(X_train_full, 'train'), (X_eval_full, 'eval')]:
+            # Get prop line from the raw dataframe (feature_25_value), not from X
+            # (which may have vegas excluded)
+            source_df = df_train if label == 'train' else df_eval
+            prop_lines = source_df['feature_25_value'].fillna(0).values.astype(float)
+
+            if 'points_avg_season' in X_df.columns:
+                X_df['season_avg_vs_line'] = X_df['points_avg_season'].values - prop_lines
+                # Zero out where no prop line
+                X_df.loc[prop_lines <= 0, 'season_avg_vs_line'] = np.nan
+            if 'points_avg_last_5' in X_df.columns:
+                X_df['last5_avg_vs_line'] = X_df['points_avg_last_5'].values - prop_lines
+                X_df.loc[prop_lines <= 0, 'last5_avg_vs_line'] = np.nan
+            if 'points_avg_last_10' in X_df.columns:
+                X_df['last10_avg_vs_line'] = X_df['points_avg_last_10'].values - prop_lines
+                X_df.loc[prop_lines <= 0, 'last10_avg_vs_line'] = np.nan
+
+        n_diff = sum(1 for c in X_train_full.columns if c.endswith('_vs_line'))
+        print(f"  Added {n_diff} differenced features: {[c for c in X_train_full.columns if c.endswith('_vs_line')]}")
+        for col in [c for c in X_train_full.columns if c.endswith('_vs_line')]:
+            vals = X_train_full[col].dropna()
+            print(f"    {col}: mean={vals.mean():.2f}, std={vals.std():.2f}, "
+                  f"NaN={X_train_full[col].isna().sum()}/{len(X_train_full)}")
+
     lines = df_eval['vegas_line'].values
     active_feature_names = list(X_train_full.columns)
 
@@ -2705,6 +2749,54 @@ def main():
 
     # For two-stage: also prepare full-feature eval for extracting vegas line
     X_eval = X_eval_full
+
+    # Anchor-line mode (Session 355): train on (actual_points - prop_line)
+    # The model learns deviations from the line, not raw points.
+    # At eval: predicted_points = prop_line + model.predict(X)
+    # This is NOT the same as the residual mode (which used vegas_line AS a feature).
+    # The prop line is only the anchor (target transformation), never a feature.
+    anchor_lines_eval = None  # Set when --anchor-line active, used at prediction time
+    if args.anchor_line:
+        print("\nAnchor-line mode: transforming target to (actual_points - prop_line)...")
+
+        # Force quantile alpha to 0.50 (predict median deviation)
+        if not args.quantile_alpha:
+            args.quantile_alpha = 0.50
+            print(f"  Auto-set quantile alpha = 0.50 (median deviation)")
+
+        # Extract prop lines from feature store (feature_25_value = vegas_points_line)
+        anchor_train = df_train['feature_25_value'].fillna(0).values.astype(float)
+        valid_train_anchor = anchor_train > 0
+        if valid_train_anchor.sum() < len(anchor_train) * 0.5:
+            print(f"\nERROR: Only {valid_train_anchor.sum()}/{len(anchor_train)} training samples have valid prop lines. "
+                  f"Anchor-line requires prop lines for target transformation.")
+            return
+
+        # Filter training data to samples with valid prop lines
+        X_train_full = X_train_full[valid_train_anchor].reset_index(drop=True)
+        y_train_full = pd.Series(
+            y_train_full[valid_train_anchor].values - anchor_train[valid_train_anchor],
+            name='deviation'
+        )
+        df_train = df_train[valid_train_anchor].reset_index(drop=True)
+        print(f"  Training: {valid_train_anchor.sum():,} of {len(valid_train_anchor):,} samples have prop lines")
+        print(f"  Deviation target stats: mean={y_train_full.mean():.2f}, std={y_train_full.std():.2f}, "
+              f"median={y_train_full.median():.2f}")
+
+        # Filter eval data to samples with valid prop lines
+        anchor_eval = df_eval['feature_25_value'].fillna(0).values.astype(float)
+        valid_eval_anchor = anchor_eval > 0
+        X_eval_full = X_eval_full[valid_eval_anchor].reset_index(drop=True)
+        y_eval = y_eval[valid_eval_anchor].reset_index(drop=True)
+        anchor_lines_eval = anchor_eval[valid_eval_anchor]
+        lines = lines[valid_eval_anchor]
+        df_eval = df_eval[valid_eval_anchor].reset_index(drop=True)
+        X_eval = X_eval_full
+        print(f"  Eval: {valid_eval_anchor.sum():,} of {len(valid_eval_anchor):,} samples have prop lines")
+
+        # Transform eval target to deviation (for training metrics like MAE on deviations)
+        y_eval_deviation = y_eval.values - anchor_lines_eval
+        print(f"  Eval deviation stats: mean={y_eval_deviation.mean():.2f}, std={y_eval_deviation.std():.2f}")
 
     # Classifier mode: transform target to binary OVER/UNDER (Session 350)
     # Keep original y_eval (actual points) for hit rate evaluation
@@ -2962,6 +3054,14 @@ def main():
             print(f"  AUC computation failed: {e}")
             auc = None
     # Reconstruct absolute predictions for alternative modes (Session 179)
+    elif args.anchor_line:
+        # Model predicted deviations from prop line; reconstruct absolute points
+        preds = anchor_lines_eval + raw_preds
+        print(f"  Anchor-line mode: reconstructed {len(preds)} absolute predictions")
+        print(f"  Deviation stats: mean={raw_preds.mean():.2f}, std={raw_preds.std():.2f}, "
+              f"median={np.median(raw_preds):.2f}")
+        print(f"  Predicted OVER rate: {(raw_preds > 0).mean()*100:.1f}%")
+        print(f"  Actual OVER rate: {(y_eval.values > anchor_lines_eval).mean()*100:.1f}%")
     elif args.residual:
         # Model predicted residuals (actual - vegas), reconstruct absolute
         preds = vegas_eval_filtered + raw_preds
@@ -3027,6 +3127,10 @@ def main():
         mode_suffix += f"_{args.player_tier}"
     if args.tier_weight:
         mode_suffix += "_tw"
+    if args.anchor_line:
+        mode_suffix += "_anchor"
+    if args.diff_features:
+        mode_suffix += "_diff"
 
     # Save model with standard naming (Session 164: include train start-end range in filename)
     MODEL_OUTPUT_DIR.mkdir(exist_ok=True)

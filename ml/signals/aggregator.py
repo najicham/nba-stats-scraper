@@ -50,7 +50,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v352_edge_floor_3_density_bypass'
+ALGORITHM_VERSION = 'v355_usage_starter_filters_premium_bypass'
 
 # Base signals that fire on nearly every edge 5+ pick. Picks with ONLY
 # these signals hit 57.1% (N=42) vs 77.8% for picks with 4+ signals.
@@ -147,6 +147,8 @@ class BestBetsAggregator:
             'model_direction_affinity': 0,
             'away_noveg': 0,
             'star_under': 0,
+            'med_usage_under': 0,
+            'starter_v12_under': 0,
             'signal_density': 0,
         }
 
@@ -159,10 +161,24 @@ class BestBetsAggregator:
                 continue
 
             # Edge floor: lowered to 3.0 (Session 352) — signal filters provide quality gate
+            # Session 355: Premium signals (combo_3way, combo_he_ms) with 95%+ HR
+            # are exempt from the edge floor. We defer the edge floor reject for
+            # below-floor picks, tagging them for rescue if premium signals are found.
             pred_edge = abs(pred.get('edge') or 0)
-            if pred_edge < self.MIN_EDGE:
-                filter_counts['edge_floor'] += 1
-                continue
+            below_edge_floor = pred_edge < self.MIN_EDGE
+            if below_edge_floor:
+                # Check if this pick has premium signals that warrant edge floor bypass
+                key_for_signal_check = f"{pred['player_lookup']}::{pred['game_id']}"
+                signal_check = signal_results.get(key_for_signal_check, [])
+                premium_tags = {'combo_3way', 'combo_he_ms'}
+                has_premium = any(
+                    r.qualifies and r.source_tag in premium_tags
+                    for r in signal_check
+                )
+                if not has_premium:
+                    filter_counts['edge_floor'] += 1
+                    continue
+                # Premium signal found — bypass edge floor (95%+ HR signals)
 
             # UNDER at edge 7+ block: V9=39.3% HR (block), V12+vegas=100% HR (allow). Session 326.
             # Session 318: Removed star-level exception (N=7 too small, 37.5% HR in best bets)
@@ -222,6 +238,23 @@ class BestBetsAggregator:
             season_avg = pred.get('points_avg_season') or 0
             if pred.get('recommendation') == 'UNDER' and season_avg >= 25:
                 filter_counts['star_under'] += 1
+                continue
+
+            # Medium teammate usage UNDER block (Session 355): 32.0% HR (N=25)
+            # Model has 0% importance on teammate_usage_available but production
+            # data shows when moderate usage is available (15-30), UNDER = catastrophic.
+            teammate_usage = pred.get('teammate_usage_available') or 0
+            if (pred.get('recommendation') == 'UNDER'
+                    and 15 <= teammate_usage <= 30):
+                filter_counts['med_usage_under'] += 1
+                continue
+
+            # Starter V12 UNDER block (Session 355): 46.7% HR (N=30)
+            # V12 UNDER specifically bad for 15-20 line range (starter tier).
+            if (pred.get('recommendation') == 'UNDER'
+                    and 15 <= season_avg < 20
+                    and source_family.startswith('v12')):
+                filter_counts['starter_v12_under'] += 1
                 continue
 
             # Line jumped UNDER block (Session 294, lowered 306): 38.2% HR at 2.0 (N=272)
@@ -345,6 +378,10 @@ class BestBetsAggregator:
             logger.info(f"Model-direction affinity: skipped {filter_counts['model_direction_affinity']} predictions")
         if filter_counts['away_noveg'] > 0:
             logger.info(f"AWAY noveg block: skipped {filter_counts['away_noveg']} predictions")
+        if filter_counts['med_usage_under'] > 0:
+            logger.info(f"Medium teammate usage UNDER block: skipped {filter_counts['med_usage_under']} predictions")
+        if filter_counts['starter_v12_under'] > 0:
+            logger.info(f"Starter V12 UNDER block (15-20 line): skipped {filter_counts['starter_v12_under']} predictions")
         if filter_counts['signal_density'] > 0:
             logger.info(f"Signal density filter: skipped {filter_counts['signal_density']} base-only picks")
 

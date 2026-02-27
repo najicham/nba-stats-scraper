@@ -310,16 +310,16 @@ def query_predictions_with_supplements(
       ) = 1
     ),
 
-    -- Multi-book line std for book disagreement signal (Session 303)
+    -- Multi-book line std and teammate_usage for signals (Session 303, 355)
     book_stats AS (
       SELECT
         player_lookup,
         game_date,
         feature_50_value AS multi_book_line_std,
-        feature_50_source AS book_std_source
+        feature_50_source AS book_std_source,
+        feature_47_value AS teammate_usage_available
       FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2`
       WHERE game_date = @target_date
-        AND feature_50_value IS NOT NULL
     ),
 
     -- Previous game prop line for line delta signal (Session 294)
@@ -378,7 +378,8 @@ def query_predictions_with_supplements(
       ppl.prev_line_value,
       ppl.prev_line_date,
       bs.multi_book_line_std,
-      bs.book_std_source
+      bs.book_std_source,
+      bs.teammate_usage_available
     FROM preds p
     LEFT JOIN latest_stats ls ON ls.player_lookup = p.player_lookup
     LEFT JOIN latest_streak lsk ON lsk.player_lookup = p.player_lookup
@@ -586,6 +587,10 @@ def query_predictions_with_supplements(
         pred['points_std_last_5'] = float(row_dict.get('points_std_last_5') or 0)
         pred['ft_rate_season'] = float(row_dict.get('ft_rate_season') or 0)
         pred['starter_rate_season'] = float(row_dict.get('starter_rate_season') or 0)
+
+        # Teammate usage from feature store for aggregator filter (Session 355)
+        tu = row_dict.get('teammate_usage_available')
+        pred['teammate_usage_available'] = float(tu) if tu is not None else 0
 
         # Copy prop line delta for aggregator pre-filter (Session 294)
         if row_dict.get('prev_line_value') is not None:

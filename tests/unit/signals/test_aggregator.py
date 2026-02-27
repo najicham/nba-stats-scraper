@@ -38,6 +38,8 @@ def _make_prediction(
     games_vs_opponent=0,
     source_model_family='',
     is_home=True,
+    points_avg_season=0,
+    teammate_usage_available=0,
 ) -> dict:
     """Helper to create a prediction dict that passes all filters by default."""
     return {
@@ -57,6 +59,8 @@ def _make_prediction(
         'games_vs_opponent': games_vs_opponent,
         'source_model_family': source_model_family,
         'is_home': is_home,
+        'points_avg_season': points_avg_season,
+        'teammate_usage_available': teammate_usage_available,
     }
 
 
@@ -109,6 +113,8 @@ class TestAggregatorReturnType:
             'model_direction_affinity': 0,
             'away_noveg': 0,
             'star_under': 0,
+            'med_usage_under': 0,
+            'starter_v12_under': 0,
             'signal_density': 0,
         }
 
@@ -519,3 +525,190 @@ class TestSignalDensityFilter:
         picks, summary = agg.aggregate([pred], signals)
         assert len(picks) == 1
         assert summary['rejected']['signal_density'] == 0
+
+
+# ============================================================================
+# MEDIUM TEAMMATE USAGE UNDER BLOCK TESTS (Session 355)
+# ============================================================================
+
+class TestMedTeammateUsageUnderBlock:
+    """Test that UNDER + medium teammate_usage (15-30) is blocked (Session 355).
+
+    Model has 0% importance on teammate_usage_available but production data
+    shows 32.0% HR (N=25) when moderate usage available + UNDER.
+    """
+
+    def _make_signal_results_for(self, pred, n_qualifying=3):
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        signals = [_make_signal_result(f'signal_{i}') for i in range(n_qualifying)]
+        return {key: signals}
+
+    def test_medium_usage_under_blocked(self):
+        """UNDER + teammate_usage=20 is blocked."""
+        pred = _make_prediction(
+            recommendation='UNDER',
+            teammate_usage_available=20,
+        )
+        signals = self._make_signal_results_for(pred)
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 0
+        assert summary['rejected']['med_usage_under'] == 1
+
+    def test_low_usage_under_allowed(self):
+        """UNDER + teammate_usage=10 (below 15) passes."""
+        pred = _make_prediction(
+            recommendation='UNDER',
+            teammate_usage_available=10,
+        )
+        signals = self._make_signal_results_for(pred)
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 1
+        assert summary['rejected']['med_usage_under'] == 0
+
+    def test_high_usage_under_allowed(self):
+        """UNDER + teammate_usage=35 (above 30) passes."""
+        pred = _make_prediction(
+            recommendation='UNDER',
+            teammate_usage_available=35,
+        )
+        signals = self._make_signal_results_for(pred)
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 1
+        assert summary['rejected']['med_usage_under'] == 0
+
+    def test_medium_usage_over_allowed(self):
+        """OVER + medium usage is NOT blocked (only UNDER is problematic)."""
+        pred = _make_prediction(
+            recommendation='OVER',
+            teammate_usage_available=20,
+        )
+        signals = self._make_signal_results_for(pred)
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 1
+        assert summary['rejected']['med_usage_under'] == 0
+
+
+# ============================================================================
+# STARTER V12 UNDER BLOCK TESTS (Session 355)
+# ============================================================================
+
+class TestStarterV12UnderBlock:
+    """Test that V12 UNDER + season_avg 15-20 is blocked (Session 355).
+
+    V12 UNDER is specifically bad for 15-20 line range: 46.7% HR (N=30).
+    """
+
+    def _make_signal_results_for(self, pred, n_qualifying=3):
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        signals = [_make_signal_result(f'signal_{i}') for i in range(n_qualifying)]
+        return {key: signals}
+
+    def test_starter_v12_under_blocked(self):
+        """V12 UNDER + season_avg=17 is blocked."""
+        pred = _make_prediction(
+            recommendation='UNDER',
+            points_avg_season=17,
+            source_model_family='v12_mae',
+        )
+        signals = self._make_signal_results_for(pred)
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 0
+        assert summary['rejected']['starter_v12_under'] == 1
+
+    def test_starter_v9_under_allowed(self):
+        """V9 UNDER + season_avg=17 passes (only V12 is blocked)."""
+        pred = _make_prediction(
+            recommendation='UNDER',
+            points_avg_season=17,
+            source_model_family='v9_mae',
+        )
+        signals = self._make_signal_results_for(pred)
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 1
+        assert summary['rejected']['starter_v12_under'] == 0
+
+    def test_starter_v12_over_allowed(self):
+        """V12 OVER + season_avg=17 passes (only UNDER is blocked)."""
+        pred = _make_prediction(
+            recommendation='OVER',
+            points_avg_season=17,
+            source_model_family='v12_mae',
+        )
+        signals = self._make_signal_results_for(pred)
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 1
+        assert summary['rejected']['starter_v12_under'] == 0
+
+    def test_star_v12_under_not_affected(self):
+        """V12 UNDER + season_avg=25 hits star block, not starter block."""
+        pred = _make_prediction(
+            recommendation='UNDER',
+            points_avg_season=25,
+            source_model_family='v12_mae',
+        )
+        signals = self._make_signal_results_for(pred)
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 0
+        assert summary['rejected']['star_under'] == 1
+        assert summary['rejected']['starter_v12_under'] == 0
+
+
+# ============================================================================
+# PREMIUM SIGNAL EDGE FLOOR BYPASS TESTS (Session 355)
+# ============================================================================
+
+class TestPremiumSignalEdgeFloorBypass:
+    """Test that combo_3way and combo_he_ms bypass the edge floor (Session 355).
+
+    These signals have 95%+ HR, so filtering them by edge floor wastes profit.
+    """
+
+    def test_premium_signal_bypasses_edge_floor(self):
+        """Pick with edge=2.0 + combo_3way signal bypasses edge floor."""
+        pred = _make_prediction(edge=2.0)
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        signals = {key: [
+            _make_signal_result('model_health'),
+            _make_signal_result('combo_3way'),
+            _make_signal_result('high_edge'),
+        ]}
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 1
+        assert summary['rejected']['edge_floor'] == 0
+
+    def test_premium_combo_he_ms_bypasses_edge_floor(self):
+        """Pick with edge=2.0 + combo_he_ms signal bypasses edge floor."""
+        pred = _make_prediction(edge=2.0)
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        signals = {key: [
+            _make_signal_result('model_health'),
+            _make_signal_result('combo_he_ms'),
+            _make_signal_result('edge_spread_optimal'),
+        ]}
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 1
+        assert summary['rejected']['edge_floor'] == 0
+
+    def test_no_premium_signal_still_blocked(self):
+        """Pick with edge=2.0 and no premium signals is still blocked."""
+        pred = _make_prediction(edge=2.0)
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        signals = {key: [
+            _make_signal_result('model_health'),
+            _make_signal_result('high_edge'),
+            _make_signal_result('edge_spread_optimal'),
+        ]}
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 0
+        assert summary['rejected']['edge_floor'] == 1
