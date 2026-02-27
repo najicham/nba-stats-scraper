@@ -298,15 +298,33 @@ def get_enabled_models_from_registry() -> List[dict]:
         results = list(bq.query(query).result())
         models = []
         for r in results:
+            # Session 358: Defensive model_type detection.
+            # Registry field is primary, but also detect from model_id prefix
+            # and GCS path extension as fallback. This fixes LightGBM models
+            # that were failing to load despite correct registry data.
+            raw_model_type = r.model_type
+            model_id = r.model_id
+            gcs_path = r.gcs_path or ''
+            if raw_model_type and raw_model_type.lower() == 'lightgbm':
+                detected_type = 'lightgbm'
+            elif model_id.startswith('lgbm') or gcs_path.endswith('.txt'):
+                detected_type = 'lightgbm'
+                logger.info(
+                    f"Detected LightGBM from model_id/path for {model_id} "
+                    f"(registry model_type={raw_model_type!r})"
+                )
+            else:
+                detected_type = raw_model_type or 'catboost'
+
             models.append({
-                'model_id': r.model_id,
-                'model_path': r.gcs_path,
+                'model_id': model_id,
+                'model_path': gcs_path,
                 'model_family': r.model_family,
                 'feature_set': r.feature_set or 'v9',  # Default to v9 for legacy entries
                 'feature_count': r.feature_count,
                 'loss_function': r.loss_function,
                 'quantile_alpha': r.quantile_alpha,
-                'model_type': r.model_type or 'catboost',  # Session 350: LightGBM support
+                'model_type': detected_type,
                 'train_start': str(r.training_start_date) if r.training_start_date else None,
                 'train_end': str(r.training_end_date) if r.training_end_date else None,
                 'backtest_mae': r.evaluation_mae,
@@ -388,11 +406,15 @@ class CatBoostMonthly(CatBoostV8):
         Session 350: Added LightGBM support. Detects model_type from config
         and loads with the appropriate framework (CatBoost or LightGBM).
         """
-        is_lightgbm = self.config.get('model_type') == 'lightgbm'
+        config_model_type = self.config.get('model_type')
+        is_lightgbm = config_model_type == 'lightgbm'
         framework_name = 'LightGBM' if is_lightgbm else 'CatBoost'
         file_ext = '.txt' if is_lightgbm else '.cbm'
 
-        logger.info(f"Loading {framework_name} monthly model from: {model_path}")
+        logger.info(
+            f"Loading {framework_name} monthly model from: {model_path} "
+            f"(model_type={config_model_type!r}, is_lightgbm={is_lightgbm})"
+        )
 
         if model_path.startswith("gs://"):
             from shared.clients import get_storage_client
