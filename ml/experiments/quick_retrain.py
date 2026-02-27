@@ -268,6 +268,15 @@ def parse_args():
                        help='Filter training data: only players with points_avg_season < N')
     parser.add_argument('--lines-only-train', action='store_true',
                        help='Filter training data: only players who have a prop line for that game')
+
+    # Model diversity experiments (Session 350)
+    parser.add_argument('--classify', action='store_true',
+                       help='Train binary OVER/UNDER classifier (Logloss) instead of regression')
+    parser.add_argument('--framework', choices=['catboost', 'lightgbm'], default='catboost',
+                       help='ML framework (default: catboost)')
+    parser.add_argument('--player-tier', choices=['star', 'starter', 'role'],
+                       help='Train tier-specific model (star: line>=25, starter: 15-25, role: 5-15)')
+
     parser.add_argument('--dry-run', action='store_true', help='Show plan only')
     parser.add_argument('--skip-register', action='store_true', help='Skip ml_experiments')
     parser.add_argument('--force', action='store_true', help='Force retrain even if duplicate training dates exist')
@@ -279,6 +288,8 @@ def parse_args():
                        help='Skip automatic model_registry INSERT after training')
     parser.add_argument('--enable', action='store_true',
                        help='Set enabled=TRUE on auto-registered model (skip manual enable step)')
+    parser.add_argument('--force-register', action='store_true',
+                       help='Upload + register even when governance gates fail (requires explicit approval)')
 
     return parser.parse_args()
 
@@ -2161,26 +2172,42 @@ def run_hyperparam_search(X_train, y_train, X_val, y_val, lines_val, w_train=Non
 # =============================================================================
 
 def compute_model_family(feature_set: str, no_vegas: bool, quantile_alpha: float = None,
-                         loss_function: str = None) -> str:
+                         loss_function: str = None, classify: bool = False,
+                         framework: str = 'catboost', player_tier: str = None) -> str:
     """Compute model_family string from training parameters.
 
-    Convention: {feature_set}_{loss} where:
+    Convention: {prefix}_{feature_set}_{loss}[_{tier}] where:
+      - prefix: lgbm for lightgbm, omitted for catboost (legacy compat)
       - feature_set: v9, v12_noveg, etc.
-      - loss: mae, q43, q45, rmse, etc.
+      - loss: mae, q43, q45, classify, rmse, etc.
+      - tier: star, starter, role (optional)
     """
     if no_vegas and not feature_set.endswith('_noveg'):
         fs = f"{feature_set}_noveg"
     else:
         fs = feature_set
 
-    if quantile_alpha:
+    # Framework prefix
+    if framework == 'lightgbm':
+        fs = f"lgbm_{fs}"
+
+    # Loss/mode suffix
+    if classify:
+        family = f"{fs}_classify"
+    elif quantile_alpha:
         alpha_str = str(quantile_alpha).replace('0.', 'q')
-        return f"{fs}_{alpha_str}"
+        family = f"{fs}_{alpha_str}"
     elif loss_function and loss_function.upper() != 'MAE':
         loss_short = loss_function.split(':')[0].lower()
-        return f"{fs}_{loss_short}"
+        family = f"{fs}_{loss_short}"
     else:
-        return f"{fs}_mae"
+        family = f"{fs}_mae"
+
+    # Player tier suffix
+    if player_tier:
+        family = f"{family}_{player_tier}"
+
+    return family
 
 
 def auto_upload_to_gcs(model_path: Path, feature_set: str, no_vegas: bool,
@@ -2235,6 +2262,7 @@ def auto_register_in_model_registry(
     hyperparameters: dict = None,
     notes: str = None,
     enabled: bool = False,
+    model_type: str = 'catboost',
 ):
     """Insert model into model_registry with full metadata.
 
@@ -2266,7 +2294,7 @@ def auto_register_in_model_registry(
     hr_edge5_val = f"{round(hr_edge5, 2)}" if hr_edge5 else "NULL"
     qa_val = f"{quantile_alpha}" if quantile_alpha else "NULL"
     strengths_val = f"'{strengths_json}'" if strengths_json else "NULL"
-    config_val = f"'{training_config_json}'" if training_config_json else "NULL"
+    config_val = f"PARSE_JSON('{training_config_json}')" if training_config_json else "NULL"
     notes_val = f"'{(notes or 'Auto-registered by quick_retrain.py').replace(chr(39), chr(39)+chr(39))}'"
 
     query = f"""
@@ -2279,7 +2307,7 @@ def auto_register_in_model_registry(
      created_at, created_by, model_family, feature_set, loss_function,
      quantile_alpha, enabled, strengths_json, training_config_json)
     VALUES
-    ('{model_id}', '{model_version}', 'catboost', '{gcs_path}', {feature_count},
+    ('{model_id}', '{model_version}', '{model_type}', '{gcs_path}', {feature_count},
      '{training_start}', '{training_end}', {training_samples},
      {round(mae, 4)}, {hr_all_val}, {hr_edge3_val},
      {hr_edge5_val}, {n_edge3},
@@ -2300,6 +2328,16 @@ def auto_register_in_model_registry(
 
 def main():
     args = parse_args()
+
+    # --player-tier convenience mapping (Session 350)
+    if args.player_tier:
+        tier_ranges = {'star': (25.0, None), 'starter': (15.0, 25.0), 'role': (5.0, 15.0)}
+        min_ppg, max_ppg = tier_ranges[args.player_tier]
+        if args.min_ppg is None:
+            args.min_ppg = min_ppg
+        if args.max_ppg is None and max_ppg is not None:
+            args.max_ppg = max_ppg
+
     dates = get_dates(args)
     exp_id = str(uuid.uuid4())[:8]
 
@@ -2367,6 +2405,13 @@ def main():
         print(f"Mode: TWO-STAGE (train without vegas, edge = pred - vegas at eval)")
     if args.quantile_alpha:
         print(f"Mode: QUANTILE (alpha={args.quantile_alpha})")
+    # Session 350: Model diversity experiments
+    if args.classify:
+        print(f"Mode: CLASSIFY (binary OVER/UNDER, Logloss)")
+    if args.framework != 'catboost':
+        print(f"Framework: {args.framework}")
+    if args.player_tier:
+        print(f"Player Tier: {args.player_tier} (min_ppg={args.min_ppg}, max_ppg={args.max_ppg})")
     if args.exclude_features:
         print(f"Excluding features: {args.exclude_features}")
     if args.feature_weights:
@@ -2383,6 +2428,14 @@ def main():
     if args.lines_only_train:
         print(f"Training Filter: lines-only (players with prop lines)")
     print()
+
+    # Session 350: Validate flag combinations
+    if args.classify and args.quantile_alpha:
+        print("ERROR: --classify and --quantile-alpha are mutually exclusive")
+        return
+    if args.classify and args.residual:
+        print("ERROR: --classify and --residual are mutually exclusive")
+        return
 
     # DATE OVERLAP GUARD (Session 176: 90%+ hit rates were caused by training on eval data)
     if train_end_dt >= eval_start_dt:
@@ -2405,7 +2458,8 @@ def main():
         print(f"  Feature set: {args.feature_set} ({selected_contract.feature_count} features)")
         print(f"  Flags: recency_weight={args.recency_weight}, tune={args.tune}, walkforward={args.walkforward}")
         print(f"  Modes: no_vegas={args.no_vegas}, residual={args.residual}, "
-              f"two_stage={args.two_stage}, quantile_alpha={args.quantile_alpha}")
+              f"two_stage={args.two_stage}, quantile_alpha={args.quantile_alpha}, "
+              f"classify={args.classify}, framework={args.framework}, player_tier={args.player_tier}")
         if args.exclude_features:
             print(f"  Exclude: {args.exclude_features}")
         if args.feature_weights:
@@ -2603,6 +2657,38 @@ def main():
     # For two-stage: also prepare full-feature eval for extracting vegas line
     X_eval = X_eval_full
 
+    # Classifier mode: transform target to binary OVER/UNDER (Session 350)
+    # Keep original y_eval (actual points) for hit rate evaluation
+    y_train_orig = y_train_full.copy()
+    y_eval_orig = y_eval.copy()
+    if args.classify:
+        # Need training lines for binary target. Use feature_25_value (vegas_points_line)
+        # from feature store, available even when --no-vegas excludes it from model.
+        train_lines = df_train['feature_25_value'].fillna(0).values.astype(float)
+        valid_train_lines = train_lines > 0
+        if valid_train_lines.sum() < len(train_lines) * 0.5:
+            print(f"\nERROR: Only {valid_train_lines.sum()}/{len(train_lines)} training samples have valid lines. "
+                  f"Classifier requires lines for binary target.")
+            return
+        # Filter to valid lines only
+        X_train_full = X_train_full[valid_train_lines].reset_index(drop=True)
+        y_train_full = (y_train_orig[valid_train_lines].values > train_lines[valid_train_lines]).astype(int)
+        y_train_full = pd.Series(y_train_full)
+        df_train = df_train[valid_train_lines].reset_index(drop=True)
+        print(f"\n  Classifier target: {y_train_full.sum()} OVER / {len(y_train_full) - y_train_full.sum()} UNDER "
+              f"({y_train_full.mean()*100:.1f}% OVER rate)")
+
+        # Also filter eval to valid lines (classifier needs lines for AUC)
+        eval_lines = lines
+        valid_eval_lines = eval_lines > 0
+        X_eval_full = X_eval_full[valid_eval_lines].reset_index(drop=True)
+        X_eval = X_eval_full
+        y_eval = y_eval[valid_eval_lines].reset_index(drop=True)
+        y_eval_orig = y_eval.copy()
+        lines = lines[valid_eval_lines]
+        df_eval = df_eval[valid_eval_lines].reset_index(drop=True)
+        print(f"  Eval: filtered to {valid_eval_lines.sum()}/{len(valid_eval_lines)} with valid lines")
+
     # Recency weighting (if --recency-weight)
     w_train_full = None
     if args.recency_weight:
@@ -2709,18 +2795,108 @@ def main():
                 direction = "↑ increasing" if constraint == 1 else "↓ decreasing"
                 print(f"    [{idx:2d}] {active_feature_names[idx]:<30s} = {constraint:+2d} ({direction})")
 
-    model = cb.CatBoostRegressor(**hp)
-    model.fit(X_train, y_train, eval_set=(X_val, y_val), sample_weight=w_train, verbose=100)
+    # --- Train model (Session 350: framework dispatch) ---
+    is_lightgbm = (args.framework == 'lightgbm')
+    is_classifier = args.classify
+    auc = None  # Only set for classifier mode
 
-    # Feature importance (always on)
-    feature_importance = display_feature_importance(model, active_feature_names)
+    if is_lightgbm:
+        import lightgbm as lgb
 
-    # Evaluate
-    print("\nEvaluating...")
-    raw_preds = model.predict(X_eval)
+        lgb_params = {
+            'verbose': -1,
+            'seed': 42,
+            'num_leaves': 63,
+            'learning_rate': 0.05,
+            'feature_fraction': 0.8,
+            'bagging_fraction': 0.8,
+            'bagging_freq': 5,
+        }
+        if is_classifier:
+            lgb_params['objective'] = 'binary'
+            lgb_params['metric'] = 'binary_logloss'
+        elif args.quantile_alpha:
+            lgb_params['objective'] = 'quantile'
+            lgb_params['alpha'] = args.quantile_alpha
+            lgb_params['metric'] = 'quantile'
+        else:
+            lgb_params['objective'] = 'regression'
+            lgb_params['metric'] = 'mae'
 
+        print(f"\nTraining LightGBM ({'classifier' if is_classifier else 'regression'})...")
+        dtrain = lgb.Dataset(X_train, y_train, weight=w_train)
+        dval = lgb.Dataset(X_val, y_val)
+        model = lgb.train(lgb_params, dtrain, num_boost_round=1000,
+                          valid_sets=[dval], callbacks=[lgb.early_stopping(50, verbose=True)])
+
+        # Feature importance
+        importances = model.feature_importance(importance_type='gain')
+        pairs = sorted(zip(active_feature_names, importances), key=lambda x: -x[1])
+        print("\n" + "-" * 40)
+        print(f"FEATURE IMPORTANCE (top 10)")
+        print("-" * 40)
+        for i, (name, imp) in enumerate(pairs[:10], 1):
+            bar = "█" * int(imp / max(pairs[0][1], 1) * 20)
+            print(f"  {i:2d}. {name:<30s} {imp:10.2f}  {bar}")
+        if len(pairs) > 10:
+            print(f"  ...")
+            for name, imp in pairs[-5:]:
+                print(f"      {name:<30s} {imp:10.2f}")
+        feature_importance = pairs
+
+        # Predict
+        print("\nEvaluating...")
+        raw_preds = model.predict(X_eval)
+
+    elif is_classifier:
+        # CatBoost classifier mode (Session 350)
+        hp['loss_function'] = 'Logloss'
+        print(f"\nTraining CatBoostClassifier (Logloss)...")
+        model = cb.CatBoostClassifier(**hp)
+        model.fit(X_train, y_train, eval_set=(X_val, y_val), sample_weight=w_train, verbose=100)
+
+        feature_importance = display_feature_importance(model, active_feature_names)
+
+        print("\nEvaluating...")
+        raw_preds = model.predict_proba(X_eval)[:, 1]  # P(OVER)
+
+    else:
+        # Standard CatBoost regression
+        model = cb.CatBoostRegressor(**hp)
+        model.fit(X_train, y_train, eval_set=(X_val, y_val), sample_weight=w_train, verbose=100)
+
+        feature_importance = display_feature_importance(model, active_feature_names)
+
+        print("\nEvaluating...")
+        raw_preds = model.predict(X_eval)
+
+    # --- Convert predictions to pseudo-points for unified evaluation ---
+    # Classifier and LightGBM classifier output probabilities; convert to
+    # pseudo-points where edge magnitude is proportional to confidence.
+    # SCALE_FACTOR maps P(over)=0.7 → +4 edge, P(over)=0.3 → -4 edge
+    CLASSIFY_SCALE_FACTOR = 20.0  # ±10 edge range at P=0/1
+
+    if is_classifier:
+        if is_lightgbm:
+            probs = raw_preds  # LightGBM binary outputs probabilities directly
+        else:
+            probs = raw_preds  # CatBoost predict_proba already extracted above
+        preds = lines + (probs - 0.5) * CLASSIFY_SCALE_FACTOR
+        print(f"  Classifier: converted {len(probs)} probabilities to pseudo-points")
+        print(f"  P(OVER) stats: mean={probs.mean():.3f}, std={probs.std():.3f}")
+        print(f"  Pseudo-point edge stats: mean={(preds - lines).mean():.2f}, std={(preds - lines).std():.2f}")
+
+        # AUC metric for classifiers
+        from sklearn.metrics import roc_auc_score
+        y_eval_binary = (y_eval_orig.values > lines).astype(int)
+        try:
+            auc = roc_auc_score(y_eval_binary, probs)
+            print(f"  AUC: {auc:.4f}")
+        except Exception as e:
+            print(f"  AUC computation failed: {e}")
+            auc = None
     # Reconstruct absolute predictions for alternative modes (Session 179)
-    if args.residual:
+    elif args.residual:
         # Model predicted residuals (actual - vegas), reconstruct absolute
         preds = vegas_eval_filtered + raw_preds
         print(f"  Residual mode: reconstructed {len(preds)} absolute predictions")
@@ -2734,7 +2910,12 @@ def main():
     else:
         preds = raw_preds
 
-    mae = mean_absolute_error(y_eval, preds)
+    # For classifiers, MAE of pseudo-points vs actuals is not meaningful
+    # but we compute it for gate compatibility (gate will be skipped)
+    if is_classifier:
+        mae = None  # Skip MAE for classifiers
+    else:
+        mae = mean_absolute_error(y_eval, preds)
 
     hr_all, bets_all = compute_hit_rate(preds, y_eval.values, lines, min_edge=1.0)
     hr_edge3, bets_edge3 = compute_hit_rate(preds, y_eval.values, lines, min_edge=3.0)
@@ -2773,14 +2954,27 @@ def main():
         mode_suffix = f"_q{args.quantile_alpha}"
     if feature_weights_map:
         mode_suffix += "_wt"
+    # Session 350: classifier and tier suffixes
+    if args.classify:
+        mode_suffix += "_classify"
+    if args.player_tier:
+        mode_suffix += f"_{args.player_tier}"
 
     # Save model with standard naming (Session 164: include train start-end range in filename)
     MODEL_OUTPUT_DIR.mkdir(exist_ok=True)
     ts = datetime.now().strftime('%Y%m%d_%H%M%S')
     train_start_compact = dates['train_start'].replace('-', '')
     train_end_compact = dates['train_end'].replace('-', '')
-    model_path = MODEL_OUTPUT_DIR / f"catboost_v9_{n_features}f{mode_suffix}_train{train_start_compact}-{train_end_compact}_{ts}.cbm"
-    model.save_model(str(model_path))
+
+    # Session 350: framework-specific naming and file format
+    framework_prefix = "lgbm" if is_lightgbm else "catboost"
+    model_ext = ".txt" if is_lightgbm else ".cbm"
+    model_path = MODEL_OUTPUT_DIR / f"{framework_prefix}_{args.feature_set}_{n_features}f{mode_suffix}_train{train_start_compact}-{train_end_compact}_{ts}{model_ext}"
+
+    if is_lightgbm:
+        model.save_model(str(model_path))
+    else:
+        model.save_model(str(model_path))
 
     # Compute SHA256 for registry
     sha256 = hashlib.sha256()
@@ -2809,40 +3003,53 @@ def main():
         emoji = "✅" if better else "❌" if abs(diff) > 2 else "⚠️"
         return f"{name}: {new_val:.2f}% vs {baseline:.2f}% ({symbol}{diff:.2f}%) {emoji}{size_warn}", better
 
-    mae_diff = mae - V9_BASELINE['mae']
-    mae_emoji = "✅" if mae_diff < 0 else "❌" if mae_diff > 0.2 else "⚠️"
-    print(f"MAE (w/lines): {mae:.4f} vs {V9_BASELINE['mae']:.4f} ({mae_diff:+.4f}) {mae_emoji}  (n={len(y_eval)})")
+    if mae is not None:
+        mae_diff = mae - V9_BASELINE['mae']
+        mae_emoji = "✅" if mae_diff < 0 else "❌" if mae_diff > 0.2 else "⚠️"
+        print(f"MAE (w/lines): {mae:.4f} vs {V9_BASELINE['mae']:.4f} ({mae_diff:+.4f}) {mae_emoji}  (n={len(y_eval)})")
+    else:
+        mae_diff = None
+        print(f"MAE: N/A (classifier mode — using AUC instead)")
+        if is_classifier and auc is not None:
+            print(f"AUC: {auc:.4f} (0.5 = random, >0.55 = useful)")
 
     # Full-population MAE: ALL quality-ready players regardless of prop lines
     # This measures point prediction accuracy across the full player pool
     full_pop_mae = None
     full_pop_n = 0
-    try:
-        print("\nComputing full-population MAE (all players, no line requirement)...")
-        df_all = load_eval_data_all_players(client, dates['eval_start'], dates['eval_end'])
-        if len(df_all) > 0:
-            feature_names_all = df_all.iloc[0]['feature_names']
-            X_all = pd.DataFrame(
-                [build_feature_array_from_columns(row) for _, row in df_all.iterrows()],
-                columns=feature_names_all[:FEATURE_STORE_FEATURE_COUNT]
-            )
-            # Use same active features as training
-            missing_cols = set(active_feature_names) - set(X_all.columns)
-            for col in missing_cols:
-                X_all[col] = np.nan
-            X_all_filtered = X_all[active_feature_names]
-            y_all = df_all['actual_points']
+    if is_classifier:
+        print("  Skipping full-population MAE (classifier mode)")
+        print()
+    else:
+        try:
+            print("\nComputing full-population MAE (all players, no line requirement)...")
+            df_all = load_eval_data_all_players(client, dates['eval_start'], dates['eval_end'])
+            if len(df_all) > 0:
+                feature_names_all = df_all.iloc[0]['feature_names']
+                X_all = pd.DataFrame(
+                    [build_feature_array_from_columns(row) for _, row in df_all.iterrows()],
+                    columns=feature_names_all[:FEATURE_STORE_FEATURE_COUNT]
+                )
+                # Use same active features as training
+                missing_cols = set(active_feature_names) - set(X_all.columns)
+                for col in missing_cols:
+                    X_all[col] = np.nan
+                X_all_filtered = X_all[active_feature_names]
+                y_all = df_all['actual_points']
 
-            all_preds = model.predict(X_all_filtered)
-            full_pop_mae = mean_absolute_error(y_all, all_preds)
-            full_pop_n = len(y_all)
-            full_pop_emoji = "✅" if full_pop_mae < V9_BASELINE['mae'] else "⚠️"
-            print(f"MAE (all players): {full_pop_mae:.4f} {full_pop_emoji}  (n={full_pop_n}, includes {full_pop_n - len(y_eval)} without lines)")
-        else:
-            print("  No all-player eval data found")
-    except Exception as e:
-        print(f"  Full-population MAE failed: {e}")
-    print()
+                if is_lightgbm:
+                    all_preds = model.predict(X_all_filtered)
+                else:
+                    all_preds = model.predict(X_all_filtered)
+                full_pop_mae = mean_absolute_error(y_all, all_preds)
+                full_pop_n = len(y_all)
+                full_pop_emoji = "✅" if full_pop_mae < V9_BASELINE['mae'] else "⚠️"
+                print(f"MAE (all players): {full_pop_mae:.4f} {full_pop_emoji}  (n={full_pop_n}, includes {full_pop_n - len(y_eval)} without lines)")
+            else:
+                print("  No all-player eval data found")
+        except Exception as e:
+            print(f"  Full-population MAE failed: {e}")
+        print()
 
     hr_all_str, hr_all_better = compare("Hit Rate (all)", hr_all, V9_BASELINE['hit_rate_all'], bets_all)
     hr_edge3_str, hr_edge3_better = compare("Hit Rate (edge 3+)", hr_edge3, V9_BASELINE['hit_rate_edge_3plus'], bets_edge3)
@@ -2941,12 +3148,17 @@ def main():
     print("\n" + "=" * 70)
     print(" GOVERNANCE GATES")
     print("=" * 70)
-    mae_better = mae < V9_BASELINE['mae']
+    mae_better = (mae is not None and mae < V9_BASELINE['mae']) or is_classifier
     edge3_reliable = bets_edge3 >= MIN_BETS_RELIABLE
     edge5_reliable = bets_edge5 >= MIN_BETS_RELIABLE
 
     gates = []
-    gates.append(("MAE improvement", mae_better, f"{mae:.4f} vs {V9_BASELINE['mae']:.4f}"))
+    if is_classifier:
+        # Classifier: replace MAE gate with AUC gate
+        auc_val = auc if is_classifier else None
+        gates.append(("AUC > 0.55 (classifier)", (auc_val or 0) > 0.55, f"{auc_val:.4f}" if auc_val else "N/A"))
+    else:
+        gates.append(("MAE improvement", mae_better, f"{mae:.4f} vs {V9_BASELINE['mae']:.4f}"))
     gates.append(("Hit rate (3+) >= 60%", (hr_edge3 or 0) >= 60, f"{hr_edge3}% (n={bets_edge3})"))
     gates.append(("Hit rate (3+) sample >= 50", edge3_reliable, f"n={bets_edge3}"))
     gates.append((f"Vegas bias within +/-{VEGAS_BIAS_LIMIT}", abs(pred_vs_vegas) <= VEGAS_BIAS_LIMIT, f"{pred_vs_vegas:+.2f}"))
@@ -2963,13 +3175,19 @@ def main():
         print(f"  [{status}] {gate_name}: {detail}")
 
     print()
-    if all_passed:
-        print("ALL GATES PASSED — model eligible for shadow testing")
+    if all_passed or args.force_register:
+        if all_passed:
+            print("ALL GATES PASSED — model eligible for shadow testing")
+        else:
+            failed_gates = [g[0] for g in gates if not g[1]]
+            print(f"GATES FAILED ({', '.join(failed_gates)}) — but --force-register override active")
+            print("  Proceeding with upload + registration despite gate failures")
         print()
 
         # Compute model family (Session 273)
         model_family = compute_model_family(
-            args.feature_set, args.no_vegas, args.quantile_alpha, args.loss_function
+            args.feature_set, args.no_vegas, args.quantile_alpha, args.loss_function,
+            classify=args.classify, framework=args.framework, player_tier=args.player_tier
         )
 
         # Build strengths JSON from segmented analysis
@@ -3002,22 +3220,33 @@ def main():
         # --- Auto-register in model_registry (Session 273) ---
         if not args.skip_auto_register and gcs_path_uploaded:
             try:
-                # Build system_id for registry
+                # Build system_id for registry (Session 350: framework-aware)
+                # Convention: {fw}_{feature_set}[_noveg][_mode][_tier]_train{dates}
                 train_start_short = dates['train_start'].replace('-', '')[4:]
                 train_end_short = dates['train_end'].replace('-', '')[4:]
-                registry_model_id = f"catboost_{args.feature_set}_train{train_start_short}_{train_end_short}"
+                fw_prefix = "lgbm" if is_lightgbm else "catboost"
+                id_parts = [fw_prefix, args.feature_set]
+                if args.no_vegas and '_noveg' not in args.feature_set:
+                    id_parts.append('noveg')
                 if args.quantile_alpha:
                     alpha_str = str(args.quantile_alpha).replace('0.', 'q')
-                    registry_model_id = f"catboost_{args.feature_set}_{alpha_str}_train{train_start_short}_{train_end_short}"
-                if args.no_vegas and '_noveg' not in registry_model_id:
-                    registry_model_id = registry_model_id.replace(f'catboost_{args.feature_set}',
-                                                                   f'catboost_{args.feature_set}_noveg')
+                    id_parts.append(alpha_str)
+                if args.classify:
+                    id_parts.append('classify')
+                if args.player_tier:
+                    id_parts.append(args.player_tier)
+                id_parts.append(f'train{train_start_short}_{train_end_short}')
+                registry_model_id = '_'.join(id_parts)
 
                 loss_fn = 'MAE'
-                if args.quantile_alpha:
+                if args.classify:
+                    loss_fn = 'Logloss'
+                elif args.quantile_alpha:
                     loss_fn = f'Quantile:alpha={args.quantile_alpha}'
                 elif args.loss_function:
                     loss_fn = args.loss_function
+
+                model_type_str = 'lightgbm' if is_lightgbm else 'catboost'
 
                 auto_register_in_model_registry(
                     bq_client=client,
@@ -3032,7 +3261,7 @@ def main():
                     training_start=dates['train_start'],
                     training_end=dates['train_end'],
                     training_samples=len(df_train),
-                    mae=mae,
+                    mae=mae if mae is not None else 0.0,
                     hr_all=hr_all,
                     hr_edge3=hr_edge3,
                     hr_edge5=hr_edge5,
@@ -3043,6 +3272,7 @@ def main():
                     hyperparameters=hp,
                     notes=f'{args.name} — auto-registered',
                     enabled=getattr(args, 'enable', False),
+                    model_type=model_type_str,
                 )
             except Exception as e:
                 print(f"\n  WARNING: Auto-register failed: {e}")
@@ -3123,8 +3353,14 @@ def main():
 
     # Register
     if not args.skip_register:
-        # Determine experiment_type based on mode (Session 179)
-        if args.no_vegas:
+        # Determine experiment_type based on mode (Session 179, 350)
+        if args.classify:
+            experiment_type = 'diversity_classifier'
+        elif args.framework == 'lightgbm':
+            experiment_type = 'diversity_lightgbm'
+        elif args.player_tier:
+            experiment_type = f'diversity_tier_{args.player_tier}'
+        elif args.no_vegas:
             experiment_type = 'monthly_retrain_no_vegas'
         elif args.residual:
             experiment_type = 'monthly_retrain_residual'
@@ -3159,11 +3395,14 @@ def main():
                     'category_weight': args.category_weight,
                     'feature_weights_resolved': {active_feature_names[k]: v for k, v in feature_weights_map.items()} if feature_weights_map else None,
                     'monotone_constraints': args.monotone_constraints,
+                    'classify': args.classify,
+                    'framework': args.framework,
+                    'player_tier': args.player_tier,
                 }),
                 'train_period': {'start_date': dates['train_start'], 'end_date': dates['train_end'], 'samples': len(df_train)},
                 'eval_period': {'start_date': dates['eval_start'], 'end_date': dates['eval_end'], 'samples': len(df_eval)},
                 'results_json': json.dumps({
-                    'mae': round(mae, 4),
+                    'mae': round(mae, 4) if mae is not None else None,
                     'mae_all_players': round(full_pop_mae, 4) if full_pop_mae is not None else None,
                     'n_all_players': full_pop_n,
                     'hit_rate_all': hr_all, 'bets_all': bets_all,

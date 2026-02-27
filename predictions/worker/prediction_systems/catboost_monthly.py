@@ -281,6 +281,7 @@ def get_enabled_models_from_registry() -> List[dict]:
             feature_count,
             loss_function,
             quantile_alpha,
+            model_type,
             training_start_date,
             training_end_date,
             evaluation_mae,
@@ -304,6 +305,7 @@ def get_enabled_models_from_registry() -> List[dict]:
                 'feature_count': r.feature_count,
                 'loss_function': r.loss_function,
                 'quantile_alpha': r.quantile_alpha,
+                'model_type': r.model_type or 'catboost',  # Session 350: LightGBM support
                 'train_start': str(r.training_start_date) if r.training_start_date else None,
                 'train_end': str(r.training_end_date) if r.training_end_date else None,
                 'backtest_mae': r.evaluation_mae,
@@ -364,18 +366,25 @@ class CatBoostMonthly(CatBoostV8):
         model_path = self.config["model_path"]
         self._load_model_from_path(model_path)
 
+        framework_name = 'LightGBM' if getattr(self, '_is_lightgbm', False) else 'CatBoost'
         logger.info(
-            f"CatBoost Monthly model loaded: {model_id} "
+            f"{framework_name} Monthly model loaded: {model_id} "
             f"(feature_set={self._feature_set}, "
             f"trained {self.config.get('train_start')} to {self.config.get('train_end')}, "
             f"file={self._model_file_name}, sha256={self._model_sha256})"
         )
 
     def _load_model_from_path(self, model_path: str):
-        """Load monthly model from local path or GCS."""
-        import catboost as cb
+        """Load monthly model from local path or GCS.
 
-        logger.info(f"Loading CatBoost monthly model from: {model_path}")
+        Session 350: Added LightGBM support. Detects model_type from config
+        and loads with the appropriate framework (CatBoost or LightGBM).
+        """
+        is_lightgbm = self.config.get('model_type') == 'lightgbm'
+        framework_name = 'LightGBM' if is_lightgbm else 'CatBoost'
+        file_ext = '.txt' if is_lightgbm else '.cbm'
+
+        logger.info(f"Loading {framework_name} monthly model from: {model_path}")
 
         if model_path.startswith("gs://"):
             from shared.clients import get_storage_client
@@ -385,12 +394,17 @@ class CatBoostMonthly(CatBoostV8):
             client = get_storage_client()
             bucket = client.bucket(bucket_name)
             blob = bucket.blob(blob_path)
-            local_path = f"/tmp/catboost_monthly_{self.model_id}.cbm"
+            local_path = f"/tmp/{framework_name.lower()}_monthly_{self.model_id}{file_ext}"
             blob.download_to_filename(local_path)
             logger.info(f"Downloaded monthly model from GCS to {local_path}")
 
-            self.model = cb.CatBoostRegressor()
-            self.model.load_model(local_path)
+            if is_lightgbm:
+                import lightgbm as lgb
+                self.model = lgb.Booster(model_file=local_path)
+            else:
+                import catboost as cb
+                self.model = cb.CatBoostRegressor()
+                self.model.load_model(local_path)
             self._model_file_name = Path(blob_path).name
             self._model_sha256 = _compute_file_sha256(local_path)
         else:
@@ -404,11 +418,17 @@ class CatBoostMonthly(CatBoostV8):
                     f"Expected for model_id: {self.model_id}"
                 )
 
-            self.model = cb.CatBoostRegressor()
-            self.model.load_model(model_path)
+            if is_lightgbm:
+                import lightgbm as lgb
+                self.model = lgb.Booster(model_file=model_path)
+            else:
+                import catboost as cb
+                self.model = cb.CatBoostRegressor()
+                self.model.load_model(model_path)
             self._model_file_name = Path(model_path).name
             self._model_sha256 = _compute_file_sha256(model_path)
 
+        self._is_lightgbm = is_lightgbm
         self._model_path = model_path
 
     def predict(
@@ -541,13 +561,14 @@ class CatBoostMonthly(CatBoostV8):
         if quality < 70:
             warnings.append('LOW_QUALITY_SCORE')
 
+        model_type_str = 'monthly_retrain_lgbm_v12' if getattr(self, '_is_lightgbm', False) else 'monthly_retrain_v12'
         return {
             'system_id': self.model_id,
             'model_version': self.model_id,
             'predicted_points': round(predicted_points, 2),
             'confidence_score': round(confidence, 2),
             'recommendation': recommendation,
-            'model_type': 'monthly_retrain_v12',
+            'model_type': model_type_str,
             'feature_count': 54 if self._feature_set == 'v12' else 50,
             'feature_version': features.get('feature_version'),
             'feature_quality_score': quality,

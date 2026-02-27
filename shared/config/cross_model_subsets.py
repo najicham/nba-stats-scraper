@@ -101,6 +101,44 @@ MODEL_FAMILIES = {
         'feature_set': 'v12',
         'loss': 'quantile',
     },
+    # Session 350: Model diversity experiments
+    # Classifier (binary OVER/UNDER) — MUST come before v12_mae catch-all
+    'v12_noveg_classify': {
+        'pattern': 'catboost_v12_noveg_classify_',
+        'alt_pattern': 'catboost_v12_classify_',
+        'exact': False,
+        'feature_set': 'v12_noveg',
+        'loss': 'classify',
+    },
+    # LightGBM — separate prefix, won't collide with catboost patterns
+    'lgbm_v12_noveg_mae': {
+        'pattern': 'lgbm_v12_noveg_',
+        'exact': False,
+        'feature_set': 'v12_noveg',
+        'loss': 'mae',
+    },
+    # Player-tier models — MUST come before v12_mae catch-all
+    'v12_noveg_star': {
+        'pattern': 'catboost_v12_noveg_star_',
+        'alt_pattern': 'catboost_v12_star_',
+        'exact': False,
+        'feature_set': 'v12_noveg',
+        'loss': 'mae',
+    },
+    'v12_noveg_starter': {
+        'pattern': 'catboost_v12_noveg_starter_',
+        'alt_pattern': 'catboost_v12_starter_',
+        'exact': False,
+        'feature_set': 'v12_noveg',
+        'loss': 'mae',
+    },
+    'v12_noveg_role': {
+        'pattern': 'catboost_v12_noveg_role_',
+        'alt_pattern': 'catboost_v12_role_',
+        'exact': False,
+        'feature_set': 'v12_noveg',
+        'loss': 'mae',
+    },
     'v12_mae': {
         'pattern': 'catboost_v12',
         'exact': False,  # Prefix match: catches 'catboost_v12', 'catboost_v12_noveg_train*',
@@ -170,7 +208,9 @@ def build_noveg_mae_sql_filter(alias: str = '') -> str:
     """
     prefix = f"{alias}." if alias else ""
     col = f"{prefix}system_id"
-    return f"({col} LIKE 'catboost_v12_noveg%' AND {col} NOT LIKE '%_q4%' AND {col} NOT LIKE '%_q5%' AND {col} NOT LIKE '%_q6%')"
+    return (f"({col} LIKE 'catboost_v12_noveg%' AND {col} NOT LIKE '%_q4%' AND {col} NOT LIKE '%_q5%' "
+            f"AND {col} NOT LIKE '%_q6%' AND {col} NOT LIKE '%_classify%' "
+            f"AND {col} NOT LIKE '%_star%' AND {col} NOT LIKE '%_starter%' AND {col} NOT LIKE '%_role%')")
 
 
 # ---------------------------------------------------------------------------
