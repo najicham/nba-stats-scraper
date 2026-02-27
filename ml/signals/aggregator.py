@@ -146,6 +146,7 @@ class BestBetsAggregator:
             'anti_pattern': 0,
             'model_direction_affinity': 0,
             'away_noveg': 0,
+            'star_under': 0,
             'signal_density': 0,
         }
 
@@ -210,6 +211,17 @@ class BestBetsAggregator:
             line_val = pred.get('line_value') or 0
             if pred.get('recommendation') == 'UNDER' and line_val > 0 and line_val < 12:
                 filter_counts['bench_under'] += 1
+                continue
+
+            # Star UNDER block (Session 354): season_avg >= 25 + UNDER = 51.3% HR (N=37)
+            # Root cause: model anchors to season avg (46% feature importance), but
+            # books price in hot streaks → structural UNDER bias for stars.
+            # 95% of star edge 3+ picks are UNDER. Below breakeven at -110.
+            # TODO: Make injury-aware — when star_teammates_out >= 1, HR = 62.5% (N=40).
+            # Pipe star_teammates_out through supplemental_data to enable this refinement.
+            season_avg = pred.get('points_avg_season') or 0
+            if pred.get('recommendation') == 'UNDER' and season_avg >= 25:
+                filter_counts['star_under'] += 1
                 continue
 
             # Line jumped UNDER block (Session 294, lowered 306): 38.2% HR at 2.0 (N=272)

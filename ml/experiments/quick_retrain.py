@@ -212,6 +212,10 @@ def parse_args():
     # New experiment features
     parser.add_argument('--recency-weight', type=int, default=None, metavar='DAYS',
                        help='Recency weight half-life in days (e.g., 30). Exponential decay.')
+    parser.add_argument('--tier-weight', type=str, default=None, metavar='WEIGHTS',
+                       help='Tier-based sample weights (e.g., "star=3.0,starter=1.5,role=1.0,bench=0.8"). '
+                            'Tiers: star (25+ ppg), starter (15-24), role (5-14), bench (<5). '
+                            'Multiplied with recency weights if both active.')
     parser.add_argument('--walkforward', action='store_true',
                        help='Run walk-forward validation (per-week eval breakdown)')
     parser.add_argument('--tune', action='store_true',
@@ -1751,6 +1755,49 @@ def calculate_sample_weights(dates, half_life_days):
     return weights.values
 
 
+def calculate_tier_weights(df, tier_weights_str):
+    """
+    Calculate per-sample weights based on player tier (points_avg_season).
+
+    Tiers: star (25+), starter (15-24), role (5-14), bench (<5).
+    Session 354: Stars have 51.3% HR due to model anchoring to season avg.
+    Upweighting forces CatBoost to optimize harder on star predictions.
+
+    Args:
+        df: Training DataFrame with 'feature_2_value' (points_avg_season)
+        tier_weights_str: Comma-separated tier=weight pairs
+            e.g. "star=3.0,starter=1.5,role=1.0,bench=0.8"
+
+    Returns:
+        Normalized weights array (mean = 1.0 to preserve effective sample size)
+    """
+    # Parse tier weights
+    tier_map = {'star': 1.0, 'starter': 1.0, 'role': 1.0, 'bench': 1.0}
+    for pair in tier_weights_str.split(','):
+        tier, weight = pair.strip().split('=')
+        tier_map[tier.strip()] = float(weight.strip())
+
+    # feature_2_value = points_avg_season
+    season_avg = df['feature_2_value'].fillna(0).astype(float)
+    weights = np.ones(len(df))
+    weights[season_avg >= 25] = tier_map['star']
+    weights[(season_avg >= 15) & (season_avg < 25)] = tier_map['starter']
+    weights[(season_avg >= 5) & (season_avg < 15)] = tier_map['role']
+    weights[season_avg < 5] = tier_map['bench']
+
+    # Normalize to mean=1.0 to preserve effective sample size
+    weights = weights / weights.mean()
+
+    # Print tier distribution
+    print(f"\n  Tier weights applied:")
+    print(f"    Star (25+):    {tier_map['star']:.1f}x  ({(season_avg >= 25).sum()} samples)")
+    print(f"    Starter (15-24): {tier_map['starter']:.1f}x  ({((season_avg >= 15) & (season_avg < 25)).sum()} samples)")
+    print(f"    Role (5-14):   {tier_map['role']:.1f}x  ({((season_avg >= 5) & (season_avg < 15)).sum()} samples)")
+    print(f"    Bench (<5):    {tier_map['bench']:.1f}x  ({(season_avg < 5).sum()} samples)")
+
+    return weights
+
+
 def compute_hit_rate(preds, actuals, lines, min_edge=1.0):
     """Compute hit rate for given edge threshold."""
     edges = preds - lines
@@ -2392,6 +2439,8 @@ def main():
     print(f"Line Source: {line_source_desc}")
     if args.recency_weight:
         print(f"Recency Weight: {args.recency_weight}-day half-life")
+    if args.tier_weight:
+        print(f"Tier Weight: {args.tier_weight}")
     if args.tune:
         print(f"Hyperparameter Tuning: ON (18-combo grid search)")
     if args.walkforward:
@@ -2697,6 +2746,23 @@ def main():
         print(f"  Weight stats: min={w_train_full.min():.4f}, max={w_train_full.max():.4f}, "
               f"mean={w_train_full.mean():.4f}, std={w_train_full.std():.4f}")
 
+    # Tier weighting (if --tier-weight) — Session 354
+    # Upweight star players to force model to optimize on star accuracy.
+    if args.tier_weight:
+        print(f"\nCalculating tier weights: {args.tier_weight}")
+        tier_weights = calculate_tier_weights(df_train, args.tier_weight)
+        if w_train_full is not None:
+            # Multiply with recency weights (both active)
+            w_train_full = w_train_full * tier_weights
+            w_train_full = w_train_full / w_train_full.mean()  # Re-normalize
+            print(f"  Combined (recency × tier) weight stats: "
+                  f"min={w_train_full.min():.4f}, max={w_train_full.max():.4f}, "
+                  f"mean={w_train_full.mean():.4f}")
+        else:
+            w_train_full = tier_weights
+        print(f"  Final weight stats: min={w_train_full.min():.4f}, max={w_train_full.max():.4f}, "
+              f"mean={w_train_full.mean():.4f}, std={w_train_full.std():.4f}")
+
     # Train/val split (carry weights through)
     if w_train_full is not None:
         X_train, X_val, y_train, y_val, w_train, w_val = train_test_split(
@@ -2959,6 +3025,8 @@ def main():
         mode_suffix += "_classify"
     if args.player_tier:
         mode_suffix += f"_{args.player_tier}"
+    if args.tier_weight:
+        mode_suffix += "_tw"
 
     # Save model with standard naming (Session 164: include train start-end range in filename)
     MODEL_OUTPUT_DIR.mkdir(exist_ok=True)
@@ -3398,6 +3466,7 @@ def main():
                     'classify': args.classify,
                     'framework': args.framework,
                     'player_tier': args.player_tier,
+                    'tier_weight': args.tier_weight,
                 }),
                 'train_period': {'start_date': dates['train_start'], 'end_date': dates['train_end'], 'samples': len(df_train)},
                 'eval_period': {'start_date': dates['eval_start'], 'end_date': dates['eval_end'], 'samples': len(df_eval)},

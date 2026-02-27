@@ -108,6 +108,7 @@ class TestAggregatorReturnType:
             'anti_pattern': 0,
             'model_direction_affinity': 0,
             'away_noveg': 0,
+            'star_under': 0,
             'signal_density': 0,
         }
 
@@ -129,7 +130,7 @@ class TestFilterTracking:
         assert summary['passed_filters'] == 0
 
     def test_edge_floor_tracked(self):
-        pred = _make_prediction(edge=3.0)  # Below MIN_EDGE=5.0
+        pred = _make_prediction(edge=2.5)  # Below MIN_EDGE=3.0 (Session 352)
         agg = BestBetsAggregator()
         _, summary = agg.aggregate([pred], {})
         assert summary['rejected']['edge_floor'] == 1
