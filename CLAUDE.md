@@ -153,7 +153,7 @@ nba-stats-scraper/
 
 7-day cadence, 42-day rolling window. `retrain-reminder` CF runs Mon 9 AM ET (Slack + SMS). Urgency: ROUTINE (7-10d), OVERDUE (11-14d), URGENT (15d+).
 
-**Dead ends (don't revisit):** Grow policy, CHAOS+quantile, residual mode, two-stage pipeline, Edge Classifier, Huber loss (47.4% HR), recency weighting (33.3%), lines-only training (20%), min-PPG filter (33.3%), 96-day window, Q43+Vegas (20% HR edge 5+, catastrophic UNDER compounding), RSM 0.5 with v9_low_vegas (hurts HR), 87-day training window (too much old data dilutes signal), min-data-in-leaf 25/50 (kills feature diversity, top 2 features = 64-68%), Q60 quantile (generates OVER volume but not profitably — 50% OVER HR), health gate on raw model HR (blocked profitable multi-model filtered best bets — removed Session 347).
+**Dead ends (don't revisit):** Grow policy, CHAOS+quantile, residual mode, two-stage pipeline, Edge Classifier, Huber loss (47.4% HR), recency weighting (33.3%), lines-only training (20%), min-PPG filter (33.3%), 96-day window, Q43+Vegas (20% HR edge 5+, catastrophic UNDER compounding), RSM 0.5 with v9_low_vegas (hurts HR), 87-day training window (too much old data dilutes signal), min-data-in-leaf 25/50 (kills feature diversity, top 2 features = 64-68%), Q60 quantile (generates OVER volume but not profitably — 50% OVER HR), health gate on raw model HR (blocked profitable multi-model filtered best bets — removed Session 347), blowout_recovery signal (50% HR 7-7 in best bets, 25% in Feb — disabled Session 349).
 
 ### Cross-Model Monitoring
 
@@ -259,6 +259,7 @@ WHERE game_date >= CURRENT_DATE() - 3 GROUP BY 1 ORDER BY 1 DESC;
 | **minScale drift on deploy** | **Deploy scripts now set `--min-instances` explicitly. Orchestrators + prediction services = 1, others = 0 (Session 338).** |
 | **Phase 6 trigger message format** | Use `{"export_types": ["signal-best-bets"], "target_date": "2026-02-24"}` — NOT `game_date`. See `phase6_export/main.py`. |
 | **SQL escape `\_` in Python** | BigQuery LIKE doesn't need backslash-escaping underscores. Use `%_q4%` not `%\\_q4%`. |
+| **Trends page stale data** | `trends-tonight` was missing from `phase6-hourly-trends` scheduler. Fixed Session 349. If stale again, check scheduler export_types include `trends-tonight`. |
 
 **Full troubleshooting:** `docs/02-operations/session-learnings.md`
 
