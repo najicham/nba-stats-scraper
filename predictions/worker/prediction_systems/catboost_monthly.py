@@ -366,10 +366,17 @@ class CatBoostMonthly(CatBoostV8):
         model_path = self.config["model_path"]
         self._load_model_from_path(model_path)
 
+        # Session 355: Anchor-line model detection.
+        # Anchor-line models predict deviations from prop line, not raw points.
+        # At inference: predicted_points = prop_line + model.predict(features)
+        # Detect from GCS path ('_anchor_') or training_config_json.
+        self._is_anchor_line = '_anchor_' in (self._model_file_name or '') or '_anchor_' in model_path
+
         framework_name = 'LightGBM' if getattr(self, '_is_lightgbm', False) else 'CatBoost'
+        anchor_str = ', ANCHOR-LINE' if self._is_anchor_line else ''
         logger.info(
             f"{framework_name} Monthly model loaded: {model_id} "
-            f"(feature_set={self._feature_set}, "
+            f"(feature_set={self._feature_set}{anchor_str}, "
             f"trained {self.config.get('train_start')} to {self.config.get('train_end')}, "
             f"file={self._model_file_name}, sha256={self._model_sha256})"
         )
@@ -524,6 +531,29 @@ class CatBoostMonthly(CatBoostV8):
                 'prediction_error_code': 'MODEL_PREDICT_FAILED',
                 'metadata': {'model_file_name': self._model_file_name},
             }
+
+        # Session 355: Anchor-line reverse transform.
+        # Model predicted deviation from prop line → add prop line back.
+        if self._is_anchor_line:
+            prop_line = features.get('vegas_points_line')
+            if prop_line and float(prop_line) > 0:
+                raw_prediction = float(prop_line) + raw_prediction
+            else:
+                # No prop line available — can't reconstruct absolute points
+                logger.warning(
+                    f"Anchor-line model {self.model_id}: no prop line for {player_lookup}, "
+                    f"raw_deviation={raw_prediction:.2f}"
+                )
+                return {
+                    'system_id': self.model_id,
+                    'model_version': self.model_id,
+                    'predicted_points': None,
+                    'confidence_score': 0,
+                    'recommendation': 'NO_PREDICTION',
+                    'model_type': 'monthly_retrain_v12',
+                    'prediction_error_code': 'ANCHOR_LINE_NO_PROP_LINE',
+                    'metadata': {'model_file_name': self._model_file_name},
+                }
 
         predicted_points = max(0, min(60, raw_prediction))
 

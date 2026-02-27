@@ -286,6 +286,12 @@ def parse_args():
                             'last10_avg_vs_line (scoring avg minus prop line). '
                             'Computed from existing feature store columns.')
 
+    # V16 features (Session 355): deviation-from-line history
+    parser.add_argument('--v16-features', action='store_true',
+                       help='Add V16 features: over_rate_last_10 (fraction of last 10 games '
+                            'where actual > prop_line), margin_vs_line_avg_last_5 '
+                            '(avg actual-line over last 5). Computed from training data.')
+
     # Model diversity experiments (Session 350)
     parser.add_argument('--classify', action='store_true',
                        help='Train binary OVER/UNDER classifier (Logloss) instead of regression')
@@ -2522,6 +2528,7 @@ def main():
         print(f"  Modes: no_vegas={args.no_vegas}, residual={args.residual}, "
               f"two_stage={args.two_stage}, quantile_alpha={args.quantile_alpha}, "
               f"anchor_line={args.anchor_line}, diff_features={args.diff_features}, "
+              f"v16_features={args.v16_features}, "
               f"classify={args.classify}, framework={args.framework}, player_tier={args.player_tier}")
         if args.exclude_features:
             print(f"  Exclude: {args.exclude_features}")
@@ -2717,6 +2724,61 @@ def main():
             vals = X_train_full[col].dropna()
             print(f"    {col}: mean={vals.mean():.2f}, std={vals.std():.2f}, "
                   f"NaN={X_train_full[col].isna().sum()}/{len(X_train_full)}")
+
+    # V16 features (Session 355): deviation-from-line history
+    # Computed as rolling per-player stats from the training data itself.
+    # over_rate_last_10: fraction of last 10 games where actual > prop_line
+    # margin_vs_line_avg_last_5: mean(actual - prop_line) over last 5 games
+    if args.v16_features:
+        print("\nComputing V16 features (over_rate, margin_vs_line)...")
+        for X_df, source_df, label in [
+            (X_train_full, df_train, 'train'),
+            (X_eval_full, df_eval, 'eval'),
+        ]:
+            actuals = source_df['actual_points'].values.astype(float)
+            prop_lines = source_df['feature_25_value'].fillna(0).values.astype(float)
+            player_lookups = source_df['player_lookup'].values
+            game_dates = pd.to_datetime(source_df['game_date']).values
+
+            # Sort by player + game_date for rolling computation
+            sort_idx = np.lexsort((game_dates, player_lookups))
+
+            over_rate_10 = np.full(len(X_df), np.nan)
+            margin_avg_5 = np.full(len(X_df), np.nan)
+
+            # Group by player and compute rolling stats
+            prev_player = None
+            player_history = []  # list of (actual - line) for games with valid lines
+            for pos in sort_idx:
+                player = player_lookups[pos]
+                if player != prev_player:
+                    player_history = []
+                    prev_player = player
+
+                # Compute features from history BEFORE this game (no leakage)
+                if len(player_history) >= 5:
+                    margin_avg_5[pos] = np.mean(player_history[-5:])
+                if len(player_history) >= 10:
+                    over_rate_10[pos] = np.mean([1.0 if m > 0 else 0.0 for m in player_history[-10:]])
+
+                # Add this game's result to history (only if valid prop line)
+                if prop_lines[pos] > 0:
+                    player_history.append(actuals[pos] - prop_lines[pos])
+
+            X_df['over_rate_last_10'] = over_rate_10
+            X_df['margin_vs_line_avg_last_5'] = margin_avg_5
+
+            non_nan_or = np.sum(~np.isnan(over_rate_10))
+            non_nan_ma = np.sum(~np.isnan(margin_avg_5))
+            print(f"  {label}: over_rate_last_10 coverage={non_nan_or}/{len(X_df)}, "
+                  f"margin_vs_line_avg_last_5 coverage={non_nan_ma}/{len(X_df)}")
+
+        # Stats
+        for col in ['over_rate_last_10', 'margin_vs_line_avg_last_5']:
+            vals = X_train_full[col].dropna()
+            if len(vals) > 0:
+                print(f"    {col}: mean={vals.mean():.3f}, std={vals.std():.3f}, "
+                      f"NaN={X_train_full[col].isna().sum()}/{len(X_train_full)}")
 
     lines = df_eval['vegas_line'].values
     active_feature_names = list(X_train_full.columns)
@@ -3131,6 +3193,8 @@ def main():
         mode_suffix += "_anchor"
     if args.diff_features:
         mode_suffix += "_diff"
+    if args.v16_features:
+        mode_suffix += "_v16"
 
     # Save model with standard naming (Session 164: include train start-end range in filename)
     MODEL_OUTPUT_DIR.mkdir(exist_ok=True)
