@@ -93,13 +93,44 @@ GROUP BY 1
 "
 ```
 
+## Part 4: Fleet Health Audit & Cleanup
+
+### Investigation: Session 343-344 models not producing
+**Not a bug — timing gap.** These models were only registered Feb 25-26 (during Session 348/350 work), not when originally trained. They started producing predictions Feb 26-27 and are accumulating data normally.
+
+### Disabled: `catboost_v12_noveg_q43_train0104_0215`
+Live performance: **14.8% HR edge 3+** (8/54 correct, 100% UNDER). Catastrophic Q43 UNDER compounding confirmed again on fresh training data. Disabled in registry.
+
+### LightGBM deploy verification
+- Build SUCCESS: `lightgbm==4.6.0` installed in Docker image
+- Old worker instances tried to load LightGBM models as CatBoost → `Incorrect model file descriptor` errors
+- New revision (00284) deployed at 15:43 UTC, serving 100% traffic
+- Models load lazily on first prediction request — LightGBM will produce first predictions on Feb 28 morning cycle
+
+### Fleet health as of Feb 27
+| Model | Live HR (edge 3+) | N | Status |
+|---|---|---|---|
+| `v9_low_vegas_train0106_0205` | 52.5% | 61 | Only model above breakeven |
+| Production `catboost_v12` | 48.7% | 152 | Below breakeven, 27d stale |
+| Production `catboost_v9` | 37.4% | 230 | Deeply unprofitable (affinity-blocked from best bets) |
+| `v12_noveg_mae_train0104_0215` | 35.3% | 17 | Too early to call (3 days) |
+| Session 343-344 (4 models) | N/A | 0-1 | Just started, accumulating |
+| `q55_tw_train0105_0215` | N/A | 0 | Started Feb 27, awaiting grading |
+| LightGBM (2 models) | N/A | 0 | Deployed, first predictions Feb 28 |
+
 ## Files Modified
 - `ml/experiments/quick_retrain.py` — `--force-register` flag, PARSE_JSON fix
-- `predictions/worker/requirements.txt` — `lightgbm==4.3.0`
+- `predictions/worker/requirements.txt` + `requirements-lock.txt` — `lightgbm==4.6.0`
 - `predictions/worker/prediction_systems/catboost_monthly.py` — LightGBM loading + prediction
 - `shared/config/cross_model_subsets.py` — 5 new model family patterns (earlier)
-- `CLAUDE.md` — Dead ends updated
+- `CLAUDE.md` — Model section updated, dead ends added (q43 noveg, LightGBM Q55, classifier, tier)
 
 ## Models in Registry (enabled, shadow)
 - `lgbm_v12_noveg_train1102_0209` — 73.3% HR, OVER 75%, UNDER 71%
 - `lgbm_v12_noveg_train1201_0209` — 67.7% HR, OVER 80%, UNDER 62%
+
+## Next Session Priorities
+1. **Check LightGBM first live results** (Feb 28 games graded)
+2. **Evaluate Session 343-344 models** at 5+ days of data (~Mar 1-2)
+3. **Decision on `v12_noveg_mae_train0104_0215`** — if still below 40% at 7 days, disable
+4. **Fresh retrain** if LightGBM validates — retrain with data through Feb 25+ for maximum freshness
