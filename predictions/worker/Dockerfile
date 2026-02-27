@@ -20,6 +20,10 @@ ENV BUILD_TIMESTAMP=${BUILD_TIMESTAMP}
 LABEL build.commit="${BUILD_COMMIT}"
 LABEL build.timestamp="${BUILD_TIMESTAMP}"
 
+# Install system dependencies required by ML libraries
+# libgomp1: OpenMP runtime needed by LightGBM (Session 352)
+RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 && rm -rf /var/lib/apt/lists/*
+
 # Set working directory
 WORKDIR /app
 

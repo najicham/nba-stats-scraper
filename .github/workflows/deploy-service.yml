@@ -43,11 +43,22 @@ jobs:
           echo "Deploying $SERVICE (commit $SHORT_SHA)"
           echo "Dockerfile: $DOCKERFILE"
 
+          # Session 352: Set min-instances per service to prevent cold-start drift.
+          # Orchestrators and prediction services need warm instances.
+          MIN_INSTANCES=0
+          case "$SERVICE" in
+            prediction-coordinator|prediction-worker|\
+            phase3-to-phase4-orchestrator|phase4-to-phase5-orchestrator|\
+            phase5-to-phase6-orchestrator)
+              MIN_INSTANCES=1
+              ;;
+          esac
+
           # Submit to Cloud Build using the repo's cloudbuild.yaml
           # This builds with the correct Dockerfile and deploys with --update-env-vars (safe)
           gcloud builds submit \
             --config cloudbuild.yaml \
-            --substitutions="_SERVICE=$SERVICE,_DOCKERFILE=$DOCKERFILE,_BUILD_TIMESTAMP=$BUILD_TIMESTAMP,SHORT_SHA=$SHORT_SHA" \
+            --substitutions="_SERVICE=$SERVICE,_DOCKERFILE=$DOCKERFILE,_BUILD_TIMESTAMP=$BUILD_TIMESTAMP,SHORT_SHA=$SHORT_SHA,_MIN_INSTANCES=$MIN_INSTANCES" \
             --project "$PROJECT" \
             --quiet
 

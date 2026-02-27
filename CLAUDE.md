@@ -311,19 +311,19 @@ python bin/monitoring/grading_gap_detector.py        # Grading gaps (auto: daily
 
 **12 active signals** (21 removed). **Edge-first architecture** — signals are for filtering and annotation, not selection.
 
-**Best Bets:** `edge 5+ → negative filters → signal density → rank by edge` (76.2% HR after Session 348 filter)
+**Best Bets:** `edge 3+ → negative filters → signal density (bypass edge ≥7) → rank by edge` (Session 352: lowered from 5.0)
 
 **Negative Filters:**
 1. Player blacklist: `<40% HR on 8+ edge-3+ picks`
 2. Avoid familiar: `6+ games vs opponent`
-3. Edge floor: `edge < 5.0` (57% HR)
+3. Edge floor: `edge < 3.0` (Session 352: lowered from 5.0 — edge 3-4 is best V12 band during degradation)
 4. **Model-direction affinity blocking** (Session 343): Blocks model+direction+edge combos with HR < 45% on 15+ picks. V9 UNDER 5+ = 30.7% HR (N=88) — blocked. V9_low_vegas has separate affinity group (62.5% UNDER — protected).
 5. Feature quality floor: `quality < 85` (24.0% HR)
 6. Bench UNDER block: `UNDER + line < 12` (35.1% HR)
 7. UNDER + line jumped 2+: `prop_line_delta >= 2.0` (38.2% HR)
 8. UNDER + line dropped 2+: `prop_line_delta <= -2.0` (35.2% HR)
 9. Away noveg block: `v12_noveg family + AWAY game` (43-44% HR vs 57-59% HOME)
-10. Signal density: `only base signals (model_health+high_edge+edge_spread)` (57.1% HR vs 76.2% with 4+ signals)
+10. Signal density: `base-only signals → skip unless edge ≥ 7.0` (Session 352 bypass for extreme edge)
 
 ### Active Signals
 

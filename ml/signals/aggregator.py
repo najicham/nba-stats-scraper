@@ -50,7 +50,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v348_signal_density_filter'
+ALGORITHM_VERSION = 'v352_edge_floor_3_density_bypass'
 
 # Base signals that fire on nearly every edge 5+ pick. Picks with ONLY
 # these signals hit 57.1% (N=42) vs 77.8% for picks with 4+ signals.
@@ -80,7 +80,7 @@ class BestBetsAggregator:
     Negative Filters:
         - Player blacklist: <40% HR on 8+ picks → skip (Session 284)
         - Avoid familiar: 6+ games vs this opponent → skip (Session 284)
-        - MIN_EDGE = 5.0: edge <5 hits only 57% (Session 297)
+        - MIN_EDGE = 3.0: lowered from 5.0 — edge 3-4 is best V12 band during degradation (Session 352)
         - UNDER edge 7+ block: 40.7% HR — catastrophic (Session 297, star exception reverted 318)
         - Feature quality floor: quality < 85 → skip (24.0% HR)
         - Bench UNDER block: UNDER + line < 12 → skip (35.1% HR)
@@ -88,12 +88,12 @@ class BestBetsAggregator:
         - Line dropped UNDER block: UNDER + line dropped 2+ → skip (35.2% HR, Session 306)
         - Neg +/- streak UNDER block: UNDER + 3+ neg games → skip (13.1% HR)
         - AWAY noveg block: v12_noveg + AWAY game → skip (43-44% HR vs 57-59% HOME, Session 347)
-        - Signal density: base-only signals (model_health+high_edge+edge_spread) → skip (57.1% HR vs 77.8% with 4+ signals, Session 348)
+        - Signal density: base-only signals → skip unless edge ≥ 7 (Session 352 bypass)
         - ANTI_PATTERN combos → skip
     """
 
     MIN_SIGNAL_COUNT = 2
-    MIN_EDGE = 5.0  # Edge 5+ = 71.1% HR (Session 297 analysis)
+    MIN_EDGE = 3.0  # Lowered from 5.0 (Session 352): edge 3-4 is best V12 band during model degradation
 
     def __init__(
         self,
@@ -157,7 +157,7 @@ class BestBetsAggregator:
                 filter_counts['blacklist'] += 1
                 continue
 
-            # Edge floor: edge <5 hits 57%, edge 5+ hits 71% (Session 297)
+            # Edge floor: lowered to 3.0 (Session 352) — signal filters provide quality gate
             pred_edge = abs(pred.get('edge') or 0)
             if pred_edge < self.MIN_EDGE:
                 filter_counts['edge_floor'] += 1
@@ -267,8 +267,10 @@ class BestBetsAggregator:
             # signals (model_health, high_edge, edge_spread_optimal) hit 57.1%
             # (N=42). Picks with at least one additional signal hit 77.8% (N=63).
             # Block picks where every qualifying signal is in the base set.
+            # Session 352: Bypass for edge ≥ 7 — at extreme edge the conviction
+            # itself is informative (all-model edge 7+ = 52-56% HR). Max 1-2/day.
             tag_set = frozenset(tags)
-            if tag_set and tag_set.issubset(BASE_SIGNALS):
+            if tag_set and tag_set.issubset(BASE_SIGNALS) and pred_edge < 7.0:
                 filter_counts['signal_density'] += 1
                 continue
 

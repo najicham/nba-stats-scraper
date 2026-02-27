@@ -68,7 +68,22 @@ steps:
       - 'BUILD_TIMESTAMP=${_BUILD_TIMESTAMP}'
       - '.'
 
-  # Step 2: Deploy to Cloud Run
+  # Step 2: Push the image BEFORE deploying
+  # Session 352: The `images:` section pushes AFTER all steps complete, but
+  # `gcloud run deploy --image` pulls from the registry. Without this push,
+  # the deploy step would pull the PREVIOUS :latest tag, deploying stale code
+  # while updating BUILD_COMMIT env var — making drift checks show "up to date".
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'us-west2-docker.pkg.dev/nba-props-platform/nba-props/${_SERVICE}:latest'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'us-west2-docker.pkg.dev/nba-props-platform/nba-props/${_SERVICE}:${SHORT_SHA}'
+
+  # Step 3: Deploy to Cloud Run
   # Session 338: Added --min-instances to prevent cold-start drift on redeploy.
   # Override per-trigger via _MIN_INSTANCES substitution (default: 0).
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
