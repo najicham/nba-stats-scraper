@@ -390,8 +390,13 @@ else:
 
 ```sql
 -- Compare scheduled final games vs games in analytics
+-- NOTE: game_id formats differ between tables:
+--   nba_reference.nba_schedule: NBA numeric ID (e.g., 0022500852)
+--   nba_analytics.player_game_summary: date_away_home (e.g., 20260226_MIA_PHI)
+-- Join on constructed game_id to bridge the format mismatch.
 WITH scheduled AS (
-    SELECT game_id, away_team_tricode, home_team_tricode, game_status
+    SELECT game_id, away_team_tricode, home_team_tricode, game_status,
+           CONCAT(REPLACE('{GAME_DATE}', '-', ''), '_', away_team_tricode, '_', home_team_tricode) as analytics_game_id
     FROM `nba-props-platform.nba_reference.nba_schedule`
     WHERE game_date = '{GAME_DATE}'
       AND game_status = 3  -- Final only
@@ -407,7 +412,7 @@ SELECT
     s.home_team_tricode,
     CASE WHEN a.game_id IS NOT NULL THEN 'OK' ELSE 'MISSING' END as analytics_status
 FROM scheduled s
-LEFT JOIN analytics a ON s.game_id = a.game_id
+LEFT JOIN analytics a ON s.analytics_game_id = a.game_id
 ORDER BY analytics_status DESC, s.game_id
 ```
 

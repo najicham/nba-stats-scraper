@@ -1348,8 +1348,37 @@ def orchestrate_phase3_to_phase4(cloud_event):
             f"entities_changed={len(entities_changed)}, correlation_id={correlation_id})"
         )
 
-        # Write to BigQuery backup (non-blocking, fire-and-forget)
-        # This provides backup tracking if Firestore becomes unavailable
+        # Update completion state with atomic transaction
+        # IMPORTANT: This MUST run BEFORE completion_tracker writes to Firestore.
+        # Session 363 fix: completion_tracker was writing to the same Firestore doc
+        # BEFORE this transaction, causing every processor to appear as a "duplicate"
+        # (line 1554 `if processor_name in current` was always True). This meant
+        # _mode was never set, _triggered was never set, and Phase 4 was never
+        # triggered via the orchestrator (only backup scheduler worked).
+        doc_ref = db.collection('phase3_completion').document(game_date)
+
+        # Create transaction and execute atomic update
+        transaction = db.transaction()
+        should_trigger, mode, trigger_reason = update_completion_atomic(
+            transaction,
+            doc_ref,
+            processor_name,
+            {
+                'completed_at': firestore.SERVER_TIMESTAMP,
+                'correlation_id': correlation_id,
+                'status': status,
+                'record_count': message_data.get('record_count', 0),
+                'execution_id': message_data.get('execution_id'),
+                'is_incremental': is_incremental,
+                'entities_changed': entities_changed
+            },
+            game_date  # Pass game_date for mode detection
+        )
+
+        # Write to completion_tracker AFTER the atomic transaction (non-blocking)
+        # This provides backup tracking in BigQuery. The Firestore write from
+        # completion_tracker is safe AFTER the transaction since the transaction
+        # already recorded the processor and evaluated trigger logic.
         if COMPLETION_TRACKER_ENABLED:
             try:
                 tracker = get_completion_tracker()
@@ -1374,7 +1403,6 @@ def orchestrate_phase3_to_phase4(cloud_event):
                     logger.warning(f"Firestore write failed for {game_date}, using BigQuery backup")
             except Exception as tracker_error:
                 # Non-blocking - log but don't fail the orchestration
-                # IMPORTANT: This exception prevents completion from being recorded!
                 import traceback
                 logger.error(
                     f"COMPLETION TRACKING FAILED (non-blocking): {tracker_error}",
@@ -1385,27 +1413,6 @@ def orchestrate_phase3_to_phase4(cloud_event):
                         "error_type": type(tracker_error).__name__
                     }
                 )
-
-        # Update completion state with atomic transaction
-        doc_ref = db.collection('phase3_completion').document(game_date)
-
-        # Create transaction and execute atomic update
-        transaction = db.transaction()
-        should_trigger, mode, trigger_reason = update_completion_atomic(
-            transaction,
-            doc_ref,
-            processor_name,
-            {
-                'completed_at': firestore.SERVER_TIMESTAMP,
-                'correlation_id': correlation_id,
-                'status': status,
-                'record_count': message_data.get('record_count', 0),
-                'execution_id': message_data.get('execution_id'),
-                'is_incremental': is_incremental,
-                'entities_changed': entities_changed
-            },
-            game_date  # Pass game_date for mode detection
-        )
 
         if should_trigger:
             logger.info(

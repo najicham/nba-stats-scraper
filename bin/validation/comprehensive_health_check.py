@@ -474,47 +474,45 @@ class ComprehensiveHealthChecker:
     def _check_cross_phase_consistency(self, check_date: date):
         """Check that phase outputs are consistent.
 
-        NOTE: Schedule uses NBA game_id format (0022500XXX), while BDL boxscores
-        use YYYYMMDD_AWAY_HOME format. We join on date+teams to compare correctly.
+        NOTE: game_id formats differ between tables:
+          - nba_reference.nba_schedule: NBA numeric IDs (e.g., 0022500852)
+          - nba_analytics.player_game_summary: date_away_home (e.g., 20260226_MIA_PHI)
+          - nba_raw.bdl_player_boxscores: YYYYMMDD_AWAY_HOME format
+
+        Session 363 fix: Join schedule→analytics using constructed game_id
+        (YYYYMMDD_AWAY_HOME) to bridge the format mismatch. Previously the
+        analytics CTE counted games independently, which worked for counts
+        but couldn't detect per-game gaps.
         """
+        check_date_str = str(check_date)
+        check_date_compact = check_date_str.replace('-', '')
         query = f"""
         WITH schedule AS (
-          -- Schedule uses NBA format game_id, so we construct the BDL format for comparison
           SELECT
-            COUNT(DISTINCT game_id) as games,
-            COUNT(DISTINCT CONCAT(
-              FORMAT_DATE('%Y%m%d', game_date), '_',
-              away_team_tricode, '_', home_team_tricode
-            )) as games_bdl_format
+            game_id,
+            away_team_tricode,
+            home_team_tricode,
+            -- Construct analytics-format game_id for cross-phase join
+            CONCAT('{check_date_compact}', '_', away_team_tricode, '_', home_team_tricode) as analytics_game_id
           FROM `{self.project_id}.nba_raw.v_nbac_schedule_latest`
           WHERE game_date = '{check_date}' AND game_status = 3
         ),
-        boxscores AS (
-          SELECT COUNT(DISTINCT game_id) as games
-          FROM `{self.project_id}.nba_raw.bdl_player_boxscores`
-          WHERE game_date = '{check_date}'
-        ),
         analytics AS (
-          SELECT COUNT(DISTINCT game_id) as games
+          SELECT DISTINCT game_id
           FROM `{self.project_id}.nba_analytics.player_game_summary`
           WHERE game_date = '{check_date}'
         ),
-        -- Cross-check: games in schedule that have boxscores (using date+teams join)
-        schedule_with_boxscores AS (
+        -- Cross-check: schedule games matched to analytics (using constructed game_id)
+        schedule_with_analytics AS (
           SELECT COUNT(DISTINCT s.game_id) as matched_games
-          FROM `{self.project_id}.nba_raw.v_nbac_schedule_latest` s
-          INNER JOIN `{self.project_id}.nba_raw.bdl_player_boxscores` b
-            ON s.game_date = b.game_date
-            AND s.home_team_tricode = b.home_team_abbr
-            AND s.away_team_tricode = b.away_team_abbr
-          WHERE s.game_date = '{check_date}' AND s.game_status = 3
+          FROM schedule s
+          INNER JOIN analytics a ON s.analytics_game_id = a.game_id
         )
         SELECT
-          s.games as schedule_games,
-          b.games as boxscore_games,
-          a.games as analytics_games,
-          sb.matched_games as schedule_boxscore_matched
-        FROM schedule s, boxscores b, analytics a, schedule_with_boxscores sb
+          (SELECT COUNT(*) FROM schedule) as schedule_games,
+          (SELECT COUNT(*) FROM analytics) as analytics_games,
+          sa.matched_games as schedule_analytics_matched
+        FROM schedule_with_analytics sa
         """
 
         results = self._query(query)
@@ -523,22 +521,17 @@ class ComprehensiveHealthChecker:
 
         row = results[0]
         schedule = row.get('schedule_games') or 0
-        boxscores = row.get('boxscore_games') or 0
         analytics = row.get('analytics_games') or 0
-        matched = row.get('schedule_boxscore_matched') or 0
+        matched = row.get('schedule_analytics_matched') or 0
 
         issues = []
         severity = Severity.OK
 
-        # Use matched count (date+teams join) for accurate comparison
-        # This handles the game_id format mismatch between schedule (NBA) and BDL
+        # Use matched count (constructed game_id join) for accurate comparison
         if schedule > 0 and matched < schedule:
-            issues.append(f"Missing boxscores: {matched}/{schedule} schedule games have boxscores")
-            severity = Severity.ERROR
-
-        if boxscores > 0 and analytics < boxscores:
-            issues.append(f"Missing analytics: {analytics}/{boxscores}")
-            severity = Severity.ERROR if analytics == 0 else Severity.WARNING
+            missing = schedule - matched
+            issues.append(f"Missing analytics: {matched}/{schedule} schedule games have analytics ({missing} missing)")
+            severity = Severity.ERROR if matched == 0 else Severity.WARNING
 
         if issues:
             message = "; ".join(issues)
@@ -547,7 +540,7 @@ class ComprehensiveHealthChecker:
                 message = f"No final games for {check_date}"
                 severity = Severity.OK
             else:
-                message = f"Phases consistent: {schedule}→{boxscores}→{analytics}"
+                message = f"Phases consistent: {schedule} scheduled → {analytics} analytics ({matched} matched)"
 
         self._add_check(
             name="cross_phase_consistency",
@@ -556,9 +549,8 @@ class ComprehensiveHealthChecker:
             message=message,
             details={
                 "schedule_games": schedule,
-                "boxscore_games": boxscores,
                 "analytics_games": analytics,
-                "schedule_boxscore_matched": matched
+                "schedule_analytics_matched": matched
             }
         )
 
