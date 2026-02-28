@@ -756,6 +756,9 @@ class SignalBestBetsExporter(BaseExporter):
         Queries nba_raw.nbac_schedule for game_status and filters out any
         predictions where game_status >= 2 (In Progress or Final).
 
+        Also writes removed predictions to the late_picks_audit table for
+        persistent tracking (Session 371).
+
         Returns:
             Tuple of (filtered_predictions, set of started game_ids that were removed).
         """
@@ -782,38 +785,84 @@ class SignalBestBetsExporter(BaseExporter):
                 job_config=bigquery.QueryJobConfig(query_parameters=params),
             ).result(timeout=30)
 
-            # Build set of started game team pairs: "AWAY_HOME"
-            started_teams = set()
+            # Build map of started game team pairs: "AWAY_HOME" → game_status
+            started_games = {}
             for row in rows:
-                started_teams.add(f"{row.away_team_tricode}_{row.home_team_tricode}")
+                key = f"{row.away_team_tricode}_{row.home_team_tricode}"
+                started_games[key] = row.game_status
 
-            if not started_teams:
+            if not started_games:
                 return predictions, set()
 
             # Filter predictions — game_id format: "YYYYMMDD_AWAY_HOME"
             filtered = []
+            removed_preds = []
             removed_game_ids = set()
-            removed_count = 0
             for pred in predictions:
                 gid = pred.get('game_id', '')
                 parts = gid.split('_', 1)
-                if len(parts) == 2 and parts[1] in started_teams:
-                    removed_count += 1
+                if len(parts) == 2 and parts[1] in started_games:
+                    pred['_game_status'] = started_games[parts[1]]
+                    removed_preds.append(pred)
                     removed_game_ids.add(gid)
                 else:
                     filtered.append(pred)
 
-            if removed_count > 0:
+            if removed_preds:
                 logger.warning(
-                    f"Filtered {removed_count} predictions for {len(removed_game_ids)} "
+                    f"Filtered {len(removed_preds)} predictions for {len(removed_game_ids)} "
                     f"started/finished games: {sorted(removed_game_ids)}"
                 )
+                self._write_late_picks_audit(target_date, removed_preds)
 
             return filtered, removed_game_ids
 
         except Exception as e:
             logger.warning(f"Started game filter failed (non-fatal): {e}")
             return predictions, set()
+
+    def _write_late_picks_audit(
+        self, target_date: str, removed_preds: List[Dict]
+    ) -> None:
+        """Write filtered-out predictions to late_picks_audit for tracking.
+
+        Non-fatal — audit failure does not block the export pipeline.
+        """
+        table_ref = f'{PROJECT_ID}.nba_predictions.late_picks_audit'
+        now_utc = datetime.now(timezone.utc).isoformat()
+
+        rows = []
+        for pred in removed_preds:
+            rows.append({
+                'audit_date': target_date,
+                'game_id': pred.get('game_id', ''),
+                'game_date': target_date,
+                'player_lookup': pred.get('player_lookup', ''),
+                'source_model_id': pred.get('source_model_id'),
+                'recommendation': pred.get('recommendation'),
+                'edge': round(float(pred.get('edge') or 0), 1),
+                'signal_count': pred.get('signal_count', 0),
+                'game_status': pred.get('_game_status'),
+                'prediction_created_at': pred.get('prediction_created_at'),
+                'export_attempted_at': now_utc,
+                'filter_action': 'BLOCKED_STARTED_GAME',
+                'algorithm_version': pred.get('algorithm_version'),
+            })
+
+        try:
+            job_config = bigquery.LoadJobConfig(
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                create_disposition=bigquery.CreateDisposition.CREATE_NEVER,
+            )
+            load_job = self.bq_client.load_table_from_json(
+                rows, table_ref, job_config=job_config
+            )
+            load_job.result(timeout=30)
+            logger.info(
+                f"Wrote {len(rows)} late picks to {table_ref} for {target_date}"
+            )
+        except Exception as e:
+            logger.warning(f"Late picks audit write failed (non-fatal): {e}")
 
     def _get_best_bets_record(self, target_date: str) -> Dict[str, Any]:
         """Query W-L record for the best_bets subset across season/month/week.

@@ -1541,6 +1541,54 @@ Backfill command (safe — only generates for models missing predictions):
 
 **Reference**: Session 157 contamination discovery, Session 158 prevention mechanisms
 
+### Phase 0.488: Late Picks Audit (Session 371 - NEW)
+
+**IMPORTANT**: Check for picks that were blocked because games had already started, and verify no stale picks remain in best bets.
+
+**Why this matters**: Session 371 discovered that POR@CHA (10 AM PST tipoff) predictions were generated 3h post-tipoff and published as best bets. The exporter's `_filter_started_games()` now blocks these and writes to `late_picks_audit`, but this check provides defense-in-depth.
+
+**Check 1: Any picks blocked today?**
+
+```bash
+bq query --use_legacy_sql=false --project_id=nba-props-platform "
+SELECT filter_action, COUNT(*) as n, ARRAY_AGG(DISTINCT game_id) as games
+FROM nba_predictions.late_picks_audit
+WHERE audit_date = @target_date
+GROUP BY 1
+"
+```
+
+**Check 2: Defense-in-depth — any current best bets for started/finished games?**
+
+```bash
+bq query --use_legacy_sql=false --project_id=nba-props-platform "
+SELECT s.game_id, COUNT(*) as picks_for_started_game
+FROM nba_predictions.signal_best_bets_picks s
+JOIN nba_raw.nbac_schedule g
+  ON s.game_date = g.game_date
+  AND s.game_id = CONCAT(REPLACE(CAST(g.game_date AS STRING), '-', ''), '_', g.away_team_tricode, '_', g.home_team_tricode)
+WHERE s.game_date = @target_date
+  AND g.game_status >= 2
+GROUP BY 1
+"
+```
+
+**Expected Results / Severity**:
+
+| Condition | Status | Meaning |
+|-----------|--------|---------|
+| 0 audit records + 0 stale picks | `[PASS]` | No late picks detected |
+| Audit records present, 0 stale picks | `[WARN]` | Filter working — {n} picks blocked for started games: {game_ids} |
+| Any stale picks in best bets for started games | `[FAIL]` | {n} picks still published for finished games: {game_ids} — filter may not be deployed |
+
+**If FAIL detected**:
+1. Check deployment drift: `./bin/check-deployment-drift.sh --verbose`
+2. Verify `_filter_started_games` is in the deployed exporter
+3. Manually delete stale picks: `DELETE FROM nba_predictions.signal_best_bets_picks WHERE game_date = @target_date AND game_id = '{game_id}'`
+4. Re-trigger Phase 6 export to refresh GCS JSON
+
+**Reference**: Session 371 late picks audit infrastructure
+
 ### Phase 0.49: Duplicate Team Record Detection (Session 103 - CRITICAL)
 
 **IMPORTANT**: Check for duplicate team_offense_game_summary records with conflicting stats.
