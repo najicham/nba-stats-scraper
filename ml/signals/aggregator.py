@@ -50,7 +50,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v355_usage_starter_filters_premium_bypass'
+ALGORITHM_VERSION = 'v365_model_hr_weight_away_block_multimodel_blacklist'
 
 # Base signals that fire on nearly every edge 5+ pick. Picks with ONLY
 # these signals hit 57.1% (N=42) vs 77.8% for picks with 4+ signals.
@@ -87,7 +87,7 @@ class BestBetsAggregator:
         - Line jumped UNDER block: UNDER + line jumped 2+ → skip (38.2% HR, Session 306)
         - Line dropped UNDER block: UNDER + line dropped 2+ → skip (35.2% HR, Session 306)
         - Neg +/- streak UNDER block: UNDER + 3+ neg games → skip (13.1% HR)
-        - AWAY noveg block: v12_noveg + AWAY game → skip (43-44% HR vs 57-59% HOME, Session 347)
+        - AWAY block: v12_noveg/v9 + AWAY game → skip (43-48% HR vs 57-59% HOME, Session 347/365)
         - Signal density: base-only signals → skip unless edge ≥ 7 (Session 352 bypass)
         - ANTI_PATTERN combos → skip
     """
@@ -201,12 +201,13 @@ class BestBetsAggregator:
                     filter_counts['model_direction_affinity'] += 1
                     continue
 
-            # AWAY noveg block (Session 347): v12_noveg models hit 57-59% HOME
-            # but only 43-44% AWAY — +15pp gap (N=40+ each). Structural to
-            # the no-vegas feature set.
+            # AWAY block (Session 347, expanded Session 365):
+            # v12_noveg: 43.8% AWAY (N=105) vs 57.0% HOME — structural to no-vegas features
+            # v9: 48.1% AWAY (N=449) vs 58.8% HOME — below breakeven at -110
             if not pred.get('is_home', False):
                 from ml.signals.model_direction_affinity import get_affinity_group
-                if get_affinity_group(source_family) == 'v12_noveg':
+                away_group = get_affinity_group(source_family)
+                if away_group in ('v12_noveg', 'v9'):
                     filter_counts['away_noveg'] += 1
                     continue
 
@@ -377,7 +378,7 @@ class BestBetsAggregator:
         if filter_counts['model_direction_affinity'] > 0:
             logger.info(f"Model-direction affinity: skipped {filter_counts['model_direction_affinity']} predictions")
         if filter_counts['away_noveg'] > 0:
-            logger.info(f"AWAY noveg block: skipped {filter_counts['away_noveg']} predictions")
+            logger.info(f"AWAY block (v12_noveg/v9): skipped {filter_counts['away_noveg']} predictions")
         if filter_counts['med_usage_under'] > 0:
             logger.info(f"Medium teammate usage UNDER block: skipped {filter_counts['med_usage_under']} predictions")
         if filter_counts['starter_v12_under'] > 0:

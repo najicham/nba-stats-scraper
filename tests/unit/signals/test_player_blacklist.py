@@ -186,11 +186,11 @@ class TestComputePlayerBlacklist:
         assert stats['blacklisted'] == 1
 
     def test_custom_system_id_passed_to_query(self):
-        """system_id parameter is passed to the BQ query."""
+        """system_id parameter is passed to the BQ query when multi_model=False."""
         client = _mock_bq_client([])
 
         compute_player_blacklist(
-            client, '2026-02-17', system_id='catboost_v12'
+            client, '2026-02-17', system_id='catboost_v12', multi_model=False
         )
 
         # Verify the query was called
@@ -200,6 +200,18 @@ class TestComputePlayerBlacklist:
         # Find the system_id parameter
         params = {p.name: p.value for p in job_config.query_parameters}
         assert params['system_id'] == 'catboost_v12'
+
+    def test_multi_model_default_no_system_id_filter(self):
+        """Default multi_model=True does not filter by system_id."""
+        client = _mock_bq_client([])
+
+        compute_player_blacklist(client, '2026-02-17')
+
+        assert client.query.called
+        call_args = client.query.call_args
+        job_config = call_args[1].get('job_config') or call_args[0][1] if len(call_args[0]) > 1 else call_args[1]['job_config']
+        params = {p.name: p.value for p in job_config.query_parameters}
+        assert 'system_id' not in params
 
 
 # ============================================================================
@@ -290,7 +302,7 @@ class TestAggregatorBlacklistIntegration:
 
     def test_algorithm_version_updated(self):
         """ALGORITHM_VERSION should reflect the latest session update."""
-        assert 'v348' in ALGORITHM_VERSION
+        assert 'v365' in ALGORITHM_VERSION
 
 
 # ============================================================================

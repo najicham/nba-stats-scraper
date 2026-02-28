@@ -368,8 +368,8 @@ class TestAwayNovegFilter:
         assert len(picks) == 1
         assert summary['rejected']['away_noveg'] == 0
 
-    def test_away_non_noveg_allowed(self):
-        """Non-noveg AWAY prediction is NOT blocked."""
+    def test_away_v9_blocked(self):
+        """V9 AWAY prediction is blocked (Session 365: 48.1% AWAY HR, N=449)."""
         pred = _make_prediction(
             source_model_family='v9_mae',
             is_home=False,
@@ -377,8 +377,8 @@ class TestAwayNovegFilter:
         signals = self._make_signal_results_for(pred)
         agg = BestBetsAggregator()
         picks, summary = agg.aggregate([pred], signals)
-        assert len(picks) == 1
-        assert summary['rejected']['away_noveg'] == 0
+        assert len(picks) == 0
+        assert summary['rejected']['away_noveg'] == 1
 
     def test_away_noveg_q45_blocked(self):
         """v12_q45 (also noveg group) AWAY prediction is rejected."""

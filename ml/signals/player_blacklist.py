@@ -28,6 +28,7 @@ def compute_player_blacklist(
     bq_client: bigquery.Client,
     target_date: str,
     system_id: str = None,
+    multi_model: bool = True,
     min_picks: int = DEFAULT_MIN_PICKS,
     hr_threshold: float = DEFAULT_HR_THRESHOLD,
     project_id: str = 'nba-props-platform',
@@ -41,7 +42,10 @@ def compute_player_blacklist(
     Args:
         bq_client: BigQuery client.
         target_date: Date string YYYY-MM-DD (predictions date, query up to day before).
-        system_id: Model system_id to filter on (default: champion).
+        system_id: Model system_id to filter on (only used when multi_model=False).
+        multi_model: If True (default), aggregate across ALL enabled models.
+            Session 365: Changed default to True — players escaping blacklist
+            through non-champion models when best bets uses multi-model selection.
         min_picks: Minimum graded edge-3+ picks to be eligible for blacklist.
         hr_threshold: Hit rate percentage below which a player is blacklisted.
             Strict less-than: exactly hr_threshold is NOT blacklisted.
@@ -54,13 +58,21 @@ def compute_player_blacklist(
     """
     empty_result = (set(), {'evaluated': 0, 'blacklisted': 0, 'players': []})
 
-    if system_id is None:
+    if not multi_model and system_id is None:
         system_id = get_best_bets_model_id()
 
     try:
         target = date.fromisoformat(target_date) if isinstance(target_date, str) else target_date
         season_year = get_season_year_from_date(target)
         season_start = get_season_start_date(season_year, use_schedule_service=False)
+
+        # Session 365: Multi-model blacklist aggregates across ALL models.
+        # A player who consistently fails to beat the line should be blocked
+        # regardless of which model generated the prediction.
+        if multi_model:
+            system_clause = ""  # No system_id filter — aggregate across all
+        else:
+            system_clause = "AND system_id = @system_id"
 
         query = f"""
         SELECT
@@ -72,20 +84,25 @@ def compute_player_blacklist(
         FROM `{project_id}.nba_predictions.prediction_accuracy`
         WHERE game_date >= @season_start
           AND game_date < @target_date
-          AND system_id = @system_id
+          {system_clause}
           AND ABS(predicted_points - line_value) >= 3
           AND is_voided = FALSE
         GROUP BY player_lookup
         HAVING COUNT(*) >= @min_picks
         """
 
-        job_config = bigquery.QueryJobConfig(
-            query_parameters=[
-                bigquery.ScalarQueryParameter('season_start', 'DATE', season_start.isoformat()),
-                bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+        query_params = [
+            bigquery.ScalarQueryParameter('season_start', 'DATE', season_start.isoformat()),
+            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+            bigquery.ScalarQueryParameter('min_picks', 'INT64', min_picks),
+        ]
+        if not multi_model:
+            query_params.append(
                 bigquery.ScalarQueryParameter('system_id', 'STRING', system_id),
-                bigquery.ScalarQueryParameter('min_picks', 'INT64', min_picks),
-            ]
+            )
+
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=query_params
         )
 
         result = bq_client.query(query, job_config=job_config).result(timeout=60)

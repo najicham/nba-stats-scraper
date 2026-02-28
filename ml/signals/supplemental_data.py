@@ -87,7 +87,23 @@ def query_predictions_with_supplements(
     if multi_model:
         system_filter = build_system_id_sql_filter('p')
         preds_cte = f"""
-    WITH all_model_preds AS (
+    -- Session 365: Model HR weight — de-prioritize poorly-performing models in
+    -- per-player selection. Models at 55%+ HR get weight 1.0, below 55% get
+    -- proportionally reduced. New models with <10 graded picks default to 50% HR.
+    WITH model_hr AS (
+      SELECT system_id AS model_id,
+        ROUND(100.0 * COUNTIF(prediction_correct) / NULLIF(COUNT(*), 0), 1) AS hr_14d,
+        COUNT(*) AS n_14d
+      FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy`
+      WHERE game_date >= DATE_SUB(@target_date, INTERVAL 14 DAY)
+        AND game_date < @target_date
+        AND ABS(predicted_points - line_value) >= 3
+        AND prediction_correct IS NOT NULL
+        AND is_voided IS NOT TRUE
+      GROUP BY system_id
+    ),
+
+    all_model_preds AS (
       SELECT
         p.player_lookup,
         p.game_id,
@@ -98,8 +114,15 @@ def query_predictions_with_supplements(
         p.recommendation,
         CAST(p.predicted_points - p.current_points_line AS FLOAT64) AS edge,
         CAST(p.confidence_score AS FLOAT64) AS confidence_score,
-        COALESCE(p.feature_quality_score, 0) AS feature_quality_score
+        COALESCE(p.feature_quality_score, 0) AS feature_quality_score,
+        -- Model HR weight: min(1.0, rolling_hr / 55.0)
+        -- Models with <10 graded picks or no data default to 50% → weight 0.91
+        LEAST(1.0, COALESCE(
+          CASE WHEN mh.n_14d >= 10 THEN mh.hr_14d ELSE NULL END,
+          50.0
+        ) / 55.0) AS model_hr_weight
       FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions` p
+      LEFT JOIN model_hr mh ON mh.model_id = p.system_id
       WHERE p.game_date = @target_date
         AND {system_filter}
         AND p.is_active = TRUE
@@ -133,9 +156,11 @@ def query_predictions_with_supplements(
       FROM all_model_preds amp
       LEFT JOIN model_counts mc
         ON mc.player_lookup = amp.player_lookup AND mc.game_id = amp.game_id
+      -- Session 365: Rank by HR-weighted edge so better-performing models
+      -- win per-player selection over poorly-performing ones
       QUALIFY ROW_NUMBER() OVER (
         PARTITION BY amp.player_lookup, amp.game_id
-        ORDER BY ABS(amp.edge) DESC, amp.system_id DESC
+        ORDER BY ABS(amp.edge) * amp.model_hr_weight DESC, amp.system_id DESC
       ) = 1
     ),"""
     else:
@@ -441,6 +466,8 @@ def query_predictions_with_supplements(
             champ_edge = row_dict.get('champion_edge')
             pred['champion_edge'] = float(champ_edge) if champ_edge is not None else None
             pred['direction_conflict'] = bool(row_dict.get('direction_conflict'))
+            # Session 365: Model HR weight used in per-player selection
+            pred['model_hr_weight'] = float(row_dict.get('model_hr_weight') or 0.91)
 
         predictions.append(pred)
 
