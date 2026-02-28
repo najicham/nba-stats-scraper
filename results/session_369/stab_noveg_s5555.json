@@ -1,0 +1,60 @@
+{
+  "model_path": "models/catboost_v12_50f_noveg_train20251201-20251231_20260228_114742.cbm",
+  "model_sha256": "a23bdc313cad717465fab978a746d044c2c7d90aa9e5ad936e75246586f67ce7",
+  "experiment_id": "1d33f5e2",
+  "dates": {
+    "train_start": "2025-12-01",
+    "train_end": "2025-12-31",
+    "eval_start": "2026-01-01",
+    "eval_end": "2026-02-27"
+  },
+  "feature_set": "v12",
+  "no_vegas": true,
+  "n_features": 50,
+  "mae": 4.8579,
+  "hr_all": 56.83,
+  "hr_edge3": 70.56,
+  "hr_edge5": 81.25,
+  "n_edge3": 180,
+  "n_edge5": 48,
+  "pred_vs_vegas": -0.1305,
+  "directional": {
+    "over_hr": 77.6,
+    "under_hr": 66.4,
+    "over_n": 67,
+    "under_n": 113
+  },
+  "all_gates_passed": true,
+  "gates": [
+    {
+      "name": "MAE improvement",
+      "passed": true,
+      "detail": "4.8579 vs 5.1400"
+    },
+    {
+      "name": "Hit rate (3+) >= 60%",
+      "passed": "True",
+      "detail": "70.56% (n=180)"
+    },
+    {
+      "name": "Hit rate (3+) sample >= 50",
+      "passed": true,
+      "detail": "n=180"
+    },
+    {
+      "name": "Vegas bias within +/-1.5",
+      "passed": "True",
+      "detail": "-0.13"
+    },
+    {
+      "name": "No critical tier bias",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "Directional balance (OVER+UNDER >= 52.4%)",
+      "passed": "True",
+      "detail": "OVER=77.6%, UNDER=66.4%"
+    }
+  ]
+}

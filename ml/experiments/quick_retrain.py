@@ -314,6 +314,9 @@ def parse_args():
     parser.add_argument('--player-tier', choices=['star', 'starter', 'role'],
                        help='Train tier-specific model (star: line>=25, starter: 15-25, role: 5-15)')
 
+    parser.add_argument('--random-seed', type=int, default=42,
+                       help='Random seed for CatBoost/LightGBM and train/val split (default: 42)')
+
     parser.add_argument('--dry-run', action='store_true', help='Show plan only')
     parser.add_argument('--skip-register', action='store_true', help='Skip ml_experiments')
     parser.add_argument('--force', action='store_true', help='Force retrain even if duplicate training dates exist')
@@ -3094,10 +3097,10 @@ def main():
     # Train/val split (carry weights through)
     if w_train_full is not None:
         X_train, X_val, y_train, y_val, w_train, w_val = train_test_split(
-            X_train_full, y_train_full, w_train_full, test_size=0.15, random_state=42)
+            X_train_full, y_train_full, w_train_full, test_size=0.15, random_state=args.random_seed)
     else:
         X_train, X_val, y_train, y_val = train_test_split(
-            X_train_full, y_train_full, test_size=0.15, random_state=42)
+            X_train_full, y_train_full, test_size=0.15, random_state=args.random_seed)
         w_train = None
 
     # Hyperparameter search (if --tune)
@@ -3117,7 +3120,7 @@ def main():
             'depth': tuned_params['depth'],
             'l2_leaf_reg': tuned_params['l2_leaf_reg'],
             'learning_rate': tuned_params['learning_rate'],
-            'random_seed': 42,
+            'random_seed': args.random_seed,
             'verbose': 100,
             'early_stopping_rounds': 50,
         }
@@ -3128,7 +3131,7 @@ def main():
             'learning_rate': 0.05,
             'depth': 6,
             'l2_leaf_reg': 3,
-            'random_seed': 42,
+            'random_seed': args.random_seed,
             'verbose': 100,
             'early_stopping_rounds': 50,
         }
@@ -3199,7 +3202,7 @@ def main():
 
         lgb_params = {
             'verbose': -1,
-            'seed': 42,
+            'seed': args.random_seed,
             'num_leaves': 63,
             'learning_rate': 0.05,
             'feature_fraction': 0.8,
