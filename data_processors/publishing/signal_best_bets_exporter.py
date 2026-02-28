@@ -147,6 +147,12 @@ class SignalBestBetsExporter(BaseExporter):
             target_date
         )
 
+        # Step 2b: Filter out predictions for games already started (Session 370)
+        # Hourly re-exports were adding picks for in-progress/finished games
+        predictions, started_game_ids = self._filter_started_games(
+            target_date, predictions
+        )
+
         if not predictions:
             logger.info(f"No predictions found for {target_date}")
             target_0 = (
@@ -195,6 +201,7 @@ class SignalBestBetsExporter(BaseExporter):
                     'edge_7_plus': 0,
                     'max_edge': None,
                 },
+                'started_games_filtered': sorted(started_game_ids) if started_game_ids else [],
                 'picks': [],
                 'total_picks': 0,
                 'signals_evaluated': [],
@@ -435,6 +442,7 @@ class SignalBestBetsExporter(BaseExporter):
             'health_gate_active': False,
             'filter_summary': filter_summary,
             'edge_distribution': edge_distribution,
+            'started_games_filtered': sorted(started_game_ids) if started_game_ids else [],
             'daily_pick_count': daily_pick_count,
             'low_conviction_day': daily_pick_count == 1,
             # ultra_bets removed from JSON (Session 327 — internal-only, in BQ)
@@ -739,6 +747,73 @@ class SignalBestBetsExporter(BaseExporter):
         except Exception as e:
             logger.warning(f"Game times lookup failed (non-fatal): {e}")
             return {}
+
+    def _filter_started_games(
+        self, target_date: str, predictions: List[Dict]
+    ) -> tuple:
+        """Remove predictions for games already in progress or finished.
+
+        Queries nba_raw.nbac_schedule for game_status and filters out any
+        predictions where game_status >= 2 (In Progress or Final).
+
+        Returns:
+            Tuple of (filtered_predictions, set of started game_ids that were removed).
+        """
+        if not predictions:
+            return predictions, set()
+
+        query = f"""
+        SELECT
+          away_team_tricode,
+          home_team_tricode,
+          game_status
+        FROM `{PROJECT_ID}.nba_raw.nbac_schedule`
+        WHERE game_date = @target_date
+          AND game_status >= 2
+        """
+
+        params = [
+            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+        ]
+
+        try:
+            rows = self.bq_client.query(
+                query,
+                job_config=bigquery.QueryJobConfig(query_parameters=params),
+            ).result(timeout=30)
+
+            # Build set of started game team pairs: "AWAY_HOME"
+            started_teams = set()
+            for row in rows:
+                started_teams.add(f"{row.away_team_tricode}_{row.home_team_tricode}")
+
+            if not started_teams:
+                return predictions, set()
+
+            # Filter predictions — game_id format: "YYYYMMDD_AWAY_HOME"
+            filtered = []
+            removed_game_ids = set()
+            removed_count = 0
+            for pred in predictions:
+                gid = pred.get('game_id', '')
+                parts = gid.split('_', 1)
+                if len(parts) == 2 and parts[1] in started_teams:
+                    removed_count += 1
+                    removed_game_ids.add(gid)
+                else:
+                    filtered.append(pred)
+
+            if removed_count > 0:
+                logger.warning(
+                    f"Filtered {removed_count} predictions for {len(removed_game_ids)} "
+                    f"started/finished games: {sorted(removed_game_ids)}"
+                )
+
+            return filtered, removed_game_ids
+
+        except Exception as e:
+            logger.warning(f"Started game filter failed (non-fatal): {e}")
+            return predictions, set()
 
     def _get_best_bets_record(self, target_date: str) -> Dict[str, Any]:
         """Query W-L record for the best_bets subset across season/month/week.
