@@ -337,14 +337,15 @@ def query_predictions_with_supplements(
       ) = 1
     ),
 
-    -- Multi-book line std and teammate_usage for signals (Session 303, 355)
+    -- Multi-book line std, teammate_usage, star_teammates_out for signals (Session 303, 355, 367)
     book_stats AS (
       SELECT
         player_lookup,
         game_date,
         feature_50_value AS multi_book_line_std,
         feature_50_source AS book_std_source,
-        feature_47_value AS teammate_usage_available
+        feature_47_value AS teammate_usage_available,
+        feature_37_value AS star_teammates_out
       FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2`
       WHERE game_date = @target_date
     ),
@@ -406,7 +407,8 @@ def query_predictions_with_supplements(
       ppl.prev_line_date,
       bs.multi_book_line_std,
       bs.book_std_source,
-      bs.teammate_usage_available
+      bs.teammate_usage_available,
+      bs.star_teammates_out
     FROM preds p
     LEFT JOIN latest_stats ls ON ls.player_lookup = p.player_lookup
     LEFT JOIN latest_streak lsk ON lsk.player_lookup = p.player_lookup
@@ -620,6 +622,10 @@ def query_predictions_with_supplements(
         # Teammate usage from feature store for aggregator filter (Session 355)
         tu = row_dict.get('teammate_usage_available')
         pred['teammate_usage_available'] = float(tu) if tu is not None else 0
+
+        # Star teammates out from feature store for star_under filter (Session 367)
+        sto = row_dict.get('star_teammates_out')
+        pred['star_teammates_out'] = float(sto) if sto is not None else 0
 
         # Copy prop line delta for aggregator pre-filter (Session 294)
         if row_dict.get('prev_line_value') is not None:

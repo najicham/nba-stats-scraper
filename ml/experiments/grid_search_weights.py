@@ -136,6 +136,7 @@ def build_command(base_args: str, combo: Dict[str, str],
         '--eval-start', eval_start,
         '--eval-end', eval_end,
         '--skip-register',
+        '--force',
         '--machine-output', machine_output,
     ]
 
@@ -167,7 +168,22 @@ def run_experiment(cmd: List[str], machine_output: str,
         else:
             # Fallback: parse stdout for key metrics
             logger.warning(f"  No machine output file, parsing stdout...")
-            return _parse_stdout(result.stdout)
+            parsed = _parse_stdout(result.stdout)
+            if parsed is None:
+                # Log failure details so user can diagnose
+                stderr_tail = result.stderr.strip().split('\n')[-5:] if result.stderr else []
+                stdout_tail = result.stdout.strip().split('\n')[-5:] if result.stdout else []
+                if stderr_tail:
+                    logger.error(f"  stderr (last 5 lines):")
+                    for line in stderr_tail:
+                        logger.error(f"    {line}")
+                if stdout_tail:
+                    logger.error(f"  stdout (last 5 lines):")
+                    for line in stdout_tail:
+                        logger.error(f"    {line}")
+                if result.returncode != 0:
+                    logger.error(f"  Exit code: {result.returncode}")
+            return parsed
 
     except subprocess.TimeoutExpired:
         logger.error(f"  TIMEOUT after 30 min")

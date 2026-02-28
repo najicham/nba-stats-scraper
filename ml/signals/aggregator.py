@@ -50,7 +50,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v365_model_hr_weight_away_block_multimodel_blacklist'
+ALGORITHM_VERSION = 'v367_star_under_injury_aware_under7plus_v9_only'
 
 # Base signals that fire on nearly every edge 5+ pick. Picks with ONLY
 # these signals hit 57.1% (N=42) vs 77.8% for picks with 4+ signals.
@@ -81,7 +81,7 @@ class BestBetsAggregator:
         - Player blacklist: <40% HR on 8+ picks → skip (Session 284)
         - Avoid familiar: 6+ games vs this opponent → skip (Session 284)
         - MIN_EDGE = 3.0: lowered from 5.0 — edge 3-4 is best V12 band during degradation (Session 352)
-        - UNDER edge 7+ block: 40.7% HR — catastrophic (Session 297, star exception reverted 318)
+        - UNDER edge 7+ block: V9 only (34.1% HR), V12/V16/V13/V15/LightGBM allowed (Session 297, narrowed 367)
         - Feature quality floor: quality < 85 → skip (24.0% HR)
         - Bench UNDER block: UNDER + line < 12 → skip (35.1% HR)
         - Line jumped UNDER block: UNDER + line jumped 2+ → skip (38.2% HR, Session 306)
@@ -180,12 +180,17 @@ class BestBetsAggregator:
                     continue
                 # Premium signal found — bypass edge floor (95%+ HR signals)
 
-            # UNDER at edge 7+ block: V9=39.3% HR (block), V12+vegas=100% HR (allow). Session 326.
-            # Session 318: Removed star-level exception (N=7 too small, 37.5% HR in best bets)
+            # UNDER at edge 7+ block (Session 297, narrowed Session 367):
+            # V9 UNDER 7+: 34.1% HR (N=41) — catastrophic, keep blocked.
+            # V12 models: already allowed (100% HR at 7+).
+            # V16/V13/V15/LightGBM: no graded data yet but not V9's structural issue.
+            # v9_low_vegas: separate affinity group (62.5% UNDER), exempt.
+            # Session 318: Removed star-level exception (N=7 too small, 37.5% HR).
             source_family = pred.get('source_model_family', '')
             if (pred.get('recommendation') == 'UNDER'
                     and pred_edge >= 7.0
-                    and not source_family.startswith('v12')):
+                    and source_family.startswith('v9')
+                    and source_family != 'v9_low_vegas'):
                 filter_counts['under_edge_7plus'] += 1
                 continue
 
@@ -230,14 +235,17 @@ class BestBetsAggregator:
                 filter_counts['bench_under'] += 1
                 continue
 
-            # Star UNDER block (Session 354): season_avg >= 25 + UNDER = 51.3% HR (N=37)
-            # Root cause: model anchors to season avg (46% feature importance), but
-            # books price in hot streaks → structural UNDER bias for stars.
-            # 95% of star edge 3+ picks are UNDER. Below breakeven at -110.
-            # TODO: Make injury-aware — when star_teammates_out >= 1, HR = 62.5% (N=40).
-            # Pipe star_teammates_out through supplemental_data to enable this refinement.
+            # Star UNDER block (Session 354, relaxed Session 367):
+            # season_avg >= 25 + UNDER was 51.3% HR (N=37) at time of creation.
+            # Session 367 revalidation: 55.3% overall (above breakeven), but
+            # 58.3% when star_teammates_out >= 1 vs 55.6% without.
+            # Now injury-aware: allow when a star teammate is out (usage boost
+            # shifts scoring distribution, making UNDER more viable).
             season_avg = pred.get('points_avg_season') or 0
-            if pred.get('recommendation') == 'UNDER' and season_avg >= 25:
+            star_teammates_out = pred.get('star_teammates_out') or 0
+            if (pred.get('recommendation') == 'UNDER'
+                    and season_avg >= 25
+                    and star_teammates_out < 1):
                 filter_counts['star_under'] += 1
                 continue
 
