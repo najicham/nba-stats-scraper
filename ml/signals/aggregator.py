@@ -50,7 +50,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v369_under_star_away'
+ALGORITHM_VERSION = 'v370_signal_floor_3'
 
 # Base signals that fire on nearly every edge 5+ pick. Picks with ONLY
 # these signals hit 57.1% (N=42) vs 77.8% for picks with 4+ signals.
@@ -90,9 +90,14 @@ class BestBetsAggregator:
         - AWAY block: v12_noveg/v9 + AWAY game → skip (43-48% HR vs 57-59% HOME, Session 347/365)
         - Signal density: base-only signals → skip unless edge ≥ 7 (Session 352 bypass)
         - ANTI_PATTERN combos → skip
+
+    Session 370: MIN_SIGNAL_COUNT raised from 2 to 3.
+        signal_count 3 = 57.4% HR (N=47) vs 4+ = 76.5% (N=63).
+        Backfill: 74.5% HR (35W-12L, $+2,180) vs baseline 64.1% (59W-33L, $+2,270).
+        +10.4pp HR with comparable P&L.
     """
 
-    MIN_SIGNAL_COUNT = 2
+    MIN_SIGNAL_COUNT = 3  # Raised from 2 (Session 370): signal_count 3 = 57.4% HR vs 4+ = 76.5%. Backfill: 74.5% HR (35W-12L)
     MIN_EDGE = 3.0  # Lowered from 5.0 (Session 352): edge 3-4 is best V12 band during model degradation
 
     def __init__(

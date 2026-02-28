@@ -189,6 +189,7 @@ These are bonus fields the frontend can use for richer display:
 
 | Section | Field | Description |
 |---|---|---|
+| trends[].tonight | `game_time` | ISO 8601 game time string (e.g. `"2026-02-28T19:30:00-05:00"`), nullable |
 | matchups | `spread` | Vegas spread (home team perspective) |
 | matchups | `total` | Vegas game total |
 | matchups | `injuries.away_starters_out` | Count of starters out |

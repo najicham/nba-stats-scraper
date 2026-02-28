@@ -261,11 +261,11 @@ class TrendsTonightExporter(BaseExporter):
             logger.warning(f"Failed to query tonight's boxscores: {e}")
             return {}
 
-    def _query_game_statuses(self, game_date: str) -> Dict[str, str]:
-        """Query game statuses per team for tonight's games.
+    def _query_game_statuses(self, game_date: str) -> Dict[str, Dict[str, Any]]:
+        """Query game statuses and times per team for tonight's games.
 
         Returns:
-            Dict mapping team_abbr → status string ('scheduled'|'in_progress'|'final')
+            Dict mapping team_abbr → {'status': str, 'game_time': str|None}
         """
         query = """
         SELECT
@@ -275,7 +275,8 @@ class TrendsTonightExporter(BaseExporter):
                 WHEN 2 THEN 'in_progress'
                 WHEN 3 THEN 'final'
                 ELSE 'scheduled'
-            END as status
+            END as status,
+            FORMAT_TIMESTAMP('%Y-%m-%dT%H:%M:%S-05:00', game_date_est) as game_time
         FROM `nba-props-platform.nba_raw.v_nbac_schedule_latest`
         WHERE game_date = @game_date
         UNION ALL
@@ -286,7 +287,8 @@ class TrendsTonightExporter(BaseExporter):
                 WHEN 2 THEN 'in_progress'
                 WHEN 3 THEN 'final'
                 ELSE 'scheduled'
-            END
+            END,
+            FORMAT_TIMESTAMP('%Y-%m-%dT%H:%M:%S-05:00', game_date_est)
         FROM `nba-props-platform.nba_raw.v_nbac_schedule_latest`
         WHERE game_date = @game_date
         """
@@ -295,7 +297,13 @@ class TrendsTonightExporter(BaseExporter):
         ]
         try:
             rows = self.query_to_list(query, params)
-            return {r['team_abbr']: r['status'] for r in rows if r.get('team_abbr')}
+            return {
+                r['team_abbr']: {
+                    'status': r['status'],
+                    'game_time': r.get('game_time'),
+                }
+                for r in rows if r.get('team_abbr')
+            }
         except Exception as e:
             logger.warning(f"Failed to query game statuses: {e}")
             return {}
@@ -325,12 +333,14 @@ class TrendsTonightExporter(BaseExporter):
         team_info: Dict,
         boxscore_row: Optional[Dict],
         game_status: str,
+        game_time: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Build a tonight object for a trend item."""
         obj: Dict[str, Any] = {
             'status': game_status or 'scheduled',
             'opponent': team_info['opponent'],
             'home': team_info['home'],
+            'game_time': game_time,
             'min': None, 'pts': None, 'reb': None, 'ast': None,
             'stl': None, 'blk': None, 'tov': None,
             'fg': None, 'fg_pct': None,
@@ -376,7 +386,7 @@ class TrendsTonightExporter(BaseExporter):
         trends: List[Dict],
         team_map: Dict[str, Dict],
         boxscores: Dict[str, Dict],
-        game_statuses: Dict[str, str],
+        game_statuses: Dict[str, Dict[str, Any]],
     ) -> None:
         """Add tonight object to each trend item whose player is playing tonight.
 
@@ -392,10 +402,12 @@ class TrendsTonightExporter(BaseExporter):
 
             team_info = team_map[team]
             boxscore_row = boxscores.get(lookup)
-            game_status = game_statuses.get(team, 'scheduled')
+            status_info = game_statuses.get(team, {})
+            game_status = status_info.get('status', 'scheduled') if isinstance(status_info, dict) else status_info
+            game_time = status_info.get('game_time') if isinstance(status_info, dict) else None
 
             trend['tonight'] = self._build_tonight_object(
-                team_info, boxscore_row, game_status
+                team_info, boxscore_row, game_status, game_time
             )
 
     # =========================================================================

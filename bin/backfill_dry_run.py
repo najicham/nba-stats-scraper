@@ -52,7 +52,8 @@ PROJECT_ID = 'nba-props-platform'
 
 
 def simulate_date(bq_client: bigquery.Client, target_date: str,
-                  combo_registry: dict, model_id: str = None) -> Dict:
+                  combo_registry: dict, model_id: str = None,
+                  min_signal_count: int = None) -> Dict:
     """Simulate what the consolidated code would pick for a single date.
 
     Returns dict with picks, filter_summary, and comparison data.
@@ -136,6 +137,8 @@ def simulate_date(bq_client: bigquery.Client, target_date: str,
         player_blacklist=player_blacklist,
         model_direction_blocks=model_dir_blocks,
     )
+    if min_signal_count is not None:
+        aggregator.MIN_SIGNAL_COUNT = min_signal_count
     top_picks, filter_summary = aggregator.aggregate(predictions, signal_results_map)
 
     # Build pick angles (was missing — caused empty angles on backfill writes)
@@ -358,6 +361,8 @@ def main():
                         help='Write picks to signal_best_bets_picks (DELETE old + INSERT new)')
     parser.add_argument('--model-id', type=str, default=None,
                         help='Single model system_id to evaluate (default: multi-model)')
+    parser.add_argument('--min-signal-count', type=int, default=None,
+                        help='Override MIN_SIGNAL_COUNT in aggregator (default: use aggregator default)')
     parser.add_argument('--verbose', '-v', action='store_true',
                         help='Show debug logging')
     args = parser.parse_args()
@@ -387,6 +392,8 @@ def main():
         print(f"Model: {model_id} (single-model mode)")
     else:
         print(f"Mode: multi-model (production)")
+    if args.min_signal_count is not None:
+        print(f"Override: MIN_SIGNAL_COUNT = {args.min_signal_count}")
     print(f"Dates: {dates[0]} to {dates[-1]} ({len(dates)} days)")
     print(f"Combo registry: {len(combo_registry)} entries "
           f"(0 ANTI_PATTERN)")
@@ -403,7 +410,8 @@ def main():
 
     for target_date in dates:
         result = simulate_date(bq_client, target_date, combo_registry,
-                               model_id=model_id)
+                               model_id=model_id,
+                               min_signal_count=args.min_signal_count)
         picks = grade_picks(bq_client, result['picks'], target_date)
 
         existing = None

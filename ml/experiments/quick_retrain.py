@@ -287,6 +287,13 @@ def parse_args():
                             'Forces quantile alpha=0.50 (median deviation). '
                             'The prop line (feature_25_value) is NOT a feature — only the anchor.')
 
+    # Derived features (Session 370): computed from existing features, no new data
+    parser.add_argument('--derived-features', action='store_true',
+                       help='Add derived features: expected_scoring_possessions '
+                            '((team_pace+opp_pace)/2 * usage_spike_score/100), '
+                            'rolling_zscore_5v10 ((avg5-avg10) / max(std10, 0.1)). '
+                            'Pure feature engineering from existing feature store columns.')
+
     # Differenced features (Session 355): player avg minus prop line
     parser.add_argument('--diff-features', action='store_true',
                        help='Add differenced features: season_avg_vs_line, last5_avg_vs_line, '
@@ -313,6 +320,12 @@ def parse_args():
                        help='ML framework (default: catboost)')
     parser.add_argument('--player-tier', choices=['star', 'starter', 'role'],
                        help='Train tier-specific model (star: line>=25, starter: 15-25, role: 5-15)')
+
+    # Uncertainty estimation (Session 370)
+    parser.add_argument('--uncertainty', action='store_true',
+                       help='Enable CatBoost virtual ensembles for uncertainty estimation. '
+                            'Uses posterior_sampling=True during training and reports HR '
+                            'stratified by prediction uncertainty quartile at edge 3+.')
 
     parser.add_argument('--random-seed', type=int, default=42,
                        help='Random seed for CatBoost/LightGBM and train/val split (default: 42)')
@@ -2593,6 +2606,7 @@ def main():
         print(f"  Modes: no_vegas={args.no_vegas}, residual={args.residual}, "
               f"two_stage={args.two_stage}, quantile_alpha={args.quantile_alpha}, "
               f"anchor_line={args.anchor_line}, diff_features={args.diff_features}, "
+              f"derived_features={args.derived_features}, "
               f"v16_features={args.v16_features}, v17_features={args.v17_features}, "
               f"classify={args.classify}, framework={args.framework}, player_tier={args.player_tier}")
         if args.exclude_features:
@@ -2789,6 +2803,35 @@ def main():
             vals = X_train_full[col].dropna()
             print(f"    {col}: mean={vals.mean():.2f}, std={vals.std():.2f}, "
                   f"NaN={X_train_full[col].isna().sum()}/{len(X_train_full)}")
+
+    # Derived features (Session 370): pure feature engineering from existing columns
+    # D11: expected_scoring_possessions = (team_pace + opp_pace) / 2 * usage_spike_score / 100
+    # D12: rolling_zscore_5v10 = (avg5 - avg10) / max(std10, 0.1) — hot/cold streak signal
+    if args.derived_features:
+        print("\nAdding derived features (D11+D12)...")
+        for X_df, label in [(X_train_full, 'train'), (X_eval_full, 'eval')]:
+            # D11: Expected scoring possessions
+            if 'team_pace' in X_df.columns and 'opponent_pace' in X_df.columns and 'usage_spike_score' in X_df.columns:
+                avg_pace = (X_df['team_pace'].fillna(100) + X_df['opponent_pace'].fillna(100)) / 2
+                usage = X_df['usage_spike_score'].fillna(0)
+                X_df['expected_scoring_poss'] = avg_pace * usage / 100
+                print(f"  D11 expected_scoring_poss ({label}): "
+                      f"mean={X_df['expected_scoring_poss'].mean():.2f}, "
+                      f"std={X_df['expected_scoring_poss'].std():.2f}")
+            else:
+                print(f"  D11 SKIPPED ({label}): missing team_pace/opponent_pace/usage_spike_score")
+
+            # D12: Rolling personalized z-score (5-game vs 10-game window)
+            if 'points_avg_last_5' in X_df.columns and 'points_avg_last_10' in X_df.columns and 'points_std_last_10' in X_df.columns:
+                avg5 = X_df['points_avg_last_5'].fillna(0)
+                avg10 = X_df['points_avg_last_10'].fillna(0)
+                std10 = X_df['points_std_last_10'].fillna(0).clip(lower=0.1)
+                X_df['rolling_zscore_5v10'] = (avg5 - avg10) / std10
+                print(f"  D12 rolling_zscore_5v10 ({label}): "
+                      f"mean={X_df['rolling_zscore_5v10'].mean():.2f}, "
+                      f"std={X_df['rolling_zscore_5v10'].std():.2f}")
+            else:
+                print(f"  D12 SKIPPED ({label}): missing points_avg columns")
 
     # V16 features (Session 355): deviation-from-line history
     # Computed as rolling per-player stats from the training data itself.
@@ -3259,6 +3302,9 @@ def main():
 
     else:
         # Standard CatBoost regression
+        if args.uncertainty:
+            hp['posterior_sampling'] = True
+            print("  Uncertainty: posterior_sampling=True (virtual ensembles)")
         model = cb.CatBoostRegressor(**hp)
         model.fit(X_train, y_train, eval_set=(X_val, y_val), sample_weight=w_train, verbose=100)
 
@@ -3370,6 +3416,8 @@ def main():
         mode_suffix += "_anchor"
     if args.diff_features:
         mode_suffix += "_diff"
+    if args.derived_features:
+        mode_suffix += "_derived"
     if args.v17_features:
         mode_suffix += "_v17"
     elif args.v16_features:
@@ -3558,6 +3606,87 @@ def main():
         print("\n  ** Best segments (HR >= 58%, N >= 5):")
         for seg_name, hr, n in sorted(best_segments, key=lambda x: -x[1]):
             print(f"     {seg_name}: {hr:.1f}% (n={n})")
+
+    # Uncertainty Analysis (Session 370: virtual ensembles)
+    if args.uncertainty and not is_lightgbm and not is_classifier:
+        print("\n" + "-" * 50)
+        print("UNCERTAINTY ANALYSIS (virtual ensembles)")
+        print("-" * 50)
+        try:
+            # Get uncertainty estimates using virtual ensembles
+            uncertainty_preds = model.virtual_ensembles_predict(
+                X_eval, prediction_type='TotalUncertainty'
+            )
+            # Column 0 = mean prediction, Column 1 = knowledge uncertainty
+            if uncertainty_preds.ndim == 2 and uncertainty_preds.shape[1] >= 2:
+                uncertainty = uncertainty_preds[:, 1]
+            else:
+                uncertainty = np.std([
+                    model.predict(X_eval) for _ in range(10)
+                ], axis=0)
+
+            # Compute edge and correctness for edge 3+ picks
+            edges_eval = np.abs(preds - lines)
+            correct_eval = (
+                ((preds > lines) & (y_eval_orig.values > lines)) |
+                ((preds < lines) & (y_eval_orig.values < lines))
+            )
+
+            edge3_mask = edges_eval >= 3.0
+            if edge3_mask.sum() >= 20:
+                unc_e3 = uncertainty[edge3_mask]
+                cor_e3 = correct_eval[edge3_mask]
+                edg_e3 = edges_eval[edge3_mask]
+
+                # Quartile analysis
+                quartiles = np.percentile(unc_e3, [25, 50, 75])
+                q_labels = ['Q1 (low unc)', 'Q2', 'Q3', 'Q4 (high unc)']
+                q_bounds = [(-np.inf, quartiles[0]), (quartiles[0], quartiles[1]),
+                            (quartiles[1], quartiles[2]), (quartiles[2], np.inf)]
+
+                print(f"\n  Edge 3+ picks (N={edge3_mask.sum()}):")
+                print(f"  Uncertainty quartile thresholds: {quartiles[0]:.2f}, {quartiles[1]:.2f}, {quartiles[2]:.2f}")
+                print(f"\n  {'Quartile':<18s} {'N':>5s} {'HR':>7s} {'Avg Edge':>9s} {'Avg Unc':>9s}")
+                print(f"  {'-'*48}")
+
+                q_hrs = []
+                for label, (lo, hi) in zip(q_labels, q_bounds):
+                    mask = (unc_e3 >= lo) & (unc_e3 < hi)
+                    n_q = mask.sum()
+                    if n_q > 0:
+                        hr_q = cor_e3[mask].mean() * 100
+                        avg_edge_q = edg_e3[mask].mean()
+                        avg_unc_q = unc_e3[mask].mean()
+                        q_hrs.append(hr_q)
+                        print(f"  {label:<18s} {n_q:5d} {hr_q:6.1f}% {avg_edge_q:8.1f} {avg_unc_q:8.2f}")
+                    else:
+                        q_hrs.append(None)
+                        print(f"  {label:<18s} {n_q:5d}    N/A")
+
+                # Check if uncertainty is just a proxy for edge
+                from scipy import stats as scipy_stats
+                corr, pval = scipy_stats.pearsonr(unc_e3, edg_e3)
+                print(f"\n  Uncertainty-Edge correlation: r={corr:.3f} (p={pval:.4f})")
+                if abs(corr) > 0.7:
+                    print("  WARNING: Uncertainty is highly correlated with edge — likely redundant")
+                elif abs(corr) < 0.3:
+                    print("  GOOD: Uncertainty captures different information than edge")
+
+                # Q1 vs Q4 gap
+                if q_hrs[0] is not None and q_hrs[3] is not None:
+                    gap = q_hrs[0] - q_hrs[3]
+                    print(f"\n  Q1-Q4 HR gap: {gap:+.1f}pp")
+                    if gap >= 10:
+                        print("  SIGNIFICANT: Low-uncertainty picks substantially outperform high-uncertainty")
+                    elif gap >= 5:
+                        print("  MODERATE: Some signal in uncertainty filtering")
+                    else:
+                        print("  WEAK: Uncertainty does not meaningfully separate winners from losers")
+            else:
+                print(f"  Only {edge3_mask.sum()} edge 3+ picks — need >= 20 for quartile analysis")
+        except Exception as e:
+            print(f"  Uncertainty analysis failed: {e}")
+            print("  (CatBoost >= 0.26 required for virtual_ensembles_predict)")
 
     # Governance Gate Summary
     print("\n" + "=" * 70)
