@@ -753,11 +753,13 @@ class SignalBestBetsExporter(BaseExporter):
     ) -> tuple:
         """Remove predictions for games already in progress or finished.
 
-        Queries nba_raw.nbac_schedule for game_status and filters out any
-        predictions where game_status >= 2 (In Progress or Final).
+        Two-layer filter (Session 371):
+          1. Time-based: game_date_est <= NOW() means tipoff has passed.
+             Self-contained — no dependency on schedule scraper updating game_status.
+          2. Status-based: game_status >= 2 as secondary catch.
 
         Also writes removed predictions to the late_picks_audit table for
-        persistent tracking (Session 371).
+        persistent tracking.
 
         Returns:
             Tuple of (filtered_predictions, set of started game_ids that were removed).
@@ -769,10 +771,11 @@ class SignalBestBetsExporter(BaseExporter):
         SELECT
           away_team_tricode,
           home_team_tricode,
-          game_status
+          game_status,
+          game_date_est
         FROM `{PROJECT_ID}.nba_raw.nbac_schedule`
         WHERE game_date = @target_date
-          AND game_status >= 2
+          AND (game_status >= 2 OR game_date_est <= CURRENT_TIMESTAMP())
         """
 
         params = [
