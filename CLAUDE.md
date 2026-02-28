@@ -102,7 +102,12 @@ nba-stats-scraper/
 | Edge 3+ HR | 48.7% Feb live — BELOW BREAKEVEN |
 | Status | ALL PRODUCTION MODELS DEGRADING — shadow fleet rebuilding (Session 350) |
 
-**15 enabled shadow models** (12 CatBoost + 2 LightGBM + 1 V16) + 1 production. Worker supports LightGBM (Session 350) and V16 feature set (Session 356).
+**15 enabled shadow models** (12 CatBoost + 2 LightGBM + 1 V16) + 1 production. Worker supports LightGBM (Session 350) and V16 feature set (Session 356). Session 364: Fixed Firestore duplicate path (`_mode` not set on duplicate Pub/Sub), deployed auto-retry-processor (34 days stale, hitting wrong endpoint).
+
+**Session 365 filter improvements (deployed):**
+- **Model HR-weighted selection**: Per-model rolling 14d HR scales edge in per-player ROW_NUMBER. V9 at 44% gets 0.80x weight, 55%+ models get 1.0x. Prevents stale models from winning selection.
+- **AWAY block expanded**: v9 AWAY now blocked (48.1% HR, N=449). Was only v12_noveg.
+- **Multi-model blacklist**: Default changed to aggregate across ALL models (was champion-only). Players escaping via non-champion models now caught.
 
 **February decline diagnosis (Session 348):** Best bets HR dropped from 73.1% (Jan) to 60.5% (Feb). Root causes: (1) OVER predictions collapsed 80%→58%, specifically Starters OVER 90%→33%, (2) full-vegas architecture failing at 54.5% vs noveg at 100% (N=6), (3) edge quality weakened from 7.2→5.4, (4) all models past 21-day shelf life.
 
@@ -124,6 +129,11 @@ nba-stats-scraper/
 **Vegas weight experiment (Session 359):** Systematic 12-experiment matrix testing vegas influence. Key finding: **optimal vegas weight is 0.25x** (not 1.0x default). At 0.25x, vegas_points_line drops from #1 feature (22.8%) to #8 (2.7%), `points_avg_season` dominates (28.1%), UNDER HR improves from 50% → 60%. New shadow models:
 - `catboost_v12_train1201_0215`: V12 vegas=0.25 weight, **75.0% HR edge 3+ (OVER 100%, UNDER 60.0%)**
 - `catboost_v16_noveg_rec14_train1201_0215`: V16 noveg + 14-day recency, **69.0% HR edge 3+ (OVER 81.8%, UNDER 61.1%)** — best UNDER model
+
+**Session 365 promising experiments (need more eval data):**
+- **Tier-weighted (v12_noveg_tierwt_vw025)**: 70.73% HR (N=41), OVER 90.9%, UNDER 63.3%. Star=2.0, starter=1.2, role=0.8, bench=0.5. Failed only sample size.
+- **V13 shooting (v13_vw025)**: 65.79% HR (N=38), OVER 84.6%, UNDER 56.0%. MAE improved to 5.08. 6 new shooting features add signal.
+- **60d window (v12_noveg_60d_vw025)**: 60.87% HR (N=23). Promising but tiny sample.
 
 **CRITICAL:** Use edge >= 3 filter. 73% of predictions have edge < 3 and lose money.
 
@@ -162,7 +172,7 @@ nba-stats-scraper/
 
 7-day cadence, 42-day rolling window. `retrain-reminder` CF runs Mon 9 AM ET (Slack + SMS). Urgency: ROUTINE (7-10d), OVERDUE (11-14d), URGENT (15d+).
 
-**Dead ends (don't revisit):** Grow policy, CHAOS+quantile, residual mode, two-stage pipeline, Edge Classifier, Huber loss (47.4% HR), recency weighting (33.3%), lines-only training (20%), min-PPG filter (33.3%), 96-day window, Q43+Vegas (20% HR edge 5+, catastrophic UNDER compounding), RSM 0.5 with v9_low_vegas (hurts HR), 87-day training window (too much old data dilutes signal), min-data-in-leaf 25/50 (kills feature diversity, top 2 features = 64-68%), Q60 quantile (generates OVER volume but not profitably — 50% OVER HR), health gate on raw model HR (blocked profitable multi-model filtered best bets — removed Session 347), blowout_recovery signal (50% HR 7-7 in best bets, 25% in Feb — disabled Session 349), no-vegas binary classifier (AUC 0.507 = random — features predict points not over/under), tier models on 42-day window (star: 244, starter: 933 — insufficient per-tier samples), starter tier model Dec 1 window (1/6 gates, Vegas bias +2.49, can't predict outside trained tier), noveg Q43 on fresh data (14.8% HR live — 0/54 UNDER, catastrophic compounding confirmed again), LightGBM Q55 (non-deterministic — swung 62%→52% between runs, MAE variants are stable), V16 Q55 quantile (53.3% HR — worse than MAE on same window), V16 wide eval Feb 1-27 (55.9% — Feb degradation dilutes signal), V16 Nov 1 training start (92-day window too broad — 55.9% HR), anchor-line training (predict actual-prop_line: collapses feature importance, only 9 edge 3+ picks, UNDER 33.3%), V16 deviation features alone (61.5% vs V12's 73.7% — hurt quality, only work combined with recency), recency on well-calibrated models (V12 vegas=0.25 went 75%→59% with recency — don't add recency to models already performing well), vegas weight < 0.25 (0.1x UNDER 54.5% — worse than 0.25x at 60%), V17 opportunity risk features (blowout_minutes_risk, minutes_volatility_last_10, opponent_pace_mismatch — all <1% feature importance, 56.7% HR noveg, 58.1% with vegas=0.25 vs V12's 75% — model doesn't find signal in opportunity risk).
+**Dead ends (don't revisit):** Grow policy, CHAOS+quantile, residual mode, two-stage pipeline, Edge Classifier, Huber loss (47.4% HR), recency weighting (33.3%), lines-only training (20%), min-PPG filter (33.3%), 96-day window, Q43+Vegas (20% HR edge 5+, catastrophic UNDER compounding), RSM 0.5 with v9_low_vegas (hurts HR), 87-day training window (too much old data dilutes signal), min-data-in-leaf 25/50 (kills feature diversity, top 2 features = 64-68%), Q60 quantile (generates OVER volume but not profitably — 50% OVER HR), health gate on raw model HR (blocked profitable multi-model filtered best bets — removed Session 347), blowout_recovery signal (50% HR 7-7 in best bets, 25% in Feb — disabled Session 349), no-vegas binary classifier (AUC 0.507 = random — features predict points not over/under), tier models on 42-day window (star: 244, starter: 933 — insufficient per-tier samples), starter tier model Dec 1 window (1/6 gates, Vegas bias +2.49, can't predict outside trained tier), noveg Q43 on fresh data (14.8% HR live — 0/54 UNDER, catastrophic compounding confirmed again), LightGBM Q55 (non-deterministic — swung 62%→52% between runs, MAE variants are stable), V16 Q55 quantile (53.3% HR — worse than MAE on same window, confirmed Session 365: 48.9% HR), V16 wide eval Feb 1-27 (55.9% — Feb degradation dilutes signal), V16 Nov 1 training start (92-day window too broad — 55.9% HR), anchor-line training (predict actual-prop_line: collapses feature importance, only 9 edge 3+ picks, UNDER 33.3%), V16 deviation features alone (61.5% vs V12's 73.7% — hurt quality, only work combined with recency), recency on well-calibrated models (V12 vegas=0.25 went 75%→59% with recency — don't add recency to models already performing well), vegas weight < 0.25 (0.1x UNDER 54.5% — worse than 0.25x at 60%), V17 opportunity risk features (blowout_minutes_risk, minutes_volatility_last_10, opponent_pace_mismatch — all <1% feature importance, 56.7% HR noveg, 58.1% with vegas=0.25 vs V12's 75% — model doesn't find signal in opportunity risk), LightGBM+vw025 (54.9% HR, N=51 — UNDER 50% below breakeven, Session 365).
 
 ### Cross-Model Monitoring
 
@@ -184,6 +194,8 @@ nba-stats-scraper/
 **Cloud Run Services:** prediction-coordinator, prediction-worker, nba-phase3-analytics-processors, nba-phase4-precompute-processors, nba-phase2-raw-processors, nba-scrapers, nba-grading-service
 
 **Cloud Functions (auto-deploy via `cloudbuild-functions.yaml`):** phase5b-grading, phase6-export, grading-gap-detector, phase3/4/5-to-next orchestrators, enrichment-trigger, daily-health-check, transition-monitor, pipeline-health-summary, nba-grading-alerts, live-freshness-monitor, self-heal-predictions, grading-readiness-monitor, post-grading-export, decay-detection (11 AM ET), retrain-reminder (Mon 9 AM ET), validation-runner
+
+**NOT auto-deployed (manual only):** auto-retry-processor
 
 ### CRITICAL: Always deploy from repo root
 ```bash
@@ -269,6 +281,7 @@ WHERE game_date >= CURRENT_DATE() - 3 GROUP BY 1 ORDER BY 1 DESC;
 | **Phase 6 trigger message format** | Use `{"export_types": ["signal-best-bets"], "target_date": "2026-02-24"}` — NOT `game_date`. See `phase6_export/main.py`. |
 | **SQL escape `\_` in Python** | BigQuery LIKE doesn't need backslash-escaping underscores. Use `%_q4%` not `%\\_q4%`. |
 | **Trends page stale data** | `trends-tonight` was missing from `phase6-hourly-trends` scheduler. Fixed Session 349. If stale again, check scheduler export_types include `trends-tonight`. |
+| **auto-retry-processor stale** | No Cloud Build trigger — must deploy manually. Check with: `gcloud functions describe auto-retry-processor --region=us-west2 --format='value(updateTime)'` |
 
 **Full troubleshooting:** `docs/02-operations/session-learnings.md`
 
@@ -330,7 +343,7 @@ python bin/monitoring/grading_gap_detector.py        # Grading gaps (auto: daily
 6. Bench UNDER block: `UNDER + line < 12` (35.1% HR)
 7. UNDER + line jumped 2+: `prop_line_delta >= 2.0` (38.2% HR)
 8. UNDER + line dropped 2+: `prop_line_delta <= -2.0` (35.2% HR)
-9. Away noveg block: `v12_noveg family + AWAY game` (43-44% HR vs 57-59% HOME)
+9. Away block: `v12_noveg/v9 family + AWAY game` (43-48% HR vs 57-59% HOME, Session 365)
 10. Signal density: `base-only signals → skip unless edge ≥ 7.0` (Session 352 bypass for extreme edge)
 
 ### Active Signals
