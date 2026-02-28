@@ -44,13 +44,18 @@ from predictions.worker.prediction_systems.catboost_v9 import (
 logger = logging.getLogger(__name__)
 
 
-# V12/V16/V17 feature names — loaded from feature_contract for consistency
+# V12/V13/V15/V16/V17 feature names — loaded from feature_contract for consistency
 # Session 324: Dynamic feature list supports V12 (54f), V12_NOVEG (50f)
 # Session 356: Added V16_NOVEG (52f) — V12_NOVEG + 2 prop line history features
 # Session 360: Added V17_NOVEG (55f) — V16_NOVEG + 3 opportunity risk features
+# Session 367: Added V13 (60f), V13_NOVEG (56f), V15 (56f), V15_NOVEG (52f)
 from shared.ml.feature_contract import (
     V12_FEATURE_NAMES as _V12_FEATURES,
     V12_NOVEG_FEATURE_NAMES as _V12_NOVEG_FEATURES,
+    V13_FEATURE_NAMES as _V13_FEATURES,
+    V13_NOVEG_FEATURE_NAMES as _V13_NOVEG_FEATURES,
+    V15_FEATURE_NAMES as _V15_FEATURES,
+    V15_NOVEG_FEATURE_NAMES as _V15_NOVEG_FEATURES,
     V16_NOVEG_FEATURE_NAMES as _V16_NOVEG_FEATURES,
     V17_NOVEG_FEATURE_NAMES as _V17_NOVEG_FEATURES,
 )
@@ -481,8 +486,8 @@ class CatBoostMonthly(CatBoostV8):
         Feature-set-aware: V9 models use parent class extraction (33 features),
         V12 models use name-based extraction (54f with vegas, 50f without).
         """
-        if self._feature_set in ('v12', 'v12_noveg', 'v16_noveg', 'v17_noveg'):
-            # V12/V16/V17 path: dynamic feature extraction (54f, 50f, 52f, or 55f)
+        if self._feature_set in ('v12', 'v12_noveg', 'v13', 'v13_noveg', 'v15', 'v15_noveg', 'v16_noveg', 'v17_noveg'):
+            # V12+ path: dynamic feature extraction (50f-60f depending on feature set)
             return self._predict_v12(player_lookup, features, betting_line)
         else:
             # V9 path: use parent class (CatBoostV8) feature extraction
@@ -655,19 +660,19 @@ class CatBoostMonthly(CatBoostV8):
             from shared.ml.feature_contract import FEATURE_DEFAULTS
 
             # Select feature list based on model's feature_set
-            if self._feature_set == 'v17_noveg':
-                feature_names = _V17_NOVEG_FEATURES
-                expected_count = 55
-            elif self._feature_set == 'v16_noveg':
-                feature_names = _V16_NOVEG_FEATURES
-                expected_count = 52
-            elif self._feature_set == 'v12_noveg':
-                feature_names = _V12_NOVEG_FEATURES
-                expected_count = 50
-            else:
-                # 'v12' = full V12 with vegas (54 features)
-                feature_names = _V12_FEATURES
-                expected_count = 54
+            _FEATURE_SET_MAP = {
+                'v17_noveg': (_V17_NOVEG_FEATURES, 55),
+                'v13': (_V13_FEATURES, 60),
+                'v13_noveg': (_V13_NOVEG_FEATURES, 56),
+                'v15': (_V15_FEATURES, 56),
+                'v15_noveg': (_V15_NOVEG_FEATURES, 52),
+                'v16_noveg': (_V16_NOVEG_FEATURES, 52),
+                'v12_noveg': (_V12_NOVEG_FEATURES, 50),
+                'v12': (_V12_FEATURES, 54),
+            }
+            feature_names, expected_count = _FEATURE_SET_MAP.get(
+                self._feature_set, (_V12_FEATURES, 54)
+            )
 
             vector = []
             for name in feature_names:
