@@ -986,6 +986,27 @@ ADD COLUMN IF NOT EXISTS feature_52_value FLOAT64 OPTIONS (description='Value fo
 ADD COLUMN IF NOT EXISTS feature_53_value FLOAT64 OPTIONS (description='Value for feature 53 (line_vs_season_avg). NULL if default.'),
 ADD COLUMN IF NOT EXISTS feature_54_value FLOAT64 OPTIONS (description='Value for feature 54 (prop_line_delta). Line change from previous game. NULL if no prev line.');
 
+-- Session 356: V16 feature value columns (prop line history)
+ALTER TABLE `nba-props-platform.nba_predictions.ml_feature_store_v2`
+ADD COLUMN IF NOT EXISTS feature_55_value FLOAT64 OPTIONS (description='Value for feature 55 (over_rate_last_10). Fraction of L10 where actual > prop_line. NULL if insufficient history.'),
+ADD COLUMN IF NOT EXISTS feature_55_quality FLOAT64 OPTIONS (description='Quality 0-100 for feature 55 (over_rate_last_10)'),
+ADD COLUMN IF NOT EXISTS feature_55_source STRING OPTIONS (description='Source for feature 55 (over_rate_last_10): calculated, missing, default'),
+ADD COLUMN IF NOT EXISTS feature_56_value FLOAT64 OPTIONS (description='Value for feature 56 (margin_vs_line_avg_last_5). Mean(actual - prop_line) over L5. NULL if insufficient history.'),
+ADD COLUMN IF NOT EXISTS feature_56_quality FLOAT64 OPTIONS (description='Quality 0-100 for feature 56 (margin_vs_line_avg_last_5)'),
+ADD COLUMN IF NOT EXISTS feature_56_source STRING OPTIONS (description='Source for feature 56 (margin_vs_line_avg_last_5): calculated, missing, default');
+
+-- Session 360: V17 feature value columns (opportunity risk)
+ALTER TABLE `nba-props-platform.nba_predictions.ml_feature_store_v2`
+ADD COLUMN IF NOT EXISTS feature_57_value FLOAT64 OPTIONS (description='Value for feature 57 (blowout_minutes_risk). Fraction of team L10 with 15+ margin. NULL if insufficient data.'),
+ADD COLUMN IF NOT EXISTS feature_57_quality FLOAT64 OPTIONS (description='Quality 0-100 for feature 57 (blowout_minutes_risk)'),
+ADD COLUMN IF NOT EXISTS feature_57_source STRING OPTIONS (description='Source for feature 57 (blowout_minutes_risk): calculated, missing, default'),
+ADD COLUMN IF NOT EXISTS feature_58_value FLOAT64 OPTIONS (description='Value for feature 58 (minutes_volatility_last_10). Stdev of player minutes L10. NULL if insufficient data.'),
+ADD COLUMN IF NOT EXISTS feature_58_quality FLOAT64 OPTIONS (description='Quality 0-100 for feature 58 (minutes_volatility_last_10)'),
+ADD COLUMN IF NOT EXISTS feature_58_source STRING OPTIONS (description='Source for feature 58 (minutes_volatility_last_10): calculated, missing, default'),
+ADD COLUMN IF NOT EXISTS feature_59_value FLOAT64 OPTIONS (description='Value for feature 59 (opponent_pace_mismatch). team_pace - opponent_pace. NULL if missing.'),
+ADD COLUMN IF NOT EXISTS feature_59_quality FLOAT64 OPTIONS (description='Quality 0-100 for feature 59 (opponent_pace_mismatch)'),
+ADD COLUMN IF NOT EXISTS feature_59_source STRING OPTIONS (description='Source for feature 59 (opponent_pace_mismatch): calculated, missing, default');
+
 -- ============================================================================
 -- MONITORING VIEW: Feature Quality Unpivot (Session 134)
 -- Unpivots 37 per-feature quality/source columns into rows for easy aggregation.

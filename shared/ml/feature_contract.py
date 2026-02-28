@@ -22,8 +22,8 @@ from dataclasses import dataclass
 # FEATURE STORE CONFIGURATION
 # =============================================================================
 
-CURRENT_FEATURE_STORE_VERSION = "v2_57features"
-FEATURE_STORE_FEATURE_COUNT = 57
+CURRENT_FEATURE_STORE_VERSION = "v2_60features"
+FEATURE_STORE_FEATURE_COUNT = 60
 
 # Canonical feature names in the feature store, IN ORDER
 # Position matters! New features must be APPENDED, never inserted.
@@ -116,6 +116,11 @@ FEATURE_STORE_NAMES: List[str] = [
     # 55-56: V16 Features — Prop Line History (Session 356)
     "over_rate_last_10",              # Fraction of last 10 games where actual > prop_line [0.0-1.0]
     "margin_vs_line_avg_last_5",      # Mean(actual - prop_line) over last 5 games
+
+    # 57-59: V17 Features — Opportunity Risk (Session 360)
+    "blowout_minutes_risk",           # Fraction of team's L10 games with 15+ margin [0.0-1.0]
+    "minutes_volatility_last_10",     # Stdev of player minutes over L10 games
+    "opponent_pace_mismatch",         # team_pace - opponent_pace (positive = faster team)
 ]
 
 # Validate feature store list length matches expected count
@@ -537,6 +542,45 @@ V16_NOVEG_CONTRACT = ModelFeatureContract(
 )
 
 
+# -----------------------------------------------------------------------------
+# V17 Model Contract (59 features - V16 + opportunity risk features)
+# Adds blowout_minutes_risk, minutes_volatility_last_10, opponent_pace_mismatch
+# Session 360: Captures risk of reduced opportunity — the gap the model can't express
+# These ARE in the feature store schema (v2_60features)
+# -----------------------------------------------------------------------------
+
+V17_FEATURE_NAMES: List[str] = V16_FEATURE_NAMES + [
+    # 56: Blowout risk — fraction of team's L10 games with 15+ margin
+    "blowout_minutes_risk",
+
+    # 57: Minutes volatility — stdev of player minutes over L10
+    "minutes_volatility_last_10",
+
+    # 58: Pace mismatch — team_pace minus opponent_pace
+    "opponent_pace_mismatch",
+]
+
+V17_CONTRACT = ModelFeatureContract(
+    model_version="v17",
+    feature_count=59,
+    feature_names=V17_FEATURE_NAMES,
+    description="CatBoost V17 - 59 features, V16 + blowout_minutes_risk + minutes_volatility + pace_mismatch"
+)
+
+V17_NOVEG_FEATURE_NAMES: List[str] = [
+    name for name in V17_FEATURE_NAMES if name not in (
+        "vegas_points_line", "vegas_opening_line", "vegas_line_move", "has_vegas_line"
+    )
+]
+
+V17_NOVEG_CONTRACT = ModelFeatureContract(
+    model_version="v17_noveg",
+    feature_count=55,
+    feature_names=V17_NOVEG_FEATURE_NAMES,
+    description="CatBoost V17 No-Vegas - 55 features (59 minus 4 vegas), with opportunity risk features"
+)
+
+
 # =============================================================================
 # CONTRACT REGISTRY
 # =============================================================================
@@ -556,6 +600,8 @@ MODEL_CONTRACTS: Dict[str, ModelFeatureContract] = {
     "v15_noveg": V15_NOVEG_CONTRACT,
     "v16": V16_CONTRACT,
     "v16_noveg": V16_NOVEG_CONTRACT,
+    "v17": V17_CONTRACT,
+    "v17_noveg": V17_NOVEG_CONTRACT,
     "catboost_v8": V8_CONTRACT,
     "catboost_v9": V9_CONTRACT,
     "catboost_v10": V10_CONTRACT,
@@ -565,6 +611,7 @@ MODEL_CONTRACTS: Dict[str, ModelFeatureContract] = {
     "catboost_v14": V14_NOVEG_CONTRACT,
     "catboost_v15": V15_NOVEG_CONTRACT,
     "catboost_v16": V16_NOVEG_CONTRACT,
+    "catboost_v17": V17_NOVEG_CONTRACT,
 }
 
 
@@ -578,6 +625,10 @@ def get_contract(model_version: str) -> ModelFeatureContract:
         version = "v8"
     if version.startswith("v11_"):
         version = "v11"
+    if version.startswith("v17_noveg"):
+        version = "v17_noveg"
+    elif version.startswith("v17_"):
+        version = "v17"
     if version.startswith("v16_noveg"):
         version = "v16_noveg"
     elif version.startswith("v16_"):
@@ -635,7 +686,7 @@ FEATURES_FROM_PHASE3_V11 = [37, 38]
 # game_total_line (38) depends on odds data availability.
 # These features are still tracked as defaults for visibility, but don't block predictions.
 # Scraper health monitoring separately alerts when star players are missing lines.
-FEATURES_OPTIONAL = set(FEATURES_VEGAS) | {38, 41, 42, 47, 50, 51, 52, 53, 54, 55, 56}
+FEATURES_OPTIONAL = set(FEATURES_VEGAS) | {38, 41, 42, 47, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59}
 
 # Session 152: Vegas line source values
 # Stored in ml_feature_store_v2.vegas_line_source and player_prop_predictions.vegas_line_source
@@ -682,6 +733,11 @@ FEATURE_SOURCE_MAP[54] = 'vegas'
 # Features 55-56: V16 prop line history (Session 356)
 FEATURE_SOURCE_MAP[55] = 'calculated'
 FEATURE_SOURCE_MAP[56] = 'calculated'
+
+# Features 57-59: V17 opportunity risk (Session 360)
+FEATURE_SOURCE_MAP[57] = 'calculated'
+FEATURE_SOURCE_MAP[58] = 'calculated'
+FEATURE_SOURCE_MAP[59] = 'calculated'
 
 
 # =============================================================================
@@ -785,6 +841,11 @@ FEATURE_DEFAULTS: Dict[str, float] = {
     # V16 features (Session 356 — prop line history)
     "over_rate_last_10": 0.5,    # Neutral (50% over rate)
     "margin_vs_line_avg_last_5": 0.0,  # Neutral (no margin)
+
+    # V17 features (Session 360 — opportunity risk)
+    "blowout_minutes_risk": 0.2,          # ~20% of games are blowouts league-wide
+    "minutes_volatility_last_10": 4.0,    # Typical minutes stdev
+    "opponent_pace_mismatch": 0.0,        # Neutral (no pace difference)
 }
 
 

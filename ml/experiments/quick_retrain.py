@@ -74,6 +74,8 @@ from shared.ml.feature_contract import (
     V15_FEATURE_NAMES,
     V16_CONTRACT,
     V16_FEATURE_NAMES,
+    V17_CONTRACT,
+    V17_FEATURE_NAMES,
     FEATURE_DEFAULTS,
     FEATURE_STORE_FEATURE_COUNT,
     FEATURE_STORE_NAMES,
@@ -199,8 +201,11 @@ def parse_args():
     parser.add_argument('--eval-days', type=int, default=7, help='Days of eval (default: 7)')
 
     # Feature set selection
-    parser.add_argument('--feature-set', choices=['v9', 'v10', 'v11', 'v12', 'v13', 'v14', 'v15'], default='v9',
-                       help='Feature set to use (v9=33, v10=37, v11=39, v12=54, v13=60, v14=65, v15=56 features)')
+    parser.add_argument('--feature-set', choices=[
+                           'v9', 'v10', 'v11', 'v12', 'v13', 'v14', 'v15', 'v16', 'v17',
+                           'v12_noveg', 'v16_noveg', 'v17_noveg',
+                       ], default='v9',
+                       help='Feature set to use (v9=33, v12=54, v16=56, v17=59, v12_noveg=50, v16_noveg=52, v17_noveg=55 features)')
 
     # Line source for evaluation
     parser.add_argument('--use-production-lines', action='store_true', default=True,
@@ -293,6 +298,13 @@ def parse_args():
                        help='Add V16 features: over_rate_last_10 (fraction of last 10 games '
                             'where actual > prop_line), margin_vs_line_avg_last_5 '
                             '(avg actual-line over last 5). Computed from training data.')
+
+    # V17 features (Session 360): opportunity risk
+    parser.add_argument('--v17-features', action='store_true',
+                       help='Add V17 features: blowout_minutes_risk (fraction of team L10 '
+                            'with 15+ margin), minutes_volatility_last_10 (stdev of player '
+                            'minutes L10), opponent_pace_mismatch (team_pace - opp_pace). '
+                            'Computed from training data.')
 
     # Model diversity experiments (Session 350)
     parser.add_argument('--classify', action='store_true',
@@ -2409,6 +2421,36 @@ def main():
     dates = get_dates(args)
     exp_id = str(uuid.uuid4())[:8]
 
+    # Session 359: Handle _noveg suffix in feature set names
+    # e.g., --feature-set v12_noveg → feature_set=v12, no_vegas=True
+    if args.feature_set.endswith('_noveg'):
+        base_fs = args.feature_set.replace('_noveg', '')
+        args.no_vegas = True
+        args.feature_set = base_fs
+        print(f"  Feature set '{base_fs}_noveg' → feature_set={base_fs}, no_vegas=True")
+
+    # Session 360: --feature-set v17 auto-enables --v17-features and --v16-features
+    if args.feature_set == 'v17':
+        if not args.v17_features:
+            args.v17_features = True
+            print(f"  Auto-enabled --v17-features for feature_set=v17")
+        if not args.v16_features:
+            args.v16_features = True
+            print(f"  Auto-enabled --v16-features for feature_set=v17")
+
+    # Session 360: --v17-features auto-upgrades feature_set to v17
+    if args.v17_features and args.feature_set in ('v12', 'v16'):
+        if not args.v16_features:
+            args.v16_features = True
+            print(f"  Auto-enabled --v16-features for --v17-features")
+        args.feature_set = 'v17'
+        print(f"  Auto-upgraded feature_set to v17 (--v17-features)")
+
+    # Session 359: --feature-set v16 auto-enables --v16-features
+    if args.feature_set == 'v16' and not args.v16_features:
+        args.v16_features = True
+        print(f"  Auto-enabled --v16-features for feature_set=v16")
+
     # Session 356: --v16-features auto-upgrades feature_set to v16
     # This ensures the model is registered with feature_set='v16_noveg' (52 features)
     # so the worker uses the correct feature list at prediction time.
@@ -2417,7 +2459,10 @@ def main():
         print(f"  Auto-upgraded feature_set to v16 (--v16-features)")
 
     # Select feature contract based on --feature-set
-    if args.feature_set == 'v16':
+    if args.feature_set == 'v17':
+        selected_contract = V17_CONTRACT
+        selected_feature_names = V17_FEATURE_NAMES
+    elif args.feature_set == 'v16':
         selected_contract = V16_CONTRACT
         selected_feature_names = V16_FEATURE_NAMES
     elif args.feature_set == 'v15':
@@ -2540,7 +2585,7 @@ def main():
         print(f"  Modes: no_vegas={args.no_vegas}, residual={args.residual}, "
               f"two_stage={args.two_stage}, quantile_alpha={args.quantile_alpha}, "
               f"anchor_line={args.anchor_line}, diff_features={args.diff_features}, "
-              f"v16_features={args.v16_features}, "
+              f"v16_features={args.v16_features}, v17_features={args.v17_features}, "
               f"classify={args.classify}, framework={args.framework}, player_tier={args.player_tier}")
         if args.exclude_features:
             print(f"  Exclude: {args.exclude_features}")
@@ -2795,6 +2840,114 @@ def main():
             if len(vals) > 0:
                 print(f"    {col}: mean={vals.mean():.3f}, std={vals.std():.3f}, "
                       f"NaN={X_train_full[col].isna().sum()}/{len(X_train_full)}")
+
+    # V17 features (Session 360): opportunity risk features
+    # blowout_minutes_risk: fraction of team's L10 games with 15+ margin
+    # minutes_volatility_last_10: stdev of player minutes over L10
+    # opponent_pace_mismatch: team_pace - opponent_pace
+    if args.v17_features:
+        print("\nComputing V17 features (blowout_risk, minutes_vol, pace_mismatch)...")
+
+        # Query 1: Team margins for blowout_minutes_risk
+        margin_query = f"""
+        SELECT team_abbr, game_date, margin_of_victory
+        FROM `{PROJECT_ID}.nba_analytics.team_offense_game_summary`
+        WHERE game_date BETWEEN '{dates['train_start']}' AND '{dates['eval_end']}'
+          AND margin_of_victory IS NOT NULL
+        ORDER BY team_abbr, game_date
+        """
+
+        # Query 2: Player minutes for minutes_volatility_last_10
+        minutes_query = f"""
+        SELECT player_lookup, game_date, minutes_played, team_abbr
+        FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
+        WHERE game_date BETWEEN DATE_SUB('{dates['train_start']}', INTERVAL 60 DAY) AND '{dates['eval_end']}'
+          AND minutes_played > 0
+        ORDER BY player_lookup, game_date
+        """
+
+        team_margins_df = client.query(margin_query).to_dataframe()
+        player_minutes_df = client.query(minutes_query).to_dataframe()
+
+        # Build team margin lookup: for each team+date, compute blowout rate of L10
+        print(f"  Team margins: {len(team_margins_df)} rows")
+        team_margin_map = {}  # (team_abbr, game_date) -> blowout_rate
+        for team, tdf in team_margins_df.groupby('team_abbr'):
+            tdf = tdf.sort_values('game_date')
+            margins = tdf['margin_of_victory'].values
+            dates_list = pd.to_datetime(tdf['game_date']).values
+            for i in range(len(tdf)):
+                # L10 games strictly before this game
+                start_idx = max(0, i - 10)
+                window = margins[start_idx:i]
+                if len(window) >= 3:
+                    blowout_rate = float(np.mean(np.abs(window) >= 15))
+                    team_margin_map[(team, dates_list[i])] = blowout_rate
+
+        # Build player minutes lookup: for each player+date, compute stdev of L10 minutes
+        print(f"  Player minutes: {len(player_minutes_df)} rows")
+        player_mins_map = {}  # (player_lookup, game_date) -> (stdev, team_abbr)
+        for player, pdf in player_minutes_df.groupby('player_lookup'):
+            pdf = pdf.sort_values('game_date')
+            minutes = pdf['minutes_played'].values
+            dates_list = pd.to_datetime(pdf['game_date']).values
+            teams = pdf['team_abbr'].values
+            for i in range(len(pdf)):
+                start_idx = max(0, i - 10)
+                window = minutes[start_idx:i]
+                if len(window) >= 3:
+                    vol = float(np.std(window, ddof=1))
+                    player_mins_map[(player, dates_list[i])] = (vol, teams[i])
+
+        # Combine train+eval, compute features, split back
+        n_train = len(df_train)
+        combined_source = pd.concat([df_train, df_eval], ignore_index=True)
+
+        blowout_risk_arr = np.full(len(combined_source), np.nan)
+        mins_vol_arr = np.full(len(combined_source), np.nan)
+        pace_mismatch_arr = np.full(len(combined_source), np.nan)
+
+        for idx in range(len(combined_source)):
+            row = combined_source.iloc[idx]
+            player = row['player_lookup']
+            gd = pd.to_datetime(row['game_date'])
+
+            # Minutes volatility + team from player lookup
+            mins_info = player_mins_map.get((player, gd))
+            if mins_info is not None:
+                mins_vol_arr[idx] = mins_info[0]
+                team = mins_info[1]
+
+                # Blowout risk from team lookup
+                br_val = team_margin_map.get((team, gd))
+                if br_val is not None:
+                    blowout_risk_arr[idx] = br_val
+
+            # Pace mismatch from existing features (22=team_pace, 14=opponent_pace)
+            team_pace = row.get('feature_22_value')
+            opp_pace = row.get('feature_14_value')
+            if team_pace is not None and opp_pace is not None:
+                try:
+                    pace_mismatch_arr[idx] = float(team_pace) - float(opp_pace)
+                except (TypeError, ValueError):
+                    pass
+
+        # Split back into train and eval
+        X_train_full['blowout_minutes_risk'] = blowout_risk_arr[:n_train]
+        X_train_full['minutes_volatility_last_10'] = mins_vol_arr[:n_train]
+        X_train_full['opponent_pace_mismatch'] = pace_mismatch_arr[:n_train]
+        X_eval_full['blowout_minutes_risk'] = blowout_risk_arr[n_train:]
+        X_eval_full['minutes_volatility_last_10'] = mins_vol_arr[n_train:]
+        X_eval_full['opponent_pace_mismatch'] = pace_mismatch_arr[n_train:]
+
+        for label, X_df in [('train', X_train_full), ('eval', X_eval_full)]:
+            print(f"  {label}:")
+            for col in ['blowout_minutes_risk', 'minutes_volatility_last_10', 'opponent_pace_mismatch']:
+                non_nan = X_df[col].notna().sum()
+                print(f"    {col}: coverage={non_nan}/{len(X_df)}")
+                vals = X_df[col].dropna()
+                if len(vals) > 0:
+                    print(f"      mean={vals.mean():.3f}, std={vals.std():.3f}")
 
     lines = df_eval['vegas_line'].values
     active_feature_names = list(X_train_full.columns)
@@ -3209,7 +3362,9 @@ def main():
         mode_suffix += "_anchor"
     if args.diff_features:
         mode_suffix += "_diff"
-    if args.v16_features:
+    if args.v17_features:
+        mode_suffix += "_v17"
+    elif args.v16_features:
         mode_suffix += "_v16"
 
     # Save model with standard naming (Session 164: include train start-end range in filename)

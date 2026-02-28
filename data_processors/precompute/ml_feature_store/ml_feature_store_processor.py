@@ -90,8 +90,8 @@ PHASE4_MAX_STALENESS_HOURS = 6
 # V9/V10 models are unaffected (name-based extraction ignores extra features).
 # v2_54features (Session 230): Extended with 15 V12 features (39-53) for
 # scoring trends, usage, fatigue, streaks, structural changes.
-FEATURE_VERSION = 'v2_57features'
-FEATURE_COUNT = 57
+FEATURE_VERSION = 'v2_60features'
+FEATURE_COUNT = 60
 
 FEATURE_NAMES = [
     # Recent Performance (0-4)
@@ -158,6 +158,11 @@ FEATURE_NAMES = [
     # V16 Features (55-56) - Session 356 (prop line history)
     'over_rate_last_10',              # 55: Fraction of last 10 where actual > prop_line
     'margin_vs_line_avg_last_5',      # 56: Mean(actual - prop_line) over last 5
+
+    # V17 Features (57-59) - Session 360 (opportunity risk)
+    'blowout_minutes_risk',           # 57: Fraction of team's L10 games with 15+ margin
+    'minutes_volatility_last_10',     # 58: Stdev of player minutes over L10
+    'opponent_pace_mismatch',         # 59: team_pace - opponent_pace
 ]
 
 # ============================================================================
@@ -251,6 +256,11 @@ ML_FEATURE_RANGES = {
     # V16 Features (55-56) - Session 356
     55: (0, 1, False, 'over_rate_last_10'),       # Rate [0.0-1.0]
     56: (-25, 25, False, 'margin_vs_line_avg_last_5'),  # Points margin
+
+    # V17 Features (57-59) - Session 360
+    57: (0, 1, False, 'blowout_minutes_risk'),     # Rate [0.0-1.0]
+    58: (0, 20, False, 'minutes_volatility_last_10'),  # Stdev of minutes
+    59: (-20, 20, False, 'opponent_pace_mismatch'),    # Pace difference
 }
 
 
@@ -2066,6 +2076,33 @@ class MLFeatureStoreProcessor(
         margin_avg = v16_data.get('margin_vs_line_avg_last_5')
         features.append(float(margin_avg) if margin_avg is not None else float('nan'))
         feature_sources[56] = 'calculated' if margin_avg is not None else 'missing'
+
+        # Features 57-59: V17 opportunity risk (Session 360)
+        v17_data = self.feature_extractor.get_v17_opportunity_risk(player_lookup) if player_lookup else {}
+
+        # Feature 57: blowout_minutes_risk
+        blowout_risk = v17_data.get('blowout_minutes_risk')
+        features.append(float(blowout_risk) if blowout_risk is not None else float('nan'))
+        feature_sources[57] = 'calculated' if blowout_risk is not None else 'missing'
+
+        # Feature 58: minutes_volatility_last_10
+        mins_vol = v17_data.get('minutes_volatility_last_10')
+        features.append(float(mins_vol) if mins_vol is not None else float('nan'))
+        feature_sources[58] = 'calculated' if mins_vol is not None else 'missing'
+
+        # Feature 59: opponent_pace_mismatch (computed from existing features 22 and 14)
+        team_pace_val = features[22]    # team_pace
+        opp_pace_val = features[14]     # opponent_pace
+        if team_pace_val is not None and opp_pace_val is not None:
+            try:
+                features.append(float(team_pace_val) - float(opp_pace_val))
+                feature_sources[59] = 'calculated'
+            except (TypeError, ValueError):
+                features.append(float('nan'))
+                feature_sources[59] = 'missing'
+        else:
+            features.append(float('nan'))
+            feature_sources[59] = 'missing'
 
         return features, feature_sources
     

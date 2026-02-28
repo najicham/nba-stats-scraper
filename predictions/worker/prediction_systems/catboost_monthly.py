@@ -44,13 +44,15 @@ from predictions.worker.prediction_systems.catboost_v9 import (
 logger = logging.getLogger(__name__)
 
 
-# V12/V16 feature names — loaded from feature_contract for consistency
+# V12/V16/V17 feature names — loaded from feature_contract for consistency
 # Session 324: Dynamic feature list supports V12 (54f), V12_NOVEG (50f)
 # Session 356: Added V16_NOVEG (52f) — V12_NOVEG + 2 prop line history features
+# Session 360: Added V17_NOVEG (55f) — V16_NOVEG + 3 opportunity risk features
 from shared.ml.feature_contract import (
     V12_FEATURE_NAMES as _V12_FEATURES,
     V12_NOVEG_FEATURE_NAMES as _V12_NOVEG_FEATURES,
     V16_NOVEG_FEATURE_NAMES as _V16_NOVEG_FEATURES,
+    V17_NOVEG_FEATURE_NAMES as _V17_NOVEG_FEATURES,
 )
 
 
@@ -479,8 +481,8 @@ class CatBoostMonthly(CatBoostV8):
         Feature-set-aware: V9 models use parent class extraction (33 features),
         V12 models use name-based extraction (54f with vegas, 50f without).
         """
-        if self._feature_set in ('v12', 'v12_noveg', 'v16_noveg'):
-            # V12/V16 path: dynamic feature extraction (54f, 50f, or 52f)
+        if self._feature_set in ('v12', 'v12_noveg', 'v16_noveg', 'v17_noveg'):
+            # V12/V16/V17 path: dynamic feature extraction (54f, 50f, 52f, or 55f)
             return self._predict_v12(player_lookup, features, betting_line)
         else:
             # V9 path: use parent class (CatBoostV8) feature extraction
@@ -622,7 +624,7 @@ class CatBoostMonthly(CatBoostV8):
             'confidence_score': round(confidence, 2),
             'recommendation': recommendation,
             'model_type': model_type_str,
-            'feature_count': {'v12': 54, 'v12_noveg': 50, 'v16_noveg': 52}.get(self._feature_set, 50),
+            'feature_count': {'v12': 54, 'v12_noveg': 50, 'v16_noveg': 52, 'v17_noveg': 55}.get(self._feature_set, 50),
             'feature_version': features.get('feature_version'),
             'feature_quality_score': quality,
             'training_period': f"{self.config.get('train_start')} to {self.config.get('train_end')}",
@@ -653,7 +655,10 @@ class CatBoostMonthly(CatBoostV8):
             from shared.ml.feature_contract import FEATURE_DEFAULTS
 
             # Select feature list based on model's feature_set
-            if self._feature_set == 'v16_noveg':
+            if self._feature_set == 'v17_noveg':
+                feature_names = _V17_NOVEG_FEATURES
+                expected_count = 55
+            elif self._feature_set == 'v16_noveg':
                 feature_names = _V16_NOVEG_FEATURES
                 expected_count = 52
             elif self._feature_set == 'v12_noveg':
@@ -705,6 +710,8 @@ class CatBoostMonthly(CatBoostV8):
         """Return monthly model information for health checks and debugging."""
         if self._feature_set == 'v12':
             feature_count = 54
+        elif self._feature_set == 'v17_noveg':
+            feature_count = 55
         elif self._feature_set == 'v16_noveg':
             feature_count = 52
         elif self._feature_set == 'v12_noveg':

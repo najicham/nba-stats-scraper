@@ -75,6 +75,9 @@ class FeatureExtractor:
         # Features 55-56: V16 prop line history (Session 356)
         self._v16_line_history_lookup: Dict[str, Dict] = {}
 
+        # Features 57-59: V17 opportunity risk (Session 360)
+        self._v17_opportunity_risk_lookup: Dict[str, Dict] = {}
+
         # Data Provenance Tracking (Session 99 - Feb 2026)
         # Track which sources were used and why fallbacks occurred
         self._fallback_reasons: List[str] = []
@@ -347,6 +350,8 @@ class FeatureExtractor:
             ('prop_line_delta', timed_task('prop_line_delta', lambda: self._batch_extract_prop_line_delta(game_date))),
             # Features 55-56: V16 prop line history (Session 356)
             ('v16_line_history', timed_task('v16_line_history', lambda: self._batch_extract_v16_line_history(game_date))),
+            # Features 57-59: V17 opportunity risk (Session 360)
+            ('v17_opportunity_risk', timed_task('v17_opportunity_risk', lambda: self._batch_extract_v17_opportunity_risk(game_date))),
         ]
 
         # Auto-retry logic for transient network/BigQuery errors
@@ -440,11 +445,12 @@ class FeatureExtractor:
         self._minutes_ppm_lookup = {}
         # V12 rolling stats
         self._player_rolling_stats_lookup = {}
-        # Feature 47/50/54/55-56
+        # Feature 47/50/54/55-56/57-59
         self._teammate_usage_lookup = {}
         self._multi_book_std_lookup = {}
         self._prop_line_delta_lookup = {}
         self._v16_line_history_lookup = {}
+        self._v17_opportunity_risk_lookup = {}
         # Historical Completeness Tracking
         self._total_games_available_lookup = {}
 
@@ -1231,6 +1237,16 @@ class FeatureExtractor:
         """
         return self._v16_line_history_lookup.get(player_lookup, {})
 
+    def get_v17_opportunity_risk(self, player_lookup: str) -> Dict:
+        """Get V17 opportunity risk features (features 57-59, Session 360).
+
+        Returns dict with:
+            blowout_minutes_risk: fraction of team's L10 games with 15+ margin
+            minutes_volatility_last_10: stdev of player minutes over L10
+        Note: opponent_pace_mismatch is computed in the processor from existing features.
+        """
+        return self._v17_opportunity_risk_lookup.get(player_lookup, {})
+
     # ========================================================================
     # V12 ROLLING STATS EXTRACTION
     # ========================================================================
@@ -1620,6 +1636,100 @@ class FeatureExtractor:
         logger.info(
             f"Batch V16 line history: {len(self._v16_line_history_lookup)} players "
             f"(over_rate={over_rate_count}, margin={margin_count})"
+        )
+
+    def _batch_extract_v17_opportunity_risk(self, game_date: date) -> None:
+        """Batch extract V17 opportunity risk features (features 57-58, Session 360).
+
+        Computes per-player:
+        - blowout_minutes_risk: fraction of team's L10 games with margin >= 15
+        - minutes_volatility_last_10: stdev of player minutes over L10 games
+
+        Note: opponent_pace_mismatch (feature 59) is computed in the processor
+        from existing features 22 (team_pace) and 14 (opponent_pace).
+
+        Source: team_offense_game_summary (margins), player_game_summary (minutes)
+        No leakage: only uses games strictly BEFORE game_date.
+        """
+        query = f"""
+        WITH team_margins AS (
+            -- Team blowout rate: fraction of L10 games with margin >= 15
+            SELECT
+                team_abbr,
+                SAFE_DIVIDE(
+                    COUNTIF(ABS(margin_of_victory) >= 15),
+                    COUNT(*)
+                ) AS blowout_minutes_risk
+            FROM (
+                SELECT
+                    team_abbr,
+                    margin_of_victory,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY team_abbr ORDER BY game_date DESC
+                    ) AS rn
+                FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
+                WHERE game_date < '{game_date}'
+                  AND game_date >= DATE_SUB('{game_date}', INTERVAL 60 DAY)
+            )
+            WHERE rn <= 10
+            GROUP BY team_abbr
+        ),
+        player_minutes_vol AS (
+            -- Player minutes volatility: stdev of minutes in L10 games
+            SELECT
+                player_lookup,
+                team_abbr,
+                STDDEV_SAMP(minutes_played) AS minutes_volatility_last_10
+            FROM (
+                SELECT
+                    player_lookup,
+                    team_abbr,
+                    minutes_played,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY player_lookup ORDER BY game_date DESC
+                    ) AS rn
+                FROM `{self.project_id}.nba_analytics.player_game_summary`
+                WHERE game_date < '{game_date}'
+                  AND game_date >= DATE_SUB('{game_date}', INTERVAL 60 DAY)
+                  AND minutes_played > 0
+            )
+            WHERE rn <= 10
+            GROUP BY player_lookup, team_abbr
+            HAVING COUNT(*) >= 3  -- Need at least 3 games for stdev
+        )
+        SELECT
+            pmv.player_lookup,
+            COALESCE(tm.blowout_minutes_risk, 0.2) AS blowout_minutes_risk,
+            pmv.minutes_volatility_last_10
+        FROM player_minutes_vol pmv
+        LEFT JOIN team_margins tm ON pmv.team_abbr = tm.team_abbr
+        """
+        result = self._safe_query(query, "batch_extract_v17_opportunity_risk")
+
+        blowout_count = 0
+        vol_count = 0
+
+        if not result.empty:
+            for record in result.to_dict('records'):
+                player = record['player_lookup']
+                entry = {}
+
+                br_val = record.get('blowout_minutes_risk')
+                if br_val is not None:
+                    entry['blowout_minutes_risk'] = round(float(br_val), 4)
+                    blowout_count += 1
+
+                mv_val = record.get('minutes_volatility_last_10')
+                if mv_val is not None:
+                    entry['minutes_volatility_last_10'] = round(float(mv_val), 2)
+                    vol_count += 1
+
+                if entry:
+                    self._v17_opportunity_risk_lookup[player] = entry
+
+        logger.info(
+            f"Batch V17 opportunity risk: {len(self._v17_opportunity_risk_lookup)} players "
+            f"(blowout={blowout_count}, volatility={vol_count})"
         )
 
     # ========================================================================
