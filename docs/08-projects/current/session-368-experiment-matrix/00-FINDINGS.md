@@ -126,8 +126,59 @@ V12 augmenter successfully pulled from upstream tables (UPCG, player_game_summar
 - **OVER**: Profitable in Jan (78-84%), collapses in Feb (57-58%). Seasonal.
 - **Don't build direction-specific models** — both directions work, decay differs
 
+## Session 369: Stability, Sliding Window, and Category Dampening
+
+### E. Stability Test (10 seeds per config)
+
+| Config | Mean HR | StdDev | Min | Max | All Pass 60%? |
+|--------|---------|--------|-----|-----|---------------|
+| **v12+vw015** | **69.8%** | **2.5pp** | 66.1% | 73.3% | YES |
+| **v12_noveg** | **67.7%** | **2.1pp** | 64.2% | 70.6% | YES |
+
+**Key insight:** Seed variance is ~2.5pp StdDev. Config differences <5pp are within noise. v12+vw015 vs v12_noveg (+2.1pp) is NOT statistically significant.
+
+### F. Sliding Window (8 × 31-day positions, v12+vw015)
+
+| Window | Train End | HR 3+ | N | OVER | UNDER |
+|--------|-----------|-------|---|------|-------|
+| W1 | Dec 15 | 70.9% | 213 | 73.3% | 69.1% |
+| W2 | Dec 22 | 72.4% | 163 | 75.8% | 70.1% |
+| W3 | Dec 29 | 71.8% | 174 | 73.1% | 70.8% |
+| W4 | Jan 5 | 71.8% | 174 | 78.5% | 67.9% |
+| W5 | Jan 12 | 70.4% | 125 | 78.9% | 63.2% |
+| **W6** | **Jan 19** | **75.4%** | **118** | **82.5%** | **71.8%** |
+| W7 | Jan 26 | 61.4% | 88 | 59.1% | 62.1% |
+| W8 | Feb 2 | 59.3% | 54 | 71.4% | 55.0% |
+
+**W1-W6 StdDev: 1.6pp** — remarkably stable. Sharp cliff at W7-W8 (pure Feb eval).
+
+### G. Category Weight Dampening (v12+vw015 base, Dec 1-31 train)
+
+| Config | HR 3+ | N | OVER | UNDER | vs Base |
+|--------|-------|---|------|-------|---------|
+| Baseline (vw015 only) | 67.3% | 165 | 68.8% | 66.3% | — |
+| **Composite dampen** (comp/derived=0.25) | **71.5%** | 151 | 69.2% | **72.7%** | **+4.2pp** |
+| Shot zone dampen (sz=0.10) | 70.0% | 170 | 69.4% | 70.4% | +2.7pp |
+| Max dampen (multi-cat) | 70.2% | 161 | 76.0% | 67.6% | +2.9pp |
+
+Composite dampening +4.2pp exceeds 1.5× seed StdDev — borderline significant.
+
+### H. Betting Strategy Validation (Production Data Jan 9 - Feb 27)
+
+| Pattern | HR | N | Impact |
+|---------|-----|---|--------|
+| UNDER Star AWAY | **38.5%** | 13 | Block → save $380 |
+| UNDER Star HOME | **81.8%** | 11 | Premium sizing |
+| 1-pick days | **50.0%** | 14 days | Low confidence annotation |
+| Edge 7+ | **81.3%** | 32 | Size up → +63% P&L |
+
 ## Data Files
 
 All JSON results in `results/session_368/`:
 - `w1_v12_vw015_jan.json` through `w16_v12noveg_90d.json` (current season)
 - `xs1_v12_vw015_2425_nov.json` through `xs8_v12_vw015_2425_61d.json` (cross-season)
+
+Session 369 results in `results/session_369/`:
+- `stab_vw015_s*.json` and `stab_noveg_s*.json` (stability tests)
+- `slide_w1.json` through `slide_w8.json` (sliding window)
+- `catdamp_*.json` (category dampening)
