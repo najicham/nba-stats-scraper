@@ -15,6 +15,7 @@ Thresholds:
 
 Created: 2026-02-15 (Session 262)
 Updated: 2026-02-15 (Session 266) - Added cross-model crash detector
+Updated: 2026-02-28 (Session 363) - Added front-load detection
 """
 
 import functions_framework
@@ -48,6 +49,11 @@ PROJECT_ID = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
 WATCH_THRESHOLD = 58.0
 ALERT_THRESHOLD = 55.0
 BLOCK_THRESHOLD = 52.4
+
+# Front-load detection thresholds (Session 363)
+FRONT_LOAD_HR_GAP = 5.0    # 7d HR must be this much below 14d HR
+FRONT_LOAD_MIN_DAYS = 3    # Must be true for this many consecutive days
+FRONT_LOAD_MIN_N = 20      # Minimum 7d sample size to be meaningful
 
 
 def get_latest_performance(target_date: Optional[str] = None) -> List[Dict]:
@@ -216,6 +222,140 @@ def detect_cross_model_crash(models: List[Dict]) -> Optional[Dict]:
             'blocks': blocks
         }]
     }
+
+
+def detect_front_loading(game_date) -> Tuple[List[Dict], Optional[Dict]]:
+    """Detect models exhibiting front-loading pattern.
+
+    Front-loading: 7d rolling HR consistently lower than 14d rolling HR,
+    indicating the model performed well initially but is now degrading.
+
+    Pattern: rolling_hr_7d < rolling_hr_14d - FRONT_LOAD_HR_GAP for
+    FRONT_LOAD_MIN_DAYS+ consecutive days.
+
+    Session 363: Observed in catboost_v12_train1225_0205 (Session 360) —
+    7d HR was consistently 6-8pp below 14d HR, declining 50% → 32% in a week.
+
+    Returns:
+        Tuple of (front_loaded_models list, slack_payload or None)
+    """
+    bq = _get_bq_client()
+
+    query = f"""
+    SELECT
+      game_date,
+      model_id,
+      rolling_hr_7d,
+      rolling_hr_14d,
+      rolling_n_7d,
+      rolling_n_14d,
+      state
+    FROM `{PROJECT_ID}.nba_predictions.model_performance_daily`
+    WHERE game_date >= DATE_SUB(DATE('{game_date}'), INTERVAL 7 DAY)
+      AND game_date <= '{game_date}'
+      AND rolling_hr_7d IS NOT NULL
+      AND rolling_hr_14d IS NOT NULL
+      AND rolling_n_7d >= {FRONT_LOAD_MIN_N}
+    ORDER BY model_id, game_date DESC
+    """
+
+    try:
+        results = list(bq.query(query).result())
+    except Exception as e:
+        logger.warning(f"Front-load detection query failed: {e}")
+        return [], None
+
+    # Group by model_id (results ordered by game_date DESC within each model)
+    by_model: Dict[str, List[Dict]] = {}
+    for r in results:
+        mid = r.model_id
+        if mid not in by_model:
+            by_model[mid] = []
+        by_model[mid].append(dict(r))
+
+    front_loaded = []
+    for model_id, days in by_model.items():
+        # days are ordered DESC — check consecutive most recent days
+        consecutive = 0
+        for day in days:
+            gap = day['rolling_hr_14d'] - day['rolling_hr_7d']
+            if gap >= FRONT_LOAD_HR_GAP:
+                consecutive += 1
+            else:
+                break
+
+        if consecutive >= FRONT_LOAD_MIN_DAYS:
+            latest = days[0]
+            front_loaded.append({
+                'model_id': model_id,
+                'consecutive_days': consecutive,
+                'hr_7d': latest['rolling_hr_7d'],
+                'hr_14d': latest['rolling_hr_14d'],
+                'gap': round(latest['rolling_hr_14d'] - latest['rolling_hr_7d'], 1),
+                'state': latest.get('state'),
+                'n_7d': latest.get('rolling_n_7d'),
+            })
+
+    if not front_loaded:
+        return [], None
+
+    # Build Slack alert
+    lines = []
+    for fl in front_loaded:
+        lines.append(
+            f"• *{fl['model_id']}*: 7d {fl['hr_7d']:.1f}% vs 14d {fl['hr_14d']:.1f}% "
+            f"(gap: {fl['gap']}pp for {fl['consecutive_days']} days, N={fl['n_7d']})"
+        )
+
+    blocks = [
+        {
+            'type': 'header',
+            'text': {
+                'type': 'plain_text',
+                'text': '📉 FRONT-LOAD DETECTED — Model Degrading After Initial Success',
+                'emoji': True,
+            }
+        },
+        {
+            'type': 'section',
+            'text': {
+                'type': 'mrkdwn',
+                'text': (
+                    f"*{len(front_loaded)} model(s) showing front-load pattern*\n"
+                    f"7-day HR consistently {FRONT_LOAD_HR_GAP:.0f}+ pp below 14-day HR "
+                    f"for {FRONT_LOAD_MIN_DAYS}+ consecutive days.\n\n"
+                    + '\n'.join(lines)
+                )
+            }
+        },
+        {
+            'type': 'section',
+            'text': {
+                'type': 'mrkdwn',
+                'text': (
+                    '*What this means:* The model performed well initially but recent predictions '
+                    'are significantly worse. This often indicates the model learned patterns '
+                    'that were temporary. Consider disabling or retraining.'
+                )
+            }
+        },
+        {
+            'type': 'context',
+            'elements': [{
+                'type': 'mrkdwn',
+                'text': f"Date: {game_date} | Run: {datetime.now(timezone.utc).strftime('%H:%M UTC')}"
+            }]
+        }
+    ]
+
+    payload = {
+        'attachments': [{
+            'color': '#FF8C00',  # Dark orange
+            'blocks': blocks
+        }]
+    }
+
+    return front_loaded, payload
 
 
 def build_alert_payload(models: List[Dict], transitions: List[Dict],
@@ -471,6 +611,16 @@ def decay_detection(request: Request):
         elif not payload and not cross_model_crash:
             logger.info("No alert needed — all models healthy, no transitions")
 
+        # Check for front-loading pattern (Session 363)
+        front_loaded, front_load_payload = detect_front_loading(game_date)
+        front_load_alert_sent = False
+        if front_load_payload:
+            front_load_alert_sent = send_slack_alert(front_load_payload)
+            logger.info(
+                f"Front-load alert sent: {front_load_alert_sent}, "
+                f"models: {[fl['model_id'] for fl in front_loaded]}"
+            )
+
         # Build response
         model_summary = {}
         for m in models:
@@ -488,6 +638,8 @@ def decay_detection(request: Request):
             'transitions': transitions,
             'alert_sent': alert_sent,
             'crash_alert_sent': crash_alert_sent,
+            'front_load_alert_sent': front_load_alert_sent,
+            'front_loaded_models': [fl['model_id'] for fl in front_loaded],
             'best_bets_model': best_bets_model,
             'timestamp': datetime.now(timezone.utc).isoformat()
         }), 200, {'Content-Type': 'application/json'}
@@ -512,6 +664,25 @@ if __name__ == '__main__':
     models = get_latest_performance(target_date)
     print(f"\nModels ({len(models)}):")
     for m in models:
-        print(f"  {m['model_id']}: {m.get('rolling_hr_7d')}% HR 7d "
+        hr_7d = m.get('rolling_hr_7d')
+        hr_14d = m.get('rolling_hr_14d')
+        gap_str = ''
+        if hr_7d is not None and hr_14d is not None:
+            gap = hr_14d - hr_7d
+            if gap >= FRONT_LOAD_HR_GAP:
+                gap_str = f' [FRONT-LOAD GAP: {gap:.1f}pp]'
+        print(f"  {m['model_id']}: {hr_7d}% HR 7d / {hr_14d}% HR 14d "
               f"(N={m.get('rolling_n_7d')}), state={m.get('state')}, "
-              f"action={m.get('action')}")
+              f"action={m.get('action')}{gap_str}")
+
+    if models:
+        game_date = models[0].get('game_date')
+        if game_date:
+            front_loaded, _ = detect_front_loading(str(game_date))
+            if front_loaded:
+                print(f"\nFront-loaded models ({len(front_loaded)}):")
+                for fl in front_loaded:
+                    print(f"  {fl['model_id']}: 7d {fl['hr_7d']:.1f}% vs 14d {fl['hr_14d']:.1f}% "
+                          f"(gap: {fl['gap']}pp for {fl['consecutive_days']} consecutive days)")
+            else:
+                print("\nNo front-loading detected.")
