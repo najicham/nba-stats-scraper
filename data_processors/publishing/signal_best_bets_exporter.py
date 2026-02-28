@@ -54,23 +54,6 @@ logger = logging.getLogger(__name__)
 PROJECT_ID = 'nba-props-platform'
 
 
-def compute_bet_sizing(edge: float) -> dict:
-    """Compute edge-based bet sizing tier and units.
-
-    Session 369 production data:
-        Edge 7+: 81.3% HR → high conviction (1.0 unit)
-        Edge 5-7: 62.8% HR → standard (0.75 units)
-        Edge 3-5: breakeven → low conviction (0.5 units)
-    """
-    abs_edge = abs(edge)
-    if abs_edge >= 7.0:
-        return {'units': 1.0, 'tier': 'high_conviction'}
-    elif abs_edge >= 5.0:
-        return {'units': 0.75, 'tier': 'standard'}
-    else:
-        return {'units': 0.5, 'tier': 'low_conviction'}
-
-
 class SignalBestBetsExporter(BaseExporter):
     """
     Export signal-curated best bets to GCS and BigQuery.
@@ -402,8 +385,6 @@ class SignalBestBetsExporter(BaseExporter):
                 'direction_conflict': pick.get('direction_conflict', False),
                 'actual': None,
                 'result': None,
-                # Bet sizing (Session 369)
-                'bet_sizing': compute_bet_sizing(pick.get('edge') or 0),
             }
 
             # Game time from schedule (Session 328)
@@ -625,9 +606,6 @@ class SignalBestBetsExporter(BaseExporter):
                 # Ultra Bets (Session 326)
                 'ultra_tier': pick.get('ultra_tier', False),
                 'ultra_criteria': json.dumps(pick.get('ultra_criteria', []), default=str),
-                # Bet sizing (Session 369)
-                'bet_size_units': pick.get('bet_sizing', {}).get('units'),
-                'bet_size_tier': pick.get('bet_sizing', {}).get('tier'),
                 'created_at': datetime.now(timezone.utc).isoformat(),
             })
 

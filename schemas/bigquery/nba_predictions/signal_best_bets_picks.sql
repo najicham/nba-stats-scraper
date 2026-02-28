@@ -67,10 +67,6 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.signal_best_bets_
   actual_points INT64,
   prediction_correct BOOLEAN,
 
-  -- Bet sizing (Session 369)
-  bet_size_units FLOAT64,                  -- Suggested units: 1.0 (high), 0.75 (standard), 0.5 (low)
-  bet_size_tier STRING,                    -- high_conviction | standard | low_conviction
-
   -- Metadata
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
 )
