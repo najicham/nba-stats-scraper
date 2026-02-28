@@ -91,6 +91,17 @@ TEMPLATES = {
             'feature-set': ['v12_noveg', 'v13', 'v15', 'v16_noveg'],
         },
     },
+    'tier_top3': {
+        'description': 'Top 3 tier weight combos from Session 367 sweep',
+        'base_args': '--feature-set v12_noveg --category-weight vegas=0.25 --no-vegas',
+        'grid': {
+            'tier-weight': [
+                'star=2.0,starter=1.2,role=0.8,bench=0.3',
+                'star=2.0,starter=1.5,role=1.0,bench=0.8',
+                'star=3.0,starter=1.0,role=0.8,bench=0.5',
+            ],
+        },
+    },
 }
 
 

@@ -1,0 +1,5 @@
+idx,combo,hr3,n3,hr5,over_hr,under_hr,mae,gates
+0,feature-set=v12_noveg,66.34,101,61.11,62.5,67.5,4.982,True
+2,feature-set=v15,63.0,100,58.33,59.1,64.1,4.9402,True
+3,feature-set=v16_noveg,61.36,88,61.54,57.1,62.7,5.0671,True
+1,feature-set=v13,,0,,,,,False

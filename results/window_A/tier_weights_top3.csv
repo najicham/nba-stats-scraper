@@ -1,0 +1,4 @@
+idx,combo,hr3,n3,hr5,over_hr,under_hr,mae,gates
+0,"tier-weight=star=2.0,starter=1.2,role=0.8,...",67.9,271,77.61,68.9,67.3,4.8776,True
+2,"tier-weight=star=3.0,starter=1.0,role=0.8,...",67.21,247,75.44,65.5,68.1,4.8867,True
+1,"tier-weight=star=2.0,starter=1.5,role=1.0,...",65.25,259,73.44,67.4,64.1,4.8823,True

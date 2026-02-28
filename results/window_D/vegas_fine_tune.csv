@@ -1,0 +1,6 @@
+idx,combo,hr3,n3,hr5,over_hr,under_hr,mae,gates
+2,category-weight=vegas=0.25,72.73,44,66.67,76.5,70.4,4.9158,False
+3,category-weight=vegas=0.30,71.43,35,66.67,72.7,70.8,4.9079,False
+0,category-weight=vegas=0.15,71.11,45,75.0,76.5,67.9,4.9069,False
+4,category-weight=vegas=0.35,70.27,37,50.0,81.8,65.4,4.9712,False
+1,category-weight=vegas=0.20,69.77,43,62.5,87.5,59.3,4.9253,False
