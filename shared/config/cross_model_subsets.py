@@ -146,6 +146,13 @@ MODEL_FAMILIES = {
         'feature_set': 'v13',
         'loss': 'mae',
     },
+    # Session 365: V15 player profile features (V12 + ft_rate_season + starter_rate_season)
+    'v15_noveg_mae': {
+        'pattern': 'catboost_v15',
+        'exact': False,
+        'feature_set': 'v15_noveg',
+        'loss': 'mae',
+    },
     'v12_mae': {
         'pattern': 'catboost_v12',
         'exact': False,  # Prefix match: catches 'catboost_v12', 'catboost_v12_noveg_train*',
