@@ -54,6 +54,23 @@ logger = logging.getLogger(__name__)
 PROJECT_ID = 'nba-props-platform'
 
 
+def compute_bet_sizing(edge: float) -> dict:
+    """Compute edge-based bet sizing tier and units.
+
+    Session 369 production data:
+        Edge 7+: 81.3% HR → high conviction (1.0 unit)
+        Edge 5-7: 62.8% HR → standard (0.75 units)
+        Edge 3-5: breakeven → low conviction (0.5 units)
+    """
+    abs_edge = abs(edge)
+    if abs_edge >= 7.0:
+        return {'units': 1.0, 'tier': 'high_conviction'}
+    elif abs_edge >= 5.0:
+        return {'units': 0.75, 'tier': 'standard'}
+    else:
+        return {'units': 0.5, 'tier': 'low_conviction'}
+
+
 class SignalBestBetsExporter(BaseExporter):
     """
     Export signal-curated best bets to GCS and BigQuery.
@@ -323,6 +340,16 @@ class SignalBestBetsExporter(BaseExporter):
         # Step 6e: Look up game times from schedule (Session 328)
         game_times = self._query_game_times(target_date, top_picks)
 
+        # Step 6f: 1-pick day low conviction annotation (Session 369)
+        # 1-pick days = 50.0% HR (7W-7L) vs multi-pick days = 69.8% (67W-29L)
+        daily_pick_count = len(top_picks)
+        if daily_pick_count == 1:
+            top_picks[0].setdefault('warning_tags', []).append('low_conviction_day')
+            top_picks[0].setdefault('pick_angles', []).append(
+                'Only 1 pick today — lower conviction environment'
+            )
+            logger.info("1-pick day: added low_conviction_day warning")
+
         # Step 7: Format for JSON
         # ultra_tier included on OVER picks ONLY when the gate is met.
         # ultra_criteria always excluded from public JSON.
@@ -375,6 +402,8 @@ class SignalBestBetsExporter(BaseExporter):
                 'direction_conflict': pick.get('direction_conflict', False),
                 'actual': None,
                 'result': None,
+                # Bet sizing (Session 369)
+                'bet_sizing': compute_bet_sizing(pick.get('edge') or 0),
             }
 
             # Game time from schedule (Session 328)
@@ -425,6 +454,8 @@ class SignalBestBetsExporter(BaseExporter):
             'health_gate_active': False,
             'filter_summary': filter_summary,
             'edge_distribution': edge_distribution,
+            'daily_pick_count': daily_pick_count,
+            'low_conviction_day': daily_pick_count == 1,
             # ultra_bets removed from JSON (Session 327 — internal-only, in BQ)
             'picks': picks_json,
             'total_picks': len(picks_json),
@@ -594,6 +625,9 @@ class SignalBestBetsExporter(BaseExporter):
                 # Ultra Bets (Session 326)
                 'ultra_tier': pick.get('ultra_tier', False),
                 'ultra_criteria': json.dumps(pick.get('ultra_criteria', []), default=str),
+                # Bet sizing (Session 369)
+                'bet_size_units': pick.get('bet_sizing', {}).get('units'),
+                'bet_size_tier': pick.get('bet_sizing', {}).get('tier'),
                 'created_at': datetime.now(timezone.utc).isoformat(),
             })
 

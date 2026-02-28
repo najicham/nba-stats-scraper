@@ -50,7 +50,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v367_star_under_injury_aware_under7plus_v9_only'
+ALGORITHM_VERSION = 'v369_under_star_away'
 
 # Base signals that fire on nearly every edge 5+ pick. Picks with ONLY
 # these signals hit 57.1% (N=42) vs 77.8% for picks with 4+ signals.
@@ -147,6 +147,7 @@ class BestBetsAggregator:
             'model_direction_affinity': 0,
             'away_noveg': 0,
             'star_under': 0,
+            'under_star_away': 0,
             'med_usage_under': 0,
             'starter_v12_under': 0,
             'signal_density': 0,
@@ -247,6 +248,14 @@ class BestBetsAggregator:
                     and season_avg >= 25
                     and star_teammates_out < 1):
                 filter_counts['star_under'] += 1
+                continue
+
+            # UNDER Star AWAY block (Session 369): 38.5% HR (5W-8L, -$380) vs HOME 81.8% (9W-2L, +$680)
+            # Star-line players (line >= 23) playing AWAY have structurally worse UNDER outcomes
+            if (pred.get('recommendation') == 'UNDER'
+                    and line_val >= 23
+                    and not pred.get('is_home', False)):
+                filter_counts['under_star_away'] += 1
                 continue
 
             # Medium teammate usage UNDER block (Session 355): 32.0% HR (N=25)
@@ -387,6 +396,8 @@ class BestBetsAggregator:
             logger.info(f"Model-direction affinity: skipped {filter_counts['model_direction_affinity']} predictions")
         if filter_counts['away_noveg'] > 0:
             logger.info(f"AWAY block (v12_noveg/v9): skipped {filter_counts['away_noveg']} predictions")
+        if filter_counts['under_star_away'] > 0:
+            logger.info(f"UNDER Star AWAY block (line≥23): skipped {filter_counts['under_star_away']} predictions")
         if filter_counts['med_usage_under'] > 0:
             logger.info(f"Medium teammate usage UNDER block: skipped {filter_counts['med_usage_under']} predictions")
         if filter_counts['starter_v12_under'] > 0:
