@@ -104,13 +104,71 @@ v12 + vegas=0.15 achieved 76.2% HR — potentially better than v12_noveg's 73.1%
 ### Grid Search Infrastructure Now Works
 The `--force` fix + diagnostic logging ensures experiments produce results. Future sessions can immediately run grids without debugging. CSVs saved in `results/`.
 
+### Phase 2B: Multi-Window Grid Search (COMPLETE)
+
+**55 experiments across 4 eval windows** (train Dec 1-31 except Window D):
+
+| Window | Train | Eval | Purpose |
+|--------|-------|------|---------|
+| A | Dec 1-31 | Jan 1 - Feb 27 | Full eval, max N |
+| B | Dec 1-31 | Jan 1-31 | Pre-decay baseline |
+| C | Dec 1-31 | Feb 1-27 | Decay period |
+| D | Dec 1 - Jan 31 | Feb 1-27 | More training data |
+
+**Feature Set Decay Analysis:**
+
+| Feature Set | Jan HR (N) | Feb HR (N) | Decay |
+|------------|------------|------------|-------|
+| **v12_noveg** | 70.9% (141) | **66.3%** (101) | **-4.6pp** |
+| v13 | 73.2% (123) | N/A | — |
+| v15 | 75.9% (116) | 63.0% (100) | -12.9pp |
+| v16_noveg | 67.4% (132) | 61.4% (88) | -6.0pp |
+
+**Vegas Weight Decay Analysis (v12 WITH vegas):**
+
+| Weight | Jan HR (N) | Feb HR (N) | Full HR (N) | Gates |
+|--------|------------|------------|-------------|-------|
+| **0.15** | 75.7% (111) | **63.6%** (77) | **73.0% (189)** | **PASS** |
+| 0.20 | 75.8% (120) | 58.7% (92) | N/A | — |
+| **0.25** | 74.3% (109) | 62.7% (67) | 68.1% (185) | PASS |
+| 0.30 | 73.8% (122) | 62.2% (82) | 65.6% (218) | PASS |
+| 0.35 | 71.4% (112) | 61.5% (83) | 68.0% (194) | PASS |
+
+**Window D (more training data, Feb eval):**
+- v12+vegas=0.25: **72.7% HR** (N=44) — up from 62.7% with 31-day training
+- v15: 69.4% (N=49), v12_noveg: 65.4% (N=52)
+
+**Tier Weight Decay Analysis:**
+
+| Tier Weights | Jan (N) | Feb (N) | Full (N) | Decay |
+|-------------|---------|---------|----------|-------|
+| star=2.0,s=1.2,r=0.8,b=0.3 | 67.5% (160) | **63.8% (105)** | **67.9% (271)** | **-3.7pp** |
+| star=3.0,s=1.0,r=0.8,b=0.5 | 70.5% (139) | 63.0% (108) | 67.2% (247) | -7.5pp |
+
+## Key Findings
+
+### Best Config: v12 + vegas=0.15
+73.0% HR on full Jan-Feb eval (N=189), **passes all governance gates**. UNDER: 74.8%, OVER: 70.3%. This is the top candidate for shadow deployment.
+
+### v12_noveg: Most Decay-Resistant
+Only -4.6pp decay (70.9%→66.3%). The simplest feature set is the most robust to market shifts. This should remain the production baseline.
+
+### V15 Is A Trap
+Best in January (75.9%) but worst decay (-12.9pp). Overfits to training period patterns that don't persist.
+
+### More Training Data Helps For February
+62-day training (Dec-Jan) significantly boosts Feb performance: v12+vegas=0.25 goes from 62.7% to 72.7%. This argues for longer training windows over frequent retraining.
+
+### Tier Weighting: Marginal
+Best tier combo (67.9% on full eval) underperforms baseline v12_noveg (70.0%) on the same window. Tier weights constrain the model for limited gain.
+
 ## Next Session Priorities
 
-1. **Monitor filter changes** — check if UNDER picks start passing through with new filters
-2. **Longer eval window experiments** — re-run top combos with Jan 15 - Feb 27 eval to get N > 50
-3. **Register winning models** — if longer eval passes gates, register via quick_retrain.py
-4. **Tier weight + recency combos** — run Phase 2D with top 2 tier combos
-5. **Direction-aware weighting** — analyze directional HR splits once model_performance_daily data accumulates
+1. **Register v12+vegas=0.15 model** — re-run quick_retrain.py with `--feature-set v12 --category-weight vegas=0.15` without `--skip-register` to upload to GCS
+2. **Shadow deploy the winner** — add to model registry, deploy to prediction-worker
+3. **Monitor filter changes** — check if UNDER picks start passing through
+4. **Test 62-day training window** — Window D showed more data helps. Try Dec 1 - Jan 31 train with v12+vegas=0.15
+5. **Direction-aware weighting** — analyze directional HR splits once data accumulates
 
 ## Files Changed
 
