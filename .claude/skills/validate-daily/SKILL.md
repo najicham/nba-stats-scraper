@@ -2089,6 +2089,70 @@ LIMIT 7"
 
 **Reference**: Session 262, Session 266 (baseline comparison), `ml/analysis/model_performance.py`
 
+### Phase 0.585: Filter Health Spot-Check (Session 366 - NEW)
+
+**IMPORTANT**: Quick 14-day check that negative filters are still blocking unprofitable picks. If a filter's blocked population has HR > 55% (above breakeven), it may be incorrectly blocking winners.
+
+**Why this matters**: Filter thresholds were set when first introduced but aren't audited regularly. Market conditions change — a filter that blocked 35% HR picks last month may be blocking 60% HR picks now.
+
+**When to run**: Standard and Comprehensive validation modes.
+
+```bash
+bq query --use_legacy_sql=false --format=pretty "
+-- Session 366: Filter health spot-check (14d lookback)
+-- Each row = predictions that WOULD be blocked by that filter
+-- REVIEW if HR > 55% (blocking profitable picks)
+WITH base AS (
+  SELECT *
+  FROM \`nba-props-platform.nba_predictions.prediction_accuracy\`
+  WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)
+    AND ABS(predicted_points - line_value) >= 3.0
+    AND prediction_correct IS NOT NULL
+    AND is_voided IS NOT TRUE
+)
+SELECT 'bench_under' AS filter_name,
+  COUNT(*) AS n,
+  ROUND(100.0 * COUNTIF(prediction_correct) / COUNT(*), 1) AS hr
+FROM base WHERE recommendation = 'UNDER' AND line_value < 12
+UNION ALL
+SELECT 'star_under',
+  COUNT(*),
+  ROUND(100.0 * COUNTIF(prediction_correct) / COUNT(*), 1)
+FROM base WHERE recommendation = 'UNDER'
+  AND player_lookup IN (
+    SELECT player_lookup FROM \`nba-props-platform.nba_analytics.player_game_summary\`
+    WHERE game_date >= '2025-10-22' AND minutes_played > 0
+    GROUP BY 1 HAVING AVG(points) >= 25
+  )
+UNION ALL
+SELECT 'under_edge_7plus_non_v12',
+  COUNT(*),
+  ROUND(100.0 * COUNTIF(prediction_correct) / COUNT(*), 1)
+FROM base WHERE recommendation = 'UNDER'
+  AND ABS(predicted_points - line_value) >= 7.0
+  AND system_id NOT LIKE 'catboost_v12%'
+UNION ALL
+SELECT 'v9_under_5plus',
+  COUNT(*),
+  ROUND(100.0 * COUNTIF(prediction_correct) / COUNT(*), 1)
+FROM base WHERE recommendation = 'UNDER'
+  AND ABS(predicted_points - line_value) >= 5.0
+  AND system_id LIKE 'catboost_v9%'
+  AND system_id NOT LIKE 'catboost_v9_low_vegas%'
+ORDER BY hr DESC
+"
+```
+
+**Expected**: All filters should have HR below 55%. If any filter shows HR > 55%, it's a REVIEW alert — run the full audit: `PYTHONPATH=. python bin/monitoring/filter_health_audit.py --days 14`
+
+| Filter HR | Status | Action |
+|-----------|--------|--------|
+| < 45% | OK | Filter is correctly blocking losers |
+| 45-55% | MARGINAL | Filter near breakeven — watch closely |
+| > 55% | REVIEW | Filter may be blocking profitable picks! Run full audit |
+
+**Reference**: Session 366, `bin/monitoring/filter_health_audit.py`
+
 ### Phase 0.59: Per-Signal Firing Rate Monitor (Session 306 - NEW)
 
 **IMPORTANT**: Detects signals that silently stop firing. The `prop_line_drop_over` signal had **zero production firings for weeks** undetected until Session 305 manual audit. This phase prevents that from recurring.

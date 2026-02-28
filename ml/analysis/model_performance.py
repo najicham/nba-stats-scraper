@@ -168,6 +168,7 @@ def compute_for_date(bq_client: bigquery.Client, target_date: date,
       SELECT
         game_date,
         system_id AS model_id,
+        recommendation,
         CASE WHEN prediction_correct THEN 1 ELSE 0 END AS win
       FROM `nba-props-platform.nba_predictions.prediction_accuracy`
       WHERE game_date BETWEEN @window_start AND @target_date
@@ -195,11 +196,79 @@ def compute_for_date(bq_client: bigquery.Client, target_date: date,
         ) * 100.0 AS rolling_hr_14d,
         -- 30d rolling
         COUNT(*) AS rolling_n_30d,
-        SAFE_DIVIDE(COUNTIF(win = 1), COUNT(*)) * 100.0 AS rolling_hr_30d
+        SAFE_DIVIDE(COUNTIF(win = 1), COUNT(*)) * 100.0 AS rolling_hr_30d,
+        -- Session 366: Directional HR splits (7d)
+        COUNTIF(game_date > DATE_SUB(@target_date, INTERVAL 7 DAY) AND recommendation = 'OVER') AS rolling_n_over_7d,
+        SAFE_DIVIDE(
+          COUNTIF(game_date > DATE_SUB(@target_date, INTERVAL 7 DAY) AND recommendation = 'OVER' AND win = 1),
+          NULLIF(COUNTIF(game_date > DATE_SUB(@target_date, INTERVAL 7 DAY) AND recommendation = 'OVER'), 0)
+        ) * 100.0 AS rolling_hr_over_7d,
+        COUNTIF(game_date > DATE_SUB(@target_date, INTERVAL 7 DAY) AND recommendation = 'UNDER') AS rolling_n_under_7d,
+        SAFE_DIVIDE(
+          COUNTIF(game_date > DATE_SUB(@target_date, INTERVAL 7 DAY) AND recommendation = 'UNDER' AND win = 1),
+          NULLIF(COUNTIF(game_date > DATE_SUB(@target_date, INTERVAL 7 DAY) AND recommendation = 'UNDER'), 0)
+        ) * 100.0 AS rolling_hr_under_7d,
+        -- Session 366: Directional HR splits (14d)
+        COUNTIF(game_date > DATE_SUB(@target_date, INTERVAL 14 DAY) AND recommendation = 'OVER') AS rolling_n_over_14d,
+        SAFE_DIVIDE(
+          COUNTIF(game_date > DATE_SUB(@target_date, INTERVAL 14 DAY) AND recommendation = 'OVER' AND win = 1),
+          NULLIF(COUNTIF(game_date > DATE_SUB(@target_date, INTERVAL 14 DAY) AND recommendation = 'OVER'), 0)
+        ) * 100.0 AS rolling_hr_over_14d,
+        COUNTIF(game_date > DATE_SUB(@target_date, INTERVAL 14 DAY) AND recommendation = 'UNDER') AS rolling_n_under_14d,
+        SAFE_DIVIDE(
+          COUNTIF(game_date > DATE_SUB(@target_date, INTERVAL 14 DAY) AND recommendation = 'UNDER' AND win = 1),
+          NULLIF(COUNTIF(game_date > DATE_SUB(@target_date, INTERVAL 14 DAY) AND recommendation = 'UNDER'), 0)
+        ) * 100.0 AS rolling_hr_under_14d
       FROM daily_results
       GROUP BY model_id
+    ),
+    -- Session 366: Best-bets stats from signal_best_bets_picks
+    best_bets_stats AS (
+      SELECT
+        bb.source_model_id AS model_id,
+        -- 14d
+        COUNTIF(bb.game_date > DATE_SUB(@target_date, INTERVAL 14 DAY) AND pa.prediction_correct IS NOT NULL) AS bb_n_14d,
+        SAFE_DIVIDE(
+          COUNTIF(bb.game_date > DATE_SUB(@target_date, INTERVAL 14 DAY) AND pa.prediction_correct = TRUE),
+          NULLIF(COUNTIF(bb.game_date > DATE_SUB(@target_date, INTERVAL 14 DAY) AND pa.prediction_correct IS NOT NULL), 0)
+        ) * 100.0 AS bb_hr_14d,
+        -- 21d
+        COUNTIF(pa.prediction_correct IS NOT NULL) AS bb_n_21d,
+        SAFE_DIVIDE(
+          COUNTIF(pa.prediction_correct = TRUE),
+          NULLIF(COUNTIF(pa.prediction_correct IS NOT NULL), 0)
+        ) * 100.0 AS bb_hr_21d,
+        -- Directional (21d)
+        SAFE_DIVIDE(
+          COUNTIF(bb.recommendation = 'OVER' AND pa.prediction_correct = TRUE),
+          NULLIF(COUNTIF(bb.recommendation = 'OVER' AND pa.prediction_correct IS NOT NULL), 0)
+        ) * 100.0 AS bb_over_hr_21d,
+        SAFE_DIVIDE(
+          COUNTIF(bb.recommendation = 'UNDER' AND pa.prediction_correct = TRUE),
+          NULLIF(COUNTIF(bb.recommendation = 'UNDER' AND pa.prediction_correct IS NOT NULL), 0)
+        ) * 100.0 AS bb_under_hr_21d,
+        -- Filter pass rate
+        SAFE_DIVIDE(
+          COUNT(*),
+          (SELECT COUNT(*) FROM `nba-props-platform.nba_predictions.prediction_accuracy` pa2
+           WHERE pa2.system_id = bb.source_model_id
+             AND pa2.game_date BETWEEN DATE_SUB(@target_date, INTERVAL 21 DAY) AND @target_date
+             AND ABS(pa2.predicted_points - pa2.line_value) >= 3)
+        ) AS bb_filter_pass_rate
+      FROM `nba-props-platform.nba_predictions.signal_best_bets_picks` bb
+      LEFT JOIN `nba-props-platform.nba_predictions.prediction_accuracy` pa
+        ON bb.player_lookup = pa.player_lookup
+        AND bb.game_date = pa.game_date
+        AND bb.system_id = pa.system_id
+        AND pa.is_voided IS NOT TRUE
+      WHERE bb.game_date BETWEEN DATE_SUB(@target_date, INTERVAL 21 DAY) AND @target_date
+        AND bb.source_model_id IS NOT NULL
+      GROUP BY bb.source_model_id
     )
-    SELECT * FROM model_date_stats
+    SELECT mds.*, bbs.bb_n_14d, bbs.bb_hr_14d, bbs.bb_n_21d, bbs.bb_hr_21d,
+           bbs.bb_over_hr_21d, bbs.bb_under_hr_21d, bbs.bb_filter_pass_rate
+    FROM model_date_stats mds
+    LEFT JOIN best_bets_stats bbs ON bbs.model_id = mds.model_id
     """
 
     window_start = target_date - timedelta(days=30)
@@ -281,6 +350,15 @@ def compute_for_date(bq_client: bigquery.Client, target_date: date,
             'rolling_n_7d': row.rolling_n_7d,
             'rolling_n_14d': row.rolling_n_14d,
             'rolling_n_30d': row.rolling_n_30d,
+            # Session 366: Directional HR splits
+            'rolling_hr_over_7d': round(row.rolling_hr_over_7d, 1) if row.rolling_hr_over_7d is not None else None,
+            'rolling_hr_under_7d': round(row.rolling_hr_under_7d, 1) if row.rolling_hr_under_7d is not None else None,
+            'rolling_n_over_7d': row.rolling_n_over_7d,
+            'rolling_n_under_7d': row.rolling_n_under_7d,
+            'rolling_hr_over_14d': round(row.rolling_hr_over_14d, 1) if row.rolling_hr_over_14d is not None else None,
+            'rolling_hr_under_14d': round(row.rolling_hr_under_14d, 1) if row.rolling_hr_under_14d is not None else None,
+            'rolling_n_over_14d': row.rolling_n_over_14d,
+            'rolling_n_under_14d': row.rolling_n_under_14d,
             'daily_picks': row.daily_picks,
             'daily_wins': row.daily_wins,
             'daily_losses': row.daily_losses,
@@ -292,6 +370,14 @@ def compute_for_date(bq_client: bigquery.Client, target_date: date,
             'action': action,
             'action_reason': action_reason,
             'days_since_training': days_since,
+            # Session 366: Best-bets post-filter metrics
+            'best_bets_hr_14d': round(row.bb_hr_14d, 1) if getattr(row, 'bb_hr_14d', None) is not None else None,
+            'best_bets_hr_21d': round(row.bb_hr_21d, 1) if getattr(row, 'bb_hr_21d', None) is not None else None,
+            'best_bets_n_14d': getattr(row, 'bb_n_14d', None),
+            'best_bets_n_21d': getattr(row, 'bb_n_21d', None),
+            'best_bets_over_hr_21d': round(row.bb_over_hr_21d, 1) if getattr(row, 'bb_over_hr_21d', None) is not None else None,
+            'best_bets_under_hr_21d': round(row.bb_under_hr_21d, 1) if getattr(row, 'bb_under_hr_21d', None) is not None else None,
+            'best_bets_filter_pass_rate': round(row.bb_filter_pass_rate, 3) if getattr(row, 'bb_filter_pass_rate', None) is not None else None,
             'computed_at': now.isoformat(),
         })
 
@@ -414,8 +500,12 @@ def main():
         written = write_rows(bq_client, rows)
         print(f"Computed {written} rows for {target}")
         for r in rows:
+            over_str = f"OVER {r['rolling_hr_over_7d']}% N={r['rolling_n_over_7d']}" if r.get('rolling_hr_over_7d') is not None else ""
+            under_str = f"UNDER {r['rolling_hr_under_7d']}% N={r['rolling_n_under_7d']}" if r.get('rolling_hr_under_7d') is not None else ""
+            bb_str = f"BB {r['best_bets_hr_21d']}% N={r['best_bets_n_21d']}" if r.get('best_bets_hr_21d') is not None else ""
             print(f"  {r['model_id']}: {r['rolling_hr_7d']}% HR 7d "
-                  f"(N={r['rolling_n_7d']}), state={r['state']}")
+                  f"(N={r['rolling_n_7d']}), state={r['state']}"
+                  f"  {over_str}  {under_str}  {bb_str}")
     else:
         parser.print_help()
 

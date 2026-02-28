@@ -29,6 +29,14 @@ SELECT
   ROUND(rolling_hr_7d, 1) AS hr_7d,
   ROUND(rolling_hr_14d, 1) AS hr_14d,
   rolling_n_7d AS n_7d,
+  -- Session 366: Directional splits
+  ROUND(rolling_hr_over_7d, 1) AS over_7d,
+  rolling_n_over_7d AS n_over,
+  ROUND(rolling_hr_under_7d, 1) AS under_7d,
+  rolling_n_under_7d AS n_under,
+  -- Session 366: Best-bets post-filter HR
+  ROUND(best_bets_hr_21d, 1) AS bb_hr_21d,
+  best_bets_n_21d AS bb_n,
   days_since_training,
   consecutive_days_below_watch AS days_below_watch,
   consecutive_days_below_alert AS days_below_alert
@@ -52,6 +60,8 @@ gcloud run services describe prediction-worker --region=us-west2 \
 ```
 MODEL HEALTH (as of YYYY-MM-DD):
   <model_id>: <STATE>  <hr_7d>% HR 7d (N=<n_7d>, <days_since_training> days stale) <icon>
+    OVER: <over_7d>% (N=<n_over>), UNDER: <under_7d>% (N=<n_under>)
+    Best Bets: <bb_hr_21d>% (N=<bb_n>) [if available]
   ...
   Best Bets Model: <current_best_bets_model>
 ```

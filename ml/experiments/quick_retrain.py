@@ -327,6 +327,8 @@ def parse_args():
                        help='Set enabled=TRUE on auto-registered model (skip manual enable step)')
     parser.add_argument('--force-register', action='store_true',
                        help='Upload + register even when governance gates fail (requires explicit approval)')
+    parser.add_argument('--machine-output', type=str, default=None, metavar='FILE',
+                       help='Write JSON summary to FILE for machine parsing (used by grid search)')
 
     return parser.parse_args()
 
@@ -3760,6 +3762,43 @@ def main():
     print(f"\nModel saved: {model_path}")
     print(f"SHA256: {model_sha256}")
     print(f"Size: {model_path.stat().st_size:,} bytes")
+
+    # Machine-readable output (Session 366: for grid search tool)
+    if args.machine_output:
+        machine_summary = {
+            'model_path': str(model_path),
+            'model_sha256': model_sha256,
+            'experiment_id': exp_id,
+            'dates': dates,
+            'feature_set': args.feature_set,
+            'no_vegas': args.no_vegas,
+            'n_features': n_features,
+            'mae': round(mae, 4) if mae is not None else None,
+            'hr_all': hr_all,
+            'hr_edge3': hr_edge3,
+            'hr_edge5': hr_edge5,
+            'n_edge3': bets_edge3,
+            'n_edge5': bets_edge5,
+            'pred_vs_vegas': round(float(pred_vs_vegas), 4),
+            'directional': {
+                'over_hr': directional.get('over_hit_rate'),
+                'under_hr': directional.get('under_hit_rate'),
+                'over_n': directional.get('over_graded'),
+                'under_n': directional.get('under_graded'),
+            },
+            'all_gates_passed': all_passed,
+            'gates': [{
+                'name': g[0],
+                'passed': g[1],
+                'detail': g[2],
+            } for g in gates],
+        }
+        try:
+            with open(args.machine_output, 'w') as f:
+                json.dump(machine_summary, f, indent=2, default=str)
+            print(f"\nMachine output written to: {args.machine_output}")
+        except Exception as e:
+            print(f"\nWARNING: Failed to write machine output: {e}")
 
     # Register
     if not args.skip_register:

@@ -39,9 +39,11 @@ from ml.signals.supplemental_data import (
     query_games_vs_opponent,
 )
 from ml.signals.player_blacklist import compute_player_blacklist
+from ml.signals.model_direction_affinity import compute_model_direction_affinities
 from ml.signals.cross_model_scorer import CrossModelScorer
 from ml.signals.pick_angle_builder import build_pick_angles
 from ml.signals.ultra_bets import compute_ultra_live_hrs
+from shared.config.cross_model_subsets import classify_system_id
 
 logging.basicConfig(level=logging.WARNING, format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
@@ -50,15 +52,27 @@ PROJECT_ID = 'nba-props-platform'
 
 
 def simulate_date(bq_client: bigquery.Client, target_date: str,
-                  combo_registry: dict) -> Dict:
+                  combo_registry: dict, model_id: str = None) -> Dict:
     """Simulate what the consolidated code would pick for a single date.
 
     Returns dict with picks, filter_summary, and comparison data.
     """
-    # 1. Query predictions (multi_model=True, same as production)
-    predictions, supplemental_map = query_predictions_with_supplements(
-        bq_client, target_date, multi_model=True
-    )
+    # 1. Query predictions
+    if model_id:
+        # Single-model mode: query specific model, populate source_model fields
+        predictions, supplemental_map = query_predictions_with_supplements(
+            bq_client, target_date, system_id=model_id, multi_model=False
+        )
+        # Populate source_model_id/family for filters that depend on them
+        family = classify_system_id(model_id)
+        for pred in predictions:
+            pred['source_model_id'] = model_id
+            pred['source_model_family'] = family
+    else:
+        # Multi-model mode (same as production)
+        predictions, supplemental_map = query_predictions_with_supplements(
+            bq_client, target_date, multi_model=True
+        )
 
     if not predictions:
         return {
@@ -106,11 +120,21 @@ def simulate_date(bq_client: bigquery.Client, target_date: str,
     # 4. Get signal health
     signal_health = get_signal_health_summary(bq_client, target_date)
 
+    # 4b. Compute model-direction affinities (production fidelity, Session 366)
+    model_dir_blocks = set()
+    try:
+        _, model_dir_blocks, _ = compute_model_direction_affinities(
+            bq_client, target_date, PROJECT_ID
+        )
+    except Exception:
+        pass
+
     # 5. Run aggregator (same as production)
     aggregator = BestBetsAggregator(
         combo_registry=combo_registry,
         signal_health=signal_health,
         player_blacklist=player_blacklist,
+        model_direction_blocks=model_dir_blocks,
     )
     top_picks, filter_summary = aggregator.aggregate(predictions, signal_results_map)
 
@@ -332,6 +356,8 @@ def main():
                         help='Compare against existing best_bets subset')
     parser.add_argument('--write', action='store_true',
                         help='Write picks to signal_best_bets_picks (DELETE old + INSERT new)')
+    parser.add_argument('--model-id', type=str, default=None,
+                        help='Single model system_id to evaluate (default: multi-model)')
     parser.add_argument('--verbose', '-v', action='store_true',
                         help='Show debug logging')
     args = parser.parse_args()
@@ -355,7 +381,12 @@ def main():
     bq_client = bigquery.Client(project=PROJECT_ID)
     combo_registry = load_combo_registry(bq_client=bq_client)
 
+    model_id = getattr(args, 'model_id', None)
     print(f"Backfill Dry Run — Algorithm: {ALGORITHM_VERSION}")
+    if model_id:
+        print(f"Model: {model_id} (single-model mode)")
+    else:
+        print(f"Mode: multi-model (production)")
     print(f"Dates: {dates[0]} to {dates[-1]} ({len(dates)} days)")
     print(f"Combo registry: {len(combo_registry)} entries "
           f"(0 ANTI_PATTERN)")
@@ -371,7 +402,8 @@ def main():
     total_written = 0
 
     for target_date in dates:
-        result = simulate_date(bq_client, target_date, combo_registry)
+        result = simulate_date(bq_client, target_date, combo_registry,
+                               model_id=model_id)
         picks = grade_picks(bq_client, result['picks'], target_date)
 
         existing = None

@@ -87,20 +87,21 @@ def query_predictions_with_supplements(
     if multi_model:
         system_filter = build_system_id_sql_filter('p')
         preds_cte = f"""
-    -- Session 365: Model HR weight — de-prioritize poorly-performing models in
-    -- per-player selection. Models at 55%+ HR get weight 1.0, below 55% get
-    -- proportionally reduced. New models with <10 graded picks default to 50% HR.
+    -- Session 366: Model HR weight with post-filter fallback chain.
+    -- Priority: best-bets HR (21d, N>=8) → raw HR (14d, N>=10) → 50% default.
+    -- Self-bootstrapping: new models use raw HR until they accumulate 8+ best-bets picks.
     WITH model_hr AS (
-      SELECT system_id AS model_id,
-        ROUND(100.0 * COUNTIF(prediction_correct) / NULLIF(COUNT(*), 0), 1) AS hr_14d,
-        COUNT(*) AS n_14d
-      FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy`
-      WHERE game_date >= DATE_SUB(@target_date, INTERVAL 14 DAY)
-        AND game_date < @target_date
-        AND ABS(predicted_points - line_value) >= 3
-        AND prediction_correct IS NOT NULL
-        AND is_voided IS NOT TRUE
-      GROUP BY system_id
+      SELECT
+        model_id,
+        rolling_hr_14d AS hr_14d,
+        rolling_n_14d AS n_14d,
+        best_bets_hr_21d AS bb_hr_21d,
+        best_bets_n_21d AS bb_n_21d
+      FROM `{PROJECT_ID}.nba_predictions.model_performance_daily`
+      WHERE game_date = (
+        SELECT MAX(game_date) FROM `{PROJECT_ID}.nba_predictions.model_performance_daily`
+        WHERE game_date < @target_date
+      )
     ),
 
     all_model_preds AS (
@@ -115,9 +116,10 @@ def query_predictions_with_supplements(
         CAST(p.predicted_points - p.current_points_line AS FLOAT64) AS edge,
         CAST(p.confidence_score AS FLOAT64) AS confidence_score,
         COALESCE(p.feature_quality_score, 0) AS feature_quality_score,
-        -- Model HR weight: min(1.0, rolling_hr / 55.0)
-        -- Models with <10 graded picks or no data default to 50% → weight 0.91
+        -- Session 366: Post-filter HR fallback chain for model weight.
+        -- best-bets HR (21d, N>=8) → raw HR (14d, N>=10) → 50% default
         LEAST(1.0, COALESCE(
+          CASE WHEN mh.bb_n_21d >= 8 THEN mh.bb_hr_21d ELSE NULL END,
           CASE WHEN mh.n_14d >= 10 THEN mh.hr_14d ELSE NULL END,
           50.0
         ) / 55.0) AS model_hr_weight
