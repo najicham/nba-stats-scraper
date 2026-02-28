@@ -1561,10 +1561,16 @@ def update_completion_atomic(transaction: firestore.Transaction, doc_ref, proces
     if processor_name in current:
         logger.debug(f"Processor {processor_name} already registered (duplicate Pub/Sub message)")
         # Session 116: Still update _completed_count to ensure consistency
+        # Session 364: Also detect and set _mode. The duplicate path previously
+        # skipped mode detection, so transaction.set() (full replace) would drop
+        # _mode if it wasn't already in the doc — e.g. when old code contaminated
+        # the doc before the Session 363 fix was deployed, or on Pub/Sub retries.
+        mode = detect_orchestration_mode(game_date) if MODE_AWARE_ENABLED else 'legacy'
         current['_completed_count'] = completed_count
+        current['_mode'] = mode
         current['_last_update'] = firestore.SERVER_TIMESTAMP
         transaction.set(doc_ref, current)
-        return (False, 'unknown', 'duplicate')
+        return (False, mode, 'duplicate')
 
     # Add this processor's completion data
     current[processor_name] = completion_data
