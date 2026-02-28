@@ -139,6 +139,13 @@ MODEL_FAMILIES = {
         'feature_set': 'v12_noveg',
         'loss': 'mae',
     },
+    # Session 365: V13 shooting features (V12 + 6 FG%/3PT% rolling stats)
+    'v13_mae': {
+        'pattern': 'catboost_v13',
+        'exact': False,
+        'feature_set': 'v13',
+        'loss': 'mae',
+    },
     'v12_mae': {
         'pattern': 'catboost_v12',
         'exact': False,  # Prefix match: catches 'catboost_v12', 'catboost_v12_noveg_train*',

@@ -1671,11 +1671,8 @@ def augment_v15_features(client, df):
         }
     print(f"  V15: Lookup built ({len(v15_lookup)} rows)")
 
-    # Write to feature_55_value and feature_56_value columns
-    # These indices match FEATURE_STORE_NAMES positions for ft_rate_season (55) and starter_rate_season (56)
-    ft_rate_idx = FEATURE_STORE_NAMES.index('ft_rate_season')
-    starter_rate_idx = FEATURE_STORE_NAMES.index('starter_rate_season')
-
+    # Session 365: V15 features are experiment-only (not in FEATURE_STORE_NAMES).
+    # Write as named columns — prepare_features() has fallback for direct column names.
     matched = 0
     for idx in range(len(df)):
         row = df.iloc[idx]
@@ -1686,18 +1683,15 @@ def augment_v15_features(client, df):
         if v15:
             matched += 1
 
-        ft_rate = v15.get('ft_rate_season', np.nan)
-        starter_rate = v15.get('starter_rate_season', np.nan)
-
-        df.at[df.index[idx], f'feature_{ft_rate_idx}_value'] = ft_rate
-        df.at[df.index[idx], f'feature_{starter_rate_idx}_value'] = starter_rate
+        df.at[df.index[idx], 'ft_rate_season'] = v15.get('ft_rate_season', np.nan)
+        df.at[df.index[idx], 'starter_rate_season'] = v15.get('starter_rate_season', np.nan)
 
     total = len(df)
     print(f"  V15 augmentation: {matched}/{total} ({100*matched/total:.0f}%) rows matched player profile data")
 
     # Report coverage stats
-    ft_non_nan = df[f'feature_{ft_rate_idx}_value'].notna().sum()
-    starter_non_nan = df[f'feature_{starter_rate_idx}_value'].notna().sum()
+    ft_non_nan = df['ft_rate_season'].notna().sum()
+    starter_non_nan = df['starter_rate_season'].notna().sum()
     print(f"  V15 coverage: ft_rate_season={ft_non_nan}/{total}, starter_rate_season={starter_non_nan}/{total}")
 
     return df
@@ -1747,7 +1741,16 @@ def prepare_features(df, contract=V9_CONTRACT, exclude_features=None):
                 else:
                     row_data[name] = np.nan
             else:
-                row_data[name] = np.nan
+                # Fallback: check if feature exists as direct column name
+                # (e.g., V13/V15 augmented features not in FEATURE_STORE_NAMES)
+                if name in row.index:
+                    val = row.get(name)
+                    if val is not None and not pd.isna(val):
+                        row_data[name] = float(val)
+                    else:
+                        row_data[name] = np.nan
+                else:
+                    row_data[name] = np.nan
 
         rows.append(row_data)
 
