@@ -75,32 +75,46 @@ def lookup_game_id(bq_client: bigquery.Client, team: str, opponent: str, game_da
 
 
 def lookup_player_name(bq_client: bigquery.Client, player_lookup: str, game_date: str) -> str:
-    """Look up player full name from signal_best_bets_picks (partition-safe)."""
-    query = """
-    SELECT player_name
-    FROM `nba-props-platform.nba_predictions.signal_best_bets_picks`
-    WHERE player_lookup = @player_lookup
-      AND game_date >= DATE_SUB(@game_date, INTERVAL 60 DAY)
-      AND game_date <= @game_date
-    ORDER BY game_date DESC
-    LIMIT 1
-    """
+    """Look up player full name, trying multiple sources."""
     params = [
         bigquery.ScalarQueryParameter('player_lookup', 'STRING', player_lookup),
         bigquery.ScalarQueryParameter('game_date', 'DATE', game_date),
     ]
-    try:
-        rows = list(bq_client.query(
-            query, job_config=bigquery.QueryJobConfig(query_parameters=params)
-        ).result(timeout=30))
-        if rows and rows[0].player_name:
-            return rows[0].player_name
-    except Exception:
-        pass
 
-    # Fallback: use player_lookup key with CamelCase conversion
-    # e.g. "guisantos" -> "Gui Santos" (best-effort)
-    logger.info(f"Could not find display name for {player_lookup}, using lookup key as name")
+    # Source 1: signal_best_bets_picks (recent best bets history)
+    # Source 2: player_game_summary (any player who's played this season)
+    queries = [
+        """
+        SELECT player_name
+        FROM `nba-props-platform.nba_predictions.signal_best_bets_picks`
+        WHERE player_lookup = @player_lookup
+          AND game_date >= DATE_SUB(@game_date, INTERVAL 60 DAY)
+          AND game_date <= @game_date
+        ORDER BY game_date DESC
+        LIMIT 1
+        """,
+        """
+        SELECT player_full_name AS player_name
+        FROM `nba-props-platform.nba_analytics.player_game_summary`
+        WHERE player_lookup = @player_lookup
+          AND game_date >= DATE_SUB(@game_date, INTERVAL 90 DAY)
+          AND game_date <= @game_date
+        ORDER BY game_date DESC
+        LIMIT 1
+        """,
+    ]
+
+    for query in queries:
+        try:
+            rows = list(bq_client.query(
+                query, job_config=bigquery.QueryJobConfig(query_parameters=params)
+            ).result(timeout=30))
+            if rows and rows[0].player_name:
+                return rows[0].player_name
+        except Exception:
+            continue
+
+    logger.warning(f"Could not find display name for {player_lookup} in any source")
     return player_lookup
 
 
