@@ -87,7 +87,7 @@ def fix_stale_schedule():
 
         client = bigquery.Client(project=get_project_id())
 
-        # Find stale games
+        # Find stale games — includes today's games past tipoff + 4 hours
         query = """
         SELECT
             game_id,
@@ -96,12 +96,20 @@ def fix_stale_schedule():
             time_slot,
             home_team_tricode as home_team_abbr,
             away_team_tricode as away_team_abbr,
-            TIMESTAMP_DIFF(CURRENT_TIMESTAMP(),
-                TIMESTAMP(CONCAT(CAST(game_date AS STRING), ' 19:00:00'), 'America/New_York'),
+            TIMESTAMP_DIFF(
+                TIMESTAMP(DATETIME(CURRENT_TIMESTAMP(), 'America/New_York')),
+                game_date_est,
                 HOUR) as hours_since_start
         FROM `nba_raw.nbac_schedule`
         WHERE game_status IN (1, 2)
-          AND game_date < CURRENT_DATE('America/New_York')
+          AND (
+            -- Past dates: always check
+            game_date < CURRENT_DATE('America/New_York')
+            -- Today: check if game tipoff was 4+ hours ago (game should be final)
+            OR (game_date = CURRENT_DATE('America/New_York')
+                AND game_date_est <= TIMESTAMP(DATETIME(CURRENT_TIMESTAMP(), 'America/New_York'))
+                )
+          )
         ORDER BY game_date DESC, time_slot
         """
 

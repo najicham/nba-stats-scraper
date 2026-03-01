@@ -32,6 +32,7 @@ from google.cloud import bigquery
 
 from shared.clients.bigquery_pool import get_bigquery_client
 from shared.config.gcp_config import get_project_id
+from shared.config.model_selection import get_best_bets_model_id
 
 from shared.config.subset_public_names import get_public_name
 from ml.signals.registry import build_default_registry
@@ -345,7 +346,7 @@ class SignalAnnotator:
                 'prediction_id': None,
                 'game_id': pick.get('game_id'),
                 'rank_in_subset': pick.get('rank'),
-                'system_id': pick.get('system_id', 'catboost_v12'),
+                'system_id': pick.get('system_id') or get_best_bets_model_id(),
                 'version_id': version_id or f"v_{computed_at.strftime('%Y%m%d_%H%M%S')}",
                 'computed_at': computed_at.isoformat(),
                 'trigger_source': 'signal_annotator',

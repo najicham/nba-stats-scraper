@@ -40,6 +40,12 @@ from zoneinfo import ZoneInfo
 from google.cloud import bigquery
 import functions_framework
 
+try:
+    from shared.config.model_selection import get_champion_model_id
+    CHAMPION_MODEL_ID = get_champion_model_id()
+except ImportError:
+    CHAMPION_MODEL_ID = 'catboost_v12'
+
 
 def get_bigquery_client(project_id: str = None) -> bigquery.Client:
     """Create a BigQuery client."""
@@ -195,7 +201,7 @@ def check_mae_summary(bq_client: bigquery.Client, target_date: str) -> Dict:
         overall_bias
     FROM `{PROJECT_ID}.nba_predictions.daily_mae_summary`
     WHERE game_date = '{target_date}'
-      AND system_id = 'catboost_v8'
+      AND system_id = '{CHAMPION_MODEL_ID}'
     """
     try:
         result = list(bq_client.query(query).result(timeout=60))

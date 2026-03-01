@@ -31,6 +31,7 @@ from typing import Dict, List, Optional, Any
 
 from google.cloud import bigquery
 from shared.clients.bigquery_pool import get_bigquery_client
+from shared.config.model_selection import get_champion_model_id
 from shared.utils.slack_retry import send_slack_webhook_with_retry
 import functions_framework
 import requests
@@ -41,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 # Constants
 PROJECT_ID = os.environ.get('GCP_PROJECT_ID') or os.environ.get('GCP_PROJECT', 'nba-props-platform')
-CHAMPION_SYSTEM = 'catboost_v8'
+CHAMPION_SYSTEM = get_champion_model_id()
 
 # Alert thresholds
 MAE_REGRESSION_THRESHOLD = 0.5  # Alert if 7d MAE > 30d MAE + 0.5

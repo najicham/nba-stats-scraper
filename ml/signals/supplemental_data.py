@@ -276,6 +276,10 @@ def query_predictions_with_supplements(
         ) AS ft_rate_season,
         AVG(CAST(starter_flag AS INT64)) OVER (PARTITION BY player_lookup ORDER BY game_date
           ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS starter_rate_season,
+        -- Self-creation rate: rolling 10-game unassisted FG ratio (Session 380)
+        AVG(SAFE_DIVIDE(unassisted_fg_makes, NULLIF(fg_makes, 0)))
+          OVER (PARTITION BY player_lookup ORDER BY game_date
+                ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING) AS self_creation_rate_last_10,
         -- Plus/minus streak (Session 294 — neg_pm_under anti-pattern)
         plus_minus,
         LAG(CASE WHEN plus_minus < 0 THEN 1 ELSE 0 END, 1)
@@ -393,6 +397,34 @@ def query_predictions_with_supplements(
       QUALIFY ROW_NUMBER() OVER (
         PARTITION BY pp.player_lookup ORDER BY pp.game_date DESC
       ) = 1
+    ),
+
+    -- DraftKings intra-day line movement: opening vs closing line (Session 380)
+    -- Line up 2.0+ on OVER = 67.8% HR (69% Feb-resilient)
+    dk_line_movement AS (
+      SELECT
+        player_lookup,
+        closing_line - opening_line AS dk_line_move_direction
+      FROM (
+        SELECT
+          player_lookup,
+          MIN(CASE WHEN rn_asc = 1 THEN points_line END) AS opening_line,
+          MIN(CASE WHEN rn_desc = 1 THEN points_line END) AS closing_line
+        FROM (
+          SELECT
+            player_lookup,
+            points_line,
+            ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY snapshot_timestamp ASC) AS rn_asc,
+            ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY snapshot_timestamp DESC) AS rn_desc
+          FROM `{PROJECT_ID}.nba_raw.odds_api_player_points_props`
+          WHERE game_date = @target_date
+            AND LOWER(bookmaker) = 'draftkings'
+            AND player_lookup IS NOT NULL
+        )
+        WHERE rn_asc = 1 OR rn_desc = 1
+        GROUP BY player_lookup
+      )
+      WHERE opening_line IS NOT NULL AND closing_line IS NOT NULL
     )
 
     SELECT
@@ -421,6 +453,7 @@ def query_predictions_with_supplements(
       ls.points_std_last_5,
       ls.ft_rate_season,
       ls.starter_rate_season,
+      ls.self_creation_rate_last_10,
       DATE_DIFF(@target_date, ls.game_date, DAY) AS rest_days,
       lsk.prev_correct_1, lsk.prev_correct_2, lsk.prev_correct_3,
       lsk.prev_correct_4, lsk.prev_correct_5,
@@ -439,13 +472,15 @@ def query_predictions_with_supplements(
       bs.prop_under_streak,
       bs.implied_team_total,
       bs.opponent_pace,
-      bs.points_std_last_10
+      bs.points_std_last_10,
+      dlm.dk_line_move_direction
     FROM preds p
     LEFT JOIN latest_stats ls ON ls.player_lookup = p.player_lookup
     LEFT JOIN latest_streak lsk ON lsk.player_lookup = p.player_lookup
     LEFT JOIN v12_preds v12 ON v12.player_lookup = p.player_lookup AND v12.game_id = p.game_id
     LEFT JOIN prev_prop_lines ppl ON ppl.player_lookup = p.player_lookup
     LEFT JOIN book_stats bs ON bs.player_lookup = p.player_lookup AND bs.game_date = p.game_date
+    LEFT JOIN dk_line_movement dlm ON dlm.player_lookup = p.player_lookup
     ORDER BY p.player_lookup
     """
 
@@ -705,6 +740,14 @@ def query_predictions_with_supplements(
         # Multi-book line std for high_book_std_under filter (Session 377)
         mbls = row_dict.get('multi_book_line_std')
         pred['multi_book_line_std'] = float(mbls) if mbls is not None else 0
+
+        # Self-creation rate (rolling 10-game) for self_creation_over signal (Session 380)
+        scr = row_dict.get('self_creation_rate_last_10')
+        pred['self_creation_rate_last_10'] = float(scr) if scr is not None else 0
+
+        # DraftKings intra-day line movement for sharp_line_move_over signal (Session 380)
+        dlm_val = row_dict.get('dk_line_move_direction')
+        pred['dk_line_move_direction'] = float(dlm_val) if dlm_val is not None else None
 
         # Copy prop line delta for aggregator pre-filter (Session 294)
         if row_dict.get('prev_line_value') is not None:

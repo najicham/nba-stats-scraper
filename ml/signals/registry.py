@@ -93,6 +93,10 @@ def build_default_registry() -> SignalRegistry:
     # Session 374b signals
     from ml.signals.line_rising_over import LineRisingOverSignal
 
+    # Session 380 signals
+    from ml.signals.self_creation_over import SelfCreationOverSignal
+    from ml.signals.sharp_line_move_over import SharpLineMoveOverSignal
+
     registry = SignalRegistry()
     registry.register(ModelHealthSignal())
     registry.register(HighEdgeSignal())
@@ -150,5 +154,9 @@ def build_default_registry() -> SignalRegistry:
 
     # Session 374b signals
     registry.register(LineRisingOverSignal())
+
+    # Session 380 signals
+    registry.register(SelfCreationOverSignal())
+    registry.register(SharpLineMoveOverSignal())
 
     return registry

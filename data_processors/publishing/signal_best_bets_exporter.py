@@ -468,6 +468,16 @@ class SignalBestBetsExporter(BaseExporter):
         """
         json_data = self.generate_json(target_date, version_id=version_id)
 
+        # Safety guard: don't overwrite existing JSON with 0 picks on re-export
+        # of past dates (all games finished → all predictions filtered out).
+        if not json_data['picks'] and json_data.get('started_games_filtered'):
+            logger.warning(
+                f"Re-export safety: {target_date} has 0 picks after filtering "
+                f"{len(json_data['started_games_filtered'])} started games. "
+                f"Skipping GCS upload to preserve existing data."
+            )
+            return f'signal-best-bets/{target_date}.json (skipped — all games started)'
+
         # Write picks to BigQuery for grading tracking (includes full ultra data)
         if json_data['picks']:
             self._write_to_bigquery(
@@ -597,7 +607,7 @@ class SignalBestBetsExporter(BaseExporter):
                 'player_lookup': pick['player_lookup'],
                 'game_id': pick.get('game_id', ''),
                 'game_date': target_date,
-                'system_id': pick.get('system_id') or pick.get('source_model') or 'catboost_v12',
+                'system_id': pick.get('system_id') or pick.get('source_model') or get_best_bets_model_id(),
                 'player_name': pick.get('player', ''),
                 'team_abbr': pick.get('team', ''),
                 'opponent_team_abbr': pick.get('opponent', ''),

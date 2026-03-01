@@ -43,6 +43,7 @@ from typing import Dict, Optional
 
 from google.cloud import bigquery
 from shared.clients.bigquery_pool import get_bigquery_client
+from shared.config.model_selection import get_champion_model_id
 import functions_framework
 
 # Configure logging
@@ -77,17 +78,17 @@ def get_prediction_health(bq_client: bigquery.Client, game_date: date) -> Dict:
         -- Overall prediction count
         (SELECT COUNT(DISTINCT universal_player_id)
          FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
-         WHERE game_date = @game_date AND system_id = 'catboost_v8') as players_predicted,
+         WHERE game_date = @game_date AND system_id = '{get_champion_model_id()}') as players_predicted,
 
         -- Actionable predictions (OVER/UNDER)
         (SELECT COUNTIF(recommendation IN ('OVER', 'UNDER'))
          FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
-         WHERE game_date = @game_date AND system_id = 'catboost_v8') as actionable_predictions,
+         WHERE game_date = @game_date AND system_id = '{get_champion_model_id()}') as actionable_predictions,
 
         -- Fallback detection
         (SELECT ROUND(AVG(confidence_score), 2)
          FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
-         WHERE game_date = @game_date AND system_id = 'catboost_v8') as catboost_avg_confidence,
+         WHERE game_date = @game_date AND system_id = '{get_champion_model_id()}') as catboost_avg_confidence,
 
         -- Feature store health
         (SELECT COUNT(*)
@@ -97,13 +98,13 @@ def get_prediction_health(bq_client: bigquery.Client, game_date: date) -> Dict:
         -- Filtered predictions (v3.4 - confidence tier filtering)
         (SELECT COUNTIF(is_actionable = false)
          FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
-         WHERE game_date = @game_date AND system_id = 'catboost_v8') as filtered_predictions,
+         WHERE game_date = @game_date AND system_id = '{get_champion_model_id()}') as filtered_predictions,
 
         -- NO_LINE predictions (added 2026-01-11: indicates prop data gap)
         -- If high, prop scraper may not be running
         (SELECT COUNTIF(has_prop_line = false OR has_prop_line IS NULL)
          FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
-         WHERE game_date = @game_date AND system_id = 'catboost_v8') as no_line_predictions
+         WHERE game_date = @game_date AND system_id = '{get_champion_model_id()}') as no_line_predictions
     """
 
     job_config = bigquery.QueryJobConfig(

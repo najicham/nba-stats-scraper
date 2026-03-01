@@ -33,6 +33,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 from shared.config.orchestration_config import get_orchestration_config
 from shared.utils.bigquery_retry import retry_on_transient
+from shared.config.model_selection import get_champion_model_id
 
 logger = logging.getLogger(__name__)
 
@@ -1821,7 +1822,7 @@ class PlayerLoader:
             FROM `{project}.nba_predictions.player_prop_predictions`
             WHERE game_date = @game_date
               AND is_active = TRUE
-              AND system_id = 'catboost_v9'
+              AND system_id = '{get_champion_model_id()}'
               AND (current_points_line IS NULL
                    OR vegas_line_source = 'none'
                    OR vegas_line_source IS NULL)

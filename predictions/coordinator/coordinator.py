@@ -85,6 +85,7 @@ from shared.utils.bigquery_retry import retry_on_transient
 from shared.utils.firestore_retry import retry_on_firestore_error, retry_firestore_transaction
 from shared.utils.auth_utils import get_api_key
 from shared.endpoints.health import create_health_blueprint, HealthChecker
+from shared.config.model_selection import get_champion_model_id
 
 # Postponement detection (Jan 2026)
 from shared.utils.postponement_detector import PostponementDetector
@@ -614,9 +615,9 @@ def get_active_system_ids() -> List[str]:
     Session 191: Returns champion + enabled shadow models.
 
     Returns:
-        List of system_ids: ['catboost_v9', 'catboost_v9_q43_train1102_0131', ...]
+        List of system_ids: [champion_model_id, shadow_models...]
     """
-    active_systems = ['catboost_v9', 'catboost_v12']  # Champion + V12 shadow (Session 238)
+    active_systems = [get_champion_model_id()]  # Champion model from config
 
     # Add enabled shadow models from MONTHLY_MODELS
     for model_id, config in MONTHLY_MODELS.items():
@@ -1336,7 +1337,10 @@ def start_prediction_batch():
                     )
 
                 # Use champion results for healing/alerting (don't heal per shadow model)
-                gate_results, summary = per_system_results['catboost_v9']
+                gate_results, summary = per_system_results.get(
+                    get_champion_model_id(),
+                    next(iter(per_system_results.values()))  # fallback to first system
+                )
 
                 # Session 139: Self-heal if players are hard-blocked and mode >= RETRY
                 heal_attempted = False
@@ -2073,7 +2077,7 @@ def morning_summary():
         FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
         WHERE game_date = @game_date
           AND is_active = TRUE
-          AND system_id = 'catboost_v9'
+          AND system_id = '{get_champion_model_id()}'
         """
 
         job_config = bq.QueryJobConfig(
@@ -2111,10 +2115,10 @@ def morning_summary():
         FROM `{PROJECT_ID}.nba_predictions.dynamic_subset_definitions` d
         CROSS JOIN `{PROJECT_ID}.nba_predictions.player_prop_predictions` p
         WHERE d.is_active = TRUE
-          AND d.system_id = 'catboost_v9'
+          AND d.system_id = '{get_champion_model_id()}'
           AND p.game_date = @game_date
           AND p.is_active = TRUE
-          AND p.system_id = 'catboost_v9'
+          AND p.system_id = '{get_champion_model_id()}'
           AND p.recommendation IN ('OVER', 'UNDER')
           AND p.current_points_line IS NOT NULL
           AND ABS(p.predicted_points - p.current_points_line) >= COALESCE(d.min_edge, 0)
@@ -3331,7 +3335,7 @@ def check_prediction_signal():
           skew_category
         FROM nba_predictions.daily_prediction_signals
         WHERE game_date = DATE('{game_date_str}')
-          AND system_id = 'catboost_v9'
+          AND system_id = '{get_champion_model_id()}'
         LIMIT 1
         """
 
@@ -3713,7 +3717,7 @@ def publish_batch_summary_from_firestore(batch_id: str):
                         prediction_run_mode
                     FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
                     WHERE game_date = @game_date
-                      AND system_id = 'catboost_v9'
+                      AND system_id = '{get_champion_model_id()}'
                       AND is_active = TRUE
                       AND current_points_line IS NOT NULL
                     GROUP BY prediction_run_mode
@@ -3754,7 +3758,7 @@ def publish_batch_summary_from_firestore(batch_id: str):
                         prediction_run_mode
                     FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
                     WHERE game_date = @game_date
-                      AND system_id = 'catboost_v9'
+                      AND system_id = '{get_champion_model_id()}'
                       AND is_active = TRUE
                       AND current_points_line IS NOT NULL
                     GROUP BY prediction_run_mode
@@ -3788,7 +3792,7 @@ def publish_batch_summary_from_firestore(batch_id: str):
                         COUNT(*) as cnt
                     FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
                     WHERE game_date = @game_date
-                      AND system_id = 'catboost_v9'
+                      AND system_id = '{get_champion_model_id()}'
                       AND is_active = TRUE
                     GROUP BY 1
                     """
@@ -3824,7 +3828,7 @@ def publish_batch_summary_from_firestore(batch_id: str):
                         prediction_run_mode
                     FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
                     WHERE game_date = @game_date
-                      AND system_id = 'catboost_v9'
+                      AND system_id = '{get_champion_model_id()}'
                       AND is_active = TRUE
                       AND current_points_line IS NOT NULL
                     GROUP BY prediction_run_mode
@@ -4016,7 +4020,7 @@ def publish_batch_summary(tracker: ProgressTracker, batch_id: str):
                         prediction_run_mode
                     FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
                     WHERE game_date = @game_date
-                      AND system_id = 'catboost_v9'
+                      AND system_id = '{get_champion_model_id()}'
                       AND is_active = TRUE
                       AND current_points_line IS NOT NULL
                     GROUP BY prediction_run_mode
@@ -4057,7 +4061,7 @@ def publish_batch_summary(tracker: ProgressTracker, batch_id: str):
                         prediction_run_mode
                     FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
                     WHERE game_date = @game_date
-                      AND system_id = 'catboost_v9'
+                      AND system_id = '{get_champion_model_id()}'
                       AND is_active = TRUE
                       AND current_points_line IS NOT NULL
                     GROUP BY prediction_run_mode
@@ -4091,7 +4095,7 @@ def publish_batch_summary(tracker: ProgressTracker, batch_id: str):
                         COUNT(*) as cnt
                     FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
                     WHERE game_date = @game_date
-                      AND system_id = 'catboost_v9'
+                      AND system_id = '{get_champion_model_id()}'
                       AND is_active = TRUE
                     GROUP BY 1
                     """
@@ -4127,7 +4131,7 @@ def publish_batch_summary(tracker: ProgressTracker, batch_id: str):
                         prediction_run_mode
                     FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
                     WHERE game_date = @game_date
-                      AND system_id = 'catboost_v9'
+                      AND system_id = '{get_champion_model_id()}'
                       AND is_active = TRUE
                       AND current_points_line IS NOT NULL
                     GROUP BY prediction_run_mode

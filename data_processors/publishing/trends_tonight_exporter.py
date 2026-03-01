@@ -276,7 +276,7 @@ class TrendsTonightExporter(BaseExporter):
                 WHEN 3 THEN 'final'
                 ELSE 'scheduled'
             END as status,
-            FORMAT_TIMESTAMP('%Y-%m-%dT%H:%M:%S-05:00', game_date_est) as game_time
+            FORMAT_TIMESTAMP('%Y-%m-%dT%H:%M:%S%Ez', game_date_est, 'America/New_York') as game_time
         FROM `nba-props-platform.nba_raw.v_nbac_schedule_latest`
         WHERE game_date = @game_date
         UNION ALL
@@ -288,7 +288,7 @@ class TrendsTonightExporter(BaseExporter):
                 WHEN 3 THEN 'final'
                 ELSE 'scheduled'
             END,
-            FORMAT_TIMESTAMP('%Y-%m-%dT%H:%M:%S-05:00', game_date_est)
+            FORMAT_TIMESTAMP('%Y-%m-%dT%H:%M:%S%Ez', game_date_est, 'America/New_York')
         FROM `nba-props-platform.nba_raw.v_nbac_schedule_latest`
         WHERE game_date = @game_date
         """

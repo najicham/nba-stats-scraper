@@ -53,6 +53,12 @@ except ImportError:
     HAS_PERFORMANCE_DIAGNOSTICS = False
     PerformanceDiagnostics = None
 
+try:
+    from shared.config.model_selection import get_champion_model_id
+    CHAMPION_MODEL_ID = get_champion_model_id()
+except ImportError:
+    CHAMPION_MODEL_ID = 'catboost_v12'
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -85,7 +91,7 @@ class DataQualityMonitor:
                 COUNTIF(has_prop_line = FALSE OR has_prop_line IS NULL) as no_line_count
             FROM `{self.project_id}.nba_predictions.player_prop_predictions`
             WHERE game_date = @game_date
-                AND system_id = 'catboost_v8'
+                AND system_id = '{CHAMPION_MODEL_ID}'
         ),
         expected_games AS (
             SELECT

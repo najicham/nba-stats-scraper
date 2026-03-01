@@ -58,6 +58,8 @@ SIGNAL_ANGLE_MAP = {
     'fast_pace_over': "Fast opponent pace (102+) — more possessions, more scoring (81.5% HR)",
     'volatile_scoring_over': "High scoring variance (CV 50%+) — upside variance favors OVER (81.5% HR)",
     'low_line_over': "Low prop line (<12) — conservative lines easier to clear (78.1% HR)",
+    'self_creation_over': "High self-creator (50%+ unassisted FG) — scoring independence favors OVER (CONDITIONAL)",
+    'sharp_line_move_over': "DraftKings line moved UP 2+ pts today — sharp money and model agree OVER (67.8% HR)",
 }
 
 # Warning tag → warning angle
