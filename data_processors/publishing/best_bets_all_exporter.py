@@ -95,8 +95,10 @@ class BestBetsAllExporter(BaseExporter):
         # This ensures picks never disappear once published.
         published_picks = self._query_published_picks(target_date)
         manual_picks = self._query_manual_picks(target_date)
+        started_game_ids = self._query_started_games(target_date)
         today_picks, merge_stats = self._merge_and_lock_picks(
-            today_signal_picks, published_picks, manual_picks
+            today_signal_picks, published_picks, manual_picks,
+            started_game_ids=started_game_ids,
         )
 
         # Persist newly published picks + audit trail
@@ -249,7 +251,7 @@ class BestBetsAllExporter(BaseExporter):
                     else 'LOSS' if p.get('prediction_correct') is False
                     else None
                 ),
-                'is_ultra': p.get('ultra_tier') is True or p.get('ultra_tier') == 'true',
+                'is_ultra': self._is_ultra(p.get('ultra_tier')),
             }
 
             source = p.get('_source')
@@ -308,6 +310,30 @@ class BestBetsAllExporter(BaseExporter):
             logger.warning(f"Game times lookup failed (non-fatal): {e}")
             return {}
 
+    def _query_started_games(self, target_date: str) -> set:
+        """Return set of game_ids (YYYYMMDD_AWAY_HOME) for started/finished games."""
+        query = f"""
+        SELECT
+          CONCAT(FORMAT_DATE('%Y%m%d', game_date), '_',
+                 away_team_tricode, '_', home_team_tricode) AS game_id,
+          game_status
+        FROM `{PROJECT_ID}.nba_raw.nbac_schedule`
+        WHERE game_date = @target_date
+          AND game_status >= 2
+        """
+        params = [
+            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+        ]
+        try:
+            rows = self.bq_client.query(
+                query,
+                job_config=bigquery.QueryJobConfig(query_parameters=params),
+            ).result(timeout=30)
+            return {row.game_id for row in rows}
+        except Exception as e:
+            logger.warning(f"Started games lookup failed (non-fatal): {e}")
+            return set()
+
     def _build_weeks(self, all_picks: List[Dict]) -> List[Dict]:
         """Group all picks into weeks → days (most recent first)."""
         weeks_map: Dict[str, Dict[str, List]] = {}
@@ -352,7 +378,7 @@ class BestBetsAllExporter(BaseExporter):
                 'actual': safe_int(row.get('actual_points')),
                 'result': result,
                 'angles': list(angles)[:3],
-                'is_ultra': row.get('ultra_tier') is True or row.get('ultra_tier') == 'true',
+                'is_ultra': self._is_ultra(row.get('ultra_tier')),
             }
 
             if row.get('is_voided'):
@@ -516,7 +542,7 @@ class BestBetsAllExporter(BaseExporter):
         under = {'wins': 0, 'losses': 0}
 
         for p in all_picks:
-            ultra = p.get('ultra_tier') is True or p.get('ultra_tier') == 'true'
+            ultra = self._is_ultra(p.get('ultra_tier'))
             if not ultra or p.get('prediction_correct') is None:
                 continue
 
@@ -669,11 +695,17 @@ class BestBetsAllExporter(BaseExporter):
             logger.warning(f"Failed to query manual picks (non-fatal): {e}")
             return []
 
+    @staticmethod
+    def _is_ultra(val) -> bool:
+        """Normalize ultra_tier from BOOLEAN or STRING to Python bool."""
+        return val is True or val == 'true'
+
     def _merge_and_lock_picks(
         self,
         signal_picks: List[Dict],
         published_picks: List[Dict],
         manual_picks: List[Dict],
+        started_game_ids: Optional[set] = None,
     ) -> Tuple[List[Dict], Dict[str, int]]:
         """Merge signal, published (locked), and manual picks for today.
 
@@ -684,10 +716,14 @@ class BestBetsAllExporter(BaseExporter):
         4. Add manual picks not already present
         5. Re-rank: active signal picks first, then locked-but-dropped, then manual
 
+        Ultra gate: ultra_tier cannot be added to a pick whose game has
+        already started (game_status >= 2). Blocked changes are logged.
+
         Returns:
             (merged_picks, merge_stats) where merge_stats has counts for audit.
         """
         now = datetime.now(timezone.utc)
+        started = started_game_ids or set()
 
         # Index signal picks by player_lookup for fast lookup
         signal_by_key = {}
@@ -733,6 +769,21 @@ class BestBetsAllExporter(BaseExporter):
                 pick['actual_points'] = sig.get('actual_points')
                 pick['is_voided'] = sig.get('is_voided')
                 pick['void_reason'] = sig.get('void_reason')
+                # Ultra gate: only update ultra_tier if game hasn't started
+                game_id = pick.get('game_id') or sig.get('game_id', '')
+                sig_ultra = self._is_ultra(sig.get('ultra_tier'))
+                pub_ultra = self._is_ultra(pub.get('ultra_tier'))
+                if game_id in started:
+                    # Game started — freeze ultra at published value
+                    pick['ultra_tier'] = pub_ultra
+                    if sig_ultra and not pub_ultra:
+                        logger.warning(
+                            f"Ultra blocked (game started): {key} game={game_id} "
+                            f"— signal says ultra but game already in progress"
+                        )
+                else:
+                    # Game not started — update ultra from signal
+                    pick['ultra_tier'] = sig_ultra
                 pick['_last_seen_in_signal'] = now
                 pick['_in_signal'] = True
                 stats['locked_picks'] += 1
@@ -751,6 +802,14 @@ class BestBetsAllExporter(BaseExporter):
         for key, sig in signal_by_key.items():
             if key not in merged:
                 pick = dict(sig)
+                # Ultra gate: strip ultra from new picks if game has started
+                game_id = pick.get('game_id', '')
+                if game_id in started and self._is_ultra(pick.get('ultra_tier')):
+                    logger.warning(
+                        f"Ultra blocked (game started): {key} game={game_id} "
+                        f"— new pick, stripping ultra_tier"
+                    )
+                    pick['ultra_tier'] = False
                 # A manual pick written to signal_best_bets_picks (system_id=
                 # manual_override) should retain 'manual' source attribution
                 is_manual = key in manual_by_key
