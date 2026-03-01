@@ -90,7 +90,25 @@ def query_predictions_with_supplements(
     -- Session 366: Model HR weight with post-filter fallback chain.
     -- Priority: best-bets HR (21d, N>=8) → raw HR (14d, N>=10) → 50% default.
     -- Self-bootstrapping: new models use raw HR until they accumulate 8+ best-bets picks.
-    WITH model_hr AS (
+    -- Session 378c: Registry cascade — disabled/blocked models auto-excluded from best bets.
+    -- Safe degradation: if registry query returns empty, NOT IN (empty) excludes nothing.
+    WITH disabled_models AS (
+      SELECT model_id
+      FROM `{PROJECT_ID}.nba_predictions.model_registry`
+      WHERE enabled = FALSE OR status IN ('blocked', 'disabled')
+    ),
+
+    -- Session 378c: 2-day warm-up — new models can't enter best bets on day 1.
+    -- Models still generate predictions (for grading/shadow analysis), but can't
+    -- win per-player selection until they've had 2 days of sanity/grading evaluation.
+    warmup_models AS (
+      SELECT model_id
+      FROM `{PROJECT_ID}.nba_predictions.model_registry`
+      WHERE enabled = TRUE
+        AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, DAY) < 2
+    ),
+
+    model_hr AS (
       SELECT
         model_id,
         rolling_hr_14d AS hr_14d,
@@ -130,6 +148,8 @@ def query_predictions_with_supplements(
         AND p.is_active = TRUE
         AND p.recommendation IN ('OVER', 'UNDER')
         AND p.line_source IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS')
+        AND p.system_id NOT IN (SELECT model_id FROM disabled_models)
+        AND p.system_id NOT IN (SELECT model_id FROM warmup_models)
     ),
 
     -- Per-player model counts: how many models have edge 5+ for this player
@@ -167,7 +187,19 @@ def query_predictions_with_supplements(
     ),"""
     else:
         preds_cte = f"""
-    WITH preds AS (
+    -- Session 378c: Registry cascade + warm-up for single-model path
+    WITH disabled_models AS (
+      SELECT model_id
+      FROM `{PROJECT_ID}.nba_predictions.model_registry`
+      WHERE enabled = FALSE OR status IN ('blocked', 'disabled')
+    ),
+    warmup_models AS (
+      SELECT model_id
+      FROM `{PROJECT_ID}.nba_predictions.model_registry`
+      WHERE enabled = TRUE
+        AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, DAY) < 2
+    ),
+    preds AS (
       SELECT
         p.player_lookup,
         p.game_id,
@@ -185,6 +217,8 @@ def query_predictions_with_supplements(
         AND p.is_active = TRUE
         AND p.recommendation IN ('OVER', 'UNDER')
         AND p.line_source IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS')
+        AND p.system_id NOT IN (SELECT model_id FROM disabled_models)
+        AND p.system_id NOT IN (SELECT model_id FROM warmup_models)
     ),"""
 
     query = f"""{preds_cte}

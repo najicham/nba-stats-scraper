@@ -147,6 +147,7 @@ if TYPE_CHECKING:
 
 from predictions.worker.write_metrics import PredictionWriteMetrics
 from shared.utils.bigquery_retry import retry_on_quota_exceeded
+from shared.validation.prediction_sanity import validate_prediction_record
 
 logger.info("✓ Heavy imports deferred (will lazy-load on first request)")
 
@@ -1746,6 +1747,26 @@ def process_player_predictions(
             
             all_predictions.append(bq_prediction)
 
+    # Session 378c: Batch-level sanity alert — if >50% of a model's predictions
+    # fail sanity checks, the model is likely miscalibrated (e.g., XGBoost version mismatch).
+    if all_predictions:
+        from collections import Counter
+        sanity_failures_by_model = Counter()
+        total_by_model = Counter()
+        for pred in all_predictions:
+            sid = pred.get('system_id', 'unknown')
+            total_by_model[sid] += 1
+            if pred.get('filter_reason', '').startswith('sanity_check_failed'):
+                sanity_failures_by_model[sid] += 1
+        for sid, failures in sanity_failures_by_model.items():
+            total = total_by_model[sid]
+            if total >= 5 and failures / total > 0.5:
+                logger.critical(
+                    f"SANITY ALERT: Model {sid} has {failures}/{total} "
+                    f"({100*failures/total:.0f}%) predictions failing sanity checks. "
+                    f"Model is likely miscalibrated."
+                )
+
     # Track prediction compute time
     metadata['prediction_compute_seconds'] = time.time() - prediction_compute_start
 
@@ -2243,6 +2264,18 @@ def format_prediction_for_bigquery(
         'backfill_bootstrap_mode': completeness.get('backfill_bootstrap_mode', False),
         'processing_decision_reason': completeness.get('processing_decision_reason', 'processed_successfully')
     })
+
+    # Session 378c: Prediction sanity validation — catch broken models at write time.
+    # Invalid predictions are still written (for debugging) but marked inactive
+    # so they can't enter best bets selection.
+    is_valid, rejection_reason = validate_prediction_record(record)
+    if not is_valid:
+        record['is_active'] = False
+        record['filter_reason'] = f"sanity_check_failed: {rejection_reason}"
+        logger.warning(
+            f"Prediction sanity check FAILED for {player_lookup} "
+            f"model={system_id}: {rejection_reason}"
+        )
 
     return record
 

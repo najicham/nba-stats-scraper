@@ -172,8 +172,37 @@ class BestBetsAggregator:
             'signal_density': 0,
         }
 
+        # Session 378c: Model sanity guard — detect and block models whose
+        # predictions are severely imbalanced (>90% one direction). A broken
+        # model (e.g., XGBoost version mismatch producing all UNDER with
+        # inflated edges) can dominate per-player selection and poison all
+        # best bets picks. This catches the problem at the aggregator level.
+        from collections import defaultdict
+        model_direction_counts: Dict[str, Dict[str, int]] = defaultdict(lambda: {'OVER': 0, 'UNDER': 0})
+        for pred in predictions:
+            rec = pred.get('recommendation')
+            if rec in ('OVER', 'UNDER'):
+                model_direction_counts[pred.get('system_id', '')][rec] += 1
+        blocked_models: Set[str] = set()
+        for model_id, counts in model_direction_counts.items():
+            total = counts['OVER'] + counts['UNDER']
+            if total >= 20:  # Need enough predictions to judge
+                over_pct = counts['OVER'] / total
+                if over_pct > 0.95 or over_pct < 0.05:
+                    blocked_models.add(model_id)
+                    dominant = 'OVER' if over_pct > 0.5 else 'UNDER'
+                    logger.warning(
+                        f"Model sanity guard: blocking {model_id} — "
+                        f"{max(over_pct, 1 - over_pct):.0%} {dominant} ({total} predictions). "
+                        f"Extreme direction imbalance suggests miscalibration."
+                    )
+
         for pred in predictions:
             # --- Negative filters (order: cheapest checks first) ---
+
+            # Model sanity guard (Session 378c): skip predictions from blocked models
+            if pred.get('system_id', '') in blocked_models:
+                continue
 
             # Player blacklist (Session 284)
             if pred['player_lookup'] in self._player_blacklist:

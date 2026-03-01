@@ -60,7 +60,7 @@ class DailySignalsExporter(BaseExporter):
             return {
                 'date': target_date,
                 'generated_at': self.get_generated_at(),
-                'model': get_model_codename('catboost_v9'),
+                'model': get_model_codename('catboost_v12'),
                 'signal': 'neutral',
                 'metrics': {
                     'conditions': 'unknown',
@@ -80,7 +80,7 @@ class DailySignalsExporter(BaseExporter):
         return {
             'date': target_date,
             'generated_at': self.get_generated_at(),
-            'model': get_model_codename('catboost_v9'),
+            'model': get_model_codename('catboost_v12'),
             'signal': public_signal,
             'metrics': {
                 'conditions': conditions,
@@ -111,7 +111,7 @@ class DailySignalsExporter(BaseExporter):
           signal_explanation
         FROM `nba_predictions.daily_prediction_signals`
         WHERE game_date = @target_date
-          AND system_id = 'catboost_v9'
+          AND system_id = 'catboost_v12'
         LIMIT 1
         """
 

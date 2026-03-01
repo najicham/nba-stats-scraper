@@ -460,7 +460,7 @@ class PlayerSeasonExporter(BaseExporter):
             SUM(CASE WHEN actual_points < line_value THEN 1 ELSE 0 END) as unders
         FROM `nba-props-platform.nba_predictions.prediction_accuracy`
         WHERE player_lookup = @player_lookup
-          AND system_id = 'catboost_v9'
+          AND system_id = 'catboost_v12'
           AND EXTRACT(YEAR FROM game_date) >= @season_year
           AND (EXTRACT(MONTH FROM game_date) >= 10 OR EXTRACT(YEAR FROM game_date) > @season_year)
         """

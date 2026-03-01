@@ -123,7 +123,7 @@ class TonightAllPlayersExporter(BaseExporter):
         """Query all players for tonight's games with predictions, fatigue, and injury data."""
         query = """
         WITH predictions AS (
-            -- Get predictions for players (production CatBoost V9 system)
+            -- Get predictions for players (production champion model)
             -- Use ROW_NUMBER to deduplicate in case of multiple rows per player/game
             SELECT
                 pp.player_lookup,
@@ -135,7 +135,7 @@ class TonightAllPlayersExporter(BaseExporter):
                 pp.current_points_line
             FROM `nba-props-platform.nba_predictions.player_prop_predictions` pp
             WHERE pp.game_date = @target_date
-              AND pp.system_id = 'catboost_v9'
+              AND pp.system_id = 'catboost_v12'
               AND pp.is_active = TRUE
             QUALIFY ROW_NUMBER() OVER (
                 PARTITION BY pp.player_lookup, pp.game_id

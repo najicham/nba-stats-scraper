@@ -473,8 +473,8 @@ class SignalBestBetsExporter(BaseExporter):
                 filter_summary=json_data.get('filter_summary'),
             )
 
-        # Upload to GCS (date-specific)
-        gcs_path = self.upload_to_gcs(
+        # Upload to GCS (date-specific) with degradation backup (Session 378c)
+        gcs_path = self.compare_and_upload(
             json_data=json_data,
             path=f'signal-best-bets/{target_date}.json',
             cache_control='public, max-age=300',
@@ -588,7 +588,7 @@ class SignalBestBetsExporter(BaseExporter):
                 'player_lookup': pick['player_lookup'],
                 'game_id': pick.get('game_id', ''),
                 'game_date': target_date,
-                'system_id': pick.get('system_id') or pick.get('source_model') or 'catboost_v9',
+                'system_id': pick.get('system_id') or pick.get('source_model') or 'catboost_v12',
                 'player_name': pick.get('player', ''),
                 'team_abbr': pick.get('team', ''),
                 'opponent_team_abbr': pick.get('opponent', ''),

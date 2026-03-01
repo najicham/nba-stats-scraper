@@ -345,7 +345,7 @@ class SignalAnnotator:
                 'prediction_id': None,
                 'game_id': pick.get('game_id'),
                 'rank_in_subset': pick.get('rank'),
-                'system_id': pick.get('system_id', 'catboost_v9'),
+                'system_id': pick.get('system_id', 'catboost_v12'),
                 'version_id': version_id or f"v_{computed_at.strftime('%Y%m%d_%H%M%S')}",
                 'computed_at': computed_at.isoformat(),
                 'trigger_source': 'signal_annotator',

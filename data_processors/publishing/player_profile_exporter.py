@@ -178,7 +178,7 @@ class PlayerProfileExporter(BaseExporter):
                 ROUND(AVG(signed_error), 2) as bias,
                 ROUND(SAFE_DIVIDE(COUNTIF(within_5_points), COUNT(*)), 3) as within_5_pct
             FROM `nba-props-platform.nba_predictions.prediction_accuracy`
-            WHERE system_id = 'catboost_v9'
+            WHERE system_id = 'catboost_v12'
             GROUP BY player_lookup
             HAVING games_predicted >= 3
         )
@@ -214,7 +214,7 @@ class PlayerProfileExporter(BaseExporter):
                 MIN(game_date) as first_date,
                 MAX(game_date) as last_date
             FROM `nba-props-platform.nba_predictions.prediction_accuracy`
-            WHERE system_id = 'catboost_v9'
+            WHERE system_id = 'catboost_v12'
               AND player_lookup = @player_lookup
             GROUP BY player_lookup
         )
@@ -251,7 +251,7 @@ class PlayerProfileExporter(BaseExporter):
             signed_error,
             confidence_score
         FROM `nba-props-platform.nba_predictions.prediction_accuracy`
-        WHERE system_id = 'catboost_v9'
+        WHERE system_id = 'catboost_v12'
           AND player_lookup = @player_lookup
         ORDER BY game_date DESC
         LIMIT @limit
@@ -272,7 +272,7 @@ class PlayerProfileExporter(BaseExporter):
             ROUND(SAFE_DIVIDE(COUNTIF(prediction_correct), COUNT(*)), 3) as win_rate,
             ROUND(AVG(absolute_error), 2) as mae
         FROM `nba-props-platform.nba_predictions.prediction_accuracy`
-        WHERE system_id = 'catboost_v9'
+        WHERE system_id = 'catboost_v12'
           AND player_lookup = @player_lookup
         GROUP BY recommendation
         """
@@ -537,7 +537,7 @@ class PlayerProfileExporter(BaseExporter):
 
         FROM `nba-props-platform.nba_predictions.prediction_accuracy`
         WHERE player_lookup = @player_lookup
-          AND system_id = 'catboost_v9'
+          AND system_id = 'catboost_v12'
         """
         params = [
             bigquery.ScalarQueryParameter('player_lookup', 'STRING', player_lookup)
@@ -648,7 +648,7 @@ class PlayerProfileExporter(BaseExporter):
         LEFT JOIN `nba-props-platform.nba_predictions.player_prop_predictions` pp
             ON gc.player_lookup = pp.player_lookup
             AND gc.game_date = pp.game_date
-            AND pp.system_id = 'catboost_v9'
+            AND pp.system_id = 'catboost_v12'
         WHERE gc.player_lookup = @player_lookup
           AND gc.game_date >= CURRENT_DATE()
         ORDER BY gc.game_date ASC

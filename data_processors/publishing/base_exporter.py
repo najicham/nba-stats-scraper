@@ -329,3 +329,112 @@ class BaseExporter(ABC):
     def get_generated_at(self) -> str:
         """Get current UTC timestamp in ISO format."""
         return datetime.now(timezone.utc).isoformat()
+
+    def compare_and_upload(
+        self,
+        json_data: Dict[str, Any],
+        path: str,
+        cache_control: str = 'public, max-age=300',
+    ) -> str:
+        """Upload JSON to GCS with degradation detection and backup.
+
+        Session 378c: Before overwriting, checks existing GCS blob for
+        degradation signals (picks dropped to 0, dropped >50%, single
+        model monopoly). If detected, backs up the old version before
+        proceeding with upload.
+
+        Layers 1-3 should prevent bad data from reaching this point.
+        This is a last-resort safety net that preserves evidence for
+        manual recovery.
+
+        Args:
+            json_data: New JSON content to upload.
+            path: GCS path within bucket (e.g., 'signal-best-bets/2026-03-01.json').
+            cache_control: HTTP cache-control header.
+
+        Returns:
+            Full GCS path where file was uploaded.
+        """
+        try:
+            self._check_and_backup_if_degraded(json_data, path)
+        except Exception as e:
+            # Never block the upload due to backup logic failure
+            logger.warning(f"Degradation check failed (non-fatal): {e}")
+
+        return self.upload_to_gcs(json_data, path, cache_control)
+
+    def _check_and_backup_if_degraded(
+        self,
+        new_data: Dict[str, Any],
+        path: str,
+    ) -> None:
+        """Compare new export against existing GCS blob and backup if degraded.
+
+        Degradation signals:
+        1. New picks = 0 while old had picks (for pending games)
+        2. Pick count dropped by > 50%
+        3. All picks from a single model (monopoly)
+
+        If any triggered, copies existing blob to _backups/ path.
+        """
+        bucket = self.gcs_client.bucket(self.bucket_name)
+        full_path = f'{API_VERSION}/{path}'
+        blob = bucket.blob(full_path)
+
+        # If no existing blob, nothing to compare against
+        if not blob.exists():
+            return
+
+        try:
+            old_json_str = blob.download_as_text()
+            old_data = json.loads(old_json_str)
+        except Exception as e:
+            logger.debug(f"Could not read existing GCS blob for comparison: {e}")
+            return
+
+        old_picks = old_data.get('picks', [])
+        new_picks = new_data.get('picks', [])
+        old_count = len(old_picks)
+        new_count = len(new_picks)
+
+        degradation_reasons = []
+
+        # Signal 1: Picks dropped to 0 when old had picks
+        if old_count > 0 and new_count == 0:
+            degradation_reasons.append(
+                f"picks_dropped_to_zero (was {old_count})"
+            )
+
+        # Signal 2: Pick count dropped by >50%
+        if old_count >= 4 and new_count < old_count * 0.5:
+            degradation_reasons.append(
+                f"picks_dropped_50pct ({old_count} -> {new_count})"
+            )
+
+        # Signal 3: All picks from single model (monopoly)
+        if new_count >= 3:
+            models = {p.get('source_model_id') or p.get('system_id', '') for p in new_picks}
+            if len(models) == 1:
+                degradation_reasons.append(
+                    f"single_model_monopoly (all {new_count} from {models.pop()})"
+                )
+
+        if not degradation_reasons:
+            return
+
+        # Backup old blob
+        ts = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')
+        backup_path = f'{API_VERSION}/_backups/{path}.{ts}'
+        backup_blob = bucket.blob(backup_path)
+
+        try:
+            backup_blob.upload_from_string(
+                old_json_str,
+                content_type='application/json',
+            )
+            logger.warning(
+                f"DEGRADATION DETECTED in {path}: {'; '.join(degradation_reasons)}. "
+                f"Backed up old version ({old_count} picks) to gs://{self.bucket_name}/{backup_path}"
+            )
+        except Exception as e:
+            logger.error(f"Failed to backup old GCS blob: {e}")

@@ -1018,7 +1018,7 @@ class TrendsTonightExporter(BaseExporter):
         WHERE game_date >= DATE_SUB(@game_date, INTERVAL 30 DAY)
           AND game_date < @game_date
           AND ABS(predicted_margin) >= 3
-          AND system_id = 'catboost_v9'
+          AND system_id = 'catboost_v12'
         """
         params = [
             bigquery.ScalarQueryParameter('game_date', 'DATE', game_date)
