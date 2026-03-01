@@ -3412,6 +3412,12 @@ def main():
     if is_lightgbm:
         import lightgbm as lgb
 
+        # Session 378c: Version compatibility check (same pattern as XGBoost)
+        PRODUCTION_LGBM_VERSION = '4.6.0'
+        local_lgbm_ver = lgb.__version__
+        if local_lgbm_ver.split('.')[0] != PRODUCTION_LGBM_VERSION.split('.')[0]:
+            print(f"\n⚠️  LightGBM version mismatch: training={local_lgbm_ver}, production={PRODUCTION_LGBM_VERSION}")
+
         lgb_params = {
             'verbose': -1,
             'seed': args.random_seed,
@@ -3459,6 +3465,25 @@ def main():
 
     elif args.framework == 'xgboost':
         import xgboost as xgb
+
+        # Session 378c: Version compatibility check. XGBoost model format is NOT
+        # fully backward-compatible. A model trained with 3.x and loaded with 2.x
+        # produces systematically wrong predictions (~8.6pt offset) WITHOUT any
+        # error. Production uses xgboost from predictions/worker/requirements.txt.
+        PRODUCTION_XGB_VERSION = '3.1.2'
+        local_version = xgb.__version__
+        local_major = local_version.split('.')[0]
+        prod_major = PRODUCTION_XGB_VERSION.split('.')[0]
+        if local_major != prod_major:
+            print(f"\n{'='*60}")
+            print(f"⚠️  XGBOOST VERSION MISMATCH ⚠️")
+            print(f"  Training: {local_version}")
+            print(f"  Production: {PRODUCTION_XGB_VERSION}")
+            print(f"  Major version differs — model format may be incompatible!")
+            print(f"  Fix: pip install xgboost=={PRODUCTION_XGB_VERSION}")
+            print(f"{'='*60}\n")
+        elif local_version != PRODUCTION_XGB_VERSION:
+            print(f"  Note: XGBoost {local_version} (production: {PRODUCTION_XGB_VERSION})")
 
         xgb_params = {
             'verbosity': 1,

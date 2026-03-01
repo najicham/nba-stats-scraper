@@ -580,6 +580,39 @@ gcloud logging read 'textPayload=~"bigdataball" AND textPayload=~"Found game fil
 
 ## Prediction System Issues
 
+### XGBoost Version Mismatch — Best Bets Poisoned (Session 378c)
+
+**Symptom**: XGBoost model produces ALL UNDER predictions with avg 4.93 points (players avg ~14 points). Inflated edges (8.8-12.6) dominate per-player selection, overwriting all CatBoost/LightGBM best bets picks.
+
+**Root Cause**: Model trained with `xgboost==3.1.2` (local), loaded in production with `xgboost==2.0.2`. XGBoost model JSON format is NOT backward-compatible across major versions. Predictions are systematically ~8.6 points too low with **no error or warning**.
+
+**Impact**: 7 all-UNDER XGBoost picks replaced 3 legitimate CatBoost/LightGBM picks in Phase 6 export. GCS JSON served broken picks to frontend.
+
+**Timeline**:
+- Session 377: XGBoost model trained locally with v3.1.2
+- Session 378: DMatrix fix deployed, XGBoost starts producing predictions
+- Session 378b: "avg predicted 4.9 pts" flagged but not disabled
+- Session 378c: Root cause found, model blocked, picks restored
+
+**Fix**:
+1. Blocked XGBoost in model_registry (enabled=FALSE, status='blocked')
+2. Deactivated 134 XGBoost predictions (is_active=FALSE)
+3. Re-triggered Phase 6 export to restore CatBoost/LightGBM picks
+4. Upgraded production to xgboost==3.1.2 (matching training env)
+5. Added version compatibility check in quick_retrain.py
+6. Added model sanity guard in aggregator (blocks models with >95% one direction)
+
+**Lessons**:
+- **Framework version mismatches are silent killers** — XGBoost, LightGBM, and CatBoost all have format compatibility concerns across major versions
+- **The aggregator had no model-level sanity check** — a single broken model could dominate all selections via inflated edges
+- **Disabling a model in the registry doesn't deactivate existing predictions** — must also set is_active=FALSE in player_prop_predictions
+- **Always pin and match versions** between training and production environments
+
+**Prevention**:
+- Version check in quick_retrain.py warns on major version mismatch
+- Model sanity guard in aggregator blocks models with extreme direction imbalance (>95% one direction on 20+ predictions)
+- Pin identical versions in requirements.txt and training environment
+
 ### Prediction Deactivation Bug (Session 78)
 
 **Symptom**: Grading shows unexpectedly low coverage; most ACTUAL_PROP predictions have `is_active=FALSE`
