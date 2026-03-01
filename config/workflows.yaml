@@ -385,6 +385,7 @@ workflows:
     execution_plan:
       type: "parallel"
       scrapers:
+        - nbac_schedule_api     # Refresh game_status (1→2→3 transitions)
         - nbac_team_boxscore
         - nbac_player_boxscore
 
@@ -408,6 +409,7 @@ workflows:
     execution_plan:
       type: "parallel"
       scrapers:
+        - nbac_schedule_api     # Refresh game_status (1→2→3 transitions)
         - nbac_team_boxscore
         - nbac_player_boxscore
         - bigdataball_pbp
@@ -432,6 +434,7 @@ workflows:
     execution_plan:
       type: "parallel"
       scrapers:
+        - nbac_schedule_api     # Refresh game_status (1→2→3 transitions)
         - nbac_team_boxscore
         - nbac_player_boxscore
         - bigdataball_pbp

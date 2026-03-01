@@ -50,7 +50,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v374b_spread_fix_over_filters_signals'
+ALGORITHM_VERSION = 'v382_legacy_block_ultra_fix'
 
 # Base signals that fire on nearly every edge 5+ pick. Picks with ONLY
 # these signals hit 57.1% (N=42) vs 77.8% for picks with 4+ signals.
@@ -170,6 +170,7 @@ class BestBetsAggregator:
             'starter_v12_under': 0,
             'opponent_under_block': 0,
             'signal_density': 0,
+            'legacy_block': 0,
         }
 
         # Session 378c: Model sanity guard — detect and block models whose
@@ -197,11 +198,27 @@ class BestBetsAggregator:
                         f"Extreme direction imbalance suggests miscalibration."
                     )
 
+        # Session 382: Legacy model blocklist — hardcoded models not in registry
+        # that bypass all registry controls. catboost_v12: 33.3% BB HR (6 picks),
+        # catboost_v9: 37.5% BB HR (12 picks). These are loaded directly by
+        # worker.py, not via the registry, so they cannot be disabled via enabled=FALSE.
+        LEGACY_MODEL_BLOCKLIST = frozenset({'catboost_v12', 'catboost_v9'})
+        legacy_blocked = LEGACY_MODEL_BLOCKLIST - blocked_models
+        if legacy_blocked:
+            blocked_models.update(legacy_blocked)
+            logger.info(
+                f"Legacy model blocklist: blocking {legacy_blocked} — "
+                f"hardcoded models bypass registry controls"
+            )
+
         for pred in predictions:
             # --- Negative filters (order: cheapest checks first) ---
 
-            # Model sanity guard (Session 378c): skip predictions from blocked models
-            if pred.get('system_id', '') in blocked_models:
+            # Model sanity guard (Session 378c) + legacy blocklist (Session 382)
+            pred_system_id = pred.get('system_id', '')
+            if pred_system_id in blocked_models:
+                if pred_system_id in LEGACY_MODEL_BLOCKLIST:
+                    filter_counts['legacy_block'] += 1
                 continue
 
             # Player blacklist (Session 284)
@@ -507,6 +524,8 @@ class BestBetsAggregator:
             logger.info(f"Opponent depleted UNDER block: skipped {filter_counts['opponent_depleted_under']} UNDER picks with 3+ opponent stars out")
         if filter_counts['signal_density'] > 0:
             logger.info(f"Signal density filter: skipped {filter_counts['signal_density']} base-only picks")
+        if filter_counts['legacy_block'] > 0:
+            logger.info(f"Legacy model blocklist: skipped {filter_counts['legacy_block']} predictions from {LEGACY_MODEL_BLOCKLIST}")
 
         # Ultra Bets classification (Session 326)
         from ml.signals.ultra_bets import classify_ultra_pick

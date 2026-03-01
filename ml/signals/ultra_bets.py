@@ -117,6 +117,15 @@ def classify_ultra_pick(pick: Dict[str, Any]) -> List[Dict[str, Any]]:
                 'backtest_period': criterion['backtest_period'],
                 'backtest_date': criterion['backtest_date'],
             })
+    # Session 382: Single-criteria ultra at edge 4.5-6 is 2-6 (25%).
+    # Require 2+ matched criteria for ultra tier. Triple/double ultra
+    # remain at 93-100% HR. This blocks:
+    #   - v12_edge_4_5plus alone (edge 4.5-5.9 non-OVER) → 1 match → blocked
+    # But preserves:
+    #   - edge >= 6 → matches v12_edge_6plus + v12_edge_4_5plus → 2 matches
+    #   - OVER edge >= 5 → matches v12_over_edge_5plus + v12_edge_4_5plus → 2 matches
+    if len(matched) < 2:
+        return []
     return matched
 
 
