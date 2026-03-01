@@ -824,16 +824,33 @@ class BestBetsAllExporter(BaseExporter):
                 else:
                     stats['algorithm_picks'] += 1
 
-        # Step 4: Add manual picks not already present
+        # Step 4: Add manual picks — override algorithm picks if same player
         for mp in manual_picks:
             key = mp.get('player_lookup', '')
-            if key and key not in merged:
-                pick = dict(mp)
-                pick['_source'] = 'manual'
-                pick['_in_signal'] = False
-                pick['_first_published_at'] = now
-                merged[key] = pick
-                stats['manual_picks'] += 1
+            if not key:
+                continue
+            existing = merged.get(key)
+            if existing and existing.get('_source') == 'manual':
+                # Already a manual pick (from published table) — skip
+                continue
+            pick = dict(mp)
+            pick['_source'] = 'manual'
+            pick['_in_signal'] = False
+            pick['_first_published_at'] = now
+            if existing:
+                # Manual override of algorithm pick — preserve grading fields
+                pick['prediction_correct'] = existing.get('prediction_correct')
+                pick['actual_points'] = existing.get('actual_points')
+                pick['is_voided'] = existing.get('is_voided')
+                pick['void_reason'] = existing.get('void_reason')
+                pick['_first_published_at'] = existing.get('_first_published_at', now)
+                logger.info(
+                    f"Manual override: {key} — replacing algorithm "
+                    f"{existing.get('recommendation')} {existing.get('line_value')} "
+                    f"with manual {pick.get('recommendation')} {pick.get('line_value')}"
+                )
+            merged[key] = pick
+            stats['manual_picks'] += 1
 
         # Step 5: Re-rank
         # Active signal picks first (by original rank), then locked-but-dropped,
