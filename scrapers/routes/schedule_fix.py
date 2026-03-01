@@ -96,10 +96,7 @@ def fix_stale_schedule():
             time_slot,
             home_team_tricode as home_team_abbr,
             away_team_tricode as away_team_abbr,
-            TIMESTAMP_DIFF(
-                TIMESTAMP(DATETIME(CURRENT_TIMESTAMP(), 'America/New_York')),
-                game_date_est,
-                HOUR) as hours_since_start
+            TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), game_date_est, HOUR) as hours_since_start
         FROM `nba_raw.nbac_schedule`
         WHERE game_status IN (1, 2)
           AND game_date <= CURRENT_DATE('America/New_York')
