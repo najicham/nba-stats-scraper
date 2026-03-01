@@ -799,7 +799,8 @@ class SignalBestBetsExporter(BaseExporter):
           game_date_est
         FROM `{PROJECT_ID}.nba_raw.nbac_schedule`
         WHERE game_date = @target_date
-          AND (game_status >= 2 OR game_date_est <= CURRENT_TIMESTAMP())
+          AND (game_status >= 2
+               OR game_date_est <= TIMESTAMP(DATETIME(CURRENT_TIMESTAMP(), 'America/New_York')))
         """
 
         params = [
