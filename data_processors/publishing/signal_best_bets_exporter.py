@@ -475,13 +475,11 @@ class SignalBestBetsExporter(BaseExporter):
                 filter_summary=json_data.get('filter_summary'),
             )
 
-        # Strip internal ultra fields from public JSON.
+        # Strip internal-only fields from public JSON.
         # BQ write above gets full ultra_tier + ultra_criteria.
-        # Public JSON only shows ultra_tier on OVER picks when gate is met.
+        # Public JSON shows ultra_tier (bool) but not ultra_criteria (internal detail).
         for pick in json_data.get('picks', []):
-            show_public = pick.pop('_show_ultra_public', False)
-            if not show_public:
-                pick.pop('ultra_tier', None)
+            pick.pop('_show_ultra_public', None)
             pick.pop('ultra_criteria', None)
 
         # Upload to GCS (date-specific) with degradation backup (Session 378c)

@@ -76,6 +76,8 @@ from shared.ml.feature_contract import (
     V16_FEATURE_NAMES,
     V17_CONTRACT,
     V17_FEATURE_NAMES,
+    V18_CONTRACT,
+    V18_FEATURE_NAMES,
     FEATURE_DEFAULTS,
     FEATURE_STORE_FEATURE_COUNT,
     FEATURE_STORE_NAMES,
@@ -202,10 +204,10 @@ def parse_args():
 
     # Feature set selection
     parser.add_argument('--feature-set', choices=[
-                           'v9', 'v10', 'v11', 'v12', 'v13', 'v14', 'v15', 'v16', 'v17',
-                           'v12_noveg', 'v16_noveg', 'v17_noveg',
+                           'v9', 'v10', 'v11', 'v12', 'v13', 'v14', 'v15', 'v16', 'v17', 'v18',
+                           'v12_noveg', 'v16_noveg', 'v17_noveg', 'v18_noveg',
                        ], default='v9',
-                       help='Feature set to use (v9=33, v12=54, v16=56, v17=59, v12_noveg=50, v16_noveg=52, v17_noveg=55 features)')
+                       help='Feature set to use (v9=33, v12=54, v16=56, v17=59, v18=60, v12_noveg=50, v16_noveg=52, v17_noveg=55, v18_noveg=56 features)')
 
     # Line source for evaluation
     parser.add_argument('--use-production-lines', action='store_true', default=True,
@@ -2497,6 +2499,12 @@ def main():
         args.feature_set = base_fs
         print(f"  Feature set '{base_fs}_noveg' → feature_set={base_fs}, no_vegas=True")
 
+    # Session 379: --feature-set v18 auto-enables --v16-features (V18 is based on V16, not V17)
+    if args.feature_set == 'v18':
+        if not args.v16_features:
+            args.v16_features = True
+            print(f"  Auto-enabled --v16-features for feature_set=v18")
+
     # Session 360: --feature-set v17 auto-enables --v17-features and --v16-features
     if args.feature_set == 'v17':
         if not args.v17_features:
@@ -2527,7 +2535,10 @@ def main():
         print(f"  Auto-upgraded feature_set to v16 (--v16-features)")
 
     # Select feature contract based on --feature-set
-    if args.feature_set == 'v17':
+    if args.feature_set == 'v18':
+        selected_contract = V18_CONTRACT
+        selected_feature_names = V18_FEATURE_NAMES
+    elif args.feature_set == 'v17':
         selected_contract = V17_CONTRACT
         selected_feature_names = V17_FEATURE_NAMES
     elif args.feature_set == 'v16':
@@ -3044,6 +3055,191 @@ def main():
         for label, X_df in [('train', X_train_full), ('eval', X_eval_full)]:
             print(f"  {label}:")
             for col in ['blowout_minutes_risk', 'minutes_volatility_last_10', 'opponent_pace_mismatch']:
+                non_nan = X_df[col].notna().sum()
+                print(f"    {col}: coverage={non_nan}/{len(X_df)}")
+                vals = X_df[col].dropna()
+                if len(vals) > 0:
+                    print(f"      mean={vals.mean():.3f}, std={vals.std():.3f}")
+
+    # V18 features (Session 379): line movement + self-creation
+    # line_movement_direction: closing_line - opening_line (DraftKings)
+    # vig_skew: avg(over_price - under_price) across books
+    # self_creation_rate: rolling 10-game avg of unassisted_fg / fg
+    # late_line_movement_count: LINE_MOVED events in last 4h before tipoff
+    if args.feature_set == 'v18':
+        print("\nComputing V18 features (line_movement, vig_skew, self_creation, late_moves)...")
+
+        # Query 1: Line movement direction (DraftKings opening vs closing)
+        line_movement_query = f"""
+        WITH dk_lines AS (
+            SELECT
+                player_lookup,
+                game_date,
+                MIN(CASE WHEN rn_asc = 1 THEN points_line END) AS opening_line,
+                MIN(CASE WHEN rn_desc = 1 THEN points_line END) AS closing_line
+            FROM (
+                SELECT
+                    player_lookup,
+                    game_date,
+                    points_line,
+                    ROW_NUMBER() OVER (PARTITION BY player_lookup, game_date ORDER BY snapshot_timestamp ASC) AS rn_asc,
+                    ROW_NUMBER() OVER (PARTITION BY player_lookup, game_date ORDER BY snapshot_timestamp DESC) AS rn_desc
+                FROM `{PROJECT_ID}.nba_raw.odds_api_player_points_props`
+                WHERE game_date BETWEEN '{dates['train_start']}' AND '{dates['eval_end']}'
+                  AND LOWER(bookmaker) = 'draftkings'
+                  AND points_line IS NOT NULL
+            )
+            WHERE rn_asc = 1 OR rn_desc = 1
+            GROUP BY player_lookup, game_date
+        )
+        SELECT player_lookup, game_date,
+               closing_line - opening_line AS line_movement_direction
+        FROM dk_lines
+        WHERE opening_line IS NOT NULL AND closing_line IS NOT NULL
+        """
+
+        # Query 2: Vig skew (avg over_price - under_price at latest snapshot, exclude Bovada)
+        vig_skew_query = f"""
+        WITH latest AS (
+            SELECT
+                player_lookup,
+                game_date,
+                bookmaker,
+                over_price,
+                under_price,
+                ROW_NUMBER() OVER (
+                    PARTITION BY player_lookup, game_date, bookmaker
+                    ORDER BY snapshot_timestamp DESC
+                ) AS rn
+            FROM `{PROJECT_ID}.nba_raw.odds_api_player_points_props`
+            WHERE game_date BETWEEN '{dates['train_start']}' AND '{dates['eval_end']}'
+              AND LOWER(bookmaker) != 'bovada'
+              AND over_price IS NOT NULL
+              AND under_price IS NOT NULL
+        )
+        SELECT player_lookup, game_date,
+               AVG(over_price - under_price) AS vig_skew,
+               COUNT(DISTINCT bookmaker) AS n_books
+        FROM latest WHERE rn = 1
+        GROUP BY player_lookup, game_date
+        HAVING COUNT(DISTINCT bookmaker) >= 2
+        """
+
+        # Query 3: Self-creation rate (rolling 10-game avg of unassisted_fg / fg)
+        self_creation_query = f"""
+        SELECT
+            player_lookup,
+            game_date,
+            fg_makes,
+            unassisted_fg_makes
+        FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
+        WHERE game_date BETWEEN DATE_SUB('{dates['train_start']}', INTERVAL 60 DAY) AND '{dates['eval_end']}'
+          AND fg_makes > 0
+          AND unassisted_fg_makes IS NOT NULL
+        ORDER BY player_lookup, game_date
+        """
+
+        # Query 4: Late line movement count (LINE_MOVED in last 4h before tipoff)
+        late_moves_query = f"""
+        WITH movements AS (
+            SELECT
+                player_lookup,
+                game_date,
+                bookmaker,
+                points_line,
+                LAG(points_line) OVER (
+                    PARTITION BY player_lookup, game_date, bookmaker
+                    ORDER BY snapshot_timestamp
+                ) AS prev_line,
+                minutes_before_tipoff
+            FROM `{PROJECT_ID}.nba_raw.odds_api_player_points_props`
+            WHERE game_date BETWEEN '{dates['train_start']}' AND '{dates['eval_end']}'
+              AND minutes_before_tipoff IS NOT NULL
+              AND minutes_before_tipoff <= 240
+              AND points_line IS NOT NULL
+        )
+        SELECT player_lookup, game_date,
+               COUNT(*) AS late_line_movement_count
+        FROM movements
+        WHERE prev_line IS NOT NULL AND points_line != prev_line
+        GROUP BY player_lookup, game_date
+        """
+
+        lm_df = client.query(line_movement_query).to_dataframe()
+        vs_df = client.query(vig_skew_query).to_dataframe()
+        sc_df = client.query(self_creation_query).to_dataframe()
+        late_df = client.query(late_moves_query).to_dataframe()
+
+        print(f"  Line movement: {len(lm_df)} rows")
+        print(f"  Vig skew: {len(vs_df)} rows")
+        print(f"  Self-creation raw: {len(sc_df)} rows")
+        print(f"  Late moves: {len(late_df)} rows")
+
+        # Build lookups: (player_lookup, game_date) -> value
+        lm_map = {}
+        for _, row in lm_df.iterrows():
+            lm_map[(row['player_lookup'], pd.to_datetime(row['game_date']))] = float(row['line_movement_direction'])
+
+        vs_map = {}
+        for _, row in vs_df.iterrows():
+            vs_map[(row['player_lookup'], pd.to_datetime(row['game_date']))] = float(row['vig_skew'])
+
+        late_map = {}
+        for _, row in late_df.iterrows():
+            late_map[(row['player_lookup'], pd.to_datetime(row['game_date']))] = float(row['late_line_movement_count'])
+
+        # Self-creation: rolling 10-game average (computed per-player, no leakage)
+        sc_map = {}  # (player_lookup, game_date) -> self_creation_rate
+        for player, pdf in sc_df.groupby('player_lookup'):
+            pdf = pdf.sort_values('game_date')
+            rates = (pdf['unassisted_fg_makes'] / pdf['fg_makes']).values
+            dates_list = pd.to_datetime(pdf['game_date']).values
+            for i in range(len(pdf)):
+                # Rolling window of games strictly BEFORE this game
+                start_idx = max(0, i - 10)
+                window = rates[start_idx:i]
+                if len(window) >= 5:
+                    sc_map[(player, dates_list[i])] = float(np.mean(window))
+
+        print(f"  Self-creation computed: {len(sc_map)} player-game entries")
+
+        # Apply to combined train+eval
+        n_train = len(df_train)
+        combined_source = pd.concat([df_train, df_eval], ignore_index=True)
+
+        lm_arr = np.full(len(combined_source), np.nan)
+        vs_arr = np.full(len(combined_source), np.nan)
+        sc_arr = np.full(len(combined_source), np.nan)
+        late_arr = np.full(len(combined_source), np.nan)
+
+        for idx in range(len(combined_source)):
+            row = combined_source.iloc[idx]
+            key = (row['player_lookup'], pd.to_datetime(row['game_date']))
+            if key in lm_map:
+                lm_arr[idx] = lm_map[key]
+            if key in vs_map:
+                vs_arr[idx] = vs_map[key]
+            if key in sc_map:
+                sc_arr[idx] = sc_map[key]
+            if key in late_map:
+                late_arr[idx] = late_map[key]
+            # Late moves: if not in map, player had 0 late moves (default)
+            elif key[0] in set(lm_df['player_lookup'].values):
+                late_arr[idx] = 0.0
+
+        # Split back into train and eval
+        X_train_full['line_movement_direction'] = lm_arr[:n_train]
+        X_train_full['vig_skew'] = vs_arr[:n_train]
+        X_train_full['self_creation_rate'] = sc_arr[:n_train]
+        X_train_full['late_line_movement_count'] = late_arr[:n_train]
+        X_eval_full['line_movement_direction'] = lm_arr[n_train:]
+        X_eval_full['vig_skew'] = vs_arr[n_train:]
+        X_eval_full['self_creation_rate'] = sc_arr[n_train:]
+        X_eval_full['late_line_movement_count'] = late_arr[n_train:]
+
+        for label, X_df in [('train', X_train_full), ('eval', X_eval_full)]:
+            print(f"  {label}:")
+            for col in ['line_movement_direction', 'vig_skew', 'self_creation_rate', 'late_line_movement_count']:
                 non_nan = X_df[col].notna().sum()
                 print(f"    {col}: coverage={non_nan}/{len(X_df)}")
                 vals = X_df[col].dropna()
@@ -3679,7 +3875,9 @@ def main():
         mode_suffix += "_diff"
     if args.derived_features:
         mode_suffix += "_derived"
-    if args.v17_features:
+    if args.feature_set == 'v18':
+        mode_suffix += "_v18"
+    elif args.v17_features:
         mode_suffix += "_v17"
     elif args.v16_features:
         mode_suffix += "_v16"

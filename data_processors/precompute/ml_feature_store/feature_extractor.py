@@ -78,6 +78,10 @@ class FeatureExtractor:
         # Features 57-59: V17 opportunity risk (Session 360)
         self._v17_opportunity_risk_lookup: Dict[str, Dict] = {}
 
+        # Features 60-63: V18 line movement + self-creation (Session 379)
+        self._v18_line_movement_lookup: Dict[str, Dict] = {}
+        self._v18_self_creation_lookup: Dict[str, float] = {}
+
         # Data Provenance Tracking (Session 99 - Feb 2026)
         # Track which sources were used and why fallbacks occurred
         self._fallback_reasons: List[str] = []
@@ -352,6 +356,10 @@ class FeatureExtractor:
             ('v16_line_history', timed_task('v16_line_history', lambda: self._batch_extract_v16_line_history(game_date))),
             # Features 57-59: V17 opportunity risk (Session 360)
             ('v17_opportunity_risk', timed_task('v17_opportunity_risk', lambda: self._batch_extract_v17_opportunity_risk(game_date))),
+            # Features 60-61, 63: V18 line movement features (Session 379)
+            ('v18_line_movement', timed_task('v18_line_movement', lambda: self._batch_extract_v18_line_movement(game_date))),
+            # Feature 62: V18 self-creation rate (Session 379)
+            ('v18_self_creation', timed_task('v18_self_creation', lambda: self._batch_extract_v18_self_creation(game_date))),
         ]
 
         # Auto-retry logic for transient network/BigQuery errors
@@ -451,6 +459,8 @@ class FeatureExtractor:
         self._prop_line_delta_lookup = {}
         self._v16_line_history_lookup = {}
         self._v17_opportunity_risk_lookup = {}
+        self._v18_line_movement_lookup = {}
+        self._v18_self_creation_lookup = {}
         # Historical Completeness Tracking
         self._total_games_available_lookup = {}
 
@@ -1246,6 +1256,23 @@ class FeatureExtractor:
         Note: opponent_pace_mismatch is computed in the processor from existing features.
         """
         return self._v17_opportunity_risk_lookup.get(player_lookup, {})
+
+    def get_v18_line_movement(self, player_lookup: str) -> Dict:
+        """Get V18 line movement features (features 60-61, 63, Session 379).
+
+        Returns dict with:
+            line_movement_direction: closing_line - opening_line (DraftKings)
+            vig_skew: avg(over_price - under_price) across books
+            late_line_movement_count: LINE_MOVED events in last 4h before tipoff
+        """
+        return self._v18_line_movement_lookup.get(player_lookup, {})
+
+    def get_v18_self_creation(self, player_lookup: str) -> Optional[float]:
+        """Get V18 self-creation rate (feature 62, Session 379).
+
+        Returns rolling 10-game avg of unassisted_fg_makes / fg_makes, or None.
+        """
+        return self._v18_self_creation_lookup.get(player_lookup)
 
     # ========================================================================
     # V12 ROLLING STATS EXTRACTION
@@ -2236,3 +2263,224 @@ class FeatureExtractor:
         games: List[Dict[str, Any]] = result.to_dict('records')
         logger.debug(f"Retrieved {len(games)} team games for {team_abbr}")
         return games
+
+    # ========================================================================
+    # V18 LINE MOVEMENT FEATURES (Session 379)
+    # Features 60 (line_movement_direction), 61 (vig_skew),
+    # 63 (late_line_movement_count)
+    # ========================================================================
+
+    def _batch_extract_v18_line_movement(self, game_date: date) -> None:
+        """Batch extract V18 line movement features (features 60-61, 63, Session 379).
+
+        Computes per-player:
+        - line_movement_direction: closing_line - opening_line (DraftKings only)
+        - vig_skew: avg(over_price - under_price) across books at latest snapshot
+        - late_line_movement_count: count of LINE_MOVED events in last 4h before tipoff
+
+        Source: odds_api_player_points_props (snapshots + movements)
+        No leakage: uses same-day pre-game data only (all snapshots are before tipoff).
+        """
+        query = f"""
+        WITH
+        -- Feature 60: Line movement direction (DraftKings opening vs closing)
+        dk_opening AS (
+            SELECT
+                player_lookup,
+                points_line AS opening_line,
+                ROW_NUMBER() OVER (
+                    PARTITION BY player_lookup
+                    ORDER BY snapshot_timestamp ASC
+                ) AS rn
+            FROM `{self.project_id}.nba_raw.odds_api_player_points_props`
+            WHERE game_date = '{game_date}'
+              AND LOWER(bookmaker) = 'draftkings'
+              AND points_line IS NOT NULL
+        ),
+        dk_closing AS (
+            SELECT
+                player_lookup,
+                points_line AS closing_line,
+                ROW_NUMBER() OVER (
+                    PARTITION BY player_lookup
+                    ORDER BY snapshot_timestamp DESC
+                ) AS rn
+            FROM `{self.project_id}.nba_raw.odds_api_player_points_props`
+            WHERE game_date = '{game_date}'
+              AND LOWER(bookmaker) = 'draftkings'
+              AND points_line IS NOT NULL
+        ),
+        line_movement AS (
+            SELECT
+                o.player_lookup,
+                c.closing_line - o.opening_line AS line_movement_direction
+            FROM dk_opening o
+            JOIN dk_closing c ON o.player_lookup = c.player_lookup AND c.rn = 1
+            WHERE o.rn = 1
+              AND o.opening_line != c.closing_line  -- Only when there's actual movement
+        ),
+
+        -- Feature 61: Vig skew (avg over_price - under_price across books, latest snapshot)
+        latest_snapshot AS (
+            SELECT
+                player_lookup,
+                bookmaker,
+                over_price,
+                under_price,
+                ROW_NUMBER() OVER (
+                    PARTITION BY player_lookup, bookmaker
+                    ORDER BY snapshot_timestamp DESC
+                ) AS rn
+            FROM `{self.project_id}.nba_raw.odds_api_player_points_props`
+            WHERE game_date = '{game_date}'
+              AND LOWER(bookmaker) != 'bovada'
+              AND over_price IS NOT NULL
+              AND under_price IS NOT NULL
+        ),
+        vig_skew_calc AS (
+            SELECT
+                player_lookup,
+                AVG(over_price - under_price) AS vig_skew,
+                COUNT(DISTINCT bookmaker) AS n_books
+            FROM latest_snapshot
+            WHERE rn = 1
+            GROUP BY player_lookup
+            HAVING COUNT(DISTINCT bookmaker) >= 2
+        ),
+
+        -- Feature 63: Late line movement count (LINE_MOVED in last 4h before tipoff)
+        late_moves AS (
+            SELECT
+                curr.player_lookup,
+                COUNT(*) AS late_line_movement_count
+            FROM (
+                SELECT
+                    player_lookup,
+                    bookmaker,
+                    points_line,
+                    minutes_before_tipoff,
+                    LAG(points_line) OVER (
+                        PARTITION BY player_lookup, bookmaker
+                        ORDER BY snapshot_timestamp
+                    ) AS prev_line
+                FROM `{self.project_id}.nba_raw.odds_api_player_points_props`
+                WHERE game_date = '{game_date}'
+                  AND minutes_before_tipoff IS NOT NULL
+                  AND minutes_before_tipoff <= 240
+                  AND points_line IS NOT NULL
+            ) curr
+            WHERE curr.prev_line IS NOT NULL
+              AND curr.points_line != curr.prev_line
+            GROUP BY curr.player_lookup
+        )
+
+        SELECT
+            COALESCE(lm.player_lookup, vs.player_lookup, lt.player_lookup) AS player_lookup,
+            lm.line_movement_direction,
+            vs.vig_skew,
+            vs.n_books,
+            lt.late_line_movement_count
+        FROM line_movement lm
+        FULL OUTER JOIN vig_skew_calc vs ON lm.player_lookup = vs.player_lookup
+        FULL OUTER JOIN late_moves lt
+            ON COALESCE(lm.player_lookup, vs.player_lookup) = lt.player_lookup
+        """
+        result = self._safe_query(query, "batch_extract_v18_line_movement")
+
+        lm_count = 0
+        vs_count = 0
+        lt_count = 0
+
+        if not result.empty:
+            for record in result.to_dict('records'):
+                player = record.get('player_lookup')
+                if not player:
+                    continue
+                entry = {}
+
+                # Feature 60: line_movement_direction
+                lm_val = record.get('line_movement_direction')
+                if lm_val is not None and not (isinstance(lm_val, float) and pd.isna(lm_val)):
+                    entry['line_movement_direction'] = round(float(lm_val), 2)
+                    lm_count += 1
+
+                # Feature 61: vig_skew
+                vs_val = record.get('vig_skew')
+                if vs_val is not None and not (isinstance(vs_val, float) and pd.isna(vs_val)):
+                    entry['vig_skew'] = round(float(vs_val), 4)
+                    vs_count += 1
+
+                # Feature 63: late_line_movement_count
+                lt_val = record.get('late_line_movement_count')
+                if lt_val is not None and not (isinstance(lt_val, float) and pd.isna(lt_val)):
+                    entry['late_line_movement_count'] = float(lt_val)
+                    lt_count += 1
+
+                if entry:
+                    self._v18_line_movement_lookup[player] = entry
+
+        logger.info(
+            f"Batch V18 line movement: {len(self._v18_line_movement_lookup)} players "
+            f"(line_dir={lm_count}, vig_skew={vs_count}, late_moves={lt_count})"
+        )
+
+    # ========================================================================
+    # V18 SELF-CREATION RATE (Session 379)
+    # Feature 62: self_creation_rate
+    # ========================================================================
+
+    def _batch_extract_v18_self_creation(self, game_date: date) -> None:
+        """Batch extract V18 self-creation rate (feature 62, Session 379).
+
+        Computes per-player rolling 10-game average of:
+            unassisted_fg_makes / fg_makes
+
+        Players who create their own shots have more predictable scoring.
+
+        Source: player_game_summary (assisted_fg_makes, unassisted_fg_makes, fg_makes)
+        No leakage: only uses games strictly BEFORE game_date.
+        """
+        query = f"""
+        WITH player_games AS (
+            SELECT
+                player_lookup,
+                game_date,
+                fg_makes,
+                unassisted_fg_makes,
+                ROW_NUMBER() OVER (
+                    PARTITION BY player_lookup
+                    ORDER BY game_date DESC
+                ) AS games_ago
+            FROM `{self.project_id}.nba_analytics.player_game_summary`
+            WHERE game_date < '{game_date}'
+              AND game_date >= DATE_SUB('{game_date}', INTERVAL 60 DAY)
+              AND fg_makes > 0
+              AND unassisted_fg_makes IS NOT NULL
+        )
+        SELECT
+            player_lookup,
+            AVG(SAFE_DIVIDE(unassisted_fg_makes, fg_makes)) AS self_creation_rate,
+            COUNT(*) AS games_used
+        FROM player_games
+        WHERE games_ago <= 10
+        GROUP BY player_lookup
+        """
+        result = self._safe_query(query, "batch_extract_v18_self_creation")
+
+        count = 0
+        if not result.empty:
+            for record in result.to_dict('records'):
+                player = record.get('player_lookup')
+                if not player:
+                    continue
+                sc_val = record.get('self_creation_rate')
+                games = record.get('games_used', 0)
+                # Need at least 5 games for a meaningful rolling average
+                if sc_val is not None and not (isinstance(sc_val, float) and pd.isna(sc_val)) and games >= 5:
+                    self._v18_self_creation_lookup[player] = round(float(sc_val), 6)
+                    count += 1
+
+        logger.info(
+            f"Batch V18 self-creation: {count} players with data "
+            f"(total lookup: {len(self._v18_self_creation_lookup)})"
+        )

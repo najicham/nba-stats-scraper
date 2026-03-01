@@ -22,7 +22,10 @@ from dataclasses import dataclass
 # FEATURE STORE CONFIGURATION
 # =============================================================================
 
-CURRENT_FEATURE_STORE_VERSION = "v2_60features"
+CURRENT_FEATURE_STORE_VERSION = "v2_64features"
+# BQ table has 60 columns (features 0-59). Features 60-63 (V18) are computed
+# at training time via augmentation, not stored in the feature store yet.
+# Bump to 64 when BQ schema migration adds feature_60-63 columns.
 FEATURE_STORE_FEATURE_COUNT = 60
 
 # Canonical feature names in the feature store, IN ORDER
@@ -121,6 +124,12 @@ FEATURE_STORE_NAMES: List[str] = [
     "blowout_minutes_risk",           # Fraction of team's L10 games with 15+ margin [0.0-1.0]
     "minutes_volatility_last_10",     # Stdev of player minutes over L10 games
     "opponent_pace_mismatch",         # team_pace - opponent_pace (positive = faster team)
+
+    # 60-63: V18 Features — Line Movement + Self-Creation (Session 379)
+    "line_movement_direction",        # closing_line - opening_line (DraftKings, game day) [-3, +3]
+    "vig_skew",                       # avg(over_price - under_price) across books at latest snapshot
+    "self_creation_rate",             # rolling 10-game avg of unassisted_fg_makes / fg_makes [0-1]
+    "late_line_movement_count",       # Count of LINE_MOVED events in last 4h before tipoff
 ]
 
 # Validate feature store list length matches expected count
@@ -581,6 +590,49 @@ V17_NOVEG_CONTRACT = ModelFeatureContract(
 )
 
 
+# -----------------------------------------------------------------------------
+# V18 Model Contract (63 features - V16 + line movement + self-creation)
+# Adds line_movement_direction, vig_skew, self_creation_rate, late_line_movement_count
+# Session 379: Structurally new data sources — line movement and shot creation
+# Based on V16 (not V17 which was a dead end for opportunity risk)
+# These features will be added to the feature store schema (v2_64features)
+# -----------------------------------------------------------------------------
+
+V18_FEATURE_NAMES: List[str] = V16_FEATURE_NAMES + [
+    # 56: Line movement direction — closing_line minus opening_line (DraftKings)
+    "line_movement_direction",
+
+    # 57: Vig skew — avg(over_price - under_price) across books
+    "vig_skew",
+
+    # 58: Self-creation rate — rolling 10-game avg of unassisted_fg / fg
+    "self_creation_rate",
+
+    # 59: Late line movement count — LINE_MOVED events in last 4h
+    "late_line_movement_count",
+]
+
+V18_CONTRACT = ModelFeatureContract(
+    model_version="v18",
+    feature_count=60,
+    feature_names=V18_FEATURE_NAMES,
+    description="CatBoost V18 - 60 features, V16 + line movement direction/vig skew/self-creation/late moves"
+)
+
+V18_NOVEG_FEATURE_NAMES: List[str] = [
+    name for name in V18_FEATURE_NAMES if name not in (
+        "vegas_points_line", "vegas_opening_line", "vegas_line_move", "has_vegas_line"
+    )
+]
+
+V18_NOVEG_CONTRACT = ModelFeatureContract(
+    model_version="v18_noveg",
+    feature_count=56,
+    feature_names=V18_NOVEG_FEATURE_NAMES,
+    description="CatBoost V18 No-Vegas - 56 features (60 minus 4 vegas), with line movement + self-creation"
+)
+
+
 # =============================================================================
 # CONTRACT REGISTRY
 # =============================================================================
@@ -602,6 +654,8 @@ MODEL_CONTRACTS: Dict[str, ModelFeatureContract] = {
     "v16_noveg": V16_NOVEG_CONTRACT,
     "v17": V17_CONTRACT,
     "v17_noveg": V17_NOVEG_CONTRACT,
+    "v18": V18_CONTRACT,
+    "v18_noveg": V18_NOVEG_CONTRACT,
     "catboost_v8": V8_CONTRACT,
     "catboost_v9": V9_CONTRACT,
     "catboost_v10": V10_CONTRACT,
@@ -612,6 +666,7 @@ MODEL_CONTRACTS: Dict[str, ModelFeatureContract] = {
     "catboost_v15": V15_NOVEG_CONTRACT,
     "catboost_v16": V16_NOVEG_CONTRACT,
     "catboost_v17": V17_NOVEG_CONTRACT,
+    "catboost_v18": V18_NOVEG_CONTRACT,
 }
 
 
@@ -625,6 +680,10 @@ def get_contract(model_version: str) -> ModelFeatureContract:
         version = "v8"
     if version.startswith("v11_"):
         version = "v11"
+    if version.startswith("v18_noveg"):
+        version = "v18_noveg"
+    elif version.startswith("v18_"):
+        version = "v18"
     if version.startswith("v17_noveg"):
         version = "v17_noveg"
     elif version.startswith("v17_"):
@@ -686,7 +745,7 @@ FEATURES_FROM_PHASE3_V11 = [37, 38]
 # game_total_line (38) depends on odds data availability.
 # These features are still tracked as defaults for visibility, but don't block predictions.
 # Scraper health monitoring separately alerts when star players are missing lines.
-FEATURES_OPTIONAL = set(FEATURES_VEGAS) | {38, 41, 42, 47, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59}
+FEATURES_OPTIONAL = set(FEATURES_VEGAS) | {38, 41, 42, 47, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63}
 
 # Session 152: Vegas line source values
 # Stored in ml_feature_store_v2.vegas_line_source and player_prop_predictions.vegas_line_source
@@ -738,6 +797,12 @@ FEATURE_SOURCE_MAP[56] = 'calculated'
 FEATURE_SOURCE_MAP[57] = 'calculated'
 FEATURE_SOURCE_MAP[58] = 'calculated'
 FEATURE_SOURCE_MAP[59] = 'calculated'
+
+# Features 60-63: V18 line movement + self-creation (Session 379)
+FEATURE_SOURCE_MAP[60] = 'vegas'       # line_movement_direction (from odds_api)
+FEATURE_SOURCE_MAP[61] = 'vegas'       # vig_skew (from odds_api)
+FEATURE_SOURCE_MAP[62] = 'calculated'  # self_creation_rate (from player_game_summary)
+FEATURE_SOURCE_MAP[63] = 'vegas'       # late_line_movement_count (from odds_api)
 
 
 # =============================================================================
@@ -846,6 +911,12 @@ FEATURE_DEFAULTS: Dict[str, float] = {
     "blowout_minutes_risk": 0.2,          # ~20% of games are blowouts league-wide
     "minutes_volatility_last_10": 4.0,    # Typical minutes stdev
     "opponent_pace_mismatch": 0.0,        # Neutral (no pace difference)
+
+    # V18 features (Session 379 — line movement + self-creation)
+    "line_movement_direction": 0.0,       # No movement (neutral)
+    "vig_skew": 0.0,                      # Balanced vig (neutral)
+    "self_creation_rate": 0.5,            # 50% self-created (neutral)
+    "late_line_movement_count": 0.0,      # No late movements
 }
 
 

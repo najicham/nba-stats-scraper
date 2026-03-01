@@ -261,6 +261,12 @@ ML_FEATURE_RANGES = {
     57: (0, 1, False, 'blowout_minutes_risk'),     # Rate [0.0-1.0]
     58: (0, 20, False, 'minutes_volatility_last_10'),  # Stdev of minutes
     59: (-20, 20, False, 'opponent_pace_mismatch'),    # Pace difference
+
+    # V18 Features (60-63) - Session 379
+    60: (-5, 5, False, 'line_movement_direction'),     # Closing - opening line
+    61: (-1, 1, False, 'vig_skew'),                    # Over price - under price
+    62: (0, 1, False, 'self_creation_rate'),            # Rate [0.0-1.0]
+    63: (0, 50, False, 'late_line_movement_count'),     # Count of late moves
 }
 
 
@@ -2116,8 +2122,31 @@ class MLFeatureStoreProcessor(
             features.append(float('nan'))
             feature_sources[59] = 'missing'
 
+        # Features 60-63: V18 line movement + self-creation (Session 379)
+        v18_data = self.feature_extractor.get_v18_line_movement(player_lookup) if player_lookup else {}
+
+        # Feature 60: line_movement_direction (DraftKings closing - opening)
+        lm_dir = v18_data.get('line_movement_direction')
+        features.append(float(lm_dir) if lm_dir is not None else float('nan'))
+        feature_sources[60] = 'vegas' if lm_dir is not None else 'missing'
+
+        # Feature 61: vig_skew (avg over_price - under_price across books)
+        vig = v18_data.get('vig_skew')
+        features.append(float(vig) if vig is not None else float('nan'))
+        feature_sources[61] = 'vegas' if vig is not None else 'missing'
+
+        # Feature 62: self_creation_rate (rolling 10-game avg)
+        sc_rate = self.feature_extractor.get_v18_self_creation(player_lookup) if player_lookup else None
+        features.append(float(sc_rate) if sc_rate is not None else float('nan'))
+        feature_sources[62] = 'calculated' if sc_rate is not None else 'missing'
+
+        # Feature 63: late_line_movement_count (LINE_MOVED in last 4h)
+        late_moves = v18_data.get('late_line_movement_count')
+        features.append(float(late_moves) if late_moves is not None else float('nan'))
+        feature_sources[63] = 'vegas' if late_moves is not None else 'missing'
+
         return features, feature_sources
-    
+
     @staticmethod
     def _is_valid_value(val) -> bool:
         """Check if a value is non-None and non-NaN (handles pandas NaN from BQ NULL)."""
