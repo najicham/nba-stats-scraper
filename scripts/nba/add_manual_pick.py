@@ -109,6 +109,28 @@ def add_pick(args) -> None:
     bq_client = get_bigquery_client(project_id=PROJECT_ID)
     now = datetime.now(timezone.utc)
 
+    # Check for existing active manual pick (prevent duplicates)
+    dup_query = """
+    SELECT COUNT(*) as cnt
+    FROM `nba-props-platform.nba_predictions.best_bets_manual_picks`
+    WHERE player_lookup = @player_lookup
+      AND game_date = @game_date
+      AND is_active = TRUE
+    """
+    dup_params = [
+        bigquery.ScalarQueryParameter('player_lookup', 'STRING', args.player),
+        bigquery.ScalarQueryParameter('game_date', 'DATE', args.date),
+    ]
+    dup_rows = list(bq_client.query(
+        dup_query, job_config=bigquery.QueryJobConfig(query_parameters=dup_params)
+    ).result(timeout=30))
+    if dup_rows and dup_rows[0].cnt > 0:
+        logger.error(
+            f"Active manual pick already exists for {args.player} on {args.date}. "
+            f"Remove it first with --remove before adding a new one."
+        )
+        sys.exit(1)
+
     game_id = lookup_game_id(bq_client, args.team, args.opponent, args.date)
     player_name = lookup_player_name(bq_client, args.player, args.date)
 
@@ -254,6 +276,19 @@ def remove_pick(args) -> None:
         signal_delete, job_config=bigquery.QueryJobConfig(query_parameters=params)
     ).result(timeout=30)
     logger.info(f"Deleted manual_override row from signal_best_bets_picks")
+
+    # Step 3: Delete from published picks so the pick locking system
+    # doesn't resurrect it on the next export
+    pub_delete = f"""
+    DELETE FROM `{PROJECT_ID}.nba_predictions.best_bets_published_picks`
+    WHERE player_lookup = @player_lookup
+      AND game_date = @game_date
+      AND source = 'manual'
+    """
+    bq_client.query(
+        pub_delete, job_config=bigquery.QueryJobConfig(query_parameters=params)
+    ).result(timeout=30)
+    logger.info(f"Deleted manual pick from best_bets_published_picks")
 
     if args.export:
         logger.info("Triggering best-bets-all re-export...")

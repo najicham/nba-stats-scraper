@@ -853,24 +853,15 @@ class BestBetsAllExporter(BaseExporter):
                 'updated_at': now.isoformat(),
             })
 
-        # Delete-and-insert pattern (simpler than MERGE for partitioned tables)
+        # Atomic partition-level write — WRITE_TRUNCATE on a partition
+        # decorator replaces the entire partition in one load job.
+        # No race condition: concurrent exports both truncate+write atomically,
+        # last one wins with correct data.
         table_id = f'{PROJECT_ID}.nba_predictions.best_bets_published_picks'
+        partition_date = target_date.replace('-', '')
+        partition_table_id = f'{table_id}${partition_date}'
 
         try:
-            # Delete existing rows for this date
-            delete_query = f"""
-            DELETE FROM `{table_id}`
-            WHERE game_date = @target_date
-            """
-            delete_params = [
-                bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
-            ]
-            self.bq_client.query(
-                delete_query,
-                job_config=bigquery.QueryJobConfig(query_parameters=delete_params),
-            ).result(timeout=30)
-
-            # Insert merged picks
             job_config = bigquery.LoadJobConfig(
                 schema=[
                     bigquery.SchemaField('player_lookup', 'STRING', mode='REQUIRED'),
@@ -890,11 +881,11 @@ class BestBetsAllExporter(BaseExporter):
                     bigquery.SchemaField('last_seen_in_signal', 'TIMESTAMP'),
                     bigquery.SchemaField('updated_at', 'TIMESTAMP'),
                 ],
-                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
             )
 
             self.bq_client.load_table_from_json(
-                rows, table_id, job_config=job_config
+                rows, partition_table_id, job_config=job_config
             ).result(timeout=30)
 
             logger.info(f"Wrote {len(rows)} picks to best_bets_published_picks")
