@@ -51,6 +51,8 @@ SIGNAL_ANGLE_MAP = {
     'ft_rate_bench_over': "Bench OVER + high FT rate: 72.5% HR historically (WATCH)",
     'home_under': "Home UNDER pattern: 63.9% HR cross-season",
     'scoring_cold_streak_over': "Cold streak bounce-back: 3+ games under line, OVER regression signal",
+    'extended_rest_under': "Extended rest (4+ days) UNDER — scoring typically lower on return (61.8% HR)",
+    'starter_under': "Starter tier UNDER — most predictable scoring range (15-25 ppg)",
 }
 
 # Warning tag → warning angle

@@ -50,7 +50,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v370_signal_floor_3'
+ALGORITHM_VERSION = 'v372_opponent_block_new_signals'
 
 # Base signals that fire on nearly every edge 5+ pick. Picks with ONLY
 # these signals hit 57.1% (N=42) vs 77.8% for picks with 4+ signals.
@@ -58,6 +58,12 @@ ALGORITHM_VERSION = 'v370_signal_floor_3'
 # combo_he_ms, combo_3way, book_disagreement, etc.) are what separate
 # profitable picks from marginal ones.
 BASE_SIGNALS = frozenset({'model_health', 'high_edge', 'edge_spread_optimal'})
+
+# Session 372: Teams with catastrophic UNDER HR (edge 3+, Dec 1+, N>=190).
+# High-variance offenses where scoring exceeds expectations.
+# Re-evaluate monthly as rosters change. Last validated: 2026-02-28.
+# MIN 43.8% (N=219), MEM 46.7% (N=197), MIL 48.7% (N=193).
+UNDER_TOXIC_OPPONENTS = frozenset({'MIN', 'MEM', 'MIL'})
 
 # Signal health regime → weight multiplier (used for pick angles context)
 HEALTH_MULTIPLIERS = {
@@ -155,6 +161,7 @@ class BestBetsAggregator:
             'under_star_away': 0,
             'med_usage_under': 0,
             'starter_v12_under': 0,
+            'opponent_under_block': 0,
             'signal_density': 0,
         }
 
@@ -299,6 +306,13 @@ class BestBetsAggregator:
             neg_pm_streak = pred.get('neg_pm_streak') or 0
             if neg_pm_streak >= 3 and pred.get('recommendation') == 'UNDER':
                 filter_counts['neg_pm_streak'] += 1
+                continue
+
+            # Opponent team UNDER block (Session 372)
+            # MIN 43.8%, MEM 46.7%, MIL 48.7% UNDER HR (edge 3+, N>=190)
+            if (pred.get('recommendation') == 'UNDER'
+                    and pred.get('opponent_team_abbr', '') in UNDER_TOXIC_OPPONENTS):
+                filter_counts['opponent_under_block'] += 1
                 continue
 
             # --- Signal evaluation (for annotations, not selection) ---

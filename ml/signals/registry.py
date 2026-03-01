@@ -78,6 +78,10 @@ def build_default_registry() -> SignalRegistry:
     from ml.signals.home_under import HomeUnderSignal
     from ml.signals.scoring_cold_streak_over import ScoringColdStreakOverSignal
 
+    # Session 372 signals
+    from ml.signals.extended_rest_under import ExtendedRestUnderSignal
+    from ml.signals.starter_under import StarterUnderSignal
+
     registry = SignalRegistry()
     registry.register(ModelHealthSignal())
     registry.register(HighEdgeSignal())
@@ -117,5 +121,9 @@ def build_default_registry() -> SignalRegistry:
     # Session 371 signals
     registry.register(HomeUnderSignal())
     registry.register(ScoringColdStreakOverSignal())
+
+    # Session 372 signals
+    registry.register(ExtendedRestUnderSignal())
+    registry.register(StarterUnderSignal())
 
     return registry
