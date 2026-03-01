@@ -369,23 +369,40 @@ def main(cloud_event):
         from shared.clients.bigquery_pool import get_bigquery_client as _get_bq3
 
         bq3 = _get_bq3(project_id=PROJECT_ID)
-        actuals_query = f"""
-        SELECT player_lookup, actual_points, prediction_correct
+        # Query ALL picks from BQ (not just those with actuals) to detect missing picks
+        all_picks_query = f"""
+        SELECT player_lookup, player_name, system_id, recommendation,
+               line_value, edge, actual_points, prediction_correct,
+               signal_tags, confidence_score, predicted_points,
+               team_abbr, opponent_team_abbr, game_id
         FROM `{PROJECT_ID}.nba_predictions.signal_best_bets_picks`
         WHERE game_date = @target_date
-          AND actual_points IS NOT NULL
         """
-        actuals_config = bq_module.QueryJobConfig(
+        all_picks_config = bq_module.QueryJobConfig(
             query_parameters=[
                 bq_module.ScalarQueryParameter('target_date', 'DATE', target_date),
             ]
         )
-        actuals_rows = {
-            row.player_lookup: {'actual': row.actual_points, 'correct': row.prediction_correct}
-            for row in bq3.query(actuals_query, job_config=actuals_config).result()
-        }
+        all_bq_picks = {}
+        for row in bq3.query(all_picks_query, job_config=all_picks_config).result():
+            all_bq_picks[row.player_lookup] = {
+                'player_lookup': row.player_lookup,
+                'player_name': row.player_name,
+                'system_id': row.system_id,
+                'direction': row.recommendation,
+                'line': float(row.line_value) if row.line_value else None,
+                'edge': float(row.edge) if row.edge else None,
+                'actual': float(row.actual_points) if row.actual_points is not None else None,
+                'correct': row.prediction_correct,
+                'signals': list(row.signal_tags) if row.signal_tags else [],
+                'confidence': float(row.confidence_score) if row.confidence_score else None,
+                'prediction': float(row.predicted_points) if row.predicted_points else None,
+                'team': row.team_abbr,
+                'opponent': row.opponent_team_abbr,
+                'game_id': row.game_id,
+            }
 
-        if actuals_rows:
+        if all_bq_picks:
             bucket_name = 'nba-props-platform-api'
             blob_path = f'v1/signal-best-bets/{target_date}.json'
             client = gcs_storage.Client(project=PROJECT_ID)
@@ -395,15 +412,51 @@ def main(cloud_event):
             if blob.exists():
                 bb_data = json.loads(blob.download_as_text())
                 wins, losses = 0, 0
+
+                # Patch existing picks with actuals
+                existing_lookups = set()
                 for pick in bb_data.get('picks', []):
                     lookup = pick.get('player_lookup')
-                    if lookup in actuals_rows:
-                        pick['actual'] = actuals_rows[lookup]['actual']
-                        pick['result'] = 'WIN' if actuals_rows[lookup]['correct'] else 'LOSS'
-                        if actuals_rows[lookup]['correct']:
+                    existing_lookups.add(lookup)
+                    if lookup in all_bq_picks and all_bq_picks[lookup]['actual'] is not None:
+                        pick['actual'] = all_bq_picks[lookup]['actual']
+                        pick['result'] = 'WIN' if all_bq_picks[lookup]['correct'] else 'LOSS'
+                        if all_bq_picks[lookup]['correct']:
                             wins += 1
                         else:
                             losses += 1
+
+                # Add BQ picks missing from JSON (e.g. manual_override added after export)
+                for lookup, bq_pick in all_bq_picks.items():
+                    if lookup not in existing_lookups:
+                        new_pick = {
+                            'player_lookup': bq_pick['player_lookup'],
+                            'player': bq_pick['player_name'],
+                            'team': bq_pick['team'],
+                            'opponent': bq_pick['opponent'],
+                            'direction': bq_pick['direction'],
+                            'line': bq_pick['line'],
+                            'prediction': bq_pick['prediction'],
+                            'edge': bq_pick['edge'],
+                            'confidence': bq_pick['confidence'],
+                            'system_id': bq_pick['system_id'],
+                            'signals': bq_pick['signals'],
+                            'game_id': bq_pick['game_id'],
+                        }
+                        if bq_pick['actual'] is not None:
+                            new_pick['actual'] = bq_pick['actual']
+                            new_pick['result'] = 'WIN' if bq_pick['correct'] else 'LOSS'
+                            if bq_pick['correct']:
+                                wins += 1
+                            else:
+                                losses += 1
+                        bb_data.get('picks', []).append(new_pick)
+                        logger.info(
+                            f"[{correlation_id}] Added missing pick {lookup} "
+                            f"(system_id={bq_pick['system_id']}) to JSON"
+                        )
+
+                bb_data['total_picks'] = len(bb_data.get('picks', []))
 
                 # Update record
                 total = wins + losses
@@ -431,7 +484,7 @@ def main(cloud_event):
             else:
                 logger.info(f"[{correlation_id}] No signal-best-bets JSON found for {target_date}")
         else:
-            logger.info(f"[{correlation_id}] No actuals to patch for {target_date}")
+            logger.info(f"[{correlation_id}] No picks to patch for {target_date}")
     except Exception as e:
         logger.error(
             f"[{correlation_id}] Failed to patch signal-best-bets JSON for {target_date}: {e}",
