@@ -284,6 +284,8 @@ WHERE game_date >= CURRENT_DATE() - 3 GROUP BY 1 ORDER BY 1 DESC;
 | **auto-retry-processor stale** | No Cloud Build trigger — must deploy manually. Check with: `gcloud functions describe auto-retry-processor --region=us-west2 --format='value(updateTime)'` |
 | **Phase 6 re-export wipes picks** | Fixed Session 371: DELETE now preserves started-game picks (game_status >= 2). |
 | **Bovada inflates book_disagreement** | Fixed Session 371: Bovada excluded from feature 50 (multi_book_line_std). 73.6% outlier rate, 2.15 avg deviation. |
+| **Feature 41 spread_magnitude ALL ZEROS** | Fixed Session 374b: Spread query took median of BOTH sides (+4/-4 = 0). Filter `outcome_point <= 0` for spreads. Requires feature store backfill + retrain. |
+| **prop_line_drop_over conceptually backward** | DISABLED Session 374b: Line drops are BEARISH for OVER (39.1% Feb HR). Replaced by `line_rising_over` (96.6% HR). |
 
 **Full troubleshooting:** `docs/02-operations/session-learnings.md`
 
@@ -332,9 +334,9 @@ python bin/monitoring/grading_gap_detector.py        # Grading gaps (auto: daily
 
 ## Signal System [Keyword: SIGNALS]
 
-**19 active signals** (22 removed). **Edge-first architecture** — signals are for filtering and annotation, not selection.
+**19 active signals** (24 removed/disabled). **Edge-first architecture** — signals are for filtering and annotation, not selection.
 
-**Best Bets:** `edge 3+ → negative filters → signal count ≥ 3 → SC=3 edge 7+ gate → signal density (bypass edge ≥7) → rank by edge` (Session 374: SC=3 restricted to edge 7+)
+**Best Bets:** `edge 3+ → negative filters → signal count ≥ 3 → SC=3 OVER edge 7+ gate → signal density (bypass edge ≥7) → rank by edge`
 
 **Negative Filters:**
 1. Player blacklist: `<40% HR on 8+ edge-3+ picks`
@@ -348,7 +350,9 @@ python bin/monitoring/grading_gap_detector.py        # Grading gaps (auto: daily
 9. Away block: `v12_noveg/v9 family + AWAY game` (43-48% HR vs 57-59% HOME, Session 365)
 10. Signal density: `base-only signals → skip unless edge ≥ 7.0` (Session 352 bypass for extreme edge)
 11. **Opponent UNDER block**: `UNDER + opponent in {MIN, MEM, MIL}` (43.8-48.7% HR, Session 372)
-12. **SC=3 edge restriction**: `signal_count == 3 AND edge < 7.0` (48.4% HR N=31 vs 85.7% at edge 7+, Session 374)
+12. **SC=3 OVER edge restriction**: `OVER + signal_count == 3 AND edge < 7.0` (SC=3 OVER 33.3%, SC=3 UNDER 62.5% — OVER-only, Session 374b)
+13. **OVER + line dropped 2+**: `OVER + prop_line_delta <= -2.0` (39.1% HR Feb N=23, Session 374b)
+14. **Opponent depleted UNDER**: `UNDER + 3+ opponent stars out` (44.4% HR N=207, Session 374b)
 
 ### Active Signals
 
@@ -362,7 +366,7 @@ python bin/monitoring/grading_gap_detector.py        # Grading gaps (auto: daily
 | `bench_under` | UNDER | 76.9% | PRODUCTION |
 | `3pt_bounce` | OVER | 74.9% | CONDITIONAL |
 | `rest_advantage_2d` | BOTH | 64.8% | CONDITIONAL (capped week 15) |
-| `prop_line_drop_over` | OVER | 71.6% | PRODUCTION |
+| `line_rising_over` | OVER | 96.6% | PRODUCTION (Session 374b) |
 | `book_disagreement` | BOTH | 93.0% | WATCH |
 | `home_under` | UNDER | 63.9% | PRODUCTION (Session 371) |
 | `scoring_cold_streak_over` | OVER | 65.1% | CONDITIONAL (Session 371) |
@@ -374,6 +378,7 @@ python bin/monitoring/grading_gap_detector.py        # Grading gaps (auto: daily
 | `low_line_over` | OVER | 78.1% | PRODUCTION (Session 374) |
 | `blowout_recovery` | OVER | 50.0% | DISABLED (Session 349) |
 | `b2b_fatigue_under` | UNDER | 39.5% Feb | DISABLED (Session 373) |
+| `prop_line_drop_over` | OVER | 53.3% Feb | DISABLED (Session 374b) |
 | `ft_rate_bench_over` | OVER | 72.5% | WATCH |
 
 **Pick Angles:** Each pick includes `pick_angles` — human-readable reasoning. See `ml/signals/pick_angle_builder.py`.

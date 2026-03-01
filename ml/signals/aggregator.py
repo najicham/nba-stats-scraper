@@ -50,7 +50,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v374_sc3_edge_starfix_signals'
+ALGORITHM_VERSION = 'v374b_spread_fix_over_filters_signals'
 
 # Base signals that fire on nearly every edge 5+ pick. Picks with ONLY
 # these signals hit 57.1% (N=42) vs 77.8% for picks with 4+ signals.
@@ -151,9 +151,11 @@ class BestBetsAggregator:
             'bench_under': 0,
             'line_jumped_under': 0,
             'line_dropped_under': 0,
+            'line_dropped_over': 0,
             'neg_pm_streak': 0,
             'signal_count': 0,
             'sc3_edge_floor': 0,
+            'opponent_depleted_under': 0,
             'confidence': 0,
             'anti_pattern': 0,
             'model_direction_affinity': 0,
@@ -303,6 +305,14 @@ class BestBetsAggregator:
                 filter_counts['line_dropped_under'] += 1
                 continue
 
+            # Line dropped OVER block (Session 374b): OVER + line dropped 2+ = 39.1% HR Feb (N=23).
+            # Market correcting downward is bearish for OVER. OVER + line UP = 96.6% HR.
+            if (prop_line_delta is not None
+                    and prop_line_delta <= -2.0
+                    and pred.get('recommendation') == 'OVER'):
+                filter_counts['line_dropped_over'] += 1
+                continue
+
             # Neg +/- streak UNDER block (Session 294): 13.1% HR
             neg_pm_streak = pred.get('neg_pm_streak') or 0
             if neg_pm_streak >= 3 and pred.get('recommendation') == 'UNDER':
@@ -314,6 +324,14 @@ class BestBetsAggregator:
             if (pred.get('recommendation') == 'UNDER'
                     and pred.get('opponent_team_abbr', '') in UNDER_TOXIC_OPPONENTS):
                 filter_counts['opponent_under_block'] += 1
+                continue
+
+            # Opponent depleted UNDER block (Session 374b): UNDER + 3+ opponent stars out = 44.4% HR (N=207).
+            # When opponent is depleted, game becomes less competitive, UNDER less predictable.
+            opponent_stars_out = pred.get('opponent_stars_out') or 0
+            if (pred.get('recommendation') == 'UNDER'
+                    and opponent_stars_out >= 3):
+                filter_counts['opponent_depleted_under'] += 1
                 continue
 
             # --- Signal evaluation (for annotations, not selection) ---
@@ -328,9 +346,12 @@ class BestBetsAggregator:
                 filter_counts['signal_count'] += 1
                 continue
 
-            # SC=3 edge restriction (Session 374): SC=3 + edge 5-7 = 48.4% HR (N=31).
-            # SC=3 + edge 7+ = 85.7% HR. Only allow SC=3 at extreme edge.
-            if len(qualifying) == self.MIN_SIGNAL_COUNT and pred_edge < 7.0:
+            # SC=3 OVER edge restriction (Session 374b): SC=3 OVER at edge 3-7 = 33.3% HR (3-6).
+            # SC=3 UNDER at edge 3-7 = 62.5% — above breakeven, keep it.
+            # SC=3 OVER at edge 7+ = 66.7%. Only allow SC=3 OVER at extreme edge.
+            if (len(qualifying) == self.MIN_SIGNAL_COUNT
+                    and pred_edge < 7.0
+                    and pred.get('recommendation') == 'OVER'):
                 filter_counts['sc3_edge_floor'] += 1
                 continue
 
@@ -429,7 +450,11 @@ class BestBetsAggregator:
         if filter_counts['starter_v12_under'] > 0:
             logger.info(f"Starter V12 UNDER block (15-20 line): skipped {filter_counts['starter_v12_under']} predictions")
         if filter_counts['sc3_edge_floor'] > 0:
-            logger.info(f"SC=3 edge floor: skipped {filter_counts['sc3_edge_floor']} SC=3 picks with edge < 7.0")
+            logger.info(f"SC=3 OVER edge floor: skipped {filter_counts['sc3_edge_floor']} SC=3 OVER picks with edge < 7.0")
+        if filter_counts['line_dropped_over'] > 0:
+            logger.info(f"Line dropped OVER block: skipped {filter_counts['line_dropped_over']} OVER picks with line drop >= 2")
+        if filter_counts['opponent_depleted_under'] > 0:
+            logger.info(f"Opponent depleted UNDER block: skipped {filter_counts['opponent_depleted_under']} UNDER picks with 3+ opponent stars out")
         if filter_counts['signal_density'] > 0:
             logger.info(f"Signal density filter: skipped {filter_counts['signal_density']} base-only picks")
 

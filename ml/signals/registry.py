@@ -90,6 +90,9 @@ def build_default_registry() -> SignalRegistry:
     from ml.signals.volatile_scoring_over import VolatileScoringOverSignal
     from ml.signals.low_line_over import LowLineOverSignal
 
+    # Session 374b signals
+    from ml.signals.line_rising_over import LineRisingOverSignal
+
     registry = SignalRegistry()
     registry.register(ModelHealthSignal())
     registry.register(HighEdgeSignal())
@@ -119,8 +122,9 @@ def build_default_registry() -> SignalRegistry:
     registry.register(BenchUnderSignal())
     # HighUsageUnderSignal, VolatileUnderSignal, HighFTUnderSignal, SelfCreatorUnderSignal removed (Session 326)
 
-    # Prop line delta signal (Session 294)
-    registry.register(PropLineDropOverSignal())
+    # PropLineDropOverSignal DISABLED (Session 374b) — conceptually backward.
+    # Line dropping is BEARISH for OVER (39.1% HR Feb N=23). Signal inflates SC
+    # on losing OVER picks. OVER + line UP = 96.6% HR — replaced by LineRisingOverSignal.
 
     # Book disagreement signal (Session 303)
     registry.register(BookDisagreementSignal())
@@ -143,5 +147,8 @@ def build_default_registry() -> SignalRegistry:
     registry.register(FastPaceOverSignal())
     registry.register(VolatileScoringOverSignal())
     registry.register(LowLineOverSignal())
+
+    # Session 374b signals
+    registry.register(LineRisingOverSignal())
 
     return registry

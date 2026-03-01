@@ -434,6 +434,30 @@ def query_predictions_with_supplements(
 
     rows = bq_client.query(query, job_config=job_config).result(timeout=60)
 
+    # Session 374b: Query opponent stars out separately (team_abbr derived in Python)
+    opp_stars_query = f"""
+    SELECT
+      ir.team AS team_abbr,
+      COUNT(DISTINCT ir.player_lookup) AS stars_out
+    FROM `{PROJECT_ID}.nba_raw.nbac_injury_report` ir
+    INNER JOIN (
+      SELECT player_lookup, team_abbr
+      FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
+      WHERE game_date >= '2025-10-22' AND game_date < @target_date
+      GROUP BY player_lookup, team_abbr
+      HAVING AVG(points) >= 18 OR AVG(minutes_played) >= 28
+    ) stars ON ir.player_lookup = stars.player_lookup AND ir.team = stars.team_abbr
+    WHERE ir.game_date = @target_date
+      AND ir.injury_status IN ('out', 'doubtful', 'Out', 'Doubtful')
+    GROUP BY ir.team
+    """
+    try:
+        opp_stars_rows = bq_client.query(opp_stars_query, job_config=job_config).result(timeout=30)
+        team_stars_out = {row['team_abbr']: row['stars_out'] for row in opp_stars_rows}
+    except Exception as e:
+        logger.warning(f"Failed to query opponent stars out: {e}")
+        team_stars_out = {}
+
     predictions = []
     supplemental_map: Dict[str, Dict] = {}
 
@@ -650,6 +674,10 @@ def query_predictions_with_supplements(
         # Points std last 10 from feature store for volatile_scoring_over signal (Session 374)
         pstd = row_dict.get('points_std_last_10')
         pred['points_std_last_10'] = float(pstd) if pstd is not None else 0
+
+        # Opponent stars out for opponent_depleted_under filter (Session 374b)
+        # Uses team_stars_out dict queried separately, keyed by opponent team
+        pred['opponent_stars_out'] = team_stars_out.get(opponent, 0)
 
         # Copy prop line delta for aggregator pre-filter (Session 294)
         if row_dict.get('prev_line_value') is not None:

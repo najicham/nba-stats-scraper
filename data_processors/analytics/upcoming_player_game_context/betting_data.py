@@ -415,6 +415,9 @@ class BettingDataExtractor:
               AND lines.away_team_abbr = @away_team
               AND lines.market_key = @market_key
               AND lines.snapshot_timestamp = earliest_snapshot.earliest
+              -- Session 374: For spreads, each bookmaker has 2 rows (+4.0 and -4.0).
+              -- Taking median of both cancels to 0. Filter to favorite side only.
+              AND (outcome_point <= 0 OR @market_key != 'spreads')
         ),
         median_calc AS (
             SELECT PERCENTILE_CONT(outcome_point, 0.5) OVER() as median_line
@@ -456,6 +459,9 @@ class BettingDataExtractor:
               AND lines.away_team_abbr = @away_team
               AND lines.market_key = @market_key
               AND lines.snapshot_timestamp = latest_snapshot.latest
+              -- Session 374: For spreads, each bookmaker has 2 rows (+4.0 and -4.0).
+              -- Taking median of both cancels to 0. Filter to favorite side only.
+              AND (outcome_point <= 0 OR @market_key != 'spreads')
         ),
         median_calc AS (
             SELECT PERCENTILE_CONT(outcome_point, 0.5) OVER() as median_line
