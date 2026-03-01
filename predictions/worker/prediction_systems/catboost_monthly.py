@@ -568,7 +568,10 @@ class CatBoostMonthly(CatBoostV8):
         try:
             if getattr(self, '_is_xgboost', False):
                 import xgboost as xgb
-                dmatrix = xgb.DMatrix(feature_vector)
+                # Session 378: XGBoost Booster validates feature names at predict
+                # time. Pass the same names used during training.
+                feature_names = self._get_v12_feature_names()
+                dmatrix = xgb.DMatrix(feature_vector, feature_names=feature_names)
                 raw_prediction = float(self.model.predict(dmatrix)[0])
             else:
                 raw_prediction = float(self.model.predict(feature_vector)[0])
@@ -723,6 +726,24 @@ class CatBoostMonthly(CatBoostV8):
         except Exception as e:
             logger.error(f"Error preparing V12 feature vector for {self.model_id}: {e}", exc_info=True)
             return None
+
+    def _get_v12_feature_names(self) -> list:
+        """Return feature names for the current feature set.
+
+        Session 378: XGBoost Booster.predict() validates feature names match
+        training data. Must pass the same ordered list used by quick_retrain.py.
+        """
+        _FEATURE_SET_MAP = {
+            'v17_noveg': _V17_NOVEG_FEATURES,
+            'v13': _V13_FEATURES,
+            'v13_noveg': _V13_NOVEG_FEATURES,
+            'v15': _V15_FEATURES,
+            'v15_noveg': _V15_NOVEG_FEATURES,
+            'v16_noveg': _V16_NOVEG_FEATURES,
+            'v12_noveg': _V12_NOVEG_FEATURES,
+            'v12': _V12_FEATURES,
+        }
+        return list(_FEATURE_SET_MAP.get(self._feature_set, _V12_FEATURES))
 
     @property
     def system_id(self) -> str:

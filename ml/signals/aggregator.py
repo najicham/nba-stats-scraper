@@ -88,6 +88,7 @@ class BestBetsAggregator:
         - Player blacklist: <40% HR on 8+ picks → skip (Session 284)
         - Avoid familiar: 6+ games vs this opponent → skip (Session 284)
         - MIN_EDGE = 3.0: lowered from 5.0 — edge 3-4 is best V12 band during degradation (Session 352)
+        - OVER edge 5+ floor: edge 3-5 OVER = 25% HR (1-3), edge 5+ OVER = 68-78% (Session 378)
         - UNDER edge 7+ block: V9 only (34.1% HR), V12/V16/V13/V15/LightGBM allowed (Session 297, narrowed 367)
         - Feature quality floor: quality < 85 → skip (24.0% HR)
         - Bench UNDER block: UNDER + line < 12 → skip (35.1% HR)
@@ -146,6 +147,7 @@ class BestBetsAggregator:
         filter_counts = {
             'blacklist': 0,
             'edge_floor': 0,
+            'over_edge_floor': 0,
             'under_edge_7plus': 0,
             'familiar_matchup': 0,
             'quality_floor': 0,
@@ -197,6 +199,13 @@ class BestBetsAggregator:
                     filter_counts['edge_floor'] += 1
                     continue
                 # Premium signal found — bypass edge floor (95%+ HR signals)
+
+            # Session 378: OVER edge 5+ floor — edge 3-5 OVER = 25% HR (1-3) in
+            # best bets full season. Edge 5-7 OVER = 67.5%, edge 7+ = 77.8%.
+            # UNDER is profitable at all edge levels (57.5-100%).
+            if pred.get('recommendation') == 'OVER' and pred_edge < 5.0:
+                filter_counts['over_edge_floor'] += 1
+                continue
 
             # UNDER at edge 7+ block (Session 297, narrowed Session 367):
             # V9 UNDER 7+: 34.1% HR (N=41) — catastrophic, keep blocked.
@@ -447,6 +456,8 @@ class BestBetsAggregator:
             )
         if filter_counts['edge_floor'] > 0:
             logger.info(f"Edge floor ({self.MIN_EDGE}): skipped {filter_counts['edge_floor']} predictions")
+        if filter_counts['over_edge_floor'] > 0:
+            logger.info(f"OVER edge floor (5.0): skipped {filter_counts['over_edge_floor']} OVER picks with edge < 5.0")
         if filter_counts['under_edge_7plus'] > 0:
             logger.info(f"UNDER edge 7+ block: skipped {filter_counts['under_edge_7plus']} predictions")
         if filter_counts['model_direction_affinity'] > 0:

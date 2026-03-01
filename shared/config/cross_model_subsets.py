@@ -117,6 +117,13 @@ MODEL_FAMILIES = {
         'feature_set': 'v12_noveg',
         'loss': 'mae',
     },
+    # Session 378: XGBoost — separate prefix, won't collide with catboost/lgbm
+    'xgb_v12_noveg_mae': {
+        'pattern': 'xgb_v12_noveg_',
+        'exact': False,
+        'feature_set': 'v12_noveg',
+        'loss': 'mae',
+    },
     # Player-tier models — MUST come before v12_mae catch-all
     'v12_noveg_star': {
         'pattern': 'catboost_v12_noveg_star_',
