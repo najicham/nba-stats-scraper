@@ -21,14 +21,16 @@ Actions on success:
 4. Re-export tonight/all-players.json with actuals
 5. Re-export best-bets/all.json with updated ultra_record
 6. Re-export best-bets/record.json and history.json with graded results
+7. Patch signal-best-bets/{date}.json with actuals and day record
 
-Version: 1.5
+Version: 1.6
 Created: 2026-02-13 (Session 242)
 Updated: 2026-02-14 (Session 254) - Added signal best bets grading backfill
 Updated: 2026-02-15 (Session 263) - Added model_performance_daily computation
 Updated: 2026-02-22 (Session 332) - Added tonight JSON re-export with actuals
 Updated: 2026-02-25 (Session 342) - Added best-bets/all.json re-export for fresh ultra_record
 Updated: 2026-02-25 (Session 343) - Added record.json + history.json re-export post-grading
+Updated: 2026-03-01 (Session 377) - Patch signal-best-bets JSON with actuals + fallback for manual_override picks
 """
 
 import base64
@@ -118,6 +120,7 @@ def backfill_signal_best_bets(target_date: str) -> int:
         return 0
 
     # Update with actuals from prediction_accuracy
+    # First pass: match on system_id (normal picks)
     update_query = f"""
     UPDATE `{PROJECT_ID}.nba_predictions.signal_best_bets_picks` sbp
     SET
@@ -140,6 +143,33 @@ def backfill_signal_best_bets(target_date: str) -> int:
     job = bq_client.query(update_query, job_config=update_config)
     job.result(timeout=60)
     rows_updated = job.num_dml_affected_rows or 0
+
+    # Second pass: backfill picks with non-standard system_ids (e.g. manual_override)
+    # that couldn't match on system_id — use player_game_summary actuals instead
+    fallback_query = f"""
+    UPDATE `{PROJECT_ID}.nba_predictions.signal_best_bets_picks` sbp
+    SET
+      actual_points = pgs.points,
+      prediction_correct = CASE
+        WHEN sbp.recommendation = 'OVER' AND pgs.points > sbp.line_value THEN TRUE
+        WHEN sbp.recommendation = 'UNDER' AND pgs.points < sbp.line_value THEN TRUE
+        WHEN pgs.points = sbp.line_value THEN NULL
+        ELSE FALSE
+      END
+    FROM `{PROJECT_ID}.nba_analytics.player_game_summary` pgs
+    WHERE sbp.player_lookup = pgs.player_lookup
+      AND sbp.game_date = pgs.game_date
+      AND sbp.game_date = @target_date
+      AND sbp.actual_points IS NULL
+      AND pgs.points IS NOT NULL
+    """
+    fallback_job = bq_client.query(fallback_query, job_config=update_config)
+    fallback_job.result(timeout=60)
+    fallback_updated = fallback_job.num_dml_affected_rows or 0
+
+    if fallback_updated > 0:
+        logger.info(f"Fallback backfilled {fallback_updated} signal best bets for {target_date}")
+        rows_updated += fallback_updated
 
     logger.info(f"Backfilled {rows_updated} signal best bets for {target_date}")
     return rows_updated
@@ -331,6 +361,83 @@ def main(cloud_event):
             exc_info=True
         )
         results['best_bets_record_error'] = str(e)
+
+    # 9. Patch signal-best-bets/{date}.json with actuals from signal_best_bets_picks (Session 377)
+    try:
+        from google.cloud import storage as gcs_storage
+        from google.cloud import bigquery as bq_module
+        from shared.clients.bigquery_pool import get_bigquery_client as _get_bq3
+
+        bq3 = _get_bq3(project_id=PROJECT_ID)
+        actuals_query = f"""
+        SELECT player_lookup, actual_points, prediction_correct
+        FROM `{PROJECT_ID}.nba_predictions.signal_best_bets_picks`
+        WHERE game_date = @target_date
+          AND actual_points IS NOT NULL
+        """
+        actuals_config = bq_module.QueryJobConfig(
+            query_parameters=[
+                bq_module.ScalarQueryParameter('target_date', 'DATE', target_date),
+            ]
+        )
+        actuals_rows = {
+            row.player_lookup: {'actual': row.actual_points, 'correct': row.prediction_correct}
+            for row in bq3.query(actuals_query, job_config=actuals_config).result()
+        }
+
+        if actuals_rows:
+            bucket_name = 'nba-props-platform-api'
+            blob_path = f'v1/signal-best-bets/{target_date}.json'
+            client = gcs_storage.Client(project=PROJECT_ID)
+            bucket = client.bucket(bucket_name)
+            blob = bucket.blob(blob_path)
+
+            if blob.exists():
+                bb_data = json.loads(blob.download_as_text())
+                wins, losses = 0, 0
+                for pick in bb_data.get('picks', []):
+                    lookup = pick.get('player_lookup')
+                    if lookup in actuals_rows:
+                        pick['actual'] = actuals_rows[lookup]['actual']
+                        pick['result'] = 'WIN' if actuals_rows[lookup]['correct'] else 'LOSS'
+                        if actuals_rows[lookup]['correct']:
+                            wins += 1
+                        else:
+                            losses += 1
+
+                # Update record
+                total = wins + losses
+                bb_data['record'] = {
+                    'season': bb_data.get('record', {}).get('season', {}),
+                    'month': bb_data.get('record', {}).get('month', {}),
+                    'week': bb_data.get('record', {}).get('week', {}),
+                    'day': {
+                        'wins': wins,
+                        'losses': losses,
+                        'pct': round(wins / total, 3) if total > 0 else 0.0,
+                    },
+                }
+                bb_data['graded_at'] = datetime.now(timezone.utc).isoformat()
+
+                blob.upload_from_string(
+                    json.dumps(bb_data, indent=2, default=str),
+                    content_type='application/json'
+                )
+                results['signal_best_bets_patched'] = f'{wins}W-{losses}L'
+                logger.info(
+                    f"[{correlation_id}] Patched signal-best-bets JSON for {target_date}: "
+                    f"{wins}W-{losses}L"
+                )
+            else:
+                logger.info(f"[{correlation_id}] No signal-best-bets JSON found for {target_date}")
+        else:
+            logger.info(f"[{correlation_id}] No actuals to patch for {target_date}")
+    except Exception as e:
+        logger.error(
+            f"[{correlation_id}] Failed to patch signal-best-bets JSON for {target_date}: {e}",
+            exc_info=True
+        )
+        results['signal_best_bets_error'] = str(e)
 
     duration = (datetime.now(timezone.utc) - start_time).total_seconds()
     logger.info(
