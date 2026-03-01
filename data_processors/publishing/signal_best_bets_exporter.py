@@ -398,9 +398,11 @@ class SignalBestBetsExporter(BaseExporter):
             gt = game_times.get(game_id)
             pick_dict['game_time'] = gt if gt else None
 
-            # Ultra tier: only OVER picks when gate met (Session 328)
-            if show_ultra:
-                pick_dict['ultra_tier'] = True
+            # Ultra data: always include for BQ write.
+            # Public JSON visibility gated by show_ultra (stripped in export()).
+            pick_dict['ultra_tier'] = pick.get('ultra_tier', False)
+            pick_dict['ultra_criteria'] = pick.get('ultra_criteria', [])
+            pick_dict['_show_ultra_public'] = show_ultra
 
             picks_json.append(pick_dict)
 
@@ -466,12 +468,21 @@ class SignalBestBetsExporter(BaseExporter):
         """
         json_data = self.generate_json(target_date, version_id=version_id)
 
-        # Write picks to BigQuery for grading tracking
+        # Write picks to BigQuery for grading tracking (includes full ultra data)
         if json_data['picks']:
             self._write_to_bigquery(
                 target_date, json_data['picks'],
                 filter_summary=json_data.get('filter_summary'),
             )
+
+        # Strip internal ultra fields from public JSON.
+        # BQ write above gets full ultra_tier + ultra_criteria.
+        # Public JSON only shows ultra_tier on OVER picks when gate is met.
+        for pick in json_data.get('picks', []):
+            show_public = pick.pop('_show_ultra_public', False)
+            if not show_public:
+                pick.pop('ultra_tier', None)
+            pick.pop('ultra_criteria', None)
 
         # Upload to GCS (date-specific) with degradation backup (Session 378c)
         gcs_path = self.compare_and_upload(
