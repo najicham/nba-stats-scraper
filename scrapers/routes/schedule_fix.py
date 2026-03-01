@@ -107,7 +107,7 @@ def fix_stale_schedule():
         stale_games = []
 
         for row in results:
-            if row.hours_since_start and row.hours_since_start > 4:
+            if row.hours_since_start is not None and row.hours_since_start >= 3:
                 stale_games.append({
                     'game_id': row.game_id,
                     'game_date': str(row.game_date),
