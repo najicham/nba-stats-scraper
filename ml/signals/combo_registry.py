@@ -56,15 +56,6 @@ _FALLBACK_REGISTRY: Dict[str, ComboEntry] = {
         direction_filter='OVER_ONLY', hit_rate=74.9, roi=None, sample_size=28,
         score_weight=1.0, notes='Session 275: Updated stats from 3-window backtest',
     ),
-    'blowout_recovery': ComboEntry(
-        combo_id='blowout_recovery',
-        display_name='Blowout Recovery (No C, No B2B)',
-        signals=['blowout_recovery'],
-        cardinality=1, classification='SYNERGISTIC', status='DISABLED',
-        direction_filter='OVER_ONLY', hit_rate=50.0, roi=None, sample_size=14,
-        score_weight=0.0, notes='Session 349: DISABLED — 50% HR (7-7) in best bets, 25% in Feb',
-    ),
-    # Market-pattern UNDER signals (Session 275)
     'bench_under': ComboEntry(
         combo_id='bench_under',
         display_name='Bench Player Under',
@@ -73,25 +64,101 @@ _FALLBACK_REGISTRY: Dict[str, ComboEntry] = {
         direction_filter='UNDER_ONLY', hit_rate=76.9, roi=46.7, sample_size=156,
         score_weight=1.5, notes='Session 275: 76.9% AVG HR across 3 eval windows',
     ),
-    # high_ft_under REMOVED — 33.3% HR on best bets (Session 326)
-    'b2b_fatigue_under': ComboEntry(
-        combo_id='b2b_fatigue_under',
-        display_name='B2B Fatigue Under',
-        signals=['b2b_fatigue_under'],
-        cardinality=1, classification='SYNERGISTIC', status='CONDITIONAL',
-        direction_filter='UNDER_ONLY', hit_rate=85.7, roi=63.6, sample_size=14,
-        score_weight=1.0, notes='Session 275: 85.7% AVG HR, small sample (N=14)',
+    # Session 371+ signals
+    'home_under': ComboEntry(
+        combo_id='home_under',
+        display_name='Home Under',
+        signals=['home_under'],
+        cardinality=1, classification='SYNERGISTIC', status='PRODUCTION',
+        direction_filter='UNDER_ONLY', hit_rate=63.9, roi=None, sample_size=1386,
+        score_weight=1.0, notes='Session 371: 63.9% HR (N=1,386), Feb-resilient 63.4%',
     ),
+    'scoring_cold_streak_over': ComboEntry(
+        combo_id='scoring_cold_streak_over',
+        display_name='Scoring Cold Streak Over',
+        signals=['scoring_cold_streak_over'],
+        cardinality=1, classification='SYNERGISTIC', status='CONDITIONAL',
+        direction_filter='OVER_ONLY', hit_rate=65.1, roi=None, sample_size=304,
+        score_weight=1.0, notes='Session 371: 65.1% HR (N=304)',
+    ),
+    'extended_rest_under': ComboEntry(
+        combo_id='extended_rest_under',
+        display_name='Extended Rest Under',
+        signals=['extended_rest_under'],
+        cardinality=1, classification='SYNERGISTIC', status='PRODUCTION',
+        direction_filter='UNDER_ONLY', hit_rate=61.8, roi=None, sample_size=76,
+        score_weight=1.0, notes='Session 372: 61.8% HR (N=76), rest_days >= 4 + line >= 15',
+    ),
+    'starter_under': ComboEntry(
+        combo_id='starter_under',
+        display_name='Starter Under',
+        signals=['starter_under'],
+        cardinality=1, classification='SYNERGISTIC', status='PRODUCTION',
+        direction_filter='UNDER_ONLY', hit_rate=68.1, roi=None, sample_size=None,
+        score_weight=1.0, notes='Session 372: Dec 68.1%, Feb 54.8%',
+    ),
+    'high_scoring_environment_over': ComboEntry(
+        combo_id='high_scoring_environment_over',
+        display_name='High Scoring Environment Over',
+        signals=['high_scoring_environment_over'],
+        cardinality=1, classification='SYNERGISTIC', status='CONDITIONAL',
+        direction_filter='OVER_ONLY', hit_rate=70.2, roi=None, sample_size=329,
+        score_weight=1.0, notes='Session 373: 70.2% HR (N=329), Feb-resilient 64.3%',
+    ),
+    'fast_pace_over': ComboEntry(
+        combo_id='fast_pace_over',
+        display_name='Fast Pace Over',
+        signals=['fast_pace_over'],
+        cardinality=1, classification='SYNERGISTIC', status='PRODUCTION',
+        direction_filter='OVER_ONLY', hit_rate=81.5, roi=None, sample_size=None,
+        score_weight=1.0, notes='Session 374: 81.5% HR',
+    ),
+    'volatile_scoring_over': ComboEntry(
+        combo_id='volatile_scoring_over',
+        display_name='Volatile Scoring Over',
+        signals=['volatile_scoring_over'],
+        cardinality=1, classification='SYNERGISTIC', status='PRODUCTION',
+        direction_filter='OVER_ONLY', hit_rate=81.5, roi=None, sample_size=None,
+        score_weight=1.0, notes='Session 374: 81.5% HR',
+    ),
+    'low_line_over': ComboEntry(
+        combo_id='low_line_over',
+        display_name='Low Line Over',
+        signals=['low_line_over'],
+        cardinality=1, classification='SYNERGISTIC', status='PRODUCTION',
+        direction_filter='OVER_ONLY', hit_rate=78.1, roi=None, sample_size=None,
+        score_weight=1.0, notes='Session 374: 78.1% HR',
+    ),
+    'line_rising_over': ComboEntry(
+        combo_id='line_rising_over',
+        display_name='Line Rising Over',
+        signals=['line_rising_over'],
+        cardinality=1, classification='SYNERGISTIC', status='PRODUCTION',
+        direction_filter='OVER_ONLY', hit_rate=96.6, roi=None, sample_size=None,
+        score_weight=1.5, notes='Session 374b: 96.6% HR, replaced prop_line_drop_over',
+    ),
+    'self_creation_over': ComboEntry(
+        combo_id='self_creation_over',
+        display_name='Self Creation Over',
+        signals=['self_creation_over'],
+        cardinality=1, classification='SYNERGISTIC', status='CONDITIONAL',
+        direction_filter='OVER_ONLY', hit_rate=59.0, roi=None, sample_size=None,
+        score_weight=1.0, notes='Session 380: 59% overall, 37% Feb — conservative',
+    ),
+    'sharp_line_move_over': ComboEntry(
+        combo_id='sharp_line_move_over',
+        display_name='Sharp Line Move Over',
+        signals=['sharp_line_move_over'],
+        cardinality=1, classification='SYNERGISTIC', status='PRODUCTION',
+        direction_filter='OVER_ONLY', hit_rate=67.8, roi=None, sample_size=577,
+        score_weight=1.0, notes='Session 380: 67.8% HR (N=577), Feb-resilient 69%',
+    ),
+    # high_ft_under REMOVED — 33.3% HR on best bets (Session 326)
     # volatile_under REMOVED — 33.3% HR on best bets (Session 326)
     # high_usage_under REMOVED — 40.0% HR on best bets (Session 326)
-    'prop_line_drop_over': ComboEntry(
-        combo_id='prop_line_drop_over',
-        display_name='Prop Line Drop Over',
-        signals=['prop_line_drop_over'],
-        cardinality=1, classification='SYNERGISTIC', status='PRODUCTION',
-        direction_filter='OVER_ONLY', hit_rate=71.6, roi=35.0, sample_size=109,
-        score_weight=1.0, notes='Session 305: Threshold 3.0→2.0. 71.6% HR (N=109, edge 3+). Was 0 production firings at 3.0.',
-    ),
+    # blowout_recovery DISABLED — 50% HR (7-7), 25% in Feb (Session 349)
+    # b2b_fatigue_under DISABLED — 39.5% Feb HR (Session 373)
+    # prop_line_drop_over DISABLED — conceptually backward, 39.1% Feb HR (Session 374b)
 }
 
 

@@ -406,14 +406,39 @@ def _get_previous_day_states(bq_client: bigquery.Client,
 
 
 def write_rows(bq_client: bigquery.Client, rows: List[dict]) -> int:
-    """Write computed rows to model_performance_daily. Returns rows written."""
+    """Write computed rows to model_performance_daily. Returns rows written.
+
+    Uses DELETE-before-write to prevent duplicate rows when re-run on the same date.
+    """
     if not rows:
         return 0
 
-    errors = bq_client.insert_rows_json(TABLE_ID, rows)
-    if errors:
-        logger.error(f"BQ insert errors: {errors}")
-        raise RuntimeError(f"Failed to write {len(rows)} rows: {errors}")
+    # Extract target date from first row (all rows share the same game_date)
+    target_date = rows[0]['game_date']
+
+    # Delete existing rows for this date before writing
+    delete_query = f"""
+    DELETE FROM `{TABLE_ID}`
+    WHERE game_date = @target_date
+    """
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+        ]
+    )
+    delete_job = bq_client.query(delete_query, job_config=job_config)
+    delete_result = delete_job.result(timeout=60)
+    deleted = delete_job.num_dml_affected_rows or 0
+    if deleted > 0:
+        logger.info(f"Deleted {deleted} existing rows for {target_date}")
+
+    # Write new rows using batch load (not streaming insert)
+    load_config = bigquery.LoadJobConfig(
+        write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+        create_disposition=bigquery.CreateDisposition.CREATE_NEVER,
+    )
+    load_job = bq_client.load_table_from_json(rows, TABLE_ID, job_config=load_config)
+    load_job.result(timeout=60)
 
     logger.info(f"Wrote {len(rows)} rows to model_performance_daily")
     return len(rows)

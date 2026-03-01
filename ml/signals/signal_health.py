@@ -49,10 +49,24 @@ MODEL_DEPENDENT_SIGNALS = frozenset({
 ACTIVE_SIGNALS = frozenset({
     'model_health', 'high_edge', 'edge_spread_optimal',
     'combo_he_ms', 'combo_3way',
-    'bench_under', '3pt_bounce', 'b2b_fatigue_under',
+    'bench_under', '3pt_bounce',
     'rest_advantage_2d',
-    'prop_line_drop_over', 'book_disagreement',
+    'book_disagreement',
     'ft_rate_bench_over',
+    # Session 371-380 additions
+    'home_under',
+    'scoring_cold_streak_over',
+    'extended_rest_under',
+    'starter_under',
+    'high_scoring_environment_over',
+    'fast_pace_over',
+    'volatile_scoring_over',
+    'low_line_over',
+    'line_rising_over',
+    'self_creation_over',
+    'sharp_line_move_over',
+    # b2b_fatigue_under DISABLED — 39.5% Feb HR (Session 373)
+    # prop_line_drop_over DISABLED — conceptually backward, 39.1% Feb HR (Session 374b)
     # blowout_recovery DISABLED — 50% HR (7-7) in best bets, 25% in Feb (Session 349)
     # high_ft_under, self_creator_under, volatile_under, high_usage_under REMOVED (Session 326)
 })
