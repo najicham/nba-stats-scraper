@@ -252,11 +252,11 @@ class GetNbaComTeamBoxscore(ScraperBase, ScraperFlaskMixin):
                 )
                 raise DownloadDataException(error_msg)
 
-            # Validate both teams have statistics
+            # Validate both teams have statistics (key present AND not None)
             for team_key in ["homeTeam", "awayTeam"]:
                 team = box_score[team_key]
-                if "statistics" not in team:
-                    error_msg = f"{team_key} missing 'statistics'"
+                if "statistics" not in team or team["statistics"] is None:
+                    error_msg = f"{team_key} missing or null 'statistics' (game may not have started)"
                     logger.error("%s for game %s", error_msg, self.opts["game_id"])
                     notify_error(
                         title="NBA.com Team Boxscore Invalid Team Data",
