@@ -249,7 +249,7 @@ class BestBetsAllExporter(BaseExporter):
                     else 'LOSS' if p.get('prediction_correct') is False
                     else None
                 ),
-                'is_ultra': bool(p.get('ultra_tier')),
+                'is_ultra': p.get('ultra_tier') is True or p.get('ultra_tier') == 'true',
             }
 
             source = p.get('_source')
@@ -352,7 +352,7 @@ class BestBetsAllExporter(BaseExporter):
                 'actual': safe_int(row.get('actual_points')),
                 'result': result,
                 'angles': list(angles)[:3],
-                'is_ultra': bool(row.get('ultra_tier')),
+                'is_ultra': row.get('ultra_tier') is True or row.get('ultra_tier') == 'true',
             }
 
             if row.get('is_voided'):
@@ -516,7 +516,8 @@ class BestBetsAllExporter(BaseExporter):
         under = {'wins': 0, 'losses': 0}
 
         for p in all_picks:
-            if not p.get('ultra_tier') or p.get('prediction_correct') is None:
+            ultra = p.get('ultra_tier') is True or p.get('ultra_tier') == 'true'
+            if not ultra or p.get('prediction_correct') is None:
                 continue
 
             is_win = bool(p['prediction_correct'])
