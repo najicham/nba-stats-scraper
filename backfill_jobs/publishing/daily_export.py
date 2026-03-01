@@ -451,10 +451,11 @@ def export_date(
             logger.error(f"  Best Bets Today error: {e}")
 
     # Consolidated best bets single file (Session 319 — primary frontend endpoint)
+    # Session 340: Pass trigger_source for audit trail
     if 'best-bets-all' in export_types:
         try:
             exporter = BestBetsAllExporter()
-            path = exporter.export(target_date)
+            path = exporter.export(target_date, trigger_source='scheduled')
             result['paths']['best_bets_all'] = path
             logger.info(f"  Best Bets All: {path}")
         except Exception as e:

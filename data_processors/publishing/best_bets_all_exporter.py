@@ -11,12 +11,23 @@ Output: v1/best-bets/all.json (~50-200 KB for a full season)
 Design: Frontend team chose single-file architecture over three separate
 files. One fetch, everything available, <200KB. See Session 319.
 
+Pick Locking (Session 340):
+  Today's picks are merged from three sources:
+    signal_best_bets_picks (volatile algo output)
+    + best_bets_published_picks (locked picks from prior exports)
+    + best_bets_manual_picks (manual overrides via CLI)
+  Once a pick is published, it persists in exports even if the signal
+  pipeline later drops it. This prevents picks from disappearing mid-day.
+
 Created: 2026-02-21 (Session 319)
+Updated: 2026-02-28 (Session 340) — Pick locking + audit trail
 """
 
+import json
 import logging
+import uuid
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from google.cloud import bigquery
 
@@ -25,6 +36,14 @@ from data_processors.publishing.exporter_utils import safe_float, safe_int
 from ml.signals.aggregator import ALGORITHM_VERSION
 
 logger = logging.getLogger(__name__)
+
+
+def _is_home(game_id: str, team_abbr: str) -> bool:
+    """Derive whether team is the home team from game_id format YYYYMMDD_AWAY_HOME."""
+    parts = game_id.split('_')
+    if len(parts) == 3:
+        return team_abbr == parts[2]
+    return False
 
 PROJECT_ID = 'nba-props-platform'
 
@@ -40,7 +59,12 @@ class BestBetsAllExporter(BaseExporter):
     """Export consolidated best bets (record + today + history) to one file."""
 
     def generate_json(self, target_date: str, **kwargs) -> Dict[str, Any]:
-        """Generate all.json with record, today's picks, and history."""
+        """Generate all.json with record, today's picks, and history.
+
+        kwargs:
+            trigger_source: str — 'scheduled', 'manual', or 'post_grading'
+        """
+        trigger_source = kwargs.get('trigger_source', 'scheduled')
         target = (
             date.fromisoformat(target_date) if isinstance(target_date, str)
             else target_date
@@ -52,7 +76,7 @@ class BestBetsAllExporter(BaseExporter):
         all_picks = self._query_all_picks(target_date, season_start.isoformat())
 
         # Split into today vs history
-        today_picks = []
+        today_signal_picks = []
         history_picks = []
         for p in all_picks:
             gd = p['game_date']
@@ -62,9 +86,29 @@ class BestBetsAllExporter(BaseExporter):
                 gd_str = str(gd)
 
             if gd_str == target_date:
-                today_picks.append(p)
+                today_signal_picks.append(p)
             else:
                 history_picks.append(p)
+
+        # ── Pick Locking (Session 340) ──────────────────────────────────
+        # Merge today's signal picks with locked published picks and manual picks.
+        # This ensures picks never disappear once published.
+        published_picks = self._query_published_picks(target_date)
+        manual_picks = self._query_manual_picks(target_date)
+        today_picks, merge_stats = self._merge_and_lock_picks(
+            today_signal_picks, published_picks, manual_picks
+        )
+
+        # Persist newly published picks + audit trail
+        self._write_published_picks(target_date, today_picks)
+        self._write_export_audit(
+            target_date, today_picks, merge_stats,
+            trigger_source=trigger_source,
+        )
+
+        # Replace today's signal picks with merged set in all_picks for
+        # record/streak/weeks computation
+        all_picks = history_picks + today_picks
 
         # Build record from graded picks only
         record = self._build_record(all_picks, target, season_start)
@@ -105,13 +149,18 @@ class BestBetsAllExporter(BaseExporter):
             result['voided'] = voided
         return result
 
-    def export(self, target_date: str) -> str:
+    def export(self, target_date: str, trigger_source: str = 'scheduled') -> str:
         """Generate and upload all.json.
+
+        Args:
+            target_date: Date string in YYYY-MM-DD format.
+            trigger_source: What triggered this export — 'scheduled', 'manual',
+                or 'post_grading'. Recorded in the audit table.
 
         Returns:
             GCS path where file was uploaded.
         """
-        json_data = self.generate_json(target_date)
+        json_data = self.generate_json(target_date, trigger_source=trigger_source)
 
         gcs_path = self.upload_to_gcs(
             json_data=json_data,
@@ -186,6 +235,7 @@ class BestBetsAllExporter(BaseExporter):
                 'player_lookup': p.get('player_lookup') or '',
                 'team': p.get('team_abbr') or '',
                 'opponent': p.get('opponent_team_abbr') or '',
+                'home': _is_home(game_id, p.get('team_abbr') or ''),
                 'direction': p.get('recommendation') or '',
                 'stat': 'PTS',
                 'line': safe_float(p.get('line_value'), precision=1),
@@ -284,11 +334,13 @@ class BestBetsAllExporter(BaseExporter):
 
             angles = row.get('pick_angles') or []
 
+            game_id = row.get('game_id') or ''
             pick_dict = {
                 'player': row.get('player_name') or '',
                 'player_lookup': row.get('player_lookup') or '',
                 'team': row.get('team_abbr') or '',
                 'opponent': row.get('opponent_team_abbr') or '',
+                'home': _is_home(game_id, row.get('team_abbr') or ''),
                 'direction': row.get('recommendation') or '',
                 'stat': 'PTS',
                 'line': safe_float(row.get('line_value'), precision=1),
@@ -567,3 +619,319 @@ class BestBetsAllExporter(BaseExporter):
                 'end': fmt_date(best_w_end),
             },
         )
+
+    # ── Pick Locking Methods (Session 340) ──────────────────────────────
+
+    def _query_published_picks(self, target_date: str) -> List[Dict]:
+        """Read locked picks from best_bets_published_picks for this date."""
+        query = """
+        SELECT
+          player_lookup, game_id, game_date,
+          player_name, team_abbr, opponent_team_abbr,
+          recommendation, line_value, edge, rank,
+          pick_angles, ultra_tier, source,
+          first_published_at, last_seen_in_signal
+        FROM `nba-props-platform.nba_predictions.best_bets_published_picks`
+        WHERE game_date = @target_date
+        """
+        params = [
+            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+        ]
+        try:
+            return self.query_to_list(query, params)
+        except Exception as e:
+            logger.warning(f"Failed to query published picks (non-fatal): {e}")
+            return []
+
+    def _query_manual_picks(self, target_date: str) -> List[Dict]:
+        """Read active manual picks for this date."""
+        query = """
+        SELECT
+          player_lookup, game_id, game_date,
+          player_name, team_abbr, opponent_team_abbr,
+          recommendation, line_value, edge, rank,
+          pick_angles, stat, notes
+        FROM `nba-props-platform.nba_predictions.best_bets_manual_picks`
+        WHERE game_date = @target_date
+          AND is_active = TRUE
+        """
+        params = [
+            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+        ]
+        try:
+            return self.query_to_list(query, params)
+        except Exception as e:
+            logger.warning(f"Failed to query manual picks (non-fatal): {e}")
+            return []
+
+    def _merge_and_lock_picks(
+        self,
+        signal_picks: List[Dict],
+        published_picks: List[Dict],
+        manual_picks: List[Dict],
+    ) -> Tuple[List[Dict], Dict[str, int]]:
+        """Merge signal, published (locked), and manual picks for today.
+
+        Merge logic:
+        1. Start with published (locked) picks as baseline
+        2. If a pick is both locked AND in signal, update edge/rank/angles
+        3. Add signal picks not yet published (new picks)
+        4. Add manual picks not already present
+        5. Re-rank: active signal picks first, then locked-but-dropped, then manual
+
+        Returns:
+            (merged_picks, merge_stats) where merge_stats has counts for audit.
+        """
+        now = datetime.now(timezone.utc)
+
+        # Index signal picks by player_lookup for fast lookup
+        signal_by_key = {}
+        for p in signal_picks:
+            key = p.get('player_lookup', '')
+            if key:
+                signal_by_key[key] = p
+
+        # Index published picks by player_lookup
+        published_by_key = {}
+        for p in published_picks:
+            key = p.get('player_lookup', '')
+            if key:
+                published_by_key[key] = p
+
+        merged = {}
+        stats = {
+            'algorithm_picks': 0,
+            'manual_picks': 0,
+            'locked_picks': 0,
+            'new_picks': 0,
+            'dropped_from_signal': 0,
+        }
+
+        # Step 1+2: Start with published picks, overlay signal data if available
+        for key, pub in published_by_key.items():
+            pick = dict(pub)
+            if key in signal_by_key:
+                # Pick still in signal — update volatile fields from fresh data
+                sig = signal_by_key[key]
+                pick['edge'] = sig.get('edge', pick.get('edge'))
+                pick['rank'] = sig.get('rank', pick.get('rank'))
+                pick['pick_angles'] = sig.get('pick_angles', pick.get('pick_angles'))
+                pick['predicted_points'] = sig.get('predicted_points')
+                pick['prediction_correct'] = sig.get('prediction_correct')
+                pick['actual_points'] = sig.get('actual_points')
+                pick['is_voided'] = sig.get('is_voided')
+                pick['void_reason'] = sig.get('void_reason')
+                pick['_last_seen_in_signal'] = now
+                pick['_in_signal'] = True
+                stats['locked_picks'] += 1
+            else:
+                # Pick dropped from signal — keep it locked
+                pick['_in_signal'] = False
+                pick['_last_seen_in_signal'] = pub.get('last_seen_in_signal')
+                stats['locked_picks'] += 1
+                stats['dropped_from_signal'] += 1
+            pick['_source'] = pub.get('source', 'algorithm')
+            merged[key] = pick
+
+        # Step 3: Add signal picks not yet published (new picks)
+        for key, sig in signal_by_key.items():
+            if key not in merged:
+                pick = dict(sig)
+                pick['_source'] = 'algorithm'
+                pick['_in_signal'] = True
+                pick['_first_published_at'] = now
+                pick['_last_seen_in_signal'] = now
+                merged[key] = pick
+                stats['new_picks'] += 1
+                stats['algorithm_picks'] += 1
+
+        # Step 4: Add manual picks not already present
+        for mp in manual_picks:
+            key = mp.get('player_lookup', '')
+            if key and key not in merged:
+                pick = dict(mp)
+                pick['_source'] = 'manual'
+                pick['_in_signal'] = False
+                pick['_first_published_at'] = now
+                merged[key] = pick
+                stats['manual_picks'] += 1
+
+        # Step 5: Re-rank
+        # Active signal picks first (by original rank), then locked-but-dropped,
+        # then manual. Within each group, sort by rank then edge.
+        def sort_key(p):
+            if p.get('_in_signal'):
+                group = 0
+            elif p.get('_source') == 'manual':
+                group = 2
+            else:
+                group = 1
+            return (group, p.get('rank') or 999, -(p.get('edge') or 0))
+
+        sorted_picks = sorted(merged.values(), key=sort_key)
+        for i, pick in enumerate(sorted_picks, 1):
+            pick['rank'] = i
+
+        # Count algorithm picks from signal
+        stats['algorithm_picks'] = sum(
+            1 for p in sorted_picks if p.get('_in_signal')
+        )
+
+        logger.info(
+            f"Pick merge: {len(sorted_picks)} total "
+            f"({stats['algorithm_picks']} algo, {stats['manual_picks']} manual, "
+            f"{stats['dropped_from_signal']} locked-but-dropped, "
+            f"{stats['new_picks']} new)"
+        )
+
+        return sorted_picks, stats
+
+    def _write_published_picks(
+        self, target_date: str, merged_picks: List[Dict]
+    ) -> None:
+        """Persist merged picks to best_bets_published_picks (upsert via MERGE)."""
+        if not merged_picks:
+            return
+
+        now = datetime.now(timezone.utc)
+        rows = []
+        for p in merged_picks:
+            rows.append({
+                'player_lookup': p.get('player_lookup') or '',
+                'game_id': p.get('game_id') or '',
+                'game_date': target_date,
+                'player_name': p.get('player_name') or '',
+                'team_abbr': p.get('team_abbr') or '',
+                'opponent_team_abbr': p.get('opponent_team_abbr') or '',
+                'recommendation': p.get('recommendation') or '',
+                'line_value': float(p['line_value']) if p.get('line_value') is not None else None,
+                'edge': float(p['edge']) if p.get('edge') is not None else None,
+                'rank': p.get('rank'),
+                'pick_angles': list(p.get('pick_angles') or []),
+                'ultra_tier': p.get('ultra_tier'),
+                'source': p.get('_source', 'algorithm'),
+                'first_published_at': (
+                    p['_first_published_at'].isoformat()
+                    if p.get('_first_published_at')
+                    else p.get('first_published_at', now.isoformat())
+                ),
+                'last_seen_in_signal': (
+                    p['_last_seen_in_signal'].isoformat()
+                    if p.get('_last_seen_in_signal')
+                    else None
+                ),
+                'updated_at': now.isoformat(),
+            })
+
+        # Delete-and-insert pattern (simpler than MERGE for partitioned tables)
+        table_id = f'{PROJECT_ID}.nba_predictions.best_bets_published_picks'
+
+        try:
+            # Delete existing rows for this date
+            delete_query = f"""
+            DELETE FROM `{table_id}`
+            WHERE game_date = @target_date
+            """
+            delete_params = [
+                bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+            ]
+            self.bq_client.query(
+                delete_query,
+                job_config=bigquery.QueryJobConfig(query_parameters=delete_params),
+            ).result(timeout=30)
+
+            # Insert merged picks
+            job_config = bigquery.LoadJobConfig(
+                schema=[
+                    bigquery.SchemaField('player_lookup', 'STRING'),
+                    bigquery.SchemaField('game_id', 'STRING'),
+                    bigquery.SchemaField('game_date', 'DATE'),
+                    bigquery.SchemaField('player_name', 'STRING'),
+                    bigquery.SchemaField('team_abbr', 'STRING'),
+                    bigquery.SchemaField('opponent_team_abbr', 'STRING'),
+                    bigquery.SchemaField('recommendation', 'STRING'),
+                    bigquery.SchemaField('line_value', 'NUMERIC'),
+                    bigquery.SchemaField('edge', 'NUMERIC'),
+                    bigquery.SchemaField('rank', 'INTEGER'),
+                    bigquery.SchemaField('pick_angles', 'STRING', mode='REPEATED'),
+                    bigquery.SchemaField('ultra_tier', 'STRING'),
+                    bigquery.SchemaField('source', 'STRING'),
+                    bigquery.SchemaField('first_published_at', 'TIMESTAMP'),
+                    bigquery.SchemaField('last_seen_in_signal', 'TIMESTAMP'),
+                    bigquery.SchemaField('updated_at', 'TIMESTAMP'),
+                ],
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+            )
+
+            self.bq_client.load_table_from_json(
+                rows, table_id, job_config=job_config
+            ).result(timeout=30)
+
+            logger.info(f"Wrote {len(rows)} picks to best_bets_published_picks")
+        except Exception as e:
+            logger.warning(f"Failed to write published picks (non-fatal): {e}")
+
+    def _write_export_audit(
+        self,
+        target_date: str,
+        merged_picks: List[Dict],
+        merge_stats: Dict[str, int],
+        trigger_source: str = 'scheduled',
+    ) -> None:
+        """Write an audit snapshot row for this export."""
+        export_id = f"exp_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+
+        # Build a compact snapshot of the pick list
+        snapshot = []
+        for p in merged_picks:
+            snapshot.append({
+                'player_lookup': p.get('player_lookup'),
+                'player_name': p.get('player_name'),
+                'team': p.get('team_abbr'),
+                'opponent': p.get('opponent_team_abbr'),
+                'direction': p.get('recommendation'),
+                'line': float(p['line_value']) if p.get('line_value') is not None else None,
+                'edge': float(p['edge']) if p.get('edge') is not None else None,
+                'rank': p.get('rank'),
+                'source': p.get('_source', 'algorithm'),
+                'in_signal': p.get('_in_signal', True),
+            })
+
+        row = {
+            'export_id': export_id,
+            'game_date': target_date,
+            'total_picks': len(merged_picks),
+            'algorithm_picks': merge_stats.get('algorithm_picks', 0),
+            'manual_picks': merge_stats.get('manual_picks', 0),
+            'locked_picks': merge_stats.get('locked_picks', 0),
+            'new_picks': merge_stats.get('new_picks', 0),
+            'dropped_from_signal': merge_stats.get('dropped_from_signal', 0),
+            'picks_snapshot': json.dumps(snapshot, default=str),
+            'algorithm_version': ALGORITHM_VERSION,
+            'trigger_source': trigger_source,
+        }
+
+        table_id = f'{PROJECT_ID}.nba_predictions.best_bets_export_audit'
+        try:
+            job_config = bigquery.LoadJobConfig(
+                schema=[
+                    bigquery.SchemaField('export_id', 'STRING'),
+                    bigquery.SchemaField('game_date', 'DATE'),
+                    bigquery.SchemaField('total_picks', 'INTEGER'),
+                    bigquery.SchemaField('algorithm_picks', 'INTEGER'),
+                    bigquery.SchemaField('manual_picks', 'INTEGER'),
+                    bigquery.SchemaField('locked_picks', 'INTEGER'),
+                    bigquery.SchemaField('new_picks', 'INTEGER'),
+                    bigquery.SchemaField('dropped_from_signal', 'INTEGER'),
+                    bigquery.SchemaField('picks_snapshot', 'STRING'),
+                    bigquery.SchemaField('algorithm_version', 'STRING'),
+                    bigquery.SchemaField('trigger_source', 'STRING'),
+                ],
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+            )
+            self.bq_client.load_table_from_json(
+                [row], table_id, job_config=job_config
+            ).result(timeout=30)
+            logger.info(f"Wrote export audit: {export_id}")
+        except Exception as e:
+            logger.warning(f"Failed to write export audit (non-fatal): {e}")
