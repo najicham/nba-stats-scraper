@@ -244,7 +244,7 @@ ML_FEATURE_RANGES = {
     44: (-5, 5, False, 'scoring_trend_slope'),     # OLS slope
     45: (-4, 4, False, 'deviation_from_avg_last3'),# Z-score
     46: (0, 20, False, 'consecutive_games_below_avg'), # Cold streak
-    47: (0, 0, False, 'teammate_usage_available'), # Dead feature (always 0)
+    47: (0, 100, False, 'teammate_usage_available'), # NOT dead (avg=44), total usage of available teammates
     48: (0, 40, False, 'usage_rate_last_5'),       # Usage %
     49: (0, 60, False, 'games_since_structural_change'), # Games since change
     50: (0, 5, False, 'multi_book_line_std'),      # Dead feature (always 0.5)
@@ -333,6 +333,18 @@ FEATURE_VARIANCE_THRESHOLDS = {
 
     # Minutes context
     31: (5.0, 15, 'minutes_avg_last_10'),  # Varies 0-40 mins
+
+    # Session 375: Expanded coverage to catch constant-value bugs like Feature 41
+    3: (1.0, 10, 'points_std_last_10'),    # Scoring variance across players
+    13: (1.0, 5, 'opponent_def_rating'),   # 30 teams, rating varies 100-120
+    14: (0.5, 5, 'opponent_pace'),         # 30 teams, pace varies 95-110
+    32: (0.1, 10, 'ppm_avg_last_10'),      # Points per minute, varies 0-1.2
+    38: (2.0, 5, 'game_total_line'),       # Game totals 200-260
+    41: (1.0, 5, 'spread_magnitude'),      # THE BUG: was ALL ZEROS for 4 months
+    42: (2.0, 5, 'implied_team_total'),    # Derived from total/spread, varies 100-130
+    43: (3.0, 15, 'points_avg_last_3'),    # Ultra-short avg, highly variable
+    47: (2.0, 10, 'teammate_usage_available'),  # NOT dead (avg=44), varies 0-100
+    48: (2.0, 10, 'usage_rate_last_5'),    # Usage %, varies 5-35
 }
 
 

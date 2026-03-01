@@ -340,6 +340,13 @@ def parse_args():
                             'base model system_id, computes residuals (actual - predicted), '
                             'and trains on residuals. Final prediction = base_pred + residual_pred.')
 
+    # Percentile features (Session 374 E2): drift-resistant feature transformation
+    parser.add_argument('--percentile-features', action='store_true',
+                       help='Add per-game-date percentile rank versions of drift-prone features. '
+                            'Converts usage_spike_score, fatigue_score, pace_score, etc. to '
+                            'within-date percentile ranks [0-1]. Originals kept alongside — '
+                            'CatBoost chooses which representation is more predictive.')
+
     parser.add_argument('--random-seed', type=int, default=42,
                        help='Random seed for CatBoost/LightGBM and train/val split (default: 42)')
 
@@ -2604,6 +2611,8 @@ def main():
         print(f"Category Weights: {args.category_weight}")
     if args.monotone_constraints:
         print(f"Monotone Constraints: {args.monotone_constraints}")
+    if args.percentile_features:
+        print(f"Percentile Features: ENABLED (drift-prone features → per-date percentile ranks)")
     # Session 253: Tier/population filters
     if args.min_ppg is not None:
         print(f"Training Filter: min PPG >= {args.min_ppg}")
@@ -2646,7 +2655,8 @@ def main():
               f"anchor_line={args.anchor_line}, diff_features={args.diff_features}, "
               f"derived_features={args.derived_features}, "
               f"v16_features={args.v16_features}, v17_features={args.v17_features}, "
-              f"classify={args.classify}, framework={args.framework}, player_tier={args.player_tier}")
+              f"classify={args.classify}, framework={args.framework}, player_tier={args.player_tier}, "
+              f"percentile_features={args.percentile_features}")
         if args.exclude_features:
             print(f"  Exclude: {args.exclude_features}")
         if args.feature_weights:
@@ -3259,6 +3269,41 @@ def main():
             X_train_full.loc[X_train_full.index[shuffle_mask], feat_name] = shuffled_vals
             print(f"  Shuffled {feat_name} in {n_shuffle}/{n_rows} rows ({rate*100:.0f}%)")
 
+    # Percentile features (Session 374 E2): per-game-date percentile ranks for drift-prone features
+    # Addresses root cause of Feb OVER collapse — usage_spike_score drifted 1.14→0.28 but
+    # percentile rank within each date is invariant to distributional shift across months.
+    if args.percentile_features:
+        DRIFT_PRONE_FEATURES = [
+            'usage_spike_score',      # 47% of Dec-Jan vs Feb drift
+            'fatigue_score',          # composite, seasonal drift
+            'pace_score',             # composite, seasonal drift
+            'shot_zone_mismatch_score',  # composite
+            'opponent_pace',          # matchup, drifted -1.5 to -2.0
+            'pct_three',              # shot zone, drifted -0.15
+            'star_teammates_out',     # drifted +0.32 to +0.80
+        ]
+        print(f"\nAdding percentile features for {len(DRIFT_PRONE_FEATURES)} drift-prone features...")
+        added_count = 0
+        for feat_name in DRIFT_PRONE_FEATURES:
+            if feat_name not in X_train_full.columns:
+                print(f"  SKIP {feat_name}: not in feature set")
+                continue
+            pctile_col = f"{feat_name}_pctile"
+            # Compute percentile rank within each game date (invariant to cross-date drift)
+            train_dates = df_train['game_date'].values
+            eval_dates = df_eval['game_date'].values
+            X_train_full[pctile_col] = X_train_full.groupby(train_dates)[feat_name].rank(pct=True)
+            X_eval_full[pctile_col] = X_eval_full.groupby(eval_dates)[feat_name].rank(pct=True)
+            # Fill NaN (single-player game dates) with 0.5 (median)
+            X_train_full[pctile_col] = X_train_full[pctile_col].fillna(0.5)
+            X_eval_full[pctile_col] = X_eval_full[pctile_col].fillna(0.5)
+            added_count += 1
+            train_vals = X_train_full[pctile_col]
+            print(f"  {feat_name} → {pctile_col}: "
+                  f"mean={train_vals.mean():.3f}, std={train_vals.std():.3f}")
+        print(f"  Added {added_count} percentile features ({len(X_train_full.columns)} total features)")
+        active_feature_names = list(X_train_full.columns)
+
     # Train/val split (carry weights through)
     if w_train_full is not None:
         X_train, X_val, y_train, y_val, w_train, w_val = train_test_split(
@@ -3547,6 +3592,8 @@ def main():
         mode_suffix += "_stackresid"
     if args.adversarial_noise:
         mode_suffix += "_advnoise"
+    if args.percentile_features:
+        mode_suffix += "_pctile"
     if args.diff_features:
         mode_suffix += "_diff"
     if args.derived_features:
@@ -4109,6 +4156,7 @@ def main():
                     'exclude_features': exclude_features if exclude_features else None,
                     'feature_weights': args.feature_weights,
                     'category_weight': args.category_weight,
+                    'percentile_features': args.percentile_features,
                     'feature_weights_resolved': {active_feature_names[k]: v for k, v in feature_weights_map.items()} if feature_weights_map else None,
                     'monotone_constraints': args.monotone_constraints,
                     'classify': args.classify,

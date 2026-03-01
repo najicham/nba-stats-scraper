@@ -1677,6 +1677,41 @@ PYTHONPATH=. python bin/maintenance/cleanup_team_duplicates.py --execute
 
 **Reference**: Session 103 handoff, investigation of usage_rate spot check failures
 
+### Phase 0.493: Feature Distribution Health (Session 375 - NEW)
+
+**IMPORTANT**: Check all feature store features for distribution anomalies (constant values, zero-rate spikes, drift). This catches "plausible but wrong" bugs that pass all other validation layers.
+
+**Why this matters**: Feature 41 (spread_magnitude) was ALL ZEROS for 4 months (Nov 2025 - Feb 2026). Every existing validation layer passed because the values were non-NULL, within range, from correct source, with 100% coverage. The root cause was a median query over symmetric spread data (+4/-4 = 0).
+
+**What to check**:
+
+```bash
+python bin/validation/feature_distribution_health.py --date $(date +%Y-%m-%d)
+```
+
+**Expected Results**:
+
+| Status | Meaning | Action |
+|--------|---------|--------|
+| PASS | All features healthy | No action needed |
+| WARN | Minor anomalies (drift, elevated zeros) | Review, usually OK |
+| FAIL | Constant-value bug or severe anomaly | Immediate investigation |
+
+**If FAIL found**:
+1. Identify the failing feature from the output
+2. Check the feature extraction query in `ml_feature_store_processor.py`
+3. Verify upstream raw data in the source table
+4. Fix the extraction bug
+5. Backfill: `PYTHONPATH=. python backfill_jobs/feature_store/run_backfill.py --start-date YYYY-MM-DD --end-date YYYY-MM-DD`
+6. Retrain models if the feature was in training data
+
+**If WARN on distribution drift**:
+- Check if a seasonal pattern (e.g., `usage_spike_score` drifts Feb → Mar)
+- Compare to adversarial validation findings (Session 370)
+- Only act if drift correlates with HR degradation
+
+**Reference**: Session 375 — Created after Feature 41 ALL ZEROS bug persisted 4 months undetected
+
 ### Phase 0.495: Team Stats Completeness Check (Session 105 - NEW)
 
 **IMPORTANT**: Verify all teams that played have team_offense_game_summary records.

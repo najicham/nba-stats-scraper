@@ -1260,6 +1260,49 @@ Early Season: 2.1%
 Status: GOOD - Ready for model training
 ```
 
+### Distribution Health Audit (Session 375)
+
+**Catches "plausible but wrong" bugs** like Feature 41 (spread_magnitude) being ALL ZEROS for 4 months. Existing checks miss constant-value bugs because the values are non-NULL, within range, and have 100% coverage.
+
+**Run the CLI tool:**
+
+```bash
+# Check last 7 days
+python bin/validation/feature_distribution_health.py --date $(date +%Y-%m-%d)
+
+# Verbose output (shows PASS results too)
+python bin/validation/feature_distribution_health.py --date $(date +%Y-%m-%d) --verbose
+
+# Check specific date with wider lookback
+python bin/validation/feature_distribution_health.py --date 2026-02-28 --lookback 14
+```
+
+**What it checks per feature:**
+1. Constant-value detection (stddev + distinct count below thresholds)
+2. Zero-rate anomaly (zeros exceed expected baseline)
+3. NULL-rate anomaly (>30% NULLs)
+4. Distribution drift (mean shifted >3 sigma vs 4-week baseline)
+5. Source cross-validation (raw table comparison for features 25, 41)
+
+**Expected output:**
+```
+=== Feature Distribution Health Check ===
+Date: 2026-02-28 (lookback: 7 days)
+
+WARNINGS:
+  WARN  Feature 8 (usage_spike_score): Distribution drift - mean shifted 3.2 sigma
+
+SUMMARY: 56 features checked, 0 FAIL, 1 WARN, 1 SKIP
+STATUS: WARN - Minor anomalies detected, review recommended
+```
+
+**If FAIL on constant-value:**
+1. Check the feature extraction query in `ml_feature_store_processor.py`
+2. Verify upstream data in the source table (see profile's `source_table`)
+3. Fix the extraction bug
+4. Backfill the feature store for affected dates
+5. Retrain models if the feature was used in training
+
 ## Related Skills
 
 - `/model-experiment` - Train challenger models
@@ -1272,10 +1315,12 @@ Status: GOOD - Ready for model training
 |------|---------|
 | `ml/experiments/quick_retrain.py` | Has check_training_data_quality() |
 | `data_processors/precompute/ml_feature_store/` | Feature store processor |
+| `bin/validation/feature_distribution_health.py` | Distribution health CLI (Session 375) |
 
 ---
 *Created: Session 104*
 *Updated: Session 115 (Added 3 new validation checks: #21-23)*
+*Updated: Session 375 (Added Distribution Health Audit section)*
 *Major Updates:*
 - Session 113: DNP pollution detection (#10, #12, #14)
 - Session 113+: Early season bootstrap (#15), shot zone dynamic threshold (#17)
