@@ -314,10 +314,18 @@ def get_enabled_models_from_registry() -> List[dict]:
             gcs_path = r.gcs_path or ''
             if raw_model_type and raw_model_type.lower() == 'lightgbm':
                 detected_type = 'lightgbm'
+            elif raw_model_type and raw_model_type.lower() == 'xgboost':
+                detected_type = 'xgboost'
             elif model_id.startswith('lgbm') or gcs_path.endswith('.txt'):
                 detected_type = 'lightgbm'
                 logger.info(
                     f"Detected LightGBM from model_id/path for {model_id} "
+                    f"(registry model_type={raw_model_type!r})"
+                )
+            elif model_id.startswith('xgb_') or gcs_path.endswith('.json'):
+                detected_type = 'xgboost'
+                logger.info(
+                    f"Detected XGBoost from model_id/path for {model_id} "
                     f"(registry model_type={raw_model_type!r})"
                 )
             else:
@@ -398,7 +406,7 @@ class CatBoostMonthly(CatBoostV8):
         # Detect from GCS path ('_anchor_') or training_config_json.
         self._is_anchor_line = '_anchor_' in (self._model_file_name or '') or '_anchor_' in model_path
 
-        framework_name = 'LightGBM' if getattr(self, '_is_lightgbm', False) else 'CatBoost'
+        framework_name = 'XGBoost' if getattr(self, '_is_xgboost', False) else ('LightGBM' if getattr(self, '_is_lightgbm', False) else 'CatBoost')
         anchor_str = ', ANCHOR-LINE' if self._is_anchor_line else ''
         logger.info(
             f"{framework_name} Monthly model loaded: {model_id} "
@@ -415,13 +423,34 @@ class CatBoostMonthly(CatBoostV8):
         """
         config_model_type = self.config.get('model_type')
         is_lightgbm = config_model_type == 'lightgbm'
-        framework_name = 'LightGBM' if is_lightgbm else 'CatBoost'
-        file_ext = '.txt' if is_lightgbm else '.cbm'
+        is_xgboost = config_model_type == 'xgboost'
+        if is_xgboost:
+            framework_name = 'XGBoost'
+            file_ext = '.json'
+        elif is_lightgbm:
+            framework_name = 'LightGBM'
+            file_ext = '.txt'
+        else:
+            framework_name = 'CatBoost'
+            file_ext = '.cbm'
 
         logger.info(
             f"Loading {framework_name} monthly model from: {model_path} "
-            f"(model_type={config_model_type!r}, is_lightgbm={is_lightgbm})"
+            f"(model_type={config_model_type!r}, is_lightgbm={is_lightgbm}, is_xgboost={is_xgboost})"
         )
+
+        def _load_from_file(file_path: str):
+            if is_xgboost:
+                import xgboost as xgb
+                self.model = xgb.Booster()
+                self.model.load_model(file_path)
+            elif is_lightgbm:
+                import lightgbm as lgb
+                self.model = lgb.Booster(model_file=file_path)
+            else:
+                import catboost as cb
+                self.model = cb.CatBoostRegressor()
+                self.model.load_model(file_path)
 
         if model_path.startswith("gs://"):
             from shared.clients import get_storage_client
@@ -435,13 +464,7 @@ class CatBoostMonthly(CatBoostV8):
             blob.download_to_filename(local_path)
             logger.info(f"Downloaded monthly model from GCS to {local_path}")
 
-            if is_lightgbm:
-                import lightgbm as lgb
-                self.model = lgb.Booster(model_file=local_path)
-            else:
-                import catboost as cb
-                self.model = cb.CatBoostRegressor()
-                self.model.load_model(local_path)
+            _load_from_file(local_path)
             self._model_file_name = Path(blob_path).name
             self._model_sha256 = _compute_file_sha256(local_path)
         else:
@@ -455,17 +478,12 @@ class CatBoostMonthly(CatBoostV8):
                     f"Expected for model_id: {self.model_id}"
                 )
 
-            if is_lightgbm:
-                import lightgbm as lgb
-                self.model = lgb.Booster(model_file=model_path)
-            else:
-                import catboost as cb
-                self.model = cb.CatBoostRegressor()
-                self.model.load_model(model_path)
+            _load_from_file(model_path)
             self._model_file_name = Path(model_path).name
             self._model_sha256 = _compute_file_sha256(model_path)
 
         self._is_lightgbm = is_lightgbm
+        self._is_xgboost = is_xgboost
         self._model_path = model_path
 
     def predict(
@@ -548,7 +566,12 @@ class CatBoostMonthly(CatBoostV8):
             }
 
         try:
-            raw_prediction = float(self.model.predict(feature_vector)[0])
+            if getattr(self, '_is_xgboost', False):
+                import xgboost as xgb
+                dmatrix = xgb.DMatrix(feature_vector)
+                raw_prediction = float(self.model.predict(dmatrix)[0])
+            else:
+                raw_prediction = float(self.model.predict(feature_vector)[0])
         except Exception as e:
             logger.error(f"Monthly V12 model {self.model_id} prediction failed: {e}", exc_info=True)
             return {

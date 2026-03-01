@@ -316,7 +316,7 @@ def parse_args():
     # Model diversity experiments (Session 350)
     parser.add_argument('--classify', action='store_true',
                        help='Train binary OVER/UNDER classifier (Logloss) instead of regression')
-    parser.add_argument('--framework', choices=['catboost', 'lightgbm'], default='catboost',
+    parser.add_argument('--framework', choices=['catboost', 'lightgbm', 'xgboost'], default='catboost',
                        help='ML framework (default: catboost)')
     parser.add_argument('--player-tier', choices=['star', 'starter', 'role'],
                        help='Train tier-specific model (star: line>=25, starter: 15-25, role: 5-15)')
@@ -2336,6 +2336,8 @@ def compute_model_family(feature_set: str, no_vegas: bool, quantile_alpha: float
     # Framework prefix
     if framework == 'lightgbm':
         fs = f"lgbm_{fs}"
+    elif framework == 'xgboost':
+        fs = f"xgb_{fs}"
 
     # Loss/mode suffix
     if classify:
@@ -3455,6 +3457,60 @@ def main():
         print("\nEvaluating...")
         raw_preds = model.predict(X_eval)
 
+    elif args.framework == 'xgboost':
+        import xgboost as xgb
+
+        xgb_params = {
+            'verbosity': 1,
+            'seed': args.random_seed,
+            'max_depth': 6,
+            'learning_rate': 0.05,
+            'subsample': 0.8,
+            'colsample_bytree': 0.8,
+            'min_child_weight': 5,
+            'reg_alpha': 0.1,
+            'reg_lambda': 1.0,
+        }
+        if is_classifier:
+            xgb_params['objective'] = 'binary:logistic'
+            xgb_params['eval_metric'] = 'logloss'
+        elif args.quantile_alpha:
+            xgb_params['objective'] = 'reg:quantileerror'
+            xgb_params['quantile_alpha'] = args.quantile_alpha
+            xgb_params['eval_metric'] = 'mae'
+        else:
+            xgb_params['objective'] = 'reg:absoluteerror'
+            xgb_params['eval_metric'] = 'mae'
+
+        print(f"\nTraining XGBoost ({'classifier' if is_classifier else 'regression'})...")
+        dtrain = xgb.DMatrix(X_train, label=y_train, weight=w_train, feature_names=list(active_feature_names))
+        dval = xgb.DMatrix(X_val, label=y_val, feature_names=list(active_feature_names))
+        model = xgb.train(
+            xgb_params, dtrain, num_boost_round=1000,
+            evals=[(dval, 'eval')],
+            early_stopping_rounds=50, verbose_eval=100,
+        )
+
+        # Feature importance
+        importance_dict = model.get_score(importance_type='gain')
+        pairs = sorted(importance_dict.items(), key=lambda x: -x[1])
+        print("\n" + "-" * 40)
+        print(f"FEATURE IMPORTANCE (top 10)")
+        print("-" * 40)
+        for i, (name, imp) in enumerate(pairs[:10], 1):
+            bar = "█" * int(imp / max(pairs[0][1], 1) * 20)
+            print(f"  {i:2d}. {name:<30s} {imp:10.2f}  {bar}")
+        if len(pairs) > 10:
+            print(f"  ...")
+            for name, imp in pairs[-5:]:
+                print(f"      {name:<30s} {imp:10.2f}")
+        feature_importance = pairs
+
+        # Predict
+        print("\nEvaluating...")
+        deval = xgb.DMatrix(X_eval, feature_names=list(active_feature_names))
+        raw_preds = model.predict(deval)
+
     elif is_classifier:
         # CatBoost classifier mode (Session 350)
         hp['loss_function'] = 'Logloss'
@@ -3610,11 +3666,21 @@ def main():
     train_end_compact = dates['train_end'].replace('-', '')
 
     # Session 350: framework-specific naming and file format
-    framework_prefix = "lgbm" if is_lightgbm else "catboost"
-    model_ext = ".txt" if is_lightgbm else ".cbm"
+    is_xgboost = (args.framework == 'xgboost')
+    if is_xgboost:
+        framework_prefix = "xgb"
+        model_ext = ".json"
+    elif is_lightgbm:
+        framework_prefix = "lgbm"
+        model_ext = ".txt"
+    else:
+        framework_prefix = "catboost"
+        model_ext = ".cbm"
     model_path = MODEL_OUTPUT_DIR / f"{framework_prefix}_{args.feature_set}_{n_features}f{mode_suffix}_train{train_start_compact}-{train_end_compact}_{ts}{model_ext}"
 
-    if is_lightgbm:
+    if is_xgboost:
+        model.save_model(str(model_path))
+    elif is_lightgbm:
         model.save_model(str(model_path))
     else:
         model.save_model(str(model_path))
@@ -3680,7 +3746,11 @@ def main():
                 X_all_filtered = X_all[active_feature_names]
                 y_all = df_all['actual_points']
 
-                if is_lightgbm:
+                if is_xgboost:
+                    import xgboost as xgb
+                    dall = xgb.DMatrix(X_all_filtered, feature_names=list(active_feature_names))
+                    all_preds = model.predict(dall)
+                elif is_lightgbm:
                     all_preds = model.predict(X_all_filtered)
                 else:
                     all_preds = model.predict(X_all_filtered)
@@ -3788,7 +3858,7 @@ def main():
             print(f"     {seg_name}: {hr:.1f}% (n={n})")
 
     # Uncertainty Analysis (Session 370: virtual ensembles)
-    if args.uncertainty and not is_lightgbm and not is_classifier:
+    if args.uncertainty and not is_lightgbm and not is_xgboost and not is_classifier:
         print("\n" + "-" * 50)
         print("UNCERTAINTY ANALYSIS (virtual ensembles)")
         print("-" * 50)
@@ -3948,7 +4018,7 @@ def main():
                 # Convention: {fw}_{feature_set}[_noveg][_mode][_tier]_train{dates}
                 train_start_short = dates['train_start'].replace('-', '')[4:]
                 train_end_short = dates['train_end'].replace('-', '')[4:]
-                fw_prefix = "lgbm" if is_lightgbm else "catboost"
+                fw_prefix = "xgb" if is_xgboost else ("lgbm" if is_lightgbm else "catboost")
                 id_parts = [fw_prefix, args.feature_set]
                 if args.no_vegas and '_noveg' not in args.feature_set:
                     id_parts.append('noveg')
@@ -3970,7 +4040,7 @@ def main():
                 elif args.loss_function:
                     loss_fn = args.loss_function
 
-                model_type_str = 'lightgbm' if is_lightgbm else 'catboost'
+                model_type_str = 'xgboost' if is_xgboost else ('lightgbm' if is_lightgbm else 'catboost')
 
                 auto_register_in_model_registry(
                     bq_client=client,

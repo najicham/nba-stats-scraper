@@ -679,6 +679,10 @@ def query_predictions_with_supplements(
         # Uses team_stars_out dict queried separately, keyed by opponent team
         pred['opponent_stars_out'] = team_stars_out.get(opponent, 0)
 
+        # Multi-book line std for high_book_std_under filter (Session 377)
+        mbls = row_dict.get('multi_book_line_std')
+        pred['multi_book_line_std'] = float(mbls) if mbls is not None else 0
+
         # Copy prop line delta for aggregator pre-filter (Session 294)
         if row_dict.get('prev_line_value') is not None:
             current_line = float(row_dict.get('line_value') or 0)

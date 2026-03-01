@@ -63,7 +63,8 @@ BASE_SIGNALS = frozenset({'model_health', 'high_edge', 'edge_spread_optimal'})
 # High-variance offenses where scoring exceeds expectations.
 # Re-evaluate monthly as rosters change. Last validated: 2026-02-28.
 # MIN 43.8% (N=219), MEM 46.7% (N=197), MIL 48.7% (N=193).
-UNDER_TOXIC_OPPONENTS = frozenset({'MIN', 'MEM', 'MIL'})
+# Session 377: Added IND — 42.7% full-season HR (N=426), 18.9% Feb (N=185).
+UNDER_TOXIC_OPPONENTS = frozenset({'MIN', 'MEM', 'MIL', 'IND'})
 
 # Signal health regime → weight multiplier (used for pick angles context)
 HEALTH_MULTIPLIERS = {
@@ -156,6 +157,7 @@ class BestBetsAggregator:
             'signal_count': 0,
             'sc3_edge_floor': 0,
             'opponent_depleted_under': 0,
+            'high_book_std_under': 0,
             'confidence': 0,
             'anti_pattern': 0,
             'model_direction_affinity': 0,
@@ -332,6 +334,14 @@ class BestBetsAggregator:
             if (pred.get('recommendation') == 'UNDER'
                     and opponent_stars_out >= 3):
                 filter_counts['opponent_depleted_under'] += 1
+                continue
+
+            # High book std UNDER block (Session 377): UNDER + multi_book_line_std 1.0-1.5 = 14.8% HR (N=142).
+            # When books disagree significantly on the line, UNDER predictions are unreliable.
+            book_std = pred.get('multi_book_line_std') or 0
+            if (pred.get('recommendation') == 'UNDER'
+                    and 1.0 <= book_std <= 1.5):
+                filter_counts['high_book_std_under'] += 1
                 continue
 
             # --- Signal evaluation (for annotations, not selection) ---
