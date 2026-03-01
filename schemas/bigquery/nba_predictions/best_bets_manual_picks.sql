@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.best_bets_manual_
   added_by STRING NOT NULL,            -- Who added this pick (e.g. 'naji')
   added_at TIMESTAMP NOT NULL,
   notes STRING,                        -- Free-form reason for the manual pick
-  is_active BOOLEAN NOT NULL DEFAULT TRUE,  -- Soft delete: FALSE = removed
+  is_active BOOLEAN NOT NULL,               -- Soft delete: FALSE = removed
 
   -- Metadata
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),

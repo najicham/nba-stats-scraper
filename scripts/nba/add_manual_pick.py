@@ -74,29 +74,34 @@ def lookup_game_id(bq_client: bigquery.Client, team: str, opponent: str, game_da
     return rows[0].game_id
 
 
-def lookup_player_name(bq_client: bigquery.Client, player_lookup: str) -> str:
-    """Look up player full name from predictions table."""
+def lookup_player_name(bq_client: bigquery.Client, player_lookup: str, game_date: str) -> str:
+    """Look up player full name from signal_best_bets_picks (partition-safe)."""
     query = """
     SELECT player_name
     FROM `nba-props-platform.nba_predictions.signal_best_bets_picks`
     WHERE player_lookup = @player_lookup
+      AND game_date >= DATE_SUB(@game_date, INTERVAL 60 DAY)
+      AND game_date <= @game_date
     ORDER BY game_date DESC
     LIMIT 1
     """
     params = [
         bigquery.ScalarQueryParameter('player_lookup', 'STRING', player_lookup),
+        bigquery.ScalarQueryParameter('game_date', 'DATE', game_date),
     ]
-    rows = list(bq_client.query(
-        query, job_config=bigquery.QueryJobConfig(query_parameters=params)
-    ).result(timeout=30))
+    try:
+        rows = list(bq_client.query(
+            query, job_config=bigquery.QueryJobConfig(query_parameters=params)
+        ).result(timeout=30))
+        if rows and rows[0].player_name:
+            return rows[0].player_name
+    except Exception:
+        pass
 
-    if rows:
-        return rows[0].player_name
-
-    # Fallback: derive from player_lookup (e.g. gui_santos_GSW -> Gui Santos)
-    parts = player_lookup.rsplit('_', 1)
-    name_part = parts[0] if len(parts) > 1 else player_lookup
-    return name_part.replace('_', ' ').title()
+    # Fallback: use player_lookup key with CamelCase conversion
+    # e.g. "guisantos" -> "Gui Santos" (best-effort)
+    logger.info(f"Could not find display name for {player_lookup}, using lookup key as name")
+    return player_lookup
 
 
 def add_pick(args) -> None:
@@ -105,7 +110,7 @@ def add_pick(args) -> None:
     now = datetime.now(timezone.utc)
 
     game_id = lookup_game_id(bq_client, args.team, args.opponent, args.date)
-    player_name = lookup_player_name(bq_client, args.player)
+    player_name = lookup_player_name(bq_client, args.player, args.date)
 
     logger.info(f"Adding manual pick: {player_name} ({args.player}) {args.direction} {args.line}")
     logger.info(f"Game: {game_id} ({args.team} vs {args.opponent}) on {args.date}")
@@ -132,22 +137,22 @@ def add_pick(args) -> None:
 
     manual_table = f'{PROJECT_ID}.nba_predictions.best_bets_manual_picks'
     manual_schema = [
-        bigquery.SchemaField('player_lookup', 'STRING'),
-        bigquery.SchemaField('game_id', 'STRING'),
-        bigquery.SchemaField('game_date', 'DATE'),
+        bigquery.SchemaField('player_lookup', 'STRING', mode='REQUIRED'),
+        bigquery.SchemaField('game_id', 'STRING', mode='REQUIRED'),
+        bigquery.SchemaField('game_date', 'DATE', mode='REQUIRED'),
         bigquery.SchemaField('player_name', 'STRING'),
         bigquery.SchemaField('team_abbr', 'STRING'),
         bigquery.SchemaField('opponent_team_abbr', 'STRING'),
-        bigquery.SchemaField('recommendation', 'STRING'),
+        bigquery.SchemaField('recommendation', 'STRING', mode='REQUIRED'),
         bigquery.SchemaField('line_value', 'NUMERIC'),
         bigquery.SchemaField('stat', 'STRING'),
         bigquery.SchemaField('edge', 'NUMERIC'),
         bigquery.SchemaField('rank', 'INTEGER'),
         bigquery.SchemaField('pick_angles', 'STRING', mode='REPEATED'),
-        bigquery.SchemaField('added_by', 'STRING'),
-        bigquery.SchemaField('added_at', 'TIMESTAMP'),
+        bigquery.SchemaField('added_by', 'STRING', mode='REQUIRED'),
+        bigquery.SchemaField('added_at', 'TIMESTAMP', mode='REQUIRED'),
         bigquery.SchemaField('notes', 'STRING'),
-        bigquery.SchemaField('is_active', 'BOOLEAN'),
+        bigquery.SchemaField('is_active', 'BOOLEAN', mode='REQUIRED'),
     ]
 
     job_config = bigquery.LoadJobConfig(
@@ -179,10 +184,10 @@ def add_pick(args) -> None:
 
     signal_table = f'{PROJECT_ID}.nba_predictions.signal_best_bets_picks'
     signal_schema = [
-        bigquery.SchemaField('player_lookup', 'STRING'),
-        bigquery.SchemaField('game_id', 'STRING'),
-        bigquery.SchemaField('game_date', 'DATE'),
-        bigquery.SchemaField('system_id', 'STRING'),
+        bigquery.SchemaField('player_lookup', 'STRING', mode='REQUIRED'),
+        bigquery.SchemaField('game_id', 'STRING', mode='REQUIRED'),
+        bigquery.SchemaField('game_date', 'DATE', mode='REQUIRED'),
+        bigquery.SchemaField('system_id', 'STRING', mode='REQUIRED'),
         bigquery.SchemaField('player_name', 'STRING'),
         bigquery.SchemaField('team_abbr', 'STRING'),
         bigquery.SchemaField('opponent_team_abbr', 'STRING'),
