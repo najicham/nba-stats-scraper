@@ -35,7 +35,7 @@ SIGNAL_ANGLE_MAP = {
     # dual_agree, model_consensus_v9_v12 REMOVED (Session 296)
     'combo_he_ms': "High edge + minutes surge combo: 94.9% HR",
     'combo_3way': "Triple combo (ESO+HE+MS): 78.1% HR",
-    'b2b_fatigue_under': "Back-to-back fatigue: 85.7% UNDER HR",
+    # b2b_fatigue_under DISABLED (Session 373) — 39.5% Feb HR, boosts losing pattern
     'rest_advantage_2d': "2+ days rest advantage: 64.8% HR",
     'edge_spread_optimal': "Optimal edge spread: 67.2% HR",
     '3pt_bounce': "3pt bounce-back pattern: 74.9% HR",
@@ -53,6 +53,7 @@ SIGNAL_ANGLE_MAP = {
     'scoring_cold_streak_over': "Cold streak bounce-back: 3+ games under line, OVER regression signal",
     'extended_rest_under': "Extended rest (4+ days) UNDER — scoring typically lower on return (61.8% HR)",
     'starter_under': "Starter tier UNDER — most predictable scoring range (15-25 ppg)",
+    'high_scoring_environment_over': "High-scoring game environment (ITT 120+) — 70.2% OVER HR, Feb-resilient",
 }
 
 # Warning tag → warning angle

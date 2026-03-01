@@ -82,6 +82,9 @@ def build_default_registry() -> SignalRegistry:
     from ml.signals.extended_rest_under import ExtendedRestUnderSignal
     from ml.signals.starter_under import StarterUnderSignal
 
+    # Session 373 signals
+    from ml.signals.high_scoring_environment_over import HighScoringEnvironmentOverSignal
+
     registry = SignalRegistry()
     registry.register(ModelHealthSignal())
     registry.register(HighEdgeSignal())
@@ -100,7 +103,9 @@ def build_default_registry() -> SignalRegistry:
 
     # Prototype signals - Batch 1
     # HotStreak3Signal, ColdContinuation2Signal removed (Session 275)
-    registry.register(B2BFatigueUnderSignal())
+    # B2BFatigueUnderSignal DISABLED (Session 373) — boosts a losing pattern (39.5% Feb HR, N=410).
+    # Fires only 3 times in best bets total (2-1). Signal is philosophically backwards:
+    # encourages B2B UNDER but B2B UNDER collapsed from 66.7% (Dec) to 39.5% (Feb).
     registry.register(RestAdvantage2DSignal())
 
     # Prototype signals - Batch 2 (8 removed Sessions 275+296, see import comments)
@@ -125,5 +130,8 @@ def build_default_registry() -> SignalRegistry:
     # Session 372 signals
     registry.register(ExtendedRestUnderSignal())
     registry.register(StarterUnderSignal())
+
+    # Session 373 signals
+    registry.register(HighScoringEnvironmentOverSignal())
 
     return registry

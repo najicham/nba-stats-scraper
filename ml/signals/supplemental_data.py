@@ -346,7 +346,8 @@ def query_predictions_with_supplements(
         feature_50_source AS book_std_source,
         feature_47_value AS teammate_usage_available,
         feature_37_value AS star_teammates_out,
-        feature_52_value AS prop_under_streak
+        feature_52_value AS prop_under_streak,
+        feature_42_value AS implied_team_total
       FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2`
       WHERE game_date = @target_date
     ),
@@ -410,7 +411,8 @@ def query_predictions_with_supplements(
       bs.book_std_source,
       bs.teammate_usage_available,
       bs.star_teammates_out,
-      bs.prop_under_streak
+      bs.prop_under_streak,
+      bs.implied_team_total
     FROM preds p
     LEFT JOIN latest_stats ls ON ls.player_lookup = p.player_lookup
     LEFT JOIN latest_streak lsk ON lsk.player_lookup = p.player_lookup
@@ -632,6 +634,10 @@ def query_predictions_with_supplements(
         # Prop under streak from feature store for scoring_cold_streak_over signal (Session 371)
         pus = row_dict.get('prop_under_streak')
         pred['prop_under_streak'] = float(pus) if pus is not None else 0
+
+        # Implied team total from feature store for high_scoring_environment_over signal (Session 373)
+        itt = row_dict.get('implied_team_total')
+        pred['implied_team_total'] = float(itt) if itt is not None else 0
 
         # Copy prop line delta for aggregator pre-filter (Session 294)
         if row_dict.get('prev_line_value') is not None:
