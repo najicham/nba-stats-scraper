@@ -54,6 +54,9 @@ SIGNAL_ANGLE_MAP = {
     'extended_rest_under': "Extended rest (4+ days) UNDER — scoring typically lower on return (61.8% HR)",
     'starter_under': "Starter tier UNDER — most predictable scoring range (15-25 ppg)",
     'high_scoring_environment_over': "High-scoring game environment (ITT 120+) — 70.2% OVER HR, Feb-resilient",
+    'fast_pace_over': "Fast opponent pace (102+) — more possessions, more scoring (81.5% HR)",
+    'volatile_scoring_over': "High scoring variance (CV 50%+) — upside variance favors OVER (81.5% HR)",
+    'low_line_over': "Low prop line (<12) — conservative lines easier to clear (78.1% HR)",
 }
 
 # Warning tag → warning angle

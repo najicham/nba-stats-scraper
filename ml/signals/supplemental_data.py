@@ -337,7 +337,7 @@ def query_predictions_with_supplements(
       ) = 1
     ),
 
-    -- Multi-book line std, teammate_usage, star_teammates_out, prop_under_streak for signals (Session 303, 355, 367, 371)
+    -- Multi-book line std, teammate_usage, star_teammates_out, prop_under_streak for signals (Session 303, 355, 367, 371, 374)
     book_stats AS (
       SELECT
         player_lookup,
@@ -347,7 +347,9 @@ def query_predictions_with_supplements(
         feature_47_value AS teammate_usage_available,
         feature_37_value AS star_teammates_out,
         feature_52_value AS prop_under_streak,
-        feature_42_value AS implied_team_total
+        feature_42_value AS implied_team_total,
+        feature_18_value AS opponent_pace,
+        feature_3_value AS points_std_last_10
       FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2`
       WHERE game_date = @target_date
     ),
@@ -412,7 +414,9 @@ def query_predictions_with_supplements(
       bs.teammate_usage_available,
       bs.star_teammates_out,
       bs.prop_under_streak,
-      bs.implied_team_total
+      bs.implied_team_total,
+      bs.opponent_pace,
+      bs.points_std_last_10
     FROM preds p
     LEFT JOIN latest_stats ls ON ls.player_lookup = p.player_lookup
     LEFT JOIN latest_streak lsk ON lsk.player_lookup = p.player_lookup
@@ -638,6 +642,14 @@ def query_predictions_with_supplements(
         # Implied team total from feature store for high_scoring_environment_over signal (Session 373)
         itt = row_dict.get('implied_team_total')
         pred['implied_team_total'] = float(itt) if itt is not None else 0
+
+        # Opponent pace from feature store for fast_pace_over signal (Session 374)
+        op = row_dict.get('opponent_pace')
+        pred['opponent_pace'] = float(op) if op is not None else 0
+
+        # Points std last 10 from feature store for volatile_scoring_over signal (Session 374)
+        pstd = row_dict.get('points_std_last_10')
+        pred['points_std_last_10'] = float(pstd) if pstd is not None else 0
 
         # Copy prop line delta for aggregator pre-filter (Session 294)
         if row_dict.get('prev_line_value') is not None:

@@ -50,7 +50,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v373_itt_signal_b2b_disabled'
+ALGORITHM_VERSION = 'v374_sc3_edge_starfix_signals'
 
 # Base signals that fire on nearly every edge 5+ pick. Picks with ONLY
 # these signals hit 57.1% (N=42) vs 77.8% for picks with 4+ signals.
@@ -153,6 +153,7 @@ class BestBetsAggregator:
             'line_dropped_under': 0,
             'neg_pm_streak': 0,
             'signal_count': 0,
+            'sc3_edge_floor': 0,
             'confidence': 0,
             'anti_pattern': 0,
             'model_direction_affinity': 0,
@@ -327,6 +328,12 @@ class BestBetsAggregator:
                 filter_counts['signal_count'] += 1
                 continue
 
+            # SC=3 edge restriction (Session 374): SC=3 + edge 5-7 = 48.4% HR (N=31).
+            # SC=3 + edge 7+ = 85.7% HR. Only allow SC=3 at extreme edge.
+            if len(qualifying) == self.MIN_SIGNAL_COUNT and pred_edge < 7.0:
+                filter_counts['sc3_edge_floor'] += 1
+                continue
+
             # Confidence floor: model-specific
             if self._min_confidence > 0:
                 confidence = pred.get('confidence_score') or 0
@@ -421,6 +428,8 @@ class BestBetsAggregator:
             logger.info(f"Medium teammate usage UNDER block: skipped {filter_counts['med_usage_under']} predictions")
         if filter_counts['starter_v12_under'] > 0:
             logger.info(f"Starter V12 UNDER block (15-20 line): skipped {filter_counts['starter_v12_under']} predictions")
+        if filter_counts['sc3_edge_floor'] > 0:
+            logger.info(f"SC=3 edge floor: skipped {filter_counts['sc3_edge_floor']} SC=3 picks with edge < 7.0")
         if filter_counts['signal_density'] > 0:
             logger.info(f"Signal density filter: skipped {filter_counts['signal_density']} base-only picks")
 

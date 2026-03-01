@@ -85,6 +85,11 @@ def build_default_registry() -> SignalRegistry:
     # Session 373 signals
     from ml.signals.high_scoring_environment_over import HighScoringEnvironmentOverSignal
 
+    # Session 374 signals
+    from ml.signals.fast_pace_over import FastPaceOverSignal
+    from ml.signals.volatile_scoring_over import VolatileScoringOverSignal
+    from ml.signals.low_line_over import LowLineOverSignal
+
     registry = SignalRegistry()
     registry.register(ModelHealthSignal())
     registry.register(HighEdgeSignal())
@@ -133,5 +138,10 @@ def build_default_registry() -> SignalRegistry:
 
     # Session 373 signals
     registry.register(HighScoringEnvironmentOverSignal())
+
+    # Session 374 signals
+    registry.register(FastPaceOverSignal())
+    registry.register(VolatileScoringOverSignal())
+    registry.register(LowLineOverSignal())
 
     return registry

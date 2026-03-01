@@ -711,10 +711,13 @@ class TeamContextCalculator:
         """
         Count star teammates who are OUT or DOUBTFUL for the game.
 
-        Star criteria (last 10 games):
+        Star criteria (last 10 games, season avg fallback):
         - Average points >= 18 PPG OR
         - Average minutes >= 28 MPG OR
         - Usage rate >= 25%
+
+        Session 374: Added season avg fallback for long-term injuries.
+        INTERVAL 10 DAY missed players out 10+ days (Giannis 27 PPG, Tatum, Morant).
 
         Args:
             team_abbr: Team abbreviation (e.g., 'LAL')
@@ -751,13 +754,28 @@ class TeamContextCalculator:
                   AND team_abbr = @team_abbr
                 GROUP BY player_lookup
             ),
+            -- Session 374: Season avg fallback for long-term injured stars.
+            -- INTERVAL 10 DAY misses players out 10+ days (Giannis 27 PPG, Tatum, Morant).
+            player_season_stats AS (
+                SELECT
+                    player_lookup,
+                    AVG(points) as avg_points,
+                    AVG(minutes_played) as avg_minutes,
+                    AVG(usage_rate) as avg_usage
+                FROM `{self.project_id}.nba_analytics.player_game_summary`
+                WHERE game_date >= '2025-10-22'
+                  AND game_date < @game_date
+                  AND team_abbr = @team_abbr
+                GROUP BY player_lookup
+            ),
             star_players AS (
                 SELECT s.player_lookup
-                FROM player_recent_stats s
+                FROM player_season_stats s
                 INNER JOIN team_roster r ON s.player_lookup = r.player_lookup
-                WHERE s.avg_points >= 18
-                   OR s.avg_minutes >= 28
-                   OR s.avg_usage >= 25
+                LEFT JOIN player_recent_stats rs ON rs.player_lookup = s.player_lookup
+                WHERE COALESCE(rs.avg_points, s.avg_points) >= 18
+                   OR COALESCE(rs.avg_minutes, s.avg_minutes) >= 28
+                   OR COALESCE(rs.avg_usage, s.avg_usage) >= 25
             ),
             injured_players AS (
                 SELECT DISTINCT player_lookup
@@ -833,13 +851,27 @@ class TeamContextCalculator:
                   AND team_abbr = @team_abbr
                 GROUP BY player_lookup
             ),
+            -- Session 374: Season avg fallback (same fix as get_star_teammates_out)
+            player_season_stats AS (
+                SELECT
+                    player_lookup,
+                    AVG(points) as avg_points,
+                    AVG(minutes_played) as avg_minutes,
+                    AVG(usage_rate) as avg_usage
+                FROM `{self.project_id}.nba_analytics.player_game_summary`
+                WHERE game_date >= '2025-10-22'
+                  AND game_date < @game_date
+                  AND team_abbr = @team_abbr
+                GROUP BY player_lookup
+            ),
             star_players AS (
                 SELECT s.player_lookup
-                FROM player_recent_stats s
+                FROM player_season_stats s
                 INNER JOIN team_roster r ON s.player_lookup = r.player_lookup
-                WHERE s.avg_points >= 18
-                   OR s.avg_minutes >= 28
-                   OR s.avg_usage >= 25
+                LEFT JOIN player_recent_stats rs ON rs.player_lookup = s.player_lookup
+                WHERE COALESCE(rs.avg_points, s.avg_points) >= 18
+                   OR COALESCE(rs.avg_minutes, s.avg_minutes) >= 28
+                   OR COALESCE(rs.avg_usage, s.avg_usage) >= 25
             ),
             questionable_players AS (
                 SELECT DISTINCT player_lookup
@@ -880,7 +912,7 @@ class TeamContextCalculator:
         """
         Calculate weighted tier score for OUT/DOUBTFUL star teammates.
 
-        Star tiers (based on PPG last 10 games):
+        Star tiers (based on PPG, season avg with recent fallback):
         - Tier 1 (Superstar): 25+ PPG = 3 points
         - Tier 2 (Star): 18-24.99 PPG = 2 points
         - Tier 3 (Quality starter): <18 PPG but 28+ MPG or 25%+ usage = 1 point
@@ -920,19 +952,33 @@ class TeamContextCalculator:
                   AND team_abbr = @team_abbr
                 GROUP BY player_lookup
             ),
+            -- Session 374: Season avg fallback (same fix as get_star_teammates_out)
+            player_season_stats AS (
+                SELECT
+                    player_lookup,
+                    AVG(points) as avg_points,
+                    AVG(minutes_played) as avg_minutes,
+                    AVG(usage_rate) as avg_usage
+                FROM `{self.project_id}.nba_analytics.player_game_summary`
+                WHERE game_date >= '2025-10-22'
+                  AND game_date < @game_date
+                  AND team_abbr = @team_abbr
+                GROUP BY player_lookup
+            ),
             star_players_with_tier AS (
                 SELECT
                     s.player_lookup,
                     CASE
-                        WHEN s.avg_points >= 25 THEN 3
-                        WHEN s.avg_points >= 18 THEN 2
+                        WHEN COALESCE(rs.avg_points, s.avg_points) >= 25 THEN 3
+                        WHEN COALESCE(rs.avg_points, s.avg_points) >= 18 THEN 2
                         ELSE 1
                     END as tier_weight
-                FROM player_recent_stats s
+                FROM player_season_stats s
                 INNER JOIN team_roster r ON s.player_lookup = r.player_lookup
-                WHERE s.avg_points >= 18
-                   OR s.avg_minutes >= 28
-                   OR s.avg_usage >= 25
+                LEFT JOIN player_recent_stats rs ON rs.player_lookup = s.player_lookup
+                WHERE COALESCE(rs.avg_points, s.avg_points) >= 18
+                   OR COALESCE(rs.avg_minutes, s.avg_minutes) >= 28
+                   OR COALESCE(rs.avg_usage, s.avg_usage) >= 25
             ),
             injured_players AS (
                 SELECT DISTINCT player_lookup
