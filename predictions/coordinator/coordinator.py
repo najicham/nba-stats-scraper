@@ -898,7 +898,8 @@ def start_prediction_batch():
             else:
                 game_date = datetime.strptime(game_date_str, '%Y-%m-%d').date()
         else:
-            game_date = date.today()
+            from zoneinfo import ZoneInfo
+            game_date = datetime.now(ZoneInfo('America/New_York')).date()
 
         min_minutes = request_data.get('min_minutes', 15)
         # Use orchestration config for default (Issue 4: enable multiple lines by default)
@@ -3981,7 +3982,8 @@ def publish_batch_summary(tracker: ProgressTracker, batch_id: str):
         unified_publisher = UnifiedPubSubPublisher(project_id=PROJECT_ID)
 
         summary = tracker.get_summary()
-        game_date = current_game_date.isoformat() if current_game_date else date.today().isoformat()
+        from zoneinfo import ZoneInfo
+        game_date = current_game_date.isoformat() if current_game_date else datetime.now(ZoneInfo('America/New_York')).date().isoformat()
 
         # Step 1: Consolidate staging tables into main predictions table
         # This is critical for the batch staging write pattern to work
@@ -4190,10 +4192,12 @@ def publish_batch_summary(tracker: ProgressTracker, batch_id: str):
             expected_players = summary.get('expected', 0)
             completed_players = summary.get('completed', 0)
 
+            from zoneinfo import ZoneInfo
+            et_today = datetime.now(ZoneInfo('America/New_York')).date()
             coverage_ok = coverage_monitor.check_coverage(
                 players_expected=expected_players,
                 players_predicted=completed_players,
-                game_date=current_game_date or date.today(),
+                game_date=current_game_date or et_today,
                 batch_id=batch_id,
                 additional_context={
                     'correlation_id': current_correlation_id,
@@ -4211,7 +4215,7 @@ def publish_batch_summary(tracker: ProgressTracker, batch_id: str):
                     missing_players = coverage_monitor.track_missing_players(
                         expected_set=expected_set,
                         predicted_set=completed_set,
-                        game_date=current_game_date or date.today(),
+                        game_date=current_game_date or et_today,
                         log_all=False  # Only log summary for large sets
                     )
                     if missing_players:
