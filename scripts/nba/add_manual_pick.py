@@ -224,6 +224,7 @@ def remove_pick(args) -> None:
     """Soft-delete a manual pick by setting is_active = FALSE."""
     bq_client = get_bigquery_client(project_id=PROJECT_ID)
 
+    # Step 1: Soft-delete from manual picks table
     query = f"""
     UPDATE `{PROJECT_ID}.nba_predictions.best_bets_manual_picks`
     SET is_active = FALSE,
@@ -236,11 +237,23 @@ def remove_pick(args) -> None:
         bigquery.ScalarQueryParameter('player_lookup', 'STRING', args.player),
         bigquery.ScalarQueryParameter('game_date', 'DATE', args.date),
     ]
-    result = bq_client.query(
+    bq_client.query(
         query, job_config=bigquery.QueryJobConfig(query_parameters=params)
     ).result(timeout=30)
-
     logger.info(f"Deactivated manual pick: {args.player} on {args.date}")
+
+    # Step 2: Delete from signal_best_bets_picks so the pick doesn't
+    # reappear via _query_all_picks() on the next export
+    signal_delete = f"""
+    DELETE FROM `{PROJECT_ID}.nba_predictions.signal_best_bets_picks`
+    WHERE player_lookup = @player_lookup
+      AND game_date = @game_date
+      AND system_id = 'manual_override'
+    """
+    bq_client.query(
+        signal_delete, job_config=bigquery.QueryJobConfig(query_parameters=params)
+    ).result(timeout=30)
+    logger.info(f"Deleted manual_override row from signal_best_bets_picks")
 
     if args.export:
         logger.info("Triggering best-bets-all re-export...")

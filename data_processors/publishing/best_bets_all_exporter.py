@@ -252,6 +252,10 @@ class BestBetsAllExporter(BaseExporter):
                 'is_ultra': bool(p.get('ultra_tier')),
             }
 
+            source = p.get('_source')
+            if source and source != 'algorithm':
+                pick_dict['source'] = source
+
             if p.get('is_voided'):
                 pick_dict['void_reason'] = 'DNP'
 
@@ -698,6 +702,13 @@ class BestBetsAllExporter(BaseExporter):
             if key:
                 published_by_key[key] = p
 
+        # Index manual picks by player_lookup for source attribution
+        manual_by_key = {
+            mp.get('player_lookup', ''): mp
+            for mp in manual_picks
+            if mp.get('player_lookup')
+        }
+
         merged = {}
         stats = {
             'algorithm_picks': 0,
@@ -730,20 +741,28 @@ class BestBetsAllExporter(BaseExporter):
                 pick['_last_seen_in_signal'] = pub.get('last_seen_in_signal')
                 stats['locked_picks'] += 1
                 stats['dropped_from_signal'] += 1
-            pick['_source'] = pub.get('source', 'algorithm')
+            # Manual picks in manual_by_key always get 'manual' source,
+            # even if a prior export stored them as 'algorithm'
+            pick['_source'] = 'manual' if key in manual_by_key else pub.get('source', 'algorithm')
             merged[key] = pick
 
         # Step 3: Add signal picks not yet published (new picks)
         for key, sig in signal_by_key.items():
             if key not in merged:
                 pick = dict(sig)
-                pick['_source'] = 'algorithm'
+                # A manual pick written to signal_best_bets_picks (system_id=
+                # manual_override) should retain 'manual' source attribution
+                is_manual = key in manual_by_key
+                pick['_source'] = 'manual' if is_manual else 'algorithm'
                 pick['_in_signal'] = True
                 pick['_first_published_at'] = now
                 pick['_last_seen_in_signal'] = now
                 merged[key] = pick
                 stats['new_picks'] += 1
-                stats['algorithm_picks'] += 1
+                if is_manual:
+                    stats['manual_picks'] += 1
+                else:
+                    stats['algorithm_picks'] += 1
 
         # Step 4: Add manual picks not already present
         for mp in manual_picks:
@@ -772,9 +791,12 @@ class BestBetsAllExporter(BaseExporter):
         for i, pick in enumerate(sorted_picks, 1):
             pick['rank'] = i
 
-        # Count algorithm picks from signal
+        # Recount by source (covers all three merge paths)
         stats['algorithm_picks'] = sum(
-            1 for p in sorted_picks if p.get('_in_signal')
+            1 for p in sorted_picks if p.get('_source') != 'manual'
+        )
+        stats['manual_picks'] = sum(
+            1 for p in sorted_picks if p.get('_source') == 'manual'
         )
 
         logger.info(
@@ -785,6 +807,15 @@ class BestBetsAllExporter(BaseExporter):
         )
 
         return sorted_picks, stats
+
+    @staticmethod
+    def _to_iso(val) -> Optional[str]:
+        """Convert a datetime, date, or string to ISO format string. Returns None for None."""
+        if val is None:
+            return None
+        if hasattr(val, 'isoformat'):
+            return val.isoformat()
+        return str(val)
 
     def _write_published_picks(
         self, target_date: str, merged_picks: List[Dict]
@@ -810,15 +841,14 @@ class BestBetsAllExporter(BaseExporter):
                 'pick_angles': list(p.get('pick_angles') or []),
                 'ultra_tier': p.get('ultra_tier'),
                 'source': p.get('_source', 'algorithm'),
-                'first_published_at': (
-                    p['_first_published_at'].isoformat()
-                    if p.get('_first_published_at')
-                    else p.get('first_published_at', now.isoformat())
+                'first_published_at': self._to_iso(
+                    p.get('_first_published_at')
+                    or p.get('first_published_at')
+                    or now
                 ),
-                'last_seen_in_signal': (
-                    p['_last_seen_in_signal'].isoformat()
-                    if p.get('_last_seen_in_signal')
-                    else None
+                'last_seen_in_signal': self._to_iso(
+                    p.get('_last_seen_in_signal')
+                    or p.get('last_seen_in_signal')
                 ),
                 'updated_at': now.isoformat(),
             })
@@ -843,9 +873,9 @@ class BestBetsAllExporter(BaseExporter):
             # Insert merged picks
             job_config = bigquery.LoadJobConfig(
                 schema=[
-                    bigquery.SchemaField('player_lookup', 'STRING'),
-                    bigquery.SchemaField('game_id', 'STRING'),
-                    bigquery.SchemaField('game_date', 'DATE'),
+                    bigquery.SchemaField('player_lookup', 'STRING', mode='REQUIRED'),
+                    bigquery.SchemaField('game_id', 'STRING', mode='REQUIRED'),
+                    bigquery.SchemaField('game_date', 'DATE', mode='REQUIRED'),
                     bigquery.SchemaField('player_name', 'STRING'),
                     bigquery.SchemaField('team_abbr', 'STRING'),
                     bigquery.SchemaField('opponent_team_abbr', 'STRING'),
@@ -855,8 +885,8 @@ class BestBetsAllExporter(BaseExporter):
                     bigquery.SchemaField('rank', 'INTEGER'),
                     bigquery.SchemaField('pick_angles', 'STRING', mode='REPEATED'),
                     bigquery.SchemaField('ultra_tier', 'STRING'),
-                    bigquery.SchemaField('source', 'STRING'),
-                    bigquery.SchemaField('first_published_at', 'TIMESTAMP'),
+                    bigquery.SchemaField('source', 'STRING', mode='REQUIRED'),
+                    bigquery.SchemaField('first_published_at', 'TIMESTAMP', mode='REQUIRED'),
                     bigquery.SchemaField('last_seen_in_signal', 'TIMESTAMP'),
                     bigquery.SchemaField('updated_at', 'TIMESTAMP'),
                 ],
@@ -915,8 +945,8 @@ class BestBetsAllExporter(BaseExporter):
         try:
             job_config = bigquery.LoadJobConfig(
                 schema=[
-                    bigquery.SchemaField('export_id', 'STRING'),
-                    bigquery.SchemaField('game_date', 'DATE'),
+                    bigquery.SchemaField('export_id', 'STRING', mode='REQUIRED'),
+                    bigquery.SchemaField('game_date', 'DATE', mode='REQUIRED'),
                     bigquery.SchemaField('total_picks', 'INTEGER'),
                     bigquery.SchemaField('algorithm_picks', 'INTEGER'),
                     bigquery.SchemaField('manual_picks', 'INTEGER'),
