@@ -327,6 +327,19 @@ def parse_args():
                             'Uses posterior_sampling=True during training and reports HR '
                             'stratified by prediction uncertainty quartile at edge 3+.')
 
+    # Adversarial robustness training (Session 374)
+    parser.add_argument('--adversarial-noise', type=str, default=None,
+                       help='Shuffle feature values in a fraction of training rows to reduce '
+                            'reliance on drift-prone features. Format: FEATURE=RATE '
+                            '(e.g., "usage_spike_score=0.2" shuffles that feature in 20%% of rows). '
+                            'Multiple features: "feat1=0.2,feat2=0.3"')
+
+    # Residual stacking (Session 374)
+    parser.add_argument('--residual-base-model', type=str, default=None, metavar='SYSTEM_ID',
+                       help='Train a stacked residual model. Loads predictions from the specified '
+                            'base model system_id, computes residuals (actual - predicted), '
+                            'and trains on residuals. Final prediction = base_pred + residual_pred.')
+
     parser.add_argument('--random-seed', type=int, default=42,
                        help='Random seed for CatBoost/LightGBM and train/val split (default: 42)')
 
@@ -720,6 +733,31 @@ def analyze_training_line_coverage(client, start, end):
         'without_lines': without_lines,
         'pct_with_lines': pct_with,
     }
+
+
+def load_base_model_predictions(client, start, end, system_id):
+    """Load base model predictions for residual stacking (Session 374).
+
+    Returns a dict mapping (player_lookup, game_date) -> predicted_points.
+    Used to compute residuals: y_residual = actual_points - base_predicted.
+    """
+    query = f"""
+    SELECT player_lookup, game_date, predicted_points
+    FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy`
+    WHERE game_date BETWEEN '{start}' AND '{end}'
+      AND system_id = '{system_id}'
+      AND predicted_points IS NOT NULL
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY player_lookup, game_date
+        ORDER BY graded_at DESC
+    ) = 1
+    """
+    df = client.query(query).to_dataframe()
+    lookup = {}
+    for _, row in df.iterrows():
+        key = (row['player_lookup'], str(row['game_date']))
+        lookup[key] = float(row['predicted_points'])
+    return lookup
 
 
 def augment_v11_features(client, df):
@@ -3080,6 +3118,71 @@ def main():
         y_eval_deviation = y_eval.values - anchor_lines_eval
         print(f"  Eval deviation stats: mean={y_eval_deviation.mean():.2f}, std={y_eval_deviation.std():.2f}")
 
+    # Stacked residual model (Session 374): train on (actual - base_model_pred)
+    # Different from --residual (actual - vegas_line): this uses a real model's predictions
+    # as the base, learning systematic errors the base model makes.
+    base_preds_eval = None  # Set when --residual-base-model active
+    if args.residual_base_model:
+        print(f"\nStacked residual mode: base model = {args.residual_base_model}")
+        base_preds_lookup = load_base_model_predictions(
+            client, dates['train_start'], dates['eval_end'], args.residual_base_model
+        )
+        print(f"  Loaded {len(base_preds_lookup):,} base model predictions")
+
+        # Match base predictions to training data
+        train_base = []
+        train_valid = []
+        for i, row in df_train.iterrows():
+            key = (row['player_lookup'], str(row['game_date']))
+            bp = base_preds_lookup.get(key)
+            if bp is not None:
+                train_base.append(bp)
+                train_valid.append(True)
+            else:
+                train_base.append(0.0)
+                train_valid.append(False)
+        train_valid = np.array(train_valid)
+        train_base = np.array(train_base)
+        print(f"  Training coverage: {train_valid.sum():,}/{len(train_valid):,} "
+              f"({train_valid.mean()*100:.1f}%) have base predictions")
+
+        if train_valid.sum() < len(train_valid) * 0.3:
+            print(f"\n  ERROR: <30% training coverage — base model {args.residual_base_model} "
+                  f"has insufficient predictions for this window.")
+            return
+
+        # Filter and transform training target
+        X_train_full = X_train_full[train_valid].reset_index(drop=True)
+        residuals = y_train_full[train_valid].values - train_base[train_valid]
+        y_train_full = pd.Series(residuals, name='residual')
+        df_train = df_train[train_valid].reset_index(drop=True)
+        print(f"  Residual target stats: mean={residuals.mean():.2f}, "
+              f"std={residuals.std():.2f}, median={np.median(residuals):.2f}")
+
+        # Match base predictions to eval data
+        eval_base = []
+        eval_valid = []
+        for i, row in df_eval.iterrows():
+            key = (row['player_lookup'], str(row['game_date']))
+            bp = base_preds_lookup.get(key)
+            if bp is not None:
+                eval_base.append(bp)
+                eval_valid.append(True)
+            else:
+                eval_base.append(0.0)
+                eval_valid.append(False)
+        eval_valid = np.array(eval_valid)
+        eval_base = np.array(eval_base)
+        print(f"  Eval coverage: {eval_valid.sum():,}/{len(eval_valid):,} "
+              f"({eval_valid.mean()*100:.1f}%) have base predictions")
+
+        X_eval_full = X_eval_full[eval_valid].reset_index(drop=True)
+        X_eval = X_eval_full
+        y_eval = y_eval[eval_valid].reset_index(drop=True)
+        lines = lines[eval_valid]
+        base_preds_eval = eval_base[eval_valid]
+        df_eval = df_eval[eval_valid].reset_index(drop=True)
+
     # Classifier mode: transform target to binary OVER/UNDER (Session 350)
     # Keep original y_eval (actual points) for hit rate evaluation
     y_train_orig = y_train_full.copy()
@@ -3136,6 +3239,25 @@ def main():
             w_train_full = tier_weights
         print(f"  Final weight stats: min={w_train_full.min():.4f}, max={w_train_full.max():.4f}, "
               f"mean={w_train_full.mean():.4f}, std={w_train_full.std():.4f}")
+
+    # Adversarial noise injection (Session 374): shuffle drift-prone features
+    if args.adversarial_noise:
+        print(f"\nApplying adversarial noise: {args.adversarial_noise}")
+        rng = np.random.RandomState(args.random_seed)
+        for spec in args.adversarial_noise.split(','):
+            feat_name, rate_str = spec.strip().split('=')
+            rate = float(rate_str)
+            if feat_name not in X_train_full.columns:
+                print(f"  WARNING: {feat_name} not in features, skipping")
+                continue
+            n_rows = len(X_train_full)
+            n_shuffle = int(n_rows * rate)
+            shuffle_mask = rng.choice(n_rows, size=n_shuffle, replace=False)
+            original_vals = X_train_full[feat_name].values.copy()
+            shuffled_vals = original_vals[shuffle_mask].copy()
+            rng.shuffle(shuffled_vals)
+            X_train_full.loc[X_train_full.index[shuffle_mask], feat_name] = shuffled_vals
+            print(f"  Shuffled {feat_name} in {n_shuffle}/{n_rows} rows ({rate*100:.0f}%)")
 
     # Train/val split (carry weights through)
     if w_train_full is not None:
@@ -3358,6 +3480,13 @@ def main():
         print(f"  Two-stage mode: model predicts independently, edge = pred - vegas")
         print(f"  Raw pred stats: mean={preds.mean():.2f}, std={preds.std():.2f}")
         print(f"  Vegas line stats: mean={lines.mean():.2f}")
+    elif args.residual_base_model and base_preds_eval is not None:
+        # Stacked residual: predicted_points = base_pred + residual_pred
+        preds = base_preds_eval + raw_preds
+        print(f"  Stacked residual mode: combined {len(preds)} predictions")
+        print(f"  Base pred stats: mean={base_preds_eval.mean():.2f}, std={base_preds_eval.std():.2f}")
+        print(f"  Residual pred stats: mean={raw_preds.mean():.2f}, std={raw_preds.std():.2f}")
+        print(f"  Final pred stats: mean={preds.mean():.2f}, std={preds.std():.2f}")
     else:
         preds = raw_preds
 
@@ -3414,6 +3543,10 @@ def main():
         mode_suffix += "_tw"
     if args.anchor_line:
         mode_suffix += "_anchor"
+    if args.residual_base_model:
+        mode_suffix += "_stackresid"
+    if args.adversarial_noise:
+        mode_suffix += "_advnoise"
     if args.diff_features:
         mode_suffix += "_diff"
     if args.derived_features:
@@ -3943,6 +4076,8 @@ def main():
             experiment_type = f'diversity_tier_{args.player_tier}'
         elif args.no_vegas:
             experiment_type = 'monthly_retrain_no_vegas'
+        elif args.residual_base_model:
+            experiment_type = 'stacked_residual'
         elif args.residual:
             experiment_type = 'monthly_retrain_residual'
         elif args.two_stage:
