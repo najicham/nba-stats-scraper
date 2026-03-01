@@ -1459,6 +1459,9 @@ class FeatureExtractor:
         Computes STDDEV(points_line) grouped by player, requiring at least 2 distinct
         bookmakers. High std = books disagree on the line (potential edge signal).
 
+        Session 371: Excludes Bovada — 73.6% outlier rate with 2.15 avg deviation
+        from median inflates std by ~68%. Removing it tightens the signal.
+
         Source: nba_raw.odds_api_player_points_props
         """
         query = f"""
@@ -1475,6 +1478,7 @@ class FeatureExtractor:
             WHERE game_date = '{game_date}'
               AND points_line IS NOT NULL
               AND points_line > 0
+              AND bookmaker != 'bovada'
         )
         SELECT
             player_lookup,

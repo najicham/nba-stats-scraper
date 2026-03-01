@@ -337,7 +337,7 @@ def query_predictions_with_supplements(
       ) = 1
     ),
 
-    -- Multi-book line std, teammate_usage, star_teammates_out for signals (Session 303, 355, 367)
+    -- Multi-book line std, teammate_usage, star_teammates_out, prop_under_streak for signals (Session 303, 355, 367, 371)
     book_stats AS (
       SELECT
         player_lookup,
@@ -345,7 +345,8 @@ def query_predictions_with_supplements(
         feature_50_value AS multi_book_line_std,
         feature_50_source AS book_std_source,
         feature_47_value AS teammate_usage_available,
-        feature_37_value AS star_teammates_out
+        feature_37_value AS star_teammates_out,
+        feature_52_value AS prop_under_streak
       FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2`
       WHERE game_date = @target_date
     ),
@@ -408,7 +409,8 @@ def query_predictions_with_supplements(
       bs.multi_book_line_std,
       bs.book_std_source,
       bs.teammate_usage_available,
-      bs.star_teammates_out
+      bs.star_teammates_out,
+      bs.prop_under_streak
     FROM preds p
     LEFT JOIN latest_stats ls ON ls.player_lookup = p.player_lookup
     LEFT JOIN latest_streak lsk ON lsk.player_lookup = p.player_lookup
@@ -626,6 +628,10 @@ def query_predictions_with_supplements(
         # Star teammates out from feature store for star_under filter (Session 367)
         sto = row_dict.get('star_teammates_out')
         pred['star_teammates_out'] = float(sto) if sto is not None else 0
+
+        # Prop under streak from feature store for scoring_cold_streak_over signal (Session 371)
+        pus = row_dict.get('prop_under_streak')
+        pred['prop_under_streak'] = float(pus) if pus is not None else 0
 
         # Copy prop line delta for aggregator pre-filter (Session 294)
         if row_dict.get('prev_line_value') is not None:

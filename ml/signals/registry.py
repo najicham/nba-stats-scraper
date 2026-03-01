@@ -74,6 +74,10 @@ def build_default_registry() -> SignalRegistry:
     # FT rate bench over signal (Session 336)
     from ml.signals.ft_rate_bench_over import FTRateBenchOverSignal
 
+    # Session 371 signals
+    from ml.signals.home_under import HomeUnderSignal
+    from ml.signals.scoring_cold_streak_over import ScoringColdStreakOverSignal
+
     registry = SignalRegistry()
     registry.register(ModelHealthSignal())
     registry.register(HighEdgeSignal())
@@ -109,5 +113,9 @@ def build_default_registry() -> SignalRegistry:
 
     # FT rate bench over signal (Session 336)
     registry.register(FTRateBenchOverSignal())
+
+    # Session 371 signals
+    registry.register(HomeUnderSignal())
+    registry.register(ScoringColdStreakOverSignal())
 
     return registry

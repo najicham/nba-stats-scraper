@@ -542,11 +542,24 @@ class SignalBestBetsExporter(BaseExporter):
         """
         table_ref = f'{PROJECT_ID}.nba_predictions.signal_best_bets_picks'
 
-        # Delete existing rows for this date to prevent duplicates on re-runs
+        # Delete existing rows for this date to prevent duplicates on re-runs.
+        # Session 371: Only delete picks for games that haven't started yet.
+        # Picks for started/finished games are preserved — they were valid when
+        # published and shouldn't be retroactively removed by re-exports with
+        # different filter settings.
         try:
             delete_query = f"""
             DELETE FROM `{table_ref}`
             WHERE game_date = @target_date
+              AND game_id NOT IN (
+                SELECT CONCAT(
+                  REPLACE(CAST(game_date AS STRING), '-', ''), '_',
+                  away_team_tricode, '_', home_team_tricode
+                )
+                FROM `{PROJECT_ID}.nba_raw.nbac_schedule`
+                WHERE game_date = @target_date
+                  AND game_status >= 2
+              )
             """
             job_config = bigquery.QueryJobConfig(
                 query_parameters=[

@@ -46,8 +46,11 @@ SIGNAL_ANGLE_MAP = {
     # volatile_under REMOVED — 33.3% HR on best bets (Session 326)
     # high_usage_under REMOVED — 40.0% HR on best bets (Session 326)
     # cold_snap REMOVED (Session 318)
+    'prop_line_drop_over': "Prop line dropped: market overreaction, OVER bounce-back — 71.6% HR",
     'book_disagreement': "Sportsbooks disagree on line: 93.0% edge 3+ HR (WATCH)",
     'ft_rate_bench_over': "Bench OVER + high FT rate: 72.5% HR historically (WATCH)",
+    'home_under': "Home UNDER pattern: 63.9% HR cross-season",
+    'scoring_cold_streak_over': "Cold streak bounce-back: 3+ games under line, OVER regression signal",
 }
 
 # Warning tag → warning angle
