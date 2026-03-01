@@ -98,15 +98,10 @@ def query_predictions_with_supplements(
       WHERE enabled = FALSE OR status IN ('blocked', 'disabled')
     ),
 
-    -- Session 378c: 2-day warm-up — new models can't enter best bets on day 1.
-    -- Models still generate predictions (for grading/shadow analysis), but can't
-    -- win per-player selection until they've had 2 days of sanity/grading evaluation.
-    warmup_models AS (
-      SELECT model_id
-      FROM `{PROJECT_ID}.nba_predictions.model_registry`
-      WHERE enabled = TRUE
-        AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, DAY) < 2
-    ),
+    -- Session 378c warmup REMOVED: created_at reflects registry insertion date,
+    -- not actual model deployment date. Re-registering models resets created_at,
+    -- blocking established models. The model HR weight system (Session 365) and
+    -- model sanity guard (Session 378c) provide sufficient protection for new models.
 
     model_hr AS (
       SELECT
@@ -149,7 +144,7 @@ def query_predictions_with_supplements(
         AND p.recommendation IN ('OVER', 'UNDER')
         AND p.line_source IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS')
         AND p.system_id NOT IN (SELECT model_id FROM disabled_models)
-        AND p.system_id NOT IN (SELECT model_id FROM warmup_models)
+        -- warmup_models filter removed (see comment above)
     ),
 
     -- Per-player model counts: how many models have edge 5+ for this player
@@ -187,17 +182,11 @@ def query_predictions_with_supplements(
     ),"""
     else:
         preds_cte = f"""
-    -- Session 378c: Registry cascade + warm-up for single-model path
+    -- Session 378c: Registry cascade for single-model path (warmup removed)
     WITH disabled_models AS (
       SELECT model_id
       FROM `{PROJECT_ID}.nba_predictions.model_registry`
       WHERE enabled = FALSE OR status IN ('blocked', 'disabled')
-    ),
-    warmup_models AS (
-      SELECT model_id
-      FROM `{PROJECT_ID}.nba_predictions.model_registry`
-      WHERE enabled = TRUE
-        AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), created_at, DAY) < 2
     ),
     preds AS (
       SELECT
@@ -218,7 +207,7 @@ def query_predictions_with_supplements(
         AND p.recommendation IN ('OVER', 'UNDER')
         AND p.line_source IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS')
         AND p.system_id NOT IN (SELECT model_id FROM disabled_models)
-        AND p.system_id NOT IN (SELECT model_id FROM warmup_models)
+        -- warmup_models filter removed (see comment above)
     ),"""
 
     query = f"""{preds_cte}
