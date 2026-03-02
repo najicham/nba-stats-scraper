@@ -31,6 +31,7 @@ lightgbm==4.6.0
 python-dateutil==2.8.2
 requests==2.31.0
 psutil==5.9.7  # Required for prometheus_metrics.py
+pyyaml>=6.0  # Required by shared/validation → scraper_retry_config
 
 # Testing (optional, for local testing)
 pytest==7.4.3

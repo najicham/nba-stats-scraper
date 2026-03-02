@@ -48,6 +48,7 @@ proto-plus==1.27.1
 protobuf==4.25.8
 psutil==5.9.7
 pyarrow==23.0.0
+PyYAML==6.0.2
 pyasn1==0.6.2
 pyasn1_modules==0.4.2
 pycparser==3.0

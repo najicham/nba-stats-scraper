@@ -90,7 +90,7 @@ PHASE4_MAX_STALENESS_HOURS = 6
 # V9/V10 models are unaffected (name-based extraction ignores extra features).
 # v2_54features (Session 230): Extended with 15 V12 features (39-53) for
 # scoring trends, usage, fatigue, streaks, structural changes.
-FEATURE_VERSION = 'v2_60features'
+FEATURE_VERSION = 'v2_54features'
 FEATURE_COUNT = 60
 
 FEATURE_NAMES = [
@@ -1618,11 +1618,16 @@ class MLFeatureStoreProcessor(
         )
 
         # Calculate quality score and build quality visibility fields
-        quality_score = self.quality_scorer.calculate_quality_score(feature_sources)
-        data_source = self.quality_scorer.determine_primary_source(feature_sources)
+        # Truncate to FEATURE_COUNT to exclude V17/V18 features (60-63)
+        # that don't have BQ schema columns yet — prevents quality cap from
+        # 'missing' sources on features beyond the production schema.
+        scored_sources = {k: v for k, v in feature_sources.items() if k < FEATURE_COUNT}
+        scored_features = features[:FEATURE_COUNT]
+        quality_score = self.quality_scorer.calculate_quality_score(scored_sources)
+        data_source = self.quality_scorer.determine_primary_source(scored_sources)
         quality_fields = self.quality_scorer.build_quality_visibility_fields(
-            feature_sources=feature_sources,
-            feature_values=features,
+            feature_sources=scored_sources,
+            feature_values=scored_features,
             feature_names=FEATURE_NAMES,
             quality_score=quality_score,
         )
@@ -1755,7 +1760,7 @@ class MLFeatureStoreProcessor(
         # enable proper NULLs (no fake defaults) and per-model gating.
         # Rule: source in (default, missing, fallback) → NULL, otherwise → actual value.
         # ============================================================
-        for i, val in enumerate(features):
+        for i, val in enumerate(features[:FEATURE_COUNT]):
             source = feature_sources.get(i, 'unknown')
             if source in ('default', 'missing', 'fallback'):
                 record[f'feature_{i}_value'] = None
