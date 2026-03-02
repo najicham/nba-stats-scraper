@@ -50,7 +50,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v382_legacy_block_ultra_fix'
+ALGORITHM_VERSION = 'v382c_starter_over_sc5'
 
 # Base signals that fire on nearly every edge 5+ pick. Picks with ONLY
 # these signals hit 57.1% (N=42) vs 77.8% for picks with 4+ signals.
@@ -168,6 +168,7 @@ class BestBetsAggregator:
             'under_star_away': 0,
             'med_usage_under': 0,
             'starter_v12_under': 0,
+            'starter_over_sc_floor': 0,
             'opponent_under_block': 0,
             'signal_density': 0,
             'legacy_block': 0,
@@ -420,6 +421,16 @@ class BestBetsAggregator:
                 filter_counts['sc3_edge_floor'] += 1
                 continue
 
+            # Starter OVER SC floor (Session 382c): Starter OVER collapsed 90% Jan → 33.3% Feb (3-6).
+            # Full season 63.2% (N=19). SC >= 5 preserves high-confidence picks while filtering
+            # marginal SC 3-4 ones that drove 6 of 21 losses in 30d.
+            # Role OVER (line < 15) and Starter UNDER are unaffected.
+            if (pred.get('recommendation') == 'OVER'
+                    and 15 <= line_val < 25
+                    and len(qualifying) < 5):
+                filter_counts['starter_over_sc_floor'] += 1
+                continue
+
             # Confidence floor: model-specific
             if self._min_confidence > 0:
                 confidence = pred.get('confidence_score') or 0
@@ -516,6 +527,8 @@ class BestBetsAggregator:
             logger.info(f"Medium teammate usage UNDER block: skipped {filter_counts['med_usage_under']} predictions")
         if filter_counts['starter_v12_under'] > 0:
             logger.info(f"Starter V12 UNDER block (15-20 line): skipped {filter_counts['starter_v12_under']} predictions")
+        if filter_counts['starter_over_sc_floor'] > 0:
+            logger.info(f"Starter OVER SC floor: skipped {filter_counts['starter_over_sc_floor']} OVER picks (line 15-25, SC < 5)")
         if filter_counts['sc3_edge_floor'] > 0:
             logger.info(f"SC=3 OVER edge floor: skipped {filter_counts['sc3_edge_floor']} SC=3 OVER picks with edge < 7.0")
         if filter_counts['line_dropped_over'] > 0:

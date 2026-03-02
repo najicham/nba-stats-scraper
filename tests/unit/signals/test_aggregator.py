@@ -6,6 +6,10 @@ Tests cover:
 2. Filter rejection counts for each filter
 3. Edge distribution tracking
 4. Empty predictions handling
+5. Starter OVER SC floor (Session 382c)
+
+Updated Session 382c: Fixed all tests for current filter stack (SC=3 OVER edge floor,
+OVER edge 5+ floor, V12 UNDER 7+ exemption, starter OVER SC floor).
 """
 
 import pytest
@@ -97,33 +101,32 @@ class TestAggregatorReturnType:
         assert picks == []
         assert summary['total_candidates'] == 0
         assert summary['passed_filters'] == 0
-        assert summary['rejected'] == {
-            'blacklist': 0,
-            'edge_floor': 0,
-            'under_edge_7plus': 0,
-            'familiar_matchup': 0,
-            'quality_floor': 0,
-            'bench_under': 0,
-            'line_jumped_under': 0,
-            'line_dropped_under': 0,
-            'neg_pm_streak': 0,
-            'signal_count': 0,
-            'confidence': 0,
-            'anti_pattern': 0,
-            'model_direction_affinity': 0,
-            'away_noveg': 0,
-            'star_under': 0,
-            'med_usage_under': 0,
-            'starter_v12_under': 0,
-            'signal_density': 0,
+        # Verify all expected filter keys exist
+        expected_keys = {
+            'blacklist', 'edge_floor', 'over_edge_floor', 'under_edge_7plus',
+            'familiar_matchup', 'quality_floor', 'bench_under',
+            'line_jumped_under', 'line_dropped_under', 'line_dropped_over',
+            'neg_pm_streak', 'signal_count', 'sc3_edge_floor',
+            'starter_over_sc_floor', 'opponent_depleted_under',
+            'high_book_std_under', 'confidence', 'anti_pattern',
+            'model_direction_affinity', 'away_noveg', 'star_under',
+            'under_star_away', 'med_usage_under', 'starter_v12_under',
+            'opponent_under_block', 'signal_density', 'legacy_block',
         }
+        assert set(summary['rejected'].keys()) == expected_keys
+        # All counts should be 0 for empty input
+        for key, val in summary['rejected'].items():
+            assert val == 0, f"Expected {key}=0, got {val}"
 
 
 class TestFilterTracking:
     """Test that individual filter rejections are tracked correctly."""
 
-    def _make_signal_results_for(self, pred, n_qualifying=3):
-        """Build signal results dict with enough qualifying signals."""
+    def _make_signal_results_for(self, pred, n_qualifying=5):
+        """Build signal results dict with enough qualifying signals.
+
+        Default 5 signals to pass SC=3 OVER edge floor and starter OVER SC floor.
+        """
         key = f"{pred['player_lookup']}::{pred['game_id']}"
         signals = [_make_signal_result(f'signal_{i}') for i in range(n_qualifying)]
         return {key: signals}
@@ -142,13 +145,17 @@ class TestFilterTracking:
         assert summary['rejected']['edge_floor'] == 1
 
     def test_under_edge_7plus_tracked(self):
-        pred = _make_prediction(edge=8.0, recommendation='UNDER', line_value=20.0)
+        """V9 UNDER edge 7+ is blocked (V12 is exempt since Session 367)."""
+        pred = _make_prediction(
+            edge=8.0, recommendation='UNDER', line_value=20.0,
+            source_model_family='v9_mae',
+        )
         agg = BestBetsAggregator()
         _, summary = agg.aggregate([pred], {})
         assert summary['rejected']['under_edge_7plus'] == 1
 
     def test_under_edge_7plus_v12_allowed(self):
-        """V12 models are exempt from the UNDER edge 7+ block (Session 326)."""
+        """V12 models are exempt from the UNDER edge 7+ block (Session 367)."""
         pred = _make_prediction(
             edge=8.0, recommendation='UNDER', line_value=27.5,
             source_model_family='v12_mae',
@@ -214,7 +221,7 @@ class TestFilterTracking:
     def test_passed_filters_correct(self):
         """One prediction passes all filters including signal count."""
         pred = _make_prediction()
-        signals = self._make_signal_results_for(pred)
+        signals = self._make_signal_results_for(pred, n_qualifying=5)
         agg = BestBetsAggregator()
         picks, summary = agg.aggregate([pred], signals)
         assert summary['passed_filters'] == 1
@@ -227,7 +234,8 @@ class TestMultipleFilters:
     def test_mixed_rejections(self):
         preds = [
             _make_prediction(player_lookup='p1', edge=2.0),      # edge_floor
-            _make_prediction(player_lookup='p2', edge=8.0, recommendation='UNDER'),  # under_edge_7plus
+            _make_prediction(player_lookup='p2', edge=8.0, recommendation='UNDER',
+                             source_model_family='v9_mae'),  # under_edge_7plus (V9)
             _make_prediction(player_lookup='p3', feature_quality_score=0),  # quality_floor
         ]
         agg = BestBetsAggregator()
@@ -246,7 +254,7 @@ class TestMultipleFilters:
 class TestModelDirectionAffinityFilter:
     """Test that model_direction_blocks parameter is respected in aggregator."""
 
-    def _make_signal_results_for(self, pred, n_qualifying=3):
+    def _make_signal_results_for(self, pred, n_qualifying=5):
         key = f"{pred['player_lookup']}::{pred['game_id']}"
         signals = [_make_signal_result(f'signal_{i}') for i in range(n_qualifying)]
         return {key: signals}
@@ -339,7 +347,7 @@ class TestAwayNovegFilter:
     v12_noveg models hit 57-59% HOME but only 43-44% AWAY — +15pp gap.
     """
 
-    def _make_signal_results_for(self, pred, n_qualifying=3):
+    def _make_signal_results_for(self, pred, n_qualifying=5):
         key = f"{pred['player_lookup']}::{pred['game_id']}"
         signals = [_make_signal_result(f'signal_{i}') for i in range(n_qualifying)]
         return {key: signals}
@@ -441,36 +449,41 @@ class TestSignalDensityFilter:
     Picks with at least one additional signal hit 77.8% (N=63).
     """
 
-    def _make_base_only_signals(self, pred):
-        """Build signal results with only the 3 base signals."""
+    def _make_base_only_signals(self, pred, n_base=3):
+        """Build signal results with only base signals."""
         key = f"{pred['player_lookup']}::{pred['game_id']}"
-        return {key: [
-            _make_signal_result('model_health'),
-            _make_signal_result('high_edge'),
-            _make_signal_result('edge_spread_optimal'),
-        ]}
+        base_tags = ['model_health', 'high_edge', 'edge_spread_optimal']
+        return {key: [_make_signal_result(t) for t in base_tags[:n_base]]}
 
-    def _make_rich_signals(self, pred):
-        """Build signal results with base + additional signal."""
+    def _make_rich_signals(self, pred, n_extra=2):
+        """Build signal results with base + additional signals.
+
+        Default 5 total (3 base + 2 extra) to pass SC=3 OVER and starter OVER SC floors.
+        """
         key = f"{pred['player_lookup']}::{pred['game_id']}"
-        return {key: [
+        signals = [
             _make_signal_result('model_health'),
             _make_signal_result('high_edge'),
             _make_signal_result('edge_spread_optimal'),
-            _make_signal_result('rest_advantage_2d'),
-        ]}
+        ]
+        for i in range(n_extra):
+            signals.append(_make_signal_result(f'extra_signal_{i}'))
+        return {key: signals}
 
     def test_base_only_signals_blocked(self):
-        """Pick with only model_health + high_edge + edge_spread_optimal is blocked."""
-        pred = _make_prediction()
+        """Pick with only model_health + high_edge + edge_spread_optimal is blocked.
+
+        Uses UNDER to avoid SC=3 OVER edge floor (which would catch it first).
+        """
+        pred = _make_prediction(recommendation='UNDER', line_value=26.0)
         signals = self._make_base_only_signals(pred)
         agg = BestBetsAggregator()
         picks, summary = agg.aggregate([pred], signals)
         assert len(picks) == 0
         assert summary['rejected']['signal_density'] == 1
 
-    def test_base_plus_one_signal_passes(self):
-        """Pick with base signals + rest_advantage_2d passes."""
+    def test_base_plus_extra_signals_passes(self):
+        """Pick with base signals + 2 extra signals passes (5 total)."""
         pred = _make_prediction()
         signals = self._make_rich_signals(pred)
         agg = BestBetsAggregator()
@@ -478,8 +491,8 @@ class TestSignalDensityFilter:
         assert len(picks) == 1
         assert summary['rejected']['signal_density'] == 0
 
-    def test_two_base_signals_blocked(self):
-        """Pick with subset of base signals (2 of 3) is also blocked."""
+    def test_below_min_signal_count_blocked(self):
+        """Pick with only 2 signals is blocked by signal_count (MIN_SIGNAL_COUNT=3)."""
         pred = _make_prediction()
         key = f"{pred['player_lookup']}::{pred['game_id']}"
         signals = {key: [
@@ -489,7 +502,7 @@ class TestSignalDensityFilter:
         agg = BestBetsAggregator()
         picks, summary = agg.aggregate([pred], signals)
         assert len(picks) == 0
-        assert summary['rejected']['signal_density'] == 1
+        assert summary['rejected']['signal_count'] == 1
 
     def test_non_base_signals_pass(self):
         """Pick with non-base signals (e.g. combo signals) passes."""
@@ -499,6 +512,8 @@ class TestSignalDensityFilter:
             _make_signal_result('model_health'),
             _make_signal_result('combo_he_ms'),
             _make_signal_result('combo_3way'),
+            _make_signal_result('rest_advantage_2d'),
+            _make_signal_result('home_under'),
         ]}
         agg = BestBetsAggregator()
         picks, summary = agg.aggregate([pred], signals)
@@ -512,7 +527,7 @@ class TestSignalDensityFilter:
         assert 'signal_density' in summary['rejected']
 
     def test_base_plus_book_disagreement_passes(self):
-        """Pick with base + book_disagreement passes (100% HR combo)."""
+        """Pick with base + book_disagreement + extra passes (5 total)."""
         pred = _make_prediction()
         key = f"{pred['player_lookup']}::{pred['game_id']}"
         signals = {key: [
@@ -520,6 +535,7 @@ class TestSignalDensityFilter:
             _make_signal_result('high_edge'),
             _make_signal_result('edge_spread_optimal'),
             _make_signal_result('book_disagreement'),
+            _make_signal_result('rest_advantage_2d'),
         ]}
         agg = BestBetsAggregator()
         picks, summary = agg.aggregate([pred], signals)
@@ -538,7 +554,7 @@ class TestMedTeammateUsageUnderBlock:
     shows 32.0% HR (N=25) when moderate usage available + UNDER.
     """
 
-    def _make_signal_results_for(self, pred, n_qualifying=3):
+    def _make_signal_results_for(self, pred, n_qualifying=5):
         key = f"{pred['player_lookup']}::{pred['game_id']}"
         signals = [_make_signal_result(f'signal_{i}') for i in range(n_qualifying)]
         return {key: signals}
@@ -602,7 +618,7 @@ class TestStarterV12UnderBlock:
     V12 UNDER is specifically bad for 15-20 line range: 46.7% HR (N=30).
     """
 
-    def _make_signal_results_for(self, pred, n_qualifying=3):
+    def _make_signal_results_for(self, pred, n_qualifying=5):
         key = f"{pred['player_lookup']}::{pred['game_id']}"
         signals = [_make_signal_result(f'signal_{i}') for i in range(n_qualifying)]
         return {key: signals}
@@ -634,13 +650,16 @@ class TestStarterV12UnderBlock:
         assert summary['rejected']['starter_v12_under'] == 0
 
     def test_starter_v12_over_allowed(self):
-        """V12 OVER + season_avg=17 passes (only UNDER is blocked)."""
+        """V12 OVER + season_avg=17 passes (only UNDER is blocked).
+
+        Uses 5 signals to pass SC=3 OVER floor and starter OVER SC floor.
+        """
         pred = _make_prediction(
             recommendation='OVER',
             points_avg_season=17,
             source_model_family='v12_mae',
         )
-        signals = self._make_signal_results_for(pred)
+        signals = self._make_signal_results_for(pred, n_qualifying=5)
         agg = BestBetsAggregator()
         picks, summary = agg.aggregate([pred], signals)
         assert len(picks) == 1
@@ -669,16 +688,19 @@ class TestPremiumSignalEdgeFloorBypass:
     """Test that combo_3way and combo_he_ms bypass the edge floor (Session 355).
 
     These signals have 95%+ HR, so filtering them by edge floor wastes profit.
+    Uses UNDER to avoid OVER edge 5+ floor (Session 378).
     """
 
     def test_premium_signal_bypasses_edge_floor(self):
-        """Pick with edge=2.0 + combo_3way signal bypasses edge floor."""
-        pred = _make_prediction(edge=2.0)
+        """Pick with edge=2.0 UNDER + combo_3way signal bypasses edge floor."""
+        pred = _make_prediction(edge=2.0, recommendation='UNDER', line_value=26.0)
         key = f"{pred['player_lookup']}::{pred['game_id']}"
         signals = {key: [
             _make_signal_result('model_health'),
             _make_signal_result('combo_3way'),
             _make_signal_result('high_edge'),
+            _make_signal_result('rest_advantage_2d'),
+            _make_signal_result('home_under'),
         ]}
         agg = BestBetsAggregator()
         picks, summary = agg.aggregate([pred], signals)
@@ -686,13 +708,15 @@ class TestPremiumSignalEdgeFloorBypass:
         assert summary['rejected']['edge_floor'] == 0
 
     def test_premium_combo_he_ms_bypasses_edge_floor(self):
-        """Pick with edge=2.0 + combo_he_ms signal bypasses edge floor."""
-        pred = _make_prediction(edge=2.0)
+        """Pick with edge=2.0 UNDER + combo_he_ms signal bypasses edge floor."""
+        pred = _make_prediction(edge=2.0, recommendation='UNDER', line_value=26.0)
         key = f"{pred['player_lookup']}::{pred['game_id']}"
         signals = {key: [
             _make_signal_result('model_health'),
             _make_signal_result('combo_he_ms'),
             _make_signal_result('edge_spread_optimal'),
+            _make_signal_result('rest_advantage_2d'),
+            _make_signal_result('home_under'),
         ]}
         agg = BestBetsAggregator()
         picks, summary = agg.aggregate([pred], signals)
@@ -712,3 +736,95 @@ class TestPremiumSignalEdgeFloorBypass:
         picks, summary = agg.aggregate([pred], signals)
         assert len(picks) == 0
         assert summary['rejected']['edge_floor'] == 1
+
+
+# ============================================================================
+# STARTER OVER SC FLOOR TESTS (Session 382c)
+# ============================================================================
+
+class TestStarterOverScFloor:
+    """Test that Starter OVER (line 15-25) requires SC >= 5 (Session 382c).
+
+    Starter OVER collapsed from 90% Jan to 33.3% Feb (3-6). Full season 63.2% (N=19).
+    SC >= 5 preserves high-confidence picks while filtering marginal SC 3-4 ones.
+    """
+
+    def _make_signal_results_for(self, pred, n_qualifying=5):
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        signals = [_make_signal_result(f'signal_{i}') for i in range(n_qualifying)]
+        return {key: signals}
+
+    def test_starter_over_sc3_blocked(self):
+        """OVER + line=18 + 3 signals → blocked by starter OVER SC floor.
+
+        SC=3 OVER edge<7 filter may also fire first, but the pick is rejected.
+        """
+        pred = _make_prediction(
+            recommendation='OVER',
+            line_value=18.0,
+            edge=8.0,  # edge >= 7 to avoid SC=3 OVER edge floor
+        )
+        signals = self._make_signal_results_for(pred, n_qualifying=4)
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 0
+        assert summary['rejected']['starter_over_sc_floor'] == 1
+
+    def test_starter_over_sc5_passes(self):
+        """OVER + line=18 + 5 signals → passes starter OVER SC floor."""
+        pred = _make_prediction(
+            recommendation='OVER',
+            line_value=18.0,
+        )
+        signals = self._make_signal_results_for(pred, n_qualifying=5)
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 1
+        assert summary['rejected']['starter_over_sc_floor'] == 0
+
+    def test_role_over_sc3_passes(self):
+        """OVER + line=12 (role tier, not starter) + 4 signals → passes.
+
+        Line < 15 is outside starter range, so starter_over_sc_floor does not apply.
+        """
+        pred = _make_prediction(
+            recommendation='OVER',
+            line_value=12.0,
+            edge=8.0,  # edge >= 7 to avoid SC=3 OVER edge floor
+        )
+        signals = self._make_signal_results_for(pred, n_qualifying=4)
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 1
+        assert summary['rejected']['starter_over_sc_floor'] == 0
+
+    def test_starter_under_sc3_passes(self):
+        """UNDER + line=18 + 4 signals → passes (only OVER restricted)."""
+        pred = _make_prediction(
+            recommendation='UNDER',
+            line_value=18.0,
+        )
+        signals = self._make_signal_results_for(pred, n_qualifying=4)
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 1
+        assert summary['rejected']['starter_over_sc_floor'] == 0
+
+    def test_star_over_sc4_passes(self):
+        """OVER + line=26 (star tier) + 4 signals → passes (line >= 25, not starter)."""
+        pred = _make_prediction(
+            recommendation='OVER',
+            line_value=26.0,
+            edge=8.0,
+        )
+        signals = self._make_signal_results_for(pred, n_qualifying=4)
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 1
+        assert summary['rejected']['starter_over_sc_floor'] == 0
+
+    def test_filter_counter_in_summary(self):
+        """starter_over_sc_floor key always present in filter summary."""
+        agg = BestBetsAggregator()
+        _, summary = agg.aggregate([], {})
+        assert 'starter_over_sc_floor' in summary['rejected']

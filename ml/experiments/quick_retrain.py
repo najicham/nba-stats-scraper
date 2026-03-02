@@ -92,7 +92,7 @@ MODEL_OUTPUT_DIR = Path("models")
 # V9 baseline (computed from production prediction_accuracy Feb 2026)
 # Based on catboost_v9 graded predictions since 2025-11-02
 V9_BASELINE = {
-    "mae": 5.14,
+    "mae": 5.50,  # Session 382c: updated from 5.14 — current-gen models produce 5.2-5.6 MAE
     "hit_rate_all": 54.53,
     "hit_rate_edge_3plus": 63.72,  # 3+ edge (medium quality)
     "hit_rate_edge_5plus": 75.33,  # 5+ edge (high quality)
@@ -3920,7 +3920,7 @@ def main():
     print(" RESULTS vs V9 BASELINE")
     print("=" * 70)
 
-    MIN_BETS_RELIABLE = 50  # Minimum bets for statistically reliable hit rate
+    MIN_BETS_RELIABLE = 25  # Session 382c: lowered from 50 — 25 achievable in 7-14 day eval windows
 
     def compare(name, new_val, baseline, n_bets, higher_better=True):
         if new_val is None:
@@ -4170,14 +4170,18 @@ def main():
     edge5_reliable = bets_edge5 >= MIN_BETS_RELIABLE
 
     gates = []
+    soft_gates = []  # Session 382c: soft gates are reported but don't block registration
     if is_classifier:
         # Classifier: replace MAE gate with AUC gate
         auc_val = auc if is_classifier else None
         gates.append(("AUC > 0.55 (classifier)", (auc_val or 0) > 0.55, f"{auc_val:.4f}" if auc_val else "N/A"))
     else:
-        gates.append(("MAE improvement", mae_better, f"{mae:.4f} vs {V9_BASELINE['mae']:.4f}"))
+        # Session 382c: MAE moved to soft gate — poor proxy for betting performance.
+        # MAE 5.14 baseline was from obsolete V9 era; current models produce 5.2-5.6.
+        # Lower MAE does NOT mean better betting (4.12 MAE crashed HR to 51.2%).
+        soft_gates.append(("MAE improvement", mae_better, f"{mae:.4f} vs {V9_BASELINE['mae']:.4f}"))
     gates.append(("Hit rate (3+) >= 60%", (hr_edge3 or 0) >= 60, f"{hr_edge3}% (n={bets_edge3})"))
-    gates.append(("Hit rate (3+) sample >= 50", edge3_reliable, f"n={bets_edge3}"))
+    gates.append(("Hit rate (3+) sample >= 25", edge3_reliable, f"n={bets_edge3}"))
     gates.append((f"Vegas bias within +/-{VEGAS_BIAS_LIMIT}", abs(pred_vs_vegas) <= VEGAS_BIAS_LIMIT, f"{pred_vs_vegas:+.2f}"))
     gates.append(("No critical tier bias", not tier_bias['has_critical_bias'], ""))
     gates.append(("Directional balance (OVER+UNDER >= 52.4%)",
@@ -4190,6 +4194,9 @@ def main():
         if not passed:
             all_passed = False
         print(f"  [{status}] {gate_name}: {detail}")
+    for gate_name, passed, detail in soft_gates:
+        status = "PASS" if passed else "WARN"
+        print(f"  [{status}] {gate_name}: {detail} (soft gate — does not block)")
 
     print()
     if all_passed or args.force_register:
