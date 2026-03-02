@@ -212,7 +212,9 @@ class TonightPlayerExporter(BaseExporter):
         FROM `nba-props-platform.nba_predictions.player_prop_predictions`
         WHERE player_lookup = @player_lookup
           AND game_date = @target_date
-          AND system_id = 'catboost_v12'
+          AND is_active = TRUE
+        ORDER BY created_at DESC
+        LIMIT 1
         """
         params = [
             bigquery.ScalarQueryParameter('player_lookup', 'STRING', player_lookup),
