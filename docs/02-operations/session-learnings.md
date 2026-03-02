@@ -1155,3 +1155,38 @@ WHERE game_date = '2026-02-02'  -- Partition filter
 **When to Use**: New features, major refactors, data pipeline changes
 
 **Cost**: ~$2-5 per architectural review (worth it to avoid rework)
+
+---
+
+## Session 386: Poisoned Published Picks Prevention System
+
+**Incident**: XGBoost model (`xgb_v12_noveg_train1221_0208`) with version mismatch produced predictions ~8.6pts too low (all UNDER, edges -8 to -10). These got locked into `best_bets_published_picks` via pick locking before the model was deactivated. After deactivation, the 8 poisoned picks persisted on the site as ungraded because:
+1. Signal pipeline correctly dropped them from `signal_best_bets_picks`
+2. But pick locking preserved them in `best_bets_published_picks`
+3. The all.json exporter only JOINed grading data for picks IN `signal_best_bets_picks`
+4. Published-only picks carried no grading columns and no `system_id`
+
+**Root cause**: Pick locking (Session 340) was designed to prevent legitimate picks from disappearing mid-day, but had no mechanism to detect when locked picks came from a now-disabled model. No `system_id` was stored, so the source model was invisible.
+
+**Fixes implemented**:
+1. **Immediate cleanup**: Deleted 8 poisoned picks from `best_bets_published_picks` for 2026-03-01, re-exported all.json
+2. **system_id + signal_status tracking**: Published picks now store which model sourced them and whether they're `active`, `dropped`, or `model_disabled`
+3. **Published-only grading**: New `_query_grading_for_published_picks()` method grades locked-but-dropped picks using prediction_accuracy (with player_game_summary fallback)
+4. **Disabled model detection**: `_merge_and_lock_picks()` checks model_registry for disabled models and marks their picks as `model_disabled`
+5. **Signal exporter defense-in-depth**: `signal_best_bets_exporter.py` filters out picks from disabled models before writing to `signal_best_bets_picks`
+6. **Pick event logging**: New `best_bets_pick_events` BQ table tracks why picks were dropped (event_type: `dropped_from_signal`, `model_disabled`, `manually_removed`)
+7. **Deactivation CLI**: `bin/deactivate_model.py` — single command to disable registry + deactivate predictions + remove signal picks + audit trail + optional re-export
+
+**Key files**:
+- `data_processors/publishing/best_bets_all_exporter.py` — grading, disabled model check, pick events
+- `data_processors/publishing/signal_best_bets_exporter.py` — disabled model filter
+- `bin/deactivate_model.py` — deactivation CLI
+- `schemas/bigquery/nba_predictions/best_bets_pick_events.sql` — event table
+
+**Prevention layers (4-deep)**:
+1. **Model sanity guard** (aggregator, Session 378c) — blocks >95% same-direction models
+2. **Signal exporter disabled model filter** — prevents disabled model picks from entering signal_best_bets_picks
+3. **All exporter disabled model detection** — marks locked picks from disabled models as `model_disabled`
+4. **Published-only grading** — grades dropped picks so they show results instead of appearing as phantom ungraded picks
+
+**Learning**: Pick locking is a necessary safeguard but creates a trust boundary. Locked picks must carry full lineage (model source, signal status) so downstream exporters can validate them. Defense-in-depth across 4 layers prevents any single system failure from poisoning published picks.

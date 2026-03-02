@@ -176,11 +176,15 @@ nba-stats-scraper/
 
 ### Cross-Model Monitoring
 
-4 layers prevent shadow models from silently failing:
+6 layers prevent shadow models from silently failing:
 1. **Model sanity guard** (aggregator) — blocks models with >95% same-direction predictions (Session 378c)
-2. `reconcile-yesterday` Phase 9 — next-day gap detection
-3. `validate-daily` Phase 0.486 — same-day early warning
-4. Pipeline canary auto-heal — automated every 30 min
+2. **Signal exporter disabled model filter** — filters picks from disabled models before writing to `signal_best_bets_picks` (Session 386)
+3. **Published picks disabled model detection** — marks locked picks from disabled models as `model_disabled` in `best_bets_published_picks` (Session 386)
+4. `reconcile-yesterday` Phase 9 — next-day gap detection
+5. `validate-daily` Phase 0.486 — same-day early warning
+6. Pipeline canary auto-heal — automated every 30 min
+
+**Deactivation CLI:** `python bin/deactivate_model.py MODEL_ID [--dry-run] [--re-export]` — cascades disable through registry, predictions, signal picks, and audit trail (Session 386).
 
 ## Breakout Classifier [Keyword: BREAKOUT]
 
@@ -288,7 +292,7 @@ WHERE game_date >= CURRENT_DATE() - 3 GROUP BY 1 ORDER BY 1 DESC;
 | **Feature 41 spread_magnitude ALL ZEROS** | Fixed Session 374b: Spread query took median of BOTH sides (+4/-4 = 0). Filter `outcome_point <= 0` for spreads. Requires feature store backfill + retrain. |
 | **prop_line_drop_over conceptually backward** | DISABLED Session 374b: Line drops are BEARISH for OVER (39.1% Feb HR). Replaced by `line_rising_over` (96.6% HR). |
 | **XGBoost version mismatch** | Session 378c: Model trained with xgboost==3.1.2, production had 2.0.2. Predictions ~8.6pts too low, ALL UNDER with inflated edges. **Fix**: Pin identical versions in training env and production requirements.txt. Version check added to quick_retrain.py. Model sanity guard added to aggregator. |
-| **Disabled model still in best bets** | Disabling a model in registry (enabled=FALSE) does NOT deactivate existing predictions. Must also `UPDATE player_prop_predictions SET is_active=FALSE` for the model's predictions. |
+| **Disabled model still in best bets** | Use `python bin/deactivate_model.py MODEL_ID` — cascades: disable registry + deactivate predictions + remove signal picks + audit. Session 386 also added defense-in-depth: signal exporter filters disabled models, all exporter marks locked picks as `model_disabled`, published-only picks get graded. |
 | **Model sanity guard** | Session 378c: aggregator.py now blocks models with >95% same-direction predictions on 20+ preds. Prevents miscalibrated model from dominating via inflated edges. |
 
 **Full troubleshooting:** `docs/02-operations/session-learnings.md`
