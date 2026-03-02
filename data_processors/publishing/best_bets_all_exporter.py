@@ -96,13 +96,57 @@ class BestBetsAllExporter(BaseExporter):
         published_picks = self._query_published_picks(target_date)
         manual_picks = self._query_manual_picks(target_date)
         started_game_ids = self._query_started_games(target_date)
+        disabled_models = self._query_disabled_models()
         today_picks, merge_stats = self._merge_and_lock_picks(
             today_signal_picks, published_picks, manual_picks,
             started_game_ids=started_game_ids,
+            disabled_models=disabled_models,
         )
+
+        # ── Grade published-only picks (Session 386) ─────────────────────
+        # Locked-but-dropped picks aren't in signal_best_bets_picks, so
+        # _query_all_picks() can't JOIN grading for them. Grade them here.
+        ungraded_lookups = [
+            p.get('player_lookup')
+            for p in today_picks
+            if not p.get('_in_signal')
+            and p.get('prediction_correct') is None
+            and p.get('player_lookup')
+        ]
+        if ungraded_lookups:
+            grading_data = self._query_grading_for_published_picks(
+                target_date, ungraded_lookups
+            )
+            for p in today_picks:
+                key = p.get('player_lookup')
+                if key in grading_data:
+                    gd = grading_data[key]
+                    actual = gd.get('actual_points')
+                    p['actual_points'] = actual
+                    p['is_voided'] = gd.get('is_voided', False)
+                    if gd.get('void_reason'):
+                        p['void_reason'] = gd['void_reason']
+                    # Use pre-computed if available, else derive from actual
+                    if gd.get('prediction_correct') is not None:
+                        p['prediction_correct'] = gd['prediction_correct']
+                    elif actual is not None and p.get('line_value') is not None:
+                        line = float(p['line_value'])
+                        if actual == line:
+                            p['prediction_correct'] = None  # push
+                        elif p.get('recommendation') == 'OVER':
+                            p['prediction_correct'] = actual > line
+                        elif p.get('recommendation') == 'UNDER':
+                            p['prediction_correct'] = actual < line
+            graded_count = sum(1 for k in ungraded_lookups if k in grading_data)
+            if graded_count:
+                logger.info(
+                    f"Graded {graded_count}/{len(ungraded_lookups)} "
+                    f"published-only picks for {target_date}"
+                )
 
         # Persist newly published picks + audit trail
         self._write_published_picks(target_date, today_picks)
+        self._write_pick_events(target_date, today_picks)
         self._write_export_audit(
             target_date, today_picks, merge_stats,
             trigger_source=trigger_source,
@@ -195,6 +239,7 @@ class BestBetsAllExporter(BaseExporter):
           b.rank,
           b.pick_angles,
           b.ultra_tier,
+          b.system_id,
           COALESCE(pa.prediction_correct, b.prediction_correct) AS prediction_correct,
           COALESCE(pa.actual_points, b.actual_points) AS actual_points,
           COALESCE(pa.is_voided, FALSE) AS is_voided,
@@ -333,6 +378,102 @@ class BestBetsAllExporter(BaseExporter):
         except Exception as e:
             logger.warning(f"Started games lookup failed (non-fatal): {e}")
             return set()
+
+    def _query_grading_for_published_picks(
+        self, target_date: str, player_lookups: List[str]
+    ) -> Dict[str, Dict]:
+        """Grade published-only picks that aren't in signal_best_bets_picks.
+
+        Two-pass approach:
+        1. Try prediction_accuracy (best match by player_lookup + game_date)
+        2. Fallback to player_game_summary for any remaining ungraded
+
+        Returns:
+            Dict mapping player_lookup → {actual_points, prediction_correct, is_voided, void_reason}
+        """
+        if not player_lookups:
+            return {}
+
+        results = {}
+
+        # Pass 1: prediction_accuracy (any system_id for this player+date)
+        placeholders = ', '.join(f'@p{i}' for i in range(len(player_lookups)))
+        query = f"""
+        SELECT
+          player_lookup,
+          actual_points,
+          prediction_correct,
+          is_voided,
+          void_reason
+        FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy`
+        WHERE game_date = @target_date
+          AND player_lookup IN ({placeholders})
+        QUALIFY ROW_NUMBER() OVER (
+          PARTITION BY player_lookup ORDER BY graded_at DESC
+        ) = 1
+        """
+
+        params = [
+            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+        ] + [
+            bigquery.ScalarQueryParameter(f'p{i}', 'STRING', pl)
+            for i, pl in enumerate(player_lookups)
+        ]
+
+        try:
+            rows = self.bq_client.query(
+                query,
+                job_config=bigquery.QueryJobConfig(query_parameters=params),
+            ).result(timeout=30)
+            for row in rows:
+                results[row.player_lookup] = {
+                    'actual_points': row.actual_points,
+                    'prediction_correct': row.prediction_correct,
+                    'is_voided': row.is_voided or False,
+                    'void_reason': row.void_reason,
+                }
+        except Exception as e:
+            logger.warning(f"Grading query (prediction_accuracy) failed: {e}")
+
+        # Pass 2: player_game_summary fallback for any still-ungraded
+        remaining = [pl for pl in player_lookups if pl not in results]
+        if not remaining:
+            return results
+
+        placeholders2 = ', '.join(f'@r{i}' for i in range(len(remaining)))
+        fallback_query = f"""
+        SELECT
+          pgs.player_lookup,
+          pgs.points AS actual_points
+        FROM `{PROJECT_ID}.nba_analytics.player_game_summary` pgs
+        WHERE pgs.game_date = @target_date
+          AND pgs.player_lookup IN ({placeholders2})
+          AND pgs.points IS NOT NULL
+        """
+
+        params2 = [
+            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+        ] + [
+            bigquery.ScalarQueryParameter(f'r{i}', 'STRING', pl)
+            for i, pl in enumerate(remaining)
+        ]
+
+        try:
+            rows = self.bq_client.query(
+                fallback_query,
+                job_config=bigquery.QueryJobConfig(query_parameters=params2),
+            ).result(timeout=30)
+            for row in rows:
+                results[row.player_lookup] = {
+                    'actual_points': row.actual_points,
+                    'prediction_correct': None,  # computed by caller from line+direction
+                    'is_voided': False,
+                    'void_reason': None,
+                }
+        except Exception as e:
+            logger.warning(f"Grading fallback (player_game_summary) failed: {e}")
+
+        return results
 
     def _build_weeks(self, all_picks: List[Dict]) -> List[Dict]:
         """Group all picks into weeks → days (most recent first)."""
@@ -661,6 +802,7 @@ class BestBetsAllExporter(BaseExporter):
           player_name, team_abbr, opponent_team_abbr,
           recommendation, line_value, edge, rank,
           pick_angles, ultra_tier, source,
+          system_id, signal_status,
           first_published_at, last_seen_in_signal
         FROM `nba-props-platform.nba_predictions.best_bets_published_picks`
         WHERE game_date = @target_date
@@ -700,12 +842,30 @@ class BestBetsAllExporter(BaseExporter):
         """Normalize ultra_tier from BOOLEAN or STRING to Python bool."""
         return val is True or val == 'true'
 
+    def _query_disabled_models(self) -> set:
+        """Return set of model_ids that are disabled/blocked in model_registry."""
+        query = f"""
+        SELECT model_id
+        FROM `{PROJECT_ID}.nba_predictions.model_registry`
+        WHERE enabled = FALSE OR status = 'blocked'
+        """
+        try:
+            rows = self.bq_client.query(query).result(timeout=15)
+            disabled = {row.model_id for row in rows}
+            if disabled:
+                logger.info(f"Found {len(disabled)} disabled models in registry")
+            return disabled
+        except Exception as e:
+            logger.warning(f"Disabled model query failed (non-fatal): {e}")
+            return set()
+
     def _merge_and_lock_picks(
         self,
         signal_picks: List[Dict],
         published_picks: List[Dict],
         manual_picks: List[Dict],
         started_game_ids: Optional[set] = None,
+        disabled_models: Optional[set] = None,
     ) -> Tuple[List[Dict], Dict[str, int]]:
         """Merge signal, published (locked), and manual picks for today.
 
@@ -715,6 +875,7 @@ class BestBetsAllExporter(BaseExporter):
         3. Add signal picks not yet published (new picks)
         4. Add manual picks not already present
         5. Re-rank: active signal picks first, then locked-but-dropped, then manual
+        6. Mark picks from disabled models (Session 386)
 
         Ultra gate: ultra_tier cannot be added to a pick whose game has
         already started (game_status >= 2). Blocked changes are logged.
@@ -724,6 +885,7 @@ class BestBetsAllExporter(BaseExporter):
         """
         now = datetime.now(timezone.utc)
         started = started_game_ids or set()
+        disabled = disabled_models or set()
 
         # Index signal picks by player_lookup for fast lookup
         signal_by_key = {}
@@ -769,6 +931,7 @@ class BestBetsAllExporter(BaseExporter):
                 pick['actual_points'] = sig.get('actual_points')
                 pick['is_voided'] = sig.get('is_voided')
                 pick['void_reason'] = sig.get('void_reason')
+                pick['system_id'] = sig.get('system_id') or pick.get('system_id')
                 # Ultra gate: only update ultra_tier if game hasn't started
                 game_id = pick.get('game_id') or sig.get('game_id', '')
                 sig_ultra = self._is_ultra(sig.get('ultra_tier'))
@@ -791,6 +954,17 @@ class BestBetsAllExporter(BaseExporter):
                 # Pick dropped from signal — keep it locked
                 pick['_in_signal'] = False
                 pick['_last_seen_in_signal'] = pub.get('last_seen_in_signal')
+                # Check if source model is disabled (Session 386)
+                pick_model = pick.get('system_id') or pub.get('system_id')
+                if pick_model and pick_model in disabled:
+                    pick['_signal_status'] = 'model_disabled'
+                    pick['_drop_reason'] = f'model_disabled:{pick_model}'
+                    logger.warning(
+                        f"Published pick from disabled model: {key} "
+                        f"model={pick_model}"
+                    )
+                    stats.setdefault('model_disabled', 0)
+                    stats['model_disabled'] += 1
                 stats['locked_picks'] += 1
                 stats['dropped_from_signal'] += 1
             # Manual picks in manual_by_key always get 'manual' source,
@@ -904,6 +1078,14 @@ class BestBetsAllExporter(BaseExporter):
         now = datetime.now(timezone.utc)
         rows = []
         for p in merged_picks:
+            # Determine signal_status from merge state
+            if p.get('_in_signal'):
+                signal_status = 'active'
+            elif p.get('_signal_status') == 'model_disabled':
+                signal_status = 'model_disabled'
+            else:
+                signal_status = 'dropped'
+
             rows.append({
                 'player_lookup': p.get('player_lookup') or '',
                 'game_id': p.get('game_id') or '',
@@ -918,6 +1100,8 @@ class BestBetsAllExporter(BaseExporter):
                 'pick_angles': list(p.get('pick_angles') or []),
                 'ultra_tier': p.get('ultra_tier'),
                 'source': p.get('_source', 'algorithm'),
+                'system_id': p.get('system_id') or p.get('_system_id'),
+                'signal_status': signal_status,
                 'first_published_at': self._to_iso(
                     p.get('_first_published_at')
                     or p.get('first_published_at')
@@ -954,6 +1138,8 @@ class BestBetsAllExporter(BaseExporter):
                     bigquery.SchemaField('pick_angles', 'STRING', mode='REPEATED'),
                     bigquery.SchemaField('ultra_tier', 'STRING'),
                     bigquery.SchemaField('source', 'STRING', mode='REQUIRED'),
+                    bigquery.SchemaField('system_id', 'STRING'),
+                    bigquery.SchemaField('signal_status', 'STRING'),
                     bigquery.SchemaField('first_published_at', 'TIMESTAMP', mode='REQUIRED'),
                     bigquery.SchemaField('last_seen_in_signal', 'TIMESTAMP'),
                     bigquery.SchemaField('updated_at', 'TIMESTAMP'),
@@ -969,6 +1155,62 @@ class BestBetsAllExporter(BaseExporter):
         except Exception as e:
             logger.warning(f"Failed to write published picks (non-fatal): {e}")
 
+    def _write_pick_events(
+        self, target_date: str, merged_picks: List[Dict]
+    ) -> None:
+        """Write structured lifecycle events for dropped/disabled picks.
+
+        Session 386: Logs why picks were dropped or marked model_disabled.
+        Only writes events for picks NOT in active signal.
+        """
+        now = datetime.now(timezone.utc)
+        events = []
+
+        for p in merged_picks:
+            if p.get('_in_signal'):
+                continue  # active picks don't get events
+
+            event_type = None
+            event_reason = None
+
+            if p.get('_signal_status') == 'model_disabled':
+                event_type = 'model_disabled'
+                event_reason = p.get('_drop_reason', 'model_disabled')
+            elif p.get('_source') == 'manual':
+                continue  # manual picks aren't "dropped"
+            else:
+                event_type = 'dropped_from_signal'
+                event_reason = 'pick_no_longer_in_signal_output'
+
+            events.append({
+                'event_id': f"evt_{now.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}",
+                'game_date': target_date,
+                'player_lookup': p.get('player_lookup') or '',
+                'game_id': p.get('game_id') or '',
+                'event_type': event_type,
+                'event_reason': event_reason,
+                'system_id': p.get('system_id'),
+                'previous_edge': float(p['edge']) if p.get('edge') is not None else None,
+                'previous_rank': p.get('rank'),
+                'created_at': now.isoformat(),
+            })
+
+        if not events:
+            return
+
+        table_id = f'{PROJECT_ID}.nba_predictions.best_bets_pick_events'
+        try:
+            job_config = bigquery.LoadJobConfig(
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                create_disposition=bigquery.CreateDisposition.CREATE_NEVER,
+            )
+            self.bq_client.load_table_from_json(
+                events, table_id, job_config=job_config
+            ).result(timeout=30)
+            logger.info(f"Wrote {len(events)} pick events to best_bets_pick_events")
+        except Exception as e:
+            logger.warning(f"Failed to write pick events (non-fatal): {e}")
+
     def _write_export_audit(
         self,
         target_date: str,
@@ -982,7 +1224,7 @@ class BestBetsAllExporter(BaseExporter):
         # Build a compact snapshot of the pick list
         snapshot = []
         for p in merged_picks:
-            snapshot.append({
+            snap = {
                 'player_lookup': p.get('player_lookup'),
                 'player_name': p.get('player_name'),
                 'team': p.get('team_abbr'),
@@ -993,7 +1235,13 @@ class BestBetsAllExporter(BaseExporter):
                 'rank': p.get('rank'),
                 'source': p.get('_source', 'algorithm'),
                 'in_signal': p.get('_in_signal', True),
-            })
+                'system_id': p.get('system_id'),
+            }
+            if p.get('_drop_reason'):
+                snap['drop_reason'] = p['_drop_reason']
+            if p.get('_signal_status'):
+                snap['signal_status'] = p['_signal_status']
+            snapshot.append(snap)
 
         row = {
             'export_id': export_id,

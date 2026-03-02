@@ -547,6 +547,24 @@ class SignalBestBetsExporter(BaseExporter):
         """Query rolling 7-day hit rate for edge 3+ picks."""
         return query_model_health(self.bq_client)
 
+    def _query_disabled_model_ids(self) -> set:
+        """Return set of model_ids that are disabled/blocked in model_registry.
+
+        Session 386: Defense-in-depth — prevents poisoned picks from entering
+        signal_best_bets_picks even if the aggregator doesn't catch them.
+        """
+        try:
+            query = f"""
+            SELECT model_id
+            FROM `{PROJECT_ID}.nba_predictions.model_registry`
+            WHERE enabled = FALSE OR status = 'blocked'
+            """
+            rows = self.bq_client.query(query).result(timeout=15)
+            return {row.model_id for row in rows}
+        except Exception as e:
+            logger.warning(f"Disabled model query failed (non-fatal): {e}")
+            return set()
+
     def _query_predictions_and_supplements(self, target_date: str) -> tuple:
         """Query today's active predictions with supplemental signal data.
 
@@ -612,6 +630,21 @@ class SignalBestBetsExporter(BaseExporter):
                 f"Failed to delete existing rows for {target_date} "
                 f"(will append anyway): {e}"
             )
+
+        # Session 386: Filter out picks from disabled models (defense-in-depth)
+        disabled_models = self._query_disabled_model_ids()
+        if disabled_models:
+            original_count = len(picks)
+            picks = [
+                p for p in picks
+                if (p.get('system_id') or p.get('source_model') or '') not in disabled_models
+            ]
+            filtered = original_count - len(picks)
+            if filtered > 0:
+                logger.warning(
+                    f"Filtered {filtered} picks from disabled models "
+                    f"before writing to signal_best_bets_picks"
+                )
 
         rows_to_insert = []
         for pick in picks:

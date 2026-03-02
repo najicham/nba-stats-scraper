@@ -30,6 +30,8 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.best_bets_publish
 
   -- Source Tracking
   source STRING NOT NULL,              -- 'algorithm' or 'manual'
+  system_id STRING,                    -- Model that sourced the prediction (e.g. catboost_v12_noveg_...)
+  signal_status STRING,                -- 'active', 'dropped', 'model_disabled'
   first_published_at TIMESTAMP NOT NULL,
   last_seen_in_signal TIMESTAMP,       -- NULL if never in signal (manual-only pick)
 
