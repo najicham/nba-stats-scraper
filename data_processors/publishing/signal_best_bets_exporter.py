@@ -38,6 +38,7 @@ from ml.signals.cross_model_scorer import CrossModelScorer
 from ml.signals.pick_angle_builder import build_pick_angles
 from ml.signals.player_blacklist import compute_player_blacklist
 from ml.signals.model_direction_affinity import compute_model_direction_affinities
+from ml.signals.model_profile_loader import load_model_profiles
 from ml.signals.subset_membership_lookup import lookup_qualifying_subsets
 from ml.signals.aggregator import ALGORITHM_VERSION
 from ml.signals.ultra_bets import compute_ultra_live_hrs, check_ultra_over_gate
@@ -134,6 +135,16 @@ class SignalBestBetsExporter(BaseExporter):
                 )
         except Exception as e:
             logger.warning(f"Model-direction affinity computation failed (non-fatal): {e}")
+
+        # Model profile store (Session 384): per-model dimension profiles for
+        # observation-mode logging in the aggregator
+        model_profile_store = None
+        try:
+            model_profile_store = load_model_profiles(
+                self.bq_client, target_date, PROJECT_ID
+            )
+        except Exception as e:
+            logger.warning(f"Model profile loading failed (non-fatal): {e}")
 
         record = self._get_best_bets_record(target_date)
 
@@ -295,6 +306,7 @@ class SignalBestBetsExporter(BaseExporter):
             player_blacklist=player_blacklist,
             model_direction_blocks=model_dir_blocks,
             model_direction_affinity_stats=model_dir_stats,
+            model_profile_store=model_profile_store,
         )
         top_picks, filter_summary = aggregator.aggregate(predictions, signal_results)
 

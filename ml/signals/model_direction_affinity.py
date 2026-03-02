@@ -74,9 +74,11 @@ def get_affinity_group(source_model_family: str) -> Optional[str]:
 
     # V12 noveg — uses v12_noveg feature set (no vegas features)
     # Includes: v12_q43, v12_q45, v12_noveg_q55, v12_noveg_q55_tw, v12_noveg_q57,
-    # lgbm_v12_noveg_mae, xgb_v12_noveg_mae (Session 378)
+    # lgbm_v12_noveg_mae, xgb_v12_noveg_mae (Session 378),
+    # v12_noveg_mae, v16_noveg_mae, v16_noveg_rec14_mae (Session 383)
     if source_model_family in ('v12_q43', 'v12_q45', 'v12_noveg_q55', 'v12_noveg_q55_tw',
-                               'v12_noveg_q57', 'lgbm_v12_noveg_mae', 'xgb_v12_noveg_mae'):
+                               'v12_noveg_q57', 'lgbm_v12_noveg_mae', 'xgb_v12_noveg_mae',
+                               'v12_noveg_mae', 'v16_noveg_mae', 'v16_noveg_rec14_mae'):
         return 'v12_noveg'
 
     # V12+vegas — uses full v12 feature set (includes vegas)
@@ -117,6 +119,10 @@ def _get_affinity_group_from_system_id(system_id: str) -> Optional[str]:
 
     # Session 378: LightGBM and XGBoost V12 noveg models
     if system_id.startswith('lgbm_v12_noveg') or system_id.startswith('xgb_v12_noveg'):
+        return 'v12_noveg'
+
+    # Session 383: V16 noveg models — same no-vegas feature base as V12 noveg
+    if system_id.startswith('catboost_v16_noveg'):
         return 'v12_noveg'
 
     # V12+vegas — remaining v12 models (catboost_v12 without noveg)

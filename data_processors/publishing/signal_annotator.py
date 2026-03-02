@@ -51,6 +51,7 @@ from ml.signals.supplemental_data import (
 )
 from ml.signals.player_blacklist import compute_player_blacklist
 from ml.signals.model_direction_affinity import compute_model_direction_affinities
+from ml.signals.model_profile_loader import load_model_profiles
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +181,15 @@ class SignalAnnotator:
         except Exception as e:
             logger.warning(f"Model-direction affinity computation failed (non-fatal): {e}")
 
+        # 4b1b. Model profile store (Session 384)
+        model_profile_store = None
+        try:
+            model_profile_store = load_model_profiles(
+                self.bq_client, target_date, self.project_id
+            )
+        except Exception as e:
+            logger.warning(f"Model profile loading failed (non-fatal): {e}")
+
         # 4b2. Enrich predictions with games_vs_opponent (Session 314)
         try:
             gvo_map = query_games_vs_opponent(self.bq_client, target_date)
@@ -226,6 +236,7 @@ class SignalAnnotator:
             model_direction_blocks=model_dir_blocks,
             model_direction_affinity_stats=model_dir_stats,
             model_direction_affinities=model_dir_affinities,
+            model_profile_store=model_profile_store,
         )
 
         logger.info(
@@ -304,6 +315,7 @@ class SignalAnnotator:
         model_direction_blocks: Optional[set] = None,
         model_direction_affinity_stats: Optional[Dict] = None,
         model_direction_affinities: Optional[Dict] = None,
+        model_profile_store=None,
     ) -> int:
         """Bridge aggregator's top picks into current_subset_picks as Signal Picks subset.
 
@@ -318,6 +330,7 @@ class SignalAnnotator:
             player_blacklist=player_blacklist,
             model_direction_blocks=model_direction_blocks,
             model_direction_affinity_stats=model_direction_affinity_stats,
+            model_profile_store=model_profile_store,
         )
         top_picks, _ = aggregator.aggregate(predictions, signal_results_map)
 

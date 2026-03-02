@@ -118,6 +118,7 @@ class BestBetsAggregator:
         player_blacklist: Optional[Set[str]] = None,
         model_direction_blocks: Optional[Set[tuple]] = None,
         model_direction_affinity_stats: Optional[Dict] = None,
+        model_profile_store: Optional[Any] = None,
     ):
         if combo_registry is not None:
             self._registry = combo_registry
@@ -130,6 +131,7 @@ class BestBetsAggregator:
         self._player_blacklist = player_blacklist or set()
         self._model_direction_blocks = model_direction_blocks or set()
         self._model_direction_affinity_stats = model_direction_affinity_stats
+        self._model_profile_store = model_profile_store
 
     def aggregate(self, predictions: List[Dict],
                   signal_results: Dict[str, List[SignalResult]]) -> Tuple[List[Dict], Dict]:
@@ -172,6 +174,7 @@ class BestBetsAggregator:
             'opponent_under_block': 0,
             'signal_density': 0,
             'legacy_block': 0,
+            'model_profile_would_block': 0,
         }
 
         # Session 378c: Model sanity guard — detect and block models whose
@@ -400,6 +403,41 @@ class BestBetsAggregator:
                 filter_counts['high_book_std_under'] += 1
                 continue
 
+            # --- Model profile observation (Session 384) ---
+            # Log what the per-model profile store WOULD block, without
+            # actually filtering. Observation mode for Phase 1 validation.
+            if self._model_profile_store and self._model_profile_store.loaded:
+                _profile_dims = [
+                    ('direction', pred.get('recommendation', '')),
+                    ('home_away', 'HOME' if pred.get('is_home', False) else 'AWAY'),
+                ]
+                # Add tier dimension
+                if line_val > 0:
+                    if line_val < 12:
+                        _profile_dims.append(('tier', 'bench'))
+                    elif line_val < 15:
+                        _profile_dims.append(('tier', 'role'))
+                    elif line_val < 25:
+                        _profile_dims.append(('tier', 'starter'))
+                    else:
+                        _profile_dims.append(('tier', 'star'))
+                # Add edge band dimension
+                if pred_edge >= 7.0:
+                    _profile_dims.append(('edge_band', '7_plus'))
+                elif pred_edge >= 5.0:
+                    _profile_dims.append(('edge_band', '5_7'))
+                elif pred_edge >= 3.0:
+                    _profile_dims.append(('edge_band', '3_5'))
+
+                for _dim, _val in _profile_dims:
+                    if self._model_profile_store.is_blocked(pred_system_id, _dim, _val):
+                        filter_counts['model_profile_would_block'] += 1
+                        logger.debug(
+                            f"Profile WOULD block: {pred_system_id} "
+                            f"{_dim}={_val} for {pred['player_lookup']}"
+                        )
+                        break  # Count once per prediction
+
             # --- Signal evaluation (for annotations, not selection) ---
 
             key = f"{pred['player_lookup']}::{pred['game_id']}"
@@ -539,6 +577,11 @@ class BestBetsAggregator:
             logger.info(f"Signal density filter: skipped {filter_counts['signal_density']} base-only picks")
         if filter_counts['legacy_block'] > 0:
             logger.info(f"Legacy model blocklist: skipped {filter_counts['legacy_block']} predictions from {LEGACY_MODEL_BLOCKLIST}")
+        if filter_counts['model_profile_would_block'] > 0:
+            logger.info(
+                f"Model profile (observation): WOULD block "
+                f"{filter_counts['model_profile_would_block']} predictions"
+            )
 
         # Ultra Bets classification (Session 326)
         from ml.signals.ultra_bets import classify_ultra_pick

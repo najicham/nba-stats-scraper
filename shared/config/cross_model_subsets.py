@@ -160,10 +160,33 @@ MODEL_FAMILIES = {
         'feature_set': 'v15_noveg',
         'loss': 'mae',
     },
+    # Session 357: V16 deviation features (V12_noveg + over_rate_last_10 + margin_vs_line_avg_last_5)
+    # Session 383: Added rec14 variant — MUST come before v16_noveg_mae
+    'v16_noveg_rec14_mae': {
+        'pattern': 'catboost_v16_noveg_rec14_',
+        'exact': False,
+        'feature_set': 'v16_noveg',
+        'loss': 'mae',
+    },
+    'v16_noveg_mae': {
+        'pattern': 'catboost_v16_noveg_',
+        'exact': False,
+        'feature_set': 'v16_noveg',
+        'loss': 'mae',
+    },
+    # Session 383: V12 noveg MAE catch-all — MUST come before v12_mae catch-all.
+    # Matches catboost_v12_noveg_train*, catboost_v12_noveg_60d_*, etc.
+    # Previously these fell through to v12_mae (wrong affinity group).
+    'v12_noveg_mae': {
+        'pattern': 'catboost_v12_noveg_',
+        'exact': False,
+        'feature_set': 'v12_noveg',
+        'loss': 'mae',
+    },
     'v12_mae': {
         'pattern': 'catboost_v12',
-        'exact': False,  # Prefix match: catches 'catboost_v12', 'catboost_v12_noveg_train*',
-                          # and 'catboost_v12_train*' (V12+vegas MAE)
+        'exact': False,  # Prefix match: catches 'catboost_v12', 'catboost_v12_train*',
+                          # and 'catboost_v12_vw015_*' (V12+vegas MAE variants)
         'feature_set': 'v12',
         'loss': 'mae',
     },

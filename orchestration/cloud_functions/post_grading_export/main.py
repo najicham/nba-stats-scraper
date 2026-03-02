@@ -315,6 +315,30 @@ def main(cloud_event):
         )
         results['model_performance_error'] = str(e)
 
+    # 5b. Compute model profile daily metrics (Session 384)
+    try:
+        from datetime import date as date_type
+        from ml.analysis.model_profile import compute_profiles_for_date, write_profile_rows
+        from shared.clients.bigquery_pool import get_bigquery_client as _get_bq_profile
+
+        bq_profile = _get_bq_profile(project_id=PROJECT_ID)
+        profile_rows = compute_profiles_for_date(
+            bq_profile, date_type.fromisoformat(target_date)
+        )
+        if profile_rows:
+            written = write_profile_rows(bq_profile, profile_rows)
+            results['model_profile'] = written
+            logger.info(
+                f"[{correlation_id}] Computed model profiles for {target_date}: "
+                f"{written} rows"
+            )
+    except Exception as e:
+        logger.error(
+            f"[{correlation_id}] Failed to compute model profiles for {target_date}: {e}",
+            exc_info=True
+        )
+        results['model_profile_error'] = str(e)
+
     # 6. Re-export tonight/all-players.json with actuals (Session 332)
     try:
         from data_processors.publishing.tonight_all_players_exporter import TonightAllPlayersExporter
