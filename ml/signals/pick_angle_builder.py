@@ -60,6 +60,7 @@ SIGNAL_ANGLE_MAP = {
     'low_line_over': "Low prop line (<12) — conservative lines easier to clear (78.1% HR)",
     'self_creation_over': "High self-creator (50%+ unassisted FG) — scoring independence favors OVER (CONDITIONAL)",
     'sharp_line_move_over': "DraftKings line moved UP 2+ pts today — sharp money and model agree OVER (67.8% HR)",
+    'sharp_line_drop_under': "DraftKings line dropped 2+ pts today — sharp money and model agree UNDER (72.4% HR)",
 }
 
 # Warning tag → warning angle

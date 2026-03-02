@@ -65,6 +65,7 @@ ACTIVE_SIGNALS = frozenset({
     'line_rising_over',
     'self_creation_over',
     'sharp_line_move_over',
+    'sharp_line_drop_under',
     # b2b_fatigue_under DISABLED — 39.5% Feb HR (Session 373)
     # prop_line_drop_over DISABLED — conceptually backward, 39.1% Feb HR (Session 374b)
     # blowout_recovery DISABLED — 50% HR (7-7) in best bets, 25% in Feb (Session 349)

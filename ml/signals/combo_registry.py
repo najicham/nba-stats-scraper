@@ -153,6 +153,14 @@ _FALLBACK_REGISTRY: Dict[str, ComboEntry] = {
         direction_filter='OVER_ONLY', hit_rate=67.8, roi=None, sample_size=577,
         score_weight=1.0, notes='Session 380: 67.8% HR (N=577), Feb-resilient 69%',
     ),
+    'sharp_line_drop_under': ComboEntry(
+        combo_id='sharp_line_drop_under',
+        display_name='Sharp Line Drop Under',
+        signals=['sharp_line_drop_under'],
+        cardinality=1, classification='SYNERGISTIC', status='PRODUCTION',
+        direction_filter='UNDER_ONLY', hit_rate=72.4, roi=None, sample_size=293,
+        score_weight=1.0, notes='Session 382C: 72.4% HR (N=293), Feb 58.3%',
+    ),
     # high_ft_under REMOVED — 33.3% HR on best bets (Session 326)
     # volatile_under REMOVED — 33.3% HR on best bets (Session 326)
     # high_usage_under REMOVED — 40.0% HR on best bets (Session 326)
