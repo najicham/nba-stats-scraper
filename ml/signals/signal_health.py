@@ -47,7 +47,8 @@ MODEL_DEPENDENT_SIGNALS = frozenset({
 # Ghost signals (removed signals with stale tags in pick_signal_tags)
 # are filtered out at query time. Updated when signals are added/removed.
 ACTIVE_SIGNALS = frozenset({
-    'model_health', 'high_edge', 'edge_spread_optimal',
+    # model_health excluded — intentionally not written to pick_signal_tags (Session 387)
+    'high_edge', 'edge_spread_optimal',
     'combo_he_ms', 'combo_3way',
     'bench_under', '3pt_bounce',
     'rest_advantage_2d',

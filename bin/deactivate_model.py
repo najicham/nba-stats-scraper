@@ -119,7 +119,7 @@ def main():
     if row.enabled or row.status != 'blocked':
         disable_query = f"""
         UPDATE `{PROJECT_ID}.nba_predictions.model_registry`
-        SET enabled = FALSE, status = 'blocked', updated_at = CURRENT_TIMESTAMP()
+        SET enabled = FALSE, status = 'blocked'
         WHERE model_id = @model_id
         """
         job = bq.query(

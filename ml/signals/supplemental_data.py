@@ -382,7 +382,8 @@ def query_predictions_with_supplements(
     ),
 
     -- Previous game prop line for line delta signal (Session 294)
-    -- Gets the most recent previous line for each player from the same model
+    -- Gets the most recent previous line for each player across ANY model
+    -- Fixed Session 387: was model-specific (dead champion = always NULL)
     prev_prop_lines AS (
       SELECT
         pp.player_lookup,
@@ -391,7 +392,6 @@ def query_predictions_with_supplements(
       FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions` pp
       WHERE pp.game_date >= DATE_SUB(@target_date, INTERVAL 14 DAY)
         AND pp.game_date < @target_date
-        AND pp.system_id = '{model_id}'
         AND pp.is_active = TRUE
         AND pp.line_source IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS')
       QUALIFY ROW_NUMBER() OVER (

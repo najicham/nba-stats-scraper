@@ -176,6 +176,10 @@ class BestBetsAllExporter(BaseExporter):
         total_picks = len(all_picks) - voided
         graded = sum(1 for p in all_picks if p.get('prediction_correct') is not None)
 
+        # Schedule context — lets the frontend distinguish "picks coming later"
+        # from "off day" even before predictions run.
+        games_scheduled = self._query_games_scheduled(target_date)
+
         result = {
             'date': target_date,
             'season': _compute_season_label(target),
@@ -187,6 +191,7 @@ class BestBetsAllExporter(BaseExporter):
             'best_streak': best_streak,
             'today': today_formatted,
             'total_today': len(today_formatted),
+            'games_scheduled': games_scheduled,
             'weeks': weeks,
             'total_picks': total_picks,
             'graded': graded,
@@ -378,6 +383,33 @@ class BestBetsAllExporter(BaseExporter):
         except Exception as e:
             logger.warning(f"Started games lookup failed (non-fatal): {e}")
             return set()
+
+    def _query_games_scheduled(self, target_date: str) -> int:
+        """Count games scheduled for the target date.
+
+        Used by the frontend to distinguish 'picks coming later' from 'off day'
+        even before predictions have run.
+
+        Returns:
+            Number of games scheduled (0 on off-days).
+        """
+        query = f"""
+        SELECT COUNT(*) AS cnt
+        FROM `{PROJECT_ID}.nba_raw.nbac_schedule`
+        WHERE game_date = @target_date
+        """
+        params = [
+            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+        ]
+        try:
+            rows = list(self.bq_client.query(
+                query,
+                job_config=bigquery.QueryJobConfig(query_parameters=params),
+            ).result(timeout=30))
+            return rows[0].cnt if rows else 0
+        except Exception as e:
+            logger.warning(f"Games scheduled lookup failed (non-fatal): {e}")
+            return 0
 
     def _query_grading_for_published_picks(
         self, target_date: str, player_lookups: List[str]
