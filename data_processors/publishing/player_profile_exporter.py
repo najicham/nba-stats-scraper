@@ -12,6 +12,7 @@ from google.cloud import bigquery
 
 from .base_exporter import BaseExporter
 from .exporter_utils import safe_float
+from shared.config.model_selection import get_champion_model_id
 
 logger = logging.getLogger(__name__)
 
@@ -178,7 +179,7 @@ class PlayerProfileExporter(BaseExporter):
                 ROUND(AVG(signed_error), 2) as bias,
                 ROUND(SAFE_DIVIDE(COUNTIF(within_5_points), COUNT(*)), 3) as within_5_pct
             FROM `nba-props-platform.nba_predictions.prediction_accuracy`
-            WHERE system_id = 'catboost_v12'
+            WHERE system_id = @champion_model_id
             GROUP BY player_lookup
             HAVING games_predicted >= 3
         )
@@ -193,7 +194,10 @@ class PlayerProfileExporter(BaseExporter):
         ) r ON a.player_lookup = r.player_lookup
         ORDER BY a.games_predicted DESC
         """
-        return self.query_to_list(query)
+        params = [
+            bigquery.ScalarQueryParameter('champion_model_id', 'STRING', get_champion_model_id()),
+        ]
+        return self.query_to_list(query, params)
 
     def _query_player_summary(self, player_lookup: str) -> Optional[Dict]:
         """Query detailed summary for a single player."""
@@ -214,7 +218,7 @@ class PlayerProfileExporter(BaseExporter):
                 MIN(game_date) as first_date,
                 MAX(game_date) as last_date
             FROM `nba-props-platform.nba_predictions.prediction_accuracy`
-            WHERE system_id = 'catboost_v12'
+            WHERE system_id = @champion_model_id
               AND player_lookup = @player_lookup
             GROUP BY player_lookup
         )
@@ -230,7 +234,8 @@ class PlayerProfileExporter(BaseExporter):
         ) r ON a.player_lookup = r.player_lookup
         """
         params = [
-            bigquery.ScalarQueryParameter('player_lookup', 'STRING', player_lookup)
+            bigquery.ScalarQueryParameter('player_lookup', 'STRING', player_lookup),
+            bigquery.ScalarQueryParameter('champion_model_id', 'STRING', get_champion_model_id()),
         ]
         results = self.query_to_list(query, params)
         return results[0] if results else None
@@ -251,14 +256,15 @@ class PlayerProfileExporter(BaseExporter):
             signed_error,
             confidence_score
         FROM `nba-props-platform.nba_predictions.prediction_accuracy`
-        WHERE system_id = 'catboost_v12'
+        WHERE system_id = @champion_model_id
           AND player_lookup = @player_lookup
         ORDER BY game_date DESC
         LIMIT @limit
         """
         params = [
             bigquery.ScalarQueryParameter('player_lookup', 'STRING', player_lookup),
-            bigquery.ScalarQueryParameter('limit', 'INT64', limit)
+            bigquery.ScalarQueryParameter('limit', 'INT64', limit),
+            bigquery.ScalarQueryParameter('champion_model_id', 'STRING', get_champion_model_id()),
         ]
         return self.query_to_list(query, params)
 
@@ -272,12 +278,13 @@ class PlayerProfileExporter(BaseExporter):
             ROUND(SAFE_DIVIDE(COUNTIF(prediction_correct), COUNT(*)), 3) as win_rate,
             ROUND(AVG(absolute_error), 2) as mae
         FROM `nba-props-platform.nba_predictions.prediction_accuracy`
-        WHERE system_id = 'catboost_v12'
+        WHERE system_id = @champion_model_id
           AND player_lookup = @player_lookup
         GROUP BY recommendation
         """
         params = [
-            bigquery.ScalarQueryParameter('player_lookup', 'STRING', player_lookup)
+            bigquery.ScalarQueryParameter('player_lookup', 'STRING', player_lookup),
+            bigquery.ScalarQueryParameter('champion_model_id', 'STRING', get_champion_model_id()),
         ]
         results = self.query_to_list(query, params)
 
@@ -537,10 +544,11 @@ class PlayerProfileExporter(BaseExporter):
 
         FROM `nba-props-platform.nba_predictions.prediction_accuracy`
         WHERE player_lookup = @player_lookup
-          AND system_id = 'catboost_v12'
+          AND system_id = @champion_model_id
         """
         params = [
-            bigquery.ScalarQueryParameter('player_lookup', 'STRING', player_lookup)
+            bigquery.ScalarQueryParameter('player_lookup', 'STRING', player_lookup),
+            bigquery.ScalarQueryParameter('champion_model_id', 'STRING', get_champion_model_id()),
         ]
         results = self.query_to_list(query, params)
 
@@ -648,7 +656,7 @@ class PlayerProfileExporter(BaseExporter):
         LEFT JOIN `nba-props-platform.nba_predictions.player_prop_predictions` pp
             ON gc.player_lookup = pp.player_lookup
             AND gc.game_date = pp.game_date
-            AND pp.system_id = 'catboost_v12'
+            AND pp.is_active = TRUE
         WHERE gc.player_lookup = @player_lookup
           AND gc.game_date >= CURRENT_DATE()
         ORDER BY gc.game_date ASC

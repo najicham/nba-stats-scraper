@@ -15,6 +15,7 @@ from google.cloud import bigquery
 
 from .base_exporter import BaseExporter
 from .exporter_utils import safe_float
+from shared.config.model_selection import get_champion_model_id
 
 logger = logging.getLogger(__name__)
 
@@ -248,7 +249,7 @@ class StreaksExporter(BaseExporter):
                 ROW_NUMBER() OVER (PARTITION BY a.player_lookup ORDER BY a.game_date DESC) as pred_num
             FROM `nba-props-platform.nba_predictions.prediction_accuracy` a
             WHERE a.game_date <= @as_of_date
-              AND a.system_id = 'catboost_v12'
+              AND a.system_id = @champion_model_id
               AND a.recommendation IN ('OVER', 'UNDER')  -- Only actionable predictions
         ),
         streak_calc AS (
@@ -300,7 +301,8 @@ class StreaksExporter(BaseExporter):
 
         params = [
             bigquery.ScalarQueryParameter('as_of_date', 'DATE', as_of_date),
-            bigquery.ScalarQueryParameter('min_streak', 'INT64', self.min_streak_length)
+            bigquery.ScalarQueryParameter('min_streak', 'INT64', self.min_streak_length),
+            bigquery.ScalarQueryParameter('champion_model_id', 'STRING', get_champion_model_id()),
         ]
 
         results = self.query_to_list(query, params)

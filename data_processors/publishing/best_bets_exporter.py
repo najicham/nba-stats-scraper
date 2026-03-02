@@ -30,29 +30,27 @@ from google.cloud import bigquery
 
 from .base_exporter import BaseExporter
 from .exporter_utils import safe_float
+from shared.config.model_selection import get_champion_model_id
 
 logger = logging.getLogger(__name__)
 
 
-# Tier configuration VALIDATED with real sportsbook lines (catboost_v8 only)
+# Tier configuration VALIDATED with real sportsbook lines (champion model only)
 # See: docs/08-projects/current/ml-model-v8-deployment/CRITICAL-DATA-AUDIT-2026-01-14.md
-# IMPORTANT: Only use catboost_v8 system - other systems hit 21-26%
+# IMPORTANT: Only use champion model - other systems hit 21-26%
 TIER_CONFIG = {
     'premium': {
-        'system_id': 'catboost_v12',
         'min_edge': 5.0,
         'max_picks': 5,
         'target_hit_rate': '83-88%',  # VALIDATED: UNDER 88.3%, OVER 83.9%
     },
     'strong': {
-        'system_id': 'catboost_v12',
         'min_edge': 3.0,
         'max_edge': 5.0,
         'max_picks': 10,
         'target_hit_rate': '74-79%',  # VALIDATED: UNDER 79.3%, OVER 74.6%
     },
     'value': {
-        'system_id': 'catboost_v12',
         'min_edge': 0.0,
         'max_edge': 3.0,
         'max_picks': 10,
@@ -206,7 +204,7 @@ class BestBetsExporter(BaseExporter):
                     COUNT(*) as sample_size,
                     ROUND(AVG(CASE WHEN prediction_correct THEN 1.0 ELSE 0.0 END), 3) as historical_accuracy
                 FROM `nba-props-platform.nba_predictions.prediction_accuracy`
-                WHERE system_id = 'catboost_v12'
+                WHERE system_id = @champion_model_id
                   AND game_date < @target_date
                   AND recommendation = 'UNDER'
                 GROUP BY player_lookup
@@ -273,8 +271,7 @@ class BestBetsExporter(BaseExporter):
                     ON p.player_lookup = pgs.player_lookup
                     AND p.game_date = pgs.game_date
                 WHERE p.game_date = @target_date
-                  AND p.system_id = 'catboost_v12'  -- CRITICAL: Only production champion
-                  AND p.is_active = TRUE  -- Only active predictions
+                  AND p.is_active = TRUE  -- Only active predictions (multi-model aggregator selects champion)
                   -- VALIDATED FILTERS per CRITICAL-DATA-AUDIT-2026-01-14.md:
                   AND p.recommendation IN ('UNDER', 'OVER')  -- Both allowed: UNDER 88%, OVER 84% with 5+ edge
                   AND p.predicted_points < 25     -- Stars less predictable
@@ -293,7 +290,7 @@ class BestBetsExporter(BaseExporter):
                     COUNT(*) as sample_size,
                     ROUND(AVG(CASE WHEN prediction_correct THEN 1.0 ELSE 0.0 END), 3) as historical_accuracy
                 FROM `nba-props-platform.nba_predictions.prediction_accuracy`
-                WHERE system_id = 'catboost_v12'
+                WHERE system_id = @champion_model_id
                   AND game_date < @target_date
                   AND recommendation = 'UNDER'
                 GROUP BY player_lookup
@@ -351,7 +348,7 @@ class BestBetsExporter(BaseExporter):
                 LEFT JOIN fatigue_data f ON p.player_lookup = f.player_lookup
                 LEFT JOIN quality_data q ON p.player_lookup = q.player_lookup AND p.game_date = q.game_date
                 WHERE p.game_date = @target_date
-                  AND p.system_id = 'catboost_v12'  -- CRITICAL: Only production champion
+                  AND p.system_id = @champion_model_id  -- Production champion (parameterized)
                   -- VALIDATED FILTERS per CRITICAL-DATA-AUDIT-2026-01-14.md:
                   AND p.recommendation IN ('UNDER', 'OVER')  -- Both allowed: UNDER 88%, OVER 84% with 5+ edge
                   AND p.predicted_points < 25     -- Stars less predictable
@@ -422,7 +419,8 @@ class BestBetsExporter(BaseExporter):
 
         params = [
             bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
-            bigquery.ScalarQueryParameter('top_n', 'INT64', top_n)
+            bigquery.ScalarQueryParameter('top_n', 'INT64', top_n),
+            bigquery.ScalarQueryParameter('champion_model_id', 'STRING', get_champion_model_id()),
         ]
 
         return self.query_to_list(query, params)

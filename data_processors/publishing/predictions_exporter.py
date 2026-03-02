@@ -14,6 +14,7 @@ from google.cloud import bigquery
 
 from .base_exporter import BaseExporter
 from .exporter_utils import safe_float, calculate_edge, get_generated_at
+from shared.config.model_selection import get_champion_model_id
 
 logger = logging.getLogger(__name__)
 
@@ -97,14 +98,15 @@ class PredictionsExporter(BaseExporter):
             ON p.player_lookup = pa.player_lookup
             AND p.game_id = pa.game_id
             AND p.game_date = pa.game_date
-            AND pa.system_id = 'catboost_v12'
+            AND pa.system_id = @champion_model_id
         WHERE p.game_date = @target_date
-          AND p.system_id = 'catboost_v12'
+          AND p.is_active = TRUE
         ORDER BY p.game_id, p.confidence_score DESC
         """
 
         params = [
-            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date)
+            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+            bigquery.ScalarQueryParameter('champion_model_id', 'STRING', get_champion_model_id()),
         ]
 
         return self.query_to_list(query, params)

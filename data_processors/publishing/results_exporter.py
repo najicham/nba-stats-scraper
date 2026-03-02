@@ -19,6 +19,7 @@ from google.cloud import bigquery
 
 from .base_exporter import BaseExporter
 from .exporter_utils import safe_float, get_generated_at
+from shared.config.model_selection import get_champion_model_id
 
 logger = logging.getLogger(__name__)
 
@@ -188,12 +189,13 @@ class ResultsExporter(BaseExporter):
             ON pa.player_lookup = fd.player_lookup
             AND pa.game_id = fd.game_id
         WHERE pa.game_date = @target_date
-          AND pa.system_id = 'catboost_v12'
+          AND pa.system_id = @champion_model_id
         ORDER BY pa.game_id, pa.player_lookup
         """
 
         params = [
-            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date)
+            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+            bigquery.ScalarQueryParameter('champion_model_id', 'STRING', get_champion_model_id()),
         ]
 
         return self.query_to_list(query, params)

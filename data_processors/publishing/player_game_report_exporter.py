@@ -27,6 +27,7 @@ from google.cloud import bigquery
 
 from .base_exporter import BaseExporter
 from .exporter_utils import safe_float
+from shared.config.model_selection import get_champion_model_id
 
 logger = logging.getLogger(__name__)
 
@@ -387,13 +388,14 @@ class PlayerGameReportExporter(BaseExporter):
         FROM `nba-props-platform.nba_predictions.prediction_accuracy`
         WHERE player_lookup = @player_lookup
           AND game_date = @game_date
-          AND system_id = 'catboost_v12'
+          AND system_id = @champion_model_id
         LIMIT 1
         """
 
         params = [
             bigquery.ScalarQueryParameter('player_lookup', 'STRING', player_lookup),
             bigquery.ScalarQueryParameter('game_date', 'DATE', game_date),
+            bigquery.ScalarQueryParameter('champion_model_id', 'STRING', get_champion_model_id()),
         ]
 
         results = self.query_to_list(query, params)

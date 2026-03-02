@@ -190,7 +190,6 @@ class LiveGradingExporter(BaseExporter):
                 p.line_source
             FROM `nba-props-platform.nba_predictions.player_prop_predictions` p
             WHERE p.game_date = @target_date
-              AND p.system_id = 'catboost_v12'
               AND p.is_active = TRUE
             QUALIFY ROW_NUMBER() OVER (
                 PARTITION BY p.player_lookup

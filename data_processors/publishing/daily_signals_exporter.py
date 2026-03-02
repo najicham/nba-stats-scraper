@@ -13,6 +13,7 @@ from google.cloud import bigquery
 
 from .base_exporter import BaseExporter
 from shared.config.model_codenames import get_model_codename
+from shared.config.model_selection import get_champion_model_id
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +61,7 @@ class DailySignalsExporter(BaseExporter):
             return {
                 'date': target_date,
                 'generated_at': self.get_generated_at(),
-                'model': get_model_codename('catboost_v12'),
+                'model': get_model_codename(get_champion_model_id()),
                 'signal': 'neutral',
                 'metrics': {
                     'conditions': 'unknown',
@@ -80,7 +81,7 @@ class DailySignalsExporter(BaseExporter):
         return {
             'date': target_date,
             'generated_at': self.get_generated_at(),
-            'model': get_model_codename('catboost_v12'),
+            'model': get_model_codename(get_champion_model_id()),
             'signal': public_signal,
             'metrics': {
                 'conditions': conditions,
@@ -111,12 +112,13 @@ class DailySignalsExporter(BaseExporter):
           signal_explanation
         FROM `nba_predictions.daily_prediction_signals`
         WHERE game_date = @target_date
-          AND system_id = 'catboost_v12'
+          AND system_id = @champion_model_id
         LIMIT 1
         """
 
         params = [
-            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date)
+            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+            bigquery.ScalarQueryParameter('champion_model_id', 'STRING', get_champion_model_id()),
         ]
 
         results = self.query_to_list(query, params)

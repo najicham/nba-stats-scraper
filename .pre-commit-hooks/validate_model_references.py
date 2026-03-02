@@ -38,6 +38,9 @@ EXCLUDE_FILES = [
     'shared/config/cross_model_subsets.py',
     # Worker labels V12 predictions in its main loop — legitimate system labeling
     'predictions/worker/worker.py',
+    # Display metadata — these show model info to users, not query filters
+    'data_processors/publishing/model_health_exporter.py',
+    'data_processors/publishing/system_performance_exporter.py',
 ]
 
 # Pattern 1: Assignment of system_id to a catboost_v* string literal
@@ -69,21 +72,58 @@ def is_comment_line(line: str) -> bool:
     return line.lstrip().startswith('#')
 
 
-def is_in_docstring(lines: list, line_idx: int) -> bool:
-    """Heuristic check if a line is inside a docstring.
+def find_module_docstring_end(lines: list) -> int:
+    """Find the line index where the module-level docstring ends.
 
-    Tracks triple-quote pairs from the start of the file up to the target line.
+    Only identifies the FIRST triple-quoted block in the file (the true module
+    docstring). Returns -1 if no module docstring is found. All other
+    triple-quoted strings (SQL queries, class/method docstrings) are NOT
+    treated as docstrings for the purpose of this hook.
     """
-    in_docstring = False
-    for i in range(line_idx):
-        stripped = lines[i].strip()
-        # Count triple quotes on this line
-        dq_count = stripped.count('"""')
-        sq_count = stripped.count("'''")
-        total = dq_count + sq_count
-        if total % 2 == 1:
-            in_docstring = not in_docstring
-    return in_docstring
+    # Skip leading blank lines and comments to find the module docstring
+    first_code_line = 0
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped and not stripped.startswith('#'):
+            first_code_line = i
+            break
+
+    # Check if the first non-comment line starts a docstring
+    first_stripped = lines[first_code_line].strip() if first_code_line < len(lines) else ''
+    if not (first_stripped.startswith('"""') or first_stripped.startswith("'''")):
+        return -1  # No module docstring
+
+    quote_char = '"""' if first_stripped.startswith('"""') else "'''"
+
+    # Single-line docstring: """text"""
+    if first_stripped.count(quote_char) >= 2:
+        return first_code_line
+
+    # Multi-line: find closing triple-quote
+    for i in range(first_code_line + 1, len(lines)):
+        if quote_char in lines[i]:
+            return i
+
+    return len(lines) - 1  # Unclosed docstring — treat rest as docstring
+
+
+def is_in_module_docstring(lines: list, line_idx: int) -> bool:
+    """Check if a line is inside the module-level docstring only.
+
+    Unlike the previous is_in_docstring(), this does NOT skip SQL queries
+    or class/method docstrings — only the file's very first triple-quoted block.
+    """
+    end = find_module_docstring_end(lines)
+    if end == -1:
+        return False
+    # Find the start (first non-blank, non-comment line)
+    start = 0
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped and not stripped.startswith('#'):
+            start = i
+            break
+    return start <= line_idx <= end
 
 
 def should_exclude(filepath: str) -> bool:
@@ -125,8 +165,8 @@ def scan_file(filepath: str) -> list:
         if is_comment_line(line):
             continue
 
-        # Skip lines inside docstrings
-        if is_in_docstring(lines, line_num):
+        # Skip lines inside module-level docstrings only (not SQL queries)
+        if is_in_module_docstring(lines, line_num):
             continue
 
         # Check if line has a catboost_v reference at all (fast path)

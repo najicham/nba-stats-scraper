@@ -25,6 +25,7 @@ from google.cloud import bigquery
 
 from .base_exporter import BaseExporter
 from .exporter_utils import safe_float
+from shared.config.model_selection import get_champion_model_id
 
 logger = logging.getLogger(__name__)
 
@@ -460,7 +461,7 @@ class PlayerSeasonExporter(BaseExporter):
             SUM(CASE WHEN actual_points < line_value THEN 1 ELSE 0 END) as unders
         FROM `nba-props-platform.nba_predictions.prediction_accuracy`
         WHERE player_lookup = @player_lookup
-          AND system_id = 'catboost_v12'
+          AND system_id = @champion_model_id
           AND EXTRACT(YEAR FROM game_date) >= @season_year
           AND (EXTRACT(MONTH FROM game_date) >= 10 OR EXTRACT(YEAR FROM game_date) > @season_year)
         """
@@ -468,6 +469,7 @@ class PlayerSeasonExporter(BaseExporter):
         params = [
             bigquery.ScalarQueryParameter('player_lookup', 'STRING', player_lookup),
             bigquery.ScalarQueryParameter('season_year', 'INT64', season_year),
+            bigquery.ScalarQueryParameter('champion_model_id', 'STRING', get_champion_model_id()),
         ]
 
         results = self.query_to_list(query, params)

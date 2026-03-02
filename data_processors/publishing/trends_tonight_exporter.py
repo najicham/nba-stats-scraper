@@ -30,6 +30,7 @@ from .whos_hot_cold_exporter import WhosHotColdExporter
 from .bounce_back_exporter import BounceBackExporter
 from .trends_v3_builder import build_trends
 from shared.utils.nba_team_mapper import get_nba_team_mapper
+from shared.config.model_selection import get_champion_model_id
 
 logger = logging.getLogger(__name__)
 
@@ -1018,10 +1019,11 @@ class TrendsTonightExporter(BaseExporter):
         WHERE game_date >= DATE_SUB(@game_date, INTERVAL 30 DAY)
           AND game_date < @game_date
           AND ABS(predicted_margin) >= 3
-          AND system_id = 'catboost_v12'
+          AND system_id = @champion_model_id
         """
         params = [
-            bigquery.ScalarQueryParameter('game_date', 'DATE', game_date)
+            bigquery.ScalarQueryParameter('game_date', 'DATE', game_date),
+            bigquery.ScalarQueryParameter('champion_model_id', 'STRING', get_champion_model_id()),
         ]
 
         try:
