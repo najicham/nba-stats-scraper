@@ -195,9 +195,9 @@ class BestBetsAllExporter(BaseExporter):
           b.rank,
           b.pick_angles,
           b.ultra_tier,
-          pa.prediction_correct,
-          pa.actual_points,
-          pa.is_voided,
+          COALESCE(pa.prediction_correct, b.prediction_correct) AS prediction_correct,
+          COALESCE(pa.actual_points, b.actual_points) AS actual_points,
+          COALESCE(pa.is_voided, FALSE) AS is_voided,
           pa.void_reason
         FROM `nba-props-platform.nba_predictions.signal_best_bets_picks` b
         LEFT JOIN `nba-props-platform.nba_predictions.prediction_accuracy` pa
