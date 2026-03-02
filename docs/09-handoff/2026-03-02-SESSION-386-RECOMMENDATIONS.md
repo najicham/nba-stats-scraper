@@ -1,154 +1,197 @@
 # Session 386 Recommendations — March 2, 2026
 
-For the next session to review. Prioritized by impact.
+For the next session to review. Prioritized by impact. Based on comprehensive validation, fleet analysis, and fresh retrains completed this session.
 
 ---
 
-## Priority 1: Deployment Drift
+## Current State Summary
 
-**`nba-grading-service` is stale.** Deployed commit `bedc7b45`, current is `d553578e`. Missing the per-model performance profiling system (Session 384, commit `d90d09b1`).
+- **Fleet:** 36 models tracked, 21 BLOCKED, 5 actively producing, 8 freshly registered (not yet producing)
+- **Production champion (`catboost_v12`):** BLOCKED at 47% 7d HR / 51.8% 14d HR — losing money
+- **Best bets (14d):** 15-10 (60.0% HR) on 27 picks. Very low volume (2.5 picks/day avg)
+- **Direction split:** UNDER 66.7% >> OVER 53.8%. OVER collapse continues.
+- **2 new shadow models deployed this session:** VW015 (76.9% backtest) and NOVEG (68.8% backtest)
 
-**Action:**
+---
+
+## Priority 1: Fleet Triage (HIGH IMPACT)
+
+**Problem:** Dead models polluting best bets selection. The champion is BLOCKED. Multiple models with <45% HR still have active predictions competing for per-player selection.
+
+**Action — Disable these BLOCKED models:**
+
+| Model | HR 14d | N | Why |
+|-------|--------|---|-----|
+| `catboost_v12_noveg_q43_train0104_0215` | 15.9% | 63 | Catastrophic. Worst in fleet. |
+| `catboost_v12_noveg_q43_train1102_0125` | 40.4% | 89 | Dead. 35 days stale. |
+| `catboost_v12_noveg_q45_train1102_0125` | 41.0% | 78 | Dead. 35 days stale. |
+| `catboost_v12_noveg_mae_train0104_0215` | 42.3% | 26 | Below breakeven. |
+| `catboost_v12_noveg_q55_tw_train0105_0215` | 42.9% | 7 | BLOCKED. |
+| `catboost_v9_q43_train1102_0131` | 0 picks | 0 | Zombie. 35 days stale. |
+| `catboost_v9_q45_train1102_0131` | 0 picks | 0 | Zombie. 35 days stale. |
+
+**Commands (dry-run first):**
+```bash
+python bin/deactivate_model.py catboost_v12_noveg_q43_train0104_0215 --dry-run
+python bin/deactivate_model.py catboost_v12_noveg_q43_train1102_0125 --dry-run
+python bin/deactivate_model.py catboost_v12_noveg_q45_train1102_0125 --dry-run
+# ... then remove --dry-run to execute
+```
+
+**Important:** Disabling in registry alone does NOT remove active predictions. Must also deactivate predictions (the script handles both). The disabled model filtering code deployed in commit `5eccddbe` provides defense-in-depth.
+
+---
+
+## Priority 2: Champion Promotion Evaluation
+
+**Problem:** No model currently qualifies for champion status (need N>=25 with HR>=60%).
+
+**Best candidates by live performance:**
+
+| Model | HR 7d | N 7d | HR 14d | N 14d | State | Notes |
+|-------|-------|------|--------|-------|-------|-------|
+| `catboost_v12_q43_train1225_0205_feb22` | 83.3% | 6 | 50.0% | 20 | HEALTHY | Divergent 7d vs 14d — hot streak? |
+| `lgbm_v12_noveg_train1201_0209` | 71.4% | 7 | 71.4% | 7 | HEALTHY | Consistent but tiny N |
+| `catboost_v12_noveg_60d_vw025_train1222_0219` | 66.7% | 9 | 66.7% | 9 | HEALTHY | Our 60d window config |
+| `catboost_v12_noveg_train0110_0220` | 58.3% | 12 | 58.3% | 12 | HEALTHY | Largest N among healthy models |
+
+**New models (just deployed, no live data yet):**
+
+| Model | Backtest HR 3+ | OVER | UNDER | Config |
+|-------|---------------|------|-------|--------|
+| `catboost_v12_train1228_0222` | 76.9% (n=13) | 100% | 62.5% | v12 + vegas=0.15, 56d window |
+| `catboost_v12_noveg_train1228_0222` | 68.8% (n=16) | 71.4% | 66.7% | v12_noveg, 56d window |
+
+**Recommendation:** Wait 2-3 weeks for N to reach 25+. The multi-model system IS working — shadow models sourced 100% HR picks while the champion sourced 25% HR picks in the last 14 days. HR-weighted selection (Session 365) naturally demotes underperforming models.
+
+---
+
+## Priority 3: Fix Failing Scheduler Jobs
+
+3 jobs failing continuously:
+
+| Job | Error | Frequency | Fix |
+|-----|-------|-----------|-----|
+| `nba-env-var-check-prod` | UNAVAILABLE | **Every 5 min** | Pause or delete — `/internal/check-env` endpoint doesn't exist on prediction-worker. Generating constant noise. |
+| `self-heal-predictions` | DEADLINE_EXCEEDED | Daily | Increase `attemptDeadline` or redeploy the service |
+| `monthly-retrain-job` | INTERNAL | Monthly (Mar 1) | Check service logs. Just fired and failed. |
+
+**Quick fix:**
+```bash
+# Stop the constant noise
+gcloud scheduler jobs pause nba-env-var-check-prod --location=us-west2 --project=nba-props-platform
+
+# Check self-heal service
+gcloud run services describe self-heal-predictions --region=us-west2 --project=nba-props-platform --format="value(status.url)"
+```
+
+---
+
+## Priority 4: Signal Health Review
+
+**Signals at or below breakeven (14d):**
+
+| Signal | HR 14d | N 14d | Season HR | Concern |
+|--------|--------|-------|-----------|---------|
+| `rest_advantage_2d` | 25.0% | 4 | 50.0% | Small N but crashing. Was capped at week 15. |
+| `high_edge` | 50.0% | 62 | 52.7% | At breakeven on large N. Core signal. |
+| `edge_spread_optimal` | 50.0% | 62 | 52.7% | Same as high_edge — they overlap. |
+| `bench_under` | 53.2% | 62 | 56.5% | WATCH status. Declining from season avg. |
+| `book_disagreement` | 58.9% | 73 | 58.9% | WATCH. 7d down to 51.9%. |
+
+**4 signals missing from `signal_health_daily`:**
+- `fast_pace_over`, `line_rising_over`, `model_health`, `self_creation_over`
+- These are listed as active in CLAUDE.md but not appearing in the health table
+- **Investigate:** Are they not being tracked, not firing, or just not in this table?
+
+**Recommendation:**
+- Re-evaluate `rest_advantage_2d` — may need disabling if it continues below breakeven
+- `high_edge` and `edge_spread_optimal` at 50% on N=62 is concerning — these are foundational signals. If they drop below 50% next week, investigate
+- Investigate the 4 missing signals to ensure they're actually firing
+
+---
+
+## Priority 5: Best Bets Deep Dive
+
+### Performance by Model Source (14d)
+
+| Model | Picks | HR | Assessment |
+|-------|-------|----|------------|
+| `catboost_v12` (champion) | 4 | **25%** | Actively hurting. BLOCKED. |
+| `v9_low_vegas_train0106_0205` | 3 | 100% | Top contributor |
+| `v12_noveg_train0110_0220` | 2 | 100% | Strong |
+| `v12_noveg_q45_train1102_0125` | 2 | 100% | Good picks despite BLOCKED status |
+| `v12_noveg_q43_train0104_0215` | 4 | 50% | Mixed |
+
+**Key insight:** Shadow models are carrying best bets while the champion drags. The filter stack + HR-weighted selection is compensating but not fully preventing champion picks from entering.
+
+### Edge Band Anomaly
+
+| Edge Band | Picks | HR | Note |
+|-----------|-------|----|------|
+| 7+ | 1 | 100% | Rare but profitable |
+| 5-6.9 | 11 | 63.6% | **Carrying performance** |
+| 3-4.9 | 4 | 25.0% | Worst band (small N) |
+| <3 | 9 | 66.7% | **Should not exist** — edge floor is 3.0 |
+
+**The <3 edge band having 9 picks is unexpected.** These may come from signal-density bypass (edge >=7 bypass removed in Session 352, but could there be another path?) or multi-model consensus scoring. Investigate how sub-3.0 edge picks enter best bets.
+
+### Direction Split
+
+| Direction | Picks | HR |
+|-----------|-------|----|
+| OVER | 13 | 53.8% |
+| UNDER | 12 | 66.7% |
+
+OVER at 53.8% is barely above breakeven. The Feb OVER collapse pattern persists. Consider whether additional OVER-side restrictions are warranted, or if the new models' training window (through Feb 22) will naturally recalibrate.
+
+---
+
+## Priority 6: Deploy Grading Service
+
+`nba-grading-service` is 1 commit behind (profiling feature from Session 384). Non-critical since profiling is observation-only, but should be deployed to clear drift.
+
 ```bash
 ./bin/deploy-service.sh nba-grading-service
 ```
 
-Also: Session 386's two commits (`5eccddbe` feat + `d553578e` docs) auto-deployed publishing services but the grading service predates these and was already stale. Verify after deploy:
-```bash
-./bin/check-deployment-drift.sh --verbose
+---
+
+## Priority 7: Verify Session 386 Prevention System
+
+The disabled model filtering and pick events code deployed in `5eccddbe` hasn't been exercised in production yet.
+
+**On next game day, verify:**
+
+1. `system_id` populated in `best_bets_published_picks`
+2. `best_bets_pick_events` has rows for any drops
+3. Cloud Run logs show "Filtered N picks from disabled models" if applicable
+4. Published-only picks still get graded after games finish
+
+---
+
+## Items to Monitor
+
+| Item | Current | Threshold to Act | Timeline |
+|------|---------|-------------------|----------|
+| New shadow models (VW015, NOVEG) | Just deployed, no data | N>=25 edge 3+ graded → promote candidate | ~2-3 weeks |
+| `lgbm_v12_noveg_train1201_0209` | 71.4% HR, N=7 | N>=25 and HR>=60% → promote candidate | ~2 weeks |
+| `book_disagreement` signal | 58.9% WATCH, 7d=51.9% | HR<50% on N>=30 → disable | ~1 week |
+| `bench_under` signal | 53.2% WATCH | HR<50% on N>=30 → disable | ~1 week |
+| OVER performance | 53.8% HR (14d) | Sustained <52.4% → OVER block expansion | Ongoing |
+| Best bets volume | 2.5 picks/day | <1 pick/day sustained → loosen filters | Ongoing |
+| Edge <3 picks in best bets | 9 picks (unexpected) | Any → investigate entry path | Next session |
+
+---
+
+## Quick Action Checklist
+
 ```
-
----
-
-## Priority 2: Model Fleet Triage — Fresh Models Underperforming
-
-**Current fleet health (7-day, edge 3+):**
-
-| Model | HR% | N | Notes |
-|-------|-----|---|-------|
-| `v12_noveg_60d_vw025_train1222_0219` | 75.0% | 8 | Best HR, tiny sample |
-| `v16_noveg_rec14_train1201_0215` | 64.3% | 14 | Strong, 15 days stale |
-| `v12_noveg_train0110_0220` | 63.6% | 11 | Current best bets source |
-| `v16_noveg_train1201_0215` | 63.6% | 11 | Matches v12_noveg |
-| `ensemble_v1` | 62.5% | 16 | Ensemble performing well |
-| `lgbm_v12_noveg_train1102_0209` | 57.1% | 21 | LightGBM — 21 days stale, disable candidate |
-| `v12_noveg_q43_train1102_0125` | 40.7% | 27 | **Catastrophic** — disable candidate |
-| `v12_noveg_q45_train1102_0125` | 40.9% | 22 | **Catastrophic** — disable candidate |
-| `v8` (production champion) | 48.9% | 92 | Below breakeven |
-| `v12` | 51.7% | 60 | Below breakeven |
-
-**Freshest models** (trained through Feb 27, 3 days stale):
-- `catboost_v12_noveg_train0103_0227` — no HR data yet (too new)
-- `lgbm_v12_noveg_train0103_0227` — no HR data yet (too new)
-
-**Recommendations:**
-1. **Disable the two Q43/Q45 models** from Nov training (`v12_noveg_q43_train1102_0125` and `v12_noveg_q45_train1102_0125`). Both at ~40% HR on 20+ graded picks. Use:
-   ```bash
-   python bin/deactivate_model.py catboost_v12_noveg_q43_train1102_0125 --dry-run
-   python bin/deactivate_model.py catboost_v12_noveg_q45_train1102_0125 --dry-run
-   ```
-2. **Evaluate the 21-day-stale LightGBM** (`lgbm_v12_noveg_train1102_0209`). At 57.1% HR it's above breakeven but the Nov training window is ancient. The fresh `lgbm_v12_noveg_train0103_0227` (3 days stale) should replace it once it has graded data.
-3. **Monitor the Feb 27 models** — they're the freshest but have zero graded picks yet. Check back after 2-3 game days.
-
----
-
-## Priority 3: Best Bets Performance — Low Volume, Mixed Results
-
-**Last 7 days:**
-
-| Date | Picks | W-L | HR |
-|------|-------|-----|-----|
-| Mar 1 | 2 | 2-0 | 100% |
-| Feb 28 | 6 | 3-3 | 50% |
-| Feb 27 | 1 | 0-1 | 0% |
-| Feb 26 | 5 | 2-2 (+1 pending) | 50% |
-| Feb 24 | 2 | 1-1 | 50% |
-
-**7-day total: 8W-7L (53.3%).** Below breakeven. Volume is very low (1-6 picks/day).
-
-**Possible causes:**
-- All-Star break and schedule gaps reduced game volume
-- The poisoned XGBoost incident (Session 378c → 383B → 386) may have leaked bad picks into Feb 28 results before cleanup
-- V8 production champion at 48.9% is dragging — but filter stack should handle this
-
-**Recommendations:**
-1. **Don't panic** — 15 total graded picks in 7 days is too small for conclusions. Variance is massive at this sample.
-2. **Check if any Feb 28 picks came from XGBoost** — cross-reference signal_best_bets_picks for Feb 28 against XGBoost model. If any leaked through before the Session 383B deactivation, those losses aren't representative.
-3. **Wait for volume** — March schedule picks up. The system needs 30+ graded picks for meaningful HR assessment.
-
----
-
-## Priority 4: Retrain Cadence
-
-**Training staleness across enabled models:**
-- 2 models at 3 days stale (Feb 27 training end) — good
-- 3 models at 8 days stale (Feb 22) — acceptable
-- 1 model at 10 days (Feb 20) — approaching threshold
-- 4 models at 15-16 days — overdue for retrain or disable
-- 1 model at 21 days — should be replaced by fresh equivalent
-
-The 7-day cadence target means anything >10 days is technically overdue. The Feb 27 models are the freshest and should naturally take over selection as they accumulate data.
-
-**Recommendation:** No urgent retrain needed since we have 2 models at 3 days stale. But the 15-16 day models (`v16_noveg_train1201_0215`, `v12_train0104_0215`, etc.) should be watched. If the Feb 27 models prove viable, consider disabling the >15d models to simplify the fleet.
-
----
-
-## Priority 5: Session 386 Verification Items
-
-The Session 386 prevention system is deployed but hasn't been exercised in production yet (no game day has run with the new code through the full pipeline).
-
-**Verify on the next game day:**
-
-1. **system_id populated in published picks:**
-   ```sql
-   SELECT game_date, COUNTIF(system_id IS NOT NULL) as has_id, COUNT(*) as total
-   FROM nba_predictions.best_bets_published_picks
-   WHERE game_date >= CURRENT_DATE()
-   GROUP BY 1
-   ```
-   Expected: 100% of picks have system_id.
-
-2. **Pick events logged for any drops:**
-   ```sql
-   SELECT * FROM nba_predictions.best_bets_pick_events
-   WHERE game_date >= CURRENT_DATE()
-   ORDER BY created_at DESC
-   ```
-   Expected: Events logged for any pick that was in signal but later dropped (common during hourly re-exports as games start).
-
-3. **Disabled model filter working:**
-   Check Cloud Run logs for `signal_best_bets_exporter` — look for "Filtered N picks from disabled models" log line. Should appear if any disabled model's predictions are still in `player_prop_predictions` (possible for models disabled without running `deactivate_model.py`).
-
-4. **Published-only grading working:**
-   If any picks get dropped from signal mid-day (e.g., game starts, re-export runs), they should still show `actual` and `result` in the JSON once games finish and grading runs.
-
----
-
-## Priority 6: Pipeline Health Gaps
-
-**No Phase 5 completions recorded in last 3 days.** This might be:
-- Normal (no games on some days around All-Star break)
-- Or the `phase_completions` table isn't being written to
-
-**Action:** Check if there were NBA games on Feb 28 / Mar 1:
-```sql
-SELECT game_date, COUNT(*) as games, COUNTIF(game_status = 3) as final
-FROM nba_reference.nba_schedule
-WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 3 DAY)
-GROUP BY 1 ORDER BY 1
+[ ] Deploy grading service: ./bin/deploy-service.sh nba-grading-service
+[ ] Disable 7 dead models: bin/deactivate_model.py (dry-run first)
+[ ] Pause nba-env-var-check-prod scheduler job
+[ ] Investigate 4 missing signals in signal_health_daily
+[ ] Investigate edge <3 picks entering best bets
+[ ] Check self-heal-predictions timeout
+[ ] Verify Session 386 prevention system on next game day
 ```
-
-If there were games but no Phase 5 completions, investigate the orchestrator chain.
-
----
-
-## Quick Summary for Next Session
-
-| Item | Action | Urgency |
-|------|--------|---------|
-| Deploy grading service | `./bin/deploy-service.sh nba-grading-service` | Do first |
-| Disable 2 catastrophic Q43/Q45 models | `bin/deactivate_model.py` (dry-run first) | High |
-| Verify Session 386 prevention system | Check on next game day | Medium |
-| Monitor Feb 27 fresh models | Wait for 10+ graded picks | Low |
-| Check Phase 5 completions gap | Investigate if games happened | Low |
-| LightGBM 21d stale model | Disable once fresh LGBM has data | Low |
