@@ -293,6 +293,32 @@ def main(cloud_event):
         )
         results['signal_health_error'] = str(e)
 
+    # 4b. Signal firing canary — detect dead or degrading signals (Session 387)
+    try:
+        from ml.signals.signal_health import check_signal_firing_canary, format_canary_slack_message
+        from shared.clients.bigquery_pool import get_bigquery_client as _get_bq_canary
+
+        bq_canary = _get_bq_canary(project_id=PROJECT_ID)
+        canary_alerts = check_signal_firing_canary(bq_canary, target_date)
+        results['signal_canary_alerts'] = len(canary_alerts)
+
+        if canary_alerts:
+            slack_msg = format_canary_slack_message(canary_alerts, target_date)
+            if slack_msg:
+                slack_url = os.environ.get('SLACK_WEBHOOK_URL_ALERTS')
+                if slack_url:
+                    from shared.utils.slack_retry import send_slack_webhook_with_retry
+                    send_slack_webhook_with_retry(slack_url, {'text': slack_msg}, timeout=10)
+                    logger.info(f"[{correlation_id}] Signal canary alert sent to Slack")
+                else:
+                    logger.warning(f"[{correlation_id}] Signal canary alerts but no SLACK_WEBHOOK_URL_ALERTS")
+    except Exception as e:
+        logger.error(
+            f"[{correlation_id}] Signal firing canary failed (non-fatal): {e}",
+            exc_info=True
+        )
+        results['signal_canary_error'] = str(e)
+
     # 5. Compute model performance daily metrics (Session 263)
     try:
         from datetime import date as date_type

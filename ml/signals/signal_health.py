@@ -78,6 +78,157 @@ COLD_THRESHOLD = -10.0   # divergence_7d_vs_season < -10 → COLD
 HOT_THRESHOLD = 10.0     # divergence_7d_vs_season > +10 → HOT
 
 
+def check_signal_firing_canary(
+    bq_client: bigquery.Client,
+    target_date: str,
+) -> List[Dict[str, Any]]:
+    """Detect signals that stopped firing or are firing at degraded rates.
+
+    Compares 7-day firing count to prior 23-day baseline for each active signal.
+    Classifies as DEAD (0 fires when previously active), DEGRADING (>70% drop),
+    or HEALTHY.
+
+    Created: Session 387 — two 80%+ HR signals were dead for weeks undetected.
+
+    Returns:
+        List of dicts with signal_tag, firing_status, fires_7d, fires_prior_23d.
+        Only returns DEAD or DEGRADING signals (empty list = all healthy).
+    """
+    query = f"""
+    WITH firing_counts AS (
+        SELECT
+            signal_tag,
+            COUNTIF(game_date > DATE_SUB(@target_date, INTERVAL 7 DAY)
+                    AND game_date <= @target_date) AS fires_7d,
+            COUNTIF(game_date > DATE_SUB(@target_date, INTERVAL 30 DAY)
+                    AND game_date <= DATE_SUB(@target_date, INTERVAL 7 DAY)) AS fires_prior_23d
+        FROM `{PROJECT_ID}.nba_predictions.pick_signal_tags`
+        CROSS JOIN UNNEST(signal_tags) AS signal_tag
+        WHERE game_date > DATE_SUB(@target_date, INTERVAL 30 DAY)
+          AND game_date <= @target_date
+          AND signal_tag IN UNNEST(@active_signals)
+        GROUP BY signal_tag
+    ),
+
+    -- Include signals with ZERO fires (not in pick_signal_tags at all)
+    all_signals AS (
+        SELECT signal AS signal_tag
+        FROM UNNEST(@active_signals) AS signal
+    )
+
+    SELECT
+        a.signal_tag,
+        COALESCE(f.fires_7d, 0) AS fires_7d,
+        COALESCE(f.fires_prior_23d, 0) AS fires_prior_23d,
+        CASE
+            WHEN COALESCE(f.fires_7d, 0) = 0 AND COALESCE(f.fires_prior_23d, 0) > 0
+                THEN 'DEAD'
+            WHEN COALESCE(f.fires_7d, 0) = 0 AND COALESCE(f.fires_prior_23d, 0) = 0
+                THEN 'NEVER_FIRED'
+            WHEN f.fires_7d > 0
+                AND f.fires_prior_23d > 0
+                AND f.fires_7d < f.fires_prior_23d * 0.3
+                THEN 'DEGRADING'
+            ELSE 'HEALTHY'
+        END AS firing_status
+    FROM all_signals a
+    LEFT JOIN firing_counts f ON a.signal_tag = f.signal_tag
+    ORDER BY
+        CASE
+            WHEN COALESCE(f.fires_7d, 0) = 0 AND COALESCE(f.fires_prior_23d, 0) > 0 THEN 0
+            WHEN COALESCE(f.fires_7d, 0) = 0 AND COALESCE(f.fires_prior_23d, 0) = 0 THEN 1
+            WHEN f.fires_7d > 0 AND f.fires_prior_23d > 0 AND f.fires_7d < f.fires_prior_23d * 0.3 THEN 2
+            ELSE 3
+        END
+    """
+
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+            bigquery.ArrayQueryParameter('active_signals', 'STRING', sorted(ACTIVE_SIGNALS)),
+        ]
+    )
+
+    rows = bq_client.query(query, job_config=job_config).result(timeout=60)
+
+    alerts = []
+    for row in rows:
+        status = row.firing_status
+        if status in ('DEAD', 'DEGRADING', 'NEVER_FIRED'):
+            alerts.append({
+                'signal_tag': row.signal_tag,
+                'firing_status': status,
+                'fires_7d': row.fires_7d,
+                'fires_prior_23d': row.fires_prior_23d,
+            })
+
+    if alerts:
+        dead = [a for a in alerts if a['firing_status'] == 'DEAD']
+        degrading = [a for a in alerts if a['firing_status'] == 'DEGRADING']
+        never = [a for a in alerts if a['firing_status'] == 'NEVER_FIRED']
+        logger.warning(
+            f"Signal firing canary for {target_date}: "
+            f"{len(dead)} DEAD, {len(degrading)} DEGRADING, {len(never)} NEVER_FIRED"
+        )
+        for a in dead:
+            logger.warning(
+                f"  DEAD: {a['signal_tag']} — 0 fires in 7d, "
+                f"was {a['fires_prior_23d']} in prior 23d"
+            )
+        for a in degrading:
+            logger.warning(
+                f"  DEGRADING: {a['signal_tag']} — {a['fires_7d']} fires in 7d, "
+                f"was {a['fires_prior_23d']} in prior 23d "
+                f"({round(100 * a['fires_7d'] / max(a['fires_prior_23d'], 1))}% of baseline)"
+            )
+    else:
+        logger.info(f"Signal firing canary for {target_date}: all signals healthy")
+
+    return alerts
+
+
+def format_canary_slack_message(alerts: List[Dict], target_date: str) -> Optional[str]:
+    """Format canary alerts into a Slack message. Returns None if no alerts."""
+    if not alerts:
+        return None
+
+    dead = [a for a in alerts if a['firing_status'] == 'DEAD']
+    degrading = [a for a in alerts if a['firing_status'] == 'DEGRADING']
+    never = [a for a in alerts if a['firing_status'] == 'NEVER_FIRED']
+
+    lines = [f"*Signal Firing Canary — {target_date}*"]
+
+    if dead:
+        lines.append("")
+        lines.append("🔴 *DEAD SIGNALS* (fired before, now zero):")
+        for a in dead:
+            lines.append(
+                f"  • `{a['signal_tag']}` — 0 fires in 7d "
+                f"(was {a['fires_prior_23d']} in prior 23d)"
+            )
+
+    if degrading:
+        lines.append("")
+        lines.append("🟡 *DEGRADING SIGNALS* (>70% drop from baseline):")
+        for a in degrading:
+            pct = round(100 * a['fires_7d'] / max(a['fires_prior_23d'], 1))
+            lines.append(
+                f"  • `{a['signal_tag']}` — {a['fires_7d']} fires in 7d "
+                f"(was {a['fires_prior_23d']} in prior 23d, {pct}% of baseline)"
+            )
+
+    if never:
+        lines.append("")
+        lines.append("⚪ *NEVER FIRED* (0 fires in 30d — check configuration):")
+        for a in never:
+            lines.append(f"  • `{a['signal_tag']}`")
+
+    lines.append("")
+    lines.append("_Check `ml/signals/` for broken thresholds, dead dependencies, or feature scale mismatches._")
+
+    return "\n".join(lines)
+
+
 def compute_signal_health(
     bq_client: bigquery.Client,
     target_date: str,
@@ -334,9 +485,26 @@ def main():
     parser.add_argument('--start', default='2026-01-09', help='Backfill start date')
     parser.add_argument('--end', default='2026-02-14', help='Backfill end date')
     parser.add_argument('--dry-run', action='store_true', help='Print without writing')
+    parser.add_argument('--canary', action='store_true',
+                        help='Run signal firing canary (detect dead/degrading signals)')
     args = parser.parse_args()
 
     client = bigquery.Client(project=PROJECT_ID)
+
+    # Signal firing canary mode (Session 387)
+    if args.canary:
+        from datetime import date as date_type
+        check_date = args.date or str(date_type.today())
+        print(f"\n=== Signal Firing Canary — {check_date} ===\n")
+        alerts = check_signal_firing_canary(client, check_date)
+        if alerts:
+            msg = format_canary_slack_message(alerts, check_date)
+            if msg:
+                print(msg)
+        else:
+            print("All signals healthy — no alerts.")
+        print(f"\nActive signals checked: {len(ACTIVE_SIGNALS)}")
+        return
 
     if args.date:
         dates = [args.date]
