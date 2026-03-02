@@ -176,15 +176,18 @@ nba-stats-scraper/
 
 ### Cross-Model Monitoring
 
-6 layers prevent shadow models from silently failing:
+7 layers prevent shadow models from silently failing:
 1. **Model sanity guard** (aggregator) — blocks models with >95% same-direction predictions (Session 378c)
 2. **Signal exporter disabled model filter** — filters picks from disabled models before writing to `signal_best_bets_picks` (Session 386)
 3. **Published picks disabled model detection** — marks locked picks from disabled models as `model_disabled` in `best_bets_published_picks` (Session 386)
 4. `reconcile-yesterday` Phase 9 — next-day gap detection
 5. `validate-daily` Phase 0.486 — same-day early warning
 6. Pipeline canary auto-heal — automated every 30 min
+7. **Decay detection state machine** — HEALTHY→WATCH→DEGRADING→BLOCKED with Slack alerts (daily 11 AM ET)
 
 **Deactivation CLI:** `python bin/deactivate_model.py MODEL_ID [--dry-run] [--re-export]` — cascades disable through registry, predictions, signal picks, and audit trail (Session 386).
+
+**KNOWN GAP:** BLOCKED models are NOT auto-disabled — requires manual `deactivate_model.py`. Signal firing is NOT monitored — signals can die silently. See `docs/08-projects/current/fleet-lifecycle-automation/00-PLAN.md` for automation plan (Session 387).
 
 ## Breakout Classifier [Keyword: BREAKOUT]
 
@@ -294,6 +297,11 @@ WHERE game_date >= CURRENT_DATE() - 3 GROUP BY 1 ORDER BY 1 DESC;
 | **XGBoost version mismatch** | Session 378c: Model trained with xgboost==3.1.2, production had 2.0.2. Predictions ~8.6pts too low, ALL UNDER with inflated edges. **Fix**: Pin identical versions in training env and production requirements.txt. Version check added to quick_retrain.py. Model sanity guard added to aggregator. |
 | **Disabled model still in best bets** | Use `python bin/deactivate_model.py MODEL_ID` — cascades: disable registry + deactivate predictions + remove signal picks + audit. Session 386 also added defense-in-depth: signal exporter filters disabled models, all exporter marks locked picks as `model_disabled`, published-only picks get graded. |
 | **Model sanity guard** | Session 378c: aggregator.py now blocks models with >95% same-direction predictions on 20+ preds. Prevents miscalibrated model from dominating via inflated edges. |
+| **Signal silently dead** | Session 387: Signals can die when external dependencies change (champion model dies, feature normalization differs from threshold). Check `signal_health_daily` for missing signals. Two patterns: (1) `prev_prop_lines` CTE queried dead champion → `prop_line_delta` always NULL, (2) threshold on wrong scale (raw 102 vs normalized 0-1). |
+| **Signal depends on champion model** | `supplemental_data.py` prev_prop_lines CTE was model-specific. Fixed Session 387: removed `system_id` filter. Prop lines are bookmaker lines, not model-dependent. Also broke `line_jumped_under`, `line_dropped_under`, `line_dropped_over` filters. |
+| **Feature normalization mismatch** | Feature store values are normalized 0-1. Signal thresholds must match. `fast_pace_over` had `MIN_OPPONENT_PACE=102` on 0-1 data — could never fire. Always check `feature_N_value` distributions before setting thresholds. |
+| **deactivate_model.py column error** | Fixed Session 387: referenced `updated_at` (doesn't exist in model_registry). Always check schema before writing UPDATE queries. |
+| **Negative edge in signal_best_bets_picks** | Fixed Session 387: UNDER picks stored as negative (predicted - line). Now stores `abs(edge)`. Use `ABS(edge)` in queries on historical data before 2026-03-02. |
 
 **Full troubleshooting:** `docs/02-operations/session-learnings.md`
 
@@ -342,7 +350,7 @@ python bin/monitoring/grading_gap_detector.py        # Grading gaps (auto: daily
 
 ## Signal System [Keyword: SIGNALS]
 
-**19 active signals** (24 removed/disabled). **Edge-first architecture** — signals are for filtering and annotation, not selection.
+**21 active signals** (24 removed/disabled). **Edge-first architecture** — signals are for filtering and annotation, not selection.
 
 **Best Bets:** `edge 3+ → negative filters → signal count ≥ 3 → SC=3 OVER edge 7+ gate → signal density (bypass edge ≥7) → rank by edge`
 
@@ -366,7 +374,7 @@ python bin/monitoring/grading_gap_detector.py        # Grading gaps (auto: daily
 
 | Signal | Direction | HR | Status |
 |--------|-----------|-----|--------|
-| `model_health` | BOTH | 52.6% | PRODUCTION |
+| `model_health` | BOTH | 52.6% | META (not in pick_signal_tags — used for signal density only) |
 | `high_edge` | BOTH | 66.7% | PRODUCTION |
 | `edge_spread_optimal` | BOTH | 67.2% | PRODUCTION |
 | `combo_he_ms` | OVER | 94.9% | PRODUCTION |
@@ -374,14 +382,14 @@ python bin/monitoring/grading_gap_detector.py        # Grading gaps (auto: daily
 | `bench_under` | UNDER | 76.9% | PRODUCTION |
 | `3pt_bounce` | OVER | 74.9% | CONDITIONAL |
 | `rest_advantage_2d` | BOTH | 64.8% | CONDITIONAL (capped week 15) |
-| `line_rising_over` | OVER | 96.6% | PRODUCTION (Session 374b) |
+| `line_rising_over` | OVER | 96.6% | PRODUCTION (Session 374b, fixed Session 387 — was dead due to champion dependency) |
 | `book_disagreement` | BOTH | 93.0% | WATCH |
 | `home_under` | UNDER | 63.9% | PRODUCTION (Session 371) |
 | `scoring_cold_streak_over` | OVER | 65.1% | CONDITIONAL (Session 371) |
 | `extended_rest_under` | UNDER | 61.8% | PRODUCTION (Session 372) |
 | `starter_under` | UNDER | 54.8-68.1% | PRODUCTION (Session 372) |
 | `high_scoring_environment_over` | OVER | 70.2% | CONDITIONAL (Session 373) |
-| `fast_pace_over` | OVER | 81.5% | PRODUCTION (Session 374) |
+| `fast_pace_over` | OVER | 81.5% | PRODUCTION (Session 374, fixed Session 387 — threshold was raw 102 on 0-1 normalized scale) |
 | `volatile_scoring_over` | OVER | 81.5% | PRODUCTION (Session 374) |
 | `low_line_over` | OVER | 78.1% | PRODUCTION (Session 374) |
 | `blowout_recovery` | OVER | 50.0% | DISABLED (Session 349) |

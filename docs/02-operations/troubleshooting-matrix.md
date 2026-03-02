@@ -40,7 +40,8 @@ Start here: What's the symptom?
 ├─ Processing taking too long → Section 4: Performance Issues
 ├─ Early season errors → Section 5: Early Season Issues
 ├─ Database/infrastructure errors → Section 6: Infrastructure Issues
-└─ Dashboard/monitoring issues → Section 7: Observability Issues
+├─ Dashboard/monitoring issues → Section 7: Observability Issues
+└─ Signal/filter not working → Section 8: Signal System Issues
 ```
 
 ---
@@ -2291,13 +2292,87 @@ for processor, count in processor_counts.most_common(10):
 
 ---
 
-**Document Version**: 1.3
+---
+
+## Section 8: Signal System Issues
+
+### 8.1 - Signal Not Appearing in signal_health_daily
+
+**Symptom:** An active signal is listed in CLAUDE.md but has zero rows in `signal_health_daily`.
+
+**Diagnosis Steps:**
+
+#### Step 1: Is the signal in ACTIVE_SIGNALS?
+```python
+# Check ml/signals/signal_health.py
+ACTIVE_SIGNALS = frozenset({...})
+```
+- If NOT listed → Add it
+- If listed → Continue to Step 2
+
+#### Step 2: Is the signal appearing in pick_signal_tags?
+```sql
+SELECT signal_tag, COUNT(*) as cnt
+FROM nba_predictions.pick_signal_tags
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+  AND signal_tag = 'your_signal_name'
+GROUP BY 1;
+```
+- If 0 rows → Signal never fires. Continue to Step 3.
+- If rows exist → Bug is in signal_health.py aggregation
+
+#### Step 3: Why isn't the signal firing?
+Check these common failure modes:
+
+| Failure Mode | Example | How to Check |
+|-------------|---------|--------------|
+| **Feature normalization mismatch** | Threshold 102 on 0-1 scale | `SELECT MIN/MAX/AVG(feature_N_value) FROM ml_feature_store_v2` |
+| **Champion model dependency** | CTE queries dead champion model | Search `supplemental_data.py` for `system_id = '{model_id}'` |
+| **Excluded from pick_signal_tags** | `model_health` excluded in annotator | Check `signal_annotator.py` for tag-specific exclusions |
+| **Conditions too narrow** | SCR >= 0.50 + OVER + line >= 15 | Relax thresholds or accept as rare signal |
+| **Supplemental data not piped** | Feature not in supplemental CTE | Check `supplemental_data.py` for the required field |
+
+### 8.2 - prop_line_delta Always NULL
+
+**Symptom:** `prop_line_delta` is NULL for all predictions. Filters 7, 8, 13 and `line_rising_over` signal don't work.
+
+**Root Cause (Session 387):** `prev_prop_lines` CTE in `supplemental_data.py` was filtered by champion model. When champion dies (BLOCKED, 0 predictions), all lookups return NULL.
+
+**Fix:** Remove `AND pp.system_id = '{model_id}'` from the `prev_prop_lines` CTE. Prop lines are bookmaker lines, not model-dependent.
+
+**Verification:**
+```sql
+-- Check if prop_line_delta is populated
+SELECT game_date, COUNT(*) as total,
+       COUNTIF(prop_line_delta IS NOT NULL) as has_delta
+FROM nba_predictions.signal_best_bets_picks
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 3 DAY)
+GROUP BY 1;
+```
+
+### 8.3 - Negative Edge Values in signal_best_bets_picks
+
+**Symptom:** `WHERE edge < 3` returns UNDER picks that actually have abs(edge) > 5.
+
+**Root Cause (Session 387):** UNDER picks stored as `predicted_points - line_value` which is negative for UNDER. The aggregator correctly uses `abs()` for all filtering, but the stored value was signed.
+
+**Fix:** Both BQ write and JSON export now use `abs(edge)`. For historical data:
+```sql
+UPDATE nba_predictions.signal_best_bets_picks
+SET edge = ABS(edge)
+WHERE edge < 0 AND game_date >= '2025-10-01';
+```
+
+---
+
+**Document Version**: 1.4
 **Created**: 2025-11-15
-**Last Updated**: 2026-02-01
+**Last Updated**: 2026-03-02
 **Maintained By**: Engineering Team
 **Review Frequency**: Monthly or after major incidents
 
 **Version History:**
+- v1.4 (2026-03-02): Added Section 8: Signal System Issues (Session 387 — silent signal failures, prop_line_delta, negative edges)
 - v1.3 (2026-02-01): Added Section 7.4: Monitoring metrics permissions troubleshooting
 - v1.2 (2026-02-01): Added Section 7: Observability Issues (dashboard health, Firestore proliferation, monitoring)
 - v1.1 (2025-11-15): Added Phase 5 prediction details (sections 1.1-1.5), XGBoost troubleshooting, updated error messages

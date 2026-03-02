@@ -1190,3 +1190,62 @@ WHERE game_date = '2026-02-02'  -- Partition filter
 4. **Published-only grading** — grades dropped picks so they show results instead of appearing as phantom ungraded picks
 
 **Learning**: Pick locking is a necessary safeguard but creates a trust boundary. Locked picks must carry full lineage (model source, signal status) so downstream exporters can validate them. Defense-in-depth across 4 layers prevents any single system failure from poisoning published picks.
+
+## Session 387: Silent Signal Failures & Fleet Lifecycle
+
+**Incident**: Two high-value signals (`line_rising_over` 96.6% HR, `fast_pace_over` 81.5% HR) were discovered to be completely dead in production — never firing, no alerts, no detection. Additionally, 4 models had inconsistent registry states (`enabled=False` but `status=active`), and the `deactivate_model.py` CLI had a column reference bug preventing execution.
+
+### Root Cause 1: Champion Model Dependency (`line_rising_over`)
+
+The `prev_prop_lines` CTE in `ml/signals/supplemental_data.py` queried predictions filtered by `system_id = '{model_id}'` where `model_id` was the production champion (`catboost_v12`). When the champion stopped producing predictions (BLOCKED state, 0 active predictions), `prev_line_value` became NULL for all players, causing `prop_line_delta` to never be set.
+
+**Impact**: Not just `line_rising_over` — ALL negative filters depending on `prop_line_delta` were also broken:
+- `line_jumped_under` (filter 7)
+- `line_dropped_under` (filter 8)
+- `line_dropped_over` (filter 13)
+
+These filters still "worked" in the sense that NULL `prop_line_delta` didn't match `>= 2.0` or `<= -2.0`, so no picks were incorrectly blocked. But they also weren't BLOCKING picks that should have been blocked.
+
+**Fix**: Removed `AND pp.system_id = '{model_id}'` from the CTE. Prop lines are bookmaker lines, not model-dependent — any model's previous prediction has the same line.
+
+### Root Cause 2: Feature Normalization Mismatch (`fast_pace_over`)
+
+The signal checked `opponent_pace >= 102.0` where `opponent_pace` came from `feature_18_value` in the ML feature store. However, feature_18 is normalized to a 0-1 scale (P75=0.49, P90=0.76, P95=0.93). The threshold of 102.0 can never be met on a 0-1 scale — the signal was dead on arrival.
+
+**Fix**: Changed `MIN_OPPONENT_PACE` from `102.0` to `0.75` (≈ top 25% of teams by pace, maps to raw pace ~102+).
+
+### Root Cause 3: model_health in ACTIVE_SIGNALS
+
+The `model_health` signal is intentionally excluded from `pick_signal_tags` in `signal_annotator.py` (line 134: `if signal.tag != 'model_health'`). It's a meta-signal used for signal density checks, not a taggable pick signal. But it was listed in `ACTIVE_SIGNALS` in `signal_health.py`, creating an impossible expectation that it would appear in `signal_health_daily`.
+
+**Fix**: Removed `model_health` from `ACTIVE_SIGNALS`.
+
+### Root Cause 4: Inconsistent Registry States
+
+4 models had `enabled=False` but `status` was still `active` or `shadow` instead of `blocked`. The `deactivate_model.py` script had a bug: it referenced `updated_at` which doesn't exist in `model_registry` (only `created_at` exists), causing the UPDATE to fail on execution.
+
+**Fix**: Removed `updated_at = CURRENT_TIMESTAMP()` from the UPDATE query. Deactivated all 4 inconsistent models.
+
+### Additional Fixes
+
+- **Edge storage**: UNDER predictions stored with negative signed edge (`predicted - line`) in `signal_best_bets_picks` and JSON exports since Feb 22. Fixed to use `abs(edge)` consistently. Backfilled 10 historical rows.
+- **Scheduler noise**: `nba-env-var-check-prod` was firing every 5 minutes against a non-existent `/internal/check-env` endpoint on prediction-worker. Paused.
+
+### Key Learnings
+
+1. **Signals that depend on external state can die silently.** No monitoring existed for "signal stopped firing." A signal firing canary is needed — compare current firing rate to historical baseline.
+
+2. **Feature normalization must be validated at signal creation time.** Always query `MIN/MAX/P50/P90` of the feature before setting thresholds. Normalized (0-1) vs raw scale mismatches are invisible in code review.
+
+3. **Champion model death cascades.** When the production champion stops producing predictions, anything that queries its predictions breaks. Supplemental data, line deltas, and potentially other features all had hidden champion dependencies.
+
+4. **Registry state consistency matters.** `enabled=False` without `status=blocked` is an inconsistent state that can confuse monitoring tools and manual inspections. The deactivation cascade should enforce both.
+
+5. **Column existence must be verified.** The `updated_at` column bug in `deactivate_model.py` was never caught because the script was created in Session 386 and only tested in dry-run mode (which doesn't execute the UPDATE).
+
+### Forward Plan
+
+See `docs/08-projects/current/fleet-lifecycle-automation/00-PLAN.md` for the 3-tier automation plan:
+- Tier 1: Auto-disable BLOCKED shadow models
+- Tier 2: Signal firing canary
+- Tier 3: Registry hygiene automation
