@@ -126,6 +126,19 @@ class PlayerLoader:
         all_lookups = [p['player_lookup'] for p in players]
         prefetched_lines = self._batch_fetch_all_betting_lines(game_date, all_lookups)
 
+        # Batch-fetch player baselines and Kalshi data (reduces ~300 per-player queries to 2)
+        try:
+            prefetched_baselines = self._batch_get_player_baselines(game_date, all_lookups)
+        except Exception as e:
+            logger.warning(f"Batch baseline fetch failed, falling back to per-player: {e}")
+            prefetched_baselines = {}
+
+        try:
+            prefetched_kalshi = self._batch_get_kalshi_lines(game_date, all_lookups)
+        except Exception as e:
+            logger.warning(f"Batch Kalshi fetch failed, falling back to per-player: {e}")
+            prefetched_kalshi = {}
+
         # Create prediction requests, filtering based on mode
         requests = []
         bootstrap_skipped = 0
@@ -136,7 +149,9 @@ class PlayerLoader:
                 player,
                 game_date,
                 use_multiple_lines,
-                _prefetched_lines=prefetched_lines
+                _prefetched_lines=prefetched_lines,
+                _prefetched_baselines=prefetched_baselines,
+                _prefetched_kalshi=prefetched_kalshi,
             )
             # Only skip players who need bootstrap (new players without history)
             if request.get('needs_bootstrap', False):
@@ -375,7 +390,9 @@ class PlayerLoader:
         player: Dict,
         game_date: date,
         use_multiple_lines: bool,
-        _prefetched_lines: Optional[Dict[str, Dict[str, Any]]] = None
+        _prefetched_lines: Optional[Dict[str, Dict[str, Any]]] = None,
+        _prefetched_baselines: Optional[Dict[str, Dict[str, Any]]] = None,
+        _prefetched_kalshi: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> Dict:
         """
         Create prediction request message for a single player
@@ -387,6 +404,8 @@ class PlayerLoader:
             game_date: Game date
             use_multiple_lines: Whether to test multiple lines
             _prefetched_lines: Optional batch-prefetched lines (Session 330)
+            _prefetched_baselines: Optional batch-prefetched baselines (L5/L10 avg)
+            _prefetched_kalshi: Optional batch-prefetched Kalshi data
 
         Returns:
             Prediction request dict with line source tracking
@@ -396,17 +415,25 @@ class PlayerLoader:
             player['player_lookup'],
             game_date,
             use_multiple_lines,
-            _prefetched_lines=_prefetched_lines
+            _prefetched_lines=_prefetched_lines,
+            _prefetched_baselines=_prefetched_baselines,
         )
 
-        # Session 79: Query Kalshi prediction market data
-        # Use the base line (Vegas or estimated) to find closest Kalshi line
+        # Session 79: Kalshi prediction market data
+        # Use batch-prefetched Kalshi data when available, fall back to per-player query
         vegas_line = line_info.get('base_line')
-        kalshi_info = self._query_kalshi_line(
-            player['player_lookup'],
-            game_date,
-            vegas_line
-        )
+        if _prefetched_kalshi is not None:
+            kalshi_info = _prefetched_kalshi.get(player['player_lookup'])
+            if kalshi_info and vegas_line is not None:
+                # Add line_discrepancy (batch doesn't compute this since it lacks per-player vegas_line)
+                kalshi_info = dict(kalshi_info)  # Don't mutate shared dict
+                kalshi_info['line_discrepancy'] = round(kalshi_info['kalshi_line'] - vegas_line, 1)
+        else:
+            kalshi_info = self._query_kalshi_line(
+                player['player_lookup'],
+                game_date,
+                vegas_line
+            )
 
         # Create request message with line source tracking (v3.2, v3.3)
         request = {
@@ -431,7 +458,7 @@ class PlayerLoader:
             'line_source': line_info['line_source'],  # 'ACTUAL_PROP', 'NO_PROP_LINE', or 'NEEDS_BOOTSTRAP'
             # v3.10: Always populate estimated_line_value as player's baseline (L5 avg) for reference
             # This allows tracking "did we beat the player's average?" even when we have real lines
-            'estimated_line_value': self._get_player_baseline(player['player_lookup']),
+            'estimated_line_value': self._get_player_baseline(player['player_lookup'], _prefetched_baselines=_prefetched_baselines),
             'estimation_method': line_info['estimation_method'],  # 'points_avg_last_5', 'points_avg_last_10', None
 
             # v3.3: Line source API and sportsbook tracking
@@ -462,7 +489,8 @@ class PlayerLoader:
         player_lookup: str,
         game_date: date,
         use_multiple_lines: bool,
-        _prefetched_lines: Optional[Dict[str, Dict[str, Any]]] = None
+        _prefetched_lines: Optional[Dict[str, Dict[str, Any]]] = None,
+        _prefetched_baselines: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         Get betting lines for player with source tracking (v3.2, v3.3)
@@ -483,6 +511,7 @@ class PlayerLoader:
             game_date: Game date
             use_multiple_lines: Whether to generate multiple lines
             _prefetched_lines: Optional batch-prefetched lines (Session 330)
+            _prefetched_baselines: Optional batch-prefetched baselines (L5/L10 avg)
 
         Returns:
             Dict with:
@@ -529,7 +558,9 @@ class PlayerLoader:
                 }
 
             # Legacy behavior: Estimate from season average (when disable_estimated_lines=False)
-            base_line, estimation_method = self._estimate_betting_line_with_method(player_lookup)
+            base_line, estimation_method = self._estimate_betting_line_with_method(
+                player_lookup, _prefetched_baselines=_prefetched_baselines
+            )
 
             # Issue 3: Handle new players who need bootstrap
             if base_line is None:
@@ -768,6 +799,136 @@ class PlayerLoader:
                     )
         except Exception as e:
             logger.warning(f"NO_LINE_DIAGNOSTIC: Batch diagnostic failed: {e}")
+
+    def _batch_get_player_baselines(
+        self,
+        game_date: date,
+        player_lookups: List[str]
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Batch-fetch player baselines (L5/L10 avg) for all players in one query.
+
+        Replaces per-player _get_player_baseline() and _estimate_betting_line_with_method()
+        BQ calls. Same pattern as _batch_fetch_all_betting_lines (Session 330).
+
+        Returns dict mapping player_lookup -> {points_avg_last_5, points_avg_last_10, games_played}
+        """
+        import time
+        t0 = time.time()
+
+        if not player_lookups:
+            return {}
+
+        query = """
+        WITH latest AS (
+            SELECT
+                player_lookup,
+                points_avg_last_5,
+                points_avg_last_10,
+                l10_games_used as games_played,
+                ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY game_date DESC) as rn
+            FROM `{project}.nba_analytics.upcoming_player_game_context`
+            WHERE game_date BETWEEN DATE_SUB(@game_date, INTERVAL 7 DAY) AND @game_date
+              AND player_lookup IN UNNEST(@player_lookups)
+        )
+        SELECT player_lookup, points_avg_last_5, points_avg_last_10, games_played
+        FROM latest WHERE rn = 1
+        """.format(project=self.project_id)
+
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                bigquery.ArrayQueryParameter("player_lookups", "STRING", player_lookups),
+            ]
+        )
+
+        try:
+            rows = list(self.client.query(query, job_config=job_config).result(timeout=60))
+            results = {}
+            for row in rows:
+                results[row.player_lookup] = {
+                    'points_avg_last_5': float(row.points_avg_last_5) if row.points_avg_last_5 is not None else None,
+                    'points_avg_last_10': float(row.points_avg_last_10) if row.points_avg_last_10 is not None else None,
+                    'games_played': int(row.games_played) if row.games_played is not None else 0,
+                }
+            elapsed = time.time() - t0
+            logger.info(f"BATCH_BASELINES: Fetched baselines for {len(results)}/{len(player_lookups)} players in {elapsed:.1f}s")
+            return results
+        except Exception as e:
+            elapsed = time.time() - t0
+            logger.warning(f"BATCH_BASELINES: Batch baseline fetch failed in {elapsed:.1f}s, falling back to per-player: {e}")
+            return {}
+
+    def _batch_get_kalshi_lines(
+        self,
+        game_date: date,
+        player_lookups: List[str]
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Batch-fetch Kalshi prediction market data for all players in one query.
+
+        Uses highest-volume Kalshi line per player (no-vegas variant).
+        The vegas-line-proximity ranking from per-player _query_kalshi_line() is a minor
+        optimization — highest volume is the safe default for batch.
+
+        Returns dict mapping player_lookup -> kalshi info dict (or absent if no data).
+        """
+        import time
+        t0 = time.time()
+
+        if not player_lookups:
+            return {}
+
+        query = """
+        WITH ranked AS (
+            SELECT
+                player_lookup,
+                line_value,
+                yes_bid,
+                no_bid,
+                liquidity_score,
+                market_ticker,
+                ROW_NUMBER() OVER (
+                    PARTITION BY player_lookup
+                    ORDER BY total_volume DESC
+                ) as rn
+            FROM `{project}.nba_raw.kalshi_player_props`
+            WHERE game_date = @game_date
+              AND player_lookup IN UNNEST(@player_lookups)
+              AND prop_type = 'points'
+              AND market_status = 'active'
+        )
+        SELECT player_lookup, line_value, yes_bid, no_bid, liquidity_score, market_ticker
+        FROM ranked WHERE rn = 1
+        """.format(project=self.project_id)
+
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                bigquery.ArrayQueryParameter("player_lookups", "STRING", player_lookups)
+            ]
+        )
+
+        try:
+            rows = list(self.client.query(query, job_config=job_config).result(timeout=60))
+            results = {}
+            for row in rows:
+                if row.line_value is not None:
+                    results[row.player_lookup] = {
+                        'kalshi_available': True,
+                        'kalshi_line': float(row.line_value),
+                        'kalshi_yes_price': int(row.yes_bid) if row.yes_bid else None,
+                        'kalshi_no_price': int(row.no_bid) if row.no_bid else None,
+                        'kalshi_liquidity': row.liquidity_score,
+                        'kalshi_market_ticker': row.market_ticker,
+                    }
+            elapsed = time.time() - t0
+            logger.info(f"BATCH_KALSHI: Fetched Kalshi data for {len(results)}/{len(player_lookups)} players in {elapsed:.1f}s")
+            return results
+        except Exception as e:
+            elapsed = time.time() - t0
+            logger.warning(f"BATCH_KALSHI: Batch Kalshi fetch failed in {elapsed:.1f}s, falling back to per-player: {e}")
+            return {}
 
     def _query_actual_betting_line(
         self,
@@ -1073,7 +1234,7 @@ class PlayerLoader:
                     ]
                 )
 
-            results = self.bq_client.query(query, job_config=job_config).result(timeout=30)
+            results = self.client.query(query, job_config=job_config).result(timeout=30)
             row = next(results, None)
 
             if row is not None and row.line_value is not None:
@@ -1449,7 +1610,11 @@ class PlayerLoader:
         line, _ = self._estimate_betting_line_with_method(player_lookup)
         return line
 
-    def _estimate_betting_line_with_method(self, player_lookup: str) -> Tuple[Optional[float], str]:
+    def _estimate_betting_line_with_method(
+        self,
+        player_lookup: str,
+        _prefetched_baselines: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> Tuple[Optional[float], str]:
         """
         Estimate betting line with method tracking (v3.2)
 
@@ -1462,6 +1627,7 @@ class PlayerLoader:
 
         Args:
             player_lookup: Player identifier
+            _prefetched_baselines: Optional batch-prefetched baselines (L5/L10 avg)
 
         Returns:
             Tuple of (estimated_line, estimation_method)
@@ -1470,14 +1636,20 @@ class PlayerLoader:
         """
         config = get_orchestration_config()
 
-        # Use upcoming_player_game_context which has the actual averages
+        # Use prefetched baselines if available (avoids per-player BQ query)
+        if _prefetched_baselines and player_lookup in _prefetched_baselines:
+            baseline = _prefetched_baselines[player_lookup]
+            return self._estimate_from_baseline(player_lookup, baseline, config)
+
+        # Fallback: per-player BQ query (when batch not available)
         query = """
         SELECT
             points_avg_last_5,
             points_avg_last_10,
             l10_games_used as games_played
         FROM `{project}.nba_analytics.upcoming_player_game_context`
-        WHERE player_lookup = @player_lookup
+        WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+          AND player_lookup = @player_lookup
         ORDER BY game_date DESC
         LIMIT 1
         """.format(project=self.project_id)
@@ -1493,37 +1665,12 @@ class PlayerLoader:
             row = next(results, None)
 
             if row is not None:
-                # Check if player has minimum games (Issue 3: new player handling)
-                games_played = row.games_played or 0
-                if games_played < config.new_player.min_games_required:
-                    logger.info(
-                        f"Player {player_lookup} has only {games_played} games "
-                        f"(min required: {config.new_player.min_games_required}), "
-                        f"marking as needs_bootstrap"
-                    )
-                    if config.new_player.use_default_line:
-                        return config.new_player.default_line_value, 'config_default'
-                    return None, 'needs_bootstrap'
-
-                # Prefer L5 average, fallback to L10
-                if row.points_avg_last_5 is not None:
-                    avg = float(row.points_avg_last_5)
-                    # Round to nearest 0.5 (common for betting lines)
-                    estimated = round(avg * 2) / 2.0
-                    # v3.9: Avoid exact 20.0 which is flagged as placeholder
-                    # Slightly adjust to 20.5 or 19.5 based on actual average
-                    if estimated == 20.0:
-                        estimated = 20.5 if avg >= 20.0 else 19.5
-                        logger.debug(f"Adjusted estimated line from 20.0 to {estimated} for {player_lookup}")
-                    return estimated, 'points_avg_last_5'
-                elif row.points_avg_last_10 is not None:
-                    avg = float(row.points_avg_last_10)
-                    estimated = round(avg * 2) / 2.0
-                    # v3.9: Avoid exact 20.0 which is flagged as placeholder
-                    if estimated == 20.0:
-                        estimated = 20.5 if avg >= 20.0 else 19.5
-                        logger.debug(f"Adjusted estimated line from 20.0 to {estimated} for {player_lookup}")
-                    return estimated, 'points_avg_last_10'
+                baseline = {
+                    'points_avg_last_5': float(row.points_avg_last_5) if row.points_avg_last_5 is not None else None,
+                    'points_avg_last_10': float(row.points_avg_last_10) if row.points_avg_last_10 is not None else None,
+                    'games_played': int(row.games_played) if row.games_played is not None else 0,
+                }
+                return self._estimate_from_baseline(player_lookup, baseline, config)
 
             # No data found - mark as needs_bootstrap (Issue 3)
             logger.info(f"No historical data found for {player_lookup}, marking as needs_bootstrap")
@@ -1537,7 +1684,53 @@ class PlayerLoader:
                 return config.new_player.default_line_value, 'config_default'
             return None, 'needs_bootstrap'
 
-    def _get_player_baseline(self, player_lookup: str) -> Optional[float]:
+    def _estimate_from_baseline(
+        self,
+        player_lookup: str,
+        baseline: Dict[str, Any],
+        config,
+    ) -> Tuple[Optional[float], str]:
+        """
+        Shared estimation logic from a baseline dict (used by both batch and per-player paths).
+        """
+        games_played = baseline.get('games_played', 0) or 0
+        if games_played < config.new_player.min_games_required:
+            logger.info(
+                f"Player {player_lookup} has only {games_played} games "
+                f"(min required: {config.new_player.min_games_required}), "
+                f"marking as needs_bootstrap"
+            )
+            if config.new_player.use_default_line:
+                return config.new_player.default_line_value, 'config_default'
+            return None, 'needs_bootstrap'
+
+        # Prefer L5 average, fallback to L10
+        if baseline.get('points_avg_last_5') is not None:
+            avg = baseline['points_avg_last_5']
+            estimated = round(avg * 2) / 2.0
+            if estimated == 20.0:
+                estimated = 20.5 if avg >= 20.0 else 19.5
+                logger.debug(f"Adjusted estimated line from 20.0 to {estimated} for {player_lookup}")
+            return estimated, 'points_avg_last_5'
+        elif baseline.get('points_avg_last_10') is not None:
+            avg = baseline['points_avg_last_10']
+            estimated = round(avg * 2) / 2.0
+            if estimated == 20.0:
+                estimated = 20.5 if avg >= 20.0 else 19.5
+                logger.debug(f"Adjusted estimated line from 20.0 to {estimated} for {player_lookup}")
+            return estimated, 'points_avg_last_10'
+
+        # No averages available
+        logger.info(f"No historical data found for {player_lookup}, marking as needs_bootstrap")
+        if config.new_player.use_default_line:
+            return config.new_player.default_line_value, 'config_default'
+        return None, 'needs_bootstrap'
+
+    def _get_player_baseline(
+        self,
+        player_lookup: str,
+        _prefetched_baselines: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> Optional[float]:
         """
         Get player's L5 points average as baseline reference (v3.10).
 
@@ -1547,15 +1740,26 @@ class PlayerLoader:
 
         Args:
             player_lookup: Player identifier
+            _prefetched_baselines: Optional batch-prefetched baselines (L5/L10 avg)
 
         Returns:
             float: Player's L5 average rounded to nearest 0.5 (like betting lines)
             None: If no data available
         """
+        # Use prefetched baselines if available (avoids per-player BQ query)
+        if _prefetched_baselines is not None:
+            baseline = _prefetched_baselines.get(player_lookup)
+            if baseline and baseline.get('points_avg_last_5') is not None:
+                avg = baseline['points_avg_last_5']
+                return round(avg * 2) / 2.0
+            return None
+
+        # Fallback: per-player BQ query (when batch not available)
         query = """
         SELECT points_avg_last_5
         FROM `{project}.nba_analytics.upcoming_player_game_context`
-        WHERE player_lookup = @player_lookup
+        WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+          AND player_lookup = @player_lookup
         ORDER BY game_date DESC
         LIMIT 1
         """.format(project=self.project_id)
@@ -1620,15 +1824,18 @@ class PlayerLoader:
     def get_players_for_game(self, game_id: str) -> List[Dict]:
         """
         Get all players for a specific game
-        
+
         Useful for debugging or targeted predictions for a single game
-        
+
         Args:
             game_id: Game identifier (e.g., '20251108_LAL_GSW')
-        
+
         Returns:
             List of player dicts for that game
         """
+        # Extract game_date from game_id format: YYYYMMDD_AWAY_HOME
+        game_date_str = game_id.split('_')[0] if '_' in game_id else None
+
         query = """
         SELECT
             player_lookup,
@@ -1637,14 +1844,19 @@ class PlayerLoader:
             COALESCE(avg_minutes_per_game_last_7, 0) as projected_minutes,  -- v3.7: Default to 0 for injury-return players
             player_status as injury_status
         FROM `{project}.nba_analytics.upcoming_player_game_context`
-        WHERE game_id = @game_id
+        WHERE game_date = @game_date
+          AND game_id = @game_id
         ORDER BY team_abbr, avg_minutes_per_game_last_7 DESC
         LIMIT 50  -- Memory optimization: Single game has max ~30 players, 50 is safe upper bound
         """.format(project=self.project_id)
-        
+
+        # Parse date from game_id for partition filter
+        game_date = datetime.strptime(game_date_str, '%Y%m%d').date() if game_date_str else date.today()
+
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
-                bigquery.ScalarQueryParameter("game_id", "STRING", game_id)
+                bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                bigquery.ScalarQueryParameter("game_id", "STRING", game_id),
             ]
         )
         
@@ -1774,17 +1986,15 @@ class PlayerLoader:
         )
 
         try:
-            result = self.client.query(query, job_config=job_config).result(timeout=30)
-            stale_players = [row.player_lookup for row in result]
+            rows = list(self.client.query(query, job_config=job_config).result(timeout=30))
+            stale_players = [row.player_lookup for row in rows]
 
             if stale_players:
                 logger.info(
                     f"Found {len(stale_players)} players with stale predictions "
                     f"(line changes >= {line_change_threshold} points) for {game_date}"
                 )
-                # Log details for debugging
-                result = self.client.query(query, job_config=job_config).result(timeout=30)
-                for row in list(result)[:5]:  # Log first 5 for debugging
+                for row in rows[:5]:
                     logger.debug(
                         f"  {row.player_lookup}: prediction_line={row.prediction_line:.1f}, "
                         f"current_line={row.current_line:.1f}, change={row.line_change:.1f}"
@@ -1816,13 +2026,14 @@ class PlayerLoader:
         Returns:
             List of player_lookup values needing re-prediction due to new lines
         """
+        champion_id = get_champion_model_id()
         query = """
         WITH predicted_without_lines AS (
             SELECT DISTINCT player_lookup
             FROM `{project}.nba_predictions.player_prop_predictions`
             WHERE game_date = @game_date
               AND is_active = TRUE
-              AND system_id = '{get_champion_model_id()}'
+              AND system_id = @champion_id
               AND (current_points_line IS NULL
                    OR vegas_line_source = 'none'
                    OR vegas_line_source IS NULL)
@@ -1848,6 +2059,7 @@ class PlayerLoader:
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
                 bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                bigquery.ScalarQueryParameter("champion_id", "STRING", champion_id),
             ]
         )
 
