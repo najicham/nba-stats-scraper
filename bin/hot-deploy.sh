@@ -63,6 +63,7 @@ get_min_instances() {
 }
 
 MIN_INSTANCES=$(get_min_instances "$SERVICE")
+CPU_THROTTLE_FLAG="--cpu-throttling"
 
 # Map service names to Dockerfile paths
 case $SERVICE in
@@ -140,6 +141,7 @@ gcloud run deploy "$SERVICE" \
     --update-env-vars="BUILD_COMMIT=$BUILD_COMMIT,BUILD_TIMESTAMP=$BUILD_TIMESTAMP" \
     --update-labels="commit-sha=$BUILD_COMMIT" \
     --min-instances="$MIN_INSTANCES" \
+    "$CPU_THROTTLE_FLAG" \
     --quiet 2>&1 | grep -E "(Deploying|Routing|Done|Service)" || true
 
 # [4/4] Quick health check

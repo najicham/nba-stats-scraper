@@ -62,6 +62,13 @@ get_min_instances() {
 
 MIN_INSTANCES=$(get_min_instances "$SERVICE")
 
+# CPU throttling controls billing mode:
+#   --cpu-throttling (default) = request-based billing, CPU free when idle
+#   --no-cpu-throttling = instance-based billing, CPU charged 24/7
+# All services use request-based billing. Session 388: prediction-worker was on
+# instance-based ($75/mo idle) — switched to request-based ($6.48/mo idle).
+CPU_THROTTLE_FLAG="--cpu-throttling"
+
 # Map service names to Dockerfile paths and expected service identity
 case $SERVICE in
   prediction-coordinator)
@@ -422,6 +429,7 @@ gcloud run deploy "$SERVICE" \
     --update-env-vars="$ENV_VARS" \
     --update-labels="commit-sha=$BUILD_COMMIT,deployed-at=$(date -u +%Y%m%d-%H%M%S)" \
     --min-instances="$MIN_INSTANCES" \
+    "$CPU_THROTTLE_FLAG" \
     --quiet
 
 echo ""
