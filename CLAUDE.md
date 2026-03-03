@@ -303,6 +303,10 @@ WHERE game_date >= CURRENT_DATE() - 3 GROUP BY 1 ORDER BY 1 DESC;
 | **deactivate_model.py column error** | Fixed Session 387: referenced `updated_at` (doesn't exist in model_registry). Always check schema before writing UPDATE queries. |
 | **Negative edge in signal_best_bets_picks** | Fixed Session 387: UNDER picks stored as negative (predicted - line). Now stores `abs(edge)`. Use `ABS(edge)` in queries on historical data before 2026-03-02. |
 
+| **Auto-deploy cascade (V17/V18 features)** | Session 388: Auto-deploy from docs commit picked up V17/V18 feature code that was never deployed. 4 bugs: (1) `feature_60_value` BQ write failure — truncate to `FEATURE_COUNT`, (2) quality capped at 69 — `calculate_quality_score()` uses `len(feature_sources)` not `FEATURE_COUNT`, truncate before scoring, (3) `FEATURE_VERSION = 'v2_60features'` rejected by worker whitelist — use `v2_54features`, (4) worker missing `pyyaml` — add to `requirements-lock.txt`. |
+| **Worker requirements-lock.txt** | Worker Dockerfile uses `requirements-lock.txt`, NOT `requirements.txt`. Always update the lock file for dependency changes. |
+| **Quality scorer FEATURE_COUNT mismatch** | `quality_scorer.py` has `FEATURE_COUNT = 54`, `ml_feature_store_processor.py` has `FEATURE_COUNT = 60`. Quality scorer's `calculate_quality_score()` uses `len(feature_sources)` which can exceed both. Truncate feature_sources before passing to quality scorer. |
+
 **Full troubleshooting:** `docs/02-operations/session-learnings.md`
 
 ## Prevention Mechanisms
