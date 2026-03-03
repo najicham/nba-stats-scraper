@@ -253,13 +253,13 @@ def get_aggregate_best_bets_hr(target_date: Optional[str] = None) -> Optional[Di
     bq = _get_bq_client()
 
     if target_date:
-        date_val = target_date
+        date_expr = "DATE('{}')".format(target_date)
     else:
-        date_val = f"(SELECT MAX(game_date) FROM `{PROJECT_ID}.nba_predictions.signal_best_bets_picks`)"
+        date_expr = "(SELECT MAX(game_date) FROM `{}.nba_predictions.signal_best_bets_picks`)".format(PROJECT_ID)
 
     query = f"""
     WITH target AS (
-      SELECT {'DATE(\'' + date_val + '\')' if target_date else date_val} AS target_date
+      SELECT {date_expr} AS target_date
     ),
     bb_graded AS (
       SELECT
@@ -407,13 +407,13 @@ def get_best_bets_hr_short_window(target_date: Optional[str] = None) -> Optional
     bq = _get_bq_client()
 
     if target_date:
-        date_val = target_date
+        date_expr = "DATE('{}')".format(target_date)
     else:
-        date_val = f"(SELECT MAX(game_date) FROM `{PROJECT_ID}.nba_predictions.signal_best_bets_picks`)"
+        date_expr = "(SELECT MAX(game_date) FROM `{}.nba_predictions.signal_best_bets_picks`)".format(PROJECT_ID)
 
     query = f"""
     WITH target AS (
-      SELECT {'DATE(\'' + date_val + '\')' if target_date else date_val} AS target_date
+      SELECT {date_expr} AS target_date
     ),
     bb_graded AS (
       SELECT
