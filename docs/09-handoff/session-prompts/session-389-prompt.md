@@ -4,9 +4,11 @@
 
 Session 388 fixed a cascading auto-deploy failure (4 bugs) that blocked all March 2 predictions. Pipeline restored, 608 predictions generated. Both revived signals (line_rising_over, fast_pace_over) confirmed firing.
 
-## Priority 1: Verify Signal Best Bets Populated
+## Priority 1: Verify Signal Best Bets on March 3+
 
-Session 388 couldn't populate `signal_best_bets_picks` due to BQ streaming buffer conflict on `current_subset_picks`. Check if the Phase 6 scheduler resolved this:
+March 2 legitimately produced 0 signal best bets picks (4-game thin slate, 31 candidates but 27 killed by legacy model block, 3 by blacklist, 1 by AWAY block). This is **not a bug**.
+
+Check March 3+ (10-game day, first full slate with fixes):
 
 ```sql
 SELECT game_date, recommendation, COUNT(*) as picks,
@@ -18,12 +20,7 @@ GROUP BY 1, 2
 ORDER BY 1, 2;
 ```
 
-If still empty for March 2, manually trigger:
-```bash
-gcloud pubsub topics publish nba-phase6-export-trigger \
-  --project=nba-props-platform \
-  --message='{"export_types": ["signal-best-bets"], "target_date": "2026-03-02"}'
-```
+**Concern:** Legacy models (catboost_v9, catboost_v12 — dead champions) still winning per-player model selection for 27/31 candidates. If this persists on bigger slates, the legacy block is removing too many picks. May need to investigate why newer models aren't generating competitive edges.
 
 ## Priority 2: Verify March 3 Pipeline Runs Clean
 

@@ -1,7 +1,7 @@
 # Session 388 Handoff — Emergency Fix: Auto-Deploy Cascade Failure
 
 **Date:** 2026-03-02
-**Status:** Pipeline restored. March 2 predictions generated (608). Signal fixes from Session 387 verified firing. Signal best bets export pending (streaming buffer conflict).
+**Status:** Pipeline restored. March 2 predictions generated (608). Signal fixes from Session 387 verified firing. Signal best bets = 0 picks (legitimate — legacy models dominate thin 4-game slate).
 
 ## What Was Done
 
@@ -63,16 +63,17 @@ Added `--cpu-throttling` flag to both `deploy-service.sh` and `hot-deploy.sh` to
 | Predictions (March 2) | 608 total (16 models × 40 players) |
 | Signal tags (March 2) | 13 signals firing |
 | Daily signals (March 2) | Written for all 16 models |
-| Signal best bets (March 2) | **NOT YET POPULATED** — streaming buffer conflict |
+| Signal best bets (March 2) | 0 picks — legitimate (see Known Issues) |
 | Signal canary | Deployed (Session 387) but not yet validated |
 
 ## Known Issues
 
-### Signal Best Bets Not Populated
-- Phase 6 export hits `streaming buffer` error on `DELETE` from `current_subset_picks`
-- This is a BQ DML limitation — streaming buffer needs ~30 min to flush
-- The Phase 6 scheduler will retry automatically
-- **Action:** Check `signal_best_bets_picks` for March 2 data on next game day. If still empty, investigate Phase 6 export flow.
+### Signal Best Bets = 0 Picks (Legitimate)
+- Export ran successfully after streaming buffer cleared, produced 0 qualifying picks
+- **Filter breakdown (31 candidates):** 27 legacy_block (catboost_v9/v12 dead champions), 3 blacklist, 1 away_noveg
+- Root cause: legacy champions still win model selection for most players (highest edge), but are blocked
+- This is a thin 4-game day with only 40 players getting quality features — expected outcome
+- **Systemic concern:** Legacy models (catboost_v9, catboost_v12) still dominating selection means newer models aren't generating competitive edges. Monitor on bigger game days.
 
 ### FEATURE_STORE_FEATURE_COUNT Inconsistency
 - `ml_feature_store_processor.py` FEATURE_COUNT = 60
