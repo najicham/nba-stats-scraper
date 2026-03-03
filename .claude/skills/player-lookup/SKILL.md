@@ -1,3 +1,8 @@
+---
+name: player-lookup
+description: Look up prediction history and accuracy for a specific player
+---
+
 # Skill: Player Lookup
 
 Look up prediction history and accuracy for a specific player.

@@ -1,3 +1,8 @@
+---
+name: spot-check-gaps
+description: Find ALL players with unexplained gaps in their game history — most comprehensive data quality audit
+---
+
 # /spot-check-gaps - System-Wide Gap Detection
 
 Find ALL players with unexplained gaps in their game history. This is the most comprehensive audit tool for data quality issues.

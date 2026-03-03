@@ -1,3 +1,8 @@
+---
+name: trend-check
+description: Check league trends and model health for early warning of model drift
+---
+
 # Trend Check Skill
 
 Check league trends and model health for early warning of model drift.

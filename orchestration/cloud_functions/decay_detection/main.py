@@ -16,6 +16,8 @@ Thresholds:
 Created: 2026-02-15 (Session 262)
 Updated: 2026-02-15 (Session 266) - Added cross-model crash detector
 Updated: 2026-02-28 (Session 363) - Added front-load detection
+Updated: 2026-03-02 (Session 389) - Added aggregate best bets HR alerting
+Updated: 2026-03-03 (Session 390) - Short-window HR, transition logic, pick volume anomaly, cascade fix
 """
 
 import functions_framework
@@ -24,6 +26,7 @@ import logging
 import os
 from datetime import datetime, date, timezone
 from flask import Request
+from google.cloud import bigquery
 from typing import Dict, List, Optional, Tuple
 
 logging.basicConfig(level=logging.INFO)
@@ -54,6 +57,20 @@ BLOCK_THRESHOLD = 52.4
 FRONT_LOAD_HR_GAP = 5.0    # 7d HR must be this much below 14d HR
 FRONT_LOAD_MIN_DAYS = 3    # Must be true for this many consecutive days
 FRONT_LOAD_MIN_N = 20      # Minimum 7d sample size to be meaningful
+
+# Best bets HR alerting thresholds (Session 389)
+BB_HR_WATCH_THRESHOLD = 55.0    # Aggregate best bets HR — approaching concern
+BB_HR_CRITICAL_THRESHOLD = 52.4  # Below breakeven at -110 odds
+BB_HR_MIN_N = 10                 # Minimum graded picks for alert to fire
+
+# Short-window HR alert (Session 390) — catches acute failures faster
+BB_HR_SHORT_WINDOW_DAYS = 5     # Short rolling window
+BB_HR_SHORT_CRITICAL = 40.0     # 5-day HR below 40% = something acutely broken
+BB_HR_SHORT_MIN_N = 5           # Minimum picks in short window
+
+# Pick volume anomaly detection (Session 390)
+PICK_VOLUME_MIN_STD_DEVS = 2.0  # Alert when 2+ std devs from 14-day average
+PICK_VOLUME_LOOKBACK_DAYS = 14  # Days to compute average pick volume
 
 
 def get_latest_performance(target_date: Optional[str] = None) -> List[Dict]:
@@ -222,6 +239,672 @@ def detect_cross_model_crash(models: List[Dict]) -> Optional[Dict]:
             'blocks': blocks
         }]
     }
+
+
+def get_aggregate_best_bets_hr(target_date: Optional[str] = None) -> Optional[Dict]:
+    """Query aggregate best bets HR across all models (21-day rolling).
+
+    Best bets draws from all models, so aggregate HR is what matters for
+    overall system health — not per-model HR.
+
+    Session 389: This was the biggest monitoring gap — no automated alerting
+    on the metric that actually determines profitability.
+    """
+    bq = _get_bq_client()
+
+    if target_date:
+        date_val = target_date
+    else:
+        date_val = f"(SELECT MAX(game_date) FROM `{PROJECT_ID}.nba_predictions.signal_best_bets_picks`)"
+
+    query = f"""
+    WITH target AS (
+      SELECT {'DATE(\'' + date_val + '\')' if target_date else date_val} AS target_date
+    ),
+    bb_graded AS (
+      SELECT
+        bb.game_date,
+        bb.recommendation,
+        pa.prediction_correct
+      FROM `{PROJECT_ID}.nba_predictions.signal_best_bets_picks` bb
+      CROSS JOIN target t
+      JOIN `{PROJECT_ID}.nba_predictions.prediction_accuracy` pa
+        ON bb.player_lookup = pa.player_lookup
+        AND bb.game_date = pa.game_date
+        AND bb.system_id = pa.system_id
+        AND pa.is_voided IS NOT TRUE
+        AND pa.game_date BETWEEN DATE_SUB(t.target_date, INTERVAL 21 DAY) AND t.target_date
+      WHERE bb.game_date BETWEEN DATE_SUB(t.target_date, INTERVAL 21 DAY) AND t.target_date
+        AND pa.prediction_correct IS NOT NULL
+    )
+    SELECT
+      COUNTIF(prediction_correct = TRUE) AS wins,
+      COUNTIF(prediction_correct = FALSE) AS losses,
+      COUNT(*) AS total,
+      SAFE_DIVIDE(COUNTIF(prediction_correct = TRUE), COUNT(*)) * 100.0 AS hr_21d,
+      -- Directional splits
+      SAFE_DIVIDE(
+        COUNTIF(recommendation = 'OVER' AND prediction_correct = TRUE),
+        NULLIF(COUNTIF(recommendation = 'OVER'), 0)
+      ) * 100.0 AS over_hr_21d,
+      COUNTIF(recommendation = 'OVER') AS over_n,
+      SAFE_DIVIDE(
+        COUNTIF(recommendation = 'UNDER' AND prediction_correct = TRUE),
+        NULLIF(COUNTIF(recommendation = 'UNDER'), 0)
+      ) * 100.0 AS under_hr_21d,
+      COUNTIF(recommendation = 'UNDER') AS under_n
+    FROM bb_graded
+    """
+
+    try:
+        results = list(bq.query(query).result())
+        if not results:
+            return None
+        row = results[0]
+        total = row.total or 0
+        if total < BB_HR_MIN_N:
+            return None
+        return {
+            'hr_21d': round(row.hr_21d, 1) if row.hr_21d is not None else None,
+            'wins': row.wins,
+            'losses': row.losses,
+            'total': total,
+            'over_hr_21d': round(row.over_hr_21d, 1) if row.over_hr_21d is not None else None,
+            'over_n': row.over_n,
+            'under_hr_21d': round(row.under_hr_21d, 1) if row.under_hr_21d is not None else None,
+            'under_n': row.under_n,
+        }
+    except Exception as e:
+        logger.warning(f"Best bets HR query failed: {e}")
+        return None
+
+
+def build_best_bets_alert(bb_stats: Dict, game_date) -> Optional[Dict]:
+    """Build Slack alert if aggregate best bets HR is below thresholds.
+
+    Session 389: This is the single most important alert — it monitors the
+    metric that directly determines profitability.
+    """
+    if not bb_stats or bb_stats.get('hr_21d') is None:
+        return None
+
+    hr = bb_stats['hr_21d']
+    total = bb_stats['total']
+
+    if hr >= BB_HR_WATCH_THRESHOLD:
+        return None  # Healthy — no alert needed
+
+    if hr < BB_HR_CRITICAL_THRESHOLD:
+        emoji = '🚨'
+        severity = 'CRITICAL — BELOW BREAKEVEN'
+        color = '#8B0000'
+        action = (
+            '*Recommended action:* Best bets is losing money. '
+            'Review filter stack effectiveness, check for disabled model leaks, '
+            'and consider tightening edge floor or signal count gate.'
+        )
+    else:
+        emoji = '⚠️'
+        severity = 'WATCH'
+        color = '#FF8C00'
+        action = (
+            '*Recommended action:* Monitor closely. Check if OVER or UNDER is '
+            'dragging performance. Consider tightening filters on the weaker direction.'
+        )
+
+    over_str = f"{bb_stats['over_hr_21d']:.1f}% ({bb_stats['over_n']})" if bb_stats.get('over_hr_21d') is not None else 'N/A'
+    under_str = f"{bb_stats['under_hr_21d']:.1f}% ({bb_stats['under_n']})" if bb_stats.get('under_hr_21d') is not None else 'N/A'
+
+    blocks = [
+        {
+            'type': 'header',
+            'text': {
+                'type': 'plain_text',
+                'text': f'{emoji} BEST BETS HR — {severity}',
+                'emoji': True,
+            }
+        },
+        {
+            'type': 'section',
+            'text': {
+                'type': 'mrkdwn',
+                'text': (
+                    f"*Aggregate best bets HR (21d): {hr:.1f}%* "
+                    f"({bb_stats['wins']}W-{bb_stats['losses']}L, N={total})\n\n"
+                    f"OVER: {over_str} | UNDER: {under_str}\n\n"
+                    f"Breakeven: 52.4% | Watch: <{BB_HR_WATCH_THRESHOLD:.0f}% | "
+                    f"Critical: <{BB_HR_CRITICAL_THRESHOLD:.1f}%"
+                )
+            }
+        },
+        {
+            'type': 'section',
+            'text': {'type': 'mrkdwn', 'text': action}
+        },
+        {
+            'type': 'context',
+            'elements': [{
+                'type': 'mrkdwn',
+                'text': f"Date: {game_date} | Run: {datetime.now(timezone.utc).strftime('%H:%M UTC')}"
+            }]
+        }
+    ]
+
+    return {
+        'attachments': [{
+            'color': color,
+            'blocks': blocks
+        }]
+    }
+
+
+def get_best_bets_hr_short_window(target_date: Optional[str] = None) -> Optional[Dict]:
+    """Query best bets HR over a short window (5 days) for acute failure detection.
+
+    Session 390: The 21-day rolling HR is too slow to catch acute drops.
+    A 5-day window at 40% threshold fires immediately when something breaks.
+    """
+    bq = _get_bq_client()
+
+    if target_date:
+        date_val = target_date
+    else:
+        date_val = f"(SELECT MAX(game_date) FROM `{PROJECT_ID}.nba_predictions.signal_best_bets_picks`)"
+
+    query = f"""
+    WITH target AS (
+      SELECT {'DATE(\'' + date_val + '\')' if target_date else date_val} AS target_date
+    ),
+    bb_graded AS (
+      SELECT
+        bb.game_date,
+        pa.prediction_correct
+      FROM `{PROJECT_ID}.nba_predictions.signal_best_bets_picks` bb
+      CROSS JOIN target t
+      JOIN `{PROJECT_ID}.nba_predictions.prediction_accuracy` pa
+        ON bb.player_lookup = pa.player_lookup
+        AND bb.game_date = pa.game_date
+        AND bb.system_id = pa.system_id
+        AND pa.is_voided IS NOT TRUE
+        AND pa.game_date BETWEEN DATE_SUB(t.target_date, INTERVAL {BB_HR_SHORT_WINDOW_DAYS} DAY) AND t.target_date
+      WHERE bb.game_date BETWEEN DATE_SUB(t.target_date, INTERVAL {BB_HR_SHORT_WINDOW_DAYS} DAY) AND t.target_date
+        AND pa.prediction_correct IS NOT NULL
+    )
+    SELECT
+      COUNTIF(prediction_correct = TRUE) AS wins,
+      COUNT(*) - COUNTIF(prediction_correct = TRUE) AS losses,
+      COUNT(*) AS total,
+      SAFE_DIVIDE(COUNTIF(prediction_correct = TRUE), COUNT(*)) * 100.0 AS hr
+    FROM bb_graded
+    """
+
+    try:
+        results = list(bq.query(query).result())
+        if not results:
+            return None
+        row = results[0]
+        total = row.total or 0
+        if total < BB_HR_SHORT_MIN_N:
+            return None
+        return {
+            'hr': round(row.hr, 1) if row.hr is not None else None,
+            'wins': row.wins,
+            'losses': row.losses,
+            'total': total,
+        }
+    except Exception as e:
+        logger.warning(f"Short-window best bets HR query failed: {e}")
+        return None
+
+
+def build_short_window_alert(short_stats: Dict, game_date) -> Optional[Dict]:
+    """Build Slack alert if short-window HR is critically low.
+
+    Session 390: Fires only when 5-day HR < 40% — something is acutely broken.
+    """
+    if not short_stats or short_stats.get('hr') is None:
+        return None
+
+    hr = short_stats['hr']
+    if hr >= BB_HR_SHORT_CRITICAL:
+        return None
+
+    blocks = [
+        {
+            'type': 'header',
+            'text': {
+                'type': 'plain_text',
+                'text': '🔥 ACUTE FAILURE — Best Bets 5-Day HR Critical',
+                'emoji': True,
+            }
+        },
+        {
+            'type': 'section',
+            'text': {
+                'type': 'mrkdwn',
+                'text': (
+                    f"*{BB_HR_SHORT_WINDOW_DAYS}-day best bets HR: {hr:.1f}%* "
+                    f"({short_stats['wins']}W-{short_stats['losses']}L, N={short_stats['total']})\n\n"
+                    f"Threshold: <{BB_HR_SHORT_CRITICAL:.0f}% over {BB_HR_SHORT_WINDOW_DAYS} days\n\n"
+                    '*This indicates an acute system failure, not gradual drift.*'
+                )
+            }
+        },
+        {
+            'type': 'section',
+            'text': {
+                'type': 'mrkdwn',
+                'text': (
+                    '*Recommended action:* Immediately investigate:\n'
+                    '1. Check if a miscalibrated model leaked into best bets\n'
+                    '2. Check for disabled model picks still in signal_best_bets_picks\n'
+                    '3. Check filter stack effectiveness with `filter_health_audit.py`\n'
+                    '4. Consider pausing best bets until root cause identified'
+                )
+            }
+        },
+        {
+            'type': 'context',
+            'elements': [{
+                'type': 'mrkdwn',
+                'text': f"Date: {game_date} | Run: {datetime.now(timezone.utc).strftime('%H:%M UTC')}"
+            }]
+        }
+    ]
+
+    return {
+        'attachments': [{
+            'color': '#8B0000',
+            'blocks': blocks
+        }]
+    }
+
+
+def get_previous_bb_hr(game_date) -> Optional[float]:
+    """Get previous day's best bets 21-day HR for transition detection.
+
+    Session 390: Used to implement state transition logic so alerts
+    only fire on transitions (HEALTHY→WATCH, WATCH→CRITICAL), not daily.
+    """
+    bq = _get_bq_client()
+
+    prev_date = f"DATE_SUB(DATE('{game_date}'), INTERVAL 1 DAY)"
+    query = f"""
+    WITH bb_graded AS (
+      SELECT pa.prediction_correct
+      FROM `{PROJECT_ID}.nba_predictions.signal_best_bets_picks` bb
+      JOIN `{PROJECT_ID}.nba_predictions.prediction_accuracy` pa
+        ON bb.player_lookup = pa.player_lookup
+        AND bb.game_date = pa.game_date
+        AND bb.system_id = pa.system_id
+        AND pa.is_voided IS NOT TRUE
+        AND pa.game_date BETWEEN DATE_SUB({prev_date}, INTERVAL 21 DAY) AND {prev_date}
+      WHERE bb.game_date BETWEEN DATE_SUB({prev_date}, INTERVAL 21 DAY) AND {prev_date}
+        AND pa.prediction_correct IS NOT NULL
+    )
+    SELECT
+      SAFE_DIVIDE(COUNTIF(prediction_correct = TRUE), COUNT(*)) * 100.0 AS hr,
+      COUNT(*) AS total
+    FROM bb_graded
+    """
+
+    try:
+        results = list(bq.query(query).result())
+        if not results or (results[0].total or 0) < BB_HR_MIN_N:
+            return None
+        return round(results[0].hr, 1) if results[0].hr is not None else None
+    except Exception:
+        return None
+
+
+def classify_bb_state(hr: Optional[float]) -> str:
+    """Classify best bets HR into a state for transition detection."""
+    if hr is None:
+        return 'UNKNOWN'
+    if hr < BB_HR_CRITICAL_THRESHOLD:
+        return 'CRITICAL'
+    if hr < BB_HR_WATCH_THRESHOLD:
+        return 'WATCH'
+    return 'HEALTHY'
+
+
+def check_pick_volume_anomaly(game_date) -> Optional[Dict]:
+    """Detect pick volume anomalies — 0 picks on game days or 2+ std devs from average.
+
+    Session 390: 0 picks on a game day means something is broken upstream but
+    currently has no alert. Also detects unusual volume changes.
+    """
+    bq = _get_bq_client()
+
+    query = f"""
+    WITH games_today AS (
+      SELECT COUNT(*) as game_count
+      FROM `{PROJECT_ID}.nba_reference.nba_schedule`
+      WHERE game_date = DATE('{game_date}')
+        AND game_status = 1  -- Scheduled
+    ),
+    picks_today AS (
+      SELECT COUNT(*) as pick_count
+      FROM `{PROJECT_ID}.nba_predictions.signal_best_bets_picks`
+      WHERE game_date = DATE('{game_date}')
+    ),
+    historical AS (
+      SELECT
+        game_date,
+        COUNT(*) as daily_picks
+      FROM `{PROJECT_ID}.nba_predictions.signal_best_bets_picks`
+      WHERE game_date BETWEEN DATE_SUB(DATE('{game_date}'), INTERVAL {PICK_VOLUME_LOOKBACK_DAYS} DAY)
+        AND game_date < DATE('{game_date}')
+      GROUP BY game_date
+    ),
+    stats AS (
+      SELECT
+        AVG(daily_picks) as avg_picks,
+        STDDEV(daily_picks) as std_picks,
+        COUNT(*) as days_with_picks
+      FROM historical
+    )
+    SELECT
+      gt.game_count,
+      pt.pick_count,
+      ROUND(s.avg_picks, 1) as avg_picks,
+      ROUND(s.std_picks, 1) as std_picks,
+      s.days_with_picks
+    FROM games_today gt
+    CROSS JOIN picks_today pt
+    CROSS JOIN stats s
+    """
+
+    try:
+        results = list(bq.query(query).result())
+        if not results:
+            return None
+        row = results[0]
+
+        game_count = row.game_count or 0
+        pick_count = row.pick_count or 0
+        avg_picks = row.avg_picks
+        std_picks = row.std_picks
+        days_with_picks = row.days_with_picks or 0
+
+        # No games today — 0 picks is expected
+        if game_count == 0:
+            return None
+
+        alerts = []
+
+        # Alert 1: Zero picks on a game day
+        if pick_count == 0 and game_count > 0:
+            alerts.append(
+                f"*ZERO picks* on a {game_count}-game day. "
+                "Pipeline may not have run or all picks filtered."
+            )
+
+        # Alert 2: Volume anomaly (2+ std devs from average)
+        if (avg_picks is not None and std_picks is not None
+                and std_picks > 0 and days_with_picks >= 5):
+            z_score = (pick_count - avg_picks) / std_picks
+            if abs(z_score) >= PICK_VOLUME_MIN_STD_DEVS:
+                direction = "above" if z_score > 0 else "below"
+                alerts.append(
+                    f"Pick count ({pick_count}) is {abs(z_score):.1f} std devs "
+                    f"{direction} {PICK_VOLUME_LOOKBACK_DAYS}-day avg ({avg_picks:.0f} "
+                    f"+/- {std_picks:.0f})."
+                )
+
+        if not alerts:
+            return None
+
+        blocks = [
+            {
+                'type': 'header',
+                'text': {
+                    'type': 'plain_text',
+                    'text': '📦 PICK VOLUME ANOMALY',
+                    'emoji': True,
+                }
+            },
+            {
+                'type': 'section',
+                'text': {
+                    'type': 'mrkdwn',
+                    'text': '\n'.join(f"• {a}" for a in alerts)
+                }
+            },
+            {
+                'type': 'section',
+                'text': {
+                    'type': 'mrkdwn',
+                    'text': (
+                        f"Games today: {game_count} | Picks today: {pick_count} | "
+                        f"14d avg: {avg_picks:.0f}" if avg_picks else
+                        f"Games today: {game_count} | Picks today: {pick_count}"
+                    )
+                }
+            },
+            {
+                'type': 'context',
+                'elements': [{
+                    'type': 'mrkdwn',
+                    'text': f"Date: {game_date} | Run: {datetime.now(timezone.utc).strftime('%H:%M UTC')}"
+                }]
+            }
+        ]
+
+        return {
+            'attachments': [{
+                'color': '#FF4500',
+                'blocks': blocks
+            }]
+        }
+
+    except Exception as e:
+        logger.warning(f"Pick volume anomaly check failed: {e}")
+        return None
+
+
+def auto_disable_blocked_models(models: List[Dict], best_bets_model: str,
+                                game_date) -> Tuple[List[str], Optional[Dict]]:
+    """Auto-disable models that have been BLOCKED (7d HR < breakeven).
+
+    Session 389: BLOCKED models were NOT auto-disabled — required manual
+    deactivate_model.py. This closes the gap by disabling in the registry,
+    which prevents new predictions and triggers signal exporter filtering.
+
+    Safeguards:
+    - Never disables the champion/best_bets model (manual decision only)
+    - Requires N >= 15 graded picks (avoids disabling on sparse data)
+    - Only disables models that transitioned TO BLOCKED (not already blocked)
+    - Logs audit trail to service_errors
+    """
+    bq = _get_bq_client()
+    disabled = []
+
+    blocked_models = [
+        m for m in models
+        if m.get('state') == 'BLOCKED'
+        and m['model_id'] != best_bets_model
+        and m.get('rolling_n_7d', 0) >= 15
+    ]
+
+    if not blocked_models:
+        return [], None
+
+    for m in blocked_models:
+        model_id = m['model_id']
+        try:
+            # Check if already disabled in registry
+            check_query = f"""
+            SELECT enabled, status
+            FROM `{PROJECT_ID}.nba_predictions.model_registry`
+            WHERE model_id = @model_id
+            """
+            check_params = [bigquery.ScalarQueryParameter('model_id', 'STRING', model_id)]
+            rows = list(bq.query(
+                check_query,
+                job_config=bigquery.QueryJobConfig(query_parameters=check_params),
+            ).result(timeout=15))
+
+            if not rows:
+                logger.warning(f"Model {model_id} not in registry — skipping auto-disable")
+                continue
+
+            row = rows[0]
+            if not row.enabled and row.status == 'blocked':
+                logger.info(f"Model {model_id} already disabled — skipping")
+                continue
+
+            # Disable in registry
+            disable_query = f"""
+            UPDATE `{PROJECT_ID}.nba_predictions.model_registry`
+            SET enabled = FALSE, status = 'blocked'
+            WHERE model_id = @model_id
+            """
+            job = bq.query(
+                disable_query,
+                job_config=bigquery.QueryJobConfig(query_parameters=check_params),
+            )
+            job.result(timeout=15)
+
+            # Deactivate predictions for today (matches deactivate_model.py step 4)
+            deactivate_query = f"""
+            UPDATE `{PROJECT_ID}.nba_predictions.player_prop_predictions`
+            SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP()
+            WHERE system_id = @model_id
+              AND game_date = CURRENT_DATE()
+              AND is_active = TRUE
+            """
+            try:
+                deact_job = bq.query(
+                    deactivate_query,
+                    job_config=bigquery.QueryJobConfig(query_parameters=check_params),
+                )
+                deact_job.result(timeout=30)
+                logger.info(
+                    f"Deactivated {deact_job.num_dml_affected_rows} predictions "
+                    f"for {model_id}"
+                )
+            except Exception as deact_err:
+                logger.warning(f"Failed to deactivate predictions for {model_id}: {deact_err}")
+
+            # Remove signal picks for today (matches deactivate_model.py step 5)
+            delete_picks_query = f"""
+            DELETE FROM `{PROJECT_ID}.nba_predictions.signal_best_bets_picks`
+            WHERE system_id = @model_id
+              AND game_date = CURRENT_DATE()
+            """
+            try:
+                del_job = bq.query(
+                    delete_picks_query,
+                    job_config=bigquery.QueryJobConfig(query_parameters=check_params),
+                )
+                del_job.result(timeout=30)
+                logger.info(
+                    f"Removed {del_job.num_dml_affected_rows} signal picks "
+                    f"for {model_id}"
+                )
+            except Exception as del_err:
+                logger.warning(f"Failed to remove signal picks for {model_id}: {del_err}")
+
+            # Audit trail
+            now = datetime.now(timezone.utc)
+            audit_query = f"""
+            INSERT INTO `{PROJECT_ID}.nba_predictions.service_errors`
+            (service_name, error_type, error_message, context, created_at)
+            VALUES (
+              'decay_detection_auto_disable',
+              'model_auto_disabled',
+              @message,
+              @context,
+              @created_at
+            )
+            """
+            audit_params = [
+                bigquery.ScalarQueryParameter(
+                    'message', 'STRING',
+                    f'Auto-disabled BLOCKED model {model_id}: '
+                    f'7d HR={m.get("rolling_hr_7d")}% (N={m.get("rolling_n_7d")})'
+                ),
+                bigquery.ScalarQueryParameter(
+                    'context', 'STRING',
+                    json.dumps({
+                        'model_id': model_id,
+                        'game_date': str(game_date),
+                        'rolling_hr_7d': m.get('rolling_hr_7d'),
+                        'rolling_n_7d': m.get('rolling_n_7d'),
+                        'days_since_training': m.get('days_since_training'),
+                        'trigger': 'decay_detection_auto_disable',
+                    })
+                ),
+                bigquery.ScalarQueryParameter('created_at', 'TIMESTAMP', now.isoformat()),
+            ]
+            try:
+                bq.query(
+                    audit_query,
+                    job_config=bigquery.QueryJobConfig(query_parameters=audit_params),
+                ).result(timeout=15)
+            except Exception as audit_err:
+                logger.warning(f"Failed to log audit for {model_id}: {audit_err}")
+
+            disabled.append(model_id)
+            logger.info(
+                f"Auto-disabled BLOCKED model {model_id}: "
+                f"7d HR={m.get('rolling_hr_7d')}% (N={m.get('rolling_n_7d')})"
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to auto-disable {model_id}: {e}")
+
+    if not disabled:
+        return [], None
+
+    # Build Slack alert
+    lines = [f"• `{mid}`" for mid in disabled]
+    blocks = [
+        {
+            'type': 'header',
+            'text': {
+                'type': 'plain_text',
+                'text': '🔒 AUTO-DISABLED — BLOCKED Models',
+                'emoji': True,
+            }
+        },
+        {
+            'type': 'section',
+            'text': {
+                'type': 'mrkdwn',
+                'text': (
+                    f"*{len(disabled)} model(s) auto-disabled* (7d HR below "
+                    f"{BLOCK_THRESHOLD:.1f}% breakeven with N >= 15):\n"
+                    + '\n'.join(lines) + '\n\n'
+                    'Registry set to `enabled=FALSE, status=blocked`. '
+                    'Signal exporter will filter these from best bets on next export.\n\n'
+                    f'*Champion model `{best_bets_model}` is protected* — '
+                    'never auto-disabled.'
+                )
+            }
+        },
+        {
+            'type': 'context',
+            'elements': [{
+                'type': 'mrkdwn',
+                'text': (
+                    f"Date: {game_date} | "
+                    f"Re-enable: manual BQ `UPDATE model_registry SET enabled=TRUE, status='shadow'` | "
+                    f"Run: {datetime.now(timezone.utc).strftime('%H:%M UTC')}"
+                )
+            }]
+        }
+    ]
+
+    payload = {
+        'attachments': [{
+            'color': '#FF4500',
+            'blocks': blocks
+        }]
+    }
+
+    return disabled, payload
 
 
 def detect_front_loading(game_date) -> Tuple[List[Dict], Optional[Dict]]:
@@ -621,6 +1304,82 @@ def decay_detection(request: Request):
                 f"models: {[fl['model_id'] for fl in front_loaded]}"
             )
 
+        # Auto-disable BLOCKED models (Session 389)
+        # Skip during cross-model crash (market disruption, not model fault)
+        auto_disabled = []
+        auto_disable_alert_sent = False
+        if not cross_model_crash:
+            auto_disabled, auto_disable_payload = auto_disable_blocked_models(
+                models, best_bets_model, game_date
+            )
+            if auto_disable_payload:
+                auto_disable_alert_sent = send_slack_alert(auto_disable_payload)
+                logger.info(
+                    f"Auto-disabled {len(auto_disabled)} BLOCKED models: "
+                    f"{auto_disabled}"
+                )
+        else:
+            logger.info("Skipping auto-disable during cross-model crash")
+
+        # Check aggregate best bets HR with transition logic (Sessions 389-390)
+        bb_stats = get_aggregate_best_bets_hr(str(game_date))
+        bb_alert_sent = False
+        bb_state = 'UNKNOWN'
+        if bb_stats:
+            current_hr = bb_stats.get('hr_21d')
+            bb_state = classify_bb_state(current_hr)
+
+            # Transition logic (Session 390): only alert on state changes
+            prev_hr = get_previous_bb_hr(game_date)
+            prev_bb_state = classify_bb_state(prev_hr)
+
+            # Alert on transitions or first time below threshold
+            state_changed = bb_state != prev_bb_state and prev_bb_state != 'UNKNOWN'
+            first_detection = prev_bb_state == 'UNKNOWN' and bb_state != 'HEALTHY'
+
+            if state_changed or first_detection:
+                bb_payload = build_best_bets_alert(bb_stats, game_date)
+                if bb_payload:
+                    bb_alert_sent = send_slack_alert(bb_payload)
+                    transition_str = f"{prev_bb_state} → {bb_state}" if state_changed else f"initial {bb_state}"
+                    logger.info(
+                        f"Best bets HR alert sent: {bb_alert_sent}, "
+                        f"HR={current_hr}% (N={bb_stats['total']}), "
+                        f"transition: {transition_str}"
+                    )
+            else:
+                logger.info(
+                    f"Best bets HR {bb_state}: {current_hr}% "
+                    f"(N={bb_stats['total']}), no state change from {prev_bb_state}"
+                )
+        else:
+            logger.info("No best bets HR data available (insufficient graded picks)")
+
+        # Short-window HR alert for acute failures (Session 390)
+        short_alert_sent = False
+        short_stats = get_best_bets_hr_short_window(str(game_date))
+        if short_stats:
+            short_payload = build_short_window_alert(short_stats, game_date)
+            if short_payload:
+                short_alert_sent = send_slack_alert(short_payload)
+                logger.info(
+                    f"Short-window HR alert sent: {short_alert_sent}, "
+                    f"{BB_HR_SHORT_WINDOW_DAYS}d HR={short_stats['hr']}% "
+                    f"(N={short_stats['total']})"
+                )
+            else:
+                logger.info(
+                    f"Short-window HR OK: {BB_HR_SHORT_WINDOW_DAYS}d "
+                    f"HR={short_stats['hr']}% (N={short_stats['total']})"
+                )
+
+        # Pick volume anomaly detection (Session 390)
+        volume_alert_sent = False
+        volume_payload = check_pick_volume_anomaly(game_date)
+        if volume_payload:
+            volume_alert_sent = send_slack_alert(volume_payload)
+            logger.info(f"Pick volume anomaly alert sent: {volume_alert_sent}")
+
         # Build response
         model_summary = {}
         for m in models:
@@ -641,6 +1400,14 @@ def decay_detection(request: Request):
             'front_load_alert_sent': front_load_alert_sent,
             'front_loaded_models': [fl['model_id'] for fl in front_loaded],
             'best_bets_model': best_bets_model,
+            'best_bets_hr': bb_stats,
+            'bb_state': bb_state,
+            'bb_alert_sent': bb_alert_sent,
+            'short_window_hr': short_stats,
+            'short_alert_sent': short_alert_sent,
+            'volume_alert_sent': volume_alert_sent,
+            'auto_disabled_models': auto_disabled,
+            'auto_disable_alert_sent': auto_disable_alert_sent,
             'timestamp': datetime.now(timezone.utc).isoformat()
         }), 200, {'Content-Type': 'application/json'}
 
@@ -686,3 +1453,30 @@ if __name__ == '__main__':
                           f"(gap: {fl['gap']}pp for {fl['consecutive_days']} consecutive days)")
             else:
                 print("\nNo front-loading detected.")
+
+            # Best bets HR (Sessions 389-390)
+            bb_stats = get_aggregate_best_bets_hr(str(game_date))
+            if bb_stats:
+                hr = bb_stats['hr_21d']
+                bb_state = classify_bb_state(hr)
+                over_str = f"{bb_stats['over_hr_21d']:.1f}% (N={bb_stats['over_n']})" if bb_stats.get('over_hr_21d') else 'N/A'
+                under_str = f"{bb_stats['under_hr_21d']:.1f}% (N={bb_stats['under_n']})" if bb_stats.get('under_hr_21d') else 'N/A'
+                print(f"\nBest Bets HR (21d): {hr:.1f}% [{bb_state}] "
+                      f"({bb_stats['wins']}W-{bb_stats['losses']}L, N={bb_stats['total']})")
+                print(f"  OVER: {over_str} | UNDER: {under_str}")
+            else:
+                print("\nNo best bets HR data available.")
+
+            # Short-window HR (Session 390)
+            short_stats = get_best_bets_hr_short_window(str(game_date))
+            if short_stats:
+                short_status = 'CRITICAL' if short_stats['hr'] < BB_HR_SHORT_CRITICAL else 'OK'
+                print(f"Best Bets HR ({BB_HR_SHORT_WINDOW_DAYS}d): {short_stats['hr']:.1f}% [{short_status}] "
+                      f"({short_stats['wins']}W-{short_stats['losses']}L, N={short_stats['total']})")
+
+            # Pick volume (Session 390)
+            volume_payload = check_pick_volume_anomaly(game_date)
+            if volume_payload:
+                print("\nPick volume anomaly detected!")
+            else:
+                print("\nPick volume normal.")

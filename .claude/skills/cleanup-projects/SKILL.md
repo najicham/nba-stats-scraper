@@ -1,3 +1,8 @@
+---
+name: cleanup-projects
+description: Automated weekly/monthly cleanup of project documentation following the Documentation Hygiene Guide
+---
+
 # Skill: Documentation & Projects Cleanup
 
 Automated weekly/monthly cleanup of project documentation following the Documentation Hygiene Guide.

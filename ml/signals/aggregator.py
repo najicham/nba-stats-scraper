@@ -50,7 +50,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v382c_starter_over_sc5'
+ALGORITHM_VERSION = 'v388_edge_tiered_sc4'
 
 # Base signals that fire on nearly every edge 5+ pick. Picks with ONLY
 # these signals hit 57.1% (N=42) vs 77.8% for picks with 4+ signals.
@@ -100,13 +100,16 @@ class BestBetsAggregator:
         - ANTI_PATTERN combos → skip
 
     Session 370: MIN_SIGNAL_COUNT raised from 2 to 3.
-        signal_count 3 = 57.4% HR (N=47) vs 4+ = 76.5% (N=63).
-        Backfill: 74.5% HR (35W-12L, $+2,180) vs baseline 64.1% (59W-33L, $+2,270).
-        +10.4pp HR with comparable P&L.
+    Session 388: Edge-tiered signal count — SC >= 4 for edge < 7, SC >= 3 for edge 7+.
+        SC=3 at edge 5-7 = 51.3% HR (N=39) — weakest link in filter stack.
+        SC=4 at edge 5-7 = 70.6% HR (N=17). SC=3 at edge 7+ = 85.7% (N=7) — preserved.
+        Subsumes SC=3 OVER edge gate (Session 374b) — ALL SC=3 at edge < 7 now blocked.
     """
 
-    MIN_SIGNAL_COUNT = 3  # Raised from 2 (Session 370): signal_count 3 = 57.4% HR vs 4+ = 76.5%. Backfill: 74.5% HR (35W-12L)
-    MIN_EDGE = 3.0  # Lowered from 5.0 (Session 352): edge 3-4 is best V12 band during model degradation
+    MIN_SIGNAL_COUNT = 3           # Base floor for edge 7+ (Session 370)
+    MIN_SIGNAL_COUNT_LOW_EDGE = 4  # Edge < 7 (Session 388): SC=3 edge 5-7 = 51.3% HR vs SC=4 = 70.6%
+    HIGH_EDGE_SC_THRESHOLD = 7.0   # Edge dividing SC tiers
+    MIN_EDGE = 3.0                 # Lowered from 5.0 (Session 352): edge 3-4 is best V12 band during model degradation
 
     def __init__(
         self,
@@ -159,7 +162,7 @@ class BestBetsAggregator:
             'line_dropped_over': 0,
             'neg_pm_streak': 0,
             'signal_count': 0,
-            'sc3_edge_floor': 0,
+            'sc3_edge_floor': 0,  # Retained for schema continuity — subsumed by edge-tiered SC (Session 388)
             'opponent_depleted_under': 0,
             'high_book_std_under': 0,
             'confidence': 0,
@@ -444,19 +447,13 @@ class BestBetsAggregator:
             results = signal_results.get(key, [])
             qualifying = [r for r in results if r.qualifies]
 
-            # Still require MIN_SIGNAL_COUNT (model_health + 1 real signal)
-            # This ensures we only pick players the signal system has context on
-            if len(qualifying) < self.MIN_SIGNAL_COUNT:
+            # Edge-tiered signal count (Session 388): SC >= 4 for edge < 7, SC >= 3 for edge 7+.
+            # SC=3 at edge 5-7 = 51.3% HR (N=39). SC=4 at edge 5-7 = 70.6% (N=17).
+            # SC=3 at edge 7+ = 85.7% (N=7) — preserved.
+            # Subsumes SC=3 OVER edge gate (Session 374b) — all directions blocked at SC=3 edge<7.
+            required_sc = self.MIN_SIGNAL_COUNT if pred_edge >= self.HIGH_EDGE_SC_THRESHOLD else self.MIN_SIGNAL_COUNT_LOW_EDGE
+            if len(qualifying) < required_sc:
                 filter_counts['signal_count'] += 1
-                continue
-
-            # SC=3 OVER edge restriction (Session 374b): SC=3 OVER at edge 3-7 = 33.3% HR (3-6).
-            # SC=3 UNDER at edge 3-7 = 62.5% — above breakeven, keep it.
-            # SC=3 OVER at edge 7+ = 66.7%. Only allow SC=3 OVER at extreme edge.
-            if (len(qualifying) == self.MIN_SIGNAL_COUNT
-                    and pred_edge < 7.0
-                    and pred.get('recommendation') == 'OVER'):
-                filter_counts['sc3_edge_floor'] += 1
                 continue
 
             # Starter OVER SC floor (Session 382c): Starter OVER collapsed 90% Jan → 33.3% Feb (3-6).
@@ -567,8 +564,7 @@ class BestBetsAggregator:
             logger.info(f"Starter V12 UNDER block (15-20 line): skipped {filter_counts['starter_v12_under']} predictions")
         if filter_counts['starter_over_sc_floor'] > 0:
             logger.info(f"Starter OVER SC floor: skipped {filter_counts['starter_over_sc_floor']} OVER picks (line 15-25, SC < 5)")
-        if filter_counts['sc3_edge_floor'] > 0:
-            logger.info(f"SC=3 OVER edge floor: skipped {filter_counts['sc3_edge_floor']} SC=3 OVER picks with edge < 7.0")
+        # sc3_edge_floor retained for schema continuity — subsumed by edge-tiered SC (Session 388)
         if filter_counts['line_dropped_over'] > 0:
             logger.info(f"Line dropped OVER block: skipped {filter_counts['line_dropped_over']} OVER picks with line drop >= 2")
         if filter_counts['opponent_depleted_under'] > 0:

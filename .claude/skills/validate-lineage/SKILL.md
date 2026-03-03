@@ -1,3 +1,8 @@
+---
+name: validate-lineage
+description: Validate data lineage integrity — ensure computed data was calculated with complete upstream dependencies
+---
+
 # Skill: validate-lineage
 
 ## Purpose

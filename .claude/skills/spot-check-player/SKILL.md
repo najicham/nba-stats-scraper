@@ -1,3 +1,8 @@
+---
+name: spot-check-player
+description: Spot-check a player's recent game history — verify injury flags, DNP records, and identify data gaps
+---
+
 # /spot-check-player - Player Game History Verification
 
 Spot-check a player's recent game history to verify injury flags, DNP records, and identify data gaps. Handles trades, two-way contracts, and G-League assignments.

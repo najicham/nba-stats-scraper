@@ -1,3 +1,8 @@
+---
+name: model-health
+description: Monitor model performance, detect drift, and diagnose issues
+---
+
 # Skill: Model Health
 
 Monitor model performance, detect drift, and diagnose issues.

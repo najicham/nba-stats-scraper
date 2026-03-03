@@ -1,3 +1,8 @@
+---
+name: spot-check-overview
+description: Player data validation toolkit overview — detecting gaps, explaining absences, and tracking contamination
+---
+
 # Spot Check Skills Overview
 
 Player data validation toolkit for detecting gaps, explaining absences, and tracking downstream contamination.

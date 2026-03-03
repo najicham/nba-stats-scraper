@@ -1,3 +1,8 @@
+---
+name: spot-check-team
+description: Check all rostered players for a specific team across their recent schedule
+---
+
 # /spot-check-team - Team Roster Audit
 
 Check all rostered players for a specific team across their recent schedule. Useful for verifying team-level data completeness.

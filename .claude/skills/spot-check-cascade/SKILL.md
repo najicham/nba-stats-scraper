@@ -1,3 +1,8 @@
+---
+name: spot-check-cascade
+description: Analyze the downstream impact of a data gap — what records are contaminated and need reprocessing
+---
+
 # /spot-check-cascade - Cascade Impact Analysis
 
 Analyze the downstream impact of a data gap. When raw data is missing or backfilled late, this skill calculates what downstream records are contaminated and need reprocessing.

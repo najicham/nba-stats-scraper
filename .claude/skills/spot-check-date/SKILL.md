@@ -1,3 +1,8 @@
+---
+name: spot-check-date
+description: Check all players who should have played on a specific date
+---
+
 # /spot-check-date - Single Date Player Audit
 
 Check all players who should have played on a specific date. Useful for investigating game days after issues are reported.

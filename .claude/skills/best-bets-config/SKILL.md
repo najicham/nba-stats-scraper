@@ -1,3 +1,8 @@
+---
+name: best-bets-config
+description: Read-only diagnostic — single-pane-of-glass view of all best bets system thresholds, active models, signals, and sync status
+---
+
 # Skill: Best Bets Config Dashboard
 
 Read-only diagnostic: single-pane-of-glass view of all best bets system thresholds, active models, signals, and sync status.
@@ -17,7 +22,7 @@ Run all 6 sections below and present results as a formatted dashboard.
 Read constants from `ml/signals/aggregator.py`:
 
 ```bash
-grep -E 'MIN_EDGE|MIN_SIGNAL_COUNT|ALGORITHM_VERSION' ml/signals/aggregator.py
+grep -E 'MIN_EDGE|MIN_SIGNAL_COUNT|ALGORITHM_VERSION|HIGH_EDGE_SC_THRESHOLD' ml/signals/aggregator.py
 ```
 
 Also show the current best bets model:
@@ -30,63 +35,82 @@ gcloud run services describe prediction-coordinator --region=us-west2 \
 Display as:
 ```
 ## 1. Aggregator Config
-| Setting              | Value              |
-|----------------------|--------------------|
-| ALGORITHM_VERSION    | v307_multi_source  |
-| MIN_EDGE             | 5.0                |
-| MIN_SIGNAL_COUNT     | 2                  |
-| Best Bets Model      | (from env var)     |
+| Setting                  | Value                    |
+|--------------------------|--------------------------|
+| ALGORITHM_VERSION        | (from grep)              |
+| MIN_EDGE                 | 3.0                      |
+| MIN_SIGNAL_COUNT         | 3 (edge 7+)             |
+| MIN_SIGNAL_COUNT_LOW_EDGE| 4 (edge < 7)            |
+| HIGH_EDGE_SC_THRESHOLD   | 7.0                      |
+| Best Bets Model          | (from env var)           |
 ```
 
 ---
 
 ### Section 2: Active Model Families
 
-Query BQ for distinct system_ids in last 3 days:
+Query BQ for enabled models from the registry:
 
+```sql
+SELECT model_id, model_family, status, enabled,
+  training_start_date, training_end_date,
+  DATE_DIFF(CURRENT_DATE(), training_end_date, DAY) as days_stale
+FROM nba_predictions.model_registry
+WHERE enabled = TRUE
+ORDER BY days_stale ASC
+```
+
+Also check active predictions:
 ```sql
 SELECT DISTINCT system_id
 FROM nba_predictions.player_prop_predictions
 WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 3 DAY)
   AND is_active = TRUE
-  AND (system_id LIKE 'catboost_%')
 ORDER BY system_id
 ```
 
-Cross-reference against `MODEL_FAMILIES` in `shared/config/cross_model_subsets.py` by calling `classify_system_id()` mentally or via grep. Flag:
-- Any system_id that does NOT match a known family pattern → **UNCLASSIFIED**
-- Any family in MODEL_FAMILIES with no active predictions → **INACTIVE**
-
-Display as:
-```
-## 2. Active Model Families
-| system_id                              | Family   | Status |
-|----------------------------------------|----------|--------|
-| catboost_v9                            | v9_mae   | ACTIVE |
-| catboost_v12_noveg_train...            | v12_mae  | ACTIVE |
-| ...                                    | ...      | ...    |
-```
+Flag:
+- Enabled models with no recent predictions → **NO PREDICTIONS**
+- Models with `days_stale > 14` → **STALE**
+- Models with `days_stale > 21` → **OVERDUE RETRAIN**
 
 ---
 
 ### Section 3: Negative Filter Inventory
 
-Display the full set of negative filters from the aggregator. Read from `ml/signals/aggregator.py` docstring + code:
+Display the full set of negative filters from `ml/signals/aggregator.py`:
 
 ```
-## 3. Negative Filters
-| # | Filter                   | Threshold        | HR     | Session | Code Location          |
-|---|--------------------------|------------------|--------|---------|------------------------|
-| 1 | Player blacklist         | <40% HR, 8+ picks| varies | 284     | aggregator.py L114     |
-| 2 | Edge floor               | edge < 5.0       | 57%    | 297     | aggregator.py L120     |
-| 3 | UNDER edge 7+ block      | UNDER + edge>=7  | 40.7%  | 297,318 | aggregator.py L125     |
-| 4 | Avoid familiar           | 6+ games vs opp  | varies | 284     | aggregator.py L130     |
-| 5 | Feature quality floor    | quality < 85     | 24.0%  | 278     | aggregator.py L135     |
-| 6 | Bench UNDER block        | UNDER + line<12  | 35.1%  | 278     | aggregator.py L140     |
-| 7 | Line jumped UNDER block  | UNDER + delta>=2 | 38.2%  | 306     | aggregator.py L146     |
-| 8 | Line dropped UNDER block | UNDER + delta<=-2| 35.2%  | 306     | aggregator.py L152     |
-| 9 | Neg +/- streak UNDER     | UNDER + 3+ neg   | 13.1%  | 294     | aggregator.py L158     |
-|10 | MIN_SIGNAL_COUNT         | < 2 signals      | n/a    | 259     | aggregator.py L170     |
+## 3. Negative Filters (27 filters)
+| #  | Filter                      | Condition                                     | Session |
+|----|-----------------------------|-----------------------------------------------|---------|
+| 1  | legacy_block                | Model in LEGACY_MODEL_BLOCKLIST               | 332     |
+| 2  | blacklist                   | Player <40% HR on 8+ edge-3+ picks            | 284     |
+| 3  | edge_floor                  | edge < 3.0                                    | 352     |
+| 4  | over_edge_floor             | OVER + edge < 5.0 (v9 only)                   | 297     |
+| 5  | under_edge_7plus            | UNDER + edge >= 7 (v9 only)                   | 297,318 |
+| 6  | model_direction_affinity    | Model+dir+edge combo HR < 45% on 15+ picks    | 343     |
+| 7  | away_noveg                  | v12_noveg/v9 family + AWAY game                | 365     |
+| 8  | familiar_matchup            | 6+ games vs same opponent                      | 284     |
+| 9  | quality_floor               | Feature quality < 85                            | 278     |
+| 10 | bench_under                 | UNDER + line < 12                               | 278     |
+| 11 | star_under                  | Star UNDER (line >= 23) injury-aware            | 297,367 |
+| 12 | under_star_away             | UNDER + Star + AWAY (line >= 23)                | 371     |
+| 13 | med_usage_under             | Medium teammate usage + UNDER                   | 371     |
+| 14 | starter_v12_under           | Starter V12 UNDER (line 15-20)                  | 371     |
+| 15 | line_jumped_under           | UNDER + prop_line_delta >= 2.0                  | 306     |
+| 16 | line_dropped_under          | UNDER + prop_line_delta <= -2.0                 | 306     |
+| 17 | line_dropped_over           | OVER + prop_line_delta <= -2.0                  | 374b    |
+| 18 | neg_pm_streak               | UNDER + 3+ negative +/- games                   | 294     |
+| 19 | opponent_under_block        | UNDER + opponent in {MIN, MEM, MIL}             | 372     |
+| 20 | opponent_depleted_under     | UNDER + 3+ opponent stars out                    | 374b    |
+| 21 | high_book_std_under         | UNDER + high multi-book line std                 | 374     |
+| 22 | model_profile_would_block   | Per-model slice HR observation (not enforced)    | 384     |
+| 23 | signal_count                | SC < 4 (edge < 7) or SC < 3 (edge 7+)           | 370,388 |
+| 24 | starter_over_sc_floor       | Starter OVER (line 15-25) with SC < 5            | 382c    |
+| 25 | confidence                  | Confidence below MIN_CONFIDENCE                  | -       |
+| 26 | anti_pattern                | Anti-pattern combo detected                      | -       |
+| 27 | signal_density              | Base-only signals + edge < 7                     | 352     |
 ```
 
 ---
@@ -111,8 +135,7 @@ Display as:
 ## 4. Signal Registry & Health
 | Signal            | Registered | Regime  | HR 7d  | N 7d | Status      |
 |-------------------|------------|---------|--------|------|-------------|
-| model_health      | Yes        | NORMAL  | 52.6%  | 100  | PRODUCTION  |
-| high_edge         | Yes        | HOT     | 66.7%  | 20   | BLOCKED     |
+| high_edge         | Yes        | HOT     | 66.7%  | 20   | PRODUCTION  |
 | ...               | ...        | ...     | ...    | ...  | ...         |
 ```
 
@@ -160,11 +183,12 @@ SELECT
   DATE_DIFF(CURRENT_DATE(), MAX(game_date), DAY) as days_stale
 FROM nba_predictions.signal_health_daily;
 
--- Grading coverage by model
-SELECT system_id, COUNT(*) as graded_last_7d
-FROM nba_predictions.prediction_accuracy
-WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
-  AND system_id LIKE 'catboost_%'
+-- Grading coverage by model (enabled models only)
+SELECT pa.system_id, COUNT(*) as graded_last_7d
+FROM nba_predictions.prediction_accuracy pa
+JOIN nba_predictions.model_registry mr ON pa.system_id = mr.model_id
+WHERE pa.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+  AND mr.enabled = TRUE
 GROUP BY 1
 ORDER BY 1;
 
