@@ -232,10 +232,11 @@ def check_phase2_completeness(bq_client, target_date):
     Check if Phase 2 processors have run for target date.
 
     Checks tables:
-    - nba_raw.bdl_player_boxscores
     - nba_raw.nbac_gamebook_player_stats
     - nba_raw.odds_api_game_lines
     - nba_raw.nbac_schedule
+
+    Note: bdl_player_boxscores excluded — BDL intentionally disabled.
 
     Returns:
         dict with:
@@ -243,8 +244,8 @@ def check_phase2_completeness(bq_client, target_date):
         - missing_processors: list of processor names
         - record_counts: dict mapping processor to record count
     """
+    # BDL intentionally disabled — excluded to avoid false alarms (Session 390)
     EXPECTED_TABLES = {
-        'bdl_player_boxscores': 'nba_raw.bdl_player_boxscores',
         'nbac_gamebook_player_stats': 'nba_raw.nbac_gamebook_player_stats',
         'odds_api_game_lines': 'nba_raw.odds_api_game_lines',
         'nbac_schedule': 'nba_raw.nbac_schedule'
@@ -254,14 +255,22 @@ def check_phase2_completeness(bq_client, target_date):
     record_counts = {}
 
     for processor_name, table_name in EXPECTED_TABLES.items():
-        # Use game_date for most tables, but schedule uses game_date_est
-        date_column = 'game_date_est' if processor_name == 'nbac_schedule' else 'game_date'
-
-        query = f"""
-        SELECT COUNT(*) as count
-        FROM `{PROJECT_ID}.{table_name}`
-        WHERE DATE({date_column}) = '{target_date}'
-        """
+        # nbac_schedule is partitioned on game_date but we filter on game_date_est;
+        # add game_date partition filter to avoid 400 error (Session 390)
+        if processor_name == 'nbac_schedule':
+            query = f"""
+            SELECT COUNT(*) as count
+            FROM `{PROJECT_ID}.{table_name}`
+            WHERE game_date >= DATE_SUB(DATE '{target_date}', INTERVAL 1 DAY)
+              AND DATE(game_date_est) = '{target_date}'
+            """
+        else:
+            date_column = 'game_date'
+            query = f"""
+            SELECT COUNT(*) as count
+            FROM `{PROJECT_ID}.{table_name}`
+            WHERE DATE({date_column}) = '{target_date}'
+            """
 
         try:
             results = list(bq_client.query(query).result(timeout=60))

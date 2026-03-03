@@ -115,12 +115,13 @@ create_or_update_job \
     "Evening analytics - catches 7 PM games (Daily 10 PM ET)"
 
 # Job 3: Late night (catches West Coast 10 PM games)
-# Runs at 1 AM ET daily (processes YESTERDAY since it's after midnight)
+# Runs at 1:15 AM ET daily (processes YESTERDAY since it's after midnight)
+# Shifted from 1:00 AM to 1:15 AM to allow boxscore data arrival (Session 390)
 create_or_update_job \
     "evening-analytics-1am-et" \
-    "0 1 * * *" \
+    "15 1 * * *" \
     '{"start_date":"YESTERDAY","end_date":"YESTERDAY","processors":["PlayerGameSummaryProcessor"],"backfill_mode":true}' \
-    "Late night analytics - catches West Coast games (Daily 1 AM ET)"
+    "Late night analytics - catches West Coast games (Daily 1:15 AM ET)"
 
 # Job 4: Morning catchup (safety net)
 # Runs at 9 AM ET daily to catch anything that was released late
