@@ -1,7 +1,7 @@
 # Best Bets & Subset System Architecture
 
-**Last updated:** Session 318 (2026-02-21)
-**Algorithm version:** `v318_signal_cleanup_filter_tightening`
+**Last updated:** Session 388 (2026-03-02)
+**Algorithm version:** `v314_consolidated`
 
 ## Overview
 
@@ -82,24 +82,29 @@ daily_export.py --only subset-picks,signal-best-bets
 
 The aggregator is **edge-first** (Session 297): picks ranked by prediction edge, not signal scores.
 
-### Negative Filters (applied in order, cheapest first)
+### Negative Filters (14 active, applied in order)
 
 | # | Filter | Threshold | HR Without | Session |
 |---|--------|-----------|------------|---------|
-| 1 | Player blacklist | <40% HR on 8+ edge-3+ picks | N/A | 284 |
-| 2 | Edge floor | edge < 5.0 | 57% | 297 |
-| 3 | UNDER edge 7+ block | UNDER + edge >= 7 (unconditional) | 40.7% | 297, 318 (star exception reverted) |
-| 4 | Familiar matchup | 6+ games vs opponent | regresses | 284 |
-| 5 | Feature quality floor | quality < 85 | 24.0% | 278 |
-| 6 | Bench UNDER block | UNDER + line < 12 | 35.1% | 278 |
-| 7 | Line jumped UNDER | UNDER + delta >= 2.0 | 38.2% | 306 |
-| 8 | Line dropped UNDER | UNDER + delta <= -2.0 | 35.2% | 306 |
-| 9 | Neg +/- streak | streak >= 3 + UNDER | 13.1% | 294 |
-| 10 | Min signal count | < 2 qualifying signals | N/A | 259 |
-| 11 | Confidence floor | model-specific (V12: 0.90) | N/A | — |
-| — | ~~ANTI_PATTERN combo~~ | ~~combo classification~~ | — | Removed Session 314 |
+| 1 | Player blacklist | <40% HR on 8+ edge-3+ picks (multi-model) | N/A | 284, 365 |
+| 2 | Edge floor | edge < 3.0 | N/A | 352 |
+| 3 | Familiar matchup | 6+ games vs opponent | regresses | 284 |
+| 4 | Feature quality floor | quality < 85 | 24.0% | 278 |
+| 5 | Bench UNDER block | UNDER + line < 12 | 35.1% | 278 |
+| 6 | UNDER + line jumped 2+ | UNDER + prop_line_delta >= 2.0 | 38.2% | 306 |
+| 7 | UNDER + line dropped 2+ | UNDER + prop_line_delta <= -2.0 | 35.2% | 306 |
+| 8 | AWAY block | v12_noveg/v9 family + AWAY game | 43-48% HR | 365 |
+| 9 | Model-direction affinity | model+direction+edge combo HR < 45% on 15+ picks | varies | 343 |
+| 10 | Signal density | base-only signals → skip unless edge >= 7.0 | N/A | 352 |
+| 11 | Opponent UNDER block | UNDER + opponent in {MIN, MEM, MIL} | 43-49% HR | 372 |
+| 12 | SC=3 OVER edge gate | OVER + signal_count == 3 + edge < 7.0 | 33.3% | 374b |
+| 13 | OVER + line dropped 2+ | OVER + prop_line_delta <= -2.0 | 39.1% | 374b |
+| 14 | Opponent depleted UNDER | UNDER + 3+ opponent stars out | 44.4% HR | 374b |
+| — | Legacy model block | catboost_v9, catboost_v12 (dead champions) | 54.8% | 365 |
 
-After filtering, picks are ranked by `abs(edge)` descending. No max picks cap (natural sizing).
+**Min signal count:** >= 3 qualifying signals (raised from 2, Session 370).
+
+After filtering, picks are ranked by `abs(edge)` descending with model HR-weighted selection (Session 365). No max picks cap (natural sizing).
 
 ### Return Value
 
@@ -194,7 +199,7 @@ All fields from current_subset_picks, plus:
 **Table:** `nba_predictions.signal_combo_registry`
 **Fallback:** `ml/signals/combo_registry.py` `_FALLBACK_REGISTRY`
 
-8 SYNERGISTIC combos (Session 318: 3 entries removed with minutes_surge/cold_snap cleanup). ANTI_PATTERN entries removed (Session 314).
+11 SYNERGISTIC combos. ANTI_PATTERN entries removed (Session 314).
 
 Used by the aggregator to detect known-good signal combinations and boost their visibility in pick angles.
 
@@ -210,35 +215,97 @@ Used by the aggregator to detect known-good signal combinations and boost their 
 
 Survives retrains automatically — new model names are classified by pattern.
 
-## Session 318 Changes
+## Signal System (21 Active)
 
-- **Removed signals:** `minutes_surge` (53.7% HR, W4 decay), `cold_snap` (N=0 all windows). Combo signals `combo_he_ms` and `combo_3way` still fire independently.
-- **UNDER edge 7+ block:** Star-level exception removed (N=7 too small, 37.5% HR in best bets). Now unconditional.
-- **rest_advantage_2d:** Capped at season week 15 (~early Feb). W6+ decays to 40%.
-- **Daily steering:** Added MARKET REGIME section with market compression, edge distribution, direction HR split, residual bias.
-- **Active signals:** 16 (was 18).
+See CLAUDE.md [SIGNALS] for the full signal table. Key signals by Feb+ HR in best bets:
 
-## Performance (Backfill Simulation, v314_consolidated)
+| Signal | HR (Feb+) | N | Role |
+|--------|-----------|---|------|
+| combo_3way | 83.3% | 7 | Top combo |
+| combo_he_ms | 83.3% | 7 | Top combo |
+| edge_spread_optimal | 61.7% | 53 | Workhorse |
+| high_edge | 61.7% | 53 | Workhorse |
+| rest_advantage_2d | 57.1% | 14 | Conditional |
+| book_disagreement | 57.1% | 7 | Watch |
+| line_rising_over | N/A | N/A | Revived Session 387 (96.6% historical) |
+| fast_pace_over | N/A | N/A | Revived Session 387 (81.5% historical) |
 
-| Period | Picks | W-L | HR | P&L |
-|--------|-------|-----|-----|-----|
-| Jan 1-31 | 97 | 74-16 | **82.2%** | +$5,640 |
-| Feb 1-7 | 16 | 11-5 | 69% | +$550 |
-| Feb 8-14 (stale model) | 14 | 4-6 | 40% | -$260 |
-| Feb 15-19 (post-retrain) | 4 | 2-2 | 50% | -$20 |
-| **Total** | **131** | **91-29** | **75.8%** | **+$5,910** |
+## Live Performance (Jan 1 - Mar 2, 2026)
 
-## Future Improvements Being Considered
+### Weekly Trend
 
-1. **UNDER day detection** — Identify game-day attributes that predict UNDER-favorable conditions. Feb 19 showed V9 UNDER at any edge went 12-0 while high-edge OVER failed. Possible indicators: league-wide scoring trends, back-to-back density, schedule context.
+| Week | Picks | Graded | HR | Notes |
+|------|-------|--------|-----|-------|
+| Jan 4 | 11 | 11 | **81.8%** | Peak performance |
+| Jan 11 | 26 | 26 | 53.8% | |
+| Jan 18 | 17 | 17 | **88.2%** | |
+| Jan 25 | 15 | 13 | **84.6%** | |
+| Feb 1 | 17 | 17 | 70.6% | |
+| Feb 8 | 14 | 10 | **40.0%** | Model decay begins |
+| Feb 15 | 6 | 6 | 50.0% | Low volume |
+| Feb 22 | 19 | 16 | 56.3% | Recovering |
+| Mar 1 | 2 | 2 | 100% | Too few to judge |
 
-2. **Direction-aware model selection** — Instead of highest edge, consider which model is best for OVER vs UNDER on a given day. V12 High Edge OVER went 0-4 on Feb 19 while quantile UNDERs went 8-0.
+### Monthly by Direction
 
-3. **Backfill all historical subsets** — Re-materialize Jan 1 - Feb 19 with consolidated code. Skill: `/backfill-subsets`.
+| Month | OVER HR | OVER N | UNDER HR | UNDER N |
+|-------|---------|--------|----------|---------|
+| **Jan** | **80.0%** | 40 | 63.0% | 27 |
+| **Feb** | 53.3% | 30 | **63.2%** | 19 |
 
-4. **Fill algorithm_version on all materializers** — Currently only best_bets rows have it. Adding to SubsetMaterializer and CrossModelSubsetMaterializer would give full version traceability.
+**Key insight:** OVER collapsed from 80% → 53% in Feb. UNDER stayed constant at 63%. The entire Feb decline is an OVER problem.
 
-5. **Threshold governance gate** — Add post-retrain validation of edge bucket HRs to `bin/retrain.sh`. Static thresholds, monitoring-only (not auto-adjust).
+### Filter Stack Effectiveness by Edge Band
+
+| Edge Band | OVER HR (N) | UNDER HR (N) | Combined |
+|-----------|-------------|--------------|----------|
+| **7+** | **77.8%** (27) | **100%** (5) | **81.3%** (32) |
+| 5-7 | 67.5% (40) | 58.5% (41) | 63.0% (81) |
+| 3-5 | 25.0% (4) | 100% (1) | 40.0% (5) |
+
+### Signal Count x Edge (Sweet Spots)
+
+| Edge | SC=3 | SC=4 | SC=5 | SC=6+ |
+|------|------|------|------|-------|
+| **7+** | 85.7% (7) | **87.5%** (8) | 69.2% (13) | **100%** (4) |
+| 5-7 | **51.3%** (39) | 70.6% (17) | 70.0% (10) | 90.0% (10) |
+
+**SC=3 at edge 5-7 is the weak link:** 51.3% HR on the largest bucket (39 picks). Everything SC 4+ is 70%+.
+
+### Ultra Bets
+
+| Criteria Count | HR | N | Status |
+|---------------|-----|---|--------|
+| 3 criteria | **93.8%** | 16 | Elite |
+| 2 criteria | **100%** | 6 | Elite |
+| 1 criterion (edge_4.5+ only) | **33.3%** | 9 | Weak — needs tightening |
+| Non-ultra | 62.7% | 83 | Solid |
+
+### Model Family Contribution (Feb+)
+
+| Family | Picks | HR | Notes |
+|--------|-------|-----|-------|
+| Legacy (v9/v12) | 35 | 54.8% | Blocked but still winning selection for 60% of candidates |
+| v12_noveg | 13 | 58.3% | |
+| v9_low_vegas | 5 | 75.0% | Best but tiny N |
+| v12_vegas | 2 | 100% | Tiny N |
+
+## Known Issues & Improvement Areas
+
+### 1. Legacy Model Domination (Critical)
+Dead champion models (catboost_v9, catboost_v12) still win the per-player model selection for ~87% of candidates because they generate inflated edges (stale models drift from the line). They then get blocked by the legacy filter. This is the biggest funnel bottleneck — on thin slates (4 games), it can produce 0 picks. Newer models need to generate competitive edges.
+
+### 2. SC=3 at Edge 5-7 (Actionable)
+51.3% HR on 39 picks — the largest single bucket and barely breakeven. Consider raising SC floor to 4 for edge 5-7 (70.6% HR) while keeping SC=3 for edge 7+ (85.7%).
+
+### 3. Ultra Single-Criterion Gate (Actionable)
+edge_4.5+-only ultra picks are 33.3% HR — worse than non-ultra. Should require 2+ criteria for ultra classification.
+
+### 4. OVER Collapse (In Progress)
+Session 387-388 revived two OVER-targeting signals (`line_rising_over` 96.6% HR, `fast_pace_over` 81.5% HR). Both confirmed firing on March 2. Impact data accumulating.
+
+### 5. Model Freshness
+7-day retrain cadence recommended but not consistently followed. Most models 10-20 days stale as of March 2. Noveg OVER at 64.6% (edge 3+) is the strongest raw signal — prioritize noveg models for retraining.
 
 ## Key Files
 
@@ -259,4 +326,4 @@ Survives retrains automatically — new model names are classified by pattern.
 | `bin/backfill_dry_run.py` | Backfill simulation script |
 
 ---
-*Created: Session 314C. See handoff: `docs/09-handoff/2026-02-20-SESSION-314B-HANDOFF.md`*
+*Created: Session 314C. Updated: Session 388 (Mar 2, 2026) with live performance data and pipeline audit findings.*
