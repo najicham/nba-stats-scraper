@@ -111,6 +111,20 @@ def build_default_registry() -> SignalRegistry:
     # Session 399 signals
     from ml.signals.sharp_book_lean import SharpBookLeanOverSignal, SharpBookLeanUnderSignal
 
+    # Session 401 signals — new data source signals
+    from ml.signals.projection_consensus import (
+        ProjectionConsensusOverSignal,
+        ProjectionConsensusUnderSignal,
+        ProjectionDisagreementFilter,
+    )
+    from ml.signals.predicted_pace import PredictedPaceOverSignal
+    from ml.signals.dvp_mismatch import DvpFavorableOverSignal
+    from ml.signals.closing_line_value import (
+        PositiveCLVOverSignal,
+        PositiveCLVUnderSignal,
+        NegativeCLVFilter,
+    )
+
     registry = SignalRegistry()
     registry.register(ModelHealthSignal())
     registry.register(HighEdgeSignal())
@@ -192,5 +206,20 @@ def build_default_registry() -> SignalRegistry:
     # Session 399 signals
     registry.register(SharpBookLeanOverSignal())
     registry.register(SharpBookLeanUnderSignal())
+
+    # Session 401 signals — new data source signals (shadow mode until validated)
+    # These signals depend on new scrapers being deployed and BQ tables populated.
+    # They will gracefully return _no_qualify() when data is not yet available.
+    registry.register(ProjectionConsensusOverSignal())
+    registry.register(ProjectionConsensusUnderSignal())
+    # ProjectionDisagreementFilter — register but NOT used as negative filter yet.
+    # Needs BQ validation on 30+ picks before adding to aggregator.
+    registry.register(ProjectionDisagreementFilter())
+    registry.register(PredictedPaceOverSignal())
+    registry.register(DvpFavorableOverSignal())
+    registry.register(PositiveCLVOverSignal())
+    registry.register(PositiveCLVUnderSignal())
+    # NegativeCLVFilter — register but NOT used as negative filter yet.
+    registry.register(NegativeCLVFilter())
 
     return registry

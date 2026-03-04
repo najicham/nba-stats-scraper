@@ -102,6 +102,7 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
         "oddsFormat": None,
         "dateFormat": None,
         "teams": None,  # Team suffix for GCS path (optional)
+        "snapshot_type": None,  # Session 401: 'opening' or 'closing' for CLV tracking
     }
 
     required_opts = ["event_id", "game_date"]
@@ -351,6 +352,8 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
             "regions": self.opts.get("regions", "us"),
             "rowCount": row_count,
             "odds": self.decoded_data,
+            # Session 401: CLV tracking — 'opening' (morning) or 'closing' (evening)
+            "snapshot_type": self.opts.get("snapshot_type") or "opening",
         }
         
         # Check for no props available (might be expected but worth tracking)

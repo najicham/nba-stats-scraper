@@ -42,6 +42,18 @@ from .bigdataball_extractors import (
     BigDataBallPbpExtractor,
     BasketballRefRosterExtractor,
 )
+from .external_extractors import (
+    NumberFireProjectionsExtractor,
+    FantasyProsProjectionsExtractor,
+    TeamRankingsStatsExtractor,
+    HashtagBasketballDvpExtractor,
+    RotoWireLineupsExtractor,
+    CoversRefereeStatsExtractor,
+    NBATrackingStatsExtractor,
+    VSiNBettingSplitsExtractor,
+    DailyFantasyFuelProjectionsExtractor,
+    DimersProjectionsExtractor,
+)
 from .mlb_extractors import (
     MLBBDLStatsExtractor,
     MLBStatsAPIExtractor,
@@ -96,6 +108,22 @@ def create_registry() -> ExtractorRegistry:
     # BigDataBall and Basketball Reference extractors
     registry.register(BasketballRefRosterExtractor())
     registry.register(BigDataBallPbpExtractor())
+
+    # Projection extractors (Session 401)
+    registry.register(NumberFireProjectionsExtractor())
+    registry.register(FantasyProsProjectionsExtractor())
+
+    # External data source extractors (Session 401)
+    # DvP MUST come before generic hashtagbasketball due to substring matching
+    registry.register(HashtagBasketballDvpExtractor())
+    registry.register(TeamRankingsStatsExtractor())
+    registry.register(RotoWireLineupsExtractor())
+    registry.register(CoversRefereeStatsExtractor())
+    registry.register(NBATrackingStatsExtractor())
+    # VSiN betting-splits MUST come before generic vsin due to substring matching
+    registry.register(VSiNBettingSplitsExtractor())
+    registry.register(DailyFantasyFuelProjectionsExtractor())
+    registry.register(DimersProjectionsExtractor())
 
     # MLB extractors
     registry.register(MLBBDLStatsExtractor())

@@ -100,6 +100,22 @@ class GCSPathBuilder:
         # Kalshi Scrapers
         "kalshi_player_props": "kalshi/player-props/%(date)s/%(timestamp)s.json",
 
+        # Projection Sites (Session 401)
+        "numberfire_projections": "projections/numberfire/%(date)s/%(timestamp)s.json",
+        "fantasypros_projections": "projections/fantasypros/%(date)s/%(timestamp)s.json",
+
+        # Additional Projection Sites (Session 401)
+        "dailyfantasyfuel_projections": "projections/dailyfantasyfuel/%(date)s/%(timestamp)s.json",
+        "dimers_projections": "projections/dimers/%(date)s/%(timestamp)s.json",
+
+        # External Data Sources (Session 401)
+        "teamrankings_team_stats": "external/teamrankings/%(date)s/%(timestamp)s.json",
+        "hashtagbasketball_dvp": "external/hashtagbasketball/dvp/%(date)s/%(timestamp)s.json",
+        "rotowire_lineups": "external/rotowire/lineups/%(date)s/%(timestamp)s.json",
+        "covers_referee_stats": "external/covers/referee-stats/%(season)s/%(timestamp)s.json",
+        "nba_tracking_stats": "external/nba-tracking/%(date)s/%(timestamp)s.json",
+        "vsin_betting_splits": "external/vsin/betting-splits/%(date)s/%(timestamp)s.json",
+
         # Big Data Ball
         # "big_data_ball_play_by_play": "big-data-ball/play-by-play/%(date)s/game_%(game_id)s/%(timestamp)s.csv",
         "bigdataball_pbp": "big-data-ball/%(nba_season)s/%(date)s/game_%(game_id)s/%(filename)s.csv",

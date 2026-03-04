@@ -467,29 +467,31 @@ class OddsApiPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
                             'odds_api_event_id': game_data.get('id', ''),
                             'game_date': game_date.isoformat() if hasattr(game_date, "isoformat") else game_date,
                             'game_start_time': game_start_dt,
-                            
+
                             # Teams (NORMALIZED TO NBA STANDARD)
                             'home_team_abbr': home_team_abbr,
                             'away_team_abbr': away_team_abbr,
-                            
+
                             # Snapshot tracking
                             'snapshot_timestamp': snapshot_dt,
                             'snapshot_tag': metadata.get('snapshot_tag'),
                             'capture_timestamp': capture_dt,
                             'minutes_before_tipoff': minutes_before,
-                            
+                            # Session 401: CLV tracking — 'opening' or 'closing'
+                            'snapshot_type': raw_data.get('snapshot_type', 'opening'),
+
                             # Prop details
                             'bookmaker': bookmaker_key,
                             'player_name': player_name,
                             'player_lookup': normalize_name(player_name),
-                            
+
                             # Points line
                             'points_line': props['points_line'],
                             'over_price': props['over_price'],
                             'over_price_american': self.decimal_to_american(props['over_price']) if props['over_price'] else None,
                             'under_price': props['under_price'],
                             'under_price_american': self.decimal_to_american(props['under_price']) if props['under_price'] else None,
-                            
+
                             # Metadata
                             'bookmaker_last_update': bookmaker_update_dt,
                             'source_file_path': file_path,

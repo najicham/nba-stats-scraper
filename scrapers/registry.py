@@ -186,6 +186,54 @@ NBA_SCRAPER_REGISTRY: Dict[str, Tuple[str, str]] = {
     ),
 
     # ========================================================================
+    # Projection Site Scrapers (4 total) - Session 401
+    # ========================================================================
+    "numberfire_projections": (
+        "scrapers.projections.numberfire_projections",
+        "NumberFireProjectionsScraper"
+    ),
+    "fantasypros_projections": (
+        "scrapers.projections.fantasypros_projections",
+        "FantasyProsProjectionsScraper"
+    ),
+    "dailyfantasyfuel_projections": (
+        "scrapers.projections.dailyfantasyfuel_projections",
+        "DailyFantasyFuelProjectionsScraper"
+    ),
+    "dimers_projections": (
+        "scrapers.projections.dimers_projections",
+        "DimersProjectionsScraper"
+    ),
+
+    # ========================================================================
+    # External Data Scrapers (7 total) - Session 401
+    # ========================================================================
+    "teamrankings_stats": (
+        "scrapers.external.teamrankings_stats",
+        "TeamRankingsStatsScraper"
+    ),
+    "hashtagbasketball_dvp": (
+        "scrapers.external.hashtagbasketball_dvp",
+        "HashtagBasketballDvpScraper"
+    ),
+    "rotowire_lineups": (
+        "scrapers.external.rotowire_lineups",
+        "RotoWireLineupsScraper"
+    ),
+    "covers_referee_stats": (
+        "scrapers.external.covers_referee_stats",
+        "CoversRefereeStatsScraper"
+    ),
+    "nba_tracking_stats": (
+        "scrapers.external.nba_tracking_stats",
+        "NBATrackingStatsScraper"
+    ),
+    "vsin_betting_splits": (
+        "scrapers.external.vsin_betting_splits",
+        "VSiNBettingSplitsScraper"
+    ),
+
+    # ========================================================================
     # ESPN Scrapers (3 total)
     # ========================================================================
     "espn_roster": (
@@ -446,6 +494,20 @@ SCRAPER_GROUPS = {
     "discovery": [
         "bigdataball_discovery",
         "br_season_roster",
+    ],
+    "projections": [
+        "numberfire_projections",
+        "fantasypros_projections",
+        "dailyfantasyfuel_projections",
+        "dimers_projections",
+    ],
+    "external": [
+        "teamrankings_stats",
+        "hashtagbasketball_dvp",
+        "rotowire_lineups",
+        "covers_referee_stats",
+        "nba_tracking_stats",
+        "vsin_betting_splits",
     ]
 }
 

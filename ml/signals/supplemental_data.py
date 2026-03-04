@@ -620,6 +620,124 @@ def query_predictions_with_supplements(
         logger.warning(f"Failed to query Q4 scoring ratios: {e}")
         q4_ratio_map = {}
 
+    # Session 401: Projection consensus from external sources (NumberFire, FantasyPros).
+    # Compare external projected_points to prop line to count how many sources
+    # agree with each direction. 2+ sources above line + OVER = consensus signal.
+    projection_query = f"""
+    WITH nf AS (
+      SELECT player_lookup, projected_points,
+        ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY timestamp DESC) AS rn
+      FROM `{PROJECT_ID}.nba_raw.numberfire_projections`
+      WHERE game_date = @target_date AND projected_points IS NOT NULL
+    ),
+    fp AS (
+      SELECT player_lookup, projected_points,
+        ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY timestamp DESC) AS rn
+      FROM `{PROJECT_ID}.nba_raw.fantasypros_projections`
+      WHERE game_date = @target_date AND projected_points IS NOT NULL
+    )
+    SELECT
+      COALESCE(nf.player_lookup, fp.player_lookup) AS player_lookup,
+      nf.projected_points AS nf_projected_points,
+      fp.projected_points AS fp_projected_points
+    FROM nf
+    FULL OUTER JOIN fp ON nf.player_lookup = fp.player_lookup AND fp.rn = 1
+    WHERE nf.rn = 1 OR fp.rn = 1
+    """
+    projection_map = {}
+    try:
+        proj_rows = bq_client.query(projection_query, job_config=job_config).result(timeout=30)
+        for row in proj_rows:
+            projection_map[row['player_lookup']] = {
+                'numberfire': float(row['nf_projected_points']) if row['nf_projected_points'] is not None else None,
+                'fantasypros': float(row['fp_projected_points']) if row['fp_projected_points'] is not None else None,
+            }
+        logger.info(f"Loaded projection data for {len(projection_map)} players")
+    except Exception as e:
+        logger.warning(f"Failed to query projection consensus data: {e}")
+
+    # Session 401: TeamRankings predicted pace for predicted_pace_over signal.
+    pace_query = f"""
+    SELECT team, pace
+    FROM `{PROJECT_ID}.nba_raw.teamrankings_team_stats`
+    WHERE game_date = (
+      SELECT MAX(game_date) FROM `{PROJECT_ID}.nba_raw.teamrankings_team_stats`
+      WHERE game_date <= @target_date
+    )
+    AND pace IS NOT NULL
+    """
+    team_pace_map = {}
+    try:
+        pace_rows = bq_client.query(pace_query, job_config=job_config).result(timeout=30)
+        team_pace_map = {row['team']: float(row['pace']) for row in pace_rows}
+        logger.info(f"Loaded TeamRankings pace for {len(team_pace_map)} teams")
+    except Exception as e:
+        logger.warning(f"Failed to query TeamRankings pace: {e}")
+
+    # Session 401: DvP data for dvp_favorable_over signal.
+    dvp_query = f"""
+    SELECT team, position, points_allowed, rank
+    FROM `{PROJECT_ID}.nba_raw.hashtagbasketball_dvp`
+    WHERE game_date = (
+      SELECT MAX(game_date) FROM `{PROJECT_ID}.nba_raw.hashtagbasketball_dvp`
+      WHERE game_date <= @target_date
+    )
+    AND points_allowed IS NOT NULL
+    """
+    dvp_map = {}  # {team: {position: {points_allowed, rank}}}
+    try:
+        dvp_rows = bq_client.query(dvp_query, job_config=job_config).result(timeout=30)
+        for row in dvp_rows:
+            team = row['team']
+            if team not in dvp_map:
+                dvp_map[team] = {}
+            dvp_map[team][row['position']] = {
+                'points_allowed': float(row['points_allowed']),
+                'rank': int(row['rank']) if row['rank'] is not None else None,
+            }
+        logger.info(f"Loaded DvP data for {len(dvp_map)} teams")
+    except Exception as e:
+        logger.warning(f"Failed to query DvP data: {e}")
+
+    # Session 401: CLV tracking — opening vs closing line comparison.
+    clv_query = f"""
+    WITH opening AS (
+      SELECT player_lookup, AVG(points_line) as opening_line
+      FROM `{PROJECT_ID}.nba_raw.odds_api_player_points_props`
+      WHERE game_date = @target_date
+        AND snapshot_type = 'opening'
+        AND player_lookup IS NOT NULL
+      GROUP BY 1
+    ),
+    closing AS (
+      SELECT player_lookup, AVG(points_line) as closing_line
+      FROM `{PROJECT_ID}.nba_raw.odds_api_player_points_props`
+      WHERE game_date = @target_date
+        AND snapshot_type = 'closing'
+        AND player_lookup IS NOT NULL
+      GROUP BY 1
+    )
+    SELECT
+      o.player_lookup,
+      o.opening_line,
+      c.closing_line,
+      o.opening_line - c.closing_line AS clv
+    FROM opening o
+    JOIN closing c ON o.player_lookup = c.player_lookup
+    """
+    clv_map = {}
+    try:
+        clv_rows = bq_client.query(clv_query, job_config=job_config).result(timeout=30)
+        for row in clv_rows:
+            clv_map[row['player_lookup']] = {
+                'opening_line': float(row['opening_line']),
+                'closing_line': float(row['closing_line']),
+                'clv': float(row['clv']),
+            }
+        logger.info(f"Loaded CLV data for {len(clv_map)} players")
+    except Exception as e:
+        logger.warning(f"Failed to query CLV data: {e}")
+
     # Session 399: Sharp vs soft book line lean for sharp_book_lean signal.
     # Sharp books (FanDuel, DraftKings) set efficient lines; soft books
     # (BetRivers, Bovada, Fliff) lag. Divergence predicts direction:
@@ -905,6 +1023,65 @@ def query_predictions_with_supplements(
         # Sharp book lean for sharp_book_lean_over/under signals (Session 399)
         sbl = sharp_lean_map.get(row_dict['player_lookup'])
         pred['sharp_book_lean'] = float(sbl) if sbl is not None else None
+
+        # Session 401: Projection consensus data
+        proj_data = projection_map.get(row_dict['player_lookup'])
+        if proj_data:
+            line = float(pred.get('line_value') or 0)
+            nf_pts = proj_data.get('numberfire')
+            fp_pts = proj_data.get('fantasypros')
+            pred['numberfire_projected_points'] = nf_pts
+            pred['fantasypros_projected_points'] = fp_pts
+
+            sources_above = 0
+            sources_below = 0
+            total_sources = 0
+            for pts in [nf_pts, fp_pts]:
+                if pts is not None and line > 0:
+                    total_sources += 1
+                    if pts > line:
+                        sources_above += 1
+                    elif pts < line:
+                        sources_below += 1
+            pred['projection_sources_above_line'] = sources_above
+            pred['projection_sources_below_line'] = sources_below
+            pred['projection_sources_total'] = total_sources
+        else:
+            pred['projection_sources_total'] = 0
+            pred['projection_sources_above_line'] = 0
+            pred['projection_sources_below_line'] = 0
+
+        # Session 401: Predicted game pace from TeamRankings
+        team_pace = team_pace_map.get(pred.get('team_abbr'))
+        opp_pace = team_pace_map.get(opponent)
+        pred['team_predicted_pace'] = team_pace
+        pred['opponent_predicted_pace'] = opp_pace
+        if team_pace and opp_pace:
+            pred['predicted_game_pace'] = (team_pace + opp_pace) / 2.0
+        else:
+            pred['predicted_game_pace'] = None
+
+        # Session 401: DvP data for opponent's defense vs player position
+        opp_dvp = dvp_map.get(opponent, {})
+        # We don't have player position in the main query, so check ALL position
+        # or use the best available position data
+        if opp_dvp:
+            # Use "ALL" position if available, otherwise check common positions
+            best_dvp = opp_dvp.get('ALL', {})
+            pred['opponent_dvp_rank'] = best_dvp.get('rank')
+            pred['opponent_dvp_points_allowed'] = best_dvp.get('points_allowed')
+        else:
+            pred['opponent_dvp_rank'] = None
+            pred['opponent_dvp_points_allowed'] = None
+
+        # Session 401: CLV data
+        clv_data = clv_map.get(row_dict['player_lookup'])
+        if clv_data:
+            pred['closing_line_value'] = clv_data['clv']
+            pred['opening_line'] = clv_data['opening_line']
+            pred['closing_line'] = clv_data['closing_line']
+        else:
+            pred['closing_line_value'] = None
 
         # Compute consecutive negative +/- streak for pre-filter (Session 294)
         # neg_3plus + UNDER = 13.1% HR (N=84) — catastrophic anti-pattern

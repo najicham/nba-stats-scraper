@@ -93,6 +93,18 @@ from data_processors.raw.oddsapi.odds_game_lines_processor import OddsGameLinesP
 from data_processors.raw.nbacom.nbac_schedule_processor import NbacScheduleProcessor
 from data_processors.raw.nbacom.nbac_injury_report_processor import NbacInjuryReportProcessor
 
+# Session 401: Projection + External data source processors
+from data_processors.raw.projections.numberfire_processor import NumberFireProjectionsProcessor
+from data_processors.raw.projections.fantasypros_processor import FantasyProsProjectionsProcessor
+from data_processors.raw.external.teamrankings_processor import TeamRankingsStatsProcessor
+from data_processors.raw.external.hashtagbasketball_dvp_processor import HashtagBasketballDvpProcessor
+from data_processors.raw.external.rotowire_lineups_processor import RotoWireLineupsProcessor
+from data_processors.raw.external.covers_referee_processor import CoversRefereeStatsProcessor
+from data_processors.raw.external.nba_tracking_processor import NBATrackingStatsProcessor
+from data_processors.raw.external.vsin_betting_splits_processor import VSiNBettingSplitsProcessor
+from data_processors.raw.projections.dailyfantasyfuel_processor import DailyFantasyFuelProjectionsProcessor
+from data_processors.raw.projections.dimers_processor import DimersProjectionsProcessor
+
 # Import MLB processors
 from data_processors.raw.mlb import (
     MlbPitcherStatsProcessor,
@@ -150,6 +162,24 @@ PROCESSOR_REGISTRY = {
     'kalshi/player-props': KalshiPropsProcessor,
 
     'big-data-ball': BigDataBallPbpProcessor,
+
+    # ============================
+    # Projection Processors (Session 401)
+    # ============================
+    'projections/numberfire': NumberFireProjectionsProcessor,
+    'projections/fantasypros': FantasyProsProjectionsProcessor,
+
+    # ============================
+    # External Data Source Processors (Session 401)
+    # ============================
+    'external/teamrankings': TeamRankingsStatsProcessor,
+    'external/hashtagbasketball/dvp': HashtagBasketballDvpProcessor,
+    'external/rotowire/lineups': RotoWireLineupsProcessor,
+    'external/covers/referee-stats': CoversRefereeStatsProcessor,
+    'external/nba-tracking': NBATrackingStatsProcessor,
+    'external/vsin/betting-splits': VSiNBettingSplitsProcessor,
+    'projections/dailyfantasyfuel': DailyFantasyFuelProjectionsProcessor,
+    'projections/dimers': DimersProjectionsProcessor,
 
     # ============================
     # MLB Processors

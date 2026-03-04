@@ -69,6 +69,10 @@ class NbacRefereeProcessor(SmartIdempotencyMixin, ProcessorBase):
             logging.error(f"Table not found: {e}")
             raise
     
+    def load_data(self) -> None:
+        """Load referee assignments JSON from GCS."""
+        self.raw_data = self.load_json_from_gcs()
+
     def normalize_text(self, text: str) -> str:
         """Normalize text for data consistency."""
         if not text:
@@ -156,10 +160,9 @@ class NbacRefereeProcessor(SmartIdempotencyMixin, ProcessorBase):
         return output
     
     def transform_data(self) -> None:
-        """Transform raw data into transformed data."""
-        raw_data = self.raw_data
-        file_path = self.raw_data.get('metadata', {}).get('source_file', 'unknown')
         """Transform game referee assignments into normalized rows."""
+        raw_data = self.raw_data
+        file_path = self.opts.get('file_path', 'unknown')
         rows = []
         
         try:

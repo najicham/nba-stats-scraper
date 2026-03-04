@@ -1,0 +1,178 @@
+"""
+RotoWire Lineups Processor
+
+GCS Path: gs://nba-scraped-data/external/rotowire/lineups/{date}/{timestamp}.json
+BigQuery Table: nba_raw.rotowire_lineups
+
+Processing Strategy: APPEND_ALWAYS (daily lineup snapshots)
+Nested Structure: games[] -> away_players[] + home_players[]
+Flattened to one row per player.
+"""
+
+import logging
+import os
+from datetime import datetime, timezone
+from typing import Dict, List
+
+from google.cloud import bigquery
+
+from data_processors.raw.processor_base import ProcessorBase
+from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
+from shared.utils.notification_system import notify_error
+
+logger = logging.getLogger(__name__)
+
+
+class RotoWireLineupsProcessor(SmartIdempotencyMixin, ProcessorBase):
+    """
+    RotoWire Lineups Processor
+
+    Processing Strategy: APPEND_ALWAYS
+    Smart Idempotency: Enabled
+        Hash Fields: player_lookup, game_date, team, is_starter
+    """
+
+    HASH_FIELDS = [
+        'player_lookup',
+        'game_date',
+        'team',
+        'is_starter',
+    ]
+
+    def __init__(self):
+        super().__init__()
+        self.table_name = 'nba_raw.rotowire_lineups'
+        self.project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
+        self.bq_client = bigquery.Client(project=self.project_id)
+
+    def load_data(self) -> None:
+        """Load data from GCS."""
+        self.raw_data = self.load_json_from_gcs()
+
+    def _process_players(self, players: List[Dict], team: str, game_date: str,
+                         game_time: str, file_path: str, scraped_at: str,
+                         current_time: str) -> List[Dict]:
+        """Flatten a player list into BQ rows."""
+        rows = []
+        for player in players:
+            player_lookup = player.get('player_lookup')
+            if not player_lookup:
+                continue
+
+            row = {
+                'game_date': game_date,
+                'game_time': game_time,
+                'away_team': '',  # set by caller
+                'home_team': '',  # set by caller
+                'player_name': player.get('player_name', ''),
+                'player_lookup': player_lookup,
+                'team': team,
+                'position': player.get('position', ''),
+                'lineup_position': player.get('lineup_position'),
+                'is_starter': player.get('is_starter', False),
+                'injury_status': player.get('injury_status', ''),
+                'projected_minutes': player.get('projected_minutes'),
+                'source_file_path': file_path,
+                'scraped_at': scraped_at,
+                'processed_at': current_time,
+            }
+            rows.append(row)
+        return rows
+
+    def transform_data(self) -> None:
+        """Transform RotoWire lineup JSON into flat BQ rows (one per player)."""
+        raw_data = self.raw_data
+        file_path = self.opts.get('file_path', 'unknown')
+        rows = []
+
+        try:
+            game_date = raw_data.get('date')
+            if not game_date:
+                raise ValueError(f"Missing date in RotoWire data: {file_path}")
+
+            scraped_at = raw_data.get('timestamp')
+            current_time = datetime.now(timezone.utc).isoformat()
+
+            for game in raw_data.get('games', []):
+                away_team = game.get('away_team', '')
+                home_team = game.get('home_team', '')
+                game_time = game.get('game_time', '')
+
+                # Process away players
+                away_rows = self._process_players(
+                    game.get('away_players', []), away_team, game_date,
+                    game_time, file_path, scraped_at, current_time
+                )
+                for r in away_rows:
+                    r['away_team'] = away_team
+                    r['home_team'] = home_team
+                rows.extend(away_rows)
+
+                # Process home players
+                home_rows = self._process_players(
+                    game.get('home_players', []), home_team, game_date,
+                    game_time, file_path, scraped_at, current_time
+                )
+                for r in home_rows:
+                    r['away_team'] = away_team
+                    r['home_team'] = home_team
+                rows.extend(home_rows)
+
+            logger.info(f"Transformed {len(rows)} RotoWire lineup rows from {file_path}")
+
+        except Exception as e:
+            logger.error(f"Transform failed for {file_path}: {e}", exc_info=True)
+            try:
+                notify_error(
+                    title="RotoWire Lineups Transform Failed",
+                    message=str(e),
+                    details={'file_path': file_path, 'error_type': type(e).__name__},
+                    processor_name=self.__class__.__name__
+                )
+            except Exception:
+                pass
+            raise
+
+        self.transformed_data = rows
+        self.add_data_hash()
+
+    def save_data(self) -> None:
+        """Save to BigQuery using batch loading."""
+        rows = self.transformed_data
+        if not rows:
+            self.stats['rows_inserted'] = 0
+            return
+
+        table_id = f"{self.project_id}.{self.table_name}"
+
+        try:
+            table_ref = self.bq_client.get_table(table_id)
+            job_config = bigquery.LoadJobConfig(
+                schema=table_ref.schema,
+                autodetect=False,
+                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                ignore_unknown_values=True,
+            )
+            load_job = self.bq_client.load_table_from_json(rows, table_id, job_config=job_config)
+            load_job.result(timeout=60)
+
+            if load_job.errors:
+                logger.error(f"BQ batch load errors: {load_job.errors}")
+            else:
+                self.stats['rows_inserted'] = len(rows)
+                logger.info(f"Loaded {len(rows)} RotoWire lineup rows to BQ")
+
+        except Exception as e:
+            logger.error(f"Failed to load to BigQuery: {e}", exc_info=True)
+            self.stats['rows_inserted'] = 0
+            self.stats['rows_failed'] = len(rows)
+            try:
+                notify_error(
+                    title="RotoWire BQ Load Failed",
+                    message=str(e),
+                    details={'table': self.table_name, 'rows': len(rows)},
+                    processor_name=self.__class__.__name__
+                )
+            except Exception:
+                pass
