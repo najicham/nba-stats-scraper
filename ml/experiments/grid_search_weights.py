@@ -114,6 +114,106 @@ TEMPLATES = {
         'window_sweep': True,
         'window_sizes': [28, 35, 42, 49, 56, 63, 70],
     },
+
+    # ── Session 395 Comprehensive Experiment Grid ──────────────────────
+
+    # ── Session 395: Comprehensive Experiment Templates ──────────────
+    # NOTE: --no-vegas physically removes vegas features.
+    # --category-weight vegas=X scales vegas features during training.
+    # For noveg feature sets, vegas features are already excluded.
+    # For full feature sets (v12, v16), use --category-weight vegas=X.
+
+    'feature_vegas_matrix': {
+        'description': 'Feature sets × vegas influence (8 combos)',
+        'base_args': '',
+        'grid': {
+            # noveg sets have no vegas features (no --category-weight needed)
+            # full sets use --category-weight to control vegas influence
+            'feature-set': [
+                'v12_noveg', 'v16_noveg', 'v13',
+                'v12', 'v12', 'v12',
+                'v16_noveg', 'v13',
+            ],
+        },
+        # NOTE: This template needs custom handling — see 'feature_vegas_combos'
+    },
+    # Better approach: explicit combos instead of grid cross-product
+    'feature_vegas_combos': {
+        'description': 'Feature set × vegas influence — explicit combos (8 experiments)',
+        'base_args': '',
+        'explicit_combos': [
+            {'feature-set': 'v12_noveg'},                                    # 1. Baseline noveg
+            {'feature-set': 'v12', 'category-weight': 'vegas=0.15'},         # 2. V12 light vegas
+            {'feature-set': 'v12', 'category-weight': 'vegas=0.25'},         # 3. V12 medium vegas
+            {'feature-set': 'v12', 'category-weight': 'vegas=1.0'},          # 4. V12 full vegas
+            {'feature-set': 'v16_noveg'},                                    # 5. V16 noveg
+            {'feature-set': 'v13'},                                          # 6. V13 (shooting)
+            {'feature-set': 'v13', 'category-weight': 'vegas=0.15'},         # 7. V13 + light vegas
+            {'feature-set': 'v15'},                                          # 8. V15
+        ],
+    },
+    'population_filter': {
+        'description': 'Train on different player populations (4 combos)',
+        'base_args': '--feature-set v12_noveg',
+        'grid': {
+            'min-ppg': ['0', '10', '15', '25'],
+        },
+    },
+    'category_weight_sweep': {
+        'description': 'Category weight emphasis experiments (8 combos)',
+        'base_args': '--feature-set v12_noveg',
+        'grid': {
+            'category-weight': [
+                'recent_performance=1.0',
+                'recent_performance=2.0',
+                'recent_performance=3.0',
+                'composite=0.5',
+                'matchup=2.0',
+                'team_context=0.5',
+                'recent_performance=2.0,matchup=2.0',
+                'opponent_history=2.0',
+            ],
+        },
+    },
+    'framework_shootout': {
+        'description': 'CatBoost vs LightGBM vs XGBoost (3 combos)',
+        'base_args': '--feature-set v12_noveg',
+        'grid': {
+            'framework': ['catboost', 'lightgbm', 'xgboost'],
+        },
+    },
+    'loss_function_sweep': {
+        'description': 'Different loss functions (4 combos)',
+        'base_args': '--feature-set v12_noveg',
+        'grid': {
+            'loss-function': ['MAE', 'RMSE', 'Huber:delta=5', 'Huber:delta=3'],
+        },
+    },
+    'population_x_features': {
+        'description': 'Population filters × feature sets (8 combos)',
+        'base_args': '',
+        'grid': {
+            'feature-set': ['v12_noveg', 'v16_noveg'],
+            'min-ppg': ['0', '10', '15', '25'],
+        },
+    },
+    'hyperparameter_sweep': {
+        'description': 'CatBoost hyperparameter sweep (6 combos)',
+        'base_args': '--feature-set v12_noveg',
+        'grid': {
+            'rsm': ['0.3', '0.5', '0.7'],
+            'grow-policy': ['SymmetricTree', 'Depthwise'],
+        },
+    },
+    'mega_sweep': {
+        'description': 'Mega sweep: features × population × framework (24 combos)',
+        'base_args': '',
+        'grid': {
+            'feature-set': ['v12_noveg', 'v16_noveg', 'v13'],
+            'min-ppg': ['0', '15'],
+            'framework': ['catboost', 'lightgbm'],
+        },
+    },
 }
 
 
@@ -334,12 +434,14 @@ def main():
 
     # Resolve template
     is_window_sweep = False
+    is_explicit_combos = False
     if args.template:
         tmpl = TEMPLATES[args.template]
         base_args = tmpl['base_args']
         if args.base_args:
             base_args += ' ' + args.base_args
         is_window_sweep = tmpl.get('window_sweep', False)
+        is_explicit_combos = 'explicit_combos' in tmpl
         grid = tmpl.get('grid', {})
         print(f"Template: {args.template} -- {tmpl['description']}")
     elif args.grid:
@@ -357,8 +459,16 @@ def main():
     if not eval_end:
         eval_end = (date.today() - timedelta(days=1)).strftime('%Y-%m-%d')
 
+    # Handle explicit combos (Session 395: arbitrary parameter combos, not cross-product)
+    if is_explicit_combos:
+        combos = tmpl['explicit_combos']
+        window_dates = None
+        print(f"Explicit combos: {len(combos)} experiments")
+        print(f"Training: {args.train_start} to {args.train_end}")
+        print(f"Eval: {eval_start} to {eval_end}")
+        print()
     # Handle window sweep templates
-    if is_window_sweep:
+    elif is_window_sweep:
         window_sizes = tmpl['window_sizes']
         eval_start_dt = datetime.strptime(eval_start, '%Y-%m-%d')
         combos = []

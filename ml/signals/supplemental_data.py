@@ -68,6 +68,7 @@ def query_predictions_with_supplements(
     target_date: str,
     system_id: Optional[str] = None,
     multi_model: bool = False,
+    skip_disabled_filter: bool = False,
 ) -> Tuple[List[Dict], Dict[str, Dict]]:
     """Query active predictions with supplemental signal data.
 
@@ -78,6 +79,9 @@ def query_predictions_with_supplements(
         multi_model: If True, query all CatBoost families and pick highest-edge
             prediction per player. Adds source_model_id, n_models_eligible,
             champion_edge, direction_conflict to each prediction dict.
+        skip_disabled_filter: If True, include predictions from disabled/blocked
+            models. Used by simulation tools to evaluate historical periods
+            where models were active but are now disabled.
 
     Returns:
         Tuple of (predictions list, supplemental_map keyed by player_lookup).
@@ -86,7 +90,17 @@ def query_predictions_with_supplements(
 
     if multi_model:
         system_filter = build_system_id_sql_filter('p')
-        preds_cte = f"""
+        # Session 395: skip_disabled_filter for historical simulation.
+        # When evaluating historical periods, models that were active then
+        # may be disabled now. The simulator needs to bypass this filter.
+        if skip_disabled_filter:
+            disabled_models_cte = """
+    -- Session 395: Disabled model filter SKIPPED (historical simulation mode)
+    WITH disabled_models AS (
+      SELECT CAST(NULL AS STRING) AS model_id FROM UNNEST(ARRAY<STRING>[]) AS model_id
+    ),"""
+        else:
+            disabled_models_cte = f"""
     -- Session 366: Model HR weight with post-filter fallback chain.
     -- Priority: best-bets HR (21d, N>=8) → raw HR (14d, N>=10) → 50% default.
     -- Self-bootstrapping: new models use raw HR until they accumulate 8+ best-bets picks.
@@ -101,7 +115,8 @@ def query_predictions_with_supplements(
       FROM `{PROJECT_ID}.nba_predictions.model_registry`
       WHERE enabled = FALSE OR status IN ('blocked', 'disabled')
          OR model_id IN ('catboost_v12', 'catboost_v9')
-    ),
+    ),"""
+        preds_cte = f"""{disabled_models_cte}
 
     -- Session 378c warmup REMOVED: created_at reflects registry insertion date,
     -- not actual model deployment date. Re-registering models resets created_at,
@@ -187,7 +202,14 @@ def query_predictions_with_supplements(
       ) = 1
     ),"""
     else:
-        preds_cte = f"""
+        if skip_disabled_filter:
+            single_disabled_cte = """
+    -- Session 395: Disabled model filter SKIPPED (historical simulation mode)
+    WITH disabled_models AS (
+      SELECT CAST(NULL AS STRING) AS model_id FROM UNNEST(ARRAY<STRING>[]) AS model_id
+    ),"""
+        else:
+            single_disabled_cte = f"""
     -- Session 378c: Registry cascade for single-model path (warmup removed)
     -- Session 391: Defense-in-depth — include hardcoded legacy models
     WITH disabled_models AS (
@@ -195,7 +217,8 @@ def query_predictions_with_supplements(
       FROM `{PROJECT_ID}.nba_predictions.model_registry`
       WHERE enabled = FALSE OR status IN ('blocked', 'disabled')
          OR model_id IN ('catboost_v12', 'catboost_v9')
-    ),
+    ),"""
+        preds_cte = f"""{single_disabled_cte}
     preds AS (
       SELECT
         p.player_lookup,

@@ -99,6 +99,7 @@ def simulate_date(
     multi_model: bool = False,
     registry=None,
     combo_registry=None,
+    historical: bool = False,
 ) -> Dict[str, Any]:
     """Simulate best bets pipeline for one date.
 
@@ -107,11 +108,13 @@ def simulate_date(
     # 1. Query predictions
     if multi_model:
         predictions, supplemental_map = query_predictions_with_supplements(
-            bq_client, target_date, multi_model=True
+            bq_client, target_date, multi_model=True,
+            skip_disabled_filter=historical,
         )
     else:
         predictions, supplemental_map = query_predictions_with_supplements(
-            bq_client, target_date, system_id=model_id, multi_model=False
+            bq_client, target_date, system_id=model_id, multi_model=False,
+            skip_disabled_filter=historical,
         )
 
     if not predictions:
@@ -266,6 +269,7 @@ def simulate_range(
     end_date: str,
     multi_model: bool = False,
     verbose: bool = False,
+    historical: bool = False,
 ) -> Dict[str, Any]:
     """Simulate best bets pipeline over a date range."""
     game_dates = get_game_dates(bq_client, start_date, end_date)
@@ -292,6 +296,7 @@ def simulate_range(
             bq_client, game_date, model_id=model_id,
             multi_model=multi_model,
             registry=registry, combo_registry=combo_registry,
+            historical=historical,
         )
 
         daily_results.append(result)
@@ -481,6 +486,9 @@ def main():
                        help='End date (YYYY-MM-DD)')
     parser.add_argument('--verbose', '-v', action='store_true',
                        help='Print per-pick details')
+    parser.add_argument('--historical', action='store_true',
+                       help='Include predictions from now-disabled models '
+                       '(for evaluating historical periods)')
 
     args = parser.parse_args()
 
@@ -494,6 +502,7 @@ def main():
     results_a = simulate_range(
         bq_client, args.model, args.start_date, args.end_date,
         multi_model=args.multi_model, verbose=args.verbose,
+        historical=args.historical,
     )
 
     if not results_a:
@@ -505,7 +514,7 @@ def main():
     if args.compare:
         results_b = simulate_range(
             bq_client, args.compare, args.start_date, args.end_date,
-            verbose=args.verbose,
+            verbose=args.verbose, historical=args.historical,
         )
         if results_b:
             print_results(results_b)
