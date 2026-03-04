@@ -104,6 +104,10 @@ def build_default_registry() -> SignalRegistry:
     # Session 397 signals
     from ml.signals.q4_scorer_over import Q4ScorerOverSignal
 
+    # Session 398 signals
+    from ml.signals.denver_visitor_over import DenverVisitorOverSignal
+    from ml.signals.day_of_week_over import DayOfWeekOverSignal
+
     registry = SignalRegistry()
     registry.register(ModelHealthSignal())
     registry.register(HighEdgeSignal())
@@ -177,5 +181,9 @@ def build_default_registry() -> SignalRegistry:
 
     # Session 397 signals
     registry.register(Q4ScorerOverSignal())
+
+    # Session 398 signals
+    registry.register(DenverVisitorOverSignal())
+    registry.register(DayOfWeekOverSignal())
 
     return registry

@@ -157,9 +157,19 @@ SELECT
   signal_tag,
   regime,
   ROUND(hr_7d, 1) AS hr_7d,
+  ROUND(hr_30d, 1) AS hr_30d,
   ROUND(hr_season, 1) AS hr_season,
   ROUND(divergence_7d_vs_season, 1) AS divergence,
   picks_7d,
+  -- Directional splits (Session 398)
+  ROUND(hr_over_7d, 1) AS over_7d,
+  picks_over_7d AS n_over_7d,
+  ROUND(hr_under_7d, 1) AS under_7d,
+  picks_under_7d AS n_under_7d,
+  ROUND(hr_over_30d, 1) AS over_30d,
+  picks_over_30d AS n_over_30d,
+  ROUND(hr_under_30d, 1) AS under_30d,
+  picks_under_30d AS n_under_30d,
   is_model_dependent,
   days_in_current_regime,
   status
@@ -178,6 +188,12 @@ SIGNAL HEALTH:
   N signals tracked: X HOT, Y NORMAL, Z COLD
   COLD: <signal_tag> (model-dependent, zeroed at 0.0x) [if any]
   HOT: <signal_tag> (1.2x), ... [if any]
+
+  Per-Signal 30d HR (ranked, with OVER/UNDER split):
+    <signal_tag>: <hr_30d>% (N=<picks_30d>) | OVER: <over_30d>% (N=<n_over_30d>) | UNDER: <under_30d>% (N=<n_under_30d>)
+    ...
+  [Flag any signal with directional HR < 50% on 15+ picks:]
+    WARNING: <signal_tag> <direction> HR below breakeven (<hr>% on N=<n>) — investigate
 ```
 
 Flag COLD model-dependent signals specifically since they're effectively disabled (0.0x weight per Session 264).

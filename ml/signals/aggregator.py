@@ -51,7 +51,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v397_q4_scorer_under_block'
+ALGORITHM_VERSION = 'v398_friday_over_block'
 
 # Base signals that fire on nearly every edge 5+ pick. Picks with ONLY
 # these signals hit 57.1% (N=42) vs 77.8% for picks with 4+ signals.
@@ -184,6 +184,7 @@ class BestBetsAggregator:
             'starter_over_sc_floor': 0,
             'opponent_under_block': 0,
             'q4_scorer_under_block': 0,
+            'friday_over_block': 0,
             'signal_density': 0,
             'legacy_block': 0,
             'model_profile_would_block': 0,
@@ -469,6 +470,25 @@ class BestBetsAggregator:
                 _record_filtered(pred, 'q4_scorer_under_block', pred_edge)
                 continue
 
+            # Friday OVER block (Session 398): OVER on Friday = 37.5% HR at best bets (N=8),
+            # 53.0% raw (N=443). Worst OVER day by far. BQ-validated across Nov-Mar.
+            game_date_str_raw = pred.get('game_date', '')
+            if game_date_str_raw and pred.get('recommendation') == 'OVER':
+                from datetime import datetime as _dt, date as _date
+                try:
+                    if isinstance(game_date_str_raw, str):
+                        _gd = _dt.strptime(game_date_str_raw, '%Y-%m-%d').date()
+                    elif isinstance(game_date_str_raw, _date):
+                        _gd = game_date_str_raw
+                    else:
+                        _gd = None
+                    if _gd and _gd.weekday() == 4:  # 4 = Friday
+                        filter_counts['friday_over_block'] += 1
+                        _record_filtered(pred, 'friday_over_block', pred_edge)
+                        continue
+                except (ValueError, TypeError):
+                    pass
+
             # High book std UNDER block (Session 377): UNDER + multi_book_line_std 1.0-1.5 = 14.8% HR (N=142).
             # When books disagree significantly on the line, UNDER predictions are unreliable.
             book_std = pred.get('multi_book_line_std') or 0
@@ -649,6 +669,8 @@ class BestBetsAggregator:
             logger.info(f"Opponent depleted UNDER block: skipped {filter_counts['opponent_depleted_under']} UNDER picks with 3+ opponent stars out")
         if filter_counts['q4_scorer_under_block'] > 0:
             logger.info(f"Q4 scorer UNDER block: skipped {filter_counts['q4_scorer_under_block']} UNDER picks with Q4 ratio >= 0.35 (34.0% HR)")
+        if filter_counts['friday_over_block'] > 0:
+            logger.info(f"Friday OVER block: skipped {filter_counts['friday_over_block']} OVER picks on Friday (37.5% HR at best bets)")
         if filter_counts['signal_density'] > 0:
             logger.info(f"Signal density filter: skipped {filter_counts['signal_density']} base-only picks")
         if filter_counts['legacy_block'] > 0:

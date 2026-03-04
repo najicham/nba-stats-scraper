@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.signal_best_bets_
   -- Signal Framework Fields
   signal_tags ARRAY<STRING>,            -- ['high_edge', 'dual_agree', ...]
   signal_count INT64,                   -- Number of qualifying signals
+  real_signal_count INT64,               -- Non-base signal count (excludes model_health, high_edge, edge_spread_optimal)
   composite_score NUMERIC(6, 4),        -- Aggregator ranking score
   rank INT64,                           -- 1-based daily rank (1 = best pick)
 

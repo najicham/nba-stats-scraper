@@ -34,6 +34,16 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.signal_health_dai
 
   days_in_current_regime INT64,
 
+  -- Directional splits (Session 398)
+  hr_over_7d FLOAT64,
+  hr_under_7d FLOAT64,
+  hr_over_30d FLOAT64,
+  hr_under_30d FLOAT64,
+  picks_over_7d INT64,
+  picks_under_7d INT64,
+  picks_over_30d INT64,
+  picks_under_30d INT64,
+
   -- Signal family
   is_model_dependent BOOLEAN,             -- high_edge, edge_spread_optimal = TRUE
 

@@ -67,6 +67,9 @@ ACTIVE_SIGNALS = frozenset({
     'self_creation_over',
     'sharp_line_move_over',
     'sharp_line_drop_under',
+    # Session 396-397 additions
+    'b2b_boost_over',
+    'q4_scorer_over',
     # b2b_fatigue_under DISABLED — 39.5% Feb HR (Session 373)
     # prop_line_drop_over DISABLED — conceptually backward, 39.1% Feb HR (Session 374b)
     # blowout_recovery DISABLED — 50% HR (7-7) in best bets, 25% in Feb (Session 349)
@@ -252,7 +255,8 @@ def compute_signal_health(
         pst.player_lookup,
         pst.system_id,
         signal_tag,
-        pa.prediction_correct
+        pa.prediction_correct,
+        pa.recommendation
       FROM `{PROJECT_ID}.nba_predictions.pick_signal_tags` pst
       CROSS JOIN UNNEST(pst.signal_tags) AS signal_tag
       INNER JOIN `{PROJECT_ID}.nba_predictions.prediction_accuracy` pa
@@ -286,7 +290,29 @@ def compute_signal_health(
 
         -- Season
         COUNTIF(prediction_correct) AS wins_season,
-        COUNT(*) AS picks_season
+        COUNT(*) AS picks_season,
+
+        -- Directional splits (Session 398)
+        -- OVER 7d
+        COUNTIF(game_date > DATE_SUB(@target_date, INTERVAL 7 DAY)
+                AND recommendation = 'OVER' AND prediction_correct) AS wins_over_7d,
+        COUNTIF(game_date > DATE_SUB(@target_date, INTERVAL 7 DAY)
+                AND recommendation = 'OVER') AS picks_over_7d,
+        -- UNDER 7d
+        COUNTIF(game_date > DATE_SUB(@target_date, INTERVAL 7 DAY)
+                AND recommendation = 'UNDER' AND prediction_correct) AS wins_under_7d,
+        COUNTIF(game_date > DATE_SUB(@target_date, INTERVAL 7 DAY)
+                AND recommendation = 'UNDER') AS picks_under_7d,
+        -- OVER 30d
+        COUNTIF(game_date > DATE_SUB(@target_date, INTERVAL 30 DAY)
+                AND recommendation = 'OVER' AND prediction_correct) AS wins_over_30d,
+        COUNTIF(game_date > DATE_SUB(@target_date, INTERVAL 30 DAY)
+                AND recommendation = 'OVER') AS picks_over_30d,
+        -- UNDER 30d
+        COUNTIF(game_date > DATE_SUB(@target_date, INTERVAL 30 DAY)
+                AND recommendation = 'UNDER' AND prediction_correct) AS wins_under_30d,
+        COUNTIF(game_date > DATE_SUB(@target_date, INTERVAL 30 DAY)
+                AND recommendation = 'UNDER') AS picks_under_30d
 
       FROM tagged
       GROUP BY signal_tag
@@ -298,7 +324,13 @@ def compute_signal_health(
       ROUND(100.0 * SAFE_DIVIDE(wins_14d, picks_14d), 1) AS hr_14d,
       ROUND(100.0 * SAFE_DIVIDE(wins_30d, picks_30d), 1) AS hr_30d,
       ROUND(100.0 * SAFE_DIVIDE(wins_season, picks_season), 1) AS hr_season,
-      picks_7d, picks_14d, picks_30d, picks_season
+      picks_7d, picks_14d, picks_30d, picks_season,
+      -- Directional splits (Session 398)
+      ROUND(100.0 * SAFE_DIVIDE(wins_over_7d, picks_over_7d), 1) AS hr_over_7d,
+      ROUND(100.0 * SAFE_DIVIDE(wins_under_7d, picks_under_7d), 1) AS hr_under_7d,
+      ROUND(100.0 * SAFE_DIVIDE(wins_over_30d, picks_over_30d), 1) AS hr_over_30d,
+      ROUND(100.0 * SAFE_DIVIDE(wins_under_30d, picks_under_30d), 1) AS hr_under_30d,
+      picks_over_7d, picks_under_7d, picks_over_30d, picks_under_30d
     FROM signal_metrics
     WHERE picks_season > 0
       AND signal_tag IN UNNEST(@active_signals)
@@ -358,6 +390,15 @@ def compute_signal_health(
             'regime': regime,
             'status': status,
             'days_in_current_regime': None,  # Populated by consecutive-day logic below
+            # Directional splits (Session 398)
+            'hr_over_7d': row.hr_over_7d,
+            'hr_under_7d': row.hr_under_7d,
+            'hr_over_30d': row.hr_over_30d,
+            'hr_under_30d': row.hr_under_30d,
+            'picks_over_7d': row.picks_over_7d,
+            'picks_under_7d': row.picks_under_7d,
+            'picks_over_30d': row.picks_over_30d,
+            'picks_under_30d': row.picks_under_30d,
             'is_model_dependent': is_model_dep,
             'computed_at': now,
         })
