@@ -50,7 +50,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v391_home_over_block'
+ALGORITHM_VERSION = 'v392_disabled_model_drain_fix'
 
 # Base signals that fire on nearly every edge 5+ pick. Picks with ONLY
 # these signals hit 57.1% (N=42) vs 77.8% for picks with 4+ signals.
@@ -169,7 +169,6 @@ class BestBetsAggregator:
             'anti_pattern': 0,
             'model_direction_affinity': 0,
             'away_noveg': 0,
-            'home_over': 0,
             'star_under': 0,
             'under_star_away': 0,
             'med_usage_under': 0,
@@ -297,13 +296,9 @@ class BestBetsAggregator:
                     filter_counts['away_noveg'] += 1
                     continue
 
-            # HOME OVER block (Session 391): HOME OVER = 43.8% HR (N=16, 30d best bets)
-            # vs AWAY OVER = 66.7% (N=15). Blowout epidemic (15%→32% rate) causes
-            # home team starters to sit in Q4 of blowouts, killing OVER predictions.
-            if (pred.get('recommendation') == 'OVER'
-                    and pred.get('is_home', False)):
-                filter_counts['home_over'] += 1
-                continue
+            # HOME OVER block REMOVED (Session 392): N=16 was contaminated by
+            # disabled model picks. Combined with AWAY block, would block ALL OVER
+            # picks from dominant model families. Revisit if clean data confirms.
 
             # Avoid familiar matchups (Session 284)
             games_vs_opp = pred.get('games_vs_opponent') or 0
@@ -565,8 +560,6 @@ class BestBetsAggregator:
             logger.info(f"Model-direction affinity: skipped {filter_counts['model_direction_affinity']} predictions")
         if filter_counts['away_noveg'] > 0:
             logger.info(f"AWAY block (v12_noveg/v9): skipped {filter_counts['away_noveg']} predictions")
-        if filter_counts['home_over'] > 0:
-            logger.info(f"HOME OVER block: skipped {filter_counts['home_over']} HOME OVER picks (43.8% HR)")
         if filter_counts['under_star_away'] > 0:
             logger.info(f"UNDER Star AWAY block (line≥23): skipped {filter_counts['under_star_away']} predictions")
         if filter_counts['med_usage_under'] > 0:
