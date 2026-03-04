@@ -232,6 +232,76 @@ def format_canary_slack_message(alerts: List[Dict], target_date: str) -> Optiona
     return "\n".join(lines)
 
 
+def check_signal_rescue_performance(
+    bq_client: bigquery.Client,
+    target_date: str,
+) -> Optional[Dict[str, Any]]:
+    """Check signal rescue performance over trailing 14 days.
+
+    Returns summary dict with rescued vs normal HR, or None if no data.
+    Fires warning if rescue HR drops below 50% on 5+ picks.
+
+    Created: Session 398.
+    """
+    query = f"""
+    SELECT
+        COUNTIF(bb.signal_rescued = TRUE AND pa.prediction_correct) as rescued_wins,
+        COUNTIF(bb.signal_rescued = TRUE AND pa.prediction_correct IS NOT NULL) as rescued_total,
+        COUNTIF(bb.signal_rescued IS NOT TRUE AND pa.prediction_correct) as normal_wins,
+        COUNTIF(bb.signal_rescued IS NOT TRUE AND pa.prediction_correct IS NOT NULL) as normal_total
+    FROM `{PROJECT_ID}.nba_predictions.signal_best_bets_picks` bb
+    LEFT JOIN `{PROJECT_ID}.nba_predictions.prediction_accuracy` pa
+        ON bb.player_lookup = pa.player_lookup
+        AND bb.game_date = pa.game_date
+        AND bb.system_id = pa.system_id
+    WHERE bb.game_date > DATE_SUB(@target_date, INTERVAL 14 DAY)
+      AND bb.game_date <= @target_date
+    """
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+        ]
+    )
+
+    try:
+        row = next(iter(bq_client.query(query, job_config=job_config).result(timeout=30)))
+        rescued_total = row.rescued_total or 0
+        normal_total = row.normal_total or 0
+        rescued_wins = row.rescued_wins or 0
+        normal_wins = row.normal_wins or 0
+
+        rescued_hr = round(100.0 * rescued_wins / rescued_total, 1) if rescued_total > 0 else None
+        normal_hr = round(100.0 * normal_wins / normal_total, 1) if normal_total > 0 else None
+
+        result = {
+            'rescued_total': rescued_total,
+            'rescued_wins': rescued_wins,
+            'rescued_hr': rescued_hr,
+            'normal_total': normal_total,
+            'normal_wins': normal_wins,
+            'normal_hr': normal_hr,
+        }
+
+        if rescued_total > 0:
+            logger.info(
+                f"Signal rescue performance (14d to {target_date}): "
+                f"{rescued_wins}/{rescued_total} ({rescued_hr}% HR) rescued, "
+                f"{normal_wins}/{normal_total} ({normal_hr}% HR) normal"
+            )
+            if rescued_total >= 5 and rescued_hr is not None and rescued_hr < 50.0:
+                logger.warning(
+                    f"Signal rescue UNDERPERFORMING: {rescued_hr}% HR on {rescued_total} picks "
+                    f"(below 50% breakeven). Consider reviewing rescue_tags."
+                )
+                result['alert'] = 'UNDERPERFORMING'
+
+        return result
+
+    except Exception as e:
+        logger.warning(f"Could not check signal rescue performance: {e}")
+        return None
+
+
 def compute_signal_health(
     bq_client: bigquery.Client,
     target_date: str,

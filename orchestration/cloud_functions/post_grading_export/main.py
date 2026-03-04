@@ -319,6 +319,36 @@ def main(cloud_event):
         )
         results['signal_canary_error'] = str(e)
 
+    # 4c. Signal rescue performance check (Session 398)
+    try:
+        from ml.signals.signal_health import check_signal_rescue_performance
+        from shared.clients.bigquery_pool import get_bigquery_client as _get_bq_rescue
+
+        bq_rescue = _get_bq_rescue(project_id=PROJECT_ID)
+        rescue_result = check_signal_rescue_performance(bq_rescue, target_date)
+        if rescue_result:
+            results['signal_rescue'] = rescue_result
+            if rescue_result.get('alert') == 'UNDERPERFORMING':
+                slack_url = os.environ.get('SLACK_WEBHOOK_URL_ALERTS')
+                if slack_url:
+                    from shared.utils.slack_retry import send_slack_webhook_with_retry
+                    msg = (
+                        f"*Signal Rescue Alert — {target_date}*\n"
+                        f"Rescued picks: {rescue_result['rescued_wins']}/{rescue_result['rescued_total']} "
+                        f"({rescue_result['rescued_hr']}% HR) — below 50% breakeven\n"
+                        f"Normal picks: {rescue_result['normal_wins']}/{rescue_result['normal_total']} "
+                        f"({rescue_result['normal_hr']}% HR)\n"
+                        f"_Review rescue_tags in `ml/signals/aggregator.py`_"
+                    )
+                    send_slack_webhook_with_retry(slack_url, {'text': msg}, timeout=10)
+                    logger.info(f"[{correlation_id}] Signal rescue underperformance alert sent to Slack")
+    except Exception as e:
+        logger.error(
+            f"[{correlation_id}] Signal rescue performance check failed (non-fatal): {e}",
+            exc_info=True
+        )
+        results['signal_rescue_error'] = str(e)
+
     # 5. Compute model performance daily metrics (Session 263)
     try:
         from datetime import date as date_type

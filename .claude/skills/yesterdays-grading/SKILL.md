@@ -59,6 +59,8 @@ SELECT
   bb.recommendation,
   ROUND(bb.edge, 1) as edge,
   bb.signal_count,
+  bb.signal_rescued,
+  bb.rescue_signal,
   pa.prediction_correct as hit,
   ROUND(pa.actual_points, 1) as actual,
   ROUND(pa.line_value, 1) as line
@@ -73,6 +75,8 @@ WHERE bb.game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
   AND pa.is_voided IS NOT TRUE
 ORDER BY pa.prediction_correct DESC, bb.edge DESC
 ```
+
+**Note:** If `signal_rescued = TRUE`, highlight that pick — it bypassed edge floor via signal. Track rescued vs normal HR separately.
 
 ## By Direction
 

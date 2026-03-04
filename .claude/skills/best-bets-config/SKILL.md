@@ -111,6 +111,40 @@ Display the full set of negative filters from `ml/signals/aggregator.py`:
 | 25 | confidence                  | Confidence below MIN_CONFIDENCE                  | -       |
 | 26 | anti_pattern                | Anti-pattern combo detected                      | -       |
 | 27 | signal_density              | Base-only signals + edge < 7                     | 352     |
+| 28 | sc3_over_block              | OVER + SC=3 (45.5% HR, net loser)                | 394     |
+| 29 | q4_scorer_under_block       | UNDER + Q4_ratio >= 0.35 (34.0% HR)              | 397     |
+| 30 | friday_over_block           | OVER + Friday (37.5% HR best bets)               | 398     |
+```
+
+### Section 3.5: Signal Rescue Config (Session 398)
+
+Picks below edge floors can bypass them via validated high-HR signals. Read `rescue_tags` from `ml/signals/aggregator.py`:
+
+```
+## 3.5. Signal Rescue
+| Setting                    | Value                                                |
+|----------------------------|------------------------------------------------------|
+| Status                     | ENABLED (Session 398)                                |
+| Edge Floor Bypass          | edge < 3.0 AND rescue signal present                 |
+| OVER Edge Floor Bypass     | OVER + edge < 5.0 AND rescue signal present          |
+| Single Signal Rescue Tags  | combo_3way, combo_he_ms, book_disagreement,          |
+|                            | home_under, low_line_over, volatile_scoring_over,    |
+|                            | high_scoring_environment_over                        |
+| Signal Stack Rescue        | 2+ real (non-base) signals at any edge               |
+| BQ Tracking Columns        | signal_rescued (BOOL), rescue_signal (STRING)        |
+```
+
+Check rescue performance:
+```sql
+SELECT rescue_signal, COUNT(*) as picks,
+  COUNTIF(pa.prediction_correct) as wins,
+  ROUND(100.0 * SAFE_DIVIDE(COUNTIF(pa.prediction_correct), COUNT(*)), 1) as hr
+FROM nba_predictions.signal_best_bets_picks bb
+LEFT JOIN nba_predictions.prediction_accuracy pa
+  ON bb.player_lookup = pa.player_lookup AND bb.game_date = pa.game_date AND bb.system_id = pa.system_id
+WHERE bb.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)
+  AND bb.signal_rescued = TRUE AND pa.prediction_correct IS NOT NULL
+GROUP BY 1 ORDER BY hr DESC
 ```
 
 ---

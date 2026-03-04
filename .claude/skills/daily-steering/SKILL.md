@@ -262,6 +262,77 @@ SIGNAL FIRING AUDIT:
 
 **Known silent signals (Session 397 analysis):** starter_under, high_scoring_environment_over, fast_pace_over, self_creation_over, sharp_line_move_over, sharp_line_drop_under, line_rising_over. These fail due to NULL data or narrow conditions, NOT signal_density filter.
 
+## Step 2.5b: Signal Rescue Performance (Session 398)
+
+Picks below edge 3.0 (or OVER below 5.0) can bypass edge floors via validated high-HR signals. Track their performance separately.
+
+```bash
+bq query --use_legacy_sql=false --format=pretty "
+WITH rescued AS (
+  SELECT
+    bb.rescue_signal,
+    bb.recommendation,
+    COUNT(*) as picks,
+    COUNTIF(pa.prediction_correct) as wins,
+    COUNTIF(NOT pa.prediction_correct) as losses,
+    ROUND(100.0 * SAFE_DIVIDE(COUNTIF(pa.prediction_correct), COUNTIF(pa.prediction_correct IS NOT NULL)), 1) as hr,
+    ROUND(AVG(ABS(bb.edge)), 1) as avg_edge
+  FROM \`nba-props-platform.nba_predictions.signal_best_bets_picks\` bb
+  LEFT JOIN \`nba-props-platform.nba_predictions.prediction_accuracy\` pa
+    ON bb.player_lookup = pa.player_lookup
+    AND bb.game_date = pa.game_date
+    AND bb.system_id = pa.system_id
+  WHERE bb.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)
+    AND bb.signal_rescued = TRUE
+    AND pa.prediction_correct IS NOT NULL
+  GROUP BY 1, 2
+),
+summary AS (
+  SELECT
+    COUNTIF(bb.signal_rescued = TRUE) as rescued_total,
+    COUNTIF(bb.signal_rescued IS NOT TRUE) as normal_total,
+    ROUND(100.0 * SAFE_DIVIDE(
+      COUNTIF(bb.signal_rescued = TRUE AND pa.prediction_correct),
+      NULLIF(COUNTIF(bb.signal_rescued = TRUE AND pa.prediction_correct IS NOT NULL), 0)
+    ), 1) as rescued_hr,
+    ROUND(100.0 * SAFE_DIVIDE(
+      COUNTIF(bb.signal_rescued IS NOT TRUE AND pa.prediction_correct),
+      NULLIF(COUNTIF(bb.signal_rescued IS NOT TRUE AND pa.prediction_correct IS NOT NULL), 0)
+    ), 1) as normal_hr
+  FROM \`nba-props-platform.nba_predictions.signal_best_bets_picks\` bb
+  LEFT JOIN \`nba-props-platform.nba_predictions.prediction_accuracy\` pa
+    ON bb.player_lookup = pa.player_lookup
+    AND bb.game_date = pa.game_date
+    AND bb.system_id = pa.system_id
+  WHERE bb.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)
+    AND pa.prediction_correct IS NOT NULL
+)
+SELECT * FROM rescued
+UNION ALL
+SELECT 'TOTAL_RESCUED' as rescue_signal, '' as recommendation,
+  rescued_total as picks, NULL as wins, NULL as losses, rescued_hr as hr, NULL as avg_edge
+FROM summary
+UNION ALL
+SELECT 'TOTAL_NORMAL' as rescue_signal, '' as recommendation,
+  normal_total as picks, NULL as wins, NULL as losses, normal_hr as hr, NULL as avg_edge
+FROM summary
+ORDER BY rescue_signal
+"
+```
+
+**Present as:**
+
+```
+SIGNAL RESCUE PERFORMANCE (14d):
+  Rescued: W-L (HR%) | Normal: W-L (HR%)
+  [Per rescue signal:]
+    <rescue_signal>: <direction> W-L (<hr>%) avg edge <avg_edge>
+  [If rescued HR < 50% on N >= 5:]
+    WARNING: Signal rescue underperforming — consider disabling <rescue_signal>
+  [If rescued_total = 0 for 7+ days:]
+    WARNING: Signal rescue not firing — check aggregator rescue_tags
+```
+
 ## Step 2.5: Market Regime Early Warning (Session 318)
 
 Detect market compression, edge distribution shifts, and directional imbalances BEFORE they show up in W-L record. This is the leading indicator; best bets HR is the lagging indicator.
