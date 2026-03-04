@@ -1,7 +1,7 @@
 # Start Your Next Session Here
 
-**Updated:** 2026-03-04 (Session 400 — Signal-First UNDER + Dedup + Model Retrain)
-**Status:** Signal-first UNDER ranking live, 26 active signals, 18 negative filters, 16+ shadow models + 1 production. Algorithm `v400_signal_first_under`.
+**Updated:** 2026-03-04 (Session 400b — Star UNDER Removed + Signal-First UNDER + Model Retrain)
+**Status:** Star UNDER filter removed, signal-first UNDER ranking live, 26 active signals, 17 negative filters, 16+ shadow models + 1 production. Algorithm `v400b_star_under_removed`.
 
 ---
 
@@ -23,13 +23,13 @@
 
 ---
 
-## What's New (Session 400)
+## What's New (Session 400 + 400b)
 
-1. **Signal-first UNDER architecture** — UNDER edge is flat at 52-53% across ALL buckets (useless for ranking). UNDER picks now ranked by weighted signal quality score: `sharp_book_lean_under` (3.0), `book_disagreement` (2.5), `bench_under` (2.0), `home_under` (1.5), `extended_rest_under` (1.5), `starter_under` (1.0). Edge is 0.1x tiebreaker. OVER unchanged.
-2. **signal_health_daily dedup** — `write_health_rows()` now DELETE-before-INSERT. Cleaned 989 duplicate rows (1,616 → 627 unique).
-3. **New model: `catboost_v12_noveg_train0104_0215`** — ALL 6 governance gates passed. 67.57% HR edge 3+ (n=37), OVER 90.0%, UNDER 59.3%, MAE 5.20, vegas bias -0.45. Enabled in shadow fleet.
-4. **Signal rescue validation** — Zero production data (no picks below edge 3.0 in recent days = no candidates). Code works correctly (simulation showed 13 rescues). Follow up in ~2 weeks.
-5. **All 4 stale services deployed** — daily-health-check, validation-runner, pipeline-health-summary, nba-phase1-scrapers.
+1. **Star UNDER filter REMOVED** — Was blocking 2-4 high-edge picks/day. Feb 50% HR was model staleness, not structural (last season Feb = 64.1%). Mar recovered to 72.1%. Cross-season research confirms no seasonal filter needed.
+2. **Signal-first UNDER architecture** — UNDER picks ranked by weighted signal quality instead of edge (flat at 52-53%). OVER ranking unchanged.
+3. **New model: `catboost_v12_noveg_train0104_0215`** — ALL 6 gates passed. 67.57% HR edge 3+ (n=37), OVER 90.0%, UNDER 59.3%. Enabled in shadow.
+4. **signal_health_daily dedup** — DELETE-before-INSERT. Cleaned 989 duplicate rows.
+5. **All 4 stale services deployed** — zero drift. First signal rescue live (Jaylen Wells OVER).
 
 ---
 
@@ -122,28 +122,32 @@ ORDER BY hr DESC
 
 ## Strategic Priorities
 
-### Priority 1: Monitor New Model + UNDER Architecture
-- Check `catboost_v12_noveg_train0104_0215` live HR after 2 days → promote if confirms backtest
-- Compare UNDER pick quality before/after signal-first ranking
-- Promote to production: `UPDATE nba_predictions.model_registry SET is_production=TRUE, status='production' WHERE model_id='catboost_v12_noveg_train0104_0215'`
+### Priority 1: Monitor Star UNDER + Volume Recovery
+- First night without star_under block — expect +2-4 UNDER picks on star-heavy slates
+- Weekly monitor query in handoff doc. Re-evaluate ONLY if <50% on 30+ picks for 2 weeks.
+- Check `away_noveg` filter next — blocked 3-6 picks/day, Mar noveg HR is 67.9%
 
-### Priority 2: Validate Signal Rescue (After 2 Weeks)
-- Check per-rescue-tag HR (especially `sharp_book_lean_over`/`under`)
-- Remove underperforming rescue tags if < 52.4% on 15+ picks
+### Priority 2: New Model Promotion
+- `catboost_v12_noveg_train0104_0215` needs 2+ days of shadow data
+- Promote if live HR >= 60% on edge 3+ graded picks
 
-### Priority 3: Brier-Weighted Model Selection
+### Priority 3: Validate Signal Rescue (After 2 Weeks)
+- First live rescue happened (Jaylen Wells OVER, edge 3.5)
+- Track per-rescue-tag HR when N >= 15. Remove tags < 52.4%.
+
+### Priority 4: Brier-Weighted Model Selection
 - Use Brier scores to weight model selection instead of raw HR
-- Requires 2+ weeks of Brier data (accumulating since Session 399)
+- Requires 2+ weeks of data (accumulating since Session 399)
 
-### Priority 4: Signal Combo Expansion
-- `sharp_book_lean_over` + `high_scoring_environment_over` potential SYNERGISTIC combo
-- Need N>=20 overlap before registering
+### Priority 5: away_noveg Filter Evaluation
+- Blocking 3-6 picks/day. Mar noveg HR = 67.9% (N=81) — strongly recovering.
+- If still high after 2 weeks, consider relaxing for newer models.
 
 ---
 
 ## Key References
 
-- **Session 400 handoff:** `docs/09-handoff/2026-03-04-SESSION-400-HANDOFF.md`
+- **Session 400/400b handoff:** `docs/09-handoff/2026-03-04-SESSION-400-HANDOFF.md`
 - **Signal inventory:** `docs/08-projects/current/signal-discovery-framework/SIGNAL-INVENTORY.md`
 - **External research:** `docs/08-projects/current/external-research-angles/00-FINDINGS.md`
 - **Calendar regime:** `docs/08-projects/current/calendar-regime-analysis/00-FINDINGS.md`
