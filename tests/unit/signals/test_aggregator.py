@@ -106,13 +106,14 @@ class TestAggregatorReturnType:
             'blacklist', 'edge_floor', 'over_edge_floor', 'under_edge_7plus',
             'familiar_matchup', 'quality_floor', 'bench_under',
             'line_jumped_under', 'line_dropped_under', 'line_dropped_over',
-            'neg_pm_streak', 'signal_count', 'sc3_edge_floor',
+            'neg_pm_streak', 'signal_count', 'sc3_edge_floor', 'sc3_over_block',
             'starter_over_sc_floor', 'opponent_depleted_under',
             'high_book_std_under', 'confidence', 'anti_pattern',
             'model_direction_affinity', 'away_noveg', 'star_under',
             'under_star_away', 'med_usage_under', 'starter_v12_under',
             'opponent_under_block', 'signal_density', 'legacy_block',
             'model_profile_would_block',
+            'toxic_starter_over_would_block', 'toxic_star_over_would_block',
         }
         assert set(summary['rejected'].keys()) == expected_keys
         # All counts should be 0 for empty input
@@ -472,16 +473,17 @@ class TestSignalDensityFilter:
         return {key: signals}
 
     def test_base_only_signals_blocked_at_low_edge(self):
-        """Pick with only 3 base signals at edge<7 is blocked by signal_count (needs SC>=4).
+        """Pick with only 3 base signals at edge<7 is blocked by signal_density.
 
-        Session 388: Edge-tiered SC means 3 signals at edge<7 fails signal_count, not density.
+        Session 393: SC relaxed from 4→3, so 3 signals passes signal_count.
+        Signal density filter catches base-only picks at edge<7.
         """
         pred = _make_prediction(recommendation='UNDER', line_value=26.0, edge=6.0)
         signals = self._make_base_only_signals(pred)
         agg = BestBetsAggregator()
         picks, summary = agg.aggregate([pred], signals)
         assert len(picks) == 0
-        assert summary['rejected']['signal_count'] == 1
+        assert summary['rejected']['signal_density'] == 1
 
     def test_base_only_signals_at_high_edge_passes(self):
         """Pick with only 3 base signals at edge>=7 passes — SC=3 sufficient + density bypass.
@@ -771,20 +773,23 @@ class TestStarterOverScFloor:
         return {key: signals}
 
     def test_starter_over_sc3_blocked(self):
-        """OVER + line=18 + 3 signals → blocked by starter OVER SC floor.
+        """OVER + line=18 + 3 signals → blocked by sc3_over_block (subsumes starter floor).
 
-        SC=3 OVER edge<7 filter may also fire first, but the pick is rejected.
+        Session 394: SC=3 OVER block catches ALL SC=3 OVER picks before starter
+        floor can fire. Starter OVER SC floor only matters for SC=3 if sc3_over_block
+        were removed.
         """
         pred = _make_prediction(
             recommendation='OVER',
             line_value=18.0,
-            edge=8.0,  # edge >= 7 to avoid SC=3 OVER edge floor
+            edge=8.0,  # edge >= 7 to pass signal_count
         )
-        signals = self._make_signal_results_for(pred, n_qualifying=4)
+        signals = self._make_signal_results_for(pred, n_qualifying=3)
         agg = BestBetsAggregator()
         picks, summary = agg.aggregate([pred], signals)
         assert len(picks) == 0
-        assert summary['rejected']['starter_over_sc_floor'] == 1
+        # sc3_over_block fires before starter_over_sc_floor
+        assert summary['rejected']['sc3_over_block'] == 1
 
     def test_starter_over_sc5_passes(self):
         """OVER + line=18 + 5 signals → passes starter OVER SC floor."""
@@ -880,8 +885,12 @@ class TestEdgeTieredSignalCount:
         assert len(picks) == 1
         assert summary['rejected']['signal_count'] == 0
 
-    def test_sc3_edge_below_7_blocked(self):
-        """SC=3 at edge < 7 is blocked (needs SC >= 4)."""
+    def test_sc3_edge_below_7_passes(self):
+        """SC=3 at edge < 7 passes (Session 393: SC relaxed from 4→3).
+
+        With non-base-only signals, SC=3 at edge<7 now passes signal_count
+        and signal_density.
+        """
         pred = _make_prediction(
             recommendation='UNDER', line_value=26.0, edge=6.5,
         )
@@ -893,8 +902,7 @@ class TestEdgeTieredSignalCount:
         ]}
         agg = BestBetsAggregator()
         picks, summary = agg.aggregate([pred], signals)
-        assert len(picks) == 0
-        assert summary['rejected']['signal_count'] == 1
+        assert len(picks) == 1
 
     def test_sc4_edge_below_7_passes(self):
         """SC=4 at edge < 7 passes the tiered threshold."""
@@ -913,8 +921,12 @@ class TestEdgeTieredSignalCount:
         assert len(picks) == 1
         assert summary['rejected']['signal_count'] == 0
 
-    def test_sc3_over_edge_below_7_blocked(self):
-        """OVER at SC=3 edge<7 is blocked (previously caught by sc3_edge_floor, now by signal_count)."""
+    def test_sc3_over_edge_below_7_blocked_by_sc3_over(self):
+        """OVER at SC=3 edge<7 is blocked by sc3_over_block (Session 394).
+
+        Session 393: SC relaxed to 3, so signal_count passes. But sc3_over_block
+        catches all OVER picks with exactly SC=3.
+        """
         pred = _make_prediction(
             recommendation='OVER', line_value=26.0, edge=6.0,
         )
@@ -927,12 +939,13 @@ class TestEdgeTieredSignalCount:
         agg = BestBetsAggregator()
         picks, summary = agg.aggregate([pred], signals)
         assert len(picks) == 0
-        assert summary['rejected']['signal_count'] == 1
-        # sc3_edge_floor is now always 0 (subsumed)
-        assert summary['rejected']['sc3_edge_floor'] == 0
+        assert summary['rejected']['sc3_over_block'] == 1
 
-    def test_sc3_under_edge_below_7_blocked(self):
-        """UNDER at SC=3 edge<7 is also blocked (new behavior — previously only OVER was blocked)."""
+    def test_sc3_under_edge_below_7_passes(self):
+        """UNDER at SC=3 edge<7 passes (Session 393: SC relaxed to 3).
+
+        With non-base-only signals, SC=3 UNDER now passes through all filters.
+        """
         pred = _make_prediction(
             recommendation='UNDER', line_value=26.0, edge=6.0,
         )
@@ -944,8 +957,7 @@ class TestEdgeTieredSignalCount:
         ]}
         agg = BestBetsAggregator()
         picks, summary = agg.aggregate([pred], signals)
-        assert len(picks) == 0
-        assert summary['rejected']['signal_count'] == 1
+        assert len(picks) == 1
 
     def test_edge_exactly_7_uses_low_threshold(self):
         """Edge exactly at 7.0 uses the SC=3 threshold (>= comparison)."""

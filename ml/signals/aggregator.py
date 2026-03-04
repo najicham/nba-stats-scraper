@@ -45,12 +45,13 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from ml.signals.base_signal import SignalResult
 from ml.signals.combo_registry import ComboEntry, load_combo_registry, match_combo
 from ml.signals.signal_health import MODEL_DEPENDENT_SIGNALS
+from shared.config.calendar_regime import detect_regime
 from shared.config.model_selection import get_min_confidence
 
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v394_sc3_over_block'
+ALGORITHM_VERSION = 'v396_calendar_regime_obs'
 
 # Base signals that fire on nearly every edge 5+ pick. Picks with ONLY
 # these signals hit 57.1% (N=42) vs 77.8% for picks with 4+ signals.
@@ -185,6 +186,8 @@ class BestBetsAggregator:
             'signal_density': 0,
             'legacy_block': 0,
             'model_profile_would_block': 0,
+            'toxic_starter_over_would_block': 0,
+            'toxic_star_over_would_block': 0,
         }
 
         # Session 393: Counterfactual tracking — log filtered-out picks so we
@@ -652,6 +655,63 @@ class BestBetsAggregator:
                 f"Model profile (observation): WOULD block "
                 f"{filter_counts['model_profile_would_block']} predictions"
             )
+        if filter_counts['toxic_starter_over_would_block'] > 0:
+            logger.info(
+                f"Calendar regime (observation): WOULD block "
+                f"{filter_counts['toxic_starter_over_would_block']} Starter OVER picks (toxic window)"
+            )
+        if filter_counts['toxic_star_over_would_block'] > 0:
+            logger.info(
+                f"Calendar regime (observation): WOULD block "
+                f"{filter_counts['toxic_star_over_would_block']} Star OVER picks (toxic window)"
+            )
+
+        # --- Calendar regime observation (Session 396) ---
+        # Detect regime once per aggregate() call. Log picks that WOULD be
+        # blocked by calendar-aware filters without actually filtering.
+        # Simulation showed: Star OVER already handled by filter stack (66.7%
+        # HR in best bets during toxic, N=3). Starter OVER is the real problem
+        # (40.0% HR, -2.6 units, N=10 during Jan 30 - Feb 25 toxic window).
+        if scored:
+            from datetime import date as date_type
+            game_date_str = scored[0].get('game_date', '')
+            try:
+                if isinstance(game_date_str, str):
+                    game_date_val = date_type.fromisoformat(game_date_str)
+                else:
+                    game_date_val = game_date_str
+                regime = detect_regime(game_date_val)
+                if regime.is_toxic:
+                    logger.info(
+                        f"Calendar regime: {regime.label} (toxic=True, "
+                        f"day {regime.days_into_regime})"
+                    )
+                    for pick in scored:
+                        pick_line = pick.get('line_value') or 0
+                        pick_rec = pick.get('recommendation', '')
+                        # Starter OVER: 40.0% HR during toxic (N=10, -48.9pp vs normal)
+                        if (pick_rec == 'OVER'
+                                and 15 <= pick_line < 25):
+                            filter_counts['toxic_starter_over_would_block'] += 1
+                            logger.info(
+                                f"Calendar WOULD block: Starter OVER "
+                                f"{pick['player_lookup']} (line={pick_line}, "
+                                f"edge={pick.get('composite_score', 0):.1f})"
+                            )
+                        # Star OVER: already handled by stack (66.7% HR, N=3)
+                        # but tracking for completeness
+                        if (pick_rec == 'OVER'
+                                and pick_line >= 25):
+                            filter_counts['toxic_star_over_would_block'] += 1
+                            logger.info(
+                                f"Calendar WOULD block: Star OVER "
+                                f"{pick['player_lookup']} (line={pick_line}, "
+                                f"edge={pick.get('composite_score', 0):.1f})"
+                            )
+                else:
+                    logger.debug(f"Calendar regime: {regime.label} (toxic=False)")
+            except (ValueError, TypeError) as e:
+                logger.debug(f"Calendar regime detection skipped: {e}")
 
         # Ultra Bets classification (Session 326)
         from ml.signals.ultra_bets import classify_ultra_pick
