@@ -51,7 +51,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v398_friday_over_block'
+ALGORITHM_VERSION = 'v398_signal_rescue'
 
 # Base signals that fire on nearly every edge 5+ pick. Picks with ONLY
 # these signals hit 57.1% (N=42) vs 77.8% for picks with 4+ signals.
@@ -274,30 +274,70 @@ class BestBetsAggregator:
                 continue
 
             # Edge floor: lowered to 3.0 (Session 352) — signal filters provide quality gate
-            # Session 355: Premium signals (combo_3way, combo_he_ms) with 95%+ HR
-            # are exempt from the edge floor. We defer the edge floor reject for
-            # below-floor picks, tagging them for rescue if premium signals are found.
+            # Session 355: Premium signals with high HR are exempt from edge floors.
+            # Session 398: Expanded from combo-only to include validated high-HR signals.
+            # Signals measure contextual conditions (pace, line movement, home/away) that
+            # are orthogonal to model edge. A pick with low edge but strong signal context
+            # can still be profitable. Rescued picks are tracked via signal_rescued flag.
             pred_edge = abs(pred.get('edge') or 0)
             below_edge_floor = pred_edge < self.MIN_EDGE
-            if below_edge_floor:
-                # Check if this pick has premium signals that warrant edge floor bypass
+
+            # Session 398: Signal rescue — check for qualifying high-HR signals
+            # that can independently justify a pick regardless of model edge.
+            # These signals have 65%+ HR at edge 0-3 on N>=5 (validated via BQ).
+            signal_rescued = False
+            rescue_signal = None
+            if below_edge_floor or (pred.get('recommendation') == 'OVER' and pred_edge < 5.0):
                 key_for_signal_check = f"{pred['player_lookup']}::{pred['game_id']}"
                 signal_check = signal_results.get(key_for_signal_check, [])
-                premium_tags = {'combo_3way', 'combo_he_ms'}
-                has_premium = any(
-                    r.qualifies and r.source_tag in premium_tags
-                    for r in signal_check
-                )
-                if not has_premium:
+                # Signals that can rescue picks from edge floor:
+                # - combo_3way, combo_he_ms: 88%+ HR in best bets (original premium)
+                # - book_disagreement: 72.0% HR at edge 0-3 (N=25)
+                # - home_under: 75.0% HR at edge 0-3 (N=8)
+                # - low_line_over: 66.7% HR at edge 0-3 (N=6)
+                # - volatile_scoring_over: 66.7% HR at edge 0-3 (N=6)
+                # - high_scoring_environment_over: 100% HR at edge 3-5 (N=7)
+                rescue_tags = {
+                    'combo_3way', 'combo_he_ms',
+                    'book_disagreement', 'home_under',
+                    'low_line_over', 'volatile_scoring_over',
+                    'high_scoring_environment_over',
+                }
+                for r in signal_check:
+                    if r.qualifies and r.source_tag in rescue_tags:
+                        signal_rescued = True
+                        rescue_signal = r.source_tag
+                        break
+
+                # Signal stacking rescue: 2+ real (non-base) signals at low edge
+                # = 62.2% HR (N=45). Multiple contextual signals agreeing is
+                # strong enough to override low model edge.
+                if not signal_rescued:
+                    qualifying_signals = [
+                        r for r in signal_check
+                        if r.qualifies and r.source_tag not in BASE_SIGNALS
+                    ]
+                    if len(qualifying_signals) >= 2:
+                        signal_rescued = True
+                        rescue_signal = 'signal_stack_2plus'
+
+            if below_edge_floor:
+                if not signal_rescued:
                     filter_counts['edge_floor'] += 1
-                    # Don't track edge_floor — these are below edge 3, not actionable
                     continue
-                # Premium signal found — bypass edge floor (95%+ HR signals)
+                # Signal rescue: bypass edge floor
+                filter_counts.setdefault('signal_rescue', 0)
+                filter_counts['signal_rescue'] += 1
+                logger.debug(
+                    f"Signal rescue: {pred['player_lookup']} edge={pred_edge:.1f} "
+                    f"rescued by {rescue_signal}"
+                )
 
             # Session 378: OVER edge 5+ floor — edge 3-5 OVER = 25% HR (1-3) in
             # best bets full season. Edge 5-7 OVER = 67.5%, edge 7+ = 77.8%.
             # UNDER is profitable at all edge levels (57.5-100%).
-            if pred.get('recommendation') == 'OVER' and pred_edge < 5.0:
+            # Session 398: Signal-rescued OVER picks bypass this floor too.
+            if pred.get('recommendation') == 'OVER' and pred_edge < 5.0 and not signal_rescued:
                 filter_counts['over_edge_floor'] += 1
                 _record_filtered(pred, 'over_edge_floor', pred_edge)
                 continue
@@ -621,6 +661,8 @@ class BestBetsAggregator:
                 'signal_tags': tags,
                 'signal_count': len(qualifying),
                 'real_signal_count': real_sc,
+                'signal_rescued': signal_rescued,
+                'rescue_signal': rescue_signal,
                 'composite_score': composite_score,
                 'matched_combo_id': matched.combo_id if matched else None,
                 'combo_classification': matched.classification if matched else None,
@@ -644,6 +686,8 @@ class BestBetsAggregator:
             )
         if filter_counts['edge_floor'] > 0:
             logger.info(f"Edge floor ({self.MIN_EDGE}): skipped {filter_counts['edge_floor']} predictions")
+        if filter_counts.get('signal_rescue', 0) > 0:
+            logger.info(f"Signal rescue: rescued {filter_counts['signal_rescue']} picks below edge floor via high-HR signals")
         if filter_counts['over_edge_floor'] > 0:
             logger.info(f"OVER edge floor (5.0): skipped {filter_counts['over_edge_floor']} OVER picks with edge < 5.0")
         if filter_counts['under_edge_7plus'] > 0:

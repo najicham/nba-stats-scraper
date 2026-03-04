@@ -365,14 +365,16 @@ python bin/monitoring/grading_gap_detector.py        # Grading gaps (auto: daily
 
 **24 active signals** (24 removed/disabled). **Edge-first architecture** — signals are for filtering and annotation, not selection.
 
-**Best Bets:** `edge 3+ → negative filters → signal count ≥ 3 → real_sc gate (OVER: real_sc>0, UNDER edge<7: real_sc>0) → rank by edge`
+**Best Bets:** `edge 3+ (or signal rescue) → negative filters → signal count ≥ 3 → real_sc gate (OVER: real_sc>0, UNDER edge<7: real_sc>0) → rank by edge`
+
+**Signal Rescue (Session 398):** Picks below edge 3.0 (or OVER below 5.0) can bypass edge floors if they have a validated high-HR signal or 2+ real (non-base) signals. Rescued picks are tracked via `signal_rescued` + `rescue_signal` in BQ. Rescue tags: `combo_3way`, `combo_he_ms`, `book_disagreement` (72% HR edge 0-3), `home_under` (75%), `low_line_over` (66.7%), `volatile_scoring_over` (66.7%), `high_scoring_environment_over` (100% edge 3-5). Signal stacking: 2+ real signals = 62.2% HR (N=45).
 
 **SC Architecture (Session 397):** `real_sc` = non-base signal count. Base signals (model_health, high_edge, edge_spread_optimal) fire on ~100% of picks, inflating SC to 3 with zero discriminative power. All SC-based filters use `real_sc` instead of total SC.
 
 **Negative Filters:**
 1. Player blacklist: `<40% HR on 8+ edge-3+ picks`
 2. Avoid familiar: `6+ games vs opponent`
-3. Edge floor: `edge < 3.0` (Session 352: lowered from 5.0 — edge 3-4 is best V12 band during degradation)
+3. Edge floor: `edge < 3.0` (Session 352: lowered from 5.0). Bypassed by signal rescue (Session 398).
 4. **Model-direction affinity blocking** (Session 343): Blocks model+direction+edge combos with HR < 45% on 15+ picks. V9 UNDER 5+ = 30.7% HR (N=88) — blocked. V9_low_vegas has separate affinity group (62.5% UNDER — protected).
 5. Feature quality floor: `quality < 85` (24.0% HR)
 6. Bench UNDER block: `UNDER + line < 12` (35.1% HR)

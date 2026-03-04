@@ -61,6 +61,10 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.signal_best_bets_
   champion_edge NUMERIC(5, 1),            -- Champion model (V9 MAE) edge for comparison
   direction_conflict BOOLEAN,             -- True if models with edge 5+ disagreed on direction
 
+  -- Signal rescue (Session 398 — picks rescued from edge floor by high-HR signals)
+  signal_rescued BOOLEAN,                   -- True if pick bypassed edge floor via signal
+  rescue_signal STRING,                     -- Which signal rescued the pick (e.g. 'book_disagreement')
+
   -- Filter summary (Session 319 — historical analysis of filtering decisions)
   filter_summary STRING,                    -- JSON: {total_candidates, passed_filters, rejected: {...}}
 

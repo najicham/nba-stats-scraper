@@ -397,6 +397,9 @@ class SignalBestBetsExporter(BaseExporter):
                 'qualifying_subset_count': pick.get('qualifying_subset_count', 0),
                 'algorithm_version': pick.get('algorithm_version', ALGORITHM_VERSION),
                 'system_id': pick.get('system_id'),
+                # Signal rescue (Session 398)
+                'signal_rescued': pick.get('signal_rescued', False),
+                'rescue_signal': pick.get('rescue_signal'),
                 # Multi-source attribution (Session 307)
                 'source_model': pick.get('source_model_id'),
                 'source_model_family': pick.get('source_model_family'),
@@ -703,6 +706,9 @@ class SignalBestBetsExporter(BaseExporter):
                 ),
                 'direction_conflict': pick.get('direction_conflict'),
                 'filter_summary': json.dumps(filter_summary, default=str) if filter_summary else None,
+                # Signal rescue (Session 398)
+                'signal_rescued': pick.get('signal_rescued', False),
+                'rescue_signal': pick.get('rescue_signal'),
                 # Ultra Bets (Session 326)
                 'ultra_tier': pick.get('ultra_tier', False),
                 'ultra_criteria': json.dumps(pick.get('ultra_criteria', []), default=str),
