@@ -39,10 +39,9 @@ COPY scrapers/requirements-lock.txt ./scrapers/requirements-lock.txt
 RUN pip install --no-cache-dir -r shared/requirements.txt
 RUN pip install --no-cache-dir -r scrapers/requirements-lock.txt
 
-# Install Playwright Chromium browser binary + system deps (libnss3, libatk, etc.)
-# The playwright Python package is in requirements-lock.txt but the browser binary
-# must be installed separately. Required for NumberFire (FanDuel SPA) and VSiN (AJAX).
-RUN playwright install chromium --with-deps
+# Playwright removed — NumberFire uses GraphQL API, VSiN uses server-rendered HTML.
+# Neither requires a headless browser. The playwright package remains in
+# requirements-lock.txt as a no-op import guard but no browser binary is needed.
 
 # Now copy all source code
 COPY shared/ ./shared/
