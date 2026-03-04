@@ -182,6 +182,70 @@ SIGNAL HEALTH:
 
 Flag COLD model-dependent signals specifically since they're effectively disabled (0.0x weight per Session 264).
 
+## Step 2.25: Signal Firing Audit (Session 397)
+
+Check which signals actually fire and appear in best bets picks. Signals can die silently when supplemental data goes NULL or thresholds don't match.
+
+```bash
+bq query --use_legacy_sql=false --format=pretty "
+WITH signal_firings AS (
+  SELECT
+    signal_tag,
+    COUNTIF(game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)) as fires_7d,
+    COUNTIF(game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)) as fires_30d,
+    COUNT(*) as fires_total
+  FROM \`nba-props-platform.nba_predictions.signal_best_bets_picks\`,
+  UNNEST(signal_tags) as signal_tag
+  WHERE game_date >= '2025-12-01'
+  GROUP BY 1
+),
+-- All registered signals (expected to fire)
+expected_signals AS (
+  SELECT signal_tag FROM UNNEST([
+    'model_health', 'high_edge', 'edge_spread_optimal',
+    'combo_he_ms', 'combo_3way', '3pt_bounce',
+    'bench_under', 'book_disagreement', 'ft_rate_bench_over',
+    'home_under', 'scoring_cold_streak_over',
+    'extended_rest_under', 'starter_under',
+    'high_scoring_environment_over', 'fast_pace_over',
+    'low_line_over', 'line_rising_over',
+    'self_creation_over', 'sharp_line_move_over',
+    'sharp_line_drop_under', 'b2b_boost_over', 'q4_scorer_over'
+  ]) as signal_tag
+)
+SELECT
+  e.signal_tag,
+  COALESCE(s.fires_7d, 0) as fires_7d,
+  COALESCE(s.fires_30d, 0) as fires_30d,
+  COALESCE(s.fires_total, 0) as fires_total,
+  CASE
+    WHEN s.fires_total IS NULL OR s.fires_total = 0 THEN 'NEVER_FIRED'
+    WHEN COALESCE(s.fires_7d, 0) = 0 AND s.fires_total > 0 THEN 'DEAD'
+    WHEN COALESCE(s.fires_7d, 0) > 0 THEN 'ACTIVE'
+    ELSE 'UNKNOWN'
+  END as signal_status
+FROM expected_signals e
+LEFT JOIN signal_firings s ON e.signal_tag = s.signal_tag
+ORDER BY fires_7d DESC, fires_total DESC
+"
+```
+
+**Present as:**
+
+```
+SIGNAL FIRING AUDIT:
+  ACTIVE (7d): <list of signals with fires_7d > 0>
+  DEAD (0 fires 7d, but fired before): <list>
+  NEVER_FIRED (0 fires all-time): <list>
+  [If any DEAD or NEVER_FIRED:]
+    WARNING: <count> signals not contributing. Common causes:
+    - NULL supplemental data (dk_line_move, self_creation_rate)
+    - Narrow thresholds (implied_team_total >= 120)
+    - Upstream filters killing qualifying picks
+```
+
+**Known silent signals (Session 397 analysis):** starter_under, high_scoring_environment_over, fast_pace_over, self_creation_over, sharp_line_move_over, sharp_line_drop_under, line_rising_over. These fail due to NULL data or narrow conditions, NOT signal_density filter.
+
 ## Step 2.5: Market Regime Early Warning (Session 318)
 
 Detect market compression, edge distribution shifts, and directional imbalances BEFORE they show up in W-L record. This is the leading indicator; best bets HR is the lagging indicator.

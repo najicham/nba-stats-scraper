@@ -519,36 +519,43 @@ class BestBetsAggregator:
             results = signal_results.get(key, [])
             qualifying = [r for r in results if r.qualifies]
 
-            # Edge-tiered signal count (Session 388): SC >= 4 for edge < 7, SC >= 3 for edge 7+.
-            # SC=3 at edge 5-7 = 51.3% HR (N=39). SC=4 at edge 5-7 = 70.6% (N=17).
-            # SC=3 at edge 7+ = 85.7% (N=7) — preserved.
-            # Subsumes SC=3 OVER edge gate (Session 374b) — all directions blocked at SC=3 edge<7.
+            tags = [r.source_tag for r in qualifying]
+            # Session 397: real_sc = non-base signal count. Base signals
+            # (model_health, high_edge, edge_spread_optimal) fire on ~100% of picks,
+            # inflating SC to 3 with zero discriminative power. real_sc measures
+            # actual signal support. SC=3 with only base signals = real_sc 0.
+            real_sc = len([t for t in tags if t not in BASE_SIGNALS])
+
+            # Signal count gate: need at least base signals firing (SC >= 3)
             required_sc = self.MIN_SIGNAL_COUNT if pred_edge >= self.HIGH_EDGE_SC_THRESHOLD else self.MIN_SIGNAL_COUNT_LOW_EDGE
-            sig_tags_early = [r.source_tag for r in qualifying]
             if len(qualifying) < required_sc:
                 filter_counts['signal_count'] += 1
-                _record_filtered(pred, 'signal_count', pred_edge, len(qualifying), sig_tags_early)
+                _record_filtered(pred, 'signal_count', pred_edge, len(qualifying), tags)
                 continue
 
-            # SC=3 OVER block (Session 394): SC=3 OVER is a net loser at 45.5% HR,
-            # -1.6 units across Dec-Mar. SC=3 UNDER is profitable (57.9%, +4.4 units).
-            # Block all OVER picks with exactly SC=3 regardless of edge.
-            if (pred.get('recommendation') == 'OVER'
-                    and len(qualifying) == 3):
-                filter_counts['sc3_over_block'] += 1
-                _record_filtered(pred, 'sc3_over_block', pred_edge, len(qualifying), sig_tags_early)
-                continue
+            # Real signal gate (Session 397 refactor): combines SC=3 OVER block
+            # + signal_density into unified real_sc check.
+            # - OVER with no real signals = 45.5% HR (Session 394) → block
+            # - UNDER with no real signals at edge < 7 = 57.1% HR (Session 348) → block
+            # - UNDER with no real signals at edge 7+ = allowed (Session 352 bypass)
+            if real_sc == 0:
+                if pred.get('recommendation') == 'OVER':
+                    filter_counts['sc3_over_block'] += 1
+                    _record_filtered(pred, 'sc3_over_block', pred_edge, len(qualifying), tags)
+                    continue
+                elif pred_edge < 7.0:
+                    filter_counts['signal_density'] += 1
+                    _record_filtered(pred, 'signal_density', pred_edge, len(qualifying), tags)
+                    continue
 
             # Starter OVER SC floor (Session 382c, relaxed Session 393):
-            # Starter OVER collapsed 90% Jan → 33.3% Feb. SC >= 5 was too restrictive
-            # for current signal pool (volatile_scoring_over disabled, rest_advantage_2d
-            # expired, several signals need NULL supplemental data). Lowered to SC >= 4
-            # during bootstrapping phase. Signal_density still blocks base-only picks.
+            # Starter OVER collapsed 90% Jan → 33.3% Feb. Need at least 1 real
+            # signal beyond base. real_sc >= 1 (equivalent to old SC >= 4).
             if (pred.get('recommendation') == 'OVER'
                     and 15 <= line_val < 25
-                    and len(qualifying) < 4):
+                    and real_sc < 1):
                 filter_counts['starter_over_sc_floor'] += 1
-                _record_filtered(pred, 'starter_over_sc_floor', pred_edge, len(qualifying), sig_tags_early)
+                _record_filtered(pred, 'starter_over_sc_floor', pred_edge, len(qualifying), tags)
                 continue
 
             # Confidence floor: model-specific
@@ -558,28 +565,10 @@ class BestBetsAggregator:
                     filter_counts['confidence'] += 1
                     continue
 
-            tags = [r.source_tag for r in qualifying]
             warning_tags: List[str] = []
 
             # Combo matching (for annotation)
             matched = match_combo(tags, self._registry)
-
-            # Block ANTI_PATTERN combos
-            if matched and matched.classification == 'ANTI_PATTERN':
-                filter_counts['anti_pattern'] += 1
-                continue
-
-            # Signal density filter (Session 348): picks with ONLY the base 3
-            # signals (model_health, high_edge, edge_spread_optimal) hit 57.1%
-            # (N=42). Picks with at least one additional signal hit 77.8% (N=63).
-            # Block picks where every qualifying signal is in the base set.
-            # Session 352: Bypass for edge ≥ 7 — at extreme edge the conviction
-            # itself is informative (all-model edge 7+ = 52-56% HR). Max 1-2/day.
-            tag_set = frozenset(tags)
-            if tag_set and tag_set.issubset(BASE_SIGNALS) and pred_edge < 7.0:
-                filter_counts['signal_density'] += 1
-                _record_filtered(pred, 'signal_density', pred_edge, len(qualifying), tags)
-                continue
 
             # Warning: contradictory signals
             # minutes_surge + blowout_recovery check removed (Session 318: minutes_surge removed)
@@ -611,6 +600,7 @@ class BestBetsAggregator:
                 **pred,
                 'signal_tags': tags,
                 'signal_count': len(qualifying),
+                'real_signal_count': real_sc,
                 'composite_score': composite_score,
                 'matched_combo_id': matched.combo_id if matched else None,
                 'combo_classification': matched.classification if matched else None,
