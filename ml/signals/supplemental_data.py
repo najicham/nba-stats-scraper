@@ -144,12 +144,13 @@ def query_predictions_with_supplements(
         ) / 55.0) AS model_hr_weight
       FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions` p
       LEFT JOIN model_hr mh ON mh.model_id = p.system_id
+      LEFT JOIN disabled_models dm ON p.system_id = dm.model_id
       WHERE p.game_date = @target_date
         AND {system_filter}
         AND p.is_active = TRUE
         AND p.recommendation IN ('OVER', 'UNDER')
         AND p.line_source IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS')
-        AND p.system_id NOT IN (SELECT model_id FROM disabled_models)
+        AND dm.model_id IS NULL  -- Exclude disabled/blocked models
         -- warmup_models filter removed (see comment above)
     ),
 
@@ -210,12 +211,13 @@ def query_predictions_with_supplements(
         CAST(p.confidence_score AS FLOAT64) AS confidence_score,
         COALESCE(p.feature_quality_score, 0) AS feature_quality_score
       FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions` p
+      LEFT JOIN disabled_models dm ON p.system_id = dm.model_id
       WHERE p.game_date = @target_date
         AND p.system_id = '{model_id}'
         AND p.is_active = TRUE
         AND p.recommendation IN ('OVER', 'UNDER')
         AND p.line_source IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS')
-        AND p.system_id NOT IN (SELECT model_id FROM disabled_models)
+        AND dm.model_id IS NULL  -- Exclude disabled/blocked models
         -- warmup_models filter removed (see comment above)
     ),"""
 
