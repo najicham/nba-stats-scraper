@@ -100,8 +100,7 @@ def query_predictions_with_supplements(
       SELECT model_id
       FROM `{PROJECT_ID}.nba_predictions.model_registry`
       WHERE enabled = FALSE OR status IN ('blocked', 'disabled')
-      UNION DISTINCT
-      SELECT model_id FROM UNNEST(['catboost_v12', 'catboost_v9']) AS model_id
+         OR model_id IN ('catboost_v12', 'catboost_v9')
     ),
 
     -- Session 378c warmup REMOVED: created_at reflects registry insertion date,
@@ -195,8 +194,7 @@ def query_predictions_with_supplements(
       SELECT model_id
       FROM `{PROJECT_ID}.nba_predictions.model_registry`
       WHERE enabled = FALSE OR status IN ('blocked', 'disabled')
-      UNION DISTINCT
-      SELECT model_id FROM UNNEST(['catboost_v12', 'catboost_v9']) AS model_id
+         OR model_id IN ('catboost_v12', 'catboost_v9')
     ),
     preds AS (
       SELECT
