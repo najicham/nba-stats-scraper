@@ -50,7 +50,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v392_disabled_model_drain_fix'
+ALGORITHM_VERSION = 'v393_bootstrap_sc_relaxation'
 
 # Base signals that fire on nearly every edge 5+ pick. Picks with ONLY
 # these signals hit 57.1% (N=42) vs 77.8% for picks with 4+ signals.
@@ -107,7 +107,10 @@ class BestBetsAggregator:
     """
 
     MIN_SIGNAL_COUNT = 3           # Base floor for edge 7+ (Session 370)
-    MIN_SIGNAL_COUNT_LOW_EDGE = 4  # Edge < 7 (Session 388): SC=3 edge 5-7 = 51.3% HR vs SC=4 = 70.6%
+    # Session 393: Lowered from 4 → 3. SC=3 at edge 5-7 = 50% HR stat was from
+    # now-disabled models (98% of graded picks). New fleet in bootstrapping phase
+    # with ~0 graded data. Signal_density filter still blocks base-only SC=3 picks.
+    MIN_SIGNAL_COUNT_LOW_EDGE = 3  # Edge < 7 (was 4, Session 388; relaxed Session 393)
     HIGH_EDGE_SC_THRESHOLD = 7.0   # Edge dividing SC tiers
     MIN_EDGE = 3.0                 # Lowered from 5.0 (Session 352): edge 3-4 is best V12 band during model degradation
 
@@ -142,6 +145,9 @@ class BestBetsAggregator:
 
         Edge-first: picks are ranked by edge (model confidence), not by
         signal composite score. Signals are attached for pick angles only.
+
+        Session 393: Also collects filtered-out picks for counterfactual
+        tracking. Access via filter_summary['filtered_picks'].
 
         Returns:
             Tuple of (picks, filter_summary) where filter_summary tracks
@@ -179,6 +185,31 @@ class BestBetsAggregator:
             'legacy_block': 0,
             'model_profile_would_block': 0,
         }
+
+        # Session 393: Counterfactual tracking — log filtered-out picks so we
+        # can grade them post-hoc and validate each filter's value.
+        filtered_picks: List[Dict] = []
+
+        def _record_filtered(pred_dict: Dict, filter_name: str,
+                             pred_edge_val: float = 0.0,
+                             sig_count: int = 0,
+                             sig_tags: Optional[List[str]] = None) -> None:
+            """Record a filtered-out pick for counterfactual analysis."""
+            filtered_picks.append({
+                'player_lookup': pred_dict.get('player_lookup', ''),
+                'game_id': pred_dict.get('game_id', ''),
+                'game_date': pred_dict.get('game_date', ''),
+                'system_id': pred_dict.get('system_id', ''),
+                'team_abbr': pred_dict.get('team_abbr', ''),
+                'opponent_team_abbr': pred_dict.get('opponent_team_abbr', ''),
+                'recommendation': pred_dict.get('recommendation', ''),
+                'predicted_points': pred_dict.get('predicted_points'),
+                'line_value': pred_dict.get('line_value') or pred_dict.get('current_points_line'),
+                'edge': round(pred_edge_val, 1),
+                'signal_count': sig_count,
+                'signal_tags': sig_tags or [],
+                'filter_reason': filter_name,
+            })
 
         # Session 378c: Model sanity guard — detect and block models whose
         # predictions are severely imbalanced (>90% one direction). A broken
@@ -229,8 +260,11 @@ class BestBetsAggregator:
                 continue
 
             # Player blacklist (Session 284)
+            pred_edge_early = abs(pred.get('edge') or 0)
             if pred['player_lookup'] in self._player_blacklist:
                 filter_counts['blacklist'] += 1
+                if pred_edge_early >= 3.0:
+                    _record_filtered(pred, 'blacklist', pred_edge_early)
                 continue
 
             # Edge floor: lowered to 3.0 (Session 352) — signal filters provide quality gate
@@ -250,6 +284,7 @@ class BestBetsAggregator:
                 )
                 if not has_premium:
                     filter_counts['edge_floor'] += 1
+                    # Don't track edge_floor — these are below edge 3, not actionable
                     continue
                 # Premium signal found — bypass edge floor (95%+ HR signals)
 
@@ -258,6 +293,7 @@ class BestBetsAggregator:
             # UNDER is profitable at all edge levels (57.5-100%).
             if pred.get('recommendation') == 'OVER' and pred_edge < 5.0:
                 filter_counts['over_edge_floor'] += 1
+                _record_filtered(pred, 'over_edge_floor', pred_edge)
                 continue
 
             # UNDER at edge 7+ block (Session 297, narrowed Session 367):
@@ -272,6 +308,7 @@ class BestBetsAggregator:
                     and source_family.startswith('v9')
                     and source_family != 'v9_low_vegas'):
                 filter_counts['under_edge_7plus'] += 1
+                _record_filtered(pred, 'under_edge_7plus', pred_edge)
                 continue
 
             # Model-direction affinity block (Session 330): data-driven
@@ -284,6 +321,7 @@ class BestBetsAggregator:
                     self._model_direction_blocks)
                 if block_reason:
                     filter_counts['model_direction_affinity'] += 1
+                    _record_filtered(pred, 'model_direction_affinity', pred_edge)
                     continue
 
             # AWAY block (Session 347, expanded Session 365):
@@ -294,6 +332,7 @@ class BestBetsAggregator:
                 away_group = get_affinity_group(source_family)
                 if away_group in ('v12_noveg', 'v9'):
                     filter_counts['away_noveg'] += 1
+                    _record_filtered(pred, 'away_noveg', pred_edge)
                     continue
 
             # HOME OVER block REMOVED (Session 392): N=16 was contaminated by
@@ -304,6 +343,7 @@ class BestBetsAggregator:
             games_vs_opp = pred.get('games_vs_opponent') or 0
             if games_vs_opp >= 6:
                 filter_counts['familiar_matchup'] += 1
+                _record_filtered(pred, 'familiar_matchup', pred_edge)
                 continue
 
             # Feature quality floor (Session 278): quality < 85 = 24.0% HR
@@ -311,12 +351,14 @@ class BestBetsAggregator:
             quality = pred.get('feature_quality_score') or 0
             if quality < 85:
                 filter_counts['quality_floor'] += 1
+                _record_filtered(pred, 'quality_floor', pred_edge)
                 continue
 
             # Bench UNDER block (Session 278): line < 12 = 35.1% HR
             line_val = pred.get('line_value') or 0
             if pred.get('recommendation') == 'UNDER' and line_val > 0 and line_val < 12:
                 filter_counts['bench_under'] += 1
+                _record_filtered(pred, 'bench_under', pred_edge)
                 continue
 
             # Star UNDER block (Session 354, relaxed Session 367):
@@ -331,6 +373,7 @@ class BestBetsAggregator:
                     and season_avg >= 25
                     and star_teammates_out < 1):
                 filter_counts['star_under'] += 1
+                _record_filtered(pred, 'star_under', pred_edge)
                 continue
 
             # UNDER Star AWAY block (Session 369): 38.5% HR (5W-8L, -$380) vs HOME 81.8% (9W-2L, +$680)
@@ -339,6 +382,7 @@ class BestBetsAggregator:
                     and line_val >= 23
                     and not pred.get('is_home', False)):
                 filter_counts['under_star_away'] += 1
+                _record_filtered(pred, 'under_star_away', pred_edge)
                 continue
 
             # Medium teammate usage UNDER block (Session 355): 32.0% HR (N=25)
@@ -348,6 +392,7 @@ class BestBetsAggregator:
             if (pred.get('recommendation') == 'UNDER'
                     and 15 <= teammate_usage <= 30):
                 filter_counts['med_usage_under'] += 1
+                _record_filtered(pred, 'med_usage_under', pred_edge)
                 continue
 
             # Starter V12 UNDER block (Session 355): 46.7% HR (N=30)
@@ -356,6 +401,7 @@ class BestBetsAggregator:
                     and 15 <= season_avg < 20
                     and source_family.startswith('v12')):
                 filter_counts['starter_v12_under'] += 1
+                _record_filtered(pred, 'starter_v12_under', pred_edge)
                 continue
 
             # Line jumped UNDER block (Session 294, lowered 306): 38.2% HR at 2.0 (N=272)
@@ -364,6 +410,7 @@ class BestBetsAggregator:
                     and prop_line_delta >= 2.0
                     and pred.get('recommendation') == 'UNDER'):
                 filter_counts['line_jumped_under'] += 1
+                _record_filtered(pred, 'line_jumped_under', pred_edge)
                 continue
 
             # Line dropped UNDER block (Session 294, lowered 306): 35.2% HR at 2.0 (N=108)
@@ -371,6 +418,7 @@ class BestBetsAggregator:
                     and prop_line_delta <= -2.0
                     and pred.get('recommendation') == 'UNDER'):
                 filter_counts['line_dropped_under'] += 1
+                _record_filtered(pred, 'line_dropped_under', pred_edge)
                 continue
 
             # Line dropped OVER block (Session 374b): OVER + line dropped 2+ = 39.1% HR Feb (N=23).
@@ -379,12 +427,14 @@ class BestBetsAggregator:
                     and prop_line_delta <= -2.0
                     and pred.get('recommendation') == 'OVER'):
                 filter_counts['line_dropped_over'] += 1
+                _record_filtered(pred, 'line_dropped_over', pred_edge)
                 continue
 
             # Neg +/- streak UNDER block (Session 294): 13.1% HR
             neg_pm_streak = pred.get('neg_pm_streak') or 0
             if neg_pm_streak >= 3 and pred.get('recommendation') == 'UNDER':
                 filter_counts['neg_pm_streak'] += 1
+                _record_filtered(pred, 'neg_pm_streak', pred_edge)
                 continue
 
             # Opponent team UNDER block (Session 372)
@@ -392,6 +442,7 @@ class BestBetsAggregator:
             if (pred.get('recommendation') == 'UNDER'
                     and pred.get('opponent_team_abbr', '') in UNDER_TOXIC_OPPONENTS):
                 filter_counts['opponent_under_block'] += 1
+                _record_filtered(pred, 'opponent_under_block', pred_edge)
                 continue
 
             # Opponent depleted UNDER block (Session 374b): UNDER + 3+ opponent stars out = 44.4% HR (N=207).
@@ -400,6 +451,7 @@ class BestBetsAggregator:
             if (pred.get('recommendation') == 'UNDER'
                     and opponent_stars_out >= 3):
                 filter_counts['opponent_depleted_under'] += 1
+                _record_filtered(pred, 'opponent_depleted_under', pred_edge)
                 continue
 
             # High book std UNDER block (Session 377): UNDER + multi_book_line_std 1.0-1.5 = 14.8% HR (N=142).
@@ -408,6 +460,7 @@ class BestBetsAggregator:
             if (pred.get('recommendation') == 'UNDER'
                     and 1.0 <= book_std <= 1.5):
                 filter_counts['high_book_std_under'] += 1
+                _record_filtered(pred, 'high_book_std_under', pred_edge)
                 continue
 
             # --- Model profile observation (Session 384) ---
@@ -456,18 +509,22 @@ class BestBetsAggregator:
             # SC=3 at edge 7+ = 85.7% (N=7) — preserved.
             # Subsumes SC=3 OVER edge gate (Session 374b) — all directions blocked at SC=3 edge<7.
             required_sc = self.MIN_SIGNAL_COUNT if pred_edge >= self.HIGH_EDGE_SC_THRESHOLD else self.MIN_SIGNAL_COUNT_LOW_EDGE
+            sig_tags_early = [r.source_tag for r in qualifying]
             if len(qualifying) < required_sc:
                 filter_counts['signal_count'] += 1
+                _record_filtered(pred, 'signal_count', pred_edge, len(qualifying), sig_tags_early)
                 continue
 
-            # Starter OVER SC floor (Session 382c): Starter OVER collapsed 90% Jan → 33.3% Feb (3-6).
-            # Full season 63.2% (N=19). SC >= 5 preserves high-confidence picks while filtering
-            # marginal SC 3-4 ones that drove 6 of 21 losses in 30d.
-            # Role OVER (line < 15) and Starter UNDER are unaffected.
+            # Starter OVER SC floor (Session 382c, relaxed Session 393):
+            # Starter OVER collapsed 90% Jan → 33.3% Feb. SC >= 5 was too restrictive
+            # for current signal pool (volatile_scoring_over disabled, rest_advantage_2d
+            # expired, several signals need NULL supplemental data). Lowered to SC >= 4
+            # during bootstrapping phase. Signal_density still blocks base-only picks.
             if (pred.get('recommendation') == 'OVER'
                     and 15 <= line_val < 25
-                    and len(qualifying) < 5):
+                    and len(qualifying) < 4):
                 filter_counts['starter_over_sc_floor'] += 1
+                _record_filtered(pred, 'starter_over_sc_floor', pred_edge, len(qualifying), sig_tags_early)
                 continue
 
             # Confidence floor: model-specific
@@ -497,6 +554,7 @@ class BestBetsAggregator:
             tag_set = frozenset(tags)
             if tag_set and tag_set.issubset(BASE_SIGNALS) and pred_edge < 7.0:
                 filter_counts['signal_density'] += 1
+                _record_filtered(pred, 'signal_density', pred_edge, len(qualifying), tags)
                 continue
 
             # Warning: contradictory signals
@@ -567,7 +625,7 @@ class BestBetsAggregator:
         if filter_counts['starter_v12_under'] > 0:
             logger.info(f"Starter V12 UNDER block (15-20 line): skipped {filter_counts['starter_v12_under']} predictions")
         if filter_counts['starter_over_sc_floor'] > 0:
-            logger.info(f"Starter OVER SC floor: skipped {filter_counts['starter_over_sc_floor']} OVER picks (line 15-25, SC < 5)")
+            logger.info(f"Starter OVER SC floor: skipped {filter_counts['starter_over_sc_floor']} OVER picks (line 15-25, SC < 4)")
         # sc3_edge_floor retained for schema continuity — subsumed by edge-tiered SC (Session 388)
         if filter_counts['line_dropped_over'] > 0:
             logger.info(f"Line dropped OVER block: skipped {filter_counts['line_dropped_over']} OVER picks with line drop >= 2")
@@ -607,6 +665,7 @@ class BestBetsAggregator:
             'total_candidates': len(predictions),
             'passed_filters': len(scored),
             'rejected': filter_counts,
+            'filtered_picks': filtered_picks,  # Session 393: counterfactual tracking
         }
 
         # Session 391: Sanity warning — detect when a single filter dominates rejections.

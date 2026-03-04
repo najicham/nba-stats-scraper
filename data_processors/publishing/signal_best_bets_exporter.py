@@ -504,6 +504,12 @@ class SignalBestBetsExporter(BaseExporter):
         if filter_summary:
             self._write_filter_audit(target_date, json_data, filter_summary)
 
+        # Session 393: Write filtered-out picks for counterfactual tracking.
+        # Enables post-hoc grading: "would this pick have won if we didn't filter it?"
+        filtered_picks = filter_summary.get('filtered_picks', []) if filter_summary else []
+        if filtered_picks:
+            self._write_filtered_picks(target_date, filtered_picks)
+
         # Strip internal-only fields from public JSON.
         # BQ write above gets full ultra_tier + ultra_criteria.
         # Public JSON shows ultra_tier (bool) but not ultra_criteria (internal detail).
@@ -779,6 +785,62 @@ class SignalBestBetsExporter(BaseExporter):
         except Exception as e:
             # Non-fatal — don't fail export if audit write fails
             logger.warning(f"Failed to write filter audit for {target_date}: {e}")
+
+    def _write_filtered_picks(self, target_date: str, filtered_picks: list) -> None:
+        """Session 393: Write filtered-out picks for counterfactual grading.
+
+        Enables post-hoc validation: query actual_points after games complete
+        to see if filtered picks would have won. Validates each filter's value.
+
+        Uses DELETE+INSERT (not MERGE) to handle re-exports cleanly.
+        """
+        table_ref = f'{PROJECT_ID}.nba_predictions.best_bets_filtered_picks'
+        now = datetime.now(timezone.utc).isoformat()
+
+        try:
+            # Delete existing rows for this game_date (re-export safe)
+            delete_query = f"DELETE FROM `{table_ref}` WHERE game_date = @game_date"
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter('game_date', 'DATE', target_date),
+                ]
+            )
+            self.bq_client.query(delete_query, job_config=job_config).result(timeout=30)
+
+            # Insert filtered picks
+            rows = []
+            for pick in filtered_picks:
+                rows.append({
+                    'game_date': target_date,
+                    'player_lookup': pick.get('player_lookup', ''),
+                    'game_id': pick.get('game_id', ''),
+                    'system_id': pick.get('system_id', ''),
+                    'team_abbr': pick.get('team_abbr', ''),
+                    'opponent_team_abbr': pick.get('opponent_team_abbr', ''),
+                    'recommendation': pick.get('recommendation', ''),
+                    'predicted_points': pick.get('predicted_points'),
+                    'line_value': pick.get('line_value'),
+                    'edge': pick.get('edge'),
+                    'signal_count': pick.get('signal_count', 0),
+                    'signal_tags': pick.get('signal_tags', []),
+                    'filter_reason': pick.get('filter_reason', ''),
+                    'actual_points': None,  # Filled by grading
+                    'prediction_correct': None,  # Filled by grading
+                    'created_at': now,
+                })
+
+            if rows:
+                errors = self.bq_client.insert_rows_json(table_ref, rows)
+                if errors:
+                    logger.warning(f"Filtered picks write errors: {errors[:3]}")
+                else:
+                    logger.info(
+                        f"Filtered picks written for {target_date}: {len(rows)} picks "
+                        f"({len(set(p['filter_reason'] for p in filtered_picks))} distinct filters)"
+                    )
+        except Exception as e:
+            # Non-fatal — don't fail export if counterfactual write fails
+            logger.warning(f"Failed to write filtered picks for {target_date}: {e}")
 
     def _query_direction_health(self, target_date: str) -> Dict[str, Any]:
         """Query 14-day rolling hit rate by direction (OVER vs UNDER).
