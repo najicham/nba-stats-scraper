@@ -10,9 +10,8 @@ pdfplumber==0.11.7
 # Image processing (scraper-specific)  
 pillow==11.2.1
 
-# Browser automation (scraper-specific)
-playwright==1.52.0
-playwright-stealth==2.0.0
+# Browser automation removed — scrapers now use APIs/server-rendered HTML
+# playwright and playwright-stealth no longer needed
 
 # Data structures (scraper-specific)
 bitarray==3.4.2
