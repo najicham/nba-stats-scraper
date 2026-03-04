@@ -210,7 +210,7 @@ class NBATrackingStatsScraper(ScraperBase, ScraperFlaskMixin):
                 NBA_STATS_URL,
                 params=params,
                 proxies=proxies,
-                timeout=30,
+                timeout=60,
             )
             response.raise_for_status()
             data = response.json()

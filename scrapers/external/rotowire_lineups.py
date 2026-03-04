@@ -80,8 +80,8 @@ class RotoWireLineupsScraper(ScraperBase, ScraperFlaskMixin):
     decode_download_data: bool = True
     header_profile: str | None = None
     proxy_enabled: bool = True
-    # RotoWire uses JavaScript rendering — enable browser if available
-    browser_enabled: bool = True
+    # Try plain HTTP first — Playwright not installed in production Docker image
+    browser_enabled: bool = False
 
     CRAWL_DELAY_SECONDS = 2.5
 
