@@ -105,7 +105,7 @@ class VSiNBettingSplitsScraper(ScraperBase, ScraperFlaskMixin):
     proxy_enabled: bool = True
     CRAWL_DELAY_SECONDS = 2.0
 
-    url = "https://data.vsin.com/nba/betting-splits/"
+    VSIN_URL = "https://data.vsin.com/nba/betting-splits/"
 
     exporters = [
         {
@@ -128,6 +128,61 @@ class VSiNBettingSplitsScraper(ScraperBase, ScraperFlaskMixin):
             "groups": ["capture"],
         },
     ]
+
+    def set_url(self) -> None:
+        """Set VSiN betting splits URL."""
+        self.url = self.VSIN_URL
+        logger.info("VSiN betting splits URL: %s", self.url)
+
+    def download_and_decode(self):
+        """Use Playwright to render VSiN WordPress page with AJAX-loaded data.
+
+        VSiN loads betting splits via WordPress AJAX after page load — static
+        HTML has empty container divs. We use headless Chromium to wait for
+        the data to render, then extract the full DOM.
+        """
+        from scrapers.scraper_base import _PLAYWRIGHT_AVAILABLE, _STEALTH_FN
+
+        if not _PLAYWRIGHT_AVAILABLE:
+            raise ValueError(
+                "Playwright not available — install with: playwright install chromium --with-deps"
+            )
+
+        from playwright.sync_api import sync_playwright
+
+        logger.info("Launching Playwright for VSiN AJAX rendering...")
+        time.sleep(self.CRAWL_DELAY_SECONDS)
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--disable-blink-features=AutomationControlled"],
+            )
+            try:
+                page = browser.new_page()
+                if callable(_STEALTH_FN):
+                    _STEALTH_FN(page)
+
+                page.goto(self.VSIN_URL, wait_until="networkidle", timeout=60_000)
+
+                # Wait for AJAX data to populate tables/cards
+                try:
+                    page.wait_for_selector(
+                        "table, [class*='split'], [class*='game'], [class*='matchup']",
+                        timeout=15_000,
+                    )
+                    # Extra wait for AJAX data to fully populate
+                    page.wait_for_timeout(3_000)
+                except Exception:
+                    logger.warning("No betting splits selector found, waiting extra time...")
+                    page.wait_for_timeout(8_000)
+
+                html = page.content()
+                logger.info("Playwright rendered %d bytes of HTML from VSiN", len(html))
+            finally:
+                browser.close()
+
+        self.decoded_data = html
 
     def transform_data(self) -> None:
         """Parse VSiN betting splits page and extract game-level public betting data."""

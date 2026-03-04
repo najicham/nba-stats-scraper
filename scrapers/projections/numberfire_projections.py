@@ -111,37 +111,77 @@ class NumberFireProjectionsScraper(ScraperBase, ScraperFlaskMixin):
         },
     ]
 
+    # FanDuel acquired NumberFire — domain redirects to FanDuel Research SPA
+    FANDUEL_URL = "https://www.fanduel.com/research/nba/fantasy/dfs-projections"
+
     def set_url(self) -> None:
-        """Build NumberFire projections URL."""
-        self.url = "https://www.numberfire.com/nba/daily-fantasy/daily-basketball-projections"
-        logger.info("NumberFire projections URL: %s", self.url)
+        """Build FanDuel projections URL (formerly NumberFire)."""
+        self.url = self.FANDUEL_URL
+        logger.info("NumberFire/FanDuel projections URL: %s", self.url)
 
-    def set_headers(self) -> None:
-        """Set browser-like headers for NumberFire."""
-        self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5",
-            "Accept-Encoding": "gzip, deflate",
-            "Connection": "keep-alive",
-            "Upgrade-Insecure-Requests": "1",
-        }
+    def download_and_decode(self):
+        """Use Playwright to render FanDuel React SPA and extract projection data.
 
-    def download_data(self):
-        """Override to add rate limiting delay."""
-        logger.info("Waiting %.1f seconds for rate limiting...", self.CRAWL_DELAY_SECONDS)
+        FanDuel Research is a client-side rendered React app — no data in static
+        HTML. We launch headless Chromium, wait for the projections table to
+        render, then hand the full DOM to BeautifulSoup in transform_data().
+        """
+        from scrapers.scraper_base import _PLAYWRIGHT_AVAILABLE, _STEALTH_FN
+
+        if not _PLAYWRIGHT_AVAILABLE:
+            raise ValueError(
+                "Playwright not available — install with: playwright install chromium --with-deps"
+            )
+
+        from playwright.sync_api import sync_playwright
+
+        logger.info("Launching Playwright for FanDuel SPA rendering...")
         time.sleep(self.CRAWL_DELAY_SECONDS)
-        super().download_data()
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--disable-blink-features=AutomationControlled"],
+            )
+            try:
+                page = browser.new_page()
+                if callable(_STEALTH_FN):
+                    _STEALTH_FN(page)
+
+                # Block heavy assets to speed up load
+                page.route(
+                    "**/*.{png,jpg,jpeg,gif,svg,woff,woff2,css}",
+                    lambda route: route.abort(),
+                )
+
+                page.goto(self.url, wait_until="networkidle", timeout=60_000)
+
+                # Wait for projection table or data container to appear
+                try:
+                    page.wait_for_selector(
+                        "table, [class*='projection'], [class*='player'], [data-testid*='player']",
+                        timeout=15_000,
+                    )
+                except Exception:
+                    logger.warning("No projection table selector found, waiting extra time...")
+                    page.wait_for_timeout(5_000)
+
+                html = page.content()
+                logger.info("Playwright rendered %d bytes of HTML from FanDuel", len(html))
+            finally:
+                browser.close()
+
+        self.decoded_data = html
 
     def validate_download_data(self) -> None:
-        """Validate that we received a proper NumberFire page."""
+        """Validate that we received a proper FanDuel/NumberFire page."""
         if not isinstance(self.decoded_data, str):
             raise ValueError("Expected HTML string")
         html_lower = self.decoded_data.lower()
         if "<html" not in html_lower:
             raise ValueError("Response doesn't appear to be HTML")
-        if "numberfire" not in html_lower:
-            raise ValueError("Response doesn't appear to be from NumberFire")
+        if "fanduel" not in html_lower and "numberfire" not in html_lower:
+            raise ValueError("Response doesn't appear to be from FanDuel/NumberFire")
 
     def transform_data(self) -> None:
         """Parse NumberFire projections page and extract player projection data."""
