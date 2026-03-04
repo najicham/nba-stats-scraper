@@ -33,6 +33,8 @@ SELECT
   bb.system_id,
   bb.pick_angles,
   bb.ultra_tier,
+  bb.signal_rescued,
+  bb.rescue_signal,
   ROUND(p.predicted_points, 1) as predicted,
   ROUND(p.current_points_line, 1) as vegas_line
 FROM `nba-props-platform.nba_predictions.signal_best_bets_picks` bb
@@ -126,10 +128,11 @@ Today's Best Bets (2026-03-03)
 
 Found 8 trading candidates
 
-| Player          | Rec   | Edge  | Signals | Model                    | Ultra |
-|-----------------|-------|-------|---------|--------------------------|-------|
-| lebron-james    | OVER  | +7.2  | 5       | catboost_v12_noveg_...   | v12_edge_6plus |
-| jayson-tatum    | UNDER | +5.4  | 4       | catboost_v12_train_...   |       |
+| Player          | Rec   | Edge  | Signals | Model                    | Ultra | Rescued |
+|-----------------|-------|-------|---------|--------------------------|-------|---------|
+| lebron-james    | OVER  | +7.2  | 5       | catboost_v12_noveg_...   | v12_edge_6plus | |
+| jayson-tatum    | UNDER | +5.4  | 4       | catboost_v12_train_...   |       | |
+| devin-booker    | OVER  | +2.1  | 3       | lgbm_v12_noveg_...       |       | book_disagreement |
 
 Summary:
   Total Picks: 8 (5 OVER / 3 UNDER)
@@ -146,3 +149,10 @@ Summary:
 - `/top-picks over` → Only OVER picks
 - `/top-picks under` → Only UNDER picks
 - `/top-picks ultra` → Only ultra-tier picks
+- `/top-picks rescued` → Only signal-rescued picks
+
+## Presentation Notes
+
+- Flag rescued picks (`signal_rescued=TRUE`) — these bypassed edge floor via a validated high-HR signal
+- Show the `rescue_signal` value (e.g., `book_disagreement`, `signal_stacking`) so the user knows WHY the pick was rescued
+- Rescued picks typically have lower edge (< 3.0) but strong signal backing — frame them as "signal-driven" vs "edge-driven"

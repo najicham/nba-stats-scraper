@@ -1014,3 +1014,64 @@ Be cautious betting UNDER vs these teams:
 *Updated: Session 69 - Added daily model comparison, support for monthly models (catboost_v9_2026_XX)*
 *Updated: Session 87 - Added Issue 4 for model version tracking via model_file_name field*
 *Updated: Session 112 - Added scenario-based analysis, player blacklist, opponent risk (Queries 8-11)*
+*Updated: Session 398 - Added signal rescue performance analysis (Query 13)*
+
+---
+
+## Session 398: Signal Rescue Performance Analysis
+
+### Query 13: By Signal Rescue Status
+
+**Purpose**: Compare performance of rescued picks (bypassed edge floor via high-HR signal) vs standard picks.
+
+```sql
+-- Signal rescue vs standard pick performance
+SELECT
+  CASE WHEN bb.signal_rescued THEN 'Rescued' ELSE 'Standard' END as pick_type,
+  bb.recommendation as direction,
+  COUNT(*) as picks,
+  COUNTIF(pa.prediction_correct) as wins,
+  ROUND(100.0 * COUNTIF(pa.prediction_correct) / NULLIF(COUNT(*), 0), 1) as hit_rate,
+  ROUND(AVG(bb.edge), 1) as avg_edge,
+  ROUND(AVG(bb.signal_count), 1) as avg_signals
+FROM `nba-props-platform.nba_predictions.signal_best_bets_picks` bb
+JOIN `nba-props-platform.nba_predictions.prediction_accuracy` pa
+  ON bb.player_lookup = pa.player_lookup
+  AND bb.game_date = pa.game_date
+  AND bb.system_id = pa.system_id
+WHERE bb.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+  AND bb.game_date < CURRENT_DATE()
+  AND pa.prediction_correct IS NOT NULL
+GROUP BY 1, 2
+ORDER BY pick_type, direction
+```
+
+### Query 13b: Rescue Signal Breakdown
+
+```sql
+-- Performance by rescue signal (which signals are rescuing well?)
+SELECT
+  bb.rescue_signal,
+  bb.recommendation as direction,
+  COUNT(*) as picks,
+  COUNTIF(pa.prediction_correct) as wins,
+  ROUND(100.0 * COUNTIF(pa.prediction_correct) / NULLIF(COUNT(*), 0), 1) as hit_rate,
+  ROUND(AVG(bb.edge), 1) as avg_edge
+FROM `nba-props-platform.nba_predictions.signal_best_bets_picks` bb
+JOIN `nba-props-platform.nba_predictions.prediction_accuracy` pa
+  ON bb.player_lookup = pa.player_lookup
+  AND bb.game_date = pa.game_date
+  AND bb.system_id = pa.system_id
+WHERE bb.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+  AND bb.game_date < CURRENT_DATE()
+  AND bb.signal_rescued = TRUE
+  AND pa.prediction_correct IS NOT NULL
+GROUP BY 1, 2
+HAVING picks >= 3
+ORDER BY hit_rate DESC
+```
+
+**Interpretation**:
+- Rescued picks should maintain >= 55% HR to justify bypassing edge floor
+- If a rescue signal drops below 52.4%, it should be removed from `RESCUE_TAGS`
+- `signal_stacking` rescues (2+ real signals) should have higher HR than single-signal rescues

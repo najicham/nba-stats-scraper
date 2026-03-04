@@ -1797,66 +1797,64 @@ def augment_v19_features(client, df):
     lookback_date = (pd.to_datetime(str(min_date)) - pd.Timedelta(days=60)).strftime('%Y-%m-%d')
 
     v19_query = f"""
-    WITH game_points AS (
+    WITH base_games AS (
         SELECT
             player_lookup,
             game_date,
             CAST(points AS FLOAT64) AS points,
-            -- Rolling stats over last 10 games (excluding current)
-            AVG(CAST(points AS FLOAT64)) OVER (
-                PARTITION BY player_lookup ORDER BY game_date
-                ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING
-            ) AS points_mean_l10,
-            STDDEV_POP(CAST(points AS FLOAT64)) OVER (
-                PARTITION BY player_lookup ORDER BY game_date
-                ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING
-            ) AS points_std_l10,
-            COUNT(*) OVER (
-                PARTITION BY player_lookup ORDER BY game_date
-                ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING
-            ) AS games_l10
+            ROW_NUMBER() OVER (
+                PARTITION BY player_lookup ORDER BY game_date DESC
+            ) AS rn
         FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
         WHERE game_date >= '{lookback_date}'
           AND game_date <= '{max_date}'
           AND minutes_played > 0
     ),
-    -- Need median separately (APPROX_QUANTILES requires GROUP BY, not window)
-    -- Use PERCENTILE_CONT for exact median via window
-    with_median AS (
+    -- For each target game, find its prior 10 games via self-join
+    target_games AS (
+        SELECT DISTINCT player_lookup, game_date
+        FROM base_games
+        WHERE game_date BETWEEN '{min_date}' AND '{max_date}'
+    ),
+    prior_games AS (
         SELECT
-            gp.player_lookup,
-            gp.game_date,
-            gp.points_mean_l10,
-            gp.points_std_l10,
-            gp.games_l10,
-            -- Median via subquery: get prior 10 games' points
-            (
-                SELECT APPROX_QUANTILES(sub.points, 2)[OFFSET(1)]
-                FROM (
-                    SELECT s2.points
-                    FROM `{PROJECT_ID}.nba_analytics.player_game_summary` s2
-                    WHERE s2.player_lookup = gp.player_lookup
-                      AND s2.game_date < gp.game_date
-                      AND s2.game_date >= DATE_SUB(gp.game_date, INTERVAL 60 DAY)
-                      AND s2.minutes_played > 0
-                    ORDER BY s2.game_date DESC
-                    LIMIT 10
-                ) sub
-            ) AS points_median_l10
-        FROM game_points gp
-        WHERE gp.game_date BETWEEN '{min_date}' AND '{max_date}'
-          AND gp.games_l10 >= 5
+            tg.player_lookup,
+            tg.game_date AS target_date,
+            bg.points,
+            ROW_NUMBER() OVER (
+                PARTITION BY tg.player_lookup, tg.game_date
+                ORDER BY bg.game_date DESC
+            ) AS prior_rn
+        FROM target_games tg
+        JOIN base_games bg
+          ON bg.player_lookup = tg.player_lookup
+          AND bg.game_date < tg.game_date
+          AND bg.game_date >= DATE_SUB(tg.game_date, INTERVAL 60 DAY)
+    ),
+    last_10 AS (
+        SELECT * FROM prior_games WHERE prior_rn <= 10
+    ),
+    skewness_stats AS (
+        SELECT
+            player_lookup,
+            target_date AS game_date,
+            AVG(points) AS points_mean_l10,
+            STDDEV_POP(points) AS points_std_l10,
+            COUNT(*) AS games_l10,
+            APPROX_QUANTILES(points, 2)[OFFSET(1)] AS points_median_l10
+        FROM last_10
+        GROUP BY player_lookup, target_date
     )
     SELECT
         player_lookup,
         game_date,
-        -- Pearson's median skewness: 3 * (mean - median) / stddev
         SAFE_DIVIDE(
             3.0 * (points_mean_l10 - points_median_l10),
             points_std_l10
         ) AS scoring_skewness_last_10
-    FROM with_median
+    FROM skewness_stats
     WHERE points_std_l10 > 0
+      AND games_l10 >= 5
     """
 
     print("  V19: Querying scoring skewness features...")

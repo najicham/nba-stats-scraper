@@ -1,7 +1,7 @@
 # Start Your Next Session Here
 
-**Updated:** 2026-02-17 (Session 286 — Features Array Migration Phases 1-4)
-**Status:** All production/monitoring code migrated off `features` array (21 files). **NEXT: Complete Phases 5-8 (tools, dead features, array removal).**
+**Updated:** 2026-03-04 (Session 399 Follow-up — Brier Backfill + V19 Experiment)
+**Status:** Signal rescue + sharp book lean live, 26 active signals, 17 negative filters, 15 shadow models + 1 production. Algorithm `v399_skew_filter`.
 
 ---
 
@@ -17,172 +17,152 @@
 # 3. Check deployment drift
 ./bin/check-deployment-drift.sh --verbose
 
-# 4. Replay last 30 days
-/replay
+# 4. Review best bets config
+/best-bets-config
 ```
 
 ---
 
-## IMMEDIATE PRIORITY: Re-Run Archetype Replays
+## What's New (Session 399 + Follow-up)
 
-Session 285 built 23 new archetype dimensions and fixed a feature store data gap (feature_N_value columns were empty Nov 28 → Feb 11). The initial replay run had invalid results due to the missing data. **Must re-run with backfilled data:**
+1. **`high_skew_over_block` filter (17th negative filter)** — OVER + mean_median_gap > 2.0 = 49.1% HR. Blocks right-skewed scoring distributions that inflate OVER mean predictions.
+2. **Sharp book lean signals** — `sharp_book_lean_over` (70.3% HR, N=508) + `sharp_book_lean_under` (84.7% HR, N=202). FanDuel/DraftKings vs BetRivers/Bovada/Fliff line divergence.
+3. **Brier score calibration** — `model_performance_daily` now has `brier_score_7d/14d/30d`. 351 rows backfilled via BQ MERGE. Best calibrated: v13_vw025 (0.217), v12_noveg_q55_tw (0.225).
+4. **V19 scoring skewness experiment — DEAD END** — Feature <2% importance, CatBoost ignores it (same iter/loss as V12_NOVEG). 63.16% HR, below 66% target. Works better as filter only.
+5. **Friday OVER block** (Session 398) — 37.5% HR best bets, 53.0% raw.
+6. **BQ query fix** — V19 augmentation correlated subquery rewritten to self-join + APPROX_QUANTILES.
 
-```bash
-# 2025-26 season
-PYTHONPATH=. python ml/experiments/season_replay_full.py \
-    --season-start 2025-11-04 --season-end 2026-02-17 \
-    --cadence 7 --rolling-train-days 42 --player-blacklist-hr 40 \
-    --avoid-familiar \
-    --save-json ml/experiments/results/replay_2526_archetypes_v2.json
+**Full details:** `docs/09-handoff/2026-03-04-SESSION-398-HANDOFF.md`
 
-# 2024-25 season
-PYTHONPATH=. python ml/experiments/season_replay_full.py \
-    --season-start 2024-11-06 --season-end 2025-04-13 \
-    --cadence 7 --rolling-train-days 42 --player-blacklist-hr 40 \
-    --avoid-familiar \
-    --save-json ml/experiments/results/replay_2425_archetypes_v2.json
+---
+
+## Tomorrow: Validate Session 399 Deployment
+
+After today's predictions run (~6 AM ET tomorrow), check:
+
+```sql
+-- 1. Verify new filter fires
+SELECT game_date, algorithm_version,
+  JSON_VALUE(rejected_json, '$.high_skew_over_block') as skew_blocked
+FROM nba_predictions.best_bets_filter_audit
+WHERE game_date >= '2026-03-04'
+
+-- 2. Verify sharp book lean signals fire
+SELECT signal_tags, real_signal_count, recommendation, player_lookup
+FROM nba_predictions.signal_best_bets_picks
+WHERE game_date >= '2026-03-04'
+  AND ('sharp_book_lean_over' IN UNNEST(signal_tags)
+    OR 'sharp_book_lean_under' IN UNNEST(signal_tags))
+
+-- 3. Verify sharp book lean rescues
+SELECT player_lookup, recommendation, edge, rescue_signal, signal_rescued
+FROM nba_predictions.signal_best_bets_picks
+WHERE game_date >= '2026-03-04'
+  AND signal_rescued = TRUE AND rescue_signal LIKE 'sharp_book%'
+
+-- 4. Check algorithm version is v399
+SELECT DISTINCT algorithm_version
+FROM nba_predictions.best_bets_filter_audit
+WHERE game_date >= '2026-03-04'
 ```
 
-**Then analyze:** Compare HR + N for each new dimension across both seasons. Find STABLE winners (HR > 55% both seasons, N >= 20 each). See Session 285 handoff for full analysis instructions.
+---
 
-### What to Look For
+## Immediate Priority: Validate Signal Rescue Performance
 
-**High-priority patterns to validate cross-season:**
+Signal rescue went live Mar 4. After ~14 days of live data, validate:
 
-| Pattern | 2425 HR (pre-backfill) | N | Potential |
-|---------|----------------------|------|-----------|
-| Low Usage UNDER | 65.9% | 660 | High volume + high HR |
-| Star 3PT UNDER | 63.2% | 310 | Specific, actionable |
-| bench_under + rest_adv combo | 61.7% | 661 | Signal combo synergy |
-| Pace+Usage Combo | 69.5% | 59 | Player archetype edge |
-| Consistent Star UNDER | 68.8% | 48 | Highest HR compound |
+```sql
+SELECT bb.rescue_signal, bb.recommendation,
+  COUNT(*) as picks,
+  COUNTIF(pa.prediction_correct) as wins,
+  ROUND(100.0 * COUNTIF(pa.prediction_correct) / COUNT(*), 1) as hr
+FROM nba_predictions.signal_best_bets_picks bb
+JOIN nba_predictions.prediction_accuracy pa
+  ON bb.player_lookup = pa.player_lookup
+  AND bb.game_date = pa.game_date
+  AND bb.system_id = pa.system_id
+WHERE bb.signal_rescued = TRUE
+  AND bb.game_date >= '2026-03-04'
+  AND pa.prediction_correct IS NOT NULL
+GROUP BY 1, 2
+ORDER BY hr DESC
+```
 
-**Anti-patterns to confirm (block if stable across seasons):**
-
-| Pattern | 2425 HR | Action |
-|---------|---------|--------|
-| 3PT Heavy OVER | 47.7% | Block in aggregator |
-| Low Usage OVER | 37.2% | Block in aggregator |
-| Volatile OVER | 42.0% | Block in aggregator |
+**Action thresholds:**
+- Any rescue tag < 52.4% on 15+ picks → remove from `RESCUE_TAGS` in `aggregator.py`
+- Overall rescued pick HR < 55% on 30+ picks → tighten rescue criteria
 
 ---
 
 ## Current State
 
-### Session 286 — Features Array Migration (Phases 1-4)
+### Fleet (15 shadow + 1 production)
 
-**21 files migrated** off `features` ARRAY to individual `feature_N_value` columns:
-- Phase 1: Column-array consistency validation added (`check_column_array_consistency()`, Check 14)
-- Phase 2: 3 P0 production files (results_exporter, ml_feature_store_processor, quick_retrain)
-- Phase 3: 3 partially-migrated files (data_loaders, training_data_loader, season_replay_full)
-- Phase 4: 12 validation/monitoring files (drift detector, audit, quality checks, SQL views)
+| Model | Framework | HR 3+ | Status |
+|-------|-----------|-------|--------|
+| `catboost_v12` (production) | CatBoost | 48.7% Feb | Interim champion, degrading |
+| `v9_low_vegas_train0106_0205` | CatBoost | 51.9% 7d | Best current model |
+| `v16_noveg_train1201_0215` | CatBoost | 70.83% backtest | Shadow |
+| `xgb_v12_noveg_s42_train1215_0208` | XGBoost | 71.7% backtest | Shadow |
+| `xgb_v12_noveg_s999_train1215_0208` | XGBoost | 69.6% backtest | Shadow |
+| `lgbm_v12_noveg_vw015_train1215_0208` | LightGBM | 66.7% backtest | Shadow |
+| + 10 more CatBoost/LightGBM shadows | | | |
 
-**New helper:** `build_feature_array_from_columns(row)` in `shared/ml/feature_contract.py` — reconstructs feature list from columns for training/augmentation code.
+### Brier Score Calibration (Latest)
 
-**Remaining:** Phases 5-8 (tool scripts, dead features f47/f50, validation run, array column removal)
+| Model | Brier 30d | Calibration |
+|-------|-----------|-------------|
+| v13_vw025 | 0.217 | Well-calibrated |
+| v12_noveg_q55_tw | 0.225 | Well-calibrated |
+| v15_noveg_vw025 | 0.229 | Well-calibrated |
+| v12_q43 | 0.247 | Decent |
+| v9 (production) | 0.287 | Decent |
+| catboost_v12_noveg_train0108 | 0.516 | Poor |
 
-### Session 285 — Deployment Fixes + Feature Store Backfill + Archetypes
+### Signal System (26 active, 24 removed)
 
-**Deployments fixed (5 services):**
-- nba-grading-service, validate-freshness, reconcile, validation-runner — all on `014f7cf8`
-- Model manifest synced: production = `catboost_v9_33f_train20251102-20260205_20260216_191144`
+**Best Bets pipeline:** `edge 3+ (or signal rescue) → negative filters → signal count >= 3 → real_sc gate → rank by edge`
 
-**Feature store backfill:**
-- `feature_N_value` columns were empty Nov 28 → Feb 11 (dual-write code only added Feb 13)
-- Backfilled 18,394 rows by extracting from `features` array blob
-- All dates now at 85-93% population (matching healthy baseline)
-- **No production impact** — model uses `features` blob which was always 100% healthy
+### Known Issues
 
-**23 new archetype dimensions (dims 24-46):** Shooting Profile, Usage Tier, Consistency, Star 3PT, Role Trajectory, Star Teammate Out, Pace x Usage, Book Disagreement, Cold Streak, Line Pricing, Game Environment, Efficiency, Compound Archetypes, Signal Combos, PPM x Tier
-
-### Session 284 — Production Implementation (DEPLOYED)
-
-| Change | P&L Impact | Status |
-|--------|-----------|--------|
-| Player blacklist (<40% HR, 8+ picks) | +$10,450 | DEPLOYED |
-| Avoid-familiar filter (6+ games vs opp) | +$1,780 | DEPLOYED |
-| Remove rel_edge>=30% filter | Positive | DEPLOYED |
-| 42-day rolling training window | +$5,370 | DEPLOYED |
-| 7-day retrain cadence | +$7,670 | DEPLOYED |
-| V12 quantile min edge to 4 | HR +5.1pp | DEPLOYED |
-| `ALGORITHM_VERSION` | `v284_blacklist_familiar_reledge` | DEPLOYED |
-
-### Model State
-- **V9 champion:** `catboost_v9_33f_train20251102-20260205_20260216_191144` — FRESH
-- **6 models total**, all active, all registered in manifest + BQ
-
-### Games resume Feb 19 (10-game slate)
-
----
-
-## Known Issues
-
-- Quantile model confidence is INVERTED (0.95 = worst tier). Needs separate calibration.
-- `dual_agree` and `model_consensus_v9_v12` have no post-fix production data yet (starts Feb 19)
-- **Dimensions 35-36 (Book Disagreement):** Uses feature_50 which is dead (always NaN). Remove or replace.
-- **feature_47 (teammate_usage_available):** Also dead. Compound archetypes using it won't fire.
+- 4 monitoring CFs stale (daily-health-check, pipeline-health-summary, validation-runner, nba-phase1-scrapers) — non-critical
+- `signal_health_daily` has duplicate rows from multiple backfills (functional, cosmetic issue)
+- PBP backfill deferred (59 dates of NBA.com PBP in GCS, not in BQ)
+- All production models degrading — shadow fleet is rebuilding
 
 ---
 
 ## Strategic Priorities
 
-### Priority 0: Complete Features Array Migration (Phases 5-8)
+### Priority 1: Validate Signal Rescue + New Signals (After 2 Weeks)
+- Check per-rescue-tag HR (especially `sharp_book_lean_over`/`under`)
+- Check `high_skew_over_block` filter rejection rate
+- Remove underperforming rescue tags if < 52.4% on 15+ picks
 
-Session 286 completed Phases 1-4. Remaining work:
+### Priority 2: Brier-Weighted Model Selection
+- Use Brier scores to weight model selection instead of raw HR
+- Requires 2 weeks of Brier data (accumulating now)
+- Walsh 2024 reference: +34.69% ROI improvement
 
-- [ ] **Phase 5:** Migrate 4 backfill/tool scripts (`bin/spot_check_features.py`, `bin/backfill-challenger-predictions.py`, `bin/backfill-v12-predictions.py`, `bin/backfill-v9-no-line-predictions.py`)
-- [ ] **Phase 6:** Implement dead features — f47 `teammate_usage_available` (SUM usage_rate for OUT teammates) and f50 `multi_book_line_std` (STDDEV of prop lines across books). Update `feature_contract.py` source mappings.
-- [ ] **Phase 7:** Comprehensive validation — run `feature_store_validator --days 90`, `audit_feature_store.py`, spot checks. Verify f47/f50 populated for recent dates.
-- [ ] **Phase 8:** Remove array column (after 2+ weeks stable) — stop dual-writing, drop `features`/`feature_names` columns, remove `EXPECTED_FEATURE_COUNT`
+### Priority 3: Signal Combo Expansion
+- `sharp_book_lean_over` + `high_scoring_environment_over` potential SYNERGISTIC combo
+- Need N>=20 overlap before registering
 
-See `docs/09-handoff/2026-02-17-SESSION-286-HANDOFF.md` for full details.
+### Priority 4: Model Retraining
+- Production model is stale (27+ days)
+- Use 56-day training window (validated sweet spot)
+- Vegas weight 0.15x (cross-session validated)
 
-### Priority 1: Archetype Replay Analysis — IN PROGRESS
-- [ ] Re-run both season replays with backfilled feature data (commands above)
-- [ ] Cross-season analysis: find stable winners (HR > 55% both seasons, N >= 20)
-- [ ] Identify signal combos worth operationalizing
-- [ ] Confirm anti-patterns (Volatile OVER, Low Usage OVER, 3PT Heavy OVER)
-- [ ] Remove dead dimensions (35-36 Book Disagreement, fix feature_47 references)
-
-### Priority 2: Feb 19 Validation (Day-of)
-- [ ] Run `/validate-daily` on Feb 19 morning
-- [ ] Verify all 6 models generate predictions for 10 games
-- [ ] Verify `player_blacklist` field in signal-best-bets JSON
-- [ ] Check `dual_agree` and `model_consensus_v9_v12` in signal evaluations
-- [ ] Check `xm_*` cross-model subsets generate picks
-- [ ] Verify `consensus_bonus` and `pick_angles` in JSON output
-
-### Priority 3: Implement Archetype Findings
-- [ ] Add confirmed stable winners as new signals or aggregator filters
-- [ ] Add confirmed anti-patterns as aggregator blocks
-- [ ] Update `ALGORITHM_VERSION` with new filters
-
-### Priority 4: Further Experiments
-- [ ] Adaptive direction gating
-- [ ] Per-model edge thresholds (V12 Q43 at edge>=4, V9 MAE at edge>=5)
-- [ ] Min training days sweep (14d/21d with 7d cadence)
-- [ ] High conviction tier in API
-
-### Completed Priorities
-- ~~Deployment drift~~ — **DONE Session 285** (5 services fixed)
-- ~~Feature store backfill~~ — **DONE Session 285** (18,394 rows)
-- ~~Archetype dimensions~~ — **DONE Session 285** (23 new dims built)
-- ~~ALL replay findings~~ — **DONE Session 284**
-- ~~Parameter sweeps~~ — **DONE Session 283**
-- ~~Experiment filters~~ — **DONE Session 282**
-- ~~Full season replay~~ — **DONE Session 280**
+### Priority 5: Signal-First UNDER Architecture
+UNDER edge is flat at 52-53% — edge doesn't discriminate UNDER quality. Signals are the only differentiator.
 
 ---
 
-## Key Session References
+## Key References
 
-- **Session 286:** Features array migration Phases 1-4 (21 files, 843 insertions). Handoff: `docs/09-handoff/2026-02-17-SESSION-286-HANDOFF.md`
-- **Session 285:** Deployment fixes, feature store backfill (18K rows), 23 archetype dimensions. Handoff: `docs/09-handoff/2026-02-17-SESSION-285-HANDOFF.md`
-- **Session 284:** Production implementation — blacklist, avoid-familiar, rel_edge removal. Handoff: `docs/09-handoff/2026-02-17-SESSION-284-HANDOFF.md`
-- **Session 283:** 40 experiments — Cad7+Roll42+BL40+AvoidFam = +$92,470, 60.3% HR
-- **Session 280-282:** Season replay engine + experiment filters + cross-season validation
-
-**Project docs:**
-- **Season replay findings:** `docs/08-projects/current/season-replay-analysis/00-FINDINGS.md`
-- **Multi-model architecture:** `docs/08-projects/current/multi-model-best-bets/00-ARCHITECTURE.md`
+- **Session 399 handoff:** `docs/09-handoff/2026-03-04-SESSION-398-HANDOFF.md` (covers 398+399)
 - **Signal inventory:** `docs/08-projects/current/signal-discovery-framework/SIGNAL-INVENTORY.md`
+- **External research:** `docs/08-projects/current/external-research-angles/00-FINDINGS.md`
+- **Calendar regime:** `docs/08-projects/current/calendar-regime-analysis/00-FINDINGS.md`
+- **Session learnings:** `docs/02-operations/session-learnings.md`
