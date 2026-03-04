@@ -51,7 +51,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v399_skew_filter'
+ALGORITHM_VERSION = 'v400_signal_first_under'
 
 # Base signals that fire on nearly every edge 5+ pick. Picks with ONLY
 # these signals hit 57.1% (N=42) vs 77.8% for picks with 4+ signals.
@@ -59,6 +59,19 @@ ALGORITHM_VERSION = 'v399_skew_filter'
 # combo_he_ms, combo_3way, book_disagreement, etc.) are what separate
 # profitable picks from marginal ones.
 BASE_SIGNALS = frozenset({'model_health', 'high_edge', 'edge_spread_optimal'})
+
+# Session 400: UNDER signal quality weights for signal-first ranking.
+# UNDER edge is flat at 52-53% across all buckets — signals are the quality
+# discriminator. Weights derived from backtest HR (higher HR = higher weight).
+UNDER_SIGNAL_WEIGHTS: Dict[str, float] = {
+    'sharp_book_lean_under': 3.0,   # 84.7% HR (N=202)
+    'book_disagreement': 2.5,        # 93.0% HR (N=43)
+    'bench_under': 2.0,              # 76.9% HR
+    'home_under': 1.5,               # 63.9% HR
+    'extended_rest_under': 1.5,      # 61.8% HR
+    'starter_under': 1.0,            # 54.8-68.1% HR
+}
+UNDER_EDGE_TIEBREAKER = 0.1  # Edge as minor tiebreaker for UNDER
 
 # Session 372: Teams with catastrophic UNDER HR (edge 3+, Dec 1+, N>=190).
 # High-variance offenses where scoring exceeds expectations.
@@ -659,9 +672,19 @@ class BestBetsAggregator:
             if xm_factors and pred.get('recommendation') == xm_factors.get('majority_direction'):
                 consensus_bonus = xm_factors.get('consensus_bonus', 0)
 
-            # Composite score = edge (primary ranking signal)
-            # Signal/combo context is tracked but doesn't influence ranking
-            composite_score = round(pred_edge, 4)
+            # Session 400: Direction-aware composite scoring.
+            # OVER: edge is the primary quality discriminator (higher edge = better).
+            # UNDER: edge is flat at 52-53% across all buckets. Use weighted
+            # signal quality score instead, with edge as minor tiebreaker.
+            under_signal_quality = None
+            if pred.get('recommendation') == 'UNDER':
+                real_signal_tags = [t for t in tags if t not in BASE_SIGNALS]
+                under_signal_quality = sum(
+                    UNDER_SIGNAL_WEIGHTS.get(t, 1.0) for t in real_signal_tags
+                )
+                composite_score = round(under_signal_quality + pred_edge * UNDER_EDGE_TIEBREAKER, 4)
+            else:
+                composite_score = round(pred_edge, 4)
 
             # Qualifying subsets (Session 279)
             player_subsets = self._qualifying_subsets.get(key, [])
@@ -678,6 +701,7 @@ class BestBetsAggregator:
                 'signal_rescued': signal_rescued,
                 'rescue_signal': rescue_signal,
                 'composite_score': composite_score,
+                'under_signal_quality': under_signal_quality,
                 'matched_combo_id': matched.combo_id if matched else None,
                 'combo_classification': matched.classification if matched else None,
                 'combo_hit_rate': matched.hit_rate if matched else None,

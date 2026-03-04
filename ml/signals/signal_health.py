@@ -536,15 +536,35 @@ def _fill_regime_duration(
 
 
 def write_health_rows(bq_client: bigquery.Client, rows: List[Dict]) -> int:
-    """Write signal health rows to BigQuery using batch load."""
+    """Write signal health rows to BigQuery using DELETE-before-INSERT.
+
+    Session 400: Added dedup — deletes existing rows for the target date
+    before appending. Prevents duplicate rows from reruns/backfills.
+    Pattern copied from model_performance.py:455-491.
+    """
     if not rows:
         return 0
 
-    job_config = bigquery.LoadJobConfig(
+    # DELETE existing rows for this date before writing
+    target_date = rows[0]['game_date']
+    delete_query = f"DELETE FROM `{TABLE_ID}` WHERE game_date = @target_date"
+    delete_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+        ]
+    )
+    delete_job = bq_client.query(delete_query, job_config=delete_config)
+    delete_job.result(timeout=60)
+    deleted = delete_job.num_dml_affected_rows or 0
+    if deleted > 0:
+        logger.info(f"Deleted {deleted} existing rows for {target_date}")
+
+    # WRITE_APPEND the new rows
+    load_config = bigquery.LoadJobConfig(
         write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
         create_disposition=bigquery.CreateDisposition.CREATE_NEVER,
     )
-    load_job = bq_client.load_table_from_json(rows, TABLE_ID, job_config=job_config)
+    load_job = bq_client.load_table_from_json(rows, TABLE_ID, job_config=load_config)
     load_job.result(timeout=60)
     logger.info(f"Wrote {len(rows)} signal health rows to {TABLE_ID}")
     return len(rows)
