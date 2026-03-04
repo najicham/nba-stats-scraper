@@ -633,6 +633,43 @@ V18_NOVEG_CONTRACT = ModelFeatureContract(
 )
 
 
+# -----------------------------------------------------------------------------
+# V19 Model Contract (55 features - V12 + scoring_skewness_last_10)
+# Session 399: Tests if scoring distribution skewness improves predictions.
+# The model has mean (points_avg) + variance (points_std) but NOT the 3rd
+# moment (skewness). Right-skewed players have mean > median, causing
+# systematic OVER over-prediction when books set lines at median.
+# Experiment only — not in feature store until validated.
+# Based on V12 (not V18) because V12_NOVEG is the proven base.
+# -----------------------------------------------------------------------------
+
+V19_FEATURE_NAMES: List[str] = V12_FEATURE_NAMES + [
+    # 54: Scoring skewness — Pearson's median skewness over last 10 games
+    # Positive = right-skewed (mean > median), negative = left-skewed
+    "scoring_skewness_last_10",
+]
+
+V19_CONTRACT = ModelFeatureContract(
+    model_version="v19",
+    feature_count=55,
+    feature_names=V19_FEATURE_NAMES,
+    description="CatBoost V19 - 55 features, V12 + scoring skewness (3rd moment of scoring distribution)"
+)
+
+V19_NOVEG_FEATURE_NAMES: List[str] = [
+    name for name in V19_FEATURE_NAMES if name not in (
+        "vegas_points_line", "vegas_opening_line", "vegas_line_move", "has_vegas_line"
+    )
+]
+
+V19_NOVEG_CONTRACT = ModelFeatureContract(
+    model_version="v19_noveg",
+    feature_count=51,
+    feature_names=V19_NOVEG_FEATURE_NAMES,
+    description="CatBoost V19 No-Vegas - 51 features (55 minus 4 vegas), with scoring skewness"
+)
+
+
 # =============================================================================
 # CONTRACT REGISTRY
 # =============================================================================
@@ -656,6 +693,8 @@ MODEL_CONTRACTS: Dict[str, ModelFeatureContract] = {
     "v17_noveg": V17_NOVEG_CONTRACT,
     "v18": V18_CONTRACT,
     "v18_noveg": V18_NOVEG_CONTRACT,
+    "v19": V19_CONTRACT,
+    "v19_noveg": V19_NOVEG_CONTRACT,
     "catboost_v8": V8_CONTRACT,
     "catboost_v9": V9_CONTRACT,
     "catboost_v10": V10_CONTRACT,
@@ -667,6 +706,7 @@ MODEL_CONTRACTS: Dict[str, ModelFeatureContract] = {
     "catboost_v16": V16_NOVEG_CONTRACT,
     "catboost_v17": V17_NOVEG_CONTRACT,
     "catboost_v18": V18_NOVEG_CONTRACT,
+    "catboost_v19": V19_NOVEG_CONTRACT,
 }
 
 

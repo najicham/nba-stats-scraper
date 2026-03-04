@@ -358,16 +358,17 @@ python bin/monitoring/grading_gap_detector.py        # Grading gaps (auto: daily
 - Meta-monitoring: `daily-health-check` CF verifies freshness of `model_performance_daily`, `signal_health_daily`, and `phase_completions`
 - Model registry: `python bin/validation/validate_model_registry.py` — checks duplicates, orphans, GCS consistency
 - Workflow health: `python bin/validation/validate_workflow_dependencies.py` — detects workflows monitoring disabled scrapers
+- **Brier score calibration** (Session 399): `model_performance_daily` has `brier_score_7d/14d/30d`. Lower = better calibrated. Backfill: `PYTHONPATH=. python ml/analysis/model_performance.py --backfill --start 2025-11-02`
 
 **Slack:** `#deployment-alerts` (2h), `#canary-alerts` (30min), `#nba-alerts` (self-healing, grading, decay)
 
 ## Signal System [Keyword: SIGNALS]
 
-**24 active signals** (24 removed/disabled). **Edge-first architecture** — signals are for filtering and annotation, not selection.
+**26 active signals** (24 removed/disabled). **Edge-first architecture** — signals are for filtering and annotation, not selection.
 
 **Best Bets:** `edge 3+ (or signal rescue) → negative filters → signal count ≥ 3 → real_sc gate (OVER: real_sc>0, UNDER edge<7: real_sc>0) → rank by edge`
 
-**Signal Rescue (Session 398):** Picks below edge 3.0 (or OVER below 5.0) can bypass edge floors if they have a validated high-HR signal or 2+ real (non-base) signals. Rescued picks are tracked via `signal_rescued` + `rescue_signal` in BQ. Rescue tags: `combo_3way`, `combo_he_ms`, `book_disagreement` (72% HR edge 0-3), `home_under` (75%), `low_line_over` (66.7%), `volatile_scoring_over` (66.7%), `high_scoring_environment_over` (100% edge 3-5). Signal stacking: 2+ real signals = 62.2% HR (N=45).
+**Signal Rescue (Session 398):** Picks below edge 3.0 (or OVER below 5.0) can bypass edge floors if they have a validated high-HR signal or 2+ real (non-base) signals. Rescued picks are tracked via `signal_rescued` + `rescue_signal` in BQ. Rescue tags: `combo_3way`, `combo_he_ms`, `book_disagreement` (72% HR edge 0-3), `home_under` (75%), `low_line_over` (66.7%), `volatile_scoring_over` (66.7%), `high_scoring_environment_over` (100% edge 3-5), `sharp_book_lean_over` (70.3%), `sharp_book_lean_under` (84.7%). Signal stacking: 2+ real signals = 62.2% HR (N=45).
 
 **SC Architecture (Session 397):** `real_sc` = non-base signal count. Base signals (model_health, high_edge, edge_spread_optimal) fire on ~100% of picks, inflating SC to 3 with zero discriminative power. All SC-based filters use `real_sc` instead of total SC.
 
@@ -388,6 +389,7 @@ python bin/monitoring/grading_gap_detector.py        # Grading gaps (auto: daily
 14. **Opponent depleted UNDER**: `UNDER + 3+ opponent stars out` (44.4% HR N=207, Session 374b)
 15. **Q4 scorer UNDER block**: `UNDER + Q4_ratio >= 0.35` (34.0% HR N=359, from BDL play-by-play, Session 397)
 16. **Friday OVER block**: `OVER + Friday` (37.5% HR best bets N=8, 53.0% raw N=443, Session 398)
+17. **High skew OVER block**: `OVER + mean_median_gap > 2.0` (49.1% HR, right-skewed scoring distribution, Session 399)
 
 ### Active Signals
 
@@ -415,6 +417,8 @@ python bin/monitoring/grading_gap_detector.py        # Grading gaps (auto: daily
 | `q4_scorer_over` | OVER | 64.4% | PRODUCTION (Session 397, from BDL PBP Q4 ratio) |
 | `denver_visitor_over` | OVER | 67.8% | PRODUCTION (Session 398, altitude effect for visiting players) |
 | `day_of_week_over` | OVER | 66-70% | PRODUCTION (Session 398, Mon/Thu/Sat OVER boost) |
+| `sharp_book_lean_over` | OVER | 70.3% | PRODUCTION (Session 399, sharp books 1.5+ higher than soft) |
+| `sharp_book_lean_under` | UNDER | 84.7% | PRODUCTION (Session 399, soft books 1.5+ higher than sharp) |
 | `blowout_recovery` | OVER | 50.0% | DISABLED (Session 349) |
 | `b2b_fatigue_under` | UNDER | 39.5% Feb | DISABLED (Session 373) |
 | `prop_line_drop_over` | OVER | 53.3% Feb | DISABLED (Session 374b) |

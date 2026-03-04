@@ -108,6 +108,9 @@ def build_default_registry() -> SignalRegistry:
     from ml.signals.denver_visitor_over import DenverVisitorOverSignal
     from ml.signals.day_of_week_over import DayOfWeekOverSignal
 
+    # Session 399 signals
+    from ml.signals.sharp_book_lean import SharpBookLeanOverSignal, SharpBookLeanUnderSignal
+
     registry = SignalRegistry()
     registry.register(ModelHealthSignal())
     registry.register(HighEdgeSignal())
@@ -185,5 +188,9 @@ def build_default_registry() -> SignalRegistry:
     # Session 398 signals
     registry.register(DenverVisitorOverSignal())
     registry.register(DayOfWeekOverSignal())
+
+    # Session 399 signals
+    registry.register(SharpBookLeanOverSignal())
+    registry.register(SharpBookLeanUnderSignal())
 
     return registry

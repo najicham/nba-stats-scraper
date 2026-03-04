@@ -51,7 +51,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v398_signal_rescue'
+ALGORITHM_VERSION = 'v399_skew_filter'
 
 # Base signals that fire on nearly every edge 5+ pick. Picks with ONLY
 # these signals hit 57.1% (N=42) vs 77.8% for picks with 4+ signals.
@@ -185,6 +185,7 @@ class BestBetsAggregator:
             'opponent_under_block': 0,
             'q4_scorer_under_block': 0,
             'friday_over_block': 0,
+            'high_skew_over_block': 0,
             'signal_density': 0,
             'legacy_block': 0,
             'model_profile_would_block': 0,
@@ -297,11 +298,14 @@ class BestBetsAggregator:
                 # - low_line_over: 66.7% HR at edge 0-3 (N=6)
                 # - volatile_scoring_over: 66.7% HR at edge 0-3 (N=6)
                 # - high_scoring_environment_over: 100% HR at edge 3-5 (N=7)
+                # - sharp_book_lean_over: 70.3% HR (N=508, Session 399)
+                # - sharp_book_lean_under: 84.7% HR (N=202, Session 399)
                 rescue_tags = {
                     'combo_3way', 'combo_he_ms',
                     'book_disagreement', 'home_under',
                     'low_line_over', 'volatile_scoring_over',
                     'high_scoring_environment_over',
+                    'sharp_book_lean_over', 'sharp_book_lean_under',
                 }
                 for r in signal_check:
                     if r.qualifies and r.source_tag in rescue_tags:
@@ -529,6 +533,16 @@ class BestBetsAggregator:
                 except (ValueError, TypeError):
                     pass
 
+            # High skew OVER block (Session 399): OVER + mean_median_gap > 2.0 = 49.1% HR.
+            # Right-skewed scoring distributions cause model to predict mean while books
+            # set lines at median. When mean >> median, OVER is systematically over-predicted.
+            mean_median_gap = pred.get('mean_median_gap') or 0
+            if (pred.get('recommendation') == 'OVER'
+                    and mean_median_gap > 2.0):
+                filter_counts['high_skew_over_block'] += 1
+                _record_filtered(pred, 'high_skew_over_block', pred_edge)
+                continue
+
             # High book std UNDER block (Session 377): UNDER + multi_book_line_std 1.0-1.5 = 14.8% HR (N=142).
             # When books disagree significantly on the line, UNDER predictions are unreliable.
             book_std = pred.get('multi_book_line_std') or 0
@@ -715,6 +729,8 @@ class BestBetsAggregator:
             logger.info(f"Q4 scorer UNDER block: skipped {filter_counts['q4_scorer_under_block']} UNDER picks with Q4 ratio >= 0.35 (34.0% HR)")
         if filter_counts['friday_over_block'] > 0:
             logger.info(f"Friday OVER block: skipped {filter_counts['friday_over_block']} OVER picks on Friday (37.5% HR at best bets)")
+        if filter_counts['high_skew_over_block'] > 0:
+            logger.info(f"High skew OVER block: skipped {filter_counts['high_skew_over_block']} OVER picks with mean-median gap > 2.0 (49.1% HR)")
         if filter_counts['signal_density'] > 0:
             logger.info(f"Signal density filter: skipped {filter_counts['signal_density']} base-only picks")
         if filter_counts['legacy_block'] > 0:

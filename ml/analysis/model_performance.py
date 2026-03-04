@@ -265,10 +265,53 @@ def compute_for_date(bq_client: bigquery.Client, target_date: date,
         AND bb.source_model_id IS NOT NULL
       GROUP BY bb.source_model_id
     )
+    -- Session 399: Brier score calibration tracking.
+    -- Measures calibration quality: how well the model's implied edge maps to
+    -- actual win probability. Lower = better calibrated. Formula:
+    -- AVG((edge_normalized - actual_correct)^2) where edge_normalized =
+    -- LEAST(ABS(predicted_points - line_value) / 15.0, 1.0).
+    -- 15.0 normalizer chosen because edge 15+ = virtually certain (~1.0 prob).
+    -- Well-calibrated models should have Brier scores in 0.15-0.25 range.
+    brier_stats AS (
+      SELECT
+        system_id AS model_id,
+        -- 7d Brier score
+        AVG(CASE WHEN game_date > DATE_SUB(@target_date, INTERVAL 7 DAY) THEN
+          POWER(
+            LEAST(ABS(predicted_points - line_value) / 15.0, 1.0)
+            - CASE WHEN prediction_correct THEN 1.0 ELSE 0.0 END,
+            2
+          )
+        END) AS brier_score_7d,
+        -- 14d Brier score
+        AVG(CASE WHEN game_date > DATE_SUB(@target_date, INTERVAL 14 DAY) THEN
+          POWER(
+            LEAST(ABS(predicted_points - line_value) / 15.0, 1.0)
+            - CASE WHEN prediction_correct THEN 1.0 ELSE 0.0 END,
+            2
+          )
+        END) AS brier_score_14d,
+        -- 30d Brier score
+        AVG(
+          POWER(
+            LEAST(ABS(predicted_points - line_value) / 15.0, 1.0)
+            - CASE WHEN prediction_correct THEN 1.0 ELSE 0.0 END,
+            2
+          )
+        ) AS brier_score_30d
+      FROM `nba-props-platform.nba_predictions.prediction_accuracy`
+      WHERE game_date BETWEEN @window_start AND @target_date
+        AND ABS(predicted_points - line_value) >= 3
+        AND system_id IN UNNEST(@model_ids)
+        AND prediction_correct IS NOT NULL
+      GROUP BY system_id
+    )
     SELECT mds.*, bbs.bb_n_14d, bbs.bb_hr_14d, bbs.bb_n_21d, bbs.bb_hr_21d,
-           bbs.bb_over_hr_21d, bbs.bb_under_hr_21d, bbs.bb_filter_pass_rate
+           bbs.bb_over_hr_21d, bbs.bb_under_hr_21d, bbs.bb_filter_pass_rate,
+           bs.brier_score_7d, bs.brier_score_14d, bs.brier_score_30d
     FROM model_date_stats mds
     LEFT JOIN best_bets_stats bbs ON bbs.model_id = mds.model_id
+    LEFT JOIN brier_stats bs ON bs.model_id = mds.model_id
     """
 
     window_start = target_date - timedelta(days=30)
@@ -378,6 +421,10 @@ def compute_for_date(bq_client: bigquery.Client, target_date: date,
             'best_bets_over_hr_21d': round(row.bb_over_hr_21d, 1) if getattr(row, 'bb_over_hr_21d', None) is not None else None,
             'best_bets_under_hr_21d': round(row.bb_under_hr_21d, 1) if getattr(row, 'bb_under_hr_21d', None) is not None else None,
             'best_bets_filter_pass_rate': round(row.bb_filter_pass_rate, 3) if getattr(row, 'bb_filter_pass_rate', None) is not None else None,
+            # Session 399: Brier score calibration tracking
+            'brier_score_7d': round(row.brier_score_7d, 4) if getattr(row, 'brier_score_7d', None) is not None else None,
+            'brier_score_14d': round(row.brier_score_14d, 4) if getattr(row, 'brier_score_14d', None) is not None else None,
+            'brier_score_30d': round(row.brier_score_30d, 4) if getattr(row, 'brier_score_30d', None) is not None else None,
             'computed_at': now.isoformat(),
         })
 
@@ -528,9 +575,10 @@ def main():
             over_str = f"OVER {r['rolling_hr_over_7d']}% N={r['rolling_n_over_7d']}" if r.get('rolling_hr_over_7d') is not None else ""
             under_str = f"UNDER {r['rolling_hr_under_7d']}% N={r['rolling_n_under_7d']}" if r.get('rolling_hr_under_7d') is not None else ""
             bb_str = f"BB {r['best_bets_hr_21d']}% N={r['best_bets_n_21d']}" if r.get('best_bets_hr_21d') is not None else ""
+            brier_str = f"Brier 7d={r['brier_score_7d']}" if r.get('brier_score_7d') is not None else ""
             print(f"  {r['model_id']}: {r['rolling_hr_7d']}% HR 7d "
                   f"(N={r['rolling_n_7d']}), state={r['state']}"
-                  f"  {over_str}  {under_str}  {bb_str}")
+                  f"  {over_str}  {under_str}  {bb_str}  {brier_str}")
     else:
         parser.print_help()
 

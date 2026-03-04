@@ -548,6 +548,39 @@ def query_predictions_with_supplements(
         logger.warning(f"Failed to query opponent stars out: {e}")
         team_stars_out = {}
 
+    # Session 399: Mean-median gap for high_skew_over_block filter.
+    # Players with right-skewed scoring (mean >> median) have inflated OVER
+    # predictions because the model predicts mean but books set lines at median.
+    # mean_median_gap > 2.0 = 49.1% OVER HR — below breakeven.
+    skew_query = f"""
+    WITH player_last_10 AS (
+      SELECT
+        player_lookup,
+        points,
+        ROW_NUMBER() OVER (
+          PARTITION BY player_lookup ORDER BY game_date DESC
+        ) AS rn
+      FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
+      WHERE game_date >= '2025-10-22'
+        AND game_date < @target_date
+        AND minutes_played > 0
+    )
+    SELECT
+      player_lookup,
+      AVG(points) - APPROX_QUANTILES(points, 100)[OFFSET(50)] AS mean_median_gap
+    FROM player_last_10
+    WHERE rn <= 10
+    GROUP BY player_lookup
+    HAVING COUNT(*) >= 5
+    """
+    try:
+        skew_rows = bq_client.query(skew_query, job_config=job_config).result(timeout=30)
+        skew_map = {row['player_lookup']: float(row['mean_median_gap']) for row in skew_rows}
+        logger.info(f"Loaded mean-median gap for {len(skew_map)} players")
+    except Exception as e:
+        logger.warning(f"Failed to query mean-median gap: {e}")
+        skew_map = {}
+
     # Session 397: Q4 scoring ratio from BDL play-by-play.
     # Players with high Q4 scoring ratio (35%+) have 34.0% UNDER HR (N=359) —
     # the model undershoots them because Q4 scoring isn't captured in averages.
@@ -586,6 +619,43 @@ def query_predictions_with_supplements(
     except Exception as e:
         logger.warning(f"Failed to query Q4 scoring ratios: {e}")
         q4_ratio_map = {}
+
+    # Session 399: Sharp vs soft book line lean for sharp_book_lean signal.
+    # Sharp books (FanDuel, DraftKings) set efficient lines; soft books
+    # (BetRivers, Bovada, Fliff) lag. Divergence predicts direction:
+    # sharp_lean >= 1.5 → OVER 70.3% HR (N=508)
+    # sharp_lean <= -1.5 → UNDER 84.7% HR (N=202)
+    sharp_lean_query = f"""
+    WITH latest_lines AS (
+      SELECT
+        player_lookup, bookmaker, points_line,
+        ROW_NUMBER() OVER (
+          PARTITION BY player_lookup, bookmaker
+          ORDER BY snapshot_timestamp DESC
+        ) AS rn
+      FROM `{PROJECT_ID}.nba_raw.odds_api_player_points_props`
+      WHERE game_date = @target_date
+        AND player_lookup IS NOT NULL
+        AND points_line IS NOT NULL
+    )
+    SELECT
+      player_lookup,
+      AVG(CASE WHEN bookmaker IN ('fanduel', 'draftkings') THEN points_line END)
+        - AVG(CASE WHEN bookmaker IN ('betrivers', 'bovada', 'fliff') THEN points_line END)
+        AS sharp_lean
+    FROM latest_lines
+    WHERE rn = 1
+    GROUP BY player_lookup
+    HAVING COUNT(DISTINCT CASE WHEN bookmaker IN ('fanduel', 'draftkings') THEN bookmaker END) >= 1
+       AND COUNT(DISTINCT CASE WHEN bookmaker IN ('betrivers', 'bovada', 'fliff') THEN bookmaker END) >= 1
+    """
+    try:
+        sharp_lean_rows = bq_client.query(sharp_lean_query, job_config=job_config).result(timeout=30)
+        sharp_lean_map = {row['player_lookup']: float(row['sharp_lean']) for row in sharp_lean_rows if row['sharp_lean'] is not None}
+        logger.info(f"Loaded sharp book lean for {len(sharp_lean_map)} players")
+    except Exception as e:
+        logger.warning(f"Failed to query sharp book lean: {e}")
+        sharp_lean_map = {}
 
     predictions = []
     supplemental_map: Dict[str, Dict] = {}
@@ -828,6 +898,13 @@ def query_predictions_with_supplements(
 
         # Q4 scoring ratio for q4_scorer_under_block filter (Session 397)
         pred['q4_scoring_ratio'] = q4_ratio_map.get(row_dict['player_lookup'], 0)
+
+        # Mean-median gap for high_skew_over_block filter (Session 399)
+        pred['mean_median_gap'] = skew_map.get(row_dict['player_lookup'], 0)
+
+        # Sharp book lean for sharp_book_lean_over/under signals (Session 399)
+        sbl = sharp_lean_map.get(row_dict['player_lookup'])
+        pred['sharp_book_lean'] = float(sbl) if sbl is not None else None
 
         # Compute consecutive negative +/- streak for pre-filter (Session 294)
         # neg_3plus + UNDER = 13.1% HR (N=84) — catastrophic anti-pattern

@@ -78,6 +78,8 @@ from shared.ml.feature_contract import (
     V17_FEATURE_NAMES,
     V18_CONTRACT,
     V18_FEATURE_NAMES,
+    V19_CONTRACT,
+    V19_FEATURE_NAMES,
     FEATURE_DEFAULTS,
     FEATURE_STORE_FEATURE_COUNT,
     FEATURE_STORE_NAMES,
@@ -204,10 +206,10 @@ def parse_args():
 
     # Feature set selection
     parser.add_argument('--feature-set', choices=[
-                           'v9', 'v10', 'v11', 'v12', 'v13', 'v14', 'v15', 'v16', 'v17', 'v18',
-                           'v12_noveg', 'v16_noveg', 'v17_noveg', 'v18_noveg',
+                           'v9', 'v10', 'v11', 'v12', 'v13', 'v14', 'v15', 'v16', 'v17', 'v18', 'v19',
+                           'v12_noveg', 'v16_noveg', 'v17_noveg', 'v18_noveg', 'v19_noveg',
                        ], default='v9',
-                       help='Feature set to use (v9=33, v12=54, v16=56, v17=59, v18=60, v12_noveg=50, v16_noveg=52, v17_noveg=55, v18_noveg=56 features)')
+                       help='Feature set to use (v9=33, v12=54, v16=56, v17=59, v18=60, v19=55, v12_noveg=50, v16_noveg=52, v17_noveg=55, v18_noveg=56, v19_noveg=51 features)')
 
     # Line source for evaluation
     parser.add_argument('--use-production-lines', action='store_true', default=True,
@@ -1762,6 +1764,139 @@ def augment_v15_features(client, df):
     return df
 
 
+def augment_v19_features(client, df):
+    """Augment training/eval DataFrame with V19 scoring skewness feature.
+
+    Session 399: Adds scoring_skewness_last_10 — Pearson's median skewness
+    coefficient computed over the player's last 10 games prior to each game_date.
+
+    Formula: 3 * (mean - median) / stddev
+
+    Positive = right-skewed (occasional high games inflate mean above median).
+    This is the 3rd moment of the scoring distribution — orthogonal to mean (feature 1)
+    and std (feature 3) which the model already has.
+
+    Based on V12 champion — does NOT require V13-V18 augmentation.
+
+    Args:
+        client: BigQuery client
+        df: DataFrame with player_lookup, game_date columns
+
+    Returns:
+        DataFrame with scoring_skewness_last_10 column added
+    """
+    if df.empty:
+        return df
+
+    if 'player_lookup' not in df.columns:
+        print("  WARNING: No player_lookup column — skipping V19 augmentation")
+        return df
+
+    min_date = df['game_date'].min()
+    max_date = df['game_date'].max()
+    lookback_date = (pd.to_datetime(str(min_date)) - pd.Timedelta(days=60)).strftime('%Y-%m-%d')
+
+    v19_query = f"""
+    WITH game_points AS (
+        SELECT
+            player_lookup,
+            game_date,
+            CAST(points AS FLOAT64) AS points,
+            -- Rolling stats over last 10 games (excluding current)
+            AVG(CAST(points AS FLOAT64)) OVER (
+                PARTITION BY player_lookup ORDER BY game_date
+                ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING
+            ) AS points_mean_l10,
+            STDDEV_POP(CAST(points AS FLOAT64)) OVER (
+                PARTITION BY player_lookup ORDER BY game_date
+                ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING
+            ) AS points_std_l10,
+            COUNT(*) OVER (
+                PARTITION BY player_lookup ORDER BY game_date
+                ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING
+            ) AS games_l10
+        FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
+        WHERE game_date >= '{lookback_date}'
+          AND game_date <= '{max_date}'
+          AND minutes_played > 0
+    ),
+    -- Need median separately (APPROX_QUANTILES requires GROUP BY, not window)
+    -- Use PERCENTILE_CONT for exact median via window
+    with_median AS (
+        SELECT
+            gp.player_lookup,
+            gp.game_date,
+            gp.points_mean_l10,
+            gp.points_std_l10,
+            gp.games_l10,
+            -- Median via subquery: get prior 10 games' points
+            (
+                SELECT APPROX_QUANTILES(sub.points, 2)[OFFSET(1)]
+                FROM (
+                    SELECT s2.points
+                    FROM `{PROJECT_ID}.nba_analytics.player_game_summary` s2
+                    WHERE s2.player_lookup = gp.player_lookup
+                      AND s2.game_date < gp.game_date
+                      AND s2.game_date >= DATE_SUB(gp.game_date, INTERVAL 60 DAY)
+                      AND s2.minutes_played > 0
+                    ORDER BY s2.game_date DESC
+                    LIMIT 10
+                ) sub
+            ) AS points_median_l10
+        FROM game_points gp
+        WHERE gp.game_date BETWEEN '{min_date}' AND '{max_date}'
+          AND gp.games_l10 >= 5
+    )
+    SELECT
+        player_lookup,
+        game_date,
+        -- Pearson's median skewness: 3 * (mean - median) / stddev
+        SAFE_DIVIDE(
+            3.0 * (points_mean_l10 - points_median_l10),
+            points_std_l10
+        ) AS scoring_skewness_last_10
+    FROM with_median
+    WHERE points_std_l10 > 0
+    """
+
+    print("  V19: Querying scoring skewness features...")
+    v19_data = client.query(v19_query).to_dataframe()
+
+    # Build lookup dict keyed by (player_lookup, game_date_str)
+    v19_lookup = {}
+    for _, row in v19_data.iterrows():
+        key = (row['player_lookup'], pd.to_datetime(row['game_date']).strftime('%Y-%m-%d'))
+        skew = float(row['scoring_skewness_last_10']) if row['scoring_skewness_last_10'] is not None and not pd.isna(row['scoring_skewness_last_10']) else np.nan
+        v19_lookup[key] = skew
+    print(f"  V19: Lookup built ({len(v19_lookup)} rows)")
+
+    # Write as named column — prepare_features() fallback reads it by name
+    matched = 0
+    for idx in range(len(df)):
+        row = df.iloc[idx]
+        game_date_str = pd.to_datetime(row['game_date']).strftime('%Y-%m-%d')
+        key = (row['player_lookup'], game_date_str)
+
+        skew_val = v19_lookup.get(key, np.nan)
+        if not (isinstance(skew_val, float) and np.isnan(skew_val)):
+            matched += 1
+
+        df.at[df.index[idx], 'scoring_skewness_last_10'] = skew_val
+
+    total = len(df)
+    print(f"  V19 augmentation: {matched}/{total} ({100*matched/total:.0f}%) rows matched skewness data")
+
+    # Report distribution stats
+    non_nan = df['scoring_skewness_last_10'].notna().sum()
+    if non_nan > 0:
+        vals = df['scoring_skewness_last_10'].dropna()
+        print(f"  V19 skewness stats: mean={vals.mean():.3f}, std={vals.std():.3f}, "
+              f"min={vals.min():.3f}, max={vals.max():.3f}, "
+              f"coverage={non_nan}/{total} ({100*non_nan/total:.0f}%)")
+
+    return df
+
+
 def prepare_features(df, contract=V9_CONTRACT, exclude_features=None):
     """
     Prepare feature matrix using NAME-BASED extraction (not position-based).
@@ -2535,7 +2670,10 @@ def main():
         print(f"  Auto-upgraded feature_set to v16 (--v16-features)")
 
     # Select feature contract based on --feature-set
-    if args.feature_set == 'v18':
+    if args.feature_set == 'v19':
+        selected_contract = V19_CONTRACT
+        selected_feature_names = V19_FEATURE_NAMES
+    elif args.feature_set == 'v18':
         selected_contract = V18_CONTRACT
         selected_feature_names = V18_FEATURE_NAMES
     elif args.feature_set == 'v17':
@@ -2795,6 +2933,18 @@ def main():
         print("\nAugmenting with V14 features (5 engineered FG% signals)...")
         df_train = augment_v14_features(client, df_train)
         df_eval = augment_v14_features(client, df_eval)
+
+    # V19: V12 augmentation first (V19 extends V12), then add 1 scoring skewness feature
+    if args.feature_set == 'v19':
+        print("\nAugmenting with V11 features (star_teammates_out, game_total_line)...")
+        df_train = augment_v11_features(client, df_train)
+        df_eval = augment_v11_features(client, df_eval)
+        print("\nAugmenting with V12 features (15 new features)...")
+        df_train = augment_v12_features(client, df_train)
+        df_eval = augment_v12_features(client, df_eval)
+        print("\nAugmenting with V19 features (scoring skewness)...")
+        df_train = augment_v19_features(client, df_train)
+        df_eval = augment_v19_features(client, df_eval)
 
     # V15: V12 augmentation first (V15 extends V12, not V13/V14), then add 2 player profile features
     if args.feature_set == 'v15':
