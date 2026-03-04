@@ -97,50 +97,12 @@ nba-stats-scraper/
 
 ## ML Model [Keyword: MODEL]
 
-| Property | Value |
-|----------|-------|
-| System ID | `catboost_v12` (interim champion since 2026-02-23) |
-| Previous Champion | `catboost_v9` (BLOCKED — 37.4% Feb HR, demoted Session 332) |
-| Production Model | `catboost_v12_50f_huber_rsm50_train20251102-20260131_20260213_213149` |
-| Training | 2025-11-02 to 2026-01-31 (**27 days stale as of Feb 27**) |
-| Edge 3+ HR | 48.7% Feb live — BELOW BREAKEVEN |
-| Status | ALL PRODUCTION MODELS DEGRADING — shadow fleet rebuilding (Session 350) |
+**Fleet:** 10+ enabled shadow models (CatBoost, LightGBM, XGBoost). No single production champion — best bets aggregates across all enabled models per player.
 
-**15 enabled shadow models** (12 CatBoost + 2 LightGBM + 1 V16) + 1 production. Worker supports LightGBM (Session 350) and V16 feature set (Session 356). Session 364: Fixed Firestore duplicate path (`_mode` not set on duplicate Pub/Sub), deployed auto-retry-processor (34 days stale, hitting wrong endpoint).
-
-**Session 365 filter improvements (deployed):**
-- **Model HR-weighted selection**: Per-model rolling 14d HR scales edge in per-player ROW_NUMBER. V9 at 44% gets 0.80x weight, 55%+ models get 1.0x. Prevents stale models from winning selection.
-- **AWAY block expanded**: v9 AWAY now blocked (48.1% HR, N=449). Was only v12_noveg.
-- **Multi-model blacklist**: Default changed to aggregate across ALL models (was champion-only). Players escaping via non-champion models now caught.
-
-**February decline diagnosis (Session 348):** Best bets HR dropped from 73.1% (Jan) to 60.5% (Feb). Root causes: (1) OVER predictions collapsed 80%→58%, specifically Starters OVER 90%→33%, (2) full-vegas architecture failing at 54.5% vs noveg at 100% (N=6), (3) edge quality weakened from 7.2→5.4, (4) all models past 21-day shelf life. **Session 370 adversarial validation:** `usage_spike_score` explains 47% of Dec-Jan → Feb drift (collapsed 1.14→0.28). AUC=0.99 — near-perfect discrimination. Seasonal pattern as rotations stabilize.
-
-**Live fleet health (Mar 3):**
-- `v9_low_vegas_train0106_0205`: 51.9% HR 7d (N=52) — best model, barely below breakeven
-- **`v16_noveg_train1201_0215`**: (Session 357) — 70.83% backtest HR edge 3+ (OVER 88.9%, UNDER 60.0%).
-- Session 343-344 models (q55_tw, q55, q57, v9_lv): Accumulating data
-- Session 348 `q55_tw_train0105_0215` (68% backtest): Accumulating data
-- **LightGBM** (3 models): `lgbm_v12_noveg_train0103_0227` (enabled), `lgbm_v12_noveg_vw015_train1215_0208` (66.7% HR, best MAE 4.84, Session 397)
-- **XGBoost** (2 models, Session 397): `xgb_v12_noveg_s42_train1215_0208` (71.7% HR), `xgb_v12_noveg_s999_train1215_0208` (69.6% HR). 5-seed validated (mean 65.9%, StdDev 4.5pp). XGBoost insensitive to vegas weight (vw015 = vw025).
-- `v12_noveg_q43_train0104_0215`: DISABLED Session 350 — 14.8% HR live (catastrophic UNDER)
-
-**LightGBM models (Session 350):** First alternative framework. Genuine feature diversity from CatBoost (`points_avg_season` dominates vs CatBoost's `line_vs_season_avg`). Precision models — fewer edge 3+ picks but higher quality.
-- `lgbm_v12_noveg_train1102_0209`: 73.3% backtest HR, OVER 75%, UNDER 71%
-- `lgbm_v12_noveg_train1201_0209`: 67.7% backtest HR, OVER 80%, UNDER 62%
-
-**V16 model (Session 357):** Adds 2 deviation-from-line features (`over_rate_last_10`, `margin_vs_line_avg_last_5`) to V12_NOVEG base. 52 features total. Feature store schema: `v2_57features` (57 columns). Backfilled Dec 1 → Feb 27.
-- `catboost_v16_noveg_train1201_0215`: 70.83% backtest HR edge 3+, OVER 88.9%, UNDER 60.0%
-
-**Vegas weight experiment (Session 359):** Systematic 12-experiment matrix testing vegas influence. Key finding: **optimal vegas weight is 0.25x** (not 1.0x default). At 0.25x, vegas_points_line drops from #1 feature (22.8%) to #8 (2.7%), `points_avg_season` dominates (28.1%), UNDER HR improves from 50% → 60%. New shadow models:
-- `catboost_v12_train1201_0215`: V12 vegas=0.25 weight, **75.0% HR edge 3+ (OVER 100%, UNDER 60.0%)**
-- `catboost_v16_noveg_rec14_train1201_0215`: V16 noveg + 14-day recency, **69.0% HR edge 3+ (OVER 81.8%, UNDER 61.1%)** — best UNDER model
-
-**Session 365 promising experiments (need more eval data):**
-- **Tier-weighted (v12_noveg_tierwt_vw025)**: 70.73% HR (N=41), OVER 90.9%, UNDER 63.3%. Star=2.0, starter=1.2, role=0.8, bench=0.5. Failed only sample size.
-- **V13 shooting (v13_vw025)**: 65.79% HR (N=38), OVER 84.6%, UNDER 56.0%. MAE improved to 5.08. 6 new shooting features add signal.
-- **60d window (v12_noveg_60d_vw025)**: 60.87% HR (N=23). Promising but tiny sample.
-
-**CRITICAL:** Use edge >= 3 filter. 73% of predictions have edge < 3 and lose money.
+**Key settings:**
+- V12_NOVEG is the strongest base feature set. Adding features consistently hurts.
+- Optimal vegas weight: 0.15-0.25x. 56-day training window is sweet spot.
+- Edge >= 3 filter is critical — 73% of predictions below edge 3 lose money.
 
 ### Model Governance
 
@@ -148,56 +110,21 @@ nba-stats-scraper/
 **NEVER deploy a model without explicit user approval at each step.**
 **Training is NOT deploying.** Use `/model-experiment` to train. Deployment requires separate user sign-off.
 
-**Governance gates** (enforced in `quick_retrain.py`):
-1. Duplicate check: blocks if same training dates exist
-2. Vegas bias: pred_vs_vegas within +/- 1.5
-3. High-edge (3+) hit rate >= 60%
-4. Sample size >= 50 graded edge 3+ bets
-5. No critical tier bias (> +/- 5 points)
-6. MAE improvement vs baseline
-
-**Key lessons:**
-- Lower MAE does NOT mean better betting (4.12 MAE crashed HR to 51.2% due to UNDER bias)
-- **NEVER use in-sample predictions as training data for a second model** (88% apparent vs 56% real HR)
-- **Edge Classifier (Model 2) does not add value** (AUC < 0.50)
+**Governance gates** (enforced in `quick_retrain.py`): Duplicate check, Vegas bias ±1.5, HR >= 60% at edge 3+, N >= 50 graded, no tier bias > ±5, MAE improvement.
 
 **Process:** Train → Gates pass → Upload to GCS → Register → Shadow 2+ days → Promote
-**Post-retrain verification:** `quick_retrain.py` auto-verifies registration + warns on duplicate families (Session 334). Run `python bin/validation/validate_model_registry.py` after any manual registry edits.
+**Registry:** `./bin/model-registry.sh list|production|validate|sync`. After GCS manifest changes, run `sync`.
+**Deactivation:** `python bin/deactivate_model.py MODEL_ID [--dry-run] [--re-export]`
 **Rollback:** `gcloud run services update prediction-worker --region=us-west2 --update-env-vars="CATBOOST_V9_MODEL_PATH=gs://..."`
 
-### Model Registry & Retraining
-
-```bash
-./bin/model-registry.sh list|production|validate|sync
-./bin/retrain.sh --promote              # Full retrain + promote
-./bin/retrain.sh --dry-run              # Preview
-```
-
-**After updating `manifest.json` in GCS, run `./bin/model-registry.sh sync`.**
-
-7-day cadence, 42-day rolling window. `retrain-reminder` CF runs Mon 9 AM ET (Slack + SMS). Urgency: ROUTINE (7-10d), OVERDUE (11-14d), URGENT (15d+).
-
-**Dead ends (don't revisit):** Grow policy, CHAOS+quantile, residual mode, two-stage pipeline, Edge Classifier, Huber loss (47.4% HR), recency weighting (33.3%), lines-only training (20%), min-PPG filter (33.3%), 96-day window, Q43+Vegas (20% HR edge 5+, catastrophic UNDER compounding), RSM 0.5 with v9_low_vegas (hurts HR), 87-day training window (too much old data dilutes signal), min-data-in-leaf 25/50 (kills feature diversity, top 2 features = 64-68%), Q60 quantile (generates OVER volume but not profitably — 50% OVER HR), health gate on raw model HR (blocked profitable multi-model filtered best bets — removed Session 347), blowout_recovery signal (50% HR 7-7 in best bets, 25% in Feb — disabled Session 349), no-vegas binary classifier (AUC 0.507 = random — features predict points not over/under), tier models on 42-day window (star: 244, starter: 933 — insufficient per-tier samples), starter tier model Dec 1 window (1/6 gates, Vegas bias +2.49, can't predict outside trained tier), noveg Q43 on fresh data (14.8% HR live — 0/54 UNDER, catastrophic compounding confirmed again), LightGBM Q55 (non-deterministic — swung 62%→52% between runs, MAE variants are stable), V16 Q55 quantile (53.3% HR — worse than MAE on same window, confirmed Session 365: 48.9% HR), V16 wide eval Feb 1-27 (55.9% — Feb degradation dilutes signal), V16 Nov 1 training start (92-day window too broad — 55.9% HR), anchor-line training (predict actual-prop_line: collapses feature importance, only 9 edge 3+ picks, UNDER 33.3%), V16 deviation features alone (61.5% vs V12's 73.7% — hurt quality, only work combined with recency), recency on well-calibrated models (V12 vegas=0.25 went 75%→59% with recency — don't add recency to models already performing well), vegas weight < 0.25 (0.1x UNDER 54.5% — worse than 0.25x at 60%), V17 opportunity risk features (blowout_minutes_risk, minutes_volatility_last_10, opponent_pace_mismatch — all <1% feature importance, 56.7% HR noveg, 58.1% with vegas=0.25 vs V12's 75% — model doesn't find signal in opportunity risk), LightGBM+vw025 (54.9% HR, N=51 — UNDER 50% below breakeven, Session 365), category weight dampening (composite=0.25/derived=0.25 — +4.2pp on current season seed 42 but fails cross-season at 61.4% vs 66.7%, increases variance 3.0pp vs 2.2pp StdDev, NOT significant across 5 seeds, Session 369), W6+dampening stacking (dampening hurts tight windows — 70-73% vs 75.4% baseline, Session 369), edge calibration isotonic regression (flat edge→P(win) at raw prediction level ~51% everywhere — filter stack does real selection, Session 370), derived feature D11 expected_scoring_possessions (amplifies usage_spike_score drift — hurt model 62.8% vs 68.6%, Session 370), derived feature D12 rolling_zscore_5v10 (<1% importance, no signal, Session 370), timezone proxy C9 (arena_timezone ALL NULL — no data), referee pace C10 (nbac_referee_game_assignments empty for 2025-26 — scraper pipeline broken), CatBoost uncertainty/virtual ensembles (Q1-Q4 gap reversed on 4/5 seeds — seed 42 was noise, Session 370), usage_spike_score exclusion (66.2% HR vs 68.6% baseline — model already handles drift internally, Session 370), usage_spike_score downweight=0.1 (65.3% vs 68.6% — same conclusion, Session 370), tier weights star=2.0/starter=1.2/role=0.8/bench=0.3 (ZERO effect — identical HR to baseline on same window across all 5 seeds, Session 370), extended rest 4+d OVER block (54.5% HR N=44, above breakeven — original research used wrong feature column feature_36=breakout_flag not days_rest, Session 372), NOP/SAC UNDER block (original research said 23-27% — BQ validation showed NOP not in worst 15, SAC at 55.4% — research was wrong, Session 372), Friday filter (N=14 too small, Session 372), prop_line_drop_over raw HR (49.2% — losing at raw prediction level, Session 372), ft_rate_bench_over raw HR (44.4% — never reaches best bets, Session 372), b2b_fatigue_under signal (39.5% Feb HR N=410, boosts losing pattern — only 3 best bets picks total, disabled Session 373), near-zero scoring_trend_slope UNDER block (50.4% raw but best bets already filters to 60% on N=5 — existing filter stack handles it, Session 373), IND UNDER toxic opponent (25.3% is Feb-only, overall 50.0% N=282 — doesn't meet full-period block threshold, Session 373), 2+ stars_out block (48.3% raw but best bets N=14 at 60% — filter stack already handles, Session 373), adversarial noise on usage_spike_score=0.2 (hurts UNDER 64.1%→55.6%, Session 374), stacked residual on catboost_v8 (47.37% HR N=95 — learns noise, Session 374), percentile features for drift-prone features (per-game-date percentile ranks — CatBoost tree splits already handle distributions, all 7 pctile features <2% importance, -2.76pp HR vs baseline, UNDER hurt -6.68pp, 5-seed validated, Session 374), OVER recovery via Q55/exclude-USS/reweight-categories (all worse than baseline MAE — Q55 61.5% OVER, exclude-USS 50.0% OVER, reweight 55.6% OVER vs baseline 63.6%, Session 374), familiar_matchup threshold lower to 4 (4+ games = 61.1% HR — filtering PROFITABLE picks, Session 374), low CV UNDER filter (CV<0.15 = 40.7% raw but N=3 at best bets with 66.7% HR — filter stack already handles, Session 374), adaptive signal floor by regime (Feb SC=3 at 57.1% still above breakeven — no SC bucket below breakeven in Feb, SC=4+ also collapses to 58-60% Feb, Session 374), slate size filter (light slate N=6 total at best bets — too rare to implement, Session 374), time slot x direction filter (worst=primetime UNDER 55.2% raw — nothing below 45% threshold, Session 374), model agreement signal (2+ models = 92.3% HR but N=13, 12/13 from Jan only, all already high-edge picks — redundant with high_edge signal, Session 374), F2 season avg > line by 3+ OVER filter (62.5% HR N=16 in best bets — above breakeven, Session 374), F3 avg implied total 108-115 OVER filter (80% HR N=5 — above breakeven in best bets, Session 374), F4 mid 3PT 15-30% OVER filter (50% HR N=4 — tiny sample, at breakeven, Session 374), direction-specific models (OVER-only/UNDER-only regression — feature distributions identical between outcomes, binary classifier AUC=0.507, circular dependency at prediction time, Session 376), dynamic edge threshold by model age (no monotonic HR decline with age — calendar date is the confound, model went 59%→83% weeks 2-4 in Jan then 55% at week 8 in Feb, Session 376), window-based ensemble 35d/42d/63d (all 64-66% HR, same feature set = no diversity, averaging near-identical predictions adds nothing, Session 376), line-range-specific edge floors (Low OVER 73% / Mid 65% / High 62% in best bets — all above breakeven, filter stack already handles differences, Session 376), post-ASB-only training (only 637 samples — insufficient, need 2,000+, Session 376), XGBoost with version mismatch (trained v3.1.2 loaded v2.0.2 — predictions ~8.6pts too low, ALL UNDER, poisoned best bets, Session 378c), XGBoost+V13 features (63.64% HR — vegas leaks through V13 shooting features, Session 397), XGBoost vegas weight insensitivity (vw015 = vw025 = 71.7% — unlike CatBoost/LightGBM where 0.15-0.25 matters, Session 397), V13+Huber5 combo (62.0% — loss function and features interact non-linearly, no additive gain, Session 396), large spread starters UNDER (56.2% HR N=283 — BELOW baseline 58.4%, larger spreads show WORSE UNDER not better, starter UNDER drops from 61.1% small spreads to 56.6% at spread 8+, Session 398), timezone crossing UNDER block (2+ hour tz diff = 53.2% — barely above breakeven, not strong enough for filter, Session 398), V19 scoring_skewness_last_10 model feature (not in top 10 importance, CatBoost ignores it — same early-stopping iteration/loss as V12_NOVEG, 63.16% HR edge 3+ N=38 vs 66% target, works better as filter high_skew_over_block, Session 399).
+**Dead ends:** See `docs/06-reference/model-dead-ends.md` — 80+ tested approaches that don't work.
 
 ### Cross-Model Monitoring
 
-10 layers prevent shadow models from silently failing:
-1. **Model sanity guard** (aggregator) — blocks models with >95% same-direction predictions (Session 378c)
-2. **Signal exporter disabled model filter** — filters picks from disabled models before writing to `signal_best_bets_picks` (Session 386)
-3. **Published picks disabled model detection** — marks locked picks from disabled models as `model_disabled` in `best_bets_published_picks` (Session 386)
-4. `reconcile-yesterday` Phase 9 — next-day gap detection
-5. `validate-daily` Phase 0.486 — same-day early warning
-6. Pipeline canary auto-heal — automated every 30 min
-7. **Decay detection state machine** — HEALTHY→WATCH→DEGRADING→BLOCKED with Slack alerts (daily 11 AM ET)
-8. **Query-level disabled model exclusion** (supplemental_data.py) — disabled/blocked + hardcoded legacy models excluded from per-player selection (Session 391)
-9. **Filter dominance warning** (aggregator.py) — logs WARNING when any single filter rejects >50% of candidates (Session 391)
-10. **Model registry consistency check** (daily-health-check) — detects unregistered system_ids producing predictions (Session 391)
+10 layers prevent shadow models from silently failing. Key ones: model sanity guard (>95% same-direction blocked), disabled model filter in exporter, decay state machine (HEALTHY→WATCH→DEGRADING→BLOCKED), filter dominance warnings, registry consistency checks.
 
-**Filter audit trail:** `nba_predictions.best_bets_filter_audit` — per game_date rejection counts. Query: `SELECT * FROM best_bets_filter_audit WHERE game_date >= CURRENT_DATE() - 7 ORDER BY game_date DESC`
-
-**Deactivation CLI:** `python bin/deactivate_model.py MODEL_ID [--dry-run] [--re-export]` — cascades disable through registry, predictions, signal picks, and audit trail (Session 386).
-
-**KNOWN GAP:** BLOCKED models are NOT auto-disabled — requires manual `deactivate_model.py`. Signal firing is NOT monitored — signals can die silently. See `docs/08-projects/current/fleet-lifecycle-automation/00-PLAN.md` for automation plan (Session 387).
+**Filter audit:** `SELECT * FROM best_bets_filter_audit WHERE game_date >= CURRENT_DATE() - 7`
+**KNOWN GAP:** BLOCKED models not auto-disabled — requires manual `deactivate_model.py`.
 
 ## Breakout Classifier [Keyword: BREAKOUT]
 
@@ -296,47 +223,26 @@ WHERE game_date >= CURRENT_DATE() - 3 GROUP BY 1 ORDER BY 1 DESC;
 | Partition filter 400 | Add `WHERE game_date >= ...` |
 | Silent BQ write 0 records | Use `{project}.{dataset}.{table}` pattern |
 | Cloud Function imports | Run symlink validation, fix shared/ paths |
-| Stale batch blocks `/start` | Check `/status`, then `/reset` |
 | `features[OFFSET(N)]` | **Use `feature_N_value` columns instead** |
 | BDL scraper 0 records | EXPECTED — BDL intentionally disabled |
 | Orchestrator not triggering P3 | NOT a bug — Phase 3 uses direct Pub/Sub |
 | Docker cache stale deploy | `./bin/hot-deploy.sh SERVICE` |
-| Coordinator backfill timeout | Increase timeout to 900s; player loader exceeds 540s on 11+ game days |
-| Phase 3 partial game processing | Quality check filters invalid teams (0 pts/FGA) instead of rejecting all. Slack alert fires + canary auto-heals. |
-| Team boxscore zeros for in-progress games | EXPECTED — scraper writes placeholders. Filtered at processing time (Session 302). |
 | Cloud Function env vars | Use `gcloud functions describe FUNC`, not `gcloud run services describe`. CFs are NOT Cloud Run services. |
-| **minScale drift on deploy** | **Deploy scripts now set `--min-instances` explicitly. Orchestrators + prediction services = 1, others = 0 (Session 338).** |
 | **Phase 6 trigger message format** | Use `{"export_types": ["signal-best-bets"], "target_date": "2026-02-24"}` — NOT `game_date`. See `phase6_export/main.py`. |
-| **SQL escape `\_` in Python** | BigQuery LIKE doesn't need backslash-escaping underscores. Use `%_q4%` not `%\\_q4%`. |
-| **Trends page stale data** | `trends-tonight` was missing from `phase6-hourly-trends` scheduler. Fixed Session 349. If stale again, check scheduler export_types include `trends-tonight`. |
-| **auto-retry-processor stale** | No Cloud Build trigger — must deploy manually. Check with: `gcloud functions describe auto-retry-processor --region=us-west2 --format='value(updateTime)'` |
-| **Phase 6 re-export wipes picks** | Fixed Session 371: DELETE now preserves started-game picks (game_status >= 2). |
-| **Bovada inflates book_disagreement** | Fixed Session 371: Bovada excluded from feature 50 (multi_book_line_std). 73.6% outlier rate, 2.15 avg deviation. |
-| **Feature 41 spread_magnitude ALL ZEROS** | Fixed Session 374b: Spread query took median of BOTH sides (+4/-4 = 0). Filter `outcome_point <= 0` for spreads. Requires feature store backfill + retrain. |
-| **prop_line_drop_over conceptually backward** | DISABLED Session 374b: Line drops are BEARISH for OVER (39.1% Feb HR). Replaced by `line_rising_over` (96.6% HR). |
-| **XGBoost version mismatch** | Session 378c: Model trained with xgboost==3.1.2, production had 2.0.2. Predictions ~8.6pts too low, ALL UNDER with inflated edges. **Fix**: Pin identical versions in training env and production requirements.txt. Version check added to quick_retrain.py. Model sanity guard added to aggregator. |
-| **Disabled model still in best bets** | Use `python bin/deactivate_model.py MODEL_ID` — cascades: disable registry + deactivate predictions + remove signal picks + audit. Session 386 also added defense-in-depth: signal exporter filters disabled models, all exporter marks locked picks as `model_disabled`, published-only picks get graded. |
-| **Model sanity guard** | Session 378c: aggregator.py now blocks models with >95% same-direction predictions on 20+ preds. Prevents miscalibrated model from dominating via inflated edges. |
-| **Signal silently dead** | Session 387: Signals can die when external dependencies change (champion model dies, feature normalization differs from threshold). Check `signal_health_daily` for missing signals. Two patterns: (1) `prev_prop_lines` CTE queried dead champion → `prop_line_delta` always NULL, (2) threshold on wrong scale (raw 102 vs normalized 0-1). |
-| **Signal depends on champion model** | `supplemental_data.py` prev_prop_lines CTE was model-specific. Fixed Session 387: removed `system_id` filter. Prop lines are bookmaker lines, not model-dependent. Also broke `line_jumped_under`, `line_dropped_under`, `line_dropped_over` filters. |
-| **Feature normalization mismatch** | Feature store values are normalized 0-1. Signal thresholds must match. `fast_pace_over` had `MIN_OPPONENT_PACE=102` on 0-1 data — could never fire. Always check `feature_N_value` distributions before setting thresholds. |
-| **deactivate_model.py column error** | Fixed Session 387: referenced `updated_at` (doesn't exist in model_registry). Always check schema before writing UPDATE queries. |
-| **Negative edge in signal_best_bets_picks** | Fixed Session 387: UNDER picks stored as negative (predicted - line). Now stores `abs(edge)`. Use `ABS(edge)` in queries on historical data before 2026-03-02. |
-
-| **Auto-deploy cascade (V17/V18 features)** | Session 388: Auto-deploy from docs commit picked up V17/V18 feature code that was never deployed. 4 bugs: (1) `feature_60_value` BQ write failure — truncate to `FEATURE_COUNT`, (2) quality capped at 69 — `calculate_quality_score()` uses `len(feature_sources)` not `FEATURE_COUNT`, truncate before scoring, (3) `FEATURE_VERSION = 'v2_60features'` rejected by worker whitelist — use `v2_54features`, (4) worker missing `pyyaml` — add to `requirements-lock.txt`. |
 | **Worker requirements-lock.txt** | Worker Dockerfile uses `requirements-lock.txt`, NOT `requirements.txt`. Always update the lock file for dependency changes. |
-| **Quality scorer FEATURE_COUNT mismatch** | `quality_scorer.py` has `FEATURE_COUNT = 54`, `ml_feature_store_processor.py` has `FEATURE_COUNT = 60`. Quality scorer's `calculate_quality_score()` uses `len(feature_sources)` which can exceed both. Truncate feature_sources before passing to quality scorer. |
-| **Legacy model selection drain (0 best bets)** | Session 391: Hardcoded `catboost_v12`/`catboost_v9` in worker.py bypass registry. They won per-player selection for 77% of candidates → all blocked by `LEGACY_MODEL_BLOCKLIST` → 0 best bets. **Fix**: (1) Added legacy models to registry as `disabled`, (2) defense-in-depth in `supplemental_data.py` excludes disabled + hardcoded legacy models, (3) filter dominance warning in `aggregator.py` alerts when any filter rejects >50%, (4) `player_blacklist.py` excludes disabled models from HR calculation. Worker env vars `ENABLE_LEGACY_V9`/`ENABLE_LEGACY_V12` (default false) gate legacy model loading. |
-| **Filter dominance undetected** | Session 391: A single filter (`legacy_block`) rejected 77% of candidates for multiple days with no alert. **Fix**: `aggregator.py` now logs WARNING when any filter rejects >50% of candidates. `best_bets_filter_audit` BQ table persists filter rejection counts per game_date for retroactive analysis. |
-| **Unregistered models producing predictions** | Session 391: `daily-health-check` now checks all `system_id`s producing predictions have corresponding registry entries. Unregistered models bypass enable/disable controls. |
+| **Feature normalization mismatch** | Feature store values are normalized 0-1. Signal thresholds must match. Always check `feature_N_value` distributions before setting thresholds. |
+| **Signal silently dead** | Signals can die when dependencies change. Check `signal_health_daily` for missing signals. Common: wrong threshold scale (raw vs 0-1), dead champion dependency. |
+| **Disabled model still in best bets** | Use `python bin/deactivate_model.py MODEL_ID` — cascades through all systems. |
+| **Auto-deploy cascade** | Push to main deploys ALL services from HEAD — keep code deployable. Session 388: docs commit deployed untested feature code. |
+| **Quality scorer FEATURE_COUNT mismatch** | `quality_scorer.py` FEATURE_COUNT=54, `ml_feature_store_processor.py` FEATURE_COUNT=60. Truncate feature_sources before scoring. |
 | **Scraper date=TODAY literal** | Session 402: ConfigMixin resolved `TODAY` to literal string, not actual date. Fixed: `resolve_today()` in scraper opts. |
-| **Playwright binary missing in Docker** | `playwright` pip package ≠ Chromium binary. Add `RUN playwright install chromium --with-deps` to Dockerfile. |
-| **NumberFire → FanDuel redirect** | Domain acquired by FanDuel. Scraper uses Playwright to render React SPA at `fanduel.com/research/nba/fantasy/dfs-projections`. |
-| **VSiN AJAX-loaded data** | WordPress site loads data via AJAX. Scraper uses Playwright with `networkidle` wait. |
+| **NumberFire → FanDuel redirect** | Domain acquired by FanDuel. Scraper uses GraphQL API at `fdresearch-api.fanduel.com/graphql`. |
+| **VSiN AJAX-loaded data** | VSiN data is server-rendered at `data.vsin.com`, not AJAX. Direct HTML parsing works. |
 | **NBA Tracking stats.nba.com timeout** | Cloud IPs blocked. Install `nba_api` library (preferred path) or increase HTTP timeout to 120s with retry. |
 | **CLV scheduler wrong target** | Evening CLV scheduler was targeting legacy `nba-phase1-scrapers`. Fixed to `nba-scrapers`. |
+| **SQL escape `\_` in Python** | BigQuery LIKE doesn't need backslash-escaping underscores. Use `%_q4%` not `%\\_q4%`. |
 
-**Full troubleshooting:** `docs/02-operations/session-learnings.md`
+**Full troubleshooting:** `docs/02-operations/troubleshooting-matrix.md`, `docs/02-operations/session-learnings.md`
 
 ## Prevention Mechanisms
 
@@ -384,67 +290,18 @@ python bin/monitoring/grading_gap_detector.py        # Grading gaps (auto: daily
 
 ## Signal System [Keyword: SIGNALS]
 
-**26 active signals + 8 shadow signals** (24 removed/disabled). **Edge-first architecture** — signals are for filtering and annotation, not selection.
+**26 active signals + 8 shadow signals** (24 removed/disabled). **17 negative filters.**
+**Full inventory:** `docs/08-projects/current/signal-discovery-framework/SIGNAL-INVENTORY.md`
 
-**Shadow signals (Session 401, accumulating data):** `projection_consensus_over`, `projection_consensus_under` (2+ external projections agree with model), `projection_disagreement` (sources disagree — caution), `predicted_pace_over` (TeamRankings pace top-10 matchup), `dvp_favorable_over` (Hashtag DvP bottom-5 defense), `positive_clv_over`, `positive_clv_under` (closing line value confirms edge direction), `negative_clv_filter` (CLV contradicts — negative filter).
+**Best Bets Pipeline:** `edge 3+ (or signal rescue) → negative filters → signal_count ≥ 3 → real_sc gate → rank by edge (OVER) or signal quality (UNDER)`
 
-**Best Bets:** `edge 3+ (or signal rescue) → negative filters → signal count ≥ 3 → real_sc gate (OVER: real_sc>0, UNDER edge<7: real_sc>0) → rank by edge`
+**Key concepts:**
+- `real_sc` = non-base signal count. Base signals (model_health, high_edge, edge_spread_optimal) inflate SC to 3 with zero value. All SC gates use `real_sc`.
+- **Signal rescue** (Session 398): Picks bypass edge floors via validated high-HR signals or 2+ real signals. Tags: `combo_3way`, `combo_he_ms`, `book_disagreement`, `sharp_book_lean_*`, etc.
+- **UNDER ranking** is signal-first (Session 400): UNDER edge is flat at 52-53% — meaningless for ranking. Weighted signal quality scores rank UNDER.
+- **Shadow signals** (Session 401): projection_consensus, predicted_pace, dvp_favorable, CLV signals — accumulating data from new scrapers.
 
-**Signal Rescue (Session 398):** Picks below edge 3.0 (or OVER below 5.0) can bypass edge floors if they have a validated high-HR signal or 2+ real (non-base) signals. Rescued picks are tracked via `signal_rescued` + `rescue_signal` in BQ. Rescue tags: `combo_3way`, `combo_he_ms`, `book_disagreement` (72% HR edge 0-3), `home_under` (75%), `low_line_over` (66.7%), `volatile_scoring_over` (66.7%), `high_scoring_environment_over` (100% edge 3-5), `sharp_book_lean_over` (70.3%), `sharp_book_lean_under` (84.7%). Signal stacking: 2+ real signals = 62.2% HR (N=45).
-
-**SC Architecture (Session 397):** `real_sc` = non-base signal count. Base signals (model_health, high_edge, edge_spread_optimal) fire on ~100% of picks, inflating SC to 3 with zero discriminative power. All SC-based filters use `real_sc` instead of total SC.
-
-**Negative Filters:**
-1. Player blacklist: `<40% HR on 8+ edge-3+ picks`
-2. Avoid familiar: `6+ games vs opponent`
-3. Edge floor: `edge < 3.0` (Session 352: lowered from 5.0). Bypassed by signal rescue (Session 398).
-4. **Model-direction affinity blocking** (Session 343): Blocks model+direction+edge combos with HR < 45% on 15+ picks. V9 UNDER 5+ = 30.7% HR (N=88) — blocked. V9_low_vegas has separate affinity group (62.5% UNDER — protected).
-5. Feature quality floor: `quality < 85` (24.0% HR)
-6. Bench UNDER block: `UNDER + line < 12` (35.1% HR)
-7. UNDER + line jumped 2+: `prop_line_delta >= 2.0` (38.2% HR)
-8. UNDER + line dropped 2+: `prop_line_delta <= -2.0` (35.2% HR)
-9. Away block: REMOVED Session 401 (root cause was model staleness not structural — March AWAY noveg = 60.0% N=45)
-10. Signal density: `base-only signals → skip unless edge ≥ 7.0` (Session 352 bypass for extreme edge)
-11. **Opponent UNDER block**: `UNDER + opponent in {MIN, MEM, MIL}` (43.8-48.7% HR, Session 372)
-12. **SC=3 OVER block**: `OVER + signal_count == 3` — blocks ALL SC=3 OVER regardless of edge (45.5% HR overall, -1.6 units net loser. SC=3 UNDER 57.9% kept, Session 394)
-13. **OVER + line dropped 2+**: `OVER + prop_line_delta <= -2.0` (39.1% HR Feb N=23, Session 374b)
-14. **Opponent depleted UNDER**: `UNDER + 3+ opponent stars out` (44.4% HR N=207, Session 374b)
-15. **Q4 scorer UNDER block**: `UNDER + Q4_ratio >= 0.35` (34.0% HR N=359, from BDL play-by-play, Session 397)
-16. **Friday OVER block**: `OVER + Friday` (37.5% HR best bets N=8, 53.0% raw N=443, Session 398)
-17. **High skew OVER block**: `OVER + mean_median_gap > 2.0` (49.1% HR, right-skewed scoring distribution, Session 399)
-
-### Active Signals
-
-| Signal | Direction | HR | Status |
-|--------|-----------|-----|--------|
-| `model_health` | BOTH | 52.6% | META (not in pick_signal_tags — used for signal density only) |
-| `high_edge` | BOTH | 66.7% | PRODUCTION |
-| `edge_spread_optimal` | BOTH | 67.2% | PRODUCTION |
-| `combo_he_ms` | OVER | 94.9% | PRODUCTION |
-| `combo_3way` | OVER | 95.5% | PRODUCTION |
-| `bench_under` | UNDER | 76.9% | PRODUCTION |
-| `3pt_bounce` | OVER | 74.9% | CONDITIONAL |
-| `rest_advantage_2d` | BOTH | 64.8% | DISABLED (Session 396 — re-enable October) |
-| `line_rising_over` | OVER | 96.6% | PRODUCTION (Session 374b, fixed Session 387 — was dead due to champion dependency) |
-| `book_disagreement` | BOTH | 93.0% | WATCH |
-| `home_under` | UNDER | 63.9% | PRODUCTION (Session 371) |
-| `scoring_cold_streak_over` | OVER | 65.1% | CONDITIONAL (Session 371) |
-| `extended_rest_under` | UNDER | 61.8% | PRODUCTION (Session 372) |
-| `starter_under` | UNDER | 54.8-68.1% | PRODUCTION (Session 372) |
-| `high_scoring_environment_over` | OVER | 70.2% | CONDITIONAL (Session 373) |
-| `fast_pace_over` | OVER | 81.5% | PRODUCTION (Session 374, fixed Session 387 — threshold was raw 102 on 0-1 normalized scale) |
-| `volatile_scoring_over` | OVER | 81.5% | PRODUCTION (Session 374) |
-| `low_line_over` | OVER | 78.1% | PRODUCTION (Session 374) |
-| `b2b_boost_over` | OVER | 64.3% | PRODUCTION (Session 396, inverse of b2b_fatigue_under) |
-| `q4_scorer_over` | OVER | 64.4% | PRODUCTION (Session 397, from BDL PBP Q4 ratio) |
-| `denver_visitor_over` | OVER | 67.8% | PRODUCTION (Session 398, altitude effect for visiting players) |
-| `day_of_week_over` | OVER | 66-70% | PRODUCTION (Session 398, Mon/Thu/Sat OVER boost) |
-| `sharp_book_lean_over` | OVER | 70.3% | PRODUCTION (Session 399, sharp books 1.5+ higher than soft) |
-| `sharp_book_lean_under` | UNDER | 84.7% | PRODUCTION (Session 399, soft books 1.5+ higher than sharp) |
-| `blowout_recovery` | OVER | 50.0% | DISABLED (Session 349) |
-| `b2b_fatigue_under` | UNDER | 39.5% Feb | DISABLED (Session 373) |
-| `prop_line_drop_over` | OVER | 53.3% Feb | DISABLED (Session 374b) |
-| `ft_rate_bench_over` | OVER | 72.5% | WATCH |
+**Top signals by HR:** `combo_3way` 95.5%, `combo_he_ms` 94.9%, `line_rising_over` 96.6%, `book_disagreement` 93.0%, `sharp_book_lean_under` 84.7%, `fast_pace_over` 81.5%
 
 **Pick Angles:** Each pick includes `pick_angles` — human-readable reasoning. See `ml/signals/pick_angle_builder.py`.
 

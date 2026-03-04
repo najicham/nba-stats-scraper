@@ -1,173 +1,161 @@
 # Signal Inventory — Complete List
 
-**Last Updated:** 2026-02-16 (Session 275 — Major cleanup)
-**Total Active Signals:** 18 (10 removed in Session 275)
-**Combo Registry:** 10 entries (8 SYNERGISTIC, 2 ANTI_PATTERN)
+**Last Updated:** 2026-03-04 (Session 404)
+**Active Signals:** 26 (+ 8 shadow accumulating data)
+**Negative Filters:** 17
+**Combo Registry:** 11 SYNERGISTIC entries
 
 ---
 
-## Active Signals (18)
+## Architecture
 
-### Core Infrastructure (2)
+**Edge-first:** Signals filter and annotate picks, not select them. Rankings are by edge (OVER) or signal quality score (UNDER).
 
-| # | Signal Tag | Description | AVG HR | Status |
-|---|------------|-------------|--------|--------|
-| 1 | `model_health` | Always fires. Baseline qualifier for 2-signal min. | 52.6% | PRODUCTION |
-| 2 | `dual_agree` | V9 + V12 same direction | 45.5% (W4 only) | WATCH |
+**SC Architecture (Session 397):** `real_sc` = non-base signal count. Base signals (`model_health`, `high_edge`, `edge_spread_optimal`) fire on ~100% of picks, inflating total SC to 3 with zero discriminative power. All SC-based filters use `real_sc` instead of total SC.
 
-### Edge & Combo Signals (4)
+**Best Bets Pipeline:** `edge 3+ (or signal rescue) → negative filters → signal count ≥ 3 → real_sc gate (OVER: real_sc>0, UNDER edge<7: real_sc>0) → rank by edge`
 
-| # | Signal Tag | Description | AVG HR | Status |
-|---|------------|-------------|--------|--------|
-| 3 | `high_edge` | Edge >= 5.0 points | 66.7% | Standalone BLOCKED, combo OK |
-| 4 | `edge_spread_optimal` | Edge + conf + quality gate | 67.2% | PRODUCTION (anti-pattern detection) |
-| 5 | `combo_he_ms` | High edge + minutes surge + OVER | 94.9% | PRODUCTION (best combo) |
-| 6 | `combo_3way` | ESO + high edge + minutes surge | 78.1% | PRODUCTION (premium) |
+**Signal Rescue (Session 398):** Picks below edge 3.0 (or OVER below 5.0) bypass edge floors if they have a validated high-HR signal or 2+ real signals. Tracked via `signal_rescued` + `rescue_signal` in BQ.
 
-### Bounce & Recovery Signals (3)
+Rescue tags: `combo_3way`, `combo_he_ms`, `book_disagreement` (72%), `home_under` (75%), `low_line_over` (66.7%), `volatile_scoring_over` (66.7%), `high_scoring_environment_over` (100% edge 3-5), `sharp_book_lean_over` (70.3%), `sharp_book_lean_under` (84.7%). Signal stacking: 2+ real signals = 62.2% HR (N=45).
 
-| # | Signal Tag | Description | AVG HR | Status |
-|---|------------|-------------|--------|--------|
-| 7 | `3pt_bounce` | Cold 3PT shooter regression → OVER | 74.9% | CONDITIONAL |
-| 8 | `cold_snap` | UNDER 3+ straight → OVER (HOME-ONLY) | N/A (N=0 recent) | CONDITIONAL |
-| 9 | `blowout_recovery` | Low mins blowout → OVER (No C, No B2B) | 56.9% | WATCH |
+**UNDER ranking (Session 400):** Signal-first, not edge-first. UNDER edge is flat at 52-53% across ALL edge buckets — ranking by edge is meaningless for UNDER. Weighted signal quality score ranks UNDER picks.
 
-### Volume & Context Signals (3)
-
-| # | Signal Tag | Description | AVG HR | Status |
-|---|------------|-------------|--------|--------|
-| 10 | `minutes_surge` | Minutes last 3 > season + 3 | 53.7% | WATCH |
-| 11 | `rest_advantage_2d` | Player rested 2+ days vs fatigued opp | 64.8% | CONDITIONAL |
-| 12 | `model_consensus_v9_v12` | V9 + V12 agree, both edge >= 3 | 45.5% (W4 only) | WATCH |
-
-### Market-Pattern UNDER Signals (6) — Session 274-275
-
-Cross-season validated patterns (2023-2024 historical data). Model-agnostic — fire on player characteristics, not model output.
-
-| # | Signal Tag | Description | AVG HR | Status |
-|---|------------|-------------|--------|--------|
-| 13 | `bench_under` | Bench player (non-starter) UNDER | **76.9%** | PRODUCTION |
-| 14 | `high_ft_under` | High FT volume (FTA >= 7) UNDER | 64.1% | CONDITIONAL |
-| 15 | `b2b_fatigue_under` | B2B fatigue + high usage UNDER | **85.7%** | CONDITIONAL (N=14) |
-| 16 | `self_creator_under` | Self-creating scorer UNDER | 61.8% | WATCH |
-| 17 | `volatile_under` | High variance player (std 10+) UNDER | 60.0% | WATCH |
-| 18 | `high_usage_under` | High usage (30%+) player UNDER | 58.7% | WATCH |
+**Pick Angles:** Each pick includes `pick_angles` — human-readable reasoning. See `ml/signals/pick_angle_builder.py`.
 
 ---
 
-## Removed Signals (10) — Session 275
+## Active Signals (26)
 
-### Below Breakeven (actively harmful — gave undeserved 2-signal qualification)
+### Base/Infrastructure (3) — fire on ~100% of picks
 
-| Signal Tag | AVG HR | Total N | Problem |
-|------------|--------|---------|---------|
-| `hot_streak_2` | 45.8% | 416 | Fired on 19% of picks, net negative. Biggest false qualifier. |
-| `hot_streak_3` | 47.5% | 182 | 2/3 windows below breakeven |
-| `cold_continuation_2` | 45.8% | 130 | Never above breakeven in any window |
-| `fg_cold_continuation` | 49.6% | 55 | Catastrophic W4 decay (64.7% → 36.8%) |
+| Signal | Direction | HR | Status | Notes |
+|--------|-----------|-----|--------|-------|
+| `model_health` | BOTH | 52.6% | META | Not in pick_signal_tags — signal density only |
+| `high_edge` | BOTH | 66.7% | PRODUCTION | |
+| `edge_spread_optimal` | BOTH | 67.2% | PRODUCTION | |
 
-### Never Fire (dead code — 0 picks across all backtest windows)
+### Combo Signals (2)
 
-| Signal Tag | Notes |
-|------------|-------|
-| `pace_mismatch` | N=0 all windows |
-| `points_surge_3` | N=0 all windows |
-| `home_dog` | N=0 all windows |
-| `minutes_surge_5` | N=0 all windows |
-| `three_pt_volume_surge` | N=0 all windows |
-| `scoring_acceleration` | N=0 all windows |
+| Signal | Direction | HR | Status | Notes |
+|--------|-----------|-----|--------|-------|
+| `combo_he_ms` | OVER | 94.9% | PRODUCTION | High edge + minutes surge |
+| `combo_3way` | OVER | 95.5% | PRODUCTION | ESO + high edge + minutes surge |
 
-### Previously Removed
+### OVER Signals (12)
 
-| Signal Tag | Session | Reason |
-|------------|---------|--------|
-| `prop_value_gap_extreme` | 255 | 12.5% HR, -76.1% ROI |
-| `triple_stack` | 256 | Meta-signal with broken logic |
+| Signal | Direction | HR | Status | Notes |
+|--------|-----------|-----|--------|-------|
+| `3pt_bounce` | OVER | 74.9% | CONDITIONAL | Cold 3PT shooter regression |
+| `line_rising_over` | OVER | 96.6% | PRODUCTION | Session 374b, fixed 387 (was dead — champion dependency) |
+| `scoring_cold_streak_over` | OVER | 65.1% | CONDITIONAL | Session 371 |
+| `high_scoring_environment_over` | OVER | 70.2% | CONDITIONAL | Session 373 |
+| `fast_pace_over` | OVER | 81.5% | PRODUCTION | Session 374, fixed 387 (threshold was raw 102 on 0-1 scale) |
+| `volatile_scoring_over` | OVER | 81.5% | PRODUCTION | Session 374 |
+| `low_line_over` | OVER | 78.1% | PRODUCTION | Session 374 |
+| `b2b_boost_over` | OVER | 64.3% | PRODUCTION | Session 396, inverse of b2b_fatigue_under |
+| `q4_scorer_over` | OVER | 64.4% | PRODUCTION | Session 397, from BDL PBP Q4 ratio |
+| `denver_visitor_over` | OVER | 67.8% | PRODUCTION | Session 398, altitude effect |
+| `day_of_week_over` | OVER | 66-70% | PRODUCTION | Session 398, Mon/Thu/Sat boost |
+| `sharp_book_lean_over` | OVER | 70.3% | PRODUCTION | Session 399, sharp books 1.5+ higher than soft |
 
----
+### UNDER Signals (5)
 
-## Combo Registry (10 entries)
+| Signal | Direction | HR | Status | Notes |
+|--------|-----------|-----|--------|-------|
+| `bench_under` | UNDER | 76.9% | PRODUCTION | |
+| `home_under` | UNDER | 63.9% | PRODUCTION | Session 371 |
+| `extended_rest_under` | UNDER | 61.8% | PRODUCTION | Session 372 |
+| `starter_under` | UNDER | 54.8-68.1% | PRODUCTION | Session 372 |
+| `sharp_book_lean_under` | UNDER | 84.7% | PRODUCTION | Session 399, soft books 1.5+ higher |
 
-### SYNERGISTIC (8)
+### BOTH Direction (1)
 
-| Combo ID | Signals | Direction | HR | Score Weight | Status |
-|----------|---------|-----------|----|-------------|--------|
-| `edge_spread_optimal+high_edge+minutes_surge` | ESO + HE + MS | BOTH | 88.9% | 2.5 | PRODUCTION |
-| `high_edge+minutes_surge` | HE + MS | OVER_ONLY | 79.4% | 2.0 | PRODUCTION |
-| `bench_under` | bench_under | UNDER_ONLY | **76.9%** | 1.5 | PRODUCTION |
-| `cold_snap` | cold_snap (home) | OVER_ONLY | 93.3% | 1.5 | CONDITIONAL |
-| `b2b_fatigue_under` | b2b_fatigue_under | UNDER_ONLY | **85.7%** | 1.0 | CONDITIONAL |
-| `3pt_bounce` | 3pt_bounce (guards) | OVER_ONLY | 74.9% | 1.0 | CONDITIONAL |
-| `high_ft_under` | high_ft_under | UNDER_ONLY | 64.1% | 0.5 | CONDITIONAL |
-| `blowout_recovery` | blowout_recovery | OVER_ONLY | 56.9% | 0.5 | WATCH |
+| Signal | Direction | HR | Status | Notes |
+|--------|-----------|-----|--------|-------|
+| `book_disagreement` | BOTH | 93.0% | WATCH | |
 
-### ANTI_PATTERN (2)
+### WATCH / Special (2)
 
-| Combo ID | Signals | HR | Score Weight | Status |
-|----------|---------|-----|-------------|--------|
-| `edge_spread_optimal+high_edge` | ESO + HE (redundancy trap) | 31.3% | -2.0 | BLOCKED |
-| `high_edge` | HE standalone | 43.8% | -1.0 | BLOCKED |
-
----
-
-## Post-Cleanup Backtest Results (Session 275)
-
-### Aggregator Simulation (Top 5 picks/day)
-
-| Window | Picks | HR | ROI |
-|--------|-------|----|-----|
-| W2 (Jan 5-18) | 50 | **80.0%** | +52.7% |
-| W3 (Jan 19-31) | 65 | **78.5%** | +49.8% |
-| W4 (Feb 1-13) | 57 | **63.2%** | +20.6% |
-| **AVG** | — | **73.9%** | — |
-
-**Improvement:** 73.9% AVG HR (up from 60.3% pre-cleanup)
-
-### Key Overlap Combos (N >= 10)
-
-| Combo | N | HR | ROI |
-|-------|---|----|-----|
-| `bench_under+model_health` | 129 | **76.7%** | +46.5% |
-| `combo_3way+...+rest_advantage_2d` (7-way) | 20 | **95.0%** | +81.4% |
-| `high_edge+model_health+rest_advantage_2d` | 20 | **85.0%** | +62.3% |
-| `3pt_bounce+model_health` | 13 | 69.2% | +32.2% |
-| `high_usage_under+model_health+self_creator_under` | 13 | 69.2% | +32.2% |
+| Signal | Direction | HR | Status | Notes |
+|--------|-----------|-----|--------|-------|
+| `ft_rate_bench_over` | OVER | 72.5% | WATCH | |
+| `rest_advantage_2d` | BOTH | 64.8% | DISABLED | Session 396 — re-enable October |
 
 ---
 
-## Direction Balance (Post-Cleanup)
+## Shadow Signals (8) — Session 401, accumulating data
 
-| Direction | Signals | Notes |
-|-----------|---------|-------|
-| OVER_ONLY | 5 (combo_he_ms, combo_3way, 3pt_bounce, cold_snap, blowout_recovery) | Original core |
-| UNDER_ONLY | 6 (bench_under, high_ft_under, b2b_fatigue_under, self_creator_under, volatile_under, high_usage_under) | **New market patterns** |
-| BOTH | 7 (model_health, high_edge, ESO, dual_agree, minutes_surge, rest_advantage_2d, model_consensus_v9_v12) | Includes infrastructure |
+| Signal | Direction | Source | Notes |
+|--------|-----------|--------|-------|
+| `projection_consensus_over` | OVER | FantasyPros, DFF, Dimers, NumberFire | 2+ sources above line + OVER |
+| `projection_consensus_under` | UNDER | Same 4 sources | 2+ sources below line + UNDER |
+| `projection_disagreement` | BOTH | Same 4 sources | 0 sources agree — caution filter |
+| `predicted_pace_over` | OVER | TeamRankings pace | Top-10 pace matchup |
+| `dvp_favorable_over` | OVER | Hashtag Basketball DvP | Bottom-5 defense |
+| `positive_clv_over` | OVER | Odds API closing lines | Closing line value confirms edge |
+| `positive_clv_under` | UNDER | Odds API closing lines | CLV confirms UNDER direction |
+| `negative_clv_filter` | BOTH | Odds API closing lines | CLV contradicts — negative filter |
 
-**OVER bias resolved.** Previously 5 OVER vs 0 UNDER dedicated signals. Now 5 OVER vs 6 UNDER.
+---
+
+## Disabled / Removed Signals
+
+| Signal | HR | Disabled | Reason |
+|--------|-----|---------|--------|
+| `blowout_recovery` | 50.0% | Session 349 | 25% in Feb, not reliable |
+| `b2b_fatigue_under` | 39.5% Feb | Session 373 | Boosts losing pattern |
+| `prop_line_drop_over` | 53.3% Feb | Session 374b | Conceptually backward — line drops are bearish |
+| `dual_agree` | 45.5% | Session 275 | V9+V12 agreement anti-correlated |
+| `hot_streak_2/3` | 45-47% | Session 275 | Net negative, false qualifier |
+| `cold_continuation_2` | 45.8% | Session 275 | Never above breakeven |
+| 6 "never fire" signals | N=0 | Session 275 | Dead code — see Session 275 notes |
+
+---
+
+## Negative Filters (17)
+
+| # | Filter | Condition | HR | Session |
+|---|--------|-----------|-----|---------|
+| 1 | Player blacklist | <40% HR on 8+ edge-3+ picks | varies | — |
+| 2 | Avoid familiar | 6+ games vs opponent | varies | — |
+| 3 | Edge floor | edge < 3.0 (bypassed by rescue) | — | 352 |
+| 4 | Model-direction affinity | HR < 45% on 15+ picks for model+direction+edge combo | <45% | 343 |
+| 5 | Feature quality floor | quality < 85 | 24.0% | — |
+| 6 | Bench UNDER block | UNDER + line < 12 | 35.1% | — |
+| 7 | UNDER + line jumped 2+ | prop_line_delta >= 2.0 | 38.2% | — |
+| 8 | UNDER + line dropped 2+ | prop_line_delta <= -2.0 | 35.2% | — |
+| 9 | Away block | REMOVED Session 401 | — | 401 |
+| 10 | Signal density | base-only signals, skip unless edge ≥ 7.0 | — | 352 |
+| 11 | Opponent UNDER block | UNDER + opponent in {MIN, MEM, MIL} | 43.8-48.7% | 372 |
+| 12 | SC=3 OVER block | OVER + signal_count == 3 | 45.5% | 394 |
+| 13 | OVER + line dropped 2+ | OVER + prop_line_delta <= -2.0 | 39.1% | 374b |
+| 14 | Opponent depleted UNDER | UNDER + 3+ opponent stars out | 44.4% | 374b |
+| 15 | Q4 scorer UNDER block | UNDER + Q4_ratio >= 0.35 | 34.0% | 397 |
+| 16 | Friday OVER block | OVER + Friday | 37.5% | 398 |
+| 17 | High skew OVER block | OVER + mean_median_gap > 2.0 | 49.1% | 399 |
+
+---
+
+## Combo Registry (11 SYNERGISTIC)
+
+| Combo | Signals | Direction | HR | Status |
+|-------|---------|-----------|-----|--------|
+| `combo_3way` | ESO + HE + MS | BOTH | 95.5% | PRODUCTION |
+| `combo_he_ms` | HE + MS | OVER_ONLY | 94.9% | PRODUCTION |
+| `bench_under` | bench_under | UNDER_ONLY | 76.9% | PRODUCTION |
+| See `signal_combo_registry` BQ table for full list | | | | |
 
 ---
 
 ## Production Readiness Criteria
 
-For a signal to be promoted to production:
-
 - **Performance:** AVG HR >= 60% across eval windows
-- **Coverage:** N >= 20 picks total (statistical significance)
-- **Stability:** Doesn't crash catastrophically in W4 (decay resilience)
-- **Overlap Value:** Boosts existing signals or provides unique coverage
+- **Coverage:** N >= 20 picks total
+- **Stability:** Doesn't crash catastrophically in worst window
 - **Technical:** No data quality issues, runs without errors
 
 ---
 
-## Next Steps
-
-1. **Monitor post-Feb-19 performance** — Validate cleanup on live out-of-sample data
-2. **Re-evaluate WATCH signals** after 2+ weeks of live data
-3. **Consider promoting** `self_creator_under` and `volatile_under` if they stabilize above 60%
-4. **Implement Batch 3** (Rest/Fatigue) signals if coverage gaps identified
-5. **Multi-model aggregation** — Route UNDER signals to Q43/Q45 for model-aware scoring
-
----
-
-**Last Updated:** 2026-02-16, Session 275
-**Next Review:** After 2+ weeks post-cleanup live data (early March 2026)
+**Last Updated:** 2026-03-04, Session 404
+**Source of truth for active signals.** CLAUDE.md has a summary; this is the full reference.
