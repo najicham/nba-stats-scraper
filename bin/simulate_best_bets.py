@@ -340,15 +340,34 @@ def simulate_range(
     over_hr = (over_wins / len(over_picks) * 100) if over_picks else 0
     under_hr = (under_wins / len(under_picks) * 100) if under_picks else 0
 
-    # Signal count breakdown
+    # Signal count breakdown (use real_signal_count when available)
     sc_breakdown = {}
     for pick in all_picks:
-        sc = pick.get('signal_count', 0)
+        sc = pick.get('real_signal_count', pick.get('signal_count', 0))
         if sc not in sc_breakdown:
             sc_breakdown[sc] = {'total': 0, 'wins': 0}
         sc_breakdown[sc]['total'] += 1
         if pick.get('is_correct'):
             sc_breakdown[sc]['wins'] += 1
+
+    # Average real signal count
+    real_scs = [pick.get('real_signal_count', pick.get('signal_count', 0))
+                for pick in all_picks]
+    avg_signal_count = round(sum(real_scs) / len(real_scs), 1) if real_scs else 0
+
+    # Signal frequency and HR tracking
+    signal_freq = {}
+    for pick in all_picks:
+        tags = pick.get('signal_tags', [])
+        is_correct = pick.get('is_correct')
+        for tag in tags:
+            if tag not in signal_freq:
+                signal_freq[tag] = {'fires': 0, 'wins': 0, 'graded': 0}
+            signal_freq[tag]['fires'] += 1
+            if is_correct is not None:
+                signal_freq[tag]['graded'] += 1
+                if is_correct:
+                    signal_freq[tag]['wins'] += 1
 
     # Edge band breakdown
     edge_breakdown = {}
@@ -387,6 +406,8 @@ def simulate_range(
         'filter_totals': filter_totals,
         'zero_pick_days': zero_pick_days,
         'avg_daily_picks': round(avg_daily_picks, 2),
+        'avg_signal_count': avg_signal_count,
+        'signal_freq': signal_freq,
         'daily_results': daily_results,
     }
 
@@ -403,6 +424,7 @@ def print_results(results: Dict[str, Any]):
     print(f"  P&L (-110):        {results['pnl']:+.2f} units")
     print(f"  Zero-pick days:    {results['zero_pick_days']}/{results['game_days']}")
     print(f"  Avg daily picks:   {results['avg_daily_picks']}")
+    print(f"  Avg real SC:       {results.get('avg_signal_count', 'N/A')}")
 
     print(f"\n  Direction:")
     o = results['over']
@@ -422,6 +444,21 @@ def print_results(results: Dict[str, Any]):
         sb = results['sc_breakdown'][sc]
         sb_hr = (sb['wins'] / sb['total'] * 100) if sb['total'] > 0 else 0
         print(f"    SC={sc}: {sb['wins']}/{sb['total']} ({sb_hr:.1f}%)")
+
+    # Top signals by HR (N>=3)
+    signal_freq = results.get('signal_freq', {})
+    if signal_freq:
+        qualified = [(tag, d) for tag, d in signal_freq.items()
+                     if d['graded'] >= 3]
+        if qualified:
+            print(f"\n  Top Signals (by HR, N>=3):")
+            sorted_signals = sorted(qualified,
+                                    key=lambda x: x[1]['wins'] / max(x[1]['graded'], 1),
+                                    reverse=True)
+            for tag, d in sorted_signals[:15]:
+                sig_hr = round(100.0 * d['wins'] / d['graded'], 1)
+                print(f"    {tag:35s}  {sig_hr:5.1f}% ({d['wins']}/{d['graded']})  "
+                      f"fired {d['fires']}x")
 
     print(f"\n  Top Filter Rejections:")
     sorted_filters = sorted(results['filter_totals'].items(), key=lambda x: x[1], reverse=True)
@@ -447,6 +484,7 @@ def print_comparison(results_a: Dict, results_b: Dict):
     print(f"  {'UNDER HR':<25s} {results_a['under']['hr']:<20.1f} {results_b['under']['hr']:<20.1f}")
     print(f"  {'Zero-pick days':<25s} {results_a['zero_pick_days']:<20d} {results_b['zero_pick_days']:<20d}")
     print(f"  {'Avg daily picks':<25s} {results_a['avg_daily_picks']:<20.2f} {results_b['avg_daily_picks']:<20.2f}")
+    print(f"  {'Avg real SC':<25s} {results_a.get('avg_signal_count', 0):<20.1f} {results_b.get('avg_signal_count', 0):<20.1f}")
 
     # Statistical significance
     if results_a['total_picks'] >= 10 and results_b['total_picks'] >= 10:

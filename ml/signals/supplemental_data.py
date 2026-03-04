@@ -803,6 +803,52 @@ def query_predictions_with_supplements(
         logger.warning(f"Failed to query sharp book lean: {e}")
         sharp_lean_map = {}
 
+    # Session 404: VSiN sharp money data — handle% vs ticket% divergence.
+    # When handle (money) diverges from tickets, sharp bettors are on the money side.
+    # This is a game-level signal: over_money_pct vs over_ticket_pct.
+    vsin_query = f"""
+    SELECT away_team, home_team,
+      over_ticket_pct, under_ticket_pct,
+      over_money_pct, under_money_pct
+    FROM `{PROJECT_ID}.nba_raw.vsin_betting_splits`
+    WHERE game_date = @target_date
+      AND over_money_pct IS NOT NULL
+      AND over_ticket_pct IS NOT NULL
+    """
+    vsin_map = {}  # {(away, home): {over_money_pct, over_ticket_pct, ...}}
+    try:
+        vsin_rows = bq_client.query(vsin_query, job_config=job_config).result(timeout=30)
+        for row in vsin_rows:
+            key = (row['away_team'], row['home_team'])
+            vsin_map[key] = {
+                'over_money_pct': float(row['over_money_pct']),
+                'under_money_pct': float(row['under_money_pct']),
+                'over_ticket_pct': float(row['over_ticket_pct']),
+                'under_ticket_pct': float(row['under_ticket_pct']),
+            }
+        logger.info(f"Loaded VSiN betting splits for {len(vsin_map)} games")
+    except Exception as e:
+        logger.warning(f"Failed to query VSiN betting splits: {e}")
+
+    # Session 404: RotoWire projected minutes for minutes_surge_over signal.
+    rotowire_query = f"""
+    SELECT player_lookup, projected_minutes
+    FROM `{PROJECT_ID}.nba_raw.rotowire_lineups`
+    WHERE game_date = @target_date
+      AND projected_minutes IS NOT NULL
+      AND player_lookup IS NOT NULL
+    """
+    rotowire_minutes_map = {}
+    try:
+        rw_rows = bq_client.query(rotowire_query, job_config=job_config).result(timeout=30)
+        rotowire_minutes_map = {
+            row['player_lookup']: float(row['projected_minutes'])
+            for row in rw_rows if row['projected_minutes']
+        }
+        logger.info(f"Loaded RotoWire minutes for {len(rotowire_minutes_map)} players")
+    except Exception as e:
+        logger.warning(f"Failed to query RotoWire minutes: {e}")
+
     predictions = []
     supplemental_map: Dict[str, Dict] = {}
 
@@ -1125,6 +1171,30 @@ def query_predictions_with_supplements(
                 break
         if neg_pm_streak > 0:
             pred['neg_pm_streak'] = neg_pm_streak
+
+        # Session 404: VSiN sharp money data — game-level handle vs ticket divergence.
+        # Join via away_team/home_team from game_id parts.
+        if len(parts) >= 3:
+            vsin_data = vsin_map.get((parts[1], parts[2]))
+            if vsin_data:
+                pred['vsin_over_money_pct'] = vsin_data['over_money_pct']
+                pred['vsin_under_money_pct'] = vsin_data['under_money_pct']
+                pred['vsin_over_ticket_pct'] = vsin_data['over_ticket_pct']
+                pred['vsin_under_ticket_pct'] = vsin_data['under_ticket_pct']
+            else:
+                pred['vsin_over_money_pct'] = None
+        else:
+            pred['vsin_over_money_pct'] = None
+
+        # Session 404: RotoWire projected minutes for minutes_surge_over signal.
+        rw_minutes = rotowire_minutes_map.get(row_dict['player_lookup'])
+        pred['rotowire_projected_minutes'] = rw_minutes
+        # Compare to season avg from player_profile
+        season_minutes = supp.get('minutes_stats', {}).get('minutes_avg_season')
+        if rw_minutes and season_minutes and season_minutes > 0:
+            pred['minutes_projection_delta'] = rw_minutes - season_minutes
+        else:
+            pred['minutes_projection_delta'] = None
 
         supplemental_map[row_dict['player_lookup']] = supp
 

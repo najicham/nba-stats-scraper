@@ -1,86 +1,106 @@
-# Session 404 Handoff — Documentation Trim, Projection Consensus, CLV Fix
+# Session 404 Handoff — Shadow Signal Expansion + VSiN Sharp Money + Doc Updates
 
 **Date:** 2026-03-04 (late evening, continuation of 403)
-**Algorithm:** `v401_away_noveg_removed` (unchanged)
-**Status:** All changes committed. Awaiting verification tomorrow.
+**Algorithm:** `v404_sharp_money_shadow`
+**Status:** Code complete, all files compile. Deploy needed.
 
 ---
 
 ## Changes Made
 
-### 1. CLAUDE.md Trimmed (455 → 385 lines, 31KB → 21KB)
+### Phase 1: Documentation Trim (early Session 404)
 
-Moved detailed reference material out of CLAUDE.md into dedicated docs:
-- **ML Model section**: Cut ~85 lines. Dead ends → `docs/06-reference/model-dead-ends.md`. Fleet details, cross-model monitoring condensed.
-- **Signal System section**: Cut ~50 lines. Full signal table + negative filters → updated `SIGNAL-INVENTORY.md`.
-- **Common Issues section**: Cut ~25 lines. Kept recurring patterns, removed session-specific historical fixes (already in troubleshooting-matrix.md).
+1. **CLAUDE.md trimmed** 455 → 385 lines (31KB → 21KB)
+   - Dead ends → `docs/06-reference/model-dead-ends.md`
+   - Signal details → `SIGNAL-INVENTORY.md`
+2. **Signal Inventory** — complete rewrite (26 active + 8 shadow + 17 filters)
+3. **Model Dead Ends** — new doc with 80+ categorized dead ends
 
-### 2. Signal Inventory Updated
+### Phase 2: Shadow Signal Monitoring (Session 404 late)
 
-**File:** `docs/08-projects/current/signal-discovery-framework/SIGNAL-INVENTORY.md`
-- Complete rewrite from Session 275 (18 signals) → Session 404 (26 active + 8 shadow + 17 negative filters)
-- Added architecture section (SC, signal rescue, UNDER ranking)
-- Added shadow signals section (projection consensus, CLV, pace, DvP)
-- Added negative filters table with all 17 filters
+Added 9 shadow signals to `ACTIVE_SIGNALS` in `signal_health.py`:
+- Session 401 signals: `projection_consensus_over/under`, `predicted_pace_over`, `dvp_favorable_over`, `positive_clv_over/under`
+- Session 404 signals: `sharp_money_over/under`, `minutes_surge_over`
 
-### 3. Model Dead Ends Document Created
+These now get tracked in `signal_health_daily` and the firing canary.
 
-**File:** `docs/06-reference/model-dead-ends.md`
-- Organized 80+ dead ends by category (training approaches, feature engineering, signals, etc.)
-- Previously was a single massive paragraph in CLAUDE.md
+### Phase 3: VSiN Sharp Money Signals (NEW)
+
+**File:** `ml/signals/sharp_money.py` — 3 signal classes:
+- `sharp_money_over` — Handle >= 65% OVER + tickets <= 45% OVER
+- `sharp_money_under` — Handle >= 65% UNDER + tickets <= 45% UNDER
+- `public_fade_filter` — 80%+ tickets on OVER (negative filter, registered but not active)
+
+**Data pipeline:** VSiN query added to `supplemental_data.py`, joins via away_team/home_team from game_id. Team abbreviation format confirmed matching (3-letter tricodes).
+
+### Phase 4: RotoWire Minutes Projection Signal (NEW)
+
+**File:** `ml/signals/minutes_projection.py` — 1 signal class:
+- `minutes_surge_over` — RotoWire projected minutes >= season avg + 3
+
+**Data pipeline:** RotoWire query added to `supplemental_data.py`, joins via player_lookup.
+
+**Note:** RotoWire `projected_minutes` is currently null for all rows. The signal will gracefully no-op until data appears.
+
+### Phase 5: Pick Angle Templates
+
+Added angle templates for all 9 new shadow signals in `pick_angle_builder.py`.
 
 ---
 
-## Carried Forward from Session 403
+## Verification Results (Phase 1)
 
-These items were deployed in Session 403 and need verification tomorrow:
+| Check | Result |
+|-------|--------|
+| 7 working scrapers | All have Mar 4 data |
+| NumberFire (fixed) | Deploy succeeded, **zero BQ rows** — not triggered yet |
+| VSiN (fixed) | Deploy succeeded, **zero BQ rows** — not triggered yet |
+| NBA Tracking (fixed) | Deploy succeeded, **zero BQ rows** — not triggered yet |
+| `predicted_pace_over` | **First shadow signal fire:** 2x on Mar 4 |
+| `projection_consensus` | Not firing — NumberFire has no data yet |
+| Mar 4 best bets | 2 picks (both OVER rescued) |
+| RotoWire `projected_minutes` | Null for all rows — scraper gets lineups but not minutes |
 
-### Projection Consensus (Priority #1)
-- Expanded from 2 → 4 sources (FantasyPros, DFF, Dimers, NumberFire)
-- MIN_SOURCES_ABOVE = 2 threshold now achievable with 3 working sources
-- **Verify:** Check if `projection_consensus_over`/`under` signals fire tomorrow
-- **Query:** `SELECT signal_name, COUNT(*) FROM signal_best_bets_picks WHERE game_date = CURRENT_DATE() AND signal_name LIKE 'projection_consensus%' GROUP BY 1`
+---
 
-### CLV Pipeline (Priority #2)
-- `snapshot_type` now flows from scheduler → orchestration → scraper
-- Evening scheduler timeout updated 180s → 900s
-- **Verify tonight:** Check if closing snapshot data appears after 10 PM UTC
-- **Query:** `SELECT snapshot_type, COUNT(*) FROM nba_raw.odds_api_player_props WHERE game_date = CURRENT_DATE() GROUP BY 1`
+## Files Changed
 
-### Scraper Rewrites (from Session 403)
-- NumberFire → FanDuel GraphQL API (no Playwright)
-- VSiN → server-rendered HTML (no Playwright)
-- NBA Tracking → nba_api + proxy pool
-- Playwright removed from Docker entirely (Debian Trixie broke install)
-- **Verify:** Force-trigger each scheduler and check BQ for rows
-
-### Pick Volume Diagnosis
-- Funnel: 726 preds → 36 edge 3+ → 13 unique players → 11 pass signal gate → 2 picks
-- Signal count ≥ 3 gate is primary bottleneck — projection consensus will help
-- Pick volume expected to increase as more signals become available
+| File | Change |
+|------|--------|
+| `ml/signals/sharp_money.py` | **NEW** — 3 signal classes (137 lines) |
+| `ml/signals/minutes_projection.py` | **NEW** — 1 signal class (58 lines) |
+| `ml/signals/supplemental_data.py` | +70 lines: VSiN + RotoWire BQ queries + pred dict wiring |
+| `ml/signals/registry.py` | +17 lines: registered 4 new signals |
+| `ml/signals/signal_health.py` | +12 lines: 9 shadow signals in ACTIVE_SIGNALS |
+| `ml/signals/pick_angle_builder.py` | +11 lines: 9 pick angle templates |
+| `ml/signals/aggregator.py` | Algorithm version → `v404_sharp_money_shadow` |
+| `docs/08-projects/current/signal-discovery-framework/SIGNAL-INVENTORY.md` | Updated with Session 404 signals |
+| `docs/09-handoff/START-NEXT-SESSION-HERE.md` | Updated fleet + priorities |
 
 ---
 
 ## What to Check Next Session
 
-1. **Scraper build status** — verify deploy-nba-scrapers succeeded (Playwright removal)
-2. **NumberFire GraphQL data** — trigger `nba-numberfire-projections` scheduler, check BQ
-3. **Projection consensus signals** — after prediction run, check if signals fire
-4. **CLV closing data** — after 10 PM UTC, check for snapshot_type=closing in BQ
-5. **Pick volume** — compare picks/day with projection consensus active vs baseline
+### Immediate (before anything else)
+1. **Trigger 3 fixed scrapers** — `nba-numberfire-projections`, `nba-vsin-betting-splits`, `nba-tracking-stats` Cloud Scheduler jobs
+2. **Verify scraper data flows to BQ** — all 3 should produce rows
+3. **Confirm projection_consensus fires** — with NumberFire data, MIN_SOURCES=2 should be achievable
+4. **Check VSiN data format** — verify team abbreviations match game_id format
 
----
+### After predictions run (~6 AM ET)
+5. **Shadow signal validation query** (from SIGNAL-INVENTORY.md) — check fires for all 12 shadow signals
+6. **Algorithm version** — verify `v404_sharp_money_shadow` in `best_bets_filter_audit`
+7. **Pick volume** — compare vs Mar 4 baseline (2 picks)
 
-## Commits This Session
-
-| Hash | Description |
-|------|-------------|
-| (pending) | docs: CLAUDE.md trim + signal inventory update + model dead ends doc |
+### ~Mar 12-14 (first promotion window)
+8. **Projection consensus** N=30 check — first promotion decision
+9. **Signal rescue 14d check** — any rescue tag < 52.4% on 15+ picks → remove
 
 ---
 
 ## Key Decisions
 
-- **Reddit/social scraping is a dead end** for player props (Session 403 research confirmed)
-- **CLAUDE.md strategy:** Keep operational essentials in-file, move detailed reference to docs/ with pointers
-- **Signal inventory is the source of truth** for all signal details — CLAUDE.md has summary only
+- **All new signals start in shadow mode** — no aggregator integration until N >= 30 graded
+- **VSiN sharp money is highest-priority new signal** — handle-ticket divergence is the most validated edge in sports betting
+- **RotoWire minutes projection deferred** until `projected_minutes` field is populated
+- **Algorithm version bumped** even though shadow signals don't affect picks — tracks the code change

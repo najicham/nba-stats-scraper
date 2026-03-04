@@ -61,6 +61,17 @@ SIGNAL_ANGLE_MAP = {
     'self_creation_over': "High self-creator (50%+ unassisted FG) — scoring independence favors OVER (CONDITIONAL)",
     'sharp_line_move_over': "DraftKings line moved UP 2+ pts today — sharp money and model agree OVER (67.8% HR)",
     'sharp_line_drop_under': "DraftKings line dropped 2+ pts today — sharp money and model agree UNDER (72.4% HR)",
+    # Session 401 shadow signals
+    'projection_consensus_over': "Multiple projection sources agree player goes OVER line",
+    'projection_consensus_under': "Multiple projection sources agree player goes UNDER line",
+    'predicted_pace_over': "High predicted game pace (101+) — more possessions favor OVER",
+    'dvp_favorable_over': "Opponent defense bottom-5 at player position — favorable matchup",
+    'positive_clv_over': "Closing line moved in OVER direction — market confirms model",
+    'positive_clv_under': "Closing line moved in UNDER direction — market confirms model",
+    # Session 404 signals
+    'sharp_money_over': "Sharp money (handle) on OVER while public tickets lean UNDER",
+    'sharp_money_under': "Sharp money (handle) on UNDER while public tickets lean OVER",
+    'minutes_surge_over': "RotoWire projects 3+ extra minutes — lineup-driven scoring upside",
 }
 
 # Warning tag → warning angle

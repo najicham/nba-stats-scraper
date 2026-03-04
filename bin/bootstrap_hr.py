@@ -2,11 +2,22 @@
 """Bootstrap confidence intervals and significance tests for hit rate comparisons.
 
 Usage:
-    # Compare two hit rates
+    # Compare two hit rates (raw numbers)
     python bin/bootstrap_hr.py --a-wins 26 --a-total 32 --b-wins 52 --b-total 82
 
     # Single HR confidence interval
     python bin/bootstrap_hr.py --a-wins 26 --a-total 32
+
+    # Compare two models from BigQuery
+    PYTHONPATH=. python bin/bootstrap_hr.py \
+        --model-a catboost_v12_noveg_train0104_0215 \
+        --model-b xgb_v12_noveg_s42_train1102_0209 \
+        --start 2026-02-01 --end 2026-02-28
+
+    # Single model CI from BigQuery
+    PYTHONPATH=. python bin/bootstrap_hr.py \
+        --model-a catboost_v12_noveg_train0104_0215 \
+        --start 2026-02-01 --end 2026-02-28
 
     # Custom confidence level and iterations
     python bin/bootstrap_hr.py --a-wins 26 --a-total 32 --b-wins 52 --b-total 82 --ci 0.90 --n-bootstrap 50000
@@ -16,9 +27,39 @@ Usage:
 """
 
 import argparse
+import os
 import sys
 import numpy as np
 from scipy import stats
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+PROJECT_ID = 'nba-props-platform'
+
+
+def query_model_hr(model_id: str, start_date: str, end_date: str,
+                   min_edge: float = 3.0) -> dict:
+    """Query graded prediction results for a model from BigQuery."""
+    from google.cloud import bigquery
+    bq_client = bigquery.Client(project=PROJECT_ID)
+
+    query = f"""
+    SELECT
+      COUNTIF(prediction_correct = TRUE) as wins,
+      COUNT(*) as total,
+      COUNTIF(recommendation = 'OVER' AND prediction_correct = TRUE) as over_wins,
+      COUNTIF(recommendation = 'OVER' AND prediction_correct IS NOT NULL) as over_total,
+      COUNTIF(recommendation = 'UNDER' AND prediction_correct = TRUE) as under_wins,
+      COUNTIF(recommendation = 'UNDER' AND prediction_correct IS NOT NULL) as under_total
+    FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy`
+    WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+      AND system_id = '{model_id}'
+      AND ABS(predicted_points - line_value) >= {min_edge}
+      AND prediction_correct IS NOT NULL
+      AND is_voided IS NOT TRUE
+    """
+    row = next(bq_client.query(query).result(timeout=60))
+    return dict(row)
 
 
 def bootstrap_hr_ci(wins: int, total: int, n_bootstrap: int = 10000,
@@ -154,12 +195,46 @@ def main():
     parser.add_argument('--n-bootstrap', type=int, default=10000, help='Bootstrap iterations (default: 10000)')
     parser.add_argument('--seed', type=int, default=42, help='Random seed (default: 42)')
 
+    # BigQuery model comparison mode
+    parser.add_argument('--model-a', type=str, help='Model A system_id (queries BQ)')
+    parser.add_argument('--model-b', type=str, help='Model B system_id (queries BQ)')
+    parser.add_argument('--start', type=str, help='Start date for BQ query (YYYY-MM-DD)')
+    parser.add_argument('--end', type=str, help='End date for BQ query (YYYY-MM-DD)')
+    parser.add_argument('--min-edge', type=float, default=3.0,
+                       help='Minimum edge filter (default: 3.0)')
+
     # Power analysis mode
     parser.add_argument('--power', action='store_true', help='Run power analysis')
     parser.add_argument('--baseline-hr', type=float, help='Baseline hit rate for power analysis')
     parser.add_argument('--target-hr', type=float, help='Target hit rate for power analysis')
 
     args = parser.parse_args()
+
+    # BigQuery model mode
+    if args.model_a:
+        if not args.start or not args.end:
+            parser.error('--model-a requires --start and --end')
+
+        print(f"\nQuerying BQ for {args.model_a} ({args.start} to {args.end}, edge >= {args.min_edge})...")
+        data_a = query_model_hr(args.model_a, args.start, args.end, args.min_edge)
+        args.a_wins = data_a['wins']
+        args.a_total = data_a['total']
+        print(f"  Model A: {data_a['wins']}/{data_a['total']} "
+              f"(OVER {data_a['over_wins']}/{data_a['over_total']}, "
+              f"UNDER {data_a['under_wins']}/{data_a['under_total']})")
+
+        if args.model_b:
+            print(f"Querying BQ for {args.model_b}...")
+            data_b = query_model_hr(args.model_b, args.start, args.end, args.min_edge)
+            args.b_wins = data_b['wins']
+            args.b_total = data_b['total']
+            print(f"  Model B: {data_b['wins']}/{data_b['total']} "
+                  f"(OVER {data_b['over_wins']}/{data_b['over_total']}, "
+                  f"UNDER {data_b['under_wins']}/{data_b['under_total']})")
+
+        if args.a_total == 0:
+            print(f"  ERROR: Model A has 0 graded predictions. Check system_id and date range.")
+            return
 
     # Power analysis mode
     if args.power:

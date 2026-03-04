@@ -125,6 +125,14 @@ def build_default_registry() -> SignalRegistry:
         NegativeCLVFilter,
     )
 
+    # Session 404 signals — VSiN sharp money + RotoWire minutes projection
+    from ml.signals.sharp_money import (
+        SharpMoneyOverSignal,
+        SharpMoneyUnderSignal,
+        PublicFadeFilter,
+    )
+    from ml.signals.minutes_projection import MinutesSurgeOverSignal
+
     registry = SignalRegistry()
     registry.register(ModelHealthSignal())
     registry.register(HighEdgeSignal())
@@ -221,5 +229,14 @@ def build_default_registry() -> SignalRegistry:
     registry.register(PositiveCLVUnderSignal())
     # NegativeCLVFilter — register but NOT used as negative filter yet.
     registry.register(NegativeCLVFilter())
+
+    # Session 404: VSiN sharp money signals (shadow mode — not in aggregator yet)
+    registry.register(SharpMoneyOverSignal())
+    registry.register(SharpMoneyUnderSignal())
+    # PublicFadeFilter — register but NOT used as negative filter yet.
+    registry.register(PublicFadeFilter())
+
+    # Session 404: RotoWire minutes projection signal (shadow mode)
+    registry.register(MinutesSurgeOverSignal())
 
     return registry

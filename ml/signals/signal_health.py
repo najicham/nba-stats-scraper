@@ -74,6 +74,18 @@ ACTIVE_SIGNALS = frozenset({
     # prop_line_drop_over DISABLED — conceptually backward, 39.1% Feb HR (Session 374b)
     # blowout_recovery DISABLED — 50% HR (7-7) in best bets, 25% in Feb (Session 349)
     # high_ft_under, self_creator_under, volatile_under, high_usage_under REMOVED (Session 326)
+    # Session 401/404: Shadow signals — monitor firing/HR while accumulating data
+    'projection_consensus_over',
+    'projection_consensus_under',
+    'predicted_pace_over',
+    'dvp_favorable_over',
+    'positive_clv_over',
+    'positive_clv_under',
+    # Session 404: VSiN sharp money signals (shadow)
+    'sharp_money_over',
+    'sharp_money_under',
+    # Session 404: RotoWire minutes projection signal (shadow)
+    'minutes_surge_over',
 })
 
 # Regime thresholds (Session 257 analysis)

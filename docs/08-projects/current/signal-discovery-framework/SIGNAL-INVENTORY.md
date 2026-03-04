@@ -1,8 +1,8 @@
 # Signal Inventory — Complete List
 
-**Last Updated:** 2026-03-04 (Session 404)
-**Active Signals:** 26 (+ 8 shadow accumulating data)
-**Negative Filters:** 17
+**Last Updated:** 2026-03-04 (Session 404 — late)
+**Active Signals:** 26 (+ 12 shadow accumulating data)
+**Negative Filters:** 17 (+ 2 shadow: `public_fade_filter`, `negative_clv_filter`)
 **Combo Registry:** 11 SYNERGISTIC entries
 
 ---
@@ -84,18 +84,33 @@ Rescue tags: `combo_3way`, `combo_he_ms`, `book_disagreement` (72%), `home_under
 
 ---
 
-## Shadow Signals (8) — Session 401, accumulating data
+## Shadow Signals (12) — Sessions 401 + 404, accumulating data
+
+All shadow signals are registered and firing but NOT wired into aggregator rescue/ranking. They record to `pick_signal_tags` and `signal_health_daily` for validation.
+
+### Session 401 — New Data Sources
 
 | Signal | Direction | Source | Notes |
 |--------|-----------|--------|-------|
 | `projection_consensus_over` | OVER | FantasyPros, DFF, Dimers, NumberFire | 2+ sources above line + OVER |
 | `projection_consensus_under` | UNDER | Same 4 sources | 2+ sources below line + UNDER |
-| `projection_disagreement` | BOTH | Same 4 sources | 0 sources agree — caution filter |
-| `predicted_pace_over` | OVER | TeamRankings pace | Top-10 pace matchup |
-| `dvp_favorable_over` | OVER | Hashtag Basketball DvP | Bottom-5 defense |
-| `positive_clv_over` | OVER | Odds API closing lines | Closing line value confirms edge |
-| `positive_clv_under` | UNDER | Odds API closing lines | CLV confirms UNDER direction |
-| `negative_clv_filter` | BOTH | Odds API closing lines | CLV contradicts — negative filter |
+| `projection_disagreement` | BOTH | Same 4 sources | 0 sources agree — negative filter (not active) |
+| `predicted_pace_over` | OVER | TeamRankings pace | Predicted game pace >= 101 (first fire Mar 4: 2x) |
+| `dvp_favorable_over` | OVER | Hashtag Basketball DvP | Bottom-5 defense at position |
+| `positive_clv_over` | OVER | Odds API closing lines | Closing line value >= 0.5 confirms edge |
+| `positive_clv_under` | UNDER | Odds API closing lines | CLV <= -0.5 confirms UNDER |
+| `negative_clv_filter` | BOTH | Odds API closing lines | CLV contradicts — negative filter (not active) |
+
+### Session 404 — VSiN Sharp Money + RotoWire Minutes
+
+| Signal | Direction | Source | Notes |
+|--------|-----------|--------|-------|
+| `sharp_money_over` | OVER | VSiN betting splits | Handle >= 65% OVER + tickets <= 45% OVER |
+| `sharp_money_under` | UNDER | VSiN betting splits | Handle >= 65% UNDER + tickets <= 45% UNDER |
+| `public_fade_filter` | OVER | VSiN betting splits | 80%+ public tickets on OVER — negative filter (not active) |
+| `minutes_surge_over` | OVER | RotoWire lineups | Projected minutes >= season avg + 3 |
+
+**Data status (Mar 4):** VSiN table empty (scraper deployed, not yet triggered). RotoWire `projected_minutes` is null for all rows (scraper captures lineups but not minutes). 7 of 10 scrapers have data. NumberFire/VSiN/NBA Tracking need first trigger.
 
 ---
 
@@ -157,5 +172,36 @@ Rescue tags: `combo_3way`, `combo_he_ms`, `book_disagreement` (72%), `home_under
 
 ---
 
-**Last Updated:** 2026-03-04, Session 404
+**Last Updated:** 2026-03-04 (late), Session 404
 **Source of truth for active signals.** CLAUDE.md has a summary; this is the full reference.
+
+### Shadow Signal Promotion Criteria
+
+| Signal Type | Promote to Production | Promote to Rescue | Disable |
+|------------|----------------------|-------------------|---------|
+| Positive signal | HR >= 60%, N >= 30 | HR >= 65% at edge 0-5, N >= 15 | HR < 50%, N >= 30 |
+| Negative filter | Tagged picks HR < 50%, N >= 30 | N/A | Tagged picks HR >= 55% |
+| UNDER signal | Add to `UNDER_SIGNAL_WEIGHTS` with HR-derived weight | N/A | N/A |
+
+### Shadow Validation Query
+
+```sql
+WITH shadow_picks AS (
+  SELECT pst.player_lookup, pst.game_date, pst.system_id, signal_tag
+  FROM nba_predictions.pick_signal_tags pst
+  CROSS JOIN UNNEST(pst.signal_tags) AS signal_tag
+  WHERE signal_tag IN ('projection_consensus_over', 'projection_consensus_under',
+    'predicted_pace_over', 'dvp_favorable_over',
+    'positive_clv_over', 'positive_clv_under',
+    'sharp_money_over', 'sharp_money_under', 'minutes_surge_over')
+    AND game_date >= '2026-03-05'
+)
+SELECT sp.signal_tag,
+  COUNT(*) as fires, COUNTIF(pa.prediction_correct IS NOT NULL) as graded,
+  COUNTIF(pa.prediction_correct) as wins,
+  ROUND(100.0 * COUNTIF(pa.prediction_correct) / NULLIF(COUNTIF(pa.prediction_correct IS NOT NULL), 0), 1) as hr
+FROM shadow_picks sp
+LEFT JOIN nba_predictions.prediction_accuracy pa
+  ON sp.player_lookup = pa.player_lookup AND sp.game_date = pa.game_date AND sp.system_id = pa.system_id
+GROUP BY 1 ORDER BY fires DESC
+```
