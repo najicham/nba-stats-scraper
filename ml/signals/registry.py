@@ -101,6 +101,9 @@ def build_default_registry() -> SignalRegistry:
     # Session 382C signals
     from ml.signals.sharp_line_drop_under import SharpLineDropUnderSignal
 
+    # Session 397 signals
+    from ml.signals.q4_scorer_over import Q4ScorerOverSignal
+
     registry = SignalRegistry()
     registry.register(ModelHealthSignal())
     registry.register(HighEdgeSignal())
@@ -171,5 +174,8 @@ def build_default_registry() -> SignalRegistry:
 
     # Session 382C signals
     registry.register(SharpLineDropUnderSignal())
+
+    # Session 397 signals
+    registry.register(Q4ScorerOverSignal())
 
     return registry

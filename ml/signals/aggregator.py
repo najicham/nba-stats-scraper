@@ -51,7 +51,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v396_calendar_regime_obs'
+ALGORITHM_VERSION = 'v397_q4_scorer_under_block'
 
 # Base signals that fire on nearly every edge 5+ pick. Picks with ONLY
 # these signals hit 57.1% (N=42) vs 77.8% for picks with 4+ signals.
@@ -183,6 +183,7 @@ class BestBetsAggregator:
             'starter_v12_under': 0,
             'starter_over_sc_floor': 0,
             'opponent_under_block': 0,
+            'q4_scorer_under_block': 0,
             'signal_density': 0,
             'legacy_block': 0,
             'model_profile_would_block': 0,
@@ -458,6 +459,16 @@ class BestBetsAggregator:
                 _record_filtered(pred, 'opponent_depleted_under', pred_edge)
                 continue
 
+            # Q4 scorer UNDER block (Session 397): UNDER + q4_scoring_ratio >= 0.35 = 34.0% HR (N=359).
+            # Players who score disproportionately in Q4 → model undershoots them.
+            # Q4 scoring is not captured in season/rolling averages → false UNDER signals.
+            q4_ratio = pred.get('q4_scoring_ratio') or 0
+            if (pred.get('recommendation') == 'UNDER'
+                    and q4_ratio >= 0.35):
+                filter_counts['q4_scorer_under_block'] += 1
+                _record_filtered(pred, 'q4_scorer_under_block', pred_edge)
+                continue
+
             # High book std UNDER block (Session 377): UNDER + multi_book_line_std 1.0-1.5 = 14.8% HR (N=142).
             # When books disagree significantly on the line, UNDER predictions are unreliable.
             book_std = pred.get('multi_book_line_std') or 0
@@ -646,6 +657,8 @@ class BestBetsAggregator:
             logger.info(f"Line dropped OVER block: skipped {filter_counts['line_dropped_over']} OVER picks with line drop >= 2")
         if filter_counts['opponent_depleted_under'] > 0:
             logger.info(f"Opponent depleted UNDER block: skipped {filter_counts['opponent_depleted_under']} UNDER picks with 3+ opponent stars out")
+        if filter_counts['q4_scorer_under_block'] > 0:
+            logger.info(f"Q4 scorer UNDER block: skipped {filter_counts['q4_scorer_under_block']} UNDER picks with Q4 ratio >= 0.35 (34.0% HR)")
         if filter_counts['signal_density'] > 0:
             logger.info(f"Signal density filter: skipped {filter_counts['signal_density']} base-only picks")
         if filter_counts['legacy_block'] > 0:

@@ -548,6 +548,45 @@ def query_predictions_with_supplements(
         logger.warning(f"Failed to query opponent stars out: {e}")
         team_stars_out = {}
 
+    # Session 397: Q4 scoring ratio from BDL play-by-play.
+    # Players with high Q4 scoring ratio (35%+) have 34.0% UNDER HR (N=359) —
+    # the model undershoots them because Q4 scoring isn't captured in averages.
+    q4_ratio_query = f"""
+    WITH player_game_q4 AS (
+      SELECT
+        REGEXP_REPLACE(player_1_lookup, r'^[0-9]+', '') as player_lookup,
+        game_date,
+        SAFE_DIVIDE(
+          SUM(CASE WHEN period = 4 THEN points_scored ELSE 0 END),
+          SUM(points_scored)
+        ) as q4_ratio
+      FROM `{PROJECT_ID}.nba_raw.bigdataball_play_by_play`
+      WHERE game_date >= '2025-10-01'
+        AND game_date < @target_date
+        AND event_type IN ('shot', 'free throw') AND points_scored > 0
+      GROUP BY 1, 2
+      HAVING SUM(points_scored) >= 5
+    ),
+    ranked AS (
+      SELECT player_lookup, q4_ratio,
+        ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY game_date DESC) as rn
+      FROM player_game_q4
+    )
+    SELECT
+      player_lookup,
+      AVG(q4_ratio) as q4_scoring_ratio
+    FROM ranked
+    WHERE rn <= 5
+    GROUP BY 1
+    """
+    try:
+        q4_rows = bq_client.query(q4_ratio_query, job_config=job_config).result(timeout=30)
+        q4_ratio_map = {row['player_lookup']: float(row['q4_scoring_ratio']) for row in q4_rows}
+        logger.info(f"Loaded Q4 scoring ratios for {len(q4_ratio_map)} players")
+    except Exception as e:
+        logger.warning(f"Failed to query Q4 scoring ratios: {e}")
+        q4_ratio_map = {}
+
     predictions = []
     supplemental_map: Dict[str, Dict] = {}
 
@@ -786,6 +825,9 @@ def query_predictions_with_supplements(
             current_line = float(row_dict.get('line_value') or 0)
             prev_line = float(row_dict['prev_line_value'])
             pred['prop_line_delta'] = round(current_line - prev_line, 1)
+
+        # Q4 scoring ratio for q4_scorer_under_block filter (Session 397)
+        pred['q4_scoring_ratio'] = q4_ratio_map.get(row_dict['player_lookup'], 0)
 
         # Compute consecutive negative +/- streak for pre-filter (Session 294)
         # neg_3plus + UNDER = 13.1% HR (N=84) — catastrophic anti-pattern
