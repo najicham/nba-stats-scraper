@@ -378,7 +378,7 @@ python bin/monitoring/grading_gap_detector.py        # Grading gaps (auto: daily
 9. Away block: `v12_noveg/v9 family + AWAY game` (43-48% HR vs 57-59% HOME, Session 365)
 10. Signal density: `base-only signals → skip unless edge ≥ 7.0` (Session 352 bypass for extreme edge)
 11. **Opponent UNDER block**: `UNDER + opponent in {MIN, MEM, MIL}` (43.8-48.7% HR, Session 372)
-12. **SC=3 OVER edge restriction**: `OVER + signal_count == 3 AND edge < 7.0` (SC=3 OVER 33.3%, SC=3 UNDER 62.5% — OVER-only, Session 374b)
+12. **SC=3 OVER block**: `OVER + signal_count == 3` — blocks ALL SC=3 OVER regardless of edge (45.5% HR overall, -1.6 units net loser. SC=3 UNDER 57.9% kept, Session 394)
 13. **OVER + line dropped 2+**: `OVER + prop_line_delta <= -2.0` (39.1% HR Feb N=23, Session 374b)
 14. **Opponent depleted UNDER**: `UNDER + 3+ opponent stars out` (44.4% HR N=207, Session 374b)
 

@@ -50,7 +50,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v393_bootstrap_sc_relaxation'
+ALGORITHM_VERSION = 'v394_sc3_over_block'
 
 # Base signals that fire on nearly every edge 5+ pick. Picks with ONLY
 # these signals hit 57.1% (N=42) vs 77.8% for picks with 4+ signals.
@@ -169,6 +169,7 @@ class BestBetsAggregator:
             'neg_pm_streak': 0,
             'signal_count': 0,
             'sc3_edge_floor': 0,  # Retained for schema continuity — subsumed by edge-tiered SC (Session 388)
+            'sc3_over_block': 0,
             'opponent_depleted_under': 0,
             'high_book_std_under': 0,
             'confidence': 0,
@@ -515,6 +516,15 @@ class BestBetsAggregator:
                 _record_filtered(pred, 'signal_count', pred_edge, len(qualifying), sig_tags_early)
                 continue
 
+            # SC=3 OVER block (Session 394): SC=3 OVER is a net loser at 45.5% HR,
+            # -1.6 units across Dec-Mar. SC=3 UNDER is profitable (57.9%, +4.4 units).
+            # Block all OVER picks with exactly SC=3 regardless of edge.
+            if (pred.get('recommendation') == 'OVER'
+                    and len(qualifying) == 3):
+                filter_counts['sc3_over_block'] += 1
+                _record_filtered(pred, 'sc3_over_block', pred_edge, len(qualifying), sig_tags_early)
+                continue
+
             # Starter OVER SC floor (Session 382c, relaxed Session 393):
             # Starter OVER collapsed 90% Jan → 33.3% Feb. SC >= 5 was too restrictive
             # for current signal pool (volatile_scoring_over disabled, rest_advantage_2d
@@ -627,6 +637,8 @@ class BestBetsAggregator:
         if filter_counts['starter_over_sc_floor'] > 0:
             logger.info(f"Starter OVER SC floor: skipped {filter_counts['starter_over_sc_floor']} OVER picks (line 15-25, SC < 4)")
         # sc3_edge_floor retained for schema continuity — subsumed by edge-tiered SC (Session 388)
+        if filter_counts['sc3_over_block'] > 0:
+            logger.info(f"SC=3 OVER block: skipped {filter_counts['sc3_over_block']} OVER picks with SC=3 (45.5% HR, net loser)")
         if filter_counts['line_dropped_over'] > 0:
             logger.info(f"Line dropped OVER block: skipped {filter_counts['line_dropped_over']} OVER picks with line drop >= 2")
         if filter_counts['opponent_depleted_under'] > 0:

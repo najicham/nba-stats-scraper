@@ -102,6 +102,18 @@ TEMPLATES = {
             ],
         },
     },
+    'training_window_sweep': {
+        'description': '7 training window sizes (28-70 days) with v12_noveg',
+        'base_args': '--feature-set v12_noveg --category-weight vegas=0.15 --no-vegas',
+        'window_sweep': True,
+        'window_sizes': [28, 35, 42, 49, 56, 63, 70],
+    },
+    'training_window_v16': {
+        'description': '7 training window sizes (28-70 days) with v16_noveg',
+        'base_args': '--feature-set v16_noveg --no-vegas',
+        'window_sweep': True,
+        'window_sizes': [28, 35, 42, 49, 56, 63, 70],
+    },
 }
 
 
@@ -321,12 +333,14 @@ def main():
     args = parser.parse_args()
 
     # Resolve template
+    is_window_sweep = False
     if args.template:
         tmpl = TEMPLATES[args.template]
         base_args = tmpl['base_args']
         if args.base_args:
             base_args += ' ' + args.base_args
-        grid = tmpl['grid']
+        is_window_sweep = tmpl.get('window_sweep', False)
+        grid = tmpl.get('grid', {})
         print(f"Template: {args.template} -- {tmpl['description']}")
     elif args.grid:
         base_args = args.base_args
@@ -343,16 +357,41 @@ def main():
     if not eval_end:
         eval_end = (date.today() - timedelta(days=1)).strftime('%Y-%m-%d')
 
-    combos = generate_combinations(grid)
-    print(f"Grid: {len(combos)} combinations")
-    print(f"Training: {args.train_start} to {args.train_end}")
-    print(f"Eval: {eval_start} to {eval_end}")
-    print()
+    # Handle window sweep templates
+    if is_window_sweep:
+        window_sizes = tmpl['window_sizes']
+        eval_start_dt = datetime.strptime(eval_start, '%Y-%m-%d')
+        combos = []
+        window_dates = []
+        for w in window_sizes:
+            train_end_dt = eval_start_dt - timedelta(days=1)
+            train_start_dt = train_end_dt - timedelta(days=w - 1)
+            combos.append({})  # No extra CLI args — dates handled separately
+            window_dates.append({
+                'label': f'{w}d',
+                'train_start': train_start_dt.strftime('%Y-%m-%d'),
+                'train_end': train_end_dt.strftime('%Y-%m-%d'),
+            })
+        print(f"Window sweep: {len(combos)} windows ({window_sizes[0]}-{window_sizes[-1]} days)")
+        print(f"Eval: {eval_start} to {eval_end}")
+        for i, wd in enumerate(window_dates):
+            print(f"  [{i+1}] {wd['label']}: train {wd['train_start']} to {wd['train_end']}")
+        print()
+    else:
+        combos = generate_combinations(grid)
+        window_dates = None
+        print(f"Grid: {len(combos)} combinations")
+        print(f"Training: {args.train_start} to {args.train_end}")
+        print(f"Eval: {eval_start} to {eval_end}")
+        print()
 
     if args.dry_run:
         print("DRY RUN -- planned experiments:")
         for i, combo in enumerate(combos):
             combo_str = ' '.join(f"--{k} {v}" for k, v in combo.items())
+            if window_dates:
+                wd = window_dates[i]
+                combo_str += f" (train: {wd['train_start']} to {wd['train_end']})"
             print(f"  [{i+1:>3d}] {base_args} {combo_str}")
         print(f"\nTotal: {len(combos)} experiments")
         return
@@ -363,15 +402,28 @@ def main():
 
     results = []
     for i, combo in enumerate(combos):
+        # For window sweeps, use per-window train dates
+        if window_dates:
+            wd = window_dates[i]
+            train_start_i = wd['train_start']
+            train_end_i = wd['train_end']
+        else:
+            train_start_i = args.train_start
+            train_end_i = args.train_end
+
         cmd, machine_output = build_command(
             base_args, combo,
-            args.train_start, args.train_end,
+            train_start_i, train_end_i,
             eval_start, eval_end,
             i, output_dir,
         )
         result = run_experiment(cmd, machine_output, i, len(combos))
         results.append(result)
 
+    # For window sweeps, override combo labels with window descriptions
+    if window_dates:
+        for i, wd in enumerate(window_dates):
+            combos[i] = {'window': wd['label'], 'train': f"{wd['train_start']}..{wd['train_end']}"}
     display_results(combos, results, csv_file=args.csv)
 
 
