@@ -381,7 +381,7 @@ python bin/monitoring/grading_gap_detector.py        # Grading gaps (auto: daily
 6. Bench UNDER block: `UNDER + line < 12` (35.1% HR)
 7. UNDER + line jumped 2+: `prop_line_delta >= 2.0` (38.2% HR)
 8. UNDER + line dropped 2+: `prop_line_delta <= -2.0` (35.2% HR)
-9. Away block: `v12_noveg/v9 family + AWAY game` (43-48% HR vs 57-59% HOME, Session 365)
+9. Away block: REMOVED Session 401 (root cause was model staleness not structural — March AWAY noveg = 60.0% N=45)
 10. Signal density: `base-only signals → skip unless edge ≥ 7.0` (Session 352 bypass for extreme edge)
 11. **Opponent UNDER block**: `UNDER + opponent in {MIN, MEM, MIL}` (43.8-48.7% HR, Session 372)
 12. **SC=3 OVER block**: `OVER + signal_count == 3` — blocks ALL SC=3 OVER regardless of edge (45.5% HR overall, -1.6 units net loser. SC=3 UNDER 57.9% kept, Session 394)

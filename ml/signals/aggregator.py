@@ -51,7 +51,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v400b_star_under_removed'
+ALGORITHM_VERSION = 'v401_away_noveg_removed'
 
 # Base signals that fire on nearly every edge 5+ pick. Picks with ONLY
 # these signals hit 57.1% (N=42) vs 77.8% for picks with 4+ signals.
@@ -109,7 +109,7 @@ class BestBetsAggregator:
         - Line jumped UNDER block: UNDER + line jumped 2+ → skip (38.2% HR, Session 306)
         - Line dropped UNDER block: UNDER + line dropped 2+ → skip (35.2% HR, Session 306)
         - Neg +/- streak UNDER block: UNDER + 3+ neg games → skip (13.1% HR)
-        - AWAY block: v12_noveg/v9 + AWAY game → skip (43-48% HR vs 57-59% HOME, Session 347/365)
+        - AWAY block: REMOVED Session 401 (root cause was model staleness, not structural)
         - Signal density: base-only signals → skip unless edge ≥ 7 (Session 352 bypass)
         - ANTI_PATTERN combos → skip
 
@@ -387,20 +387,12 @@ class BestBetsAggregator:
                     _record_filtered(pred, 'model_direction_affinity', pred_edge)
                     continue
 
-            # AWAY block (Session 347, expanded Session 365):
-            # v12_noveg: 43.8% AWAY (N=105) vs 57.0% HOME — structural to no-vegas features
-            # v9: 48.1% AWAY (N=449) vs 58.8% HOME — below breakeven at -110
-            if not pred.get('is_home', False):
-                from ml.signals.model_direction_affinity import get_affinity_group
-                away_group = get_affinity_group(source_family)
-                if away_group in ('v12_noveg', 'v9'):
-                    filter_counts['away_noveg'] += 1
-                    _record_filtered(pred, 'away_noveg', pred_edge)
-                    continue
-
-            # HOME OVER block REMOVED (Session 392): N=16 was contaminated by
-            # disabled model picks. Combined with AWAY block, would block ALL OVER
-            # picks from dominant model families. Revisit if clean data confirms.
+            # AWAY block REMOVED (Session 401):
+            # Original (Session 347/365): v12_noveg 43.8% AWAY, v9 48.1% AWAY
+            # Root cause was model staleness (train_1102 vintage = 44.1% AWAY),
+            # NOT structural. Newer models (Jan+ training) show zero HOME/AWAY gap:
+            # 61.0% AWAY vs 63.3% HOME. March AWAY noveg = 60.0% (N=45).
+            # Filter was #1 blocker (9 rejections in 2 days), blocking winning picks.
 
             # Avoid familiar matchups (Session 284)
             games_vs_opp = pred.get('games_vs_opponent') or 0
@@ -725,8 +717,7 @@ class BestBetsAggregator:
             logger.info(f"UNDER edge 7+ block: skipped {filter_counts['under_edge_7plus']} predictions")
         if filter_counts['model_direction_affinity'] > 0:
             logger.info(f"Model-direction affinity: skipped {filter_counts['model_direction_affinity']} predictions")
-        if filter_counts['away_noveg'] > 0:
-            logger.info(f"AWAY block (v12_noveg/v9): skipped {filter_counts['away_noveg']} predictions")
+        # away_noveg filter REMOVED Session 401 — was model staleness, not structural
         if filter_counts['under_star_away'] > 0:
             logger.info(f"UNDER Star AWAY block (line≥23): skipped {filter_counts['under_star_away']} predictions")
         if filter_counts['med_usage_under'] > 0:
