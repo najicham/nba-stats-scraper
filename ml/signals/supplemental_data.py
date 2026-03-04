@@ -620,9 +620,10 @@ def query_predictions_with_supplements(
         logger.warning(f"Failed to query Q4 scoring ratios: {e}")
         q4_ratio_map = {}
 
-    # Session 401: Projection consensus from external sources (NumberFire, FantasyPros).
+    # Session 401/403: Projection consensus from external sources.
     # Compare external projected_points to prop line to count how many sources
     # agree with each direction. 2+ sources above line + OVER = consensus signal.
+    # Sources: NumberFire (broken — FanDuel redirect), FantasyPros, DailyFantasyFuel, Dimers
     projection_query = f"""
     WITH nf AS (
       SELECT player_lookup, projected_points,
@@ -635,14 +636,39 @@ def query_predictions_with_supplements(
         ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY timestamp DESC) AS rn
       FROM `{PROJECT_ID}.nba_raw.fantasypros_projections`
       WHERE game_date = @target_date AND projected_points IS NOT NULL
+    ),
+    dff AS (
+      SELECT player_lookup, projected_points,
+        ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY timestamp DESC) AS rn
+      FROM `{PROJECT_ID}.nba_raw.dailyfantasyfuel_projections`
+      WHERE game_date = @target_date AND projected_points IS NOT NULL
+    ),
+    dm AS (
+      SELECT player_lookup, projected_points,
+        ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY timestamp DESC) AS rn
+      FROM `{PROJECT_ID}.nba_raw.dimers_projections`
+      WHERE game_date = @target_date AND projected_points IS NOT NULL
+    ),
+    all_players AS (
+      SELECT player_lookup FROM nf WHERE rn = 1
+      UNION DISTINCT
+      SELECT player_lookup FROM fp WHERE rn = 1
+      UNION DISTINCT
+      SELECT player_lookup FROM dff WHERE rn = 1
+      UNION DISTINCT
+      SELECT player_lookup FROM dm WHERE rn = 1
     )
     SELECT
-      COALESCE(nf.player_lookup, fp.player_lookup) AS player_lookup,
+      ap.player_lookup,
       nf.projected_points AS nf_projected_points,
-      fp.projected_points AS fp_projected_points
-    FROM nf
-    FULL OUTER JOIN fp ON nf.player_lookup = fp.player_lookup AND fp.rn = 1
-    WHERE nf.rn = 1 OR fp.rn = 1
+      fp.projected_points AS fp_projected_points,
+      dff.projected_points AS dff_projected_points,
+      dm.projected_points AS dm_projected_points
+    FROM all_players ap
+    LEFT JOIN nf ON ap.player_lookup = nf.player_lookup AND nf.rn = 1
+    LEFT JOIN fp ON ap.player_lookup = fp.player_lookup AND fp.rn = 1
+    LEFT JOIN dff ON ap.player_lookup = dff.player_lookup AND dff.rn = 1
+    LEFT JOIN dm ON ap.player_lookup = dm.player_lookup AND dm.rn = 1
     """
     projection_map = {}
     try:
@@ -651,8 +677,10 @@ def query_predictions_with_supplements(
             projection_map[row['player_lookup']] = {
                 'numberfire': float(row['nf_projected_points']) if row['nf_projected_points'] is not None else None,
                 'fantasypros': float(row['fp_projected_points']) if row['fp_projected_points'] is not None else None,
+                'dailyfantasyfuel': float(row['dff_projected_points']) if row['dff_projected_points'] is not None else None,
+                'dimers': float(row['dm_projected_points']) if row['dm_projected_points'] is not None else None,
             }
-        logger.info(f"Loaded projection data for {len(projection_map)} players")
+        logger.info(f"Loaded projection data for {len(projection_map)} players from 4 sources")
     except Exception as e:
         logger.warning(f"Failed to query projection consensus data: {e}")
 
@@ -1024,19 +1052,23 @@ def query_predictions_with_supplements(
         sbl = sharp_lean_map.get(row_dict['player_lookup'])
         pred['sharp_book_lean'] = float(sbl) if sbl is not None else None
 
-        # Session 401: Projection consensus data
+        # Session 401/403: Projection consensus data (4 sources)
         proj_data = projection_map.get(row_dict['player_lookup'])
         if proj_data:
             line = float(pred.get('line_value') or 0)
             nf_pts = proj_data.get('numberfire')
             fp_pts = proj_data.get('fantasypros')
+            dff_pts = proj_data.get('dailyfantasyfuel')
+            dm_pts = proj_data.get('dimers')
             pred['numberfire_projected_points'] = nf_pts
             pred['fantasypros_projected_points'] = fp_pts
+            pred['dailyfantasyfuel_projected_points'] = dff_pts
+            pred['dimers_projected_points'] = dm_pts
 
             sources_above = 0
             sources_below = 0
             total_sources = 0
-            for pts in [nf_pts, fp_pts]:
+            for pts in [nf_pts, fp_pts, dff_pts, dm_pts]:
                 if pts is not None and line > 0:
                     total_sources += 1
                     if pts > line:

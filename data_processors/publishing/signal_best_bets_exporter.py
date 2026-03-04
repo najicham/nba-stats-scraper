@@ -484,6 +484,24 @@ class SignalBestBetsExporter(BaseExporter):
         """
         json_data = self.generate_json(target_date, version_id=version_id)
 
+        # Session 403: Filter disabled model picks BEFORE any writes (BQ + GCS).
+        # Previously this filter was inside _write_to_bigquery only, which meant
+        # GCS got unfiltered picks while BQ got filtered — consistency gap.
+        disabled_models = self._query_disabled_model_ids()
+        if disabled_models and json_data['picks']:
+            original_count = len(json_data['picks'])
+            json_data['picks'] = [
+                p for p in json_data['picks']
+                if (p.get('system_id') or p.get('source_model') or '') not in disabled_models
+            ]
+            filtered = original_count - len(json_data['picks'])
+            if filtered > 0:
+                json_data['total_picks'] = len(json_data['picks'])
+                logger.warning(
+                    f"Filtered {filtered} picks from disabled models "
+                    f"before export (BQ + GCS consistent)"
+                )
+
         # Safety guard: don't overwrite existing JSON with 0 picks on re-export
         # of past dates (all games finished → all predictions filtered out).
         if not json_data['picks'] and json_data.get('started_games_filtered'):
@@ -648,20 +666,8 @@ class SignalBestBetsExporter(BaseExporter):
                 f"(will append anyway): {e}"
             )
 
-        # Session 386: Filter out picks from disabled models (defense-in-depth)
-        disabled_models = self._query_disabled_model_ids()
-        if disabled_models:
-            original_count = len(picks)
-            picks = [
-                p for p in picks
-                if (p.get('system_id') or p.get('source_model') or '') not in disabled_models
-            ]
-            filtered = original_count - len(picks)
-            if filtered > 0:
-                logger.warning(
-                    f"Filtered {filtered} picks from disabled models "
-                    f"before writing to signal_best_bets_picks"
-                )
+        # Session 386/403: Disabled model filtering now happens in export() before
+        # both BQ and GCS writes for consistency. Kept as comment for history.
 
         rows_to_insert = []
         for pick in picks:

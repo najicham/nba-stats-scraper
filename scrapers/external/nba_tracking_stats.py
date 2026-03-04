@@ -149,35 +149,71 @@ class NBATrackingStatsScraper(ScraperBase, ScraperFlaskMixin):
         Overrides ScraperBase.download_and_decode() because we either use the
         nba_api library (preferred) or make a custom request with specific
         parameters, rather than downloading a single URL.
+
+        Uses proxy infrastructure from ScraperBase to avoid stats.nba.com
+        blocking cloud IPs.
         """
         season = _get_current_season()
         logger.info("Fetching NBA tracking stats for season %s", season)
 
         time.sleep(self.CRAWL_DELAY_SECONDS)
 
-        if NBA_API_AVAILABLE:
-            self.decoded_data = self._fetch_via_nba_api(season)
+        # Get proxy URL from the ScraperBase proxy rotation infrastructure
+        proxy_url = self._get_proxy_url()
+        if proxy_url:
+            logger.info("Using proxy for stats.nba.com: %s", proxy_url[:30] + "...")
         else:
-            self.decoded_data = self._fetch_via_http(season)
+            logger.warning("No proxy available — stats.nba.com may block cloud IPs")
 
-    def _fetch_via_nba_api(self, season: str) -> Dict[str, Any]:
+        if NBA_API_AVAILABLE:
+            self.decoded_data = self._fetch_via_nba_api(season, proxy_url)
+        else:
+            self.decoded_data = self._fetch_via_http(season, proxy_url)
+
+    def _get_proxy_url(self) -> Optional[str]:
+        """Get a healthy proxy URL from the proxy rotation infrastructure."""
+        try:
+            from scrapers.utils.proxy_utils import get_healthy_proxy_urls_for_target
+            proxy_pool = get_healthy_proxy_urls_for_target(
+                "stats.nba.com", shuffle=True
+            )
+            if proxy_pool:
+                return proxy_pool[0]
+        except Exception as e:
+            logger.debug("Failed to get proxy from pool: %s", e)
+
+        # Fallback: check if proxy_url was set via opts or env
+        if hasattr(self, 'proxy_url') and self.proxy_url:
+            return self.proxy_url
+
+        proxy_env = os.environ.get('NBA_SCRAPER_PROXY')
+        if proxy_env:
+            return proxy_env
+
+        return None
+
+    def _fetch_via_nba_api(self, season: str, proxy_url: Optional[str] = None) -> Dict[str, Any]:
         """Fetch data using the nba_api library."""
         logger.info("Using nba_api library for tracking stats")
         try:
-            stats = LeagueDashPlayerStats(
-                measure_type_detailed_defense='Usage',
-                season=season,
-                per_mode_detailed='PerGame',
-                timeout=30,
-            )
+            kwargs = {
+                'measure_type_detailed_defense': 'Usage',
+                'season': season,
+                'per_mode_detailed': 'PerGame',
+                'timeout': 60,
+            }
+            if proxy_url:
+                kwargs['proxy'] = proxy_url
+
+            stats = LeagueDashPlayerStats(**kwargs)
             result = stats.get_dict()
             logger.info("nba_api returned data successfully")
             return result
         except Exception as e:
             logger.warning("nba_api call failed: %s — falling back to HTTP", e)
-            return self._fetch_via_http(season)
+            return self._fetch_via_http(season, proxy_url)
 
-    def _fetch_via_http(self, season: str) -> Dict[str, Any]:
+    def _fetch_via_http(self, season: str, proxy_url: Optional[str] = None) -> Dict[str, Any]:
         """Fetch data via direct HTTP request to stats.nba.com."""
         import requests
 
@@ -197,13 +233,9 @@ class NBATrackingStatsScraper(ScraperBase, ScraperFlaskMixin):
         session = requests.Session()
         session.headers.update(NBA_STATS_HEADERS)
 
-        # Use proxy if configured via ScraperBase
         proxies = {}
-        if self.proxy_enabled and hasattr(self, 'proxy_url') and self.proxy_url:
-            proxies = {
-                'http': self.proxy_url,
-                'https': self.proxy_url,
-            }
+        if proxy_url:
+            proxies = {'http': proxy_url, 'https': proxy_url}
 
         # Retry with backoff — stats.nba.com blocks cloud IPs intermittently
         max_retries = 3

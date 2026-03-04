@@ -1,6 +1,6 @@
 # File: scrapers/external/vsin_betting_splits.py
 """
-VSiN NBA Public Betting Splits Scraper                          v1.0 - 2026-03-04
+VSiN NBA Public Betting Splits Scraper                          v2.0 - 2026-03-04
 ----------------------------------------------------------------------------------
 Scrapes public betting percentage data from VSiN (DraftKings-sourced).
 
@@ -9,8 +9,8 @@ Data: Percentage of bets (tickets) and money (handle) on each side of game total
 Access: Free, updates every 5 minutes, DraftKings-sourced data.
 Timing: Available throughout the day, scrape ~2 PM ET for pre-game data.
 
-When 80%+ of public bets are on OVER for a game total but the line hasn't moved up,
-sharp money is likely on UNDER. This creates a sharp_money signal for player props.
+v2.0: Data is server-side rendered at data.vsin.com — no Playwright needed.
+      Rewrote parser to match actual freezetable HTML structure.
 
 Usage:
   python scrapers/external/vsin_betting_splits.py --date 2026-03-04 --debug
@@ -18,12 +18,10 @@ Usage:
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
 import sys
-import time
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
@@ -39,11 +37,11 @@ except ImportError:
     from scrapers.scraper_flask_mixin import ScraperFlaskMixin, convert_existing_flask_scraper
     from scrapers.utils.gcs_path_builder import GCSPathBuilder
 
-from shared.utils.notification_system import notify_error, notify_warning, notify_info
+from shared.utils.notification_system import notify_warning, notify_info
 
 logger = logging.getLogger("scraper_base")
 
-# Team name mappings for resolving VSiN team names to standard tricodes
+# Team name → tricode mapping
 TEAM_MAP = {
     "atlanta": "ATL", "hawks": "ATL",
     "boston": "BOS", "celtics": "BOS",
@@ -69,7 +67,7 @@ TEAM_MAP = {
     "orlando": "ORL", "magic": "ORL",
     "philadelphia": "PHI", "76ers": "PHI", "sixers": "PHI",
     "phoenix": "PHX", "suns": "PHX",
-    "portland": "POR", "trail blazers": "POR", "blazers": "POR",
+    "portland": "POR", "trail blazers": "POR", "blazers": "POR", "trailblazers": "POR",
     "sacramento": "SAC", "kings": "SAC",
     "san antonio": "SAS", "spurs": "SAS",
     "toronto": "TOR", "raptors": "TOR",
@@ -134,103 +132,42 @@ class VSiNBettingSplitsScraper(ScraperBase, ScraperFlaskMixin):
         self.url = self.VSIN_URL
         logger.info("VSiN betting splits URL: %s", self.url)
 
-    def download_and_decode(self):
-        """Use Playwright to render VSiN WordPress page with AJAX-loaded data.
-
-        VSiN loads betting splits via WordPress AJAX after page load — static
-        HTML has empty container divs. We use headless Chromium to wait for
-        the data to render, then extract the full DOM.
-        """
-        from scrapers.scraper_base import _PLAYWRIGHT_AVAILABLE, _STEALTH_FN
-
-        if not _PLAYWRIGHT_AVAILABLE:
-            raise ValueError(
-                "Playwright not available — install with: playwright install chromium --with-deps"
-            )
-
-        from playwright.sync_api import sync_playwright
-
-        logger.info("Launching Playwright for VSiN AJAX rendering...")
-        time.sleep(self.CRAWL_DELAY_SECONDS)
-
-        with sync_playwright() as p:
-            browser = p.chromium.launch(
-                headless=True,
-                args=["--disable-blink-features=AutomationControlled"],
-            )
-            try:
-                page = browser.new_page()
-                if callable(_STEALTH_FN):
-                    _STEALTH_FN(page)
-
-                page.goto(self.VSIN_URL, wait_until="networkidle", timeout=60_000)
-
-                # Wait for AJAX data to populate tables/cards
-                try:
-                    page.wait_for_selector(
-                        "table, [class*='split'], [class*='game'], [class*='matchup']",
-                        timeout=15_000,
-                    )
-                    # Extra wait for AJAX data to fully populate
-                    page.wait_for_timeout(3_000)
-                except Exception:
-                    logger.warning("No betting splits selector found, waiting extra time...")
-                    page.wait_for_timeout(8_000)
-
-                html = page.content()
-                logger.info("Playwright rendered %d bytes of HTML from VSiN", len(html))
-            finally:
-                browser.close()
-
-        self.decoded_data = html
-
     def transform_data(self) -> None:
-        """Parse VSiN betting splits page and extract game-level public betting data."""
+        """Parse VSiN data.vsin.com server-rendered HTML for betting splits.
+
+        HTML structure (freezetable layout):
+        - Row 0: Title banner ("NBA Betting Splits")
+        - Row 1: Column headers (Spread / Handle / Bets / Total / Handle / Bets / ML)
+        - Row 2+: Data rows, each with cells:
+            [0] Teams (txt-color-vsinred links: away, home)
+            [1] Spread lines (DraftKings links: away, home)
+            [2] Spread handle % (divs: away, home)
+            [3] Spread bets % (divs: away, home)
+            [4] Total line (divs/links: over, under — same number)
+            [5] Total handle % (divs: over, under)
+            [6] Total bets % (divs: over, under)
+            [7] Moneyline (DraftKings links: away, home)
+        """
         soup = BeautifulSoup(self.decoded_data, "html.parser")
-
-        games = []
         game_date = self.opts["date"]
+        games = []
 
-        # Try to find the main data container
-        # VSiN typically uses structured tables or card layouts
-        tables = soup.find_all("table")
+        table = soup.find("table")
+        if not table:
+            logger.warning("No table found on VSiN page")
+            self.data = self._empty_result(game_date)
+            return
 
-        # Also try to find embedded JSON data (common pattern on data sites)
-        scripts = soup.find_all("script")
-        embedded_data = None
-        for script in scripts:
-            script_text = script.get_text()
-            if "bettingSplits" in script_text or "publicBetting" in script_text:
-                # Try to extract JSON from script tag
-                json_match = re.search(r'(?:bettingSplits|publicBetting|gameData)\s*[=:]\s*(\[.*?\]);',
-                                       script_text, re.DOTALL)
-                if json_match:
-                    try:
-                        embedded_data = json.loads(json_match.group(1))
-                    except json.JSONDecodeError:
-                        pass
+        rows = table.find_all("tr")
 
-        if embedded_data:
-            games = self._parse_embedded_data(embedded_data, game_date)
-        elif tables:
-            games = self._parse_tables(tables, game_date)
-        else:
-            # Try card-based layouts
-            cards = soup.find_all("div", class_=re.compile(r"game|matchup|split"))
-            if cards:
-                games = self._parse_cards(cards, game_date)
+        for row in rows[2:]:  # Skip header rows
+            cells = row.find_all("td")
+            if len(cells) < 8:
+                continue
 
-        if not games:
-            logger.warning(f"No betting splits data found for {game_date}")
-            try:
-                notify_warning(
-                    title="VSiN Betting Splits: No Data",
-                    message=f"Could not find betting splits data for {game_date}",
-                    details={"date": game_date, "tables_found": len(tables)},
-                    processor_name=self.__class__.__name__
-                )
-            except Exception:
-                pass
+            game = self._parse_game_row(cells, game_date)
+            if game:
+                games.append(game)
 
         self.data = {
             "source": "vsin",
@@ -240,150 +177,136 @@ class VSiNBettingSplitsScraper(ScraperBase, ScraperFlaskMixin):
             "games": games,
         }
 
-        logger.info(f"VSiN: Scraped {len(games)} games with betting splits for {game_date}")
+        logger.info("VSiN: Scraped %d games with betting splits for %s", len(games), game_date)
 
-    def _parse_embedded_data(self, data: list, game_date: str) -> List[Dict]:
-        """Parse embedded JSON data from VSiN page."""
-        games = []
-        for item in data:
-            away_team = resolve_team(item.get("awayTeam", item.get("away", "")))
-            home_team = resolve_team(item.get("homeTeam", item.get("home", "")))
+        if games:
+            try:
+                notify_info(
+                    title="VSiN Betting Splits Scraped",
+                    message=f"Scraped {len(games)} games for {game_date}",
+                    details={"game_count": len(games), "date": game_date},
+                    processor_name=self.__class__.__name__
+                )
+            except Exception:
+                pass
+        else:
+            try:
+                notify_warning(
+                    title="VSiN Betting Splits: No Data",
+                    message=f"0 games found for {game_date}",
+                    details={"date": game_date},
+                    processor_name=self.__class__.__name__
+                )
+            except Exception:
+                pass
 
-            game = {
+    def _parse_game_row(self, cells, game_date: str) -> Optional[Dict]:
+        """Parse a single data row into a game dict."""
+        try:
+            # Cell 0: Teams from txt-color-vsinred links (away first, home second)
+            team_links = cells[0].find_all("a", class_="txt-color-vsinred")
+            team_names = [a.get_text(strip=True) for a in team_links]
+            if len(team_names) < 2:
+                return None
+
+            away_team = resolve_team(team_names[0])
+            home_team = resolve_team(team_names[1])
+
+            # Cell 1: Spread lines
+            spread_links = cells[1].find_all("a")
+            spreads = [a.get_text(strip=True) for a in spread_links]
+            away_spread = _parse_number(spreads[0]) if len(spreads) > 0 else None
+            home_spread = _parse_number(spreads[1]) if len(spreads) > 1 else None
+
+            # Cell 2-3: Spread handle % and bets %
+            spread_handle = _extract_pcts(cells[2])
+            spread_bets = _extract_pcts(cells[3])
+
+            # Cell 4: Total line
+            total_line = None
+            total_divs = cells[4].find_all("div", class_=re.compile(r"text-center"))
+            for div in total_divs:
+                val = _parse_number(div.get_text(strip=True))
+                if val and val > 100:  # NBA totals are 200+
+                    total_line = val
+                    break
+            if total_line is None:
+                total_links = cells[4].find_all("a")
+                for link in total_links:
+                    val = _parse_number(link.get_text(strip=True))
+                    if val and val > 100:
+                        total_line = val
+                        break
+
+            # Cell 5-6: Total handle % and bets %
+            total_handle = _extract_pcts(cells[5])
+            total_bets = _extract_pcts(cells[6])
+
+            # Cell 7: Moneyline
+            ml_links = cells[7].find_all("a")
+            moneylines = [a.get_text(strip=True) for a in ml_links]
+            away_ml = _parse_number(moneylines[0]) if len(moneylines) > 0 else None
+            home_ml = _parse_number(moneylines[1]) if len(moneylines) > 1 else None
+
+            return {
                 "away_team": away_team,
                 "home_team": home_team,
                 "game_date": game_date,
-                "total_line": self._safe_float(item.get("total", item.get("totalLine"))),
-                "over_ticket_pct": self._safe_float(item.get("overTicketPct", item.get("overPct"))),
-                "under_ticket_pct": self._safe_float(item.get("underTicketPct", item.get("underPct"))),
-                "over_money_pct": self._safe_float(item.get("overMoneyPct", item.get("overHandlePct"))),
-                "under_money_pct": self._safe_float(item.get("underMoneyPct", item.get("underHandlePct"))),
-                "spread": self._safe_float(item.get("spread")),
-                "home_spread_pct": self._safe_float(item.get("homeSpreadPct")),
-                "away_spread_pct": self._safe_float(item.get("awaySpreadPct")),
+                # Spread
+                "spread": away_spread,
+                "away_spread_pct": spread_bets[0] if len(spread_bets) > 0 else None,
+                "home_spread_pct": spread_bets[1] if len(spread_bets) > 1 else None,
+                # Total — ticket_pct = bets %, money_pct = handle %
+                # (matches Phase 2 processor field names)
+                "total_line": total_line,
+                "over_ticket_pct": total_bets[0] if len(total_bets) > 0 else None,
+                "under_ticket_pct": total_bets[1] if len(total_bets) > 1 else None,
+                "over_money_pct": total_handle[0] if len(total_handle) > 0 else None,
+                "under_money_pct": total_handle[1] if len(total_handle) > 1 else None,
+                # Moneyline (extra data, not in BQ yet)
+                "away_moneyline": away_ml,
+                "home_moneyline": home_ml,
             }
-            games.append(game)
-        return games
 
-    def _parse_tables(self, tables: list, game_date: str) -> List[Dict]:
-        """Parse HTML tables for betting splits data."""
-        games = []
-        for table in tables:
-            headers = []
-            for th in table.find_all("th"):
-                h = th.get_text(strip=True).lower()
-                headers.append(h)
-
-            # Skip tables that don't look like betting splits
-            has_team = any(h in ("team", "matchup", "game") for h in headers)
-            has_pct = any("%" in h or "pct" in h or "public" in h or "ticket" in h for h in headers)
-            if not (has_team or has_pct) and len(headers) < 3:
-                continue
-
-            # Identify column positions
-            over_pct_col = None
-            under_pct_col = None
-            total_col = None
-            team_col = None
-            over_money_col = None
-            under_money_col = None
-
-            for i, h in enumerate(headers):
-                if "over" in h and ("%" in h or "pct" in h or "ticket" in h):
-                    over_pct_col = i
-                elif "under" in h and ("%" in h or "pct" in h or "ticket" in h):
-                    under_pct_col = i
-                elif "over" in h and ("money" in h or "handle" in h):
-                    over_money_col = i
-                elif "under" in h and ("money" in h or "handle" in h):
-                    under_money_col = i
-                elif h in ("total", "o/u", "game total"):
-                    total_col = i
-                elif h in ("team", "matchup", "game", "teams"):
-                    team_col = i
-
-            rows = table.find_all("tr")
-            for row in rows[1:]:  # Skip header
-                cells = row.find_all(["td", "th"])
-                cell_texts = [c.get_text(strip=True) for c in cells]
-                if len(cell_texts) < 3:
-                    continue
-
-                # Extract teams
-                away_team = ""
-                home_team = ""
-                if team_col is not None and team_col < len(cell_texts):
-                    team_text = cell_texts[team_col]
-                    # Try to split teams: "LAL @ BOS" or "LAL vs BOS"
-                    parts = re.split(r'\s*[@vs]+\s*', team_text, maxsplit=1)
-                    if len(parts) == 2:
-                        away_team = resolve_team(parts[0])
-                        home_team = resolve_team(parts[1])
-
-                game = {
-                    "away_team": away_team,
-                    "home_team": home_team,
-                    "game_date": game_date,
-                    "total_line": self._safe_float_from_cells(cell_texts, total_col),
-                    "over_ticket_pct": self._safe_float_from_cells(cell_texts, over_pct_col),
-                    "under_ticket_pct": self._safe_float_from_cells(cell_texts, under_pct_col),
-                    "over_money_pct": self._safe_float_from_cells(cell_texts, over_money_col),
-                    "under_money_pct": self._safe_float_from_cells(cell_texts, under_money_col),
-                }
-
-                if away_team or home_team:
-                    games.append(game)
-
-        return games
-
-    def _parse_cards(self, cards: list, game_date: str) -> List[Dict]:
-        """Parse card-style layout for betting splits."""
-        games = []
-        for card in cards:
-            text = card.get_text(" ", strip=True)
-
-            # Try to extract teams
-            team_els = card.find_all(class_=re.compile(r"team|name"))
-            teams = [resolve_team(el.get_text(strip=True)) for el in team_els]
-
-            # Try to extract percentages
-            pct_els = card.find_all(class_=re.compile(r"pct|percent|split"))
-            pcts = []
-            for el in pct_els:
-                val = re.search(r'(\d+(?:\.\d+)?)\s*%?', el.get_text())
-                if val:
-                    pcts.append(float(val.group(1)))
-
-            if len(teams) >= 2:
-                game = {
-                    "away_team": teams[0],
-                    "home_team": teams[1],
-                    "game_date": game_date,
-                    "over_ticket_pct": pcts[0] if len(pcts) > 0 else None,
-                    "under_ticket_pct": pcts[1] if len(pcts) > 1 else None,
-                    "over_money_pct": pcts[2] if len(pcts) > 2 else None,
-                    "under_money_pct": pcts[3] if len(pcts) > 3 else None,
-                }
-                games.append(game)
-
-        return games
-
-    def _safe_float(self, val) -> Optional[float]:
-        """Safely convert value to float."""
-        if val is None:
-            return None
-        try:
-            if isinstance(val, str):
-                val = val.replace("%", "").replace(",", "").strip()
-            return float(val)
-        except (ValueError, TypeError):
+        except Exception as e:
+            logger.debug("Error parsing VSiN row: %s", e)
             return None
 
-    def _safe_float_from_cells(self, cells: list, col: Optional[int]) -> Optional[float]:
-        """Safely extract float from cell list by column index."""
-        if col is None or col >= len(cells):
-            return None
-        return self._safe_float(cells[col])
+    def _empty_result(self, game_date: str) -> Dict:
+        return {
+            "source": "vsin",
+            "date": game_date,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "game_count": 0,
+            "games": [],
+        }
+
+
+def _extract_pcts(cell) -> List[Optional[float]]:
+    """Extract percentage values from div elements in a cell.
+
+    Returns list of floats (e.g., [44.0, 56.0]) for away/over and home/under.
+    """
+    divs = cell.find_all("div", class_=re.compile(r"text-center"))
+    values = []
+    for div in divs:
+        text = div.get_text(strip=True)
+        if "%" in text:
+            val = _parse_number(text.replace("%", ""))
+            if val is not None:
+                values.append(val)
+    return values
+
+
+def _parse_number(text: str) -> Optional[float]:
+    """Parse a number from text, handling +/- signs and commas."""
+    if not text:
+        return None
+    try:
+        cleaned = text.strip().replace(",", "").replace("%", "")
+        return float(cleaned)
+    except (ValueError, TypeError):
+        return None
 
 
 # Flask integration
