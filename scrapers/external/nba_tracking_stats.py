@@ -194,31 +194,37 @@ class NBATrackingStatsScraper(ScraperBase, ScraperFlaskMixin):
             'Rank': 'N',
         }
 
-        try:
-            session = requests.Session()
-            session.headers.update(NBA_STATS_HEADERS)
+        session = requests.Session()
+        session.headers.update(NBA_STATS_HEADERS)
 
-            # Use proxy if configured via ScraperBase
-            proxies = {}
-            if self.proxy_enabled and hasattr(self, 'proxy_url') and self.proxy_url:
-                proxies = {
-                    'http': self.proxy_url,
-                    'https': self.proxy_url,
-                }
+        # Use proxy if configured via ScraperBase
+        proxies = {}
+        if self.proxy_enabled and hasattr(self, 'proxy_url') and self.proxy_url:
+            proxies = {
+                'http': self.proxy_url,
+                'https': self.proxy_url,
+            }
 
-            response = session.get(
-                NBA_STATS_URL,
-                params=params,
-                proxies=proxies,
-                timeout=60,
-            )
-            response.raise_for_status()
-            data = response.json()
-            logger.info("Direct HTTP request succeeded (%d bytes)", len(response.content))
-            return data
-        except Exception as e:
-            logger.error("Direct HTTP request failed: %s", e)
-            raise
+        # Retry with backoff — stats.nba.com blocks cloud IPs intermittently
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = session.get(
+                    NBA_STATS_URL,
+                    params=params,
+                    proxies=proxies,
+                    timeout=120,
+                )
+                response.raise_for_status()
+                data = response.json()
+                logger.info("Direct HTTP request succeeded on attempt %d (%d bytes)", attempt, len(response.content))
+                return data
+            except Exception as e:
+                logger.warning("HTTP attempt %d/%d failed: %s", attempt, max_retries, e)
+                if attempt == max_retries:
+                    logger.error("All %d HTTP attempts failed", max_retries)
+                    raise
+                time.sleep(5 * attempt)  # 5s, 10s backoff
 
     def validate_download_data(self) -> None:
         """Validate we received valid NBA stats API response."""

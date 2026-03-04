@@ -40,6 +40,9 @@ google-api-python-client>=2.176.0
 google-auth-httplib2>=0.2.0
 google-auth-oauthlib>=1.2.2
 
+# NBA.com stats API wrapper (preferred over direct HTTP for tracking stats)
+nba_api>=1.5.0
+
 fuzzywuzzy>=0.18.0
 python-Levenshtein>=0.21.0
 pyyaml>=6.0
