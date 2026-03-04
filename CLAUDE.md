@@ -9,7 +9,7 @@ Build profitable NBA player props prediction system (55%+ accuracy on over/under
 ## Architecture Overview
 
 **Six-Phase Data Pipeline:**
-1. **Phase 1 - Scrapers**: 30+ scrapers → Cloud Storage JSON
+1. **Phase 1 - Scrapers**: 40+ scrapers → Cloud Storage JSON
 2. **Phase 2 - Raw Processing**: JSON → BigQuery raw tables
 3. **Phase 3 - Analytics**: Player/team game summaries
 4. **Phase 4 - Precompute**: Performance aggregates, matchup history
@@ -70,6 +70,8 @@ nba-stats-scraper/
 │   ├── analytics/        # Phase 3
 │   └── precompute/       # Phase 4
 ├── scrapers/             # Phase 1 - Data scrapers
+│   ├── projections/     # External projection sources (NumberFire, FantasyPros, DFF, Dimers)
+│   └── external/        # External analytics (TeamRankings, Hashtag, RotoWire, Covers, VSiN, NBA Tracking)
 ├── orchestration/        # Phase transition orchestrators
 ├── shared/               # Shared utilities
 ├── bin/                  # Scripts and tools
@@ -88,8 +90,10 @@ nba-stats-scraper/
 | Player Stats | `nbac_gamebook_player_stats` | `nba_raw.nbac_gamebook_player_stats` |
 | Betting Lines | `odds_api_*` | `nba_raw.odds_api_*` |
 | Play-by-Play | `nbac_play_by_play` | `nba_raw.nbac_play_by_play` |
+| Projections | `numberfire_projections`, `fantasypros_projections`, `dailyfantasyfuel_projections`, `dimers_projections` | `nba_raw.numberfire_projections`, etc. |
+| External Analytics | `teamrankings_pace`, `hashtagbasketball_dvp`, `rotowire_lineups`, `covers_referee_stats`, `nba_tracking_stats`, `vsin_betting_splits` | `nba_raw.teamrankings_pace`, etc. |
 
-**Naming:** `nbac_*` = NBA.com, `bdl_*` = Ball Don't Lie (disabled), `odds_api_*` = The Odds API, `bettingpros_*` = BettingPros
+**Naming:** `nbac_*` = NBA.com, `bdl_*` = Ball Don't Lie (disabled), `odds_api_*` = The Odds API, `bettingpros_*` = BettingPros, `numberfire_*`/`fantasypros_*`/`dailyfantasyfuel_*`/`dimers_*` = Projection sources, `teamrankings_*`/`hashtagbasketball_*`/`rotowire_*`/`covers_*`/`vsin_*`/`nba_tracking_*` = External analytics
 
 ## ML Model [Keyword: MODEL]
 
@@ -229,6 +233,16 @@ nba-stats-scraper/
 | `model_performance_daily` | Daily rolling HR/state per model. Auto-populated by post_grading_export |
 | `signal_health_daily` | Signal regime (HOT/NORMAL/COLD) per timeframe |
 | `signal_combo_registry` | 11 SYNERGISTIC combos |
+| `nba_raw.numberfire_projections` | NumberFire/FanDuel player projections (Session 401) |
+| `nba_raw.fantasypros_projections` | FantasyPros consensus projections |
+| `nba_raw.dailyfantasyfuel_projections` | DailyFantasyFuel projections |
+| `nba_raw.dimers_projections` | Dimers projected points |
+| `nba_raw.teamrankings_pace` | TeamRankings team pace ratings |
+| `nba_raw.hashtagbasketball_dvp` | Hashtag Basketball defense-vs-position |
+| `nba_raw.rotowire_lineups` | RotoWire expected lineups + minutes |
+| `nba_raw.covers_referee_stats` | Covers referee O/U tendency stats |
+| `nba_raw.nba_tracking_stats` | NBA.com player tracking/usage data |
+| `nba_raw.vsin_betting_splits` | VSiN public betting percentages |
 
 **Game Status:** 1=Scheduled, 2=In Progress, 3=Final
 
@@ -315,6 +329,12 @@ WHERE game_date >= CURRENT_DATE() - 3 GROUP BY 1 ORDER BY 1 DESC;
 | **Legacy model selection drain (0 best bets)** | Session 391: Hardcoded `catboost_v12`/`catboost_v9` in worker.py bypass registry. They won per-player selection for 77% of candidates → all blocked by `LEGACY_MODEL_BLOCKLIST` → 0 best bets. **Fix**: (1) Added legacy models to registry as `disabled`, (2) defense-in-depth in `supplemental_data.py` excludes disabled + hardcoded legacy models, (3) filter dominance warning in `aggregator.py` alerts when any filter rejects >50%, (4) `player_blacklist.py` excludes disabled models from HR calculation. Worker env vars `ENABLE_LEGACY_V9`/`ENABLE_LEGACY_V12` (default false) gate legacy model loading. |
 | **Filter dominance undetected** | Session 391: A single filter (`legacy_block`) rejected 77% of candidates for multiple days with no alert. **Fix**: `aggregator.py` now logs WARNING when any filter rejects >50% of candidates. `best_bets_filter_audit` BQ table persists filter rejection counts per game_date for retroactive analysis. |
 | **Unregistered models producing predictions** | Session 391: `daily-health-check` now checks all `system_id`s producing predictions have corresponding registry entries. Unregistered models bypass enable/disable controls. |
+| **Scraper date=TODAY literal** | Session 402: ConfigMixin resolved `TODAY` to literal string, not actual date. Fixed: `resolve_today()` in scraper opts. |
+| **Playwright binary missing in Docker** | `playwright` pip package ≠ Chromium binary. Add `RUN playwright install chromium --with-deps` to Dockerfile. |
+| **NumberFire → FanDuel redirect** | Domain acquired by FanDuel. Scraper uses Playwright to render React SPA at `fanduel.com/research/nba/fantasy/dfs-projections`. |
+| **VSiN AJAX-loaded data** | WordPress site loads data via AJAX. Scraper uses Playwright with `networkidle` wait. |
+| **NBA Tracking stats.nba.com timeout** | Cloud IPs blocked. Install `nba_api` library (preferred path) or increase HTTP timeout to 120s with retry. |
+| **CLV scheduler wrong target** | Evening CLV scheduler was targeting legacy `nba-phase1-scrapers`. Fixed to `nba-scrapers`. |
 
 **Full troubleshooting:** `docs/02-operations/session-learnings.md`
 
@@ -364,7 +384,9 @@ python bin/monitoring/grading_gap_detector.py        # Grading gaps (auto: daily
 
 ## Signal System [Keyword: SIGNALS]
 
-**26 active signals** (24 removed/disabled). **Edge-first architecture** — signals are for filtering and annotation, not selection.
+**26 active signals + 8 shadow signals** (24 removed/disabled). **Edge-first architecture** — signals are for filtering and annotation, not selection.
+
+**Shadow signals (Session 401, accumulating data):** `projection_consensus_over`, `projection_consensus_under` (2+ external projections agree with model), `projection_disagreement` (sources disagree — caution), `predicted_pace_over` (TeamRankings pace top-10 matchup), `dvp_favorable_over` (Hashtag DvP bottom-5 defense), `positive_clv_over`, `positive_clv_under` (closing line value confirms edge direction), `negative_clv_filter` (CLV contradicts — negative filter).
 
 **Best Bets:** `edge 3+ (or signal rescue) → negative filters → signal count ≥ 3 → real_sc gate (OVER: real_sc>0, UNDER edge<7: real_sc>0) → rank by edge`
 

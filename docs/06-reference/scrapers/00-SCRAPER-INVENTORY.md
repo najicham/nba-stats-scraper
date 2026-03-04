@@ -1,8 +1,8 @@
 # Phase 1 Scraper Inventory
 
-**Last Updated:** 2026-02-05 (Session 127B)
+**Last Updated:** 2026-03-04 (Session 402)
 
-Complete catalog of all 30+ production scrapers organized by data type and source.
+Complete catalog of all 40+ production scrapers organized by data type and source.
 
 ---
 
@@ -124,6 +124,104 @@ Complete catalog of all 30+ production scrapers organized by data type and sourc
 
 ---
 
+## Projection Data Sources (Session 401)
+
+### numberfire_projections (NumberFire/FanDuel) — FAILING
+- **Source:** FanDuel Research (formerly NumberFire, domain redirects)
+- **URL:** `https://www.fanduel.com/research/nba/fantasy/dfs-projections`
+- **BigQuery Table:** `nba_raw.numberfire_projections`
+- **File:** `scrapers/projections/numberfire_projections.py`
+- **Schedule:** Daily 10:15 AM ET (`nba-numberfire-projections`)
+- **Status:** ❌ FAILING — FanDuel redirect requires Playwright JS rendering
+- **Use Case:** Player point projections for consensus signal
+
+### fantasypros_projections (FantasyPros) — WORKING
+- **Source:** FantasyPros.com consensus projections
+- **URL:** `https://www.fantasypros.com/nba/projections/`
+- **BigQuery Table:** `nba_raw.fantasypros_projections`
+- **File:** `scrapers/projections/fantasypros_projections.py`
+- **Schedule:** Daily 10:20 AM ET (`nba-fantasypros-projections`)
+- **Status:** ✅ Production (271 records)
+- **Use Case:** Consensus projected points from 4+ expert sources
+
+### dailyfantasyfuel_projections (DailyFantasyFuel) — WORKING
+- **Source:** DailyFantasyFuel.com projections
+- **URL:** `https://www.dailyfantasyfuel.com/nba/projections/`
+- **BigQuery Table:** `nba_raw.dailyfantasyfuel_projections`
+- **File:** `scrapers/projections/dailyfantasyfuel_projections.py`
+- **Schedule:** Daily 10:25 AM ET (`nba-dailyfantasyfuel-projections`)
+- **Status:** ✅ Production (112 records)
+- **Use Case:** Independent projection source for consensus signal
+
+### dimers_projections (Dimers) — WORKING
+- **Source:** Dimers.com NBA player projections
+- **URL:** `https://www.dimers.com/bet-hub/nba/projections`
+- **BigQuery Table:** `nba_raw.dimers_projections`
+- **File:** `scrapers/projections/dimers_projections.py`
+- **Schedule:** Daily 10:30 AM ET (`nba-dimers-projections`)
+- **Status:** ✅ Production (20 records)
+- **Use Case:** Third projection source for consensus signal
+
+---
+
+## External Analytics Sources (Session 401)
+
+### teamrankings_pace (TeamRankings) — WORKING
+- **Source:** TeamRankings.com team pace ratings
+- **URL:** `https://www.teamrankings.com/nba/stat/possessions-per-game`
+- **BigQuery Table:** `nba_raw.teamrankings_pace`
+- **File:** `scrapers/external/teamrankings_pace.py`
+- **Schedule:** Daily 10:35 AM ET (`nba-teamrankings-pace`)
+- **Status:** ✅ Production (30 records)
+- **Use Case:** Team pace data for `predicted_pace_over` signal
+
+### hashtagbasketball_dvp (Hashtag Basketball) — WORKING
+- **Source:** HashtagBasketball.com Defense vs Position
+- **URL:** `https://hashtagbasketball.com/nba-defense-vs-position`
+- **BigQuery Table:** `nba_raw.hashtagbasketball_dvp`
+- **File:** `scrapers/external/hashtagbasketball_dvp.py`
+- **Schedule:** Daily 10:40 AM ET (`nba-hashtagbasketball-dvp`)
+- **Status:** ✅ Production (34 records)
+- **Use Case:** DvP rankings for `dvp_favorable_over` signal
+
+### rotowire_lineups (RotoWire) — WORKING
+- **Source:** RotoWire.com expected lineups and minutes
+- **URL:** `https://www.rotowire.com/basketball/nba-lineups.php`
+- **BigQuery Table:** `nba_raw.rotowire_lineups`
+- **File:** `scrapers/external/rotowire_lineups.py`
+- **Schedule:** Daily 10:45 AM ET (`nba-rotowire-lineups`)
+- **Status:** ✅ Production (480 records)
+- **Use Case:** Projected minutes and lineup status confirmation
+
+### covers_referee_stats (Covers) — WORKING
+- **Source:** Covers.com referee statistics
+- **URL:** `https://www.covers.com/sport/basketball/nba/referee-stats`
+- **BigQuery Table:** `nba_raw.covers_referee_stats`
+- **File:** `scrapers/external/covers_referee_stats.py`
+- **Schedule:** Daily 10:50 AM ET (`nba-covers-referee-stats`)
+- **Status:** ✅ Production (76 records)
+- **Use Case:** Referee O/U tendencies for game-level context
+
+### nba_tracking_stats (NBA.com) — FAILING
+- **Source:** NBA.com player tracking stats (via nba_api or direct HTTP)
+- **Endpoint:** `stats.nba.com/stats/leaguedashplayerstats?MeasureType=Usage`
+- **BigQuery Table:** `nba_raw.nba_tracking_stats`
+- **File:** `scrapers/external/nba_tracking_stats.py`
+- **Schedule:** Daily 10:55 AM ET (`nba-tracking-stats`)
+- **Status:** ❌ FAILING — `nba_api` not in requirements, HTTP fallback times out (cloud IP blocked)
+- **Use Case:** Touch-based usage data (drives, catch-and-shoot, paint touches)
+
+### vsin_betting_splits (VSiN) — FAILING
+- **Source:** VSiN.com public betting splits (DraftKings-sourced)
+- **URL:** `https://data.vsin.com/nba/betting-splits/`
+- **BigQuery Table:** `nba_raw.vsin_betting_splits`
+- **File:** `scrapers/external/vsin_betting_splits.py`
+- **Schedule:** Daily 2:00 PM ET (`nba-vsin-betting-splits`)
+- **Status:** ❌ FAILING — WordPress AJAX-loaded data, needs Playwright rendering
+- **Use Case:** Public betting percentages for sharp money signal
+
+---
+
 ## Table Naming Conventions
 
 | Prefix | Source | Example |
@@ -134,6 +232,16 @@ Complete catalog of all 30+ production scrapers organized by data type and sourc
 | `bettingpros_*` | BettingPros | `bettingpros_player_points_props` |
 | `bbref_*` | Basketball Reference | `bbref_player_stats` |
 | `bigdataball_*` | BigDataBall | `bigdataball_defense` |
+| `numberfire_*` | NumberFire/FanDuel | `numberfire_projections` |
+| `fantasypros_*` | FantasyPros | `fantasypros_projections` |
+| `dailyfantasyfuel_*` | DailyFantasyFuel | `dailyfantasyfuel_projections` |
+| `dimers_*` | Dimers | `dimers_projections` |
+| `teamrankings_*` | TeamRankings | `teamrankings_pace` |
+| `hashtagbasketball_*` | Hashtag Basketball | `hashtagbasketball_dvp` |
+| `rotowire_*` | RotoWire | `rotowire_lineups` |
+| `covers_*` | Covers | `covers_referee_stats` |
+| `nba_tracking_*` | NBA.com Tracking | `nba_tracking_stats` |
+| `vsin_*` | VSiN | `vsin_betting_splits` |
 
 ---
 
@@ -191,6 +299,8 @@ scrapers/
 ├── theoddsapi/       # The Odds API (odds_api_*)
 ├── bettingpros/      # BettingPros (bettingpros_*)
 ├── basketballref/    # Basketball Reference (bbref_*)
+├── projections/      # External projections (numberfire, fantasypros, dff, dimers)
+├── external/         # External analytics (teamrankings, hashtag, rotowire, covers, vsin, nba_tracking)
 └── registry.py       # Scraper registration (programmatic)
 ```
 

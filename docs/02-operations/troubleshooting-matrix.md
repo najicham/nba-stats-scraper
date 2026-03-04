@@ -2365,13 +2365,97 @@ WHERE edge < 0 AND game_date >= '2025-10-01';
 
 ---
 
-**Document Version**: 1.4
+---
+
+## Section 9: New Data Source Scraper Issues (Session 401-402)
+
+### 9.1 — Scraper Returns date=TODAY Literal in Data
+
+**Symptom:** BQ write fails with "Invalid DATE value: TODAY". GCS file path contains `/TODAY/` instead of `/2026-03-04/`.
+
+**Root Cause:** Cloud Scheduler sends `date=TODAY`. ConfigMixin passes it through without resolving.
+
+**Fix:** Session 402 added `resolve_today()` to scraper opts. Converts `TODAY` → actual Eastern date string.
+
+**Verification:**
+```bash
+# Force-trigger a scraper and check logs
+gcloud scheduler jobs run nba-fantasypros-projections --location=us-west2
+# Check logs for resolved date
+gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="nba-scrapers" AND "fantasypros"' --limit=10 --format='value(textPayload)'
+```
+
+### 9.2 — NumberFire Scraper Returns Empty Data (FanDuel Redirect)
+
+**Symptom:** NumberFire scraper returns 0 players. HTML validation fails with "Response doesn't appear to be from NumberFire".
+
+**Root Cause:** `numberfire.com` 301-redirects to `fanduel.com/research/nba/fantasy/dfs-projections`. FanDuel page is a React SPA — no data in static HTML.
+
+**Fix:** Override `download_and_decode()` with Playwright headless browser to render JavaScript. Uses `playwright-stealth` for bot detection avoidance.
+
+**Verification:**
+```sql
+SELECT game_date, player_count FROM nba_raw.numberfire_projections
+WHERE game_date >= CURRENT_DATE() - 3 ORDER BY game_date DESC;
+```
+
+### 9.3 — VSiN Scraper Returns Empty Games (AJAX Data)
+
+**Symptom:** VSiN scraper returns `game_count: 0`. HTML contains empty div containers but no table data.
+
+**Root Cause:** `data.vsin.com` is a WordPress site that loads betting splits via AJAX after page load. Static HTML has empty containers.
+
+**Fix:** Override `download_and_decode()` with Playwright. Wait for `networkidle` + explicit table selector before extracting HTML.
+
+**Verification:**
+```sql
+SELECT game_date, game_count FROM nba_raw.vsin_betting_splits
+WHERE game_date >= CURRENT_DATE() - 3 ORDER BY game_date DESC;
+```
+
+### 9.4 — NBA Tracking Stats Timeout (Cloud IP Blocked)
+
+**Symptom:** `stats.nba.com` request times out after 60s. No data returned.
+
+**Root Cause:** NBA.com blocks cloud provider IP ranges. The `nba_api` library (which handles headers/retries better) was not in requirements.
+
+**Fix:** (1) Add `nba_api>=1.5.0` to requirements. Scraper already has dual code path — `nba_api` activates automatically when available. (2) Increase HTTP fallback timeout to 120s with retry.
+
+**Verification:**
+```sql
+SELECT game_date, player_count FROM nba_raw.nba_tracking_stats
+WHERE game_date >= CURRENT_DATE() - 3 ORDER BY game_date DESC;
+```
+
+### 9.5 — Playwright "Executable doesn't exist" in Docker
+
+**Symptom:** Scraper using Playwright fails with `playwright._impl._errors.Error: Executable doesn't exist`.
+
+**Root Cause:** `playwright` pip package installs Python API bindings only. Chromium binary must be installed separately.
+
+**Fix:** Add to Dockerfile after pip install: `RUN playwright install chromium --with-deps`
+
+### 9.6 — CLV Evening Scraper Not Firing
+
+**Symptom:** No `snapshot_type=closing` rows in `nba_raw.odds_api_player_props` after 6 PM ET.
+
+**Root Cause:** Evening CLV scheduler was targeting old service name `nba-phase1-scrapers` instead of `nba-scrapers`.
+
+**Fix (Session 402):** Updated scheduler target. Verify with:
+```bash
+gcloud scheduler jobs describe nba-clv-evening-snapshot --location=us-west2 --format='value(httpTarget.uri)'
+```
+
+---
+
+**Document Version**: 1.5
 **Created**: 2025-11-15
-**Last Updated**: 2026-03-02
+**Last Updated**: 2026-03-04
 **Maintained By**: Engineering Team
 **Review Frequency**: Monthly or after major incidents
 
 **Version History:**
+- v1.5 (2026-03-04): Added Section 9: New Data Source Scraper Issues (Session 401-402 — date=TODAY, Playwright, NumberFire redirect, VSiN AJAX, NBA Tracking timeout, CLV scheduler)
 - v1.4 (2026-03-02): Added Section 8: Signal System Issues (Session 387 — silent signal failures, prop_line_delta, negative edges)
 - v1.3 (2026-02-01): Added Section 7.4: Monitoring metrics permissions troubleshooting
 - v1.2 (2026-02-01): Added Section 7: Observability Issues (dashboard health, Firestore proliferation, monitoring)

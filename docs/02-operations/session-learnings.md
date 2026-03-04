@@ -1276,3 +1276,43 @@ See `docs/08-projects/current/fleet-lifecycle-automation/00-PLAN.md` for the 3-t
 - Tier 1: Auto-disable BLOCKED shadow models
 - Tier 2: Signal firing canary
 - Tier 3: Registry hygiene automation
+
+---
+
+## Session 401-402: Scraper Infrastructure Issues
+
+### ConfigMixin date=TODAY Bug
+
+**Symptom:** Scraper scheduler sends `date=TODAY` parameter. Scraper passes literal string `"TODAY"` into JSON data and GCS paths. Phase 2 processor rejects it as invalid DATE for BigQuery.
+
+**Root Cause:** `ConfigMixin.resolve_opts()` did not resolve the `TODAY` sentinel to an actual date string. It was treated as a passthrough value.
+
+**Fix (Session 402):** Added `resolve_today()` in scraper opts processing that converts `TODAY` → `YYYY-MM-DD` (Eastern time) before any downstream use.
+
+**Prevention:** Any new scraper inheriting `ScraperBase` automatically gets date resolution. Test with `--date TODAY` locally before deploying.
+
+### Playwright Library vs Browser Binary
+
+**Symptom:** `playwright==1.52.0` installed via pip, but `playwright.chromium.launch()` fails with "Executable doesn't exist" at runtime.
+
+**Root Cause:** The `playwright` Python package is just the API bindings. The actual Chromium binary (~150MB) must be installed separately via `playwright install chromium`. In Docker, `--with-deps` is also needed for system libraries (libnss3, libatk, etc.).
+
+**Fix:** Added `RUN playwright install chromium --with-deps` to `scrapers/Dockerfile` after pip install step.
+
+**Note:** Adds ~150-200MB to Docker image. Monitor cold start times.
+
+### Referee Processor Missing load_data()
+
+**Symptom:** `NbacRefereeProcessor` in Phase 2 failed silently — no data loaded from GCS, transform produced empty results.
+
+**Root Cause:** `ProcessorBase` requires `load_data()` override. The referee processor was created in December but `load_data()` was never implemented — it inherited a no-op default.
+
+**Fix (Session 402):** Implemented `load_data()` to read JSON from GCS path. Historical files (~59 dates from December onward) need backfill via `bin/backfill_referee_data.py`.
+
+### NumberFire → FanDuel Domain Redirect
+
+**Symptom:** NumberFire projections URL returns 301 redirect to `fanduel.com/research/nba/fantasy/dfs-projections`. The FanDuel page is a React SPA with no data in static HTML.
+
+**Root Cause:** FanDuel acquired NumberFire and redirected the domain. The projections data is now rendered client-side via JavaScript.
+
+**Fix:** Override `download_and_decode()` to use Playwright headless browser. Navigate to FanDuel URL, wait for table render, extract rendered HTML for BeautifulSoup parsing. Requires `playwright-stealth` to avoid bot detection.
