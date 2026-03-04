@@ -73,28 +73,36 @@ def compute_player_blacklist(
         # Legacy models (catboost_v12/v9) with poor HR were inflating per-player
         # loss counts, blacklisting 113/330 players (34%). Only count predictions
         # from models that are still eligible for best bets selection.
+        # Uses CTE + LEFT JOIN instead of NOT IN subquery (BQ correlated subquery limit).
         if multi_model:
-            system_clause = """AND system_id NOT IN (
+            disabled_cte = f"""
+            WITH disabled_models AS (
                 SELECT model_id FROM `{project_id}.nba_predictions.model_registry`
                 WHERE enabled = FALSE OR status IN ('blocked', 'disabled')
-            )""".format(project_id=project_id)
+            )"""
+            disabled_join = """LEFT JOIN disabled_models dm ON pa.system_id = dm.model_id"""
+            disabled_filter = "AND dm.model_id IS NULL"
         else:
-            system_clause = "AND system_id = @system_id"
+            disabled_cte = ""
+            disabled_join = ""
+            disabled_filter = "AND pa.system_id = @system_id"
 
         query = f"""
+        {disabled_cte}
         SELECT
-            player_lookup,
-            COUNTIF(prediction_correct = TRUE) AS wins,
-            COUNTIF(prediction_correct = FALSE) AS losses,
+            pa.player_lookup,
+            COUNTIF(pa.prediction_correct = TRUE) AS wins,
+            COUNTIF(pa.prediction_correct = FALSE) AS losses,
             COUNT(*) AS total_picks,
-            ROUND(100.0 * COUNTIF(prediction_correct = TRUE) / COUNT(*), 1) AS hit_rate
-        FROM `{project_id}.nba_predictions.prediction_accuracy`
-        WHERE game_date >= @season_start
-          AND game_date < @target_date
-          {system_clause}
-          AND ABS(predicted_points - line_value) >= 3
-          AND is_voided = FALSE
-        GROUP BY player_lookup
+            ROUND(100.0 * COUNTIF(pa.prediction_correct = TRUE) / COUNT(*), 1) AS hit_rate
+        FROM `{project_id}.nba_predictions.prediction_accuracy` pa
+        {disabled_join}
+        WHERE pa.game_date >= @season_start
+          AND pa.game_date < @target_date
+          {disabled_filter}
+          AND ABS(pa.predicted_points - pa.line_value) >= 3
+          AND pa.is_voided = FALSE
+        GROUP BY pa.player_lookup
         HAVING COUNT(*) >= @min_picks
         """
 
