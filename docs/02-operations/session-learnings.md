@@ -474,6 +474,33 @@ return f"({col} NOT LIKE '%_q4%')"
 
 ## Data Quality Issues
 
+### Play-by-Play Data Silent Failure — GCS Data Never Reaches BQ (Session 396)
+
+**Problem**: `nba_raw.nbac_play_by_play` had only 506 rows (single test day from Jan 15) despite the scraper running daily via `post_game_window_3` workflow. 59 dates of data existed in GCS but Phase 2 never processed them.
+
+**Root Cause Chain**:
+1. Scraper downloads play-by-play and exports to GCS correctly
+2. `_determine_execution_status()` in `execution_logging_mixin.py` checks `self.data` for standard patterns (`records`, `games`, `players`, etc.)
+3. Play-by-play uses `{"metadata": {...}, "playByPlay": {...}}` — no standard key matches
+4. Status reported as `no_data (0 records)` to Pub/Sub
+5. Phase 2 receives `status=no_data` → "No file to process" → skips
+
+**Secondary Issue**: Cloud Scheduler calls `/scrape` directly every 4h with only `date` param, bypassing the parameter resolver which would provide `game_id`. Always fails with "Missing required option [game_id]".
+
+**Why Undetected**: (1) Daily validation doesn't check `nbac_play_by_play` table, (2) scraper marked `critical: false` in workflows, (3) validation config exists in YAML but not wired into daily runner.
+
+**Fix**: Added `record_count` key to `self.data` in `transform_data()`:
+```python
+self.data["record_count"] = len(actions)
+```
+
+**Key Lessons**:
+1. Any scraper with non-standard `self.data` structure will silently report `no_data`
+2. GCS data existence does NOT mean BQ data existence — Phase 2 depends on Pub/Sub status
+3. Validation must cover ALL raw tables, not just predictions and analytics
+4. `critical: false` scrapers need separate monitoring — they can fail for months undetected
+5. Direct `/scrape` route bypasses parameter resolver — per-game scrapers need workflow orchestration
+
 ### Phase 3 All-or-Nothing Quality Rejection (Session 302)
 
 **Problem**: `TeamOffenseGameSummaryProcessor` quality check rejected ALL team records when ANY team had zeros (points=0, fg_attempted=0). On an 11-game night with 5 late games still in progress, the scraper wrote zero-value placeholders for 10 teams. The quality check rejected all 22 teams — even the 12 valid ones from 6 completed games. This cascaded: PlayerGameSummary blocked on empty team dependency → Phase 4/5/6 all failed.

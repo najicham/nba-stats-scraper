@@ -455,6 +455,10 @@ class GetNbaComPlayByPlay(ScraperBase, ScraperFlaskMixin):
                     "eventCount": len(actions),
                 },
                 "playByPlay": self.decoded_data,
+                # record_count enables _determine_execution_status() to detect
+                # records and report 'success' instead of 'no_data' to Phase 2.
+                # Without this, Phase 2 skips processing despite GCS data existing.
+                "record_count": len(actions),
             }
             
             # Add production validation

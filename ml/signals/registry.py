@@ -44,6 +44,7 @@ def build_default_registry() -> SignalRegistry:
     # HotStreak3Signal REMOVED — 47.5% AVG HR, below breakeven (Session 275)
     # ColdContinuation2Signal REMOVED — 45.8% AVG HR, never above breakeven (Session 275)
     from ml.signals.b2b_fatigue_under import B2BFatigueUnderSignal
+    from ml.signals.b2b_boost_over import B2BBoostOverSignal
     from ml.signals.rest_advantage_2d import RestAdvantage2DSignal
 
     # Prototype signals - Batch 2 (Session 255)
@@ -121,7 +122,11 @@ def build_default_registry() -> SignalRegistry:
     # B2BFatigueUnderSignal DISABLED (Session 373) — boosts a losing pattern (39.5% Feb HR, N=410).
     # Fires only 3 times in best bets total (2-1). Signal is philosophically backwards:
     # encourages B2B UNDER but B2B UNDER collapsed from 66.7% (Dec) to 39.5% (Feb).
-    registry.register(RestAdvantage2DSignal())
+    # B2BBoostOverSignal (Session 396) — B2B is BULLISH for OVER (64.3% raw, 69.2% toxic window)
+    registry.register(B2BBoostOverSignal())
+    # RestAdvantage2DSignal DISABLED (Session 396) — 25% 30d HR (N=4), collapsed from
+    # 80.6% Jan to 57.1% Feb. Post-ASB fewer rest differentials. Re-enable next October.
+    # registry.register(RestAdvantage2DSignal())
 
     # Prototype signals - Batch 2 (8 removed Sessions 275+296, see import comments)
 
