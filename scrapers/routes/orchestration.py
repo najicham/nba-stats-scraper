@@ -234,11 +234,20 @@ def execute_workflow():
 
         current_app.logger.info(f"🎯 Manual workflow execution: {workflow_name} with {len(scrapers)} scrapers")
 
+        # Session 403: Pass extra params (e.g. snapshot_type for CLV evening scrape)
+        # from scheduler body through to scraper parameter resolution.
+        extra_context = {}
+        if data.get('snapshot_type'):
+            extra_context['snapshot_type'] = data['snapshot_type']
+        if data.get('game_date'):
+            extra_context['target_date'] = data['game_date']
+
         # Use new HTTP-based executor
         executor = get_executor()
         result = executor.execute_workflow(
             workflow_name=workflow_name,
-            scrapers=scrapers
+            scrapers=scrapers,
+            extra_context=extra_context,
         )
 
         return jsonify({

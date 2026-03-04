@@ -442,7 +442,8 @@ class WorkflowExecutor:
         scrapers: List[str],
         decision_id: Optional[str] = None,
         target_games: Optional[List[str]] = None,
-        target_date: Optional[str] = None
+        target_date: Optional[str] = None,
+        extra_context: Optional[Dict[str, Any]] = None,
     ) -> WorkflowExecution:
         """
         Execute a single workflow by calling its scrapers.
@@ -491,6 +492,11 @@ class WorkflowExecutor:
             target_games=target_games,
             target_date=target_date
         )
+
+        # Session 403: Merge extra context from caller (e.g., snapshot_type for CLV)
+        if extra_context:
+            context.update(extra_context)
+            logger.info(f"   Extra context: {extra_context}")
 
         scraper_executions = []
 

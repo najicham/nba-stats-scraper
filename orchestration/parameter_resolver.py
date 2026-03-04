@@ -710,15 +710,21 @@ class ParameterResolver:
             return []
 
         # Return parameter set for each event
+        # Session 403: Pass snapshot_type from context (for CLV evening scrape)
+        snapshot_type = context.get('snapshot_type')
         params_list = []
         for event_id in event_ids:
-            params_list.append({
+            params = {
                 'event_id': event_id,
                 'game_date': context['execution_date'],
                 'sport': 'basketball_nba'
-            })
+            }
+            if snapshot_type:
+                params['snapshot_type'] = snapshot_type
+            params_list.append(params)
 
-        logger.info(f"Resolved oddsa_player_props for {len(params_list)} events")
+        logger.info(f"Resolved oddsa_player_props for {len(params_list)} events"
+                     f"{f' (snapshot_type={snapshot_type})' if snapshot_type else ''}")
         return params_list
 
     def _resolve_odds_game_lines(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
