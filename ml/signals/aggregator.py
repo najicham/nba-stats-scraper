@@ -51,7 +51,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v400_signal_first_under'
+ALGORITHM_VERSION = 'v400b_star_under_removed'
 
 # Base signals that fire on nearly every edge 5+ pick. Picks with ONLY
 # these signals hit 57.1% (N=42) vs 77.8% for picks with 4+ signals.
@@ -424,20 +424,13 @@ class BestBetsAggregator:
                 _record_filtered(pred, 'bench_under', pred_edge)
                 continue
 
-            # Star UNDER block (Session 354, relaxed Session 367):
-            # season_avg >= 25 + UNDER was 51.3% HR (N=37) at time of creation.
-            # Session 367 revalidation: 55.3% overall (above breakeven), but
-            # 58.3% when star_teammates_out >= 1 vs 55.6% without.
-            # Now injury-aware: allow when a star teammate is out (usage boost
-            # shifts scoring distribution, making UNDER more viable).
+            # Star UNDER block — REMOVED Session 400.
+            # Was 50.0% Feb (toxic window) but recovered to 72.1% Mar (N=61).
+            # Signal-supported star UNDER: 71.4% Mar (N=7). Blanket block
+            # was killing highest-edge multi-model picks (Maxey 8.5, SGA 6.6).
+            # Research agent investigating seasonal activation pattern.
+            # Filter counter retained for schema continuity.
             season_avg = pred.get('points_avg_season') or 0
-            star_teammates_out = pred.get('star_teammates_out') or 0
-            if (pred.get('recommendation') == 'UNDER'
-                    and season_avg >= 25
-                    and star_teammates_out < 1):
-                filter_counts['star_under'] += 1
-                _record_filtered(pred, 'star_under', pred_edge)
-                continue
 
             # UNDER Star AWAY block (Session 369): 38.5% HR (5W-8L, -$380) vs HOME 81.8% (9W-2L, +$680)
             # Star-line players (line >= 23) playing AWAY have structurally worse UNDER outcomes
