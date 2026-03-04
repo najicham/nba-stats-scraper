@@ -765,6 +765,50 @@ def send_slack_notification(results: HealthCheckResult):
         logger.warning("SLACK_WEBHOOK_URL not configured, skipping daily summary")
 
 
+def check_model_registry_consistency(game_date: str) -> Tuple[str, str]:
+    """Session 391: Detect prediction system_ids that aren't in model_registry.
+
+    Hardcoded models in worker.py bypass registry controls. This check compares
+    today's prediction output against the registry to catch unregistered models
+    producing predictions (e.g., catboost_v12/v9 legacy models).
+
+    Returns:
+        Tuple of (status, message)
+    """
+    try:
+        query = f"""
+        WITH prediction_models AS (
+          SELECT DISTINCT system_id
+          FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
+          WHERE game_date = '{game_date}'
+        ),
+        registry_models AS (
+          SELECT DISTINCT model_id
+          FROM `{PROJECT_ID}.nba_predictions.model_registry`
+        )
+        SELECT
+          p.system_id,
+          r.model_id IS NOT NULL as in_registry
+        FROM prediction_models p
+        LEFT JOIN registry_models r ON p.system_id = r.model_id
+        WHERE r.model_id IS NULL
+        """
+        results = list(bq.query(query).result())
+        unregistered = [row.system_id for row in results]
+
+        if not unregistered:
+            return ('pass', 'All prediction system_ids have registry entries')
+        else:
+            return (
+                'warn',
+                f'Unregistered system_ids producing predictions: {", ".join(unregistered)}. '
+                f'These bypass registry controls (enable/disable, status tracking).'
+            )
+    except Exception as e:
+        logger.warning(f"Model registry consistency check failed: {e}")
+        return ('warn', f'Check failed: {e}')
+
+
 @functions_framework.http
 def daily_health_check(request):
     """
@@ -845,7 +889,15 @@ def daily_health_check(request):
     results.add("Completion Tracking", status, message)
 
     # ========================================================================
-    # CHECK 8: GCS Export Freshness
+    # CHECK 8: Model Registry Consistency (Session 391)
+    # ========================================================================
+    logger.info("Checking model registry consistency...")
+
+    status, message = check_model_registry_consistency(today)
+    results.add("Model Registry Consistency", status, message)
+
+    # ========================================================================
+    # CHECK 9: GCS Export Freshness
     # ========================================================================
     logger.info("Checking GCS export freshness...")
 

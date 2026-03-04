@@ -92,10 +92,16 @@ def query_predictions_with_supplements(
     -- Self-bootstrapping: new models use raw HR until they accumulate 8+ best-bets picks.
     -- Session 378c: Registry cascade — disabled/blocked models auto-excluded from best bets.
     -- Safe degradation: if registry query returns empty, NOT IN (empty) excludes nothing.
+    -- Session 391: Defense-in-depth — hardcoded legacy models that bypass registry
+    -- (loaded directly by worker.py) are explicitly excluded here to prevent them
+    -- from winning per-player selection then being blocked by LEGACY_MODEL_BLOCKLIST.
+    -- Root cause: catboost_v12/v9 won selection for 47/61 players → all blocked → 0 best bets.
     WITH disabled_models AS (
       SELECT model_id
       FROM `{PROJECT_ID}.nba_predictions.model_registry`
       WHERE enabled = FALSE OR status IN ('blocked', 'disabled')
+      UNION DISTINCT
+      SELECT model_id FROM UNNEST(['catboost_v12', 'catboost_v9']) AS model_id
     ),
 
     -- Session 378c warmup REMOVED: created_at reflects registry insertion date,
@@ -183,10 +189,13 @@ def query_predictions_with_supplements(
     else:
         preds_cte = f"""
     -- Session 378c: Registry cascade for single-model path (warmup removed)
+    -- Session 391: Defense-in-depth — include hardcoded legacy models
     WITH disabled_models AS (
       SELECT model_id
       FROM `{PROJECT_ID}.nba_predictions.model_registry`
       WHERE enabled = FALSE OR status IN ('blocked', 'disabled')
+      UNION DISTINCT
+      SELECT model_id FROM UNNEST(['catboost_v12', 'catboost_v9']) AS model_id
     ),
     preds AS (
       SELECT

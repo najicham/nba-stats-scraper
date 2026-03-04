@@ -61,7 +61,7 @@ ACTIVE_SIGNALS = frozenset({
     'starter_under',
     'high_scoring_environment_over',
     'fast_pace_over',
-    'volatile_scoring_over',
+    # volatile_scoring_over DISABLED — 50% HR live, coin flip (Session 391)
     'low_line_over',
     'line_rising_over',
     'self_creation_over',

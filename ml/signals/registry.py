@@ -152,7 +152,9 @@ def build_default_registry() -> SignalRegistry:
 
     # Session 374 signals
     registry.register(FastPaceOverSignal())
-    registry.register(VolatileScoringOverSignal())
+    # VolatileScoringOverSignal DISABLED (Session 391) — 50% HR (4-4) in 21 days,
+    # lost its edge. Backtest was 81.5% but live performance is coin flip. Adds
+    # signal count to losing picks. CV >= 0.50 condition too broad.
     registry.register(LowLineOverSignal())
 
     # Session 374b signals

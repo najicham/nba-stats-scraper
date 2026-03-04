@@ -332,13 +332,19 @@ def discover_models(bq_client, game_date: str,
     from google.cloud import bigquery as bq
 
     sql_filter = build_system_id_sql_filter()
+    # Session 391: Filter out disabled/blocked models from discovery.
+    # Previously, disabled models with is_active=TRUE predictions leaked into
+    # cross-model scoring. Now checks model_registry.enabled status.
     query = f"""
-    SELECT DISTINCT system_id
-    FROM `{project_id}.nba_predictions.player_prop_predictions`
-    WHERE game_date = @game_date
-      AND is_active = TRUE
-      AND recommendation IN ('OVER', 'UNDER')
+    SELECT DISTINCT p.system_id
+    FROM `{project_id}.nba_predictions.player_prop_predictions` p
+    LEFT JOIN `{project_id}.nba_predictions.model_registry` mr
+      ON p.system_id = mr.model_id
+    WHERE p.game_date = @game_date
+      AND p.is_active = TRUE
+      AND p.recommendation IN ('OVER', 'UNDER')
       AND {sql_filter}
+      AND (mr.enabled IS NULL OR mr.enabled = TRUE)
     """
 
     job_config = bq.QueryJobConfig(

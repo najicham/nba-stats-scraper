@@ -163,7 +163,12 @@ PUBSUB_READY_TOPIC = os.environ.get('PUBSUB_READY_TOPIC', 'prediction-ready')
 # CatBoost model version: 'v8' (historical training) or 'v9' (current season)
 CATBOOST_VERSION = os.environ.get('CATBOOST_VERSION', 'v9')  # Default to V9 (Session 67)
 CATBOOST_SYSTEM_ID = f'catboost_{CATBOOST_VERSION}'  # e.g., 'catboost_v9' or 'catboost_v8'
-logger.info(f"✓ Environment configuration loaded (CATBOOST_VERSION={CATBOOST_VERSION}, SYSTEM_ID={CATBOOST_SYSTEM_ID})")
+# Session 391: Legacy model gating — these hardcoded models bypass registry controls
+# and produce ~200 wasted predictions/day that are excluded by downstream filters.
+# Default false so new deploys automatically skip legacy models.
+ENABLE_LEGACY_V9 = os.environ.get('ENABLE_LEGACY_V9', 'false').lower() == 'true'
+ENABLE_LEGACY_V12 = os.environ.get('ENABLE_LEGACY_V12', 'false').lower() == 'true'
+logger.info(f"✓ Environment configuration loaded (CATBOOST_VERSION={CATBOOST_VERSION}, SYSTEM_ID={CATBOOST_SYSTEM_ID}, LEGACY_V9={ENABLE_LEGACY_V9}, LEGACY_V12={ENABLE_LEGACY_V12})")
 
 # Failure Classification for Retry Logic
 # Permanent failures - data won't appear on retry, ack message immediately
@@ -202,6 +207,7 @@ _staging_writer: Optional['BatchStagingWriter'] = None
 _injury_filter: Optional['InjuryFilter'] = None
 _breakout_classifier = None  # Session 128: Breakout classifier for shadow mode
 _catboost_v12 = None  # Session 230: CatBoost V12 no-vegas shadow model
+_systems_initialized = False  # Session 391: Separate sentinel from _catboost (may be None when V9 disabled)
 
 def get_data_loader() -> 'PredictionDataLoader':
     """Lazy-load data loader on first use"""
@@ -281,15 +287,21 @@ def get_prediction_systems() -> tuple:
     from prediction_systems.catboost_v9 import CatBoostV9
     from prediction_systems.catboost_monthly import get_enabled_monthly_models
 
-    global _moving_average, _zone_matchup, _catboost, _monthly_models
-    if _catboost is None:
+    global _moving_average, _zone_matchup, _catboost, _monthly_models, _systems_initialized
+    if not _systems_initialized:
         logger.info("Initializing prediction systems...")
         _moving_average = MovingAverageBaseline()
         _zone_matchup = ZoneMatchupV1()
 
         # Load CatBoost V9 champion model
-        logger.info("Loading CatBoost V9 (champion)...")
-        _catboost = CatBoostV9()
+        # Session 391: Gate behind ENABLE_LEGACY_V9 — legacy model bypasses registry,
+        # produces predictions excluded by supplemental_data.py disabled_models filter.
+        if ENABLE_LEGACY_V9:
+            logger.info("Loading CatBoost V9 (legacy, explicitly enabled)...")
+            _catboost = CatBoostV9()
+        else:
+            logger.info("CatBoost V9 legacy model SKIPPED (ENABLE_LEGACY_V9=false)")
+            _catboost = None
 
         # Load monthly models (Session 68, Session 273: DB-driven from model_registry)
         logger.info("Loading monthly models (registry + dict fallback)...")
@@ -306,25 +318,31 @@ def get_prediction_systems() -> tuple:
             logger.info("No monthly models enabled")
 
         # Session 230: CatBoost V12 no-vegas shadow model
-        # Try/except so V12 failure doesn't break other systems
+        # Session 391: Gate behind ENABLE_LEGACY_V12 — legacy model bypasses registry.
         global _catboost_v12
-        try:
-            v12_model_path = os.environ.get('CATBOOST_V12_MODEL_PATH')
-            if v12_model_path:
-                from prediction_systems.catboost_v12 import CatBoostV12
-                logger.info("Loading CatBoost V12 (no-vegas shadow model)...")
-                _catboost_v12 = CatBoostV12()
-                logger.info(f"CatBoost V12 loaded: {_catboost_v12.get_model_info()}")
-            else:
-                logger.info("CATBOOST_V12_MODEL_PATH not set — V12 shadow disabled")
-        except Exception as e:
-            logger.warning(f"CatBoost V12 failed to load (non-fatal): {e}", exc_info=True)
-            _catboost_v12 = None
+        if ENABLE_LEGACY_V12:
+            try:
+                v12_model_path = os.environ.get('CATBOOST_V12_MODEL_PATH')
+                if v12_model_path:
+                    from prediction_systems.catboost_v12 import CatBoostV12
+                    logger.info("Loading CatBoost V12 (legacy, explicitly enabled)...")
+                    _catboost_v12 = CatBoostV12()
+                    logger.info(f"CatBoost V12 loaded: {_catboost_v12.get_model_info()}")
+                else:
+                    logger.info("CATBOOST_V12_MODEL_PATH not set — V12 shadow disabled")
+            except Exception as e:
+                logger.warning(f"CatBoost V12 failed to load (non-fatal): {e}", exc_info=True)
+                _catboost_v12 = None
+        else:
+            logger.info("CatBoost V12 legacy model SKIPPED (ENABLE_LEGACY_V12=false)")
 
+        _systems_initialized = True
         monthly_count = len(_monthly_models) if _monthly_models else 0
+        v9_loaded = _catboost is not None
         v12_loaded = _catboost_v12 is not None
-        total_systems = 3 + monthly_count + (1 if v12_loaded else 0)
-        logger.info(f"All prediction systems initialized ({total_systems} systems: MovingAvg, ZoneMatchup, CatBoost V9, {monthly_count} monthly models, V12={'YES' if v12_loaded else 'NO'})")
+        base_systems = 2  # MovingAvg, ZoneMatchup (always loaded)
+        total_systems = base_systems + (1 if v9_loaded else 0) + monthly_count + (1 if v12_loaded else 0)
+        logger.info(f"All prediction systems initialized ({total_systems} systems: MovingAvg, ZoneMatchup, V9={'YES' if v9_loaded else 'DISABLED'}, {monthly_count} monthly models, V12={'YES' if v12_loaded else 'DISABLED'})")
     return _moving_average, _zone_matchup, _catboost
 
 _circuit_breaker: Optional['SystemCircuitBreaker'] = None
@@ -1564,51 +1582,53 @@ def process_player_predictions(
         # — zero best bets contribution, decommissioned as zombie models
 
         # System 5: CatBoost V9 (champion ML model)
-        system_id = CATBOOST_SYSTEM_ID
-        metadata['systems_attempted'].append(system_id)
-        try:
-            # Check circuit breaker
-            state, skip_reason = circuit_breaker.check_circuit(system_id)
-            if state == 'OPEN':
-                logger.warning(f"Circuit breaker OPEN for {system_id}: {skip_reason}")
-                metadata['circuit_breaker_triggered'] = True
-                metadata['circuits_opened'].append(system_id)
-                metadata['systems_failed'].append(system_id)
-                metadata['system_errors'][system_id] = f'Circuit breaker open: {skip_reason}'
-                system_predictions[system_id] = None
-            else:
-                result = catboost.predict(
-                    player_lookup=player_lookup,
-                    features=features,
-                    betting_line=line_value
-                )
-
-                if result['predicted_points'] is not None:
-                    # Record success
-                    circuit_breaker.record_success(system_id)
-                    metadata['systems_succeeded'].append(system_id)
-
-                    system_predictions[CATBOOST_SYSTEM_ID] = {
-                        'predicted_points': result['predicted_points'],
-                        'confidence': result['confidence_score'],
-                        'recommendation': result['recommendation'],
-                        'system_type': 'dict',
-                        'metadata': result
-                    }
-                else:
-                    logger.warning(f"CatBoost {CATBOOST_VERSION} returned None for {player_lookup}")
+        # Session 391: Skip if legacy V9 is disabled (ENABLE_LEGACY_V9=false)
+        if catboost is not None:
+            system_id = CATBOOST_SYSTEM_ID
+            metadata['systems_attempted'].append(system_id)
+            try:
+                # Check circuit breaker
+                state, skip_reason = circuit_breaker.check_circuit(system_id)
+                if state == 'OPEN':
+                    logger.warning(f"Circuit breaker OPEN for {system_id}: {skip_reason}")
+                    metadata['circuit_breaker_triggered'] = True
+                    metadata['circuits_opened'].append(system_id)
                     metadata['systems_failed'].append(system_id)
-                    metadata['system_errors'][system_id] = 'Prediction returned None'
-                    system_predictions[CATBOOST_SYSTEM_ID] = None
-        except Exception as e:
-            # Record failure
-            error_msg = str(e)
-            circuit_breaker.record_failure(system_id, error_msg, type(e).__name__)
+                    metadata['system_errors'][system_id] = f'Circuit breaker open: {skip_reason}'
+                    system_predictions[system_id] = None
+                else:
+                    result = catboost.predict(
+                        player_lookup=player_lookup,
+                        features=features,
+                        betting_line=line_value
+                    )
 
-            logger.error(f"CatBoost v8 failed for {player_lookup}: {e}", exc_info=True)
-            metadata['systems_failed'].append(system_id)
-            metadata['system_errors'][system_id] = error_msg
-            system_predictions['catboost_v8'] = None
+                    if result['predicted_points'] is not None:
+                        # Record success
+                        circuit_breaker.record_success(system_id)
+                        metadata['systems_succeeded'].append(system_id)
+
+                        system_predictions[CATBOOST_SYSTEM_ID] = {
+                            'predicted_points': result['predicted_points'],
+                            'confidence': result['confidence_score'],
+                            'recommendation': result['recommendation'],
+                            'system_type': 'dict',
+                            'metadata': result
+                        }
+                    else:
+                        logger.warning(f"CatBoost {CATBOOST_VERSION} returned None for {player_lookup}")
+                        metadata['systems_failed'].append(system_id)
+                        metadata['system_errors'][system_id] = 'Prediction returned None'
+                        system_predictions[CATBOOST_SYSTEM_ID] = None
+            except Exception as e:
+                # Record failure
+                error_msg = str(e)
+                circuit_breaker.record_failure(system_id, error_msg, type(e).__name__)
+
+                logger.error(f"CatBoost V9 failed for {player_lookup}: {e}", exc_info=True)
+                metadata['systems_failed'].append(system_id)
+                metadata['system_errors'][system_id] = error_msg
+                system_predictions[system_id] = None
         
         # Session 343: Removed Systems 6 (ensemble_v1) and 7 (ensemble_v1_1)
         # — zero best bets contribution, decommissioned as zombie models

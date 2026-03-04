@@ -573,6 +573,8 @@ def check_pick_volume_anomaly(game_date) -> Optional[Dict]:
 
     Session 390: 0 picks on a game day means something is broken upstream but
     currently has no alert. Also detects unusual volume changes.
+    Session 391: Added consecutive drought detection — escalates severity when
+    multiple game days in a row have 0 best bets picks.
     """
     bq = _get_bq_client()
 
@@ -587,6 +589,28 @@ def check_pick_volume_anomaly(game_date) -> Optional[Dict]:
       SELECT COUNT(*) as pick_count
       FROM `{PROJECT_ID}.nba_predictions.signal_best_bets_picks`
       WHERE game_date = DATE('{game_date}')
+    ),
+    -- Session 391: Check last 5 game days for consecutive drought
+    recent_game_days AS (
+      SELECT
+        s.game_date,
+        COALESCE(p.pick_count, 0) as pick_count
+      FROM (
+        SELECT DISTINCT game_date
+        FROM `{PROJECT_ID}.nba_reference.nba_schedule`
+        WHERE game_date BETWEEN DATE_SUB(DATE('{game_date}'), INTERVAL 7 DAY)
+          AND DATE('{game_date}')
+          AND game_status IN (1, 2, 3)  -- Any scheduled/in-progress/completed
+      ) s
+      LEFT JOIN (
+        SELECT game_date, COUNT(*) as pick_count
+        FROM `{PROJECT_ID}.nba_predictions.signal_best_bets_picks`
+        WHERE game_date BETWEEN DATE_SUB(DATE('{game_date}'), INTERVAL 7 DAY)
+          AND DATE('{game_date}')
+        GROUP BY game_date
+      ) p ON s.game_date = p.game_date
+      ORDER BY s.game_date DESC
+      LIMIT 5
     ),
     historical AS (
       SELECT
@@ -609,10 +633,13 @@ def check_pick_volume_anomaly(game_date) -> Optional[Dict]:
       pt.pick_count,
       ROUND(s.avg_picks, 1) as avg_picks,
       ROUND(s.std_picks, 1) as std_picks,
-      s.days_with_picks
+      s.days_with_picks,
+      ARRAY_AGG(STRUCT(rgd.game_date, rgd.pick_count) ORDER BY rgd.game_date DESC) as recent_days
     FROM games_today gt
     CROSS JOIN picks_today pt
     CROSS JOIN stats s
+    CROSS JOIN recent_game_days rgd
+    GROUP BY gt.game_count, pt.pick_count, s.avg_picks, s.std_picks, s.days_with_picks
     """
 
     try:
@@ -631,14 +658,33 @@ def check_pick_volume_anomaly(game_date) -> Optional[Dict]:
         if game_count == 0:
             return None
 
+        # Session 391: Count consecutive zero-pick game days (most recent first)
+        consecutive_drought = 0
+        recent_days = row.recent_days if hasattr(row, 'recent_days') and row.recent_days else []
+        for day in recent_days:
+            if day['pick_count'] == 0:
+                consecutive_drought += 1
+            else:
+                break
+
         alerts = []
+        is_drought = False
 
         # Alert 1: Zero picks on a game day
         if pick_count == 0 and game_count > 0:
-            alerts.append(
-                f"*ZERO picks* on a {game_count}-game day. "
-                "Pipeline may not have run or all picks filtered."
-            )
+            if consecutive_drought >= 2:
+                is_drought = True
+                alerts.append(
+                    f"*DROUGHT: ZERO picks for {consecutive_drought} consecutive game days* "
+                    f"on a {game_count}-game slate. "
+                    "All models may be filtered, disabled, or pipeline is broken. "
+                    "Immediate investigation required."
+                )
+            else:
+                alerts.append(
+                    f"*ZERO picks* on a {game_count}-game day. "
+                    "Pipeline may not have run or all picks filtered."
+                )
 
         # Alert 2: Volume anomaly (2+ std devs from average)
         if (avg_picks is not None and std_picks is not None
@@ -655,12 +701,13 @@ def check_pick_volume_anomaly(game_date) -> Optional[Dict]:
         if not alerts:
             return None
 
+        header_text = '🚨 BEST BETS DROUGHT' if is_drought else '📦 PICK VOLUME ANOMALY'
         blocks = [
             {
                 'type': 'header',
                 'text': {
                     'type': 'plain_text',
-                    'text': '📦 PICK VOLUME ANOMALY',
+                    'text': header_text,
                     'emoji': True,
                 }
             },
@@ -691,9 +738,11 @@ def check_pick_volume_anomaly(game_date) -> Optional[Dict]:
             }
         ]
 
+        # Red for drought (critical), orange for single-day anomaly
+        alert_color = '#FF0000' if is_drought else '#FF4500'
         return {
             'attachments': [{
-                'color': '#FF4500',
+                'color': alert_color,
                 'blocks': blocks
             }]
         }

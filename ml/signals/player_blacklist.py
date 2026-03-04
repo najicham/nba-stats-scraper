@@ -69,8 +69,15 @@ def compute_player_blacklist(
         # Session 365: Multi-model blacklist aggregates across ALL models.
         # A player who consistently fails to beat the line should be blocked
         # regardless of which model generated the prediction.
+        # Session 391: Exclude disabled/blocked models from multi-model blacklist.
+        # Legacy models (catboost_v12/v9) with poor HR were inflating per-player
+        # loss counts, blacklisting 113/330 players (34%). Only count predictions
+        # from models that are still eligible for best bets selection.
         if multi_model:
-            system_clause = ""  # No system_id filter — aggregate across all
+            system_clause = """AND system_id NOT IN (
+                SELECT model_id FROM `{project_id}.nba_predictions.model_registry`
+                WHERE enabled = FALSE OR status IN ('blocked', 'disabled')
+            )""".format(project_id=project_id)
         else:
             system_clause = "AND system_id = @system_id"
 

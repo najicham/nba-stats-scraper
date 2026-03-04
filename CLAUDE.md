@@ -176,7 +176,7 @@ nba-stats-scraper/
 
 ### Cross-Model Monitoring
 
-7 layers prevent shadow models from silently failing:
+10 layers prevent shadow models from silently failing:
 1. **Model sanity guard** (aggregator) — blocks models with >95% same-direction predictions (Session 378c)
 2. **Signal exporter disabled model filter** — filters picks from disabled models before writing to `signal_best_bets_picks` (Session 386)
 3. **Published picks disabled model detection** — marks locked picks from disabled models as `model_disabled` in `best_bets_published_picks` (Session 386)
@@ -184,6 +184,11 @@ nba-stats-scraper/
 5. `validate-daily` Phase 0.486 — same-day early warning
 6. Pipeline canary auto-heal — automated every 30 min
 7. **Decay detection state machine** — HEALTHY→WATCH→DEGRADING→BLOCKED with Slack alerts (daily 11 AM ET)
+8. **Query-level disabled model exclusion** (supplemental_data.py) — disabled/blocked + hardcoded legacy models excluded from per-player selection (Session 391)
+9. **Filter dominance warning** (aggregator.py) — logs WARNING when any single filter rejects >50% of candidates (Session 391)
+10. **Model registry consistency check** (daily-health-check) — detects unregistered system_ids producing predictions (Session 391)
+
+**Filter audit trail:** `nba_predictions.best_bets_filter_audit` — per game_date rejection counts. Query: `SELECT * FROM best_bets_filter_audit WHERE game_date >= CURRENT_DATE() - 7 ORDER BY game_date DESC`
 
 **Deactivation CLI:** `python bin/deactivate_model.py MODEL_ID [--dry-run] [--re-export]` — cascades disable through registry, predictions, signal picks, and audit trail (Session 386).
 
@@ -306,6 +311,9 @@ WHERE game_date >= CURRENT_DATE() - 3 GROUP BY 1 ORDER BY 1 DESC;
 | **Auto-deploy cascade (V17/V18 features)** | Session 388: Auto-deploy from docs commit picked up V17/V18 feature code that was never deployed. 4 bugs: (1) `feature_60_value` BQ write failure — truncate to `FEATURE_COUNT`, (2) quality capped at 69 — `calculate_quality_score()` uses `len(feature_sources)` not `FEATURE_COUNT`, truncate before scoring, (3) `FEATURE_VERSION = 'v2_60features'` rejected by worker whitelist — use `v2_54features`, (4) worker missing `pyyaml` — add to `requirements-lock.txt`. |
 | **Worker requirements-lock.txt** | Worker Dockerfile uses `requirements-lock.txt`, NOT `requirements.txt`. Always update the lock file for dependency changes. |
 | **Quality scorer FEATURE_COUNT mismatch** | `quality_scorer.py` has `FEATURE_COUNT = 54`, `ml_feature_store_processor.py` has `FEATURE_COUNT = 60`. Quality scorer's `calculate_quality_score()` uses `len(feature_sources)` which can exceed both. Truncate feature_sources before passing to quality scorer. |
+| **Legacy model selection drain (0 best bets)** | Session 391: Hardcoded `catboost_v12`/`catboost_v9` in worker.py bypass registry. They won per-player selection for 77% of candidates → all blocked by `LEGACY_MODEL_BLOCKLIST` → 0 best bets. **Fix**: (1) Added legacy models to registry as `disabled`, (2) defense-in-depth in `supplemental_data.py` excludes disabled + hardcoded legacy models, (3) filter dominance warning in `aggregator.py` alerts when any filter rejects >50%, (4) `player_blacklist.py` excludes disabled models from HR calculation. Worker env vars `ENABLE_LEGACY_V9`/`ENABLE_LEGACY_V12` (default false) gate legacy model loading. |
+| **Filter dominance undetected** | Session 391: A single filter (`legacy_block`) rejected 77% of candidates for multiple days with no alert. **Fix**: `aggregator.py` now logs WARNING when any filter rejects >50% of candidates. `best_bets_filter_audit` BQ table persists filter rejection counts per game_date for retroactive analysis. |
+| **Unregistered models producing predictions** | Session 391: `daily-health-check` now checks all `system_id`s producing predictions have corresponding registry entries. Unregistered models bypass enable/disable controls. |
 
 **Full troubleshooting:** `docs/02-operations/session-learnings.md`
 

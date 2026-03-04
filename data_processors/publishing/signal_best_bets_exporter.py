@@ -497,6 +497,13 @@ class SignalBestBetsExporter(BaseExporter):
                 filter_summary=json_data.get('filter_summary'),
             )
 
+        # Session 391: Write filter summary audit trail for historical analysis.
+        # Persists rejection counts so we can retroactively detect patterns like
+        # "legacy_block dominated 77% of candidates for 3 days before being caught."
+        filter_summary = json_data.get('filter_summary')
+        if filter_summary:
+            self._write_filter_audit(target_date, json_data, filter_summary)
+
         # Strip internal-only fields from public JSON.
         # BQ write above gets full ultra_tier + ultra_criteria.
         # Public JSON shows ultra_tier (bool) but not ultra_criteria (internal detail).
@@ -715,6 +722,63 @@ class SignalBestBetsExporter(BaseExporter):
                 f"Failed to write signal best bets to BigQuery: {e}",
                 exc_info=True,
             )
+
+    def _write_filter_audit(
+        self,
+        target_date: str,
+        json_data: Dict,
+        filter_summary: Dict,
+    ) -> None:
+        """Session 391: Write filter summary to audit table for historical analysis.
+
+        Enables queries like "show days where a single filter rejected > 50%"
+        to catch configuration issues retroactively.
+        """
+        table_ref = f'{PROJECT_ID}.nba_predictions.best_bets_filter_audit'
+        total_candidates = filter_summary.get('total_candidates', 0)
+        passed = filter_summary.get('passed_filters', 0)
+        rejected = filter_summary.get('rejected', {})
+
+        row = {
+            'game_date': target_date,
+            'total_candidates': total_candidates,
+            'passed_filters': passed,
+            'rejected_json': json.dumps(rejected, default=str),
+            'algorithm_version': json_data.get('algorithm_version', ALGORITHM_VERSION),
+            'computed_at': datetime.now(timezone.utc).isoformat(),
+        }
+
+        try:
+            # MERGE to handle re-exports — only keep latest run per game_date
+            merge_query = f"""
+            MERGE `{table_ref}` T
+            USING (SELECT @game_date AS game_date) S
+            ON T.game_date = S.game_date
+            WHEN MATCHED THEN UPDATE SET
+                total_candidates = @total_candidates,
+                passed_filters = @passed_filters,
+                rejected_json = @rejected_json,
+                algorithm_version = @algorithm_version,
+                computed_at = @computed_at
+            WHEN NOT MATCHED THEN INSERT
+                (game_date, total_candidates, passed_filters, rejected_json, algorithm_version, computed_at)
+            VALUES (@game_date, @total_candidates, @passed_filters, @rejected_json, @algorithm_version, @computed_at)
+            """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter('game_date', 'DATE', target_date),
+                    bigquery.ScalarQueryParameter('total_candidates', 'INT64', total_candidates),
+                    bigquery.ScalarQueryParameter('passed_filters', 'INT64', passed),
+                    bigquery.ScalarQueryParameter('rejected_json', 'STRING', json.dumps(rejected, default=str)),
+                    bigquery.ScalarQueryParameter('algorithm_version', 'STRING', json_data.get('algorithm_version', ALGORITHM_VERSION)),
+                    bigquery.ScalarQueryParameter('computed_at', 'TIMESTAMP', datetime.now(timezone.utc).isoformat()),
+                ]
+            )
+            self.bq_client.query(merge_query, job_config=job_config).result(timeout=30)
+            logger.info(f"Filter audit written for {target_date}: {total_candidates} candidates, {passed} passed")
+        except Exception as e:
+            # Non-fatal — don't fail export if audit write fails
+            logger.warning(f"Failed to write filter audit for {target_date}: {e}")
 
     def _query_direction_health(self, target_date: str) -> Dict[str, Any]:
         """Query 14-day rolling hit rate by direction (OVER vs UNDER).
