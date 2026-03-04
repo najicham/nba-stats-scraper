@@ -1313,6 +1313,46 @@ See `docs/08-projects/current/fleet-lifecycle-automation/00-PLAN.md` for the 3-t
 
 **Symptom:** NumberFire projections URL returns 301 redirect to `fanduel.com/research/nba/fantasy/dfs-projections`. The FanDuel page is a React SPA with no data in static HTML.
 
-**Root Cause:** FanDuel acquired NumberFire and redirected the domain. The projections data is now rendered client-side via JavaScript.
+**Root Cause:** FanDuel acquired NumberFire and redirected the domain. The projections data is rendered client-side via a GraphQL API.
 
-**Fix:** Override `download_and_decode()` to use Playwright headless browser. Navigate to FanDuel URL, wait for table render, extract rendered HTML for BeautifulSoup parsing. Requires `playwright-stealth` to avoid bot detection.
+**Fix (Session 403):** Rewrote scraper to call `fdresearch-api.fanduel.com/graphql` directly. Two queries: `getSlates(sport: NBA)` to find today's slate ID, then `getProjections(slateId)` for all player projections. No Playwright needed. Returns ~140 players with points/minutes/rebounds/assists.
+
+### VSiN "AJAX" Assumption Was Wrong
+
+**Symptom:** VSiN scraper returned 0 games. Initial assessment said data was AJAX-loaded.
+
+**Root Cause:** The data IS server-side rendered at `data.vsin.com/nba/betting-splits/` (not `www.vsin.com`). The HTML parser was looking for column headers like "team", "over%", "under%" that don't exist — the actual structure uses a freezetable layout with team names in `txt-color-vsinred` links and percentages in nested `div` elements.
+
+**Fix (Session 403):** Rewrote `transform_data()` to match actual HTML structure. No Playwright needed. Tested: all 6 games parse correctly.
+
+**Lesson:** Always curl the actual URL and inspect the HTML before assuming AJAX. `data.vsin.com` ≠ `www.vsin.com`.
+
+### Playwright Debian Package Breakage
+
+**Symptom:** `playwright install chromium --with-deps` fails with "Package 'ttf-unifont' has no installation candidate" on Debian Trixie.
+
+**Root Cause:** Debian Trixie renamed `ttf-unifont` → `fonts-unifont` and removed `ttf-ubuntu-font-family`. Playwright's `--with-deps` flag hardcodes the old package names.
+
+**Fix (Session 403):** Removed Playwright entirely from Dockerfile and requirements. All scrapers that used it were rewritten to use APIs or server-rendered HTML.
+
+**Lesson:** Avoid Playwright in production Docker images — fragile system dependencies, adds 150MB+ to image, and alternatives (APIs, server-rendered HTML) are almost always available.
+
+### GCS-BQ Consistency Gap in Signal Exporter
+
+**Symptom:** `best_bets_filter_audit` showed 1 passed pick for Mar 3, but `signal_best_bets_picks` had 0 rows.
+
+**Root Cause:** `_write_to_bigquery()` filtered disabled model picks in a LOCAL variable. The calling `export()` method still had the original unfiltered `json_data['picks']`. BQ got 0 rows (correct), GCS got 1 pick (wrong), filter_audit counted the unfiltered pick.
+
+**Fix (Session 403):** Moved disabled model filter from `_write_to_bigquery()` to `export()` before BOTH BQ write and GCS upload. Now all three outputs see the same filtered set.
+
+**Lesson:** Defense-in-depth filters must modify the shared data, not create local copies.
+
+### Scraper download_and_decode Override Bypasses Proxy
+
+**Symptom:** NBA Tracking scraper had `proxy_enabled = True` but all requests went direct to stats.nba.com and timed out.
+
+**Root Cause:** Custom `download_and_decode()` override bypassed the `ScraperBase.download_data_with_proxy()` infrastructure. The override checked `self.proxy_url` (always None) instead of calling `get_healthy_proxy_urls_for_target()`.
+
+**Fix (Session 403):** Added `_get_proxy_url()` helper that queries the proxy pool, then passes the URL to both `_fetch_via_nba_api(proxy=...)` and `_fetch_via_http(proxies=...)`.
+
+**Lesson:** When overriding `download_and_decode()`, manually integrate proxy infrastructure — it won't happen automatically.
