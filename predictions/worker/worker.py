@@ -168,7 +168,9 @@ CATBOOST_SYSTEM_ID = f'catboost_{CATBOOST_VERSION}'  # e.g., 'catboost_v9' or 'c
 # Default false so new deploys automatically skip legacy models.
 ENABLE_LEGACY_V9 = os.environ.get('ENABLE_LEGACY_V9', 'false').lower() == 'true'
 ENABLE_LEGACY_V12 = os.environ.get('ENABLE_LEGACY_V12', 'false').lower() == 'true'
-logger.info(f"✓ Environment configuration loaded (CATBOOST_VERSION={CATBOOST_VERSION}, SYSTEM_ID={CATBOOST_SYSTEM_ID}, LEGACY_V9={ENABLE_LEGACY_V9}, LEGACY_V12={ENABLE_LEGACY_V12})")
+ENABLE_LEGACY_MOVING_AVG = os.environ.get('ENABLE_LEGACY_MOVING_AVG', 'false').lower() == 'true'
+ENABLE_LEGACY_ZONE_MATCHUP = os.environ.get('ENABLE_LEGACY_ZONE_MATCHUP', 'false').lower() == 'true'
+logger.info(f"✓ Environment configuration loaded (CATBOOST_VERSION={CATBOOST_VERSION}, SYSTEM_ID={CATBOOST_SYSTEM_ID}, LEGACY_V9={ENABLE_LEGACY_V9}, LEGACY_V12={ENABLE_LEGACY_V12}, LEGACY_MA={ENABLE_LEGACY_MOVING_AVG}, LEGACY_ZM={ENABLE_LEGACY_ZONE_MATCHUP})")
 
 # Failure Classification for Retry Logic
 # Permanent failures - data won't appear on retry, ack message immediately
@@ -290,8 +292,22 @@ def get_prediction_systems() -> tuple:
     global _moving_average, _zone_matchup, _catboost, _monthly_models, _systems_initialized
     if not _systems_initialized:
         logger.info("Initializing prediction systems...")
-        _moving_average = MovingAverageBaseline()
-        _zone_matchup = ZoneMatchupV1()
+        # Session 393: Gate moving_average and zone_matchup behind env vars.
+        # These legacy baseline models bypass the registry and produce predictions
+        # that pollute prediction_accuracy (inflating player blacklist from 0→113).
+        if ENABLE_LEGACY_MOVING_AVG:
+            logger.info("Loading MovingAverageBaseline (legacy, explicitly enabled)...")
+            _moving_average = MovingAverageBaseline()
+        else:
+            logger.info("MovingAverageBaseline SKIPPED (ENABLE_LEGACY_MOVING_AVG=false)")
+            _moving_average = None
+
+        if ENABLE_LEGACY_ZONE_MATCHUP:
+            logger.info("Loading ZoneMatchupV1 (legacy, explicitly enabled)...")
+            _zone_matchup = ZoneMatchupV1()
+        else:
+            logger.info("ZoneMatchupV1 SKIPPED (ENABLE_LEGACY_ZONE_MATCHUP=false)")
+            _zone_matchup = None
 
         # Load CatBoost V9 champion model
         # Session 391: Gate behind ENABLE_LEGACY_V9 — legacy model bypasses registry,
@@ -340,9 +356,10 @@ def get_prediction_systems() -> tuple:
         monthly_count = len(_monthly_models) if _monthly_models else 0
         v9_loaded = _catboost is not None
         v12_loaded = _catboost_v12 is not None
-        base_systems = 2  # MovingAvg, ZoneMatchup (always loaded)
-        total_systems = base_systems + (1 if v9_loaded else 0) + monthly_count + (1 if v12_loaded else 0)
-        logger.info(f"All prediction systems initialized ({total_systems} systems: MovingAvg, ZoneMatchup, V9={'YES' if v9_loaded else 'DISABLED'}, {monthly_count} monthly models, V12={'YES' if v12_loaded else 'DISABLED'})")
+        ma_loaded = _moving_average is not None
+        zm_loaded = _zone_matchup is not None
+        total_systems = (1 if ma_loaded else 0) + (1 if zm_loaded else 0) + (1 if v9_loaded else 0) + monthly_count + (1 if v12_loaded else 0)
+        logger.info(f"All prediction systems initialized ({total_systems} systems: MovingAvg={'YES' if ma_loaded else 'DISABLED'}, ZoneMatchup={'YES' if zm_loaded else 'DISABLED'}, V9={'YES' if v9_loaded else 'DISABLED'}, {monthly_count} monthly models, V12={'YES' if v12_loaded else 'DISABLED'})")
     return _moving_average, _zone_matchup, _catboost
 
 _circuit_breaker: Optional['SystemCircuitBreaker'] = None
@@ -561,8 +578,8 @@ def index():
     systems_info = {}
     if _catboost is not None:
         systems_info = {
-            'moving_average': str(_moving_average),
-            'zone_matchup': str(_zone_matchup),
+            'moving_average': str(_moving_average) if _moving_average is not None else 'DISABLED',
+            'zone_matchup': str(_zone_matchup) if _zone_matchup is not None else 'DISABLED',
             CATBOOST_SYSTEM_ID: str(_catboost),
             'catboost_v12': str(_catboost_v12) if _catboost_v12 is not None else 'not loaded',
             'monthly_models': len(_monthly_models) if _monthly_models else 0,
@@ -1499,84 +1516,78 @@ def process_player_predictions(
         system_predictions = {}
 
         # System 1: Moving Average Baseline
-        system_id = 'moving_average'
-        metadata['systems_attempted'].append(system_id)
-        try:
-            # Check circuit breaker
-            state, skip_reason = circuit_breaker.check_circuit(system_id)
-            if state == 'OPEN':
-                logger.warning(f"Circuit breaker OPEN for {system_id}: {skip_reason}")
-                metadata['circuit_breaker_triggered'] = True
-                metadata['circuits_opened'].append(system_id)
+        # Session 393: Skip if legacy moving average is disabled
+        if moving_average is not None:
+            system_id = 'moving_average'
+            metadata['systems_attempted'].append(system_id)
+            try:
+                state, skip_reason = circuit_breaker.check_circuit(system_id)
+                if state == 'OPEN':
+                    logger.warning(f"Circuit breaker OPEN for {system_id}: {skip_reason}")
+                    metadata['circuit_breaker_triggered'] = True
+                    metadata['circuits_opened'].append(system_id)
+                    metadata['systems_failed'].append(system_id)
+                    metadata['system_errors'][system_id] = f'Circuit breaker open: {skip_reason}'
+                    system_predictions[system_id] = None
+                else:
+                    pred, conf, rec = moving_average.predict(
+                        features=features,
+                        player_lookup=player_lookup,
+                        game_date=game_date,
+                        prop_line=line_value
+                    )
+                    circuit_breaker.record_success(system_id)
+                    metadata['systems_succeeded'].append(system_id)
+                    system_predictions['moving_average'] = {
+                        'predicted_points': pred,
+                        'confidence': conf,
+                        'recommendation': rec,
+                        'system_type': 'tuple'
+                    }
+            except Exception as e:
+                error_msg = str(e)
+                circuit_breaker.record_failure(system_id, error_msg, type(e).__name__)
+                logger.error(f"Moving Average failed for {player_lookup}: {e}", exc_info=True)
                 metadata['systems_failed'].append(system_id)
-                metadata['system_errors'][system_id] = f'Circuit breaker open: {skip_reason}'
-                system_predictions[system_id] = None
-            else:
-                pred, conf, rec = moving_average.predict(
-                    features=features,
-                    player_lookup=player_lookup,
-                    game_date=game_date,
-                    prop_line=line_value
-                )
-                # Record success
-                circuit_breaker.record_success(system_id)
-                metadata['systems_succeeded'].append(system_id)
+                metadata['system_errors'][system_id] = error_msg
+                system_predictions['moving_average'] = None
 
-                system_predictions['moving_average'] = {
-                    'predicted_points': pred,
-                    'confidence': conf,
-                    'recommendation': rec,
-                    'system_type': 'tuple'
-                }
-        except Exception as e:
-            # Record failure
-            error_msg = str(e)
-            circuit_breaker.record_failure(system_id, error_msg, type(e).__name__)
-
-            logger.error(f"Moving Average failed for {player_lookup}: {e}", exc_info=True)
-            metadata['systems_failed'].append(system_id)
-            metadata['system_errors'][system_id] = error_msg
-            system_predictions['moving_average'] = None
-        
         # System 2: Zone Matchup V1
-        system_id = 'zone_matchup_v1'
-        metadata['systems_attempted'].append(system_id)
-        try:
-            # Check circuit breaker
-            state, skip_reason = circuit_breaker.check_circuit(system_id)
-            if state == 'OPEN':
-                logger.warning(f"Circuit breaker OPEN for {system_id}: {skip_reason}")
-                metadata['circuit_breaker_triggered'] = True
-                metadata['circuits_opened'].append(system_id)
+        # Session 393: Skip if legacy zone matchup is disabled
+        if zone_matchup is not None:
+            system_id = 'zone_matchup_v1'
+            metadata['systems_attempted'].append(system_id)
+            try:
+                state, skip_reason = circuit_breaker.check_circuit(system_id)
+                if state == 'OPEN':
+                    logger.warning(f"Circuit breaker OPEN for {system_id}: {skip_reason}")
+                    metadata['circuit_breaker_triggered'] = True
+                    metadata['circuits_opened'].append(system_id)
+                    metadata['systems_failed'].append(system_id)
+                    metadata['system_errors'][system_id] = f'Circuit breaker open: {skip_reason}'
+                    system_predictions[system_id] = None
+                else:
+                    pred, conf, rec = zone_matchup.predict(
+                        features=features,
+                        player_lookup=player_lookup,
+                        game_date=game_date,
+                        prop_line=line_value
+                    )
+                    circuit_breaker.record_success(system_id)
+                    metadata['systems_succeeded'].append(system_id)
+                    system_predictions['zone_matchup_v1'] = {
+                        'predicted_points': pred,
+                        'confidence': conf,
+                        'recommendation': rec,
+                        'system_type': 'tuple'
+                    }
+            except Exception as e:
+                error_msg = str(e)
+                circuit_breaker.record_failure(system_id, error_msg, type(e).__name__)
+                logger.error(f"Zone Matchup failed for {player_lookup}: {e}", exc_info=True)
                 metadata['systems_failed'].append(system_id)
-                metadata['system_errors'][system_id] = f'Circuit breaker open: {skip_reason}'
-                system_predictions[system_id] = None
-            else:
-                pred, conf, rec = zone_matchup.predict(
-                    features=features,
-                    player_lookup=player_lookup,
-                    game_date=game_date,
-                    prop_line=line_value
-                )
-                # Record success
-                circuit_breaker.record_success(system_id)
-                metadata['systems_succeeded'].append(system_id)
-
-                system_predictions['zone_matchup_v1'] = {
-                    'predicted_points': pred,
-                    'confidence': conf,
-                    'recommendation': rec,
-                    'system_type': 'tuple'
-                }
-        except Exception as e:
-            # Record failure
-            error_msg = str(e)
-            circuit_breaker.record_failure(system_id, error_msg, type(e).__name__)
-
-            logger.error(f"Zone Matchup failed for {player_lookup}: {e}", exc_info=True)
-            metadata['systems_failed'].append(system_id)
-            metadata['system_errors'][system_id] = error_msg
-            system_predictions['zone_matchup_v1'] = None
+                metadata['system_errors'][system_id] = error_msg
+                system_predictions['zone_matchup_v1'] = None
         
         # Session 343: Removed Systems 3 (similarity_balanced_v1) and 4 (xgboost_v1/catboost_v8)
         # — zero best bets contribution, decommissioned as zombie models

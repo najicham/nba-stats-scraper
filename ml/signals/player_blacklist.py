@@ -70,25 +70,28 @@ def compute_player_blacklist(
         # A player who consistently fails to beat the line should be blocked
         # regardless of which model generated the prediction.
         # Session 391: Exclude disabled/blocked models from multi-model blacklist.
-        # Legacy models (catboost_v12/v9) with poor HR were inflating per-player
-        # loss counts, blacklisting 113/330 players (34%). Only count predictions
-        # from models that are still eligible for best bets selection.
-        # Uses CTE + LEFT JOIN instead of NOT IN subquery (BQ correlated subquery limit).
+        # Session 393: INNER JOIN to enabled models instead of LEFT JOIN exclusion.
+        # The LEFT JOIN approach only excluded models IN the registry that were
+        # disabled — 14 unregistered legacy models (ensemble_v1, catboost_v8,
+        # moving_average_baseline_v1, etc.) bypassed it because they had no
+        # registry entry (dm.model_id IS NULL = TRUE). This inflated the
+        # blacklist from 0 to 113 players. INNER JOIN ensures only predictions
+        # from registered+enabled models count toward player HR.
         if multi_model:
-            disabled_cte = f"""
-            WITH disabled_models AS (
+            enabled_cte = f"""
+            WITH enabled_models AS (
                 SELECT model_id FROM `{project_id}.nba_predictions.model_registry`
-                WHERE enabled = FALSE OR status IN ('blocked', 'disabled')
+                WHERE enabled = TRUE AND status NOT IN ('blocked', 'disabled')
             )"""
-            disabled_join = """LEFT JOIN disabled_models dm ON pa.system_id = dm.model_id"""
-            disabled_filter = "AND dm.model_id IS NULL"
+            enabled_join = """INNER JOIN enabled_models em ON pa.system_id = em.model_id"""
+            enabled_filter = ""
         else:
-            disabled_cte = ""
-            disabled_join = ""
-            disabled_filter = "AND pa.system_id = @system_id"
+            enabled_cte = ""
+            enabled_join = ""
+            enabled_filter = "AND pa.system_id = @system_id"
 
         query = f"""
-        {disabled_cte}
+        {enabled_cte}
         SELECT
             pa.player_lookup,
             COUNTIF(pa.prediction_correct = TRUE) AS wins,
@@ -96,10 +99,10 @@ def compute_player_blacklist(
             COUNT(*) AS total_picks,
             ROUND(100.0 * COUNTIF(pa.prediction_correct = TRUE) / COUNT(*), 1) AS hit_rate
         FROM `{project_id}.nba_predictions.prediction_accuracy` pa
-        {disabled_join}
+        {enabled_join}
         WHERE pa.game_date >= @season_start
           AND pa.game_date < @target_date
-          {disabled_filter}
+          {enabled_filter}
           AND ABS(pa.predicted_points - pa.line_value) >= 3
           AND pa.is_voided = FALSE
         GROUP BY pa.player_lookup
