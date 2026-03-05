@@ -1,172 +1,154 @@
-# Session 407 Handoff — Verification + Feature Experiment
+# Session 407 Handoff — Worker Crash Fix + Single-Source Projections
 
 **Date:** 2026-03-05
-**Type:** Verification, analysis, planning
-**Algorithm:** `v406_scraper_fixes_combo_edge3` (unchanged)
+**Type:** Bug fix (P0), data source cleanup, verification
+**Commit:** `8f52e279` — `fix: worker NoneType crash + single-source projection mode`
 
 ---
 
 ## What This Session Did
 
-### 1. Verified All Session 406 Scraper Fixes in BQ
+### 1. Found & Fixed P0 Worker Crash (ALL predictions blocked)
 
-All 9 scraper sources confirmed with Mar 4 data in BQ:
+**Bug:** `worker.py:1790` — `pred.get('filter_reason', '').startswith(...)` crashes when `filter_reason=None`.
+- `dict.get(key, default)` returns `None` (not default) when key exists with value `None`
+- The `filter_reason` field defaults to `None` for unfiltered predictions (line 1881)
+- When the new models (train0107_0219) were added to the model cache, their predictions triggered this code path
+- The crash happens in `process_player_predictions()` BEFORE returning results, so NO predictions are written to BQ
 
-| Source | Records | Status |
+**Impact:** Mar 5 had **0 predictions** across ALL models. The crash affected every player request via Pub/Sub retry loops.
+
+**Fix:** `(pred.get('filter_reason') or '').startswith(...)` — handles both missing key and explicit `None`.
+
+### 2. Diagnosed Projection Source Status
+
+| Source | Verdict | Detail |
 |--------|---------|--------|
-| NumberFire | 63 unique valid | WORKING |
-| VSiN | 14 games | WORKING |
-| NBA Tracking | 1638 players | WORKING |
-| TeamRankings | 450 rows | WORKING (TODAY bug fixed) |
-| FantasyPros | 4065 rows, 0 valid pts | STILL BROKEN (DFS FPTS) |
-| Dimers | 6 unique valid pts | LIMITED (top scorers only) |
-| RotoWire | 14400 rows | WORKING (play_probability added) |
-| Covers | 1140 rows | WORKING |
-| Hashtag DVP | 510 rows | WORKING |
+| NumberFire | WORKING (120 rows/day) | FanDuel Research GraphQL, valid per-game pts |
+| FantasyPros | DEAD | Playwright timeout, wrong data type (DFS season totals) |
+| Dimers | NOT VIABLE | Page shows generic projections, NOT game-date-specific. SGA/Maxey/Brown had values but weren't playing that day. Angular SPA with no discoverable API. |
+| DFF | Already excluded | DFS fantasy points only |
 
-### 2. Fixed Two Bugs
+### 3. Switched to Single-Source Projection Mode
 
-- **TeamRankings `TODAY` literal**: Scraper missing `set_additional_opts()` — GCS path had `/TODAY/` instead of date. Fixed.
-- **RotoWire `play_probability`**: BQ schema had no column for the new field. Added INTEGER column + updated Phase 2 processor.
+With only NumberFire viable, changed projection consensus to single-source:
+- **`supplemental_data.py`**: Removed FP and Dimers CTEs from projection query. NumberFire only.
+- **`projection_consensus.py`**: MIN_SOURCES_ABOVE/BELOW: 2 → 1. Confidence lowered (0.75→0.70 OVER, 0.70→0.65 UNDER).
+- **Disagreement filter**: Requires 2+ sources, so effectively disabled until second source added.
 
-### 3. Evaluated Negative Filter Performance
+### 4. Fixed Dimers Player Name Concatenation
 
-Filters add **+13.7pp** value (52.2% unfiltered → 65.9% post-filter). Top rejectors on Mar 4:
-- `line_jumped_under`: 3 rejections
-- `bench_under`: 2
-- `line_dropped_under`: 2
+`_clean_concatenated_name()` was only called for `player_lookup`, not `player_name`. Fixed to clean before returning the record.
 
-**Conclusion:** Filters are working well. Don't remove.
+### 5. Morning Verification Results
 
-### 4. Ran Feature Experiment: NBA Tracking Stats
-
-5-seed CatBoost experiment adding season-level tracking features (usage_pct, ppg, pct_pts, fga) to V12_noveg:
-
-| Metric | Base | + Tracking | Delta |
-|--------|------|------------|-------|
-| MAE | 5.228 | 5.209 | -0.019 |
-| HR 3+ | 53.6% | 53.9% | +0.3pp (noise) |
-| HR 5+ | 67.4% | 66.0% | -1.5pp (noise) |
-
-**Conclusion:** Season-level static features don't help. Need per-game features or daily-varying data (projections, sharp money).
-
-### 5. Assessed Backfill Feasibility
-
-- **Can't backfill**: Projections (live pages only), VSiN (live only)
-- **Can backfill**: TeamRankings (one scrape = full season), NBA Tracking (nba_api season data)
-- **Per-game tracking** (touches, drives) blocked — NBA.com rate limits cloud IPs
+| Check | Result |
+|-------|--------|
+| Mar 5 predictions | **0** — worker crash (now fixed) |
+| New models (train0107_0219) | 0 predictions — crash prevented writes |
+| Shadow signals (today) | 0 fires — no predictions to signal on |
+| Combo signals (3way/he_ms) | 88.2% HR (15-2) but stopped Feb 11 — edge compression |
+| predicted_pace_over | 2 fires Mar 4, awaiting grading |
+| Pick volume | 2/day (critically low) |
+| Deployment drift | Only legacy nba-phase1-scrapers (expected) |
 
 ---
 
-## Shadow Signals — NOT YET VERIFIED
+## What Still Needs Investigation (Next Session)
 
-Pipeline hadn't run for Mar 5 at time of session. Expected results when it does:
-
-| Signal | Expected | Dependency |
-|--------|----------|------------|
-| projection_consensus | ~3 fires/day | NF (63) + Dimers (6) overlap |
-| sharp_money | 1-4 fires/day | VSiN 14 games |
-| dvp_favorable | 1-2 fires/day | DVP rank computed |
-| combo_3way/he_ms | Resume firing | MIN_EDGE 3.0 |
-| predicted_pace | Continue (2 fires Mar 4) | TeamRankings |
-
----
-
-## Fleet Health (as of Mar 2)
-
-- 4 HEALTHY models: lgbm_train1201, catboost_60d_vw025, catboost_v16_noveg (×2)
-- 2 DEGRADING: lgbm_train1102, catboost_train0110
-- 15 BLOCKED (mostly quantile + legacy)
-- Best bets: 14d 8-4 (66.7%), 30d 13-12 (52.0%)
-- Volume: 2-5 picks/day
-
----
-
-## Code Changes
-
-```
-fix: TeamRankings TODAY literal + RotoWire play_probability in Phase 2
-  scrapers/external/teamrankings_stats.py     — added set_additional_opts()
-  data_processors/raw/external/rotowire_lineups_processor.py — added play_probability field
-```
-
-BQ schema change (not in code): `nba_raw.rotowire_lineups` gained `play_probability INTEGER` column.
-
----
-
-## Session 408 Plan — Experiment Feature Table + Signal Verification
-
-### Priority 1: Verify Shadow Signals (5 min)
+### P0: Verify Worker Fix Works
+After deployment completes, verify:
 ```sql
--- Run after pipeline completes (~10 AM ET)
-SELECT signal_tag, COUNT(*) FROM nba_predictions.signal_best_bets_picks,
-UNNEST(signal_tags) AS signal_tag
-WHERE game_date = '2026-03-05'
-AND signal_tag IN ('projection_consensus_over', 'sharp_money_over', 'dvp_favorable_over', 'combo_3way')
+-- Check Mar 5 predictions exist (run after morning pipeline ~10 AM ET)
+SELECT system_id, COUNT(*) FROM nba_predictions.player_prop_predictions
+WHERE game_date = CURRENT_DATE()
+GROUP BY 1 ORDER BY 2 DESC
+
+-- Specifically check new models
+SELECT system_id, COUNT(*) FROM nba_predictions.player_prop_predictions
+WHERE game_date = CURRENT_DATE() AND system_id LIKE '%train0107%'
 GROUP BY 1
 ```
 
-### Priority 2: Create Experiment Feature Table (30 min)
+### P1: Why Combo Signals Stopped (88.2% HR!)
+`combo_3way` and `combo_he_ms` have **88.2% HR (15-2)** but stopped firing after Feb 11. Even with MIN_EDGE lowered to 3.0, they haven't resumed. Mar 4 had 11 OVER predictions with edge 3+, but combo requires ALL of:
+- edge >= 3 ✅ (11 predictions qualify)
+- minutes_surge >= 3 (last_3 - season avg minutes) — **UNKNOWN how many qualify**
+- confidence >= 0.70 AND not in 88-90% tier — **UNKNOWN**
 
-**Goal:** A sandbox BQ table (`ml_feature_store_experiment`) where we can test new features without touching production. The `/model-experiment` skill joins this table during training.
-
-**Design:**
+**Investigation needed:**
 ```sql
-CREATE TABLE nba_predictions.ml_feature_store_experiment (
-  player_lookup STRING NOT NULL,
-  game_date DATE NOT NULL,
-  experiment_id STRING NOT NULL,
-  -- 20 flexible feature slots
-  exp_feature_0_name STRING, exp_feature_0_value FLOAT64,
-  exp_feature_1_name STRING, exp_feature_1_value FLOAT64,
-  ...
-  exp_feature_19_name STRING, exp_feature_19_value FLOAT64,
-  created_at TIMESTAMP
-) PARTITION BY game_date CLUSTER BY player_lookup, experiment_id;
+-- Check how many OVER edge 3+ predictions have minutes_surge >= 3
+-- This requires checking gamebook data (minutes_avg_last_3 - minutes_avg_season)
+-- against the prediction data
 ```
 
-**Populate with:**
-1. Season-level NBA Tracking (touches, drives, catch_shoot_pct, pull_up_pct, paint_touches, usage_pct) — static per player
-2. TeamRankings team pace/efficiency — static per team
-3. DVP rank normalized — changes daily
-4. Sharp money divergence (handle% - ticket%) — changes daily (needs accumulation)
-5. Projection consensus delta (avg projection - line) — changes daily (needs accumulation)
+Or add logging to the combo signal evaluation to see WHY it's not qualifying.
 
-**Key insight:** Static features already tested = WASH. The features with real potential change DAILY (projection delta, sharp money). These need 30+ days of accumulation before we can test.
+### P1: Projection Consensus Signal Verification
+After worker fix deploys:
+```sql
+SELECT t as signal_tag, COUNT(*) as fires
+FROM nba_predictions.signal_best_bets_picks, UNNEST(signal_tags) t
+WHERE t LIKE 'projection_consensus%' AND game_date = CURRENT_DATE()
+GROUP BY 1
+```
+With NumberFire providing 120 players and MIN_SOURCES=1, the signal should fire for any player where NumberFire agrees with the model direction.
 
-### Priority 3: Backfill Script for Experiment Features (20 min)
+### P2: Find Second Projection Source
+NumberFire-only is fine but fragile. If NumberFire/FanDuel changes their API, we lose the signal entirely. Options:
+1. **BettingPros implied totals** — we already scrape `bettingpros_player_points_props`. Check if `line_value` can serve as an implicit "projection" (market-implied expected points).
+2. **ESPN Player Props** — may have projections embedded in their props pages.
+3. **PrizePicks/Underdog Fantasy** — DFS platforms with player projections.
+4. **Action Network** — Has projections but may require auth.
 
-Write `bin/backfill_experiment_features.py`:
-- Reads from raw scraper tables + nba_api
-- Computes all 12 candidate features
-- Writes to `ml_feature_store_experiment`
-- Can be run daily after Phase 2 to keep features fresh
+### P2: Sharp Money / DVP / CLV Signals Not Firing
+- **sharp_money**: Depends on VSiN data + supplemental_data.py `sharp_lean_map`. VSiN has 14 rows in BQ but signal hasn't fired.
+- **dvp_favorable**: DVP data has 510 rows, rank is computed. Signal might need specific rank thresholds.
+- **CLV signals**: Table `nba_raw.odds_api_player_props` doesn't exist. Need to find correct table name or check if closing snapshot data is flowing.
 
-### Priority 4: Modify `/model-experiment` for Experiment Features (15 min)
+### P3: Fleet Diversity Problem
+All 145 model pairs have r >= 0.95 (REDUNDANT). The fleet offers zero prediction diversity. This is a fundamental limit — all models trained on same features converge to same predictions.
 
-Add `--experiment-features EXPERIMENT_ID` flag to quick_retrain.py:
-- Joins `ml_feature_store_experiment` with main feature store
-- Appends experiment features to the training matrix
-- Standard 5-seed evaluation
+### P3: Edge Compression Recovery
+OVER avg edge: 1.67-2.08 (far below the 3.0 combo floor). UNDER avg edge: 2.91-4.00. Edge compression is post-ASB and may recover as regular season settles. Monitor weekly.
+
+### P3: Experiment Feature Table (from Session 407 plan)
+The experiment feature table plan from the previous 407 attempt is still valid:
+- Create `ml_feature_store_experiment` in BQ
+- Populate with daily-varying features (projection delta, sharp money divergence)
+- Need 30+ days of accumulation before testing
+
+---
+
+## Files Changed
+
+| File | Change |
+|------|--------|
+| `predictions/worker/worker.py:1790` | Fixed NoneType crash: `(x or '').startswith(...)` |
+| `ml/signals/supplemental_data.py` | Removed FP/Dimers CTEs, NumberFire-only query |
+| `ml/signals/projection_consensus.py` | MIN_SOURCES 2→1, updated docstring |
+| `scrapers/projections/dimers_projections.py` | Clean player_name before return |
+
+---
+
+## Key Numbers
+
+| Metric | Value | Notes |
+|--------|-------|-------|
+| Mar 5 predictions | 0 (pre-fix) | Worker crash blocked everything |
+| Mar 4 predictions | 1,078 (11 models) | Normal before new model cache |
+| OVER edge 3+ (Mar 4) | 11 predictions | Combo signal should fire on some |
+| combo_3way HR | 88.2% (15-2) | Best signal, not firing since Feb 11 |
+| Pick volume | 2/day | Target: 4-8/day |
+| NumberFire projections | 120 valid/day | Only working projection source |
 
 ---
 
 ## Don't Do
 
-- Don't add features to production `ml_feature_store_v2` — use experiment table
-- Don't promote shadow signals yet — need N >= 30 graded
-- Don't retrain models — 12 in fleet, focus on evaluation
+- Don't remove Dimers/FantasyPros scrapers — they still run but data is excluded from signals
+- Don't promote shadow signals — need N >= 30 graded
+- Don't relax edge floor below 3.0 — edge 2-3 historically ~52% HR
+- Don't add features to production feature store — use experiment table
 - Don't remove negative filters — they add +13.7pp value
-- Don't try to fix `minutes_surge_over` — permanently blocked
-
----
-
-## Key Metrics to Track
-
-| Metric | Current | Target |
-|--------|---------|--------|
-| Pick volume | 2-5/day | 4-8/day |
-| Best bets HR 14d | 66.7% | > 60% |
-| Shadow signals firing | 1 (predicted_pace) | 5+ |
-| Experiment features tested | 4 (all WASH) | 12 |
-| Days of daily-varying data | 1 | 30+ for testing |
