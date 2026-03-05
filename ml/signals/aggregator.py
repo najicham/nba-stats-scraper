@@ -928,27 +928,6 @@ class BestBetsAggregator:
             except (ValueError, TypeError) as e:
                 logger.debug(f"Calendar regime detection skipped: {e}")
 
-        # --- High spread OVER observation filter (Session 413) ---
-        # OVER picks in games with spread > 7 hit at 44.4% (N=18) vs 74.1% (spread <= 7).
-        # Observation mode: log + record for counterfactual grading, don't block.
-        HIGH_SPREAD_THRESHOLD = 7.0
-        for pick in scored:
-            if (pick.get('recommendation') == 'OVER'
-                    and pick.get('spread_magnitude', 0) > HIGH_SPREAD_THRESHOLD):
-                pick_edge = pick.get('composite_score', 0)
-                filter_counts['high_spread_over_would_block'] += 1
-                _record_filtered(pick, 'high_spread_over_would_block', pick_edge)
-                logger.info(
-                    f"High spread WOULD block: OVER "
-                    f"{pick['player_lookup']} (spread={pick.get('spread_magnitude', 0):.1f}, "
-                    f"edge={pick_edge:.1f})"
-                )
-        if filter_counts['high_spread_over_would_block'] > 0:
-            logger.info(
-                f"High spread observation: WOULD block "
-                f"{filter_counts['high_spread_over_would_block']} OVER picks (spread > {HIGH_SPREAD_THRESHOLD})"
-            )
-
         # Ultra Bets classification (Session 326)
         from ml.signals.ultra_bets import classify_ultra_pick
         for pick_entry in scored:

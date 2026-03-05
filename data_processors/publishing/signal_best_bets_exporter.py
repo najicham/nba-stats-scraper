@@ -715,7 +715,7 @@ class SignalBestBetsExporter(BaseExporter):
                 'line_value': pick.get('line'),
                 'recommendation': pick.get('direction', ''),
                 'edge': round(abs(float(pick.get('edge') or 0)), 1),
-                'confidence_score': round(min(float(pick.get('confidence') or 0), 9.999), 3),
+                'confidence_score': round(min(float(pick.get('confidence') or 0) / 100.0, 9.999), 3),
                 'signal_tags': pick.get('signals', []),
                 'signal_count': pick.get('signal_count', 0),
                 'real_signal_count': pick.get('real_signal_count', 0),
@@ -750,6 +750,11 @@ class SignalBestBetsExporter(BaseExporter):
                 # Ultra Bets (Session 326)
                 'ultra_tier': pick.get('ultra_tier', False),
                 'ultra_criteria': json.dumps(pick.get('ultra_criteria', []), default=str),
+                # Session 414: Additional pick context for analysis
+                'under_signal_quality': pick.get('under_signal_quality'),
+                'model_hr_weight': pick.get('model_hr_weight'),
+                'trend_slope': pick.get('trend_slope'),
+                'spread_magnitude': pick.get('spread_magnitude'),
                 'created_at': datetime.now(timezone.utc).isoformat(),
             })
 

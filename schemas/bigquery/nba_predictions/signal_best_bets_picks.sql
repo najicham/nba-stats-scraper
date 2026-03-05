@@ -65,8 +65,22 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.signal_best_bets_
   signal_rescued BOOLEAN,                   -- True if pick bypassed edge floor via signal
   rescue_signal STRING,                     -- Which signal rescued the pick (e.g. 'book_disagreement')
 
+  -- Ultra Bets (Session 326)
+  ultra_tier BOOLEAN,                       -- True if pick meets ultra-confidence criteria
+  ultra_criteria STRING,                    -- JSON: criteria details
+
   -- Filter summary (Session 319 — historical analysis of filtering decisions)
   filter_summary STRING,                    -- JSON: {total_candidates, passed_filters, rejected: {...}}
+
+  -- Pick context (Session 414 — analysis fields)
+  under_signal_quality FLOAT64,             -- UNDER signal quality score (weighted, NULL for OVER)
+  model_hr_weight FLOAT64,                  -- Model's HR-based weight used in selection
+  trend_slope FLOAT64,                      -- Player scoring trend slope (feature 44)
+  spread_magnitude FLOAT64,                 -- Game spread magnitude (feature 41)
+
+  -- Bet sizing (planned, not yet implemented)
+  bet_size_units FLOAT64,
+  bet_size_tier STRING,
 
   -- Outcome (populated after grading)
   actual_points INT64,

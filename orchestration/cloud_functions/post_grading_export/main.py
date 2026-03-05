@@ -18,6 +18,7 @@ Actions on success:
 1. Re-export picks/{date}.json with actuals via AllSubsetsPicksExporter
 2. Refresh subsets/season.json via SeasonSubsetPicksExporter
 3. Backfill actuals into signal_best_bets_picks table
+3b. Backfill actuals into best_bets_filtered_picks (counterfactual grading)
 4. Re-export tonight/all-players.json with actuals
 5. Re-export best-bets/all.json with updated ultra_record
 6. Re-export best-bets/record.json and history.json with graded results
@@ -175,6 +176,96 @@ def backfill_signal_best_bets(target_date: str) -> int:
     return rows_updated
 
 
+def backfill_filtered_picks(target_date: str) -> int:
+    """
+    Backfill actual_points and prediction_correct into best_bets_filtered_picks
+    from prediction_accuracy after grading completes.
+
+    This enables counterfactual analysis: did the filters actually save us?
+
+    Args:
+        target_date: Date that was graded (YYYY-MM-DD)
+
+    Returns:
+        Number of rows updated
+    """
+    from google.cloud import bigquery
+    from shared.clients.bigquery_pool import get_bigquery_client
+
+    bq_client = get_bigquery_client(project_id=PROJECT_ID)
+
+    # Check if any filtered picks exist for this date
+    check_query = f"""
+    SELECT COUNT(*) as cnt
+    FROM `{PROJECT_ID}.nba_predictions.best_bets_filtered_picks`
+    WHERE game_date = @target_date
+    """
+    check_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+        ]
+    )
+    check_result = bq_client.query(check_query, job_config=check_config).result()
+    row = next(check_result, None)
+    if not row or row.cnt == 0:
+        logger.info(f"No filtered picks found for {target_date}, skipping backfill")
+        return 0
+
+    # Match on system_id first (most filtered picks have valid system_ids)
+    update_query = f"""
+    UPDATE `{PROJECT_ID}.nba_predictions.best_bets_filtered_picks` fp
+    SET
+      actual_points = CAST(pa.actual_points AS INT64),
+      prediction_correct = pa.prediction_correct
+    FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy` pa
+    WHERE fp.player_lookup = pa.player_lookup
+      AND fp.game_id = pa.game_id
+      AND fp.game_date = pa.game_date
+      AND pa.system_id = fp.system_id
+      AND fp.game_date = @target_date
+      AND fp.actual_points IS NULL
+      AND pa.prediction_correct IS NOT NULL
+    """
+    update_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+        ]
+    )
+
+    job = bq_client.query(update_query, job_config=update_config)
+    job.result(timeout=60)
+    rows_updated = job.num_dml_affected_rows or 0
+
+    # Fallback: use player_game_summary for picks without matching system_id
+    fallback_query = f"""
+    UPDATE `{PROJECT_ID}.nba_predictions.best_bets_filtered_picks` fp
+    SET
+      actual_points = CAST(pgs.points AS INT64),
+      prediction_correct = CASE
+        WHEN fp.recommendation = 'OVER' AND pgs.points > fp.line_value THEN TRUE
+        WHEN fp.recommendation = 'UNDER' AND pgs.points < fp.line_value THEN TRUE
+        WHEN pgs.points = fp.line_value THEN NULL
+        ELSE FALSE
+      END
+    FROM `{PROJECT_ID}.nba_analytics.player_game_summary` pgs
+    WHERE fp.player_lookup = pgs.player_lookup
+      AND fp.game_date = pgs.game_date
+      AND fp.game_date = @target_date
+      AND fp.actual_points IS NULL
+      AND pgs.points IS NOT NULL
+    """
+    fallback_job = bq_client.query(fallback_query, job_config=update_config)
+    fallback_job.result(timeout=60)
+    fallback_updated = fallback_job.num_dml_affected_rows or 0
+
+    if fallback_updated > 0:
+        logger.info(f"Fallback backfilled {fallback_updated} filtered picks for {target_date}")
+        rows_updated += fallback_updated
+
+    logger.info(f"Backfilled {rows_updated} filtered picks for {target_date}")
+    return rows_updated
+
+
 def parse_pubsub_message(cloud_event) -> Dict:
     """Parse Pub/Sub CloudEvent and extract message data."""
     try:
@@ -271,6 +362,20 @@ def main(cloud_event):
             exc_info=True
         )
         results['signal_backfill_error'] = str(e)
+
+    # 3b. Backfill actuals into best_bets_filtered_picks (Session 414)
+    try:
+        filtered_backfilled = backfill_filtered_picks(target_date)
+        results['filtered_backfill'] = filtered_backfilled
+        logger.info(
+            f"[{correlation_id}] Backfilled {filtered_backfilled} filtered picks for {target_date}"
+        )
+    except Exception as e:
+        logger.error(
+            f"[{correlation_id}] Failed to backfill filtered picks for {target_date}: {e}",
+            exc_info=True
+        )
+        results['filtered_backfill_error'] = str(e)
 
     # 4. Compute signal health for the graded date (Session 259)
     try:
