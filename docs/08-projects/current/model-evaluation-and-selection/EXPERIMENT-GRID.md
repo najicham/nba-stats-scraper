@@ -14,7 +14,7 @@ Experiment features are injected at training time via the experiment table — z
 
 | # | Experiment | Features | Hypothesis | Prior Evidence | Expected Signal |
 |---|-----------|----------|-----------|----------------|-----------------|
-| 1 | `pace_v1` | team_pace_tr, opp_pace_tr, pace_ratio_tr, opp_off_eff_tr, opp_def_eff_tr | TeamRankings pace/efficiency add context beyond existing team_pace/opp_pace features (which are from Phase 3 analytics). External source may capture different signal. | `predicted_pace_over` shadow signal fires. `fast_pace_over` production signal has 81.5% HR. V17 opponent_pace_mismatch was tested but as single-feature addition. | **DEAD END** (pace-only: -3.4pp HR, <1% importance). Efficiency pending re-test. |
+| 1 | `pace_v1` | team_pace_tr, opp_pace_tr, pace_ratio_tr, opp_off_eff_tr, opp_def_eff_tr | TeamRankings pace/efficiency add context beyond existing team_pace/opp_pace features (which are from Phase 3 analytics). External source may capture different signal. | `predicted_pace_over` shadow signal fires. `fast_pace_over` production signal has 81.5% HR. V17 opponent_pace_mismatch was tested but as single-feature addition. | **DEAD END.** Pace-only: -3.4pp HR. Full (5 feat): +0.0pp same-seed, <1% importance. See Results. |
 | 2 | `tracking_v1` | tracking_touches, tracking_drives, tracking_catch_shoot_pct, tracking_pull_up_pct, tracking_paint_touches, tracking_usage_pct | Different tracking features than Session 407 (which tested usg, ppg, pct_pts, fga). Touches/drives/paint_touches capture play style. | Session 407: usg/ppg/pct_pts/fga = WASH (+0.3pp). These are different features. But all are static (season-level). | LOW. Same static problem. Most values are 0.0 in current scrape. Likely WASH again. |
 
 ### Tier 2: Run After ~30 Days Accumulation (Daily-Varying Features)
@@ -29,7 +29,7 @@ Experiment features are injected at training time via the experiment table — z
 
 | # | Experiment | Features | Hypothesis | Prior Evidence | Expected Signal | Prerequisite |
 |---|-----------|----------|-----------|----------------|-----------------|--------------|
-| 6 | `pace_x_tracking_v1` | pace_ratio_tr * tracking_usage_pct, pace_ratio_tr * tracking_drives | Interaction: high-usage players in fast-paced games score more. | Neither interaction tested. Individual features may be wash but interaction could capture conditional effect. | LOW-MEDIUM | Tier 1 results |
+| 6 | `pace_x_tracking_v1` | pace_ratio_tr * tracking_usage_pct, pace_ratio_tr * tracking_drives | Interaction: high-usage players in fast-paced games score more. | Neither interaction tested. Individual features may be wash but interaction could capture conditional effect. | **SKIP** — both pace and tracking are dead ends individually | Tier 1 results |
 | 7 | `projection_x_sharp_v1` | projection_consensus_delta * sharp_money_divergence | When projections AND sharp money agree on direction, signal is stronger. | No prior. Both sources independent. | MEDIUM | Tier 2 data |
 | 8 | `multi_source_v1` | Best features from Tier 1 + Tier 2 combined | Combined model with cherry-picked features from individual experiments. | No prior. Risk of overfitting to eval period. | MEDIUM (with overfitting risk) | Tier 1+2 results |
 
@@ -99,7 +99,25 @@ done
 
 **Verdict: DEAD END (pace-only).** Adding TeamRankings pace features to V12_noveg adds noise. Expected: model already has 4 pace features from Phase 3 analytics. TeamRankings seasonal averages are highly correlated with rolling 10-game Phase 3 values.
 
-**Part B (efficiency features):** TeamRankings scraper fixed — efficiency values now captured (e.g., BOS off_eff=116.2, def_eff=108.7). These ARE genuinely new information (no existing efficiency features in model). Re-run pace_v1 with full 5 features after next scrape cycle populates BQ.
+### Experiment 1b: `pace_v1` full (5 features incl. efficiency) — Session 408
+
+**Date:** Mar 5, 2026 | **Features:** all 5 (team_pace_tr, opp_pace_tr, pace_ratio_tr, opp_off_eff_tr, opp_def_eff_tr)
+**Eval window:** Feb 25 - Mar 3, 2026 | **Training:** 56 days
+
+| Seed | HR(all) | HR(3+) | N(3+) | MAE |
+|------|---------|--------|-------|-----|
+| 42 | 56.5% | 90.9% | 11 | 5.472 |
+| 123 | 61.3% | 69.2% | 13 | 5.470 |
+| 456 | 58.7% | 90.9% | 11 | 5.440 |
+| 789 | 58.6% | 76.9% | 13 | 5.392 |
+| 999 | 57.8% | 70.6% | 17 | 5.445 |
+| **AVG** | **58.6%** | **79.7%** | **13.0** | **5.444** |
+
+**Same-seed (s42) vs baseline:** HR(3+) 90.9% → 90.9% (+0.0pp), HR(all) -3.8pp, MAE +0.09.
+
+**Efficiency features (opp_off_eff_tr, opp_def_eff_tr):** Not in top 10 importance in any seed. Adding efficiency to pace-only: +5.0pp HR(3+) avg, but stdev=10.6% with N≈13 — noise, not signal.
+
+**Verdict: DEAD END (full pace_v1).** All 5 TeamRankings features are noise. Both pace (redundant with f7/f14/f22) and efficiency (seasonal averages, static) fail to add signal. Skip Tier 3 `pace_x_tracking_v1` experiment.
 
 ## Decision Criteria
 

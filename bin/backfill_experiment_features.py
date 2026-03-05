@@ -197,14 +197,19 @@ def backfill_tracking_v1(client, start_date, end_date, dry_run=False):
 def backfill_pace_v1(client, start_date, end_date, dry_run=False):
     """Backfill pace features — static, replicated across game dates."""
     # Get latest pace data
+    # Prefer rows with efficiency data (latest scrape has it, older scrapes don't)
     pace_query = f"""
-    SELECT team, pace, offensive_efficiency, defensive_efficiency
+    SELECT team,
+           ANY_VALUE(pace) as pace,
+           MAX(offensive_efficiency) as offensive_efficiency,
+           MAX(defensive_efficiency) as defensive_efficiency
     FROM `{PROJECT_ID}.nba_raw.teamrankings_team_stats`
     WHERE game_date = (
         SELECT MAX(game_date) FROM `{PROJECT_ID}.nba_raw.teamrankings_team_stats`
         WHERE game_date <= '{end_date}'
     )
       AND team IS NOT NULL
+    GROUP BY team
     """
     pace_df = client.query(pace_query).to_dataframe()
     if pace_df.empty:
@@ -597,6 +602,7 @@ def main():
     parser.add_argument('--end', type=str, default=None, help='End date (YYYY-MM-DD)')
     parser.add_argument('--list', action='store_true', help='List available experiments')
     parser.add_argument('--dry-run', action='store_true', help='Show what would be written')
+    parser.add_argument('--no-clear', action='store_true', help='Skip clearing existing rows (use when streaming buffer blocks DELETE)')
     args = parser.parse_args()
 
     if args.list:
@@ -634,7 +640,7 @@ def main():
 
         client = get_client()
 
-        if not args.dry_run:
+        if not args.dry_run and not args.no_clear:
             clear_experiment(client, exp_id, start_date, end_date)
 
         backfill_fn = BACKFILL_FUNCTIONS[exp_id]
