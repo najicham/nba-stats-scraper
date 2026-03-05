@@ -145,20 +145,26 @@ class FantasyProsProjectionsScraper(ScraperBase, ScraperFlaskMixin):
             with sync_playwright() as p:
                 browser = p.chromium.launch(headless=True)
                 page = browser.new_page()
-                page.goto(self.url, wait_until="networkidle", timeout=30000)
-                # Wait for the table to fully render
-                page.wait_for_selector("table#data tbody tr", timeout=15000)
-                # Scroll to bottom to trigger any lazy-loading
+                page.goto(self.url, wait_until="domcontentloaded", timeout=60000)
+                # Wait for the table to render
+                try:
+                    page.wait_for_selector("table#data tbody tr", timeout=20000)
+                except Exception:
+                    page.wait_for_selector("table tbody tr", timeout=10000)
+                # Scroll to trigger lazy-loading
                 page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                time.sleep(2)
+                time.sleep(3)
                 self.decoded_data = page.content()
                 browser.close()
             logger.info("Playwright rendered page (%d chars)", len(self.decoded_data))
         except Exception as e:
-            logger.warning("Playwright unavailable or failed (%s), falling back to HTTP", e)
-            super().download_data()
-            if hasattr(self, 'raw_data') and self.raw_data:
-                self.decoded_data = self.raw_data.decode('utf-8', errors='replace') if isinstance(self.raw_data, bytes) else self.raw_data
+            logger.warning("Playwright failed (%s), falling back to HTTP", e)
+            # Fallback: use requests directly (gets 10 players from static HTML)
+            import requests
+            resp = requests.get(self.url, headers=self.headers, timeout=30)
+            resp.raise_for_status()
+            self.decoded_data = resp.text
+            logger.info("HTTP fallback got %d chars", len(self.decoded_data))
 
     def validate_download_data(self) -> None:
         """Validate that we received a proper FantasyPros page."""
