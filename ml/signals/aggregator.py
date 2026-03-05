@@ -209,6 +209,7 @@ class BestBetsAggregator:
             'regime_over_floor': 0,
             'regime_rescue_blocked': 0,
             'high_spread_over_would_block': 0,
+            'flat_trend_under': 0,
         }
 
         # Session 393: Counterfactual tracking — log filtered-out picks so we
@@ -573,6 +574,26 @@ class BestBetsAggregator:
                 _record_filtered(pred, 'high_book_std_under', pred_edge)
                 continue
 
+            # Flat trend UNDER block (Session 413): UNDER + trend_slope -0.5 to 0.5 = 53% HR
+            # (N=2,720). No clear scoring trend → UNDER is essentially a coin flip.
+            # Players with directional trends (up or down) hit UNDER at 61-62%.
+            trend_slope = pred.get('trend_slope') or 0
+            if (pred.get('recommendation') == 'UNDER'
+                    and -0.5 <= trend_slope <= 0.5):
+                filter_counts['flat_trend_under'] += 1
+                _record_filtered(pred, 'flat_trend_under', pred_edge)
+                continue
+
+            # High spread OVER observation (Session 413): OVER + spread >= 7 = 41.2% HR at BB
+            # level (N=17), but 62% at full prediction level. Observation mode — not blocking.
+            # Blowout risk: starters get pulled early in lopsided games.
+            spread_mag = pred.get('spread_magnitude') or 0
+            if (pred.get('recommendation') == 'OVER'
+                    and spread_mag >= 7.0):
+                filter_counts['high_spread_over_would_block'] += 1
+                _record_filtered(pred, 'high_spread_over_would_block', pred_edge)
+                # Observation mode — do NOT continue/filter
+
             # --- Model profile observation (Session 384) ---
             # Log what the per-model profile store WOULD block, without
             # actually filtering. Observation mode for Phase 1 validation.
@@ -762,6 +783,13 @@ class BestBetsAggregator:
             logger.info(f"Friday OVER block: skipped {filter_counts['friday_over_block']} OVER picks on Friday (37.5% HR at best bets)")
         if filter_counts['high_skew_over_block'] > 0:
             logger.info(f"High skew OVER block: skipped {filter_counts['high_skew_over_block']} OVER picks with mean-median gap > 2.0 (49.1% HR)")
+        if filter_counts['flat_trend_under'] > 0:
+            logger.info(f"Flat trend UNDER block: skipped {filter_counts['flat_trend_under']} UNDER picks with trend slope -0.5 to 0.5 (53% HR)")
+        if filter_counts['high_spread_over_would_block'] > 0:
+            logger.info(
+                f"High spread OVER (observation): WOULD block "
+                f"{filter_counts['high_spread_over_would_block']} OVER picks with spread >= 7"
+            )
         if filter_counts['signal_density'] > 0:
             logger.info(f"Signal density filter: skipped {filter_counts['signal_density']} base-only picks")
         if filter_counts['legacy_block'] > 0:

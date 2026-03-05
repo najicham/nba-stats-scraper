@@ -164,21 +164,66 @@ WHERE b.game_date >= '2026-01-01' AND pa.actual_points IS NOT NULL
 GROUP BY 1;
 ```
 
+### 5. Session 413 — Signal Discovery + New Filters
+
+**Research (4 parallel agents):** Full-season signal performance, streak analysis, UNDER conviction gap, spread/blowout validation.
+
+#### 5a. `mean_reversion_under` Shadow Signal (STRONGEST FINDING)
+- **77.8% HR (N=212, +18.9pp over UNDER baseline)** — stable all months including toxic Feb (79.6% vs 48.0%)
+- Condition: `trend_slope >= 2.0 AND pts_avg_last3 >= line + 2 AND recommendation = UNDER`
+- Directionally validated: helps UNDER (+16pp), hurts OVER (-2pp). Mean reversion exploits market chasing hot streaks.
+- Created `ml/signals/mean_reversion_under.py`, registered in `registry.py` as shadow signal
+- **This is the first UNDER-specific conviction signal.** Previously every strong signal was OVER-only.
+
+#### 5b. `flat_trend_under` Active Negative Filter
+- UNDER + trend_slope -0.5 to 0.5 = **53% HR (N=2,720)** — essentially coin flip
+- Players with any directional trend (up or down) hit UNDER at 61-62%
+- Added as active filter in `aggregator.py`
+
+#### 5c. `high_spread_over_would_block` Observation Filter
+- OVER + spread >= 7 = **41.2% HR at BB level (N=17)**, but 62% at full prediction level
+- Observation mode only — records to `filtered_picks` for counterfactual tracking, does NOT block
+- Re-evaluate at N=50 tagged picks
+
+#### 5d. `rest_advantage_2d` Investigation — NOT BROKEN
+- Signal has `MAX_SEASON_WEEKS=15` — auto-expired Feb 10. Session 396 also disabled (redundant).
+- Season decay validated: 64.9% Jan → 54.7% Feb. Working as designed. Re-enable next October.
+
+#### 5e. Player Streaks — DEFERRED
+- 3+ loss streak OVER = 51.7% (N=118), but effect is modest (~11pp spread)
+- `consecutive_line_misses` computed in supplemental_data but not wired through to prediction dict
+- Revisit when N >= 300 and after wiring through streak data
+
+#### 5f. Daily Regime Context (earlier in session)
+- Yesterday BB HR autocorrelation (r=0.43) drives OVER exposure
+- Created `ml/signals/regime_context.py`, wired into aggregator + exporter
+- Cautious regime (HR<50%): OVER floor 5→6, OVER rescue disabled
+
 ## Next Session — Priority Tasks
 
-### 1. COMMIT AND DEPLOY pick locking (see commands above)
-Must deploy before tonight's exports. Monitor first game day with true locking.
+### 1. Monitor deployed features
+- Pick locking: verify pick count never decreases across re-exports
+- Regime context: check `best_bets_filtered_picks` for `regime_%` entries
+- Flat trend filter: check `flat_trend_under` count in filter audit
+- Mean reversion signal: check if `mean_reversion_under` appears in pick signal_tags
 
-### 2. Implement `high_spread_over_block` filter
-**Decision needed:** observation-mode (logs only) vs active filter.
-- **If observation-mode:** Add counter in `aggregator.py` like `toxic_starter_over_would_block` pattern. Record to `filtered_picks` for counterfactual grading. No picks blocked.
-- **If active filter:** Add to the 17 existing negative filters in `aggregator.py`. Condition: `recommendation == 'OVER' AND spread_magnitude > 7.0`. Feature `f41` (`spread_magnitude`) needed in prediction dict — verify it flows through `supplemental_data.py`.
-- **Reference:** `ml/signals/aggregator.py` lines 174-211 (filter_counts), lines 277-564 (filter logic)
-
-### 3. Monitor signal rescue at N=25-30
+### 2. Monitor signal rescue at N=25-30
 After ~2 weeks of data (around Mar 19), re-run rescue analysis. If HR stays below 55%:
 - Remove `low_line_over` and `volatile_scoring_over` from rescue set
 - Consider tightening `signal_stack_2plus` from 2+ to 3+ real signals
 
-### 4. Verify pick locking post-deploy
-Run verification queries above after first re-export cycle. Key check: pick count never decreases between exports for the same game_date.
+### 3. Mean reversion promotion check (~Mar 19)
+If `mean_reversion_under` fires consistently and maintains 65%+ HR on BB picks (N>=15), consider:
+- Adding to rescue_tags set (signal rescue for UNDER)
+- Promoting from shadow to production
+
+### 4. Counterfactual evaluation (~Mar 12+)
+```sql
+-- Regime filter effectiveness
+SELECT filter_reason, COUNT(*), COUNTIF(prediction_correct) as wins,
+  ROUND(100.0 * COUNTIF(prediction_correct) / COUNT(*), 1) as hr
+FROM nba_predictions.best_bets_filtered_picks
+WHERE filter_reason IN ('regime_over_floor','regime_rescue_blocked','flat_trend_under','high_spread_over_would_block')
+  AND prediction_correct IS NOT NULL AND game_date >= '2026-03-06'
+GROUP BY 1;
+```
