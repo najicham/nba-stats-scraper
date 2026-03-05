@@ -55,6 +55,7 @@ class DailyFantasyFuelProjectionsProcessor(SmartIdempotencyMixin, ProcessorBase)
                     'team': player.get('team', ''),
                     'position': player.get('position', ''),
                     'projected_points': player.get('projected_points'),
+                    'projected_fantasy_points': player.get('projected_fantasy_points'),
                     'projected_minutes': player.get('projected_minutes'),
                     'salary': player.get('salary'),
                     'source_file_path': file_path,

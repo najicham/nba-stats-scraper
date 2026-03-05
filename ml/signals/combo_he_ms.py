@@ -5,6 +5,10 @@ SESSION 257 FINDING: 68.8% HR (16 picks), +33.5% ROI
   - Both conditions checked internally (no dependency on other signal instances)
   - Synergistic: minutes surge confirms the edge is backed by real playing time increase
 
+SESSION 405: Lowered MIN_EDGE 5.0 → 4.0. Post-ASB edge compression killed
+  the signal (max OVER edge 4.0-4.7 across all enabled models). OVER edge 4-5
+  has 57.5% HR (N=563) — the minutes surge requirement is the real quality gate.
+
 See: docs/08-projects/current/signal-testing/SESSION-257-RESULTS.md
 """
 
@@ -14,9 +18,9 @@ from ml.signals.base_signal import BaseSignal, SignalResult
 
 class HighEdgeMinutesSurgeComboSignal(BaseSignal):
     tag = "combo_he_ms"
-    description = "Edge >= 5 + minutes surge >= 3 + OVER — two strong indicators aligned"
+    description = "Edge >= 4 + minutes surge >= 3 + OVER — two strong indicators aligned"
 
-    MIN_EDGE = 5.0
+    MIN_EDGE = 4.0
     MIN_SURGE = 3.0
 
     def evaluate(self, prediction: Dict,

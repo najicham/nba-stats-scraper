@@ -8,6 +8,10 @@ SESSION 295 FIX: OVER-only direction filter.
   - OVER: 95.5% HR (N=22), UNDER: 20.0% HR (N=5) — catastrophic gap.
   - Full-season audit confirmed UNDER picks with this combo are anti-pattern.
 
+SESSION 405: Lowered MIN_EDGE 5.0 → 4.0. Post-ASB edge compression meant zero
+  models produce OVER edge >= 5 (max 4.0-4.7). Minutes surge + ESO gate are the
+  real quality discriminators — edge 4+ is sufficient.
+
 See: docs/08-projects/current/signal-testing/SESSION-257-RESULTS.md
 """
 
@@ -17,9 +21,9 @@ from ml.signals.base_signal import BaseSignal, SignalResult
 
 class ThreeWayComboSignal(BaseSignal):
     tag = "combo_3way"
-    description = "Edge >= 5 + minutes surge >= 3 + ESO quality gate — premium 3-way combo"
+    description = "Edge >= 4 + minutes surge >= 3 + ESO quality gate — premium 3-way combo"
 
-    MIN_EDGE = 5.0
+    MIN_EDGE = 4.0
     MIN_SURGE = 3.0
     MIN_CONFIDENCE = 0.70
     PROBLEM_TIER_MIN = 0.88

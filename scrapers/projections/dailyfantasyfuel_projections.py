@@ -1,17 +1,22 @@
 # File: scrapers/projections/dailyfantasyfuel_projections.py
 """
-DailyFantasyFuel NBA Player Projections Scraper                v1.0 - 2026-03-04
+DailyFantasyFuel NBA Player Projections Scraper                v1.1 - 2026-03-04
 ---------------------------------------------------------------------------------
 Scrapes DFS player projections from DailyFantasyFuel (DraftKings slate).
 
 URL: https://www.dailyfantasyfuel.com/nba/projections/draftkings
-Data: Projected points, minutes, salary for every player daily.
-Access: Free, HTML tables, no auth.
+Data: DFS fantasy points, salary for every player daily.
+Access: Free, HTML tables (div-based layout), no auth.
 Timing: Updates morning of game day.
 
-Used alongside NumberFire and FantasyPros projections to create a projection
-consensus signal. When 2+ independent projection sources agree with our model
-direction, the signal fires (expected HR 65-70%).
+IMPORTANT: DailyFantasyFuel provides DraftKings FANTASY points (FPTS), NOT real
+NBA scoring points. DK FPTS formula: PTS*1 + REB*1.25 + AST*1.5 + STL*2 + BLK*2
+- TO*0.5 + 3PM*0.5. A player with 25 real PTS may show 38+ FPTS. There are NO
+individual stat breakdowns on this page.
+
+Because FPTS cannot be compared against real NBA prop lines, this source is
+EXCLUDED from the projection_consensus signal. The data is stored as
+projected_fantasy_points for reference but projected_points is always None.
 
 Usage:
   python scrapers/projections/dailyfantasyfuel_projections.py --date 2026-03-04 --debug
@@ -248,33 +253,24 @@ class DailyFantasyFuelProjectionsScraper(ScraperBase, ScraperFlaskMixin):
     def _extract_player_from_row(
         self, cells, pts_col, min_col, salary_col, pos_col, team_col
     ) -> Optional[Dict]:
-        """Extract player projection from a single table row."""
+        """Extract player projection from a single table row.
+
+        DFF page uses a div-based layout where player name cells can contain
+        name + position + salary + FPTS + value all concatenated. We must
+        extract ONLY the player name, not sibling element text.
+
+        DFF provides DraftKings fantasy points (FPTS), NOT real NBA points.
+        We store FPTS as projected_fantasy_points and set projected_points=None
+        so this source is excluded from real-points consensus comparisons.
+        """
         try:
             player_name = ""
             team = ""
             position = ""
 
-            # DailyFantasyFuel typically has player name as a link in the first cell
-            first_cell = cells[0]
-            link = first_cell.find("a")
-            if link:
-                player_name = link.get_text(strip=True)
-            else:
-                text = first_cell.get_text(strip=True)
-                if len(text) > 3 and " " in text:
-                    player_name = text
-
-            if not player_name:
-                # Try second cell in case first is a rank or checkbox
-                if len(cells) > 1:
-                    second_cell = cells[1]
-                    link = second_cell.find("a")
-                    if link:
-                        player_name = link.get_text(strip=True)
-                    else:
-                        text = second_cell.get_text(strip=True)
-                        if len(text) > 3 and " " in text and not re.match(r'^[\d.]+$', text):
-                            player_name = text
+            # Strategy: extract name from the FIRST <a> tag only (not the
+            # whole cell text, which concatenates name+pos+salary+FPTS+value).
+            player_name = self._extract_clean_player_name(cells)
 
             if not player_name:
                 return None
@@ -302,8 +298,8 @@ class DailyFantasyFuelProjectionsScraper(ScraperBase, ScraperFlaskMixin):
                             elif not position and part in ("PG", "SG", "SF", "PF", "C", "G", "F"):
                                 position = part
 
-            # Extract numeric projections
-            projected_points = self._extract_numeric(cell_texts, pts_col)
+            # Extract DFS fantasy points projection
+            projected_fpts = self._extract_numeric(cell_texts, pts_col)
             projected_minutes = self._extract_numeric(cell_texts, min_col)
 
             # Salary: strip $ and commas
@@ -312,12 +308,12 @@ class DailyFantasyFuelProjectionsScraper(ScraperBase, ScraperFlaskMixin):
                 salary_text = cell_texts[salary_col]
                 salary = self._try_parse_salary(salary_text)
 
-            # Fallback: find first reasonable points value if pts_col missed
-            if projected_points is None:
+            # Fallback: find first reasonable FPTS value if pts_col missed
+            if projected_fpts is None:
                 for text in cell_texts[1:]:
                     val = self._try_parse_float(text)
-                    if val is not None and 5.0 <= val <= 60.0:
-                        projected_points = val
+                    if val is not None and 5.0 <= val <= 80.0:
+                        projected_fpts = val
                         break
 
             return {
@@ -325,7 +321,10 @@ class DailyFantasyFuelProjectionsScraper(ScraperBase, ScraperFlaskMixin):
                 "player_lookup": normalize_player_name(player_name),
                 "team": team,
                 "position": position,
-                "projected_points": projected_points,
+                # DFF only has DK fantasy points, NOT real NBA points.
+                # projected_points=None excludes DFF from consensus signal.
+                "projected_points": None,
+                "projected_fantasy_points": projected_fpts,
                 "projected_minutes": projected_minutes,
                 "salary": salary,
             }
@@ -333,8 +332,100 @@ class DailyFantasyFuelProjectionsScraper(ScraperBase, ScraperFlaskMixin):
             logger.debug("Error parsing DailyFantasyFuel row: %s", e)
             return None
 
+    def _extract_clean_player_name(self, cells) -> str:
+        """Extract ONLY the player name from cells, ignoring sibling elements.
+
+        DFF cells can contain name+position+salary+FPTS+value all concatenated
+        when using get_text(). This method extracts just the name by:
+        1. Looking for an <a> tag and using its direct text (not descendants)
+        2. Falling back to the first text node before any child elements
+        3. Using regex to strip position/salary/FPTS suffixes from garbled text
+        """
+        # Try first two cells (first may be a rank/checkbox column)
+        for cell in cells[:2]:
+            # Strategy 1: Find <a> tag — most reliable, gives just the name
+            link = cell.find("a")
+            if link:
+                # Use .string or direct text content, not .get_text() which
+                # traverses descendants and may pick up nested elements
+                name = link.string
+                if name and name.strip():
+                    return name.strip()
+                # If .string is None (multiple children), get only direct text
+                name = link.get_text(strip=True)
+                if name:
+                    # Clean garbled suffixes: "J. BrunsonPG" → "J. Brunson"
+                    name = self._clean_garbled_name(name)
+                    if name:
+                        return name
+
+            # Strategy 2: Get first direct text node from the cell
+            for child in cell.children:
+                if isinstance(child, str):
+                    text = child.strip()
+                    if len(text) > 2 and " " in text:
+                        return self._clean_garbled_name(text)
+
+        # Strategy 3: Last resort — get full cell text and regex-clean it
+        for cell in cells[:2]:
+            text = cell.get_text(strip=True)
+            if text:
+                cleaned = self._clean_garbled_name(text)
+                if cleaned and " " in cleaned:
+                    return cleaned
+
+        return ""
+
+    def _clean_garbled_name(self, text: str) -> str:
+        """Strip position, salary, FPTS, and value suffixes from garbled names.
+
+        Handles patterns like:
+          "J. BrunsonPG. $9100FPTS38.7VALUE4.3x" → "J. Brunson"
+          "Jalen BrunsonPG" → "Jalen Brunson"
+          "LeBron JamesSF · $10500" → "LeBron James"
+        """
+        if not text:
+            return ""
+
+        # Remove everything from known DFS markers onward
+        # These markers indicate where the name ends and metadata begins
+        for marker in ["FPTS", "VALUE", "FP ", "DK "]:
+            idx = text.find(marker)
+            if idx > 0:
+                text = text[:idx]
+
+        # Remove salary patterns: "$9100", "$10.0k", "· $10500"
+        text = re.sub(r'[·\s]*\$[\d,.k]+.*$', '', text)
+
+        # Remove position suffixes glued to name: "BrunsonPG", "JamesSF", "JokicC"
+        # Position codes at end of string, possibly preceded by ". " or "- "
+        # Multi-char positions are safe with case-insensitive match
+        text = re.sub(
+            r'(?<=[a-z])(?:[\s.\-]*)(PG|SG|SF|PF|C/PF|PF/C|SG/SF|SF/PF|PG/SG)[\s.\-]*$',
+            '', text, flags=re.IGNORECASE
+        )
+        # Standalone "C" (center) must be CASE-SENSITIVE to avoid stripping
+        # the trailing 'c' from names like "Doncic" or "Zubac"
+        text = re.sub(
+            r'(?<=[a-z])(?:[\s.\-]*)C[\s.\-]*$',
+            '', text
+        )
+
+        # Remove trailing dots, dashes, whitespace
+        text = text.rstrip(' .-·')
+
+        # Final check: should look like a name (letters, spaces, dots, hyphens)
+        if re.match(r'^[A-Za-z][A-Za-z.\s\'-]+$', text) and len(text) > 2:
+            return text.strip()
+
+        return text.strip()
+
     def _try_parse_embedded_data(self, soup) -> List[Dict]:
-        """Try to extract projection data from embedded JSON/script tags."""
+        """Try to extract projection data from embedded JSON/script tags.
+
+        All values from DFF are DFS fantasy points, not real NBA points.
+        Store as projected_fantasy_points with projected_points=None.
+        """
         players = []
         for script in soup.find_all("script"):
             script_text = script.string or ""
@@ -367,7 +458,8 @@ class DailyFantasyFuelProjectionsScraper(ScraperBase, ScraperFlaskMixin):
                                         "player_lookup": normalize_player_name(name),
                                         "team": TEAM_ABBR_MAP.get(raw_team, raw_team),
                                         "position": item.get("position", ""),
-                                        "projected_points": float(pts),
+                                        "projected_points": None,
+                                        "projected_fantasy_points": float(pts),
                                         "projected_minutes": self._safe_float(
                                             item.get("min") or item.get("minutes")
                                         ),
@@ -401,7 +493,8 @@ class DailyFantasyFuelProjectionsScraper(ScraperBase, ScraperFlaskMixin):
                                             "player_lookup": normalize_player_name(name),
                                             "team": TEAM_ABBR_MAP.get(raw_team, raw_team),
                                             "position": item.get("position", ""),
-                                            "projected_points": float(pts),
+                                            "projected_points": None,
+                                            "projected_fantasy_points": float(pts),
                                             "projected_minutes": self._safe_float(
                                                 item.get("min")
                                             ),

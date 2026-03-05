@@ -4,11 +4,12 @@ Session 401/403: When 2+ independent projection sources agree with our model's
 OVER/UNDER direction relative to the prop line, the confluence of independent
 models creates a strong consensus signal.
 
-Sources (4 total, 3 working as of Session 403):
+Sources (3 usable for consensus):
   - FantasyPros: consensus projections from 4+ experts (WORKING)
-  - DailyFantasyFuel: independent DFS projections (WORKING)
   - Dimers: projected points model (WORKING)
   - NumberFire/FanDuel: FanDuel Research projections (BROKEN — needs Playwright)
+  - DailyFantasyFuel: EXCLUDED — only provides DraftKings fantasy points (FPTS),
+    not real NBA points. FPTS cannot be compared against prop lines.
 
 Projection sources use different architectures (regression ensembles, Monte Carlo
 simulations) with different feature weights — genuinely orthogonal to CatBoost.
@@ -20,8 +21,8 @@ Signals:
   - projection_disagreement: Model says OVER but 0 projections agree
     Expected filter HR <50% — all external models disagree with our direction.
 
-The signal reads from 4 projection BQ tables, joined to predictions via
-player_lookup in supplemental_data.py.
+The signal reads from 3 projection BQ tables (DFF excluded), joined to
+predictions via player_lookup in supplemental_data.py.
 """
 
 from typing import Dict, Optional

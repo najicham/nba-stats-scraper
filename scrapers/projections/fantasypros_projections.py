@@ -4,7 +4,7 @@ FantasyPros NBA Consensus Projections Scraper                   v1.0 - 2026-03-0
 ----------------------------------------------------------------------------------
 Scrapes consensus player projections aggregated from multiple DFS sites.
 
-URL: https://www.fantasypros.com/nba/projections/
+URL: https://www.fantasypros.com/nba/projections/daily-overall.php
 Data: Consensus projected points, rebounds, assists, etc.
 Access: Free tier, structured HTML tables.
 Timing: Updates early morning.
@@ -100,7 +100,7 @@ class FantasyProsProjectionsScraper(ScraperBase, ScraperFlaskMixin):
 
     def set_url(self) -> None:
         """Build FantasyPros projections URL."""
-        self.url = "https://www.fantasypros.com/nba/projections/tot.php"
+        self.url = "https://www.fantasypros.com/nba/projections/daily-overall.php"
         logger.info("FantasyPros projections URL: %s", self.url)
 
     def set_headers(self) -> None:

@@ -137,11 +137,11 @@ Complete catalog of all 40+ production scrapers organized by data type and sourc
 
 ### fantasypros_projections (FantasyPros) — WORKING
 - **Source:** FantasyPros.com consensus projections
-- **URL:** `https://www.fantasypros.com/nba/projections/`
+- **URL:** `https://www.fantasypros.com/nba/projections/daily-overall.php`
 - **BigQuery Table:** `nba_raw.fantasypros_projections`
 - **File:** `scrapers/projections/fantasypros_projections.py`
 - **Schedule:** Daily 10:20 AM ET (`nba-fantasypros-projections`)
-- **Status:** ✅ Production (271 records)
+- **Status:** ✅ Production — was scraping season totals (tot.php), fixed to daily
 - **Use Case:** Consensus projected points from 4+ expert sources
 
 ### dailyfantasyfuel_projections (DailyFantasyFuel) — WORKING

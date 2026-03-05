@@ -624,28 +624,27 @@ def query_predictions_with_supplements(
     # Compare external projected_points to prop line to count how many sources
     # agree with each direction. 2+ sources above line + OVER = consensus signal.
     # Sources: NumberFire (broken — FanDuel redirect), FantasyPros, DailyFantasyFuel, Dimers
+    # Session 405: Scrapers produce hyphenated player_lookup (jalen-brunson) but
+    # predictions use no-hyphen format (jalenbrunson). Normalize with REPLACE.
     projection_query = f"""
     WITH nf AS (
-      SELECT player_lookup, projected_points,
-        ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY timestamp DESC) AS rn
+      SELECT REPLACE(player_lookup, '-', '') AS player_lookup, projected_points,
+        ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY scraped_at DESC) AS rn
       FROM `{PROJECT_ID}.nba_raw.numberfire_projections`
       WHERE game_date = @target_date AND projected_points IS NOT NULL
     ),
     fp AS (
-      SELECT player_lookup, projected_points,
-        ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY timestamp DESC) AS rn
+      SELECT REPLACE(player_lookup, '-', '') AS player_lookup, projected_points,
+        ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY scraped_at DESC) AS rn
       FROM `{PROJECT_ID}.nba_raw.fantasypros_projections`
       WHERE game_date = @target_date AND projected_points IS NOT NULL
     ),
-    dff AS (
-      SELECT player_lookup, projected_points,
-        ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY timestamp DESC) AS rn
-      FROM `{PROJECT_ID}.nba_raw.dailyfantasyfuel_projections`
-      WHERE game_date = @target_date AND projected_points IS NOT NULL
-    ),
+    -- DFF excluded from consensus: it only provides DraftKings fantasy points
+    -- (FPTS), not real NBA points. FPTS cannot be compared against prop lines.
+    -- DFF projected_points is always NULL; projected_fantasy_points has FPTS.
     dm AS (
-      SELECT player_lookup, projected_points,
-        ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY timestamp DESC) AS rn
+      SELECT REPLACE(player_lookup, '-', '') AS player_lookup, projected_points,
+        ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY scraped_at DESC) AS rn
       FROM `{PROJECT_ID}.nba_raw.dimers_projections`
       WHERE game_date = @target_date AND projected_points IS NOT NULL
     ),
@@ -654,20 +653,16 @@ def query_predictions_with_supplements(
       UNION DISTINCT
       SELECT player_lookup FROM fp WHERE rn = 1
       UNION DISTINCT
-      SELECT player_lookup FROM dff WHERE rn = 1
-      UNION DISTINCT
       SELECT player_lookup FROM dm WHERE rn = 1
     )
     SELECT
       ap.player_lookup,
       nf.projected_points AS nf_projected_points,
       fp.projected_points AS fp_projected_points,
-      dff.projected_points AS dff_projected_points,
       dm.projected_points AS dm_projected_points
     FROM all_players ap
     LEFT JOIN nf ON ap.player_lookup = nf.player_lookup AND nf.rn = 1
     LEFT JOIN fp ON ap.player_lookup = fp.player_lookup AND fp.rn = 1
-    LEFT JOIN dff ON ap.player_lookup = dff.player_lookup AND dff.rn = 1
     LEFT JOIN dm ON ap.player_lookup = dm.player_lookup AND dm.rn = 1
     """
     projection_map = {}
@@ -677,10 +672,11 @@ def query_predictions_with_supplements(
             projection_map[row['player_lookup']] = {
                 'numberfire': float(row['nf_projected_points']) if row['nf_projected_points'] is not None else None,
                 'fantasypros': float(row['fp_projected_points']) if row['fp_projected_points'] is not None else None,
-                'dailyfantasyfuel': float(row['dff_projected_points']) if row['dff_projected_points'] is not None else None,
+                # DFF excluded: only has DFS fantasy points, not real NBA points
+                'dailyfantasyfuel': None,
                 'dimers': float(row['dm_projected_points']) if row['dm_projected_points'] is not None else None,
             }
-        logger.info(f"Loaded projection data for {len(projection_map)} players from 4 sources")
+        logger.info(f"Loaded projection data for {len(projection_map)} players from 3 sources (DFF excluded: DFS FPTS only)")
     except Exception as e:
         logger.warning(f"Failed to query projection consensus data: {e}")
 
@@ -831,8 +827,9 @@ def query_predictions_with_supplements(
         logger.warning(f"Failed to query VSiN betting splits: {e}")
 
     # Session 404: RotoWire projected minutes for minutes_surge_over signal.
+    # Session 405: Normalize player_lookup (remove hyphens) to match prediction format.
     rotowire_query = f"""
-    SELECT player_lookup, projected_minutes
+    SELECT REPLACE(player_lookup, '-', '') AS player_lookup, projected_minutes
     FROM `{PROJECT_ID}.nba_raw.rotowire_lineups`
     WHERE game_date = @target_date
       AND projected_minutes IS NOT NULL

@@ -257,11 +257,19 @@ class DimersProjectionsScraper(ScraperBase, ScraperFlaskMixin):
             team = ""
             position = ""
 
-            # Look for player name as a link first
+            # Look for player name as a link first.
+            # Session 405: Use link.string or first text node to avoid
+            # concatenating full + abbreviated name (e.g., "Jalen BrunsonJ. Brunson").
             first_cell = cells[0]
             link = first_cell.find("a")
             if link:
-                player_name = link.get_text(strip=True)
+                # .string returns direct text if no child elements, else None
+                player_name = link.string or ""
+                if not player_name:
+                    # Multiple child elements — take the longest text node
+                    texts = [t.strip() for t in link.stripped_strings]
+                    if texts:
+                        player_name = max(texts, key=len)
             else:
                 text = first_cell.get_text(strip=True)
                 if len(text) > 3 and " " in text:
@@ -273,7 +281,11 @@ class DimersProjectionsScraper(ScraperBase, ScraperFlaskMixin):
                     second_cell = cells[1]
                     link = second_cell.find("a")
                     if link:
-                        player_name = link.get_text(strip=True)
+                        player_name = link.string or ""
+                        if not player_name:
+                            texts = [t.strip() for t in link.stripped_strings]
+                            if texts:
+                                player_name = max(texts, key=len)
                     else:
                         text = second_cell.get_text(strip=True)
                         if len(text) > 3 and " " in text and not re.match(r'^[\d.]+$', text):

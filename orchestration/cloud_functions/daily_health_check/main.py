@@ -906,6 +906,31 @@ def daily_health_check(request):
         results.add(check_name, status, message)
 
     # ========================================================================
+    # CHECK 10: Signal Firing Canary (Session 404+)
+    # ========================================================================
+    logger.info("Checking signal firing status...")
+
+    try:
+        from ml.signals.signal_health import check_signal_firing_canary
+        canary_alerts = check_signal_firing_canary(bq, today)
+        dead = [a for a in canary_alerts if a['firing_status'] == 'DEAD']
+        degrading = [a for a in canary_alerts if a['firing_status'] == 'DEGRADING']
+
+        if dead:
+            dead_names = ', '.join(a['signal_tag'] for a in dead)
+            results.add("Signal Canary", "fail",
+                        f"{len(dead)} DEAD signal(s): {dead_names}")
+        elif degrading:
+            deg_names = ', '.join(a['signal_tag'] for a in degrading)
+            results.add("Signal Canary", "warn",
+                        f"{len(degrading)} DEGRADING signal(s): {deg_names}")
+        else:
+            results.add("Signal Canary", "pass", "All signals firing normally")
+    except Exception as e:
+        logger.warning(f"Signal canary check failed: {e}")
+        results.add("Signal Canary", "warn", f"Check failed: {e}")
+
+    # ========================================================================
     # Send Results
     # ========================================================================
     logger.info(
