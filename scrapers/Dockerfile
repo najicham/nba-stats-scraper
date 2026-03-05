@@ -39,9 +39,9 @@ COPY scrapers/requirements-lock.txt ./scrapers/requirements-lock.txt
 RUN pip install --no-cache-dir -r shared/requirements.txt
 RUN pip install --no-cache-dir -r scrapers/requirements-lock.txt
 
-# Playwright removed — NumberFire uses GraphQL API, VSiN uses server-rendered HTML.
-# Neither requires a headless browser. The playwright package remains in
-# requirements-lock.txt as a no-op import guard but no browser binary is needed.
+# Install Playwright + Chromium for scrapers that need JS rendering
+# (FantasyPros, Dimers paginate data client-side)
+RUN python -m playwright install --with-deps chromium
 
 # Now copy all source code
 COPY shared/ ./shared/

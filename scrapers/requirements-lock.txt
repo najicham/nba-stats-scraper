@@ -43,6 +43,7 @@ opentelemetry-sdk==1.39.1
 opentelemetry-semantic-conventions==0.60b1
 packaging==26.0
 pbpstats==1.3.11
+playwright==1.52.0
 pdfminer.six==20250506
 pdfplumber==0.11.7
 pdfreader==0.1.15

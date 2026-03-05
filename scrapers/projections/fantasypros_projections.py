@@ -131,11 +131,34 @@ class FantasyProsProjectionsScraper(ScraperBase, ScraperFlaskMixin):
             "Upgrade-Insecure-Requests": "1",
         }
 
-    def download_data(self):
-        """Override to add rate limiting delay."""
-        logger.info("Waiting %.1f seconds for rate limiting...", self.CRAWL_DELAY_SECONDS)
+    def download_and_decode(self):
+        """Use Playwright to render the full page with JS-loaded data.
+
+        FantasyPros paginates via client-side JavaScript — static HTML only
+        has 10 players. Playwright renders the full table.
+        Falls back to standard HTTP if Playwright is unavailable.
+        """
         time.sleep(self.CRAWL_DELAY_SECONDS)
-        super().download_data()
+        try:
+            from playwright.sync_api import sync_playwright
+            logger.info("Using Playwright to render FantasyPros page")
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True)
+                page = browser.new_page()
+                page.goto(self.url, wait_until="networkidle", timeout=30000)
+                # Wait for the table to fully render
+                page.wait_for_selector("table#data tbody tr", timeout=15000)
+                # Scroll to bottom to trigger any lazy-loading
+                page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                time.sleep(2)
+                self.decoded_data = page.content()
+                browser.close()
+            logger.info("Playwright rendered page (%d chars)", len(self.decoded_data))
+        except Exception as e:
+            logger.warning("Playwright unavailable or failed (%s), falling back to HTTP", e)
+            super().download_data()
+            if hasattr(self, 'raw_data') and self.raw_data:
+                self.decoded_data = self.raw_data.decode('utf-8', errors='replace') if isinstance(self.raw_data, bytes) else self.raw_data
 
     def validate_download_data(self) -> None:
         """Validate that we received a proper FantasyPros page."""

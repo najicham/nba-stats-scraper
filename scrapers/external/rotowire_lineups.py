@@ -274,6 +274,15 @@ class RotoWireLineupsScraper(ScraperBase, ScraperFlaskMixin):
                 except (ValueError, TypeError):
                     pass
 
+            # Extract play probability from CSS class (e.g., is-pct-play-100)
+            play_probability = None
+            item_classes = item.get("class", [])
+            for cls in item_classes:
+                pct_match = re.search(r'is-pct-play-(\d+)', cls)
+                if pct_match:
+                    play_probability = int(pct_match.group(1))
+                    break
+
             is_starter = lineup_position <= 5
 
             return {
@@ -284,6 +293,7 @@ class RotoWireLineupsScraper(ScraperBase, ScraperFlaskMixin):
                 "is_starter": is_starter,
                 "injury_status": injury_status,
                 "projected_minutes": projected_minutes,
+                "play_probability": play_probability,
             }
         except Exception as e:
             logger.debug("Error parsing player item: %s", e)
