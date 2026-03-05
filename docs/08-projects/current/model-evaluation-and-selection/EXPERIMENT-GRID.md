@@ -25,51 +25,50 @@ Experiment features are injected at training time via the experiment table — z
 | 4 | `sharp_money_v1` | sharp_money_divergence, over_ticket_pct, over_money_pct | Sharp vs public money divergence predicts outcomes. Money% - ticket% captures where sharps disagree with public. | `sharp_money_over/under` shadow signal exists but NOT FIRING. VSiN data is game-level (total O/U), not player-level. | **MEDIUM**. Game-level feature applied to all players in same game. Signal may be diluted. But sharp money is proven concept in sports betting. | ~Apr 5 |
 | 5 | `dvp_v1` | dvp_points_rank_norm, dvp_points_allowed | Opponent defense vs position is a classic DFS feature. Weak defense = more points opportunity. | `dvp_favorable_over` shadow signal exists, status unknown. No prior feature experiment. Feature is semi-static (ranks change slowly). | **MEDIUM**. Classic feature. But DVP ranks change slowly — may be near-static in practice. Points_allowed has more variance. | ~Apr 5 |
 
-### Tier 3: Future Experiments (Feature Interactions & Combinations)
+### Tier 3: Derived Features (Computed from Existing Data — Full Season)
 
-| # | Experiment | Features | Hypothesis | Prior Evidence | Expected Signal | Prerequisite |
-|---|-----------|----------|-----------|----------------|-----------------|--------------|
-| 6 | `pace_x_tracking_v1` | pace_ratio_tr * tracking_usage_pct, pace_ratio_tr * tracking_drives | Interaction: high-usage players in fast-paced games score more. | Neither interaction tested. Individual features may be wash but interaction could capture conditional effect. | **SKIP** — both pace and tracking are dead ends individually | Tier 1 results |
-| 7 | `projection_x_sharp_v1` | projection_consensus_delta * sharp_money_divergence | When projections AND sharp money agree on direction, signal is stronger. | No prior. Both sources independent. | MEDIUM | Tier 2 data |
-| 8 | `multi_source_v1` | Best features from Tier 1 + Tier 2 combined | Combined model with cherry-picked features from individual experiments. | No prior. Risk of overfitting to eval period. | MEDIUM (with overfitting risk) | Tier 1+2 results |
+| # | Experiment | Features | Hypothesis | Result |
+|---|-----------|----------|-----------|--------|
+| 6 | `derived_v1` | pts_std_last_5, pts_std_last_10, form_ratio, over_rate_weighted | Player volatility and momentum signals | **NOISE** (+4.2pp, N=14) |
+| 7 | `interactions_v1` | fatigue*minutes, pace*usage, rest*b2b, spread*home | Cross-feature interaction terms | **DEAD_END** (+0.5pp) |
+| 8 | `line_history_v1` | line_vs_avg, opening_vs_current, line_range | Line-derived CLV proxy features | **DEAD_END** (-3.5pp) |
+| 9 | `derived_all` | All 11 derived+interaction+line features | Combined derived features | **DEAD_END** (-0.6pp) |
+| 10 | `kitchen_sink` | All 22 experiment features | Everything combined | **NOISE** (+3.2pp, N=12) |
+
+### Tier 4: Future Experiments (Pending Data Accumulation)
+
+| # | Experiment | Features | Hypothesis | Ready Date |
+|---|-----------|----------|-----------|------------|
+| 11 | `projections_v1` | projection_consensus_pts/delta, n_sources | External projections — best remaining candidate | ~Apr 5 |
+| 12 | `sharp_money_v1` | sharp_money_divergence, ticket/money pct | Sharp vs public money | ~Apr 5 |
+| 13 | `projection_x_sharp_v1` | projection_delta * sharp_divergence | When independent sources agree | ~Apr 5 |
 
 ## Execution Protocol
 
-For each experiment:
+**Preferred: Use experiment harness** (automates baseline + multi-seed + z-test + verdict):
 
 ```bash
 # 1. Backfill
 PYTHONPATH=. python bin/backfill_experiment_features.py --experiment EXPERIMENT_ID
 
-# 2. Verify data
-bq query --use_legacy_sql=false "
-SELECT feature_name, COUNT(*), AVG(feature_value), STDDEV(feature_value)
-FROM nba_predictions.ml_feature_store_experiment
-WHERE experiment_id = 'EXPERIMENT_ID'
-GROUP BY 1"
-
-# 3. Run 5-seed experiment
-for seed in 42 123 456 789 999; do
-  PYTHONPATH=. python ml/experiments/quick_retrain.py \
-    --name "EXP_${EXPERIMENT_ID}_s${seed}" \
-    --feature-set v12_noveg \
+# 2. Run harness (baseline + experiment, 5 seeds each, auto-verdict)
+PYTHONPATH=. python ml/experiments/experiment_harness.py \
+    --name EXPERIMENT_ID \
     --experiment-features EXPERIMENT_ID \
-    --train-days 56 \
-    --random-seed $seed \
-    --machine-output results/experiment_grid/${EXPERIMENT_ID}_s${seed}.json
-done
+    --hypothesis "Why we are testing this" \
+    --persist  # writes to BQ experiment_grid_results
 
-# 4. Compare: aggregate 5-seed HR/MAE vs baseline
-# Baseline: V12_noveg 5-seed from Session 407
+# Combo experiment (comma-separated IDs):
+PYTHONPATH=. python ml/experiments/experiment_harness.py \
+    --name derived_all \
+    --experiment-features "derived_v1,interactions_v1,line_history_v1" \
+    --hypothesis "All derived combined" --persist
 ```
 
-## Baseline (V12_noveg 5-seed, Session 407)
+## Baseline (V12_noveg, auto-generated per harness run)
 
-| Metric | Value |
-|--------|-------|
-| HR (edge 3+) | ~65.9% (post-filter) |
-| HR (unfiltered) | ~52.2% |
-| MAE | ~5.3 |
+Harness runs fresh baseline with same eval window for fair comparison.
+Typical baseline: HR(3+) ~76% (small eval N), MAE ~5.40.
 
 ## Results
 
@@ -119,6 +118,52 @@ done
 
 **Verdict: DEAD END (full pace_v1).** All 5 TeamRankings features are noise. Both pace (redundant with f7/f14/f22) and efficiency (seasonal averages, static) fail to add signal. Skip Tier 3 `pace_x_tracking_v1` experiment.
 
+### Session 409: Full Grid Results (Experiment Harness, 5-seed)
+
+**Date:** Mar 5, 2026 | **Harness:** `ml/experiments/experiment_harness.py`
+**Baseline:** V12_noveg, 56d training | **Eval:** Auto (last 7 days)
+**Schema fix:** Recreated table from WIDE to LONG format. Fixed derived_v1 data leakage (window included CURRENT ROW).
+
+| # | Experiment | Features | Delta HR(3+) | N(3+) | Delta MAE | z-score | Verdict |
+|---|-----------|----------|-------------|-------|-----------|---------|---------|
+| 1 | `tracking_v1` | 6 tracking stats | **-1.3pp** | 13 | +0.012 | -0.08 | DEAD_END |
+| 2 | `pace_v1` | 5 pace/efficiency | **+8.2pp** | 12 | -0.014 | +0.52 | NOISE (N too small) |
+| 3 | `interactions_v1` | 4 cross-feature products | **+0.5pp** | 12 | +0.022 | +0.03 | DEAD_END |
+| 4 | `line_history_v1` | 3 line-derived features | **-3.5pp** | 12 | +0.022 | -0.20 | DEAD_END |
+| 5 | `derived_v1` | 4 volatility/form | **+4.2pp** | 14 | -0.049 | +0.27 | NOISE (N too small) |
+| 6 | `derived_all` | derived+interactions+line (11 features) | **-0.6pp** | 13 | +0.046 | -0.04 | DEAD_END |
+| 7 | `kitchen_sink` | All 22 experiment features | **+3.2pp** | 12 | +0.022 | +0.19 | NOISE (N too small) |
+
+**Key findings:**
+- **No experiment reached significance** — all N(3+) are 9-18 per seed (too small for p<0.05)
+- **derived_v1 is most promising** (+4.2pp HR, -0.05 MAE) but needs more data
+- **Combining features hurts** — derived_all worse than derived_v1 alone (curse of dimensionality)
+- **Kitchen sink** = slight positive (+3.2pp) but MAE worse — model confused by noise features
+- **V12_noveg remains best** — consistent with prior findings (adding features hurts)
+
+**BQ table:** `nba_predictions.experiment_grid_results` — all results persisted with `--persist`
+
+### Session 410: Feature Exclusion + Training Window + RSM Experiments
+
+**Date:** Mar 4, 2026 | **Harness:** Fixed (extra_args only apply to experiment runs, not baseline)
+**Baseline:** V12_noveg, 56d training | **Eval:** 14 days (doubled from 7 — harness fix)
+**N(3+):** 25-46 per seed (up from 12-18) — much better statistical power
+
+| # | Experiment | Change | Delta HR(3+) | N(3+) avg | Delta MAE | Verdict |
+|---|-----------|--------|-------------|-----------|-----------|---------|
+| 1 | `exclude_noise_v2` | Remove playoff_game, breakout_flag, injury_risk, games_since_structural_change | **-1.2pp** | 32 | +0.006 | DEAD_END |
+| 2 | `exclude_shot_zones_v2` | Remove pct_paint, pct_mid_range, pct_three, pct_free_throw | **+1.4pp** | 35 | +0.002 | NOISE |
+| 3 | `window_63d_v2` | 63-day training window (vs 56d) | **+0.1pp** | 31 | -0.010 | DEAD_END |
+| 4 | `window_70d_v2` | 70-day training window (vs 56d) | **+1.4pp** | 28 | -0.005 | NOISE |
+| 5 | `rsm03_v2` | RSM 0.3 (subsample 30% features per split) | **-3.8pp** | 38 | +0.030 | DEAD_END |
+
+**Key findings:**
+- **CatBoost self-optimizes feature selection** — removing "noise" features either hurts or makes no difference
+- **RSM 0.3 is harmful** (-3.8pp) — random subsampling removes features the model needs
+- **56d remains sweet spot** — 63d identical, 70d is slight noise-level positive
+- **Shot zone exclusion closest to signal** (+1.4pp) but not actionable at noise level
+- **Harness bug found & fixed:** Prior runs (Session 409) applied extra_args to both baseline and experiment, producing +0.0pp. Fixed: baseline_train_days separate from experiment train_days; extra_args only for experiment runs.
+
 ## Decision Criteria
 
 - **Promote to signal:** HR improvement >= 2pp at edge 3+ across 5 seeds, N >= 50
@@ -135,12 +180,21 @@ done
 5. **Tracking data quality**: touches, drives, paint_touches mostly 0.0. Only usage_pct has real values.
 6. **VSiN is game-level**: sharp money splits are per-game total (not player-level). Applied uniformly to all players in a game.
 7. **Dimers projections questionable**: May be generic, not game-date-specific (Session 407 finding)
+8. **Data leakage risk in derived features**: Window functions MUST use `1 PRECEDING` not `CURRENT ROW` to exclude target game. Initial derived_v1 showed +21.6pp (fake) before fix.
 
 ## What's Already Dead (Don't Re-Test)
 
-From `docs/06-reference/model-dead-ends.md`:
+From `docs/06-reference/model-dead-ends.md` + Session 409:
 - TeamRankings pace features (team_pace_tr, opp_pace_tr, pace_ratio_tr) — Session 408, redundant with existing f7/f14/f22
-- Static tracking stats as individual features (usg, ppg, pct_pts, fga) — Session 407
+- Static tracking stats — Session 407 (usg/ppg/pct_pts/fga) + Session 409 (touches/drives/paint_touches/catch_shoot/pull_up/usage). Mostly 0.0 values.
+- Cross-feature interaction terms (fatigue*minutes, pace*usage, rest*b2b, spread*home) — Session 409, DEAD_END
+- Line-derived features (line_vs_avg, opening_vs_current, line_range) — Session 409, DEAD_END (-3.5pp)
+- Combined derived features (11 features) — Session 409, DEAD_END. Curse of dimensionality.
+- Feature exclusion (playoff_game, breakout_flag, injury_risk, structural_change) — Session 410, -1.2pp. CatBoost already ignores them.
+- Feature exclusion (shot zones: pct_paint/mid_range/three/free_throw) — Session 410, +1.4pp NOISE
+- RSM 0.3 (random subspace 30%) — Session 410, -3.8pp DEAD_END. Removes needed features.
+- Training window 63d — Session 410, +0.1pp DEAD_END. Identical to 56d.
+- Training window 70d — Session 410, +1.4pp NOISE. 56d confirmed as sweet spot.
 - V17 opponent_pace_mismatch — <1% importance
 - Expected_scoring_possessions (pace * usage) — 62.8% vs 68.6% baseline
 - Rolling_zscore_5v10 — <1% importance

@@ -1,7 +1,7 @@
 # Signal Inventory — Complete List
 
-**Last Updated:** 2026-03-04 (Session 404 — late)
-**Active Signals:** 26 (+ 12 shadow accumulating data)
+**Last Updated:** 2026-03-05 (Session 411)
+**Active Signals:** 27 (+ 20 shadow accumulating data)
 **Negative Filters:** 17 (+ 2 shadow: `public_fade_filter`, `negative_clv_filter`)
 **Combo Registry:** 11 SYNERGISTIC entries
 
@@ -51,7 +51,7 @@ Rescue tags: `combo_3way`, `combo_he_ms`, `book_disagreement` (72%), `home_under
 | `scoring_cold_streak_over` | OVER | 65.1% | CONDITIONAL | Session 371 |
 | `high_scoring_environment_over` | OVER | 70.2% | CONDITIONAL | Session 373 |
 | `fast_pace_over` | OVER | 81.5% | PRODUCTION | Session 374, fixed 387 (threshold was raw 102 on 0-1 scale) |
-| `volatile_scoring_over` | OVER | 81.5% | PRODUCTION | Session 374 |
+| `volatile_scoring_over` | OVER | 77.8% post-toxic | PRODUCTION | Session 374, disabled 391 (toxic 50%), re-enabled 411 (77.8% recovery) |
 | `low_line_over` | OVER | 78.1% | PRODUCTION | Session 374 |
 | `b2b_boost_over` | OVER | 64.3% | PRODUCTION | Session 396, inverse of b2b_fatigue_under |
 | `q4_scorer_over` | OVER | 64.4% | PRODUCTION | Session 397, from BDL PBP Q4 ratio |
@@ -84,7 +84,7 @@ Rescue tags: `combo_3way`, `combo_he_ms`, `book_disagreement` (72%), `home_under
 
 ---
 
-## Shadow Signals (12) — Sessions 401 + 404, accumulating data
+## Shadow Signals (20) — Sessions 401 + 404 + 410 + 411, accumulating data
 
 All shadow signals are registered and firing but NOT wired into aggregator rescue/ranking. They record to `pick_signal_tags` and `signal_health_daily` for validation.
 
@@ -111,6 +111,28 @@ All shadow signals are registered and firing but NOT wired into aggregator rescu
 | `minutes_surge_over` | OVER | RotoWire lineups | Projected minutes >= season avg + 3 |
 
 **Data status (Mar 4):** VSiN table empty (scraper deployed, not yet triggered). RotoWire `projected_minutes` is null for all rows (scraper captures lineups but not minutes). 7 of 10 scrapers have data. NumberFire/VSiN/NBA Tracking need first trigger.
+
+### Session 410 — Derived Feature Signals (experiment dead ends → contextual signals)
+
+Features that failed as model inputs but are conceptually perfect as contextual evaluators: they identify WHEN to trust the model, not how to improve predictions.
+
+| Signal | Direction | Source | Notes |
+|--------|-----------|--------|-------|
+| `hot_form_over` | OVER | f0 (pts_avg_last_5), f1 (pts_avg_last_10) | Form ratio >= 1.10 + line >= 10 |
+| `consistent_scorer_over` | OVER | f3 (points_std_last_10) | CV <= 0.30 + line >= 12. Complement to volatile_scoring_over |
+| `over_trend_over` | OVER | prev_over_1..5 (streak_data) | 60%+ over rate last 5 games + line >= 10 |
+
+### Session 411 — Feature Store Signals (toxic window discovery → contextual signals)
+
+Signals derived from feature store distributions. Discovered via toxic window analysis: most "dead" signals were casualties of Jan 30 - Feb 25 toxic window, not intrinsically broken. These exploit raw feature values as contextual evaluators.
+
+| Signal | Direction | Source | Notes |
+|--------|-----------|--------|-------|
+| `usage_surge_over` | OVER | f48 (usage_rate_last_5) | Usage >= 25% (top quartile) + line >= 12 |
+| `scoring_momentum_over` | OVER | f44 (trend_slope), f43 (pts_avg_last_3), f1 (pts_avg_last_10) | Slope > 1.0 + 3g avg > 10g avg |
+| `career_matchup_over` | OVER | f29 (avg_pts_vs_opp), f30 (games_vs_opp) | Career avg vs opponent > line, 3+ games |
+| `minutes_load_over` | OVER | f40 (minutes_load_7d) | 100+ min in 7 days = heavy engagement |
+| `blowout_risk_under` | UNDER | f57 (blowout_risk) | 40%+ blowout bench rate + line >= 15. Fills UNDER gap (only 6th UNDER signal) |
 
 ---
 
@@ -172,7 +194,7 @@ All shadow signals are registered and firing but NOT wired into aggregator rescu
 
 ---
 
-**Last Updated:** 2026-03-04 (late), Session 404
+**Last Updated:** 2026-03-04, Session 410
 **Source of truth for active signals.** CLAUDE.md has a summary; this is the full reference.
 
 ### Shadow Signal Promotion Criteria
@@ -193,7 +215,8 @@ WITH shadow_picks AS (
   WHERE signal_tag IN ('projection_consensus_over', 'projection_consensus_under',
     'predicted_pace_over', 'dvp_favorable_over',
     'positive_clv_over', 'positive_clv_under',
-    'sharp_money_over', 'sharp_money_under', 'minutes_surge_over')
+    'sharp_money_over', 'sharp_money_under', 'minutes_surge_over',
+    'hot_form_over', 'consistent_scorer_over', 'over_trend_over')
     AND game_date >= '2026-03-05'
 )
 SELECT sp.signal_tag,

@@ -116,6 +116,18 @@ feature_data AS (
     fs.feature_14_value AS opponent_pace,
     fs.feature_22_value AS team_pace,
     fs.feature_2_value AS points_avg_season,  -- For player tier classification
+    -- Session 410: hot_form, consistent_scorer, over_trend signals
+    fs.feature_0_value AS points_avg_last_5,
+    fs.feature_1_value AS points_avg_last_10,
+    fs.feature_3_value AS points_std_last_10,
+    -- Session 411: feature store signals
+    fs.feature_29_value AS avg_pts_vs_opp,
+    fs.feature_30_value AS games_vs_opp,
+    fs.feature_40_value AS minutes_load_7d,
+    fs.feature_43_value AS pts_avg_last3,
+    fs.feature_44_value AS trend_slope,
+    fs.feature_48_value AS usage_rate_l5,
+    fs.feature_57_value AS blowout_risk,
     -- Player tier: elite (>25 ppg), stars (20-25), starters (15-20), role (10-15), bench (<10)
     CASE
       WHEN fs.feature_2_value > 25 THEN 'elite'
@@ -215,6 +227,16 @@ SELECT
   fd.team_pace,
   fd.points_avg_season,
   fd.player_tier,
+  fd.points_avg_last_5,
+  fd.points_avg_last_10,
+  fd.points_std_last_10,
+  fd.avg_pts_vs_opp,
+  fd.games_vs_opp,
+  fd.minutes_load_7d,
+  fd.pts_avg_last3,
+  fd.trend_slope,
+  fd.usage_rate_l5,
+  fd.blowout_risk,
   gs.three_pct_last_3,
   gs.three_pct_season,
   gs.three_pct_std,
@@ -297,6 +319,23 @@ def evaluate_signals(rows: List[Dict], registry) -> Tuple[
             'fta_season': float(row.get('fta_season') or 0),
             'unassisted_fg_season': float(row.get('unassisted_fg_season') or 0),
             'points_std_last_5': float(row.get('points_std_last_5') or 0),
+            # Session 410: hot_form, consistent_scorer, over_trend
+            'points_avg_last_5': float(row.get('points_avg_last_5') or 0),
+            'points_avg_last_10': float(row.get('points_avg_last_10') or 0),
+            'points_std_last_10': float(row.get('points_std_last_10') or 0),
+            'prev_over_1': row.get('prev_over_1'),
+            'prev_over_2': row.get('prev_over_2'),
+            'prev_over_3': row.get('prev_over_3'),
+            'prev_over_4': row.get('prev_over_4'),
+            'prev_over_5': row.get('prev_over_5'),
+            # Session 411: feature store signals
+            'avg_pts_vs_opp': float(row.get('avg_pts_vs_opp') or 0),
+            'games_vs_opp': float(row.get('games_vs_opp') or 0),
+            'minutes_load_7d': float(row.get('minutes_load_7d') or 0),
+            'pts_avg_last3': float(row.get('pts_avg_last3') or 0),
+            'trend_slope': float(row.get('trend_slope') or 0),
+            'usage_rate_l5': float(row.get('usage_rate_l5') or 0),
+            'blowout_risk': float(row.get('blowout_risk') or 0),
         }
         predictions.append(pred)
 

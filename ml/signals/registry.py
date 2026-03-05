@@ -133,6 +133,18 @@ def build_default_registry() -> SignalRegistry:
     )
     from ml.signals.minutes_projection import MinutesSurgeOverSignal
 
+    # Session 410: Derived feature signals (shadow mode — from experiment dead ends)
+    from ml.signals.hot_form_over import HotFormOverSignal
+    from ml.signals.consistent_scorer_over import ConsistentScorerOverSignal
+    from ml.signals.over_trend_over import OverTrendOverSignal
+
+    # Session 411: Feature store signals (shadow mode — from feature distributions)
+    from ml.signals.usage_surge_over import UsageSurgeOverSignal
+    from ml.signals.scoring_momentum_over import ScoringMomentumOverSignal
+    from ml.signals.career_matchup_over import CareerMatchupOverSignal
+    from ml.signals.minutes_load_over import MinutesLoadOverSignal
+    from ml.signals.blowout_risk_under import BlowoutRiskUnderSignal
+
     registry = SignalRegistry()
     registry.register(ModelHealthSignal())
     registry.register(HighEdgeSignal())
@@ -189,9 +201,10 @@ def build_default_registry() -> SignalRegistry:
 
     # Session 374 signals
     registry.register(FastPaceOverSignal())
-    # VolatileScoringOverSignal DISABLED (Session 391) — 50% HR (4-4) in 21 days,
-    # lost its edge. Backtest was 81.5% but live performance is coin flip. Adds
-    # signal count to losing picks. CV >= 0.50 condition too broad.
+    # VolatileScoringOverSignal RE-ENABLED (Session 411) — 77.8% HR (7-2) post-toxic.
+    # Was disabled Session 391 at 50% (4-4) during toxic window (Jan 30 - Feb 25).
+    # Post-ASB recovery confirms original 81.5% backtest signal is real.
+    registry.register(VolatileScoringOverSignal())
     registry.register(LowLineOverSignal())
 
     # Session 374b signals
@@ -238,5 +251,19 @@ def build_default_registry() -> SignalRegistry:
 
     # Session 404: RotoWire minutes projection signal (shadow mode)
     registry.register(MinutesSurgeOverSignal())
+
+    # Session 410: Derived feature signals (shadow mode — accumulating data)
+    # Failed as model features but conceptually perfect as contextual signals.
+    registry.register(HotFormOverSignal())
+    registry.register(ConsistentScorerOverSignal())
+    registry.register(OverTrendOverSignal())
+
+    # Session 411: Feature store signals (shadow mode — validating fire rates)
+    # 4 OVER + 1 UNDER (fills UNDER gap). All use raw feature values from book_stats CTE.
+    registry.register(UsageSurgeOverSignal())
+    registry.register(ScoringMomentumOverSignal())
+    registry.register(CareerMatchupOverSignal())
+    registry.register(MinutesLoadOverSignal())
+    registry.register(BlowoutRiskUnderSignal())
 
     return registry

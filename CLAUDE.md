@@ -124,7 +124,7 @@ nba-stats-scraper/
 10 layers prevent shadow models from silently failing. Key ones: model sanity guard (>95% same-direction blocked), disabled model filter in exporter, decay state machine (HEALTHY→WATCH→DEGRADING→BLOCKED), filter dominance warnings, registry consistency checks.
 
 **Filter audit:** `SELECT * FROM best_bets_filter_audit WHERE game_date >= CURRENT_DATE() - 7`
-**KNOWN GAP:** BLOCKED models not auto-disabled — requires manual `deactivate_model.py`.
+**Auto-disable:** BLOCKED models are auto-disabled by `decay_detection` CF (Session 389). Requires `AUTO_DISABLE_ENABLED=true` env var. Safety floor: 3+ models must remain enabled.
 
 ## Breakout Classifier [Keyword: BREAKOUT]
 
@@ -276,11 +276,13 @@ python bin/monitoring/deployment_drift_alerter.py   # Deployment drift (auto: ev
 python bin/monitoring/pipeline_canary_queries.py     # Pipeline canaries (auto: every 30min)
 python bin/monitoring/analyze_healing_patterns.py    # Self-healing audit (auto: every 15min)
 python bin/monitoring/grading_gap_detector.py        # Grading gaps (auto: daily 9 AM ET)
+python bin/monitoring/signal_decay_monitor.py        # Signal decay/recovery (Session 411)
 ```
 
 - Auto-heals stalled batches (>90% complete, stalled 15+ min)
 - Quality gates block bad data at Phase 2→3 transition
-- Decay detection: `decay-detection` CF daily 11 AM ET, state machine HEALTHY→WATCH→DEGRADING→BLOCKED
+- Decay detection: `decay-detection` CF daily 11 AM ET, state machine HEALTHY→WATCH→DEGRADING→BLOCKED (models)
+- Signal decay: `signal_decay_monitor.py` — detects signal DEGRADING/RECOVERED states, Slack alerts (Session 411)
 - Meta-monitoring: `daily-health-check` CF verifies freshness of `model_performance_daily`, `signal_health_daily`, and `phase_completions`
 - Model registry: `python bin/validation/validate_model_registry.py` — checks duplicates, orphans, GCS consistency
 - Workflow health: `python bin/validation/validate_workflow_dependencies.py` — detects workflows monitoring disabled scrapers
@@ -290,7 +292,7 @@ python bin/monitoring/grading_gap_detector.py        # Grading gaps (auto: daily
 
 ## Signal System [Keyword: SIGNALS]
 
-**26 active signals + 8 shadow signals** (24 removed/disabled). **17 negative filters.**
+**27 active signals + 20 shadow signals** (24 removed/disabled). **17 negative filters.**
 **Full inventory:** `docs/08-projects/current/signal-discovery-framework/SIGNAL-INVENTORY.md`
 
 **Best Bets Pipeline:** `edge 3+ (or signal rescue) → negative filters → signal_count ≥ 3 → real_sc gate → rank by edge (OVER) or signal quality (UNDER)`
@@ -299,7 +301,7 @@ python bin/monitoring/grading_gap_detector.py        # Grading gaps (auto: daily
 - `real_sc` = non-base signal count. Base signals (model_health, high_edge, edge_spread_optimal) inflate SC to 3 with zero value. All SC gates use `real_sc`.
 - **Signal rescue** (Session 398): Picks bypass edge floors via validated high-HR signals or 2+ real signals. Tags: `combo_3way`, `combo_he_ms`, `book_disagreement`, `sharp_book_lean_*`, etc.
 - **UNDER ranking** is signal-first (Session 400): UNDER edge is flat at 52-53% — meaningless for ranking. Weighted signal quality scores rank UNDER.
-- **Shadow signals** (Session 401): projection_consensus, predicted_pace, dvp_favorable, CLV signals — accumulating data from new scrapers.
+- **Shadow signals** (Sessions 401-411): projection_consensus, predicted_pace, dvp_favorable, CLV, sharp_money, minutes_surge, hot_form, consistent_scorer, over_trend, usage_surge, scoring_momentum, career_matchup, minutes_load, blowout_risk — accumulating data.
 
 **Top signals by HR:** `combo_3way` 95.5%, `combo_he_ms` 94.9%, `line_rising_over` 96.6%, `book_disagreement` 93.0%, `sharp_book_lean_under` 84.7%, `fast_pace_over` 81.5%
 

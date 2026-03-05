@@ -61,7 +61,7 @@ ACTIVE_SIGNALS = frozenset({
     'starter_under',
     'high_scoring_environment_over',
     'fast_pace_over',
-    # volatile_scoring_over DISABLED — 50% HR live, coin flip (Session 391)
+    'volatile_scoring_over',  # RE-ENABLED Session 411 — 77.8% post-toxic
     'low_line_over',
     'line_rising_over',
     'self_creation_over',
@@ -86,6 +86,16 @@ ACTIVE_SIGNALS = frozenset({
     'sharp_money_under',
     # Session 404: RotoWire minutes projection signal (shadow)
     'minutes_surge_over',
+    # Session 410: Derived feature signals (shadow)
+    'hot_form_over',
+    'consistent_scorer_over',
+    'over_trend_over',
+    # Session 411: Feature store signals (shadow)
+    'usage_surge_over',
+    'scoring_momentum_over',
+    'career_matchup_over',
+    'minutes_load_over',
+    'blowout_risk_under',
 })
 
 # Regime thresholds (Session 257 analysis)

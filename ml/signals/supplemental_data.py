@@ -408,7 +408,16 @@ def query_predictions_with_supplements(
         feature_52_value AS prop_under_streak,
         feature_42_value AS implied_team_total,
         feature_18_value AS opponent_pace,
-        feature_3_value AS points_std_last_10
+        feature_3_value AS points_std_last_10,
+        feature_0_value AS points_avg_last_5,
+        feature_1_value AS points_avg_last_10,
+        feature_29_value AS avg_pts_vs_opp,
+        feature_30_value AS games_vs_opp,
+        feature_40_value AS minutes_load_7d,
+        feature_43_value AS pts_avg_last3,
+        feature_44_value AS trend_slope,
+        feature_48_value AS usage_rate_l5,
+        feature_57_value AS blowout_risk
       FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2`
       WHERE game_date = @target_date
     ),
@@ -505,6 +514,15 @@ def query_predictions_with_supplements(
       bs.implied_team_total,
       bs.opponent_pace,
       bs.points_std_last_10,
+      bs.points_avg_last_5,
+      bs.points_avg_last_10,
+      bs.avg_pts_vs_opp,
+      bs.games_vs_opp,
+      bs.minutes_load_7d,
+      bs.pts_avg_last3,
+      bs.trend_slope,
+      bs.usage_rate_l5,
+      bs.blowout_risk,
       dlm.dk_line_move_direction
     FROM preds p
     LEFT JOIN latest_stats ls ON ls.player_lookup = p.player_lookup
@@ -690,6 +708,7 @@ def query_predictions_with_supplements(
       )
       AND points_allowed IS NOT NULL
       AND position = 'ALL'
+      AND team NOT IN ('PG', 'SG', 'SF', 'PF', 'C')
     )
     SELECT team, position, points_allowed,
       RANK() OVER (ORDER BY points_allowed DESC) AS rank
@@ -711,21 +730,32 @@ def query_predictions_with_supplements(
         logger.warning(f"Failed to query DvP data: {e}")
 
     # Session 401: CLV tracking — opening vs closing line comparison.
+    # Session 408: snapshot_type='closing' never populated. Use earliest vs
+    # latest snapshot_tags instead. snap-0700 is first morning scrape,
+    # snap-1905/snap-2200 are latest pre-game scrapes.
     clv_query = f"""
-    WITH opening AS (
-      SELECT player_lookup, AVG(points_line) as opening_line
+    WITH tagged AS (
+      SELECT player_lookup, points_line, snapshot_tag
       FROM `{PROJECT_ID}.nba_raw.odds_api_player_points_props`
       WHERE game_date = @target_date
-        AND snapshot_type = 'opening'
         AND player_lookup IS NOT NULL
+        AND snapshot_tag IS NOT NULL
+        AND points_line IS NOT NULL
+    ),
+    snap_bounds AS (
+      SELECT MIN(snapshot_tag) as earliest_snap, MAX(snapshot_tag) as latest_snap
+      FROM tagged
+    ),
+    opening AS (
+      SELECT t.player_lookup, AVG(t.points_line) as opening_line
+      FROM tagged t, snap_bounds sb
+      WHERE t.snapshot_tag = sb.earliest_snap
       GROUP BY 1
     ),
     closing AS (
-      SELECT player_lookup, AVG(points_line) as closing_line
-      FROM `{PROJECT_ID}.nba_raw.odds_api_player_points_props`
-      WHERE game_date = @target_date
-        AND snapshot_type = 'closing'
-        AND player_lookup IS NOT NULL
+      SELECT t.player_lookup, AVG(t.points_line) as closing_line
+      FROM tagged t, snap_bounds sb
+      WHERE t.snapshot_tag = sb.latest_snap
       GROUP BY 1
     )
     SELECT
@@ -735,6 +765,7 @@ def query_predictions_with_supplements(
       o.opening_line - c.closing_line AS clv
     FROM opening o
     JOIN closing c ON o.player_lookup = c.player_lookup
+    WHERE ABS(o.opening_line - c.closing_line) > 0
     """
     clv_map = {}
     try:
@@ -1049,6 +1080,28 @@ def query_predictions_with_supplements(
         # Points std last 10 from feature store for volatile_scoring_over signal (Session 374)
         pstd = row_dict.get('points_std_last_10')
         pred['points_std_last_10'] = float(pstd) if pstd is not None else 0
+
+        # Points avg last 5/10 from feature store for hot_form_over signal (Session 410)
+        pa5 = row_dict.get('points_avg_last_5')
+        pred['points_avg_last_5'] = float(pa5) if pa5 is not None else 0
+        pa10 = row_dict.get('points_avg_last_10')
+        pred['points_avg_last_10'] = float(pa10) if pa10 is not None else 0
+
+        # Session 411: Feature store values for new shadow signals
+        pred['avg_pts_vs_opp'] = float(row_dict.get('avg_pts_vs_opp') or 0)
+        pred['games_vs_opp'] = float(row_dict.get('games_vs_opp') or 0)
+        pred['minutes_load_7d'] = float(row_dict.get('minutes_load_7d') or 0)
+        pred['pts_avg_last3'] = float(row_dict.get('pts_avg_last3') or 0)
+        pred['trend_slope'] = float(row_dict.get('trend_slope') or 0)
+        pred['usage_rate_l5'] = float(row_dict.get('usage_rate_l5') or 0)
+        pred['blowout_risk'] = float(row_dict.get('blowout_risk') or 0)
+
+        # Over trend: prev_over_1..5 from streak data for over_trend_over signal (Session 410)
+        pred['prev_over_1'] = row_dict.get('prev_over_1')
+        pred['prev_over_2'] = row_dict.get('prev_over_2')
+        pred['prev_over_3'] = row_dict.get('prev_over_3')
+        pred['prev_over_4'] = row_dict.get('prev_over_4')
+        pred['prev_over_5'] = row_dict.get('prev_over_5')
 
         # Opponent stars out for opponent_depleted_under filter (Session 374b)
         # Uses team_stars_out dict queried separately, keyed by opponent team

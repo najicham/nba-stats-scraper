@@ -1,0 +1,15 @@
+[
+  {"name": "experiment_id", "type": "STRING", "mode": "REQUIRED", "description": "Unique experiment run ID (name + timestamp)"},
+  {"name": "name", "type": "STRING", "mode": "REQUIRED", "description": "Experiment name (e.g., pace_v1)"},
+  {"name": "hypothesis", "type": "STRING", "mode": "NULLABLE", "description": "Why this experiment was run"},
+  {"name": "config", "type": "STRING", "mode": "NULLABLE", "description": "JSON config (feature_set, train_days, seeds, extra_args)"},
+  {"name": "seed_results", "type": "STRING", "mode": "NULLABLE", "description": "JSON array of per-seed experiment results"},
+  {"name": "baseline_results", "type": "STRING", "mode": "NULLABLE", "description": "JSON array of per-seed baseline results"},
+  {"name": "aggregate", "type": "STRING", "mode": "NULLABLE", "description": "JSON experiment aggregate (mean/std per metric)"},
+  {"name": "baseline_aggregate", "type": "STRING", "mode": "NULLABLE", "description": "JSON baseline aggregate (mean/std per metric)"},
+  {"name": "comparison", "type": "STRING", "mode": "NULLABLE", "description": "JSON comparison (delta, z-score, significance)"},
+  {"name": "verdict", "type": "STRING", "mode": "REQUIRED", "description": "DEAD_END, NOISE, PROMISING, PROMOTE, NO_BASELINE"},
+  {"name": "verdict_reason", "type": "STRING", "mode": "NULLABLE", "description": "Human-readable verdict explanation"},
+  {"name": "git_commit", "type": "STRING", "mode": "NULLABLE", "description": "Git commit hash at time of experiment"},
+  {"name": "created_at", "type": "TIMESTAMP", "mode": "REQUIRED", "description": "When the experiment was run"}
+]

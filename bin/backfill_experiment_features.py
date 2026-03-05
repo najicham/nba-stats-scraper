@@ -7,11 +7,14 @@ from raw scraper tables. Long/narrow schema: one row per (player, game_date,
 experiment_id, feature_name).
 
 Experiments:
-  tracking_v1    - NBA tracking stats (touches, drives, usage, etc.)
-  pace_v1        - TeamRankings team pace and efficiency
-  dvp_v1         - Hashtag Basketball defense-vs-position
-  projections_v1 - NumberFire + Dimers projected points
-  sharp_money_v1 - VSiN betting splits (public %, money %)
+  tracking_v1      - NBA tracking stats (touches, drives, usage, etc.)
+  pace_v1          - TeamRankings team pace and efficiency
+  dvp_v1           - Hashtag Basketball defense-vs-position
+  projections_v1   - NumberFire + Dimers projected points
+  sharp_money_v1   - VSiN betting splits (public %, money %)
+  derived_v1       - Player volatility & consistency (from player_game_summary)
+  interactions_v1  - Cross-feature interactions (from ml_feature_store_v2)
+  line_history_v1  - Line-based derived features (from ml_feature_store_v2)
 
 Usage:
   PYTHONPATH=. python bin/backfill_experiment_features.py --experiment tracking_v1
@@ -94,6 +97,38 @@ EXPERIMENTS = {
             "sharp_money_divergence",
             "over_ticket_pct",
             "over_money_pct",
+        ],
+    },
+    "derived_v1": {
+        "description": "Player volatility & consistency (from player_game_summary)",
+        "type": "derived",
+        "source_table": "nba_analytics.player_game_summary",
+        "features": [
+            "pts_std_last_5",
+            "pts_std_last_10",
+            "form_ratio",
+            "over_rate_weighted",
+        ],
+    },
+    "interactions_v1": {
+        "description": "Cross-feature interactions (from ml_feature_store_v2)",
+        "type": "derived",
+        "source_table": "nba_predictions.ml_feature_store_v2",
+        "features": [
+            "fatigue_x_minutes",
+            "pace_x_usage",
+            "rest_x_b2b",
+            "spread_x_home",
+        ],
+    },
+    "line_history_v1": {
+        "description": "Line-based derived features (from ml_feature_store_v2)",
+        "type": "derived",
+        "source_table": "nba_predictions.ml_feature_store_v2",
+        "features": [
+            "line_vs_avg",
+            "opening_vs_current",
+            "line_range",
         ],
     },
 }
@@ -545,6 +580,273 @@ def backfill_sharp_money_v1(client, start_date, end_date, dry_run=False):
     return _write_rows(client, rows)
 
 
+def backfill_derived_v1(client, start_date, end_date, dry_run=False):
+    """Backfill player volatility & consistency features from player_game_summary.
+
+    Uses rolling window stats computed via SQL window functions.
+    Full season data available — no external scraper dependency.
+    """
+    import math as _math
+
+    # CRITICAL: Use 1 PRECEDING to exclude target game (avoid data leakage)
+    query = f"""
+    WITH player_games AS (
+        SELECT
+            pgs.player_lookup,
+            pgs.game_date,
+            pgs.points,
+            -- Rolling stats EXCLUDING current game (1 PRECEDING = prior games only)
+            AVG(pgs.points) OVER (
+                PARTITION BY pgs.player_lookup ORDER BY pgs.game_date
+                ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING
+            ) as avg_last_5,
+            AVG(pgs.points) OVER (
+                PARTITION BY pgs.player_lookup ORDER BY pgs.game_date
+                ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING
+            ) as avg_last_10,
+            AVG(pgs.points) OVER (
+                PARTITION BY pgs.player_lookup ORDER BY pgs.game_date
+                ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING
+            ) as avg_last_3,
+            -- Std dev EXCLUDING current game
+            STDDEV_SAMP(pgs.points) OVER (
+                PARTITION BY pgs.player_lookup ORDER BY pgs.game_date
+                ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING
+            ) as std_last_5,
+            STDDEV_SAMP(pgs.points) OVER (
+                PARTITION BY pgs.player_lookup ORDER BY pgs.game_date
+                ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING
+            ) as std_last_10,
+            -- Count for minimum games filter (excluding current)
+            COUNT(*) OVER (
+                PARTITION BY pgs.player_lookup ORDER BY pgs.game_date
+                ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING
+            ) as games_last_10
+        FROM `{PROJECT_ID}.nba_analytics.player_game_summary` pgs
+        WHERE pgs.game_date BETWEEN DATE_SUB(DATE('{start_date}'), INTERVAL 30 DAY) AND '{end_date}'
+          AND pgs.points IS NOT NULL
+          AND pgs.player_lookup IS NOT NULL
+    )
+    SELECT pg.player_lookup, pg.game_date, pg.std_last_5, pg.std_last_10,
+           pg.avg_last_3, pg.avg_last_10, pg.games_last_10
+    FROM player_games pg
+    JOIN `{PROJECT_ID}.nba_predictions.ml_feature_store_v2` mf
+        ON pg.player_lookup = mf.player_lookup AND pg.game_date = mf.game_date
+    WHERE pg.game_date BETWEEN '{start_date}' AND '{end_date}'
+      AND pg.games_last_10 >= 5
+    """
+    df = client.query(query).to_dataframe()
+    if df.empty:
+        print("  WARNING: No derived data found")
+        return 0
+
+    print(f"  Derived data: {len(df)} player-game rows")
+
+    # Over rate weighted: for each target game, compute over-hit rate from
+    # the 10 prior games (excluding target), with recent 5 weighted 2x.
+    # Uses a self-join to get prior games per target date.
+    over_query = f"""
+    WITH graded AS (
+        SELECT player_lookup, game_date, actual_points, line_value,
+               CASE WHEN actual_points > line_value THEN 1 ELSE 0 END as went_over
+        FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy`
+        WHERE game_date BETWEEN DATE_SUB(DATE('{start_date}'), INTERVAL 60 DAY) AND '{end_date}'
+          AND has_prop_line = TRUE
+          AND actual_points IS NOT NULL
+          AND line_value IS NOT NULL
+    ),
+    with_prior AS (
+        SELECT
+            target.player_lookup,
+            target.game_date as target_date,
+            prior.went_over,
+            ROW_NUMBER() OVER (
+                PARTITION BY target.player_lookup, target.game_date
+                ORDER BY prior.game_date DESC
+            ) as recency_rank
+        FROM graded target
+        JOIN graded prior
+            ON target.player_lookup = prior.player_lookup
+            AND prior.game_date < target.game_date
+        WHERE target.game_date BETWEEN '{start_date}' AND '{end_date}'
+    )
+    SELECT player_lookup, target_date as game_date,
+           SUM(went_over * CASE WHEN recency_rank <= 5 THEN 2.0 ELSE 1.0 END)
+           / SUM(CASE WHEN recency_rank <= 5 THEN 2.0 ELSE 1.0 END) as over_rate_weighted
+    FROM with_prior
+    WHERE recency_rank <= 10
+    GROUP BY player_lookup, target_date
+    HAVING COUNT(*) >= 5
+    """
+    over_df = client.query(over_query).to_dataframe()
+    over_lookup = {}
+    if not over_df.empty:
+        for _, row in over_df.iterrows():
+            over_lookup[(row['player_lookup'], str(row['game_date']))] = float(row['over_rate_weighted'])
+        print(f"  Over rate data: {len(over_df)} player-game rows")
+
+    rows = []
+    for _, row in df.iterrows():
+        player = row['player_lookup']
+        game_date = str(row['game_date'])
+
+        if row['std_last_5'] is not None and not _math.isnan(row['std_last_5']):
+            rows.append({'player_lookup': player, 'game_date': game_date,
+                        'experiment_id': 'derived_v1', 'feature_name': 'pts_std_last_5',
+                        'feature_value': float(row['std_last_5'])})
+
+        if row['std_last_10'] is not None and not _math.isnan(row['std_last_10']):
+            rows.append({'player_lookup': player, 'game_date': game_date,
+                        'experiment_id': 'derived_v1', 'feature_name': 'pts_std_last_10',
+                        'feature_value': float(row['std_last_10'])})
+
+        # form_ratio = avg_last_3 / avg_last_10 (momentum indicator)
+        avg3 = row['avg_last_3']
+        avg10 = row['avg_last_10']
+        if avg3 is not None and avg10 is not None and avg10 > 0:
+            if not _math.isnan(avg3) and not _math.isnan(avg10):
+                rows.append({'player_lookup': player, 'game_date': game_date,
+                            'experiment_id': 'derived_v1', 'feature_name': 'form_ratio',
+                            'feature_value': float(avg3 / avg10)})
+
+        # over_rate_weighted
+        over_rate = over_lookup.get((player, game_date))
+        if over_rate is not None:
+            rows.append({'player_lookup': player, 'game_date': game_date,
+                        'experiment_id': 'derived_v1', 'feature_name': 'over_rate_weighted',
+                        'feature_value': over_rate})
+
+    if dry_run:
+        print(f"  DRY RUN: Would insert {len(rows)} rows")
+        return len(rows)
+
+    return _write_rows(client, rows)
+
+
+def backfill_interactions_v1(client, start_date, end_date, dry_run=False):
+    """Backfill cross-feature interaction terms from ml_feature_store_v2.
+
+    Computes products of existing feature pairs that may capture nonlinear effects.
+    Full season data available.
+    """
+    import math as _math
+
+    # Feature indices: f5=fatigue_score, f44=minutes_load_last_7d,
+    # f6=pace_score, f32=points_per_minute, f9=rest_advantage, f39=days_rest,
+    # f42=spread_magnitude, f15=home_away
+    query = f"""
+    SELECT player_lookup, game_date,
+           feature_5_value as fatigue,
+           feature_44_value as minutes_load,
+           feature_6_value as pace,
+           feature_32_value as ppm,
+           feature_9_value as rest_adv,
+           feature_39_value as days_rest,
+           feature_42_value as spread_mag,
+           feature_15_value as home_away
+    FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2`
+    WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+    """
+    df = client.query(query).to_dataframe()
+    if df.empty:
+        print("  WARNING: No feature store data found")
+        return 0
+
+    print(f"  Feature store data: {len(df)} rows")
+
+    rows = []
+    for _, row in df.iterrows():
+        player = row['player_lookup']
+        game_date = str(row['game_date'])
+
+        def safe_mult(a, b, name):
+            if a is not None and b is not None:
+                try:
+                    fa, fb = float(a), float(b)
+                    if not (_math.isnan(fa) or _math.isnan(fb)):
+                        rows.append({'player_lookup': player, 'game_date': game_date,
+                                    'experiment_id': 'interactions_v1', 'feature_name': name,
+                                    'feature_value': fa * fb})
+                except (ValueError, TypeError):
+                    pass
+
+        safe_mult(row['fatigue'], row['minutes_load'], 'fatigue_x_minutes')
+        safe_mult(row['pace'], row['ppm'], 'pace_x_usage')
+        safe_mult(row['rest_adv'], row['days_rest'], 'rest_x_b2b')
+        safe_mult(row['spread_mag'], row['home_away'], 'spread_x_home')
+
+    if dry_run:
+        print(f"  DRY RUN: Would insert {len(rows)} rows")
+        return len(rows)
+
+    return _write_rows(client, rows)
+
+
+def backfill_line_history_v1(client, start_date, end_date, dry_run=False):
+    """Backfill line-based derived features from ml_feature_store_v2.
+
+    Features:
+    - line_vs_avg: vegas line - recent avg points (feature_25 - feature_0)
+    - opening_vs_current: opening line - current line (feature_26 - feature_25) = early CLV proxy
+    - line_range: normalized position of line in player's recent range
+    """
+    import math as _math
+
+    # f0=avg_points_recent, f25=vegas_points_line, f26=opening_line, f4=points_std
+    query = f"""
+    SELECT player_lookup, game_date,
+           feature_0_value as avg_pts,
+           feature_25_value as vegas_line,
+           feature_26_value as opening_line,
+           feature_4_value as pts_std
+    FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2`
+    WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+    """
+    df = client.query(query).to_dataframe()
+    if df.empty:
+        print("  WARNING: No feature store data found")
+        return 0
+
+    print(f"  Feature store data: {len(df)} rows")
+
+    rows = []
+    for _, row in df.iterrows():
+        player = row['player_lookup']
+        game_date = str(row['game_date'])
+
+        avg_pts = row['avg_pts']
+        vegas_line = row['vegas_line']
+        opening_line = row['opening_line']
+        pts_std = row['pts_std']
+
+        def is_valid(v):
+            return v is not None and not (isinstance(v, float) and _math.isnan(v))
+
+        # line_vs_avg: vegas line - recent average (how far line is from player's norm)
+        if is_valid(vegas_line) and is_valid(avg_pts):
+            rows.append({'player_lookup': player, 'game_date': game_date,
+                        'experiment_id': 'line_history_v1', 'feature_name': 'line_vs_avg',
+                        'feature_value': float(vegas_line) - float(avg_pts)})
+
+        # opening_vs_current: opening - current (positive = line moved down, negative = up)
+        if is_valid(opening_line) and is_valid(vegas_line):
+            rows.append({'player_lookup': player, 'game_date': game_date,
+                        'experiment_id': 'line_history_v1', 'feature_name': 'opening_vs_current',
+                        'feature_value': float(opening_line) - float(vegas_line)})
+
+        # line_range: (vegas_line - avg_pts) / pts_std — how many std devs from avg
+        if is_valid(vegas_line) and is_valid(avg_pts) and is_valid(pts_std) and float(pts_std) > 0:
+            rows.append({'player_lookup': player, 'game_date': game_date,
+                        'experiment_id': 'line_history_v1', 'feature_name': 'line_range',
+                        'feature_value': (float(vegas_line) - float(avg_pts)) / float(pts_std)})
+
+    if dry_run:
+        print(f"  DRY RUN: Would insert {len(rows)} rows")
+        return len(rows)
+
+    return _write_rows(client, rows)
+
+
 def _write_rows(client, rows):
     """Write rows to experiment table using streaming insert."""
     if not rows:
@@ -592,6 +894,9 @@ BACKFILL_FUNCTIONS = {
     'dvp_v1': backfill_dvp_v1,
     'projections_v1': backfill_projections_v1,
     'sharp_money_v1': backfill_sharp_money_v1,
+    'derived_v1': backfill_derived_v1,
+    'interactions_v1': backfill_interactions_v1,
+    'line_history_v1': backfill_line_history_v1,
 }
 
 

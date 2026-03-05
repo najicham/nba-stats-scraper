@@ -201,3 +201,44 @@ This session completed the scraper layer of the Session 405+ plan (Phase 1). The
 Next priority is **Phase 2-3 of the plan**: accumulate shadow signal data and run first promotion window analysis.
 
 **Full plan:** `docs/09-handoff/session-prompts/SESSION-406-PLAN.md`
+
+---
+
+## Session 406 Verification (Mar 5, ~9 PM ET)
+
+### Build Status
+- **14/15 builds SUCCESS.** One scraper build FAILED (Playwright `--with-deps` on Trixie) — fixed by subsequent commit `ee91013f` (manual system deps). Final scraper build `e7f1d8f3` SUCCESS.
+- `nba-scrapers` deployed at 01:40 UTC. All other services up to date.
+
+### Scraper Data Freshness (Verified in BQ)
+| Source | Status | Count | Latest |
+|--------|--------|-------|--------|
+| NumberFire | **120 rows** | Valid pts (29.5, 24.3...) | Mar 5 01:22 UTC |
+| VSiN | **14 rows** | Correct team codes | Mar 5 01:22 UTC |
+| NBA Tracking | **1092 rows** | 2 scrapes | Mar 5 00:57 UTC |
+| DVP | **510 rows** | rank=NULL in raw (expected — computed in supplemental query) | Mar 4 18:49 UTC |
+| FantasyPros | **4065 rows** | ALL invalid (2418 for SGA = DFS season totals). 0/4065 in 5-60 range. | Mar 4 18:49 UTC |
+| Dimers | **320 rows** | Only 3/20 with valid pts (85% NULL). Pre-Playwright data. | Mar 5 01:30 UTC |
+
+### Key Finding: Data scraped BEFORE Playwright fix deployed
+- Dimers data at 01:30 UTC was scraped BEFORE the new build deployed at 01:32 UTC
+- Next scheduled scrape: 9:30-9:45 AM ET Mar 5 — will be first true Playwright test
+- FantasyPros: Even with Playwright, the `daily-overall.php` page shows DFS data. URL needs changing or FP needs excluding.
+
+### Models & Signals
+- **New models** (catboost/xgb_train0107_0219): No predictions yet. Worker cache refreshed (`MODEL_CACHE_REFRESH` updated). Will produce predictions on next Phase 5 run.
+- **Shadow signals**: Only `predicted_pace_over` (2 fires Mar 4). Others awaiting morning pipeline with new data.
+- **Pick volume**: 2/day on Mar 4 (pre-fix). Target 4-8.
+
+### Infrastructure
+- **GCS freshness monitor**: Deployed + scheduler (every 6h ET) + tested. 10/10 exports PASS.
+- **Deployment drift**: `nba-phase1-scrapers` (legacy service name) flagged as stale. `nba-scrapers` (current) is up to date.
+- **Worker model cache**: Refreshed to `$(date +%Y%m%d_%H%M)`.
+
+### Remaining for Next Session
+1. **Verify Playwright renders Dimers** (9:45 AM ET scrape)
+2. **Fix FantasyPros URL** — `daily-overall.php` is DFS data. Try `overall.php` or exclude permanently.
+3. **Verify shadow signals fire** after morning pipeline
+4. **Verify combo signals fire** with MIN_EDGE 3.0
+5. **Check pick volume** improvement
+6. **Optional: Evening CLV scheduler** for closing line data

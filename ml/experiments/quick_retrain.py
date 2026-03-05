@@ -58,6 +58,7 @@ import catboost as cb
 
 # Import canonical feature contract - SINGLE SOURCE OF TRUTH
 from shared.ml.feature_contract import (
+    ModelFeatureContract,
     V9_CONTRACT,
     V9_FEATURE_NAMES,
     V10_CONTRACT,
@@ -369,6 +370,12 @@ def parse_args():
                        help='Upload + register even when governance gates fail (requires explicit approval)')
     parser.add_argument('--machine-output', type=str, default=None, metavar='FILE',
                        help='Write JSON summary to FILE for machine parsing (used by grid search)')
+
+    # Experiment features (Session 407: experiment feature infrastructure)
+    parser.add_argument('--experiment-features', type=str, default=None, metavar='EXPERIMENT_ID',
+                       help='Augment with experiment features from ml_feature_store_experiment table. '
+                            'E.g., "tracking_v1", "pace_v1". Features are added as direct DataFrame '
+                            'columns and picked up by prepare_features() via column name fallback.')
 
     return parser.parse_args()
 
@@ -769,6 +776,84 @@ def load_base_model_predictions(client, start, end, system_id):
         key = (row['player_lookup'], str(row['game_date']))
         lookup[key] = float(row['predicted_points'])
     return lookup
+
+
+def augment_experiment_features(client, df, experiment_id):
+    """
+    Augment DataFrame with experiment features from ml_feature_store_experiment.
+
+    Queries the experiment table, pivots to wide format (one column per feature_name),
+    and left-joins on (player_lookup, game_date). Features become direct DataFrame
+    columns, which prepare_features() picks up via column name fallback.
+
+    Supports comma-separated experiment IDs (e.g., "derived_v1,interactions_v1")
+    to combine features from multiple experiments in a single augmentation.
+
+    Args:
+        client: BigQuery client
+        df: DataFrame with player_lookup, game_date columns
+        experiment_id: Experiment ID(s), comma-separated (e.g., "tracking_v1" or "derived_v1,interactions_v1")
+
+    Returns:
+        (df, feature_names): Augmented DataFrame and list of experiment feature names
+    """
+    if df.empty:
+        return df, []
+
+    # Support comma-separated experiment IDs
+    exp_ids = [eid.strip() for eid in experiment_id.split(',')]
+
+    min_date = df['game_date'].min()
+    max_date = df['game_date'].max()
+
+    ids_str = ", ".join(f"'{eid}'" for eid in exp_ids)
+    query = f"""
+    SELECT player_lookup, game_date, feature_name, feature_value
+    FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_experiment`
+    WHERE experiment_id IN ({ids_str})
+      AND game_date BETWEEN '{min_date}' AND '{max_date}'
+    """
+    exp_data = client.query(query).to_dataframe()
+
+    if exp_data.empty:
+        print(f"  WARNING: No experiment data for {exp_ids} in {min_date} to {max_date}")
+        return df, []
+
+    # Pivot to wide: one column per feature_name
+    df_wide = exp_data.pivot_table(
+        index=['player_lookup', 'game_date'],
+        columns='feature_name',
+        values='feature_value'
+    ).reset_index()
+
+    feature_names = [c for c in df_wide.columns if c not in ('player_lookup', 'game_date')]
+    print(f"  Experiment {exp_ids}: {len(exp_data)} rows -> {len(feature_names)} features")
+    print(f"  Features: {feature_names}")
+
+    # Ensure game_date types match for merge
+    df['game_date'] = pd.to_datetime(df['game_date'])
+    df_wide['game_date'] = pd.to_datetime(df_wide['game_date'])
+
+    pre_len = len(df)
+    df = df.merge(df_wide, on=['player_lookup', 'game_date'], how='left')
+    assert len(df) == pre_len, f"Merge changed row count: {pre_len} -> {len(df)}"
+
+    # Report coverage
+    for feat in feature_names:
+        coverage = df[feat].notna().sum()
+        print(f"    {feat}: {coverage}/{len(df)} ({100*coverage/len(df):.0f}%) coverage")
+
+    return df, feature_names
+
+
+def extend_contract_with_experiment(base_contract, experiment_feature_names):
+    """Create extended contract that includes experiment features."""
+    return ModelFeatureContract(
+        model_version=f"{base_contract.model_version}_exp",
+        feature_count=base_contract.feature_count + len(experiment_feature_names),
+        feature_names=list(base_contract.feature_names) + experiment_feature_names,
+        description=f"{base_contract.description} + {len(experiment_feature_names)} experiment features",
+    )
 
 
 def augment_v11_features(client, df):
@@ -2955,6 +3040,16 @@ def main():
         print("\nAugmenting with V15 features (2 player profile features)...")
         df_train = augment_v15_features(client, df_train)
         df_eval = augment_v15_features(client, df_eval)
+
+    # Experiment features (Session 407): augment with sandbox features
+    if args.experiment_features:
+        print(f"\nAugmenting with experiment features: {args.experiment_features}")
+        df_train, exp_feature_names = augment_experiment_features(client, df_train, args.experiment_features)
+        df_eval, _ = augment_experiment_features(client, df_eval, args.experiment_features)
+        if exp_feature_names:
+            selected_contract = extend_contract_with_experiment(selected_contract, exp_feature_names)
+            print(f"  Extended contract: {selected_contract.model_version} "
+                  f"({selected_contract.feature_count} features)")
 
     if len(df_train) < 1000 or len(df_eval) < 100:
         print("ERROR: Not enough data")
