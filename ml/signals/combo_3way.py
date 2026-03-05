@@ -12,6 +12,11 @@ SESSION 405: Lowered MIN_EDGE 5.0 → 4.0. Post-ASB edge compression meant zero
   models produce OVER edge >= 5 (max 4.0-4.7). Minutes surge + ESO gate are the
   real quality discriminators — edge 4+ is sufficient.
 
+SESSION 406: Lowered MIN_EDGE 4.0 → 3.0. Edge 4.0 still too aggressive — only
+  0-1 OVER predictions per day reach edge 4.0+ post-ASB. Edge 3.0 matches the
+  aggregator's general edge floor. ~15 OVER predictions at edge 3-4 daily means
+  minutes surge gate (7% of players) produces ~1 combo signal/day.
+
 See: docs/08-projects/current/signal-testing/SESSION-257-RESULTS.md
 """
 
@@ -21,9 +26,9 @@ from ml.signals.base_signal import BaseSignal, SignalResult
 
 class ThreeWayComboSignal(BaseSignal):
     tag = "combo_3way"
-    description = "Edge >= 4 + minutes surge >= 3 + ESO quality gate — premium 3-way combo"
+    description = "Edge >= 3 + minutes surge >= 3 + ESO quality gate — premium 3-way combo"
 
-    MIN_EDGE = 4.0
+    MIN_EDGE = 3.0
     MIN_SURGE = 3.0
     MIN_CONFIDENCE = 0.70
     PROBLEM_TIER_MIN = 0.88

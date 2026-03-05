@@ -44,10 +44,27 @@ from shared.utils.notification_system import notify_error, notify_warning, notif
 logger = logging.getLogger("scraper_base")
 
 
+def _clean_concatenated_name(name: str) -> str:
+    """Fix names like 'Shai Gilgeous-AlexanderS. Gilgeous-Alexander'.
+
+    Session 406: Some sites concatenate full name + abbreviated name in a
+    single text node. Detect the pattern where a lowercase letter is immediately
+    followed by an uppercase letter + ". " and split at that boundary.
+    """
+    if not name:
+        return name
+    match = re.search(r'([a-z])([A-Z]\.\s)', name)
+    if match:
+        return name[:match.start() + 1].strip()
+    return name
+
+
 def normalize_player_name(name: str) -> str:
     """Convert player name to player_lookup format (lowercase, hyphenated)."""
     if not name:
         return ""
+    # Session 406: Clean concatenated names before normalizing
+    name = _clean_concatenated_name(name)
     for suffix in [" Jr.", " Sr.", " Jr", " Sr", " III", " II", " IV"]:
         name = name.replace(suffix, "")
     normalized = name.lower().strip()
@@ -258,6 +275,11 @@ class FantasyProsProjectionsScraper(ScraperBase, ScraperFlaskMixin):
             projected_minutes = self._extract_numeric(cell_texts, min_col)
             projected_rebounds = self._extract_numeric(cell_texts, reb_col)
             projected_assists = self._extract_numeric(cell_texts, ast_col)
+
+            # Session 406: Validate range — reject season-total or DFS values.
+            # Per-game NBA points are typically 5-60.
+            if projected_points is not None and not (5.0 <= projected_points <= 60.0):
+                projected_points = None
 
             # Fallback: find first reasonable points value
             if projected_points is None:

@@ -626,18 +626,24 @@ def query_predictions_with_supplements(
     # Sources: NumberFire (broken — FanDuel redirect), FantasyPros, DailyFantasyFuel, Dimers
     # Session 405: Scrapers produce hyphenated player_lookup (jalen-brunson) but
     # predictions use no-hyphen format (jalenbrunson). Normalize with REPLACE.
+    # Session 406: Added projected_points range filter (5-60) to exclude:
+    # - FantasyPros season-total DFS values (e.g., 2418 for SGA)
+    # - Any obviously wrong scraped values
+    # Valid per-game NBA point projections are typically 8-50.
     projection_query = f"""
     WITH nf AS (
       SELECT REPLACE(player_lookup, '-', '') AS player_lookup, projected_points,
         ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY scraped_at DESC) AS rn
       FROM `{PROJECT_ID}.nba_raw.numberfire_projections`
       WHERE game_date = @target_date AND projected_points IS NOT NULL
+        AND projected_points BETWEEN 5 AND 60
     ),
     fp AS (
       SELECT REPLACE(player_lookup, '-', '') AS player_lookup, projected_points,
         ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY scraped_at DESC) AS rn
       FROM `{PROJECT_ID}.nba_raw.fantasypros_projections`
       WHERE game_date = @target_date AND projected_points IS NOT NULL
+        AND projected_points BETWEEN 5 AND 60
     ),
     -- DFF excluded from consensus: it only provides DraftKings fantasy points
     -- (FPTS), not real NBA points. FPTS cannot be compared against prop lines.
@@ -647,6 +653,7 @@ def query_predictions_with_supplements(
         ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY scraped_at DESC) AS rn
       FROM `{PROJECT_ID}.nba_raw.dimers_projections`
       WHERE game_date = @target_date AND projected_points IS NOT NULL
+        AND projected_points BETWEEN 5 AND 60
     ),
     all_players AS (
       SELECT player_lookup FROM nf WHERE rn = 1
@@ -698,15 +705,23 @@ def query_predictions_with_supplements(
     except Exception as e:
         logger.warning(f"Failed to query TeamRankings pace: {e}")
 
-    # Session 401: DvP data for dvp_favorable_over signal.
+    # Session 401/406: DvP data for dvp_favorable_over signal.
+    # Session 406: rank column is NULL in BQ — compute from points_allowed.
+    # Rank 1 = most points allowed (worst defender). Deduplicate scraper rows.
     dvp_query = f"""
-    SELECT team, position, points_allowed, rank
-    FROM `{PROJECT_ID}.nba_raw.hashtagbasketball_dvp`
-    WHERE game_date = (
-      SELECT MAX(game_date) FROM `{PROJECT_ID}.nba_raw.hashtagbasketball_dvp`
-      WHERE game_date <= @target_date
+    WITH deduped AS (
+      SELECT DISTINCT team, position, points_allowed
+      FROM `{PROJECT_ID}.nba_raw.hashtagbasketball_dvp`
+      WHERE game_date = (
+        SELECT MAX(game_date) FROM `{PROJECT_ID}.nba_raw.hashtagbasketball_dvp`
+        WHERE game_date <= @target_date
+      )
+      AND points_allowed IS NOT NULL
+      AND position = 'ALL'
     )
-    AND points_allowed IS NOT NULL
+    SELECT team, position, points_allowed,
+      RANK() OVER (ORDER BY points_allowed DESC) AS rank
+    FROM deduped
     """
     dvp_map = {}  # {team: {position: {points_allowed, rank}}}
     try:
