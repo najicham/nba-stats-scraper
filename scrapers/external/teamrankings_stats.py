@@ -248,8 +248,8 @@ class TeamRankingsStatsScraper(ScraperBase, ScraperFlaskMixin):
                     if stat_name == "pace" and 90 <= val <= 115:
                         result[tricode] = val
                         break
-                    elif "efficiency" in stat_name and 90 <= val <= 130:
-                        result[tricode] = val
+                    elif "efficiency" in stat_name and 0.5 <= val <= 2.0:
+                        result[tricode] = round(val * 100, 1)  # Convert per-possession to per-100
                         break
                 except (ValueError, TypeError):
                     continue

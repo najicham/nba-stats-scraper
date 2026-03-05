@@ -26,6 +26,8 @@ Do NOT revisit these approaches — all tested and confirmed negative or neutral
 - V13+Huber5 combo (62.0% — loss function and features interact non-linearly)
 
 ## Feature Variants
+- TeamRankings pace features (team_pace_tr, opp_pace_tr, pace_ratio_tr) — Session 408: redundant with existing f7/f14/f22, <1% importance in all 5 seeds, -3.4pp HR vs baseline. Model already has 4 pace features.
+- Static tracking stats as individual features (usg, ppg, pct_pts, fga) — Session 407: +0.3pp = noise. 9.2% importance but no HR gain.
 - V16 deviation features alone (61.5% vs V12's 73.7%)
 - V17 opportunity risk features (blowout_minutes_risk, minutes_volatility_last_10, opponent_pace_mismatch — all <1% importance, 56.7% HR)
 - V19 scoring_skewness_last_10 as model feature (not in top 10 importance, 63.16% HR — works better as filter)
