@@ -271,4 +271,9 @@ def build_default_registry() -> SignalRegistry:
     from ml.signals.mean_reversion_under import MeanReversionUnderSignal
     registry.register(MeanReversionUnderSignal())
 
+    # Session 414: Day-of-week UNDER (shadow mode — complements OVER signal)
+    # Monday 60.3% (N=277), Thursday 59.4% (N=419).
+    from ml.signals.day_of_week_under import DayOfWeekUnderSignal
+    registry.register(DayOfWeekUnderSignal())
+
     return registry

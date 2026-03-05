@@ -148,6 +148,22 @@ GROUP BY 1;
 - HR delta >= 10pp vs non-tagged OVER → promote to active negative filter
 - HR delta < 5pp → discard, effect was toxic window artifact
 
+#### 7b. Session 414 observation filters evaluation (target N>=30 each)
+**Added:** Session 414 (Mar 5) | **Type:** Filter activation decision
+```sql
+SELECT filter_reason, COUNT(*) as n,
+  COUNTIF(prediction_correct) as would_have_won,
+  ROUND(100.0 * COUNTIF(prediction_correct) / COUNT(*), 1) as hr
+FROM nba_predictions.best_bets_filtered_picks
+WHERE filter_reason IN ('mid_line_over_obs', 'monday_over_obs', 'home_over_obs')
+  AND prediction_correct IS NOT NULL AND game_date >= '2026-03-06'
+GROUP BY 1;
+```
+**Decision at N>=30 per filter:**
+- `mid_line_over_obs`: HR < 50% at BB → promote to active block. Research: 28-40% (N=12).
+- `monday_over_obs`: HR < 50% at BB → promote to active block. Research: 49.0% (N=251).
+- `home_over_obs`: HR < 50% at BB → promote to active block. Research: 49.7% (N=4,278).
+
 ---
 
 ### Due: ~Apr 5 (1 Month)
