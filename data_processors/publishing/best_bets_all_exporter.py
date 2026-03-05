@@ -11,16 +11,20 @@ Output: v1/best-bets/all.json (~50-200 KB for a full season)
 Design: Frontend team chose single-file architecture over three separate
 files. One fetch, everything available, <200KB. See Session 319.
 
-Pick Locking (Session 340):
+Pick Locking (Session 340, 412):
   Today's picks are merged from three sources:
-    signal_best_bets_picks (volatile algo output)
-    + best_bets_published_picks (locked picks from prior exports)
+    signal_best_bets_picks (locked algo output — rows preserved across re-runs)
+    + best_bets_published_picks (lock metadata: status, first_published_at)
     + best_bets_manual_picks (manual overrides via CLI)
-  Once a pick is published, it persists in exports even if the signal
-  pipeline later drops it. This prevents picks from disappearing mid-day.
+  Once a pick is published, it is TRULY locked:
+    - signal_best_bets_picks rows are never deleted (only upserted)
+    - Published picks always get signal_status='active' (no 'dropped')
+    - Only game_started and model_disabled get special statuses
+    - Locked picks rank equally with fresh signal picks (no demotion)
 
 Created: 2026-02-21 (Session 319)
 Updated: 2026-02-28 (Session 340) — Pick locking + audit trail
+Updated: 2026-03-05 (Session 412) — True pick locking
 """
 
 import json
@@ -104,12 +108,15 @@ class BestBetsAllExporter(BaseExporter):
         )
 
         # ── Grade published-only picks (Session 386) ─────────────────────
-        # Locked-but-dropped picks aren't in signal_best_bets_picks, so
-        # _query_all_picks() can't JOIN grading for them. Grade them here.
+        # Session 412: With true pick locking, locked picks are preserved in
+        # signal_best_bets_picks and graded via the _query_all_picks JOIN.
+        # This fallback only grades picks that are somehow only in
+        # best_bets_published_picks (e.g., manual picks, or safety net).
         ungraded_lookups = [
             p.get('player_lookup')
             for p in today_picks
             if not p.get('_in_signal')
+            and not p.get('_locked')
             and p.get('prediction_correct') is None
             and p.get('player_lookup')
         ]
@@ -983,9 +990,15 @@ class BestBetsAllExporter(BaseExporter):
                 pick['_in_signal'] = True
                 stats['locked_picks'] += 1
             else:
-                # Pick dropped from signal — keep it locked
+                # Session 412: TRUE LOCK — pick dropped from signal but
+                # stays active. Only game_started is a legitimate removal.
                 pick['_in_signal'] = False
+                pick['_locked'] = True
                 pick['_last_seen_in_signal'] = pub.get('last_seen_in_signal')
+                # Check if game has started (legitimate removal)
+                game_id = pick.get('game_id') or pub.get('game_id', '')
+                if game_id in started:
+                    pick['_signal_status'] = 'game_started'
                 # Check if source model is disabled (Session 386)
                 pick_model = pick.get('system_id') or pub.get('system_id')
                 if pick_model and pick_model in disabled:
@@ -1059,15 +1072,13 @@ class BestBetsAllExporter(BaseExporter):
             stats['manual_picks'] += 1
 
         # Step 5: Re-rank
-        # Active signal picks first (by original rank), then locked-but-dropped,
-        # then manual. Within each group, sort by rank then edge.
+        # Session 412: Locked picks rank equally with signal picks (true
+        # lock — no demotion). Manual picks still sorted last.
         def sort_key(p):
-            if p.get('_in_signal'):
-                group = 0
-            elif p.get('_source') == 'manual':
-                group = 2
-            else:
+            if p.get('_source') == 'manual':
                 group = 1
+            else:
+                group = 0  # Both signal and locked-but-dropped
             return (group, p.get('rank') or 999, -(p.get('edge') or 0))
 
         sorted_picks = sorted(merged.values(), key=sort_key)
@@ -1110,13 +1121,15 @@ class BestBetsAllExporter(BaseExporter):
         now = datetime.now(timezone.utc)
         rows = []
         for p in merged_picks:
-            # Determine signal_status from merge state
-            if p.get('_in_signal'):
-                signal_status = 'active'
+            # Session 412: True pick locking — published = active, always.
+            # Only game_started and model_disabled get special statuses.
+            # No more 'dropped' status — locked picks stay active.
+            if p.get('_signal_status') == 'game_started':
+                signal_status = 'game_started'
             elif p.get('_signal_status') == 'model_disabled':
                 signal_status = 'model_disabled'
             else:
-                signal_status = 'dropped'
+                signal_status = 'active'
 
             rows.append({
                 'player_lookup': p.get('player_lookup') or '',
@@ -1190,9 +1203,10 @@ class BestBetsAllExporter(BaseExporter):
     def _write_pick_events(
         self, target_date: str, merged_picks: List[Dict]
     ) -> None:
-        """Write structured lifecycle events for dropped/disabled picks.
+        """Write structured lifecycle events for pick state changes.
 
         Session 386: Logs why picks were dropped or marked model_disabled.
+        Session 412: Added locked_retained and game_started_removal events.
         Only writes events for picks NOT in active signal.
         """
         now = datetime.now(timezone.utc)
@@ -1200,14 +1214,20 @@ class BestBetsAllExporter(BaseExporter):
 
         for p in merged_picks:
             if p.get('_in_signal'):
-                continue  # active picks don't get events
+                continue  # active picks confirmed by signal don't get events
 
             event_type = None
             event_reason = None
 
-            if p.get('_signal_status') == 'model_disabled':
+            if p.get('_signal_status') == 'game_started':
+                event_type = 'game_started_removal'
+                event_reason = 'game_in_progress_or_final'
+            elif p.get('_signal_status') == 'model_disabled':
                 event_type = 'model_disabled'
                 event_reason = p.get('_drop_reason', 'model_disabled')
+            elif p.get('_locked'):
+                event_type = 'locked_retained'
+                event_reason = 'pick_locked_signal_dropped'
             elif p.get('_source') == 'manual':
                 continue  # manual picks aren't "dropped"
             else:

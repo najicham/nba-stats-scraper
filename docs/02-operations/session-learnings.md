@@ -1392,3 +1392,13 @@ See `docs/08-projects/current/fleet-lifecycle-automation/00-PLAN.md` for the 3-t
 **Root Cause:** LightGBM's UNDER predictions are biased — Stars UNDER at 47.1%, Starters UNDER at 45.5%. Only Role UNDER performs (63.6%). CatBoost and XGBoost don't show this tier-dependent UNDER failure.
 
 **Lesson:** LightGBM may need tier-specific training or separate OVER/UNDER models. Framework-specific UNDER calibration should be monitored.
+
+### Re-exports Destroy Published Picks (Session 412)
+
+**Symptom:** KAT UNDER 17.5 published at 1:16 PM, dropped at 6:46 PM. Scored 17 (WIN) but never graded. 19 exports ran for Mar 4 with 3 different algorithm versions.
+
+**Root Cause:** `SignalBestBetsExporter._write_to_bigquery()` deleted ALL rows for a game date on every export, then re-inserted only picks from the current signal run. The "lock" in `best_bets_published_picks` only preserved metadata — it didn't prevent signal_best_bets_picks rows from being destroyed.
+
+**Fix:** Changed DELETE scope from "all rows for date" to "only rows for players being refreshed" (`player_lookup IN UNNEST(@player_lookups)`). Picks dropped by signal on re-run stay in the table. Published picks always get `signal_status='active'` (no more 'dropped').
+
+**Lesson:** Write operations on grading-critical tables must be scoped. Never delete rows that might be needed for downstream processes (grading, record tracking). Use upsert patterns instead of delete-all+insert.

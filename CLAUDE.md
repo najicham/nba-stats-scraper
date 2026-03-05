@@ -241,6 +241,7 @@ WHERE game_date >= CURRENT_DATE() - 3 GROUP BY 1 ORDER BY 1 DESC;
 | **NBA Tracking stats.nba.com timeout** | Cloud IPs blocked. Install `nba_api` library (preferred path) or increase HTTP timeout to 120s with retry. |
 | **CLV scheduler wrong target** | Evening CLV scheduler was targeting legacy `nba-phase1-scrapers`. Fixed to `nba-scrapers`. |
 | **SQL escape `\_` in Python** | BigQuery LIKE doesn't need backslash-escaping underscores. Use `%_q4%` not `%\\_q4%`. |
+| **Re-exports destroy picks** | FIXED Session 412. `signal_best_bets_picks` now uses scoped DELETE (only refreshed players). Published picks stay `signal_status='active'`. |
 
 **Full troubleshooting:** `docs/02-operations/troubleshooting-matrix.md`, `docs/02-operations/session-learnings.md`
 

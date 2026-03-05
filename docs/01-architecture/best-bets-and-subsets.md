@@ -1,6 +1,6 @@
 # Best Bets & Subset System Architecture
 
-**Last updated:** Session 388 (2026-03-02)
+**Last updated:** Session 412 (2026-03-05)
 **Algorithm version:** `v314_consolidated`
 
 ## Overview
@@ -12,8 +12,28 @@ The subset system creates **observation groups** of predictions at export time, 
 | Table | Purpose | Who Writes | algorithm_version |
 |-------|---------|------------|-------------------|
 | `current_subset_picks` | All subset picks (39 subset_ids) | SubsetMaterializer, CrossModelSubsetMaterializer, SignalSubsetMaterializer, SignalAnnotator bridge | Only on `best_bets` subset rows |
-| `signal_best_bets_picks` | Best bets for GCS export + grading | SignalBestBetsExporter (System 2) | Yes, always |
+| `signal_best_bets_picks` | Best bets for GCS export + grading (rows LOCKED after write) | SignalBestBetsExporter (System 2) | Yes, always |
 | `pick_signal_tags` | Signal evaluations per prediction | SignalAnnotator | No (has version_id) |
+| `best_bets_published_picks` | Lock metadata (signal_status, first_published_at) | BestBetsAllExporter | No |
+
+### True Pick Locking (Session 412)
+
+Once a pick is written to `signal_best_bets_picks`, it is **never deleted** (only upserted).
+Re-exports only delete rows for players being refreshed. Picks dropped by the signal
+pipeline on subsequent runs are preserved in the table for grading.
+
+```
+Export 1: Signal → 8 picks → all written
+Export 2: Signal → 6 returning + 2 new (2 dropped)
+    DELETE only 8 player_lookups in new output
+    INSERT 8 rows
+    2 dropped picks STAY (locked for grading)
+    Result: 10 picks total
+```
+
+**Published picks in `best_bets_published_picks`** always get `signal_status='active'`.
+Only `game_started` (game in progress/final) and `model_disabled` get special statuses.
+The old `signal_status='dropped'` is eliminated — published = active.
 
 ### Two Best Bets Systems (consolidated Session 314)
 

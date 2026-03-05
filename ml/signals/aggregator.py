@@ -139,6 +139,7 @@ class BestBetsAggregator:
         model_direction_blocks: Optional[Set[tuple]] = None,
         model_direction_affinity_stats: Optional[Dict] = None,
         model_profile_store: Optional[Any] = None,
+        regime_context: Optional[Dict[str, Any]] = None,
     ):
         if combo_registry is not None:
             self._registry = combo_registry
@@ -152,6 +153,7 @@ class BestBetsAggregator:
         self._model_direction_blocks = model_direction_blocks or set()
         self._model_direction_affinity_stats = model_direction_affinity_stats
         self._model_profile_store = model_profile_store
+        self._regime_context = regime_context or {}
 
     def aggregate(self, predictions: List[Dict],
                   signal_results: Dict[str, List[SignalResult]]) -> Tuple[List[Dict], Dict]:
@@ -204,6 +206,8 @@ class BestBetsAggregator:
             'model_profile_would_block': 0,
             'toxic_starter_over_would_block': 0,
             'toxic_star_over_would_block': 0,
+            'regime_over_floor': 0,
+            'regime_rescue_blocked': 0,
         }
 
         # Session 393: Counterfactual tracking — log filtered-out picks so we
@@ -338,6 +342,17 @@ class BestBetsAggregator:
                         signal_rescued = True
                         rescue_signal = 'signal_stack_2plus'
 
+                # Session 412: Regime gating — during cautious regime (yesterday
+                # BB HR < 50%), disable signal rescue for OVER picks. OVER HR
+                # swings 33-67% by regime; suppressing OVER rescue is high-leverage.
+                if (signal_rescued
+                        and self._regime_context.get('disable_over_rescue')
+                        and pred.get('recommendation') == 'OVER'):
+                    filter_counts['regime_rescue_blocked'] += 1
+                    _record_filtered(pred, 'regime_rescue_blocked', pred_edge)
+                    signal_rescued = False
+                    rescue_signal = None
+
             if below_edge_floor:
                 if not signal_rescued:
                     filter_counts['edge_floor'] += 1
@@ -354,9 +369,16 @@ class BestBetsAggregator:
             # best bets full season. Edge 5-7 OVER = 67.5%, edge 7+ = 77.8%.
             # UNDER is profitable at all edge levels (57.5-100%).
             # Session 398: Signal-rescued OVER picks bypass this floor too.
-            if pred.get('recommendation') == 'OVER' and pred_edge < 5.0 and not signal_rescued:
-                filter_counts['over_edge_floor'] += 1
-                _record_filtered(pred, 'over_edge_floor', pred_edge)
+            # Session 412: Regime context raises floor +1.0 during cautious regime.
+            over_floor = 5.0 + self._regime_context.get('over_edge_floor_delta', 0)
+            if pred.get('recommendation') == 'OVER' and pred_edge < over_floor and not signal_rescued:
+                # Distinguish regime-caused vs normal filtering for counterfactual tracking
+                if pred_edge >= 5.0 and self._regime_context.get('over_edge_floor_delta', 0) > 0:
+                    filter_counts['regime_over_floor'] += 1
+                    _record_filtered(pred, 'regime_over_floor', pred_edge)
+                else:
+                    filter_counts['over_edge_floor'] += 1
+                    _record_filtered(pred, 'over_edge_floor', pred_edge)
                 continue
 
             # UNDER at edge 7+ block (Session 297, narrowed Session 367):
@@ -748,6 +770,19 @@ class BestBetsAggregator:
                 f"Model profile (observation): WOULD block "
                 f"{filter_counts['model_profile_would_block']} predictions"
             )
+        if filter_counts['regime_over_floor'] > 0:
+            over_floor = 5.0 + self._regime_context.get('over_edge_floor_delta', 0)
+            logger.info(
+                f"Regime OVER floor ({over_floor}): skipped "
+                f"{filter_counts['regime_over_floor']} OVER picks "
+                f"(cautious regime, yesterday HR={self._regime_context.get('yesterday_bb_hr')}%)"
+            )
+        if filter_counts['regime_rescue_blocked'] > 0:
+            logger.info(
+                f"Regime rescue blocked: skipped "
+                f"{filter_counts['regime_rescue_blocked']} OVER signal-rescue picks "
+                f"(cautious regime)"
+            )
         if filter_counts['toxic_starter_over_would_block'] > 0:
             logger.info(
                 f"Calendar regime (observation): WOULD block "
@@ -762,9 +797,7 @@ class BestBetsAggregator:
         # --- Calendar regime observation (Session 396) ---
         # Detect regime once per aggregate() call. Log picks that WOULD be
         # blocked by calendar-aware filters without actually filtering.
-        # Simulation showed: Star OVER already handled by filter stack (66.7%
-        # HR in best bets during toxic, N=3). Starter OVER is the real problem
-        # (40.0% HR, -2.6 units, N=10 during Jan 30 - Feb 25 toxic window).
+        # Session 412: Now also records to filtered_picks for counterfactual grading.
         if scored:
             from datetime import date as date_type
             game_date_str = scored[0].get('game_date', '')
@@ -782,24 +815,27 @@ class BestBetsAggregator:
                     for pick in scored:
                         pick_line = pick.get('line_value') or 0
                         pick_rec = pick.get('recommendation', '')
+                        pick_edge = pick.get('composite_score', 0)
                         # Starter OVER: 40.0% HR during toxic (N=10, -48.9pp vs normal)
                         if (pick_rec == 'OVER'
                                 and 15 <= pick_line < 25):
                             filter_counts['toxic_starter_over_would_block'] += 1
+                            _record_filtered(pick, 'toxic_starter_over_would_block', pick_edge)
                             logger.info(
                                 f"Calendar WOULD block: Starter OVER "
                                 f"{pick['player_lookup']} (line={pick_line}, "
-                                f"edge={pick.get('composite_score', 0):.1f})"
+                                f"edge={pick_edge:.1f})"
                             )
                         # Star OVER: already handled by stack (66.7% HR, N=3)
                         # but tracking for completeness
                         if (pick_rec == 'OVER'
                                 and pick_line >= 25):
                             filter_counts['toxic_star_over_would_block'] += 1
+                            _record_filtered(pick, 'toxic_star_over_would_block', pick_edge)
                             logger.info(
                                 f"Calendar WOULD block: Star OVER "
                                 f"{pick['player_lookup']} (line={pick_line}, "
-                                f"edge={pick.get('composite_score', 0):.1f})"
+                                f"edge={pick_edge:.1f})"
                             )
                 else:
                     logger.debug(f"Calendar regime: {regime.label} (toxic=False)")
@@ -831,6 +867,7 @@ class BestBetsAggregator:
             'passed_filters': len(scored),
             'rejected': filter_counts,
             'filtered_picks': filtered_picks,  # Session 393: counterfactual tracking
+            'regime_context': self._regime_context,  # Session 412: daily regime state
         }
 
         # Session 391: Sanity warning — detect when a single filter dominates rejections.

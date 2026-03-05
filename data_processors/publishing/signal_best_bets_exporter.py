@@ -296,6 +296,11 @@ class SignalBestBetsExporter(BaseExporter):
             'max_edge': round(max(edges), 1) if edges else None,
         }
 
+        # Step 5e: Regime context — yesterday's BB HR autocorrelation (Session 412)
+        from ml.signals.regime_context import get_regime_context
+        regime_ctx = get_regime_context(self.bq_client, target_date)
+        logger.info(f"Regime: {regime_ctx['regime_state']} (yesterday HR={regime_ctx.get('yesterday_bb_hr')})")
+
         # Step 6: Aggregate to top picks (with combo registry + signal health weighting + consensus)
         combo_registry = load_combo_registry(bq_client=self.bq_client)
         aggregator = BestBetsAggregator(
@@ -307,6 +312,7 @@ class SignalBestBetsExporter(BaseExporter):
             model_direction_blocks=model_dir_blocks,
             model_direction_affinity_stats=model_dir_stats,
             model_profile_store=model_profile_store,
+            regime_context=regime_ctx,
         )
         top_picks, filter_summary = aggregator.aggregate(predictions, signal_results)
 
@@ -512,6 +518,20 @@ class SignalBestBetsExporter(BaseExporter):
             )
             return f'signal-best-bets/{target_date}.json (skipped — all games started)'
 
+        # Session 412: True pick locking — log lock behavior before BQ write.
+        # Existing picks not in current signal output are preserved in BQ.
+        existing_lookups = self._query_existing_pick_lookups(target_date)
+        new_lookups = {p['player_lookup'] for p in json_data['picks']}
+        preserved_lookups = existing_lookups - new_lookups
+        truly_new_lookups = new_lookups - existing_lookups
+        if preserved_lookups:
+            logger.info(
+                f"Pick locking: preserving {len(preserved_lookups)} locked picks "
+                f"not in current signal output "
+                f"({len(truly_new_lookups)} truly new, "
+                f"{len(new_lookups & existing_lookups)} refreshed)"
+            )
+
         # Write picks to BigQuery for grading tracking (includes full ultra data)
         if json_data['picks']:
             self._write_to_bigquery(
@@ -618,23 +638,32 @@ class SignalBestBetsExporter(BaseExporter):
     ) -> None:
         """Write signal best bets to BigQuery using batch load (not streaming).
 
-        Deletes existing rows for the target date first to prevent duplicate
-        accumulation on re-runs (Session 297: fixed triple-write bug).
+        Session 412: True pick locking — only deletes rows for players being
+        refreshed. Picks from prior runs that signal no longer produces are
+        PRESERVED in the table for grading. This prevents the scenario where
+        a valid pick (e.g., KAT UNDER 17.5) gets deleted by a re-export.
 
         Uses load_table_from_json with WRITE_APPEND to avoid 90-min streaming
         buffer that blocks DML operations (codebase best practice).
         """
         table_ref = f'{PROJECT_ID}.nba_predictions.signal_best_bets_picks'
 
-        # Delete existing rows for this date to prevent duplicates on re-runs.
-        # Session 371: Only delete picks for games that haven't started yet.
-        # Picks for started/finished games are preserved — they were valid when
-        # published and shouldn't be retroactively removed by re-exports with
-        # different filter settings.
+        # True pick locking (Session 412): Only delete rows for players we're
+        # about to re-insert. Picks from prior runs that are no longer in the
+        # signal output are PRESERVED — they stay in the table for grading.
+        # This prevents the "KAT UNDER 17.5" scenario where a valid pick gets
+        # deleted by a re-export with different algorithm settings.
+        #
+        # Session 371: Also preserves picks for started/finished games.
+        new_player_lookups = list({p['player_lookup'] for p in picks})
+        if not new_player_lookups:
+            return
+
         try:
             delete_query = f"""
             DELETE FROM `{table_ref}`
             WHERE game_date = @target_date
+              AND player_lookup IN UNNEST(@player_lookups)
               AND game_id NOT IN (
                 SELECT CONCAT(
                   REPLACE(CAST(game_date AS STRING), '-', ''), '_',
@@ -650,15 +679,18 @@ class SignalBestBetsExporter(BaseExporter):
                     bigquery.ScalarQueryParameter(
                         'target_date', 'DATE', target_date
                     ),
+                    bigquery.ArrayQueryParameter(
+                        'player_lookups', 'STRING', new_player_lookups
+                    ),
                 ]
             )
             delete_job = self.bq_client.query(delete_query, job_config=job_config)
-            result = delete_job.result(timeout=30)
+            delete_job.result(timeout=30)
             deleted = delete_job.num_dml_affected_rows or 0
             if deleted > 0:
                 logger.info(
-                    f"Deleted {deleted} existing rows for {target_date} "
-                    f"from {table_ref}"
+                    f"Deleted {deleted} rows for {len(new_player_lookups)} "
+                    f"refreshed players on {target_date} from {table_ref}"
                 )
         except Exception as e:
             logger.warning(
@@ -742,6 +774,30 @@ class SignalBestBetsExporter(BaseExporter):
                 f"Failed to write signal best bets to BigQuery: {e}",
                 exc_info=True,
             )
+
+    def _query_existing_pick_lookups(self, target_date: str) -> set:
+        """Return set of player_lookups already in signal_best_bets_picks for this date.
+
+        Session 412: Used to detect truly new picks vs refreshes, and to
+        log how many picks are being preserved by true pick locking.
+        """
+        table_ref = f'{PROJECT_ID}.nba_predictions.signal_best_bets_picks'
+        query = f"""
+        SELECT DISTINCT player_lookup
+        FROM `{table_ref}`
+        WHERE game_date = @target_date
+        """
+        try:
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+                ]
+            )
+            rows = self.bq_client.query(query, job_config=job_config).result(timeout=15)
+            return {row.player_lookup for row in rows}
+        except Exception as e:
+            logger.warning(f"Failed to query existing pick lookups (non-fatal): {e}")
+            return set()
 
     def _write_filter_audit(
         self,
