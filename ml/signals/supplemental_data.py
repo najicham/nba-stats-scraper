@@ -417,7 +417,8 @@ def query_predictions_with_supplements(
         feature_43_value AS pts_avg_last3,
         feature_44_value AS trend_slope,
         feature_48_value AS usage_rate_l5,
-        feature_57_value AS blowout_risk
+        feature_57_value AS blowout_risk,
+        feature_41_value AS spread_magnitude
       FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2`
       WHERE game_date = @target_date
     ),
@@ -523,6 +524,7 @@ def query_predictions_with_supplements(
       bs.trend_slope,
       bs.usage_rate_l5,
       bs.blowout_risk,
+      bs.spread_magnitude,
       dlm.dk_line_move_direction
     FROM preds p
     LEFT JOIN latest_stats ls ON ls.player_lookup = p.player_lookup
@@ -1095,6 +1097,9 @@ def query_predictions_with_supplements(
         pred['trend_slope'] = float(row_dict.get('trend_slope') or 0)
         pred['usage_rate_l5'] = float(row_dict.get('usage_rate_l5') or 0)
         pred['blowout_risk'] = float(row_dict.get('blowout_risk') or 0)
+
+        # Spread magnitude for high_spread_over observation filter (Session 413)
+        pred['spread_magnitude'] = float(row_dict.get('spread_magnitude') or 0)
 
         # Over trend: prev_over_1..5 from streak data for over_trend_over signal (Session 410)
         pred['prev_over_1'] = row_dict.get('prev_over_1')

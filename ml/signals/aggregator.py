@@ -51,7 +51,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v406_scraper_fixes_combo_edge3'
+ALGORITHM_VERSION = 'v413_spread_observation'
 
 # Base signals that fire on nearly every edge 5+ pick. Picks with ONLY
 # these signals hit 57.1% (N=42) vs 77.8% for picks with 4+ signals.
@@ -208,6 +208,7 @@ class BestBetsAggregator:
             'toxic_star_over_would_block': 0,
             'regime_over_floor': 0,
             'regime_rescue_blocked': 0,
+            'high_spread_over_would_block': 0,
         }
 
         # Session 393: Counterfactual tracking — log filtered-out picks so we
@@ -841,6 +842,27 @@ class BestBetsAggregator:
                     logger.debug(f"Calendar regime: {regime.label} (toxic=False)")
             except (ValueError, TypeError) as e:
                 logger.debug(f"Calendar regime detection skipped: {e}")
+
+        # --- High spread OVER observation filter (Session 413) ---
+        # OVER picks in games with spread > 7 hit at 44.4% (N=18) vs 74.1% (spread <= 7).
+        # Observation mode: log + record for counterfactual grading, don't block.
+        HIGH_SPREAD_THRESHOLD = 7.0
+        for pick in scored:
+            if (pick.get('recommendation') == 'OVER'
+                    and pick.get('spread_magnitude', 0) > HIGH_SPREAD_THRESHOLD):
+                pick_edge = pick.get('composite_score', 0)
+                filter_counts['high_spread_over_would_block'] += 1
+                _record_filtered(pick, 'high_spread_over_would_block', pick_edge)
+                logger.info(
+                    f"High spread WOULD block: OVER "
+                    f"{pick['player_lookup']} (spread={pick.get('spread_magnitude', 0):.1f}, "
+                    f"edge={pick_edge:.1f})"
+                )
+        if filter_counts['high_spread_over_would_block'] > 0:
+            logger.info(
+                f"High spread observation: WOULD block "
+                f"{filter_counts['high_spread_over_would_block']} OVER picks (spread > {HIGH_SPREAD_THRESHOLD})"
+            )
 
         # Ultra Bets classification (Session 326)
         from ml.signals.ultra_bets import classify_ultra_pick
