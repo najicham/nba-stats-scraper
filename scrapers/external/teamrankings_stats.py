@@ -126,6 +126,10 @@ class TeamRankingsStatsScraper(ScraperBase, ScraperFlaskMixin):
         },
     ]
 
+    def set_additional_opts(self) -> None:
+        """Resolve TODAY literal to actual Eastern date."""
+        super().set_additional_opts()
+
     def set_url(self) -> None:
         """Set initial URL (pace page). We'll fetch all 3 pages in download_and_decode."""
         self.url = STAT_URLS["pace"]

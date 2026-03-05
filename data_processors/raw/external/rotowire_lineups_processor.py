@@ -72,6 +72,7 @@ class RotoWireLineupsProcessor(SmartIdempotencyMixin, ProcessorBase):
                 'is_starter': player.get('is_starter', False),
                 'injury_status': player.get('injury_status', ''),
                 'projected_minutes': player.get('projected_minutes'),
+                'play_probability': player.get('play_probability'),
                 'source_file_path': file_path,
                 'scraped_at': scraped_at,
                 'processed_at': current_time,
