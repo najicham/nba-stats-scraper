@@ -162,6 +162,7 @@ def query_predictions_with_supplements(
       WHERE p.game_date = @target_date
         AND {system_filter}
         AND p.is_active = TRUE
+        AND p.is_actionable = TRUE  -- Session 414: exclude worker-filtered predictions
         AND p.recommendation IN ('OVER', 'UNDER')
         AND p.line_source IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS')
         AND dm.model_id IS NULL  -- Exclude disabled/blocked models
@@ -236,6 +237,7 @@ def query_predictions_with_supplements(
       WHERE p.game_date = @target_date
         AND p.system_id = '{model_id}'
         AND p.is_active = TRUE
+        AND p.is_actionable = TRUE  -- Session 414: exclude worker-filtered predictions
         AND p.recommendation IN ('OVER', 'UNDER')
         AND p.line_source IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS')
         AND dm.model_id IS NULL  -- Exclude disabled/blocked models
@@ -390,6 +392,7 @@ def query_predictions_with_supplements(
       WHERE p2.game_date = @target_date
         AND {build_noveg_mae_sql_filter('p2')}
         AND p2.is_active = TRUE
+        AND p2.is_actionable = TRUE  -- Session 414: exclude worker-filtered predictions
         AND p2.recommendation IN ('OVER', 'UNDER')
       QUALIFY ROW_NUMBER() OVER (
         PARTITION BY p2.player_lookup, p2.game_id ORDER BY p2.system_id DESC
