@@ -29,6 +29,8 @@ def get_regime_context(bq_client, target_date: date) -> Dict[str, Any]:
         over_edge_floor_delta: +1.0 (cautious) or 0.0
         disable_over_rescue: True (cautious) or False
     """
+    if isinstance(target_date, str):
+        target_date = date.fromisoformat(target_date)
     yesterday = target_date - timedelta(days=1)
     result = {
         'yesterday_bb_hr': None,
