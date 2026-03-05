@@ -620,16 +620,14 @@ def query_predictions_with_supplements(
         logger.warning(f"Failed to query Q4 scoring ratios: {e}")
         q4_ratio_map = {}
 
-    # Session 401/403: Projection consensus from external sources.
+    # Session 401/403/407: Projection alignment from external sources.
     # Compare external projected_points to prop line to count how many sources
-    # agree with each direction. 2+ sources above line + OVER = consensus signal.
-    # Sources: NumberFire (broken — FanDuel redirect), FantasyPros, DailyFantasyFuel, Dimers
-    # Session 405: Scrapers produce hyphenated player_lookup (jalen-brunson) but
-    # predictions use no-hyphen format (jalenbrunson). Normalize with REPLACE.
-    # Session 406: Added projected_points range filter (5-60) to exclude:
-    # - FantasyPros season-total DFS values (e.g., 2418 for SGA)
-    # - Any obviously wrong scraped values
-    # Valid per-game NBA point projections are typically 8-50.
+    # agree with each direction. 1+ source above line + OVER = aligned signal.
+    # Session 407: Switched to single-source mode (NumberFire only).
+    # - FantasyPros EXCLUDED: Dead (Playwright timeout, wrong data type — DFS season totals)
+    # - Dimers EXCLUDED: Page shows generic projections, NOT game-date-specific
+    # - DFF EXCLUDED: Only provides DraftKings fantasy points (FPTS)
+    # NumberFire (via FanDuel Research GraphQL) provides 120+ valid per-game projections.
     projection_query = f"""
     WITH nf AS (
       SELECT REPLACE(player_lookup, '-', '') AS player_lookup, projected_points,
@@ -637,40 +635,14 @@ def query_predictions_with_supplements(
       FROM `{PROJECT_ID}.nba_raw.numberfire_projections`
       WHERE game_date = @target_date AND projected_points IS NOT NULL
         AND projected_points BETWEEN 5 AND 60
-    ),
-    fp AS (
-      SELECT REPLACE(player_lookup, '-', '') AS player_lookup, projected_points,
-        ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY scraped_at DESC) AS rn
-      FROM `{PROJECT_ID}.nba_raw.fantasypros_projections`
-      WHERE game_date = @target_date AND projected_points IS NOT NULL
-        AND projected_points BETWEEN 5 AND 60
-    ),
-    -- DFF excluded from consensus: it only provides DraftKings fantasy points
-    -- (FPTS), not real NBA points. FPTS cannot be compared against prop lines.
-    -- DFF projected_points is always NULL; projected_fantasy_points has FPTS.
-    dm AS (
-      SELECT REPLACE(player_lookup, '-', '') AS player_lookup, projected_points,
-        ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY scraped_at DESC) AS rn
-      FROM `{PROJECT_ID}.nba_raw.dimers_projections`
-      WHERE game_date = @target_date AND projected_points IS NOT NULL
-        AND projected_points BETWEEN 5 AND 60
-    ),
-    all_players AS (
-      SELECT player_lookup FROM nf WHERE rn = 1
-      UNION DISTINCT
-      SELECT player_lookup FROM fp WHERE rn = 1
-      UNION DISTINCT
-      SELECT player_lookup FROM dm WHERE rn = 1
     )
     SELECT
-      ap.player_lookup,
+      nf.player_lookup,
       nf.projected_points AS nf_projected_points,
-      fp.projected_points AS fp_projected_points,
-      dm.projected_points AS dm_projected_points
-    FROM all_players ap
-    LEFT JOIN nf ON ap.player_lookup = nf.player_lookup AND nf.rn = 1
-    LEFT JOIN fp ON ap.player_lookup = fp.player_lookup AND fp.rn = 1
-    LEFT JOIN dm ON ap.player_lookup = dm.player_lookup AND dm.rn = 1
+      CAST(NULL AS FLOAT64) AS fp_projected_points,
+      CAST(NULL AS FLOAT64) AS dm_projected_points
+    FROM nf
+    WHERE rn = 1
     """
     projection_map = {}
     try:
@@ -683,7 +655,7 @@ def query_predictions_with_supplements(
                 'dailyfantasyfuel': None,
                 'dimers': float(row['dm_projected_points']) if row['dm_projected_points'] is not None else None,
             }
-        logger.info(f"Loaded projection data for {len(projection_map)} players from 3 sources (DFF excluded: DFS FPTS only)")
+        logger.info(f"Loaded projection data for {len(projection_map)} players from NumberFire (single-source mode)")
     except Exception as e:
         logger.warning(f"Failed to query projection consensus data: {e}")
 

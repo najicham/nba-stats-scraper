@@ -1,28 +1,25 @@
-"""Projection consensus signal — external projections agree with model direction.
+"""Projection alignment signal — external projection agrees with model direction.
 
-Session 401/403: When 2+ independent projection sources agree with our model's
-OVER/UNDER direction relative to the prop line, the confluence of independent
-models creates a strong consensus signal.
+Session 401/403: Originally designed as multi-source consensus (2+ sources agree).
+Session 407: Switched to single-source mode using NumberFire only.
 
-Sources (3 usable for consensus):
-  - FantasyPros: consensus projections from 4+ experts (WORKING)
-  - Dimers: projected points model (WORKING)
-  - NumberFire/FanDuel: FanDuel Research projections (BROKEN — needs Playwright)
-  - DailyFantasyFuel: EXCLUDED — only provides DraftKings fantasy points (FPTS),
-    not real NBA points. FPTS cannot be compared against prop lines.
+Sources:
+  - NumberFire/FanDuel: FanDuel Research GraphQL projections (120+ players/day) ✅
+  - FantasyPros: EXCLUDED — Dead (Playwright timeout, wrong data type: DFS season totals)
+  - Dimers: EXCLUDED — Page shows generic projections, NOT game-date-specific
+  - DailyFantasyFuel: EXCLUDED — only provides DraftKings fantasy points (FPTS)
 
-Projection sources use different architectures (regression ensembles, Monte Carlo
-simulations) with different feature weights — genuinely orthogonal to CatBoost.
+NumberFire uses regression ensembles with different feature weights — genuinely
+orthogonal to our CatBoost models.
 
 Signals:
-  - projection_consensus_over: Model says OVER AND 2+ projections above line
-    Expected HR 65-70% based on consensus-beats-line research.
-  - projection_consensus_under: Model says UNDER AND 2+ projections below line
-  - projection_disagreement: Model says OVER but 0 projections agree
-    Expected filter HR <50% — all external models disagree with our direction.
+  - projection_consensus_over: Model says OVER AND 1+ projection above line
+    (renamed intent: "projection aligned" but tag kept for backwards compat)
+  - projection_consensus_under: Model says UNDER AND 1+ projection below line
+  - projection_disagreement: Model says OVER but 0 projections agree (needs 2+ sources)
 
-The signal reads from 3 projection BQ tables (DFF excluded), joined to
-predictions via player_lookup in supplemental_data.py.
+Single-source mode: MIN_SOURCES lowered to 1. When a second reliable source
+becomes available, raise back to 2.
 """
 
 from typing import Dict, Optional
@@ -39,10 +36,10 @@ class ProjectionConsensusOverSignal(BaseSignal):
     """
 
     tag = "projection_consensus_over"
-    description = "2+ external projections above line + model OVER — consensus signal"
+    description = "External projection above line + model OVER — aligned signal"
 
-    CONFIDENCE = 0.75
-    MIN_SOURCES_ABOVE = 2  # Number of external sources projecting above line
+    CONFIDENCE = 0.70  # Session 407: lowered from 0.75 for single-source mode
+    MIN_SOURCES_ABOVE = 1  # Session 407: lowered from 2 for single-source mode
 
     def evaluate(self, prediction: Dict,
                  features: Optional[Dict] = None,
@@ -83,10 +80,10 @@ class ProjectionConsensusUnderSignal(BaseSignal):
     """
 
     tag = "projection_consensus_under"
-    description = "2+ external projections below line + model UNDER — consensus signal"
+    description = "External projection below line + model UNDER — aligned signal"
 
-    CONFIDENCE = 0.70
-    MIN_SOURCES_BELOW = 2
+    CONFIDENCE = 0.65  # Session 407: lowered from 0.70 for single-source mode
+    MIN_SOURCES_BELOW = 1  # Session 407: lowered from 2 for single-source mode
 
     def evaluate(self, prediction: Dict,
                  features: Optional[Dict] = None,

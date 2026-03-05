@@ -1787,7 +1787,7 @@ def process_player_predictions(
         for pred in all_predictions:
             sid = pred.get('system_id', 'unknown')
             total_by_model[sid] += 1
-            if pred.get('filter_reason', '').startswith('sanity_check_failed'):
+            if (pred.get('filter_reason') or '').startswith('sanity_check_failed'):
                 sanity_failures_by_model[sid] += 1
         for sid, failures in sanity_failures_by_model.items():
             total = total_by_model[sid]

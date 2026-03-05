@@ -378,6 +378,8 @@ class DimersProjectionsScraper(ScraperBase, ScraperFlaskMixin):
                         projected_points = val
                         break
 
+            # Session 407: Clean concatenated names in player_name too, not just player_lookup
+            player_name = _clean_concatenated_name(player_name)
             return {
                 "player_name": player_name,
                 "player_lookup": normalize_player_name(player_name),
