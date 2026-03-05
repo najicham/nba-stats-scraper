@@ -760,24 +760,69 @@ def auto_disable_blocked_models(models: List[Dict], best_bets_model: str,
     deactivate_model.py. This closes the gap by disabling in the registry,
     which prevents new predictions and triggers signal exporter filtering.
 
+    Session 405: Added additional safeguards:
+    - AUTO_DISABLE_ENABLED env var (defaults to False until validated)
+    - Minimum 3 enabled models safety floor
+    - Minimum 7-day model age (insufficient data for younger models)
+    - consecutive_days_below_alert >= 3 (not just one bad day)
+
     Safeguards:
     - Never disables the champion/best_bets model (manual decision only)
     - Requires N >= 15 graded picks (avoids disabling on sparse data)
-    - Only disables models that transitioned TO BLOCKED (not already blocked)
+    - Never disables if fewer than 3 models would remain enabled
+    - Never disables models less than 7 days old
+    - Requires 3+ consecutive days below alert threshold
     - Logs audit trail to service_errors
     """
+    # Session 405: Feature flag — defaults to off until validated in production
+    if not os.environ.get('AUTO_DISABLE_ENABLED', '').lower() in ('true', '1', 'yes'):
+        logger.info("Auto-disable is disabled (set AUTO_DISABLE_ENABLED=true to enable)")
+        return [], None
+
     bq = _get_bq_client()
     disabled = []
+
+    # Session 405: Count currently enabled models for safety floor
+    enabled_count = 0
+    try:
+        enabled_query = f"""
+        SELECT COUNT(*) as cnt
+        FROM `{PROJECT_ID}.nba_predictions.model_registry`
+        WHERE enabled = TRUE
+        """
+        enabled_rows = list(bq.query(enabled_query).result())
+        enabled_count = enabled_rows[0].cnt if enabled_rows else 0
+    except Exception as e:
+        logger.warning(f"Failed to count enabled models: {e}")
+        return [], None
+
+    MIN_ENABLED_MODELS = 3
+    MIN_MODEL_AGE_DAYS = 7
+    MIN_CONSECUTIVE_DAYS_BELOW = 3
 
     blocked_models = [
         m for m in models
         if m.get('state') == 'BLOCKED'
         and m['model_id'] != best_bets_model
         and m.get('rolling_n_7d', 0) >= 15
+        and m.get('consecutive_days_below_alert', 0) >= MIN_CONSECUTIVE_DAYS_BELOW
+        and m.get('days_since_training', 0) >= MIN_MODEL_AGE_DAYS
     ]
 
     if not blocked_models:
         return [], None
+
+    # Session 405: Safety floor — never auto-disable if too few models remain
+    max_to_disable = enabled_count - MIN_ENABLED_MODELS
+    if max_to_disable <= 0:
+        logger.info(
+            f"Safety floor: only {enabled_count} enabled models, "
+            f"need minimum {MIN_ENABLED_MODELS} — skipping auto-disable"
+        )
+        return [], None
+
+    # Limit disabled count to stay above safety floor
+    blocked_models = blocked_models[:max_to_disable]
 
     for m in blocked_models:
         model_id = m['model_id']

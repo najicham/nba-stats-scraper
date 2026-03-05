@@ -77,12 +77,22 @@ TEAM_MAP = {
 
 
 def resolve_team(name: str) -> str:
-    """Convert team name variants to NBA tricode."""
+    """Convert team name variants to NBA tricode.
+
+    Uses word-boundary matching to avoid false positives like
+    'nets' matching inside 'hornets'.
+    """
     lower = name.lower().strip()
     if lower in TEAM_MAP:
         return TEAM_MAP[lower]
+    # Split into words and check each word individually
+    words = lower.split()
+    for word in words:
+        if word in TEAM_MAP:
+            return TEAM_MAP[word]
+    # Check multi-word keys (e.g., "golden state", "la clippers")
     for key, tricode in TEAM_MAP.items():
-        if key in lower or lower in key:
+        if ' ' in key and key in lower:
             return tricode
     return name.upper()[:3]
 
@@ -161,7 +171,10 @@ class VSiNBettingSplitsScraper(ScraperBase, ScraperFlaskMixin):
         rows = table.find_all("tr")
 
         for row in rows[2:]:  # Skip header rows
-            cells = row.find_all("td")
+            # Use recursive=False to get direct TD children only.
+            # The freezetable layout has nested elements that inflate
+            # find_all("td") from 10 real cells to 150+ nested elements.
+            cells = row.find_all("td", recursive=False)
             if len(cells) < 8:
                 continue
 

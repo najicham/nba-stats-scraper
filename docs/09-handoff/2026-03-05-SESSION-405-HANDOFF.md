@@ -1,8 +1,8 @@
-# Session 405 Handoff — Critical Signal Bug Fixes + Shadow Signal Expansion
+# Session 405 Handoff — Bug Fixes, Analysis Tools, Fleet Retrain, Infrastructure
 
-**Date:** 2026-03-04 / 2026-03-05 (late evening)
+**Date:** 2026-03-04 / 2026-03-05
 **Algorithm:** `v404_sharp_money_shadow`
-**Status:** All fixes deployed. Builds queued. Verify tomorrow morning.
+**Status:** All fixes deployed. 2 new models trained and registered. Analysis tools built.
 
 ---
 
@@ -180,15 +180,87 @@ GROUP BY 1 ORDER BY fires DESC
 
 ---
 
+## Session 405 Later Work — Analysis, Retraining, Infrastructure
+
+### Combo Signal Root Cause Analysis
+- **combo_3way + combo_he_ms dead since Feb 11** due to post-ASB edge compression
+- Edge 4+ OVER predictions dropped from 34/day (Feb 11) to 0-3/day post-ASB
+- Minutes surge 3+ intersection is zero among edge 4+ OVER picks since Feb 22
+- MIN_EDGE lowering from 5→4 is deployed; combo signals will remain rare until edges expand
+
+### New Analysis Tools
+| Tool | Purpose |
+|------|---------|
+| `bin/analysis/edge_calibration.py` | HR by edge band × framework × direction |
+| `bin/analysis/model_correlation.py` | Pairwise prediction correlation between models |
+
+**Edge calibration finding:** Edge calibrates moderately (51% at 0-1 → 62% at 7+). XGBoost calibrates significantly better than CatBoost at every edge band (71.3% vs 59.0% at edge 5-7).
+
+**Model correlation finding:** ALL 145 model pairs have r >= 0.95 (REDUNDANT). Zero diverse pairs (r < 0.70). The fleet makes nearly identical predictions — multi-model "diversity" is illusory.
+
+### Fresh Fleet Retraining (Training: Jan 7 → Feb 19, Eval: Feb 20 → Mar 3)
+| Framework | HR (edge 3+) | N | MAE | Status |
+|-----------|-------------|---|-----|--------|
+| CatBoost | 61.5% | 39 | 5.24 | PASSED → `catboost_v12_noveg_train0107_0219` |
+| XGBoost | 62.8% | 51 | 5.22 | PASSED → `xgb_v12_noveg_train0107_0219` |
+| LightGBM | 56.6% | 53 | 5.37 | FAILED — UNDER 51.3% < breakeven |
+
+Both passing models registered with `enabled=TRUE`. Fleet now 12 enabled models.
+
+### Training Window Grid Search (CatBoost v12_noveg)
+| Window | HR (edge 3+) | N | MAE |
+|--------|-------------|---|-----|
+| 63d | **71.4%** | 35 | 5.16 |
+| 56d | 71.0% | 31 | 5.19 |
+| 70d | 69.7% | 33 | 5.19 |
+| 42d | 65.9% | 44 | 5.23 |
+
+**Finding:** 63-day window slightly beats 56-day. Sweet spot is 56-70 days.
+
+### Infrastructure Improvements
+1. **GCS Freshness Monitor CF** — `orchestration/cloud_functions/gcs_freshness_monitor/main.py`. Checks 10 GCS exports, Slack alerts on stale/missing. Needs Cloud Scheduler job creation.
+2. **Auto-disable improvements** — Added `AUTO_DISABLE_ENABLED` env var (off by default), minimum 3 enabled models safety floor, 7-day age check, `consecutive_days_below_alert >= 3`.
+
+### Shadow Signal Triage
+| Signal | Data Available | Status |
+|--------|---------------|--------|
+| projection_consensus_over/under | FP=4065, Dimers=300 | Unblocked by scraped_at fix |
+| predicted_pace_over | teamrankings=450 | Working (2 fires Mar 4) |
+| dvp_favorable_over | hashtagbasketball=510 | Data exists, investigate thresholds |
+| sharp_money_over/under | vsin=0 | Blocked — VSiN scraper broken |
+| minutes_surge_over | rotowire minutes=null | Blocked — no projected_minutes |
+| positive_clv_over/under | No closing snapshot | Blocked — need evening closing scrape |
+| q4_scorer_over | bigdataball=14071 | Data exists, investigate supplemental flow |
+| self_creation_over | gamebook (always available) | Data exists, investigate thresholds |
+
+### Filter Temporal Validation
+- `post_filter_eval.py` shows 100% rejection for single-model eval (expected — pipeline designed for multi-model aggregation)
+- No actionable filter changes needed
+
+---
+
+## Files Changed (Session 405 Later Work)
+
+| File | Change |
+|------|--------|
+| `bin/analysis/edge_calibration.py` | **NEW** — edge calibration analysis |
+| `bin/analysis/model_correlation.py` | **NEW** — model correlation analysis |
+| `orchestration/cloud_functions/gcs_freshness_monitor/main.py` | **NEW** — GCS freshness CF |
+| `orchestration/cloud_functions/gcs_freshness_monitor/requirements.txt` | **NEW** |
+| `orchestration/cloud_functions/decay_detection/main.py` | Auto-disable improvements |
+
+---
+
 ## Strategic Context
 
 **Full plan:** `docs/09-handoff/session-prompts/SESSION-405-PLAN.md`
 
-**Key priorities:**
-1. Verify fixes work → pick volume increases
-2. Shadow signal data accumulation (12 signals, first promotion ~Mar 12)
-3. Signal promotion when N >= 30 graded (projection_consensus first)
-4. Model fleet cleanup — 4-5 disable candidates at < 50% edge 3+ HR
-5. Threshold experiments once data accumulates
+**Key priorities for next session:**
+1. Verify fixes work → projection_consensus fires, combo signals fire, pick volume increases
+2. Verify new models producing predictions (`catboost_v12_noveg_train0107_0219`, `xgb_v12_noveg_train0107_0219`)
+3. Deploy GCS freshness monitor CF + Cloud Scheduler job
+4. Investigate dvp_favorable_over, q4_scorer_over, self_creation_over — data exists but not firing
+5. Shadow signal data accumulation (first promotion window ~Mar 12)
+6. Consider fleet deduplication — all models r >= 0.95 (but per user preference, only decommission if hurting best bets)
 
 **14d best bets HR:** 58.3% (14/24). OVER 50.0%, UNDER 66.7%. Pick volume is the bottleneck, not accuracy.

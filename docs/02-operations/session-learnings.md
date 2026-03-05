@@ -1356,3 +1356,39 @@ See `docs/08-projects/current/fleet-lifecycle-automation/00-PLAN.md` for the 3-t
 **Fix (Session 403):** Added `_get_proxy_url()` helper that queries the proxy pool, then passes the URL to both `_fetch_via_nba_api(proxy=...)` and `_fetch_via_http(proxies=...)`.
 
 **Lesson:** When overriding `download_and_decode()`, manually integrate proxy infrastructure — it won't happen automatically.
+
+### Training/Eval Date Overlap Gate (Session 405)
+
+**Symptom:** `quick_retrain.py` blocked with "TRAINING/EVAL DATE OVERLAP DETECTED" when train-end was after eval-start.
+
+**Root Cause:** Using `--train-end 2026-03-04 --eval-start 2026-02-20` creates 13 days of overlap. Model trains on the same games it evaluates on, producing inflated HR (87%+ instead of real 62%).
+
+**Fix:** Set `--train-end` before `--eval-start` (e.g., train Jan 7 → Feb 19, eval Feb 20 → Mar 3).
+
+**Lesson:** Always ensure train-end < eval-start. The governance gate catches this automatically.
+
+### Model Fleet Has Zero Diversity (Session 405)
+
+**Symptom:** 22 models, but model_correlation.py showed ALL 145 pairs have r >= 0.95 (REDUNDANT). Zero diverse pairs (r < 0.70).
+
+**Root Cause:** All models use the same feature set (v12_noveg), same training data source (player_game_summary + ml_feature_store), and similar training windows. CatBoost, LightGBM, and XGBoost converge to nearly identical predictions despite algorithmic differences.
+
+**Implication:** Multi-model agreement is NOT a useful diversity signal. V9+V12 agreement anti-correlation finding (CLAUDE.md) extends to ALL model pairs. The fleet provides redundancy (if one model fails, others have same predictions) but not complementary information.
+
+**Lesson:** True model diversity requires different feature sets, different target variables, or fundamentally different modeling approaches (e.g., player-specific models, game-context specialists).
+
+### Post-ASB Edge Compression Kills Combo Signals (Session 405)
+
+**Symptom:** combo_3way (95.5% HR) and combo_he_ms (94.9% HR) dead since Feb 11.
+
+**Root Cause:** All-Star Break + model staleness compressed edge distributions. Edge 4+ OVER predictions dropped from 34/day (Feb 11) to 0-3/day. Combined with minutes surge >= 3 requirement, the intersection is zero.
+
+**Lesson:** Combo signals with multiple threshold gates are fragile to distribution shifts. The edge gate is the weakest contributor — minutes surge is the real quality discriminator. Consider adaptive thresholds or relative (percentile-based) instead of absolute edge thresholds.
+
+### LightGBM UNDER Calibration Issue (Session 405)
+
+**Symptom:** LightGBM retrain (Jan 7 → Feb 19) achieved 56.6% HR at edge 3+ but UNDER direction was 51.3% — below breakeven. Governance gate correctly blocked.
+
+**Root Cause:** LightGBM's UNDER predictions are biased — Stars UNDER at 47.1%, Starters UNDER at 45.5%. Only Role UNDER performs (63.6%). CatBoost and XGBoost don't show this tier-dependent UNDER failure.
+
+**Lesson:** LightGBM may need tier-specific training or separate OVER/UNDER models. Framework-specific UNDER calibration should be monitored.

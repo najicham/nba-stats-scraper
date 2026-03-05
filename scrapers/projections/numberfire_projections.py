@@ -166,14 +166,17 @@ class NumberFireProjectionsScraper(ScraperBase, ScraperFlaskMixin):
         self.decoded_data = {"players": projections, "slate_id": slate_id}
 
     def _get_main_slate_id(self, session) -> Optional[str]:
-        """Query getSlates to find today's main NBA slate."""
+        """Query getSlates to find today's main NBA slate.
+
+        Note: FanDuel GraphQL schema changed — getSlates uses direct args
+        (not input wrapper), returns 'id' (not 'slateId'), no 'gameCount'.
+        """
         slates_query = {
             "query": """
             query {
-                getSlates(input: {sport: NBA}) {
-                    slateId
+                getSlates(sport: NBA) {
+                    id
                     name
-                    gameCount
                 }
             }
             """
@@ -187,19 +190,24 @@ class NumberFireProjectionsScraper(ScraperBase, ScraperFlaskMixin):
             logger.error("FanDuel GraphQL slates request failed: %s", e)
             return None
 
+        # Check for GraphQL errors
+        if "errors" in data:
+            logger.error("FanDuel GraphQL errors: %s", data["errors"])
+            return None
+
         slates = data.get("data", {}).get("getSlates", [])
         if not slates:
             return None
 
-        # Find the "Main" slate (covers all games), or fallback to largest
+        # Find the "Main" slate (covers all games)
         for slate in slates:
-            name = (slate.get("name") or "").lower()
+            name = (slate.get("name") or "").lower().strip("'\"")
             if "main" in name:
-                return slate["slateId"]
+                return slate["id"]
 
-        # Fallback: use the slate with the most games
-        slates.sort(key=lambda s: s.get("gameCount", 0), reverse=True)
-        return slates[0]["slateId"]
+        # Fallback: first slate (no gameCount available to sort by)
+        logger.warning("No 'Main' slate found, using first slate: %s", slates[0].get("name"))
+        return slates[0]["id"]
 
     def validate_download_data(self) -> None:
         """Validate we received valid projections data."""

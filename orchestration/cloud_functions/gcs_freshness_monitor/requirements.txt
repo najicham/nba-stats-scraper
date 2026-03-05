@@ -1,0 +1,5 @@
+# GCS Freshness Monitor Cloud Function Requirements
+functions-framework==3.*
+google-cloud-storage>=2.0.0
+google-cloud-secret-manager==2.16.0
+requests>=2.28.0
