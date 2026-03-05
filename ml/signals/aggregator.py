@@ -51,7 +51,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v413_spread_observation'
+ALGORITHM_VERSION = 'v414_observation_filters'
 
 # Base signals that fire on nearly every edge 5+ pick. Picks with ONLY
 # these signals hit 57.1% (N=42) vs 77.8% for picks with 4+ signals.
@@ -210,6 +210,9 @@ class BestBetsAggregator:
             'regime_rescue_blocked': 0,
             'high_spread_over_would_block': 0,
             'flat_trend_under': 0,
+            'mid_line_over_obs': 0,
+            'monday_over_obs': 0,
+            'home_over_obs': 0,
         }
 
         # Session 393: Counterfactual tracking — log filtered-out picks so we
@@ -345,15 +348,15 @@ class BestBetsAggregator:
                         rescue_signal = 'signal_stack_2plus'
 
                 # Session 412: Regime gating — during cautious regime (yesterday
-                # BB HR < 50%), disable signal rescue for OVER picks. OVER HR
-                # swings 33-67% by regime; suppressing OVER rescue is high-leverage.
+                # BB HR < 50%), track what WOULD be blocked for counterfactual.
+                # Session 413: Observation-only — regime on N=7 nuked 10/12 picks.
+                # Next-day avg after bad day is still 53.9% (above breakeven).
                 if (signal_rescued
                         and self._regime_context.get('disable_over_rescue')
                         and pred.get('recommendation') == 'OVER'):
                     filter_counts['regime_rescue_blocked'] += 1
                     _record_filtered(pred, 'regime_rescue_blocked', pred_edge)
-                    signal_rescued = False
-                    rescue_signal = None
+                    # Observation mode — do NOT disable rescue
 
             if below_edge_floor:
                 if not signal_rescued:
@@ -371,17 +374,20 @@ class BestBetsAggregator:
             # best bets full season. Edge 5-7 OVER = 67.5%, edge 7+ = 77.8%.
             # UNDER is profitable at all edge levels (57.5-100%).
             # Session 398: Signal-rescued OVER picks bypass this floor too.
-            # Session 412: Regime context raises floor +1.0 during cautious regime.
-            over_floor = 5.0 + self._regime_context.get('over_edge_floor_delta', 0)
+            # Session 413: Regime floor delta now observation-only (was active Session 412).
+            over_floor = 5.0  # Fixed floor — regime delta removed
+            regime_delta = self._regime_context.get('over_edge_floor_delta', 0)
             if pred.get('recommendation') == 'OVER' and pred_edge < over_floor and not signal_rescued:
-                # Distinguish regime-caused vs normal filtering for counterfactual tracking
-                if pred_edge >= 5.0 and self._regime_context.get('over_edge_floor_delta', 0) > 0:
-                    filter_counts['regime_over_floor'] += 1
-                    _record_filtered(pred, 'regime_over_floor', pred_edge)
-                else:
-                    filter_counts['over_edge_floor'] += 1
-                    _record_filtered(pred, 'over_edge_floor', pred_edge)
+                filter_counts['over_edge_floor'] += 1
+                _record_filtered(pred, 'over_edge_floor', pred_edge)
                 continue
+            # Observation: track what regime floor WOULD block
+            if (regime_delta > 0
+                    and pred.get('recommendation') == 'OVER'
+                    and 5.0 <= pred_edge < 5.0 + regime_delta
+                    and not signal_rescued):
+                filter_counts['regime_over_floor'] += 1
+                _record_filtered(pred, 'regime_over_floor', pred_edge)
 
             # UNDER at edge 7+ block (Session 297, narrowed Session 367):
             # V9 UNDER 7+: 34.1% HR (N=41) — catastrophic, keep blocked.
@@ -594,6 +600,42 @@ class BestBetsAggregator:
                 _record_filtered(pred, 'high_spread_over_would_block', pred_edge)
                 # Observation mode — do NOT continue/filter
 
+            # Mid-line OVER observation (Session 414): OVER + line 15-25 = 28.6-40% BB HR (N=12).
+            # Tiny N but alarming — track counterfactual before activating.
+            if (pred.get('recommendation') == 'OVER'
+                    and 15 <= line_val <= 25):
+                filter_counts['mid_line_over_obs'] += 1
+                _record_filtered(pred, 'mid_line_over_obs', pred_edge)
+                # Observation mode — do NOT continue/filter
+
+            # Monday OVER observation (Session 414): OVER on Monday = 49.0% HR (N=251).
+            # Complements active friday_over_block. Reuses date parsing from Friday filter.
+            if pred.get('recommendation') == 'OVER':
+                _gd_raw_obs = pred.get('game_date', '')
+                if _gd_raw_obs:
+                    from datetime import datetime as _dt_obs, date as _date_obs
+                    try:
+                        if isinstance(_gd_raw_obs, str):
+                            _gd_obs = _dt_obs.strptime(_gd_raw_obs, '%Y-%m-%d').date()
+                        elif isinstance(_gd_raw_obs, _date_obs):
+                            _gd_obs = _gd_raw_obs
+                        else:
+                            _gd_obs = None
+                        if _gd_obs and _gd_obs.weekday() == 0:  # 0 = Monday
+                            filter_counts['monday_over_obs'] += 1
+                            _record_filtered(pred, 'monday_over_obs', pred_edge)
+                            # Observation mode — do NOT continue/filter
+                    except (ValueError, TypeError):
+                        pass
+
+            # Home OVER observation (Session 414): OVER + is_home = 49.7% HR (N=4,278).
+            # Large N, consistently below breakeven.
+            if (pred.get('recommendation') == 'OVER'
+                    and pred.get('is_home')):
+                filter_counts['home_over_obs'] += 1
+                _record_filtered(pred, 'home_over_obs', pred_edge)
+                # Observation mode — do NOT continue/filter
+
             # --- Model profile observation (Session 384) ---
             # Log what the per-model profile store WOULD block, without
             # actually filtering. Observation mode for Phase 1 validation.
@@ -789,6 +831,21 @@ class BestBetsAggregator:
             logger.info(
                 f"High spread OVER (observation): WOULD block "
                 f"{filter_counts['high_spread_over_would_block']} OVER picks with spread >= 7"
+            )
+        if filter_counts['mid_line_over_obs'] > 0:
+            logger.info(
+                f"Mid-line OVER (observation): tagged "
+                f"{filter_counts['mid_line_over_obs']} OVER picks with line 15-25"
+            )
+        if filter_counts['monday_over_obs'] > 0:
+            logger.info(
+                f"Monday OVER (observation): tagged "
+                f"{filter_counts['monday_over_obs']} OVER picks on Monday (49.0% HR)"
+            )
+        if filter_counts['home_over_obs'] > 0:
+            logger.info(
+                f"Home OVER (observation): tagged "
+                f"{filter_counts['home_over_obs']} home OVER picks (49.7% HR)"
             )
         if filter_counts['signal_density'] > 0:
             logger.info(f"Signal density filter: skipped {filter_counts['signal_density']} base-only picks")
