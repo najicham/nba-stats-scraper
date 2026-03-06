@@ -372,4 +372,6 @@ def run_check(request):
         'timestamp': datetime.now(timezone.utc).isoformat()
     }
 
-    return json.dumps(response_data), 200 if not stale_services else 500
+    # Always return 200 — scheduler treats non-200 as failure.
+    # Drift status is communicated via response body and Slack alerts.
+    return json.dumps(response_data), 200

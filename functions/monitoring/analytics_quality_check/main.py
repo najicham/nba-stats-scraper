@@ -325,5 +325,6 @@ def run_check(request):
         'per_game': per_game,
     }
 
-    status_code = 200 if severity == 'OK' else (500 if severity == 'CRITICAL' else 400)
-    return json.dumps(response_data), status_code
+    # Always return 200 — scheduler treats non-200 as failure.
+    # Quality status is communicated via response body and Slack alerts.
+    return json.dumps(response_data), 200
