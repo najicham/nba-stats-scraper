@@ -66,8 +66,7 @@ def build_default_registry() -> SignalRegistry:
     # HighFTUnderSignal REMOVED — 33.3% HR on best bets (Session 326)
     # SelfCreatorUnderSignal REMOVED — 36.4% HR on best bets (Session 326)
 
-    # Prop line delta signal (Session 294)
-    from ml.signals.prop_line_drop_over import PropLineDropOverSignal
+    # PropLineDropOverSignal REMOVED — disabled Session 374b, import dead code (cleaned Session 425)
 
     # Book disagreement signal (Session 303)
     from ml.signals.book_disagreement import BookDisagreementSignal

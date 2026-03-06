@@ -96,6 +96,22 @@ ACTIVE_SIGNALS = frozenset({
     'career_matchup_over',
     'minutes_load_over',
     'blowout_risk_under',
+    # Session 418: Player profile signals (shadow)
+    'bounce_back_over',
+    'over_streak_reversion_under',
+    # Session 414: Day-of-week signals (shadow)
+    'day_of_week_over',
+    'day_of_week_under',
+    # Session 399: Sharp book lean signals (active in rescue_tags)
+    'sharp_book_lean_over',
+    'sharp_book_lean_under',
+    # Session 413/417: Mean reversion (ACTIVE — production + rescue signal, was untracked!)
+    'mean_reversion_under',
+    # Session 422c/423: New UNDER signals (shadow)
+    'volatile_starter_under',
+    'downtrend_under',
+    'star_favorite_under',
+    'starter_away_overtrend_under',
 })
 
 # Regime thresholds (Session 257 analysis)
