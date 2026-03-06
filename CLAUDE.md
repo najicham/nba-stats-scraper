@@ -242,6 +242,7 @@ WHERE game_date >= CURRENT_DATE() - 3 GROUP BY 1 ORDER BY 1 DESC;
 | **CLV scheduler wrong target** | Evening CLV scheduler was targeting legacy `nba-phase1-scrapers`. Fixed to `nba-scrapers`. |
 | **SQL escape `\_` in Python** | BigQuery LIKE doesn't need backslash-escaping underscores. Use `%_q4%` not `%\\_q4%`. |
 | **Re-exports destroy picks** | FIXED Session 412. `signal_best_bets_picks` now uses scoped DELETE (only refreshed players). Published picks stay `signal_status='active'`. |
+| **`win_flag` always FALSE** | `player_game_summary.win_flag` is FALSE for ALL teams/players. Use `plus_minus > 0` as win proxy. |
 
 **Full troubleshooting:** `docs/02-operations/troubleshooting-matrix.md`, `docs/02-operations/session-learnings.md`
 
@@ -288,6 +289,13 @@ python bin/monitoring/signal_decay_monitor.py        # Signal decay/recovery (Se
 - Model registry: `python bin/validation/validate_model_registry.py` — checks duplicates, orphans, GCS consistency
 - Workflow health: `python bin/validation/validate_workflow_dependencies.py` — detects workflows monitoring disabled scrapers
 - **Brier score calibration** (Session 399): `model_performance_daily` has `brier_score_7d/14d/30d`. Lower = better calibrated. Backfill: `PYTHONPATH=. python ml/analysis/model_performance.py --backfill --start 2025-11-02`
+
+**Analysis tools:**
+```bash
+python bin/analysis/player_deep_dive.py PLAYER_LOOKUP [--seasons N] [--output PATH]  # 9-module player analysis
+python bin/analysis/edge_calibration.py          # Edge vs HR calibration
+python bin/analysis/model_correlation.py         # Inter-model agreement
+```
 
 **Slack:** `#deployment-alerts` (2h), `#canary-alerts` (30min), `#nba-alerts` (self-healing, grading, decay)
 

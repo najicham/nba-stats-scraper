@@ -266,7 +266,7 @@ def build_default_registry() -> SignalRegistry:
     registry.register(MinutesLoadOverSignal())
     registry.register(BlowoutRiskUnderSignal())
 
-    # Session 413: Mean reversion UNDER (shadow mode — strongest UNDER signal found)
+    # Session 413/417: Mean reversion UNDER — promoted to active (rescue + UNDER weight)
     # 77.8% HR (N=212), stable all months. Hot streak regression.
     from ml.signals.mean_reversion_under import MeanReversionUnderSignal
     registry.register(MeanReversionUnderSignal())

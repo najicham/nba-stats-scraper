@@ -51,7 +51,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v415_rescue_tighten'
+ALGORITHM_VERSION = 'v417_mean_reversion_under'
 
 # Base signals that fire on nearly every edge 5+ pick. Picks with ONLY
 # these signals hit 57.1% (N=42) vs 77.8% for picks with 4+ signals.
@@ -65,6 +65,7 @@ BASE_SIGNALS = frozenset({'model_health', 'high_edge', 'edge_spread_optimal'})
 # discriminator. Weights derived from backtest HR (higher HR = higher weight).
 UNDER_SIGNAL_WEIGHTS: Dict[str, float] = {
     'sharp_book_lean_under': 3.0,   # 84.7% HR (N=202)
+    'mean_reversion_under': 2.5,    # 77.8% HR (N=212, Session 413/417)
     'book_disagreement': 2.5,        # 93.0% HR (N=43)
     'bench_under': 2.0,              # 76.9% HR
     'home_under': 1.5,               # 63.9% HR
@@ -332,6 +333,7 @@ class BestBetsAggregator:
                     'book_disagreement', 'home_under',
                     'volatile_scoring_over',
                     'sharp_book_lean_over', 'sharp_book_lean_under',
+                    'mean_reversion_under',  # Session 417: 77.8% HR (N=212)
                 }
                 for r in signal_check:
                     if r.qualifies and r.source_tag in rescue_tags:
@@ -491,14 +493,16 @@ class BestBetsAggregator:
                 _record_filtered(pred, 'starter_v12_under', pred_edge)
                 continue
 
-            # Line jumped UNDER block (Session 294, lowered 306): 38.2% HR at 2.0 (N=272)
+            # Line jumped UNDER — DEMOTED to observation (Session 417)
+            # Was 38.2% HR (N=272, Session 294), but recent: 5/5 winners blocked.
+            # Now logs to filtered_picks for tracking but does NOT block.
             prop_line_delta = pred.get('prop_line_delta')
             if (prop_line_delta is not None
                     and prop_line_delta >= 2.0
                     and pred.get('recommendation') == 'UNDER'):
                 filter_counts['line_jumped_under'] += 1
-                _record_filtered(pred, 'line_jumped_under', pred_edge)
-                continue
+                _record_filtered(pred, 'line_jumped_under_obs', pred_edge)
+                # continue  # Session 417: observation only — do not block
 
             # Line dropped UNDER block (Session 294, lowered 306): 35.2% HR at 2.0 (N=108)
             if (prop_line_delta is not None

@@ -264,7 +264,7 @@ def compute_for_date(bq_client: bigquery.Client, target_date: date,
       WHERE bb.game_date BETWEEN DATE_SUB(@target_date, INTERVAL 21 DAY) AND @target_date
         AND bb.source_model_id IS NOT NULL
       GROUP BY bb.source_model_id
-    )
+    ),
     -- Session 399: Brier score calibration tracking.
     -- Measures calibration quality: how well the model's implied edge maps to
     -- actual win probability. Lower = better calibrated. Formula:

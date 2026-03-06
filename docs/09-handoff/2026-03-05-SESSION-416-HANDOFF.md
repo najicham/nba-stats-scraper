@@ -97,24 +97,93 @@ The code changes are deployed to main but the Cloud Function won't pick them up 
 
 ---
 
-## Priority 1: Grade Mar 5 (Next Session)
+## Session 416b: Full System Investigation (same day, later)
 
-Mar 5 games are tonight (9 games). Run the grading queries from Session 415 handoff Priority 1.
+### Investigation 1: Filter Counterfactual Analysis
 
-Key questions:
-- Did the v415 rescue tightening reduce rescued picks? (first full slate under new algorithm)
-- Signal rescue cumulative HR at N=9+ (was 3-3 at N=6)
-- Rescued picks are all OVER — is the OVER rescue problem getting better?
+**CRITICAL: Filters are currently blocking winners at a higher rate than losers.**
 
-## Priority 2: Signal Rescue Evaluation (Mar 10+)
+| Category | N | HR% |
+|----------|---|-----|
+| Blocked picks | 24 | 70.8% |
+| Passed picks | 126 | 65.9% |
 
-At N=15 rescued picks:
-- HR < 55% → tighten further (raise to 3+ real signals for stack rescue)
-- HR > 60% → current tightening is working
+Worst offenders blocking winners:
+- `line_jumped_under`: 5-0 (100% HR blocked winners) — **most harmful filter**
+- `over_edge_floor`: 3-0 (100%)
+- `bench_under`: 2-0 (100%)
 
-## Priority 3: Monitoring Review (Mar 12)
+Working correctly:
+- `line_dropped_under`: 0-2 (correctly blocked losers)
 
-Rescue cap calibration check per Session 415 monitoring plan.
+**Caveat:** N=24, only 2 game days. Not statistically significant yet.
+
+**BUG FOUND:** `best_bets_filtered_picks` grading backfill from Session 414 is NOT working — `actual_points`/`prediction_correct` are all NULL. Agent had to manually join with `prediction_accuracy`.
+
+### Investigation 2: Mar 4 Loss Autopsy
+
+**Result: 4-4 (50.0% HR)**
+- OVER: 3-4 (42.9%) — 3 massive point misses (Joe 4pts/9.5 line, Sensabaugh 7/15.5, Scoot 8/13.5)
+- UNDER: 1-0 (100%) — KAT only UNDER pick, hit
+- Rescued: 3-3 (50%), Normal: 1-1 (50%) — rescue dominating 75% of slate
+- Filtered picks counterfactual: 8-2 (80%) — filters destroyed value this day
+- **UNDER starvation:** 7 UNDER picks filtered, 6 would have won
+
+### Investigation 3: Shadow Signal Evaluation
+
+**Too early — max graded N = 6.** No signals meet any promotion threshold.
+- `predicted_pace_over`: 3-3 (50%, N=6)
+- `dvp_favorable_over`: 1-0 (N=1)
+- `mean_reversion_under`: **NEVER FIRED** in production (0 rows). Needs wiring investigation.
+- 9 shadow signals have zero fires anywhere
+- Re-evaluate in 2-3 weeks (~15-20 game days)
+
+### Investigation 4: Handoff Commits
+
+Committed sessions 413-416: `61702c39`
+
+### Investigation 5: Fleet Health
+
+**17 of 25 "active" registry models are SILENT** — zero predictions in 14 days. Only 8 actually producing.
+
+| State | Enabled | Disabled |
+|-------|---------|----------|
+| HEALTHY | 1 | 3 |
+| WATCH | 0 | 1 |
+| DEGRADING | 0 | 2 |
+| BLOCKED | 0 | 19 |
+| INSUFFICIENT_DATA | 3 | 13 |
+
+**Dead families:** All quantile (q43/q45/q55/q57), all v9, v12_mae, v13 — zero enabled models.
+**Best retrain candidate:** `catboost_v9_low_vegas` — 72.7% edge5+ HR (N=22), 53.6% overall 30d HR.
+
+14d BB HR trend: 17-12 (58.6%). Volume critically low (~2 picks/day avg).
+
+---
+
+## Priority 1: Fix Filtered Picks Grading (BUG)
+
+`post_grading_export` is not backfilling `best_bets_filtered_picks`. This blocks all counterfactual analysis. Investigate the code path.
+
+## Priority 2: Investigate `line_jumped_under` Filter
+
+5-0 blocking winners. Monitor 1 more week → demote to observation if pattern holds.
+
+## Priority 3: Investigate 17 Silent Models
+
+Registry says 25 active, worker runs 8. Need to understand root cause (worker loading? feature store? registry config?).
+
+## Priority 4: Wire `mean_reversion_under`
+
+Session 413's strongest UNDER signal (77.8% backtest) has never fired. Given UNDER starvation, this is high-priority.
+
+## Priority 5: Consider Fresh Retrains
+
+Market compression GREEN (1.0). 56-day window now covers toxic+recovery. Retrain v12_noveg (MAE + q43) to revitalize fleet. Use `/model-experiment`.
+
+## Priority 6: Grade Mar 5 (Next Session)
+
+First full v415 slate. Watch `signal_stack_2plus_obs` and `high_spread_over` filter performance.
 
 ---
 
@@ -124,3 +193,4 @@ Rescue cap calibration check per Session 415 monitoring plan.
 - OVER still weak (52.9% 14d) but UNDER carrying (66.7%)
 - Autocorrelation model (r=0.43) predicts mean reversion after bad stretches
 - Apr 5+ experiment window for projection_delta + sharp_money
+- Filters need careful review — may be over-blocking UNDER winners

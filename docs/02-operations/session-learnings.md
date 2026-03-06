@@ -501,6 +501,16 @@ self.data["record_count"] = len(actions)
 4. `critical: false` scrapers need separate monitoring — they can fail for months undetected
 5. Direct `/scrape` route bypasses parameter resolver — per-game scrapers need workflow orchestration
 
+### win_flag Always FALSE in player_game_summary (Session 417)
+
+**Problem**: `player_game_summary.win_flag` is FALSE for ALL teams, ALL players, ALL seasons. Zero TRUE values in the entire table.
+
+**Impact**: Any analysis using win_flag returns wrong results (e.g., "0 wins" for every player).
+
+**Workaround**: Use `plus_minus > 0` as a proxy for wins. Applied in `bin/analysis/player_deep_dive.py`.
+
+**Status**: Not fixed at source. Root cause not investigated (likely Phase 3 processor never populates it correctly).
+
 ### Phase 3 All-or-Nothing Quality Rejection (Session 302)
 
 **Problem**: `TeamOffenseGameSummaryProcessor` quality check rejected ALL team records when ANY team had zeros (points=0, fg_attempted=0). On an 11-game night with 5 late games still in progress, the scraper wrote zero-value placeholders for 10 teams. The quality check rejected all 22 teams — even the 12 valid ones from 6 completed games. This cascaded: PlayerGameSummary blocked on empty team dependency → Phase 4/5/6 all failed.

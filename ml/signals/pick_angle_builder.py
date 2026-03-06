@@ -72,6 +72,8 @@ SIGNAL_ANGLE_MAP = {
     'sharp_money_over': "Sharp money (handle) on OVER while public tickets lean UNDER",
     'sharp_money_under': "Sharp money (handle) on UNDER while public tickets lean OVER",
     'minutes_surge_over': "RotoWire projects 3+ extra minutes — lineup-driven scoring upside",
+    # Session 417: mean reversion promoted to active
+    'mean_reversion_under': "Hot streak regression — 3-game avg well above line with steep upward trend (77.8% HR)",
 }
 
 # Warning tag → warning angle
