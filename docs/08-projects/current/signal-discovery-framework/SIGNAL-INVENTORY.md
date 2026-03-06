@@ -1,7 +1,7 @@
 # Signal Inventory — Complete List
 
 **Last Updated:** 2026-03-06 (Session 423)
-**Active Signals:** 28 (+ 25 shadow accumulating data)
+**Active Signals:** 28 (+ 26 shadow accumulating data)
 **Negative Filters:** 22 (+ 6 observation)
 **Combo Registry:** 11 SYNERGISTIC entries
 
@@ -71,7 +71,7 @@ Rescue tags: `combo_3way`, `combo_he_ms`, `book_disagreement` (72%), `home_under
 | `home_under` | UNDER | 63.9% | PRODUCTION | Session 371 |
 | `extended_rest_under` | UNDER | 61.8% | PRODUCTION | Session 372 |
 | `starter_under` | UNDER | 54.8-68.1% | PRODUCTION | Session 372 |
-| `sharp_book_lean_under` | UNDER | 84.7% | PRODUCTION | Session 399, soft books 1.5+ higher |
+| `sharp_book_lean_under` | UNDER | 84.7% backtest / 0 fires | PRODUCTION (dormant) | Session 399. Zero production fires — market regime: sharp books consistently set higher lines than soft. Weight demoted 3.0→1.0 (Session 423). |
 | `mean_reversion_under` | UNDER | 77.8% | PRODUCTION | Session 413, trend_slope>=2.0 + avg_3g>=line+2. First conviction UNDER signal. Rescue-eligible. |
 | `day_of_week_under` | UNDER | 59.4-60.3% | SHADOW | Session 414, Monday 60.3% (N=277), Thursday 59.4% (N=419) |
 | `sharp_line_drop_under` | UNDER | 87.5% | PRODUCTION | Session 382c. Now in UNDER_SIGNAL_WEIGHTS (2.5) since Session 422c |
@@ -157,6 +157,7 @@ Three new UNDER signals to fill the UNDER signal vacuum. 98.4% of model-level UN
 | `volatile_starter_under` | UNDER | line_value, f3 (points_std_last_10), edge | Starter (18-25) + volatile (std>8) + edge 5+. 65.5% HR (N=637). Monthly stable: Nov 63.6%, Dec 70.5%, Jan 61.9%, Feb 63.4%. |
 | `downtrend_under` | UNDER | f44 (trend_slope) | Slight downtrend (slope -1.5 to -0.5). 63.9% HR (N=1,654). Highest-volume UNDER segment. |
 | `star_favorite_under` | UNDER | line_value, f41 (spread_magnitude) | Star (line 25+) + team favored by 3+. ~73% HR (N=88). Blowout pull effect. |
+| `starter_away_overtrend_under` | UNDER | line_value, is_home, f55 (over_rate_last_10) | Starter (18-25) + AWAY + over_rate > 50%. 68.1% HR (N=213). Monthly stable. |
 
 ---
 
@@ -291,7 +292,8 @@ WITH shadow_picks AS (
     'positive_clv_over', 'positive_clv_under',
     'sharp_money_over', 'sharp_money_under', 'minutes_surge_over',
     'hot_form_over', 'consistent_scorer_over', 'over_trend_over',
-    'volatile_starter_under', 'downtrend_under', 'star_favorite_under')
+    'volatile_starter_under', 'downtrend_under', 'star_favorite_under',
+    'starter_away_overtrend_under')
     AND game_date >= '2026-03-05'
 )
 SELECT sp.signal_tag,

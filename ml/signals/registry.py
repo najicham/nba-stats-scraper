@@ -292,4 +292,9 @@ def build_default_registry() -> SignalRegistry:
     registry.register(DowntrendUnderSignal())
     registry.register(StarFavoriteUnderSignal())
 
+    # Session 423: Starter away overtrend UNDER (shadow mode)
+    # Starter (18-25) + AWAY + over_rate > 50% = 68.1% HR (N=213), stable monthly
+    from ml.signals.starter_away_overtrend_under import StarterAwayOvertrendUnderSignal
+    registry.register(StarterAwayOvertrendUnderSignal())
+
     return registry

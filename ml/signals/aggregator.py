@@ -69,12 +69,13 @@ BASE_SIGNALS = frozenset({
 # UNDER edge is flat at 52-53% across all buckets — signals are the quality
 # discriminator. Weights derived from backtest HR (higher HR = higher weight).
 UNDER_SIGNAL_WEIGHTS: Dict[str, float] = {
-    'sharp_book_lean_under': 3.0,   # 84.7% HR (N=202)
+    'sharp_book_lean_under': 1.0,   # Session 423: demoted 3.0→1.0. 84.7% backtest but ZERO production fires — market regime makes negative lean nonexistent
     'mean_reversion_under': 2.5,    # 77.8% HR (N=212, Session 413/417)
     'sharp_line_drop_under': 2.5,   # Session 422c: 87.5% HR (N=8) — already fires, now weighted
     'book_disagreement': 2.5,        # 93.0% HR (N=43)
     'bench_under': 2.0,              # 76.9% HR
     'home_under': 2.0,               # Session 422c: boosted from 1.5. 60.6% HR (N=4,253) model-level
+    'starter_away_overtrend_under': 1.5,  # Session 423: 68.1% HR (N=213), monthly stable, shadow
     'extended_rest_under': 1.5,      # 61.8% HR
     'volatile_starter_under': 1.5,   # Session 422c: 65.5% HR (N=637), shadow
     'downtrend_under': 1.5,          # Session 422c: 63.9% HR (N=1,654), shadow

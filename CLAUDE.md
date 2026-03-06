@@ -301,7 +301,7 @@ python bin/analysis/model_correlation.py         # Inter-model agreement
 
 ## Signal System [Keyword: SIGNALS]
 
-**28 active signals + 25 shadow signals** (24 removed/disabled). **22 negative filters + 6 observation.**
+**28 active signals + 26 shadow signals** (24 removed/disabled). **22 negative filters + 6 observation.**
 **Full inventory:** `docs/08-projects/current/signal-discovery-framework/SIGNAL-INVENTORY.md`
 
 **Best Bets Pipeline:** `edge 3+ (or signal rescue) → negative filters → signal_count ≥ 3 → real_sc gate → rank by edge (OVER) or signal quality (UNDER)`
@@ -309,10 +309,10 @@ python bin/analysis/model_correlation.py         # Inter-model agreement
 **Key concepts:**
 - `real_sc` = non-base signal count. Base signals (model_health, high_edge, edge_spread_optimal, blowout_recovery, starter_under, blowout_risk_under) inflate SC to 3 with zero value. All SC gates use `real_sc`.
 - **Signal rescue** (Session 398): Picks bypass edge floors via validated high-HR signals or 2+ real signals. Tags: `combo_3way`, `combo_he_ms`, `book_disagreement`, `sharp_book_lean_*`, `mean_reversion_under`, etc.
-- **UNDER ranking** is signal-first (Session 400): UNDER edge is flat at 52-53% — meaningless for ranking. Weighted signal quality scores rank UNDER. 10 weighted UNDER signals in `UNDER_SIGNAL_WEIGHTS`.
-- **Shadow signals** (Sessions 401-423): projection_consensus, predicted_pace, dvp_favorable, CLV, sharp_money, minutes_surge, hot_form, consistent_scorer, over_trend, usage_surge, scoring_momentum, career_matchup, minutes_load, blowout_risk, volatile_starter_under, downtrend_under, star_favorite_under — accumulating data.
+- **UNDER ranking** is signal-first (Session 400): UNDER edge is flat at 52-53% — meaningless for ranking. Weighted signal quality scores rank UNDER. 11 weighted UNDER signals in `UNDER_SIGNAL_WEIGHTS`.
+- **Shadow signals** (Sessions 401-423): projection_consensus, predicted_pace, dvp_favorable, CLV, sharp_money, minutes_surge, hot_form, consistent_scorer, over_trend, usage_surge, scoring_momentum, career_matchup, minutes_load, blowout_risk, volatile_starter_under, downtrend_under, star_favorite_under, starter_away_overtrend_under — accumulating data.
 
-**Top signals by HR:** `combo_3way` 95.5%, `combo_he_ms` 94.9%, `line_rising_over` 96.6%, `book_disagreement` 93.0%, `sharp_book_lean_under` 84.7%, `fast_pace_over` 81.5%
+**Top signals by HR:** `combo_3way` 95.5%, `combo_he_ms` 94.9%, `line_rising_over` 96.6%, `book_disagreement` 93.0%, `sharp_line_drop_under` 87.5%, `fast_pace_over` 81.5%
 
 **Pick Angles:** Each pick includes `pick_angles` — human-readable reasoning. See `ml/signals/pick_angle_builder.py`.
 
