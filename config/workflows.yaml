@@ -296,6 +296,33 @@ workflows:
     alerts:
       missing_games: "WARNING"  # Some games may still be in progress
 
+  # Session 417 (2026-03-05): Added same-night collection window.
+  # Most East Coast games (7:30 PM ET start) finish by ~10 PM ET.
+  # This window at 11:30 PM ET captures completed box scores same-night,
+  # closing the gap between post_game_window_1 (10 PM, games still live)
+  # and post_game_window_2 (1 AM). No gamebook PDF — not available yet.
+  # Phase 2→3 auto-triggers via Pub/Sub after raw processing.
+  post_game_window_1b:
+    enabled: true
+    priority: "HIGH"
+    decision_type: "game_aware_yesterday"
+    description: "Same-night box score collection - 11:30 PM ET (East Coast/Central games complete)"
+
+    schedule:
+      game_aware: true
+      target_date: "yesterday"
+      fixed_time: "23:30"  # 11:30 PM ET
+      tolerance_minutes: 30  # Execute 11 PM - midnight
+
+    execution_plan:
+      type: "parallel"
+      scrapers:
+        - nbac_schedule_api       # Update game_status to Final
+        - nbac_player_boxscore    # Box scores (leaguegamelog API, available right after game)
+
+    alerts:
+      missing_games: "WARNING"  # West Coast games may still be in progress
+
   post_game_window_2:
     enabled: true
     priority: "HIGH"
