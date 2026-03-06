@@ -60,8 +60,9 @@ ALGORITHM_VERSION = 'v422_filter_rebalance'
 # profitable picks from marginal ones.
 BASE_SIGNALS = frozenset({
     'model_health', 'high_edge', 'edge_spread_optimal',
-    'blowout_recovery',   # Session 419: 20% BB HR (1-4), demoted — still fires for tracking
-    'starter_under',      # Session 419: 38.7% signal HR (N=31), demoted
+    'blowout_recovery',   # Session 422: 20% BB HR (1-4), demoted — still fires for tracking
+    'starter_under',      # Session 422: 38.7% signal HR (N=31), demoted
+    'blowout_risk_under', # Session 422b: 16.7% HR (N=12), inflating SC on bad picks
 })
 
 # Session 400: UNDER signal quality weights for signal-first ranking.
@@ -882,7 +883,7 @@ class BestBetsAggregator:
         if filter_counts.get('signal_rescue', 0) > 0:
             logger.info(f"Signal rescue: rescued {filter_counts['signal_rescue']} picks below edge floor via high-HR signals")
         if filter_counts['over_edge_floor'] > 0:
-            logger.info(f"OVER edge floor (5.0): skipped {filter_counts['over_edge_floor']} OVER picks with edge < 5.0")
+            logger.info(f"OVER edge floor (3.0): skipped {filter_counts['over_edge_floor']} OVER picks with edge < 3.0")
         if filter_counts['under_edge_7plus'] > 0:
             logger.info(f"UNDER edge 7+ block: skipped {filter_counts['under_edge_7plus']} predictions")
         if filter_counts['model_direction_affinity'] > 0:
@@ -943,7 +944,7 @@ class BestBetsAggregator:
                 f"{filter_counts['model_profile_would_block']} predictions"
             )
         if filter_counts['regime_over_floor'] > 0:
-            over_floor = 5.0 + self._regime_context.get('over_edge_floor_delta', 0)
+            over_floor = 3.0 + self._regime_context.get('over_edge_floor_delta', 0)
             logger.info(
                 f"Regime OVER floor ({over_floor}): skipped "
                 f"{filter_counts['regime_over_floor']} OVER picks "

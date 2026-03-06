@@ -416,6 +416,16 @@ class SignalBestBetsExporter(BaseExporter):
                 'n_models_eligible': pick.get('n_models_eligible', 0),
                 'champion_edge': pick.get('champion_edge'),
                 'direction_conflict': pick.get('direction_conflict', False),
+                # Session 422b: Fields that were in BQ write but missing from pick_dict
+                'under_signal_quality': pick.get('under_signal_quality'),
+                'model_hr_weight': pick.get('model_hr_weight'),
+                'trend_slope': pick.get('trend_slope'),
+                'spread_magnitude': pick.get('spread_magnitude'),
+                'player_tier': pick.get('player_tier'),
+                'tier_edge_cap_delta': pick.get('tier_edge_cap_delta'),
+                'capped_composite_score': pick.get('capped_composite_score'),
+                'compression_ratio': pick.get('compression_ratio'),
+                'compression_scaled_edge': pick.get('compression_scaled_edge'),
                 'actual': None,
                 'result': None,
             }
@@ -754,11 +764,16 @@ class SignalBestBetsExporter(BaseExporter):
                 # Ultra Bets (Session 326)
                 'ultra_tier': pick.get('ultra_tier', False),
                 'ultra_criteria': json.dumps(pick.get('ultra_criteria', []), default=str),
-                # Session 414: Additional pick context for analysis
+                # Session 414/422b: Additional pick context for analysis
                 'under_signal_quality': pick.get('under_signal_quality'),
                 'model_hr_weight': pick.get('model_hr_weight'),
                 'trend_slope': pick.get('trend_slope'),
                 'spread_magnitude': pick.get('spread_magnitude'),
+                'player_tier': pick.get('player_tier'),
+                'tier_edge_cap_delta': pick.get('tier_edge_cap_delta'),
+                'capped_composite_score': pick.get('capped_composite_score'),
+                'compression_ratio': pick.get('compression_ratio'),
+                'compression_scaled_edge': pick.get('compression_scaled_edge'),
                 'created_at': datetime.now(timezone.utc).isoformat(),
             })
 
