@@ -507,14 +507,9 @@ class BestBetsAggregator:
                 _record_filtered(pred, 'med_usage_under', pred_edge)
                 continue
 
-            # Starter V12 UNDER block (Session 355): 46.7% HR (N=30)
-            # V12 UNDER specifically bad for 15-20 line range (starter tier).
-            if (pred.get('recommendation') == 'UNDER'
-                    and 15 <= season_avg < 20
-                    and source_family.startswith('v12')):
-                filter_counts['starter_v12_under'] += 1
-                _record_filtered(pred, 'starter_v12_under', pred_edge)
-                continue
+            # starter_v12_under REMOVED (Session 422b): Dead filter — zero fires
+            # across entire season. startswith('v12') missed lgbm/xgb models,
+            # and season_avg vs line_value mismatch meant no picks matched.
 
             # Line jumped UNDER — DEMOTED to observation (Session 417)
             # Was 38.2% HR (N=272, Session 294), but recent: 5/5 winners blocked.
@@ -893,8 +888,7 @@ class BestBetsAggregator:
             logger.info(f"UNDER Star AWAY (observation): tagged {filter_counts['under_star_away']} picks (line≥23, away)")
         if filter_counts['med_usage_under'] > 0:
             logger.info(f"Medium teammate usage UNDER block: skipped {filter_counts['med_usage_under']} predictions")
-        if filter_counts['starter_v12_under'] > 0:
-            logger.info(f"Starter V12 UNDER block (15-20 line): skipped {filter_counts['starter_v12_under']} predictions")
+        # starter_v12_under removed Session 422b (dead filter, zero fires)
         if filter_counts['starter_over_sc_floor'] > 0:
             logger.info(f"Starter OVER SC floor: skipped {filter_counts['starter_over_sc_floor']} OVER picks (line 15-25, SC < 4)")
         # sc3_edge_floor retained for schema continuity — subsumed by edge-tiered SC (Session 388)

@@ -591,9 +591,9 @@ class TestMedTeammateUsageUnderBlock:
 # ============================================================================
 
 class TestStarterV12UnderBlock:
-    """Test that V12 UNDER + season_avg 15-20 is blocked (Session 355).
+    """Test that V12 UNDER + season_avg 15-20 is NO LONGER blocked (Session 422b).
 
-    V12 UNDER is specifically bad for 15-20 line range: 46.7% HR (N=30).
+    Filter removed: zero fires across entire season (dead filter).
     """
 
     def _make_signal_results_for(self, pred, n_qualifying=5):
@@ -601,8 +601,8 @@ class TestStarterV12UnderBlock:
         signals = [_make_signal_result(f'signal_{i}') for i in range(n_qualifying)]
         return {key: signals}
 
-    def test_starter_v12_under_blocked(self):
-        """V12 UNDER + season_avg=17 is blocked."""
+    def test_starter_v12_under_now_allowed(self):
+        """V12 UNDER + season_avg=17 now passes (filter removed Session 422b)."""
         pred = _make_prediction(
             recommendation='UNDER',
             points_avg_season=17,
@@ -611,8 +611,8 @@ class TestStarterV12UnderBlock:
         signals = self._make_signal_results_for(pred)
         agg = BestBetsAggregator()
         picks, summary = agg.aggregate([pred], signals)
-        assert len(picks) == 0
-        assert summary['rejected']['starter_v12_under'] == 1
+        assert len(picks) == 1
+        assert summary['rejected']['starter_v12_under'] == 0
 
     def test_starter_v9_under_allowed(self):
         """V9 UNDER + season_avg=17 passes (only V12 is blocked)."""
