@@ -128,8 +128,10 @@ class TestAggregatorReturnType:
             'toxic_starter_over_would_block', 'toxic_star_over_would_block',
             'regime_over_floor', 'regime_rescue_blocked',
             'high_spread_over_would_block', 'flat_trend_under',
+            'under_after_streak',
             'mid_line_over_obs', 'monday_over_obs', 'home_over_obs',
             'signal_stack_2plus_obs', 'rescue_cap',
+            'unreliable_over_low_mins_obs', 'unreliable_under_flat_trend_obs',
         }
         assert set(summary['rejected'].keys()) == expected_keys
         # All counts should be 0 for empty input

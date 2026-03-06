@@ -17,7 +17,7 @@
 
 **Signal Rescue (Session 398):** Picks below edge 3.0 (or OVER below 5.0) bypass edge floors if they have a validated high-HR signal or 2+ real signals. Tracked via `signal_rescued` + `rescue_signal` in BQ.
 
-Rescue tags: `combo_3way`, `combo_he_ms`, `book_disagreement` (72%), `home_under` (75%), `volatile_scoring_over` (66.7%), `sharp_book_lean_over` (70.3%), `sharp_book_lean_under` (84.7%). Signal stacking: 2+ real signals = 62.2% HR (N=45). Session 415: removed `low_line_over` and `high_scoring_environment_over` from rescue (underperforming at BB level).
+Rescue tags: `combo_3way`, `combo_he_ms`, `book_disagreement` (72%), `home_under` (75%), `volatile_scoring_over` (66.7%), `high_scoring_environment_over` (71.4%), `sharp_book_lean_over` (70.3%), `sharp_book_lean_under` (84.7%), `mean_reversion_under` (77.8%). Signal stacking: 2+ real signals = 62.2% HR (N=45). Session 415: removed `low_line_over` from rescue. Session 420: restored `high_scoring_environment_over` (71.4% HR, 3-0 Mar 5; removal killed OVER pipeline).
 
 **Rescue Cap (Session 415):** Maximum percentage of picks that can be rescue-sourced per slate. Prevents rescue from dominating when edge compression makes most picks low-edge. Threshold: 40% of total picks. Excess rescue picks are dropped by weakest rescue signal.
 

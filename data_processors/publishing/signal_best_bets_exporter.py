@@ -297,9 +297,13 @@ class SignalBestBetsExporter(BaseExporter):
         }
 
         # Step 5e: Regime context — yesterday's BB HR autocorrelation (Session 412)
-        from ml.signals.regime_context import get_regime_context
+        from ml.signals.regime_context import get_regime_context, get_market_compression
         regime_ctx = get_regime_context(self.bq_client, target_date)
         logger.info(f"Regime: {regime_ctx['regime_state']} (yesterday HR={regime_ctx.get('yesterday_bb_hr')})")
+
+        # Session 421: Market compression detector (observation mode)
+        compression_ctx = get_market_compression(self.bq_client, target_date)
+        regime_ctx['market_compression'] = compression_ctx
 
         # Step 6: Aggregate to top picks (with combo registry + signal health weighting + consensus)
         combo_registry = load_combo_registry(bq_client=self.bq_client)

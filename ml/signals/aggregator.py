@@ -51,7 +51,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v417_mean_reversion_under'
+ALGORITHM_VERSION = 'v421_edge_confidence_obs'
 
 # Base signals that fire on nearly every edge 5+ pick. Picks with ONLY
 # these signals hit 57.1% (N=42) vs 77.8% for picks with 4+ signals.
@@ -86,6 +86,17 @@ HEALTH_MULTIPLIERS = {
     'HOT': 1.2,
     'NORMAL': 1.0,
     'COLD': 0.5,
+}
+
+# Session 421: Player-tier edge caps (observation mode).
+# Bench/role players at high edge = severe overconfidence during toxic windows.
+# Bench edge 7+: 34.1% HR (N=91). Role edge 7+: 43.1% HR (N=72).
+# For OVER ranking only. Caps effective edge used in composite_score.
+TIER_EDGE_CAPS = {
+    'bench': 5.0,     # line < 12: 34.1% HR at edge 7+ (N=91)
+    'role': 6.0,      # line 12-17.5: 43.1% HR at edge 7+ (N=72)
+    'starter': None,   # line 18-24.5: uncapped (63.2% HR)
+    'star': None,      # line 25+: uncapped
 }
 
 
@@ -217,6 +228,8 @@ class BestBetsAggregator:
             'home_over_obs': 0,
             'signal_stack_2plus_obs': 0,
             'rescue_cap': 0,
+            'unreliable_over_low_mins_obs': 0,
+            'unreliable_under_flat_trend_obs': 0,
         }
 
         # Session 393: Counterfactual tracking — log filtered-out picks so we
@@ -326,13 +339,15 @@ class BestBetsAggregator:
                 # - high_scoring_environment_over: 100% HR at edge 3-5 (N=7)
                 # - sharp_book_lean_over: 70.3% HR (N=508, Session 399)
                 # - sharp_book_lean_under: 84.7% HR (N=202, Session 399)
-                # Session 415: Removed low_line_over (0% HR in rescued BB)
-                # and high_scoring_environment_over (most common rescue tag,
-                # dilutes slate during edge compression).
+                # Session 415: Removed low_line_over (0% HR in rescued BB).
+                # Session 420: Restored high_scoring_environment_over —
+                # 71.4% HR (5-7) overall, 3-0 on Mar 5. Removal killed
+                # OVER pipeline (0 OVER picks at edge 5+ on Mar 6).
                 rescue_tags = {
                     'combo_3way', 'combo_he_ms',
                     'book_disagreement', 'home_under',
                     'volatile_scoring_over',
+                    'high_scoring_environment_over',  # Session 420: restored (71.4% HR)
                     'sharp_book_lean_over', 'sharp_book_lean_under',
                     'mean_reversion_under',  # Session 417: 77.8% HR (N=212)
                 }
@@ -662,6 +677,26 @@ class BestBetsAggregator:
                 _record_filtered(pred, 'home_over_obs', pred_edge)
                 # Observation mode — do NOT continue/filter
 
+            # Session 421: Feature-based unreliable high-edge observation.
+            # Wrong OVER fingerprint: edge 5+ + low minutes_load (<45).
+            # Wrong UNDER fingerprint: edge 5+ + high minutes_load (>58) + flat trend.
+            if pred_edge >= 5.0:
+                mins_load = pred.get('minutes_load_7d') or 0
+                t_slope = pred.get('trend_slope') or 0
+
+                if (pred.get('recommendation') == 'OVER'
+                        and mins_load > 0 and mins_load < 45):
+                    filter_counts['unreliable_over_low_mins_obs'] += 1
+                    _record_filtered(pred, 'unreliable_over_low_mins_obs', pred_edge)
+                    # Observation only — do NOT block
+
+                elif (pred.get('recommendation') == 'UNDER'
+                        and mins_load > 58
+                        and -0.3 <= t_slope <= 0.3):
+                    filter_counts['unreliable_under_flat_trend_obs'] += 1
+                    _record_filtered(pred, 'unreliable_under_flat_trend_obs', pred_edge)
+                    # Observation only — do NOT block
+
             # --- Model profile observation (Session 384) ---
             # Log what the per-model profile store WOULD block, without
             # actually filtering. Observation mode for Phase 1 validation.
@@ -783,6 +818,20 @@ class BestBetsAggregator:
             else:
                 composite_score = round(pred_edge, 4)
 
+            # Session 421: Player-tier edge cap observation.
+            # Classify tier by line, compute what composite_score WOULD be if capped.
+            # Observation only — composite_score is NOT changed for ranking.
+            tier = ('star' if line_val >= 25 else
+                    'starter' if line_val >= 18 else
+                    'role' if line_val >= 12 else 'bench')
+            cap = TIER_EDGE_CAPS.get(tier)
+            if cap and pred.get('recommendation') == 'OVER' and composite_score > cap:
+                capped_composite = round(cap, 4)
+                tier_cap_delta = round(composite_score - capped_composite, 2)
+            else:
+                capped_composite = composite_score
+                tier_cap_delta = 0.0
+
             # Qualifying subsets (Session 279)
             player_subsets = self._qualifying_subsets.get(key, [])
             subsets_for_storage = [
@@ -799,6 +848,9 @@ class BestBetsAggregator:
                 'rescue_signal': rescue_signal,
                 'composite_score': composite_score,
                 'under_signal_quality': under_signal_quality,
+                'player_tier': tier,
+                'tier_edge_cap_delta': tier_cap_delta,
+                'capped_composite_score': capped_composite,
                 'matched_combo_id': matched.combo_id if matched else None,
                 'combo_classification': matched.classification if matched else None,
                 'combo_hit_rate': matched.hit_rate if matched else None,
@@ -917,6 +969,36 @@ class BestBetsAggregator:
                 f"Rescue cap: dropped {filter_counts['rescue_cap']} lowest-edge rescued picks "
                 f"to keep rescue ≤ 40% of slate"
             )
+        if filter_counts['unreliable_over_low_mins_obs'] > 0:
+            logger.info(
+                f"Unreliable OVER low mins (observation): tagged "
+                f"{filter_counts['unreliable_over_low_mins_obs']} edge 5+ OVER picks with minutes_load < 45"
+            )
+        if filter_counts['unreliable_under_flat_trend_obs'] > 0:
+            logger.info(
+                f"Unreliable UNDER flat trend (observation): tagged "
+                f"{filter_counts['unreliable_under_flat_trend_obs']} edge 5+ UNDER picks with high mins + flat trend"
+            )
+
+        # Session 421: Tier edge cap observation summary
+        capped_count = sum(1 for p in scored if p.get('tier_edge_cap_delta', 0) > 0)
+        if capped_count:
+            logger.info(f"Tier edge cap (observation): {capped_count} picks would be re-ranked")
+
+        # Session 421: Market compression observation
+        compression = self._regime_context.get('market_compression', {})
+        compression_ratio = compression.get('compression_ratio')
+        if compression_ratio is not None:
+            if compression_ratio < 0.70:
+                high_edge = [p for p in scored if p.get('composite_score', 0) >= 5.0]
+                logger.info(f"Market compression RED ({compression_ratio}): {len(high_edge)} edge 5+ picks")
+                for p in high_edge:
+                    p['compression_ratio'] = compression_ratio
+                    p['compression_scaled_edge'] = round(p.get('composite_score', 0) * compression_ratio, 2)
+            else:
+                # Store ratio on all picks for tracking even in GREEN/YELLOW
+                for p in scored:
+                    p['compression_ratio'] = compression_ratio
 
         # --- Calendar regime observation (Session 396) ---
         # Detect regime once per aggregate() call. Log picks that WOULD be
