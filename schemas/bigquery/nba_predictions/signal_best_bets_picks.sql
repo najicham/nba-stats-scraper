@@ -78,6 +78,13 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.signal_best_bets_
   trend_slope FLOAT64,                      -- Player scoring trend slope (feature 44)
   spread_magnitude FLOAT64,                 -- Game spread magnitude (feature 41)
 
+  -- Edge overconfidence observation (Session 421)
+  player_tier STRING,                        -- bench/role/starter/star based on line value
+  tier_edge_cap_delta FLOAT64,               -- How much composite would drop if capped
+  capped_composite_score FLOAT64,            -- Composite score after tier cap applied
+  compression_ratio FLOAT64,                 -- 7d/30d P90 edge ratio (market compression)
+  compression_scaled_edge FLOAT64,           -- composite * compression_ratio (RED only)
+
   -- Bet sizing (planned, not yet implemented)
   bet_size_units FLOAT64,
   bet_size_tier STRING,
