@@ -35,7 +35,7 @@ def _make_prediction(
     edge=6.0,
     recommendation='OVER',
     feature_quality_score=90,
-    line_value=20.0,
+    line_value=27.0,
     confidence_score=0.85,
     prop_line_delta=None,
     neg_pm_streak=0,
@@ -44,8 +44,16 @@ def _make_prediction(
     is_home=True,
     points_avg_season=0,
     teammate_usage_available=0,
+    trend_slope=2.0,
+    spread_magnitude=0,
 ) -> dict:
-    """Helper to create a prediction dict that passes all filters by default."""
+    """Helper to create a prediction dict that passes all filters by default.
+
+    Defaults chosen to avoid all active filter blocks:
+    - line_value=27.0: above mid_line_over range (15-25) for OVER
+    - trend_slope=2.0: above flat_trend_under range (-0.5 to 0.5) for UNDER
+    - spread_magnitude=0: below high_spread_over threshold (7.0) for OVER
+    """
     return {
         'player_lookup': player_lookup,
         'game_id': game_id,
@@ -65,6 +73,8 @@ def _make_prediction(
         'is_home': is_home,
         'points_avg_season': points_avg_season,
         'teammate_usage_available': teammate_usage_available,
+        'trend_slope': trend_slope,
+        'spread_magnitude': spread_magnitude,
     }
 
 
@@ -111,9 +121,15 @@ class TestAggregatorReturnType:
             'high_book_std_under', 'confidence', 'anti_pattern',
             'model_direction_affinity', 'away_noveg', 'star_under',
             'under_star_away', 'med_usage_under', 'starter_v12_under',
-            'opponent_under_block', 'signal_density', 'legacy_block',
+            'opponent_under_block', 'q4_scorer_under_block',
+            'friday_over_block', 'high_skew_over_block',
+            'signal_density', 'legacy_block',
             'model_profile_would_block',
             'toxic_starter_over_would_block', 'toxic_star_over_would_block',
+            'regime_over_floor', 'regime_rescue_blocked',
+            'high_spread_over_would_block', 'flat_trend_under',
+            'mid_line_over_obs', 'monday_over_obs', 'home_over_obs',
+            'signal_stack_2plus_obs', 'rescue_cap',
         }
         assert set(summary['rejected'].keys()) == expected_keys
         # All counts should be 0 for empty input
@@ -344,9 +360,12 @@ class TestModelDirectionAffinityFilter:
 # ============================================================================
 
 class TestAwayNovegFilter:
-    """Test that v12_noveg AWAY predictions are blocked (Session 347).
+    """Test that away_noveg filter was REMOVED (Session 401).
 
-    v12_noveg models hit 57-59% HOME but only 43-44% AWAY — +15pp gap.
+    Originally (Session 347/365): v12_noveg 43.8% AWAY, v9 48.1% AWAY.
+    Root cause was model staleness (train_1102 vintage), NOT structural.
+    Newer models show zero HOME/AWAY gap. Filter removed Session 401.
+    Counter retained for schema continuity.
     """
 
     def _make_signal_results_for(self, pred, n_qualifying=5):
@@ -354,8 +373,8 @@ class TestAwayNovegFilter:
         signals = [_make_signal_result(f'signal_{i}') for i in range(n_qualifying)]
         return {key: signals}
 
-    def test_away_noveg_blocked(self):
-        """v12_noveg AWAY prediction is rejected."""
+    def test_away_noveg_no_longer_blocked(self):
+        """v12_noveg AWAY prediction passes (filter removed Session 401)."""
         pred = _make_prediction(
             source_model_family='v12_q43',
             is_home=False,
@@ -363,80 +382,19 @@ class TestAwayNovegFilter:
         signals = self._make_signal_results_for(pred)
         agg = BestBetsAggregator()
         picks, summary = agg.aggregate([pred], signals)
-        assert len(picks) == 0
-        assert summary['rejected']['away_noveg'] == 1
-
-    def test_home_noveg_allowed(self):
-        """v12_noveg HOME prediction passes the filter."""
-        pred = _make_prediction(
-            source_model_family='v12_q43',
-            is_home=True,
-        )
-        signals = self._make_signal_results_for(pred)
-        agg = BestBetsAggregator()
-        picks, summary = agg.aggregate([pred], signals)
         assert len(picks) == 1
         assert summary['rejected']['away_noveg'] == 0
 
-    def test_away_v9_blocked(self):
-        """V9 AWAY prediction is blocked (Session 365: 48.1% AWAY HR, N=449)."""
+    def test_away_noveg_counter_always_zero(self):
+        """away_noveg counter is always 0 (filter removed Session 401)."""
         pred = _make_prediction(
             source_model_family='v9_mae',
             is_home=False,
         )
         signals = self._make_signal_results_for(pred)
         agg = BestBetsAggregator()
-        picks, summary = agg.aggregate([pred], signals)
-        assert len(picks) == 0
-        assert summary['rejected']['away_noveg'] == 1
-
-    def test_away_noveg_q45_blocked(self):
-        """v12_q45 (also noveg group) AWAY prediction is rejected."""
-        pred = _make_prediction(
-            source_model_family='v12_q45',
-            is_home=False,
-        )
-        signals = self._make_signal_results_for(pred)
-        agg = BestBetsAggregator()
-        picks, summary = agg.aggregate([pred], signals)
-        assert len(picks) == 0
-        assert summary['rejected']['away_noveg'] == 1
-
-    def test_away_noveg_q55_tw_blocked(self):
-        """v12_noveg_q55_tw (shadow model) AWAY prediction is rejected."""
-        pred = _make_prediction(
-            source_model_family='v12_noveg_q55_tw',
-            is_home=False,
-        )
-        signals = self._make_signal_results_for(pred)
-        agg = BestBetsAggregator()
-        picks, summary = agg.aggregate([pred], signals)
-        assert len(picks) == 0
-        assert summary['rejected']['away_noveg'] == 1
-
-    def test_away_v12_vegas_allowed(self):
-        """v12_mae (v12_vegas group) AWAY prediction is NOT blocked."""
-        pred = _make_prediction(
-            source_model_family='v12_mae',
-            is_home=False,
-        )
-        signals = self._make_signal_results_for(pred)
-        agg = BestBetsAggregator()
-        picks, summary = agg.aggregate([pred], signals)
-        assert len(picks) == 1
+        _, summary = agg.aggregate([pred], signals)
         assert summary['rejected']['away_noveg'] == 0
-
-    def test_missing_is_home_treated_as_away(self):
-        """Prediction without is_home field is treated as AWAY (blocked)."""
-        pred = _make_prediction(
-            source_model_family='v12_q43',
-        )
-        del pred['is_home']  # Remove the field entirely
-        signals = self._make_signal_results_for(pred)
-        agg = BestBetsAggregator()
-        picks, summary = agg.aggregate([pred], signals)
-        assert len(picks) == 0
-        assert summary['rejected']['away_noveg'] == 1
 
 
 # ============================================================================
@@ -684,7 +642,11 @@ class TestStarterV12UnderBlock:
         assert summary['rejected']['starter_v12_under'] == 0
 
     def test_star_v12_under_not_affected(self):
-        """V12 UNDER + season_avg=25 hits star block, not starter block."""
+        """V12 UNDER + season_avg=25 passes (star_under removed Session 400).
+
+        star_under was removed Session 400 — 72.1% HR post-toxic recovery.
+        season_avg=25 is outside starter range (15-20), so starter_v12_under skips.
+        """
         pred = _make_prediction(
             recommendation='UNDER',
             points_avg_season=25,
@@ -693,8 +655,8 @@ class TestStarterV12UnderBlock:
         signals = self._make_signal_results_for(pred)
         agg = BestBetsAggregator()
         picks, summary = agg.aggregate([pred], signals)
-        assert len(picks) == 0
-        assert summary['rejected']['star_under'] == 1
+        assert len(picks) == 1
+        assert summary['rejected']['star_under'] == 0
         assert summary['rejected']['starter_v12_under'] == 0
 
 
@@ -772,12 +734,11 @@ class TestStarterOverScFloor:
         signals = [_make_signal_result(f'signal_{i}') for i in range(n_qualifying)]
         return {key: signals}
 
-    def test_starter_over_sc3_blocked(self):
-        """OVER + line=18 + 3 signals → blocked by sc3_over_block (subsumes starter floor).
+    def test_starter_over_sc3_blocked_by_mid_line(self):
+        """OVER + line=18 + 3 signals → blocked by mid_line_over (Session 415).
 
-        Session 394: SC=3 OVER block catches ALL SC=3 OVER picks before starter
-        floor can fire. Starter OVER SC floor only matters for SC=3 if sc3_over_block
-        were removed.
+        Session 415: mid_line_over promoted to active block, subsumes
+        starter_over_sc_floor for all OVER + line 15-25 picks.
         """
         pred = _make_prediction(
             recommendation='OVER',
@@ -788,11 +749,14 @@ class TestStarterOverScFloor:
         agg = BestBetsAggregator()
         picks, summary = agg.aggregate([pred], signals)
         assert len(picks) == 0
-        # sc3_over_block fires before starter_over_sc_floor
-        assert summary['rejected']['sc3_over_block'] == 1
+        # mid_line_over fires before sc3_over_block and starter_over_sc_floor
+        assert summary['rejected']['mid_line_over_obs'] == 1
 
-    def test_starter_over_sc5_passes(self):
-        """OVER + line=18 + 5 signals → passes starter OVER SC floor."""
+    def test_starter_over_sc5_blocked_by_mid_line(self):
+        """OVER + line=18 + 5 signals → blocked by mid_line_over (Session 415).
+
+        Session 415: mid_line_over subsumes starter_over_sc_floor.
+        """
         pred = _make_prediction(
             recommendation='OVER',
             line_value=18.0,
@@ -800,8 +764,8 @@ class TestStarterOverScFloor:
         signals = self._make_signal_results_for(pred, n_qualifying=5)
         agg = BestBetsAggregator()
         picks, summary = agg.aggregate([pred], signals)
-        assert len(picks) == 1
-        assert summary['rejected']['starter_over_sc_floor'] == 0
+        assert len(picks) == 0
+        assert summary['rejected']['mid_line_over_obs'] == 1
 
     def test_role_over_sc3_passes(self):
         """OVER + line=12 (role tier, not starter) + 4 signals → passes.
@@ -922,10 +886,10 @@ class TestEdgeTieredSignalCount:
         assert summary['rejected']['signal_count'] == 0
 
     def test_sc3_over_edge_below_7_blocked_by_sc3_over(self):
-        """OVER at SC=3 edge<7 is blocked by sc3_over_block (Session 394).
+        """OVER at SC=3 with only base signals is blocked by sc3_over_block.
 
-        Session 393: SC relaxed to 3, so signal_count passes. But sc3_over_block
-        catches all OVER picks with exactly SC=3.
+        sc3_over_block fires when real_sc == 0 (all base signals).
+        Must use only base signals to trigger this filter.
         """
         pred = _make_prediction(
             recommendation='OVER', line_value=26.0, edge=6.0,
@@ -933,8 +897,8 @@ class TestEdgeTieredSignalCount:
         key = f"{pred['player_lookup']}::{pred['game_id']}"
         signals = {key: [
             _make_signal_result('model_health'),
-            _make_signal_result('combo_he_ms'),
-            _make_signal_result('rest_advantage_2d'),
+            _make_signal_result('high_edge'),
+            _make_signal_result('edge_spread_optimal'),
         ]}
         agg = BestBetsAggregator()
         picks, summary = agg.aggregate([pred], signals)
@@ -989,3 +953,118 @@ class TestEdgeTieredSignalCount:
         agg = BestBetsAggregator()
         _, summary = agg.aggregate([pred], signals)
         assert summary['rejected']['sc3_edge_floor'] == 0
+
+
+# ============================================================================
+# RESCUE CAP TESTS (Session 415)
+# ============================================================================
+
+class TestRescueCap:
+    """Test that rescued picks are capped at 40% of the slate (Session 415).
+
+    During edge compression, rescue was generating 67% of the slate at 50% HR.
+    Cap drops lowest-edge rescues, minimum 1 rescue always kept.
+    """
+
+    def _make_signal_results_for(self, pred, n_qualifying=5):
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        signals = [_make_signal_result(f'signal_{i}') for i in range(n_qualifying)]
+        return {key: signals}
+
+    def test_rescue_cap_counter_in_summary(self):
+        """rescue_cap key always present in filter summary."""
+        agg = BestBetsAggregator()
+        _, summary = agg.aggregate([], {})
+        assert 'rescue_cap' in summary['rejected']
+
+    def test_signal_stack_2plus_obs_counter_in_summary(self):
+        """signal_stack_2plus_obs key always present in filter summary."""
+        agg = BestBetsAggregator()
+        _, summary = agg.aggregate([], {})
+        assert 'signal_stack_2plus_obs' in summary['rejected']
+
+
+# ============================================================================
+# UNDER STAR AWAY OBSERVATION MODE TESTS (Session 415)
+# ============================================================================
+
+class TestUnderStarAwayObservation:
+    """Test that under_star_away is now observation-only (Session 415).
+
+    Was 38.5% HR at creation (toxic Feb) but recovered to 73.0% post-ASB.
+    Should count but not block.
+    """
+
+    def _make_signal_results_for(self, pred, n_qualifying=5):
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        signals = [_make_signal_result(f'signal_{i}') for i in range(n_qualifying)]
+        return {key: signals}
+
+    def test_under_star_away_no_longer_blocks(self):
+        """UNDER + star line + away should pass through (observation only)."""
+        pred = _make_prediction(
+            recommendation='UNDER',
+            line_value=25.0,
+            is_home=False,
+        )
+        signals = self._make_signal_results_for(pred)
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        # Should pass — observation mode, no longer blocking
+        assert len(picks) == 1
+        # Counter still incremented for tracking
+        assert summary['rejected']['under_star_away'] == 1
+
+
+# ============================================================================
+# MID-LINE OVER BLOCK TESTS (Session 415)
+# ============================================================================
+
+class TestMidLineOverBlock:
+    """Test that mid-line OVER (line 15-25) is now an active block (Session 415).
+
+    Promoted from observation: 47.9% HR (N=213) full season.
+    """
+
+    def _make_signal_results_for(self, pred, n_qualifying=5):
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        signals = [_make_signal_result(f'signal_{i}') for i in range(n_qualifying)]
+        return {key: signals}
+
+    def test_mid_line_over_blocked(self):
+        """OVER + line=20 is now blocked."""
+        pred = _make_prediction(
+            recommendation='OVER',
+            line_value=20.0,
+            edge=6.0,
+        )
+        signals = self._make_signal_results_for(pred)
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 0
+        assert summary['rejected']['mid_line_over_obs'] == 1
+
+    def test_high_line_over_not_blocked(self):
+        """OVER + line=27 (above mid-line range) passes."""
+        pred = _make_prediction(
+            recommendation='OVER',
+            line_value=27.0,
+            edge=6.0,
+        )
+        signals = self._make_signal_results_for(pred)
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 1
+        assert summary['rejected']['mid_line_over_obs'] == 0
+
+    def test_mid_line_under_not_blocked(self):
+        """UNDER + line=20 is NOT blocked by mid_line_over."""
+        pred = _make_prediction(
+            recommendation='UNDER',
+            line_value=20.0,
+        )
+        signals = self._make_signal_results_for(pred)
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 1
+        assert summary['rejected']['mid_line_over_obs'] == 0

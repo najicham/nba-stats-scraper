@@ -71,6 +71,40 @@ GROUP BY 1;
 
 ### Due: ~Mar 12 (1 Week)
 
+#### 3b. Calibrate rescue cap threshold
+**Added:** Session 415 (Mar 5) | **Type:** Threshold calibration
+Rescue cap limits rescue-sourced picks to 40% of slate. Check if 40% is too aggressive (dropping good picks) or too lenient (still too many weak rescues).
+```sql
+-- Check how many picks are being capped per slate
+SELECT b.game_date,
+  COUNT(*) as total_picks,
+  COUNTIF(b.signal_rescued) as rescued,
+  ROUND(100.0 * COUNTIF(b.signal_rescued) / COUNT(*), 1) as rescue_pct,
+  ROUND(100.0 * COUNTIF(b.signal_rescued AND p.prediction_correct) /
+    NULLIF(COUNTIF(b.signal_rescued AND p.prediction_correct IS NOT NULL), 0), 1) as rescue_hr,
+  ROUND(100.0 * COUNTIF(NOT b.signal_rescued AND p.prediction_correct) /
+    NULLIF(COUNTIF(NOT b.signal_rescued AND p.prediction_correct IS NOT NULL), 0), 1) as normal_hr
+FROM nba_predictions.signal_best_bets_picks b
+LEFT JOIN nba_predictions.prediction_accuracy p
+  ON b.player_lookup = p.player_lookup AND b.game_date = p.game_date AND b.system_id = p.system_id
+WHERE b.game_date >= '2026-03-06'
+GROUP BY 1 ORDER BY 1;
+
+-- Check if any picks were dropped by the cap
+SELECT filter_reason, COUNT(*) as n,
+  COUNTIF(prediction_correct) as would_have_won,
+  ROUND(100.0 * COUNTIF(prediction_correct) / COUNT(*), 1) as hr
+FROM nba_predictions.best_bets_filtered_picks
+WHERE filter_reason = 'rescue_cap_exceeded'
+  AND prediction_correct IS NOT NULL AND game_date >= '2026-03-06'
+GROUP BY 1;
+```
+**Decision after 7 days:**
+- Rescue HR within 5pp of normal HR → 40% cap is fine
+- Rescue HR > 10pp below normal → tighten to 30%
+- Cap rarely triggers (rescue always < 40%) → cap is loose, fine as safety net
+- Cap drops picks that would have won > 55% → loosen to 50%
+
 #### 4. Counterfactual evaluation of new filters
 **Added:** Session 413 (Mar 5) | **Type:** Effectiveness check
 ```sql
@@ -133,36 +167,38 @@ WHERE tag = 'mean_reversion_under'
 - HR 55-65% → keep shadow, monitor another 2 weeks
 - HR < 55% → keep shadow, investigate discrepancy vs research
 
-#### 7. Spread observation filter evaluation (target N=50)
-**Added:** Session 413 (Mar 5) | **Type:** Filter activation decision
+#### 7. Remaining Session 414 observation filters evaluation (target N>=30 each)
+**Added:** Session 414 (Mar 5), updated Session 415 | **Type:** Filter activation decision
+**Note:** `high_spread_over` and `mid_line_over` promoted to active blocks in Session 415. Remaining observation filters below.
 ```sql
 SELECT filter_reason, COUNT(*) as n,
   COUNTIF(prediction_correct) as would_have_won,
   ROUND(100.0 * COUNTIF(prediction_correct) / COUNT(*), 1) as hr
 FROM nba_predictions.best_bets_filtered_picks
-WHERE filter_reason = 'high_spread_over_would_block'
-  AND prediction_correct IS NOT NULL AND game_date >= '2026-03-06'
-GROUP BY 1;
-```
-**Decision at N>=50:**
-- HR delta >= 10pp vs non-tagged OVER → promote to active negative filter
-- HR delta < 5pp → discard, effect was toxic window artifact
-
-#### 7b. Session 414 observation filters evaluation (target N>=30 each)
-**Added:** Session 414 (Mar 5) | **Type:** Filter activation decision
-```sql
-SELECT filter_reason, COUNT(*) as n,
-  COUNTIF(prediction_correct) as would_have_won,
-  ROUND(100.0 * COUNTIF(prediction_correct) / COUNT(*), 1) as hr
-FROM nba_predictions.best_bets_filtered_picks
-WHERE filter_reason IN ('mid_line_over_obs', 'monday_over_obs', 'home_over_obs')
+WHERE filter_reason IN ('monday_over_obs', 'home_over_obs')
   AND prediction_correct IS NOT NULL AND game_date >= '2026-03-06'
 GROUP BY 1;
 ```
 **Decision at N>=30 per filter:**
-- `mid_line_over_obs`: HR < 50% at BB → promote to active block. Research: 28-40% (N=12).
 - `monday_over_obs`: HR < 50% at BB → promote to active block. Research: 49.0% (N=251).
 - `home_over_obs`: HR < 50% at BB → promote to active block. Research: 49.7% (N=4,278).
+
+#### 7b. Review `under_star_away` observation data
+**Added:** Session 415 (Mar 5) | **Type:** Filter demotion review
+`under_star_away` demoted from active block to observation (recovered to 73% post-ASB, was 38.5% during toxic Feb).
+```sql
+SELECT filter_reason, COUNT(*) as n,
+  COUNTIF(prediction_correct) as would_have_won,
+  ROUND(100.0 * COUNTIF(prediction_correct) / COUNT(*), 1) as counterfactual_hr
+FROM nba_predictions.best_bets_filtered_picks
+WHERE filter_reason = 'under_star_away'
+  AND prediction_correct IS NOT NULL AND game_date >= '2026-03-06'
+GROUP BY 1;
+```
+**Decision at N>=15:**
+- Counterfactual HR > 60% → demotion was correct, keep observation
+- Counterfactual HR 50-60% → ambiguous, extend observation another 2 weeks
+- Counterfactual HR < 50% → re-activate as block, recovery was false
 
 ---
 
@@ -255,6 +291,8 @@ _Move items here when complete, with date and outcome._
 
 | # | Item | Resolved | Outcome |
 |---|------|----------|---------|
+| - | high_spread_over promotion (item #7) | Mar 5 | Session 415: Promoted to active block (filter #18). 44.3% HR at N=61. |
+| - | mid_line_over promotion (item #7b) | Mar 5 | Session 415: Promoted to active block (filter #19). 47.9% HR at N=213. |
 | - | Session 412 commit and deploy | Mar 5 | Committed + pushed. Auto-deployed. |
 | - | Worker crash fix (filter_reason=None) | Mar 5 | Fixed Session 407, deployed. |
 | - | v401 algorithm deployment | Mar 5 | Deployed with pick locking + regime context. |

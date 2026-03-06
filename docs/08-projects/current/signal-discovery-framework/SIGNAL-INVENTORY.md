@@ -1,8 +1,8 @@
 # Signal Inventory — Complete List
 
-**Last Updated:** 2026-03-05 (Session 411)
+**Last Updated:** 2026-03-05 (Session 415)
 **Active Signals:** 27 (+ 20 shadow accumulating data)
-**Negative Filters:** 17 (+ 2 shadow: `public_fade_filter`, `negative_clv_filter`)
+**Negative Filters:** 19 (+ 3 observation: `under_star_away`, `public_fade_filter`, `negative_clv_filter`)
 **Combo Registry:** 11 SYNERGISTIC entries
 
 ---
@@ -17,7 +17,11 @@
 
 **Signal Rescue (Session 398):** Picks below edge 3.0 (or OVER below 5.0) bypass edge floors if they have a validated high-HR signal or 2+ real signals. Tracked via `signal_rescued` + `rescue_signal` in BQ.
 
-Rescue tags: `combo_3way`, `combo_he_ms`, `book_disagreement` (72%), `home_under` (75%), `low_line_over` (66.7%), `volatile_scoring_over` (66.7%), `high_scoring_environment_over` (100% edge 3-5), `sharp_book_lean_over` (70.3%), `sharp_book_lean_under` (84.7%). Signal stacking: 2+ real signals = 62.2% HR (N=45).
+Rescue tags: `combo_3way`, `combo_he_ms`, `book_disagreement` (72%), `home_under` (75%), `volatile_scoring_over` (66.7%), `sharp_book_lean_over` (70.3%), `sharp_book_lean_under` (84.7%). Signal stacking: 2+ real signals = 62.2% HR (N=45). Session 415: removed `low_line_over` and `high_scoring_environment_over` from rescue (underperforming at BB level).
+
+**Rescue Cap (Session 415):** Maximum percentage of picks that can be rescue-sourced per slate. Prevents rescue from dominating when edge compression makes most picks low-edge. Threshold: 40% of total picks. Excess rescue picks are dropped by weakest rescue signal.
+
+**`signal_stack_2plus` demotion (Session 415):** Demoted from rescue qualification to observation-only. 50% HR at N=6 — thinnest quality tier with only 2 real signals. Still tracked in `pick_signal_tags` for monitoring.
 
 **UNDER ranking (Session 400):** Signal-first, not edge-first. UNDER edge is flat at 52-53% across ALL edge buckets — ranking by edge is meaningless for UNDER. Weighted signal quality score ranks UNDER picks.
 
@@ -150,7 +154,7 @@ Signals derived from feature store distributions. Discovered via toxic window an
 
 ---
 
-## Negative Filters (17)
+## Negative Filters (19)
 
 | # | Filter | Condition | HR | Session |
 |---|--------|-----------|-----|---------|
@@ -171,6 +175,16 @@ Signals derived from feature store distributions. Discovered via toxic window an
 | 15 | Q4 scorer UNDER block | UNDER + Q4_ratio >= 0.35 | 34.0% | 397 |
 | 16 | Friday OVER block | OVER + Friday | 37.5% | 398 |
 | 17 | High skew OVER block | OVER + mean_median_gap > 2.0 | 49.1% | 399 |
+| 18 | High spread OVER block | OVER + spread >= 7 | 44.3% | 415 |
+| 19 | Mid-line OVER block | OVER + line 15-25 | 47.9% | 415 |
+
+### Observation-Only Filters (3)
+
+| Filter | Condition | HR | Session | Notes |
+|--------|-----------|-----|---------|-------|
+| `under_star_away` | UNDER + line >= 23 + away | 73.0% post-ASB | 415 | Demoted from active block (was 38.5% during toxic Feb, recovered post-ASB). Review ~Mar 19. |
+| `public_fade_filter` | 80%+ public tickets OVER | — | 404 | VSiN data accumulating |
+| `negative_clv_filter` | CLV contradicts pick direction | — | 401 | CLV data accumulating |
 
 ---
 
@@ -194,7 +208,7 @@ Signals derived from feature store distributions. Discovered via toxic window an
 
 ---
 
-**Last Updated:** 2026-03-04, Session 410
+**Last Updated:** 2026-03-05, Session 415
 **Source of truth for active signals.** CLAUDE.md has a summary; this is the full reference.
 
 ### Shadow Signal Promotion Criteria

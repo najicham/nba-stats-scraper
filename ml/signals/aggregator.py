@@ -51,7 +51,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v414_observation_filters'
+ALGORITHM_VERSION = 'v415_rescue_tighten'
 
 # Base signals that fire on nearly every edge 5+ pick. Picks with ONLY
 # these signals hit 57.1% (N=42) vs 77.8% for picks with 4+ signals.
@@ -213,6 +213,8 @@ class BestBetsAggregator:
             'mid_line_over_obs': 0,
             'monday_over_obs': 0,
             'home_over_obs': 0,
+            'signal_stack_2plus_obs': 0,
+            'rescue_cap': 0,
         }
 
         # Session 393: Counterfactual tracking — log filtered-out picks so we
@@ -322,11 +324,13 @@ class BestBetsAggregator:
                 # - high_scoring_environment_over: 100% HR at edge 3-5 (N=7)
                 # - sharp_book_lean_over: 70.3% HR (N=508, Session 399)
                 # - sharp_book_lean_under: 84.7% HR (N=202, Session 399)
+                # Session 415: Removed low_line_over (0% HR in rescued BB)
+                # and high_scoring_environment_over (most common rescue tag,
+                # dilutes slate during edge compression).
                 rescue_tags = {
                     'combo_3way', 'combo_he_ms',
                     'book_disagreement', 'home_under',
-                    'low_line_over', 'volatile_scoring_over',
-                    'high_scoring_environment_over',
+                    'volatile_scoring_over',
                     'sharp_book_lean_over', 'sharp_book_lean_under',
                 }
                 for r in signal_check:
@@ -335,17 +339,21 @@ class BestBetsAggregator:
                         rescue_signal = r.source_tag
                         break
 
-                # Signal stacking rescue: 2+ real (non-base) signals at low edge
-                # = 62.2% HR (N=45). Multiple contextual signals agreeing is
-                # strong enough to override low model edge.
+                # Session 415: signal_stack_2plus demoted to observation-only.
+                # 50% HR at N=6 in rescued BB — thinnest quality tier, all OVER.
+                # Track counterfactual but do NOT rescue.
                 if not signal_rescued:
                     qualifying_signals = [
                         r for r in signal_check
                         if r.qualifies and r.source_tag not in BASE_SIGNALS
                     ]
                     if len(qualifying_signals) >= 2:
-                        signal_rescued = True
-                        rescue_signal = 'signal_stack_2plus'
+                        filter_counts['signal_stack_2plus_obs'] += 1
+                        _record_filtered(
+                            pred, 'signal_stack_2plus_obs', pred_edge,
+                            len(qualifying_signals),
+                            [r.source_tag for r in qualifying_signals],
+                        )
 
                 # Session 412: Regime gating — during cautious regime (yesterday
                 # BB HR < 50%), track what WOULD be blocked for counterfactual.
@@ -454,14 +462,15 @@ class BestBetsAggregator:
             # Filter counter retained for schema continuity.
             season_avg = pred.get('points_avg_season') or 0
 
-            # UNDER Star AWAY block (Session 369): 38.5% HR (5W-8L, -$380) vs HOME 81.8% (9W-2L, +$680)
-            # Star-line players (line >= 23) playing AWAY have structurally worse UNDER outcomes
+            # UNDER Star AWAY observation (Session 369→415): Was 38.5% HR at creation
+            # (toxic Feb) but recovered to 73.0% post-ASB. Demoted to observation
+            # Session 415 — collect 2 weeks fresh data before re-evaluation.
             if (pred.get('recommendation') == 'UNDER'
                     and line_val >= 23
                     and not pred.get('is_home', False)):
                 filter_counts['under_star_away'] += 1
                 _record_filtered(pred, 'under_star_away', pred_edge)
-                continue
+                # Observation mode — do NOT continue/filter
 
             # Medium teammate usage UNDER block (Session 355): 32.0% HR (N=25)
             # Model has 0% importance on teammate_usage_available but production
@@ -590,23 +599,24 @@ class BestBetsAggregator:
                 _record_filtered(pred, 'flat_trend_under', pred_edge)
                 continue
 
-            # High spread OVER observation (Session 413): OVER + spread >= 7 = 41.2% HR at BB
-            # level (N=17), but 62% at full prediction level. Observation mode — not blocking.
-            # Blowout risk: starters get pulled early in lopsided games.
+            # High spread OVER block (Session 413→415): OVER + spread >= 7 = 44.3% HR (N=61)
+            # full season. Blowout risk: starters get pulled early in lopsided games.
+            # Promoted from observation to active block Session 415.
             spread_mag = pred.get('spread_magnitude') or 0
             if (pred.get('recommendation') == 'OVER'
                     and spread_mag >= 7.0):
                 filter_counts['high_spread_over_would_block'] += 1
                 _record_filtered(pred, 'high_spread_over_would_block', pred_edge)
-                # Observation mode — do NOT continue/filter
+                continue
 
-            # Mid-line OVER observation (Session 414): OVER + line 15-25 = 28.6-40% BB HR (N=12).
-            # Tiny N but alarming — track counterfactual before activating.
+            # Mid-line OVER block (Session 414→415): OVER + line 15-25 = 47.9% BB HR (N=213)
+            # full season. Promoted from observation to active block Session 415.
+            # Note: subsumes starter_over_sc_floor for OVER picks (acceptable).
             if (pred.get('recommendation') == 'OVER'
                     and 15 <= line_val <= 25):
                 filter_counts['mid_line_over_obs'] += 1
                 _record_filtered(pred, 'mid_line_over_obs', pred_edge)
-                # Observation mode — do NOT continue/filter
+                continue
 
             # Monday OVER observation (Session 414): OVER on Monday = 49.0% HR (N=251).
             # Complements active friday_over_block. Reuses date parsing from Friday filter.
@@ -805,7 +815,7 @@ class BestBetsAggregator:
             logger.info(f"Model-direction affinity: skipped {filter_counts['model_direction_affinity']} predictions")
         # away_noveg filter REMOVED Session 401 — was model staleness, not structural
         if filter_counts['under_star_away'] > 0:
-            logger.info(f"UNDER Star AWAY block (line≥23): skipped {filter_counts['under_star_away']} predictions")
+            logger.info(f"UNDER Star AWAY (observation): tagged {filter_counts['under_star_away']} picks (line≥23, away)")
         if filter_counts['med_usage_under'] > 0:
             logger.info(f"Medium teammate usage UNDER block: skipped {filter_counts['med_usage_under']} predictions")
         if filter_counts['starter_v12_under'] > 0:
@@ -829,13 +839,13 @@ class BestBetsAggregator:
             logger.info(f"Flat trend UNDER block: skipped {filter_counts['flat_trend_under']} UNDER picks with trend slope -0.5 to 0.5 (53% HR)")
         if filter_counts['high_spread_over_would_block'] > 0:
             logger.info(
-                f"High spread OVER (observation): WOULD block "
-                f"{filter_counts['high_spread_over_would_block']} OVER picks with spread >= 7"
+                f"High spread OVER block: skipped "
+                f"{filter_counts['high_spread_over_would_block']} OVER picks with spread >= 7 (44.3% HR)"
             )
         if filter_counts['mid_line_over_obs'] > 0:
             logger.info(
-                f"Mid-line OVER (observation): tagged "
-                f"{filter_counts['mid_line_over_obs']} OVER picks with line 15-25"
+                f"Mid-line OVER block: skipped "
+                f"{filter_counts['mid_line_over_obs']} OVER picks with line 15-25 (47.9% HR)"
             )
         if filter_counts['monday_over_obs'] > 0:
             logger.info(
@@ -878,6 +888,16 @@ class BestBetsAggregator:
             logger.info(
                 f"Calendar regime (observation): WOULD block "
                 f"{filter_counts['toxic_star_over_would_block']} Star OVER picks (toxic window)"
+            )
+        if filter_counts['signal_stack_2plus_obs'] > 0:
+            logger.info(
+                f"Signal stack 2+ (observation): tagged "
+                f"{filter_counts['signal_stack_2plus_obs']} picks that would have been rescued"
+            )
+        if filter_counts['rescue_cap'] > 0:
+            logger.info(
+                f"Rescue cap: dropped {filter_counts['rescue_cap']} lowest-edge rescued picks "
+                f"to keep rescue ≤ 40% of slate"
             )
 
         # --- Calendar regime observation (Session 396) ---
@@ -934,6 +954,31 @@ class BestBetsAggregator:
             ultra_criteria = classify_ultra_pick(pick_entry)
             pick_entry['ultra_tier'] = len(ultra_criteria) > 0
             pick_entry['ultra_criteria'] = ultra_criteria
+
+        # Session 415: Rescue cap — if rescued picks > 40% of slate, drop
+        # lowest-edge rescues to filtered_picks. Rescue was designed as an
+        # exception mechanism but generates 67% of slate during edge compression.
+        # Minimum 1 rescue always kept.
+        rescued_picks = [p for p in scored if p.get('signal_rescued')]
+        non_rescued = [p for p in scored if not p.get('signal_rescued')]
+        if scored and len(rescued_picks) > 0:
+            max_rescue = max(1, int(len(scored) * 0.4))
+            if len(rescued_picks) > max_rescue:
+                # Sort rescued by edge ascending (drop lowest first)
+                rescued_picks.sort(key=lambda x: x.get('edge', 0))
+                to_drop = rescued_picks[:len(rescued_picks) - max_rescue]
+                to_keep = rescued_picks[len(rescued_picks) - max_rescue:]
+                for drop_pick in to_drop:
+                    filter_counts['rescue_cap'] += 1
+                    _record_filtered(
+                        drop_pick, 'rescue_cap',
+                        drop_pick.get('edge', 0),
+                    )
+                    logger.info(
+                        f"Rescue cap: dropping {drop_pick['player_lookup']} "
+                        f"edge={drop_pick.get('edge', 0):.1f}"
+                    )
+                scored = non_rescued + to_keep
 
         # Rank by edge descending (model confidence = primary signal)
         scored.sort(key=lambda x: x['composite_score'], reverse=True)
