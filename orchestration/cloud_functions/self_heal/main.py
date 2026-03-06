@@ -480,7 +480,7 @@ def trigger_phase4(target_date):
     }
 
     @retry_with_backoff(
-        max_attempts=3,
+        max_attempts=1,  # No retries — P4 all-processors takes 300s+, retrying just burns timeout budget
         base_delay=2.0,
         max_delay=30.0,
         exceptions=(requests.RequestException, requests.Timeout, ConnectionError)

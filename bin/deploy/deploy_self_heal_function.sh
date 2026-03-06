@@ -31,7 +31,7 @@ RUNTIME="python311"
 ENTRY_POINT="self_heal_check"
 SERVICE_ACCOUNT="756957797294-compute@developer.gserviceaccount.com"
 MEMORY="512MB"
-TIMEOUT="540s"  # 9 minutes for self-healing pipeline
+TIMEOUT="900s"  # 15 minutes for self-healing pipeline (P3 180s + P4 300s + P5 120s + overhead)
 
 # Scheduler configuration
 SCHEDULER_NAME="self-heal-predictions"
