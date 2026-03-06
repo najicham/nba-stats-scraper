@@ -1,8 +1,8 @@
 # Signal Inventory — Complete List
 
-**Last Updated:** 2026-03-06 (Session 421)
-**Active Signals:** 28 (+ 22 shadow accumulating data)
-**Negative Filters:** 21 (+ 5 observation)
+**Last Updated:** 2026-03-06 (Session 423)
+**Active Signals:** 28 (+ 25 shadow accumulating data)
+**Negative Filters:** 22 (+ 6 observation)
 **Combo Registry:** 11 SYNERGISTIC entries
 
 ---
@@ -74,6 +74,7 @@ Rescue tags: `combo_3way`, `combo_he_ms`, `book_disagreement` (72%), `home_under
 | `sharp_book_lean_under` | UNDER | 84.7% | PRODUCTION | Session 399, soft books 1.5+ higher |
 | `mean_reversion_under` | UNDER | 77.8% | PRODUCTION | Session 413, trend_slope>=2.0 + avg_3g>=line+2. First conviction UNDER signal. Rescue-eligible. |
 | `day_of_week_under` | UNDER | 59.4-60.3% | SHADOW | Session 414, Monday 60.3% (N=277), Thursday 59.4% (N=419) |
+| `sharp_line_drop_under` | UNDER | 87.5% | PRODUCTION | Session 382c. Now in UNDER_SIGNAL_WEIGHTS (2.5) since Session 422c |
 
 ### BOTH Direction (1)
 
@@ -147,6 +148,16 @@ Signals derived from feature store distributions. Discovered via toxic window an
 | `bounce_back_over` | OVER | prev_game_context | Bad miss (FG% < 35% OR actual < line-5) + AWAY = 56.2% over (N=379). HOME bounce disappears. |
 | `over_streak_reversion_under` | UNDER | f55 (over_rate_last_10), f53 (prop_over_streak) | 4+ overs in last 5 = 44.0% over next (56% UNDER, N=366). Progressive reversion. |
 
+### Session 422c/423 — UNDER Signal Development
+
+Three new UNDER signals to fill the UNDER signal vacuum. 98.4% of model-level UNDER predictions had zero real signals.
+
+| Signal | Direction | Source | Notes |
+|--------|-----------|--------|-------|
+| `volatile_starter_under` | UNDER | line_value, f3 (points_std_last_10), edge | Starter (18-25) + volatile (std>8) + edge 5+. 65.5% HR (N=637). Monthly stable: Nov 63.6%, Dec 70.5%, Jan 61.9%, Feb 63.4%. |
+| `downtrend_under` | UNDER | f44 (trend_slope) | Slight downtrend (slope -1.5 to -0.5). 63.9% HR (N=1,654). Highest-volume UNDER segment. |
+| `star_favorite_under` | UNDER | line_value, f41 (spread_magnitude) | Star (line 25+) + team favored by 3+. ~73% HR (N=88). Blowout pull effect. |
+
 ---
 
 ## Disabled / Removed Signals
@@ -186,6 +197,9 @@ Signals derived from feature store distributions. Discovered via toxic window an
 | 17 | Mid-line OVER block | OVER + line 15-25 | 47.9% | 415 |
 | 18 | Flat trend UNDER block | UNDER + trend_slope -0.5 to 0.5 | 53% | 413 |
 | 19 | UNDER after streak | UNDER + 3+ consecutive unders | 44.7% | 418 |
+| 20 | Med usage UNDER block | UNDER + teammate_usage 15-30 | 32.0% | 355 |
+| 21 | UNDER edge 7+ (V9) | UNDER + edge 7+ + V9 family | 34.1% | 297 |
+| 22 | B2B UNDER block | UNDER + rest_days <= 1 | 30.8% | 422c |
 | — | Away block | REMOVED Session 401 | — | 401 |
 | — | UNDER + line jumped 2+ | Demoted to observation Session 417 (5/5 winners blocked) | — | 417 |
 
@@ -197,6 +211,7 @@ Signals derived from feature store distributions. Discovered via toxic window an
 | `line_jumped_under_obs` | UNDER + prop_line_delta >= 2.0 | 100% (5/5 winners blocked) | 417 | Demoted from active — was blocking winners. |
 | `unreliable_over_low_mins_obs` | OVER + edge 5+ + minutes_load_7d < 45 | — | 421 | Wrong OVER fingerprint during toxic window. |
 | `unreliable_under_flat_trend_obs` | UNDER + edge 5+ + minutes_load > 58 + flat trend | — | 421 | Wrong UNDER fingerprint during toxic window. |
+| `blowout_risk_under_block_obs` | UNDER + blowout_risk >= 0.40 + line >= 15 | 16.7% (N=12) | 423 | Blowout benching → players get pulled → OVER. |
 | `public_fade_filter` | 80%+ public tickets OVER | — | 404 | VSiN data accumulating |
 | `negative_clv_filter` | CLV contradicts pick direction | — | 401 | CLV data accumulating |
 
@@ -253,7 +268,7 @@ Source: `ml/signals/regime_context.py::get_market_compression()`.
 
 ---
 
-**Last Updated:** 2026-03-06, Session 421
+**Last Updated:** 2026-03-06, Session 423
 **Source of truth for active signals.** CLAUDE.md has a summary; this is the full reference.
 
 ### Shadow Signal Promotion Criteria
@@ -275,7 +290,8 @@ WITH shadow_picks AS (
     'predicted_pace_over', 'dvp_favorable_over',
     'positive_clv_over', 'positive_clv_under',
     'sharp_money_over', 'sharp_money_under', 'minutes_surge_over',
-    'hot_form_over', 'consistent_scorer_over', 'over_trend_over')
+    'hot_form_over', 'consistent_scorer_over', 'over_trend_over',
+    'volatile_starter_under', 'downtrend_under', 'star_favorite_under')
     AND game_date >= '2026-03-05'
 )
 SELECT sp.signal_tag,

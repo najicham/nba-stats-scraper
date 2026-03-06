@@ -132,6 +132,7 @@ class TestAggregatorReturnType:
             'mid_line_over_obs', 'monday_over_obs', 'home_over_obs',
             'signal_stack_2plus_obs', 'rescue_cap',
             'unreliable_over_low_mins_obs', 'unreliable_under_flat_trend_obs',
+            'b2b_under_block', 'blowout_risk_under_block_obs',
         }
         assert set(summary['rejected'].keys()) == expected_keys
         # All counts should be 0 for empty input
@@ -223,6 +224,22 @@ class TestFilterTracking:
         agg = BestBetsAggregator()
         _, summary = agg.aggregate([pred], {})
         assert summary['rejected']['neg_pm_streak'] == 1
+
+    def test_b2b_under_block_tracked(self):
+        """B2B UNDER = 30.8% HR — should be blocked."""
+        pred = _make_prediction(recommendation='UNDER', line_value=20.0)
+        pred['rest_days'] = 1  # B2B
+        agg = BestBetsAggregator()
+        _, summary = agg.aggregate([pred], {})
+        assert summary['rejected']['b2b_under_block'] == 1
+
+    def test_b2b_over_not_blocked(self):
+        """B2B OVER should NOT be blocked by b2b_under_block."""
+        pred = _make_prediction(recommendation='OVER')
+        pred['rest_days'] = 1
+        agg = BestBetsAggregator()
+        _, summary = agg.aggregate([pred], {})
+        assert summary['rejected']['b2b_under_block'] == 0
 
     def test_signal_count_tracked(self):
         """Prediction passes all negative filters but has 0 qualifying signals."""

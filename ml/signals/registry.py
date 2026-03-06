@@ -284,4 +284,12 @@ def build_default_registry() -> SignalRegistry:
     registry.register(BounceBackOverSignal())
     registry.register(OverStreakReversionUnderSignal())
 
+    # Session 422c: New UNDER signals (shadow mode — filling UNDER signal vacuum)
+    from ml.signals.volatile_starter_under import VolatileStarterUnderSignal
+    from ml.signals.downtrend_under import DowntrendUnderSignal
+    from ml.signals.star_favorite_under import StarFavoriteUnderSignal
+    registry.register(VolatileStarterUnderSignal())
+    registry.register(DowntrendUnderSignal())
+    registry.register(StarFavoriteUnderSignal())
+
     return registry

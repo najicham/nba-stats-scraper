@@ -51,7 +51,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v422_filter_rebalance'
+ALGORITHM_VERSION = 'v423_blowout_obs'
 
 # Base signals that fire on nearly every edge 5+ pick. Picks with ONLY
 # these signals hit 57.1% (N=42) vs 77.8% for picks with 4+ signals.
@@ -71,10 +71,14 @@ BASE_SIGNALS = frozenset({
 UNDER_SIGNAL_WEIGHTS: Dict[str, float] = {
     'sharp_book_lean_under': 3.0,   # 84.7% HR (N=202)
     'mean_reversion_under': 2.5,    # 77.8% HR (N=212, Session 413/417)
+    'sharp_line_drop_under': 2.5,   # Session 422c: 87.5% HR (N=8) — already fires, now weighted
     'book_disagreement': 2.5,        # 93.0% HR (N=43)
     'bench_under': 2.0,              # 76.9% HR
-    'home_under': 1.5,               # 63.9% HR
+    'home_under': 2.0,               # Session 422c: boosted from 1.5. 60.6% HR (N=4,253) model-level
     'extended_rest_under': 1.5,      # 61.8% HR
+    'volatile_starter_under': 1.5,   # Session 422c: 65.5% HR (N=637), shadow
+    'downtrend_under': 1.5,          # Session 422c: 63.9% HR (N=1,654), shadow
+    'star_favorite_under': 1.5,      # Session 422c: ~73% HR (N=88), shadow
     # starter_under removed Session 419 (38.7% signal HR N=31, demoted to BASE_SIGNALS)
 }
 UNDER_EDGE_TIEBREAKER = 0.1  # Edge as minor tiebreaker for UNDER
@@ -235,6 +239,8 @@ class BestBetsAggregator:
             'rescue_cap': 0,
             'unreliable_over_low_mins_obs': 0,
             'unreliable_under_flat_trend_obs': 0,
+            'b2b_under_block': 0,
+            'blowout_risk_under_block_obs': 0,
         }
 
         # Session 393: Counterfactual tracking — log filtered-out picks so we
@@ -507,6 +513,15 @@ class BestBetsAggregator:
                 _record_filtered(pred, 'med_usage_under', pred_edge)
                 continue
 
+            # B2B UNDER block (Session 422c): 30.8% HR (N=52) — B2B players go OVER
+            # at high rates. Market underprices fatigue or model overestimates it.
+            rest_days = pred.get('rest_days') or 99
+            if (pred.get('recommendation') == 'UNDER'
+                    and rest_days <= 1):
+                filter_counts['b2b_under_block'] += 1
+                _record_filtered(pred, 'b2b_under_block', pred_edge)
+                continue
+
             # starter_v12_under REMOVED (Session 422b): Dead filter — zero fires
             # across entire season. startswith('v12') missed lgbm/xgb models,
             # and season_avg vs line_value mismatch meant no picks matched.
@@ -631,6 +646,17 @@ class BestBetsAggregator:
                 filter_counts['under_after_streak'] += 1
                 _record_filtered(pred, 'under_after_streak', pred_edge)
                 continue
+
+            # Blowout risk UNDER block observation (Session 423): blowout_risk >= 0.40 + UNDER
+            # = 16.7% HR (N=12). High blowout benching risk → players get pulled → OVER.
+            # Observation mode until N >= 20 at BB level.
+            blowout_risk_val = pred.get('blowout_risk') or 0
+            if (pred.get('recommendation') == 'UNDER'
+                    and blowout_risk_val >= 0.40
+                    and line_val >= 15):
+                filter_counts['blowout_risk_under_block_obs'] += 1
+                _record_filtered(pred, 'blowout_risk_under_block_obs', pred_edge)
+                # Observation mode — do NOT continue/filter
 
             # High spread OVER — DEMOTED to observation (Session 419).
             # Historical 44.3% (N=61) full season, but CF HR = 100% (2-0, blocking winners).
@@ -843,6 +869,8 @@ class BestBetsAggregator:
 
             scored.append({
                 **pred,
+                'trend_slope': pred.get('trend_slope') or 0.0,
+                'spread_magnitude': pred.get('spread_magnitude') or 0.0,
                 'signal_tags': tags,
                 'signal_count': len(qualifying),
                 'real_signal_count': real_sc,
@@ -979,6 +1007,13 @@ class BestBetsAggregator:
             logger.info(
                 f"Unreliable UNDER flat trend (observation): tagged "
                 f"{filter_counts['unreliable_under_flat_trend_obs']} edge 5+ UNDER picks with high mins + flat trend"
+            )
+
+        if filter_counts['blowout_risk_under_block_obs'] > 0:
+            logger.info(
+                f"Blowout risk UNDER block (observation): tagged "
+                f"{filter_counts['blowout_risk_under_block_obs']} UNDER picks with "
+                f"blowout_risk >= 0.40 (16.7% HR N=12)"
             )
 
         # Session 421: Tier edge cap observation summary
