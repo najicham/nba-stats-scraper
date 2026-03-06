@@ -25,10 +25,10 @@ from ml.signals.base_signal import BaseSignal, SignalResult
 
 class MeanReversionUnderSignal(BaseSignal):
     tag = "mean_reversion_under"
-    description = "Mean reversion (trend 2+ AND 3g avg > line+2) UNDER — hot streak regression"
+    description = "Mean reversion (trend 1.5+ AND 3g avg > line+1.5) UNDER — hot streak regression"
 
-    MIN_SLOPE = 2.0  # Strong upward trend (top ~5% of distribution)
-    MIN_ABOVE_LINE = 2.0  # 3-game avg must be 2+ pts above the line
+    MIN_SLOPE = 1.5  # Session 419: Relaxed from 2.0. Core variant at 1.0 = 68% HR (N=565).
+    MIN_ABOVE_LINE = 1.5  # Session 419: Relaxed from 2.0. Enables more qualifying candidates.
     MIN_LINE = 12.0  # Filter noise from very low lines
     CONFIDENCE_BASE = 0.80
     CONFIDENCE_MAX_SLOPE = 4.0  # Slope at which confidence maxes
@@ -56,7 +56,7 @@ class MeanReversionUnderSignal(BaseSignal):
         if above_line < self.MIN_ABOVE_LINE:
             return self._no_qualify()
 
-        # Scale confidence: slope 2.0 → 0.80, 4.0+ → 0.90
+        # Scale confidence: slope 1.5 → 0.80, 4.0+ → 0.90
         slope_pct = min(1.0, (slope - self.MIN_SLOPE) /
                         (self.CONFIDENCE_MAX_SLOPE - self.MIN_SLOPE))
         confidence = self.CONFIDENCE_BASE + slope_pct * 0.10

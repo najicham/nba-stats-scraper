@@ -1,8 +1,8 @@
 # Signal Inventory — Complete List
 
-**Last Updated:** 2026-03-05 (Session 415)
-**Active Signals:** 27 (+ 20 shadow accumulating data)
-**Negative Filters:** 19 (+ 3 observation: `under_star_away`, `public_fade_filter`, `negative_clv_filter`)
+**Last Updated:** 2026-03-06 (Session 421)
+**Active Signals:** 28 (+ 22 shadow accumulating data)
+**Negative Filters:** 21 (+ 5 observation)
 **Combo Registry:** 11 SYNERGISTIC entries
 
 ---
@@ -29,7 +29,7 @@ Rescue tags: `combo_3way`, `combo_he_ms`, `book_disagreement` (72%), `home_under
 
 ---
 
-## Active Signals (26)
+## Active Signals (28)
 
 ### Base/Infrastructure (3) — fire on ~100% of picks
 
@@ -63,7 +63,7 @@ Rescue tags: `combo_3way`, `combo_he_ms`, `book_disagreement` (72%), `home_under
 | `day_of_week_over` | OVER | 66-70% | PRODUCTION | Session 398, Mon/Thu/Sat boost |
 | `sharp_book_lean_over` | OVER | 70.3% | PRODUCTION | Session 399, sharp books 1.5+ higher than soft |
 
-### UNDER Signals (5)
+### UNDER Signals (7)
 
 | Signal | Direction | HR | Status | Notes |
 |--------|-----------|-----|--------|-------|
@@ -72,6 +72,8 @@ Rescue tags: `combo_3way`, `combo_he_ms`, `book_disagreement` (72%), `home_under
 | `extended_rest_under` | UNDER | 61.8% | PRODUCTION | Session 372 |
 | `starter_under` | UNDER | 54.8-68.1% | PRODUCTION | Session 372 |
 | `sharp_book_lean_under` | UNDER | 84.7% | PRODUCTION | Session 399, soft books 1.5+ higher |
+| `mean_reversion_under` | UNDER | 77.8% | PRODUCTION | Session 413, trend_slope>=2.0 + avg_3g>=line+2. First conviction UNDER signal. Rescue-eligible. |
+| `day_of_week_under` | UNDER | 59.4-60.3% | SHADOW | Session 414, Monday 60.3% (N=277), Thursday 59.4% (N=419) |
 
 ### BOTH Direction (1)
 
@@ -88,7 +90,7 @@ Rescue tags: `combo_3way`, `combo_he_ms`, `book_disagreement` (72%), `home_under
 
 ---
 
-## Shadow Signals (20) — Sessions 401 + 404 + 410 + 411, accumulating data
+## Shadow Signals (22) — Sessions 401 + 404 + 410 + 411 + 418, accumulating data
 
 All shadow signals are registered and firing but NOT wired into aggregator rescue/ranking. They record to `pick_signal_tags` and `signal_health_daily` for validation.
 
@@ -138,6 +140,13 @@ Signals derived from feature store distributions. Discovered via toxic window an
 | `minutes_load_over` | OVER | f40 (minutes_load_7d) | 100+ min in 7 days = heavy engagement |
 | `blowout_risk_under` | UNDER | f57 (blowout_risk) | 40%+ blowout bench rate + line >= 15. Fills UNDER gap (only 6th UNDER signal) |
 
+### Session 418 — Player Profile Signals (deep dive findings)
+
+| Signal | Direction | Source | Notes |
+|--------|-----------|--------|-------|
+| `bounce_back_over` | OVER | prev_game_context | Bad miss (FG% < 35% OR actual < line-5) + AWAY = 56.2% over (N=379). HOME bounce disappears. |
+| `over_streak_reversion_under` | UNDER | f55 (over_rate_last_10), f53 (prop_over_streak) | 4+ overs in last 5 = 44.0% over next (56% UNDER, N=366). Progressive reversion. |
+
 ---
 
 ## Disabled / Removed Signals
@@ -154,7 +163,7 @@ Signals derived from feature store distributions. Discovered via toxic window an
 
 ---
 
-## Negative Filters (19)
+## Negative Filters (21)
 
 | # | Filter | Condition | HR | Session |
 |---|--------|-----------|-----|---------|
@@ -164,25 +173,30 @@ Signals derived from feature store distributions. Discovered via toxic window an
 | 4 | Model-direction affinity | HR < 45% on 15+ picks for model+direction+edge combo | <45% | 343 |
 | 5 | Feature quality floor | quality < 85 | 24.0% | — |
 | 6 | Bench UNDER block | UNDER + line < 12 | 35.1% | — |
-| 7 | UNDER + line jumped 2+ | prop_line_delta >= 2.0 | 38.2% | — |
-| 8 | UNDER + line dropped 2+ | prop_line_delta <= -2.0 | 35.2% | — |
-| 9 | Away block | REMOVED Session 401 | — | 401 |
-| 10 | Signal density | base-only signals, skip unless edge ≥ 7.0 | — | 352 |
-| 11 | Opponent UNDER block | UNDER + opponent in {MIN, MEM, MIL} | 43.8-48.7% | 372 |
-| 12 | SC=3 OVER block | OVER + signal_count == 3 | 45.5% | 394 |
-| 13 | OVER + line dropped 2+ | OVER + prop_line_delta <= -2.0 | 39.1% | 374b |
-| 14 | Opponent depleted UNDER | UNDER + 3+ opponent stars out | 44.4% | 374b |
-| 15 | Q4 scorer UNDER block | UNDER + Q4_ratio >= 0.35 | 34.0% | 397 |
-| 16 | Friday OVER block | OVER + Friday | 37.5% | 398 |
-| 17 | High skew OVER block | OVER + mean_median_gap > 2.0 | 49.1% | 399 |
-| 18 | High spread OVER block | OVER + spread >= 7 | 44.3% | 415 |
-| 19 | Mid-line OVER block | OVER + line 15-25 | 47.9% | 415 |
+| 7 | UNDER + line dropped 2+ | prop_line_delta <= -2.0 | 35.2% | — |
+| 8 | Signal density | base-only signals, skip unless edge ≥ 7.0 | — | 352 |
+| 9 | Opponent UNDER block | UNDER + opponent in {MIN, MEM, MIL} | 43.8-48.7% | 372 |
+| 10 | SC=3 OVER block | OVER + signal_count == 3 | 45.5% | 394 |
+| 11 | OVER + line dropped 2+ | OVER + prop_line_delta <= -2.0 | 39.1% | 374b |
+| 12 | Opponent depleted UNDER | UNDER + 3+ opponent stars out | 44.4% | 374b |
+| 13 | Q4 scorer UNDER block | UNDER + Q4_ratio >= 0.35 | 34.0% | 397 |
+| 14 | Friday OVER block | OVER + Friday | 37.5% | 398 |
+| 15 | High skew OVER block | OVER + mean_median_gap > 2.0 | 49.1% | 399 |
+| 16 | High spread OVER block | OVER + spread >= 7 | 44.3% | 415 |
+| 17 | Mid-line OVER block | OVER + line 15-25 | 47.9% | 415 |
+| 18 | Flat trend UNDER block | UNDER + trend_slope -0.5 to 0.5 | 53% | 413 |
+| 19 | UNDER after streak | UNDER + 3+ consecutive unders | 44.7% | 418 |
+| — | Away block | REMOVED Session 401 | — | 401 |
+| — | UNDER + line jumped 2+ | Demoted to observation Session 417 (5/5 winners blocked) | — | 417 |
 
-### Observation-Only Filters (3)
+### Observation-Only Filters (5)
 
 | Filter | Condition | HR | Session | Notes |
 |--------|-----------|-----|---------|-------|
 | `under_star_away` | UNDER + line >= 23 + away | 73.0% post-ASB | 415 | Demoted from active block (was 38.5% during toxic Feb, recovered post-ASB). Review ~Mar 19. |
+| `line_jumped_under_obs` | UNDER + prop_line_delta >= 2.0 | 100% (5/5 winners blocked) | 417 | Demoted from active — was blocking winners. |
+| `unreliable_over_low_mins_obs` | OVER + edge 5+ + minutes_load_7d < 45 | — | 421 | Wrong OVER fingerprint during toxic window. |
+| `unreliable_under_flat_trend_obs` | UNDER + edge 5+ + minutes_load > 58 + flat trend | — | 421 | Wrong UNDER fingerprint during toxic window. |
 | `public_fade_filter` | 80%+ public tickets OVER | — | 404 | VSiN data accumulating |
 | `negative_clv_filter` | CLV contradicts pick direction | — | 401 | CLV data accumulating |
 
@@ -208,7 +222,38 @@ Signals derived from feature store distributions. Discovered via toxic window an
 
 ---
 
-**Last Updated:** 2026-03-05, Session 415
+## Observation Mechanics (Session 421)
+
+Three edge overconfidence mitigations in observation mode. Data logged but no ranking/filtering changes.
+
+### Player-Tier Edge Caps
+
+| Tier | Line Range | Cap | Edge 7+ HR (pre-ASB) |
+|------|-----------|-----|---------------------|
+| Bench | < 12 | 5.0 | 34.1% (N=91) |
+| Role | 12-17.5 | 6.0 | 43.1% (N=72) |
+| Starter | 18-24.5 | uncapped | 63.2% (N=57) |
+| Star | 25+ | uncapped | — |
+
+BQ columns: `player_tier`, `tier_edge_cap_delta`, `capped_composite_score` on `signal_best_bets_picks`.
+
+### Market Compression Detector
+
+Compares 7d vs 30d P90 edge. Ratio < 0.70 = RED, 0.70-0.85 = YELLOW, > 0.85 = GREEN.
+BQ columns: `compression_ratio`, `compression_scaled_edge` on `signal_best_bets_picks`.
+Source: `ml/signals/regime_context.py::get_market_compression()`.
+
+### Activation Criteria
+
+| Mitigation | Activate When | Change |
+|-----------|--------------|--------|
+| Tier caps | 2+ weeks, capped HR < 50% at N >= 20 | Use `capped_composite_score` for ranking |
+| Compression | 30+ days, RED edge 5+ HR < 50% at N >= 30 | Multiply composite by compression_ratio |
+| Feature reliability | 2+ weeks, flagged HR < 45% at N >= 15 | Promote to active filter |
+
+---
+
+**Last Updated:** 2026-03-06, Session 421
 **Source of truth for active signals.** CLAUDE.md has a summary; this is the full reference.
 
 ### Shadow Signal Promotion Criteria

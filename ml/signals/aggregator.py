@@ -51,14 +51,18 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v421_edge_confidence_obs'
+ALGORITHM_VERSION = 'v422_filter_rebalance'
 
 # Base signals that fire on nearly every edge 5+ pick. Picks with ONLY
 # these signals hit 57.1% (N=42) vs 77.8% for picks with 4+ signals.
 # Session 348 analysis: the additional signals (rest_advantage_2d,
 # combo_he_ms, combo_3way, book_disagreement, etc.) are what separate
 # profitable picks from marginal ones.
-BASE_SIGNALS = frozenset({'model_health', 'high_edge', 'edge_spread_optimal'})
+BASE_SIGNALS = frozenset({
+    'model_health', 'high_edge', 'edge_spread_optimal',
+    'blowout_recovery',   # Session 419: 20% BB HR (1-4), demoted — still fires for tracking
+    'starter_under',      # Session 419: 38.7% signal HR (N=31), demoted
+})
 
 # Session 400: UNDER signal quality weights for signal-first ranking.
 # UNDER edge is flat at 52-53% across all buckets — signals are the quality
@@ -70,7 +74,7 @@ UNDER_SIGNAL_WEIGHTS: Dict[str, float] = {
     'bench_under': 2.0,              # 76.9% HR
     'home_under': 1.5,               # 63.9% HR
     'extended_rest_under': 1.5,      # 61.8% HR
-    'starter_under': 1.0,            # 54.8-68.1% HR
+    # starter_under removed Session 419 (38.7% signal HR N=31, demoted to BASE_SIGNALS)
 }
 UNDER_EDGE_TIEBREAKER = 0.1  # Edge as minor tiebreaker for UNDER
 
@@ -396,12 +400,12 @@ class BestBetsAggregator:
                     f"rescued by {rescue_signal}"
                 )
 
-            # Session 378: OVER edge 5+ floor — edge 3-5 OVER = 25% HR (1-3) in
-            # best bets full season. Edge 5-7 OVER = 67.5%, edge 7+ = 77.8%.
-            # UNDER is profitable at all edge levels (57.5-100%).
-            # Session 398: Signal-rescued OVER picks bypass this floor too.
-            # Session 413: Regime floor delta now observation-only (was active Session 412).
-            over_floor = 5.0  # Fixed floor — regime delta removed
+            # Session 378→419: OVER edge floor. Originally 5.0 based on stale 25%
+            # HR (1-3, pre-filter-stack). Post-ASB edge 3-5 OVER = 67.6% (N=105).
+            # CF: 87.5% (7-1) blocked winners. Specific OVER filters (friday,
+            # high_spread, mid_line, high_skew) already catch bad OVER categories.
+            # Lowered to 3.0 (effectively MIN_EDGE) — the blanket floor is redundant.
+            over_floor = 3.0  # Session 419: lowered from 5.0
             regime_delta = self._regime_context.get('over_edge_floor_delta', 0)
             if pred.get('recommendation') == 'OVER' and pred_edge < over_floor and not signal_rescued:
                 filter_counts['over_edge_floor'] += 1
@@ -410,7 +414,7 @@ class BestBetsAggregator:
             # Observation: track what regime floor WOULD block
             if (regime_delta > 0
                     and pred.get('recommendation') == 'OVER'
-                    and 5.0 <= pred_edge < 5.0 + regime_delta
+                    and over_floor <= pred_edge < over_floor + regime_delta
                     and not signal_rescued):
                 filter_counts['regime_over_floor'] += 1
                 _record_filtered(pred, 'regime_over_floor', pred_edge)
@@ -465,12 +469,14 @@ class BestBetsAggregator:
                 _record_filtered(pred, 'quality_floor', pred_edge)
                 continue
 
-            # Bench UNDER block (Session 278): line < 12 = 35.1% HR
+            # Bench UNDER — DEMOTED to observation (Session 419).
+            # Original 35.1% HR was pre-filter-stack. CF HR = 100% (2-0, blocking winners).
+            # Other UNDER filters (flat_trend, opponent, med_usage) catch bad UNDER picks.
             line_val = pred.get('line_value') or 0
             if pred.get('recommendation') == 'UNDER' and line_val > 0 and line_val < 12:
                 filter_counts['bench_under'] += 1
-                _record_filtered(pred, 'bench_under', pred_edge)
-                continue
+                _record_filtered(pred, 'bench_under_obs', pred_edge)
+                # continue  # Session 419: observation mode — do NOT block
 
             # Star UNDER block — REMOVED Session 400.
             # Was 50.0% Feb (toxic window) but recovered to 72.1% Mar (N=61).
@@ -630,15 +636,15 @@ class BestBetsAggregator:
                 _record_filtered(pred, 'under_after_streak', pred_edge)
                 continue
 
-            # High spread OVER block (Session 413→415): OVER + spread >= 7 = 44.3% HR (N=61)
-            # full season. Blowout risk: starters get pulled early in lopsided games.
-            # Promoted from observation to active block Session 415.
+            # High spread OVER — DEMOTED to observation (Session 419).
+            # Historical 44.3% (N=61) full season, but CF HR = 100% (2-0, blocking winners).
+            # Monitor 2 weeks — if CF HR drops below 50% at N >= 5, re-activate.
             spread_mag = pred.get('spread_magnitude') or 0
             if (pred.get('recommendation') == 'OVER'
                     and spread_mag >= 7.0):
                 filter_counts['high_spread_over_would_block'] += 1
                 _record_filtered(pred, 'high_spread_over_would_block', pred_edge)
-                continue
+                # continue  # Session 419: observation mode — do NOT block
 
             # Mid-line OVER block (Session 414→415): OVER + line 15-25 = 47.9% BB HR (N=213)
             # full season. Promoted from observation to active block Session 415.
