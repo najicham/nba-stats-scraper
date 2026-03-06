@@ -237,7 +237,7 @@ class SubsetGradingProcessor:
             datetime of first tip, or None if not available
         """
         query = f"""
-        SELECT MIN(game_datetime_utc) as first_tip
+        SELECT CAST(MIN(game_date) AS TIMESTAMP) as first_tip
         FROM `{self.project_id}.nba_reference.nba_schedule`
         WHERE game_date = @game_date
           AND game_status IN (2, 3)  -- In Progress or Final (game actually happened)
