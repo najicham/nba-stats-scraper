@@ -276,4 +276,12 @@ def build_default_registry() -> SignalRegistry:
     from ml.signals.day_of_week_under import DayOfWeekUnderSignal
     registry.register(DayOfWeekUnderSignal())
 
+    # Session 418: Player profile signals (shadow mode — validating)
+    # bounce_back_over: Bad miss (<70% of line) + AWAY = 56.2% raw, 60%+ with model (N=379)
+    # over_streak_reversion_under: 4+ overs in last 5 = 56% UNDER (N=366)
+    from ml.signals.bounce_back_over import BounceBackOverSignal
+    from ml.signals.over_streak_reversion_under import OverStreakReversionUnderSignal
+    registry.register(BounceBackOverSignal())
+    registry.register(OverStreakReversionUnderSignal())
+
     return registry

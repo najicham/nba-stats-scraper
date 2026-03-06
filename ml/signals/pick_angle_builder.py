@@ -74,6 +74,9 @@ SIGNAL_ANGLE_MAP = {
     'minutes_surge_over': "RotoWire projects 3+ extra minutes — lineup-driven scoring upside",
     # Session 417: mean reversion promoted to active
     'mean_reversion_under': "Hot streak regression — 3-game avg well above line with steep upward trend (77.8% HR)",
+    # Session 418: player profile signals
+    'bounce_back_over': "Bounce-back: bad miss last game + away game — scoring regression (56.2% HR)",
+    'over_streak_reversion_under': "Over-streak reversion: 4+ overs in last 5 games — due for correction (56% UNDER)",
 }
 
 # Warning tag → warning angle

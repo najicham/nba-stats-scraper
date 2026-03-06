@@ -211,6 +211,7 @@ class BestBetsAggregator:
             'regime_rescue_blocked': 0,
             'high_spread_over_would_block': 0,
             'flat_trend_under': 0,
+            'under_after_streak': 0,
             'mid_line_over_obs': 0,
             'monday_over_obs': 0,
             'home_over_obs': 0,
@@ -603,6 +604,17 @@ class BestBetsAggregator:
                 _record_filtered(pred, 'flat_trend_under', pred_edge)
                 continue
 
+            # UNDER after streak (Session 418): 3+ consecutive unders + model UNDER = 44.7% HR (N=515)
+            # Model blind spot: it chases the downtrend, but bounce-back makes these UNDER calls lose.
+            # Edge guard: only suppress low-mid edge; at edge 5+ the model's conviction may override.
+            prop_under_streak = pred.get('prop_under_streak') or 0
+            if (pred.get('recommendation') == 'UNDER'
+                    and prop_under_streak >= 3
+                    and pred_edge < 5.0):
+                filter_counts['under_after_streak'] += 1
+                _record_filtered(pred, 'under_after_streak', pred_edge)
+                continue
+
             # High spread OVER block (Session 413→415): OVER + spread >= 7 = 44.3% HR (N=61)
             # full season. Blowout risk: starters get pulled early in lopsided games.
             # Promoted from observation to active block Session 415.
@@ -841,6 +853,8 @@ class BestBetsAggregator:
             logger.info(f"High skew OVER block: skipped {filter_counts['high_skew_over_block']} OVER picks with mean-median gap > 2.0 (49.1% HR)")
         if filter_counts['flat_trend_under'] > 0:
             logger.info(f"Flat trend UNDER block: skipped {filter_counts['flat_trend_under']} UNDER picks with trend slope -0.5 to 0.5 (53% HR)")
+        if filter_counts['under_after_streak'] > 0:
+            logger.info(f"UNDER after streak: skipped {filter_counts['under_after_streak']} UNDER picks on players with 3+ consecutive unders (44.7% HR anti-signal)")
         if filter_counts['high_spread_over_would_block'] > 0:
             logger.info(
                 f"High spread OVER block: skipped "

@@ -421,7 +421,9 @@ def query_predictions_with_supplements(
         feature_44_value AS trend_slope,
         feature_48_value AS usage_rate_l5,
         feature_57_value AS blowout_risk,
-        feature_41_value AS spread_magnitude
+        feature_41_value AS spread_magnitude,
+        feature_53_value AS prop_over_streak,
+        feature_55_value AS over_rate_last_10
       FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2`
       WHERE game_date = @target_date
     ),
@@ -470,6 +472,27 @@ def query_predictions_with_supplements(
         GROUP BY player_lookup
       )
       WHERE opening_line IS NOT NULL AND closing_line IS NOT NULL
+    ),
+
+    -- Session 418: Previous game context for bounce-back and streak signals.
+    -- Fetches each player's most recent game stats to detect bad misses, shooting slumps, etc.
+    prev_game_context AS (
+      SELECT
+        player_lookup,
+        points AS prev_game_points,
+        points_line AS prev_game_line,
+        SAFE_DIVIDE(points, NULLIF(points_line, 0)) AS prev_game_ratio,
+        SAFE_DIVIDE(fg_makes, NULLIF(fg_attempts, 0)) AS prev_game_fg_pct,
+        minutes_played AS prev_game_minutes,
+        game_date AS prev_game_date
+      FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
+      WHERE game_date >= DATE_SUB(@target_date, INTERVAL 14 DAY)
+        AND game_date < @target_date
+        AND points IS NOT NULL AND points > 0
+        AND (is_dnp IS NULL OR is_dnp = FALSE)
+      QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY player_lookup ORDER BY game_date DESC
+      ) = 1
     )
 
     SELECT
@@ -528,7 +551,14 @@ def query_predictions_with_supplements(
       bs.usage_rate_l5,
       bs.blowout_risk,
       bs.spread_magnitude,
-      dlm.dk_line_move_direction
+      bs.prop_over_streak,
+      bs.over_rate_last_10,
+      dlm.dk_line_move_direction,
+      pgc.prev_game_points,
+      pgc.prev_game_line,
+      pgc.prev_game_ratio,
+      pgc.prev_game_fg_pct,
+      pgc.prev_game_minutes
     FROM preds p
     LEFT JOIN latest_stats ls ON ls.player_lookup = p.player_lookup
     LEFT JOIN latest_streak lsk ON lsk.player_lookup = p.player_lookup
@@ -536,6 +566,7 @@ def query_predictions_with_supplements(
     LEFT JOIN prev_prop_lines ppl ON ppl.player_lookup = p.player_lookup
     LEFT JOIN book_stats bs ON bs.player_lookup = p.player_lookup AND bs.game_date = p.game_date
     LEFT JOIN dk_line_movement dlm ON dlm.player_lookup = p.player_lookup
+    LEFT JOIN prev_game_context pgc ON pgc.player_lookup = p.player_lookup
     ORDER BY p.player_lookup
     """
 
@@ -1103,6 +1134,17 @@ def query_predictions_with_supplements(
 
         # Spread magnitude for high_spread_over observation filter (Session 413)
         pred['spread_magnitude'] = float(row_dict.get('spread_magnitude') or 0)
+
+        # Session 418: Previous game context for bounce-back and streak signals
+        pred['prev_game_ratio'] = float(row_dict.get('prev_game_ratio') or 0)
+        pred['prev_game_fg_pct'] = float(row_dict.get('prev_game_fg_pct') or 0)
+        pred['prev_game_points'] = float(row_dict.get('prev_game_points') or 0)
+        pred['prev_game_line'] = float(row_dict.get('prev_game_line') or 0)
+        pred['prev_game_minutes'] = float(row_dict.get('prev_game_minutes') or 0)
+        pos = row_dict.get('prop_over_streak')
+        pred['prop_over_streak'] = float(pos) if pos is not None else 0
+        orl = row_dict.get('over_rate_last_10')
+        pred['over_rate_last_10'] = float(orl) if orl is not None else 0
 
         # Over trend: prev_over_1..5 from streak data for over_trend_over signal (Session 410)
         pred['prev_over_1'] = row_dict.get('prev_over_1')
