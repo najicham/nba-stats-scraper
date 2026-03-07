@@ -1,16 +1,20 @@
 # Start Your Next Session Here
 
-**Updated:** 2026-03-07 (Session 429 — MLB Sprint 3 deployed + feature contract fix)
-**Status:** MLB code committed and deploying. CatBoost V1 model NOT YET ENABLED in BQ. NBA running normally.
+**Updated:** 2026-03-07 (Session 429 — MLB fully deployed)
+**Status:** MLB pipeline live. CatBoost V1 enabled + serving. All scheduler jobs paused (resume Mar 24-25). NBA running normally.
 
 ## What Happened This Session
 
-### MLB Sprint 3 Deployed
-- Committed all Sprint 2+3 code (predictors, signals, grading, scrapers, schemas)
-- **Fixed critical feature contract mismatch** — pitcher_loader was missing 4 of 31 CatBoost features (season_swstr_pct, season_csw_pct, k_avg_vs_line, over_implied_prob, velocity_change). Would have blocked 100% of predictions.
-- Fixed Dockerfile: added `libgomp1` for CatBoost runtime
-- Synced main scraper registry with 3 new MLB scrapers
-- Agent audit found no other deployment blockers
+### MLB Sprint 4: Full Deployment
+- CatBoost V1 enabled in BQ registry (is_production=TRUE)
+- MLB worker deployed: catboost_v1, v1_6_rolling, ensemble_v1 all loading
+- 22 Cloud Scheduler jobs created (all paused until season start)
+- Batter analytics migrated from BDL to unified source (BDL + mlbapi UNION)
+- Feature contract fixed (4 missing features + velocity_change formula)
+- Dockerfile fixed (libgomp1 + urllib3==2.6.3)
+- Main scraper registry synced with 3 new MLB scrapers
+- ODDS_API_KEY verified (configured via secret)
+- Slack notifications working
 
 ### NBA Session 429
 - Removed `mean_reversion_under` from UNDER_SIGNAL_WEIGHTS (cross-season decay to 53.0%)
@@ -21,37 +25,18 @@
 
 ## What to Do Next
 
-### Priority 1: Enable CatBoost V1 Model (5 min)
-
-```sql
-UPDATE `nba-props-platform.mlb_predictions.model_registry`
-SET enabled = TRUE, is_production = TRUE, updated_at = CURRENT_TIMESTAMP()
-WHERE model_id = 'catboost_mlb_v1_31f_train20250430_20250828';
-```
-
-### Priority 2: Verify Deployment (10 min)
+### Priority 1: Resume Schedulers Before Season (Mar 24-25)
 
 ```bash
-gcloud builds list --region=us-west2 --project=nba-props-platform --limit=5
-./bin/check-deployment-drift.sh --verbose
+# Resume all MLB scheduler jobs before opening day (Mar 27)
+for job in $(gcloud scheduler jobs list --location=us-west2 --format='value(name)' | grep mlb); do
+  gcloud scheduler jobs resume $job --location=us-west2
+done
 ```
 
-### Priority 3: Cloud Scheduler Jobs (30 min)
+### Priority 2: Pre-Season Retrain (Mar 24-25)
 
-New scrapers need scheduler jobs before season start:
-
-```bash
-# Check existing MLB jobs
-gcloud scheduler jobs list --project=nba-props-platform | grep mlb
-
-# Add: Statcast daily (2 AM ET, after overnight games)
-# Add: Box scores MLBAPI (replace BDL overnight job)
-# Optional: Reddit discussion (11 AM ET)
-```
-
-### Priority 4: Pre-Season Retrain (30 min)
-
-Retrain CatBoost on freshest available data before Mar 27:
+Current model trained through Aug 2025. Retrain on freshest available data:
 
 ```bash
 PYTHONPATH=. python ml/training/mlb/quick_retrain_mlb.py \
@@ -60,27 +45,15 @@ PYTHONPATH=. python ml/training/mlb/quick_retrain_mlb.py \
   --upload --register
 ```
 
-### Priority 5: E2E Pipeline Test
+### Priority 3: Statcast Raw Backfill (Optional)
+
+Raw table empty but analytics has data. For pipeline completeness:
 
 ```bash
-# Test CatBoost predictor loads
-PYTHONPATH=. python -c "
-from predictions.mlb.prediction_systems.catboost_v1_predictor import CatBoostV1Predictor
-p = CatBoostV1Predictor(); assert p.load_model(); print('CatBoost V1 OK')
-"
-
-# Test signal system
-PYTHONPATH=. python -c "
-from ml.signals.mlb.registry import build_mlb_registry
-r = build_mlb_registry()
-print(f'Active: {len(r.active_signals())}, Shadow: {len(r.shadow_signals())}, Filters: {len(r.negative_filters())}')
-"
-
-# Verify model registry
-bq query --nouse_legacy_sql 'SELECT model_id, enabled, is_production, evaluation_hr_edge_1plus FROM mlb_predictions.model_registry'
+PYTHONPATH=. python scripts/mlb/backfill_statcast.py --start 2025-07-01 --end 2025-09-28 --sleep 2
 ```
 
-### Priority 6: NBA Monitoring
+### Priority 4: NBA Monitoring
 
 - Filter demotion (Session 428) deployed Mar 6 — monitor BB HR for 7 days
 - New signals (bounce_back_over, CLV, over_streak_reversion_under) first fired Mar 7
@@ -88,33 +61,38 @@ bq query --nouse_legacy_sql 'SELECT model_id, enabled, is_production, evaluation
 
 ---
 
-## MLB Sprint 4 Remaining Plan (Mar 27 Opening Day)
+## What's Done (Full Checklist)
 
-### Week 1 (Mar 8-14): Infrastructure
-- [ ] Enable CatBoost V1 in BQ registry
-- [ ] Verify Cloud Build success
-- [ ] Add Cloud Scheduler jobs for new scrapers
-- [ ] Verify scraper credentials (ODDS_API_KEY, pybaseball)
-- [ ] Test Slack notifications for MLB pipeline
+- [x] Sprint 2+3 code committed (43 files, +8,158 lines)
+- [x] Feature contract fix (pitcher_loader provides all 31 CatBoost features)
+- [x] Dockerfile fixed (libgomp1 + urllib3 pin)
+- [x] CatBoost V1 enabled in BQ registry
+- [x] MLB worker deployed with all 3 systems
+- [x] 22 Cloud Scheduler jobs (all paused)
+- [x] Batter analytics migrated to unified BDL + mlbapi source
+- [x] Pitcher analytics already migrated (mlb_pitcher_stats)
+- [x] ODDS_API_KEY configured
+- [x] Slack notifications working
+- [x] E2E local tests pass (model, signals, exporter)
+- [x] cloudbuild-mlb-worker.yaml Dockerfile path fixed
+- [x] Main scraper registry synced
 
-### Week 2 (Mar 15-21): Testing + Polish
-- [ ] Run Statcast backfill (Jul-Sep 2025) for completeness
-- [ ] Retrain CatBoost on freshest data
-- [ ] E2E pipeline test with historical game date
-- [ ] Verify grading processor handles void logic correctly
-- [ ] Fix cloudbuild-mlb-worker.yaml Dockerfile path if needed
+## What's Left
 
-### Week 3 (Mar 22-27): Launch
-- [ ] Resume all MLB scheduler jobs
-- [ ] Final retrain with latest data
-- [ ] Opening day monitoring plan
-- [ ] Set up daily review cadence for first week
+| Task | When | Effort |
+|------|------|--------|
+| Resume scheduler jobs | Mar 24-25 | 5 min |
+| Retrain CatBoost on freshest data | Mar 24-25 | 30 min |
+| Statcast raw backfill | Optional | 15 min |
+| BDL injury source replacement | Post-launch | 1 hr |
+| BDL subscription retirement | After mlbapi analytics validated | — |
 
-### Post-Launch (Apr 1+): In-Season
+## Post-Launch Monitoring (Apr 1+)
+
 - [ ] Monitor first week predictions daily
-- [ ] Promote shadow signals after 30 days accumulation
+- [ ] Promote shadow signals after 30 days
 - [ ] First retrain decision based on live performance
-- [ ] Watch for July drift pattern (walk-forward showed dip)
+- [ ] Watch for July drift (walk-forward showed dip)
 
 ---
 
@@ -123,13 +101,13 @@ bq query --nouse_legacy_sql 'SELECT model_id, enabled, is_production, evaluation
 | File | Purpose |
 |------|---------|
 | `docs/08-projects/current/mlb-pitcher-strikeouts/CURRENT-STATUS.md` | MLB project status |
-| `docs/08-projects/current/mlb-pitcher-strikeouts/2026-03-MLB-MASTER-PLAN.md` | Full master plan |
-| `docs/09-handoff/2026-03-07-MLB-SPRINT3-HANDOFF.md` | Sprint 3 details |
+| `predictions/mlb/prediction_systems/catboost_v1_predictor.py` | CatBoost V1 predictor (31 features) |
+| `predictions/mlb/pitcher_loader.py` | Shared feature loader |
 | `ml/training/mlb/quick_retrain_mlb.py` | Retrain script |
-| `results/mlb_walkforward_2025/simulation_summary.json` | Walk-forward results |
+| `ml/signals/mlb/registry.py` | Signal registry (8+6+4) |
 
 ## Deployment State
 
 - **NBA:** Algorithm `v429_signal_weight_cleanup` deployed
-- **MLB:** Sprint 2+3 code committed and deploying. CatBoost V1 in GCS, NOT yet enabled in BQ.
+- **MLB:** Fully deployed. CatBoost V1 enabled. Worker serving 3 systems. Schedulers paused.
 - **Drift:** Check with `./bin/check-deployment-drift.sh --verbose`

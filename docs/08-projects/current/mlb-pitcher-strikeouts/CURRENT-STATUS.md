@@ -1,7 +1,7 @@
 # MLB Pitcher Strikeouts - Current Status
 
-**Last Updated**: 2026-03-07 (Sprint 4 — deployed + worker live)
-**Project Phase**: Sprint 4: Deploy + Launch Prep (90% complete)
+**Last Updated**: 2026-03-07 (Sprint 4 — fully deployed)
+**Project Phase**: Sprint 4: Deploy + Launch Prep (98% complete — retrain before opening day)
 **Season Start**: 2026-03-27 (20 days)
 
 ---
@@ -51,22 +51,21 @@
 | Deploy MLB worker with CatBoost | DONE | - | All 3 systems loading (catboost_v1, v1_6_rolling, ensemble_v1) |
 | Cloud Scheduler script updated | DONE | - | statcast_daily, reddit, mlbapi box scores |
 | E2E local tests pass | DONE | - | Model loads (31 features), signals (18), exporter OK |
-| Create scheduler jobs in GCP | TODO | 15 min | Run `bin/schedulers/setup_mlb_schedulers.sh --paused` |
-| Retrain CatBoost on freshest data | TODO | 30 min | Fresh 120d window before opening day |
-| Verify scraper credentials | TODO | 15 min | ODDS_API_KEY, pybaseball, MLB API |
-| Update analytics layer from BDL to mlbapi | TODO | 2 hrs | pitcher_game_summary + batter_game_summary → mlbapi_* tables |
-| Test Slack notifications for MLB | TODO | 10 min | Verify #mlb-alerts channel |
+| Create scheduler jobs in GCP | DONE | - | 22 total MLB jobs, all paused. Resume Mar 24-25. |
+| Verify scraper credentials | DONE | - | ODDS_API_KEY configured via secret |
+| Batter analytics BDL→mlbapi migration | DONE | - | UNION of bdl_batter_stats + mlbapi_batter_stats |
+| Test Slack notifications | DONE | - | notify_info sends successfully |
+| Retrain CatBoost on freshest data | TODO | 30 min | Do Mar 24-25. No new data beyond Sep 2025 (off-season). |
 
 ### Nice to Have (First 2 weeks of season)
 
 | Task | Effort | Notes |
 |------|--------|-------|
-| Cloud Scheduler for mlb_reddit_discussion | 15 min | Optional, 11 AM ET |
 | Statcast raw backfill (Jul-Sep 2025) | 15 min | `scripts/mlb/backfill_statcast.py` ready |
 | Odds API 2023 historical backfill | $290 | 29K API credits, deferred |
 | Monitor July drift pattern | Ongoing | Walk-forward showed July dip |
 | Signal promotion after 30 days | Ongoing | 6 shadow signals accumulating |
-| cloudbuild-mlb-worker.yaml Dockerfile path | 5 min | May reference old path |
+| BDL injury source replacement | 1 hr | `bdl_injuries` has fail-safe fallback. Need mlbapi source eventually. |
 
 ---
 
