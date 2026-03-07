@@ -1,74 +1,144 @@
 # Start Your Next Session Here
 
-**Updated:** 2026-03-07 (Session 429 — System Improvement Audit)
-**Status:** NBA v429 deployed. Infrastructure hardened. MLB fully deployed (schedulers paused until Mar 24).
-
-## What Happened This Session (429)
-
-### Infrastructure Fixes (Phase A — ALL DONE)
-- **Deactivated 3 BLOCKED models:** xgb_v12_noveg_train0107_0219, catboost_v12_noveg_train0107_0219, catboost_v16_noveg_train0105_0221. Fleet: 8 enabled models.
-- **Created `nba_orchestration.service_errors` BQ table** — was silently missing, audit trail now works.
-- **Fixed 3 bugs in decay-detection CF:** SQL GROUP BY with ARRAY_AGG, dataset mismatch, column schema mismatch.
-- **Fixed same dataset bug in `deactivate_model.py`.**
-- **Enabled `AUTO_DISABLE_ENABLED=true`** on decay-detection CF. BLOCKED models auto-disabled daily 11 AM ET.
-
-### Code Quality (Phase B — ALL DONE)
-- **Feature contract consolidated:** `catboost_v12.py` imports from `shared/ml/feature_contract.py` (killed 50-element hardcoded list).
-- **Champion model from registry:** `get_champion_model_id()` queries `model_registry WHERE is_production=TRUE` (1hr cache, fallback).
-- **HTTP handlers** added to `data_source_health_canary.py` and `signal_decay_monitor.py`.
-
-### Signal Changes
-- **Removed `mean_reversion_under`** from UNDER_SIGNAL_WEIGHTS (53.0% HR, below 54.3% baseline).
-- **Built `bin/monitoring/signal_weight_report.py`** — first run flagged combo_3way (63.9% N=36) and combo_he_ms (70.8% N=24) for promotion.
-- Algorithm version: `v429_signal_weight_cleanup`
+**Updated:** 2026-03-07 (Session 429 — BDL retirement + data source audit)
+**Status:** MLB fully deployed. BDL subscription being cancelled. Batter backfill running (~20% done).
 
 ---
 
-## What to Do Next
+## Three Tasks for This Session
 
-### Priority 1: Validate v429 Pipeline (15 min)
-```sql
--- Check picks exist with correct algorithm version
-SELECT game_date, algorithm_version, recommendation, COUNT(*) as picks
-FROM nba_predictions.signal_best_bets_picks
-WHERE game_date >= '2026-03-07'
-GROUP BY 1, 2, 3 ORDER BY 1, 2, 3;
+### Task 1: Fully Disable BDL (NBA + MLB)
 
--- Check new signal fires (bounce_back_over, CLV, under_after_bad_miss, volatile_starter_under, downtrend_under)
-SELECT player_lookup, recommendation, signal_tags
-FROM nba_predictions.signal_best_bets_picks
-WHERE game_date = CURRENT_DATE()
-  AND (signal_tags LIKE '%bounce_back%' OR signal_tags LIKE '%clv%'
-       OR signal_tags LIKE '%under_after_bad_miss%'
-       OR signal_tags LIKE '%volatile_starter%' OR signal_tags LIKE '%downtrend%');
+BDL (Ball Don't Lie) subscription is being cancelled. ALL BDL data is unreliable:
+- MLB pitcher stats: 15 rows (dead)
+- MLB batter stats: 97K rows but no game-level granularity (`game_id = "DATE_UNK_UNK"`)
+- MLB injuries: 222 rows from 1 date (useless)
+- NBA BDL: Already decommissioned for everything except `bdl_injuries` (Session 151)
+- 24 other BDL MLB tables: completely empty
+
+**Full analysis:** `docs/08-projects/current/mlb-pitcher-strikeouts/BDL-RETIREMENT-PLAN.md`
+
+#### What to remove/disable:
+
+**Scheduler jobs (4 paused BDL jobs — DELETE them):**
+```bash
+gcloud scheduler jobs list --location=us-west2 --project=nba-props-platform | grep bdl
+# bdl-catchup-afternoon, bdl-catchup-evening, bdl-catchup-midday, bdl-injuries-hourly
+# All already PAUSED. Safe to delete.
 ```
 
-### Priority 2: Signal Promotion Decisions (15 min)
-- **combo_3way:** 63.9% HR, N=36 — meets production threshold (HR>=60%, N>=30). Promote?
-- **combo_he_ms:** 70.8% HR, N=24 — meets rescue threshold (HR>=65%, N>=15). Already rescue?
-- Run: `PYTHONPATH=. python bin/monitoring/signal_weight_report.py --dry-run`
+**NBA main registry (`scrapers/registry.py`):**
+- Line 77: `bdl_injuries` scraper entry → REMOVE
+- Lines 482-488: `ball_dont_lie` source grouping → REMOVE
 
-### Priority 3: Schedule Monitors (15 min)
-HTTP handlers are ready. Create Cloud Scheduler jobs:
-- data_source_health_canary → daily 7 AM ET
-- signal_decay_monitor → daily 12 PM ET
-- signal_weight_report → weekly Monday 10 AM ET
+**MLB registries:**
+- `scrapers/mlb/registry.py` lines 33-88: 13 BDL MLB scraper entries → REMOVE
+- `scrapers/mlb/registry.py` line 241-248: `balldontlie` source grouping → REMOVE
+- `scrapers/registry.py` lines 262-274: 13 BDL MLB scraper entries → REMOVE
 
-### Priority 4: CI Enforcement (20 min)
-Create GitHub Actions workflow for 5 critical pre-commit hooks:
-- validate-deploy-safety, validate-python-syntax, validate-schema-fields, validate-dockerfile-imports, validate-model-references
+**Analytics processors:**
+- `data_processors/analytics/mlb/batter_game_summary_processor.py`: Remove BDL from UNION query (keep mlbapi-only). **Wait until batter backfill completes** — check: `SELECT COUNT(DISTINCT game_date) FROM mlb_raw.mlbapi_batter_stats` should be ~365.
+- `data_processors/analytics/mlb/main_mlb_analytics_service.py` line 68: Remove `bdl_pitcher_stats` trigger
+- `data_processors/analytics/mlb/main_mlb_analytics_service.py` line 70: Remove `bdl_batter_stats` trigger
 
-### Priority 5: Calendar Regime Research (30-45 min)
-- Query prediction_accuracy Jan 15 - Mar 10 across 2025+2026
-- Map HR by week — identify exact toxic window boundaries
-- Per-signal HR during toxic vs non-toxic
-- Would regime-aware multipliers improve toxic window by 5+pp?
+**Prediction code:**
+- `predictions/mlb/base_predictor.py:119`: `bdl_injuries` query — REMOVE (see BDL-RETIREMENT-PLAN.md Option C: prop lines already filter IL pitchers)
+- `predictions/mlb/pitcher_strikeouts_predictor.py:245`: Same `bdl_injuries` query — REMOVE
 
-### Priority 6: Filter Auto-Demotion Design (future)
-Needs BQ table to persist filtered_picks data. Currently only in JSON exports.
+**NBA code to check:**
+```bash
+# Find any remaining NBA bdl_ references
+grep -rn "bdl_" data_processors/ predictions/ orchestration/ shared/ --include="*.py" | grep -v ".pyc" | grep -v mlb | grep -v __pycache__
+```
 
-### Priority 7: MLB Pre-Season (Mar 24-25)
-- Resume scheduler jobs, retrain CatBoost V1, E2E smoke test
+---
+
+### Task 2: Data Source Audit — Coverage & Backup Check
+
+Audit every active data source. For each: does it have a backup? Can we backfill historical?
+
+**Full current inventory:** `docs/08-projects/current/mlb-pitcher-strikeouts/DATA-SOURCES.md`
+
+#### NBA Data Sources (check these)
+
+| Source | Scraper | proxy_enabled | Backup? | Historical? |
+|--------|---------|:---:|---------|-------------|
+| NBA.com stats | `nbac_*` (10 scrapers) | YES (most) | No backup | Yes — stats.nba.com endpoints |
+| Odds API | `oddsa_*` | NO | No backup | Yes — historical endpoint ($) |
+| BettingPros | `bp_*` | YES | No backup | Partial (props scraper) |
+| NumberFire | `numberfire_projections` | NO | No backup | No — daily snapshots only |
+| FantasyPros | `fantasypros_projections` | YES | No backup | No — DEAD (Playwright timeout) |
+| Dimers | `dimers_projections` | YES | No backup | No — DEAD (generic projections) |
+| DailyFantasyFuel | `dailyfantasyfuel_projections` | YES | No backup | No — DEAD (DFS only) |
+| TeamRankings | `teamrankings_stats` | YES | No backup | No — current season snapshot |
+| Hashtag Basketball | `hashtagbasketball_dvp` | YES | No backup | No — current season |
+| RotoWire | `rotowire_lineups` | YES | No backup | No — daily lineups |
+| VSiN | `vsin_betting_splits` | YES | No backup | No — daily splits |
+| Covers | `covers_referee_stats` | YES | No backup | No — current season |
+| NBA Tracking | `nba_tracking_stats` | YES | No backup | Yes — stats.nba.com |
+
+#### MLB Data Sources
+
+| Source | Scraper | proxy_enabled | Backup? | Historical? |
+|--------|---------|:---:|---------|-------------|
+| MLB Stats API | `mlb_schedule`, `mlb_lineups`, `mlb_box_scores_mlbapi`, `mlb_umpire_assignments` | NO | N/A — free official API | Yes |
+| BettingPros | `bp_pitcher_props` | NO | No backup | Partial |
+| Odds API | `mlb_pitcher_props`, `mlb_game_lines` | NO | No backup | Yes — historical ($) |
+| Statcast (pybaseball) | `mlb_statcast_*` | NO | No backup | Yes — pybaseball |
+| FanGraphs | `fangraphs_pitcher_season_stats` | NO | No backup | Yes — web scrape |
+| UmpScorecards | `mlb_umpire_stats` | NO | No backup | Yes — web scrape |
+| Weather | `mlb_weather` | NO | OpenWeatherMap | Yes — Open-Meteo |
+| Reddit | `mlb_reddit_discussion` | NO | No backup | No — daily |
+
+**Key questions to answer:**
+1. Which scrapers could we lose tomorrow and not recover? (No historical backfill possible)
+2. Which have single points of failure? (Only 1 source, no backup)
+3. Which are we NOT collecting that we should be? (Game lines empty, weather empty, umpire assignments empty)
+
+---
+
+### Task 3: Proxy Audit — Ensure All Scrapers Use Proxies
+
+Many scrapers have `proxy_enabled = False` that probably should use proxies, especially web scrapers hitting sites that block cloud IPs.
+
+**Proxy architecture:** `scrapers/scraper_base.py` line 219 — default is `False`. Each scraper overrides.
+
+#### Scrapers currently WITHOUT proxy that may need it:
+
+**NBA — probably fine without proxy:**
+- `nbac_schedule_cdn` — CDN, unlikely to block
+- `nbac_player_movement` — NBA.com, low volume
+- `numberfire_projections` — GraphQL API (FanDuel)
+
+**MLB — need proxy review:**
+- ALL MLB external scrapers (`proxy_enabled = False`):
+  - `mlb_umpire_stats` — UmpScorecards web scrape
+  - `mlb_weather` — OpenWeatherMap API (probably fine, has API key)
+  - `mlb_reddit_discussion` — Reddit (cloud IPs often blocked)
+  - `mlb_ballpark_factors` — web scrape
+- ALL MLB Odds API scrapers — API key auth, probably fine
+- ALL MLB Stats API scrapers — free official API, cloud-friendly
+- `mlb_statcast_*` — pybaseball, uses different HTTP library (not our proxy system)
+- `fangraphs_pitcher_season_stats` — web scrape, SHOULD use proxy
+
+**Questions:**
+1. What proxy service do we use? Check env vars: `PROXY_URL`, `PROXY_URLS`
+2. Are proxies healthy? Run: `PYTHONPATH=. python -c "from scrapers.utils.proxy_utils import get_proxy_health_summary; print(get_proxy_health_summary())"`
+3. Which scrapers have failed due to blocking? Check Cloud Run logs for 403/429 errors
+
+---
+
+## Background: Batter Stats Backfill In Progress
+
+```bash
+# Check progress (should reach ~365 dates / ~97K records)
+bq query --nouse_legacy_sql 'SELECT COUNT(*) as n, COUNT(DISTINCT game_date) as dates, MAX(game_date) as latest FROM mlb_raw.mlbapi_batter_stats WHERE game_date >= "2024-01-01"'
+
+# If it stopped, resume from where it left off:
+PYTHONPATH=. python scripts/mlb/backfill_batter_stats.py --start 2024-03-28 --end 2025-09-28 --sleep 0.3 --skip-existing
+```
+
+Once backfill reaches ~365 dates, the BDL batter table can be dropped from the UNION query.
 
 ---
 
@@ -76,22 +146,21 @@ Needs BQ table to persist filtered_picks data. Currently only in JSON exports.
 
 | Item | Status |
 |------|--------|
-| Fleet | 8 enabled models, AUTO_DISABLE live |
-| Algorithm | v429_signal_weight_cleanup |
-| Decay CF | Fixed + AUTO_DISABLE=true |
-| service_errors | Table created, writers fixed |
-| Champion model | Now from registry (is_production=TRUE) |
-| Feature contract | Consolidated (SSOT in shared/ml/) |
-| Deployment | All services fresh (3 commits pushed today) |
+| NBA | v429_signal_weight_cleanup, 8 enabled models, running normally |
+| MLB Worker | Deployed — catboost_v1, v1_6_rolling, ensemble_v1 all loading |
+| MLB Schedulers | 24 jobs, ALL paused. Resume Mar 24-25. |
+| CatBoost V1 | Enabled in BQ registry (is_production=TRUE) |
+| Batter Backfill | Running — ~23K records, ~98 dates done (of ~550) |
+| BDL | 4 scheduler jobs PAUSED. 13+13 registry entries to remove. Subscription being cancelled. |
 
-## Key Files Changed This Session
-- `ml/signals/aggregator.py` — mean_reversion_under removed, version bump
-- `orchestration/cloud_functions/decay_detection/main.py` — 3 bug fixes
-- `bin/deactivate_model.py` — dataset/column fix
-- `predictions/worker/prediction_systems/catboost_v12.py` — feature contract import
-- `shared/config/model_selection.py` — champion from registry
-- `bin/monitoring/signal_weight_report.py` — NEW
+## Key Files
 
-## Full Audit
-- `docs/08-projects/current/system-improvement-audit/SYSTEM-AUDIT.md` — keyword map of every system component
-- `docs/08-projects/current/system-improvement-audit/EXECUTION-PLAN.md` — prioritized plan from 3-agent consensus
+| File | Purpose |
+|------|---------|
+| `docs/08-projects/current/mlb-pitcher-strikeouts/BDL-RETIREMENT-PLAN.md` | Full BDL analysis + removal plan |
+| `docs/08-projects/current/mlb-pitcher-strikeouts/DATA-SOURCES.md` | All MLB data sources + gaps |
+| `scrapers/registry.py` | Main scraper registry (NBA + MLB) |
+| `scrapers/mlb/registry.py` | MLB-specific scraper registry |
+| `scrapers/scraper_base.py:219` | Proxy default (False) |
+| `scrapers/utils/proxy_utils.py` | Proxy rotation + health tracking |
+| `scripts/mlb/backfill_batter_stats.py` | MLB Stats API batter backfill |
