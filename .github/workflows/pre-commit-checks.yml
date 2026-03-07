@@ -1,0 +1,52 @@
+name: Pre-commit Checks
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '**.py'
+      - '**/Dockerfile*'
+      - 'schemas/**'
+      - 'bin/**/*.sh'
+  push:
+    branches: [main]
+    paths:
+      - '**.py'
+      - '**/Dockerfile*'
+      - 'schemas/**'
+      - 'bin/**/*.sh'
+
+jobs:
+  pre-commit-checks:
+    name: Validate Code Safety
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # BLOCKING: These hooks currently pass and must stay passing
+      - name: Validate Python syntax
+        run: python .pre-commit-hooks/validate_python_syntax.py
+
+      - name: Validate Dockerfile imports
+        run: python .pre-commit-hooks/validate_dockerfile_imports.py
+
+      # WARNING-ONLY: Pre-existing violations — will be promoted to blocking
+      # once violations are cleaned up
+      - name: Check deploy safety (--set-env-vars)
+        run: python .pre-commit-hooks/validate_deploy_safety.py
+        continue-on-error: true
+
+      - name: Validate schema fields
+        run: python .pre-commit-hooks/validate_schema_fields.py
+        continue-on-error: true
+
+      - name: Check model references
+        run: python .pre-commit-hooks/validate_model_references.py
+        continue-on-error: true

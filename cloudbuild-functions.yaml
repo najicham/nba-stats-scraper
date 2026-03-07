@@ -43,6 +43,17 @@ steps:
         cp -r ml /workspace/deploy_pkg/
         mkdir -p /workspace/deploy_pkg/bin
         cp -r bin/monitoring /workspace/deploy_pkg/bin/
+
+        # Copy monitor impl files alongside main.py for CF wrappers
+        # (bin/ is not a Python package in Cloud Functions runtime)
+        MONITOR_MAP="data_source_health_canary signal_decay_monitor signal_weight_report"
+        for monitor in $$MONITOR_MAP; do
+          if [ -f "bin/monitoring/$${monitor}.py" ] && grep -q "$${monitor}_impl" /workspace/deploy_pkg/main.py 2>/dev/null; then
+            cp "bin/monitoring/$${monitor}.py" "/workspace/deploy_pkg/$${monitor}_impl.py"
+            echo "Copied $${monitor}.py as $${monitor}_impl.py"
+          fi
+        done
+
         # NOTE: Do NOT copy orchestration/ — it contains other Cloud Functions
         # with syntax errors that cause gcloud compile checks to fail.
 
@@ -118,6 +129,12 @@ steps:
     args:
       - '-c'
       - |
+        # Skip IAM for HTTP-triggered functions (they use --allow-unauthenticated)
+        if [ "${_TRIGGER_TYPE}" = "http" ]; then
+          echo "HTTP-triggered function — skipping Pub/Sub IAM binding"
+          exit 0
+        fi
+
         echo "Setting IAM permissions for Pub/Sub invocation..."
         SERVICE_ACCOUNT="756957797294-compute@developer.gserviceaccount.com"
 
