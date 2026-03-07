@@ -305,6 +305,9 @@ class SignalBestBetsExporter(BaseExporter):
         compression_ctx = get_market_compression(self.bq_client, target_date)
         regime_ctx['market_compression'] = compression_ctx
 
+        # Step 5f: Query runtime filter overrides (Session 432: auto-demote system)
+        runtime_demoted = self._query_filter_overrides()
+
         # Step 6: Aggregate to top picks (with combo registry + signal health weighting + consensus)
         combo_registry = load_combo_registry(bq_client=self.bq_client)
         aggregator = BestBetsAggregator(
@@ -317,6 +320,7 @@ class SignalBestBetsExporter(BaseExporter):
             model_direction_affinity_stats=model_dir_stats,
             model_profile_store=model_profile_store,
             regime_context=regime_ctx,
+            runtime_demoted_filters=runtime_demoted,
         )
         top_picks, filter_summary = aggregator.aggregate(predictions, signal_results)
 
@@ -935,6 +939,27 @@ class SignalBestBetsExporter(BaseExporter):
         except Exception as e:
             # Non-fatal — don't fail export if counterfactual write fails
             logger.warning(f"Failed to write filtered picks for {target_date}: {e}")
+
+    def _query_filter_overrides(self) -> set:
+        """Session 432: Query runtime filter overrides for auto-demoted filters.
+
+        Returns set of filter names that are currently demoted via
+        the filter_overrides table (populated by filter-counterfactual-evaluator CF).
+        """
+        try:
+            query = f"""
+            SELECT filter_name
+            FROM `{PROJECT_ID}.nba_predictions.filter_overrides`
+            WHERE active = TRUE
+            """
+            rows = list(self.bq_client.query(query).result(timeout=15))
+            demoted = {row.filter_name for row in rows}
+            if demoted:
+                logger.info(f"Runtime filter overrides active: {sorted(demoted)}")
+            return demoted
+        except Exception as e:
+            logger.warning(f"Failed to query filter_overrides (non-fatal): {e}")
+            return set()
 
     def _query_direction_health(self, target_date: str) -> Dict[str, Any]:
         """Query 14-day rolling hit rate by direction (OVER vs UNDER).

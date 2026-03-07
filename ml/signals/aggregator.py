@@ -162,6 +162,7 @@ class BestBetsAggregator:
         model_direction_affinity_stats: Optional[Dict] = None,
         model_profile_store: Optional[Any] = None,
         regime_context: Optional[Dict[str, Any]] = None,
+        runtime_demoted_filters: Optional[Set[str]] = None,
     ):
         if combo_registry is not None:
             self._registry = combo_registry
@@ -176,6 +177,9 @@ class BestBetsAggregator:
         self._model_direction_affinity_stats = model_direction_affinity_stats
         self._model_profile_store = model_profile_store
         self._regime_context = regime_context or {}
+        # Session 432: Runtime filter overrides from filter_overrides table.
+        # Filters in this set still record to filtered_picks but don't block.
+        self._runtime_demoted = runtime_demoted_filters or set()
 
     def aggregate(self, predictions: List[Dict],
                   signal_results: Dict[str, List[SignalResult]]) -> Tuple[List[Dict], Dict]:
@@ -192,6 +196,11 @@ class BestBetsAggregator:
             how many candidates were rejected by each filter.
         """
         scored = []
+
+        # Session 432: Log runtime-demoted filters
+        if self._runtime_demoted:
+            logger.info(f"Runtime-demoted filters (auto-obs): {sorted(self._runtime_demoted)}")
+
         # Track all filter rejections
         filter_counts = {
             'blacklist': 0,
@@ -456,7 +465,8 @@ class BestBetsAggregator:
                 if block_reason:
                     filter_counts['model_direction_affinity'] += 1
                     _record_filtered(pred, 'model_direction_affinity', pred_edge)
-                    continue
+                    if 'model_direction_affinity' not in self._runtime_demoted:
+                        continue
 
             # AWAY block REMOVED (Session 401):
             # Original (Session 347/365): v12_noveg 43.8% AWAY, v9 48.1% AWAY
@@ -470,7 +480,8 @@ class BestBetsAggregator:
             if games_vs_opp >= 6:
                 filter_counts['familiar_matchup'] += 1
                 _record_filtered(pred, 'familiar_matchup', pred_edge)
-                continue
+                if 'familiar_matchup' not in self._runtime_demoted:
+                    continue
 
             # Feature quality floor (Session 278): quality < 85 = 24.0% HR
             # Session 310: quality=0 (missing) must also be blocked, not passed through
@@ -515,7 +526,8 @@ class BestBetsAggregator:
                     and 15 <= teammate_usage <= 30):
                 filter_counts['med_usage_under'] += 1
                 _record_filtered(pred, 'med_usage_under', pred_edge)
-                continue
+                if 'med_usage_under' not in self._runtime_demoted:
+                    continue
 
             # B2B UNDER block (Session 422c): 30.8% HR (N=52) — B2B players go OVER
             # at high rates. Market underprices fatigue or model overestimates it.
@@ -524,7 +536,8 @@ class BestBetsAggregator:
                     and rest_days <= 1):
                 filter_counts['b2b_under_block'] += 1
                 _record_filtered(pred, 'b2b_under_block', pred_edge)
-                continue
+                if 'b2b_under_block' not in self._runtime_demoted:
+                    continue
 
             # starter_v12_under REMOVED (Session 422b): Dead filter — zero fires
             # across entire season. startswith('v12') missed lgbm/xgb models,
@@ -547,7 +560,8 @@ class BestBetsAggregator:
                     and pred.get('recommendation') == 'UNDER'):
                 filter_counts['line_dropped_under'] += 1
                 _record_filtered(pred, 'line_dropped_under', pred_edge)
-                continue
+                if 'line_dropped_under' not in self._runtime_demoted:
+                    continue
 
             # Line dropped OVER — DEMOTED to observation (Session 428).
             # Original 39.1% HR was Feb toxic window (N=23). Full-season CF HR = 60.0%
@@ -575,7 +589,8 @@ class BestBetsAggregator:
                     and pred.get('opponent_team_abbr', '') in UNDER_TOXIC_OPPONENTS):
                 filter_counts['opponent_under_block'] += 1
                 _record_filtered(pred, 'opponent_under_block', pred_edge)
-                continue
+                if 'opponent_under_block' not in self._runtime_demoted:
+                    continue
 
             # Opponent depleted UNDER block (Session 374b): UNDER + 3+ opponent stars out = 44.4% HR (N=207).
             # When opponent is depleted, game becomes less competitive, UNDER less predictable.
@@ -584,7 +599,8 @@ class BestBetsAggregator:
                     and opponent_stars_out >= 3):
                 filter_counts['opponent_depleted_under'] += 1
                 _record_filtered(pred, 'opponent_depleted_under', pred_edge)
-                continue
+                if 'opponent_depleted_under' not in self._runtime_demoted:
+                    continue
 
             # Q4 scorer UNDER block (Session 397): UNDER + q4_scoring_ratio >= 0.35 = 34.0% HR (N=359).
             # Players who score disproportionately in Q4 → model undershoots them.
@@ -594,7 +610,8 @@ class BestBetsAggregator:
                     and q4_ratio >= 0.35):
                 filter_counts['q4_scorer_under_block'] += 1
                 _record_filtered(pred, 'q4_scorer_under_block', pred_edge)
-                continue
+                if 'q4_scorer_under_block' not in self._runtime_demoted:
+                    continue
 
             # Friday OVER block (Session 398): OVER on Friday = 37.5% HR at best bets (N=8),
             # 53.0% raw (N=443). Worst OVER day by far. BQ-validated across Nov-Mar.
@@ -611,7 +628,8 @@ class BestBetsAggregator:
                     if _gd and _gd.weekday() == 4:  # 4 = Friday
                         filter_counts['friday_over_block'] += 1
                         _record_filtered(pred, 'friday_over_block', pred_edge)
-                        continue
+                        if 'friday_over_block' not in self._runtime_demoted:
+                            continue
                 except (ValueError, TypeError):
                     pass
 
@@ -623,7 +641,8 @@ class BestBetsAggregator:
                     and mean_median_gap > 2.0):
                 filter_counts['high_skew_over_block'] += 1
                 _record_filtered(pred, 'high_skew_over_block', pred_edge)
-                continue
+                if 'high_skew_over_block' not in self._runtime_demoted:
+                    continue
 
             # High book std UNDER block (Session 377): UNDER + multi_book_line_std 1.0-1.5 = 14.8% HR (N=142).
             # When books disagree significantly on the line, UNDER predictions are unreliable.
@@ -632,7 +651,8 @@ class BestBetsAggregator:
                     and 1.0 <= book_std <= 1.5):
                 filter_counts['high_book_std_under'] += 1
                 _record_filtered(pred, 'high_book_std_under', pred_edge)
-                continue
+                if 'high_book_std_under' not in self._runtime_demoted:
+                    continue
 
             # Flat trend UNDER — DEMOTED to observation (Session 428).
             # Original 53% HR (N=2,720) was marginally above breakeven but full-season
@@ -654,7 +674,8 @@ class BestBetsAggregator:
                     and pred_edge < 5.0):
                 filter_counts['under_after_streak'] += 1
                 _record_filtered(pred, 'under_after_streak', pred_edge)
-                continue
+                if 'under_after_streak' not in self._runtime_demoted:
+                    continue
 
             # UNDER after bad miss + bad shooting + AWAY (Session 427):
             # Mirror image of bounce_back_over's strongest tier. Player shot badly
@@ -670,7 +691,8 @@ class BestBetsAggregator:
                     and is_away):
                 filter_counts['under_after_bad_miss'] += 1
                 _record_filtered(pred, 'under_after_bad_miss', pred_edge)
-                continue
+                if 'under_after_bad_miss' not in self._runtime_demoted:
+                    continue
 
             # Blowout risk UNDER block observation (Session 423): blowout_risk >= 0.40 + UNDER
             # = 16.7% HR (N=12). High blowout benching risk → players get pulled → OVER.
