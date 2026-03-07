@@ -68,6 +68,7 @@ MLB_ANALYTICS_TRIGGERS = {
     'bdl_pitcher_stats': [MlbPitcherGameSummaryProcessor],
     'mlb_batter_stats': [MlbBatterGameSummaryProcessor],
     'bdl_batter_stats': [MlbBatterGameSummaryProcessor],
+    'mlbapi_batter_stats': [MlbBatterGameSummaryProcessor],
     'mlb_game_lineups': [MlbPitcherGameSummaryProcessor, MlbBatterGameSummaryProcessor],
 }
 

@@ -5,7 +5,7 @@ MLB Pitcher Game Summary Analytics Processor
 Transforms raw pitcher stats into analytics features with rolling averages.
 Key output: Strikeout prediction features for ML model.
 
-Source: mlb_raw.bdl_pitcher_stats
+Source: mlb_raw.mlb_pitcher_stats
 Target: mlb_analytics.pitcher_game_summary
 
 Key Features Generated:
@@ -398,7 +398,7 @@ class MlbPitcherGameSummaryProcessor(CircuitBreakerMixin, AnalyticsProcessorBase
             ROUND(season_contact_pct, 4) as season_contact_pct,
 
             -- Data quality
-            'bdl' as stats_source,
+            'mlbapi' as stats_source,
             rolling_stats_games,
             CASE WHEN season_games_prior = 0 OR season_games_prior IS NULL THEN TRUE ELSE FALSE END as is_first_start,
             CASE

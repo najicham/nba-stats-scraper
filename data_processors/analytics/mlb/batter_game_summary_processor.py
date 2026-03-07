@@ -5,7 +5,7 @@ MLB Batter Game Summary Analytics Processor
 Transforms raw batter stats into analytics features with rolling K rates.
 CRITICAL for bottom-up strikeout prediction model.
 
-Source: mlb_raw.bdl_batter_stats
+Source: mlb_raw.bdl_batter_stats + mlb_raw.mlbapi_batter_stats (UNION)
 Target: mlb_analytics.batter_game_summary
 
 Bottom-Up Model Insight:
@@ -79,8 +79,13 @@ class MlbBatterGameSummaryProcessor(CircuitBreakerMixin, AnalyticsProcessorBase)
         return f"""
         SELECT
             COUNT(*) > 0 AS data_available
-        FROM `{self.project_id}.{self.raw_dataset}.bdl_batter_stats`
-        WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+        FROM (
+            SELECT game_date FROM `{self.project_id}.{self.raw_dataset}.bdl_batter_stats`
+            WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+            UNION ALL
+            SELECT game_date FROM `{self.project_id}.{self.raw_dataset}.mlbapi_batter_stats`
+            WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+        )
         """
 
     def process_date(self, target_date: date) -> Dict:
@@ -144,16 +149,14 @@ class MlbBatterGameSummaryProcessor(CircuitBreakerMixin, AnalyticsProcessorBase)
         date_str = target_date.isoformat()
 
         query = f"""
-        WITH batter_history AS (
-            -- Get all batter stats with game ordering
+        WITH unified_batter_stats AS (
+            -- BDL historical data (through Sep 2025)
             SELECT
                 player_lookup,
                 player_full_name,
                 game_id,
                 game_date,
                 team_abbr,
-                home_team_abbr,
-                away_team_abbr,
                 CASE WHEN team_abbr = home_team_abbr THEN away_team_abbr ELSE home_team_abbr END as opponent_team_abbr,
                 CASE WHEN team_abbr = home_team_abbr THEN TRUE ELSE FALSE END as is_home,
                 season_year,
@@ -162,33 +165,53 @@ class MlbBatterGameSummaryProcessor(CircuitBreakerMixin, AnalyticsProcessorBase)
                 game_status,
                 position,
                 batting_order,
+                strikeouts, at_bats, hits, walks, home_runs, rbi, runs,
+                doubles, triples, stolen_bases
+            FROM `{self.project_id}.{self.raw_dataset}.bdl_batter_stats`
+            WHERE game_date <= '{date_str}'
+              AND at_bats > 0
+              AND game_status IN ('STATUS_FINAL', 'STATUS_F')
 
-                -- Actual performance
-                strikeouts,
-                at_bats,
-                hits,
-                walks,
-                home_runs,
-                rbi,
-                runs,
-                doubles,
-                triples,
-                stolen_bases,
+            UNION ALL
 
-                -- Previous game date for days rest
+            -- MLB Stats API data (2026 season onward)
+            SELECT
+                player_lookup,
+                player_name as player_full_name,
+                CAST(game_pk AS STRING) as game_id,
+                game_date,
+                team_abbr,
+                opponent_abbr as opponent_team_abbr,
+                CASE WHEN home_away = 'home' THEN TRUE ELSE FALSE END as is_home,
+                season_year,
+                FALSE as is_postseason,
+                NULL as venue,
+                'Final' as game_status,
+                NULL as position,
+                batting_order,
+                strikeouts, at_bats, hits, walks, home_runs, COALESCE(rbis, 0) as rbi, runs,
+                0 as doubles, 0 as triples, 0 as stolen_bases
+            FROM `{self.project_id}.{self.raw_dataset}.mlbapi_batter_stats`
+            WHERE game_date <= '{date_str}'
+              AND at_bats > 0
+        ),
+
+        batter_history AS (
+            -- Deduplicate in case both sources have overlapping data
+            SELECT
+                *,
                 LAG(game_date) OVER (
                     PARTITION BY player_lookup
                     ORDER BY game_date, game_id
                 ) as prev_game_date
-
-            FROM `{self.project_id}.{self.raw_dataset}.bdl_batter_stats`
-            -- NOTE: Using <= here is CORRECT because:
-            -- 1. The rolling window functions use ROWS BETWEEN X PRECEDING AND 1 PRECEDING
-            -- 2. This explicitly excludes the current row from rolling calculations
-            -- 3. We need <= to include the target date's row in the output
-            WHERE game_date <= '{date_str}'
-              AND at_bats > 0  -- Filter to batters who had at-bats
-              AND game_status IN ('STATUS_FINAL', 'STATUS_F')  -- Both formats
+            FROM (
+                SELECT *, ROW_NUMBER() OVER (
+                    PARTITION BY player_lookup, game_date, game_id
+                    ORDER BY game_date
+                ) as _dedup_rn
+                FROM unified_batter_stats
+            )
+            WHERE _dedup_rn = 1
         ),
 
         rolling_stats AS (
@@ -348,7 +371,7 @@ class MlbBatterGameSummaryProcessor(CircuitBreakerMixin, AnalyticsProcessorBase)
             DATE_DIFF(game_date, prev_game_date, DAY) as days_since_last_game,
 
             -- Data quality
-            'bdl' as stats_source,
+            'unified' as stats_source,
             rolling_stats_games,
             CASE WHEN season_games_prior = 0 OR season_games_prior IS NULL THEN TRUE ELSE FALSE END as is_first_game_season,
             CASE
