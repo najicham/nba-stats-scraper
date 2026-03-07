@@ -157,6 +157,22 @@ create_job \
     '{"scraper": "mlb_reddit_discussion", "date": "TODAY"}' \
     "Reddit MLB discussion and sentiment"
 
+# Umpire assignments (11:30 AM ET - after lineup announcements)
+create_job \
+    "mlb-umpire-assignments" \
+    "30 11 * * *" \
+    "$SCRAPERS_URL/scrape" \
+    '{"scraper": "mlb_umpire_assignments", "date": "TODAY"}' \
+    "Home plate umpire assignments for K predictions"
+
+# Game lines - run totals (11 AM ET - morning odds)
+create_job \
+    "mlb-game-lines-morning" \
+    "0 11 * * *" \
+    "$SCRAPERS_URL/scrape" \
+    '{"scraper": "mlb_game_lines", "game_date": "TODAY"}' \
+    "Game lines (moneyline, spread, run totals)"
+
 echo ""
 echo "=== Phase 5: Predictions ==="
 

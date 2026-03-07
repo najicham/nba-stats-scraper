@@ -311,6 +311,11 @@ MLB_SCRAPER_REGISTRY: Dict[str, Tuple[str, str]] = {
     "mlb_box_scores_mlbapi": ("scrapers.mlb.mlbstatsapi.mlb_box_scores", "MlbBoxScoresScraper"),
 
     # ========================================================================
+    # MLB Stats API - Umpire Assignments
+    # ========================================================================
+    "mlb_umpire_assignments": ("scrapers.mlb.mlbstatsapi.mlb_umpire_assignments", "MlbUmpireAssignmentsScraper"),
+
+    # ========================================================================
     # Reddit / Community Intelligence
     # ========================================================================
     "mlb_reddit_discussion": ("scrapers.mlb.external.mlb_reddit_discussion", "MlbRedditDiscussionScraper"),

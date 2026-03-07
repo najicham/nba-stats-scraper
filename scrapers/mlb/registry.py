@@ -176,6 +176,14 @@ MLB_SCRAPER_REGISTRY: Dict[str, Tuple[str, str]] = {
     ),
 
     # ========================================================================
+    # MLB Stats API - Umpire Assignments (Game-Day)
+    # ========================================================================
+    "mlb_umpire_assignments": (
+        "scrapers.mlb.mlbstatsapi.mlb_umpire_assignments",
+        "MlbUmpireAssignmentsScraper"
+    ),
+
+    # ========================================================================
     # Reddit / Community Intelligence
     # ========================================================================
     "mlb_reddit_discussion": (
