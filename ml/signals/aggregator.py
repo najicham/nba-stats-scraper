@@ -51,7 +51,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v427_shooting_tiers_weight_rebalance'
+ALGORITHM_VERSION = 'v428_filter_cleanup'
 
 # Base signals that fire on nearly every edge 5+ pick. Picks with ONLY
 # these signals hit 57.1% (N=42) vs 77.8% for picks with 4+ signals.
@@ -548,21 +548,25 @@ class BestBetsAggregator:
                 _record_filtered(pred, 'line_dropped_under', pred_edge)
                 continue
 
-            # Line dropped OVER block (Session 374b): OVER + line dropped 2+ = 39.1% HR Feb (N=23).
-            # Market correcting downward is bearish for OVER. OVER + line UP = 96.6% HR.
+            # Line dropped OVER — DEMOTED to observation (Session 428).
+            # Original 39.1% HR was Feb toxic window (N=23). Full-season CF HR = 60.0%
+            # (N=477) — blocking profitable picks. Market line drops may reflect injury
+            # news that the model already incorporates.
             if (prop_line_delta is not None
                     and prop_line_delta <= -2.0
                     and pred.get('recommendation') == 'OVER'):
                 filter_counts['line_dropped_over'] += 1
-                _record_filtered(pred, 'line_dropped_over', pred_edge)
-                continue
+                _record_filtered(pred, 'line_dropped_over_obs', pred_edge)
+                # continue  # Session 428: observation mode — do NOT block
 
-            # Neg +/- streak UNDER block (Session 294): 13.1% HR
+            # Neg +/- streak UNDER — DEMOTED to observation (Session 428).
+            # Original 13.1% HR was from early data. Full-season CF HR = 64.5%
+            # (N=758) — highest CF HR of any filter. Blocking the most profitable picks.
             neg_pm_streak = pred.get('neg_pm_streak') or 0
             if neg_pm_streak >= 3 and pred.get('recommendation') == 'UNDER':
                 filter_counts['neg_pm_streak'] += 1
-                _record_filtered(pred, 'neg_pm_streak', pred_edge)
-                continue
+                _record_filtered(pred, 'neg_pm_streak_obs', pred_edge)
+                # continue  # Session 428: observation mode — do NOT block
 
             # Opponent team UNDER block (Session 372)
             # MIN 43.8%, MEM 46.7%, MIL 48.7% UNDER HR (edge 3+, N>=190)
@@ -629,15 +633,16 @@ class BestBetsAggregator:
                 _record_filtered(pred, 'high_book_std_under', pred_edge)
                 continue
 
-            # Flat trend UNDER block (Session 413): UNDER + trend_slope -0.5 to 0.5 = 53% HR
-            # (N=2,720). No clear scoring trend → UNDER is essentially a coin flip.
-            # Players with directional trends (up or down) hit UNDER at 61-62%.
+            # Flat trend UNDER — DEMOTED to observation (Session 428).
+            # Original 53% HR (N=2,720) was marginally above breakeven but full-season
+            # CF HR = 59.2% (N=211) within BB pipeline — blocking profitable picks.
+            # 68% directional consistency is moderate but not enough to justify blocking.
             trend_slope = pred.get('trend_slope') or 0
             if (pred.get('recommendation') == 'UNDER'
                     and -0.5 <= trend_slope <= 0.5):
                 filter_counts['flat_trend_under'] += 1
-                _record_filtered(pred, 'flat_trend_under', pred_edge)
-                continue
+                _record_filtered(pred, 'flat_trend_under_obs', pred_edge)
+                # continue  # Session 428: observation mode — do NOT block
 
             # UNDER after streak (Session 418): 3+ consecutive unders + model UNDER = 44.7% HR (N=515)
             # Model blind spot: it chases the downtrend, but bounce-back makes these UNDER calls lose.
@@ -687,14 +692,15 @@ class BestBetsAggregator:
                 _record_filtered(pred, 'high_spread_over_would_block', pred_edge)
                 # continue  # Session 419: observation mode — do NOT block
 
-            # Mid-line OVER block (Session 414→415): OVER + line 15-25 = 47.9% BB HR (N=213)
-            # full season. Promoted from observation to active block Session 415.
-            # Note: subsumes starter_over_sc_floor for OVER picks (acceptable).
+            # Mid-line OVER — DEMOTED to observation (Session 428).
+            # Original 47.9% BB HR (N=213) was toxic-window-biased. Full-season
+            # CF HR = 55.8% (N=926) — above breakeven. Weekly stddev 13.6pp on
+            # mean 2.8pp lift = pure noise. Not a reliable filter.
             if (pred.get('recommendation') == 'OVER'
                     and 15 <= line_val <= 25):
                 filter_counts['mid_line_over_obs'] += 1
                 _record_filtered(pred, 'mid_line_over_obs', pred_edge)
-                continue
+                # continue  # Session 428: observation mode — do NOT block
 
             # Monday OVER observation (Session 414): OVER on Monday = 49.0% HR (N=251).
             # Complements active friday_over_block. Reuses date parsing from Friday filter.
@@ -942,7 +948,7 @@ class BestBetsAggregator:
         if filter_counts['sc3_over_block'] > 0:
             logger.info(f"SC=3 OVER block: skipped {filter_counts['sc3_over_block']} OVER picks with SC=3 (45.5% HR, net loser)")
         if filter_counts['line_dropped_over'] > 0:
-            logger.info(f"Line dropped OVER block: skipped {filter_counts['line_dropped_over']} OVER picks with line drop >= 2")
+            logger.info(f"Line dropped OVER (observation): tagged {filter_counts['line_dropped_over']} OVER picks with line drop >= 2")
         if filter_counts['opponent_depleted_under'] > 0:
             logger.info(f"Opponent depleted UNDER block: skipped {filter_counts['opponent_depleted_under']} UNDER picks with 3+ opponent stars out")
         if filter_counts['q4_scorer_under_block'] > 0:
@@ -952,7 +958,7 @@ class BestBetsAggregator:
         if filter_counts['high_skew_over_block'] > 0:
             logger.info(f"High skew OVER block: skipped {filter_counts['high_skew_over_block']} OVER picks with mean-median gap > 2.0 (49.1% HR)")
         if filter_counts['flat_trend_under'] > 0:
-            logger.info(f"Flat trend UNDER block: skipped {filter_counts['flat_trend_under']} UNDER picks with trend slope -0.5 to 0.5 (53% HR)")
+            logger.info(f"Flat trend UNDER (observation): tagged {filter_counts['flat_trend_under']} UNDER picks with trend slope -0.5 to 0.5")
         if filter_counts['under_after_streak'] > 0:
             logger.info(f"UNDER after streak: skipped {filter_counts['under_after_streak']} UNDER picks on players with 3+ consecutive unders (44.7% HR anti-signal)")
         if filter_counts['under_after_bad_miss'] > 0:
@@ -964,8 +970,8 @@ class BestBetsAggregator:
             )
         if filter_counts['mid_line_over_obs'] > 0:
             logger.info(
-                f"Mid-line OVER block: skipped "
-                f"{filter_counts['mid_line_over_obs']} OVER picks with line 15-25 (47.9% HR)"
+                f"Mid-line OVER (observation): tagged "
+                f"{filter_counts['mid_line_over_obs']} OVER picks with line 15-25"
             )
         if filter_counts['monday_over_obs'] > 0:
             logger.info(
