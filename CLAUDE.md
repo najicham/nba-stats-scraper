@@ -138,7 +138,7 @@ nba-stats-scraper/
 
 **Cloud Run Services:** prediction-coordinator, prediction-worker, nba-phase3-analytics-processors, nba-phase4-precompute-processors, nba-phase2-raw-processors, nba-scrapers, nba-grading-service
 
-**Cloud Functions (auto-deploy via `cloudbuild-functions.yaml`):** phase5b-grading, phase6-export, grading-gap-detector, phase3/4/5-to-next orchestrators, enrichment-trigger, daily-health-check, transition-monitor, pipeline-health-summary, nba-grading-alerts, live-freshness-monitor, self-heal-predictions, grading-readiness-monitor, post-grading-export, decay-detection (11 AM ET), retrain-reminder (Mon 9 AM ET), validation-runner
+**Cloud Functions (auto-deploy via `cloudbuild-functions.yaml`):** phase5b-grading, phase6-export, grading-gap-detector, phase3/4/5-to-next orchestrators, enrichment-trigger, daily-health-check, transition-monitor, pipeline-health-summary, nba-grading-alerts, live-freshness-monitor, self-heal-predictions, grading-readiness-monitor, post-grading-export, decay-detection (11 AM ET), retrain-reminder (Mon 9 AM ET), validation-runner, filter-counterfactual-evaluator (11:30 AM ET)
 
 **NOT auto-deployed (manual only):** auto-retry-processor
 
@@ -160,6 +160,9 @@ nba-stats-scraper/
 | `model_performance_daily` | Daily rolling HR/state per model. Auto-populated by post_grading_export |
 | `signal_health_daily` | Signal regime (HOT/NORMAL/COLD) per timeframe |
 | `signal_combo_registry` | 11 SYNERGISTIC combos |
+| `filter_counterfactual_daily` | Daily CF HR per negative filter. Auto-populated by filter-counterfactual-evaluator CF |
+| `filter_overrides` | Runtime filter demotions (auto-demote system). Aggregator reads at export time |
+| `best_bets_filtered_picks` | Picks blocked by filters, with graded actuals. Source for CF HR computation |
 | `nba_raw.numberfire_projections` | NumberFire/FanDuel player projections (Session 401) |
 | `nba_raw.fantasypros_projections` | FantasyPros consensus projections |
 | `nba_raw.dailyfantasyfuel_projections` | DailyFantasyFuel projections |
@@ -289,6 +292,7 @@ python bin/monitoring/signal_decay_monitor.py        # Signal decay/recovery (Se
 - Model registry: `python bin/validation/validate_model_registry.py` — checks duplicates, orphans, GCS consistency
 - Workflow health: `python bin/validation/validate_workflow_dependencies.py` — detects workflows monitoring disabled scrapers
 - **Brier score calibration** (Session 399): `model_performance_daily` has `brier_score_7d/14d/30d`. Lower = better calibrated. Backfill: `PYTHONPATH=. python ml/analysis/model_performance.py --backfill --start 2025-11-02`
+- **Filter auto-demote** (Session 432): `filter-counterfactual-evaluator` CF daily 11:30 AM ET. Computes CF HR per filter, auto-demotes to observation if CF HR >= 55% for 7 consecutive days (N >= 20). Max 2/run. Core filters excluded. Demotions in `filter_overrides` table, read by aggregator at export.
 
 **Analysis tools:**
 ```bash
