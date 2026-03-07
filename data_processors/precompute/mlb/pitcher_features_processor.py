@@ -289,32 +289,12 @@ class MlbPitcherFeaturesProcessor(PrecomputeProcessorBase):
             return {}
 
     def _get_pitcher_splits(self, game_date: date) -> Dict[str, Dict]:
-        """Get pitcher home/away and day/night splits."""
-        query = f"""
-        SELECT
-            player_lookup,
-            split_category,
-            k_per_9,
-            era,
-            games
-        FROM `{self.project_id}.mlb_raw.bdl_pitcher_splits`
-        WHERE snapshot_date <= '{game_date}'
-          AND split_category IN ('home', 'away', 'day', 'night')
-        QUALIFY ROW_NUMBER() OVER (PARTITION BY player_lookup, split_category ORDER BY snapshot_date DESC) = 1
+        """Get pitcher home/away and day/night splits.
+
+        BDL data source retired (Session 430). Returns empty until
+        MLB Stats API splits replacement is implemented.
         """
-        try:
-            df = self.bq_client.query(query).to_dataframe()
-            # Organize by player_lookup with all splits
-            splits = {}
-            for _, row in df.iterrows():
-                player = row['player_lookup']
-                if player not in splits:
-                    splits[player] = {}
-                splits[player][row['split_category']] = row.to_dict()
-            return splits
-        except Exception as e:
-            logger.warning(f"Pitcher splits query failed: {e}")
-            return {}
+        return {}
 
     def _get_game_lines(self, game_date: date) -> Dict[str, Dict]:
         """Get game totals and moneylines."""

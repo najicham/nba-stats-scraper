@@ -407,7 +407,7 @@ class MlbBallparkFactorsScraper(ScraperBase, ScraperFlaskMixin):
     required_opts: List[str] = []
     download_type = DownloadType.JSON
     decode_download_data = False  # Using static data
-    proxy_enabled: bool = False
+    proxy_enabled: bool = True
 
     exporters = [
         {

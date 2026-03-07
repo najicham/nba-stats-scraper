@@ -91,78 +91,13 @@ class BaseMLBPredictor(ABC):
         """
         Get set of pitcher_lookup values currently on IL.
 
-        Caches result based on config TTL to avoid repeated queries.
-        Uses retry logic with exponential backoff for BigQuery failures.
-
-        Safety: On BigQuery failure after retries, returns empty set (no skips)
-        rather than stale cache to avoid missing recently recovered pitchers.
+        BDL injuries data source retired (Session 430). Prop lines already
+        filter IL pitchers — no pitcher on IL will have active prop lines.
 
         Returns:
-            set: pitcher_lookup values on IL
+            set: empty set (IL filtering handled by prop line availability)
         """
-        config = get_config()
-        cache_ttl_hours = config.cache.il_cache_ttl_hours
-        now = datetime.now()
-
-        # Return cached if within TTL
-        if (BaseMLBPredictor._il_cache is not None and
-            BaseMLBPredictor._il_cache_timestamp is not None):
-            cache_age = now - BaseMLBPredictor._il_cache_timestamp
-            if cache_age < timedelta(hours=cache_ttl_hours):
-                logger.debug(f"IL cache hit (age: {cache_age})")
-                return BaseMLBPredictor._il_cache
-
-        # Query with retry logic (3 attempts with exponential backoff)
-        client = self._get_bq_client()
-        query = """
-        SELECT DISTINCT REPLACE(player_lookup, '_', '') as player_lookup
-        FROM `nba-props-platform.mlb_raw.bdl_injuries`
-        WHERE snapshot_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
-          AND is_pitcher = TRUE
-          AND injury_status IN ('10-Day-IL', '15-Day-IL', '60-Day-IL', 'Out')
-        """
-
-        max_retries = 3
-        base_delay = 1.0  # seconds
-
-        for attempt in range(max_retries):
-            try:
-                result = client.query(query).result()
-                il_pitchers = {row.player_lookup for row in result}
-
-                # Cache result with timestamp
-                BaseMLBPredictor._il_cache = il_pitchers
-                BaseMLBPredictor._il_cache_timestamp = now
-
-                logger.info(f"Loaded {len(il_pitchers)} pitchers on IL (cache refreshed)")
-                return il_pitchers
-
-            except Exception as e:
-                if attempt < max_retries - 1:
-                    # Exponential backoff
-                    delay = base_delay * (2 ** attempt)
-                    logger.warning(f"IL query failed (attempt {attempt + 1}/{max_retries}), retrying in {delay}s: {e}")
-                    import time
-                    time.sleep(delay)
-                else:
-                    # Final attempt failed
-                    cache_age_hours = ((now - BaseMLBPredictor._il_cache_timestamp).total_seconds() / 3600
-                                      if BaseMLBPredictor._il_cache_timestamp else None)
-
-                    logger.error(
-                        f"IL query failed after {max_retries} attempts: {e}",
-                        extra={
-                            "error_type": type(e, exc_info=True).__name__,
-                            "cache_age_hours": cache_age_hours,
-                            "fallback_action": "return_empty_set"
-                        },
-                        exc_info=True
-                    )
-
-                    # FAIL SAFE: Return empty set (no IL skips) rather than stale cache
-                    # This is safer - we'd rather NOT skip a pitcher than skip them
-                    # based on outdated IL status
-                    return set()
+        return set()
 
     def _calculate_confidence(self, features: Dict, feature_vector: np.ndarray = None) -> float:
         """

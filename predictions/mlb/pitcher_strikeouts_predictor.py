@@ -219,51 +219,14 @@ class PitcherStrikeoutsPredictor:
     def _get_current_il_pitchers(self) -> set:
         """
         Get set of pitcher_lookup values currently on IL.
-        Caches result based on config TTL to avoid repeated queries.
+
+        BDL injuries data source retired (Session 430). Prop lines already
+        filter IL pitchers — no pitcher on IL will have active prop lines.
 
         Returns:
-            set: pitcher_lookup values on IL
+            set: empty set (IL filtering handled by prop line availability)
         """
-        from datetime import datetime, timedelta
-
-        config = get_config()
-        cache_ttl_hours = config.cache.il_cache_ttl_hours
-        now = datetime.now()
-
-        # Return cached if within TTL
-        if (PitcherStrikeoutsPredictor._il_cache is not None and
-            PitcherStrikeoutsPredictor._il_cache_timestamp is not None):
-            cache_age = now - PitcherStrikeoutsPredictor._il_cache_timestamp
-            if cache_age < timedelta(hours=cache_ttl_hours):
-                logger.debug(f"IL cache hit (age: {cache_age})")
-                return PitcherStrikeoutsPredictor._il_cache
-
-        try:
-            client = self._get_bq_client()
-            query = """
-            SELECT DISTINCT REPLACE(player_lookup, '_', '') as player_lookup
-            FROM `nba-props-platform.mlb_raw.bdl_injuries`
-            WHERE snapshot_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
-              AND is_pitcher = TRUE
-              AND injury_status IN ('10-Day-IL', '15-Day-IL', '60-Day-IL', 'Out')
-            """
-            result = client.query(query).result()
-            il_pitchers = {row.player_lookup for row in result}
-
-            # Cache result with timestamp
-            PitcherStrikeoutsPredictor._il_cache = il_pitchers
-            PitcherStrikeoutsPredictor._il_cache_timestamp = now
-
-            logger.info(f"Loaded {len(il_pitchers)} pitchers on IL (cache refreshed)")
-            return il_pitchers
-
-        except Exception as e:
-            logger.error(f"Failed to load IL status from BigQuery: {e}", exc_info=True)
-            # Return stale cache if available (fail-safe)
-            if PitcherStrikeoutsPredictor._il_cache is not None:
-                logger.warning("Returning stale IL cache after error")
-                return PitcherStrikeoutsPredictor._il_cache
-            return set()
+        return set()
 
     def load_model(self) -> bool:
         """

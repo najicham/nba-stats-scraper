@@ -113,7 +113,7 @@ class MlbRedditDiscussionScraper(ScraperBase, ScraperFlaskMixin):
     required_opts: List[str] = ["date"]
     download_type = DownloadType.JSON
     decode_download_data = False  # Multiple API calls, we handle download ourselves
-    proxy_enabled: bool = False
+    proxy_enabled: bool = True
 
     exporters = [
         {

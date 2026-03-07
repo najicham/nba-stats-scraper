@@ -32,62 +32,6 @@ logger = logging.getLogger(__name__)
 
 MLB_SCRAPER_REGISTRY: Dict[str, Tuple[str, str]] = {
     # ========================================================================
-    # Ball Don't Lie Scrapers (13 total)
-    # ========================================================================
-    "mlb_games": (
-        "scrapers.mlb.balldontlie.mlb_games",
-        "MlbGamesScraper"
-    ),
-    "mlb_box_scores": (
-        "scrapers.mlb.balldontlie.mlb_box_scores",
-        "MlbBoxScoresScraper"
-    ),
-    "mlb_live_box_scores": (
-        "scrapers.mlb.balldontlie.mlb_live_box_scores",
-        "MlbLiveBoxScoresScraper"
-    ),
-    "mlb_pitcher_stats": (
-        "scrapers.mlb.balldontlie.mlb_pitcher_stats",
-        "MlbPitcherStatsScraper"
-    ),
-    "mlb_batter_stats": (
-        "scrapers.mlb.balldontlie.mlb_batter_stats",
-        "MlbBatterStatsScraper"
-    ),
-    "mlb_active_players": (
-        "scrapers.mlb.balldontlie.mlb_active_players",
-        "MlbActivePlayersScraper"
-    ),
-    "mlb_injuries": (
-        "scrapers.mlb.balldontlie.mlb_injuries",
-        "MlbInjuriesScraper"
-    ),
-    "mlb_player_splits": (
-        "scrapers.mlb.balldontlie.mlb_player_splits",
-        "MlbPlayerSplitsScraper"
-    ),
-    "mlb_player_versus": (
-        "scrapers.mlb.balldontlie.mlb_player_versus",
-        "MlbPlayerVersusScraper"
-    ),
-    "mlb_season_stats": (
-        "scrapers.mlb.balldontlie.mlb_season_stats",
-        "MlbSeasonStatsScraper"
-    ),
-    "mlb_standings": (
-        "scrapers.mlb.balldontlie.mlb_standings",
-        "MlbStandingsScraper"
-    ),
-    "mlb_team_season_stats": (
-        "scrapers.mlb.balldontlie.mlb_team_season_stats",
-        "MlbTeamSeasonStatsScraper"
-    ),
-    "mlb_teams": (
-        "scrapers.mlb.balldontlie.mlb_teams",
-        "MlbTeamsScraper"
-    ),
-
-    # ========================================================================
     # MLB Stats API Scrapers (3 total)
     # ========================================================================
     "mlb_schedule": (
@@ -244,11 +188,6 @@ def get_scrapers_by_source(source: str) -> list:
         List of scraper names for that source
     """
     source_map = {
-        'balldontlie': ['mlb_games', 'mlb_box_scores', 'mlb_live_box_scores',
-                        'mlb_pitcher_stats', 'mlb_batter_stats', 'mlb_active_players',
-                        'mlb_injuries', 'mlb_player_splits', 'mlb_player_versus',
-                        'mlb_season_stats', 'mlb_standings', 'mlb_team_season_stats',
-                        'mlb_teams'],
         'mlbstatsapi': ['mlb_schedule', 'mlb_lineups', 'mlb_game_feed'],
         'oddsapi': ['mlb_events', 'mlb_events_his', 'mlb_game_lines',
                     'mlb_game_lines_his', 'mlb_pitcher_props', 'mlb_pitcher_props_his',

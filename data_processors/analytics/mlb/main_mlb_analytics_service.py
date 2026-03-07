@@ -65,9 +65,7 @@ MLB_ANALYTICS_PROCESSORS = {
 # Trigger mapping: which raw tables trigger which analytics processors
 MLB_ANALYTICS_TRIGGERS = {
     'mlb_pitcher_stats': [MlbPitcherGameSummaryProcessor],
-    'bdl_pitcher_stats': [MlbPitcherGameSummaryProcessor],
     'mlb_batter_stats': [MlbBatterGameSummaryProcessor],
-    'bdl_batter_stats': [MlbBatterGameSummaryProcessor],
     'mlbapi_batter_stats': [MlbBatterGameSummaryProcessor],
     'mlb_game_lineups': [MlbPitcherGameSummaryProcessor, MlbBatterGameSummaryProcessor],
 }

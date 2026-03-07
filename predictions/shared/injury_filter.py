@@ -13,7 +13,6 @@ Checks player injury status before generating predictions to:
 Data Sources (v2.1):
 - nba_raw.nbac_injury_report: NBA.com official injury reports (primary)
 - nba_analytics.player_game_summary: Historical DNP data from gamebooks (v2.1)
-- nba_raw.bdl_injuries: Ball Don't Lie backup source (validation)
 
 Based on analysis of 2024-25 season:
 - 28.6% of DNPs (1,833) were catchable by checking OUT status

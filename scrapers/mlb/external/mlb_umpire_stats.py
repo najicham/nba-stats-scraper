@@ -73,7 +73,7 @@ class MlbUmpireStatsScraper(ScraperBase, ScraperFlaskMixin):
     required_opts: List[str] = []
     download_type = DownloadType.HTML
     decode_download_data = True
-    proxy_enabled: bool = False
+    proxy_enabled: bool = True
 
     exporters = [
         {

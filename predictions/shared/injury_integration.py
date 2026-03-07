@@ -12,7 +12,6 @@ Provides comprehensive injury data handling for predictions:
 
 Data Sources:
 - nba_raw.nbac_injury_report: Official NBA.com injury reports (primary)
-- nba_raw.bdl_injuries: Ball Don't Lie backup source (validation)
 
 Status Levels:
 - OUT: Skip prediction entirely (player will not play)
@@ -67,7 +66,7 @@ class PlayerInjuryInfo:
     reason_category: Optional[str]
     team_abbr: Optional[str]
     game_date: date
-    source: str  # 'nba_com', 'bdl', 'combined'
+    source: str  # 'nba_com'
     confidence: float  # 0.0-1.0 based on source quality and recency
     report_hour: Optional[int]  # Hour of latest report (for recency)
 
@@ -229,32 +228,9 @@ class InjuryIntegration:
         for player, info in nba_injuries.items():
             injuries[player] = info
 
-        # Load from Ball Don't Lie (backup/validation)
-        bdl_injuries = self._load_bdl_injuries(game_date)
-        for player, info in bdl_injuries.items():
-            if player not in injuries:
-                # NBA.com doesn't have this player - use BDL data
-                info.source = 'bdl'
-                injuries[player] = info
-            else:
-                # Both sources have data - validate and enhance confidence
-                existing = injuries[player]
-                if existing.status == info.status:
-                    # Sources agree - boost confidence
-                    existing.confidence = min(1.0, existing.confidence + 0.1)
-                    existing.source = 'combined'
-                else:
-                    # Sources disagree - prefer more recent report
-                    if (info.report_hour or 0) > (existing.report_hour or 0):
-                        # BDL is more recent, but keep NBA.com as primary
-                        logger.warning(
-                            f"Injury status conflict for {player}: "
-                            f"NBA.com={existing.status}, BDL={info.status}"
-                        )
-
         logger.info(
             f"Loaded {len(injuries)} injury records for {game_date} "
-            f"(NBA.com: {len(nba_injuries)}, BDL: {len(bdl_injuries)})"
+            f"(NBA.com: {len(nba_injuries)})"
         )
 
         self._injury_cache[cache_key] = injuries
@@ -306,54 +282,6 @@ class InjuryIntegration:
 
         except Exception as e:
             logger.error(f"Error loading NBA.com injuries for {game_date}: {e}", exc_info=True)
-
-        return injuries
-
-    def _load_bdl_injuries(self, game_date: date) -> Dict[str, PlayerInjuryInfo]:
-        """Load injuries from Ball Don't Lie table"""
-        query = """
-        SELECT
-            player_lookup,
-            injury_status_normalized as injury_status,
-            injury_description as reason,
-            reason_category,
-            team_abbr,
-            scrape_date,
-            parsing_confidence
-        FROM `nba-props-platform.nba_raw.bdl_injuries`
-        WHERE scrape_date = @game_date
-        QUALIFY ROW_NUMBER() OVER (
-            PARTITION BY player_lookup
-            ORDER BY scrape_timestamp DESC
-        ) = 1
-        """
-
-        job_config = bigquery.QueryJobConfig(
-            query_parameters=[
-                bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
-            ]
-        )
-
-        injuries = {}
-        try:
-            result = self.client.query(query, job_config=job_config).result()
-
-            for row in result:
-                status = row.injury_status.lower() if row.injury_status else 'unknown'
-                injuries[row.player_lookup] = PlayerInjuryInfo(
-                    player_lookup=row.player_lookup,
-                    status=status,
-                    reason=row.reason,
-                    reason_category=row.reason_category,
-                    team_abbr=row.team_abbr,
-                    game_date=row.scrape_date,
-                    source='bdl',
-                    confidence=row.parsing_confidence or 0.7,
-                    report_hour=None
-                )
-
-        except Exception as e:
-            logger.error(f"Error loading BDL injuries for {game_date}: {e}", exc_info=True)
 
         return injuries
 

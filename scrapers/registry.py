@@ -72,14 +72,6 @@ NBA_SCRAPER_REGISTRY: Dict[str, Tuple[str, str]] = {
     ),
     
     # ========================================================================
-    # Ball Don't Lie Scrapers (injuries only — other BDL services decommissioned Session 151)
-    # ========================================================================
-    "bdl_injuries": (
-        "scrapers.balldontlie.bdl_injuries",
-        "BdlInjuriesScraper"
-    ),
-
-    # ========================================================================
     # BettingPros Scrapers (4 total: 2 NBA + 2 MLB)
     # ========================================================================
     # NBA
@@ -256,23 +248,6 @@ NBA_SCRAPER_REGISTRY: Dict[str, Tuple[str, str]] = {
 # ============================================================================
 
 MLB_SCRAPER_REGISTRY: Dict[str, Tuple[str, str]] = {
-    # ========================================================================
-    # Ball Don't Lie Scrapers (13 total)
-    # ========================================================================
-    "mlb_games": ("scrapers.mlb.balldontlie.mlb_games", "MlbGamesScraper"),
-    "mlb_box_scores": ("scrapers.mlb.balldontlie.mlb_box_scores", "MlbBoxScoresScraper"),
-    "mlb_live_box_scores": ("scrapers.mlb.balldontlie.mlb_live_box_scores", "MlbLiveBoxScoresScraper"),
-    "mlb_pitcher_stats": ("scrapers.mlb.balldontlie.mlb_pitcher_stats", "MlbPitcherStatsScraper"),
-    "mlb_batter_stats": ("scrapers.mlb.balldontlie.mlb_batter_stats", "MlbBatterStatsScraper"),
-    "mlb_active_players": ("scrapers.mlb.balldontlie.mlb_active_players", "MlbActivePlayersScraper"),
-    "mlb_injuries": ("scrapers.mlb.balldontlie.mlb_injuries", "MlbInjuriesScraper"),
-    "mlb_player_splits": ("scrapers.mlb.balldontlie.mlb_player_splits", "MlbPlayerSplitsScraper"),
-    "mlb_player_versus": ("scrapers.mlb.balldontlie.mlb_player_versus", "MlbPlayerVersusScraper"),
-    "mlb_season_stats": ("scrapers.mlb.balldontlie.mlb_season_stats", "MlbSeasonStatsScraper"),
-    "mlb_standings": ("scrapers.mlb.balldontlie.mlb_standings", "MlbStandingsScraper"),
-    "mlb_team_season_stats": ("scrapers.mlb.balldontlie.mlb_team_season_stats", "MlbTeamSeasonStatsScraper"),
-    "mlb_teams": ("scrapers.mlb.balldontlie.mlb_teams", "MlbTeamsScraper"),
-
     # ========================================================================
     # MLB Stats API Scrapers (3 total)
     # ========================================================================
@@ -478,14 +453,6 @@ SCRAPER_GROUPS = {
         "oddsa_game_lines",
         "oddsa_game_lines_his",
         "oddsa_team_players",
-    ],
-    "ball_dont_lie": [
-        "bdl_games",
-        "bdl_box_scores",
-        "bdl_player_box_scores",
-        "bdl_active_players",
-        "bdl_injuries",
-        "bdl_standings",
     ],
     "nba_com": [
         "nbac_schedule_api",
