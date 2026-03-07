@@ -233,6 +233,7 @@ class BestBetsAggregator:
             'high_spread_over_would_block': 0,
             'flat_trend_under': 0,
             'under_after_streak': 0,
+            'under_after_bad_miss': 0,
             'mid_line_over_obs': 0,
             'monday_over_obs': 0,
             'home_over_obs': 0,
@@ -649,6 +650,22 @@ class BestBetsAggregator:
                 _record_filtered(pred, 'under_after_streak', pred_edge)
                 continue
 
+            # UNDER after bad miss + bad shooting + AWAY (Session 427):
+            # Mirror image of bounce_back_over's strongest tier. Player shot badly
+            # (<30% FG) AND missed line (<70%) — bounce-back is coming. UNDER in
+            # this context is reliably toxic: 45.1%(2024), 51.9%(2025), 33.8%(2026).
+            # Combined N=457. Only applies AWAY — HOME buffers the bounce (60%+ HR).
+            prev_ratio = pred.get('prev_game_ratio') or 0
+            prev_fg = pred.get('prev_game_fg_pct') or 0
+            is_away = not pred.get('is_home', True)
+            if (pred.get('recommendation') == 'UNDER'
+                    and 0 < prev_ratio < 0.70
+                    and 0 < prev_fg < 0.30
+                    and is_away):
+                filter_counts['under_after_bad_miss'] += 1
+                _record_filtered(pred, 'under_after_bad_miss', pred_edge)
+                continue
+
             # Blowout risk UNDER block observation (Session 423): blowout_risk >= 0.40 + UNDER
             # = 16.7% HR (N=12). High blowout benching risk → players get pulled → OVER.
             # Observation mode until N >= 20 at BB level.
@@ -938,6 +955,8 @@ class BestBetsAggregator:
             logger.info(f"Flat trend UNDER block: skipped {filter_counts['flat_trend_under']} UNDER picks with trend slope -0.5 to 0.5 (53% HR)")
         if filter_counts['under_after_streak'] > 0:
             logger.info(f"UNDER after streak: skipped {filter_counts['under_after_streak']} UNDER picks on players with 3+ consecutive unders (44.7% HR anti-signal)")
+        if filter_counts['under_after_bad_miss'] > 0:
+            logger.info(f"UNDER after bad miss: skipped {filter_counts['under_after_bad_miss']} UNDER picks on AWAY players after bad miss + bad shooting (33-45% HR)")
         if filter_counts['high_spread_over_would_block'] > 0:
             logger.info(
                 f"High spread OVER block: skipped "
