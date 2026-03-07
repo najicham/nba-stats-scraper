@@ -23,6 +23,9 @@ COPY predictions/mlb/ ./predictions/mlb/
 # Set working directory to mlb for running the service
 WORKDIR /app/predictions/mlb
 
+# Install system dependencies (libgomp1 required by CatBoost/LightGBM)
+RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 && rm -rf /var/lib/apt/lists/*
+
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 

@@ -113,6 +113,7 @@ def get_prediction_systems() -> Dict:
         from predictions.mlb.config import get_config
         from predictions.mlb.prediction_systems.v1_baseline_predictor import V1BaselinePredictor
         from predictions.mlb.prediction_systems.v1_6_rolling_predictor import V1_6RollingPredictor
+        from predictions.mlb.prediction_systems.catboost_v1_predictor import CatBoostV1Predictor
         from predictions.mlb.prediction_systems.ensemble_v1 import MLBEnsembleV1
 
         config = get_config()
@@ -123,6 +124,16 @@ def get_prediction_systems() -> Dict:
         systems = {}
         v1_baseline = None
         v1_6_rolling = None
+
+        # CatBoost V1 (Sprint 3 — walk-forward validated)
+        if 'catboost_v1' in active_systems:
+            catboost_v1 = CatBoostV1Predictor(
+                model_path=config.systems.catboost_v1_model_path,
+                project_id=PROJECT_ID
+            )
+            catboost_v1.load_model()
+            systems['catboost_v1'] = catboost_v1
+            logger.info("CatBoost V1 predictor initialized")
 
         # V1 Baseline
         if 'v1_baseline' in active_systems or 'ensemble_v1' in active_systems:

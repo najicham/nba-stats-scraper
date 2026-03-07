@@ -1,8 +1,8 @@
 # Signal Inventory — Complete List
 
-**Last Updated:** 2026-03-06 (Session 423)
+**Last Updated:** 2026-03-07 (Session 429)
 **Active Signals:** 28 (+ 26 shadow accumulating data)
-**Negative Filters:** 22 (+ 6 observation)
+**Negative Filters:** 19 (+ 10 observation)
 **Combo Registry:** 11 SYNERGISTIC entries
 
 ---
@@ -17,7 +17,7 @@
 
 **Signal Rescue (Session 398):** Picks below edge 3.0 (or OVER below 5.0) bypass edge floors if they have a validated high-HR signal or 2+ real signals. Tracked via `signal_rescued` + `rescue_signal` in BQ.
 
-Rescue tags: `combo_3way`, `combo_he_ms`, `book_disagreement` (72%), `home_under` (75%), `volatile_scoring_over` (66.7%), `high_scoring_environment_over` (71.4%), `sharp_book_lean_over` (70.3%), `sharp_book_lean_under` (84.7%), `mean_reversion_under` (77.8%). Signal stacking: 2+ real signals = 62.2% HR (N=45). Session 415: removed `low_line_over` from rescue. Session 420: restored `high_scoring_environment_over` (71.4% HR, 3-0 Mar 5; removal killed OVER pipeline).
+Rescue tags: `combo_3way`, `combo_he_ms`, `book_disagreement` (72%), `home_under` (75%), `volatile_scoring_over` (66.7%), `high_scoring_environment_over` (71.4%), `sharp_book_lean_over` (70.3%), `sharp_book_lean_under` (84.7%). Signal stacking: 2+ real signals = 62.2% HR (N=45). Session 415: removed `low_line_over` from rescue. Session 420: restored `high_scoring_environment_over`. Session 427: removed `mean_reversion_under` (cross-season decay to 53.0%).
 
 **Rescue Cap (Session 415):** Maximum percentage of picks that can be rescue-sourced per slate. Prevents rescue from dominating when edge compression makes most picks low-edge. Threshold: 40% of total picks. Excess rescue picks are dropped by weakest rescue signal.
 
@@ -72,7 +72,7 @@ Rescue tags: `combo_3way`, `combo_he_ms`, `book_disagreement` (72%), `home_under
 | `extended_rest_under` | UNDER | 61.8% | PRODUCTION | Session 372 |
 | `starter_under` | UNDER | 54.8-68.1% | PRODUCTION | Session 372 |
 | `sharp_book_lean_under` | UNDER | 84.7% backtest / 0 fires | PRODUCTION (dormant) | Session 399. Zero production fires — market regime: sharp books consistently set higher lines than soft. Weight demoted 3.0→1.0 (Session 423). |
-| `mean_reversion_under` | UNDER | 77.8% | PRODUCTION | Session 413, trend_slope>=2.0 + avg_3g>=line+2. First conviction UNDER signal. Rescue-eligible. |
+| `mean_reversion_under` | UNDER | 53.0% (2026) | PRODUCTION (weight removed) | Session 413→429. Cross-season decay: 75.7%(2024)→65.2%(2025)→53.0%(2026). Below baseline. Removed from rescue (S427) and UNDER_SIGNAL_WEIGHTS (S429). Still fires for tracking. |
 | `day_of_week_under` | UNDER | 59.4-60.3% | SHADOW | Session 414, Monday 60.3% (N=277), Thursday 59.4% (N=419) |
 | `sharp_line_drop_under` | UNDER | 87.5% | PRODUCTION | Session 382c. Now in UNDER_SIGNAL_WEIGHTS (2.5) since Session 422c |
 

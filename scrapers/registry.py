@@ -300,9 +300,20 @@ MLB_SCRAPER_REGISTRY: Dict[str, Tuple[str, str]] = {
     "mlb_umpire_stats": ("scrapers.mlb.external.mlb_umpire_stats", "MlbUmpireStatsScraper"),
 
     # ========================================================================
-    # Statcast Scrapers (1 total)
+    # Statcast Scrapers (2 total)
     # ========================================================================
     "mlb_statcast_pitcher": ("scrapers.mlb.statcast.mlb_statcast_pitcher", "MlbStatcastPitcherScraper"),
+    "mlb_statcast_daily": ("scrapers.mlb.statcast.mlb_statcast_daily", "MlbStatcastDailyScraper"),
+
+    # ========================================================================
+    # MLB Stats API - Box Scores (BDL Replacement)
+    # ========================================================================
+    "mlb_box_scores_mlbapi": ("scrapers.mlb.mlbstatsapi.mlb_box_scores", "MlbBoxScoresScraper"),
+
+    # ========================================================================
+    # Reddit / Community Intelligence
+    # ========================================================================
+    "mlb_reddit_discussion": ("scrapers.mlb.external.mlb_reddit_discussion", "MlbRedditDiscussionScraper"),
 }
 
 

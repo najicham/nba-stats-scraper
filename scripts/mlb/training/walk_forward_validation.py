@@ -72,35 +72,35 @@ SELECT
     bp.perf_last_10_under,
     CASE WHEN bp.actual_value > bp.over_line THEN 1 ELSE 0 END as went_over,
 
-    -- Features from pitcher_game_summary
-    COALESCE(pgs.k_avg_last_3, 5.0) as f00_k_avg_last_3,
-    COALESCE(pgs.k_avg_last_5, 5.0) as f01_k_avg_last_5,
-    COALESCE(pgs.k_avg_last_10, 5.0) as f02_k_avg_last_10,
-    COALESCE(pgs.k_std_last_10, 2.0) as f03_k_std_last_10,
-    COALESCE(pgs.ip_avg_last_5, 5.5) as f04_ip_avg_last_5,
-    COALESCE(pgs.season_k_per_9, 8.5) as f05_season_k_per_9,
-    COALESCE(pgs.era_rolling_10, 4.0) as f06_season_era,
-    COALESCE(pgs.whip_rolling_10, 1.3) as f07_season_whip,
-    COALESCE(pgs.season_games_started, 5) as f08_season_games,
-    COALESCE(pgs.season_strikeouts, 30) as f09_season_k_total,
+    -- Features from pitcher_game_summary (no COALESCE — let NaNs propagate for zero-tolerance)
+    pgs.k_avg_last_3 as f00_k_avg_last_3,
+    pgs.k_avg_last_5 as f01_k_avg_last_5,
+    pgs.k_avg_last_10 as f02_k_avg_last_10,
+    pgs.k_std_last_10 as f03_k_std_last_10,
+    pgs.ip_avg_last_5 as f04_ip_avg_last_5,
+    pgs.season_k_per_9 as f05_season_k_per_9,
+    pgs.era_rolling_10 as f06_season_era,
+    pgs.whip_rolling_10 as f07_season_whip,
+    pgs.season_games_started as f08_season_games,
+    pgs.season_strikeouts as f09_season_k_total,
     IF(pgs.is_home, 1.0, 0.0) as f10_is_home,
-    COALESCE(pgs.opponent_team_k_rate, 0.22) as f15_opponent_team_k_rate,
-    COALESCE(pgs.ballpark_k_factor, 1.0) as f16_ballpark_k_factor,
-    COALESCE(pgs.month_of_season, 6) as f17_month_of_season,
-    COALESCE(pgs.days_into_season, 90) as f18_days_into_season,
+    pgs.opponent_team_k_rate as f15_opponent_team_k_rate,
+    pgs.ballpark_k_factor as f16_ballpark_k_factor,
+    pgs.month_of_season as f17_month_of_season,
+    pgs.days_into_season as f18_days_into_season,
     -- SwStr% - LEADING INDICATORS (Season-level)
-    COALESCE(pgs.season_swstr_pct, 0.105) as f19_season_swstr_pct,
-    COALESCE(pgs.season_csw_pct, 0.29) as f19b_season_csw_pct,
-    COALESCE(pgs.season_chase_pct, 0.30) as f19c_season_chase_pct,
+    pgs.season_swstr_pct as f19_season_swstr_pct,
+    pgs.season_csw_pct as f19b_season_csw_pct,
+    pgs.season_chase_pct as f19c_season_chase_pct,
 
-    COALESCE(pgs.days_rest, 5) as f20_days_rest,
+    pgs.days_rest as f20_days_rest,
     pgs.games_last_30_days as f21_games_last_30_days,
-    COALESCE(pgs.pitch_count_avg_last_5, 90.0) as f22_pitch_count_avg,
-    COALESCE(pgs.season_innings, 50.0) as f23_season_ip_total,
+    pgs.pitch_count_avg_last_5 as f22_pitch_count_avg,
+    pgs.season_innings as f23_season_ip_total,
     IF(pgs.is_postseason, 1.0, 0.0) as f24_is_postseason,
 
-    -- Line-relative features
-    (COALESCE(pgs.k_avg_last_5, 5.0) - bp.over_line) as f30_k_avg_vs_line,
+    -- Line-relative features (no COALESCE — zero tolerance)
+    (pgs.k_avg_last_5 - bp.over_line) as f30_k_avg_vs_line,
     bp.over_line as f32_line_level,
 
     -- BettingPros features
@@ -113,13 +113,13 @@ SELECT
         ELSE 100.0 / (bp.over_odds + 100.0)
     END as f44_over_implied_prob,
 
-    -- NEW: Rolling Statcast Features (BACKTEST VALIDATED)
-    COALESCE(sc.swstr_pct_last_3, pgs.season_swstr_pct, 0.105) as f50_swstr_pct_last_3,
-    COALESCE(sc.fb_velocity_last_3, 93.0) as f51_fb_velocity_last_3,
+    -- Rolling Statcast Features (no COALESCE — zero tolerance)
+    sc.swstr_pct_last_3 as f50_swstr_pct_last_3,
+    sc.fb_velocity_last_3 as f51_fb_velocity_last_3,
     -- SwStr% Trend: recent - season (positive = hot streak, negative = cold)
-    COALESCE(sc.swstr_pct_last_3 - sc.swstr_pct_season_prior, 0.0) as f52_swstr_trend,
+    (sc.swstr_pct_last_3 - sc.swstr_pct_season_prior) as f52_swstr_trend,
     -- Velocity change: season - recent (positive = dropping, negative = gaining)
-    COALESCE(sc.fb_velocity_season_prior - sc.fb_velocity_last_3, 0.0) as f53_velocity_change
+    (sc.fb_velocity_season_prior - sc.fb_velocity_last_3) as f53_velocity_change
 
 FROM `mlb_raw.bp_pitcher_props` bp
 JOIN `mlb_analytics.pitcher_game_summary` pgs
@@ -174,13 +174,22 @@ features = [
 
 available_features = [f for f in features if f in df.columns]
 
-# Prepare feature matrix
+# Prepare feature matrix — drop rows with NaN instead of filling with median
+# (median fill contaminates training data with fabricated values)
 X = df[available_features].copy()
 for col in X.columns:
     X[col] = pd.to_numeric(X[col], errors='coerce')
-X = X.fillna(X.median())
 
 y = df['went_over'].copy().astype(int)
+
+# Drop rows where ANY feature is NaN (zero tolerance for defaults)
+nan_mask = X.isna().any(axis=1)
+n_dropped = nan_mask.sum()
+if n_dropped > 0:
+    print(f"Dropping {n_dropped} rows with NaN features ({n_dropped/len(X)*100:.1f}%)")
+    X = X[~nan_mask].reset_index(drop=True)
+    y = y[~nan_mask].reset_index(drop=True)
+    df = df[~nan_mask].reset_index(drop=True)
 
 # ============================================================================
 # WALK-FORWARD VALIDATION

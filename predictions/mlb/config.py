@@ -165,10 +165,11 @@ class SystemConfig:
     """Configuration for prediction system registry."""
 
     # Active systems to run (comma-separated system IDs)
-    # Default: v1_baseline only (Phase 1)
+    # Phase 1: v1_baseline
     # Phase 2: v1_baseline,v1_6_rolling
     # Phase 3: v1_baseline,v1_6_rolling,ensemble_v1
-    active_systems: str = field(default_factory=lambda: os.environ.get('MLB_ACTIVE_SYSTEMS', 'v1_baseline'))
+    # Sprint 3: catboost_v1,v1_6_rolling,ensemble_v1
+    active_systems: str = field(default_factory=lambda: os.environ.get('MLB_ACTIVE_SYSTEMS', 'catboost_v1,v1_6_rolling,ensemble_v1'))
 
     # Model paths for each system
     v1_model_path: str = field(default_factory=lambda: os.environ.get(
@@ -178,6 +179,12 @@ class SystemConfig:
     v1_6_model_path: str = field(default_factory=lambda: os.environ.get(
         'MLB_V1_6_MODEL_PATH',
         'gs://nba-scraped-data/ml-models/mlb/mlb_pitcher_strikeouts_v1_6_rolling_20260115_131149.json'
+    ))
+
+    # CatBoost V1 model path (Sprint 3)
+    catboost_v1_model_path: str = field(default_factory=lambda: os.environ.get(
+        'MLB_CATBOOST_V1_MODEL_PATH',
+        'gs://nba-props-platform-ml-models/mlb/catboost_mlb_v1_31f_train20250430_20250828_20260307_080406.cbm'
     ))
 
     # Ensemble weights (V1, V1.6)

@@ -103,45 +103,39 @@ class MLBEnsembleV1(BaseMLBPredictor):
                 'error': f'Component prediction failed: {str(e)}'
             }
 
-        # Check if either system returned an error or skip
-        if v1_pred.get('recommendation') == 'ERROR' and v1_6_pred.get('recommendation') == 'ERROR':
+        # Check if either system returned an error, skip, or blocked
+        non_actionable = {'ERROR', 'SKIP', 'BLOCKED'}
+        if v1_pred.get('recommendation') in non_actionable and v1_6_pred.get('recommendation') in non_actionable:
             return {
                 'pitcher_lookup': pitcher_lookup,
                 'predicted_strikeouts': None,
                 'confidence': 0.0,
-                'recommendation': 'ERROR',
+                'recommendation': v1_pred.get('recommendation', 'ERROR'),
                 'system_id': self.system_id,
-                'error': 'Both systems failed'
+                'default_feature_count': max(
+                    v1_pred.get('default_feature_count', 0),
+                    v1_6_pred.get('default_feature_count', 0),
+                ),
+                'error': 'Both systems failed/blocked'
             }
 
-        # If one system skipped (red flag), use the other system's recommendation
-        if v1_pred.get('recommendation') == 'SKIP' and v1_6_pred.get('recommendation') != 'SKIP':
-            # Use V1.6 prediction but mark as ensemble with reduced confidence
+        # If one system is non-actionable, use the other
+        v1_ok = v1_pred.get('recommendation') not in non_actionable
+        v1_6_ok = v1_6_pred.get('recommendation') not in non_actionable
+
+        if not v1_ok and v1_6_ok:
             prediction = v1_6_pred.copy()
             prediction['system_id'] = self.system_id
-            prediction['confidence'] = prediction.get('confidence', 0) * 0.8  # Reduce confidence
-            prediction['ensemble_note'] = 'V1 skipped, using V1.6 only'
+            prediction['confidence'] = prediction.get('confidence', 0) * 0.8
+            prediction['ensemble_note'] = f'V1 {v1_pred.get("recommendation")}, using V1.6 only'
             return prediction
 
-        if v1_6_pred.get('recommendation') == 'SKIP' and v1_pred.get('recommendation') != 'SKIP':
-            # Use V1 prediction but mark as ensemble with reduced confidence
+        if not v1_6_ok and v1_ok:
             prediction = v1_pred.copy()
             prediction['system_id'] = self.system_id
-            prediction['confidence'] = prediction.get('confidence', 0) * 0.8  # Reduce confidence
-            prediction['ensemble_note'] = 'V1.6 skipped, using V1 only'
+            prediction['confidence'] = prediction.get('confidence', 0) * 0.8
+            prediction['ensemble_note'] = f'V1.6 {v1_6_pred.get("recommendation")}, using V1 only'
             return prediction
-
-        # If both skipped, return skip
-        if v1_pred.get('recommendation') == 'SKIP' and v1_6_pred.get('recommendation') == 'SKIP':
-            return {
-                'pitcher_lookup': pitcher_lookup,
-                'predicted_strikeouts': None,
-                'confidence': 0.0,
-                'recommendation': 'SKIP',
-                'system_id': self.system_id,
-                'skip_reason': 'Both systems skipped',
-                'red_flags': v1_pred.get('red_flags', []) + v1_6_pred.get('red_flags', [])
-            }
 
         # Both systems produced predictions - calculate ensemble
         v1_strikeouts = v1_pred.get('predicted_strikeouts')

@@ -233,19 +233,23 @@ class V1_6RollingPredictor(BaseMLBPredictor):
             logger.error(f"[{self.system_id}] Failed to load model: {e}", exc_info=True)
             return False
 
-    def prepare_features(self, raw_features: Dict) -> Optional[np.ndarray]:
+    def prepare_features(self, raw_features: Dict) -> tuple:
         """
-        Prepare feature vector from raw features for V1.6 model
+        Prepare feature vector from raw features for V1.6 model.
+
+        Zero-tolerance: counts how many features used defaults instead of
+        silently substituting. Callers MUST check default_feature_count.
 
         Args:
             raw_features: Dict with feature values (can use raw names or model names)
 
         Returns:
-            np.ndarray: Feature vector or None if invalid
+            tuple: (feature_vector, default_feature_count, default_features)
+                   or (None, 0, []) if preparation fails
         """
         if not self.feature_order:
             logger.error(f"[{self.system_id}] Model not loaded - no feature_order available", exc_info=True)
-            return None
+            return None, 0, []
 
         try:
             # Normalize raw_features to model feature names
@@ -283,28 +287,31 @@ class V1_6RollingPredictor(BaseMLBPredictor):
                 if whip is not None:
                     normalized_features['f07_season_whip'] = whip
 
-            # Build feature vector in exact order from model metadata
+            # Build feature vector — track defaults instead of silently substituting
             feature_vector = []
+            default_feature_count = 0
+            default_features = []
             for feature_name in self.feature_order:
                 value = normalized_features.get(feature_name)
-                if value is None:
+                if value is None or (isinstance(value, float) and (np.isnan(value) or np.isinf(value))):
+                    # Use default for vector construction but COUNT IT
                     value = FEATURE_DEFAULTS_V1_6.get(feature_name, 0.0)
+                    default_feature_count += 1
+                    default_features.append(feature_name)
                 feature_vector.append(float(value))
 
+            if default_feature_count > 0:
+                logger.warning(
+                    f"[{self.system_id}] {default_feature_count} features used defaults: "
+                    f"{default_features[:5]}{'...' if len(default_features) > 5 else ''}"
+                )
+
             result = np.array(feature_vector).reshape(1, -1)
-
-            # Validate
-            if np.any(np.isnan(result)) or np.any(np.isinf(result)):
-                logger.warning(f"[{self.system_id}] Feature vector contains NaN or Inf values")
-                for i, val in enumerate(result[0]):
-                    if np.isnan(val) or np.isinf(val):
-                        result[0][i] = FEATURE_DEFAULTS_V1_6.get(self.feature_order[i], 0.0)
-
-            return result
+            return result, default_feature_count, default_features
 
         except Exception as e:
             logger.error(f"[{self.system_id}] Error preparing features: {e}", exc_info=True)
-            return None
+            return None, 0, []
 
     def predict(
         self,
@@ -334,8 +341,8 @@ class V1_6RollingPredictor(BaseMLBPredictor):
                 'error': 'Failed to load model'
             }
 
-        # Prepare features
-        feature_vector = self.prepare_features(features)
+        # Prepare features (zero-tolerance: tracks default count)
+        feature_vector, default_feature_count, default_features = self.prepare_features(features)
         if feature_vector is None:
             return {
                 'pitcher_lookup': pitcher_lookup,
@@ -343,7 +350,25 @@ class V1_6RollingPredictor(BaseMLBPredictor):
                 'confidence': 0.0,
                 'recommendation': 'ERROR',
                 'system_id': self.system_id,
+                'default_feature_count': 0,
                 'error': 'Failed to prepare features'
+            }
+
+        # ZERO TOLERANCE: Block predictions with any default features
+        if default_feature_count > 0:
+            logger.info(
+                f"[{self.system_id}] BLOCKED {pitcher_lookup}: "
+                f"{default_feature_count} default features ({default_features[:5]})"
+            )
+            return {
+                'pitcher_lookup': pitcher_lookup,
+                'predicted_strikeouts': None,
+                'confidence': 0.0,
+                'recommendation': 'BLOCKED',
+                'system_id': self.system_id,
+                'default_feature_count': default_feature_count,
+                'default_features': default_features,
+                'error': f'Blocked: {default_feature_count} features used defaults'
             }
 
         # Make prediction
@@ -367,14 +392,6 @@ class V1_6RollingPredictor(BaseMLBPredictor):
             # Adjust confidence based on feature coverage
             confidence = self._adjust_confidence_for_coverage(confidence, coverage_pct)
 
-            # Log low coverage predictions
-            if coverage_pct < 80.0:
-                logger.warning(
-                    f"[{self.system_id}] Low feature coverage for {pitcher_lookup}: "
-                    f"{coverage_pct:.1f}% ({len(missing_features)} missing features)"
-                )
-                logger.debug(f"[{self.system_id}] Missing features: {missing_features[:10]}")  # Log first 10
-
             # Generate initial recommendation
             recommendation = self._generate_recommendation(
                 predicted_strikeouts,
@@ -390,6 +407,7 @@ class V1_6RollingPredictor(BaseMLBPredictor):
                 'confidence': 0.0,
                 'recommendation': 'ERROR',
                 'system_id': self.system_id,
+                'default_feature_count': 0,
                 'error': str(e)
             }
 
@@ -410,7 +428,8 @@ class V1_6RollingPredictor(BaseMLBPredictor):
                 'model_mae': self.model_metadata.get('test_mae') if self.model_metadata else None,
                 'red_flags': red_flag_result.flags,
                 'skip_reason': red_flag_result.skip_reason,
-                'feature_coverage_pct': round(coverage_pct, 1)
+                'feature_coverage_pct': round(coverage_pct, 1),
+                'default_feature_count': 0
             }
 
         # Apply confidence multiplier from soft red flags
@@ -441,5 +460,6 @@ class V1_6RollingPredictor(BaseMLBPredictor):
             'model_mae': self.model_metadata.get('test_mae') if self.model_metadata else None,
             'red_flags': red_flag_result.flags if red_flag_result.flags else None,
             'confidence_multiplier': round(red_flag_result.confidence_multiplier, 2) if red_flag_result.confidence_multiplier < 1.0 else None,
-            'feature_coverage_pct': round(coverage_pct, 1)
+            'feature_coverage_pct': round(coverage_pct, 1),
+            'default_feature_count': 0
         }

@@ -51,7 +51,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v428_filter_cleanup'
+ALGORITHM_VERSION = 'v429_signal_weight_cleanup'
 
 # Base signals that fire on nearly every edge 5+ pick. Picks with ONLY
 # these signals hit 57.1% (N=42) vs 77.8% for picks with 4+ signals.
@@ -70,7 +70,7 @@ BASE_SIGNALS = frozenset({
 # discriminator. Weights derived from backtest HR (higher HR = higher weight).
 UNDER_SIGNAL_WEIGHTS: Dict[str, float] = {
     'sharp_book_lean_under': 1.0,   # Session 423: demoted 3.0→1.0. 84.7% backtest but ZERO production fires — market regime makes negative lean nonexistent
-    'mean_reversion_under': 1.5,    # Session 427: demoted 2.5→1.5. Cross-season decay: 75.7%(2024)→65.2%(2025)→53.0%(2026), below baseline. Keep but reduce influence.
+    # mean_reversion_under removed Session 429: cross-season decay below 2026 baseline (53.0% vs 54.3%). Was 2.5→1.5→removed.
     'sharp_line_drop_under': 2.5,   # Session 422c: 87.5% HR (N=8) — already fires, now weighted
     'book_disagreement': 2.5,        # 93.0% HR (N=43)
     'bench_under': 2.0,              # 76.9% HR

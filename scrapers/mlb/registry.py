@@ -156,11 +156,31 @@ MLB_SCRAPER_REGISTRY: Dict[str, Tuple[str, str]] = {
     ),
 
     # ========================================================================
-    # Statcast Scrapers (1 total)
+    # Statcast Scrapers (2 total)
     # ========================================================================
     "mlb_statcast_pitcher": (
         "scrapers.mlb.statcast.mlb_statcast_pitcher",
         "MlbStatcastPitcherScraper"
+    ),
+    "mlb_statcast_daily": (
+        "scrapers.mlb.statcast.mlb_statcast_daily",
+        "MlbStatcastDailyScraper"
+    ),
+
+    # ========================================================================
+    # MLB Stats API - Box Scores (BDL Replacement)
+    # ========================================================================
+    "mlb_box_scores_mlbapi": (
+        "scrapers.mlb.mlbstatsapi.mlb_box_scores",
+        "MlbBoxScoresScraper"
+    ),
+
+    # ========================================================================
+    # Reddit / Community Intelligence
+    # ========================================================================
+    "mlb_reddit_discussion": (
+        "scrapers.mlb.external.mlb_reddit_discussion",
+        "MlbRedditDiscussionScraper"
     ),
 }
 
@@ -225,17 +245,19 @@ def get_scrapers_by_source(source: str) -> list:
         'oddsapi': ['mlb_events', 'mlb_events_his', 'mlb_game_lines',
                     'mlb_game_lines_his', 'mlb_pitcher_props', 'mlb_pitcher_props_his',
                     'mlb_batter_props', 'mlb_batter_props_his'],
-        'external': ['mlb_weather', 'mlb_ballpark_factors', 'mlb_umpire_stats'],
-        'statcast': ['mlb_statcast_pitcher'],
+        'external': ['mlb_weather', 'mlb_ballpark_factors', 'mlb_umpire_stats',
+                     'mlb_reddit_discussion'],
+        'statcast': ['mlb_statcast_pitcher', 'mlb_statcast_daily'],
     }
     return source_map.get(source, [])
 
 
 # Priority scrapers for minimum viable pipeline
 PRIORITY_SCRAPERS = [
-    'mlb_schedule',      # What games today
-    'mlb_lineups',       # Starting pitchers
-    'mlb_pitcher_props', # Strikeout lines
-    'mlb_game_feed',     # Live game data
-    'mlb_games',         # Game results
+    'mlb_schedule',           # What games today
+    'mlb_lineups',            # Starting pitchers
+    'mlb_pitcher_props',      # Strikeout lines
+    'mlb_box_scores_mlbapi',  # Post-game stats (replaces BDL)
+    'mlb_statcast_daily',     # Advanced pitcher metrics (SwStr%, velocity)
+    'mlb_reddit_discussion',  # Community intelligence
 ]

@@ -374,6 +374,9 @@ def load_batch_features(
             pgs.days_into_season,
             pgs.vs_opponent_k_per_9 as avg_k_vs_opponent,
             pgs.vs_opponent_games as games_vs_opponent,
+            -- Season Statcast aggregates (CatBoost V1 features f19/f19b)
+            pgs.season_swstr_pct,
+            pgs.season_csw_pct,
             -- Workload
             pgs.games_last_30_days,
             pgs.pitch_count_avg_last_5,
@@ -394,6 +397,7 @@ def load_batch_features(
             fb_velocity_last_3,
             swstr_pct_last_5,
             swstr_pct_season_prior,
+            fb_velocity_season_prior,
             ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY game_date DESC) as rn
         FROM `{proj_id}.mlb_analytics.pitcher_rolling_statcast`
         WHERE game_date < @game_date
@@ -404,6 +408,7 @@ def load_batch_features(
             player_lookup,
             projection_value as bp_projection,
             over_line as bp_over_line,
+            over_odds,
             -- Calculate performance percentages
             SAFE_DIVIDE(perf_last_5_over, perf_last_5_over + perf_last_5_under) as perf_last_5_pct,
             SAFE_DIVIDE(perf_last_10_over, perf_last_10_over + perf_last_10_under) as perf_last_10_pct
@@ -417,13 +422,21 @@ def load_batch_features(
         s.swstr_pct_last_3,
         s.fb_velocity_last_3,
         COALESCE(s.swstr_pct_last_3 - s.swstr_pct_season_prior, 0) as swstr_trend,
-        COALESCE(s.fb_velocity_last_3, 0) as velocity_last_3,
+        COALESCE(s.fb_velocity_season_prior - s.fb_velocity_last_3, 0) as velocity_change,
+        -- Line-relative features (CatBoost V1 f30/f32)
+        (lf.k_avg_last_5 - bp.bp_over_line) as k_avg_vs_line,
         -- BettingPros (f40-f44)
         bp.bp_projection,
         COALESCE(bp.bp_projection - bp.bp_over_line, 0) as projection_diff,
         bp.perf_last_5_pct,
         bp.perf_last_10_pct,
-        bp.bp_over_line as strikeouts_line
+        bp.bp_over_line as strikeouts_line,
+        -- Over implied probability (CatBoost V1 f44)
+        CASE
+            WHEN bp.over_odds < 0 THEN ABS(bp.over_odds) / (ABS(bp.over_odds) + 100.0)
+            WHEN bp.over_odds > 0 THEN 100.0 / (bp.over_odds + 100.0)
+            ELSE NULL
+        END as over_implied_prob
     FROM latest_features lf
     LEFT JOIN statcast_latest s ON lf.player_lookup = s.player_lookup AND s.rn = 1
     LEFT JOIN bp_features bp ON lf.player_lookup = bp.player_lookup
