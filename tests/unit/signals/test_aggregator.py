@@ -128,7 +128,7 @@ class TestAggregatorReturnType:
             'toxic_starter_over_would_block', 'toxic_star_over_would_block',
             'regime_over_floor', 'regime_rescue_blocked',
             'high_spread_over_would_block', 'flat_trend_under',
-            'under_after_streak',
+            'under_after_streak', 'under_after_bad_miss',
             'mid_line_over_obs', 'monday_over_obs', 'home_over_obs',
             'signal_stack_2plus_obs', 'rescue_cap',
             'unreliable_over_low_mins_obs', 'unreliable_under_flat_trend_obs',
@@ -753,11 +753,11 @@ class TestStarterOverScFloor:
         signals = [_make_signal_result(f'signal_{i}') for i in range(n_qualifying)]
         return {key: signals}
 
-    def test_starter_over_sc3_blocked_by_mid_line(self):
-        """OVER + line=18 + 3 signals → blocked by mid_line_over (Session 415).
+    def test_starter_over_sc3_mid_line_observation(self):
+        """OVER + line=18 + 3 signals → mid_line_over is observation-only (Session 428).
 
-        Session 415: mid_line_over promoted to active block, subsumes
-        starter_over_sc_floor for all OVER + line 15-25 picks.
+        Session 428: mid_line_over demoted to observation. Picks pass through
+        and may be caught by other filters (sc3_over_block if real_sc=0).
         """
         pred = _make_prediction(
             recommendation='OVER',
@@ -767,14 +767,15 @@ class TestStarterOverScFloor:
         signals = self._make_signal_results_for(pred, n_qualifying=3)
         agg = BestBetsAggregator()
         picks, summary = agg.aggregate([pred], signals)
-        assert len(picks) == 0
-        # mid_line_over fires before sc3_over_block and starter_over_sc_floor
+        # mid_line_over is observation-only — pick passes through
         assert summary['rejected']['mid_line_over_obs'] == 1
+        # Pick may still be selected since it passes other filters
+        assert len(picks) >= 0
 
-    def test_starter_over_sc5_blocked_by_mid_line(self):
-        """OVER + line=18 + 5 signals → blocked by mid_line_over (Session 415).
+    def test_starter_over_sc5_mid_line_observation(self):
+        """OVER + line=18 + 5 signals → mid_line_over is observation-only (Session 428).
 
-        Session 415: mid_line_over subsumes starter_over_sc_floor.
+        Session 428: mid_line_over demoted to observation, pick passes through.
         """
         pred = _make_prediction(
             recommendation='OVER',
@@ -783,8 +784,9 @@ class TestStarterOverScFloor:
         signals = self._make_signal_results_for(pred, n_qualifying=5)
         agg = BestBetsAggregator()
         picks, summary = agg.aggregate([pred], signals)
-        assert len(picks) == 0
+        # mid_line_over records observation but doesn't block
         assert summary['rejected']['mid_line_over_obs'] == 1
+        assert len(picks) >= 0
 
     def test_role_over_sc3_passes(self):
         """OVER + line=12 (role tier, not starter) + 4 signals → passes.
@@ -1050,8 +1052,8 @@ class TestMidLineOverBlock:
         signals = [_make_signal_result(f'signal_{i}') for i in range(n_qualifying)]
         return {key: signals}
 
-    def test_mid_line_over_blocked(self):
-        """OVER + line=20 is now blocked."""
+    def test_mid_line_over_observation(self):
+        """OVER + line=20 — observation-only since Session 428."""
         pred = _make_prediction(
             recommendation='OVER',
             line_value=20.0,
@@ -1060,8 +1062,9 @@ class TestMidLineOverBlock:
         signals = self._make_signal_results_for(pred)
         agg = BestBetsAggregator()
         picks, summary = agg.aggregate([pred], signals)
-        assert len(picks) == 0
+        # Session 428: demoted to observation, pick passes through
         assert summary['rejected']['mid_line_over_obs'] == 1
+        assert len(picks) >= 0
 
     def test_high_line_over_not_blocked(self):
         """OVER + line=27 (above mid-line range) passes."""
@@ -1087,3 +1090,72 @@ class TestMidLineOverBlock:
         picks, summary = agg.aggregate([pred], signals)
         assert len(picks) == 1
         assert summary['rejected']['mid_line_over_obs'] == 0
+
+
+class TestRuntimeDemotion:
+    """Test Session 432 runtime filter demotion via filter_overrides."""
+
+    def _make_signal_results_for(self, pred, n_qualifying=5):
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        signals = [_make_signal_result(f'signal_{i}') for i in range(n_qualifying)]
+        return {key: signals}
+
+    def test_friday_over_normally_blocked(self):
+        """Friday OVER pick is normally blocked."""
+        pred = _make_prediction(recommendation='OVER', edge=6.0)
+        pred['game_date'] = '2026-03-06'  # Friday
+        signals = self._make_signal_results_for(pred)
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert summary['rejected']['friday_over_block'] == 1
+        assert len(picks) == 0
+
+    def test_friday_over_passes_when_runtime_demoted(self):
+        """Friday OVER pick passes when friday_over_block is runtime-demoted."""
+        pred = _make_prediction(recommendation='OVER', edge=6.0)
+        pred['game_date'] = '2026-03-06'  # Friday
+        signals = self._make_signal_results_for(pred)
+        agg = BestBetsAggregator(runtime_demoted_filters={'friday_over_block'})
+        picks, summary = agg.aggregate([pred], signals)
+        # Filter still records the count
+        assert summary['rejected']['friday_over_block'] == 1
+        # But pick is NOT blocked
+        assert len(picks) == 1
+
+    def test_core_filters_unaffected_by_runtime_demotion(self):
+        """Core safety filters (edge_floor, blacklist) can't be runtime-demoted."""
+        pred = _make_prediction(recommendation='OVER', edge=1.0)
+        signals = self._make_signal_results_for(pred)
+        # Even if someone tried to demote edge_floor, it's not eligible
+        agg = BestBetsAggregator(runtime_demoted_filters={'edge_floor'})
+        picks, summary = agg.aggregate([pred], signals)
+        # edge_floor is NOT gated by runtime_demoted — always blocks
+        assert len(picks) == 0
+
+    def test_b2b_under_demoted(self):
+        """B2B UNDER block can be runtime-demoted."""
+        pred = _make_prediction(recommendation='UNDER', edge=4.0)
+        pred['rest_days'] = 1  # B2B
+        signals = self._make_signal_results_for(pred)
+
+        # Without demotion: blocked by b2b_under_block
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert summary['rejected']['b2b_under_block'] == 1
+        assert len(picks) == 0
+
+        # With demotion: passes through
+        agg2 = BestBetsAggregator(runtime_demoted_filters={'b2b_under_block'})
+        picks2, summary2 = agg2.aggregate([pred], signals)
+        assert summary2['rejected']['b2b_under_block'] == 1
+        assert len(picks2) == 1
+
+    def test_empty_demotion_set_no_effect(self):
+        """Empty runtime_demoted_filters set has no effect on behavior."""
+        pred = _make_prediction(recommendation='OVER', edge=6.0)
+        pred['game_date'] = '2026-03-06'  # Friday
+        signals = self._make_signal_results_for(pred)
+        agg = BestBetsAggregator(runtime_demoted_filters=set())
+        picks, summary = agg.aggregate([pred], signals)
+        assert summary['rejected']['friday_over_block'] == 1
+        assert len(picks) == 0

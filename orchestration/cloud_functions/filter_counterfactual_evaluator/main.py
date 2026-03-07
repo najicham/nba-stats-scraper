@@ -25,7 +25,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 PROJECT_ID = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
-SLACK_WEBHOOK_URL = os.environ.get('SLACK_WEBHOOK_URL_ALERTS')
+SLACK_WEBHOOK_URL = os.environ.get('SLACK_WEBHOOK_URL_ALERTS') or os.environ.get('SLACK_WEBHOOK_URL_WARNING')
 
 # Filters eligible for auto-demotion. Core safety filters are excluded.
 ELIGIBLE_FOR_AUTO_DEMOTE = {
@@ -117,41 +117,50 @@ def compute_daily_cf_hr(bq: bigquery.Client, target_date: str) -> List[Dict]:
 def write_daily_cf_hr(bq: bigquery.Client, target_date: str, daily_rows: List[Dict]) -> int:
     """Write daily counterfactual HR rows to filter_counterfactual_daily.
 
-    Uses DELETE+INSERT for re-run safety.
+    Uses MERGE per filter for re-run safety (avoids streaming buffer conflicts).
     """
     table_ref = f'{PROJECT_ID}.nba_predictions.filter_counterfactual_daily'
     now = datetime.now(timezone.utc).isoformat()
 
-    # Delete existing rows for this date (re-run safe)
-    delete_query = f"DELETE FROM `{table_ref}` WHERE game_date = @target_date"
-    job_config = bigquery.QueryJobConfig(
-        query_parameters=[
-            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
-        ]
-    )
-    bq.query(delete_query, job_config=job_config).result(timeout=30)
-
     if not daily_rows:
         return 0
 
-    rows = []
+    written = 0
     for r in daily_rows:
-        rows.append({
-            'game_date': target_date,
-            'filter_name': r['filter_name'],
-            'blocked_count': r['blocked_count'],
-            'wins': r['wins'],
-            'losses': r['losses'],
-            'pushes': r['pushes'],
-            'counterfactual_hr': r['counterfactual_hr'],
-            'computed_at': now,
-        })
+        merge_query = f"""
+        MERGE `{table_ref}` T
+        USING (SELECT @game_date AS game_date, @filter_name AS filter_name) S
+        ON T.game_date = S.game_date AND T.filter_name = S.filter_name
+        WHEN MATCHED THEN UPDATE SET
+            blocked_count = @blocked_count,
+            wins = @wins,
+            losses = @losses,
+            pushes = @pushes,
+            counterfactual_hr = @cf_hr,
+            computed_at = @computed_at
+        WHEN NOT MATCHED THEN INSERT
+            (game_date, filter_name, blocked_count, wins, losses, pushes, counterfactual_hr, computed_at)
+        VALUES (@game_date, @filter_name, @blocked_count, @wins, @losses, @pushes, @cf_hr, @computed_at)
+        """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter('game_date', 'DATE', target_date),
+                bigquery.ScalarQueryParameter('filter_name', 'STRING', r['filter_name']),
+                bigquery.ScalarQueryParameter('blocked_count', 'INT64', r['blocked_count']),
+                bigquery.ScalarQueryParameter('wins', 'INT64', r['wins']),
+                bigquery.ScalarQueryParameter('losses', 'INT64', r['losses']),
+                bigquery.ScalarQueryParameter('pushes', 'INT64', r['pushes']),
+                bigquery.ScalarQueryParameter('cf_hr', 'FLOAT64', r['counterfactual_hr']),
+                bigquery.ScalarQueryParameter('computed_at', 'TIMESTAMP', now),
+            ]
+        )
+        try:
+            bq.query(merge_query, job_config=job_config).result(timeout=30)
+            written += 1
+        except Exception as e:
+            logger.warning(f"MERGE failed for {r['filter_name']}: {e}")
 
-    errors = bq.insert_rows_json(table_ref, rows)
-    if errors:
-        logger.warning(f"Write errors: {errors[:3]}")
-        return 0
-    return len(rows)
+    return written
 
 
 def check_auto_demote(bq: bigquery.Client, target_date: str) -> List[Dict]:

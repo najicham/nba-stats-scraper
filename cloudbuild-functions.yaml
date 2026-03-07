@@ -9,7 +9,7 @@
 #          enrichment-trigger, daily-health-check, live-export,
 #          transition-monitor, pipeline-health-summary, nba-grading-alerts,
 #          live-freshness-monitor, self-heal-predictions, grading-readiness-monitor,
-#          post-grading-export
+#          post-grading-export, filter-counterfactual-evaluator
 #
 # Substitution variables:
 #   _FUNCTION_NAME: Cloud Function name (e.g., phase5b-grading)
