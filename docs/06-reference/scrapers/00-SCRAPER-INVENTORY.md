@@ -1,6 +1,6 @@
 # Phase 1 Scraper Inventory
 
-**Last Updated:** 2026-03-04 (Session 405)
+**Last Updated:** 2026-03-07 (Session 430 — BDL retired, projections status updated)
 
 Complete catalog of all 40+ production scrapers organized by data type and source.
 
@@ -19,15 +19,10 @@ Complete catalog of all 40+ production scrapers organized by data type and sourc
 - **Use Case:** PRIMARY source for injury data
 - **Note:** Requires PDF parsing with pdfplumber
 
-### bdl_injuries (Ball Don't Lie)
-- **Source:** Ball Don't Lie API
-- **URL:** `https://api.balldontlie.io/v1/player_injuries`
-- **Coverage:** ~95% (daily updates)
-- **BigQuery Table:** `nba_raw.bdl_injuries`
-- **File:** `scrapers/balldontlie/bdl_injuries.py`
-- **Status:** ✅ Production
-- **Use Case:** Fallback if NBA.com unavailable
-- **Note:** Known reliability issues with other BDL data
+### ~~bdl_injuries (Ball Don't Lie)~~ — RETIRED
+- **Status:** ❌ RETIRED (Session 430, 2026-03-07)
+- **Reason:** BDL subscription cancelled. Data unreliable (222 rows from single date).
+- **Replacement:** None needed — NBA.com `nbac_injury_report` is sole source.
 
 ---
 
@@ -54,11 +49,9 @@ Complete catalog of all 40+ production scrapers organized by data type and sourc
 - **Coverage:** Official play-by-play stats
 - **File:** `scrapers/nbacom/nbac_gamebook_pdf.py`
 
-### bdl_player_box_scores (Ball Don't Lie)
-- **Source:** Ball Don't Lie API
-- **BigQuery Table:** `nba_raw.bdl_player_box_scores`
-- **Use Case:** Fallback for missing gamebook data
-- **File:** `scrapers/balldontlie/bdl_player_box_scores.py`
+### ~~bdl_player_box_scores (Ball Don't Lie)~~ — RETIRED
+- **Status:** ❌ RETIRED (Session 151, confirmed Session 430)
+- **Reason:** BDL subscription cancelled. NBA.com gamebook is sole source.
 
 ---
 
@@ -126,41 +119,25 @@ Complete catalog of all 40+ production scrapers organized by data type and sourc
 
 ## Projection Data Sources (Session 401)
 
-### numberfire_projections (NumberFire/FanDuel) — FAILING
-- **Source:** FanDuel Research (formerly NumberFire, domain redirects)
-- **URL:** `https://www.fanduel.com/research/nba/fantasy/dfs-projections`
+### numberfire_projections (NumberFire/FanDuel) — WORKING
+- **Source:** FanDuel Research GraphQL API (formerly NumberFire)
+- **URL:** `fdresearch-api.fanduel.com/graphql`
 - **BigQuery Table:** `nba_raw.numberfire_projections`
 - **File:** `scrapers/projections/numberfire_projections.py`
 - **Schedule:** Daily 10:15 AM ET (`nba-numberfire-projections`)
-- **Status:** ❌ FAILING — FanDuel redirect requires Playwright JS rendering
+- **Status:** ✅ Production — 120 valid pts/day. ONLY working projection source.
 - **Use Case:** Player point projections for consensus signal
+- **SPOF Warning:** Single point of failure — no backup projection source
 
-### fantasypros_projections (FantasyPros) — WORKING
-- **Source:** FantasyPros.com consensus projections
-- **URL:** `https://www.fantasypros.com/nba/projections/daily-overall.php`
-- **BigQuery Table:** `nba_raw.fantasypros_projections`
-- **File:** `scrapers/projections/fantasypros_projections.py`
-- **Schedule:** Daily 10:20 AM ET (`nba-fantasypros-projections`)
-- **Status:** ✅ Production — was scraping season totals (tot.php), fixed to daily
-- **Use Case:** Consensus projected points from 4+ expert sources
+### fantasypros_projections (FantasyPros) — DEAD
+- **Status:** ❌ DEAD — Playwright timeout, scraping DFS season totals not daily
+- **Use Case:** Was consensus projected points. Not producing usable data.
 
-### dailyfantasyfuel_projections (DailyFantasyFuel) — WORKING
-- **Source:** DailyFantasyFuel.com projections
-- **URL:** `https://www.dailyfantasyfuel.com/nba/projections/`
-- **BigQuery Table:** `nba_raw.dailyfantasyfuel_projections`
-- **File:** `scrapers/projections/dailyfantasyfuel_projections.py`
-- **Schedule:** Daily 10:25 AM ET (`nba-dailyfantasyfuel-projections`)
-- **Status:** ✅ Production (112 records)
-- **Use Case:** Independent projection source for consensus signal
+### dailyfantasyfuel_projections (DailyFantasyFuel) — DEAD
+- **Status:** ❌ DEAD — Returns DFS fantasy points only, not scoring projections
 
-### dimers_projections (Dimers) — WORKING
-- **Source:** Dimers.com NBA player projections
-- **URL:** `https://www.dimers.com/bet-hub/nba/projections`
-- **BigQuery Table:** `nba_raw.dimers_projections`
-- **File:** `scrapers/projections/dimers_projections.py`
-- **Schedule:** Daily 10:30 AM ET (`nba-dimers-projections`)
-- **Status:** ✅ Production (20 records)
-- **Use Case:** Third projection source for consensus signal
+### dimers_projections (Dimers) — DEAD
+- **Status:** ❌ DEAD — Page shows generic projections, NOT game-date-specific
 
 ---
 
@@ -211,14 +188,15 @@ Complete catalog of all 40+ production scrapers organized by data type and sourc
 - **Status:** ❌ FAILING — `nba_api` not in requirements, HTTP fallback times out (cloud IP blocked)
 - **Use Case:** Touch-based usage data (drives, catch-and-shoot, paint touches)
 
-### vsin_betting_splits (VSiN) — FAILING
+### vsin_betting_splits (VSiN) — WORKING
 - **Source:** VSiN.com public betting splits (DraftKings-sourced)
 - **URL:** `https://data.vsin.com/nba/betting-splits/`
 - **BigQuery Table:** `nba_raw.vsin_betting_splits`
 - **File:** `scrapers/external/vsin_betting_splits.py`
 - **Schedule:** Daily 2:00 PM ET (`nba-vsin-betting-splits`)
-- **Status:** ❌ FAILING — WordPress AJAX-loaded data, needs Playwright rendering
+- **Status:** ✅ Production — data is server-rendered at data.vsin.com (not AJAX)
 - **Use Case:** Public betting percentages for sharp money signal
+- **SPOF Warning:** Only public betting % source — no backup
 
 ---
 
@@ -227,7 +205,7 @@ Complete catalog of all 40+ production scrapers organized by data type and sourc
 | Prefix | Source | Example |
 |--------|--------|---------|
 | `nbac_*` | NBA.com (official) | `nbac_injury_report` |
-| `bdl_*` | Ball Don't Lie | `bdl_injuries` |
+| ~~`bdl_*`~~ | ~~Ball Don't Lie~~ | RETIRED (Session 430) |
 | `odds_api_*` | The Odds API | `odds_api_game_lines` |
 | `bettingpros_*` | BettingPros | `bettingpros_player_points_props` |
 | `bbref_*` | Basketball Reference | `bbref_player_stats` |
@@ -250,12 +228,10 @@ Complete catalog of all 40+ production scrapers organized by data type and sourc
 ### "Which source should I use for...?"
 
 **Injury Data:**
-- ✅ PRIMARY: `nbac_injury_report` (NBA.com official)
-- 🔄 FALLBACK: `bdl_injuries` (Ball Don't Lie)
+- ✅ PRIMARY: `nbac_injury_report` (NBA.com official, sole source)
 
 **Player Stats:**
-- ✅ PRIMARY: `nbac_gamebook_player_stats` (official)
-- 🔄 FALLBACK: `bdl_player_box_scores`
+- ✅ PRIMARY: `nbac_gamebook_player_stats` (official, sole source)
 
 **Schedule:**
 - ✅ PRIMARY: `nbac_schedule` (100% coverage)
@@ -295,7 +271,7 @@ All scrapers in: `/home/naji/code/nba-stats-scraper/scrapers/`
 ```
 scrapers/
 ├── nbacom/           # NBA.com official sources (nbac_*)
-├── balldontlie/      # Ball Don't Lie (bdl_*)
+├── balldontlie/      # Ball Don't Lie (RETIRED — code remains, scrapers removed from registry)
 ├── theoddsapi/       # The Odds API (odds_api_*)
 ├── bettingpros/      # BettingPros (bettingpros_*)
 ├── basketballref/    # Basketball Reference (bbref_*)

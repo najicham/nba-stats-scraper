@@ -1,7 +1,8 @@
-# BDL Retirement Plan — Cancel Subscription
+# BDL Retirement Plan — COMPLETE
 
 **Created:** 2026-03-07
-**Status:** RETIRE. All 3 BDL MLB tables are unreliable. Replacements ready or in progress.
+**Completed:** 2026-03-07 (Session 430)
+**Status:** DONE. Subscription cancelled. All code references removed. Batter backfill in progress.
 
 ---
 
@@ -100,9 +101,17 @@ The only remaining BDL dependency is injury data in `base_predictor.py` and `pit
 
 ---
 
-## Timeline
+## Execution Log (Session 430)
 
-- **Now:** Backfill running, batter processor uses UNION (both sources)
-- **After backfill:** Switch to mlbapi-only, remove BDL from UNION
-- **Before season (Mar 27):** Cancel BDL subscription
-- **Optional:** Remove IL queries from predictors (Option C)
+- **Scheduler jobs deleted:** bdl-catchup-afternoon, bdl-catchup-evening, bdl-catchup-midday, bdl-injuries-hourly
+- **Registry entries removed:** `bdl_injuries` from NBA, 13 BDL entries from both MLB registries, `ball_dont_lie` group
+- **IL queries removed:** `base_predictor.py` and `pitcher_strikeouts_predictor.py` now return empty set (Option C adopted)
+- **NBA injury integration cleaned:** `_load_bdl_injuries()` removed, NBA.com is sole source
+- **BDL triggers removed:** `bdl_pitcher_stats` and `bdl_batter_stats` from MLB analytics service
+- **Pitcher splits removed:** Dead `bdl_pitcher_splits` query → returns empty dict
+- **Subscription cancelled:** User confirmed Mar 7, 2026
+
+## Remaining
+
+- **Batter UNION query:** `batter_game_summary_processor.py` still has BDL in UNION. Remove when `mlbapi_batter_stats` reaches ~365 dates (currently at 108).
+- **450+ reference cleanup:** Comments, config, monitoring code throughout codebase. Harmless but messy. Low priority.

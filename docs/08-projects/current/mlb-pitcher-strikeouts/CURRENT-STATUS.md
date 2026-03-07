@@ -53,7 +53,7 @@
 | E2E local tests pass | DONE | - | Model loads (31 features), signals (18), exporter OK |
 | Create scheduler jobs in GCP | DONE | - | 22 total MLB jobs, all paused. Resume Mar 24-25. |
 | Verify scraper credentials | DONE | - | ODDS_API_KEY configured via secret |
-| Batter analytics BDL→mlbapi migration | DONE | - | UNION of bdl_batter_stats + mlbapi_batter_stats |
+| Batter analytics BDL→mlbapi migration | DONE | - | BDL retired (Session 430). UNION kept until backfill complete. |
 | Test Slack notifications | DONE | - | notify_info sends successfully |
 | Retrain CatBoost on freshest data | TODO | 30 min | Do Mar 24-25. No new data beyond Sep 2025 (off-season). |
 
@@ -65,7 +65,7 @@
 | Odds API 2023 historical backfill | $290 | 29K API credits, deferred |
 | Monitor July drift pattern | Ongoing | Walk-forward showed July dip |
 | Signal promotion after 30 days | Ongoing | 6 shadow signals accumulating |
-| BDL injury source replacement | 1 hr | `bdl_injuries` has fail-safe fallback. Need mlbapi source eventually. |
+| ~~BDL injury source replacement~~ | DONE | Removed Session 430 — prop lines already filter IL pitchers |
 
 ---
 

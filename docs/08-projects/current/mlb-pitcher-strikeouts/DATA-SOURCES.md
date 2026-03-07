@@ -104,4 +104,4 @@ See `BDL-RETIREMENT-PLAN.md` for details.
 | BettingPros | Web scrape | Careful | Yes | Free |
 | FanGraphs | Web scrape | Careful | Yes | Free |
 | Open-Meteo | None | Unlimited | Yes | Free |
-| BDL | API key | — | — | **CANCEL** |
+| ~~BDL~~ | ~~API key~~ | — | — | **CANCELLED** (Session 430) |
