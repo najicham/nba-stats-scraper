@@ -146,7 +146,7 @@ else
         --min-instances=0 \
         --concurrency=10 \
         --no-allow-unauthenticated \
-        --set-env-vars="GCP_PROJECT_ID=${PROJECT_ID}" \
+        --update-env-vars="GCP_PROJECT_ID=${PROJECT_ID}" \
         --project=${PROJECT_ID}
     
     # Get service URL

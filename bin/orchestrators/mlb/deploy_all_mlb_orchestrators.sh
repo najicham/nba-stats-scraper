@@ -61,7 +61,7 @@ deploy_function() {
             --timeout=300s \
             --min-instances=0 \
             --max-instances=5 \
-            --set-env-vars="$ENV_VARS" \
+            --update-env-vars="$ENV_VARS" \
             --project="$PROJECT_ID" \
             --quiet
     else
@@ -78,7 +78,7 @@ deploy_function() {
             --timeout=300s \
             --min-instances=0 \
             --max-instances=1 \
-            --set-env-vars="$ENV_VARS" \
+            --update-env-vars="$ENV_VARS" \
             --project="$PROJECT_ID" \
             --quiet
     fi

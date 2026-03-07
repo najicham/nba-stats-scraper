@@ -135,7 +135,7 @@ deploy_cloud_run() {
         --min-instances 0 \
         --max-instances 5 \
         --concurrency 10 \
-        --set-env-vars "$ENV_VARS"
+        --update-env-vars "$ENV_VARS"
 
     log "Deployment complete"
 }

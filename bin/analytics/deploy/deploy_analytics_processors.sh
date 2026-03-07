@@ -151,7 +151,7 @@ gcloud run deploy $SERVICE_NAME \
     --concurrency=1 \
     --min-instances=0 \
     --max-instances=5 \
-    --set-env-vars="$ENV_VARS" \
+    --update-env-vars="$ENV_VARS" \
     --set-secrets="AWS_SES_ACCESS_KEY_ID=aws-ses-access-key-id:latest,AWS_SES_SECRET_ACCESS_KEY=aws-ses-secret-access-key:latest,SLACK_WEBHOOK_URL=slack-webhook-url:latest,BREVO_SMTP_PASSWORD=brevo-smtp-password:latest" \
     --labels="commit-sha=$GIT_COMMIT_SHA,git-branch=${GIT_BRANCH//\//-}" \
     --clear-base-image

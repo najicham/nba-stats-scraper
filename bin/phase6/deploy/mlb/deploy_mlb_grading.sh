@@ -87,7 +87,7 @@ gcloud run deploy $SERVICE_NAME \
     --concurrency 5 \
     --min-instances 0 \
     --max-instances 5 \
-    --set-env-vars="$ENV_VARS" \
+    --update-env-vars="$ENV_VARS" \
     --project $PROJECT_ID
 
 # Get service URL

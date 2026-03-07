@@ -69,7 +69,7 @@ BASE_SIGNALS = frozenset({
 # UNDER edge is flat at 52-53% across all buckets — signals are the quality
 # discriminator. Weights derived from backtest HR (higher HR = higher weight).
 UNDER_SIGNAL_WEIGHTS: Dict[str, float] = {
-    'sharp_book_lean_under': 1.0,   # Session 423: demoted 3.0→1.0. 84.7% backtest but ZERO production fires — market regime makes negative lean nonexistent
+    # sharp_book_lean_under removed Session 431: ZERO production fires in 2026. Market regime makes negative lean nonexistent. Was 3.0→1.0→removed.
     # mean_reversion_under removed Session 429: cross-season decay below 2026 baseline (53.0% vs 54.3%). Was 2.5→1.5→removed.
     'sharp_line_drop_under': 2.5,   # Session 422c: 87.5% HR (N=8) — already fires, now weighted
     'book_disagreement': 2.5,        # 93.0% HR (N=43)
@@ -361,7 +361,8 @@ class BestBetsAggregator:
                     'book_disagreement', 'home_under',
                     'volatile_scoring_over',
                     'high_scoring_environment_over',  # Session 420: restored (71.4% HR)
-                    'sharp_book_lean_over', 'sharp_book_lean_under',
+                    'sharp_book_lean_over',
+                    # sharp_book_lean_under removed Session 431: zero production fires in 2026
                     # mean_reversion_under removed Session 427: cross-season decay
                     # 75.7%(2024)→65.2%(2025)→53.0%(2026), below 2026 baseline
                 }

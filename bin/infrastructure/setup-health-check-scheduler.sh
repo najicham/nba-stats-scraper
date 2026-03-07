@@ -63,7 +63,7 @@ if gcloud run jobs describe "$JOB_NAME" --region="$REGION" --project="$PROJECT_I
         --project="$PROJECT_ID" \
         --max-retries=1 \
         --task-timeout=10m \
-        --set-env-vars="GCP_PROJECT_ID=${PROJECT_ID}"
+        --update-env-vars="GCP_PROJECT_ID=${PROJECT_ID}"
 else
     echo "Creating new job..."
     gcloud run jobs create "$JOB_NAME" \
@@ -72,7 +72,7 @@ else
         --project="$PROJECT_ID" \
         --max-retries=1 \
         --task-timeout=10m \
-        --set-env-vars="GCP_PROJECT_ID=${PROJECT_ID}"
+        --update-env-vars="GCP_PROJECT_ID=${PROJECT_ID}"
 fi
 
 if [ $? -ne 0 ]; then

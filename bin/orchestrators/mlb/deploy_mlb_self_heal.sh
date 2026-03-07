@@ -49,7 +49,7 @@ gcloud functions deploy "$FUNCTION_NAME" \
     --timeout=300s \
     --min-instances=0 \
     --max-instances=1 \
-    --set-env-vars="GCP_PROJECT=$PROJECT_ID" \
+    --update-env-vars="GCP_PROJECT=$PROJECT_ID" \
     --project="$PROJECT_ID"
 
 # Get function URL

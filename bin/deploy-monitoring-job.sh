@@ -106,7 +106,7 @@ if gcloud run jobs describe "$CLOUD_RUN_JOB" --region="$REGION" &>/dev/null; the
     gcloud run jobs update "$CLOUD_RUN_JOB" \
         --region="$REGION" \
         --image="$FULL_IMAGE" \
-        --set-env-vars="BUILD_COMMIT=$COMMIT_SHA,BUILD_TIMESTAMP=$BUILD_TIMESTAMP" \
+        --update-env-vars="BUILD_COMMIT=$COMMIT_SHA,BUILD_TIMESTAMP=$BUILD_TIMESTAMP" \
         --max-retries=1 \
         --task-timeout=10m
 else
@@ -114,7 +114,7 @@ else
     gcloud run jobs create "$CLOUD_RUN_JOB" \
         --region="$REGION" \
         --image="$FULL_IMAGE" \
-        --set-env-vars="BUILD_COMMIT=$COMMIT_SHA,BUILD_TIMESTAMP=$BUILD_TIMESTAMP" \
+        --update-env-vars="BUILD_COMMIT=$COMMIT_SHA,BUILD_TIMESTAMP=$BUILD_TIMESTAMP" \
         --max-retries=1 \
         --task-timeout=10m
 fi

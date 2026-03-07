@@ -62,7 +62,7 @@ gcloud functions deploy "$FUNCTION_NAME" \
     --allow-unauthenticated \
     --service-account="$SERVICE_ACCOUNT" \
     --source="$FUNC_SRC" \
-    --set-env-vars="$ENV_VARS" \
+    --update-env-vars="$ENV_VARS" \
     --no-gen2
 
 # Get the function URL

@@ -54,7 +54,7 @@ run_command gcloud functions deploy box-score-completeness-alert \
     --entry-point check_box_score_completeness \
     --trigger-http \
     --allow-unauthenticated \
-    --set-env-vars GCP_PROJECT=$PROJECT_ID \
+    --update-env-vars GCP_PROJECT=$PROJECT_ID \
     --timeout 180 \
     --memory 256MB \
     --quiet
@@ -68,7 +68,7 @@ run_command gcloud functions deploy phase4-failure-alert \
     --entry-point check_phase4_status \
     --trigger-http \
     --allow-unauthenticated \
-    --set-env-vars GCP_PROJECT=$PROJECT_ID \
+    --update-env-vars GCP_PROJECT=$PROJECT_ID \
     --timeout 180 \
     --memory 256MB \
     --quiet

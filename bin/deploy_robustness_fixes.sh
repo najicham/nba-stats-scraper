@@ -101,7 +101,7 @@ deploy_bdl_scraper() {
         --region=$REGION_WEST \
         --platform=managed \
         --allow-unauthenticated \
-        --set-env-vars="SERVICE=scrapers" \
+        --update-env-vars="SERVICE=scrapers" \
         --timeout=600 \
         --quiet; then
         print_success "BDL scraper deployed with retry logic"
@@ -167,7 +167,7 @@ deploy_phase3_gate() {
         --source=. \
         --entry-point=orchestrate_phase3_to_phase4 \
         --trigger-topic=nba-phase3-analytics-complete \
-        --set-env-vars=GCP_PROJECT=$PROJECT_ID \
+        --update-env-vars=GCP_PROJECT=$PROJECT_ID \
         --timeout=540 \
         --memory=512MB \
         --quiet; then
@@ -231,7 +231,7 @@ deploy_phase4_circuit_breaker() {
         --source=. \
         --entry-point=orchestrate_phase4_to_phase5 \
         --trigger-topic=nba-phase4-precompute-complete \
-        --set-env-vars=GCP_PROJECT=$PROJECT_ID,PREDICTION_COORDINATOR_URL=https://prediction-coordinator-756957797294.us-west2.run.app \
+        --update-env-vars=GCP_PROJECT=$PROJECT_ID,PREDICTION_COORDINATOR_URL=https://prediction-coordinator-756957797294.us-west2.run.app \
         --timeout=540 \
         --memory=512MB \
         --quiet; then

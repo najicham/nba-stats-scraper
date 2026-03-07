@@ -99,7 +99,7 @@ EOF
         --allow-unauthenticated \
         --service-account="$SERVICE_ACCOUNT" \
         --source="$FUNC_SRC" \
-        --set-env-vars="GCP_PROJECT=$PROJECT_ID" \
+        --update-env-vars="GCP_PROJECT=$PROJECT_ID" \
         --set-secrets="ANTHROPIC_API_KEY=anthropic-api-key:latest" \
         --no-gen2
 

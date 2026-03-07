@@ -132,7 +132,7 @@ gcloud functions deploy "${FUNCTION_NAME}" \
     --service-account="${SERVICE_ACCOUNT}" \
     --source="${TEMP_DIR}" \
     --gen2 \
-    --set-env-vars="GCP_PROJECT=${PROJECT_ID},AWS_SES_REGION=us-west-2,AWS_SES_FROM_EMAIL=alert@989.ninja,EMAIL_ALERTS_TO=nchammas@gmail.com,SLACK_ALERTS_ENABLED=true" \
+    --update-env-vars="GCP_PROJECT=${PROJECT_ID},AWS_SES_REGION=us-west-2,AWS_SES_FROM_EMAIL=alert@989.ninja,EMAIL_ALERTS_TO=nchammas@gmail.com,SLACK_ALERTS_ENABLED=true" \
     --set-secrets="AWS_SES_ACCESS_KEY_ID=aws-ses-access-key-id:latest,AWS_SES_SECRET_ACCESS_KEY=aws-ses-secret-access-key:latest,SLACK_WEBHOOK_URL_INFO=slack-webhook-url-info:latest"
 
 echo ""

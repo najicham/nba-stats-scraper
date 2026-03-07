@@ -63,7 +63,7 @@ gcloud functions deploy $FUNCTION_NAME \
     --entry-point $ENTRY_POINT \
     --trigger-http \
     --allow-unauthenticated \
-    --set-env-vars "GCP_PROJECT=$PROJECT_ID" \
+    --update-env-vars "GCP_PROJECT=$PROJECT_ID" \
     --memory 512MB \
     --timeout 300s \
     --max-instances 1

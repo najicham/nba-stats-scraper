@@ -121,7 +121,7 @@ gcloud run deploy $SERVICE_NAME \
     --cpu=1 \
     --clear-base-image \
     --set-secrets="ODDS_API_KEY=ODDS_API_KEY:latest,AWS_SES_ACCESS_KEY_ID=aws-ses-access-key-id:latest,AWS_SES_SECRET_ACCESS_KEY=aws-ses-secret-access-key:latest,SLACK_WEBHOOK_URL=slack-webhook-url:latest,BREVO_SMTP_PASSWORD=brevo-smtp-password:latest,DECODO_PROXY_CREDENTIALS=DECODO_PROXY_CREDENTIALS:latest" \
-    --set-env-vars="$ENV_VARS" \
+    --update-env-vars="$ENV_VARS" \
     --labels="commit-sha=$GIT_COMMIT_SHA,git-branch=${GIT_BRANCH//\//-}"
 
 DEPLOY_STATUS=$?
@@ -243,7 +243,7 @@ if [ $DEPLOY_STATUS -eq 0 ]; then
 
             gcloud run services update $ORCHESTRATOR_SERVICE \
                 --region=$REGION \
-                --set-env-vars="SERVICE_URL=$SCRAPER_URL" \
+                --update-env-vars="SERVICE_URL=$SCRAPER_URL" \
                 --quiet
 
             echo "   ✅ Orchestrator configured to call scraper service"

@@ -158,7 +158,7 @@ gcloud functions deploy "$FUNCTION_NAME" \
   --allow-unauthenticated \
   --memory="$MEMORY" \
   --timeout="$TIMEOUT" \
-  --set-env-vars="GCP_PROJECT_ID=${PROJECT_ID}" \
+  --update-env-vars="GCP_PROJECT_ID=${PROJECT_ID}" \
   --set-secrets="SLACK_WEBHOOK_URL=${SECRET_NAME}:latest" \
   --project="$PROJECT_ID"
 

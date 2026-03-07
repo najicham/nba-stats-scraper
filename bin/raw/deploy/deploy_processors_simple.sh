@@ -116,7 +116,7 @@ gcloud run deploy $SERVICE_NAME \
     --concurrency=10 \
     --min-instances=0 \
     --max-instances=5 \
-    --set-env-vars="$ENV_VARS" \
+    --update-env-vars="$ENV_VARS" \
     --set-secrets="$SECRETS" \
     --labels="commit-sha=$GIT_COMMIT_SHA,git-branch=${GIT_BRANCH//\//-}" \
     --clear-base-image

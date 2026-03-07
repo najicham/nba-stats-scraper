@@ -195,7 +195,7 @@ gcloud functions deploy $FUNCTION_NAME \
     --entry-point $ENTRY_POINT \
     --trigger-topic $TRIGGER_TOPIC \
     --service-account=$SERVICE_ACCOUNT \
-    --set-env-vars GCP_PROJECT=$PROJECT_ID,BUILD_COMMIT=$BUILD_COMMIT,BUILD_TIMESTAMP=$BUILD_TIMESTAMP \
+    --update-env-vars GCP_PROJECT=$PROJECT_ID,BUILD_COMMIT=$BUILD_COMMIT,BUILD_TIMESTAMP=$BUILD_TIMESTAMP \
     --update-labels commit-sha=$BUILD_COMMIT \
     --memory $MEMORY \
     --timeout $TIMEOUT \

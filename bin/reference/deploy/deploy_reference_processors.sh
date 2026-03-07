@@ -127,7 +127,7 @@ echo "$(show_elapsed_time $DEPLOY_START_TIME) Phase 2: Cloud Run deployment star
         --concurrency=1 \
         --min-instances=0 \
         --max-instances=3 \
-        --set-env-vars="$ENV_VARS" \
+        --update-env-vars="$ENV_VARS" \
         > /tmp/deploy_output.log 2>&1
     echo $? > /tmp/deploy_status.txt
 ) &

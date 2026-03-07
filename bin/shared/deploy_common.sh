@@ -222,7 +222,7 @@ deploy_cloud_run_job() {
     
     # Add environment variables if provided
     if [[ -n "$env_vars" ]]; then
-        gcloud_cmd="$gcloud_cmd --set-env-vars=\"$env_vars\""
+        gcloud_cmd="$gcloud_cmd --update-env-vars=\"$env_vars\""
         echo "   Environment variables: ${#env_vars} characters"
     fi
     

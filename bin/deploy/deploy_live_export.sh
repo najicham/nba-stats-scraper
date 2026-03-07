@@ -94,7 +94,7 @@ if [ "$DEPLOY_FUNCTION" = true ]; then
         --allow-unauthenticated \
         --service-account="$SERVICE_ACCOUNT" \
         --source="$FUNC_SRC" \
-        --set-env-vars="GCP_PROJECT=$PROJECT_ID,GCS_BUCKET=nba-props-platform-api,BDL_API_KEY=$BDL_API_KEY" \
+        --update-env-vars="GCP_PROJECT=$PROJECT_ID,GCS_BUCKET=nba-props-platform-api,BDL_API_KEY=$BDL_API_KEY" \
         --gen2
 
     # Clean up copied files

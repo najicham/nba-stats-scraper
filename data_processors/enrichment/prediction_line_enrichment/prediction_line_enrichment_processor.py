@@ -25,6 +25,7 @@ from typing import Dict, List, Optional, Tuple
 
 from google.cloud import bigquery
 from shared.clients.bigquery_pool import get_bigquery_client
+from shared.config.model_selection import get_champion_model_id
 
 logger = logging.getLogger(__name__)
 
@@ -354,7 +355,7 @@ class PredictionLineEnrichmentProcessor:
             p.sportsbook
         FROM `{self.predictions_table}` p
         WHERE p.game_date = '{game_date}'
-          AND p.system_id = 'catboost_v9'
+          AND p.system_id = '{get_champion_model_id()}'
           AND p.is_active = TRUE
           AND p.player_lookup IN ({lookups_str})
           AND p.prediction_run_mode != 'LINE_UPDATE'
@@ -368,12 +369,12 @@ class PredictionLineEnrichmentProcessor:
             result = self.bq_client.query(query).to_dataframe()
             players = result.to_dict('records')
             logger.info(
-                f"Found {len(players)} V9 players needing re-prediction "
+                f"Found {len(players)} champion model players needing re-prediction "
                 f"(out of {len(enriched_players)} enriched)"
             )
             return players
         except Exception as e:
-            logger.error(f"Error querying V9 players for re-prediction: {e}")
+            logger.error(f"Error querying champion model players for re-prediction: {e}")
             return []
 
     def recheck_injuries(self, game_date: date, dry_run: bool = False) -> Dict:

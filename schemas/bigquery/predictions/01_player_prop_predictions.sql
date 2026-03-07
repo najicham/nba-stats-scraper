@@ -342,7 +342,7 @@ ADD COLUMN IF NOT EXISTS line_discrepancy NUMERIC(5,2) OPTIONS(description="Diff
 
 -- Session 139: Quality visibility fields (from ml_feature_store_v2)
 ALTER TABLE `nba-props-platform.nba_predictions.player_prop_predictions`
-ADD COLUMN IF NOT EXISTS is_quality_ready BOOL OPTIONS(description="Session 139: Quality gate from feature store (gold/silver/bronze + score>=70 + matchup>=50)");
+ADD COLUMN IF NOT EXISTS is_quality_ready BOOLEAN OPTIONS(description="Session 139: Quality gate from feature store (gold/silver/bronze + score>=70 + matchup>=50)");
 
 ALTER TABLE `nba-props-platform.nba_predictions.player_prop_predictions`
 ADD COLUMN IF NOT EXISTS quality_alert_level STRING OPTIONS(description="Session 139: Quality alert level at prediction time: green, yellow, red");
@@ -353,7 +353,7 @@ ADD COLUMN IF NOT EXISTS matchup_quality_pct FLOAT64 OPTIONS(description="Sessio
 -- Session 139: Track whether prediction was made before game started
 -- FALSE for BACKFILL or post-game predictions (record-keeping only, not actionable)
 ALTER TABLE `nba-props-platform.nba_predictions.player_prop_predictions`
-ADD COLUMN IF NOT EXISTS prediction_made_before_game BOOL OPTIONS(description="Session 139: TRUE if made before game start, FALSE for backfills/post-game");
+ADD COLUMN IF NOT EXISTS prediction_made_before_game BOOLEAN OPTIONS(description="Session 139: TRUE if made before game start, FALSE for backfills/post-game");
 
 -- Session 141: Default feature count for audit trail (zero tolerance enforcement)
 ALTER TABLE `nba-props-platform.nba_predictions.player_prop_predictions`
@@ -362,4 +362,25 @@ ADD COLUMN IF NOT EXISTS default_feature_count INT64 OPTIONS(description="Sessio
 -- Session 142: Default feature indices for per-feature audit trail
 ALTER TABLE `nba-props-platform.nba_predictions.player_prop_predictions`
 ADD COLUMN IF NOT EXISTS default_feature_indices ARRAY<INT64> OPTIONS(description="Session 142: Indices of features using default/fallback values (empty = all real data)");
+
+-- Schema alignment fix: Fields written by worker but missing from schema
+-- Detected by .pre-commit-hooks/validate_schema_fields.py
+
+-- Session 97: Data quality flag based on feature quality score
+ALTER TABLE `nba-props-platform.nba_predictions.player_prop_predictions`
+ADD COLUMN IF NOT EXISTS low_quality_flag BOOLEAN OPTIONS(description="Session 97: TRUE if feature_quality_score < 70% (predictions made with incomplete data)");
+
+-- Session 99: Data provenance tracking for audit trail
+ALTER TABLE `nba-props-platform.nba_predictions.player_prop_predictions`
+ADD COLUMN IF NOT EXISTS matchup_data_status STRING OPTIONS(description="Session 99: Matchup data completeness: COMPLETE, PARTIAL_FALLBACK, or MATCHUP_UNAVAILABLE");
+
+ALTER TABLE `nba-props-platform.nba_predictions.player_prop_predictions`
+ADD COLUMN IF NOT EXISTS feature_sources_json STRING OPTIONS(description="Session 99: Per-feature source tracking JSON for full audit trail");
+
+-- Session 103: Tier calibration metadata (raw prediction stays pure)
+ALTER TABLE `nba-props-platform.nba_predictions.player_prop_predictions`
+ADD COLUMN IF NOT EXISTS scoring_tier STRING OPTIONS(description="Session 103: Player scoring tier based on season average: star, starter, role, bench");
+
+ALTER TABLE `nba-props-platform.nba_predictions.player_prop_predictions`
+ADD COLUMN IF NOT EXISTS tier_adjustment FLOAT64 OPTIONS(description="Session 103: Suggested calibration adjustment to add to predicted_points at query time");
 

@@ -31,6 +31,8 @@ EXCLUDE_DIRS = [
     '.pre-commit-hooks/',
     # Prediction system classes define their own identity — legitimate
     'predictions/worker/prediction_systems/',
+    # MLB prediction systems define their own system_ids (separate from NBA champion)
+    'predictions/mlb/prediction_systems/',
 ]
 
 EXCLUDE_FILES = [

@@ -101,7 +101,7 @@ gcloud functions deploy $FUNCTION_NAME \
     --source $SOURCE_DIR \
     --entry-point $ENTRY_POINT \
     --trigger-topic $TRIGGER_TOPIC \
-    --set-env-vars GCP_PROJECT=$PROJECT_ID \
+    --update-env-vars GCP_PROJECT=$PROJECT_ID \
     --memory $MEMORY \
     --timeout $TIMEOUT \
     --max-instances $MAX_INSTANCES \

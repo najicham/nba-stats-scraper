@@ -214,7 +214,7 @@ gcloud run jobs create "$JOB_NAME" \
     --cpu="$CPU" \
     --max-retries=1 \
     --tasks=1 \
-    --set-env-vars="$ENV_VARS" \
+    --update-env-vars="$ENV_VARS" \
     --quiet
 
 echo ""

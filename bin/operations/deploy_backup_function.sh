@@ -42,7 +42,7 @@ gcloud functions deploy $FUNCTION_NAME \
   --timeout=3600s \
   --memory=512MB \
   --max-instances=1 \
-  --set-env-vars=PROJECT_ID=$PROJECT_ID
+  --update-env-vars=PROJECT_ID=$PROJECT_ID
 
 echo -e "${GREEN}[$(date +%T)]${NC} Cloud Function deployed successfully"
 

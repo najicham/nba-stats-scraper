@@ -166,7 +166,7 @@ gcloud functions deploy $FUNCTION_NAME \
     --trigger-http \
     --allow-unauthenticated \
     --service-account=$SERVICE_ACCOUNT \
-    --set-env-vars "$ENV_VARS" \
+    --update-env-vars "$ENV_VARS" \
     --memory $MEMORY \
     --timeout $TIMEOUT \
     --max-instances $MAX_INSTANCES \

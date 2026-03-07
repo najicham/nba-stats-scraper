@@ -1,7 +1,9 @@
 """Blowout Recovery signal — previous game minutes way below average, bounce back."""
 
+from datetime import date
 from typing import Dict, Optional
 from ml.signals.base_signal import BaseSignal, SignalResult
+from shared.config.calendar_regime import detect_regime
 
 
 class BlowoutRecoverySignal(BaseSignal):
@@ -19,6 +21,15 @@ class BlowoutRecoverySignal(BaseSignal):
         # Low minutes → bounce back → OVER
         if prediction.get('recommendation') != 'OVER':
             return self._no_qualify()
+
+        # Session 431: Suppress during toxic window (75%→33% collapse, -41.7pp)
+        game_date = prediction.get('game_date')
+        if game_date:
+            if isinstance(game_date, str):
+                game_date = date.fromisoformat(game_date)
+            regime = detect_regime(game_date)
+            if regime.is_toxic:
+                return self._no_qualify()
 
         # Exclude Centers: 20.0% HR (Session 257)
         player_ctx = supplemental.get('player_context', {})

@@ -69,7 +69,7 @@ gcloud run jobs create quota-monitor \
   --image="gcr.io/${PROJECT_ID}/nba-orchestrator:latest" \
   --command="python" \
   --args="monitoring/bigquery_quota_monitor.py" \
-  --set-env-vars="PROJECT_ID=${PROJECT_ID}" \
+  --update-env-vars="PROJECT_ID=${PROJECT_ID}" \
   --service-account="nba-orchestrator@${PROJECT_ID}.iam.gserviceaccount.com" \
   --max-retries=2 \
   --task-timeout=600 \

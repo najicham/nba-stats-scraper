@@ -102,9 +102,9 @@ ACTIVE_SIGNALS = frozenset({
     # Session 414: Day-of-week signals (shadow)
     'day_of_week_over',
     'day_of_week_under',
-    # Session 399: Sharp book lean signals (active in rescue_tags)
-    'sharp_book_lean_over',
-    'sharp_book_lean_under',
+    # Session 399: Sharp book lean signals
+    'sharp_book_lean_over',  # active in rescue_tags
+    'sharp_book_lean_under',  # Session 431: demoted to observation-only (zero fires 2026)
     # Session 413/417: Mean reversion (ACTIVE — production + rescue signal, was untracked!)
     'mean_reversion_under',
     # Session 422c/423: New UNDER signals (shadow)

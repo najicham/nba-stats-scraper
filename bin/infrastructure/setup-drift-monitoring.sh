@@ -44,7 +44,7 @@ gcloud functions deploy $FUNCTION_NAME \
     --trigger-topic=$TOPIC_NAME \
     --timeout=60s \
     --memory=256MB \
-    --set-env-vars="GCP_PROJECT=$PROJECT_ID" \
+    --update-env-vars="GCP_PROJECT=$PROJECT_ID" \
     --project=$PROJECT_ID
 
 # Step 3: Create Cloud Scheduler job

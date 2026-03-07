@@ -64,7 +64,7 @@ gcloud functions deploy $FUNCTION_NAME \
     --trigger-http \
     --allow-unauthenticated \
     --set-secrets="SLACK_WEBHOOK_URL=nba-grading-slack-webhook:latest" \
-    --set-env-vars="ALERT_THRESHOLD_ACCURACY_MIN=55,ALERT_THRESHOLD_UNGRADEABLE_MAX=20,ALERT_THRESHOLD_DAYS=7,SEND_DAILY_SUMMARY=false" \
+    --update-env-vars="ALERT_THRESHOLD_ACCURACY_MIN=55,ALERT_THRESHOLD_UNGRADEABLE_MAX=20,ALERT_THRESHOLD_DAYS=7,SEND_DAILY_SUMMARY=false" \
     --timeout=60s \
     --memory=256Mi \
     --max-instances=1 \

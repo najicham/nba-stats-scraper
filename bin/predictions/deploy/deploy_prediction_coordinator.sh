@@ -87,7 +87,7 @@ gcloud run deploy $SERVICE_NAME \
     --concurrency=8 \
     --min-instances=$MIN_INSTANCES \
     --max-instances=$MAX_INSTANCES \
-    --set-env-vars="$ENV_VARS" \
+    --update-env-vars="$ENV_VARS" \
     --clear-base-image
 
 DEPLOY_STATUS=$?

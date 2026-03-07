@@ -186,7 +186,7 @@ deploy_cloud_run() {
         --concurrency "$CONCURRENCY" \
         --min-instances "$MIN_INSTANCES" \
         --max-instances "$MAX_INSTANCES" \
-        --set-env-vars "$ENV_VARS" \
+        --update-env-vars "$ENV_VARS" \
         --allow-unauthenticated \
         --service-account "prediction-worker@${PROJECT_ID}.iam.gserviceaccount.com" \
         --ingress all \

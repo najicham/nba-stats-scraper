@@ -144,7 +144,7 @@ if [ "${JOB_EXISTS}" = "yes" ]; then
         --task-timeout=5m \
         --memory=512Mi \
         --cpu=1 \
-        --set-env-vars="${ENV_VARS}" \
+        --update-env-vars="${ENV_VARS}" \
         --labels="component=monitoring,type=freshness-check"
 else
     echo -e "${BLUE}Creating new Cloud Run job...${NC}"
@@ -157,7 +157,7 @@ else
         --task-timeout=5m \
         --memory=512Mi \
         --cpu=1 \
-        --set-env-vars="${ENV_VARS}" \
+        --update-env-vars="${ENV_VARS}" \
         --labels="component=monitoring,type=freshness-check"
 fi
 

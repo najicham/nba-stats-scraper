@@ -37,16 +37,12 @@ jobs:
       - name: Validate Dockerfile imports
         run: python .pre-commit-hooks/validate_dockerfile_imports.py
 
-      # WARNING-ONLY: Pre-existing violations — will be promoted to blocking
-      # once violations are cleaned up
+      # Session 431b: Promoted from warning-only to blocking (all violations resolved)
       - name: Check deploy safety (--set-env-vars)
         run: python .pre-commit-hooks/validate_deploy_safety.py
-        continue-on-error: true
 
       - name: Validate schema fields
         run: python .pre-commit-hooks/validate_schema_fields.py
-        continue-on-error: true
 
       - name: Check model references
         run: python .pre-commit-hooks/validate_model_references.py
-        continue-on-error: true
