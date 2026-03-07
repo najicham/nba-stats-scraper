@@ -1,7 +1,7 @@
 # MLB Pitcher Strikeouts - Current Status
 
-**Last Updated**: 2026-03-07 (Sprint 3 deployed)
-**Project Phase**: Sprint 4: Deploy + Launch Prep
+**Last Updated**: 2026-03-07 (Sprint 4 — deployed + worker live)
+**Project Phase**: Sprint 4: Deploy + Launch Prep (90% complete)
 **Season Start**: 2026-03-27 (20 days)
 
 ---
@@ -29,10 +29,15 @@
 - Quick retrain script with governance gates
 - Feature contract fix: pitcher_loader now provides all 31 CatBoost features
 
-### Code Deployed (Session 429)
+### Sprint 4: Deploy + Launch (In Progress)
 - Dockerfile fixed (libgomp1 for CatBoost)
 - Main scraper registry synced with MLB-specific registry
 - Pitcher loader feature gap fixed (season_swstr_pct, season_csw_pct, k_avg_vs_line, over_implied_prob, velocity_change)
+- urllib3==2.6.3 pinned (fixes circular import in Cloud Run)
+- CatBoost V1 enabled in BQ model registry (enabled=TRUE, is_production=TRUE)
+- MLB worker deployed and serving: catboost_v1, v1_6_rolling, ensemble_v1 all loading
+- cloudbuild-mlb-worker.yaml Dockerfile path fixed
+- Scheduler script updated: mlb_statcast_daily (3 AM), mlb_reddit (11 AM), overnight uses MLB API
 
 ---
 
@@ -42,13 +47,14 @@
 
 | Task | Status | Effort | Notes |
 |------|--------|--------|-------|
-| Enable CatBoost V1 in BQ registry | TODO | 5 min | `UPDATE model_registry SET enabled=TRUE, is_production=TRUE` |
-| Verify Cloud Build succeeds | TODO | 10 min | Auto-triggered by push to main |
-| Cloud Scheduler for mlb_statcast_daily | TODO | 15 min | Add 2 AM ET job |
-| Cloud Scheduler for mlb_box_scores_mlbapi | TODO | 15 min | Update overnight job from BDL |
+| Enable CatBoost V1 in BQ registry | DONE | - | enabled=TRUE, is_production=TRUE |
+| Deploy MLB worker with CatBoost | DONE | - | All 3 systems loading (catboost_v1, v1_6_rolling, ensemble_v1) |
+| Cloud Scheduler script updated | DONE | - | statcast_daily, reddit, mlbapi box scores |
+| E2E local tests pass | DONE | - | Model loads (31 features), signals (18), exporter OK |
+| Create scheduler jobs in GCP | TODO | 15 min | Run `bin/schedulers/setup_mlb_schedulers.sh --paused` |
 | Retrain CatBoost on freshest data | TODO | 30 min | Fresh 120d window before opening day |
 | Verify scraper credentials | TODO | 15 min | ODDS_API_KEY, pybaseball, MLB API |
-| E2E pipeline test | TODO | 30 min | Load model, predict, grade cycle |
+| Update analytics layer from BDL to mlbapi | TODO | 2 hrs | pitcher_game_summary + batter_game_summary → mlbapi_* tables |
 | Test Slack notifications for MLB | TODO | 10 min | Verify #mlb-alerts channel |
 
 ### Nice to Have (First 2 weeks of season)
