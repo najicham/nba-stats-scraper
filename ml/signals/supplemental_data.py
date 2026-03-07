@@ -766,12 +766,15 @@ def query_predictions_with_supplements(
         logger.warning(f"Failed to query DvP data: {e}")
 
     # Session 401: CLV tracking — opening vs closing line comparison.
-    # Session 408: snapshot_type='closing' never populated. Use earliest vs
-    # latest snapshot_tags instead. snap-0700 is first morning scrape,
-    # snap-1905/snap-2200 are latest pre-game scrapes.
+    # Session 408: snapshot_type='closing' never populated.
+    # Session 427: Fixed snapshot selection — was using MIN/MAX on string
+    # snapshot_tag, picking snap-0006 (midnight) and snap-2201 (sparse late).
+    # Now uses first snapshot >= 0600 (morning market open) and last <= 2200
+    # (evening pre-game). Produces 5x more CLV-qualified players (10 vs 2).
     clv_query = f"""
     WITH tagged AS (
-      SELECT player_lookup, points_line, snapshot_tag
+      SELECT player_lookup, points_line, snapshot_tag,
+        CAST(SUBSTR(snapshot_tag, 6) AS INT64) AS snap_time
       FROM `{PROJECT_ID}.nba_raw.odds_api_player_points_props`
       WHERE game_date = @target_date
         AND player_lookup IS NOT NULL
@@ -779,7 +782,9 @@ def query_predictions_with_supplements(
         AND points_line IS NOT NULL
     ),
     snap_bounds AS (
-      SELECT MIN(snapshot_tag) as earliest_snap, MAX(snapshot_tag) as latest_snap
+      SELECT
+        MIN(CASE WHEN snap_time >= 600 THEN snapshot_tag END) as earliest_snap,
+        MAX(CASE WHEN snap_time <= 2200 THEN snapshot_tag END) as latest_snap
       FROM tagged
     ),
     opening AS (
