@@ -33,8 +33,8 @@ SIGNAL_ANGLE_MAP = {
     'high_edge': "High edge: model predicts {edge:.1f} pts from line",
     'bench_under': "Bench UNDER pattern: 76.6% historical rate",
     # dual_agree, model_consensus_v9_v12 REMOVED (Session 296)
-    'combo_he_ms': "High edge + minutes surge combo: 94.9% HR",
-    'combo_3way': "Triple combo (ESO+HE+MS): 78.1% HR",
+    'combo_he_ms': "High edge + minutes surge combo: 70.8% HR",
+    'combo_3way': "Triple combo (ESO+HE+MS): 63.9% HR",
     # b2b_fatigue_under DISABLED (Session 373) — 39.5% Feb HR, boosts losing pattern
     'rest_advantage_2d': "2+ days rest advantage: 64.8% HR",
     'edge_spread_optimal': "Optimal edge spread: 67.2% HR",

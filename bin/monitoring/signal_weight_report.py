@@ -98,6 +98,8 @@ def build_promotion_section(health_rows):
     known_active = set(CURRENT_UNDER_WEIGHTS.keys()) | base_tags | {
         'fast_pace_over', 'line_rising_over', 'volatile_scoring_over',
         'high_scoring_environment_over', 'sharp_book_lean_over',
+        'combo_3way', 'combo_he_ms', 'book_disagreement',
+        'scoring_cold_streak_over', 'low_line_over',
     }
 
     candidates = []
