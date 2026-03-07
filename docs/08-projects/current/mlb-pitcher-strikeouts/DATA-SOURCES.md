@@ -1,258 +1,107 @@
-# MLB Pitcher Strikeouts - Data Sources Analysis
+# MLB Data Sources — Current State & Gaps
 
-**Updated**: 2026-01-06
-
-## Executive Summary
-
-After comprehensive research, here's the recommended data source hierarchy for MLB pitcher strikeout predictions:
-
-| Priority | Source | Type | Status |
-|----------|--------|------|--------|
-| **P0** | Ball Don't Lie | API | Already integrated for NBA - just add MLB |
-| **P0** | MLB Stats API | Official API | Free, no auth, cloud-friendly |
-| **P1** | Baseball Savant/Statcast | Official | Best for advanced pitcher metrics |
-| **P1** | The Odds API | API | Already integrated - supports `pitcher_strikeouts` |
-| **P2** | FanGraphs | Scrape | K/9, K%, xFIP, WAR |
-| **P2** | Baseball Reference | Scrape | Historical game logs |
-| **NOT** | ESPN | Deprecated | API deprecated since 2013, no advanced stats |
+**Updated:** 2026-03-07
+**Status:** BDL retired. MLB Stats API is primary. Key gaps: weather, umpires, lineup confirmation.
 
 ---
 
-## 1. Ball Don't Lie (RECOMMENDED)
+## Active Sources (Working)
 
-### Status: YES - MLB Supported!
+| Source | Table | Records | Coverage | Notes |
+|--------|-------|---------|----------|-------|
+| **MLB Stats API** | `mlb_pitcher_stats` | 42,125 | 2024-03 → 2025-09 | Primary pitcher stats. Replaces BDL. |
+| **MLB Stats API** | `mlbapi_batter_stats` | Backfilling | 2024-03 → 2025-09 | Replaces BDL. Proper game_pk granularity. |
+| **MLB Stats API** | `mlb_schedule` | 9,881 | All seasons | Game schedule, status, venue. |
+| **MLB Stats API** | `mlb_game_lineups` | 10,319 | 2024-2025 | Starting lineups (pitcher + batters). |
+| **MLB Stats API** | `mlb_lineup_batters` | 185,418 | 2024-2025 | Individual batter lineup positions. |
+| **BettingPros** | `bp_pitcher_props` | 25,404 | 2022-04 → 2025-09 | K prop lines + projections. **Critical for model.** |
+| **Odds API** | `oddsa_pitcher_props` | 60,589 | 2024-04 → 2025-09 | Multi-book K lines (odds, over/under). |
+| **Odds API** | `oddsa_batter_props` | 635,497 | 2024-2025 | Batter props (not used in K model yet). |
+| **Statcast** (pybaseball) | `statcast_pitcher_game_stats` | 39,918 | 2024-2025 | Rolling SwStr%, velocity, spin (analytics layer). |
+| **Statcast** (pybaseball) | `statcast_pitcher_daily` | 1,506 | Backfilling | Raw daily pitch-level aggregates. |
+| **FanGraphs** | `fangraphs_pitcher_season_stats` | 1,704 | Latest snapshot | Season-level SwStr%, CSW%, K%, contact%. |
+| **BettingPros** | `bp_batter_props` | 775,818 | 2024-2025 | Batter K props (for bottom-up model). |
 
-Ball Don't Lie supports **all major sports** including MLB:
-- NBA, NFL, MLB, NHL, EPL, WNBA, NCAAF, NCAAB, MMA, World Cup
+## Retired Sources (BDL — Cancel Subscription)
 
-### Why This Is Great
-- **Already integrated** - 16 NBA scrapers in your codebase
-- **Same API patterns** - Consistent structure across sports
-- **Same auth** - Bearer token (optional for free tier)
-- **Same pagination** - Cursor-based
+See `BDL-RETIREMENT-PLAN.md` for details.
 
-### Likely MLB Endpoints
-```
-https://api.balldontlie.io/v1/games?sport=mlb
-https://api.balldontlie.io/v1/stats?sport=mlb
-https://api.balldontlie.io/v1/players?sport=mlb
-https://api.balldontlie.io/v1/teams?sport=mlb
-https://api.balldontlie.io/v1/standings?sport=mlb
-https://api.balldontlie.io/v1/odds?sport=mlb
-https://api.balldontlie.io/v1/box_scores?sport=mlb
-```
-
-### Implementation
-Copy existing BDL scrapers, change sport parameter:
-```python
-# scrapers/mlb/balldontlie/bdl_mlb_games.py
-class BdlMlbGamesScraper(ScraperBase, ScraperFlaskMixin):
-    _API_ROOT = "https://api.balldontlie.io/v1/games"
-
-    def set_url(self):
-        self.url = f"{self._API_ROOT}?sport=mlb&..."
-```
+| Table | Rows | Issue |
+|-------|------|-------|
+| `bdl_pitcher_stats` | 15 | Dead — migrated to MLB Stats API |
+| `bdl_batter_stats` | 97K | No game_id granularity — all rows have `game_id = "DATE_UNK_UNK"` |
+| `bdl_injuries` | 222 | Single snapshot from Jan 15, 2026 — useless |
+| 24 other bdl_* tables | 0 | Never populated |
 
 ---
 
-## 2. MLB Stats API (RECOMMENDED)
+## Data Gaps — What We Need
 
-### Comparison: MLB.com vs NBA.com
+### Gap 1: Injuries / IL Status (Priority: LOW)
+**Why low:** Pitchers on the IL won't have prop lines from bookmakers. The Odds API already filters them out naturally. The IL query in `base_predictor.py` is defense-in-depth.
 
-| Feature | MLB.com | NBA.com |
-|---------|---------|---------|
-| **Public API** | YES (statsapi.mlb.com) | YES (stats.nba.com) |
-| **Auth Required** | NO | User-Agent headers |
-| **Cloud IP Blocking** | NO | YES (aggressive) |
-| **Proxy Needed** | NO | YES for cloud |
-| **Rate Limiting** | Moderate | Aggressive Cloudflare |
-| **Developer Friendly** | VERY | Difficult |
+**If we want it anyway:**
+- MLB Stats API: `https://statsapi.mlb.com/api/v1/transactions?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD`
+- Free, no auth. Contains IL placements (typeCode='IL'), activations, DFA.
+- Effort: ~2 hours for scraper + processor.
 
-### Key Endpoints
-```
-Base: https://statsapi.mlb.com/api/v1/
+### Gap 2: Umpire Assignments (Priority: MEDIUM)
+**Why it matters:** Home plate umpire K tendencies vary significantly. Some umpires have wider/tighter strike zones. Walk-forward showed +2-3pp HR improvement with umpire context in NBA (covers_referee_stats).
 
-/schedule?sportId=1&season=2024&gameTypes=R
-/game/{gameId}/feed/live
-/game/{gameId}/boxscore
-/teams
-/people/{playerId}
-/standings
-```
+**Source options:**
+- MLB Stats API: `https://statsapi.mlb.com/api/v1/schedule?date=YYYY-MM-DD&sportId=1&hydrate=officials`
+- Returns umpire crew for each game. `officials` array includes home plate umpire.
+- Cross-reference with umpire K-rate historical data from Statcast/Savant.
+- Table `umpire_game_assignment` already exists (empty). Schema ready.
 
-### Python Package
-```bash
-pip install MLB-StatsAPI
-```
+**Effort:** ~3 hours (scraper + historical K-rate lookup table).
 
-```python
-from statsapi import statsapi
+### Gap 3: Weather (Priority: MEDIUM)
+**Why it matters:** Temperature, wind, humidity affect ball flight and pitcher grip. Cold weather = more swings and misses (slippery bats) = more K's. Dome stadiums = controlled environment.
 
-# Get pitcher stats
-pitcher = statsapi.lookup_player("Clayton Kershaw")
-game_logs = statsapi.player_stat_data(pitcher[0]['id'], 'pitching', 'season')
-```
+**Source options:**
+- Open-Meteo API: `https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&hourly=temperature_2m,wind_speed_10m`
+- Free, no auth, cloud-friendly.
+- Need venue → lat/lon mapping (30 stadiums, static).
+- Table `game_weather` already exists (empty). Schema ready.
 
-### Why Better Than NBA.com
-- No proxy infrastructure needed
-- Works from GCP/AWS directly
-- More sustainable rate limiting
-- Official API support
+**Effort:** ~3 hours (venue mapping + scraper + processor).
 
----
+### Gap 4: Game Lines / Run Totals (Priority: LOW-MEDIUM)
+**Why it matters:** Over/under run totals correlate with K's. High-total games = more offense = fewer K's. Low-total games = pitching duels = more K's.
 
-## 3. Baseball Savant / Statcast (RECOMMENDED)
+**Source:** Already have Odds API configured. Just need to enable the `baseball_mlb` sport for game lines (currently only fetching player props).
+- Table `oddsa_game_lines` exists (empty).
 
-### Best For: Advanced Pitcher Metrics
+**Effort:** ~1 hour (add sport to existing Odds API scraper config).
 
-**Unique Data Available:**
-- Pitch velocity (peak and effective)
-- Spin rate (RPM at release)
-- Pitch movement (horizontal/vertical)
-- Extension (release point distance)
-- Whiff rates (swinging strikes)
-- Run value per pitch type
+### Gap 5: Pitch Mix / Arsenal Data (Priority: LOW)
+**Why it matters:** Pitchers with high slider/curveball usage K more. Changes in pitch mix game-to-game predict K variance.
 
-### Access Methods
-1. **Web CSV Export** - https://baseballsavant.mlb.com/statcast_search
-2. **pybaseball Package** - Python wrapper
-3. **Direct scraping** - Statcast search pages
+**Source:** Statcast via pybaseball. We already scrape aggregate SwStr% but not per-pitch-type breakdowns.
 
-### Python Integration
-```bash
-pip install pybaseball
-```
-
-```python
-from pybaseball import statcast_pitcher
-
-# Get pitcher's Statcast data
-data = statcast_pitcher(
-    start_dt='2024-04-01',
-    end_dt='2024-09-30',
-    player_id=477132  # Clayton Kershaw
-)
-```
-
-### Limitation
-- 25,000 row query limit per request
-- Need multiple queries for full season
+**Effort:** ~2 hours (extend statcast scraper, add pitch-type columns).
 
 ---
 
-## 4. The Odds API (Already Integrated)
+## Recommended Priority Order
 
-### MLB Pitcher Strikeouts: SUPPORTED!
-
-```python
-# Already in codebase - just change parameters
-sport_key = 'baseball_mlb'
-markets = 'pitcher_strikeouts'
-
-# Existing pattern in scrapers/oddsapi/oddsa_player_props.py
-```
-
-### Available Markets
-- `pitcher_strikeouts` - Direct strikeout O/U
-- `pitcher_hits_allowed`
-- `pitcher_walks`
-- `pitcher_earned_runs`
+1. **Umpire assignments** — highest signal-to-effort ratio. MLB Stats API hydrate is trivial. Umpire K-rates have real predictive power.
+2. **Game lines (run totals)** — 1 hour to enable. Provides game-environment context.
+3. **Weather** — free API, schemas exist. Meaningful for outdoor stadiums (21 of 30).
+4. **Injuries** — low priority since prop lines already filter IL pitchers.
+5. **Pitch mix** — nice-to-have, Statcast extension.
 
 ---
 
-## 5. FanGraphs (Backup)
+## API Summary
 
-### Best For: Advanced Calculated Metrics
-
-**Key Metrics:**
-- K/9 (Strikeouts per 9 innings)
-- K% (Strikeout percentage)
-- xFIP (Expected FIP)
-- WAR (Wins Above Replacement)
-
-### Access Method
-```python
-from pybaseball import pitching_stats
-
-# Season pitching stats from FanGraphs
-stats = pitching_stats(2024, qual=50)  # min 50 IP
-```
-
----
-
-## 6. ESPN - NOT RECOMMENDED
-
-### Why NOT ESPN
-
-| Issue | Details |
-|-------|---------|
-| **Deprecated** | Official API deprecated since 2013 |
-| **No Advanced Stats** | Missing Statcast data |
-| **Unstable** | Endpoints can change without notice |
-| **No Support** | No documentation or developer support |
-| **TOS Risk** | Heavy automation may violate terms |
-
-### What ESPN Has
-- Basic stats only (K, ERA, WHIP, IP)
-- No pitch velocity, spin rate, movement
-- No per-pitch data
-
-### Verdict
-**Do not use ESPN** - MLB Stats API and Baseball Savant are superior in every way.
-
----
-
-## Recommended Architecture
-
-```
-MLB Data Sources
-├── PRIMARY LAYER (Real-time + Stats)
-│   ├── Ball Don't Lie API ─── Games, Box Scores, Stats, Odds
-│   ├── MLB Stats API ──────── Schedule, Rosters, Game Data
-│   └── The Odds API ───────── Pitcher Strikeout Lines
-│
-├── ADVANCED METRICS LAYER
-│   └── Baseball Savant ────── Statcast: velocity, spin, movement
-│
-└── BACKUP LAYER (Historical)
-    ├── FanGraphs ──────────── K/9, K%, xFIP, WAR
-    └── Baseball Reference ─── Historical game logs
-```
-
----
-
-## Implementation Priority
-
-### Week 1: Core Data
-1. **Ball Don't Lie MLB** - Adapt existing BDL scrapers
-2. **Odds API MLB** - Add `baseball_mlb` sport key
-
-### Week 2: Official Sources
-3. **MLB Stats API** - New scrapers using `MLB-StatsAPI` package
-4. **Baseball Savant** - `pybaseball` integration
-
-### Week 3: Backup Sources
-5. **FanGraphs** - Advanced metrics via `pybaseball`
-6. **Baseball Reference** - Historical game logs
-
----
-
-## Package Requirements
-
-```
-# New packages for MLB
-pybaseball>=2.0.0
-MLB-StatsAPI>=1.0.0
-```
-
----
-
-## Key Differences from NBA
-
-| Aspect | NBA | MLB |
-|--------|-----|-----|
-| **Primary API** | stats.nba.com (needs proxy) | statsapi.mlb.com (open) |
-| **Cloud Friendly** | No (IP blocking) | Yes |
-| **Best Stats Source** | NBA.com | Baseball Savant |
-| **Existing BDL Support** | Yes (16 scrapers) | Yes (same API) |
-| **Odds API Support** | Yes | Yes (`pitcher_strikeouts`) |
+| API | Auth | Rate Limit | Cloud-OK | Cost |
+|-----|------|-----------|----------|------|
+| MLB Stats API | None | Generous (~100/min) | Yes | Free |
+| Odds API | API key (have it) | 500/month free tier | Yes | $0 (free tier) or $79/mo |
+| Statcast (pybaseball) | None | ~1 req/2sec | Yes | Free |
+| BettingPros | Web scrape | Careful | Yes | Free |
+| FanGraphs | Web scrape | Careful | Yes | Free |
+| Open-Meteo | None | Unlimited | Yes | Free |
+| BDL | API key | — | — | **CANCEL** |
