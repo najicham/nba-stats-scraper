@@ -202,5 +202,17 @@ def main():
                 logger.warning(f"Failed to send Slack alert: {e}")
 
 
+def http_handler(request=None):
+    """HTTP entry point for Cloud Scheduler / Cloud Function invocation."""
+    try:
+        sys.argv = ['signal_decay_monitor']
+        main()
+        return ('{"status": "ok"}', 200, {'Content-Type': 'application/json'})
+    except Exception as e:
+        logger.error(f"Signal decay monitor failed: {e}")
+        return (f'{{"status": "error", "message": "{e}"}}', 200,
+                {'Content-Type': 'application/json'})
+
+
 if __name__ == '__main__':
     main()

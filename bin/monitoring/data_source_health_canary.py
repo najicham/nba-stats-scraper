@@ -347,5 +347,19 @@ def main():
     return 1 if critical else 0
 
 
+def http_handler(request=None):
+    """HTTP entry point for Cloud Scheduler / Cloud Function invocation."""
+    try:
+        # Override argparse for HTTP context
+        sys.argv = ['data_source_health_canary', '--skip-game-check']
+        result = main()
+        return (f'{{"status": "ok", "exit_code": {result}}}', 200,
+                {'Content-Type': 'application/json'})
+    except Exception as e:
+        logger.error(f"Health canary failed: {e}")
+        return (f'{{"status": "error", "message": "{e}"}}', 200,
+                {'Content-Type': 'application/json'})
+
+
 if __name__ == '__main__':
     sys.exit(main())

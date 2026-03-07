@@ -32,6 +32,7 @@ from typing import Dict, Optional
 import numpy as np
 
 from predictions.worker.prediction_systems.catboost_v8 import ModelLoadError
+from shared.ml.feature_contract import V12_NOVEG_FEATURE_NAMES
 
 logger = logging.getLogger(__name__)
 
@@ -40,72 +41,8 @@ MODEL_PREFIX = "catboost/v12"
 DEFAULT_MODEL_GCS = f"gs://{MODEL_BUCKET}/{MODEL_PREFIX}/catboost_v12_50f_noveg_train20251102-20260131.cbm"
 
 # V12 No-Vegas feature order (50 features = V12 minus indices 25-28)
-# Must match training exactly.
-V12_NOVEG_FEATURES = [
-    # 0-4: Recent Performance
-    "points_avg_last_5",
-    "points_avg_last_10",
-    "points_avg_season",
-    "points_std_last_10",
-    "games_in_last_7_days",
-    # 5-8: Composite Factors
-    "fatigue_score",
-    "shot_zone_mismatch_score",
-    "pace_score",
-    "usage_spike_score",
-    # 9-12: Derived Factors
-    "rest_advantage",
-    "injury_risk",
-    "recent_trend",
-    "minutes_change",
-    # 13-17: Matchup Context
-    "opponent_def_rating",
-    "opponent_pace",
-    "home_away",
-    "back_to_back",
-    "playoff_game",
-    # 18-21: Shot Zones
-    "pct_paint",
-    "pct_mid_range",
-    "pct_three",
-    "pct_free_throw",
-    # 22-24: Team Context
-    "team_pace",
-    "team_off_rating",
-    "team_win_pct",
-    # (vegas 25-28 SKIPPED)
-    # 29-30: Opponent History
-    "avg_points_vs_opponent",
-    "games_vs_opponent",
-    # 31-32: Minutes/Efficiency
-    "minutes_avg_last_10",
-    "ppm_avg_last_10",
-    # 33: DNP Risk
-    "dnp_rate",
-    # 34-36: Player Trajectory
-    "pts_slope_10g",
-    "pts_vs_season_zscore",
-    "breakout_flag",
-    # 37-38: V11
-    "star_teammates_out",
-    "game_total_line",
-    # 39-53: V12 features (now from feature store)
-    "days_rest",
-    "minutes_load_last_7d",
-    "spread_magnitude",
-    "implied_team_total",
-    "points_avg_last_3",
-    "scoring_trend_slope",
-    "deviation_from_avg_last3",
-    "consecutive_games_below_avg",
-    "teammate_usage_available",
-    "usage_rate_last_5",
-    "games_since_structural_change",
-    "multi_book_line_std",
-    "prop_over_streak",
-    "prop_under_streak",
-    "line_vs_season_avg",
-]
+# Single source of truth: shared/ml/feature_contract.py
+V12_NOVEG_FEATURES = V12_NOVEG_FEATURE_NAMES
 
 assert len(V12_NOVEG_FEATURES) == 50, f"Expected 50 features, got {len(V12_NOVEG_FEATURES)}"
 
