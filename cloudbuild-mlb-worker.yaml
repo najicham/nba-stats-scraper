@@ -5,7 +5,7 @@ steps:
     args:
       - 'build'
       - '-f'
-      - 'docker/mlb-prediction-worker.Dockerfile'
+      - 'predictions/mlb/Dockerfile'
       - '-t'
       - 'gcr.io/nba-props-platform/mlb-prediction-worker:latest'
       - '.'

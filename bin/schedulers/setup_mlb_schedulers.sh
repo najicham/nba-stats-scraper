@@ -133,12 +133,29 @@ create_job \
     "Live game data every 5 minutes"
 
 # Overnight final results (2 AM ET - after late west coast games)
+# Uses MLB Stats API box scores (replaced BDL mlb_box_scores)
 create_job \
     "mlb-overnight-results" \
     "0 2 * * *" \
     "$SCRAPERS_URL/scrape" \
-    '{"scraper": "mlb_box_scores", "date": "YESTERDAY"}' \
-    "Final box scores for yesterday"
+    '{"scraper": "mlb_box_scores_mlbapi", "date": "YESTERDAY"}' \
+    "Final box scores for yesterday (MLB Stats API)"
+
+# Statcast daily pitcher metrics (3 AM ET - after overnight results)
+create_job \
+    "mlb-statcast-daily" \
+    "0 3 * * *" \
+    "$SCRAPERS_URL/scrape" \
+    '{"scraper": "mlb_statcast_daily", "date": "YESTERDAY"}' \
+    "Statcast pitcher metrics (SwStr%, velocity, spin)"
+
+# Reddit community discussion (11 AM ET - morning discussion threads)
+create_job \
+    "mlb-reddit-discussion" \
+    "0 11 * * *" \
+    "$SCRAPERS_URL/scrape" \
+    '{"scraper": "mlb_reddit_discussion", "date": "TODAY"}' \
+    "Reddit MLB discussion and sentiment"
 
 echo ""
 echo "=== Phase 5: Predictions ==="
@@ -183,14 +200,16 @@ echo "=============================================="
 echo "  Scheduler Setup Complete"
 echo "=============================================="
 echo ""
-echo "Jobs created (11 total):"
+echo "Jobs created (13 total):"
 echo "  mlb-schedule-daily        10:00 AM - Fetch schedule"
 echo "  mlb-lineups-morning       11:00 AM - Get lineups"
 echo "  mlb-lineups-pregame        1:00 PM - Refresh lineups"
 echo "  mlb-props-morning         10:30 AM - Get K lines"
 echo "  mlb-props-pregame         12:30 PM - Refresh K lines"
 echo "  mlb-live-boxscores        Every 5 min (1-11 PM)"
-echo "  mlb-overnight-results      2:00 AM - Final scores"
+echo "  mlb-overnight-results      2:00 AM - Final scores (MLB Stats API)"
+echo "  mlb-statcast-daily         3:00 AM - Statcast pitcher metrics"
+echo "  mlb-reddit-discussion     11:00 AM - Reddit discussion"
 echo "  mlb-predictions-generate   1:00 PM - Make predictions"
 echo "  mlb-shadow-mode-daily      1:30 PM - Shadow mode A/B test"
 echo "  mlb-grading-daily         10:00 AM - Grade yesterday"

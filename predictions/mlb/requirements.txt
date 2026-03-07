@@ -28,6 +28,7 @@ catboost==1.2.2
 # Utilities
 python-dateutil==2.8.2
 requests==2.31.0
+urllib3==2.6.3  # Pin to match NBA worker — avoids circular import with google-cloud-*
 
 # Testing (optional, for local testing)
 pytest==7.4.3
