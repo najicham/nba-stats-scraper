@@ -51,7 +51,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v425_signal_health_gap'
+ALGORITHM_VERSION = 'v427_shooting_tiers_weight_rebalance'
 
 # Base signals that fire on nearly every edge 5+ pick. Picks with ONLY
 # these signals hit 57.1% (N=42) vs 77.8% for picks with 4+ signals.
@@ -70,16 +70,16 @@ BASE_SIGNALS = frozenset({
 # discriminator. Weights derived from backtest HR (higher HR = higher weight).
 UNDER_SIGNAL_WEIGHTS: Dict[str, float] = {
     'sharp_book_lean_under': 1.0,   # Session 423: demoted 3.0→1.0. 84.7% backtest but ZERO production fires — market regime makes negative lean nonexistent
-    'mean_reversion_under': 2.5,    # 77.8% HR (N=212, Session 413/417)
+    'mean_reversion_under': 1.5,    # Session 427: demoted 2.5→1.5. Cross-season decay: 75.7%(2024)→65.2%(2025)→53.0%(2026), below baseline. Keep but reduce influence.
     'sharp_line_drop_under': 2.5,   # Session 422c: 87.5% HR (N=8) — already fires, now weighted
     'book_disagreement': 2.5,        # 93.0% HR (N=43)
     'bench_under': 2.0,              # 76.9% HR
     'home_under': 2.0,               # Session 422c: boosted from 1.5. 60.6% HR (N=4,253) model-level
     'starter_away_overtrend_under': 1.5,  # Session 423: 68.1% HR (N=213), monthly stable, shadow
     'extended_rest_under': 1.5,      # 61.8% HR
-    'volatile_starter_under': 1.5,   # Session 422c: 65.5% HR (N=637), shadow
-    'downtrend_under': 1.5,          # Session 422c: 63.9% HR (N=1,654), shadow
-    'star_favorite_under': 1.5,      # Session 422c: ~73% HR (N=88), shadow
+    'volatile_starter_under': 2.0,   # Session 427: promoted 1.5→2.0. Cross-season +11.1pp lift (best UNDER signal)
+    'downtrend_under': 2.0,          # Session 427: promoted 1.5→2.0. Cross-season +8.1pp lift, increasing trend
+    # star_favorite_under removed Session 427: +0.7pp lift = noise, 73% HR from N=88 was single-season artifact
     # starter_under removed Session 419 (38.7% signal HR N=31, demoted to BASE_SIGNALS)
 }
 UNDER_EDGE_TIEBREAKER = 0.1  # Edge as minor tiebreaker for UNDER
@@ -361,7 +361,8 @@ class BestBetsAggregator:
                     'volatile_scoring_over',
                     'high_scoring_environment_over',  # Session 420: restored (71.4% HR)
                     'sharp_book_lean_over', 'sharp_book_lean_under',
-                    'mean_reversion_under',  # Session 417: 77.8% HR (N=212)
+                    # mean_reversion_under removed Session 427: cross-season decay
+                    # 75.7%(2024)→65.2%(2025)→53.0%(2026), below 2026 baseline
                 }
                 for r in signal_check:
                     if r.qualifies and r.source_tag in rescue_tags:
