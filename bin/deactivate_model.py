@@ -16,6 +16,7 @@ Created: 2026-03-02 (Session 386)
 """
 
 import argparse
+import hashlib
 import sys
 from datetime import date, datetime, timezone
 
@@ -163,30 +164,35 @@ def main():
         job.result(timeout=30)
         print(f"  [OK] Removed {job.num_dml_affected_rows} signal best bets")
 
-    # Step 6: Audit trail
+    # Step 6: Audit trail — write to nba_orchestration.service_errors
     now = datetime.now(timezone.utc)
+    error_msg = f'Deactivated model {model_id}: {active_preds} predictions, {signal_preds} signal picks'
+    error_id = hashlib.md5(
+        f'deactivate_model_cli:model_deactivation:{error_msg}:{now.strftime("%Y%m%d%H%M")}'.encode()
+    ).hexdigest()
     audit_query = f"""
-    INSERT INTO `{PROJECT_ID}.nba_predictions.service_errors`
-    (service_name, error_type, error_message, context, created_at)
+    INSERT INTO `{PROJECT_ID}.nba_orchestration.service_errors`
+    (error_id, service_name, error_timestamp, error_type, error_category,
+     severity, error_message, game_date, phase, recovery_attempted, recovery_successful)
     VALUES (
+      @error_id,
       'deactivate_model_cli',
+      @error_timestamp,
       'model_deactivation',
+      'model_lifecycle',
+      'info',
       @message,
-      @context,
-      @created_at
+      @game_date,
+      'phase_5_predictions',
+      FALSE,
+      FALSE
     )
     """
     audit_params = [
-        bigquery.ScalarQueryParameter(
-            'message', 'STRING',
-            f'Deactivated model {model_id}: {active_preds} predictions, {signal_preds} signal picks'
-        ),
-        bigquery.ScalarQueryParameter(
-            'context', 'STRING',
-            f'{{"model_id": "{model_id}", "target_date": "{target_date}", '
-            f'"predictions_deactivated": {active_preds}, "signal_picks_removed": {signal_preds}}}'
-        ),
-        bigquery.ScalarQueryParameter('created_at', 'TIMESTAMP', now.isoformat()),
+        bigquery.ScalarQueryParameter('error_id', 'STRING', error_id),
+        bigquery.ScalarQueryParameter('error_timestamp', 'TIMESTAMP', now.isoformat()),
+        bigquery.ScalarQueryParameter('message', 'STRING', error_msg),
+        bigquery.ScalarQueryParameter('game_date', 'DATE', str(target_date)),
     ]
     try:
         bq.query(

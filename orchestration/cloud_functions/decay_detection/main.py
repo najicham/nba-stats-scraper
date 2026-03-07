@@ -21,6 +21,7 @@ Updated: 2026-03-03 (Session 390) - Short-window HR, transition logic, pick volu
 """
 
 import functions_framework
+import hashlib
 import json
 import logging
 import os
@@ -634,12 +635,14 @@ def check_pick_volume_anomaly(game_date) -> Optional[Dict]:
       ROUND(s.avg_picks, 1) as avg_picks,
       ROUND(s.std_picks, 1) as std_picks,
       s.days_with_picks,
-      ARRAY_AGG(STRUCT(rgd.game_date, rgd.pick_count) ORDER BY rgd.game_date DESC) as recent_days
+      rgd_agg.recent_days
     FROM games_today gt
     CROSS JOIN picks_today pt
     CROSS JOIN stats s
-    CROSS JOIN recent_game_days rgd
-    GROUP BY gt.game_count, pt.pick_count, s.avg_picks, s.std_picks, s.days_with_picks
+    CROSS JOIN (
+      SELECT ARRAY_AGG(STRUCT(game_date, pick_count) ORDER BY game_date DESC) as recent_days
+      FROM recent_game_days
+    ) rgd_agg
     """
 
     try:
@@ -900,37 +903,38 @@ def auto_disable_blocked_models(models: List[Dict], best_bets_model: str,
             except Exception as del_err:
                 logger.warning(f"Failed to remove signal picks for {model_id}: {del_err}")
 
-            # Audit trail
+            # Audit trail — write to nba_orchestration.service_errors
             now = datetime.now(timezone.utc)
+            error_msg = (
+                f'Auto-disabled BLOCKED model {model_id}: '
+                f'7d HR={m.get("rolling_hr_7d")}% (N={m.get("rolling_n_7d")})'
+            )
+            error_id = hashlib.md5(
+                f'decay_detection_auto_disable:model_auto_disabled:{error_msg}:{now.strftime("%Y%m%d%H%M")}'.encode()
+            ).hexdigest()
             audit_query = f"""
-            INSERT INTO `{PROJECT_ID}.nba_predictions.service_errors`
-            (service_name, error_type, error_message, context, created_at)
+            INSERT INTO `{PROJECT_ID}.nba_orchestration.service_errors`
+            (error_id, service_name, error_timestamp, error_type, error_category,
+             severity, error_message, game_date, phase, recovery_attempted, recovery_successful)
             VALUES (
+              @error_id,
               'decay_detection_auto_disable',
+              @error_timestamp,
               'model_auto_disabled',
+              'model_lifecycle',
+              'info',
               @message,
-              @context,
-              @created_at
+              @game_date,
+              'phase_5_predictions',
+              FALSE,
+              FALSE
             )
             """
             audit_params = [
-                bigquery.ScalarQueryParameter(
-                    'message', 'STRING',
-                    f'Auto-disabled BLOCKED model {model_id}: '
-                    f'7d HR={m.get("rolling_hr_7d")}% (N={m.get("rolling_n_7d")})'
-                ),
-                bigquery.ScalarQueryParameter(
-                    'context', 'STRING',
-                    json.dumps({
-                        'model_id': model_id,
-                        'game_date': str(game_date),
-                        'rolling_hr_7d': m.get('rolling_hr_7d'),
-                        'rolling_n_7d': m.get('rolling_n_7d'),
-                        'days_since_training': m.get('days_since_training'),
-                        'trigger': 'decay_detection_auto_disable',
-                    })
-                ),
-                bigquery.ScalarQueryParameter('created_at', 'TIMESTAMP', now.isoformat()),
+                bigquery.ScalarQueryParameter('error_id', 'STRING', error_id),
+                bigquery.ScalarQueryParameter('error_timestamp', 'TIMESTAMP', now.isoformat()),
+                bigquery.ScalarQueryParameter('message', 'STRING', error_msg),
+                bigquery.ScalarQueryParameter('game_date', 'DATE', str(game_date)),
             ]
             try:
                 bq.query(
