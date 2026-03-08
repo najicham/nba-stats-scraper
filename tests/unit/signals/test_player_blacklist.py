@@ -302,7 +302,7 @@ class TestAggregatorBlacklistIntegration:
 
     def test_algorithm_version_updated(self):
         """ALGORITHM_VERSION should reflect the latest session update."""
-        assert 'v365' in ALGORITHM_VERSION
+        assert ALGORITHM_VERSION.startswith('v4')
 
 
 # ============================================================================
