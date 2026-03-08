@@ -51,7 +51,12 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v440_prediction_sanity_active'
+ALGORITHM_VERSION = 'v441_team_cap_hot_reversion'
+
+# Session 441: Max picks per team per game.
+# Prevents correlated exposure from same-game concentration.
+# Mar 7: 3 UTA picks in same blowout all lost simultaneously.
+MAX_PICKS_PER_TEAM = 2
 
 # Base signals that fire on nearly every edge 5+ pick. Picks with ONLY
 # these signals hit 57.1% (N=42) vs 77.8% for picks with 4+ signals.
@@ -333,6 +338,8 @@ class BestBetsAggregator:
             'bias_regime_over_obs': 0,
             'prediction_sanity': 0,
             'depleted_stars_over_obs': 0,
+            'hot_shooting_reversion_obs': 0,
+            'team_cap': 0,
         }
 
         # Session 393: Counterfactual tracking — log filtered-out picks so we
@@ -917,6 +924,19 @@ class BestBetsAggregator:
                 _record_filtered(pred, 'depleted_stars_over_obs', pred_edge)
                 # Observation mode — do NOT continue/filter
 
+            # Session 441: Hot shooting reversion UNDER (observation mode).
+            # After 70%+ FG games (with real minutes), UNDER HR = 59.2% (N=250).
+            # Efficiency mean-reverts at the extreme — 60-69% shows NO signal.
+            # Uses prev_game_fg_pct + prev_game_minutes as proxy for FGA >= 12.
+            prev_fg_pct = pred.get('prev_game_fg_pct') or 0
+            prev_mins = pred.get('prev_game_minutes') or 0
+            if (pred.get('recommendation') == 'OVER'
+                    and prev_fg_pct >= 0.70
+                    and prev_mins >= 20):
+                filter_counts['hot_shooting_reversion_obs'] += 1
+                _record_filtered(pred, 'hot_shooting_reversion_obs', pred_edge)
+                # Observation mode — do NOT continue/filter
+
             # Session 421: Feature-based unreliable high-edge observation.
             # Wrong OVER fingerprint: edge 5+ + low minutes_load (<45).
             # Wrong UNDER fingerprint: edge 5+ + high minutes_load (>58) + flat trend.
@@ -1265,6 +1285,18 @@ class BestBetsAggregator:
                 f"(BB 0% N=4, model 48.2% N=137)"
             )
 
+        if filter_counts['hot_shooting_reversion_obs'] > 0:
+            logger.info(
+                f"Hot shooting reversion (observation): tagged "
+                f"{filter_counts['hot_shooting_reversion_obs']} OVER picks after "
+                f"70%+ FG game (59.2% UNDER HR N=250)"
+            )
+        if filter_counts['team_cap'] > 0:
+            logger.info(
+                f"Team cap ({MAX_PICKS_PER_TEAM}/team): dropped "
+                f"{filter_counts['team_cap']} excess same-team picks"
+            )
+
         # Session 421: Tier edge cap observation summary
         capped_count = sum(1 for p in scored if p.get('tier_edge_cap_delta', 0) > 0)
         if capped_count:
@@ -1372,8 +1404,29 @@ class BestBetsAggregator:
                     )
                 scored = non_rescued + to_keep
 
-        # Rank by edge descending (model confidence = primary signal)
+        # Session 441: Per-team cap — prevent correlated exposure.
+        # Mar 7: 3 UTA OVER picks in same blowout all lost simultaneously.
+        # Keep highest-edge picks per team, drop excess to filtered_picks.
+        # Sort by composite_score desc first so we keep the best picks.
         scored.sort(key=lambda x: x['composite_score'], reverse=True)
+        team_counts: Dict[str, int] = {}
+        team_capped: List[Dict] = []
+        team_kept: List[Dict] = []
+        for pick in scored:
+            team = pick.get('team_abbr', '')
+            team_counts[team] = team_counts.get(team, 0) + 1
+            if team_counts[team] > MAX_PICKS_PER_TEAM:
+                filter_counts['team_cap'] += 1
+                _record_filtered(pick, 'team_cap', pick.get('composite_score', 0))
+                team_capped.append(pick)
+                logger.info(
+                    f"Team cap: dropping {pick['player_lookup']} "
+                    f"({team}, #{team_counts[team]} pick) "
+                    f"edge={pick.get('composite_score', 0):.1f}"
+                )
+            else:
+                team_kept.append(pick)
+        scored = team_kept
 
         # Assign ranks — natural sizing (Session 298: no artificial cap)
         for i, pick in enumerate(scored):

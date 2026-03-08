@@ -132,7 +132,8 @@ class TestAggregatorReturnType:
             'mid_line_over_obs', 'monday_over_obs', 'home_over_obs',
             'signal_stack_2plus_obs', 'rescue_cap', 'rescue_health_gate',
             'bias_regime_over_obs', 'prediction_sanity',
-            'depleted_stars_over_obs',
+            'depleted_stars_over_obs', 'hot_shooting_reversion_obs',
+            'team_cap',
             'unreliable_over_low_mins_obs', 'unreliable_under_flat_trend_obs',
             'b2b_under_block', 'blowout_risk_under_block_obs',
         }
@@ -1547,3 +1548,121 @@ class TestDepletedStarsOverObservation:
         agg = BestBetsAggregator()
         picks, summary = agg.aggregate([pred], signals)
         assert summary['rejected']['depleted_stars_over_obs'] == 0
+
+
+class TestHotShootingReversionObservation:
+    """Session 441: Hot shooting reversion UNDER observation.
+
+    After 70%+ FG games with real minutes, UNDER HR = 59.2% (N=250).
+    Observation mode — tracks OVER picks after hot shooting but doesn't block.
+    """
+
+    def test_hot_shooting_obs_does_not_block(self):
+        """OVER after 70%+ FG should be tagged but NOT blocked."""
+        pred = _make_prediction(edge=6.0, recommendation='OVER', is_home=False)
+        pred['prev_game_fg_pct'] = 0.75  # 75% FG last game
+        pred['prev_game_minutes'] = 32   # Real minutes
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        signals = {key: [_make_signal_result(f'sig_{i}') for i in range(5)]}
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 1  # NOT blocked
+        assert summary['rejected']['hot_shooting_reversion_obs'] == 1
+
+    def test_hot_shooting_not_triggered_at_65pct(self):
+        """65% FG should NOT trigger (threshold is 70%)."""
+        pred = _make_prediction(edge=6.0, recommendation='OVER', is_home=False)
+        pred['prev_game_fg_pct'] = 0.65
+        pred['prev_game_minutes'] = 30
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        signals = {key: [_make_signal_result(f'sig_{i}') for i in range(5)]}
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert summary['rejected']['hot_shooting_reversion_obs'] == 0
+
+    def test_hot_shooting_not_triggered_low_minutes(self):
+        """70%+ FG but only 15 minutes should NOT trigger (garbage time)."""
+        pred = _make_prediction(edge=6.0, recommendation='OVER', is_home=False)
+        pred['prev_game_fg_pct'] = 0.80
+        pred['prev_game_minutes'] = 15  # Below 20 min threshold
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        signals = {key: [_make_signal_result(f'sig_{i}') for i in range(5)]}
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert summary['rejected']['hot_shooting_reversion_obs'] == 0
+
+
+class TestTeamCap:
+    """Session 441: Per-team cap to prevent correlated exposure.
+
+    Mar 7: 3 UTA OVER picks in same blowout all lost simultaneously.
+    Cap at MAX_PICKS_PER_TEAM (2) per team, keeping highest-edge picks.
+    """
+
+    def test_third_pick_from_same_team_dropped(self):
+        """3rd pick from same team should be dropped (cap=2)."""
+        preds = []
+        for i, edge in enumerate([8.0, 6.0, 4.0]):
+            p = _make_prediction(
+                player_lookup=f'player_{i}',
+                game_id='20260307_UTA_MIL',
+                edge=edge,
+                is_home=False,
+            )
+            p['team_abbr'] = 'UTA'
+            preds.append(p)
+        key_fn = lambda p: f"{p['player_lookup']}::{p['game_id']}"
+        signals = {}
+        for p in preds:
+            signals[key_fn(p)] = [_make_signal_result(f'sig_{i}') for i in range(5)]
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate(preds, signals)
+        assert len(picks) == 2  # Only 2 kept
+        assert summary['rejected']['team_cap'] == 1
+        # Highest edge picks should be kept
+        kept_edges = sorted([p['edge'] for p in picks], reverse=True)
+        assert kept_edges == [8.0, 6.0]
+
+    def test_two_picks_from_same_team_allowed(self):
+        """2 picks from same team is within cap — both should pass."""
+        preds = []
+        for i, edge in enumerate([7.0, 5.0]):
+            p = _make_prediction(
+                player_lookup=f'player_{i}',
+                game_id='20260307_UTA_MIL',
+                edge=edge,
+                is_home=False,
+            )
+            p['team_abbr'] = 'UTA'
+            preds.append(p)
+        key_fn = lambda p: f"{p['player_lookup']}::{p['game_id']}"
+        signals = {}
+        for p in preds:
+            signals[key_fn(p)] = [_make_signal_result(f'sig_{i}') for i in range(5)]
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate(preds, signals)
+        assert len(picks) == 2
+        assert summary['rejected']['team_cap'] == 0
+
+    def test_different_teams_not_affected(self):
+        """3 picks from 3 different teams should all pass."""
+        preds = []
+        for i, (team, game) in enumerate([('UTA', '20260307_UTA_MIL'),
+                                           ('GSW', '20260307_GSW_OKC'),
+                                           ('BKN', '20260307_BKN_DET')]):
+            p = _make_prediction(
+                player_lookup=f'player_{i}',
+                game_id=game,
+                edge=5.0,
+                is_home=False,
+            )
+            p['team_abbr'] = team
+            preds.append(p)
+        key_fn = lambda p: f"{p['player_lookup']}::{p['game_id']}"
+        signals = {}
+        for p in preds:
+            signals[key_fn(p)] = [_make_signal_result(f'sig_{i}') for i in range(5)]
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate(preds, signals)
+        assert len(picks) == 3
+        assert summary['rejected']['team_cap'] == 0

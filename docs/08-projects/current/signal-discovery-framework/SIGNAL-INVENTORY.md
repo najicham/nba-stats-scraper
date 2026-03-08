@@ -202,6 +202,7 @@ Three new UNDER signals to fill the UNDER signal vacuum. 98.4% of model-level UN
 | 21 | UNDER edge 7+ (V9) | UNDER + edge 7+ + V9 family | 34.1% | 297 |
 | 22 | B2B UNDER block | UNDER + rest_days <= 1 | 30.8% | 422c |
 | 23 | Prediction sanity | pred > 2x season_avg + line < 18 | 40.9% (N=88) | 440 |
+| 24 | Team cap | > 2 picks from same team | — | 441 |
 | — | Away block | REMOVED Session 401 | — | 401 |
 | — | UNDER + line jumped 2+ | Demoted to observation Session 417 (5/5 winners blocked) | — | 417 |
 
@@ -215,6 +216,7 @@ Three new UNDER signals to fill the UNDER signal vacuum. 98.4% of model-level UN
 | `unreliable_under_flat_trend_obs` | UNDER + edge 5+ + minutes_load > 58 + flat trend | — | 421 | Wrong UNDER fingerprint during toxic window. |
 | `blowout_risk_under_block_obs` | UNDER + blowout_risk >= 0.40 + line >= 15 | 16.7% (N=12) | 423 | Blowout benching → players get pulled → OVER. |
 | `depleted_stars_over_obs` | OVER + star_teammates_out >= 3 | BB 0% (N=4), model 48.2% (N=137) | 439 | Skeleton crew = team offense degrades, volume boost doesn't materialize. |
+| `hot_shooting_reversion_obs` | OVER + prev_game FG% >= 70% + 20+ min | 59.2% UNDER HR (N=250) | 441 | Efficiency mean-reverts at extreme — 60-69% shows no signal. |
 | `public_fade_filter` | 80%+ public tickets OVER | — | 404 | VSiN data accumulating |
 | `negative_clv_filter` | CLV contradicts pick direction | — | 401 | CLV data accumulating |
 
