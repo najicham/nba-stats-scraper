@@ -161,10 +161,18 @@ def load_training_data(client: bigquery.Client) -> pd.DataFrame:
             ELSE 100.0 / (bp.over_odds + 100.0)
         END as f44_over_implied_prob,
 
-        sc.swstr_pct_last_3 as f50_swstr_pct_last_3,
-        sc.fb_velocity_last_3 as f51_fb_velocity_last_3,
-        (sc.swstr_pct_last_3 - sc.swstr_pct_season_prior) as f52_swstr_trend,
-        (sc.fb_velocity_season_prior - sc.fb_velocity_last_3) as f53_velocity_change
+        -- Statcast features: COALESCE with season averages to reduce NaN drops
+        -- (Session 432: recovers 487/492 null statcast rows)
+        COALESCE(sc.swstr_pct_last_3, pgs.season_swstr_pct) as f50_swstr_pct_last_3,
+        COALESCE(sc.fb_velocity_last_3, sc.fb_velocity_season_prior) as f51_fb_velocity_last_3,
+        COALESCE(
+            sc.swstr_pct_last_3 - sc.swstr_pct_season_prior,
+            0.0  -- No trend data = assume neutral
+        ) as f52_swstr_trend,
+        COALESCE(
+            sc.fb_velocity_season_prior - sc.fb_velocity_last_3,
+            0.0  -- No velocity change data = assume stable
+        ) as f53_velocity_change
 
     FROM `mlb_raw.bp_pitcher_props` bp
     JOIN `mlb_analytics.pitcher_game_summary` pgs
