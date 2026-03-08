@@ -130,7 +130,8 @@ class TestAggregatorReturnType:
             'high_spread_over_would_block', 'flat_trend_under',
             'under_after_streak', 'under_after_bad_miss',
             'mid_line_over_obs', 'monday_over_obs', 'home_over_obs',
-            'signal_stack_2plus_obs', 'rescue_cap',
+            'signal_stack_2plus_obs', 'rescue_cap', 'rescue_health_gate',
+            'bias_regime_over_obs',
             'unreliable_over_low_mins_obs', 'unreliable_under_flat_trend_obs',
             'b2b_under_block', 'blowout_risk_under_block_obs',
         }
@@ -1159,3 +1160,208 @@ class TestRuntimeDemotion:
         picks, summary = agg.aggregate([pred], signals)
         assert summary['rejected']['friday_over_block'] == 1
         assert len(picks) == 0
+
+
+# ============================================================================
+# SESSION 437 PHASE 2 & 3 TESTS — RESCUE ARCHITECTURE + OVER QUALITY
+# ============================================================================
+
+class TestRescueCapPrioritySort:
+    """Session 437 P4: rescue_cap should drop lowest-priority rescues first."""
+
+    def _make_signal_results_for(self, pred, n_qualifying=5, rescue_tag=None):
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        signals = [_make_signal_result(f'signal_{i}') for i in range(n_qualifying)]
+        if rescue_tag:
+            signals.append(_make_signal_result(rescue_tag))
+        return {key: signals}
+
+    def test_rescue_cap_keeps_higher_priority(self):
+        """HSE rescue (priority 3) should be kept over combo_he_ms (priority 1)."""
+        from ml.signals.aggregator import RESCUE_SIGNAL_PRIORITY
+        assert RESCUE_SIGNAL_PRIORITY['high_scoring_environment_over'] > RESCUE_SIGNAL_PRIORITY.get('combo_he_ms', 0)
+
+    def test_rescue_priority_ordering(self):
+        """Priority map has HSE > sharp_book > combo signals."""
+        from ml.signals.aggregator import RESCUE_SIGNAL_PRIORITY
+        assert RESCUE_SIGNAL_PRIORITY['high_scoring_environment_over'] == 3
+        assert RESCUE_SIGNAL_PRIORITY['sharp_book_lean_over'] == 2
+        assert RESCUE_SIGNAL_PRIORITY['combo_he_ms'] == 1
+
+
+class TestComboHeMsOverRescueRemoval:
+    """Session 437 P6: combo_he_ms should not rescue OVER picks."""
+
+    def _make_signal_results_for(self, pred, tags):
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        signals = [_make_signal_result(t) for t in tags]
+        return {key: signals}
+
+    def test_combo_he_ms_does_not_rescue_over(self):
+        """OVER pick below edge floor should NOT be rescued by combo_he_ms."""
+        pred = _make_prediction(
+            recommendation='OVER',
+            edge=2.5,  # Below edge floor of 3.0
+            line_value=27.0,
+        )
+        tags = ['model_health', 'high_edge', 'edge_spread_optimal',
+                'combo_he_ms', 'rest_advantage_2d']
+        signals = self._make_signal_results_for(pred, tags)
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        # combo_he_ms should NOT rescue OVER — pick should be filtered
+        assert len(picks) == 0
+        assert summary['rejected']['edge_floor'] > 0
+
+    def test_combo_he_ms_still_rescues_under(self):
+        """UNDER pick below edge floor SHOULD be rescued by combo_he_ms."""
+        pred = _make_prediction(
+            recommendation='UNDER',
+            edge=2.5,  # Below edge floor of 3.0
+            line_value=27.0,
+            trend_slope=2.0,
+        )
+        tags = ['model_health', 'high_edge', 'edge_spread_optimal',
+                'combo_he_ms', 'rest_advantage_2d']
+        signals = self._make_signal_results_for(pred, tags)
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        # combo_he_ms should rescue UNDER
+        assert len(picks) == 1
+        assert picks[0].get('signal_rescued') is True
+        assert picks[0].get('rescue_signal') == 'combo_he_ms'
+
+
+class TestRescueHealthGate:
+    """Session 437 P5: signals with low 7d HR lose rescue eligibility."""
+
+    def _make_signal_results_for(self, pred, tags):
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        signals = [_make_signal_result(t) for t in tags]
+        return {key: signals}
+
+    def test_unhealthy_signal_loses_rescue(self):
+        """Signal with 7d HR below threshold should not rescue."""
+        pred = _make_prediction(
+            recommendation='UNDER',
+            edge=2.5,  # Below edge floor
+            line_value=27.0,
+            trend_slope=2.0,
+        )
+        tags = ['model_health', 'high_edge', 'edge_spread_optimal',
+                'home_under', 'rest_advantage_2d']
+        signals = self._make_signal_results_for(pred, tags)
+        # home_under at 45% HR = below 60% threshold
+        health = {'home_under': {'hr_7d': 45.0, 'regime': 'COLD', 'status': 'DEGRADING'}}
+        agg = BestBetsAggregator(signal_health=health)
+        picks, summary = agg.aggregate([pred], signals)
+        # home_under should lose rescue eligibility — pick filtered
+        assert len(picks) == 0
+
+    def test_healthy_signal_keeps_rescue(self):
+        """Signal with 7d HR above threshold should still rescue."""
+        pred = _make_prediction(
+            recommendation='UNDER',
+            edge=2.5,
+            line_value=27.0,
+            trend_slope=2.0,
+        )
+        tags = ['model_health', 'high_edge', 'edge_spread_optimal',
+                'home_under', 'rest_advantage_2d']
+        signals = self._make_signal_results_for(pred, tags)
+        # home_under at 75% HR = above threshold
+        health = {'home_under': {'hr_7d': 75.0, 'regime': 'HOT', 'status': 'HEALTHY'}}
+        agg = BestBetsAggregator(signal_health=health)
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 1
+        assert picks[0].get('rescue_signal') == 'home_under'
+
+    def test_no_health_data_fails_open(self):
+        """Without signal_health data, all signals keep rescue eligibility."""
+        pred = _make_prediction(
+            recommendation='UNDER',
+            edge=2.5,
+            line_value=27.0,
+            trend_slope=2.0,
+        )
+        tags = ['model_health', 'high_edge', 'edge_spread_optimal',
+                'home_under', 'rest_advantage_2d']
+        signals = self._make_signal_results_for(pred, tags)
+        # No signal_health — fail open
+        agg = BestBetsAggregator(signal_health={})
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 1
+        assert picks[0].get('rescue_signal') == 'home_under'
+
+
+class TestOverSignalQualityScoring:
+    """Session 437 P7: OVER composite score includes signal quality."""
+
+    def _make_signal_results_for(self, pred, tags):
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        signals = [_make_signal_result(t) for t in tags]
+        return {key: signals}
+
+    def test_over_signal_quality_stored(self):
+        """OVER picks should have over_signal_quality in output."""
+        pred = _make_prediction(
+            recommendation='OVER',
+            edge=6.0,
+            line_value=27.0,
+        )
+        tags = ['model_health', 'high_edge', 'edge_spread_optimal',
+                'fast_pace_over', 'line_rising_over']
+        signals = self._make_signal_results_for(pred, tags)
+        agg = BestBetsAggregator()
+        picks, _ = agg.aggregate([pred], signals)
+        assert len(picks) == 1
+        assert picks[0]['over_signal_quality'] is not None
+        assert picks[0]['over_signal_quality'] > 0
+
+    def test_over_quality_affects_ranking(self):
+        """OVER pick with better signals should rank higher at same edge."""
+        pred_a = _make_prediction(
+            player_lookup='player_a',
+            recommendation='OVER',
+            edge=5.0,
+            line_value=27.0,
+        )
+        pred_b = _make_prediction(
+            player_lookup='player_b',
+            game_id='20260220_BOS_MIA',
+            recommendation='OVER',
+            edge=5.0,
+            line_value=27.0,
+        )
+        # Player A has high-value signals
+        tags_a = ['model_health', 'high_edge', 'edge_spread_optimal',
+                  'fast_pace_over', 'line_rising_over', 'combo_3way']
+        # Player B has only base signals + one low-weight
+        tags_b = ['model_health', 'high_edge', 'edge_spread_optimal',
+                  'b2b_boost_over']
+        signals = {}
+        signals.update(self._make_signal_results_for(pred_a, tags_a))
+        signals.update(self._make_signal_results_for(pred_b, tags_b))
+        agg = BestBetsAggregator()
+        picks, _ = agg.aggregate([pred_a, pred_b], signals)
+        assert len(picks) == 2
+        # Player A should rank higher (same edge but better signal quality)
+        assert picks[0]['player_lookup'] == 'player_a'
+        assert picks[0]['composite_score'] > picks[1]['composite_score']
+
+    def test_under_quality_unchanged(self):
+        """UNDER picks should still use under_signal_quality (not over)."""
+        pred = _make_prediction(
+            recommendation='UNDER',
+            edge=5.0,
+            line_value=27.0,
+            trend_slope=2.0,
+        )
+        tags = ['model_health', 'high_edge', 'edge_spread_optimal',
+                'home_under', 'bench_under']
+        signals = self._make_signal_results_for(pred, tags)
+        agg = BestBetsAggregator()
+        picks, _ = agg.aggregate([pred], signals)
+        assert len(picks) == 1
+        assert picks[0]['under_signal_quality'] is not None
+        assert picks[0]['over_signal_quality'] is None

@@ -51,7 +51,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v429_signal_weight_cleanup'
+ALGORITHM_VERSION = 'v437_rescue_architecture'
 
 # Base signals that fire on nearly every edge 5+ pick. Picks with ONLY
 # these signals hit 57.1% (N=42) vs 77.8% for picks with 4+ signals.
@@ -114,6 +114,50 @@ UNDER_SIGNAL_WEIGHTS: Dict[str, float] = {
     # starter_under removed Session 419 (38.7% signal HR N=31, demoted to BASE_SIGNALS)
 }
 UNDER_EDGE_TIEBREAKER = 0.1  # Edge as minor tiebreaker for UNDER
+
+# Session 437 P4: Rescue signal priority weights for rescue_cap sorting.
+# When rescue_cap trims excess rescues, drop lowest-priority first.
+# Priority based on validated BB HR — higher = more likely to keep.
+# Old behavior: sorted by edge ascending (dropped HSE 100% HR while keeping
+# combo_he_ms 40% HR because HSE had lower edge).
+RESCUE_SIGNAL_PRIORITY: Dict[str, int] = {
+    'high_scoring_environment_over': 3,  # 100% BB HR (3-0)
+    'sharp_book_lean_over': 2,           # 100% BB HR (1-0)
+    'home_under': 2,                     # Solid UNDER rescue signal
+    'combo_3way': 1,                     # Co-fires with combo_he_ms
+    'combo_he_ms': 1,                    # 53.8% BB HR — weak at low edge
+}
+
+# Session 437 P5: Minimum 7d HR for a signal to qualify as rescue.
+# Read from signal_health_daily at runtime. Signals below this threshold
+# automatically lose rescue eligibility. Self-correcting — signals regain
+# rescue when their HR recovers. Fail-open: if signal_health is empty,
+# all signals pass (no blocking without data).
+RESCUE_MIN_HR_7D = 60.0
+
+# Session 437 P7: Validated OVER signal weights — mirrors UNDER_SIGNAL_WEIGHTS.
+# OVER edge is the primary discriminator, but signal quality distinguishes
+# between two OVER picks at similar edge. Weighted quality is added as a
+# secondary component (edge remains dominant).
+# Weights derived from validated BB/signal HR. Only validated signals get
+# non-zero weight — shadow signals default to 0.0 (via SHADOW_SIGNALS check).
+OVER_SIGNAL_WEIGHTS: Dict[str, float] = {
+    'line_rising_over': 3.0,                # 96.6% signal HR
+    'combo_3way': 2.5,                      # 95.5% season signal HR
+    'fast_pace_over': 2.5,                  # 81.5% signal HR
+    'high_scoring_environment_over': 2.0,   # 100% BB HR (3-0)
+    'book_disagreement': 2.0,               # 93.0% signal HR
+    'scoring_cold_streak_over': 1.5,        # Post-cold bounce signal
+    'sharp_book_lean_over': 1.5,            # 70.3% signal HR
+    'b2b_boost_over': 1.0,                  # Active signal
+    'q4_scorer_over': 1.0,                  # Active signal
+    'self_creation_over': 1.0,              # Active signal
+    'sharp_line_move_over': 1.0,            # Active signal
+    'combo_he_ms': 1.0,                     # 53.8% BB HR — low weight
+}
+# OVER quality tiebreaker weight: how much signal quality affects ranking
+# relative to edge. Edge is still dominant (1.0x), quality is secondary.
+OVER_QUALITY_WEIGHT = 0.3
 
 # Session 372: Teams with catastrophic UNDER HR (edge 3+, Dec 1+, N>=190).
 # High-variance offenses where scoring exceeds expectations.
@@ -279,10 +323,12 @@ class BestBetsAggregator:
             'home_over_obs': 0,
             'signal_stack_2plus_obs': 0,
             'rescue_cap': 0,
+            'rescue_health_gate': 0,
             'unreliable_over_low_mins_obs': 0,
             'unreliable_under_flat_trend_obs': 0,
             'b2b_under_block': 0,
             'blowout_risk_under_block_obs': 0,
+            'bias_regime_over_obs': 0,
         }
 
         # Session 393: Counterfactual tracking — log filtered-out picks so we
@@ -334,6 +380,20 @@ class BestBetsAggregator:
                         f"{max(over_pct, 1 - over_pct):.0%} {dominant} ({total} predictions). "
                         f"Extreme direction imbalance suggests miscalibration."
                     )
+
+        # Session 437 P8: Bias-regime detection for OVER volume gating.
+        # When >70% of predictions are UNDER, the model is signaling low OVER
+        # confidence. Track what WOULD be blocked (observation mode).
+        # Active mode would limit OVER to edge 5+ non-rescued only.
+        total_preds = len(predictions)
+        under_count = sum(1 for p in predictions if p.get('recommendation') == 'UNDER')
+        under_pct = under_count / total_preds if total_preds > 0 else 0.0
+        bias_regime_under = under_pct > 0.70
+        if bias_regime_under:
+            logger.info(
+                f"Bias regime: UNDER-heavy ({under_pct:.0%} UNDER, "
+                f"{total_preds - under_count} OVER out of {total_preds})"
+            )
 
         # Session 382: Legacy model blocklist — hardcoded models not in registry
         # that bypass all registry controls. catboost_v12: 33.3% BB HR (6 picks),
@@ -397,7 +457,7 @@ class BestBetsAggregator:
                 # 71.4% HR (5-7) overall, 3-0 on Mar 5. Removal killed
                 # OVER pipeline (0 OVER picks at edge 5+ on Mar 6).
                 rescue_tags = {
-                    'combo_3way', 'combo_he_ms',
+                    'combo_3way',
                     # book_disagreement removed Session 434: 47.4% HR (N=19), rescuing losers
                     'home_under',
                     # volatile_scoring_over removed Session 436: 0% BB HR, 20% overall.
@@ -408,6 +468,31 @@ class BestBetsAggregator:
                     # mean_reversion_under removed Session 427: cross-season decay
                     # 75.7%(2024)→65.2%(2025)→53.0%(2026), below 2026 baseline
                 }
+                # Session 437 P6: combo_he_ms removed from OVER rescue.
+                # combo_he_ms at edge < 4 = 25% HR (1-3), even at edge 4.0+
+                # recent HR is 53.8%. Keep for UNDER where it performs well.
+                if pred.get('recommendation') != 'OVER':
+                    rescue_tags.add('combo_he_ms')
+
+                # Session 437 P5: Dynamic rescue health gate.
+                # Signals with 7d HR < RESCUE_MIN_HR_7D lose rescue eligibility.
+                # Self-correcting — no manual intervention during cold/hot streaks.
+                if self._signal_health:
+                    unhealthy_rescue = set()
+                    for rtag in list(rescue_tags):
+                        health = self._signal_health.get(rtag, {})
+                        hr_7d = health.get('hr_7d')
+                        if hr_7d is not None and hr_7d < RESCUE_MIN_HR_7D:
+                            unhealthy_rescue.add(rtag)
+                            logger.debug(
+                                f"Rescue health gate: {rtag} blocked "
+                                f"(7d HR={hr_7d:.1f}% < {RESCUE_MIN_HR_7D}%)"
+                            )
+                    if unhealthy_rescue:
+                        rescue_tags -= unhealthy_rescue
+                        filter_counts.setdefault('rescue_health_gate', 0)
+                        filter_counts['rescue_health_gate'] += len(unhealthy_rescue)
+
                 for r in signal_check:
                     if r.qualifies and r.source_tag in rescue_tags:
                         signal_rescued = True
@@ -473,6 +558,16 @@ class BestBetsAggregator:
                     and not signal_rescued):
                 filter_counts['regime_over_floor'] += 1
                 _record_filtered(pred, 'regime_over_floor', pred_edge)
+
+            # Session 437 P8: Bias-regime OVER volume gate (observation mode).
+            # When >70% of predictions are UNDER and this is a rescued OVER
+            # with edge < 5.0, track what would be blocked. Active mode would
+            # limit OVER to edge 5+ non-rescued only during UNDER-heavy regimes.
+            if (bias_regime_under
+                    and pred.get('recommendation') == 'OVER'
+                    and (signal_rescued or pred_edge < 5.0)):
+                filter_counts['bias_regime_over_obs'] += 1
+                _record_filtered(pred, 'bias_regime_over_obs', pred_edge)
 
             # UNDER at edge 7+ block (Session 297, narrowed Session 367):
             # V9 UNDER 7+: 34.1% HR (N=41) — catastrophic, keep blocked.
@@ -918,11 +1013,14 @@ class BestBetsAggregator:
             if xm_factors and pred.get('recommendation') == xm_factors.get('majority_direction'):
                 consensus_bonus = xm_factors.get('consensus_bonus', 0)
 
-            # Session 400: Direction-aware composite scoring.
-            # OVER: edge is the primary quality discriminator (higher edge = better).
+            # Session 400/437: Direction-aware composite scoring.
             # UNDER: edge is flat at 52-53% across all buckets. Use weighted
             # signal quality score instead, with edge as minor tiebreaker.
+            # OVER: edge is the primary discriminator, but signal quality (P7)
+            # helps distinguish picks at similar edge — prevents high-edge picks
+            # with only shadow/base signals from outranking signal-rich picks.
             under_signal_quality = None
+            over_signal_quality = None
             if pred.get('recommendation') == 'UNDER':
                 real_signal_tags = [t for t in tags if t not in BASE_SIGNALS]
                 under_signal_quality = sum(
@@ -930,7 +1028,17 @@ class BestBetsAggregator:
                 )
                 composite_score = round(under_signal_quality + pred_edge * UNDER_EDGE_TIEBREAKER, 4)
             else:
-                composite_score = round(pred_edge, 4)
+                # Session 437 P7: Weighted OVER quality scoring.
+                # Only validated (non-base, non-shadow) signals contribute.
+                # Shadow signals default to 0.0 weight (excluded from real tags).
+                over_real_tags = [t for t in tags
+                                 if t not in BASE_SIGNALS and t not in SHADOW_SIGNALS]
+                over_signal_quality = sum(
+                    OVER_SIGNAL_WEIGHTS.get(t, 0.5) for t in over_real_tags
+                )
+                composite_score = round(
+                    pred_edge + over_signal_quality * OVER_QUALITY_WEIGHT, 4
+                )
 
             # Session 421: Player-tier edge cap observation.
             # Classify tier by line, compute what composite_score WOULD be if capped.
@@ -964,6 +1072,7 @@ class BestBetsAggregator:
                 'rescue_signal': rescue_signal,
                 'composite_score': composite_score,
                 'under_signal_quality': under_signal_quality,
+                'over_signal_quality': over_signal_quality,
                 'player_tier': tier,
                 'tier_edge_cap_delta': tier_cap_delta,
                 'capped_composite_score': capped_composite,
@@ -1083,8 +1192,13 @@ class BestBetsAggregator:
             )
         if filter_counts['rescue_cap'] > 0:
             logger.info(
-                f"Rescue cap: dropped {filter_counts['rescue_cap']} lowest-edge rescued picks "
+                f"Rescue cap: dropped {filter_counts['rescue_cap']} lowest-priority rescued picks "
                 f"to keep rescue ≤ 40% of slate"
+            )
+        if filter_counts['rescue_health_gate'] > 0:
+            logger.info(
+                f"Rescue health gate: {filter_counts['rescue_health_gate']} signal(s) "
+                f"lost rescue eligibility (7d HR < {RESCUE_MIN_HR_7D}%)"
             )
         if filter_counts['unreliable_over_low_mins_obs'] > 0:
             logger.info(
@@ -1188,8 +1302,13 @@ class BestBetsAggregator:
         if scored and len(rescued_picks) > 0:
             max_rescue = max(1, int(len(scored) * 0.4))
             if len(rescued_picks) > max_rescue:
-                # Sort rescued by edge ascending (drop lowest first)
-                rescued_picks.sort(key=lambda x: x.get('edge', 0))
+                # Session 437 P4: Sort by (priority, edge) ascending — drop
+                # lowest-priority rescues first. Old sort was edge-only, which
+                # dropped HSE (100% HR, 3-0) in favor of combo_he_ms (40% HR).
+                rescued_picks.sort(key=lambda x: (
+                    RESCUE_SIGNAL_PRIORITY.get(x.get('rescue_signal', ''), 0),
+                    x.get('edge', 0),
+                ))
                 to_drop = rescued_picks[:len(rescued_picks) - max_rescue]
                 to_keep = rescued_picks[len(rescued_picks) - max_rescue:]
                 for drop_pick in to_drop:
@@ -1200,7 +1319,9 @@ class BestBetsAggregator:
                     )
                     logger.info(
                         f"Rescue cap: dropping {drop_pick['player_lookup']} "
-                        f"edge={drop_pick.get('edge', 0):.1f}"
+                        f"edge={drop_pick.get('edge', 0):.1f} "
+                        f"rescue={drop_pick.get('rescue_signal', '?')} "
+                        f"priority={RESCUE_SIGNAL_PRIORITY.get(drop_pick.get('rescue_signal', ''), 0)}"
                     )
                 scored = non_rescued + to_keep
 

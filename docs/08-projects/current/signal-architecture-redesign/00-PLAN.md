@@ -1,32 +1,25 @@
-# Signal Architecture Redesign — Session 436
+# Signal Architecture Redesign — Sessions 436-437
 
 ## Problem Statement
 
 Mar 7 autopsy: 1-5 (all 5 OVER losses). Raw model was 80% HR on OVER but BB selection picked the worst 5 candidates. Root cause: shadow signals inflate real_sc, rescue pulls in bad picks, no quality weighting for OVER.
 
-## Phase 1: Quick Fixes (Deploy Today)
+## Phase 1: Quick Fixes — DEPLOYED (Session 436b)
 
-- **P1: Add SHADOW_SIGNALS frozenset, exclude from real_sc.** Shadow signals (day_of_week_over, predicted_pace_over, projection_consensus_over, etc.) currently count toward `real_sc`, helping bad picks pass the SC >= 3 gate. All 5 Mar 7 losers had inflated counts (avg 5.8 vs winner 3.0). Fix: define `SHADOW_SIGNALS` set in signal config, subtract from real_sc computation.
-- **P2: Remove volatile_scoring_over from rescue tags.** 0% BB HR. Should never rescue picks.
-- **P3: Add day_of_week_over + predicted_pace_over to BASE_SIGNALS.** Both have sub-50% BB HR (40%, 43%) and inflate real_sc. Moving to BASE_SIGNALS neutralizes their count contribution.
+- **P1: SHADOW_SIGNALS frozenset, excluded from real_sc.** DONE. 19 shadow signals no longer inflate real_sc.
+- **P2: volatile_scoring_over removed from rescue.** DONE. 0% BB HR.
+- **P3: day_of_week_over + predicted_pace_over → BASE_SIGNALS.** DONE. Zero real_sc contribution.
 
-## Phase 2: Rescue Architecture (This Week)
+## Phase 2: Rescue Architecture — DEPLOYED (Session 437)
 
-- **P4: Signal-quality-aware rescue_cap sorting.** Current rescue_cap sorts by edge ascending, which dropped HSE rescue (100% HR, 3-0) in favor of combo_he_ms rescue (40% HR). Fix: sort by priority weight descending, then edge descending. Each rescue tag gets a priority based on validated HR.
-- **P5: Dynamic rescue health gate.** Read `signal_health_daily` at rescue time. Require 7d HR >= 60% for any signal to qualify as rescue. Signals in COLD/DEGRADING state automatically lose rescue eligibility.
-- **P6: Remove combo_he_ms from OVER rescue until recovery.** combo_he_ms rescue at edge < 4 = 25% HR (1-3). Keep for UNDER rescue where it performs well.
+- **P4: Signal-quality-aware rescue_cap sorting.** DONE. `RESCUE_SIGNAL_PRIORITY` map sorts by priority descending, then edge descending. HSE (priority 3) > sharp_book_lean (2) > combo signals (1). Prevents dropping high-HR rescues in favor of low-HR ones.
+- **P5: Dynamic rescue health gate.** DONE. `RESCUE_MIN_HR_7D = 60.0`. Reads `signal_health_daily` at runtime. Signals below 60% 7d HR automatically lose rescue eligibility. Fail-open when health data unavailable.
+- **P6: combo_he_ms removed from OVER rescue.** DONE. combo_he_ms at edge < 4 = 25% HR (1-3). Kept for UNDER rescue only.
 
-## Phase 3: OVER Quality Scoring (Next Week)
+## Phase 3: OVER Quality Scoring — DEPLOYED (Session 437)
 
-- **P7: Weighted quality scoring for OVER signals.** Mirror UNDER's `UNDER_SIGNAL_WEIGHTS` approach. Create `VALIDATED_OVER_SIGNALS` with weights based on validated BB HR:
-  - `line_rising_over`: 3.0 (96.6% HR)
-  - `combo_3way`: 2.5 (95.5% HR)
-  - `fast_pace_over`: 2.5 (81.5% HR)
-  - `HSE`: 2.0 (100% BB HR, N=3)
-  - `book_disagreement`: 2.0 (93.0% HR)
-  - `volatile_scoring_over`: 0.0 (0% BB HR — blocked)
-  - Replace binary `real_sc >= 1` gate with minimum quality threshold for OVER.
-- **P8: Bias-regime OVER volume gate.** When >70% of predictions are UNDER (current: 75%), limit OVER picks to edge 5+ non-rescued only. Prevents low-confidence OVER picks from diluting BB during UNDER-biased regimes.
+- **P7: Weighted OVER quality scoring.** DONE. `OVER_SIGNAL_WEIGHTS` with validated weights. `OVER_QUALITY_WEIGHT = 0.3` as secondary component to edge. Shadow signals get 0.0 weight. OVER composite = `edge + over_signal_quality * 0.3`. This reranks picks at similar edge — signal-rich picks rank higher than signal-poor ones.
+- **P8: Bias-regime OVER volume gate.** OBSERVATION MODE. When >70% predictions are UNDER, tracks what would be blocked (rescued OVER + edge < 5 OVER). Will promote to active after validation.
 
 ## Phase 4: Structural Improvements (2+ Weeks)
 
@@ -36,10 +29,43 @@ Mar 7 autopsy: 1-5 (all 5 OVER losses). Raw model was 80% HR on OVER but BB sele
 ## Future Investigation (Parking Lot)
 
 - **Single champion model vs fleet** — all 145 model pairs r >= 0.95, zero diversity. Fleet adds complexity without value. Consider promoting single best model.
-- **Volume tier** — edge >= 2.5, core filters only, separate tracking. Would capture profitable picks currently blocked by edge 3+ floor.
 - **Learned rejection classifier** — replace 29 hand-crafted filters with ML model trained on pick outcomes. Input: all signal/filter features. Output: pick probability.
 - **Relax zero-tolerance default features** — test default_count <= 3 to recover coverage (75 → 160 players already helped by Session 434 fix).
 - **Bet sizing** — Kelly/fractional-Kelly based on edge magnitude. Currently flat-betting all picks equally.
+
+## Session 437: Volume Tier / High-Edge Override Analysis
+
+### Key Finding: The System Leaves +10.7 Units on the Table
+
+| Tier | Volume | W-L | HR | Profit |
+|------|--------|-----|----|--------|
+| Current BB | 142 | 91-51 | 64.1% | +31.8 |
+| ALL filtered | 81 | 42-39 | 51.9% | -0.8 |
+| **Filtered edge 4+** | **37** | **25-12** | **67.6%** | **+10.7** |
+| Filtered edge 3-4 | 44 | 17-27 | 38.6% | -11.5 |
+
+### Filters Destroying Value (edge 4+)
+
+| Filter | CF HR | W-L | Units Destroyed |
+|--------|-------|-----|-----------------|
+| `over_edge_floor` | 87.5% | 7-1 | +5.4 |
+| `line_jumped_under` | 100% | 5-0 | +4.5 |
+| `bench_under` | 100% | 2-0 | +1.8 |
+
+**`line_jumped_under` detail:** Maxey UNDER at edge 7.3/7.8, Acebailey, VJ Edgecombe, Quentin Grimes — all won. Market line jumping UP while model says UNDER = alpha signal.
+
+**`over_edge_floor` detail:** 7 OVER picks at edge 3.3-4.8 all won. The OVER floor at 4.0 is blocking profitable picks. BUT: original Session 435 analysis showed BB OVER 3-4 = 33.3% HR (4-12). This 7-1 run is recent (Mar 3-5 only, N=8). Could be hot streak or post-ASB regime shift.
+
+### Verdict: NOT a Volume Tier — A High-Edge Override
+
+The broad "volume tier" (edge 2.5+ all filters) is slightly unprofitable (51.8% HR). But a targeted **high-edge override** at edge 4+ that bypasses weak filters while keeping strong ones (high_spread_over, line_dropped, med_usage_under) would recover ~+10 units (+33% profit increase).
+
+**Caution:** N=37 at edge 4+ filtered. Need to accumulate to N=100+ before acting. Monitor via `best_bets_filtered_picks` weekly.
+
+### Specific Actions for Next Session
+1. Track `line_jumped_under` CF HR weekly — if stays above 60% at N >= 20, DEMOTE to observation
+2. Track `over_edge_floor` CF HR at edge 3.5-4.0 separately — reconsider floor level
+3. Consider edge-gated filter bypass: edge 5+ → skip signal gates (except proven filters)
 
 ## Key Data Points
 
