@@ -63,7 +63,7 @@ class MlbGameLinesHistoricalScraper(ScraperBase, ScraperFlaskMixin):
 
     Optional opts:
       - markets: Comma-sep markets (default: h2h,spreads,totals)
-      - bookmakers: Comma-sep bookmakers (default: draftkings,fanduel)
+      - bookmakers: Comma-sep bookmakers (default: all 12 US books)
       - regions: Comma-sep regions (default: us)
     """
 
@@ -114,7 +114,7 @@ class MlbGameLinesHistoricalScraper(ScraperBase, ScraperFlaskMixin):
         if not self.opts.get("markets"):
             self.opts["markets"] = "h2h,spreads,totals"
         if not self.opts.get("bookmakers"):
-            self.opts["bookmakers"] = "draftkings,fanduel"
+            self.opts["bookmakers"] = "draftkings,fanduel,betmgm,williamhill_us,betrivers,bovada,espnbet,hardrockbet,betonlineag,fliff,betparx,ballybet"
         if not self.opts.get("regions"):
             self.opts["regions"] = "us"
 

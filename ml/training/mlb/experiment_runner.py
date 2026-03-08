@@ -26,6 +26,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+import re
+import unicodedata
+
 import numpy as np
 import pandas as pd
 from google.cloud import bigquery
@@ -36,8 +39,39 @@ logger = logging.getLogger(__name__)
 PROJECT_ID = "nba-props-platform"
 OUTPUT_DIR = "results/experiments"
 
+# Manual mapping for FanGraphs names that can't be auto-normalized
+FANGRAPHS_NAME_OVERRIDES = {
+    'hyunjinryu': 'hyun_jin_ryu',
+    'shabortstevenson': 'sha_bortstevenson',
+    'jolaurel': 'jo_laurel',
+    'jpmathieu': 'jp_mathieu',
+    'tjmcfarland': 'tj_mcfarland',
+}
+
+
+def normalize_fangraphs_lookup(name: str) -> str:
+    """Normalize FanGraphs player_lookup to match our system's format.
+
+    FanGraphs uses: carlosrodon (no underscores, no accents, no suffixes)
+    Our system uses: carlos_rodón (underscores, accents, with suffixes)
+
+    Strategy: normalize both sides to a common form for matching:
+    lowercase, strip accents, remove underscores, remove suffixes.
+    """
+    if not name:
+        return ''
+    name = name.lower().strip()
+    # Remove common suffixes
+    name = re.sub(r'\s*(jr\.?|sr\.?|ii|iii|iv|v)\s*$', '', name)
+    # Remove accents
+    name = unicodedata.normalize('NFD', name)
+    name = ''.join(c for c in name if unicodedata.category(c) != 'Mn')
+    # Remove all non-alphanumeric
+    name = re.sub(r'[^a-z0-9]', '', name)
+    return name
+
 # ============================================================
-# BASELINE FEATURES (current production V1 — 31 features)
+# BASELINE FEATURES (current production V1 — 40 features)
 # ============================================================
 BASELINE_FEATURES = [
     'f00_k_avg_last_3', 'f01_k_avg_last_5', 'f02_k_avg_last_10',
@@ -53,6 +87,9 @@ BASELINE_FEATURES = [
     'f40_bp_projection', 'f41_projection_diff', 'f44_over_implied_prob',
     'f50_swstr_pct_last_3', 'f51_fb_velocity_last_3',
     'f52_swstr_trend', 'f53_velocity_change',
+    'f65_vs_opp_k_per_9', 'f66_vs_opp_games',
+    'f67_season_starts', 'f68_k_per_pitch', 'f69_recent_workload_ratio',
+    'f70_o_swing_pct', 'f71_z_contact_pct', 'f72_fip', 'f73_gb_pct',
 ]
 
 # ============================================================
@@ -79,17 +116,7 @@ EXPERIMENTS = {
     'multi_book_odds': {
         'name': 'Multi-Book Odds Divergence',
         'hypothesis': 'DK vs FanDuel line disagreement signals sharp money',
-        'extra_features': ['f70_dk_fd_spread', 'f71_dk_over_implied', 'f72_fd_over_implied'],
-        # These need a separate query — loaded separately below
-        'needs_separate_load': True,
-        'extra_sql': '',
-        'extra_select': '',
-    },
-
-    'fangraphs_advanced': {
-        'name': 'FanGraphs Advanced Pitching',
-        'hypothesis': 'o-swing%, z-contact%, FIP add pitcher quality signal',
-        'extra_features': ['f70_o_swing_pct', 'f71_z_contact_pct', 'f72_fip', 'f73_gb_pct'],
+        'extra_features': ['f80_dk_fd_spread', 'f81_dk_over_implied', 'f82_fd_over_implied'],
         # These need a separate query — loaded separately below
         'needs_separate_load': True,
         'extra_sql': '',
@@ -118,8 +145,6 @@ EXPERIMENTS = {
         'extra_features': [
             'f60_k_trajectory', 'f61_k_accel', 'f62_ip_k_efficiency',
             'f63_lineup_avg_k_rate', 'f64_lineup_top3_k_rate',
-            'f65_vs_opp_k_per_9', 'f66_vs_opp_games',
-            'f67_season_starts', 'f68_k_per_pitch', 'f69_recent_workload_ratio',
         ],
         'extra_sql': """
             LEFT JOIN (
@@ -143,13 +168,6 @@ EXPERIMENTS = {
             -- Lineup K features
             lineup.lineup_avg_k_rate as f63_lineup_avg_k_rate,
             lineup.lineup_top3_k_rate as f64_lineup_top3_k_rate,
-            -- Pitcher matchup features
-            pgs.vs_opponent_k_per_9 as f65_vs_opp_k_per_9,
-            pgs.vs_opponent_games as f66_vs_opp_games,
-            -- Workload features
-            pgs.season_games_started as f67_season_starts,
-            SAFE_DIVIDE(pgs.k_avg_last_5, NULLIF(pgs.pitch_count_avg_last_5, 0)) as f68_k_per_pitch,
-            SAFE_DIVIDE(pgs.games_last_30_days, 6.0) as f69_recent_workload_ratio,
         """,
     },
 }
@@ -230,7 +248,19 @@ def build_query(experiment_id: Optional[str] = None) -> str:
         COALESCE(sc.swstr_pct_last_3, pgs.season_swstr_pct) as f50_swstr_pct_last_3,
         COALESCE(sc.fb_velocity_last_3, sc.fb_velocity_season_prior) as f51_fb_velocity_last_3,
         COALESCE(sc.swstr_pct_last_3 - sc.swstr_pct_season_prior, 0.0) as f52_swstr_trend,
-        COALESCE(sc.fb_velocity_season_prior - sc.fb_velocity_last_3, 0.0) as f53_velocity_change
+        COALESCE(sc.fb_velocity_season_prior - sc.fb_velocity_last_3, 0.0) as f53_velocity_change,
+        -- Pitcher matchup features (baseline)
+        pgs.vs_opponent_k_per_9 as f65_vs_opp_k_per_9,
+        pgs.vs_opponent_games as f66_vs_opp_games,
+        -- Workload features (baseline)
+        pgs.season_games_started as f67_season_starts,
+        SAFE_DIVIDE(pgs.k_avg_last_5, NULLIF(pgs.pitch_count_avg_last_5, 0)) as f68_k_per_pitch,
+        SAFE_DIVIDE(pgs.games_last_30_days, 6.0) as f69_recent_workload_ratio,
+        -- FanGraphs advanced pitching features (baseline, Session 436)
+        fg.o_swing_pct as f70_o_swing_pct,
+        fg.z_contact_pct as f71_z_contact_pct,
+        fg.fip as f72_fip,
+        fg.gb_pct as f73_gb_pct
 
         {"," + extra_select if extra_select else ""}
 
@@ -241,6 +271,10 @@ def build_query(experiment_id: Optional[str] = None) -> str:
     LEFT JOIN statcast_rolling sc
         ON REPLACE(pgs.player_lookup, '_', '') = REPLACE(sc.player_lookup, '_', '')
         AND pgs.game_date = sc.game_date
+    LEFT JOIN `mlb_raw.fangraphs_pitcher_season_stats` fg
+        ON LOWER(REGEXP_REPLACE(NORMALIZE(fg.player_lookup, NFD), r'[\\W_]+', ''))
+            = LOWER(REGEXP_REPLACE(NORMALIZE(pgs.player_lookup, NFD), r'[\\W_]+', ''))
+        AND fg.season_year = EXTRACT(YEAR FROM pgs.game_date)
     {extra_sql}
     WHERE bp.market_id = 285
       AND bp.actual_value IS NOT NULL
@@ -659,6 +693,7 @@ def main():
         ) = 1
         """
         odds_df = client.query(odds_q).to_dataframe()
+        odds_df['game_date'] = pd.to_datetime(odds_df['game_date'])  # Fix: match df's Timestamp type for join
         dk = odds_df[odds_df['bookmaker'] == 'draftkings'].set_index(['game_date', 'player_lookup'])
         fd = odds_df[odds_df['bookmaker'] == 'fanduel'].set_index(['game_date', 'player_lookup'])
 
@@ -668,37 +703,19 @@ def main():
         fd_map = fd['over_implied_prob'].to_dict()
         dk_pt = dk['point'].to_dict()
         fd_pt = fd['point'].to_dict()
-        df['f70_dk_fd_spread'] = df['_key'].apply(
+        df['f80_dk_fd_spread'] = df['_key'].apply(
             lambda k: (dk_pt.get(k, 0) or 0) - (fd_pt.get(k, 0) or 0))
-        df['f71_dk_over_implied'] = df['_key'].apply(lambda k: dk_map.get(k))
-        df['f72_fd_over_implied'] = df['_key'].apply(lambda k: fd_map.get(k))
+        df['f81_dk_over_implied'] = df['_key'].apply(lambda k: dk_map.get(k))
+        df['f82_fd_over_implied'] = df['_key'].apply(lambda k: fd_map.get(k))
         df.drop(columns=['_key'], inplace=True)
-        print(f"  Multi-book: {df['f71_dk_over_implied'].notna().sum()} DK, "
-              f"{df['f72_fd_over_implied'].notna().sum()} FD matches")
+        print(f"  Multi-book: {df['f81_dk_over_implied'].notna().sum()} DK, "
+              f"{df['f82_fd_over_implied'].notna().sum()} FD matches")
 
-    if 'fangraphs_advanced' in feature_exps or args.all:
-        print("Loading FanGraphs advanced stats...")
-        fg_q = """
-        SELECT player_lookup, season_year,
-            o_swing_pct, z_contact_pct, fip, gb_pct
-        FROM `mlb_raw.fangraphs_pitcher_season_stats`
-        """
-        fg_df = client.query(fg_q).to_dataframe()
-        fg_df = fg_df.set_index(['player_lookup', 'season_year'])
-        df['_year'] = df['game_date'].dt.year
-        df['_fg_key'] = list(zip(df['player_lookup'], df['_year']))
-        for col, fg_col in [('f70_o_swing_pct', 'o_swing_pct'),
-                             ('f71_z_contact_pct', 'z_contact_pct'),
-                             ('f72_fip', 'fip'), ('f73_gb_pct', 'gb_pct')]:
-            col_map = fg_df[fg_col].to_dict()
-            df[col] = df['_fg_key'].apply(lambda k: col_map.get(k))
-        df.drop(columns=['_year', '_fg_key'], inplace=True)
-        n_fg = df['f70_o_swing_pct'].notna().sum()
-        print(f"  FanGraphs: {n_fg}/{len(df)} matched ({n_fg/len(df)*100:.0f}%)")
+    # FanGraphs features (f70-f73) now loaded via SQL JOIN in build_query (baseline)
 
     # Run baseline
     print("\n" + "="*70)
-    print("BASELINE: CatBoost V1 (31 features)")
+    print("BASELINE: CatBoost V1 (40 features)")
     print("="*70)
     baseline = run_model_experiment('catboost', df, seeds=seeds)
 

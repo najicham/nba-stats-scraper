@@ -184,7 +184,7 @@ class SystemConfig:
     # CatBoost V1 model path (Sprint 3)
     catboost_v1_model_path: str = field(default_factory=lambda: os.environ.get(
         'MLB_CATBOOST_V1_MODEL_PATH',
-        'gs://nba-props-platform-ml-models/mlb/catboost_mlb_v1_31f_train20250517_20250914_20260308_014509.cbm'
+        'gs://nba-props-platform-ml-models/mlb/catboost_mlb_v1_40f_train20250517_20250914_20260308_090647.cbm'
     ))
 
     # Ensemble weights (V1, V1.6)

@@ -40,6 +40,7 @@ CATBOOST_V1_FEATURES = [
     'f52_swstr_trend', 'f53_velocity_change',
     'f65_vs_opp_k_per_9', 'f66_vs_opp_games',
     'f67_season_starts', 'f68_k_per_pitch', 'f69_recent_workload_ratio',
+    'f70_o_swing_pct', 'f71_z_contact_pct', 'f72_fip', 'f73_gb_pct',
 ]
 
 # Raw name -> model feature name mapping
@@ -86,6 +87,10 @@ RAW_TO_MODEL_MAPPING = {
     'season_starts': 'f67_season_starts',
     'k_per_pitch': 'f68_k_per_pitch',
     'recent_workload_ratio': 'f69_recent_workload_ratio',
+    'o_swing_pct': 'f70_o_swing_pct',
+    'z_contact_pct': 'f71_z_contact_pct',
+    'fip': 'f72_fip',
+    'gb_pct': 'f73_gb_pct',
 }
 
 
@@ -101,7 +106,7 @@ class CatBoostV1Predictor(BaseMLBPredictor):
     def __init__(self, model_path: str = None, project_id: str = None):
         super().__init__(system_id='catboost_v1', project_id=project_id)
 
-        default_model = 'gs://nba-props-platform-ml-models/mlb/catboost_mlb_v1_31f_train20250517_20250914_20260308_014509.cbm'
+        default_model = 'gs://nba-props-platform-ml-models/mlb/catboost_mlb_v1_40f_train20250517_20250914_20260308_090647.cbm'
         self.model_path = model_path or os.environ.get('MLB_CATBOOST_V1_MODEL_PATH', default_model)
         self.model = None
         self.model_metadata = None
@@ -186,6 +191,7 @@ class CatBoostV1Predictor(BaseMLBPredictor):
                 'f19_season_swstr_pct', 'f19b_season_csw_pct',
                 'f65_vs_opp_k_per_9', 'f66_vs_opp_games',
                 'f67_season_starts', 'f68_k_per_pitch', 'f69_recent_workload_ratio',
+                'f70_o_swing_pct', 'f71_z_contact_pct', 'f72_fip', 'f73_gb_pct',
             }
             feature_vector = []
             default_feature_count = 0

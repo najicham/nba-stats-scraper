@@ -2632,11 +2632,13 @@ def auto_register_in_model_registry(
     enabled: bool = False,
     model_type: str = 'catboost',
 ):
-    """Insert model into model_registry with full metadata.
+    """Upsert model into model_registry with full metadata.
 
-    Uses DML INSERT (not streaming insert) so rows are immediately updatable.
-    Session 276: Fixed streaming buffer issue — streaming inserts block UPDATEs
-    for up to 30 minutes. DML inserts are immediately consistent.
+    Uses DML MERGE to prevent duplicate rows when the same model_id is
+    registered multiple times (e.g., re-running quick_retrain with identical
+    training date ranges). Session 436: Changed INSERT → MERGE to fix
+    duplicate entries (118 duplicates cleaned up).
+    Session 276: Uses DML (not streaming insert) so rows are immediately updatable.
     """
     import subprocess
 
@@ -2655,8 +2657,9 @@ def auto_register_in_model_registry(
             {k: v for k, v in hyperparameters.items() if k != 'verbose'}
         )
 
-    # Use DML INSERT instead of streaming insert to avoid streaming buffer issues
-    # Streaming inserts (insert_rows_json) create rows that can't be UPDATEd for ~30 min
+    # Use DML MERGE to upsert — prevents duplicate rows when same model_id
+    # is registered multiple times (Session 436: root cause of 118 duplicates).
+    # DML (not streaming insert) ensures rows are immediately updatable.
     hr_all_val = f"{round(hr_all, 2)}" if hr_all else "NULL"
     hr_edge3_val = f"{round(hr_edge3, 2)}" if hr_edge3 else "NULL"
     hr_edge5_val = f"{round(hr_edge5, 2)}" if hr_edge5 else "NULL"
@@ -2666,22 +2669,48 @@ def auto_register_in_model_registry(
     notes_val = f"'{(notes or 'Auto-registered by quick_retrain.py').replace(chr(39), chr(39)+chr(39))}'"
 
     query = f"""
-    INSERT INTO `{PROJECT_ID}.nba_predictions.model_registry`
-    (model_id, model_version, model_type, gcs_path, feature_count,
-     training_start_date, training_end_date, training_samples,
-     evaluation_mae, evaluation_hit_rate, evaluation_hit_rate_edge_3plus,
-     evaluation_hit_rate_edge_5plus, evaluation_n_edge_3plus,
-     experiment_id, git_commit, status, is_production, notes,
-     created_at, created_by, model_family, feature_set, loss_function,
-     quantile_alpha, enabled, strengths_json, training_config_json)
-    VALUES
-    ('{model_id}', '{model_version}', '{model_type}', '{gcs_path}', {feature_count},
-     '{training_start}', '{training_end}', {training_samples},
-     {round(mae, 4)}, {hr_all_val}, {hr_edge3_val},
-     {hr_edge5_val}, {n_edge3},
-     '{experiment_id}', '{git_commit}', 'active', FALSE, {notes_val},
-     CURRENT_TIMESTAMP(), 'quick_retrain', '{model_family}', '{feature_set}',
-     '{loss_function}', {qa_val}, {str(enabled).upper()}, {strengths_val}, {config_val})
+    MERGE `{PROJECT_ID}.nba_predictions.model_registry` AS target
+    USING (SELECT '{model_id}' AS model_id) AS source
+    ON target.model_id = source.model_id
+    WHEN MATCHED THEN
+      UPDATE SET
+        model_version = '{model_version}',
+        model_type = '{model_type}',
+        gcs_path = '{gcs_path}',
+        feature_count = {feature_count},
+        training_start_date = '{training_start}',
+        training_end_date = '{training_end}',
+        training_samples = {training_samples},
+        evaluation_mae = {round(mae, 4)},
+        evaluation_hit_rate = {hr_all_val},
+        evaluation_hit_rate_edge_3plus = {hr_edge3_val},
+        evaluation_hit_rate_edge_5plus = {hr_edge5_val},
+        evaluation_n_edge_3plus = {n_edge3},
+        experiment_id = '{experiment_id}',
+        git_commit = '{git_commit}',
+        notes = {notes_val},
+        model_family = '{model_family}',
+        feature_set = '{feature_set}',
+        loss_function = '{loss_function}',
+        quantile_alpha = {qa_val},
+        strengths_json = {strengths_val},
+        training_config_json = {config_val}
+    WHEN NOT MATCHED THEN
+      INSERT (model_id, model_version, model_type, gcs_path, feature_count,
+         training_start_date, training_end_date, training_samples,
+         evaluation_mae, evaluation_hit_rate, evaluation_hit_rate_edge_3plus,
+         evaluation_hit_rate_edge_5plus, evaluation_n_edge_3plus,
+         experiment_id, git_commit, status, is_production, notes,
+         created_at, created_by, model_family, feature_set, loss_function,
+         quantile_alpha, enabled, strengths_json, training_config_json)
+      VALUES
+        ('{model_id}', '{model_version}', '{model_type}', '{gcs_path}', {feature_count},
+         '{training_start}', '{training_end}', {training_samples},
+         {round(mae, 4)}, {hr_all_val}, {hr_edge3_val},
+         {hr_edge5_val}, {n_edge3},
+         '{experiment_id}', '{git_commit}', 'active', FALSE, {notes_val},
+         CURRENT_TIMESTAMP(), 'quick_retrain', '{model_family}', '{feature_set}',
+         '{loss_function}', {qa_val}, {str(enabled).upper()}, {strengths_val}, {config_val})
     """
 
     job = bq_client.query(query)

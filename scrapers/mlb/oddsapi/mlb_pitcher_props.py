@@ -73,7 +73,7 @@ class MlbPitcherPropsScraper(ScraperBase, ScraperFlaskMixin):
 
     Optional opts:
       - markets: Comma-sep markets (default: pitcher_strikeouts,pitcher_outs,...)
-      - bookmakers: Comma-sep bookmakers (default: draftkings,fanduel)
+      - bookmakers: Comma-sep bookmakers (default: all 12 US books)
       - regions: Comma-sep regions (default: us)
     """
 
@@ -116,7 +116,7 @@ class MlbPitcherPropsScraper(ScraperBase, ScraperFlaskMixin):
         if not self.opts.get("markets"):
             self.opts["markets"] = DEFAULT_PITCHER_MARKETS
         if not self.opts.get("bookmakers"):
-            self.opts["bookmakers"] = "draftkings,fanduel"
+            self.opts["bookmakers"] = "draftkings,fanduel,betmgm,williamhill_us,betrivers,bovada,espnbet,hardrockbet,betonlineag,fliff,betparx,ballybet"
         if not self.opts.get("regions"):
             self.opts["regions"] = "us"
 

@@ -75,6 +75,7 @@ FEATURE_COLS = [
     'f52_swstr_trend', 'f53_velocity_change',
     'f65_vs_opp_k_per_9', 'f66_vs_opp_games',
     'f67_season_starts', 'f68_k_per_pitch', 'f69_recent_workload_ratio',
+    'f70_o_swing_pct', 'f71_z_contact_pct', 'f72_fip', 'f73_gb_pct',
 ]
 
 
@@ -183,7 +184,13 @@ def load_training_data(client: bigquery.Client) -> pd.DataFrame:
         -- Deep workload features (Session 435)
         pgs.season_games_started as f67_season_starts,
         SAFE_DIVIDE(pgs.k_avg_last_5, NULLIF(pgs.pitch_count_avg_last_5, 0)) as f68_k_per_pitch,
-        SAFE_DIVIDE(pgs.games_last_30_days, 6.0) as f69_recent_workload_ratio
+        SAFE_DIVIDE(pgs.games_last_30_days, 6.0) as f69_recent_workload_ratio,
+
+        -- FanGraphs advanced pitching features (Session 436)
+        fg.o_swing_pct as f70_o_swing_pct,
+        fg.z_contact_pct as f71_z_contact_pct,
+        fg.fip as f72_fip,
+        fg.gb_pct as f73_gb_pct
 
     FROM `mlb_raw.bp_pitcher_props` bp
     JOIN `mlb_analytics.pitcher_game_summary` pgs
@@ -192,6 +199,10 @@ def load_training_data(client: bigquery.Client) -> pd.DataFrame:
     LEFT JOIN statcast_rolling sc
         ON REPLACE(pgs.player_lookup, '_', '') = REPLACE(sc.player_lookup, '_', '')
         AND pgs.game_date = sc.game_date
+    LEFT JOIN `mlb_raw.fangraphs_pitcher_season_stats` fg
+        ON LOWER(REGEXP_REPLACE(NORMALIZE(fg.player_lookup, NFD), r'[\\W_]+', ''))
+            = LOWER(REGEXP_REPLACE(NORMALIZE(pgs.player_lookup, NFD), r'[\\W_]+', ''))
+        AND fg.season_year = EXTRACT(YEAR FROM pgs.game_date)
     WHERE bp.market_id = 285
       AND bp.actual_value IS NOT NULL
       AND bp.projection_value IS NOT NULL

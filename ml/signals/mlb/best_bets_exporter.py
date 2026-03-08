@@ -58,6 +58,19 @@ MAX_EDGE = float(os.environ.get('MLB_MAX_EDGE', '2.5'))
 # Daily pick limit — truncate ranked picks to this count
 MAX_PICKS_PER_DAY = int(os.environ.get('MLB_MAX_PICKS_PER_DAY', '2'))
 
+# Day-of-week filter (Session 435 hypothesized Mon+Thu+Sat = 86% HR).
+# Session 436 DEBUNKED: base rates identical (48.8% vs 48.8%). DOW was a
+# walk-forward artifact. Real proxy is slate size (fewer pitchers = better top-1).
+# Kept as shadow-only tracking — DO NOT enable as hard filter.
+DOW_FILTER_DAYS = os.environ.get('MLB_DOW_FILTER', 'Mon,Thu,Sat,Sun')
+DOW_FILTER_ENABLED = os.environ.get('MLB_DOW_FILTER_ENABLED', 'false').lower() == 'true'
+
+# Map day names to weekday numbers (Monday=0)
+_DOW_MAP = {'Mon': 0, 'Tue': 1, 'Wed': 2, 'Thu': 3, 'Fri': 4, 'Sat': 5, 'Sun': 6}
+DOW_FILTER_SET = frozenset(
+    _DOW_MAP[d.strip()] for d in DOW_FILTER_DAYS.split(',') if d.strip() in _DOW_MAP
+) if DOW_FILTER_DAYS else frozenset()
+
 # Minimum real signal count for best bets (OVER)
 MIN_SIGNAL_COUNT = 2
 
@@ -393,6 +406,53 @@ class MLBBestBetsExporter:
             logger.info(f"[MLB BB] Trimming {trimmed} picks to daily limit of {MAX_PICKS_PER_DAY}")
             ranked_picks = ranked_picks[:MAX_PICKS_PER_DAY]
 
+        # 6c. Day-of-week filter (Session 435: Mon+Thu+Sat = 86% HR)
+        gd = date.fromisoformat(game_date)
+        dow = gd.weekday()  # Monday=0
+        dow_name = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][dow]
+        dow_favorable = dow in DOW_FILTER_SET if DOW_FILTER_SET else True
+
+        for pick in ranked_picks:
+            pick['dow'] = dow_name
+            pick['dow_favorable'] = dow_favorable
+
+        if DOW_FILTER_SET:
+            if DOW_FILTER_ENABLED and not dow_favorable:
+                # Hard filter: block all picks on unfavorable days
+                for pick in ranked_picks:
+                    self.filter_audit.append({
+                        'game_date': game_date,
+                        'pitcher_lookup': pick.get('pitcher_lookup', ''),
+                        'system_id': pick.get('system_id', 'unknown'),
+                        'filter_name': 'dow_filter',
+                        'filter_result': 'BLOCKED',
+                        'filter_reason': f'{dow_name} not in favorable DOW set ({DOW_FILTER_DAYS})',
+                        'recommendation': pick.get('recommendation'),
+                        'edge': pick.get('edge'),
+                        'line_value': pick.get('strikeouts_line'),
+                    })
+                logger.info(f"[MLB BB] DOW filter BLOCKED all {len(ranked_picks)} picks "
+                            f"({dow_name} not in {DOW_FILTER_DAYS})")
+                ranked_picks = []
+            elif not dow_favorable:
+                # Shadow mode: log but don't block
+                logger.info(f"[MLB BB] DOW filter SHADOW: {dow_name} not in favorable set "
+                            f"({DOW_FILTER_DAYS}) — {len(ranked_picks)} picks would be blocked")
+                for pick in ranked_picks:
+                    self.filter_audit.append({
+                        'game_date': game_date,
+                        'pitcher_lookup': pick.get('pitcher_lookup', ''),
+                        'system_id': pick.get('system_id', 'unknown'),
+                        'filter_name': 'dow_filter_shadow',
+                        'filter_result': 'SHADOW_BLOCK',
+                        'filter_reason': f'{dow_name} not in favorable DOW set ({DOW_FILTER_DAYS})',
+                        'recommendation': pick.get('recommendation'),
+                        'edge': pick.get('edge'),
+                        'line_value': pick.get('strikeouts_line'),
+                    })
+            else:
+                logger.info(f"[MLB BB] DOW filter: {dow_name} is favorable — picks pass")
+
         for i, pick in enumerate(ranked_picks, 1):
             pick['rank'] = i
 
@@ -520,6 +580,8 @@ class MLBBestBetsExporter:
                 'signal_rescued': pick.get('signal_rescued', False),
                 'rescue_signal': pick.get('rescue_signal'),
                 'under_signal_quality': pick.get('under_signal_quality'),
+                'dow': pick.get('dow'),
+                'dow_favorable': pick.get('dow_favorable'),
                 'created_at': now,
             })
 

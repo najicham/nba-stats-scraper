@@ -443,10 +443,19 @@ def load_batch_features(
         -- Deep workload features (f67-f69, Session 435)
         lf.season_games_started as season_starts,
         SAFE_DIVIDE(lf.k_avg_last_5, NULLIF(lf.pitch_count_avg_last_5, 0)) as k_per_pitch,
-        SAFE_DIVIDE(lf.games_last_30_days, 6.0) as recent_workload_ratio
+        SAFE_DIVIDE(lf.games_last_30_days, 6.0) as recent_workload_ratio,
+        -- FanGraphs advanced pitching features (f70-f73, Session 436)
+        fg.o_swing_pct,
+        fg.z_contact_pct,
+        fg.fip,
+        fg.gb_pct
     FROM latest_features lf
     LEFT JOIN statcast_latest s ON lf.player_lookup = s.player_lookup AND s.rn = 1
     LEFT JOIN bp_features bp ON lf.player_lookup = bp.player_lookup
+    LEFT JOIN `{proj_id}.mlb_raw.fangraphs_pitcher_season_stats` fg
+        ON LOWER(REGEXP_REPLACE(NORMALIZE(fg.player_lookup, NFD), r'[\\W_]+', ''))
+            = LOWER(REGEXP_REPLACE(NORMALIZE(lf.player_lookup, NFD), r'[\\W_]+', ''))
+        AND fg.season_year = EXTRACT(YEAR FROM @game_date)
     WHERE lf.rn = 1
     """
 
