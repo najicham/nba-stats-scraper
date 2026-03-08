@@ -1,9 +1,10 @@
 # Signal Inventory — Complete List
 
-**Last Updated:** 2026-03-07 (Session 431)
+**Last Updated:** 2026-03-08 (Session 442)
 **Active Signals:** 27 (+ 27 shadow/observation accumulating data)
-**Negative Filters:** 19 (+ 10 observation)
+**Negative Filters:** 19 (+ 12 observation)
 **Combo Registry:** 11 SYNERGISTIC entries
+**Algorithm Version:** `v442_autopsy_observations`
 
 ---
 
@@ -87,7 +88,7 @@ Rescue tags: `combo_3way`, `combo_he_ms`, `book_disagreement` (72%), `home_under
 | Signal | Direction | HR | Status | Notes |
 |--------|-----------|-----|--------|-------|
 | `ft_rate_bench_over` | OVER | 72.5% | WATCH | |
-| `rest_advantage_2d` | BOTH | 64.8% | DISABLED | Session 396 — re-enable October |
+| `rest_advantage_2d` | BOTH | 74.0% BB (N=50) | PRODUCTION (weight 2.0) | Session 396 (disabled) → Session 442: added to OVER_SIGNAL_WEIGHTS at 2.0 (74.0% BB HR, N=50) |
 
 ---
 
@@ -206,7 +207,7 @@ Three new UNDER signals to fill the UNDER signal vacuum. 98.4% of model-level UN
 | — | Away block | REMOVED Session 401 | — | 401 |
 | — | UNDER + line jumped 2+ | Demoted to observation Session 417 (5/5 winners blocked) | — | 417 |
 
-### Observation-Only Filters (5)
+### Observation-Only Filters (12)
 
 | Filter | Condition | HR | Session | Notes |
 |--------|-----------|-----|---------|-------|
@@ -219,6 +220,10 @@ Three new UNDER signals to fill the UNDER signal vacuum. 98.4% of model-level UN
 | `hot_shooting_reversion_obs` | OVER + prev_game FG% >= 70% + 20+ min | 59.2% UNDER HR (N=250) | 441 | Efficiency mean-reverts at extreme — 60-69% shows no signal. |
 | `public_fade_filter` | 80%+ public tickets OVER | — | 404 | VSiN data accumulating |
 | `negative_clv_filter` | CLV contradicts pick direction | — | 401 | CLV data accumulating |
+| `over_low_rsc_obs` | OVER + real_signal_count < 4 | 45.5% (rsc=3, N=11) vs 65.4% (rsc=4, N=26) | 442 | OVER rsc=3 underperforms significantly. Accumulating data. Promote at N >= 30. |
+| `mae_gap_obs` | All picks when model MAE > Vegas MAE by 0.15+ (mae_gap_7d from league_macro_daily) | 40-50% | 442 | BB HR craters when model loses edge over Vegas. Observation mode. |
+| `thin_slate_obs` | All picks on 4-6 game slates | 51.2% (76.7% OVER-heavy mix) | 442 | 7-9 games = 72.0% HR. Small slates = lower quality picks and OVER-heavy skew. Observation mode. |
+| `hot_streak_under_obs` | UNDER + over_rate_last_10 >= 0.7 (feature 55) | 44.4% UNDER HR (N=18) vs 81-87% when cold | 442 | Betting UNDER on a hot player is anti-signal. Uses f55 (over_rate_last_10). Observation mode. |
 
 ---
 
@@ -273,7 +278,7 @@ Source: `ml/signals/regime_context.py::get_market_compression()`.
 
 ---
 
-**Last Updated:** 2026-03-07, Session 431
+**Last Updated:** 2026-03-08, Session 442
 **Source of truth for active signals.** CLAUDE.md has a summary; this is the full reference.
 
 ### Shadow Signal Promotion Criteria

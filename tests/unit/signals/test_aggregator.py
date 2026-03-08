@@ -133,6 +133,8 @@ class TestAggregatorReturnType:
             'signal_stack_2plus_obs', 'rescue_cap', 'rescue_health_gate',
             'bias_regime_over_obs', 'prediction_sanity',
             'depleted_stars_over_obs', 'hot_shooting_reversion_obs',
+            'over_low_rsc_obs', 'mae_gap_obs', 'thin_slate_obs',
+            'hot_streak_under_obs',
             'team_cap',
             'unreliable_over_low_mins_obs', 'unreliable_under_flat_trend_obs',
             'b2b_under_block', 'blowout_risk_under_block_obs',
@@ -1666,3 +1668,167 @@ class TestTeamCap:
         picks, summary = agg.aggregate(preds, signals)
         assert len(picks) == 3
         assert summary['rejected']['team_cap'] == 0
+
+
+# ============================================================================
+# SESSION 442 OBSERVATION FILTER TESTS
+# ============================================================================
+
+class TestOverLowRscObservation:
+    """Session 442 O1: OVER with low real_signal_count observation.
+
+    OVER at rsc 1-3 = 45.5% HR (N=11) vs rsc 4+ = 65.4% (N=26).
+    Observation mode — accumulates data, does NOT block.
+    """
+
+    def _make_signal_results_for(self, pred, tags):
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        signals = [_make_signal_result(t) for t in tags]
+        return {key: signals}
+
+    def test_over_low_rsc_observation(self):
+        """OVER pick with real_sc between 1-3 should be tagged but NOT blocked."""
+        pred = _make_prediction(
+            recommendation='OVER',
+            edge=6.0,
+            line_value=27.0,
+        )
+        # 3 base + 2 real = real_sc=2 (between 1-3, triggers obs)
+        tags = ['model_health', 'high_edge', 'edge_spread_optimal',
+                'fast_pace_over', 'book_disagreement']
+        signals = self._make_signal_results_for(pred, tags)
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 1  # NOT blocked — observation only
+        assert summary['rejected']['over_low_rsc_obs'] == 1
+
+    def test_over_low_rsc_not_triggered_at_rsc4(self):
+        """OVER pick with real_sc >= 4 should NOT trigger the observation."""
+        pred = _make_prediction(
+            recommendation='OVER',
+            edge=6.0,
+            line_value=27.0,
+        )
+        # 3 base + 4 real = real_sc=4, above threshold
+        tags = ['model_health', 'high_edge', 'edge_spread_optimal',
+                'fast_pace_over', 'book_disagreement', 'combo_3way',
+                'line_rising_over']
+        signals = self._make_signal_results_for(pred, tags)
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 1
+        assert summary['rejected']['over_low_rsc_obs'] == 0
+
+
+class TestHotStreakUnderObservation:
+    """Session 442 O4: Hot streak UNDER observation.
+
+    UNDER when player went over in 4+ of last 5 (over_rate_last_10 >= 0.7)
+    = 44.4% HR (N=18). Observation mode — tracks but does NOT block.
+    """
+
+    def _make_signal_results_for(self, pred, n_qualifying=5):
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        signals = [_make_signal_result(f'signal_{i}') for i in range(n_qualifying)]
+        return {key: signals}
+
+    def test_hot_streak_under_observation(self):
+        """UNDER pick with over_rate_last_10 = 0.8 should be tagged but NOT blocked."""
+        pred = _make_prediction(
+            recommendation='UNDER',
+            edge=5.0,
+            line_value=27.0,
+        )
+        pred['over_rate_last_10'] = 0.8  # Hot streak — triggers obs
+        signals = self._make_signal_results_for(pred)
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 1  # NOT blocked — observation only
+        assert summary['rejected']['hot_streak_under_obs'] == 1
+
+    def test_hot_streak_under_not_triggered_below_threshold(self):
+        """UNDER pick with over_rate_last_10 = 0.5 should NOT trigger."""
+        pred = _make_prediction(
+            recommendation='UNDER',
+            edge=5.0,
+            line_value=27.0,
+        )
+        pred['over_rate_last_10'] = 0.5  # Not hot — below 0.7 threshold
+        signals = self._make_signal_results_for(pred)
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 1
+        assert summary['rejected']['hot_streak_under_obs'] == 0
+
+
+class TestMaeGapObservation:
+    """Session 442 O2: MAE gap observation.
+
+    When model MAE exceeds Vegas MAE by 0.15+ (mae_gap_7d), BB HR craters.
+    Observation mode — tracks but does NOT block.
+    """
+
+    def _make_signal_results_for(self, pred, n_qualifying=5):
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        signals = [_make_signal_result(f'signal_{i}') for i in range(n_qualifying)]
+        return {key: signals}
+
+    def test_mae_gap_observation(self):
+        """Pick with mae_gap_7d = 0.25 should be tagged but NOT blocked."""
+        pred = _make_prediction(
+            recommendation='OVER',
+            edge=6.0,
+            line_value=27.0,
+        )
+        signals = self._make_signal_results_for(pred)
+        agg = BestBetsAggregator(regime_context={'mae_gap_7d': 0.25})
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 1  # NOT blocked — observation only
+        assert summary['rejected']['mae_gap_obs'] == 1
+
+
+class TestThinSlateObservation:
+    """Session 442 O3: Thin slate observation.
+
+    4-6 game slates = 51.2% HR with 76.7% OVER-heavy mix.
+    7-9 game slates = 72.0% HR. Observation mode — tracks but does NOT block.
+    """
+
+    def _make_signal_results_for(self, pred, n_qualifying=5):
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        signals = [_make_signal_result(f'signal_{i}') for i in range(n_qualifying)]
+        return {key: signals}
+
+    def test_thin_slate_observation(self):
+        """Pick with num_games_on_slate = 5 should be tagged but NOT blocked."""
+        pred = _make_prediction(
+            recommendation='OVER',
+            edge=6.0,
+            line_value=27.0,
+        )
+        signals = self._make_signal_results_for(pred)
+        agg = BestBetsAggregator(regime_context={'num_games_on_slate': 5})
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 1  # NOT blocked — observation only
+        assert summary['rejected']['thin_slate_obs'] == 1
+
+
+class TestRestAdvantage2dWeight:
+    """Session 442: rest_advantage_2d added to OVER_SIGNAL_WEIGHTS."""
+
+    def test_rest_advantage_2d_weight(self):
+        """rest_advantage_2d should be in OVER_SIGNAL_WEIGHTS with value 2.0."""
+        from ml.signals.aggregator import OVER_SIGNAL_WEIGHTS
+        assert 'rest_advantage_2d' in OVER_SIGNAL_WEIGHTS
+        assert OVER_SIGNAL_WEIGHTS['rest_advantage_2d'] == 2.0
+
+
+class TestAlgorithmVersionV442:
+    """Session 442: Algorithm version bump."""
+
+    def test_algorithm_version_v442(self):
+        """ALGORITHM_VERSION should start with 'v442'."""
+        from ml.signals.aggregator import ALGORITHM_VERSION
+        assert ALGORITHM_VERSION.startswith('v442'), (
+            f"Expected ALGORITHM_VERSION to start with 'v442', got '{ALGORITHM_VERSION}'"
+        )

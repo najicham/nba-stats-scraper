@@ -28,6 +28,8 @@ def get_regime_context(bq_client, target_date: date) -> Dict[str, Any]:
         regime_state: 'cautious' | 'normal' | 'confident'
         over_edge_floor_delta: +1.0 (cautious) or 0.0
         disable_over_rescue: True (cautious) or False
+        mae_gap_7d: float or None (model MAE - Vegas MAE, 7d rolling)
+        num_games_on_slate: int or None (games scheduled for target_date)
     """
     if isinstance(target_date, str):
         target_date = date.fromisoformat(target_date)
@@ -38,6 +40,8 @@ def get_regime_context(bq_client, target_date: date) -> Dict[str, Any]:
         'regime_state': 'normal',
         'over_edge_floor_delta': 0.0,
         'disable_over_rescue': False,
+        'mae_gap_7d': None,
+        'num_games_on_slate': None,
     }
 
     try:
@@ -105,6 +109,48 @@ def get_regime_context(bq_client, target_date: date) -> Dict[str, Any]:
         f"(yesterday HR={result['yesterday_bb_hr']}%, "
         f"N={result['yesterday_bb_picks']})"
     )
+
+    # Session 442: MAE gap — when model MAE exceeds Vegas MAE, BB HR craters.
+    try:
+        macro_query = """
+            SELECT mae_gap_7d
+            FROM `nba-props-platform.nba_predictions.league_macro_daily`
+            WHERE game_date = @yesterday
+        """
+        from google.cloud.bigquery import QueryJobConfig, ScalarQueryParameter
+        macro_config = QueryJobConfig(
+            query_parameters=[
+                ScalarQueryParameter('yesterday', 'DATE', yesterday),
+            ]
+        )
+        macro_rows = list(bq_client.query(macro_query, job_config=macro_config).result())
+        if macro_rows and macro_rows[0].mae_gap_7d is not None:
+            result['mae_gap_7d'] = round(float(macro_rows[0].mae_gap_7d), 3)
+            logger.info(f"MAE gap (yesterday): {result['mae_gap_7d']}")
+    except Exception as e:
+        logger.warning(f"MAE gap query failed (non-fatal): {e}")
+
+    # Session 442: Slate size — thin slates (4-6 games) have 51.2% BB HR.
+    try:
+        slate_query = """
+            SELECT COUNT(*) as num_games
+            FROM `nba-props-platform.nba_reference.nba_schedule`
+            WHERE game_date = @target_date
+              AND game_status IN (1, 2, 3)
+        """
+        from google.cloud.bigquery import QueryJobConfig, ScalarQueryParameter
+        slate_config = QueryJobConfig(
+            query_parameters=[
+                ScalarQueryParameter('target_date', 'DATE', target_date),
+            ]
+        )
+        slate_rows = list(bq_client.query(slate_query, job_config=slate_config).result())
+        if slate_rows and slate_rows[0].num_games is not None:
+            result['num_games_on_slate'] = slate_rows[0].num_games
+            logger.info(f"Slate size: {result['num_games_on_slate']} games")
+    except Exception as e:
+        logger.warning(f"Slate size query failed (non-fatal): {e}")
+
     return result
 
 

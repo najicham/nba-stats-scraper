@@ -51,7 +51,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v441_team_cap_hot_reversion'
+ALGORITHM_VERSION = 'v442_autopsy_observations'
 
 # Session 441: Max picks per team per game.
 # Prevents correlated exposure from same-game concentration.
@@ -154,6 +154,7 @@ OVER_SIGNAL_WEIGHTS: Dict[str, float] = {
     'fast_pace_over': 2.5,                  # 81.5% signal HR
     'high_scoring_environment_over': 2.0,   # 100% BB HR (3-0)
     'book_disagreement': 2.0,               # 93.0% signal HR
+    'rest_advantage_2d': 2.0,               # Session 442: 74.0% BB HR (N=50), strongest unweighted signal
     'scoring_cold_streak_over': 1.5,        # Post-cold bounce signal
     'sharp_book_lean_over': 1.5,            # 70.3% signal HR
     'b2b_boost_over': 1.0,                  # Active signal
@@ -339,6 +340,10 @@ class BestBetsAggregator:
             'prediction_sanity': 0,
             'depleted_stars_over_obs': 0,
             'hot_shooting_reversion_obs': 0,
+            'over_low_rsc_obs': 0,
+            'mae_gap_obs': 0,
+            'thin_slate_obs': 0,
+            'hot_streak_under_obs': 0,
             'team_cap': 0,
         }
 
@@ -1120,6 +1125,44 @@ class BestBetsAggregator:
                 for s in player_subsets
             ]
 
+            # Session 442 O1: OVER low real_signal_count observation.
+            # OVER at rsc=3 = 45.5% HR (N=11) vs rsc=4 = 65.4% (N=26).
+            # Observation mode — accumulate BB-level data, promote at N >= 30.
+            if (pred.get('recommendation') == 'OVER'
+                    and real_sc < 4
+                    and real_sc > 0):  # rsc=0 already blocked by sc3_over_block
+                filter_counts['over_low_rsc_obs'] += 1
+                _record_filtered(pred, 'over_low_rsc_obs', pred_edge, len(qualifying), tags)
+                # Observation only — does NOT block
+
+            # Session 442 O2: MAE gap observation.
+            # When model MAE exceeds Vegas MAE by 0.15+ (mae_gap_7d), BB HR craters to 40-50%.
+            # When model beats Vegas (negative gap), HR is 80-100%.
+            mae_gap = self._regime_context.get('mae_gap_7d')
+            if mae_gap is not None and mae_gap > 0.15:
+                filter_counts['mae_gap_obs'] += 1
+                _record_filtered(pred, 'mae_gap_obs', pred_edge, len(qualifying), tags)
+                # Observation only — does NOT block
+
+            # Session 442 O3: Thin slate observation.
+            # 4-6 game slates = 51.2% HR with 76.7% OVER-heavy mix.
+            # 7-9 game slates = 72.0% HR. Small slates force OVER-heavy picks.
+            num_games = self._regime_context.get('num_games_on_slate')
+            if num_games is not None and 4 <= num_games <= 6:
+                filter_counts['thin_slate_obs'] += 1
+                _record_filtered(pred, 'thin_slate_obs', pred_edge, len(qualifying), tags)
+                # Observation only — does NOT block
+
+            # Session 442 O4: Hot streak UNDER observation.
+            # UNDER when player went over in 4+ of last 5 = 44.4% HR (N=18).
+            # UNDER when player went over in 0-2 of last 5 = 81-87% HR.
+            # Uses feature 55 (over_rate_last_10, 0-1 scale). >= 0.7 = hot streak.
+            if (pred.get('recommendation') == 'UNDER'
+                    and (pred.get('over_rate_last_10') or 0) >= 0.7):
+                filter_counts['hot_streak_under_obs'] += 1
+                _record_filtered(pred, 'hot_streak_under_obs', pred_edge, len(qualifying), tags)
+                # Observation only — does NOT block
+
             scored.append({
                 **pred,
                 'trend_slope': pred.get('trend_slope') or 0.0,
@@ -1290,6 +1333,30 @@ class BestBetsAggregator:
                 f"Hot shooting reversion (observation): tagged "
                 f"{filter_counts['hot_shooting_reversion_obs']} OVER picks after "
                 f"70%+ FG game (59.2% UNDER HR N=250)"
+            )
+        if filter_counts['over_low_rsc_obs'] > 0:
+            logger.info(
+                f"OVER low rsc (observation): tagged "
+                f"{filter_counts['over_low_rsc_obs']} OVER picks with real_sc < 4 "
+                f"(45.5% HR at rsc=3, N=11)"
+            )
+        if filter_counts['mae_gap_obs'] > 0:
+            logger.info(
+                f"MAE gap (observation): tagged "
+                f"{filter_counts['mae_gap_obs']} picks with model MAE > Vegas MAE by 0.15+ "
+                f"(40-50% BB HR in this regime)"
+            )
+        if filter_counts['thin_slate_obs'] > 0:
+            logger.info(
+                f"Thin slate (observation): tagged "
+                f"{filter_counts['thin_slate_obs']} picks on 4-6 game slates "
+                f"(51.2% HR, 76.7% OVER-heavy)"
+            )
+        if filter_counts['hot_streak_under_obs'] > 0:
+            logger.info(
+                f"Hot streak UNDER (observation): tagged "
+                f"{filter_counts['hot_streak_under_obs']} UNDER picks with "
+                f"over_rate_last_10 >= 0.7 (44.4% HR when player hot)"
             )
         if filter_counts['team_cap'] > 0:
             logger.info(
