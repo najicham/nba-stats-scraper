@@ -222,7 +222,9 @@ class QualityScorer:
             logger.warning("No feature sources provided, returning 0")
             return 0.0
 
-        num_features = len(feature_sources)
+        # Session 434: Cap at FEATURE_COUNT to avoid features 54-59 (always default)
+        # being counted as required defaults. OPTIONAL_FEATURES only covers 0-53.
+        num_features = min(len(feature_sources), FEATURE_COUNT)
 
         # Exclude optional features that are 'missing' from the average.
         # Optional features (vegas, V12) shouldn't penalize the score when

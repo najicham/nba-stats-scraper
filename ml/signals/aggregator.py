@@ -72,7 +72,7 @@ UNDER_SIGNAL_WEIGHTS: Dict[str, float] = {
     # sharp_book_lean_under removed Session 431: ZERO production fires in 2026. Market regime makes negative lean nonexistent. Was 3.0→1.0→removed.
     # mean_reversion_under removed Session 429: cross-season decay below 2026 baseline (53.0% vs 54.3%). Was 2.5→1.5→removed.
     'sharp_line_drop_under': 2.5,   # Session 422c: 87.5% HR (N=8) — already fires, now weighted
-    'book_disagreement': 2.5,        # 93.0% HR (N=43)
+    'book_disagreement': 1.0,        # Session 434: reduced 2.5→1.0. 47.4% HR 7d (N=19), below breakeven
     'bench_under': 2.0,              # 76.9% HR
     'home_under': 2.0,               # Session 422c: boosted from 1.5. 60.6% HR (N=4,253) model-level
     'starter_away_overtrend_under': 1.5,  # Session 423: 68.1% HR (N=213), monthly stable, shadow
@@ -367,7 +367,8 @@ class BestBetsAggregator:
                 # OVER pipeline (0 OVER picks at edge 5+ on Mar 6).
                 rescue_tags = {
                     'combo_3way', 'combo_he_ms',
-                    'book_disagreement', 'home_under',
+                    # book_disagreement removed Session 434: 47.4% HR (N=19), rescuing losers
+                    'home_under',
                     'volatile_scoring_over',
                     'high_scoring_environment_over',  # Session 420: restored (71.4% HR)
                     'sharp_book_lean_over',
@@ -694,16 +695,17 @@ class BestBetsAggregator:
                 if 'under_after_bad_miss' not in self._runtime_demoted:
                     continue
 
-            # Blowout risk UNDER block observation (Session 423): blowout_risk >= 0.40 + UNDER
-            # = 16.7% HR (N=12). High blowout benching risk → players get pulled → OVER.
-            # Observation mode until N >= 20 at BB level.
+            # Blowout risk UNDER block (Session 423→434): blowout_risk >= 0.40 + UNDER
+            # = 15.4% HR (N=13). High blowout benching risk → players get pulled → OVER.
+            # Session 434: Promoted from observation to active blocking.
             blowout_risk_val = pred.get('blowout_risk') or 0
             if (pred.get('recommendation') == 'UNDER'
                     and blowout_risk_val >= 0.40
                     and line_val >= 15):
                 filter_counts['blowout_risk_under_block_obs'] += 1
                 _record_filtered(pred, 'blowout_risk_under_block_obs', pred_edge)
-                # Observation mode — do NOT continue/filter
+                if 'blowout_risk_under_block_obs' not in self._runtime_demoted:
+                    continue
 
             # High spread OVER — DEMOTED to observation (Session 419).
             # Historical 44.3% (N=61) full season, but CF HR = 100% (2-0, blocking winners).
