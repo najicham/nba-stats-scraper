@@ -828,6 +828,9 @@ class PitcherStrikeoutsPredictor:
                 vs_opponent_k_per_9 as avg_k_vs_opponent,
                 vs_opponent_games as games_vs_opponent,
 
+                -- Season Statcast aggregates (fallback for COALESCE)
+                season_swstr_pct,
+
                 -- Workload
                 games_last_30_days,
                 pitch_count_avg_last_5,
@@ -850,7 +853,8 @@ class PitcherStrikeoutsPredictor:
                 swstr_pct_last_3,
                 fb_velocity_last_3,
                 swstr_pct_last_5,
-                swstr_pct_season_prior
+                swstr_pct_season_prior,
+                fb_velocity_season_prior
             FROM `{self.project_id}.mlb_analytics.pitcher_rolling_statcast`
             WHERE player_lookup = @pitcher_lookup
               AND game_date < @game_date
@@ -874,12 +878,11 @@ class PitcherStrikeoutsPredictor:
         )
         SELECT
             b.*,
-            -- Rolling Statcast (f50-f53)
-            s.swstr_pct_last_3,
-            s.fb_velocity_last_3,
-            -- SwStr% trend: recent vs season baseline
+            -- Rolling Statcast (f50-f53) with COALESCE fallbacks (Session 433)
+            COALESCE(s.swstr_pct_last_3, b.season_swstr_pct) as swstr_pct_last_3,
+            COALESCE(s.fb_velocity_last_3, s.fb_velocity_season_prior) as fb_velocity_last_3,
             COALESCE(s.swstr_pct_last_3 - s.swstr_pct_season_prior, 0) as swstr_trend,
-            COALESCE(s.fb_velocity_last_3, 0) as velocity_last_3,
+            COALESCE(s.fb_velocity_season_prior - s.fb_velocity_last_3, 0) as velocity_change,
             -- BettingPros (f40-f44)
             bp.bp_projection,
             COALESCE(bp.bp_projection - bp.bp_over_line, 0) as projection_diff,
@@ -972,6 +975,8 @@ class PitcherStrikeoutsPredictor:
                 pgs.days_into_season,
                 pgs.vs_opponent_k_per_9 as avg_k_vs_opponent,
                 pgs.vs_opponent_games as games_vs_opponent,
+                -- Season Statcast aggregates (fallback for COALESCE)
+                pgs.season_swstr_pct,
                 -- Workload
                 pgs.games_last_30_days,
                 pgs.pitch_count_avg_last_5,
@@ -992,6 +997,7 @@ class PitcherStrikeoutsPredictor:
                 fb_velocity_last_3,
                 swstr_pct_last_5,
                 swstr_pct_season_prior,
+                fb_velocity_season_prior,
                 ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY game_date DESC) as rn
             FROM `{self.project_id}.mlb_analytics.pitcher_rolling_statcast`
             WHERE game_date < @game_date
@@ -1011,11 +1017,11 @@ class PitcherStrikeoutsPredictor:
         )
         SELECT
             lf.*,
-            -- Rolling Statcast (f50-f53)
-            s.swstr_pct_last_3,
-            s.fb_velocity_last_3,
+            -- Rolling Statcast (f50-f53) with COALESCE fallbacks (Session 433)
+            COALESCE(s.swstr_pct_last_3, lf.season_swstr_pct) as swstr_pct_last_3,
+            COALESCE(s.fb_velocity_last_3, s.fb_velocity_season_prior) as fb_velocity_last_3,
             COALESCE(s.swstr_pct_last_3 - s.swstr_pct_season_prior, 0) as swstr_trend,
-            COALESCE(s.fb_velocity_last_3, 0) as velocity_last_3,
+            COALESCE(s.fb_velocity_season_prior - s.fb_velocity_last_3, 0) as velocity_change,
             -- BettingPros (f40-f44)
             bp.bp_projection,
             COALESCE(bp.bp_projection - bp.bp_over_line, 0) as projection_diff,

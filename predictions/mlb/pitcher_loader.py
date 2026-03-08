@@ -418,9 +418,9 @@ def load_batch_features(
     )
     SELECT
         lf.*,
-        -- Rolling Statcast (f50-f53)
-        s.swstr_pct_last_3,
-        s.fb_velocity_last_3,
+        -- Rolling Statcast (f50-f53) with COALESCE fallbacks (Session 433)
+        COALESCE(s.swstr_pct_last_3, lf.season_swstr_pct) as swstr_pct_last_3,
+        COALESCE(s.fb_velocity_last_3, s.fb_velocity_season_prior) as fb_velocity_last_3,
         COALESCE(s.swstr_pct_last_3 - s.swstr_pct_season_prior, 0) as swstr_trend,
         COALESCE(s.fb_velocity_season_prior - s.fb_velocity_last_3, 0) as velocity_change,
         -- Line-relative features (CatBoost V1 f30/f32)

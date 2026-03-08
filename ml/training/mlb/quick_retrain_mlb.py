@@ -200,7 +200,7 @@ def load_training_data(client: bigquery.Client) -> pd.DataFrame:
 
 
 def prepare_features(df: pd.DataFrame) -> tuple:
-    """Prepare feature matrix with zero-tolerance NaN handling."""
+    """Prepare feature matrix. CatBoost/XGBoost handle NaN natively."""
     available = [f for f in FEATURE_COLS if f in df.columns]
     X = df[available].copy()
     for col in X.columns:
@@ -208,17 +208,27 @@ def prepare_features(df: pd.DataFrame) -> tuple:
 
     y = df['went_over'].astype(int)
 
-    # Zero tolerance: drop NaN rows
-    valid_mask = ~X.isna().any(axis=1)
-    n_dropped = (~valid_mask).sum()
-    if n_dropped > 0:
-        logger.info(f"Dropping {n_dropped} rows with NaN features ({n_dropped/len(X)*100:.1f}%)")
+    # Report NaN stats for diagnostics (but don't drop — models handle NaN natively)
+    nan_cols = X.isna().sum()
+    nan_cols = nan_cols[nan_cols > 0]
+    if len(nan_cols) > 0:
+        n_any_nan = X.isna().any(axis=1).sum()
+        logger.info(f"Rows with any NaN: {n_any_nan}/{len(X)} ({n_any_nan/len(X)*100:.1f}%) — handled by model")
+        for col, count in nan_cols.items():
+            logger.info(f"  {col}: {count} NaN ({count/len(X)*100:.1f}%)")
 
-    X = X[valid_mask].reset_index(drop=True)
-    y = y[valid_mask].reset_index(drop=True)
-    df_clean = df[valid_mask].reset_index(drop=True)
+    # Only drop rows where ALL core features (f00-f24) are NaN (bad data)
+    core_features = [f for f in available if any(f.startswith(p) for p in ['f0', 'f1', 'f2'])]
+    if core_features:
+        core_valid = ~X[core_features].isna().all(axis=1)
+        n_dropped = (~core_valid).sum()
+        if n_dropped > 0:
+            logger.info(f"Dropping {n_dropped} rows with ALL core features NaN")
+            X = X[core_valid].reset_index(drop=True)
+            y = y[core_valid].reset_index(drop=True)
+            df = df[core_valid].reset_index(drop=True)
 
-    return X, y, df_clean, available
+    return X, y, df, available
 
 
 def train_catboost(X_train, y_train):

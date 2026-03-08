@@ -85,13 +85,14 @@ class CatBoostV1Predictor(BaseMLBPredictor):
     CatBoost V1 binary classifier for pitcher strikeout over/under.
 
     Predicts probability of OVER, then converts to recommendation + edge.
-    Uses zero-tolerance for missing features (BLOCKED if any default).
+    Zero-tolerance for core features (BLOCKED if missing). Statcast features (f50-f53)
+    are NaN-tolerant — CatBoost handles them natively (Session 433).
     """
 
     def __init__(self, model_path: str = None, project_id: str = None):
         super().__init__(system_id='catboost_v1', project_id=project_id)
 
-        default_model = 'gs://nba-props-platform-ml-models/mlb/catboost_mlb_v1_31f_train20250517_20250914_20260307_235416.cbm'
+        default_model = 'gs://nba-props-platform-ml-models/mlb/catboost_mlb_v1_31f_train20250517_20250914_20260308_014509.cbm'
         self.model_path = model_path or os.environ.get('MLB_CATBOOST_V1_MODEL_PATH', default_model)
         self.model = None
         self.model_metadata = None
@@ -147,7 +148,7 @@ class CatBoostV1Predictor(BaseMLBPredictor):
         """
         Prepare feature vector from raw features.
 
-        Zero-tolerance: counts how many features used defaults.
+        Core features use zero-tolerance. Statcast features pass NaN to CatBoost.
         Returns (feature_vector, default_feature_count, default_features).
         """
         try:
@@ -168,6 +169,13 @@ class CatBoostV1Predictor(BaseMLBPredictor):
                 normalized['f24_is_postseason'] = 1.0 if raw_features.get('is_postseason') else 0.0
 
             # Build feature vector — track defaults
+            # Statcast features (f50-f53) are NaN-tolerant: CatBoost handles them natively.
+            # Core features still use zero-tolerance.
+            NAN_TOLERANT_FEATURES = {
+                'f50_swstr_pct_last_3', 'f51_fb_velocity_last_3',
+                'f52_swstr_trend', 'f53_velocity_change',
+                'f19_season_swstr_pct', 'f19b_season_csw_pct',
+            }
             feature_vector = []
             default_feature_count = 0
             default_features = []
@@ -175,6 +183,10 @@ class CatBoostV1Predictor(BaseMLBPredictor):
             for feature_name in CATBOOST_V1_FEATURES:
                 value = normalized.get(feature_name)
                 if value is None or (isinstance(value, float) and (np.isnan(value) or np.isinf(value))):
+                    if feature_name in NAN_TOLERANT_FEATURES:
+                        # CatBoost handles NaN natively for these features
+                        feature_vector.append(float('nan'))
+                        continue
                     default_feature_count += 1
                     default_features.append(feature_name)
                     value = 0.0  # Placeholder — will be BLOCKED anyway
