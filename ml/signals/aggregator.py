@@ -51,7 +51,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v439_depleted_roster_obs'
+ALGORITHM_VERSION = 'v440_prediction_sanity_active'
 
 # Base signals that fire on nearly every edge 5+ pick. Picks with ONLY
 # these signals hit 57.1% (N=42) vs 77.8% for picks with 4+ signals.
@@ -331,7 +331,7 @@ class BestBetsAggregator:
             'b2b_under_block': 0,
             'blowout_risk_under_block_obs': 0,
             'bias_regime_over_obs': 0,
-            'prediction_sanity_obs': 0,
+            'prediction_sanity': 0,
             'depleted_stars_over_obs': 0,
         }
 
@@ -889,18 +889,20 @@ class BestBetsAggregator:
                 _record_filtered(pred, 'home_over_obs', pred_edge)
                 # Observation mode — do NOT continue/filter
 
-            # Session 438 P10: Prediction sanity check (observation mode).
-            # Flag predictions where predicted_points > 2x season avg on
-            # bench/role players (line < 18). Catches model artifacts from
-            # sparse training data on low-volume players.
+            # Session 438 P10 → Session 440: Prediction sanity check (ACTIVE).
+            # Block predictions where predicted_points > 2x season avg on
+            # bench/role players (line < 18). Model-level HR = 40.9% (N=88)
+            # for pred > 2x avg — strongly below breakeven. Catches model
+            # artifacts from sparse training data on low-volume players.
+            # Mar 7: would have blocked Konchar (2.77x avg, LOSS).
             predicted_pts = pred.get('predicted_points') or 0
             if (predicted_pts > 0
                     and season_avg > 0
                     and line_val < 18
                     and predicted_pts > 2 * season_avg):
-                filter_counts['prediction_sanity_obs'] += 1
-                _record_filtered(pred, 'prediction_sanity_obs', pred_edge)
-                # Observation mode — do NOT continue/filter
+                filter_counts['prediction_sanity'] += 1
+                _record_filtered(pred, 'prediction_sanity', pred_edge)
+                continue
 
             # Session 439: Depleted roster OVER observation.
             # When 3+ star teammates are OUT, BB OVER = 0% HR (N=4), model-level = 48.2% (N=137).

@@ -175,7 +175,7 @@ Three new UNDER signals to fill the UNDER signal vacuum. 98.4% of model-level UN
 
 ---
 
-## Negative Filters (21)
+## Negative Filters (22)
 
 | # | Filter | Condition | HR | Session |
 |---|--------|-----------|-----|---------|
@@ -201,6 +201,7 @@ Three new UNDER signals to fill the UNDER signal vacuum. 98.4% of model-level UN
 | 20 | Med usage UNDER block | UNDER + teammate_usage 15-30 | 32.0% | 355 |
 | 21 | UNDER edge 7+ (V9) | UNDER + edge 7+ + V9 family | 34.1% | 297 |
 | 22 | B2B UNDER block | UNDER + rest_days <= 1 | 30.8% | 422c |
+| 23 | Prediction sanity | pred > 2x season_avg + line < 18 | 40.9% (N=88) | 440 |
 | — | Away block | REMOVED Session 401 | — | 401 |
 | — | UNDER + line jumped 2+ | Demoted to observation Session 417 (5/5 winners blocked) | — | 417 |
 

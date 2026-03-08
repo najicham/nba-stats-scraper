@@ -131,7 +131,7 @@ class TestAggregatorReturnType:
             'under_after_streak', 'under_after_bad_miss',
             'mid_line_over_obs', 'monday_over_obs', 'home_over_obs',
             'signal_stack_2plus_obs', 'rescue_cap', 'rescue_health_gate',
-            'bias_regime_over_obs', 'prediction_sanity_obs',
+            'bias_regime_over_obs', 'prediction_sanity',
             'depleted_stars_over_obs',
             'unreliable_over_low_mins_obs', 'unreliable_under_flat_trend_obs',
             'b2b_under_block', 'blowout_risk_under_block_obs',
@@ -1394,11 +1394,16 @@ class TestBaseSignalsAntiSignals:
         assert len(picks) == 0
 
 
-class TestPredictionSanityObservation:
-    """Session 438 P10: Prediction sanity check observation filter."""
+class TestPredictionSanityFilter:
+    """Session 438 P10 → Session 440: Prediction sanity check (ACTIVE).
 
-    def test_sanity_obs_does_not_block(self):
-        """Sanity observation should record but NOT block picks."""
+    Blocks picks where predicted_points > 2x season_avg on bench/role
+    players (line < 18). Model-level HR = 40.9% (N=88) — strongly below
+    breakeven.
+    """
+
+    def test_sanity_blocks_bench_player_over_prediction(self):
+        """Sanity filter should BLOCK picks with pred > 2x avg on low-line players."""
         pred = _make_prediction(
             edge=6.0,
             line_value=15.0,         # role player (< 18 threshold for sanity)
@@ -1411,11 +1416,11 @@ class TestPredictionSanityObservation:
         signals = {key: [_make_signal_result(f'real_signal_{i}') for i in range(5)]}
         agg = BestBetsAggregator()
         picks, summary = agg.aggregate([pred], signals)
-        # Pick should still pass (observation only, sanity doesn't block)
-        assert len(picks) == 1
-        assert summary['rejected']['prediction_sanity_obs'] == 1
+        # Pick should be BLOCKED (active filter)
+        assert len(picks) == 0
+        assert summary['rejected']['prediction_sanity'] == 1
 
-    def test_sanity_obs_not_triggered_for_stars(self):
+    def test_sanity_not_triggered_for_stars(self):
         """Sanity check should NOT trigger for star players (line >= 18)."""
         pred = _make_prediction(
             edge=5.0,
@@ -1428,7 +1433,39 @@ class TestPredictionSanityObservation:
         agg = BestBetsAggregator()
         picks, summary = agg.aggregate([pred], signals)
         assert len(picks) == 1
-        assert summary['rejected']['prediction_sanity_obs'] == 0
+        assert summary['rejected']['prediction_sanity'] == 0
+
+    def test_sanity_not_triggered_when_pred_below_2x(self):
+        """Sanity should NOT trigger when predicted < 2x season avg."""
+        pred = _make_prediction(
+            edge=4.0,
+            line_value=12.0,         # role player
+            points_avg_season=10.0,  # 10 pts avg
+            is_home=False,
+        )
+        pred['predicted_points'] = 16.0  # 1.6x — below 2x threshold
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        signals = {key: [_make_signal_result(f'real_signal_{i}') for i in range(5)]}
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 1
+        assert summary['rejected']['prediction_sanity'] == 0
+
+    def test_sanity_boundary_line_exactly_18(self):
+        """Line exactly 18 should NOT trigger (condition is < 18, not <=)."""
+        pred = _make_prediction(
+            edge=5.0,
+            line_value=18.0,         # boundary — exactly 18
+            points_avg_season=8.0,
+            is_home=False,
+        )
+        pred['predicted_points'] = 20.0  # 2.5x avg, but line not < 18
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        signals = {key: [_make_signal_result(f'real_signal_{i}') for i in range(5)]}
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 1
+        assert summary['rejected']['prediction_sanity'] == 0
 
 
 class TestEdgeZscore:
