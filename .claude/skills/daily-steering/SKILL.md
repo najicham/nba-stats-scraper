@@ -670,6 +670,58 @@ RISK FACTORS:
   Games schedule: <next 7 days summary>
 ```
 
+## Step 5.5: MLB League Macro (if in-season: Apr-Oct)
+
+If MLB season is active (April through October), check MLB macro trends from `mlb_predictions.league_macro_daily`.
+
+```bash
+bq query --use_legacy_sql=false --format=pretty "
+SELECT
+  game_date,
+  ROUND(vegas_mae_7d, 2) AS vegas_mae_7d,
+  ROUND(model_mae_7d, 2) AS model_mae_7d,
+  ROUND(mae_gap_7d, 2) AS mae_gap_7d,
+  ROUND(avg_k_per_game_7d, 1) AS avg_k_7d,
+  ROUND(vegas_bias_7d, 2) AS vegas_bias_7d,
+  ROUND(model_hr_7d, 1) AS model_hr_7d,
+  ROUND(bb_hr_7d, 1) AS bb_hr_7d,
+  bb_n_7d,
+  market_regime
+FROM \`nba-props-platform.mlb_predictions.league_macro_daily\`
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 10 DAY)
+ORDER BY game_date DESC
+"
+```
+
+**Present as:**
+
+```
+MLB LEAGUE MACRO (K props):
+  Vegas MAE (7d): <val> (<TIGHT/NORMAL/LOOSE>) — books accuracy on K lines
+  Model MAE (7d): <val> — MAE gap: <val> (<positive = model worse>)
+  K environment: <val> K/game (7d avg)
+  Vegas bias:    <val> (7d) — positive = books underestimate Ks
+  Model HR (7d): <val>%
+  BB HR (7d):    <val>% (N=<n>)
+
+  [If vegas_mae_7d < 1.7:]
+    WARNING: K market TIGHT — Vegas very accurate on strikeout lines
+  [If mae_gap_7d > 0.3:]
+    WARNING: Model falling behind Vegas on K props
+  [If bb_hr_7d < 52.4 on N >= 10:]
+    WARNING: MLB best bets below breakeven
+```
+
+**Thresholds (K props — narrower than NBA points):**
+
+| Metric | TIGHT/Concern | NORMAL | LOOSE/Good |
+|--------|---------------|--------|------------|
+| Vegas MAE 7d | < 1.7 | 1.7-2.0 | > 2.0 |
+| MAE gap 7d | > 0.3 | -0.2 to 0.3 | < -0.2 |
+| K/game 7d | N/A (directional) | 5.0-7.0 | N/A |
+
+Skip this section outside MLB season (Nov-Mar).
+
 ## Step 6: Assemble Final Report
 
 Combine all sections into a clean, scannable report:
@@ -699,6 +751,9 @@ BEST BETS TRACK RECORD:
 
 RISK FACTORS:
   <risks or "None detected">
+
+MLB LEAGUE MACRO (if in-season):
+  <K environment, Vegas accuracy, BB HR, or "Off-season">
 
 NEXT STEPS:
   1. <primary action>

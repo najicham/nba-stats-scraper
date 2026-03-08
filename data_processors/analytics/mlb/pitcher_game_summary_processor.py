@@ -197,10 +197,10 @@ class MlbPitcherGameSummaryProcessor(CircuitBreakerMixin, AnalyticsProcessorBase
                 o_swing_pct as chase_pct,
                 k_pct as fg_k_pct,
                 contact_pct
-            FROM `{self.project_id}.{self.raw_dataset}.fangraphs_pitcher_season_stats`
+            FROM `{self.project_id}.mlb_raw.fangraphs_pitcher_season_stats`
             WHERE snapshot_date = (
                 SELECT MAX(snapshot_date)
-                FROM `{self.project_id}.{self.raw_dataset}.fangraphs_pitcher_season_stats`
+                FROM `{self.project_id}.mlb_raw.fangraphs_pitcher_season_stats`
             )
         ),
 
@@ -334,7 +334,27 @@ class MlbPitcherGameSummaryProcessor(CircuitBreakerMixin, AnalyticsProcessorBase
                     PARTITION BY h.player_lookup
                     ORDER BY game_date, game_id
                     ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING
-                ) as rolling_stats_games
+                ) as rolling_stats_games,
+
+                -- vs opponent stats (derived from gamebook — Session 437)
+                SAFE_DIVIDE(
+                    SUM(h.strikeouts) OVER (
+                        PARTITION BY h.player_lookup, h.opponent_team_abbr
+                        ORDER BY game_date, game_id
+                        ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                    ) * 9,
+                    SUM(h.innings_pitched) OVER (
+                        PARTITION BY h.player_lookup, h.opponent_team_abbr
+                        ORDER BY game_date, game_id
+                        ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                    )
+                ) as vs_opponent_k_per_9,
+
+                COUNT(*) OVER (
+                    PARTITION BY h.player_lookup, h.opponent_team_abbr
+                    ORDER BY game_date, game_id
+                    ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                ) as vs_opponent_games
 
             FROM pitcher_history h
             LEFT JOIN fangraphs_stats fg
@@ -396,6 +416,10 @@ class MlbPitcherGameSummaryProcessor(CircuitBreakerMixin, AnalyticsProcessorBase
             ROUND(season_csw_pct, 4) as season_csw_pct,
             ROUND(season_chase_pct, 4) as season_chase_pct,
             ROUND(season_contact_pct, 4) as season_contact_pct,
+
+            -- vs opponent (Session 437 — derived from gamebook history)
+            ROUND(vs_opponent_k_per_9, 2) as vs_opponent_k_per_9,
+            vs_opponent_games,
 
             -- Data quality
             'mlbapi' as stats_source,

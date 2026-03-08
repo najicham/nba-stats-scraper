@@ -67,7 +67,7 @@ def parse_args():
 
 
 def load_data(client: bigquery.Client) -> pd.DataFrame:
-    """Load all available data for the simulation period."""
+    """Load all available data for the simulation period (V3: 40 features)."""
     print("Loading data from BigQuery...")
 
     query = """
@@ -134,7 +134,22 @@ def load_data(client: bigquery.Client) -> pd.DataFrame:
         COALESCE(sc.swstr_pct_last_3, pgs.season_swstr_pct) as f50_swstr_pct_last_3,
         COALESCE(sc.fb_velocity_last_3, sc.fb_velocity_season_prior) as f51_fb_velocity_last_3,
         COALESCE(sc.swstr_pct_last_3 - sc.swstr_pct_season_prior, 0.0) as f52_swstr_trend,
-        COALESCE(sc.fb_velocity_season_prior - sc.fb_velocity_last_3, 0.0) as f53_velocity_change
+        COALESCE(sc.fb_velocity_season_prior - sc.fb_velocity_last_3, 0.0) as f53_velocity_change,
+
+        -- Pitcher matchup features (Session 435/437 — derived from gamebook)
+        pgs.vs_opponent_k_per_9 as f65_vs_opp_k_per_9,
+        pgs.vs_opponent_games as f66_vs_opp_games,
+
+        -- Deep workload features (Session 435)
+        pgs.season_games_started as f67_season_starts,
+        SAFE_DIVIDE(pgs.k_avg_last_5, NULLIF(pgs.pitch_count_avg_last_5, 0)) as f68_k_per_pitch,
+        SAFE_DIVIDE(pgs.games_last_30_days, 6.0) as f69_recent_workload_ratio,
+
+        -- FanGraphs advanced pitching features (Session 436)
+        fg.o_swing_pct as f70_o_swing_pct,
+        fg.z_contact_pct as f71_z_contact_pct,
+        fg.fip as f72_fip,
+        fg.gb_pct as f73_gb_pct
 
     FROM `mlb_raw.bp_pitcher_props` bp
     JOIN `mlb_analytics.pitcher_game_summary` pgs
@@ -143,6 +158,10 @@ def load_data(client: bigquery.Client) -> pd.DataFrame:
     LEFT JOIN statcast_rolling sc
         ON REPLACE(pgs.player_lookup, '_', '') = REPLACE(sc.player_lookup, '_', '')
         AND pgs.game_date = sc.game_date
+    LEFT JOIN `mlb_raw.fangraphs_pitcher_season_stats` fg
+        ON LOWER(REGEXP_REPLACE(NORMALIZE(fg.player_lookup, NFD), r'[\\W_]+', ''))
+            = LOWER(REGEXP_REPLACE(NORMALIZE(pgs.player_lookup, NFD), r'[\\W_]+', ''))
+        AND fg.season_year = EXTRACT(YEAR FROM pgs.game_date)
     WHERE bp.market_id = 285
       AND bp.actual_value IS NOT NULL
       AND bp.projection_value IS NOT NULL
@@ -170,7 +189,7 @@ def load_data(client: bigquery.Client) -> pd.DataFrame:
 
 
 def get_features(df: pd.DataFrame) -> list:
-    """Get available feature columns."""
+    """Get available feature columns (V3: 40 features)."""
     feature_cols = [
         'f00_k_avg_last_3', 'f01_k_avg_last_5', 'f02_k_avg_last_10',
         'f03_k_std_last_10', 'f04_ip_avg_last_5',
@@ -186,6 +205,12 @@ def get_features(df: pd.DataFrame) -> list:
         # Rolling Statcast (LEFT JOIN — may be NULL, handled natively by models)
         'f50_swstr_pct_last_3', 'f51_fb_velocity_last_3',
         'f52_swstr_trend', 'f53_velocity_change',
+        # Pitcher matchup (Session 435/437 — may be NULL for first matchups)
+        'f65_vs_opp_k_per_9', 'f66_vs_opp_games',
+        # Deep workload (Session 435)
+        'f67_season_starts', 'f68_k_per_pitch', 'f69_recent_workload_ratio',
+        # FanGraphs advanced (Session 436 — LEFT JOIN, NaN-tolerant)
+        'f70_o_swing_pct', 'f71_z_contact_pct', 'f72_fip', 'f73_gb_pct',
     ]
     return [f for f in feature_cols if f in df.columns]
 
@@ -197,8 +222,8 @@ def train_model(X_train: pd.DataFrame, y_train: pd.Series,
         from catboost import CatBoostClassifier
         model = CatBoostClassifier(
             depth=5,
-            learning_rate=0.03,
-            iterations=300,
+            learning_rate=0.015,    # V3 wider config
+            iterations=500,         # V3 wider config
             l2_leaf_reg=3,
             subsample=0.8,
             random_seed=42,
