@@ -128,14 +128,15 @@ ml/signals/aggregator.py                                  — over_floor 3.0 →
 
 ## What to Do Next
 
-### Priority 1: Verify Mar 8 Prediction Volume
-Both quality fixes (required_default_count + FEATURE_COUNT cap) deployed. Expect ~150+ players.
+### Priority 1: Verify Mar 8 Prediction Volume (CRITICAL)
+Session 434 fixed two bugs that blocked 80-160 players/day. Mar 8 is the FIRST pipeline run with both fixes. Expect ~150+ players (was ~75).
 ```sql
 SELECT game_date, COUNT(*) as predictions, COUNT(DISTINCT player_lookup) as players
 FROM nba_predictions.player_prop_predictions
-WHERE game_date = '2026-03-08' AND system_id = 'catboost_v12'
-GROUP BY 1
+WHERE game_date >= '2026-03-08'
+GROUP BY 1 ORDER BY 1
 ```
+If still ~75, check Phase 4 deploy: `gcloud run services describe nba-phase4-precompute-processors --region=us-west2 --format="value(status.latestCreatedRevisionName)"`
 
 ### Priority 2: Monitor OVER Edge Floor 4.0 Impact
 First pipeline run with the new floor. Check if OVER picks are higher quality:
@@ -162,15 +163,22 @@ FROM nba_predictions.league_macro_daily
 WHERE game_date >= '2026-03-08' ORDER BY game_date
 ```
 
-### Priority 5: Retrain Experiment (When Ready)
-If model-vs-line gap persists, experiment with:
+### Priority 5: Auto-Disable Check
+lgbm_vw015 (48.6% HR) and xgb_s42 (52.4% HR) are BLOCKED. Auto-disable fires at 11 AM ET daily. Verify they get disabled and that 5+ HEALTHY models remain:
+```sql
+SELECT model_id, enabled FROM nba_predictions.model_registry
+WHERE model_id IN ('lgbm_v12_noveg_vw015_train1215_0208', 'xgb_v12_noveg_s42_train1215_0208')
+```
+
+### Priority 6: Retrain Experiment (When Ready)
+Model-vs-Vegas gap is -2.26 (model predicts way below lines). Should self-correct by mid-March as training window slides past ASB. If `mae_gap_7d` doesn't narrow below -1.0 by March 22, experiment with:
 - Higher Vegas weight (0.25x vs current 0.15x)
 - Shorter training window (42d vs current 56d)
 - Use `/model-experiment` to train as shadow
 
-### Priority 6: Future Work
-- **Pick up retrain `catboost_v9_low_vegas`** — 27d stale, approaching 30d
-- **Monitor blowout_risk_under filter** — now active, check if blocking bad UNDER picks
+### Priority 7: Future Work
+- **Retrain `catboost_v9_low_vegas`** — 27d stale, approaching 30d
+- **Monitor blowout_risk_under filter** — now active (Session 434), check if blocking bad UNDER picks
 - **Raise `MIN_SOURCES` to 2** after ESPN validated (~1 week shadow)
 - **catboost_v12 edge 5+ investigation** — 47.6% HR at edge 5+ (N=21)
 
