@@ -1,7 +1,7 @@
 """MLB Signal Registry — discovers and instantiates all MLB signal classes.
 
 Ports the NBA ml/signals/registry.py pattern for MLB pitcher strikeouts.
-8 active signals + 6 shadow signals + 4 negative filters.
+11 active signals + 6 shadow signals + 4 negative filters.
 """
 
 from typing import Dict, List
@@ -43,7 +43,7 @@ class MLBSignalRegistry:
 def build_mlb_registry() -> MLBSignalRegistry:
     """Build registry with all MLB production signals."""
     from ml.signals.mlb.signals import (
-        # Active signals (8)
+        # Active signals (11) — 8 original + 3 walk-forward validated (Session 433)
         HighEdgeSignal,
         SwStrSurgeSignal,
         VelocityDropUnderSignal,
@@ -52,6 +52,9 @@ def build_mlb_registry() -> MLBSignalRegistry:
         HighVarianceUnderSignal,
         BallparkKBoostSignal,
         UmpireKFriendlySignal,
+        ProjectionAgreesOverSignal,
+        KTrendingOverSignal,
+        RecentKAboveLineSignal,
         # Shadow signals (6)
         LineMovementOverSignal,
         WeatherColdUnderSignal,
@@ -68,7 +71,7 @@ def build_mlb_registry() -> MLBSignalRegistry:
 
     registry = MLBSignalRegistry()
 
-    # Active signals (8) — affect pick selection and ranking
+    # Active signals (11) — affect pick selection and ranking
     registry.register(HighEdgeSignal())
     registry.register(SwStrSurgeSignal())
     registry.register(VelocityDropUnderSignal())
@@ -77,6 +80,10 @@ def build_mlb_registry() -> MLBSignalRegistry:
     registry.register(HighVarianceUnderSignal())
     registry.register(BallparkKBoostSignal())
     registry.register(UmpireKFriendlySignal())
+    # Walk-forward validated OVER signals (Session 433)
+    registry.register(ProjectionAgreesOverSignal())
+    registry.register(KTrendingOverSignal())
+    registry.register(RecentKAboveLineSignal())
 
     # Shadow signals (6) — accumulate data, don't affect picks yet
     # Need 30+ days of data before promotion to active (NBA lesson)

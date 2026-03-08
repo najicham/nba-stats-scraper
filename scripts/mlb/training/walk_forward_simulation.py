@@ -61,6 +61,8 @@ def parse_args():
     parser.add_argument("--model-type", default="both",
                        choices=["xgboost", "catboost", "both"],
                        help="Model type to test")
+    parser.add_argument("--filter-nan-predictions", action="store_true",
+                       help="Hybrid: train on all data, predict only for clean-statcast pitchers")
     return parser.parse_args()
 
 
@@ -91,7 +93,7 @@ def load_data(client: bigquery.Client) -> pd.DataFrame:
         bp.over_odds,
         CASE WHEN bp.actual_value > bp.over_line THEN 1 ELSE 0 END as went_over,
 
-        -- Features (no COALESCE — zero tolerance)
+        -- Features
         pgs.player_lookup,
         pgs.k_avg_last_3 as f00_k_avg_last_3,
         pgs.k_avg_last_5 as f01_k_avg_last_5,
@@ -128,11 +130,11 @@ def load_data(client: bigquery.Client) -> pd.DataFrame:
             ELSE 100.0 / (bp.over_odds + 100.0)
         END as f44_over_implied_prob,
 
-        -- Rolling Statcast Features (no COALESCE — zero tolerance)
-        sc.swstr_pct_last_3 as f50_swstr_pct_last_3,
-        sc.fb_velocity_last_3 as f51_fb_velocity_last_3,
-        (sc.swstr_pct_last_3 - sc.swstr_pct_season_prior) as f52_swstr_trend,
-        (sc.fb_velocity_season_prior - sc.fb_velocity_last_3) as f53_velocity_change
+        -- Rolling Statcast Features with COALESCE fallbacks (Session 433)
+        COALESCE(sc.swstr_pct_last_3, pgs.season_swstr_pct) as f50_swstr_pct_last_3,
+        COALESCE(sc.fb_velocity_last_3, sc.fb_velocity_season_prior) as f51_fb_velocity_last_3,
+        COALESCE(sc.swstr_pct_last_3 - sc.swstr_pct_season_prior, 0.0) as f52_swstr_trend,
+        COALESCE(sc.fb_velocity_season_prior - sc.fb_velocity_last_3, 0.0) as f53_velocity_change
 
     FROM `mlb_raw.bp_pitcher_props` bp
     JOIN `mlb_analytics.pitcher_game_summary` pgs
@@ -181,7 +183,7 @@ def get_features(df: pd.DataFrame) -> list:
         'f23_season_ip_total', 'f24_is_postseason',
         'f30_k_avg_vs_line', 'f32_line_level',
         'f40_bp_projection', 'f41_projection_diff', 'f44_over_implied_prob',
-        # Rolling Statcast (LEFT JOIN — may be NULL, dropped by zero-tolerance)
+        # Rolling Statcast (LEFT JOIN — may be NULL, handled natively by models)
         'f50_swstr_pct_last_3', 'f51_fb_velocity_last_3',
         'f52_swstr_trend', 'f53_velocity_change',
     ]
@@ -233,8 +235,13 @@ def simulate_window(
     sim_start: pd.Timestamp,
     sim_end: pd.Timestamp,
     model_type: str = 'xgboost',
+    filter_nan_predictions: bool = False,
 ) -> Dict:
-    """Run walk-forward simulation for a single training window size."""
+    """Run walk-forward simulation for a single training window size.
+
+    If filter_nan_predictions=True, predictions are only generated for
+    pitchers with complete statcast data (hybrid: train on all, predict on clean).
+    """
     results_by_threshold = {t: [] for t in edge_thresholds}
     retrain_log = []
     daily_metrics = []
@@ -264,11 +271,7 @@ def simulate_window(
                 X_train[col] = pd.to_numeric(X_train[col], errors='coerce')
             y_train = train_df['went_over'].astype(int)
 
-            # Drop NaN rows (zero tolerance)
-            valid_mask = ~X_train.isna().any(axis=1)
-            X_train = X_train[valid_mask]
-            y_train = y_train[valid_mask]
-
+            # CatBoost/XGBoost handle NaN natively — don't drop rows
             if len(X_train) < 50:
                 continue
 
@@ -289,10 +292,14 @@ def simulate_window(
         for col in X_test.columns:
             X_test[col] = pd.to_numeric(X_test[col], errors='coerce')
 
-        # Drop NaN rows
-        valid_test = ~X_test.isna().any(axis=1)
-        X_test = X_test[valid_test]
-        test_df = test_df[valid_test]
+        # Hybrid mode: filter predictions to clean-statcast pitchers only
+        if filter_nan_predictions:
+            statcast_cols = ['f50_swstr_pct_last_3', 'f51_fb_velocity_last_3']
+            sc_cols_present = [c for c in statcast_cols if c in X_test.columns]
+            if sc_cols_present:
+                clean_mask = ~X_test[sc_cols_present].isna().any(axis=1)
+                X_test = X_test[clean_mask]
+                test_df = test_df[clean_mask]
 
         if len(X_test) == 0:
             continue
@@ -403,6 +410,7 @@ def main():
                 sim_start=sim_start,
                 sim_end=sim_end,
                 model_type=model_type,
+                filter_nan_predictions=args.filter_nan_predictions,
             )
 
             all_results[(model_type, window)] = result

@@ -1,14 +1,17 @@
-"""MLB Pitcher Strikeout Signals — 8 active + 6 shadow + 4 negative filters.
+"""MLB Pitcher Strikeout Signals — 11 active + 6 shadow + 4 negative filters.
 
-Active Signals (8):
-  high_edge             — Edge >= 1.0 K
-  swstr_surge           — SwStr% last 3 > season avg + 2%
-  velocity_drop_under   — FB velocity down 1.5+ mph
-  opponent_k_prone      — Team K-rate top 25%
-  short_rest_under      — < 4 days rest
-  high_variance_under   — K std > 3.5 last 10
-  ballpark_k_boost      — Park K-factor > 1.05
-  umpire_k_friendly     — Umpire K-rate top 25%
+Active Signals (11):
+  high_edge               — Edge >= 1.0 K (base signal)
+  swstr_surge             — SwStr% last 3 > season avg + 2%
+  velocity_drop_under     — FB velocity down 1.5+ mph
+  opponent_k_prone        — Team K-rate top 25%
+  short_rest_under        — < 4 days rest
+  high_variance_under     — K std > 3.5 last 10
+  ballpark_k_boost        — Park K-factor > 1.05
+  umpire_k_friendly       — Umpire K-rate top 25%
+  projection_agrees_over  — BettingPros proj > line + 0.5 (Session 433)
+  k_trending_over         — K avg last 3 > last 10 + 1.0 (Session 433)
+  recent_k_above_line     — K avg last 5 > line (Session 433)
 
 Shadow Signals (6):
   line_movement_over    — Line dropped 0.5+ from open
@@ -358,6 +361,108 @@ class CatcherFramingOverSignal(BaseMLBSignal):
         if framing_runs >= 5.0:  # Season framing runs above average
             conf = min(1.0, framing_runs / 15.0)
             return self._qualify(confidence=conf, catcher_framing_runs=round(framing_runs, 1))
+        return self._no_qualify()
+
+
+class ProjectionAgreesOverSignal(BaseMLBSignal):
+    """BettingPros projection > line + 0.5 — projection confirms OVER.
+
+    Walk-forward: projection_diff is top feature by importance (6.9%).
+    When projection agrees with model direction, HR improves.
+    """
+    tag = "projection_agrees_over"
+    description = "BettingPros projection exceeds line by 0.5+ K"
+    direction = "OVER"
+
+    def evaluate(self, prediction: Dict,
+                 features: Optional[Dict] = None,
+                 supplemental: Optional[Dict] = None) -> MLBSignalResult:
+        if prediction.get('recommendation') != 'OVER':
+            return self._no_qualify()
+        if not features:
+            return self._no_qualify()
+
+        # projection_diff = bp_projection - bp_over_line (already computed)
+        proj_diff = features.get('projection_diff')
+        if proj_diff is None:
+            # Try raw values
+            proj = features.get('bp_projection')
+            line = prediction.get('strikeouts_line')
+            if proj is not None and line is not None:
+                proj_diff = proj - line
+            else:
+                return self._no_qualify()
+
+        if proj_diff >= 0.5:
+            conf = min(1.0, proj_diff / 2.0)
+            return self._qualify(confidence=conf, projection_diff=round(proj_diff, 2))
+        return self._no_qualify()
+
+
+class KTrendingOverSignal(BaseMLBSignal):
+    """Recent K avg trending up — K avg last 3 > K avg last 10 + 1.0.
+
+    Captures pitchers on a hot streak whose model prediction is confirmed
+    by recent performance momentum.
+    """
+    tag = "k_trending_over"
+    description = "K average last 3 starts exceeds last 10 by 1.0+"
+    direction = "OVER"
+
+    def evaluate(self, prediction: Dict,
+                 features: Optional[Dict] = None,
+                 supplemental: Optional[Dict] = None) -> MLBSignalResult:
+        if prediction.get('recommendation') != 'OVER':
+            return self._no_qualify()
+        if not features:
+            return self._no_qualify()
+
+        k_last_3 = features.get('k_avg_last_3')
+        k_last_10 = features.get('k_avg_last_10')
+        if k_last_3 is None or k_last_10 is None:
+            return self._no_qualify()
+
+        trend = k_last_3 - k_last_10
+        if trend >= 1.0:
+            conf = min(1.0, trend / 3.0)
+            return self._qualify(confidence=conf,
+                                k_last_3=round(k_last_3, 1),
+                                k_last_10=round(k_last_10, 1),
+                                trend=round(trend, 1))
+        return self._no_qualify()
+
+
+class RecentKAboveLineSignal(BaseMLBSignal):
+    """K avg last 5 > strikeouts line — direct empirical evidence for OVER.
+
+    Walk-forward validated: k_avg_vs_line (f30) is a core feature.
+    When the pitcher's recent avg exceeds the line, OVER has higher HR.
+    """
+    tag = "recent_k_above_line"
+    description = "K average last 5 starts exceeds current line"
+    direction = "OVER"
+
+    def evaluate(self, prediction: Dict,
+                 features: Optional[Dict] = None,
+                 supplemental: Optional[Dict] = None) -> MLBSignalResult:
+        if prediction.get('recommendation') != 'OVER':
+            return self._no_qualify()
+        if not features:
+            return self._no_qualify()
+
+        # k_avg_vs_line = k_avg_last_5 - line (already computed as f30)
+        k_vs_line = features.get('k_avg_vs_line')
+        if k_vs_line is None:
+            k_last_5 = features.get('k_avg_last_5')
+            line = prediction.get('strikeouts_line')
+            if k_last_5 is not None and line is not None:
+                k_vs_line = k_last_5 - line
+            else:
+                return self._no_qualify()
+
+        if k_vs_line > 0:
+            conf = min(1.0, k_vs_line / 2.0)
+            return self._qualify(confidence=conf, k_avg_vs_line=round(k_vs_line, 2))
         return self._no_qualify()
 
 
