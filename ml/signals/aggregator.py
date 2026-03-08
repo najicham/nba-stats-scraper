@@ -344,6 +344,7 @@ class BestBetsAggregator:
             'mae_gap_obs': 0,
             'thin_slate_obs': 0,
             'hot_streak_under_obs': 0,
+            'solo_game_pick_obs': 0,
             'team_cap': 0,
         }
 
@@ -1358,6 +1359,12 @@ class BestBetsAggregator:
                 f"{filter_counts['hot_streak_under_obs']} UNDER picks with "
                 f"over_rate_last_10 >= 0.7 (44.4% HR when player hot)"
             )
+        if filter_counts['solo_game_pick_obs'] > 0:
+            logger.info(
+                f"Solo game pick (observation): tagged "
+                f"{filter_counts['solo_game_pick_obs']} picks from games with only 1 BB pick "
+                f"(52.2% HR solo vs 75.3% multi)"
+            )
         if filter_counts['team_cap'] > 0:
             logger.info(
                 f"Team cap ({MAX_PICKS_PER_TEAM}/team): dropped "
@@ -1502,6 +1509,27 @@ class BestBetsAggregator:
                 f"Selected {len(scored)} picks (edge range: "
                 f"{scored[-1]['composite_score']:.1f}-{scored[0]['composite_score']:.1f})"
             )
+
+        # Session 442 O5: Solo game pick observation.
+        # Picks from games with only 1 BB pick = 52.2% HR (N=69) vs
+        # multi-pick games = 75.3% (N=73). 23pp gap across both directions.
+        # Mechanism: solo games had poor model coverage overall.
+        # Observation mode — tags picks for counterfactual tracking.
+        if scored:
+            game_pick_counts: Dict[str, int] = {}
+            for pick in scored:
+                gid = pick.get('game_id', '')
+                game_pick_counts[gid] = game_pick_counts.get(gid, 0) + 1
+            for pick in scored:
+                gid = pick.get('game_id', '')
+                pick['picks_in_game'] = game_pick_counts.get(gid, 1)
+                if game_pick_counts.get(gid, 1) == 1:
+                    filter_counts['solo_game_pick_obs'] += 1
+                    _record_filtered(pick, 'solo_game_pick_obs',
+                                     pick.get('composite_score', 0),
+                                     pick.get('signal_count', 0),
+                                     pick.get('signal_tags', []))
+                    # Observation only — does NOT block
 
         filter_summary = {
             'total_candidates': len(predictions),

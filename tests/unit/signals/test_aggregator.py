@@ -135,6 +135,7 @@ class TestAggregatorReturnType:
             'depleted_stars_over_obs', 'hot_shooting_reversion_obs',
             'over_low_rsc_obs', 'mae_gap_obs', 'thin_slate_obs',
             'hot_streak_under_obs',
+            'solo_game_pick_obs',
             'team_cap',
             'unreliable_over_low_mins_obs', 'unreliable_under_flat_trend_obs',
             'b2b_under_block', 'blowout_risk_under_block_obs',
@@ -1821,6 +1822,66 @@ class TestRestAdvantage2dWeight:
         from ml.signals.aggregator import OVER_SIGNAL_WEIGHTS
         assert 'rest_advantage_2d' in OVER_SIGNAL_WEIGHTS
         assert OVER_SIGNAL_WEIGHTS['rest_advantage_2d'] == 2.0
+
+
+class TestSoloGamePickObservation:
+    """Session 442 O5: Solo game pick observation.
+
+    Solo picks (1 per game) = 52.2% HR vs multi (2+) = 75.3%.
+    Tags solo picks for tracking. Observation mode — does NOT block.
+    """
+
+    def _make_signal_results_for(self, pred, tags):
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        signals = [_make_signal_result(t) for t in tags]
+        return {key: signals}
+
+    def test_solo_game_pick_observation(self):
+        """A single pick from a game should be tagged as solo."""
+        pred = _make_prediction(
+            recommendation='OVER',
+            edge=6.0,
+            line_value=12.0,
+            game_id='20260310_LAL_BOS',
+        )
+        tags = ['model_health', 'high_edge', 'edge_spread_optimal',
+                'fast_pace_over', 'book_disagreement']
+        signals = self._make_signal_results_for(pred, tags)
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 1
+        assert summary['rejected']['solo_game_pick_obs'] == 1
+        assert picks[0]['picks_in_game'] == 1
+
+    def test_multi_game_pick_not_tagged(self):
+        """Two picks from the same game should NOT be tagged as solo."""
+        pred1 = _make_prediction(
+            recommendation='OVER',
+            edge=6.0,
+            line_value=12.0,
+            game_id='20260310_LAL_BOS',
+            player_lookup='player_a',
+        )
+        pred2 = _make_prediction(
+            recommendation='UNDER',
+            edge=6.0,
+            line_value=25.0,
+            game_id='20260310_LAL_BOS',
+            player_lookup='player_b',
+        )
+        tags = ['model_health', 'high_edge', 'edge_spread_optimal',
+                'fast_pace_over', 'book_disagreement']
+        key1 = f"player_a::20260310_LAL_BOS"
+        key2 = f"player_b::20260310_LAL_BOS"
+        signals = {
+            key1: [_make_signal_result(t) for t in tags],
+            key2: [_make_signal_result(t) for t in tags],
+        }
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred1, pred2], signals)
+        assert len(picks) == 2
+        assert summary['rejected']['solo_game_pick_obs'] == 0
+        assert all(p['picks_in_game'] == 2 for p in picks)
 
 
 class TestAlgorithmVersionV442:
