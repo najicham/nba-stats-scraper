@@ -856,6 +856,268 @@ FILTER FAILURES TODAY:
 ===============================================
 ```
 
+---
+
+## Section 6: Player History Context
+
+For each player in today's picks (wins AND losses), check their historical BB performance to see if this outcome was predictable.
+
+### 6A: Today's Picks — Historical BB Track Record
+
+```bash
+bq query --use_legacy_sql=false --format=pretty "
+WITH today_picks AS (
+  SELECT DISTINCT bb.player_lookup, bb.recommendation
+  FROM \`nba-props-platform.nba_predictions.signal_best_bets_picks\` bb
+  WHERE bb.game_date = '$TARGET_DATE'
+),
+historical AS (
+  SELECT
+    bb.player_lookup,
+    COUNT(*) as total_bb_picks,
+    COUNTIF(pa.prediction_correct) as bb_wins,
+    ROUND(100.0 * COUNTIF(pa.prediction_correct) / COUNT(*), 1) as bb_hr,
+    ROUND(COUNTIF(pa.prediction_correct) * 0.91 - COUNTIF(NOT pa.prediction_correct) * 1.0, 2) as bb_profit,
+    ROUND(AVG(pa.predicted_points - pa.actual_points), 1) as avg_bias,
+    COUNTIF(bb.recommendation = 'OVER' AND pa.prediction_correct) as over_wins,
+    COUNTIF(bb.recommendation = 'OVER') as over_total,
+    COUNTIF(bb.recommendation = 'UNDER' AND pa.prediction_correct) as under_wins,
+    COUNTIF(bb.recommendation = 'UNDER') as under_total,
+    STRING_AGG(
+      CONCAT(CASE WHEN pa.prediction_correct THEN 'W' ELSE 'L' END,
+             '(', FORMAT_DATE('%m/%d', bb.game_date), ')'),
+      ' ' ORDER BY bb.game_date
+    ) as pick_history
+  FROM \`nba-props-platform.nba_predictions.signal_best_bets_picks\` bb
+  JOIN \`nba-props-platform.nba_predictions.prediction_accuracy\` pa
+    ON bb.player_lookup = pa.player_lookup AND bb.game_date = pa.game_date AND bb.system_id = pa.system_id
+  WHERE bb.game_date < '$TARGET_DATE'
+    AND pa.prediction_correct IS NOT NULL AND pa.is_voided IS NOT TRUE
+  GROUP BY 1
+)
+SELECT
+  tp.player_lookup,
+  tp.recommendation as today_dir,
+  COALESCE(h.total_bb_picks, 0) as prior_picks,
+  h.bb_hr as prior_hr,
+  h.bb_profit as prior_profit,
+  h.avg_bias,
+  CONCAT(COALESCE(h.over_wins, 0), '-', COALESCE(h.over_total, 0) - COALESCE(h.over_wins, 0)) as over_record,
+  CONCAT(COALESCE(h.under_wins, 0), '-', COALESCE(h.under_total, 0) - COALESCE(h.under_wins, 0)) as under_record,
+  h.pick_history
+FROM today_picks tp
+LEFT JOIN historical h ON tp.player_lookup = h.player_lookup
+ORDER BY COALESCE(h.total_bb_picks, 0) DESC
+"
+```
+
+### 6B: Today's Biggest Covers — Were They Repeat Cover Kings?
+
+```bash
+bq query --use_legacy_sql=false --format=pretty "
+WITH big_covers AS (
+  SELECT
+    pa.player_lookup,
+    pa.actual_points - pa.line_value as margin,
+    CASE WHEN pa.actual_points > pa.line_value THEN 'OVER' ELSE 'UNDER' END as cover_dir
+  FROM \`nba-props-platform.nba_predictions.prediction_accuracy\` pa
+  WHERE pa.game_date = '$TARGET_DATE'
+    AND pa.has_prop_line = TRUE AND pa.prediction_correct IS NOT NULL
+    AND pa.system_id LIKE 'catboost_v12%'
+    AND ABS(pa.actual_points - pa.line_value) >= 5
+  QUALIFY ROW_NUMBER() OVER (PARTITION BY pa.player_lookup ORDER BY ABS(pa.predicted_points - pa.line_value) DESC) = 1
+),
+cover_history AS (
+  SELECT
+    pa.player_lookup,
+    COUNTIF(ABS(pa.actual_points - pa.line_value) >= 5) as big_covers_season,
+    COUNTIF(pa.actual_points > pa.line_value AND ABS(pa.actual_points - pa.line_value) >= 5) as big_overs,
+    COUNTIF(pa.actual_points < pa.line_value AND ABS(pa.actual_points - pa.line_value) >= 5) as big_unders,
+    COUNT(*) as total_games
+  FROM \`nba-props-platform.nba_predictions.prediction_accuracy\` pa
+  WHERE pa.game_date >= '2026-01-09' AND pa.game_date < '$TARGET_DATE'
+    AND pa.has_prop_line = TRUE AND pa.prediction_correct IS NOT NULL
+    AND pa.system_id LIKE 'catboost_v12%'
+  GROUP BY 1
+)
+SELECT
+  bc.player_lookup,
+  bc.cover_dir,
+  ROUND(bc.margin, 1) as today_margin,
+  COALESCE(ch.big_covers_season, 0) as prior_big_covers,
+  ch.big_overs as prior_big_overs,
+  ch.big_unders as prior_big_unders,
+  ROUND(100.0 * COALESCE(ch.big_covers_season, 0) / NULLIF(ch.total_games, 0), 1) as big_cover_rate
+FROM big_covers bc
+LEFT JOIN cover_history ch ON bc.player_lookup = ch.player_lookup
+ORDER BY bc.margin DESC
+LIMIT 10
+"
+```
+
+**Present as:**
+```
+--- SECTION 6: PLAYER CONTEXT ---
+
+TODAY'S PICKS — PRIOR TRACK RECORD:
+  <player> (<today_dir>): Prior BB record W-L (HR%), profit +/-X.XX
+    Bias: X.X | History: W(01/15) L(01/22) W(02/03) ...
+    [If prior_hr < 40% and prior_picks >= 3]: WARNING — repeat loser
+    [If prior_hr >= 75% and prior_picks >= 3]: VALIDATED — consistent winner
+    [If prior_picks = 0]: FIRST BB PICK — no history
+
+REPEAT COVER KINGS TODAY:
+  <player> covered <dir> by X.X today — X prior big covers this season (X% of games)
+  [If big_cover_rate > 20%]: HIGH-VARIANCE PLAYER — covers big frequently
+  [If this player was NOT picked]: MISSED REPEAT COVER KING
+```
+
+---
+
+## Section 7: What Would Have Changed
+
+Analyze today's outcomes through the lens of current system rules and identify specific changes that would have improved results. This section compares what the system DID vs what ALTERNATIVE rules would have done.
+
+### 7A: Shadow Signal Impact — Would Phase 1 Changes Help?
+
+```bash
+bq query --use_legacy_sql=false --format=pretty "
+-- Check if any losses had shadow/base signals inflating their real_sc
+SELECT
+  bb.player_lookup,
+  bb.recommendation,
+  pa.prediction_correct as hit,
+  bb.signal_count,
+  bb.real_signal_count,
+  bb.signal_rescued,
+  bb.rescue_signal,
+  ROUND(bb.edge, 1) as edge,
+  -- Count how many signal_tags are in the known shadow/base sets
+  (SELECT COUNT(*) FROM UNNEST(bb.signal_tags) t
+   WHERE t IN ('day_of_week_over', 'predicted_pace_over',
+     'projection_consensus_over', 'projection_consensus_under',
+     'positive_clv_over', 'positive_clv_under',
+     'hot_form_over', 'scoring_momentum_over', 'usage_surge_over',
+     'career_matchup_over', 'consistent_scorer_over', 'over_trend_over',
+     'minutes_load_over', 'bounce_back_over', 'sharp_money_over',
+     'sharp_money_under', 'minutes_surge_over', 'dvp_favorable_over',
+     'day_of_week_under', 'over_streak_reversion_under',
+     'star_favorite_under', 'starter_away_overtrend_under',
+     'model_health', 'high_edge', 'edge_spread_optimal',
+     'blowout_recovery', 'starter_under', 'blowout_risk_under')
+  ) as base_shadow_count,
+  bb.signal_tags
+FROM \`nba-props-platform.nba_predictions.signal_best_bets_picks\` bb
+JOIN \`nba-props-platform.nba_predictions.prediction_accuracy\` pa
+  ON bb.player_lookup = pa.player_lookup AND bb.game_date = pa.game_date AND bb.system_id = pa.system_id
+WHERE bb.game_date = '$TARGET_DATE'
+  AND pa.prediction_correct IS NOT NULL AND pa.is_voided IS NOT TRUE
+ORDER BY pa.prediction_correct ASC, bb.edge DESC
+"
+```
+
+### 7B: Rescue Audit — Which Rescued Picks Hit vs Missed?
+
+```bash
+bq query --use_legacy_sql=false --format=pretty "
+SELECT
+  bb.player_lookup,
+  bb.recommendation,
+  bb.rescue_signal,
+  ROUND(bb.edge, 1) as edge,
+  ROUND(bb.line_value, 1) as line,
+  pa.prediction_correct as hit,
+  pa.actual_points,
+  ROUND(pa.actual_points - bb.line_value, 1) as margin,
+  bb.player_tier,
+  bb.signal_tags
+FROM \`nba-props-platform.nba_predictions.signal_best_bets_picks\` bb
+JOIN \`nba-props-platform.nba_predictions.prediction_accuracy\` pa
+  ON bb.player_lookup = pa.player_lookup AND bb.game_date = pa.game_date AND bb.system_id = pa.system_id
+WHERE bb.game_date = '$TARGET_DATE'
+  AND bb.signal_rescued = TRUE
+  AND pa.prediction_correct IS NOT NULL AND pa.is_voided IS NOT TRUE
+ORDER BY pa.prediction_correct ASC
+"
+```
+
+### 7C: Edge Floor Impact — What Would Edge 5+ Only Look Like?
+
+```bash
+bq query --use_legacy_sql=false --format=pretty "
+-- Compare actual results vs hypothetical edge 5+ only
+SELECT
+  'actual_bb' as scenario,
+  COUNT(*) as picks,
+  COUNTIF(pa.prediction_correct) as wins,
+  ROUND(100.0 * COUNTIF(pa.prediction_correct) / COUNT(*), 1) as hr,
+  ROUND(COUNTIF(pa.prediction_correct) * 0.91 - COUNTIF(NOT pa.prediction_correct) * 1.0, 2) as profit
+FROM \`nba-props-platform.nba_predictions.signal_best_bets_picks\` bb
+JOIN \`nba-props-platform.nba_predictions.prediction_accuracy\` pa
+  ON bb.player_lookup = pa.player_lookup AND bb.game_date = pa.game_date AND bb.system_id = pa.system_id
+WHERE bb.game_date = '$TARGET_DATE'
+  AND pa.prediction_correct IS NOT NULL AND pa.is_voided IS NOT TRUE
+
+UNION ALL
+
+SELECT
+  'edge_5plus_only' as scenario,
+  COUNT(*) as picks,
+  COUNTIF(pa.prediction_correct) as wins,
+  ROUND(100.0 * COUNTIF(pa.prediction_correct) / COUNT(*), 1) as hr,
+  ROUND(COUNTIF(pa.prediction_correct) * 0.91 - COUNTIF(NOT pa.prediction_correct) * 1.0, 2) as profit
+FROM \`nba-props-platform.nba_predictions.signal_best_bets_picks\` bb
+JOIN \`nba-props-platform.nba_predictions.prediction_accuracy\` pa
+  ON bb.player_lookup = pa.player_lookup AND bb.game_date = pa.game_date AND bb.system_id = pa.system_id
+WHERE bb.game_date = '$TARGET_DATE'
+  AND bb.edge >= 5.0
+  AND pa.prediction_correct IS NOT NULL AND pa.is_voided IS NOT TRUE
+
+UNION ALL
+
+SELECT
+  'non_rescued_only' as scenario,
+  COUNT(*) as picks,
+  COUNTIF(pa.prediction_correct) as wins,
+  ROUND(100.0 * COUNTIF(pa.prediction_correct) / COUNT(*), 1) as hr,
+  ROUND(COUNTIF(pa.prediction_correct) * 0.91 - COUNTIF(NOT pa.prediction_correct) * 1.0, 2) as profit
+FROM \`nba-props-platform.nba_predictions.signal_best_bets_picks\` bb
+JOIN \`nba-props-platform.nba_predictions.prediction_accuracy\` pa
+  ON bb.player_lookup = pa.player_lookup AND bb.game_date = pa.game_date AND bb.system_id = pa.system_id
+WHERE bb.game_date = '$TARGET_DATE'
+  AND bb.signal_rescued IS NOT TRUE
+  AND pa.prediction_correct IS NOT NULL AND pa.is_voided IS NOT TRUE
+"
+```
+
+**Present as:**
+```
+--- SECTION 7: WHAT WOULD HAVE CHANGED ---
+
+SHADOW/BASE SIGNAL INFLATION:
+  [For each loss]:
+  <player>: signal_count=X, real_sc=X, base+shadow=X
+  Adjusted real_sc (excluding base+shadow): X
+  [If adjusted real_sc < 1]: WOULD HAVE BEEN BLOCKED by real_sc gate
+
+RESCUE AUDIT:
+  Rescued picks today: W-L (HR%)
+  [For each rescued loss]:
+  <player> rescued by <signal> at edge X.X — LOST
+  [If rescue signal HR is below 50% historically]: RESCUE SIGNAL CONCERN
+
+SCENARIO COMPARISON:
+  | Scenario | Picks | W-L | HR% | Profit |
+  |----------|-------|-----|-----|--------|
+  | Actual BB | X | W-L | XX% | +/-X.XX |
+  | Edge 5+ only | X | W-L | XX% | +/-X.XX |
+  | Non-rescued only | X | W-L | XX% | +/-X.XX |
+  [Flag if alternative scenario would have been more profitable]
+  [Quantify: "Edge 5+ only would have saved/cost X.XX units today"]
+```
+
+---
+
 ## Key Schema Reminders
 
 - `prediction_accuracy` has NO `edge` column — compute: `ABS(predicted_points - line_value)`
