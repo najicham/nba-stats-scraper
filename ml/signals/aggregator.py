@@ -693,17 +693,16 @@ class BestBetsAggregator:
                 if 'under_after_bad_miss' not in self._runtime_demoted:
                     continue
 
-            # Blowout risk UNDER block (Session 423→434): blowout_risk >= 0.40 + UNDER
-            # = 15.4% HR (N=13). High blowout benching risk → players get pulled → OVER.
-            # Session 434: Promoted from observation to active blocking.
+            # Blowout risk UNDER block (Session 423→434→436): blowout_risk >= 0.40 + UNDER
+            # Session 434: Promoted to active. Session 436: Demoted back to observation.
+            # Raw prediction HR = 57.9% (N=216) — filter blocks profitable UNDER picks.
+            # Threshold 0.40 too broad (captures ~70% of players). Need more data.
             blowout_risk_val = pred.get('blowout_risk') or 0
             if (pred.get('recommendation') == 'UNDER'
                     and blowout_risk_val >= 0.40
                     and line_val >= 15):
                 filter_counts['blowout_risk_under_block_obs'] += 1
                 _record_filtered(pred, 'blowout_risk_under_block_obs', pred_edge)
-                if 'blowout_risk_under_block_obs' not in self._runtime_demoted:
-                    continue
 
             # High spread OVER — DEMOTED to observation (Session 419).
             # Historical 44.3% (N=61) full season, but CF HR = 100% (2-0, blocking winners).
