@@ -436,7 +436,14 @@ def load_batch_features(
             WHEN bp.over_odds < 0 THEN ABS(bp.over_odds) / (ABS(bp.over_odds) + 100.0)
             WHEN bp.over_odds > 0 THEN 100.0 / (bp.over_odds + 100.0)
             ELSE NULL
-        END as over_implied_prob
+        END as over_implied_prob,
+        -- Pitcher matchup features (f65-f66, Session 435)
+        lf.avg_k_vs_opponent as vs_opp_k_per_9,
+        lf.games_vs_opponent as vs_opp_games,
+        -- Deep workload features (f67-f69, Session 435)
+        lf.season_games_started as season_starts,
+        SAFE_DIVIDE(lf.k_avg_last_5, NULLIF(lf.pitch_count_avg_last_5, 0)) as k_per_pitch,
+        SAFE_DIVIDE(lf.games_last_30_days, 6.0) as recent_workload_ratio
     FROM latest_features lf
     LEFT JOIN statcast_latest s ON lf.player_lookup = s.player_lookup AND s.rn = 1
     LEFT JOIN bp_features bp ON lf.player_lookup = bp.player_lookup

@@ -73,6 +73,8 @@ FEATURE_COLS = [
     'f40_bp_projection', 'f41_projection_diff', 'f44_over_implied_prob',
     'f50_swstr_pct_last_3', 'f51_fb_velocity_last_3',
     'f52_swstr_trend', 'f53_velocity_change',
+    'f65_vs_opp_k_per_9', 'f66_vs_opp_games',
+    'f67_season_starts', 'f68_k_per_pitch', 'f69_recent_workload_ratio',
 ]
 
 
@@ -172,7 +174,16 @@ def load_training_data(client: bigquery.Client) -> pd.DataFrame:
         COALESCE(
             sc.fb_velocity_season_prior - sc.fb_velocity_last_3,
             0.0  -- No velocity change data = assume stable
-        ) as f53_velocity_change
+        ) as f53_velocity_change,
+
+        -- Pitcher matchup features (Session 435)
+        pgs.vs_opponent_k_per_9 as f65_vs_opp_k_per_9,
+        pgs.vs_opponent_games as f66_vs_opp_games,
+
+        -- Deep workload features (Session 435)
+        pgs.season_games_started as f67_season_starts,
+        SAFE_DIVIDE(pgs.k_avg_last_5, NULLIF(pgs.pitch_count_avg_last_5, 0)) as f68_k_per_pitch,
+        SAFE_DIVIDE(pgs.games_last_30_days, 6.0) as f69_recent_workload_ratio
 
     FROM `mlb_raw.bp_pitcher_props` bp
     JOIN `mlb_analytics.pitcher_game_summary` pgs
@@ -237,8 +248,8 @@ def train_catboost(X_train, y_train):
 
     model = CatBoostClassifier(
         depth=5,
-        learning_rate=0.03,
-        iterations=300,
+        learning_rate=0.015,
+        iterations=500,
         l2_leaf_reg=3,
         subsample=0.8,
         random_seed=42,

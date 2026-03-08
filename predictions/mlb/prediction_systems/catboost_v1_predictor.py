@@ -3,8 +3,8 @@
 CatBoost V1 MLB Pitcher Strikeouts Predictor
 
 CatBoost binary classifier predicting OVER/UNDER for pitcher strikeout props.
-Uses 31 features including rolling Statcast metrics, BettingPros projections,
-and line-relative features. Trained with 120-day window.
+Uses 36 features including rolling Statcast metrics, BettingPros projections,
+line-relative features, pitcher matchup, and deep workload. Trained with 120-day window.
 
 Walk-forward validated: 54.2% HR at edge 1.0+ (N=1,183), 55.7% at edge 1.5+.
 Governance gates: 62.2% HR at edge 1+ (N=164), vegas bias +0.16 K.
@@ -38,6 +38,8 @@ CATBOOST_V1_FEATURES = [
     'f40_bp_projection', 'f41_projection_diff', 'f44_over_implied_prob',
     'f50_swstr_pct_last_3', 'f51_fb_velocity_last_3',
     'f52_swstr_trend', 'f53_velocity_change',
+    'f65_vs_opp_k_per_9', 'f66_vs_opp_games',
+    'f67_season_starts', 'f68_k_per_pitch', 'f69_recent_workload_ratio',
 ]
 
 # Raw name -> model feature name mapping
@@ -77,6 +79,13 @@ RAW_TO_MODEL_MAPPING = {
     'fb_velocity_last_3': 'f51_fb_velocity_last_3',
     'swstr_trend': 'f52_swstr_trend',
     'velocity_change': 'f53_velocity_change',
+    'vs_opp_k_per_9': 'f65_vs_opp_k_per_9',
+    'vs_opponent_k_per_9': 'f65_vs_opp_k_per_9',
+    'vs_opp_games': 'f66_vs_opp_games',
+    'vs_opponent_games': 'f66_vs_opp_games',
+    'season_starts': 'f67_season_starts',
+    'k_per_pitch': 'f68_k_per_pitch',
+    'recent_workload_ratio': 'f69_recent_workload_ratio',
 }
 
 
@@ -175,6 +184,8 @@ class CatBoostV1Predictor(BaseMLBPredictor):
                 'f50_swstr_pct_last_3', 'f51_fb_velocity_last_3',
                 'f52_swstr_trend', 'f53_velocity_change',
                 'f19_season_swstr_pct', 'f19b_season_csw_pct',
+                'f65_vs_opp_k_per_9', 'f66_vs_opp_games',
+                'f67_season_starts', 'f68_k_per_pitch', 'f69_recent_workload_ratio',
             }
             feature_vector = []
             default_feature_count = 0
