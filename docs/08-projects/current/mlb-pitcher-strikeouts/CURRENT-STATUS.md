@@ -1,7 +1,7 @@
 # MLB Pitcher Strikeouts - Current Status
 
-**Last Updated**: 2026-03-07 (Sprint 4 — fully deployed)
-**Project Phase**: Sprint 4: Deploy + Launch Prep (98% complete — retrain before opening day)
+**Last Updated**: 2026-03-07 (Session 432 — model retrained, backfills running)
+**Project Phase**: Sprint 4: Deploy + Launch Prep (99% complete — resume schedulers Mar 24)
 **Season Start**: 2026-03-27 (20 days)
 
 ---
@@ -55,13 +55,13 @@
 | Verify scraper credentials | DONE | - | ODDS_API_KEY configured via secret |
 | Batter analytics BDL→mlbapi migration | DONE | - | BDL retired (Session 430). UNION kept until backfill complete. |
 | Test Slack notifications | DONE | - | notify_info sends successfully |
-| Retrain CatBoost on freshest data | TODO | 30 min | Do Mar 24-25. No new data beyond Sep 2025 (off-season). |
+| Retrain CatBoost on freshest data | DONE | - | Session 432: train20250517_20250914, 68.5% HR edge 1+ (N=54). All gates passed. |
 
 ### Nice to Have (First 2 weeks of season)
 
 | Task | Effort | Notes |
 |------|--------|-------|
-| Statcast raw backfill (Jul-Sep 2025) | 15 min | `scripts/mlb/backfill_statcast.py` ready |
+| Statcast raw backfill (Jul-Sep 2025) | IN PROGRESS | Session 432: backfilling Jul 14 - Sep 28 2025 |
 | Odds API 2023 historical backfill | $290 | 29K API credits, deferred |
 | Monitor July drift pattern | Ongoing | Walk-forward showed July dip |
 | Signal promotion after 30 days | Ongoing | 6 shadow signals accumulating |
@@ -88,7 +88,8 @@
 
 | Model | Type | HR (edge 1+) | Status | GCS Path |
 |-------|------|-------------|--------|----------|
-| CatBoost V1 | Classifier | 62.2% (N=164) | Production (pending enable) | `gs://nba-props-platform-ml-models/mlb/catboost_mlb_v1_31f_train20250430_20250828_*.cbm` |
+| CatBoost V1 (new) | Classifier | 68.5% (N=54) | Production | `gs://nba-props-platform-ml-models/mlb/catboost_mlb_v1_31f_train20250517_20250914_*.cbm` |
+| CatBoost V1 (old) | Classifier | 62.2% (N=164) | Shadow | `gs://nba-props-platform-ml-models/mlb/catboost_mlb_v1_31f_train20250430_20250828_*.cbm` |
 | XGBoost V1 | Classifier | 57.6% (N=288) | Shadow | `gs://nba-props-platform-ml-models/mlb/xgboost_mlb_v1_31f_train20250430_20250828_*.json` |
 | V1.6 Rolling | Regressor | Legacy | Active (ensemble) | GCS legacy path |
 | Ensemble V1 | Weighted avg | Legacy | Active | V1 30% + V1.6 50% |
