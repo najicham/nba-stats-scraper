@@ -500,6 +500,30 @@ def main(cloud_event):
         )
         results['model_profile_error'] = str(e)
 
+    # 5c. Compute league macro daily metrics (Session 435)
+    try:
+        from datetime import date as date_type
+        from ml.analysis.league_macro import compute_for_date as compute_macro, write_rows as write_macro_row
+        from shared.clients.bigquery_pool import get_bigquery_client as _get_bq_macro
+
+        bq_macro = _get_bq_macro(project_id=PROJECT_ID)
+        macro_row = compute_macro(bq_macro, date_type.fromisoformat(target_date))
+        if macro_row:
+            written = write_macro_row(bq_macro, macro_row)
+            results['league_macro'] = written
+            regime = macro_row.get('market_regime', 'UNKNOWN')
+            vegas_mae = macro_row.get('vegas_mae_7d', 'N/A')
+            logger.info(
+                f"[{correlation_id}] League macro for {target_date}: "
+                f"regime={regime}, vegas_mae_7d={vegas_mae}"
+            )
+    except Exception as e:
+        logger.error(
+            f"[{correlation_id}] Failed to compute league macro for {target_date}: {e}",
+            exc_info=True
+        )
+        results['league_macro_error'] = str(e)
+
     # 6. Re-export tonight/all-players.json with actuals (Session 332)
     try:
         from data_processors.publishing.tonight_all_players_exporter import TonightAllPlayersExporter

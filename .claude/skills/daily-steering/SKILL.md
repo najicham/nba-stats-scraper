@@ -333,6 +333,54 @@ SIGNAL RESCUE PERFORMANCE (14d):
     WARNING: Signal rescue not firing — check aggregator rescue_tags
 ```
 
+## Step 2.5a: League Macro Trends (Session 435)
+
+Check league-level macro trends from `league_macro_daily`. These are leading indicators — tightening lines or scoring shifts show up here before they affect BB HR.
+
+```bash
+bq query --use_legacy_sql=false --format=pretty "
+SELECT
+  game_date,
+  ROUND(vegas_mae_7d, 2) AS vegas_mae_7d,
+  ROUND(model_mae_7d, 2) AS model_mae_7d,
+  ROUND(mae_gap_7d, 2) AS mae_gap_7d,
+  ROUND(league_avg_ppg_7d, 1) AS scoring_7d,
+  ROUND(avg_edge_7d, 2) AS edge_7d,
+  ROUND(bb_hr_7d, 1) AS bb_hr_7d,
+  bb_n_7d,
+  market_regime
+FROM \`nba-props-platform.nba_predictions.league_macro_daily\`
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 10 DAY)
+ORDER BY game_date DESC
+"
+```
+
+**Present as:**
+
+```
+LEAGUE MACRO TRENDS:
+  Vegas MAE (7d): <val> (<TIGHT/NORMAL/LOOSE>) — <lower = harder to beat>
+  Model MAE (7d): <val> — MAE gap: <val> (<positive = model worse>)
+  Scoring env:    <val> ppg (7d avg) — <trend vs prior week>
+  Edge supply:    <val> avg edge (7d) — <shrinking/stable/growing>
+  BB HR (7d):     <val>% (N=<n>)
+
+  [If vegas_mae_7d < 4.5:]
+    WARNING: Market TIGHT — Vegas very accurate, edge harder to find
+  [If mae_gap_7d > 0.5:]
+    WARNING: Model falling behind Vegas — consider retrain
+  [If league_avg_ppg_7d drops >0.5 from prior week:]
+    NOTE: Scoring environment cooling — bench_under may improve, combo signals may weaken
+```
+
+**Thresholds:**
+
+| Metric | TIGHT/Concern | NORMAL | LOOSE/Good |
+|--------|---------------|--------|------------|
+| Vegas MAE 7d | < 4.5 | 4.5-5.5 | > 5.5 |
+| MAE gap 7d | > 0.5 | -0.3 to 0.5 | < -0.3 |
+| League PPG 7d | N/A (directional) | 9.5-11.0 | N/A |
+
 ## Step 2.5: Market Regime Early Warning (Session 318)
 
 Detect market compression, edge distribution shifts, and directional imbalances BEFORE they show up in W-L record. This is the leading indicator; best bets HR is the lagging indicator.

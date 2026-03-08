@@ -173,6 +173,7 @@ nba-stats-scraper/
 | `nba_raw.covers_referee_stats` | Covers referee O/U tendency stats |
 | `nba_raw.nba_tracking_stats` | NBA.com player tracking/usage data |
 | `nba_raw.vsin_betting_splits` | VSiN public betting percentages |
+| `league_macro_daily` | Daily league macro trends — Vegas MAE, scoring env, edge availability, BB HR |
 
 **Game Status:** 1=Scheduled, 2=In Progress, 3=Final
 
@@ -210,6 +211,11 @@ SELECT game_date,
        COUNTIF(default_feature_count > 0) as blocked_players
 FROM nba_predictions.ml_feature_store_v2
 WHERE game_date >= CURRENT_DATE() - 3 GROUP BY 1 ORDER BY 1 DESC;
+
+-- Check league macro trends
+SELECT game_date, vegas_mae_7d, model_mae_7d, mae_gap_7d, league_avg_ppg_7d, bb_hr_7d, market_regime
+FROM nba_predictions.league_macro_daily
+WHERE game_date >= CURRENT_DATE() - 7 ORDER BY game_date DESC;
 ```
 
 **Full query library:** `docs/02-operations/useful-queries.md`
@@ -282,6 +288,7 @@ python bin/monitoring/pipeline_canary_queries.py     # Pipeline canaries (auto: 
 python bin/monitoring/analyze_healing_patterns.py    # Self-healing audit (auto: every 15min)
 python bin/monitoring/grading_gap_detector.py        # Grading gaps (auto: daily 9 AM ET)
 python bin/monitoring/signal_decay_monitor.py        # Signal decay/recovery (Session 411)
+PYTHONPATH=. python ml/analysis/league_macro.py      # League macro trends (auto: post-grading)
 ```
 
 - Auto-heals stalled batches (>90% complete, stalled 15+ min)
