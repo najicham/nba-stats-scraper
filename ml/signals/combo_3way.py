@@ -17,6 +17,11 @@ SESSION 406: Lowered MIN_EDGE 4.0 → 3.0. Edge 4.0 still too aggressive — onl
   aggregator's general edge floor. ~15 OVER predictions at edge 3-4 daily means
   minutes surge gate (7% of players) produces ~1 combo signal/day.
 
+SESSION 433: Raised MIN_EDGE 3.0 → 4.0. Edge 3.0 diluted quality — season HR
+  dropped from 95% (N=22 at edge 5+) to ~68%. Recent losses all edge 3.0-3.8
+  role players (Josh Green, Micah Potter, Brice Sensabaugh). Edge 4.0 restores
+  quality while keeping the signal active post-ASB (1-2 fires/day).
+
 See: docs/08-projects/current/signal-testing/SESSION-257-RESULTS.md
 """
 
@@ -26,9 +31,9 @@ from ml.signals.base_signal import BaseSignal, SignalResult
 
 class ThreeWayComboSignal(BaseSignal):
     tag = "combo_3way"
-    description = "Edge >= 3 + minutes surge >= 3 + ESO quality gate — premium 3-way combo"
+    description = "Edge >= 4 + minutes surge >= 3 + ESO quality gate — premium 3-way combo"
 
-    MIN_EDGE = 3.0
+    MIN_EDGE = 4.0
     MIN_SURGE = 3.0
     MIN_CONFIDENCE = 0.70
     PROBLEM_TIER_MIN = 0.88
@@ -41,7 +46,7 @@ class ThreeWayComboSignal(BaseSignal):
         if prediction.get('recommendation') != 'OVER':
             return self._no_qualify()
 
-        # Check edge >= 5
+        # Check edge >= 4
         edge = abs(prediction.get('edge') or 0)
         if edge < self.MIN_EDGE:
             return self._no_qualify()

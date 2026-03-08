@@ -136,18 +136,30 @@ def check_signal_firing_canary(
         Only returns DEAD or DEGRADING signals (empty list = all healthy).
     """
     query = f"""
-    WITH firing_counts AS (
+    -- Session 433: Dedup pick_signal_tags for accurate fire counts
+    WITH deduped_pst AS (
+        SELECT * FROM (
+            SELECT *, ROW_NUMBER() OVER (
+                PARTITION BY game_date, player_lookup, system_id
+                ORDER BY evaluated_at DESC
+            ) AS _rn
+            FROM `{PROJECT_ID}.nba_predictions.pick_signal_tags`
+            WHERE game_date > DATE_SUB(@target_date, INTERVAL 30 DAY)
+              AND game_date <= @target_date
+        )
+        WHERE _rn = 1
+    ),
+
+    firing_counts AS (
         SELECT
             signal_tag,
             COUNTIF(game_date > DATE_SUB(@target_date, INTERVAL 7 DAY)
                     AND game_date <= @target_date) AS fires_7d,
             COUNTIF(game_date > DATE_SUB(@target_date, INTERVAL 30 DAY)
                     AND game_date <= DATE_SUB(@target_date, INTERVAL 7 DAY)) AS fires_prior_23d
-        FROM `{PROJECT_ID}.nba_predictions.pick_signal_tags`
+        FROM deduped_pst
         CROSS JOIN UNNEST(signal_tags) AS signal_tag
-        WHERE game_date > DATE_SUB(@target_date, INTERVAL 30 DAY)
-          AND game_date <= @target_date
-          AND signal_tag IN UNNEST(@active_signals)
+        WHERE signal_tag IN UNNEST(@active_signals)
         GROUP BY signal_tag
     ),
 
@@ -357,7 +369,23 @@ def compute_signal_health(
         List of dicts ready for BigQuery insertion (one per signal_tag).
     """
     query = f"""
-    WITH tagged AS (
+    -- Session 433: Dedup pick_signal_tags to handle intermittent 2x row duplication.
+    -- Root cause: signal_annotator._write_rows() can append without DELETE on error.
+    -- ROW_NUMBER deduplicates per (game_date, player_lookup, system_id).
+    WITH deduped_pst AS (
+      SELECT * FROM (
+        SELECT *, ROW_NUMBER() OVER (
+          PARTITION BY game_date, player_lookup, system_id
+          ORDER BY evaluated_at DESC
+        ) AS _rn
+        FROM `{PROJECT_ID}.nba_predictions.pick_signal_tags`
+        WHERE game_date >= '2025-10-22'
+          AND game_date <= @target_date
+      )
+      WHERE _rn = 1
+    ),
+
+    tagged AS (
       SELECT
         pst.game_date,
         pst.player_lookup,
@@ -365,15 +393,13 @@ def compute_signal_health(
         signal_tag,
         pa.prediction_correct,
         pa.recommendation
-      FROM `{PROJECT_ID}.nba_predictions.pick_signal_tags` pst
+      FROM deduped_pst pst
       CROSS JOIN UNNEST(pst.signal_tags) AS signal_tag
       INNER JOIN `{PROJECT_ID}.nba_predictions.prediction_accuracy` pa
         ON pst.player_lookup = pa.player_lookup
         AND pst.game_date = pa.game_date
         AND pst.system_id = pa.system_id
-      WHERE pst.game_date >= '2025-10-22'
-        AND pst.game_date <= @target_date
-        AND pa.prediction_correct IS NOT NULL
+      WHERE pa.prediction_correct IS NOT NULL
         AND pa.is_voided IS NOT TRUE
     ),
 

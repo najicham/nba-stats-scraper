@@ -269,18 +269,23 @@ class SignalAnnotator:
         if not target_date:
             logger.error("Cannot determine game_date from rows, skipping delete")
         else:
+            # Session 433: Use parameterized query for safety.
+            # If DELETE fails, still proceed — signal_health.py deduplicates at read time.
             try:
-                delete_query = f"""
-                DELETE FROM `{TABLE_ID}`
-                WHERE game_date = '{target_date}'
-                """
-                delete_job = self.bq_client.query(delete_query)
+                delete_query = f"DELETE FROM `{TABLE_ID}` WHERE game_date = @target_date"
+                delete_config = bigquery.QueryJobConfig(
+                    query_parameters=[
+                        bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+                    ]
+                )
+                delete_job = self.bq_client.query(delete_query, job_config=delete_config)
                 delete_job.result(timeout=60)
-                logger.info(f"Deleted existing signal annotations for {target_date}")
+                deleted = delete_job.num_dml_affected_rows or 0
+                logger.info(f"Deleted {deleted} existing signal annotations for {target_date}")
             except Exception as e:
                 logger.warning(
                     f"Failed to delete existing annotations for {target_date}: {e}. "
-                    "Proceeding with append (may create duplicates)."
+                    "Proceeding with append (deduped at read time by signal_health.py)."
                 )
 
         try:

@@ -13,6 +13,10 @@ SESSION 406: Lowered MIN_EDGE 4.0 → 3.0. Edge 4.0 still too aggressive — onl
   0-1 OVER predictions per day at edge 4.0+ post-ASB. Minutes surge is the
   quality gate, not edge.
 
+SESSION 433: Raised MIN_EDGE 3.0 → 4.0. Edge 3.0 diluted quality — season HR
+  dropped from 95% (N=22 at edge 5+) to ~68%. Edge 4.0 restores quality while
+  keeping signal active post-ASB.
+
 See: docs/08-projects/current/signal-testing/SESSION-257-RESULTS.md
 """
 
@@ -22,9 +26,9 @@ from ml.signals.base_signal import BaseSignal, SignalResult
 
 class HighEdgeMinutesSurgeComboSignal(BaseSignal):
     tag = "combo_he_ms"
-    description = "Edge >= 3 + minutes surge >= 3 + OVER — two strong indicators aligned"
+    description = "Edge >= 4 + minutes surge >= 3 + OVER — two strong indicators aligned"
 
-    MIN_EDGE = 3.0
+    MIN_EDGE = 4.0
     MIN_SURGE = 3.0
 
     def evaluate(self, prediction: Dict,
@@ -34,7 +38,7 @@ class HighEdgeMinutesSurgeComboSignal(BaseSignal):
         if prediction.get('recommendation') != 'OVER':
             return self._no_qualify()
 
-        # Check edge >= 5
+        # Check edge >= 4
         edge = abs(prediction.get('edge') or 0)
         if edge < self.MIN_EDGE:
             return self._no_qualify()

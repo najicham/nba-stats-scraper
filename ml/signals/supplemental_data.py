@@ -734,6 +734,7 @@ def query_predictions_with_supplements(
     # Session 401/406: DvP data for dvp_favorable_over signal.
     # Session 406: rank column is NULL in BQ — compute from points_allowed.
     # Rank 1 = most points allowed (worst defender). Deduplicate scraper rows.
+    # Session 433: Fallback to gamebook self-computation when Hashtag unavailable.
     dvp_query = f"""
     WITH deduped AS (
       SELECT DISTINCT team, position, points_allowed
@@ -764,6 +765,50 @@ def query_predictions_with_supplements(
         logger.info(f"Loaded DvP data for {len(dvp_map)} teams")
     except Exception as e:
         logger.warning(f"Failed to query DvP data: {e}")
+
+    # Session 433: Fallback — self-compute DvP from gamebook when Hashtag
+    # is unavailable (SPOF mitigation). Uses last 30 days of opponent scoring.
+    # Only fires when primary Hashtag source returned 0 teams.
+    if len(dvp_map) == 0:
+        logger.warning("Hashtag DvP unavailable — falling back to gamebook self-computation")
+        dvp_fallback_query = f"""
+        WITH opponent_scoring AS (
+          SELECT
+            g.opponent_team_abbr AS defending_team,
+            g.points,
+          FROM `{PROJECT_ID}.nba_analytics.player_game_summary` g
+          WHERE g.game_date >= DATE_SUB(@target_date, INTERVAL 30 DAY)
+            AND g.game_date < @target_date
+            AND g.minutes > 0
+            AND g.points IS NOT NULL
+            AND (g.is_dnp IS NULL OR g.is_dnp = FALSE)
+        ),
+        team_defense AS (
+          SELECT
+            defending_team AS team,
+            'ALL' AS position,
+            ROUND(AVG(points), 1) AS points_allowed
+          FROM opponent_scoring
+          GROUP BY defending_team
+          HAVING COUNT(*) >= 30
+        )
+        SELECT team, position, points_allowed,
+          RANK() OVER (ORDER BY points_allowed DESC) AS rank
+        FROM team_defense
+        """
+        try:
+            fb_rows = bq_client.query(dvp_fallback_query, job_config=job_config).result(timeout=30)
+            for row in fb_rows:
+                team = row['team']
+                if team not in dvp_map:
+                    dvp_map[team] = {}
+                dvp_map[team][row['position']] = {
+                    'points_allowed': float(row['points_allowed']),
+                    'rank': int(row['rank']) if row['rank'] is not None else None,
+                }
+            logger.info(f"DvP fallback loaded for {len(dvp_map)} teams (from gamebook)")
+        except Exception as e:
+            logger.warning(f"DvP fallback query also failed: {e}")
 
     # Session 401: CLV tracking — opening vs closing line comparison.
     # Session 408: snapshot_type='closing' never populated.
