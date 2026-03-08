@@ -63,6 +63,37 @@ BASE_SIGNALS = frozenset({
     'blowout_recovery',   # Session 422: 20% BB HR (1-4), demoted — still fires for tracking
     'starter_under',      # Session 422: 38.7% signal HR (N=31), demoted
     'blowout_risk_under', # Session 422b: 16.7% HR (N=12), inflating SC on bad picks
+    'day_of_week_over',   # Session 436: 40% BB HR (N=15), on ALL 5 Mar 7 losers — noise
+    'predicted_pace_over',  # Session 436: 43% BB HR (N=21), fires on ~50% matchups — noise
+})
+
+# Session 436: Shadow signals fire and record to pick_signal_tags for validation
+# tracking, but MUST NOT count toward real_sc. 4 brainstorming agents independently
+# identified this as the #1 root cause of Mar 7 failure (1-5, all OVER).
+# Shadow signals inflated real_sc on bad picks (losers avg 5.8 vs winner 3.0).
+# Graduation: when a shadow signal reaches N >= 30 at BB level with HR >= 60%,
+# remove from this set and add to VALIDATED signals.
+SHADOW_SIGNALS = frozenset({
+    'projection_consensus_over',   # 0% BB HR (0-5) — catastrophic
+    'projection_consensus_under',  # Insufficient BB data
+    'positive_clv_over',           # 0% BB HR (0-1)
+    'positive_clv_under',          # Insufficient BB data
+    'hot_form_over',               # 0% BB HR (0-2) — catastrophic
+    'scoring_momentum_over',       # 0% BB HR (0-2) — catastrophic
+    'usage_surge_over',            # 75% HR (N=8) — promising but N too small
+    'career_matchup_over',         # 0% BB HR (0-1)
+    'consistent_scorer_over',      # 71.4% HR (N=7) — promising but N too small
+    'over_trend_over',             # Insufficient BB data
+    'minutes_load_over',           # Insufficient BB data
+    'bounce_back_over',            # Insufficient BB data
+    'sharp_money_over',            # No data yet
+    'sharp_money_under',           # No data yet
+    'minutes_surge_over',          # Permanently blocked (no RotoWire minutes)
+    'dvp_favorable_over',          # Insufficient BB data
+    'day_of_week_under',           # 33.3% HR (N=9) — bad start
+    'over_streak_reversion_under', # Insufficient BB data
+    'star_favorite_under',         # +0.7pp = noise (Session 427)
+    'starter_away_overtrend_under',  # Insufficient BB data
 })
 
 # Session 400: UNDER signal quality weights for signal-first ranking.
@@ -369,7 +400,8 @@ class BestBetsAggregator:
                     'combo_3way', 'combo_he_ms',
                     # book_disagreement removed Session 434: 47.4% HR (N=19), rescuing losers
                     'home_under',
-                    'volatile_scoring_over',
+                    # volatile_scoring_over removed Session 436: 0% BB HR, 20% overall.
+                    # Rescues bench players with high CV (trivially satisfied at low lines).
                     'high_scoring_environment_over',  # Session 420: restored (71.4% HR)
                     'sharp_book_lean_over',
                     # sharp_book_lean_under removed Session 431: zero production fires in 2026
@@ -820,11 +852,12 @@ class BestBetsAggregator:
             qualifying = [r for r in results if r.qualifies]
 
             tags = [r.source_tag for r in qualifying]
-            # Session 397: real_sc = non-base signal count. Base signals
-            # (model_health, high_edge, edge_spread_optimal) fire on ~100% of picks,
-            # inflating SC to 3 with zero discriminative power. real_sc measures
-            # actual signal support. SC=3 with only base signals = real_sc 0.
-            real_sc = len([t for t in tags if t not in BASE_SIGNALS])
+            # Session 397: real_sc = non-base, non-shadow signal count.
+            # Base signals fire on ~100% of picks, inflating SC with zero value.
+            # Session 436: Shadow signals are unvalidated and inflate real_sc on
+            # bad picks (Mar 7: losers avg 5.8 vs winner 3.0). Exclude both.
+            real_sc = len([t for t in tags
+                          if t not in BASE_SIGNALS and t not in SHADOW_SIGNALS])
 
             # Signal count gate: need at least base signals firing (SC >= 3)
             required_sc = self.MIN_SIGNAL_COUNT if pred_edge >= self.HIGH_EDGE_SC_THRESHOLD else self.MIN_SIGNAL_COUNT_LOW_EDGE
