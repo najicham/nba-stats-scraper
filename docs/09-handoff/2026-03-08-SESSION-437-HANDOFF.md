@@ -1,8 +1,8 @@
-# Session 437 Handoff — Signal Architecture Phases 2-3 + Volume Tier Analysis
+# Session 437 Handoff — Signal Architecture Phases 2-3 + Autopsy Tools + Volume Analysis
 
 **Date:** 2026-03-08
 **Session:** 437 (NBA focus)
-**Status:** Phases 2-3 DEPLOYED. Volume tier analysis COMPLETE. Mar 7 autopsy DONE.
+**Status:** Phases 2-3 DEPLOYED. Two autopsy tools built. Volume tier analysis COMPLETE.
 
 ---
 
@@ -60,10 +60,39 @@
 
 ---
 
+### 6. Full-Season Analysis (Option C)
+
+Ran comprehensive cross-day analysis (Jan 9 - Mar 7). Key findings:
+
+- **Performance degrading:** Jan +26.59 units (73.1% HR) → Feb +4.48 (57.1%) → Mar +0.74 (53.8%). OVER driving the decline (80% → 47%).
+- **Cover kings correctly filtered:** Top missed-cover players (DeRozan, KAT, Brunson) are high-variance with model edge < 3. Edge floor is working. **Exception: Wembanyama** at 70% model HR — worth monitoring.
+- **Worst BB picks:** Luka UNDER 3-7 (bias -5.2), Keyonte George OVER 1-3 (bias +7.8), Oubre OVER 2-4 (bias +8.2). Potential blacklist candidates.
+- **OVER edge 3-4 paradox:** Model HR 59.7% but BB HR 30.8% — selection layer anti-selects in this band. Phases 1-3 address this.
+- **Filter data only 5 days old** (Mar 3-8) — all filter findings preliminary.
+
+### 7. Two Autopsy Tools Built
+
+**`/season-autopsy`** — NEW (730 lines, 7 sections). Cross-day pattern mining:
+1. Monthly/weekly performance trajectory with trend detection
+2. Cover kings & trap players — who covers big, who we pick well/poorly
+3. Edge band, tier, game type, day-of-week performance splits
+4. Filter effectiveness deep dive with monthly consistency
+5. Signal win rate + rescue performance + signal pair synergies
+6. Profit leakage analysis (model vs BB HR gap by edge band)
+7. Synthesis with filter/signal/player recommendations
+
+Usage: `/season-autopsy` (full season) or `/season-autopsy 2026-02-01 2026-03-07` (range)
+
+**`/daily-autopsy`** — ENHANCED (+262 lines, now 1,135 lines, 7 sections):
+- Added Section 6: Player history context — prior BB track record for each pick, repeat cover king detection
+- Added Section 7: What would have changed — shadow signal audit, rescue audit, scenario comparison (actual vs edge 5+ vs non-rescued)
+
 ## Commits
 
 ```
 982aed0f feat: Phase 2-3 signal architecture — rescue redesign + OVER quality scoring
+59f8bbec docs: Session 437 handoff
+59980f11 feat: /season-autopsy skill + enhanced /daily-autopsy with player history & scenarios
 ```
 
 ---
@@ -85,27 +114,39 @@
 
 ## What to Do Next
 
-### Priority 1: Monitor Phase 2-3 Impact (Mar 9+)
+### Priority 1: Run the New Tools
 
-Run `/daily-autopsy` on Mar 9 to see if `v437_rescue_architecture` picks perform better. Key metrics:
+**Start here — get oriented with current system state:**
+```bash
+/daily-autopsy                    # Yesterday's autopsy (new Sections 6+7)
+/season-autopsy                   # Full season cross-day analysis
+/season-autopsy 2026-02-15 2026-03-07  # Focus on recent decline period
+```
+
+Review the `/season-autopsy` output for actionable filter/signal/player recommendations. The tool synthesizes findings into specific actions.
+
+### Priority 2: Monitor Phase 2-3 Impact (Mar 9+)
+
+Run `/daily-autopsy` on Mar 9+ to see if `v437_rescue_architecture` picks perform better. Key metrics:
 - **rescued pick count** — should decrease (combo_he_ms OVER blocked, health gate active)
 - **OVER real_sc** — should be lower (shadow signals excluded)
 - **OVER composite scores** — should show signal quality variation (not just edge)
 - **bias_regime_over_obs** count — how many picks would volume gate block
+- **algorithm_version** — should be `v437_rescue_architecture` (was `v429` on Mar 8 picks)
 
-### Priority 2: Filter Investigation (Accumulate Data)
+### Priority 3: Filter Investigation (Accumulate Data)
 
-Monitor weekly via `best_bets_filtered_picks`:
+Monitor weekly via `/season-autopsy` filter section:
 1. `line_jumped_under` CF HR — currently 100% (5-0). If stays above 60% at N >= 20, DEMOTE to observation.
 2. `over_edge_floor` CF HR at edge 3.5-4.0 — the 4.0 floor may be too high for this regime.
 3. Consider edge-gated filter bypass: edge 5+ → skip signal gates (except proven filters).
 
-### Priority 3: Phase 4 (2+ Weeks)
+### Priority 4: Phase 4 (2+ Weeks)
 
 - P9: Volatility-adjusted edge (z-score). Requires player variance data at ranking time.
 - P10: Prediction sanity check. Block predicted > 2x season avg on bench players.
 
-### Priority 4: "Engineer for Profit" — Other Ideas
+### Priority 5: "Engineer for Profit" — Other Ideas
 
 - **Single champion model** — all 145 model pairs r >= 0.95. Fleet = echo chamber.
 - **Learned rejection classifier** — ML model on pick outcomes replaces 29 hand-crafted filters.
@@ -127,16 +168,25 @@ Monitor weekly via `best_bets_filtered_picks`:
 ## Files Changed
 
 ```
+# Phase 2-3 signal architecture (aggregator)
 ml/signals/aggregator.py — RESCUE_SIGNAL_PRIORITY, RESCUE_MIN_HR_7D,
                            OVER_SIGNAL_WEIGHTS, OVER_QUALITY_WEIGHT,
                            combo_he_ms OVER rescue removal, rescue health gate,
                            rescue_cap priority sorting, OVER composite scoring,
                            bias_regime_over_obs, algorithm v437
 
-tests/unit/signals/test_aggregator.py — 10 new tests: rescue cap priority,
+# Tests
+tests/unit/signals/test_aggregator.py — 10 new tests (80 total): rescue cap priority,
                                          combo_he_ms OVER removal, rescue health gate,
                                          OVER signal quality scoring
 
+# Autopsy tools
+.claude/skills/season-autopsy/SKILL.md — NEW: 730-line cross-day pattern mining
+.claude/skills/daily-autopsy/SKILL.md — ENHANCED: +262 lines (1,135 total),
+                                         new Sections 6 (player history) + 7 (scenarios)
+
+# Project docs
 docs/08-projects/current/signal-architecture-redesign/00-PLAN.md — Phase status
                                          updates, volume tier analysis results
+docs/09-handoff/2026-03-08-SESSION-437-HANDOFF.md — This file
 ```
