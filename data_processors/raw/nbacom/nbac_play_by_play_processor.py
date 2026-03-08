@@ -14,6 +14,7 @@ from google.cloud import bigquery, storage
 from data_processors.raw.processor_base import ProcessorBase
 from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
 from shared.clients.bigquery_pool import get_bigquery_client
+from shared.utils.player_name_normalizer import normalize_name_for_lookup
 from shared.utils.notification_system import (
     notify_error,
     notify_warning,
@@ -78,15 +79,12 @@ class NbacPlayByPlayProcessor(SmartIdempotencyMixin, ProcessorBase):
         }
     
     def normalize_player_name(self, name: str) -> str:
-        """Normalize player name for cross-table joins."""
-        if not name:
-            return ""
-        
-        # Remove common suffixes and normalize
-        name = name.lower().strip()
-        name = re.sub(r'\s+(jr\.?|sr\.?|ii|iii|iv)$', '', name)
-        name = re.sub(r'[^a-z0-9]', '', name)
-        return name
+        """Normalize player name for cross-table joins.
+
+        Session 439: Delegate to shared normalizer for proper Unicode/diacritic
+        handling and consistent suffix normalization.
+        """
+        return normalize_name_for_lookup(name)
     
     def parse_game_clock(self, clock_str: str) -> Tuple[str, int, int]:
         """

@@ -13,6 +13,7 @@ from google.cloud import bigquery
 from data_processors.raw.processor_base import ProcessorBase
 from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
 from shared.utils.nba_team_mapper import NBATeamMapper
+from shared.utils.player_name_normalizer import normalize_name_for_lookup
 from shared.utils.notification_system import (
     notify_error,
     notify_warning,
@@ -59,18 +60,12 @@ class EspnBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
         self.raw_data = self.load_json_from_gcs()
 
     def normalize_player_name(self, name: str) -> str:
-        """Normalize player name for cross-source matching."""
-        if not name:
-            return ""
-        
-        # Convert to lowercase and remove special characters
-        normalized = name.lower().strip()
-        # Remove suffixes like Jr, Sr, II, III, IV
-        normalized = re.sub(r'\s+(jr\.?|sr\.?|ii+|iv|v)$', '', normalized)
-        # Remove all non-alphanumeric characters
-        normalized = re.sub(r'[^a-z0-9]', '', normalized)
-        
-        return normalized
+        """Normalize player name for cross-source matching.
+
+        Session 439: Delegate to shared normalizer for proper Unicode/diacritic
+        handling and consistent suffix normalization.
+        """
+        return normalize_name_for_lookup(name)
     
     def parse_minutes(self, minutes_str: str) -> str:
         """Parse and validate minutes string."""

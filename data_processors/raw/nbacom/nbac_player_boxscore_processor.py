@@ -13,6 +13,7 @@ from google.cloud import bigquery
 from data_processors.raw.processor_base import ProcessorBase
 from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
 from shared.utils.nba_team_mapper import NBATeamMapper
+from shared.utils.player_name_normalizer import normalize_name_for_lookup
 from shared.utils.notification_system import (
     notify_error,
     notify_warning,
@@ -115,13 +116,15 @@ class NbacPlayerBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
         self.games_found = set()
     
     def normalize_player_name(self, name: str) -> str:
-        """Normalize player names for cross-source matching."""
-        if not name:
-            return ""
-        normalized = name.lower().strip()
-        normalized = re.sub(r'\s+(jr\.?|sr\.?|ii+|iv|v)$', '', normalized, flags=re.IGNORECASE)
-        normalized = re.sub(r'[^a-z0-9]', '', normalized)
-        return normalized
+        """Normalize player names for cross-source matching.
+
+        Session 439: Delegate to shared normalizer for proper Unicode/diacritic
+        handling and consistent suffix normalization (Jr/Sr/II/III).
+        Previous local implementation missed diacritics (Jokić→joki instead of
+        jokic) and stripped suffixes (Porter Jr.→porter instead of porterjr),
+        creating 40+ duplicate player_lookup values.
+        """
+        return normalize_name_for_lookup(name)
     
     def safe_int(self, value) -> Optional[int]:
         """Safely convert value to int."""

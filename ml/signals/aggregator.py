@@ -51,7 +51,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v438_base_signals_zscore'
+ALGORITHM_VERSION = 'v439_depleted_roster_obs'
 
 # Base signals that fire on nearly every edge 5+ pick. Picks with ONLY
 # these signals hit 57.1% (N=42) vs 77.8% for picks with 4+ signals.
@@ -332,6 +332,7 @@ class BestBetsAggregator:
             'blowout_risk_under_block_obs': 0,
             'bias_regime_over_obs': 0,
             'prediction_sanity_obs': 0,
+            'depleted_stars_over_obs': 0,
         }
 
         # Session 393: Counterfactual tracking — log filtered-out picks so we
@@ -901,6 +902,19 @@ class BestBetsAggregator:
                 _record_filtered(pred, 'prediction_sanity_obs', pred_edge)
                 # Observation mode — do NOT continue/filter
 
+            # Session 439: Depleted roster OVER observation.
+            # When 3+ star teammates are OUT, BB OVER = 0% HR (N=4), model-level = 48.2% (N=137).
+            # Depleted rosters have worse overall offense — volume boost doesn't materialize
+            # for remaining players. Bench/role players on skeleton crews score well below line.
+            # At stars_out=2: BB OVER = 50% (N=12), model = 49.2% (N=708) — borderline.
+            # Starting in observation to accumulate data before promoting.
+            own_stars_out = pred.get('star_teammates_out') or 0
+            if (pred.get('recommendation') == 'OVER'
+                    and own_stars_out >= 3):
+                filter_counts['depleted_stars_over_obs'] += 1
+                _record_filtered(pred, 'depleted_stars_over_obs', pred_edge)
+                # Observation mode — do NOT continue/filter
+
             # Session 421: Feature-based unreliable high-edge observation.
             # Wrong OVER fingerprint: edge 5+ + low minutes_load (<45).
             # Wrong UNDER fingerprint: edge 5+ + high minutes_load (>58) + flat trend.
@@ -1240,6 +1254,13 @@ class BestBetsAggregator:
                 f"Blowout risk UNDER block (observation): tagged "
                 f"{filter_counts['blowout_risk_under_block_obs']} UNDER picks with "
                 f"blowout_risk >= 0.40 (16.7% HR N=12)"
+            )
+
+        if filter_counts['depleted_stars_over_obs'] > 0:
+            logger.info(
+                f"Depleted stars OVER (observation): tagged "
+                f"{filter_counts['depleted_stars_over_obs']} OVER picks with 3+ star teammates OUT "
+                f"(BB 0% N=4, model 48.2% N=137)"
             )
 
         # Session 421: Tier edge cap observation summary

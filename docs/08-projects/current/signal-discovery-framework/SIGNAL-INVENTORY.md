@@ -213,6 +213,7 @@ Three new UNDER signals to fill the UNDER signal vacuum. 98.4% of model-level UN
 | `unreliable_over_low_mins_obs` | OVER + edge 5+ + minutes_load_7d < 45 | — | 421 | Wrong OVER fingerprint during toxic window. |
 | `unreliable_under_flat_trend_obs` | UNDER + edge 5+ + minutes_load > 58 + flat trend | — | 421 | Wrong UNDER fingerprint during toxic window. |
 | `blowout_risk_under_block_obs` | UNDER + blowout_risk >= 0.40 + line >= 15 | 16.7% (N=12) | 423 | Blowout benching → players get pulled → OVER. |
+| `depleted_stars_over_obs` | OVER + star_teammates_out >= 3 | BB 0% (N=4), model 48.2% (N=137) | 439 | Skeleton crew = team offense degrades, volume boost doesn't materialize. |
 | `public_fade_filter` | 80%+ public tickets OVER | — | 404 | VSiN data accumulating |
 | `negative_clv_filter` | CLV contradicts pick direction | — | 401 | CLV data accumulating |
 

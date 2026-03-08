@@ -132,6 +132,7 @@ class TestAggregatorReturnType:
             'mid_line_over_obs', 'monday_over_obs', 'home_over_obs',
             'signal_stack_2plus_obs', 'rescue_cap', 'rescue_health_gate',
             'bias_regime_over_obs', 'prediction_sanity_obs',
+            'depleted_stars_over_obs',
             'unreliable_over_low_mins_obs', 'unreliable_under_flat_trend_obs',
             'b2b_under_block', 'blowout_risk_under_block_obs',
         }
@@ -1466,3 +1467,46 @@ class TestEdgeZscore:
         picks, _ = agg.aggregate([pred], signals)
         assert len(picks) == 1
         assert picks[0]['edge_zscore'] == 0.5
+
+
+class TestDepletedStarsOverObservation:
+    """Session 439: Depleted roster OVER observation filter.
+
+    When 3+ star teammates are OUT, BB OVER = 0% HR (N=4), model = 48.2% (N=137).
+    The volume boost expected by the model doesn't materialize because the entire
+    team offense degrades on skeleton crews.
+    """
+
+    def _make_signals_for(self, pred, n=5):
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        signals = [_make_signal_result(f'signal_{i}') for i in range(n)]
+        return {key: signals}
+
+    def test_depleted_stars_over_does_not_block(self):
+        """Observation mode: pick with 3+ stars out should still pass (not blocked)."""
+        pred = _make_prediction(edge=6.0, recommendation='OVER', line_value=15.0)
+        pred['star_teammates_out'] = 3
+        signals = self._make_signals_for(pred)
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 1  # NOT blocked — observation only
+        assert summary['rejected']['depleted_stars_over_obs'] == 1  # But counted
+
+    def test_depleted_stars_over_not_triggered_at_two(self):
+        """stars_out=2 should NOT trigger the observation (threshold is 3)."""
+        pred = _make_prediction(edge=6.0, recommendation='OVER', line_value=15.0)
+        pred['star_teammates_out'] = 2
+        signals = self._make_signals_for(pred)
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 1
+        assert summary['rejected']['depleted_stars_over_obs'] == 0
+
+    def test_depleted_stars_under_not_triggered(self):
+        """UNDER picks should never trigger depleted_stars_over_obs."""
+        pred = _make_prediction(edge=6.0, recommendation='UNDER', line_value=27.0)
+        pred['star_teammates_out'] = 4
+        signals = self._make_signals_for(pred)
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert summary['rejected']['depleted_stars_over_obs'] == 0

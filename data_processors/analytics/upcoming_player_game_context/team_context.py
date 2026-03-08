@@ -713,11 +713,15 @@ class TeamContextCalculator:
 
         Star criteria (last 10 games, season avg fallback):
         - Average points >= 18 PPG OR
-        - Average minutes >= 28 MPG OR
-        - Usage rate >= 25%
+        - (Average minutes >= 28 MPG AND average points >= 12 PPG)
+        Requires >= 10 games played to qualify.
 
         Session 374: Added season avg fallback for long-term injuries.
         INTERVAL 10 DAY missed players out 10+ days (Giannis 27 PPG, Tatum, Morant).
+        Session 439: Tightened criteria — removed usage >= 25% (inflated by
+        garbage-time players: Mo Bamba 52.7% usage in 3 MPG). Added games >= 10
+        floor and pts >= 12 guard on 28 MPG (catches defensive specialists like
+        Herb Jones 8.9 PPG/28.8 MPG). Reduces false stars from 50 to ~0.
 
         Args:
             team_abbr: Team abbreviation (e.g., 'LAL')
@@ -761,21 +765,30 @@ class TeamContextCalculator:
                     player_lookup,
                     AVG(points) as avg_points,
                     AVG(minutes_played) as avg_minutes,
-                    AVG(usage_rate) as avg_usage
+                    AVG(usage_rate) as avg_usage,
+                    COUNT(*) as games_played
                 FROM `{self.project_id}.nba_analytics.player_game_summary`
                 WHERE game_date >= '2025-10-22'
                   AND game_date < @game_date
                   AND team_abbr = @team_abbr
+                  AND (is_dnp IS NULL OR is_dnp = FALSE)
+                  AND minutes_played > 0
                 GROUP BY player_lookup
             ),
             star_players AS (
+                -- Session 439: Tightened star criteria.
+                -- Removed usage >= 25% (garbage-time inflation).
+                -- Added pts >= 12 guard on 28 MPG and games >= 10 floor.
                 SELECT s.player_lookup
                 FROM player_season_stats s
                 INNER JOIN team_roster r ON s.player_lookup = r.player_lookup
                 LEFT JOIN player_recent_stats rs ON rs.player_lookup = s.player_lookup
-                WHERE COALESCE(rs.avg_points, s.avg_points) >= 18
-                   OR COALESCE(rs.avg_minutes, s.avg_minutes) >= 28
-                   OR COALESCE(rs.avg_usage, s.avg_usage) >= 25
+                WHERE s.games_played >= 10
+                  AND (
+                    COALESCE(rs.avg_points, s.avg_points) >= 18
+                    OR (COALESCE(rs.avg_minutes, s.avg_minutes) >= 28
+                        AND COALESCE(rs.avg_points, s.avg_points) >= 12)
+                  )
             ),
             injured_players AS (
                 SELECT DISTINCT player_lookup
@@ -852,16 +865,20 @@ class TeamContextCalculator:
                 GROUP BY player_lookup
             ),
             -- Session 374: Season avg fallback (same fix as get_star_teammates_out)
+            -- Session 439: Tightened criteria (same as get_star_teammates_out)
             player_season_stats AS (
                 SELECT
                     player_lookup,
                     AVG(points) as avg_points,
                     AVG(minutes_played) as avg_minutes,
-                    AVG(usage_rate) as avg_usage
+                    AVG(usage_rate) as avg_usage,
+                    COUNT(*) as games_played
                 FROM `{self.project_id}.nba_analytics.player_game_summary`
                 WHERE game_date >= '2025-10-22'
                   AND game_date < @game_date
                   AND team_abbr = @team_abbr
+                  AND (is_dnp IS NULL OR is_dnp = FALSE)
+                  AND minutes_played > 0
                 GROUP BY player_lookup
             ),
             star_players AS (
@@ -869,9 +886,12 @@ class TeamContextCalculator:
                 FROM player_season_stats s
                 INNER JOIN team_roster r ON s.player_lookup = r.player_lookup
                 LEFT JOIN player_recent_stats rs ON rs.player_lookup = s.player_lookup
-                WHERE COALESCE(rs.avg_points, s.avg_points) >= 18
-                   OR COALESCE(rs.avg_minutes, s.avg_minutes) >= 28
-                   OR COALESCE(rs.avg_usage, s.avg_usage) >= 25
+                WHERE s.games_played >= 10
+                  AND (
+                    COALESCE(rs.avg_points, s.avg_points) >= 18
+                    OR (COALESCE(rs.avg_minutes, s.avg_minutes) >= 28
+                        AND COALESCE(rs.avg_points, s.avg_points) >= 12)
+                  )
             ),
             questionable_players AS (
                 SELECT DISTINCT player_lookup
