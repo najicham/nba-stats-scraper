@@ -86,7 +86,8 @@ Found that `signal_best_bets_picks.system_id` is the sourcing model (e.g., `lgbm
 ## Commits
 
 ```
-<to be filled after commit>
+4f7fb25a docs: Session 435b handoff — league macro + post_grading integration + docs
+9a6891bc fix: OVER edge floor raised 3.0 → 4.0 — BB OVER 3-4 was 33.3% HR
 ```
 
 ---
