@@ -1,30 +1,33 @@
 """MLB Signal Best Bets Exporter — regressor-based pipeline.
 
-Pipeline (v4 regressor — unified, no season phases):
+Pipeline (v5 cross-season validated — Session 443):
   1. Load predictions for game_date
   1b. Overconfidence cap: edge > MAX_EDGE (2.0) blocked
   1c. Probability cap: p_over > MAX_PROB_OVER (0.85) blocked (relaxed for regressor)
   2. Apply direction filter (OVER + optional UNDER via env var)
   3. Apply negative filters (bullpen, il_return, pitch_count, insufficient_data,
-     pitcher_blacklist, bad_opponent, bad_venue)
+     pitcher_blacklist, whole_line_over)
   4. Apply edge floor (DEFAULT_EDGE_FLOOR = 0.75 K) — with signal rescue
   5. Evaluate all active + shadow signals
   6. Gate: signal_count >= 2 (OVER) or >= 3 (UNDER, higher bar)
-  7. Rank: OVER by edge, UNDER by signal quality
+  7. Rank: OVER by pure edge (composite scoring fails cross-season validation)
   8. Build pick angles (human-readable reasoning)
   9. Write to mlb_predictions.signal_best_bets_picks
  10. Write filter audit to mlb_predictions.best_bets_filter_audit
 
-Regressor transition (Session 441):
-  - Unified edge floor 0.75 K (regressor sweet spot, no phase logic)
-  - Probability cap relaxed to 0.85 (p_over is derived, not native)
-  - 3 new negative filters: pitcher_blacklist, bad_opponent, bad_venue
-  - 3 new positive signals: projection_agrees, home_pitcher, long_rest
+Session 443 changes (11-agent cross-season validation):
+  - Pitcher blacklist expanded 10 → 18 (validated bad pitchers)
+  - Whole-number line filter added (49% HR vs 58.6% half-lines, p<0.001)
+  - bad_opponent/bad_venue demoted to observation (cross-season r=-0.29)
+  - DOW filter removed (confirmed noise)
+  - Pure edge ranking confirmed optimal (composite scoring fails cross-season)
+  - CatBoost Regressor defaults confirmed (hyperparameter sweep: defaults win)
+  - Ensembles rejected (CatBoost solo outperforms all ensembles)
 """
 
 import logging
 import os
-from datetime import datetime, date, timezone
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 from ml.signals.mlb.registry import build_mlb_registry, MLBSignalRegistry
 from ml.signals.mlb.base_signal import MLBSignalResult
@@ -57,19 +60,6 @@ MAX_PROB_OVER = float(os.environ.get('MLB_MAX_PROB_OVER', '0.85'))
 # Daily pick limit — truncate ranked picks to this count
 # Walk-forward (Session 438b): Top-3 at prob 0.60-0.70 = 63.1% HR, +20.4% ROI, zero losing months
 MAX_PICKS_PER_DAY = int(os.environ.get('MLB_MAX_PICKS_PER_DAY', '3'))
-
-# Day-of-week filter (Session 435 hypothesized Mon+Thu+Sat = 86% HR).
-# Session 436 DEBUNKED: base rates identical (48.8% vs 48.8%). DOW was a
-# walk-forward artifact. Real proxy is slate size (fewer pitchers = better top-1).
-# Kept as shadow-only tracking — DO NOT enable as hard filter.
-DOW_FILTER_DAYS = os.environ.get('MLB_DOW_FILTER', 'Mon,Thu,Sat,Sun')
-DOW_FILTER_ENABLED = os.environ.get('MLB_DOW_FILTER_ENABLED', 'false').lower() == 'true'
-
-# Map day names to weekday numbers (Monday=0)
-_DOW_MAP = {'Mon': 0, 'Tue': 1, 'Wed': 2, 'Thu': 3, 'Fri': 4, 'Sat': 5, 'Sun': 6}
-DOW_FILTER_SET = frozenset(
-    _DOW_MAP[d.strip()] for d in DOW_FILTER_DAYS.split(',') if d.strip() in _DOW_MAP
-) if DOW_FILTER_DAYS else frozenset()
 
 # Minimum real signal count for best bets (OVER)
 MIN_SIGNAL_COUNT = 2
@@ -378,58 +368,11 @@ class MLBBestBetsExporter:
             logger.info(f"[MLB BB] Trimming {trimmed} picks to daily limit of {MAX_PICKS_PER_DAY}")
             ranked_picks = ranked_picks[:MAX_PICKS_PER_DAY]
 
-        # 6c. Day-of-week filter (Session 435: Mon+Thu+Sat = 86% HR)
-        gd = date.fromisoformat(game_date)
-        dow = gd.weekday()  # Monday=0
-        dow_name = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][dow]
-        dow_favorable = dow in DOW_FILTER_SET if DOW_FILTER_SET else True
-
-        for pick in ranked_picks:
-            pick['dow'] = dow_name
-            pick['dow_favorable'] = dow_favorable
-
-        if DOW_FILTER_SET:
-            if DOW_FILTER_ENABLED and not dow_favorable:
-                # Hard filter: block all picks on unfavorable days
-                for pick in ranked_picks:
-                    self.filter_audit.append({
-                        'game_date': game_date,
-                        'pitcher_lookup': pick.get('pitcher_lookup', ''),
-                        'system_id': pick.get('system_id', 'unknown'),
-                        'filter_name': 'dow_filter',
-                        'filter_result': 'BLOCKED',
-                        'filter_reason': f'{dow_name} not in favorable DOW set ({DOW_FILTER_DAYS})',
-                        'recommendation': pick.get('recommendation'),
-                        'edge': pick.get('edge'),
-                        'line_value': pick.get('strikeouts_line'),
-                    })
-                logger.info(f"[MLB BB] DOW filter BLOCKED all {len(ranked_picks)} picks "
-                            f"({dow_name} not in {DOW_FILTER_DAYS})")
-                ranked_picks = []
-            elif not dow_favorable:
-                # Shadow mode: log but don't block
-                logger.info(f"[MLB BB] DOW filter SHADOW: {dow_name} not in favorable set "
-                            f"({DOW_FILTER_DAYS}) — {len(ranked_picks)} picks would be blocked")
-                for pick in ranked_picks:
-                    self.filter_audit.append({
-                        'game_date': game_date,
-                        'pitcher_lookup': pick.get('pitcher_lookup', ''),
-                        'system_id': pick.get('system_id', 'unknown'),
-                        'filter_name': 'dow_filter_shadow',
-                        'filter_result': 'SHADOW_BLOCK',
-                        'filter_reason': f'{dow_name} not in favorable DOW set ({DOW_FILTER_DAYS})',
-                        'recommendation': pick.get('recommendation'),
-                        'edge': pick.get('edge'),
-                        'line_value': pick.get('strikeouts_line'),
-                    })
-            else:
-                logger.info(f"[MLB BB] DOW filter: {dow_name} is favorable — picks pass")
-
         for i, pick in enumerate(ranked_picks, 1):
             pick['rank'] = i
 
         # 7. Build pick angles + stamp algorithm version
-        algo_version = f'mlb_v4_regressor_top{MAX_PICKS_PER_DAY}'
+        algo_version = f'mlb_v5_cross_validated_top{MAX_PICKS_PER_DAY}'
         for pick in ranked_picks:
             pick['pick_angles'] = self._build_pick_angles(pick)
             pick['algorithm_version'] = algo_version
@@ -563,8 +506,6 @@ class MLBBestBetsExporter:
                 'signal_rescued': pick.get('signal_rescued', False),
                 'rescue_signal': pick.get('rescue_signal'),
                 'under_signal_quality': pick.get('under_signal_quality'),
-                'dow': pick.get('dow'),
-                'dow_favorable': pick.get('dow_favorable'),
                 'created_at': now,
             })
 

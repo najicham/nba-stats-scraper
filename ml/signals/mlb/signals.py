@@ -1,4 +1,4 @@
-"""MLB Pitcher Strikeout Signals — 14 active + 6 shadow + 7 negative filters.
+"""MLB Pitcher Strikeout Signals — 14 active + 6 shadow + 6 negative filters + 2 observation.
 
 Active Signals (14):
   high_edge                       — Edge >= 1.0 K (base signal)
@@ -24,14 +24,17 @@ Shadow Signals (6):
   catcher_framing_over  — Elite catcher framing
   pitch_count_limit_under — Documented pitch count cap
 
-Negative Filters (7):
+Negative Filters (6):
   bullpen_game_skip     — Opener/bullpen game detected
   il_return_skip        — First start from IL
   pitch_count_cap_skip  — Under-only: documented pitch count cap
   insufficient_data_skip — < 3 career starts
-  pitcher_blacklist     — Block pitchers with <45% HR (Session 441)
-  bad_opponent_over     — Block OVER vs low-K opponents KC/MIA/CWS (Session 441)
-  bad_venue_over        — Block OVER at K-unfriendly venues (Session 441)
+  pitcher_blacklist     — Block pitchers with <45% HR (Session 443, expanded to 18)
+  whole_line_over       — Block OVER on whole-number lines (Session 443, +9.6pp structural)
+
+Observation Filters (2) — log but don't block, cross-season unstable:
+  bad_opponent_over_obs — OVER vs low-K opponents (Session 443: r=-0.29 cross-season)
+  bad_venue_over_obs    — OVER at K-unfriendly venues (Session 443: confounded with team)
 """
 
 from typing import Dict, Optional
@@ -590,17 +593,37 @@ class InsufficientDataFilter(BaseMLBSignal):
 
 class PitcherBlacklistFilter(BaseMLBSignal):
     """Block pitchers with historically poor OVER performance.
-    Walk-forward: blocked picks at 36.4% HR -> +2.2pp lift."""
+    Walk-forward regressor: blocked picks at 37.5% HR -> +3.1pp lift.
+
+    Session 443 deep dive: Expanded from 10 to 18 pitchers.
+    Removed: freddy_peralta (54.5%), tyler_glasnow (66.7%), paul_skenes (61.9%),
+             hunter_greene (46.2%), yusei_kikuchi (51.9%), jose_soriano (no data).
+    Added: 12 new pitchers with <45% HR at N >= 10 in regressor walk-forward.
+    """
     tag = "pitcher_blacklist"
-    description = "Pitcher on blacklist (walk-forward <45% HR at edge >= 1.0)"
+    description = "Pitcher on blacklist (walk-forward <45% HR at edge >= 0.75)"
     direction = "OVER"
     is_negative_filter = True
 
-    # Pitchers with <45% HR at edge >= 1.0, N >= 8 in walk-forward
+    # Session 443: Regressor walk-forward validated, <45% HR at N >= 10
     BLACKLIST = frozenset([
-        'freddy_peralta', 'tyler_glasnow', 'tanner_bibee', 'mitchell_parker',
-        'hunter_greene', 'yusei_kikuchi', 'casey_mize', 'paul_skenes',
-        'jose_soriano', 'mitch_keller',
+        # Kept from original (confirmed bad in regressor data)
+        'tanner_bibee', 'mitchell_parker', 'casey_mize', 'mitch_keller',
+        # New additions (Session 443 pitcher deep dive + filter optimization)
+        'logan_webb',          # 37.5% HR, N=24
+        'jose_berrios',        # 38.1% HR, N=21
+        'logan_gilbert',       # 38.5% HR, N=26
+        'logan_allen',         # 36.2% HR, N=47
+        'jake_irvin',          # 33.3% HR, N=15
+        'george_kirby',        # 40.0% HR, N=25
+        'mackenzie_gore',      # 40.9% HR, N=22
+        'bailey_ober',         # 40.0% HR, N=20
+        'zach_eflin',          # 30.0% HR, N=10
+        'ryne_nelson',         # 30.8% HR, N=13
+        'jameson_taillon',     # 33.3% HR, N=12
+        'ryan_feltner',        # 33.3% HR, N=12
+        'luis_severino',       # 42.1% HR, N=19
+        'randy_vasquez',       # 27.8% HR, N=18
     ])
 
     def evaluate(self, prediction: Dict,
@@ -615,15 +638,52 @@ class PitcherBlacklistFilter(BaseMLBSignal):
         return self._no_qualify()
 
 
-class BadOpponentFilter(BaseMLBSignal):
-    """Block OVER against low-K opponents.
-    Walk-forward: KC/MIA/CWS = 44-46% HR -> +1.7pp lift."""
-    tag = "bad_opponent_over"
-    description = "Opponent team has low K rate (walk-forward <48% OVER HR)"
+class WholeLineOverFilter(BaseMLBSignal):
+    """Block OVER on whole-number strikeout lines (X.0).
+
+    Session 443: Whole-number lines have 17.3% push rate (actual == line = OVER loss).
+    Half-lines: 58.6% OVER HR vs Whole-lines: 49.0% (-9.6pp). p < 0.001.
+    Effect is structural (integer K counts), consistent across both seasons,
+    independent of pitcher/opponent/venue. 75% of blocks are unique (not caught
+    by other filters). Incremental +1.6pp after existing filters.
+    """
+    tag = "whole_line_over"
+    description = "Whole-number K line has high push rate (49% OVER HR, p<0.001)"
     direction = "OVER"
     is_negative_filter = True
 
-    BAD_OPPONENTS = frozenset(['KC', 'MIA', 'CWS'])
+    def evaluate(self, prediction: Dict,
+                 features: Optional[Dict] = None,
+                 supplemental: Optional[Dict] = None) -> MLBSignalResult:
+        if prediction.get('recommendation') != 'OVER':
+            return self._no_qualify()
+        line = prediction.get('strikeouts_line')
+        if line is None:
+            return self._no_qualify()
+        # Check if line is a whole number (X.0)
+        if line == int(line):
+            push_rates = {3.0: 26.2, 4.0: 20.4, 5.0: 10.1, 6.0: 14.6, 7.0: 25.9}
+            push_pct = push_rates.get(float(line), 17.3)
+            return self._qualify(
+                confidence=0.9,
+                reason=f'Whole-number line {line:.0f}.0 — {push_pct:.0f}% push rate (structural)',
+            )
+        return self._no_qualify()
+
+
+class BadOpponentObservationFilter(BaseMLBSignal):
+    """OBSERVATION: OVER vs low-K opponents. Logs but does not block.
+
+    Session 443: Cross-season opponent HR is ANTI-CORRELATED (r=-0.29).
+    Static opponent lists go stale within a season. KC improved from 40%
+    to 51% between 2024 and 2025. Demoted from active filter to observation.
+    """
+    tag = "bad_opponent_over_obs"
+    description = "OBSERVATION: Opponent low K rate (cross-season r=-0.29, unstable)"
+    direction = "OVER"
+    is_shadow = True  # Shadow = observation, logs but doesn't block
+
+    BAD_OPPONENTS = frozenset(['KC', 'MIA'])
 
     def evaluate(self, prediction: Dict,
                  features: Optional[Dict] = None,
@@ -632,21 +692,25 @@ class BadOpponentFilter(BaseMLBSignal):
             return self._no_qualify()
         opp = prediction.get('opponent_team_abbr', '')
         if opp in self.BAD_OPPONENTS:
-            return self._qualify(confidence=0.7,
-                                 reason=f'vs {opp} (walk-forward <48% OVER HR)')
+            return self._qualify(confidence=0.5,
+                                 reason=f'OBS: vs {opp} (cross-season unstable, r=-0.29)')
         return self._no_qualify()
 
 
-class BadVenueFilter(BaseMLBSignal):
-    """Block OVER at K-unfriendly venues.
-    Walk-forward: 42-47% HR at these parks -> +0.5pp lift."""
-    tag = "bad_venue_over"
-    description = "K-unfriendly venue (walk-forward <48% OVER HR)"
+class BadVenueObservationFilter(BaseMLBSignal):
+    """OBSERVATION: OVER at K-unfriendly venues. Logs but does not block.
+
+    Session 443: Venue effects are confounded with home team quality.
+    Variance attribution: eta-squared ~0.006 (not significant, p=0.13).
+    Demoted from active filter to observation.
+    """
+    tag = "bad_venue_over_obs"
+    description = "OBSERVATION: K-unfriendly venue (confounded with team, p=0.13)"
     direction = "OVER"
-    is_negative_filter = True
+    is_shadow = True  # Shadow = observation, logs but doesn't block
 
     BAD_VENUES = frozenset([
-        'loanDepot park', 'Rate Field', 'Sutter Health Park', 'Busch Stadium',
+        'loanDepot park', 'Guaranteed Rate Field', 'Progressive Field', 'Nationals Park',
     ])
 
     def evaluate(self, prediction: Dict,
@@ -656,8 +720,8 @@ class BadVenueFilter(BaseMLBSignal):
             return self._no_qualify()
         venue = prediction.get('venue', '') or (features or {}).get('venue', '')
         if venue in self.BAD_VENUES:
-            return self._qualify(confidence=0.6,
-                                 reason=f'{venue} (walk-forward <48% OVER HR)')
+            return self._qualify(confidence=0.4,
+                                 reason=f'OBS: {venue} (confounded with team, eta²=0.006)')
         return self._no_qualify()
 
 

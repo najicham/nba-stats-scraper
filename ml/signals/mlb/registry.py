@@ -1,7 +1,7 @@
 """MLB Signal Registry — discovers and instantiates all MLB signal classes.
 
 Ports the NBA ml/signals/registry.py pattern for MLB pitcher strikeouts.
-14 active signals + 6 shadow signals + 7 negative filters.
+14 active signals + 8 shadow/observation signals + 6 negative filters.
 """
 
 from typing import Dict, List
@@ -58,21 +58,22 @@ def build_mlb_registry() -> MLBSignalRegistry:
         RegressorProjectionAgreesSignal,
         HomePitcherSignal,
         LongRestSignal,
-        # Shadow signals (6)
+        # Shadow signals (6) + observation filters (2)
         LineMovementOverSignal,
         WeatherColdUnderSignal,
         PlatoonAdvantageSignal,
         AcePitcherOverSignal,
         CatcherFramingOverSignal,
         PitchCountLimitUnderSignal,
-        # Negative filters (7)
+        BadOpponentObservationFilter,
+        BadVenueObservationFilter,
+        # Negative filters (6)
         BullpenGameFilter,
         ILReturnFilter,
         PitchCountCapFilter,
         InsufficientDataFilter,
         PitcherBlacklistFilter,
-        BadOpponentFilter,
-        BadVenueFilter,
+        WholeLineOverFilter,
     )
 
     registry = MLBSignalRegistry()
@@ -96,22 +97,23 @@ def build_mlb_registry() -> MLBSignalRegistry:
     registry.register(LongRestSignal())
 
     # Shadow signals (6) — accumulate data, don't affect picks yet
-    # Need 30+ days of data before promotion to active (NBA lesson)
     registry.register(LineMovementOverSignal())
     registry.register(WeatherColdUnderSignal())
     registry.register(PlatoonAdvantageSignal())
     registry.register(AcePitcherOverSignal())
     registry.register(CatcherFramingOverSignal())
     registry.register(PitchCountLimitUnderSignal())
+    # Observation filters (2) — demoted from active (Session 443, cross-season unstable)
+    registry.register(BadOpponentObservationFilter())
+    registry.register(BadVenueObservationFilter())
 
-    # Negative filters (7) — block picks
+    # Negative filters (6) — block picks
     registry.register(BullpenGameFilter())
     registry.register(ILReturnFilter())
     registry.register(PitchCountCapFilter())
     registry.register(InsufficientDataFilter())
-    # Regressor-transition filters (Session 441)
     registry.register(PitcherBlacklistFilter())
-    registry.register(BadOpponentFilter())
-    registry.register(BadVenueFilter())
+    # Session 443: Whole-number line filter (p<0.001, +9.6pp structural edge)
+    registry.register(WholeLineOverFilter())
 
     return registry

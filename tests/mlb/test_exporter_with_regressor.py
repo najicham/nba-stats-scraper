@@ -145,7 +145,7 @@ class TestExporterNegativeFilters:
         exporter = MLBBestBetsExporter(bq_client=MagicMock())
 
         pred = _make_prediction(
-            pitcher_lookup='freddy_peralta',
+            pitcher_lookup='tanner_bibee',
             edge=1.2,
             predicted_strikeouts=6.7,
             strikeouts_line=5.5,
@@ -154,7 +154,7 @@ class TestExporterNegativeFilters:
         result = exporter.export(
             predictions=[pred],
             game_date='2026-06-15',
-            features_by_pitcher={'freddy_peralta': _make_features_for_signals()},
+            features_by_pitcher={'tanner_bibee': _make_features_for_signals()},
             dry_run=True,
         )
 
@@ -168,16 +168,16 @@ class TestExporterNegativeFilters:
         ]
         assert len(blacklist_audits) == 1
 
-    def test_bad_opponent_blocks(self):
-        """Prediction vs KC should be blocked by bad_opponent filter."""
+    def test_whole_line_blocks(self):
+        """OVER prediction on whole-number line (5.0) should be blocked.
+        Session 443: Whole lines have 17.3% push rate, 49% OVER HR (p<0.001)."""
         exporter = MLBBestBetsExporter(bq_client=MagicMock())
 
         pred = _make_prediction(
             pitcher_lookup='good_pitcher',
             edge=1.2,
-            predicted_strikeouts=6.7,
-            strikeouts_line=5.5,
-            opponent_team_abbr='KC',
+            predicted_strikeouts=6.2,
+            strikeouts_line=5.0,  # Whole number line
         )
 
         result = exporter.export(
@@ -187,48 +187,41 @@ class TestExporterNegativeFilters:
             dry_run=True,
         )
 
-        # Should be blocked by bad_opponent_over filter
+        # Should be blocked by whole_line_over filter
         assert len(result) == 0
 
-        bad_opp_audits = [
+        whole_line_audits = [
             a for a in exporter.filter_audit
-            if a.get('filter_name') == 'bad_opponent_over'
+            if a.get('filter_name') == 'whole_line_over'
                and a.get('filter_result') == 'BLOCKED'
         ]
-        assert len(bad_opp_audits) == 1
+        assert len(whole_line_audits) == 1
 
-    def test_bad_venue_blocks(self):
-        """Prediction at loanDepot park should be blocked by bad_venue filter."""
+    def test_half_line_passes(self):
+        """OVER prediction on half-line (5.5) should NOT be blocked by whole-line filter."""
         exporter = MLBBestBetsExporter(bq_client=MagicMock())
 
-        # BadVenueFilter checks prediction.get('venue') and features.get('venue')
         pred = _make_prediction(
-            pitcher_lookup='venue_pitcher',
+            pitcher_lookup='good_pitcher',
             edge=1.2,
             predicted_strikeouts=6.7,
-            strikeouts_line=5.5,
-            venue='loanDepot park',
+            strikeouts_line=5.5,  # Half-line — no push risk
         )
-
-        features = _make_features_for_signals()
-        features['venue'] = 'loanDepot park'
 
         result = exporter.export(
             predictions=[pred],
             game_date='2026-06-15',
-            features_by_pitcher={'venue_pitcher': features},
+            features_by_pitcher={'good_pitcher': _make_features_for_signals()},
             dry_run=True,
         )
 
-        # Should be blocked by bad_venue_over filter
-        assert len(result) == 0
-
-        bad_venue_audits = [
+        # Half-line should pass through (may still be blocked by signal gate)
+        whole_line_blocks = [
             a for a in exporter.filter_audit
-            if a.get('filter_name') == 'bad_venue_over'
+            if a.get('filter_name') == 'whole_line_over'
                and a.get('filter_result') == 'BLOCKED'
         ]
-        assert len(bad_venue_audits) == 1
+        assert len(whole_line_blocks) == 0
 
 
 class TestExporterPositiveSignals:
@@ -311,19 +304,18 @@ class TestExporterIntegration:
             ),
             # Pitcher 2: Blacklisted — should be blocked
             _make_prediction(
-                pitcher_lookup='freddy_peralta',
+                pitcher_lookup='tanner_bibee',
                 edge=1.5,
                 predicted_strikeouts=7.0,
                 strikeouts_line=5.5,
                 p_over=0.72,
             ),
-            # Pitcher 3: vs KC (bad opponent) — should be blocked
+            # Pitcher 3: Whole-number line — should be blocked by whole_line_over
             _make_prediction(
                 pitcher_lookup='unlucky_pitcher',
                 edge=1.3,
                 predicted_strikeouts=6.8,
-                strikeouts_line=5.5,
-                opponent_team_abbr='KC',
+                strikeouts_line=5.0,  # Whole number = push risk
                 p_over=0.69,
             ),
             # Pitcher 4: Home pitcher, good signals — should survive
@@ -347,7 +339,7 @@ class TestExporterIntegration:
         # Features for signal-firing pitchers (enough signals to pass gate)
         features_by_pitcher = {
             'ace_pitcher': _make_features_for_signals(),
-            'freddy_peralta': _make_features_for_signals(),
+            'tanner_bibee': _make_features_for_signals(),
             'unlucky_pitcher': _make_features_for_signals(),
             'home_ace': _make_features_for_signals(),
             'overconfident_pitcher': _make_features_for_signals(),
@@ -367,8 +359,8 @@ class TestExporterIntegration:
 
         # Verify blocked pitchers are NOT in result
         result_pitchers = {p['pitcher_lookup'] for p in result}
-        assert 'freddy_peralta' not in result_pitchers, "Blacklisted pitcher should be blocked"
-        assert 'unlucky_pitcher' not in result_pitchers, "Bad opponent pitcher should be blocked"
+        assert 'tanner_bibee' not in result_pitchers, "Blacklisted pitcher should be blocked"
+        assert 'unlucky_pitcher' not in result_pitchers, "Whole-line pitcher should be blocked"
         assert 'overconfident_pitcher' not in result_pitchers, "Overconfident pitcher should be blocked"
 
         # Verify surviving picks have required fields
