@@ -211,6 +211,39 @@ class MlbPitcherGameSummaryProcessor(CircuitBreakerMixin, AnalyticsProcessorBase
             FROM team_daily_k_rates
         ),
 
+        -- Schedule data for day/night games (Session 438)
+        schedule_info AS (
+            SELECT
+                game_date as sched_game_date,
+                home_team_abbr as sched_home_team,
+                away_team_abbr as sched_away_team,
+                CASE WHEN day_night = 'day' THEN TRUE ELSE FALSE END as is_day_game
+            FROM `{self.project_id}.{self.raw_dataset}.mlb_schedule`
+            WHERE game_date = '{date_str}'
+        ),
+
+        -- Ballpark K factor from historical data (Session 438)
+        -- Rolling average of K/IP ratio per venue over last 2 seasons
+        venue_k_factors AS (
+            SELECT
+                venue as vkf_venue,
+                SAFE_DIVIDE(
+                    AVG(strikeouts),
+                    AVG(innings_pitched) * AVG(k_per_9) / 9
+                ) as ballpark_k_factor
+            FROM (
+                SELECT venue, strikeouts, innings_pitched,
+                    AVG(strikeouts) OVER (PARTITION BY player_lookup ORDER BY game_date ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING) * 9 /
+                    NULLIF(AVG(innings_pitched) OVER (PARTITION BY player_lookup ORDER BY game_date ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING), 0) as k_per_9
+                FROM `{self.project_id}.{self.raw_dataset}.mlb_pitcher_stats`
+                WHERE game_date BETWEEN DATE_SUB('{date_str}', INTERVAL 2 YEAR) AND DATE_SUB('{date_str}', INTERVAL 1 DAY)
+                  AND innings_pitched >= 3.0 AND is_starter = TRUE
+            )
+            WHERE k_per_9 IS NOT NULL AND k_per_9 > 0
+            GROUP BY venue
+            HAVING COUNT(*) >= 20
+        ),
+
         -- FanGraphs season stats for SwStr% (leading indicator)
         fangraphs_stats AS (
             SELECT DISTINCT
@@ -235,6 +268,10 @@ class MlbPitcherGameSummaryProcessor(CircuitBreakerMixin, AnalyticsProcessorBase
 
                 -- Opponent team K rate (rolling 15g from batter stats, Session 438)
                 COALESCE(tkr.rolling_k_rate_15g, 0.22) as opponent_team_k_rate,
+
+                -- Day/night and ballpark (Session 438)
+                si.is_day_game,
+                COALESCE(vkf.ballpark_k_factor, 1.0) as ballpark_k_factor,
 
                 -- FanGraphs season-level SwStr% (join by player + season)
                 fg.swstr_pct as season_swstr_pct,
@@ -390,6 +427,14 @@ class MlbPitcherGameSummaryProcessor(CircuitBreakerMixin, AnalyticsProcessorBase
             LEFT JOIN team_rolling_k_rates tkr
                 ON tkr.tkr_game_date = h.game_date
                 AND tkr.tkr_team_abbr = h.opponent_team_abbr
+            LEFT JOIN schedule_info si
+                ON si.sched_game_date = h.game_date
+                AND (
+                    (h.is_home = TRUE AND si.sched_home_team = h.team_abbr)
+                    OR (h.is_home = FALSE AND si.sched_away_team = h.team_abbr)
+                )
+            LEFT JOIN venue_k_factors vkf
+                ON vkf.vkf_venue = h.venue
         )
 
         SELECT
@@ -403,10 +448,12 @@ class MlbPitcherGameSummaryProcessor(CircuitBreakerMixin, AnalyticsProcessorBase
 
             -- Game context
             is_home,
+            is_day_game,         -- Session 438: from schedule
             is_postseason,
             venue,
             game_status,
             win as win_flag,
+            ROUND(ballpark_k_factor, 3) as ballpark_k_factor,  -- Session 438: from venue history
 
             -- Actual performance (TARGET!)
             strikeouts,
