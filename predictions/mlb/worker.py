@@ -67,7 +67,7 @@ health_checker = HealthChecker(
     service_name='mlb-prediction-worker',
     version='1.0'
 )
-app.register_blueprint(create_health_blueprint(health_checker))
+app.register_blueprint(create_health_blueprint(service_name='mlb-prediction-worker', health_checker=health_checker))
 logger.info("Health check endpoints registered: /health, /ready, /health/deep")
 
 # Initialize AlertManager (with backfill mode detection)
