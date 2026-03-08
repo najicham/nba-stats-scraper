@@ -196,6 +196,10 @@ NBA_SCRAPER_REGISTRY: Dict[str, Tuple[str, str]] = {
         "scrapers.projections.dimers_projections",
         "DimersProjectionsScraper"
     ),
+    "espn_projections": (
+        "scrapers.projections.espn_projections",
+        "ESPNProjectionsScraper"
+    ),
 
     # ========================================================================
     # External Data Scrapers (7 total) - Session 401
@@ -483,6 +487,7 @@ SCRAPER_GROUPS = {
         "fantasypros_projections",
         "dailyfantasyfuel_projections",
         "dimers_projections",
+        "espn_projections",
     ],
     "external": [
         "teamrankings_stats",

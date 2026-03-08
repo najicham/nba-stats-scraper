@@ -104,6 +104,7 @@ from data_processors.raw.external.nba_tracking_processor import NBATrackingStats
 from data_processors.raw.external.vsin_betting_splits_processor import VSiNBettingSplitsProcessor
 from data_processors.raw.projections.dailyfantasyfuel_processor import DailyFantasyFuelProjectionsProcessor
 from data_processors.raw.projections.dimers_processor import DimersProjectionsProcessor
+from data_processors.raw.projections.espn_processor import ESPNProjectionsProcessor
 
 # Import MLB processors
 from data_processors.raw.mlb import (
@@ -180,6 +181,7 @@ PROCESSOR_REGISTRY = {
     'external/vsin/betting-splits': VSiNBettingSplitsProcessor,
     'projections/dailyfantasyfuel': DailyFantasyFuelProjectionsProcessor,
     'projections/dimers': DimersProjectionsProcessor,
+    'projections/espn': ESPNProjectionsProcessor,
 
     # ============================
     # MLB Processors

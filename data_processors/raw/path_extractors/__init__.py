@@ -53,6 +53,7 @@ from .external_extractors import (
     VSiNBettingSplitsExtractor,
     DailyFantasyFuelProjectionsExtractor,
     DimersProjectionsExtractor,
+    ESPNProjectionsExtractor,
 )
 from .mlb_extractors import (
     MLBBDLStatsExtractor,
@@ -124,6 +125,7 @@ def create_registry() -> ExtractorRegistry:
     registry.register(VSiNBettingSplitsExtractor())
     registry.register(DailyFantasyFuelProjectionsExtractor())
     registry.register(DimersProjectionsExtractor())
+    registry.register(ESPNProjectionsExtractor())
 
     # MLB extractors
     registry.register(MLBBDLStatsExtractor())

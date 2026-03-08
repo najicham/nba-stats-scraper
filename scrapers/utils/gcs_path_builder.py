@@ -108,6 +108,9 @@ class GCSPathBuilder:
         "dailyfantasyfuel_projections": "projections/dailyfantasyfuel/%(date)s/%(timestamp)s.json",
         "dimers_projections": "projections/dimers/%(date)s/%(timestamp)s.json",
 
+        # ESPN Fantasy Projections (Session 434)
+        "espn_projections": "projections/espn/%(date)s/%(timestamp)s.json",
+
         # External Data Sources (Session 401)
         "teamrankings_team_stats": "external/teamrankings/%(date)s/%(timestamp)s.json",
         "hashtagbasketball_dvp": "external/hashtagbasketball/dvp/%(date)s/%(timestamp)s.json",

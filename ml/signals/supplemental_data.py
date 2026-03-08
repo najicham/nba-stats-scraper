@@ -678,10 +678,12 @@ def query_predictions_with_supplements(
     # Compare external projected_points to prop line to count how many sources
     # agree with each direction. 1+ source above line + OVER = aligned signal.
     # Session 407: Switched to single-source mode (NumberFire only).
+    # Session 434: Added ESPN Fantasy projections as second source (shadow validation).
     # - FantasyPros EXCLUDED: Dead (Playwright timeout, wrong data type — DFS season totals)
     # - Dimers EXCLUDED: Page shows generic projections, NOT game-date-specific
     # - DFF EXCLUDED: Only provides DraftKings fantasy points (FPTS)
     # NumberFire (via FanDuel Research GraphQL) provides 120+ valid per-game projections.
+    # ESPN Fantasy provides season-average per-game projections for ~500 players.
     projection_query = f"""
     WITH nf AS (
       SELECT REPLACE(player_lookup, '-', '') AS player_lookup, projected_points,
@@ -689,14 +691,23 @@ def query_predictions_with_supplements(
       FROM `{PROJECT_ID}.nba_raw.numberfire_projections`
       WHERE game_date = @target_date AND projected_points IS NOT NULL
         AND projected_points BETWEEN 5 AND 60
+    ),
+    espn AS (
+      SELECT REPLACE(player_lookup, '-', '') AS player_lookup, projected_points,
+        ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY scraped_at DESC) AS rn
+      FROM `{PROJECT_ID}.nba_raw.espn_projections`
+      WHERE game_date = @target_date AND projected_points IS NOT NULL
+        AND projected_points BETWEEN 5 AND 60
     )
     SELECT
-      nf.player_lookup,
+      COALESCE(nf.player_lookup, espn.player_lookup) AS player_lookup,
       nf.projected_points AS nf_projected_points,
       CAST(NULL AS FLOAT64) AS fp_projected_points,
-      CAST(NULL AS FLOAT64) AS dm_projected_points
+      CAST(NULL AS FLOAT64) AS dm_projected_points,
+      espn.projected_points AS espn_projected_points
     FROM nf
-    WHERE rn = 1
+    FULL OUTER JOIN espn ON nf.player_lookup = espn.player_lookup AND espn.rn = 1
+    WHERE nf.rn = 1 OR (nf.player_lookup IS NULL AND espn.rn = 1)
     """
     projection_map = {}
     try:
@@ -708,8 +719,9 @@ def query_predictions_with_supplements(
                 # DFF excluded: only has DFS fantasy points, not real NBA points
                 'dailyfantasyfuel': None,
                 'dimers': float(row['dm_projected_points']) if row['dm_projected_points'] is not None else None,
+                'espn': float(row['espn_projected_points']) if row['espn_projected_points'] is not None else None,
             }
-        logger.info(f"Loaded projection data for {len(projection_map)} players from NumberFire (single-source mode)")
+        logger.info(f"Loaded projection data for {len(projection_map)} players from NumberFire + ESPN")
     except Exception as e:
         logger.warning(f"Failed to query projection consensus data: {e}")
 
@@ -1235,7 +1247,8 @@ def query_predictions_with_supplements(
         sbl = sharp_lean_map.get(row_dict['player_lookup'])
         pred['sharp_book_lean'] = float(sbl) if sbl is not None else None
 
-        # Session 401/403: Projection consensus data (4 sources)
+        # Session 401/403: Projection consensus data (5 sources)
+        # Session 434: Added ESPN Fantasy projections as fifth source
         proj_data = projection_map.get(row_dict['player_lookup'])
         if proj_data:
             line = float(pred.get('line_value') or 0)
@@ -1243,15 +1256,17 @@ def query_predictions_with_supplements(
             fp_pts = proj_data.get('fantasypros')
             dff_pts = proj_data.get('dailyfantasyfuel')
             dm_pts = proj_data.get('dimers')
+            espn_pts = proj_data.get('espn')
             pred['numberfire_projected_points'] = nf_pts
             pred['fantasypros_projected_points'] = fp_pts
             pred['dailyfantasyfuel_projected_points'] = dff_pts
             pred['dimers_projected_points'] = dm_pts
+            pred['espn_projected_points'] = espn_pts
 
             sources_above = 0
             sources_below = 0
             total_sources = 0
-            for pts in [nf_pts, fp_pts, dff_pts, dm_pts]:
+            for pts in [nf_pts, fp_pts, dff_pts, dm_pts, espn_pts]:
                 if pts is not None and line > 0:
                     total_sources += 1
                     if pts > line:

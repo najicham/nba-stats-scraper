@@ -236,3 +236,25 @@ class DimersProjectionsExtractor(PathExtractor):
         except (ValueError, IndexError) as e:
             logger.warning(f"Could not extract from Dimers path: {path}: {e}")
         return {}
+
+
+class ESPNProjectionsExtractor(PathExtractor):
+    """Extract options from ESPN projections paths."""
+
+    PATTERN = re.compile(r'projections/espn/')
+
+    def matches(self, path: str) -> bool:
+        return bool(self.PATTERN.search(path))
+
+    def extract(self, path: str) -> dict:
+        """
+        Extract from path: projections/espn/{date}/{timestamp}.json
+        """
+        parts = path.split('/')
+        try:
+            idx = parts.index('espn')
+            if idx + 1 < len(parts):
+                return {'game_date': parts[idx + 1]}
+        except (ValueError, IndexError) as e:
+            logger.warning(f"Could not extract from ESPN path: {path}: {e}")
+        return {}

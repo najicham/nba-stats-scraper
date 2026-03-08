@@ -1,0 +1,80 @@
+[
+  {
+    "name": "game_date",
+    "type": "DATE",
+    "mode": "REQUIRED",
+    "description": "Date the projections are for"
+  },
+  {
+    "name": "player_name",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Player full name from ESPN"
+  },
+  {
+    "name": "player_lookup",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Normalized player name for matching (lowercase, no spaces)"
+  },
+  {
+    "name": "team",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "NBA team abbreviation (standard tricode)"
+  },
+  {
+    "name": "position",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Player position (PG, SG, SF, PF, C)"
+  },
+  {
+    "name": "projected_points",
+    "type": "FLOAT64",
+    "mode": "NULLABLE",
+    "description": "Projected points per game (season total / projected games)"
+  },
+  {
+    "name": "projected_minutes",
+    "type": "FLOAT64",
+    "mode": "NULLABLE",
+    "description": "Projected minutes per game"
+  },
+  {
+    "name": "projected_rebounds",
+    "type": "FLOAT64",
+    "mode": "NULLABLE",
+    "description": "Projected rebounds per game"
+  },
+  {
+    "name": "projected_assists",
+    "type": "FLOAT64",
+    "mode": "NULLABLE",
+    "description": "Projected assists per game"
+  },
+  {
+    "name": "espn_player_id",
+    "type": "INT64",
+    "mode": "NULLABLE",
+    "description": "ESPN internal player ID"
+  },
+  {
+    "name": "source_file_path",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "GCS path of source file"
+  },
+  {
+    "name": "scraped_at",
+    "type": "TIMESTAMP",
+    "mode": "NULLABLE",
+    "description": "When the data was scraped"
+  },
+  {
+    "name": "processed_at",
+    "type": "TIMESTAMP",
+    "mode": "NULLABLE",
+    "description": "When the data was processed into BigQuery"
+  }
+]

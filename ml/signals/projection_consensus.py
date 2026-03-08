@@ -2,15 +2,18 @@
 
 Session 401/403: Originally designed as multi-source consensus (2+ sources agree).
 Session 407: Switched to single-source mode using NumberFire only.
+Session 434: Added ESPN Fantasy projections as second source (shadow validation).
 
 Sources:
-  - NumberFire/FanDuel: FanDuel Research GraphQL projections (120+ players/day) ✅
+  - NumberFire/FanDuel: FanDuel Research GraphQL projections (120+ players/day)
+  - ESPN Fantasy: Season-average per-game projections (~500 players/day, shadow)
   - FantasyPros: EXCLUDED — Dead (Playwright timeout, wrong data type: DFS season totals)
   - Dimers: EXCLUDED — Page shows generic projections, NOT game-date-specific
   - DailyFantasyFuel: EXCLUDED — only provides DraftKings fantasy points (FPTS)
 
 NumberFire uses regression ensembles with different feature weights — genuinely
-orthogonal to our CatBoost models.
+orthogonal to our CatBoost models. ESPN provides season-average projections as a
+fallback when NumberFire is unavailable.
 
 Signals:
   - projection_consensus_over: Model says OVER AND 1+ projection above line
@@ -18,8 +21,7 @@ Signals:
   - projection_consensus_under: Model says UNDER AND 1+ projection below line
   - projection_disagreement: Model says OVER but 0 projections agree (needs 2+ sources)
 
-Single-source mode: MIN_SOURCES lowered to 1. When a second reliable source
-becomes available, raise back to 2.
+MIN_SOURCES remains at 1 — ESPN needs shadow validation before raising to 2.
 """
 
 from typing import Dict, Optional
@@ -68,6 +70,7 @@ class ProjectionConsensusOverSignal(BaseSignal):
                 'fantasypros_proj': prediction.get('fantasypros_projected_points'),
                 'dailyfantasyfuel_proj': prediction.get('dailyfantasyfuel_projected_points'),
                 'dimers_proj': prediction.get('dimers_projected_points'),
+                'espn_proj': prediction.get('espn_projected_points'),
             }
         )
 
@@ -112,6 +115,7 @@ class ProjectionConsensusUnderSignal(BaseSignal):
                 'fantasypros_proj': prediction.get('fantasypros_projected_points'),
                 'dailyfantasyfuel_proj': prediction.get('dailyfantasyfuel_projected_points'),
                 'dimers_proj': prediction.get('dimers_projected_points'),
+                'espn_proj': prediction.get('espn_projected_points'),
             }
         )
 
@@ -157,5 +161,6 @@ class ProjectionDisagreementFilter(BaseSignal):
                 'fantasypros_proj': prediction.get('fantasypros_projected_points'),
                 'dailyfantasyfuel_proj': prediction.get('dailyfantasyfuel_projected_points'),
                 'dimers_proj': prediction.get('dimers_projected_points'),
+                'espn_proj': prediction.get('espn_projected_points'),
             }
         )
