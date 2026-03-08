@@ -934,6 +934,7 @@ class PredictionDataLoader:
             vegas_quality_pct,
             game_context_quality_pct,
             default_feature_count,
+            required_default_count,
             default_feature_indices,
             is_training_ready
         FROM `{project}.{predictions_dataset}.ml_feature_store_v2`
@@ -1038,6 +1039,7 @@ class PredictionDataLoader:
                 features['vegas_quality_pct'] = float(getattr(row, 'vegas_quality_pct', 0) or 0)
                 features['game_context_quality_pct'] = float(getattr(row, 'game_context_quality_pct', 0) or 0)
                 features['default_feature_count'] = int(getattr(row, 'default_feature_count', 0) or 0)
+                features['required_default_count'] = int(getattr(row, 'required_default_count', 0) or 0)
                 features['default_feature_indices'] = list(getattr(row, 'default_feature_indices', None) or [])
                 features['is_training_ready'] = getattr(row, 'is_training_ready', None) or False
 
