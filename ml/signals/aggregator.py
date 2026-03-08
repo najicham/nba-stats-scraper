@@ -51,7 +51,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v437_rescue_architecture'
+ALGORITHM_VERSION = 'v438_base_signals_zscore'
 
 # Base signals that fire on nearly every edge 5+ pick. Picks with ONLY
 # these signals hit 57.1% (N=42) vs 77.8% for picks with 4+ signals.
@@ -65,6 +65,8 @@ BASE_SIGNALS = frozenset({
     'blowout_risk_under', # Session 422b: 16.7% HR (N=12), inflating SC on bad picks
     'day_of_week_over',   # Session 436: 40% BB HR (N=15), on ALL 5 Mar 7 losers — noise
     'predicted_pace_over',  # Session 436: 43% BB HR (N=21), fires on ~50% matchups — noise
+    'low_line_over',        # Session 438: 20% BB HR (1-4), 50% model HR — confirmed anti-signal
+    'prop_line_drop_over',  # Session 438: 57.9% BB HR (11-19) — below 60% graduation, inflating real_sc
 })
 
 # Session 436: Shadow signals fire and record to pick_signal_tags for validation
@@ -329,6 +331,7 @@ class BestBetsAggregator:
             'b2b_under_block': 0,
             'blowout_risk_under_block_obs': 0,
             'bias_regime_over_obs': 0,
+            'prediction_sanity_obs': 0,
         }
 
         # Session 393: Counterfactual tracking — log filtered-out picks so we
@@ -885,6 +888,19 @@ class BestBetsAggregator:
                 _record_filtered(pred, 'home_over_obs', pred_edge)
                 # Observation mode — do NOT continue/filter
 
+            # Session 438 P10: Prediction sanity check (observation mode).
+            # Flag predictions where predicted_points > 2x season avg on
+            # bench/role players (line < 18). Catches model artifacts from
+            # sparse training data on low-volume players.
+            predicted_pts = pred.get('predicted_points') or 0
+            if (predicted_pts > 0
+                    and season_avg > 0
+                    and line_val < 18
+                    and predicted_pts > 2 * season_avg):
+                filter_counts['prediction_sanity_obs'] += 1
+                _record_filtered(pred, 'prediction_sanity_obs', pred_edge)
+                # Observation mode — do NOT continue/filter
+
             # Session 421: Feature-based unreliable high-edge observation.
             # Wrong OVER fingerprint: edge 5+ + low minutes_load (<45).
             # Wrong UNDER fingerprint: edge 5+ + high minutes_load (>58) + flat trend.
@@ -1054,6 +1070,13 @@ class BestBetsAggregator:
                 capped_composite = composite_score
                 tier_cap_delta = 0.0
 
+            # Session 438 P9: Volatility-adjusted edge z-score (observation).
+            # Normalizes edge by player scoring variance. A 4-point edge
+            # on a volatile player (std=8, z=0.5) is less meaningful than
+            # on a consistent player (std=3, z=1.33).
+            pts_std = pred.get('points_std_last_10') or 0
+            edge_zscore = round(pred_edge / max(pts_std, 1.0), 4)
+
             # Qualifying subsets (Session 279)
             player_subsets = self._qualifying_subsets.get(key, [])
             subsets_for_storage = [
@@ -1087,6 +1110,7 @@ class BestBetsAggregator:
                 'agreeing_model_ids': agreeing_model_ids,
                 'qualifying_subsets': subsets_for_storage,
                 'qualifying_subset_count': len(subsets_for_storage),
+                'edge_zscore': edge_zscore,
                 'algorithm_version': ALGORITHM_VERSION,
             })
 

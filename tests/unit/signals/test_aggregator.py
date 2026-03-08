@@ -131,7 +131,7 @@ class TestAggregatorReturnType:
             'under_after_streak', 'under_after_bad_miss',
             'mid_line_over_obs', 'monday_over_obs', 'home_over_obs',
             'signal_stack_2plus_obs', 'rescue_cap', 'rescue_health_gate',
-            'bias_regime_over_obs',
+            'bias_regime_over_obs', 'prediction_sanity_obs',
             'unreliable_over_low_mins_obs', 'unreliable_under_flat_trend_obs',
             'b2b_under_block', 'blowout_risk_under_block_obs',
         }
@@ -1365,3 +1365,104 @@ class TestOverSignalQualityScoring:
         assert len(picks) == 1
         assert picks[0]['under_signal_quality'] is not None
         assert picks[0]['over_signal_quality'] is None
+
+
+class TestBaseSignalsAntiSignals:
+    """Session 438: Verify low_line_over and prop_line_drop_over are in BASE_SIGNALS."""
+
+    def test_low_line_over_in_base_signals(self):
+        """low_line_over confirmed anti-signal (20% BB HR). Must not inflate real_sc."""
+        from ml.signals.aggregator import BASE_SIGNALS
+        assert 'low_line_over' in BASE_SIGNALS
+
+    def test_prop_line_drop_over_in_base_signals(self):
+        """prop_line_drop_over below 60% graduation threshold. Must not inflate real_sc."""
+        from ml.signals.aggregator import BASE_SIGNALS
+        assert 'prop_line_drop_over' in BASE_SIGNALS
+
+    def test_base_signals_excluded_from_real_sc(self):
+        """Picks with only base signals should have real_sc=0 and get filtered."""
+        pred = _make_prediction(edge=5.0, line_value=27.0)
+        base_tags = ['model_health', 'high_edge', 'edge_spread_optimal',
+                     'low_line_over', 'prop_line_drop_over']
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        signals = {key: [_make_signal_result(t) for t in base_tags]}
+        agg = BestBetsAggregator()
+        picks, _ = agg.aggregate([pred], signals)
+        # Should be filtered out because real_sc < 3
+        assert len(picks) == 0
+
+
+class TestPredictionSanityObservation:
+    """Session 438 P10: Prediction sanity check observation filter."""
+
+    def test_sanity_obs_does_not_block(self):
+        """Sanity observation should record but NOT block picks."""
+        pred = _make_prediction(
+            edge=6.0,
+            line_value=15.0,         # role player (< 18 threshold for sanity)
+            points_avg_season=8.0,   # 8 pts avg
+            is_home=False,           # avoid home_over_obs
+        )
+        pred['predicted_points'] = 21.0  # 2.625x season avg — triggers sanity
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        # 5 real signals to pass all gates
+        signals = {key: [_make_signal_result(f'real_signal_{i}') for i in range(5)]}
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        # Pick should still pass (observation only, sanity doesn't block)
+        assert len(picks) == 1
+        assert summary['rejected']['prediction_sanity_obs'] == 1
+
+    def test_sanity_obs_not_triggered_for_stars(self):
+        """Sanity check should NOT trigger for star players (line >= 18)."""
+        pred = _make_prediction(
+            edge=5.0,
+            line_value=25.0,         # star — above 18 threshold
+            points_avg_season=12.0,
+        )
+        pred['predicted_points'] = 30.0  # 2.5x but line >= 18 so no trigger
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        signals = {key: [_make_signal_result(f'real_signal_{i}') for i in range(5)]}
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], signals)
+        assert len(picks) == 1
+        assert summary['rejected']['prediction_sanity_obs'] == 0
+
+
+class TestEdgeZscore:
+    """Session 438 P9: Volatility-adjusted edge z-score."""
+
+    def _make_signals_for(self, pred):
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        return {key: [_make_signal_result(f'real_signal_{i}') for i in range(5)]}
+
+    def test_zscore_computed(self):
+        """edge_zscore should appear on scored picks."""
+        pred = _make_prediction(edge=6.0, line_value=27.0)
+        pred['points_std_last_10'] = 4.0  # z = 6.0 / 4.0 = 1.5
+        signals = self._make_signals_for(pred)
+        agg = BestBetsAggregator()
+        picks, _ = agg.aggregate([pred], signals)
+        assert len(picks) == 1
+        assert picks[0]['edge_zscore'] == 1.5
+
+    def test_zscore_floors_std_at_one(self):
+        """When std is 0 or missing, floor at 1.0 to avoid div-by-zero."""
+        pred = _make_prediction(edge=6.0, line_value=27.0)
+        pred['points_std_last_10'] = 0  # should floor to 1.0
+        signals = self._make_signals_for(pred)
+        agg = BestBetsAggregator()
+        picks, _ = agg.aggregate([pred], signals)
+        assert len(picks) == 1
+        assert picks[0]['edge_zscore'] == 6.0  # 6.0 / 1.0
+
+    def test_high_variance_low_zscore(self):
+        """High variance player should have low z-score despite decent edge."""
+        pred = _make_prediction(edge=4.0, line_value=27.0)
+        pred['points_std_last_10'] = 8.0  # z = 4.0 / 8.0 = 0.5
+        signals = self._make_signals_for(pred)
+        agg = BestBetsAggregator()
+        picks, _ = agg.aggregate([pred], signals)
+        assert len(picks) == 1
+        assert picks[0]['edge_zscore'] == 0.5
