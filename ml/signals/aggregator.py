@@ -421,12 +421,10 @@ class BestBetsAggregator:
                     f"rescued by {rescue_signal}"
                 )
 
-            # Session 378→419: OVER edge floor. Originally 5.0 based on stale 25%
-            # HR (1-3, pre-filter-stack). Post-ASB edge 3-5 OVER = 67.6% (N=105).
-            # CF: 87.5% (7-1) blocked winners. Specific OVER filters (friday,
-            # high_spread, mid_line, high_skew) already catch bad OVER categories.
-            # Lowered to 3.0 (effectively MIN_EDGE) — the blanket floor is redundant.
-            over_floor = 3.0  # Session 419: lowered from 5.0
+            # Session 435: BB OVER edge 3-4 = 33.3% HR (4-12). Signal rescue
+            # bypasses floor and picks losers. 4.0+ = 68.3% HR. 5.0+ = 68.5%
+            # but kills volume. 4.0 is the sweet spot.
+            over_floor = 4.0  # Session 435: raised from 3.0 (was 5.0 pre-419)
             regime_delta = self._regime_context.get('over_edge_floor_delta', 0)
             if pred.get('recommendation') == 'OVER' and pred_edge < over_floor and not signal_rescued:
                 filter_counts['over_edge_floor'] += 1
@@ -956,7 +954,7 @@ class BestBetsAggregator:
         if filter_counts.get('signal_rescue', 0) > 0:
             logger.info(f"Signal rescue: rescued {filter_counts['signal_rescue']} picks below edge floor via high-HR signals")
         if filter_counts['over_edge_floor'] > 0:
-            logger.info(f"OVER edge floor (3.0): skipped {filter_counts['over_edge_floor']} OVER picks with edge < 3.0")
+            logger.info(f"OVER edge floor (4.0): skipped {filter_counts['over_edge_floor']} OVER picks with edge < 4.0")
         if filter_counts['under_edge_7plus'] > 0:
             logger.info(f"UNDER edge 7+ block: skipped {filter_counts['under_edge_7plus']} predictions")
         if filter_counts['model_direction_affinity'] > 0:
@@ -1018,7 +1016,7 @@ class BestBetsAggregator:
                 f"{filter_counts['model_profile_would_block']} predictions"
             )
         if filter_counts['regime_over_floor'] > 0:
-            over_floor = 3.0 + self._regime_context.get('over_edge_floor_delta', 0)
+            over_floor = 4.0 + self._regime_context.get('over_edge_floor_delta', 0)
             logger.info(
                 f"Regime OVER floor ({over_floor}): skipped "
                 f"{filter_counts['regime_over_floor']} OVER picks "
