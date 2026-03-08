@@ -1,10 +1,13 @@
-"""MLB Signal Best Bets Exporter — port of NBA signal_best_bets_exporter.py.
+"""MLB Signal Best Bets Exporter — regressor-based pipeline.
 
-Pipeline:
+Pipeline (v4 regressor — unified, no season phases):
   1. Load predictions for game_date
-  2. Apply direction filter (OVER-only until UNDER signals validated)
-  3. Apply negative filters (bullpen_game, il_return, pitch_count_cap, insufficient_data)
-  4. Apply edge floor (phase-aware: Phase 1 = 2.0, Phase 2 = 1.0) — with signal rescue
+  1b. Overconfidence cap: edge > MAX_EDGE (2.0) blocked
+  1c. Probability cap: p_over > MAX_PROB_OVER (0.85) blocked (relaxed for regressor)
+  2. Apply direction filter (OVER + optional UNDER via env var)
+  3. Apply negative filters (bullpen, il_return, pitch_count, insufficient_data,
+     pitcher_blacklist, bad_opponent, bad_venue)
+  4. Apply edge floor (DEFAULT_EDGE_FLOOR = 0.75 K) — with signal rescue
   5. Evaluate all active + shadow signals
   6. Gate: signal_count >= 2 (OVER) or >= 3 (UNDER, higher bar)
   7. Rank: OVER by edge, UNDER by signal quality
@@ -12,14 +15,11 @@ Pipeline:
   9. Write to mlb_predictions.signal_best_bets_picks
  10. Write filter audit to mlb_predictions.best_bets_filter_audit
 
-Season Phases (Session 433 — walk-forward validated):
-  Phase 1 (season start → day 45): OVER-only, edge >= 2.0
-    - April is historically 47-50% HR, conservative threshold protects bankroll
-  Phase 2 (day 45+): OVER + qualified UNDER, edge >= 1.0
-    - OVER at edge 1.0: 56% HR, +7.1% ROI (walk-forward 2025)
-    - UNDER requires 3+ real signals (higher bar — raw UNDER is 47-49%)
-  June tightening: edge >= 1.5 during ASB approach (June 15 - July 20)
-    - June is consistently worst month (46-51%)
+Regressor transition (Session 441):
+  - Unified edge floor 0.75 K (regressor sweet spot, no phase logic)
+  - Probability cap relaxed to 0.85 (p_over is derived, not native)
+  - 3 new negative filters: pitcher_blacklist, bad_opponent, bad_venue
+  - 3 new positive signals: projection_agrees, home_pitcher, long_rest
 """
 
 import logging
@@ -32,31 +32,31 @@ from ml.signals.mlb.base_signal import MLBSignalResult
 logger = logging.getLogger(__name__)
 
 # =============================================================================
-# SEASON PHASE CONFIGURATION (walk-forward validated Session 433)
+# REGRESSOR CONFIGURATION (unified — no season phases)
 # =============================================================================
 
-# Default edge floor (overridden by phase logic)
-DEFAULT_EDGE_FLOOR = 1.0  # K
+# Default edge floor (env var override: MLB_EDGE_FLOOR)
+# Regressor sweet spot at 0.75 K — walk-forward validated
+DEFAULT_EDGE_FLOOR = float(os.environ.get('MLB_EDGE_FLOOR', '0.75'))
 
-# Phase thresholds
-PHASE_1_EDGE_FLOOR = 2.0   # Conservative early-season (OVER e2.0 = 58% HR)
-PHASE_2_EDGE_FLOOR = 1.0   # Full production (OVER e1.0 = 56% HR)
-JUNE_EDGE_FLOOR = 1.5      # Tightened during ASB approach
-
-# How many days into season before Phase 2
-PHASE_1_DURATION_DAYS = 45  # ~mid-May
-
-# UNDER direction control
+# UNDER direction control (env var override: MLB_UNDER_ENABLED)
 # UNDER is unprofitable without signal filtering (47-49% HR walk-forward)
 # Only surface UNDER with strong signal backing
 UNDER_ENABLED = os.environ.get('MLB_UNDER_ENABLED', 'false').lower() == 'true'
 UNDER_MIN_SIGNALS = 3  # Higher bar than OVER (which uses 2)
 
-# Overconfidence cap — OVER picks with edge > MAX_EDGE are blocked (55% HR vs 60% sweet spot)
-MAX_EDGE = float(os.environ.get('MLB_MAX_EDGE', '2.5'))
+# Overconfidence cap — OVER picks with edge > MAX_EDGE are blocked
+# Walk-forward (Session 438b): edge 2.0-2.5 = 58.7%, edge 3.0+ = 48.2% (losing)
+MAX_EDGE = float(os.environ.get('MLB_MAX_EDGE', '2.0'))
+
+# Probability cap — OVER picks with p_over > MAX_PROB are blocked
+# Relaxed for regressor: p_over is derived (not native classifier output)
+# Regressor p_over has different calibration — 0.85 keeps outliers only
+MAX_PROB_OVER = float(os.environ.get('MLB_MAX_PROB_OVER', '0.85'))
 
 # Daily pick limit — truncate ranked picks to this count
-MAX_PICKS_PER_DAY = int(os.environ.get('MLB_MAX_PICKS_PER_DAY', '2'))
+# Walk-forward (Session 438b): Top-3 at prob 0.60-0.70 = 63.1% HR, +20.4% ROI, zero losing months
+MAX_PICKS_PER_DAY = int(os.environ.get('MLB_MAX_PICKS_PER_DAY', '3'))
 
 # Day-of-week filter (Session 435 hypothesized Mon+Thu+Sat = 86% HR).
 # Session 436 DEBUNKED: base rates identical (48.8% vs 48.8%). DOW was a
@@ -93,17 +93,6 @@ UNDER_SIGNAL_WEIGHTS = {
     'pitch_count_limit_under': 2.0,
 }
 
-# MLB season start dates (approximate — updated yearly)
-MLB_SEASON_STARTS = {
-    2025: date(2025, 3, 27),
-    2026: date(2026, 3, 26),
-    2027: date(2027, 4, 1),
-}
-
-# June tightening window (ASB approach — June 15 to July 20)
-JUNE_TIGHTEN_START_MONTH_DAY = (6, 15)  # June 15
-JUNE_TIGHTEN_END_MONTH_DAY = (7, 20)    # July 20
-
 
 class MLBBestBetsExporter:
     """Generate MLB best bets from predictions + signals."""
@@ -119,53 +108,6 @@ class MLBBestBetsExporter:
             from shared.clients.bigquery_pool import get_bigquery_client
             self.bq_client = get_bigquery_client(project_id=self.project_id)
         return self.bq_client
-
-    def _get_season_phase(self, game_date_str: str) -> dict:
-        """Determine season phase and applicable thresholds.
-
-        Returns dict with:
-          phase: 1 or 2
-          edge_floor: float
-          under_enabled: bool
-          under_min_signals: int
-          reason: str
-        """
-        gd = date.fromisoformat(game_date_str)
-        year = gd.year
-        season_start = MLB_SEASON_STARTS.get(year, date(year, 3, 28))
-        days_into_season = (gd - season_start).days
-
-        # June tightening check (overrides phase)
-        tighten_start = date(year, *JUNE_TIGHTEN_START_MONTH_DAY)
-        tighten_end = date(year, *JUNE_TIGHTEN_END_MONTH_DAY)
-        in_june_window = tighten_start <= gd <= tighten_end
-
-        if days_into_season < PHASE_1_DURATION_DAYS:
-            return {
-                'phase': 1,
-                'edge_floor': PHASE_1_EDGE_FLOOR,
-                'under_enabled': False,
-                'under_min_signals': UNDER_MIN_SIGNALS,
-                'reason': f'Phase 1 (day {days_into_season}/{PHASE_1_DURATION_DAYS}): '
-                          f'OVER-only, edge >= {PHASE_1_EDGE_FLOOR}',
-            }
-        elif in_june_window:
-            return {
-                'phase': 2,
-                'edge_floor': JUNE_EDGE_FLOOR,
-                'under_enabled': UNDER_ENABLED,
-                'under_min_signals': UNDER_MIN_SIGNALS,
-                'reason': f'Phase 2 + June tightening: edge >= {JUNE_EDGE_FLOOR}',
-            }
-        else:
-            return {
-                'phase': 2,
-                'edge_floor': PHASE_2_EDGE_FLOOR,
-                'under_enabled': UNDER_ENABLED,
-                'under_min_signals': UNDER_MIN_SIGNALS,
-                'reason': f'Phase 2 (day {days_into_season}): '
-                          f'edge >= {PHASE_2_EDGE_FLOOR}, UNDER={UNDER_ENABLED}',
-            }
 
     def export(
         self,
@@ -184,7 +126,7 @@ class MLBBestBetsExporter:
             game_date: Target game date (YYYY-MM-DD)
             features_by_pitcher: {pitcher_lookup: {feature_dict}}
             supplemental_by_pitcher: {pitcher_lookup: {supplemental_dict}}
-            edge_floor: Override edge floor (None = use phase-aware default)
+            edge_floor: Override edge floor (None = use DEFAULT_EDGE_FLOOR)
             min_signals: Minimum real signal count for OVER (default 2)
             dry_run: If True, don't write to BQ
 
@@ -195,16 +137,16 @@ class MLBBestBetsExporter:
         supplemental_by_pitcher = supplemental_by_pitcher or {}
         self.filter_audit = []
 
-        # Determine season phase
-        phase = self._get_season_phase(game_date)
-        effective_edge_floor = edge_floor if edge_floor is not None else phase['edge_floor']
+        # Unified edge floor (no phase logic — regressor sweet spot)
+        effective_edge_floor = edge_floor if edge_floor is not None else DEFAULT_EDGE_FLOOR
+        under_enabled = UNDER_ENABLED
 
         logger.info(f"[MLB BB] Processing {len(predictions)} predictions for {game_date}")
-        logger.info(f"[MLB BB] {phase['reason']}")
+        logger.info(f"[MLB BB] Edge floor: {effective_edge_floor}, UNDER enabled: {under_enabled}")
 
         # 1. Filter to actionable predictions (OVER/UNDER with line)
         allowed_directions = ['OVER']
-        if phase['under_enabled']:
+        if under_enabled:
             allowed_directions.append('UNDER')
 
         actionable = []
@@ -214,7 +156,7 @@ class MLBBestBetsExporter:
                     and p.get('strikeouts_line') is not None
                     and p.get('predicted_strikeouts') is not None):
                 actionable.append(p)
-            elif rec == 'UNDER' and not phase['under_enabled']:
+            elif rec == 'UNDER' and not under_enabled:
                 # Record UNDER blocks in audit for tracking
                 self.filter_audit.append({
                     'game_date': game_date,
@@ -256,6 +198,36 @@ class MLBBestBetsExporter:
             logger.info(f"[MLB BB] {len(actionable) - len(capped)} blocked by overconfidence cap "
                         f"(edge > {MAX_EDGE})")
         actionable = capped
+
+        # 1c. Probability cap — block OVER picks with p_over > MAX_PROB_OVER
+        # Walk-forward: prob 0.60-0.70 = 64.4% HR, prob 0.70+ drops to 58.7%, 0.80+ = 48.2%
+        prob_capped = []
+        for p in actionable:
+            p_over = p.get('p_over')
+            if (p.get('recommendation') == 'OVER'
+                    and p_over is not None
+                    and p_over > MAX_PROB_OVER):
+                self.filter_audit.append({
+                    'game_date': game_date,
+                    'pitcher_lookup': p.get('pitcher_lookup', ''),
+                    'system_id': p.get('system_id', 'unknown'),
+                    'filter_name': 'probability_cap',
+                    'filter_result': 'BLOCKED',
+                    'filter_reason': f'OVER p_over {p_over:.3f} > {MAX_PROB_OVER} cap '
+                                     f'(walk-forward: prob>{MAX_PROB_OVER} = 56-48% HR)',
+                    'recommendation': p.get('recommendation'),
+                    'edge': p.get('edge'),
+                    'line_value': p.get('strikeouts_line'),
+                })
+                logger.debug(f"[MLB BB] {p.get('pitcher_lookup', '')} BLOCKED by probability_cap "
+                             f"(p_over={p_over:.3f} > {MAX_PROB_OVER})")
+            else:
+                prob_capped.append(p)
+
+        if len(actionable) - len(prob_capped) > 0:
+            logger.info(f"[MLB BB] {len(actionable) - len(prob_capped)} blocked by probability cap "
+                        f"(p_over > {MAX_PROB_OVER})")
+        actionable = prob_capped
 
         # 2. Apply negative filters
         passed_filters = []
@@ -324,7 +296,7 @@ class MLBBestBetsExporter:
                     'system_id': pred.get('system_id', 'unknown'),
                     'filter_name': 'edge_floor',
                     'filter_result': 'BLOCKED',
-                    'filter_reason': f'Edge {edge:.1f} < {effective_edge_floor} (phase {phase["phase"]})',
+                    'filter_reason': f'Edge {edge:.1f} < {effective_edge_floor}',
                     'recommendation': pred.get('recommendation'),
                     'edge': pred.get('edge'),
                     'line_value': pred.get('strikeouts_line'),
@@ -369,7 +341,7 @@ class MLBBestBetsExporter:
         gated_picks = []
         for p in annotated_picks:
             if p['recommendation'] == 'UNDER':
-                required = phase['under_min_signals']
+                required = UNDER_MIN_SIGNALS
             else:
                 required = min_signals
             if p['real_signal_count'] >= required:
@@ -379,7 +351,7 @@ class MLBBestBetsExporter:
         under_gated = sum(1 for p in gated_picks if p['recommendation'] == 'UNDER')
         logger.info(f"[MLB BB] {len(gated_picks)} passed signal count gate "
                     f"(OVER: {over_gated} >= {min_signals} signals, "
-                    f"UNDER: {under_gated} >= {phase['under_min_signals']} signals)")
+                    f"UNDER: {under_gated} >= {UNDER_MIN_SIGNALS} signals)")
 
         # 6. Rank picks
         over_picks = [p for p in gated_picks if p['recommendation'] == 'OVER']
@@ -457,7 +429,7 @@ class MLBBestBetsExporter:
             pick['rank'] = i
 
         # 7. Build pick angles + stamp algorithm version
-        algo_version = f'mlb_v2_phase{phase["phase"]}_top{MAX_PICKS_PER_DAY}'
+        algo_version = f'mlb_v4_regressor_top{MAX_PICKS_PER_DAY}'
         for pick in ranked_picks:
             pick['pick_angles'] = self._build_pick_angles(pick)
             pick['algorithm_version'] = algo_version
@@ -525,6 +497,10 @@ class MLBBestBetsExporter:
             meta = signal_results['projection_agrees_over'].metadata
             angles.append(f"Projection confirms: +{meta.get('projection_diff', 0):.1f} K above line")
 
+        if 'regressor_projection_agrees_over' in signal_results:
+            meta = signal_results['regressor_projection_agrees_over'].metadata
+            angles.append(f"Projection agrees: +{meta.get('projection_diff', 0):.1f} K above line")
+
         if 'k_trending_over' in signal_results:
             meta = signal_results['k_trending_over'].metadata
             angles.append(f"K trending up: {meta.get('k_last_3', 0):.1f} avg last 3 "
@@ -533,6 +509,13 @@ class MLBBestBetsExporter:
         if 'recent_k_above_line' in signal_results:
             meta = signal_results['recent_k_above_line'].metadata
             angles.append(f"Recent K avg exceeds line by {meta.get('k_avg_vs_line', 0):.1f} K")
+
+        if 'home_pitcher_over' in signal_results:
+            angles.append("Home pitcher K advantage")
+
+        if 'long_rest_over' in signal_results:
+            meta = signal_results['long_rest_over'].metadata
+            angles.append(f"Extended rest: {meta.get('days_rest', '?')} days (fresh arm)")
 
         return angles
 

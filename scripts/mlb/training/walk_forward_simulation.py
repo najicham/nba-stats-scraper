@@ -104,8 +104,11 @@ def load_data(client: bigquery.Client) -> pd.DataFrame:
         bp.over_odds,
         CASE WHEN bp.actual_value > bp.over_line THEN 1 ELSE 0 END as went_over,
 
-        -- Features
+        -- Metadata for analysis (not features)
         pgs.player_lookup,
+        pgs.team_abbr,
+        pgs.opponent_team_abbr,
+        pgs.venue,
         pgs.k_avg_last_3 as f00_k_avg_last_3,
         pgs.k_avg_last_5 as f01_k_avg_last_5,
         pgs.k_avg_last_10 as f02_k_avg_last_10,
@@ -128,9 +131,7 @@ def load_data(client: bigquery.Client) -> pd.DataFrame:
         pgs.pitch_count_avg_last_5 as f22_pitch_count_avg,
         pgs.season_innings as f23_season_ip_total,
         IF(pgs.is_postseason, 1.0, 0.0) as f24_is_postseason,
-
-        -- Opponent team K rate (Session 438 — rolling 15g from batter stats)
-        pgs.opponent_team_k_rate as f15_opponent_team_k_rate,
+        IF(pgs.is_day_game, 1.0, 0.0) as f25_is_day_game,
 
         -- Line-relative features
         (pgs.k_avg_last_5 - bp.over_line) as f30_k_avg_vs_line,
@@ -213,7 +214,7 @@ def get_features(df: pd.DataFrame) -> list:
         'f17_month_of_season', 'f18_days_into_season',
         'f19_season_swstr_pct', 'f19b_season_csw_pct',
         'f20_days_rest', 'f21_games_last_30_days', 'f22_pitch_count_avg',
-        'f23_season_ip_total', 'f24_is_postseason',
+        'f23_season_ip_total', 'f24_is_postseason', 'f25_is_day_game',
         'f30_k_avg_vs_line', 'f32_line_level',
         'f40_bp_projection', 'f41_projection_diff', 'f44_over_implied_prob',
         # Rolling Statcast (LEFT JOIN — may be NULL, handled natively by models)
@@ -392,7 +393,11 @@ def simulate_window(
             y_pred_filtered = predicted_over[edge_mask]
             correct = (y_pred_filtered == y_filtered).astype(int)
 
+            # Get metadata for filtered predictions
+            test_filtered = test_df.iloc[np.where(edge_mask)[0]]
+
             for idx in range(len(correct)):
+                row = test_filtered.iloc[idx]
                 results_by_threshold[threshold].append({
                     'game_date': str(game_date.date()),
                     'correct': int(correct[idx]),
@@ -400,6 +405,20 @@ def simulate_window(
                     'predicted_over': int(y_pred_filtered[idx]),
                     'proba': float(y_proba[edge_mask][idx]),
                     'edge': float(model_edge[edge_mask][idx]),
+                    # Rich metadata for strategy analysis
+                    'pitcher_name': str(row.get('player_name', '')),
+                    'pitcher_lookup': str(row.get('player_lookup', '')),
+                    'team_abbr': str(row.get('team_abbr', '')),
+                    'opponent_team_abbr': str(row.get('opponent_team_abbr', '')),
+                    'venue': str(row.get('venue', '')),
+                    'is_home': int(row.get('f10_is_home', 0)),
+                    'is_day_game': int(row.get('f25_is_day_game', 0)),
+                    'strikeouts_line': float(row.get('over_line', 0)),
+                    'actual_strikeouts': float(row.get('actual_value', 0)),
+                    'projection_value': float(row.get('projection_value', 0)),
+                    'days_rest': float(row.get('f20_days_rest', 0)) if pd.notna(row.get('f20_days_rest')) else None,
+                    'k_avg_last_5': float(row.get('f01_k_avg_last_5', 0)) if pd.notna(row.get('f01_k_avg_last_5')) else None,
+                    'season_k_per_9': float(row.get('f05_season_k_per_9', 0)) if pd.notna(row.get('f05_season_k_per_9')) else None,
                 })
 
         # Daily summary (no edge filter)

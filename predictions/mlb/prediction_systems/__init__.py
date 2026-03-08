@@ -10,6 +10,7 @@ Available Systems:
 - v1_baseline: V1.4 baseline system with 25 features
 - v1_6_rolling: V1.6 system with 35 features (rolling statcast, BettingPros, line-relative)
 - ensemble_v1: Weighted ensemble combining V1 + V1.6
+- catboost_v2_regressor: CatBoost V2 regressor predicting raw K count (40 features)
 
 Usage:
     from predictions.mlb.prediction_systems import V1BaselinePredictor
@@ -20,9 +21,11 @@ Usage:
 from predictions.mlb.prediction_systems.v1_baseline_predictor import V1BaselinePredictor
 from predictions.mlb.prediction_systems.v1_6_rolling_predictor import V1_6RollingPredictor
 from predictions.mlb.prediction_systems.ensemble_v1 import MLBEnsembleV1
+from predictions.mlb.prediction_systems.catboost_v2_regressor_predictor import CatBoostV2RegressorPredictor
 
 __all__ = [
     'V1BaselinePredictor',
     'V1_6RollingPredictor',
     'MLBEnsembleV1',
+    'CatBoostV2RegressorPredictor',
 ]

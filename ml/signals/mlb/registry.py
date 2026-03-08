@@ -1,7 +1,7 @@
 """MLB Signal Registry — discovers and instantiates all MLB signal classes.
 
 Ports the NBA ml/signals/registry.py pattern for MLB pitcher strikeouts.
-11 active signals + 6 shadow signals + 4 negative filters.
+14 active signals + 6 shadow signals + 7 negative filters.
 """
 
 from typing import Dict, List
@@ -43,7 +43,7 @@ class MLBSignalRegistry:
 def build_mlb_registry() -> MLBSignalRegistry:
     """Build registry with all MLB production signals."""
     from ml.signals.mlb.signals import (
-        # Active signals (11) — 8 original + 3 walk-forward validated (Session 433)
+        # Active signals (14) — 8 original + 3 walk-forward (Session 433) + 3 regressor (Session 441)
         HighEdgeSignal,
         SwStrSurgeSignal,
         VelocityDropUnderSignal,
@@ -55,6 +55,9 @@ def build_mlb_registry() -> MLBSignalRegistry:
         ProjectionAgreesOverSignal,
         KTrendingOverSignal,
         RecentKAboveLineSignal,
+        RegressorProjectionAgreesSignal,
+        HomePitcherSignal,
+        LongRestSignal,
         # Shadow signals (6)
         LineMovementOverSignal,
         WeatherColdUnderSignal,
@@ -62,16 +65,19 @@ def build_mlb_registry() -> MLBSignalRegistry:
         AcePitcherOverSignal,
         CatcherFramingOverSignal,
         PitchCountLimitUnderSignal,
-        # Negative filters (4)
+        # Negative filters (7)
         BullpenGameFilter,
         ILReturnFilter,
         PitchCountCapFilter,
         InsufficientDataFilter,
+        PitcherBlacklistFilter,
+        BadOpponentFilter,
+        BadVenueFilter,
     )
 
     registry = MLBSignalRegistry()
 
-    # Active signals (11) — affect pick selection and ranking
+    # Active signals (14) — affect pick selection and ranking
     registry.register(HighEdgeSignal())
     registry.register(SwStrSurgeSignal())
     registry.register(VelocityDropUnderSignal())
@@ -84,6 +90,10 @@ def build_mlb_registry() -> MLBSignalRegistry:
     registry.register(ProjectionAgreesOverSignal())
     registry.register(KTrendingOverSignal())
     registry.register(RecentKAboveLineSignal())
+    # Regressor-transition signals (Session 441)
+    registry.register(RegressorProjectionAgreesSignal())
+    registry.register(HomePitcherSignal())
+    registry.register(LongRestSignal())
 
     # Shadow signals (6) — accumulate data, don't affect picks yet
     # Need 30+ days of data before promotion to active (NBA lesson)
@@ -94,10 +104,14 @@ def build_mlb_registry() -> MLBSignalRegistry:
     registry.register(CatcherFramingOverSignal())
     registry.register(PitchCountLimitUnderSignal())
 
-    # Negative filters (4) — block picks
+    # Negative filters (7) — block picks
     registry.register(BullpenGameFilter())
     registry.register(ILReturnFilter())
     registry.register(PitchCountCapFilter())
     registry.register(InsufficientDataFilter())
+    # Regressor-transition filters (Session 441)
+    registry.register(PitcherBlacklistFilter())
+    registry.register(BadOpponentFilter())
+    registry.register(BadVenueFilter())
 
     return registry

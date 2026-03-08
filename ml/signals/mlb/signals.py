@@ -1,17 +1,20 @@
-"""MLB Pitcher Strikeout Signals — 11 active + 6 shadow + 4 negative filters.
+"""MLB Pitcher Strikeout Signals — 14 active + 6 shadow + 7 negative filters.
 
-Active Signals (11):
-  high_edge               — Edge >= 1.0 K (base signal)
-  swstr_surge             — SwStr% last 3 > season avg + 2%
-  velocity_drop_under     — FB velocity down 1.5+ mph
-  opponent_k_prone        — Team K-rate top 25%
-  short_rest_under        — < 4 days rest
-  high_variance_under     — K std > 3.5 last 10
-  ballpark_k_boost        — Park K-factor > 1.05
-  umpire_k_friendly       — Umpire K-rate top 25%
-  projection_agrees_over  — BettingPros proj > line + 0.5 (Session 433)
-  k_trending_over         — K avg last 3 > last 10 + 1.0 (Session 433)
-  recent_k_above_line     — K avg last 5 > line (Session 433)
+Active Signals (14):
+  high_edge                       — Edge >= 1.0 K (base signal)
+  swstr_surge                     — SwStr% last 3 > season avg + 2%
+  velocity_drop_under             — FB velocity down 1.5+ mph
+  opponent_k_prone                — Team K-rate top 25%
+  short_rest_under                — < 4 days rest
+  high_variance_under             — K std > 3.5 last 10
+  ballpark_k_boost                — Park K-factor > 1.05
+  umpire_k_friendly               — Umpire K-rate top 25%
+  projection_agrees_over          — BettingPros proj > line + 0.5 (Session 433)
+  k_trending_over                 — K avg last 3 > last 10 + 1.0 (Session 433)
+  recent_k_above_line             — K avg last 5 > line (Session 433)
+  regressor_projection_agrees_over — Projection value > line (regressor, Session 441)
+  home_pitcher_over               — Pitcher is at home (Session 441)
+  long_rest_over                  — Pitcher on 8+ days rest (Session 441)
 
 Shadow Signals (6):
   line_movement_over    — Line dropped 0.5+ from open
@@ -21,11 +24,14 @@ Shadow Signals (6):
   catcher_framing_over  — Elite catcher framing
   pitch_count_limit_under — Documented pitch count cap
 
-Negative Filters (4):
+Negative Filters (7):
   bullpen_game_skip     — Opener/bullpen game detected
   il_return_skip        — First start from IL
   pitch_count_cap_skip  — Under-only: documented pitch count cap
   insufficient_data_skip — < 3 career starts
+  pitcher_blacklist     — Block pitchers with <45% HR (Session 441)
+  bad_opponent_over     — Block OVER vs low-K opponents KC/MIA/CWS (Session 441)
+  bad_venue_over        — Block OVER at K-unfriendly venues (Session 441)
 """
 
 from typing import Dict, Optional
@@ -579,4 +585,140 @@ class InsufficientDataFilter(BaseMLBSignal):
                 confidence=1.0, starts=starts,
                 reason=f"Only {starts} starts — need {self.MIN_STARTS}+",
             )
+        return self._no_qualify()
+
+
+class PitcherBlacklistFilter(BaseMLBSignal):
+    """Block pitchers with historically poor OVER performance.
+    Walk-forward: blocked picks at 36.4% HR -> +2.2pp lift."""
+    tag = "pitcher_blacklist"
+    description = "Pitcher on blacklist (walk-forward <45% HR at edge >= 1.0)"
+    direction = "OVER"
+    is_negative_filter = True
+
+    # Pitchers with <45% HR at edge >= 1.0, N >= 8 in walk-forward
+    BLACKLIST = frozenset([
+        'freddy_peralta', 'tyler_glasnow', 'tanner_bibee', 'mitchell_parker',
+        'hunter_greene', 'yusei_kikuchi', 'casey_mize', 'paul_skenes',
+        'jose_soriano', 'mitch_keller',
+    ])
+
+    def evaluate(self, prediction: Dict,
+                 features: Optional[Dict] = None,
+                 supplemental: Optional[Dict] = None) -> MLBSignalResult:
+        if prediction.get('recommendation') != 'OVER':
+            return self._no_qualify()
+        pitcher = prediction.get('pitcher_lookup', '')
+        if pitcher in self.BLACKLIST:
+            return self._qualify(confidence=0.8,
+                                 reason=f'{pitcher} on blacklist (walk-forward <45% HR)')
+        return self._no_qualify()
+
+
+class BadOpponentFilter(BaseMLBSignal):
+    """Block OVER against low-K opponents.
+    Walk-forward: KC/MIA/CWS = 44-46% HR -> +1.7pp lift."""
+    tag = "bad_opponent_over"
+    description = "Opponent team has low K rate (walk-forward <48% OVER HR)"
+    direction = "OVER"
+    is_negative_filter = True
+
+    BAD_OPPONENTS = frozenset(['KC', 'MIA', 'CWS'])
+
+    def evaluate(self, prediction: Dict,
+                 features: Optional[Dict] = None,
+                 supplemental: Optional[Dict] = None) -> MLBSignalResult:
+        if prediction.get('recommendation') != 'OVER':
+            return self._no_qualify()
+        opp = prediction.get('opponent_team_abbr', '')
+        if opp in self.BAD_OPPONENTS:
+            return self._qualify(confidence=0.7,
+                                 reason=f'vs {opp} (walk-forward <48% OVER HR)')
+        return self._no_qualify()
+
+
+class BadVenueFilter(BaseMLBSignal):
+    """Block OVER at K-unfriendly venues.
+    Walk-forward: 42-47% HR at these parks -> +0.5pp lift."""
+    tag = "bad_venue_over"
+    description = "K-unfriendly venue (walk-forward <48% OVER HR)"
+    direction = "OVER"
+    is_negative_filter = True
+
+    BAD_VENUES = frozenset([
+        'loanDepot park', 'Rate Field', 'Sutter Health Park', 'Busch Stadium',
+    ])
+
+    def evaluate(self, prediction: Dict,
+                 features: Optional[Dict] = None,
+                 supplemental: Optional[Dict] = None) -> MLBSignalResult:
+        if prediction.get('recommendation') != 'OVER':
+            return self._no_qualify()
+        venue = prediction.get('venue', '') or (features or {}).get('venue', '')
+        if venue in self.BAD_VENUES:
+            return self._qualify(confidence=0.6,
+                                 reason=f'{venue} (walk-forward <48% OVER HR)')
+        return self._no_qualify()
+
+
+# =============================================================================
+# ACTIVE SIGNALS — Session 441 additions (regressor transition)
+# =============================================================================
+
+class RegressorProjectionAgreesSignal(BaseMLBSignal):
+    """Projection source agrees with OVER direction.
+    Walk-forward: +3.8pp lift when projection > line."""
+    tag = "regressor_projection_agrees_over"
+    description = "Projection value exceeds strikeouts line"
+    direction = "OVER"
+
+    def evaluate(self, prediction: Dict,
+                 features: Optional[Dict] = None,
+                 supplemental: Optional[Dict] = None) -> MLBSignalResult:
+        if prediction.get('recommendation') != 'OVER':
+            return self._no_qualify()
+        proj = prediction.get('projection_value') or (features or {}).get('projection_value')
+        line = prediction.get('strikeouts_line')
+        if proj is not None and line is not None and proj > line:
+            diff = proj - line
+            return self._qualify(confidence=min(1.0, diff / 2.0),
+                                 reason=f'Projection {proj:.1f} > line {line:.1f} (+{diff:.1f})',
+                                 projection_diff=round(diff, 2))
+        return self._no_qualify()
+
+
+class HomePitcherSignal(BaseMLBSignal):
+    """Home pitcher advantage for strikeout OVER.
+    Walk-forward: HOME 64.9% vs AWAY 59.7% (+5.2pp)."""
+    tag = "home_pitcher_over"
+    description = "Home pitcher K advantage"
+    direction = "OVER"
+
+    def evaluate(self, prediction: Dict,
+                 features: Optional[Dict] = None,
+                 supplemental: Optional[Dict] = None) -> MLBSignalResult:
+        if prediction.get('recommendation') != 'OVER':
+            return self._no_qualify()
+        is_home = prediction.get('is_home') or (features or {}).get('is_home')
+        if is_home:
+            return self._qualify(confidence=0.6, reason='Home pitcher K advantage')
+        return self._no_qualify()
+
+
+class LongRestSignal(BaseMLBSignal):
+    """Pitcher on extended rest (8+ days). Walk-forward: 69.4% HR."""
+    tag = "long_rest_over"
+    description = "Pitcher on extended rest (8+ days)"
+    direction = "OVER"
+
+    def evaluate(self, prediction: Dict,
+                 features: Optional[Dict] = None,
+                 supplemental: Optional[Dict] = None) -> MLBSignalResult:
+        if prediction.get('recommendation') != 'OVER':
+            return self._no_qualify()
+        days_rest = (features or {}).get('days_rest') or prediction.get('days_rest')
+        if days_rest is not None and days_rest >= 8:
+            return self._qualify(confidence=0.7,
+                                 reason=f'{days_rest:.0f} days rest (extended)',
+                                 days_rest=days_rest)
         return self._no_qualify()
