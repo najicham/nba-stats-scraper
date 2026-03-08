@@ -187,6 +187,30 @@ class MlbPitcherGameSummaryProcessor(CircuitBreakerMixin, AnalyticsProcessorBase
               AND is_starter = TRUE  -- Only starting pitchers
         ),
 
+        -- Opponent team K rate from raw batter stats (rolling 15-game avg)
+        -- For each team on each date, compute their K rate from recent games
+        team_daily_k_rates AS (
+            SELECT
+                game_date,
+                team_abbr,
+                SAFE_DIVIDE(SUM(strikeouts), SUM(at_bats)) as game_k_rate
+            FROM `{self.project_id}.{self.raw_dataset}.mlbapi_batter_stats`
+            WHERE game_date <= '{date_str}'
+              AND at_bats > 0
+            GROUP BY game_date, team_abbr
+        ),
+        team_rolling_k_rates AS (
+            SELECT
+                game_date as tkr_game_date,
+                team_abbr as tkr_team_abbr,
+                AVG(game_k_rate) OVER (
+                    PARTITION BY team_abbr
+                    ORDER BY game_date
+                    ROWS BETWEEN 15 PRECEDING AND 1 PRECEDING
+                ) as rolling_k_rate_15g
+            FROM team_daily_k_rates
+        ),
+
         -- FanGraphs season stats for SwStr% (leading indicator)
         fangraphs_stats AS (
             SELECT DISTINCT
@@ -208,6 +232,9 @@ class MlbPitcherGameSummaryProcessor(CircuitBreakerMixin, AnalyticsProcessorBase
             -- Calculate rolling averages for each game
             SELECT
                 h.*,
+
+                -- Opponent team K rate (rolling 15g from batter stats, Session 438)
+                COALESCE(tkr.rolling_k_rate_15g, 0.22) as opponent_team_k_rate,
 
                 -- FanGraphs season-level SwStr% (join by player + season)
                 fg.swstr_pct as season_swstr_pct,
@@ -360,6 +387,9 @@ class MlbPitcherGameSummaryProcessor(CircuitBreakerMixin, AnalyticsProcessorBase
             LEFT JOIN fangraphs_stats fg
                 ON REPLACE(h.player_lookup, '_', '') = fg.player_lookup
                 AND h.season_year = fg.season_year
+            LEFT JOIN team_rolling_k_rates tkr
+                ON tkr.tkr_game_date = h.game_date
+                AND tkr.tkr_team_abbr = h.opponent_team_abbr
         )
 
         SELECT
@@ -416,6 +446,9 @@ class MlbPitcherGameSummaryProcessor(CircuitBreakerMixin, AnalyticsProcessorBase
             ROUND(season_csw_pct, 4) as season_csw_pct,
             ROUND(season_chase_pct, 4) as season_chase_pct,
             ROUND(season_contact_pct, 4) as season_contact_pct,
+
+            -- Opponent team K rate (Session 438 — rolling 15g from batter stats)
+            ROUND(opponent_team_k_rate, 3) as opponent_team_k_rate,
 
             -- vs opponent (Session 437 — derived from gamebook history)
             ROUND(vs_opponent_k_per_9, 2) as vs_opponent_k_per_9,

@@ -63,6 +63,17 @@ def parse_args():
                        help="Model type to test")
     parser.add_argument("--filter-nan-predictions", action="store_true",
                        help="Hybrid: train on all data, predict only for clean-statcast pitchers")
+    parser.add_argument("--retrain-strategy", default="fixed",
+                       choices=["fixed", "triggered", "both"],
+                       help="Retrain strategy: fixed=every N days, triggered=only when HR<threshold")
+    parser.add_argument("--trigger-threshold", type=float, default=52.0,
+                       help="HR threshold for triggered retraining (default: 52%%)")
+    parser.add_argument("--trigger-lookback", type=int, default=7,
+                       help="Days to look back for triggered retrain HR check (default: 7)")
+    parser.add_argument("--trigger-cooldown", type=int, default=7,
+                       help="Min days between triggered retrains (default: 7)")
+    parser.add_argument("--trigger-max-interval", type=int, default=30,
+                       help="Max days without retrain even if healthy (default: 30)")
     return parser.parse_args()
 
 
@@ -117,6 +128,9 @@ def load_data(client: bigquery.Client) -> pd.DataFrame:
         pgs.pitch_count_avg_last_5 as f22_pitch_count_avg,
         pgs.season_innings as f23_season_ip_total,
         IF(pgs.is_postseason, 1.0, 0.0) as f24_is_postseason,
+
+        -- Opponent team K rate (Session 438 — rolling 15g from batter stats)
+        pgs.opponent_team_k_rate as f15_opponent_team_k_rate,
 
         -- Line-relative features
         (pgs.k_avg_last_5 - bp.over_line) as f30_k_avg_vs_line,
@@ -261,11 +275,18 @@ def simulate_window(
     sim_end: pd.Timestamp,
     model_type: str = 'xgboost',
     filter_nan_predictions: bool = False,
+    retrain_strategy: str = 'fixed',
+    trigger_threshold: float = 52.0,
+    trigger_lookback: int = 7,
+    trigger_cooldown: int = 7,
+    trigger_max_interval: int = 30,
 ) -> Dict:
     """Run walk-forward simulation for a single training window size.
 
-    If filter_nan_predictions=True, predictions are only generated for
-    pitchers with complete statcast data (hybrid: train on all, predict on clean).
+    Retrain strategies:
+    - fixed: retrain every retrain_interval days (original behavior)
+    - triggered: retrain only when rolling HR drops below trigger_threshold,
+                 with cooldown and max interval safety net
     """
     results_by_threshold = {t: [] for t in edge_thresholds}
     retrain_log = []
@@ -278,12 +299,33 @@ def simulate_window(
     ]['game_date'].unique())
 
     for game_date in game_dates:
-        # Check if we need to retrain
-        needs_retrain = (
-            current_model is None or
-            last_train_date is None or
-            (game_date - last_train_date).days >= retrain_interval
-        )
+        # Check if we need to retrain based on strategy
+        if retrain_strategy == 'fixed':
+            needs_retrain = (
+                current_model is None or
+                last_train_date is None or
+                (game_date - last_train_date).days >= retrain_interval
+            )
+        else:  # triggered
+            if current_model is None or last_train_date is None:
+                needs_retrain = True
+            else:
+                days_since = (game_date - last_train_date).days
+                # Safety net: always retrain after max_interval
+                if days_since >= trigger_max_interval:
+                    needs_retrain = True
+                # Cooldown: don't retrain too soon
+                elif days_since < trigger_cooldown:
+                    needs_retrain = False
+                else:
+                    # Check rolling HR from daily_metrics
+                    recent = [m for m in daily_metrics
+                              if pd.Timestamp(m['game_date']) >= game_date - pd.Timedelta(days=trigger_lookback)]
+                    if len(recent) >= 3:  # need min 3 days of data
+                        rolling_hr = sum(m['correct'] for m in recent) / max(sum(m['predictions'] for m in recent), 1) * 100
+                        needs_retrain = rolling_hr < trigger_threshold
+                    else:
+                        needs_retrain = False
 
         if needs_retrain:
             # Training data: window_days before this game_date
@@ -391,6 +433,11 @@ def main():
     else:
         model_types = [args.model_type]
 
+    if args.retrain_strategy == 'both':
+        retrain_strategies = ['fixed', 'triggered']
+    else:
+        retrain_strategies = [args.retrain_strategy]
+
     print("=" * 80)
     print(" MLB WALK-FORWARD SIMULATION")
     print("=" * 80)
@@ -398,7 +445,11 @@ def main():
     print(f"Training windows: {training_windows}")
     print(f"Edge thresholds: {edge_thresholds}")
     print(f"Model types: {model_types}")
+    print(f"Retrain strategy: {retrain_strategies}")
     print(f"Retrain interval: {args.retrain_interval} days")
+    if 'triggered' in retrain_strategies:
+        print(f"Trigger: HR < {args.trigger_threshold}% over {args.trigger_lookback}d "
+              f"(cooldown: {args.trigger_cooldown}d, max: {args.trigger_max_interval}d)")
     print()
 
     # Load data
@@ -412,33 +463,39 @@ def main():
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Run simulation for each model type and training window
-    # Key: (model_type, window) -> result
+    # Run simulation for each model type, training window, and retrain strategy
+    # Key: (model_type, window, strategy) -> result
     all_results = {}
 
-    for model_type in model_types:
-        print(f"\n{'#'*80}")
-        print(f"# MODEL TYPE: {model_type.upper()}")
-        print(f"{'#'*80}")
+    for strategy in retrain_strategies:
+        for model_type in model_types:
+            print(f"\n{'#'*80}")
+            print(f"# {model_type.upper()} | RETRAIN: {strategy.upper()}")
+            print(f"{'#'*80}")
 
-        for window in training_windows:
-            print(f"\n{'='*60}")
-            print(f"[{model_type}] Training Window: {window} days")
-            print(f"{'='*60}")
+            for window in training_windows:
+                print(f"\n{'='*60}")
+                print(f"[{model_type}/{strategy}] Training Window: {window} days")
+                print(f"{'='*60}")
 
-            result = simulate_window(
-                df=df,
-                feature_cols=feature_cols,
-                training_window_days=window,
-                edge_thresholds=edge_thresholds,
-                retrain_interval=args.retrain_interval,
-                sim_start=sim_start,
-                sim_end=sim_end,
-                model_type=model_type,
-                filter_nan_predictions=args.filter_nan_predictions,
-            )
+                result = simulate_window(
+                    df=df,
+                    feature_cols=feature_cols,
+                    training_window_days=window,
+                    edge_thresholds=edge_thresholds,
+                    retrain_interval=args.retrain_interval,
+                    sim_start=sim_start,
+                    sim_end=sim_end,
+                    model_type=model_type,
+                    filter_nan_predictions=args.filter_nan_predictions,
+                    retrain_strategy=strategy,
+                    trigger_threshold=args.trigger_threshold,
+                    trigger_lookback=args.trigger_lookback,
+                    trigger_cooldown=args.trigger_cooldown,
+                    trigger_max_interval=args.trigger_max_interval,
+                )
 
-            all_results[(model_type, window)] = result
+                all_results[(model_type, window, strategy)] = result
 
             # Print summary for this window
             print(f"\nRetrains: {len(result['retrain_log'])}")
@@ -458,37 +515,79 @@ def main():
                     print(f"{threshold:>8.1f} {'0':>8} {'N/A':>8} {'N/A':>10}")
 
     # ==========================================================================
-    # CROSS-WINDOW COMPARISON (per model type)
+    # CROSS-WINDOW COMPARISON (per model type and strategy)
     # ==========================================================================
-    for model_type in model_types:
+    for strategy in retrain_strategies:
+        for model_type in model_types:
+            print("\n" + "=" * 80)
+            print(f"CROSS-WINDOW COMPARISON — {model_type.upper()} ({strategy.upper()})")
+            print("=" * 80)
+
+            print(f"\n{'Window':>8}", end="")
+            for t in edge_thresholds:
+                print(f"  edge>={t:.1f}", end="")
+            print()
+            print("-" * (8 + len(edge_thresholds) * 12))
+
+            for window in training_windows:
+                print(f"{window:>6}d", end="")
+                for threshold in edge_thresholds:
+                    picks = all_results[(model_type, window, strategy)]['results_by_threshold'][threshold]
+                    if picks:
+                        hr = sum(p['correct'] for p in picks) / len(picks) * 100
+                        n = len(picks)
+                        print(f"  {hr:5.1f}%/{n:<4}", end="")
+                    else:
+                        print(f"  {'N/A':>10}", end="")
+                print()
+
+    # ==========================================================================
+    # STRATEGY COMPARISON: Fixed vs Triggered (if both)
+    # ==========================================================================
+    if len(retrain_strategies) > 1:
         print("\n" + "=" * 80)
-        print(f"CROSS-WINDOW COMPARISON — {model_type.upper()}")
+        print("RETRAIN STRATEGY COMPARISON: FIXED vs TRIGGERED")
         print("=" * 80)
 
-        print(f"\n{'Window':>8}", end="")
-        for t in edge_thresholds:
-            print(f"  edge>={t:.1f}", end="")
-        print()
-        print("-" * (8 + len(edge_thresholds) * 12))
+        print(f"\n{'Window':>8} {'Edge':>6}", end="")
+        for s in retrain_strategies:
+            print(f"  {s:>14}", end="")
+        print(f"  {'Delta':>8}  {'Retrains':>14}")
+        print("-" * 80)
 
-        for window in training_windows:
-            print(f"{window:>6}d", end="")
-            for threshold in edge_thresholds:
-                picks = all_results[(model_type, window)]['results_by_threshold'][threshold]
-                if picks:
-                    hr = sum(p['correct'] for p in picks) / len(picks) * 100
-                    n = len(picks)
-                    print(f"  {hr:5.1f}%/{n:<4}", end="")
-                else:
-                    print(f"  {'N/A':>10}", end="")
-            print()
+        for model_type in model_types:
+            print(f"\n  [{model_type}]")
+            for window in training_windows:
+                for threshold in edge_thresholds:
+                    hrs = {}
+                    ns = {}
+                    retrains = {}
+                    for s in retrain_strategies:
+                        result = all_results[(model_type, window, s)]
+                        picks = result['results_by_threshold'][threshold]
+                        retrains[s] = len(result['retrain_log'])
+                        if picks:
+                            hrs[s] = sum(p['correct'] for p in picks) / len(picks) * 100
+                            ns[s] = len(picks)
+                        else:
+                            hrs[s] = None
+                            ns[s] = 0
+
+                    if all(hrs.get(s) is not None for s in retrain_strategies):
+                        print(f"{window:>6}d {threshold:>5.1f}", end="")
+                        for s in retrain_strategies:
+                            print(f"  {hrs[s]:5.1f}%/{ns[s]:<4}", end="")
+                        delta = hrs['triggered'] - hrs['fixed']
+                        rt_str = f"{retrains['fixed']}F/{retrains['triggered']}T"
+                        print(f"  {delta:>+7.1f}pp  {rt_str:>14}")
 
     # ==========================================================================
-    # HEAD-TO-HEAD: XGBoost vs CatBoost (if both)
+    # HEAD-TO-HEAD: XGBoost vs CatBoost (if both model types)
     # ==========================================================================
     if len(model_types) > 1:
+        strategy = retrain_strategies[0]  # Use first strategy for head-to-head
         print("\n" + "=" * 80)
-        print("HEAD-TO-HEAD: XGBoost vs CatBoost")
+        print(f"HEAD-TO-HEAD: XGBoost vs CatBoost ({strategy})")
         print("=" * 80)
 
         print(f"\n{'Window':>8} {'Edge':>6}", end="")
@@ -502,7 +601,7 @@ def main():
                 hrs = {}
                 ns = {}
                 for mt in model_types:
-                    picks = all_results[(mt, window)]['results_by_threshold'][threshold]
+                    picks = all_results[(mt, window, strategy)]['results_by_threshold'][threshold]
                     if picks:
                         hrs[mt] = sum(p['correct'] for p in picks) / len(picks) * 100
                         ns[mt] = len(picks)
@@ -522,8 +621,8 @@ def main():
     # ==========================================================================
 
     # Save detailed results
-    for (model_type, window), result in all_results.items():
-        prefix = f"{model_type}_{window}d"
+    for (model_type, window, strategy), result in all_results.items():
+        prefix = f"{model_type}_{window}d_{strategy}"
 
         # Daily predictions
         daily_df = pd.DataFrame(result['daily_metrics'])
@@ -547,14 +646,15 @@ def main():
         'training_windows': training_windows,
         'edge_thresholds': edge_thresholds,
         'model_types': model_types,
+        'retrain_strategies': retrain_strategies,
         'retrain_interval': args.retrain_interval,
         'total_samples': len(df),
         'features': feature_cols,
         'results': {},
     }
 
-    for (model_type, window), result in all_results.items():
-        key = f"{model_type}_{window}d"
+    for (model_type, window, strategy), result in all_results.items():
+        key = f"{model_type}_{window}d_{strategy}"
         summary['results'][key] = {}
         for threshold in edge_thresholds:
             picks = result['results_by_threshold'][threshold]
@@ -576,22 +676,22 @@ def main():
     print("MONTHLY BREAKDOWN (best config)")
     print("=" * 80)
 
-    # Find best model/window/threshold combo
+    # Find best model/window/threshold/strategy combo
     best_hr = 0
-    best_combo = ('xgboost', 56, 1.0)
-    for (model_type, window), result in all_results.items():
+    best_combo = ('xgboost', 56, 1.0, 'fixed')
+    for (model_type, window, strategy), result in all_results.items():
         for threshold in edge_thresholds:
             picks = result['results_by_threshold'][threshold]
             if picks and len(picks) >= 30:
                 hr = sum(p['correct'] for p in picks) / len(picks) * 100
                 if hr > best_hr:
                     best_hr = hr
-                    best_combo = (model_type, window, threshold)
+                    best_combo = (model_type, window, threshold, strategy)
 
-    best_model, best_window, best_threshold = best_combo
-    print(f"\nBest combo: {best_model} {best_window}d window, edge >= {best_threshold} ({best_hr:.1f}% HR)")
+    best_model, best_window, best_threshold, best_strategy = best_combo
+    print(f"\nBest combo: {best_model} {best_window}d window, edge >= {best_threshold}, {best_strategy} ({best_hr:.1f}% HR)")
 
-    picks = all_results[(best_model, best_window)]['results_by_threshold'][best_threshold]
+    picks = all_results[(best_model, best_window, best_strategy)]['results_by_threshold'][best_threshold]
     if picks:
         picks_df = pd.DataFrame(picks)
         picks_df['month'] = pd.to_datetime(picks_df['game_date']).dt.to_period('M')
