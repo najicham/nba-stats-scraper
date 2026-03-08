@@ -421,12 +421,16 @@ class BestBetsAggregator:
                     f"rescued by {rescue_signal}"
                 )
 
-            # Session 435: BB OVER edge 3-4 = 33.3% HR (4-12). Signal rescue
-            # bypasses floor and picks losers. 4.0+ = 68.3% HR. 5.0+ = 68.5%
-            # but kills volume. 4.0 is the sweet spot.
+            # Session 435: BB OVER edge 3-4 = 33.3% HR (4-12). 4.0+ = 68.3%.
+            # Session 436: Apply floor to rescued OVER too — rescued OVER = 50% HR
+            # vs non-rescued 66.7%. combo_he_ms rescue at edge <4 = 40% HR (2-3).
+            # Exempt HSE rescue (3-0, 100% HR) — HSE identifies genuine scoring env.
             over_floor = 4.0  # Session 435: raised from 3.0 (was 5.0 pre-419)
             regime_delta = self._regime_context.get('over_edge_floor_delta', 0)
-            if pred.get('recommendation') == 'OVER' and pred_edge < over_floor and not signal_rescued:
+            hse_rescued = signal_rescued and rescue_signal == 'high_scoring_environment_over'
+            if (pred.get('recommendation') == 'OVER'
+                    and pred_edge < over_floor
+                    and not hse_rescued):
                 filter_counts['over_edge_floor'] += 1
                 _record_filtered(pred, 'over_edge_floor', pred_edge)
                 continue
@@ -705,14 +709,16 @@ class BestBetsAggregator:
                 _record_filtered(pred, 'blowout_risk_under_block_obs', pred_edge)
 
             # High spread OVER — DEMOTED to observation (Session 419).
-            # Historical 44.3% (N=61) full season, but CF HR = 100% (2-0, blocking winners).
-            # Monitor 2 weeks — if CF HR drops below 50% at N >= 5, re-activate.
+            # Session 436: Promoted back to active blocking.
+            # Spread >= 7 OVER = 47% HR (N=32) vs 77% in competitive games.
+            # 30pp differential validated over full season. Flagged 4 of 5 Mar 7 losses.
             spread_mag = pred.get('spread_magnitude') or 0
             if (pred.get('recommendation') == 'OVER'
                     and spread_mag >= 7.0):
                 filter_counts['high_spread_over_would_block'] += 1
                 _record_filtered(pred, 'high_spread_over_would_block', pred_edge)
-                # continue  # Session 419: observation mode — do NOT block
+                if 'high_spread_over_would_block' not in self._runtime_demoted:
+                    continue
 
             # Mid-line OVER — DEMOTED to observation (Session 428).
             # Original 47.9% BB HR (N=213) was toxic-window-biased. Full-season
