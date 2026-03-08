@@ -1410,7 +1410,6 @@ class BestBetsAggregator:
         # Sort by composite_score desc first so we keep the best picks.
         scored.sort(key=lambda x: x['composite_score'], reverse=True)
         team_counts: Dict[str, int] = {}
-        team_capped: List[Dict] = []
         team_kept: List[Dict] = []
         for pick in scored:
             team = pick.get('team_abbr', '')
@@ -1418,7 +1417,6 @@ class BestBetsAggregator:
             if team_counts[team] > MAX_PICKS_PER_TEAM:
                 filter_counts['team_cap'] += 1
                 _record_filtered(pick, 'team_cap', pick.get('composite_score', 0))
-                team_capped.append(pick)
                 logger.info(
                     f"Team cap: dropping {pick['player_lookup']} "
                     f"({team}, #{team_counts[team]} pick) "
