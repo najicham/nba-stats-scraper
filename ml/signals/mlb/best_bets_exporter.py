@@ -52,6 +52,12 @@ PHASE_1_DURATION_DAYS = 45  # ~mid-May
 UNDER_ENABLED = os.environ.get('MLB_UNDER_ENABLED', 'false').lower() == 'true'
 UNDER_MIN_SIGNALS = 3  # Higher bar than OVER (which uses 2)
 
+# Overconfidence cap — OVER picks with edge > MAX_EDGE are blocked (55% HR vs 60% sweet spot)
+MAX_EDGE = float(os.environ.get('MLB_MAX_EDGE', '2.5'))
+
+# Daily pick limit — truncate ranked picks to this count
+MAX_PICKS_PER_DAY = int(os.environ.get('MLB_MAX_PICKS_PER_DAY', '2'))
+
 # Minimum real signal count for best bets (OVER)
 MIN_SIGNAL_COUNT = 2
 
@@ -212,6 +218,32 @@ class MLBBestBetsExporter:
         logger.info(f"[MLB BB] {len(actionable)} actionable predictions "
                     f"(directions: {allowed_directions})")
 
+        # 1b. Overconfidence cap — block OVER picks with edge > MAX_EDGE
+        capped = []
+        for p in actionable:
+            edge = abs(p.get('edge', 0))
+            if p.get('recommendation') == 'OVER' and edge > MAX_EDGE:
+                self.filter_audit.append({
+                    'game_date': game_date,
+                    'pitcher_lookup': p.get('pitcher_lookup', ''),
+                    'system_id': p.get('system_id', 'unknown'),
+                    'filter_name': 'overconfidence_cap',
+                    'filter_result': 'BLOCKED',
+                    'filter_reason': f'OVER edge {edge:.1f} > {MAX_EDGE} cap (overconfident)',
+                    'recommendation': p.get('recommendation'),
+                    'edge': p.get('edge'),
+                    'line_value': p.get('strikeouts_line'),
+                })
+                logger.debug(f"[MLB BB] {p.get('pitcher_lookup', '')} BLOCKED by overconfidence_cap "
+                             f"(edge={edge:.1f} > {MAX_EDGE})")
+            else:
+                capped.append(p)
+
+        if len(actionable) - len(capped) > 0:
+            logger.info(f"[MLB BB] {len(actionable) - len(capped)} blocked by overconfidence cap "
+                        f"(edge > {MAX_EDGE})")
+        actionable = capped
+
         # 2. Apply negative filters
         passed_filters = []
         for pred in actionable:
@@ -354,12 +386,21 @@ class MLBBestBetsExporter:
 
         # Combine and assign ranks
         ranked_picks = over_picks + under_picks
+
+        # 6b. Daily pick limit — truncate to MAX_PICKS_PER_DAY
+        if len(ranked_picks) > MAX_PICKS_PER_DAY:
+            trimmed = len(ranked_picks) - MAX_PICKS_PER_DAY
+            logger.info(f"[MLB BB] Trimming {trimmed} picks to daily limit of {MAX_PICKS_PER_DAY}")
+            ranked_picks = ranked_picks[:MAX_PICKS_PER_DAY]
+
         for i, pick in enumerate(ranked_picks, 1):
             pick['rank'] = i
 
-        # 7. Build pick angles
+        # 7. Build pick angles + stamp algorithm version
+        algo_version = f'mlb_v2_phase{phase["phase"]}_top{MAX_PICKS_PER_DAY}'
         for pick in ranked_picks:
             pick['pick_angles'] = self._build_pick_angles(pick)
+            pick['algorithm_version'] = algo_version
 
         # 8. Write to BigQuery
         if not dry_run and ranked_picks:
@@ -475,7 +516,7 @@ class MLBBestBetsExporter:
                 'real_signal_count': pick.get('real_signal_count', 0),
                 'rank': pick.get('rank'),
                 'pick_angles': pick.get('pick_angles', []),
-                'algorithm_version': f'mlb_v2_phase{phase["phase"]}',
+                'algorithm_version': pick.get('algorithm_version', 'mlb_v2'),
                 'signal_rescued': pick.get('signal_rescued', False),
                 'rescue_signal': pick.get('rescue_signal'),
                 'under_signal_quality': pick.get('under_signal_quality'),
