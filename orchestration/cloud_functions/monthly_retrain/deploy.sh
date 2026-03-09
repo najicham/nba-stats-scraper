@@ -54,11 +54,11 @@ gcloud functions deploy $FUNCTION_NAME \
     --source . \
     --entry-point monthly_retrain \
     --trigger-http \
-    --allow-unauthenticated \
+    --no-allow-unauthenticated \
     --timeout=540 \
     --memory=4Gi \
     --cpu=2 \
-    --set-env-vars GCP_PROJECT_ID=$PROJECT_ID,GCS_BUCKET=$GCS_BUCKET,SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-""} \
+    --update-env-vars GCP_PROJECT_ID=$PROJECT_ID,GCS_BUCKET=$GCS_BUCKET,SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-""} \
     --project $PROJECT_ID
 
 # Get function URL

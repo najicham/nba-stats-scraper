@@ -790,6 +790,50 @@ PYTHONPATH=. python shared/validation/phase3_completion_checker.py 2026-02-02 --
 
 ## Monitoring Issues
 
+### Gen2 Cloud Function Scheduler URL Mismatch (Session 448)
+
+**Symptom**: Cloud Scheduler jobs targeting Gen2 Cloud Functions return INTERNAL (code 13) or never execute (code -1)
+
+**Cause**: Gen2 CFs get a Cloud Run-backed URL (`https://FUNC-HASH.a.run.app`) but scheduler jobs still point at the Gen1 URL (`https://REGION-PROJECT.cloudfunctions.net/FUNC`). The Gen1 URL returns 500 because the function no longer serves there. Additionally, Gen2 CFs require OIDC authentication which Gen1 didn't need.
+
+**Real Examples (Session 448)**:
+- `morning-deployment-check`: INTERNAL/500 — scheduler hit Gen1 URL
+- `signal-weight-report-weekly`: code -1 — never ran, Gen1 URL + no OIDC
+- `monthly-retrain-job`: INTERNAL/500 — no OIDC auth token
+
+**Fix**:
+```bash
+# 1. Update scheduler URI to Gen2 URL
+gcloud scheduler jobs update http JOB_NAME \
+  --location=us-west2 --project=nba-props-platform \
+  --uri="https://FUNC-HASH.a.run.app" \
+  --oidc-service-account-email="756957797294-compute@developer.gserviceaccount.com"
+
+# 2. Add IAM on the backing Cloud Run service
+gcloud run services add-iam-policy-binding FUNC_NAME \
+  --region=us-west2 --project=nba-props-platform \
+  --member='serviceAccount:756957797294-compute@developer.gserviceaccount.com' \
+  --role='roles/run.invoker'
+```
+
+**Prevention**: After deploying Gen2 CFs, verify scheduler URI matches `serviceConfig.uri` (not `httpsTrigger.url`). Phase 0.675 regression detector catches these.
+
+---
+
+### Scheduler Timeout Too Short for Workflow Scrapers (Session 448)
+
+**Symptom**: DEADLINE_EXCEEDED on scheduler jobs, but scraped data still arrives
+
+**Cause**: Multi-source scraper workflows (betting lines, CLV closing) take longer than the scheduler `attemptDeadline`
+
+**Rule of Thumb**:
+- Simple scrapers (single source): 600s
+- Workflow scrapers (multi-source): 1800s
+
+**Fix**: `gcloud scheduler jobs update http JOB --attempt-deadline=1800s`
+
+---
+
 ### Monitoring Permissions Error (Session 61)
 
 **Symptom**: `403 Permission 'monitoring.timeSeries.create' denied`

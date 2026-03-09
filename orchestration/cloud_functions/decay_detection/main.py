@@ -618,7 +618,7 @@ def check_pick_volume_anomaly(game_date) -> Optional[Dict]:
         game_date,
         COUNT(*) as daily_picks
       FROM `{PROJECT_ID}.nba_predictions.signal_best_bets_picks`
-      WHERE game_date BETWEEN DATE_SUB(DATE('{game_date}'), INTERVAL {PICK_VOLUME_LOOKBACK_DAYS} DAY)
+      WHERE game_date >= DATE_SUB(DATE('{game_date}'), INTERVAL {PICK_VOLUME_LOOKBACK_DAYS} DAY)
         AND game_date < DATE('{game_date}')
       GROUP BY game_date
     ),

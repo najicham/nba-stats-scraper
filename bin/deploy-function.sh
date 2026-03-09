@@ -169,6 +169,18 @@ get_function_config() {
             FUNC_TRIGGER_TYPE="http"
             FUNC_NEEDS_SHARED="true"
             ;;
+        morning-deployment-check)
+            FUNC_SOURCE_DIR="functions/monitoring/morning_deployment_check"
+            FUNC_ENTRY_POINT="run_check"
+            FUNC_TRIGGER_TYPE="http"
+            FUNC_NEEDS_SHARED="false"
+            ;;
+        monthly-retrain)
+            FUNC_SOURCE_DIR="orchestration/cloud_functions/monthly_retrain"
+            FUNC_ENTRY_POINT="monthly_retrain"
+            FUNC_TRIGGER_TYPE="http"
+            FUNC_NEEDS_SHARED="false"
+            ;;
 
         *)
             return 1
@@ -204,6 +216,8 @@ usage() {
     echo "    self-heal-predictions"
     echo "    live-freshness-monitor"
     echo "    enrichment-trigger"
+    echo "    morning-deployment-check"
+    echo "    monthly-retrain"
     echo ""
     echo "Options:"
     echo "  --dry-run                Show what would be deployed without deploying"

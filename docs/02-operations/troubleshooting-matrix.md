@@ -1761,6 +1761,9 @@ If service already ran and failed, wait for next scheduled run or manually trigg
 | Missing IAM (run.invoker) on target | Grant SA roles/run.invoker | 216B |
 | CLI tools in CF runtime | Use Python client libraries | 218B |
 | Stale deployment (code fixed but not deployed) | Redeploy function | 219 |
+| Gen2 CF URL mismatch (scheduler → Gen1 URL) | Update URI to `serviceConfig.uri` + OIDC | 448 |
+| DEADLINE_EXCEEDED on workflow scrapers | Increase `attemptDeadline` to 1800s | 448 |
+| No OIDC auth on Gen2 CF scheduler job | Add `--oidc-service-account-email` | 448 |
 
 **Diagnosis:**
 ```bash
@@ -1775,7 +1778,7 @@ for n,c in sorted(failing): print(f'  {n}: code {c}')
 "
 ```
 
-**References:** Session 219 handoff (all 15 jobs fixed), validate-daily Phase 0.67/0.675
+**References:** Session 219 handoff (all 15 jobs fixed), Session 448 (7 more fixed), validate-daily Phase 0.67/0.675
 
 ### 6.8 - Auto-Retry Queue Runaway (Session 220)
 

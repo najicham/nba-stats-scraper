@@ -138,7 +138,7 @@ nba-stats-scraper/
 
 **Cloud Run Services:** prediction-coordinator, prediction-worker, nba-phase3-analytics-processors, nba-phase4-precompute-processors, nba-phase2-raw-processors, nba-scrapers, nba-grading-service
 
-**Cloud Functions (auto-deploy via `cloudbuild-functions.yaml`):** phase5b-grading, phase6-export, grading-gap-detector, phase3/4/5-to-next orchestrators, enrichment-trigger, daily-health-check, transition-monitor, pipeline-health-summary, nba-grading-alerts, live-freshness-monitor, self-heal-predictions, grading-readiness-monitor, post-grading-export, decay-detection (11 AM ET), retrain-reminder (Mon 9 AM ET), validation-runner, filter-counterfactual-evaluator (11:30 AM ET)
+**Cloud Functions (auto-deploy via `cloudbuild-functions.yaml`):** phase5b-grading, phase6-export, grading-gap-detector, phase3/4/5-to-next orchestrators, enrichment-trigger, daily-health-check, transition-monitor, pipeline-health-summary, nba-grading-alerts, live-freshness-monitor, self-heal-predictions, grading-readiness-monitor, post-grading-export, decay-detection (11 AM ET), retrain-reminder (Mon 9 AM ET), validation-runner, filter-counterfactual-evaluator (11:30 AM ET), morning-deployment-check (6 AM ET), monthly-retrain (1st of month)
 
 **NOT auto-deployed (manual only):** auto-retry-processor
 
@@ -174,6 +174,7 @@ nba-stats-scraper/
 | `nba_raw.nba_tracking_stats` | NBA.com player tracking/usage data |
 | `nba_raw.vsin_betting_splits` | VSiN public betting percentages |
 | `league_macro_daily` | Daily league macro trends — Vegas MAE, scoring env, edge availability, BB HR |
+| `model_bb_candidates` | Per-model pipeline candidates with full provenance (45 cols). Partitioned by game_date |
 
 **Game Status:** 1=Scheduled, 2=In Progress, 3=Final
 
@@ -252,6 +253,8 @@ WHERE game_date >= CURRENT_DATE() - 7 ORDER BY game_date DESC;
 | **SQL escape `\_` in Python** | BigQuery LIKE doesn't need backslash-escaping underscores. Use `%_q4%` not `%\\_q4%`. |
 | **Re-exports destroy picks** | FIXED Session 412. `signal_best_bets_picks` now uses scoped DELETE (only refreshed players). Published picks stay `signal_status='active'`. |
 | **`win_flag` always FALSE** | `player_game_summary.win_flag` is FALSE for ALL teams/players. Use `plus_minus > 0` as win proxy. |
+| **Gen2 CF scheduler URL mismatch** | Scheduler targeting Gen1 URL returns 500/INTERNAL. Update URI to `serviceConfig.uri` + add OIDC auth + IAM. Session 448. |
+| **Scheduler DEADLINE_EXCEEDED** | Workflow scrapers (multi-source) need 1800s timeout, not 900s. Data still arrives despite timeout. Session 448. |
 
 **Full troubleshooting:** `docs/02-operations/troubleshooting-matrix.md`, `docs/02-operations/session-learnings.md`
 
@@ -343,18 +346,27 @@ High-confidence classification layer on best bets. Internal-only (stripped from 
 
 **Public exposure gate:** Ultra OVER N >= 50 and HR >= 80%. Currently 17-2, need ~31 more.
 
-## Multi-Model Best Bets [Keyword: MULTIMODEL]
+## Per-Model Best Bets Pipelines [Keyword: PIPELINES]
 
-2-system consolidated architecture. SignalBestBetsExporter + SignalAnnotator bridge share same aggregator, blacklist, and filters. Algorithm version: `v314_consolidated`.
+Per-model pipeline architecture (Session 445). Replaced winner-take-all with independent pipelines + pool-and-rank merge. Algorithm version: `v446_per_model_deployed`.
 
-**Dynamic model discovery:** 6 families (`v9_mae`, `v12_mae`, `v9_q43`, `v9_q45`, `v12_q43`, `v12_q45`). `discover_models()` queries BQ, classifies by pattern — survives retrains automatically.
+**How it works:**
+1. Batch query ALL enabled models' predictions (1 BQ scan, no ROW_NUMBER dedup)
+2. Shared context computed once: signal health, filters, combo registry, regime, blacklist
+3. Per-model aggregator runs N times in `mode='per_model'` (skips team_cap, rescue_cap)
+4. Pool ALL candidates, sort by `composite_score` DESC
+5. First-occurrence player dedup + team cap (2/team) + volume cap (15/day) + rescue cap (40%)
+6. Final picks written to `signal_best_bets_picks`
 
-**CRITICAL:** V9+V12 agreement is ANTI-correlated with winning. `diversity_mult` removed.
+**Key differences from old consensus approach:**
+- No `diversity_mult` or `consensus_bonus` — pure composite_score ranking
+- All models compete equally; first-occurrence dedup in merge
+- Signals evaluate per-model (gate on model-specific `recommendation`)
+- Full provenance in `model_bb_candidates` BQ table (45 columns)
+- `pipeline_agreement_count` tracked but NOT used for scoring (anti-correlated)
 
-**Consensus bonus:** `agreement_base = 0.05 * (n_agreeing - 2)` + `quantile_bonus = 0.10 if UNDER + all quantile agree`. Max 0.15.
-
-**Key files:** `ml/signals/cross_model_scorer.py`, `shared/config/cross_model_subsets.py`
-**See:** `docs/08-projects/current/multi-model-best-bets/00-ARCHITECTURE.md`
+**Key files:** `ml/signals/per_model_pipeline.py`, `ml/signals/pipeline_merger.py`, `shared/config/cross_model_subsets.py`
+**See:** `docs/08-projects/current/per-model-pipelines/00-ARCHITECTURE.md`
 
 ## GCP Resources
 
