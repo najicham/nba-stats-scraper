@@ -493,6 +493,31 @@ def query_predictions_with_supplements(
       QUALIFY ROW_NUMBER() OVER (
         PARTITION BY player_lookup ORDER BY game_date DESC
       ) = 1
+    ),
+
+    -- Session 451: FTA variance for ft_variance_under observation.
+    -- Players with high FTA avg (>=5) + high CV (>=0.5) = 47.8% UNDER HR vs 70.6% stable (22.8pp gap).
+    fta_variance AS (
+      SELECT
+        player_lookup,
+        AVG(CAST(ft_attempts AS FLOAT64)) AS fta_avg_last_10,
+        STDDEV(CAST(ft_attempts AS FLOAT64)) AS fta_std_last_10,
+        SAFE_DIVIDE(
+          STDDEV(CAST(ft_attempts AS FLOAT64)),
+          NULLIF(AVG(CAST(ft_attempts AS FLOAT64)), 0)
+        ) AS fta_cv_last_10
+      FROM (
+        SELECT player_lookup, ft_attempts,
+          ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY game_date DESC) AS rn
+        FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
+        WHERE game_date >= '2025-10-22'
+          AND game_date < @target_date
+          AND minutes_played > 0
+          AND (is_dnp IS NULL OR is_dnp = FALSE)
+      )
+      WHERE rn <= 10
+      GROUP BY player_lookup
+      HAVING COUNT(*) >= 5
     )
 
     SELECT
@@ -558,7 +583,10 @@ def query_predictions_with_supplements(
       pgc.prev_game_line,
       pgc.prev_game_ratio,
       pgc.prev_game_fg_pct,
-      pgc.prev_game_minutes
+      pgc.prev_game_minutes,
+      fv.fta_avg_last_10,
+      fv.fta_std_last_10,
+      fv.fta_cv_last_10
     FROM preds p
     LEFT JOIN latest_stats ls ON ls.player_lookup = p.player_lookup
     LEFT JOIN latest_streak lsk ON lsk.player_lookup = p.player_lookup
@@ -567,6 +595,7 @@ def query_predictions_with_supplements(
     LEFT JOIN book_stats bs ON bs.player_lookup = p.player_lookup AND bs.game_date = p.game_date
     LEFT JOIN dk_line_movement dlm ON dlm.player_lookup = p.player_lookup
     LEFT JOIN prev_game_context pgc ON pgc.player_lookup = p.player_lookup
+    LEFT JOIN fta_variance fv ON fv.player_lookup = p.player_lookup
     ORDER BY p.player_lookup
     """
 
@@ -1152,6 +1181,8 @@ def query_predictions_with_supplements(
         pred['points_avg_season'] = float(row_dict.get('points_avg_season') or 0)
         pred['usage_avg_season'] = float(row_dict.get('usage_avg_season') or 0)
         pred['fta_season'] = float(row_dict.get('fta_season') or 0)
+        pred['fta_avg_last_10'] = float(row_dict.get('fta_avg_last_10') or 0)
+        pred['fta_cv_last_10'] = float(row_dict.get('fta_cv_last_10') or 0)
         pred['unassisted_fg_season'] = float(row_dict.get('unassisted_fg_season') or 0)
         pred['points_std_last_5'] = float(row_dict.get('points_std_last_5') or 0)
         pred['ft_rate_season'] = float(row_dict.get('ft_rate_season') or 0)

@@ -315,7 +315,7 @@ python bin/analysis/model_correlation.py         # Inter-model agreement
 
 ## Signal System [Keyword: SIGNALS]
 
-**28 active signals + 26 shadow signals** (24 removed/disabled). **22 negative filters + 6 observation.**
+**28 active signals + 27 shadow signals** (24 removed/disabled). **23 negative filters + 10 observation.**
 **Full inventory:** `docs/08-projects/current/signal-discovery-framework/SIGNAL-INVENTORY.md`
 
 **Best Bets Pipeline:** `edge 3+ (or signal rescue) → negative filters → signal_count ≥ 3 → real_sc gate → rank by edge (OVER) or signal quality (UNDER)`
@@ -348,7 +348,7 @@ High-confidence classification layer on best bets. Internal-only (stripped from 
 
 ## Per-Model Best Bets Pipelines [Keyword: PIPELINES]
 
-Per-model pipeline architecture (Session 445). Replaced winner-take-all with independent pipelines + pool-and-rank merge. Algorithm version: `v446_per_model_deployed`.
+Per-model pipeline architecture (Session 445). Replaced winner-take-all with independent pipelines + pool-and-rank merge. Algorithm version: `v451_session451_filters`.
 
 **How it works:**
 1. Batch query ALL enabled models' predictions (1 BQ scan, no ROW_NUMBER dedup)

@@ -1,10 +1,10 @@
 # Signal Inventory — Complete List
 
-**Last Updated:** 2026-03-08 (Session 442)
-**Active Signals:** 27 (+ 27 shadow/observation accumulating data)
-**Negative Filters:** 19 (+ 12 observation)
+**Last Updated:** 2026-03-09 (Session 451)
+**Active Signals:** 28 (+ 27 shadow/observation accumulating data)
+**Negative Filters:** 23 (+ 10 observation)
 **Combo Registry:** 11 SYNERGISTIC entries
-**Algorithm Version:** `v442_autopsy_observations`
+**Algorithm Version:** `v451_session451_filters`
 
 ---
 
@@ -73,7 +73,7 @@ Rescue tags: `combo_3way`, `combo_he_ms`, `book_disagreement` (72%), `home_under
 | `extended_rest_under` | UNDER | 61.8% | PRODUCTION | Session 372 |
 | `starter_under` | UNDER | 54.8-68.1% | PRODUCTION | Session 372 |
 | `sharp_book_lean_under` | UNDER | 84.7% backtest / 0 fires | OBSERVATION | Session 399. Zero production fires — market regime: sharp books consistently set higher lines than soft. Demoted 3.0→1.0 (S423)→observation (S431). Removed from UNDER_SIGNAL_WEIGHTS and rescue_tags. |
-| `mean_reversion_under` | UNDER | 53.0% (2026) | PRODUCTION (weight removed) | Session 413→429. Cross-season decay: 75.7%(2024)→65.2%(2025)→53.0%(2026). Below baseline. Removed from rescue (S427) and UNDER_SIGNAL_WEIGHTS (S429). Still fires for tracking. |
+| `mean_reversion_under` | UNDER | 53.0% (2026) | SHADOW (S451) | Session 413→429→451. Cross-season decay: 75.7%→65.2%→53.0%. Moved to SHADOW_SIGNALS (stops real_sc inflation). Added MAX_OVER_RATE=0.60 guard (don't fire on structural high-scorers). Removed from rescue (S427), weights (S429). |
 | `day_of_week_under` | UNDER | 59.4-60.3% | SHADOW | Session 414, Monday 60.3% (N=277), Thursday 59.4% (N=419) |
 | `sharp_line_drop_under` | UNDER | 87.5% | PRODUCTION | Session 382c. Now in UNDER_SIGNAL_WEIGHTS (2.5) since Session 422c |
 
@@ -176,7 +176,7 @@ Three new UNDER signals to fill the UNDER signal vacuum. 98.4% of model-level UN
 
 ---
 
-## Negative Filters (22)
+## Negative Filters (23 active + 1 safety)
 
 | # | Filter | Condition | HR | Session |
 |---|--------|-----------|-----|---------|
@@ -204,10 +204,11 @@ Three new UNDER signals to fill the UNDER signal vacuum. 98.4% of model-level UN
 | 22 | B2B UNDER block | UNDER + rest_days <= 1 | 30.8% | 422c |
 | 23 | Prediction sanity | pred > 2x season_avg + line < 18 | 40.9% (N=88) | 440 |
 | 24 | Team cap | > 2 picks from same team | — | 441 |
+| 25 | Line anomaly extreme drop | OVER + line drop >= 40% or >= 6pts from prev game | — | 451 |
 | — | Away block | REMOVED Session 401 | — | 401 |
 | — | UNDER + line jumped 2+ | Demoted to observation Session 417 (5/5 winners blocked) | — | 417 |
 
-### Observation-Only Filters (12)
+### Observation-Only Filters (10 + 3 new Session 451)
 
 | Filter | Condition | HR | Session | Notes |
 |--------|-----------|-----|---------|-------|
@@ -224,6 +225,9 @@ Three new UNDER signals to fill the UNDER signal vacuum. 98.4% of model-level UN
 | `mae_gap_obs` | All picks when model MAE > Vegas MAE by 0.15+ (mae_gap_7d from league_macro_daily) | 40-50% | 442 | BB HR craters when model loses edge over Vegas. Observation mode. |
 | `thin_slate_obs` | All picks on 4-6 game slates | 51.2% (76.7% OVER-heavy mix) | 442 | 7-9 games = 72.0% HR. Small slates = lower quality picks and OVER-heavy skew. Observation mode. |
 | `hot_streak_under_obs` | UNDER + over_rate_last_10 >= 0.7 (feature 55) | 44.4% UNDER HR (N=18) vs 81-87% when cold | 442 | Betting UNDER on a hot player is anti-signal. Uses f55 (over_rate_last_10). Observation mode. |
+| `player_under_suppression_obs` | UNDER + player UNDER HR < 35% at N >= 20 (enabled models) | Herro 22.5% (all models, N=40) | 451 | Direction-specific. Won't fire until fleet has 4-6 weeks history (~Mar 24). Check date: **Mar 24**. |
+| `under_low_rsc_obs` | UNDER + real_sc < 2 + edge < 7 | Mar 8: 6/7 UNDER losses had rsc 1-2 | 451 | Would also block wins (Zion rsc=1). Needs N >= 30 to assess risk. Check date: **Mar 24**. |
+| `ft_variance_under_obs` | UNDER + fta_avg_last_10 >= 5 + fta_cv >= 0.5 | 47.8% UNDER HR vs 70.6% stable (22.8pp gap) | 451 | FTA avg and CV are stable player traits. Booker flagged on Mar 8. Check date: **Mar 24**. |
 
 ---
 

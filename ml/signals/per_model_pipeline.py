@@ -27,7 +27,7 @@ from google.cloud import bigquery
 from ml.signals.aggregator import BestBetsAggregator
 from ml.signals.combo_registry import load_combo_registry
 from ml.signals.model_health import BREAKEVEN_HR
-from ml.signals.player_blacklist import compute_player_blacklist
+from ml.signals.player_blacklist import compute_player_blacklist, compute_player_under_suppression
 from ml.signals.model_direction_affinity import compute_model_direction_affinities
 from ml.signals.model_profile_loader import load_model_profiles
 from ml.signals.regime_context import get_regime_context, get_market_compression
@@ -83,6 +83,9 @@ class SharedContext:
     # Player blacklist: set of player_lookup strings
     player_blacklist: Set[str] = field(default_factory=set)
     blacklist_stats: Dict[str, Any] = field(default_factory=dict)
+
+    # Session 451: Player UNDER suppression — direction-specific poor performers
+    player_under_suppression: Set[str] = field(default_factory=set)
 
     # Model-direction affinity blocks
     model_direction_blocks: Set[tuple] = field(default_factory=set)
@@ -1437,6 +1440,14 @@ def build_shared_context(
     except Exception as e:
         logger.warning(f"Player blacklist computation failed (non-fatal): {e}")
 
+    # 5b. Player UNDER suppression (1 query, Session 451)
+    try:
+        ctx.player_under_suppression, _ = compute_player_under_suppression(
+            bq_client, target_date
+        )
+    except Exception as e:
+        logger.warning(f"Player UNDER suppression computation failed (non-fatal): {e}")
+
     # 6. Model-direction affinity (1 query)
     try:
         _, ctx.model_direction_blocks, ctx.model_direction_affinity_stats = \
@@ -1476,7 +1487,8 @@ def build_shared_context(
     logger.info(
         f"Shared context built: {len(predictions_by_model)} models, "
         f"{sum(len(v) for v in predictions_by_model.values())} total predictions, "
-        f"{len(ctx.player_blacklist)} blacklisted players"
+        f"{len(ctx.player_blacklist)} blacklisted, "
+        f"{len(ctx.player_under_suppression)} UNDER-suppressed players"
     )
 
     return ctx
@@ -1548,6 +1560,7 @@ def run_single_model_pipeline(
         combo_registry=shared_ctx.combo_registry,
         signal_health=shared_ctx.signal_health,
         player_blacklist=shared_ctx.player_blacklist,
+        player_under_suppression=shared_ctx.player_under_suppression,
         model_direction_blocks=shared_ctx.model_direction_blocks,
         model_direction_affinity_stats=shared_ctx.model_direction_affinity_stats,
         model_profile_store=shared_ctx.model_profile_store,

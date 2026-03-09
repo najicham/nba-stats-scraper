@@ -136,6 +136,10 @@ class TestAggregatorReturnType:
             'over_low_rsc_obs', 'mae_gap_obs', 'thin_slate_obs',
             'hot_streak_under_obs',
             'solo_game_pick_obs',
+            'line_anomaly_extreme_drop',
+            'player_under_suppression_obs',
+            'under_low_rsc_obs',
+            'ft_variance_under_obs',
             'team_cap',
             'unreliable_over_low_mins_obs', 'unreliable_under_flat_trend_obs',
             'b2b_under_block', 'blowout_risk_under_block_obs',
@@ -1887,11 +1891,11 @@ class TestSoloGamePickObservation:
 class TestAlgorithmVersionV442:
     """Session 442: Algorithm version bump."""
 
-    def test_algorithm_version_v442(self):
-        """ALGORITHM_VERSION should start with 'v442'."""
+    def test_algorithm_version_v451(self):
+        """ALGORITHM_VERSION should start with 'v451'."""
         from ml.signals.aggregator import ALGORITHM_VERSION
-        assert ALGORITHM_VERSION.startswith('v442'), (
-            f"Expected ALGORITHM_VERSION to start with 'v442', got '{ALGORITHM_VERSION}'"
+        assert ALGORITHM_VERSION.startswith('v451'), (
+            f"Expected ALGORITHM_VERSION to start with 'v451', got '{ALGORITHM_VERSION}'"
         )
 
 
@@ -1951,3 +1955,178 @@ class TestPerModelMode:
         agg = BestBetsAggregator(mode='per_model')
         picks, summary = agg.aggregate(preds, signals)
         assert summary['rejected']['rescue_cap'] == 0  # No rescues dropped
+
+
+# ============================================================================
+# SESSION 451 FILTER TESTS
+# ============================================================================
+
+class TestLineAnomalyExtremeDropFilter:
+    """Session 451: Line anomaly blocks OVER when line drops >= 40% or >= 6 pts."""
+
+    def _make_signals(self, pred, n=5):
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        return {key: [_make_signal_result(f'sig_{i}') for i in range(n)]}
+
+    def test_blocks_40pct_drop_over(self):
+        """OVER with 50% line drop should be blocked."""
+        pred = _make_prediction(
+            edge=7.0, recommendation='OVER', line_value=8.5,
+            prop_line_delta=-8.0,  # current 8.5, prev was 16.5 => delta = -8.0
+        )
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], self._make_signals(pred))
+        assert summary['rejected']['line_anomaly_extreme_drop'] == 1
+        assert len(picks) == 0
+
+    def test_blocks_6pt_abs_drop_over(self):
+        """OVER with 6+ point absolute drop should be blocked."""
+        pred = _make_prediction(
+            edge=6.0, recommendation='OVER', line_value=14.0,
+            prop_line_delta=-7.0,  # current 14, prev was 21 => delta = -7.0
+        )
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], self._make_signals(pred))
+        assert summary['rejected']['line_anomaly_extreme_drop'] == 1
+        assert len(picks) == 0
+
+    def test_allows_normal_line_drop_over(self):
+        """OVER with small line drop should pass."""
+        pred = _make_prediction(
+            edge=6.0, recommendation='OVER', line_value=20.0,
+            prop_line_delta=-3.0,  # current 20, prev 23 => 13% drop
+        )
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], self._make_signals(pred))
+        assert summary['rejected']['line_anomaly_extreme_drop'] == 0
+        assert len(picks) == 1
+
+    def test_does_not_affect_under(self):
+        """UNDER with big line drop should not be blocked by this filter."""
+        pred = _make_prediction(
+            edge=5.0, recommendation='UNDER', line_value=8.5,
+            prop_line_delta=-8.0,
+            trend_slope=2.0,
+        )
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], self._make_signals(pred))
+        assert summary['rejected']['line_anomaly_extreme_drop'] == 0
+
+
+class TestPlayerUnderSuppressionObs:
+    """Session 451: Player UNDER suppression observation mode."""
+
+    def _make_signals(self, pred, n=5):
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        return {key: [_make_signal_result(f'sig_{i}') for i in range(n)]}
+
+    def test_tags_suppressed_under_player(self):
+        """UNDER pick on suppressed player should be tagged but not blocked."""
+        pred = _make_prediction(
+            player_lookup='kat_player', edge=5.0,
+            recommendation='UNDER', trend_slope=2.0,
+        )
+        agg = BestBetsAggregator(player_under_suppression={'kat_player'})
+        picks, summary = agg.aggregate([pred], self._make_signals(pred))
+        assert summary['rejected']['player_under_suppression_obs'] == 1
+        assert len(picks) == 1  # Observation — still passes
+
+    def test_does_not_tag_over_on_suppressed_player(self):
+        """OVER pick on suppressed player should not be tagged."""
+        pred = _make_prediction(
+            player_lookup='kat_player', edge=6.0,
+            recommendation='OVER',
+        )
+        agg = BestBetsAggregator(player_under_suppression={'kat_player'})
+        picks, summary = agg.aggregate([pred], self._make_signals(pred))
+        assert summary['rejected']['player_under_suppression_obs'] == 0
+
+    def test_does_not_tag_non_suppressed_player(self):
+        """UNDER pick on non-suppressed player should not be tagged."""
+        pred = _make_prediction(
+            edge=5.0, recommendation='UNDER', trend_slope=2.0,
+        )
+        agg = BestBetsAggregator(player_under_suppression={'some_other'})
+        picks, summary = agg.aggregate([pred], self._make_signals(pred))
+        assert summary['rejected']['player_under_suppression_obs'] == 0
+
+
+class TestMeanReversionUnderGuard:
+    """Session 451: mean_reversion_under doesn't fire on high OVER-rate players."""
+
+    def test_blocked_at_high_over_rate(self):
+        from ml.signals.mean_reversion_under import MeanReversionUnderSignal
+        sig = MeanReversionUnderSignal()
+        result = sig.evaluate({
+            'recommendation': 'UNDER', 'line_value': 25.0,
+            'trend_slope': 2.5, 'pts_avg_last3': 28.0,
+            'over_rate_last_10': 0.70,  # Above 0.60 guard
+        })
+        assert not result.qualifies
+
+    def test_fires_at_low_over_rate(self):
+        from ml.signals.mean_reversion_under import MeanReversionUnderSignal
+        sig = MeanReversionUnderSignal()
+        result = sig.evaluate({
+            'recommendation': 'UNDER', 'line_value': 25.0,
+            'trend_slope': 2.5, 'pts_avg_last3': 28.0,
+            'over_rate_last_10': 0.40,  # Below guard
+        })
+        assert result.qualifies
+
+    def test_fires_when_over_rate_missing(self):
+        from ml.signals.mean_reversion_under import MeanReversionUnderSignal
+        sig = MeanReversionUnderSignal()
+        result = sig.evaluate({
+            'recommendation': 'UNDER', 'line_value': 25.0,
+            'trend_slope': 2.5, 'pts_avg_last3': 28.0,
+            # over_rate_last_10 missing → defaults to 0
+        })
+        assert result.qualifies
+
+
+class TestMeanReversionInShadowSignals:
+    """Session 451: mean_reversion_under is in SHADOW_SIGNALS."""
+
+    def test_mean_reversion_in_shadow(self):
+        from ml.signals.aggregator import SHADOW_SIGNALS
+        assert 'mean_reversion_under' in SHADOW_SIGNALS
+
+
+class TestFtVarianceUnderObs:
+    """Session 451: FT variance observation tags high-FTA + high-CV UNDER picks."""
+
+    def _make_signals(self, pred, n=5):
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        return {key: [_make_signal_result(f'sig_{i}') for i in range(n)]}
+
+    def test_tags_high_fta_high_cv(self):
+        pred = _make_prediction(
+            edge=5.0, recommendation='UNDER', trend_slope=2.0,
+        )
+        pred['fta_avg_last_10'] = 6.0
+        pred['fta_cv_last_10'] = 0.55
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], self._make_signals(pred))
+        assert summary['rejected']['ft_variance_under_obs'] == 1
+        assert len(picks) == 1  # Observation — still passes
+
+    def test_does_not_tag_low_fta(self):
+        pred = _make_prediction(
+            edge=5.0, recommendation='UNDER', trend_slope=2.0,
+        )
+        pred['fta_avg_last_10'] = 3.0  # Below 5.0 threshold
+        pred['fta_cv_last_10'] = 0.55
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], self._make_signals(pred))
+        assert summary['rejected']['ft_variance_under_obs'] == 0
+
+    def test_does_not_tag_low_cv(self):
+        pred = _make_prediction(
+            edge=5.0, recommendation='UNDER', trend_slope=2.0,
+        )
+        pred['fta_avg_last_10'] = 6.0
+        pred['fta_cv_last_10'] = 0.3  # Below 0.5 threshold
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate([pred], self._make_signals(pred))
+        assert summary['rejected']['ft_variance_under_obs'] == 0

@@ -51,7 +51,7 @@ from shared.config.model_selection import get_min_confidence
 logger = logging.getLogger(__name__)
 
 # Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v442_autopsy_observations'
+ALGORITHM_VERSION = 'v451_session451_filters'
 
 # Session 441: Max picks per team per game.
 # Prevents correlated exposure from same-game concentration.
@@ -101,6 +101,7 @@ SHADOW_SIGNALS = frozenset({
     'over_streak_reversion_under', # Insufficient BB data
     'star_favorite_under',         # +0.7pp = noise (Session 427)
     'starter_away_overtrend_under',  # Insufficient BB data
+    'mean_reversion_under',  # Session 451: decayed to 53% vs 54.3% baseline, removed from weights/rescue Session 429. Stop real_sc inflation.
 })
 
 # Session 400: UNDER signal quality weights for signal-first ranking.
@@ -241,6 +242,7 @@ class BestBetsAggregator:
         cross_model_factors: Optional[Dict[str, Dict[str, Any]]] = None,
         qualifying_subsets: Optional[Dict[str, List[Dict]]] = None,
         player_blacklist: Optional[Set[str]] = None,
+        player_under_suppression: Optional[Set[str]] = None,
         model_direction_blocks: Optional[Set[tuple]] = None,
         model_direction_affinity_stats: Optional[Dict] = None,
         model_profile_store: Optional[Any] = None,
@@ -257,6 +259,7 @@ class BestBetsAggregator:
         self._cross_model_factors = cross_model_factors or {}
         self._qualifying_subsets = qualifying_subsets or {}
         self._player_blacklist = player_blacklist or set()
+        self._player_under_suppression = player_under_suppression or set()
         self._model_direction_blocks = model_direction_blocks or set()
         self._model_direction_affinity_stats = model_direction_affinity_stats
         self._model_profile_store = model_profile_store
@@ -347,6 +350,10 @@ class BestBetsAggregator:
             'thin_slate_obs': 0,
             'hot_streak_under_obs': 0,
             'solo_game_pick_obs': 0,
+            'line_anomaly_extreme_drop': 0,
+            'player_under_suppression_obs': 0,
+            'under_low_rsc_obs': 0,
+            'ft_variance_under_obs': 0,
             'team_cap': 0,
         }
 
@@ -444,6 +451,16 @@ class BestBetsAggregator:
                 if pred_edge_early >= 3.0:
                     _record_filtered(pred, 'blacklist', pred_edge_early)
                 continue
+
+            # Session 451: Player UNDER suppression (observation mode).
+            # Players with UNDER HR < 35% at N >= 20 across enabled models are
+            # tracked. KAT 28% (N=32), Herro 12.5% (N=8). Start as observation
+            # to measure impact before promoting to active filter.
+            if (pred.get('recommendation') == 'UNDER'
+                    and pred['player_lookup'] in self._player_under_suppression):
+                filter_counts['player_under_suppression_obs'] += 1
+                _record_filtered(pred, 'player_under_suppression_obs', pred_edge_early)
+                # Observation mode — do NOT continue/filter
 
             # Edge floor: lowered to 3.0 (Session 352) — signal filters provide quality gate
             # Session 355: Premium signals with high HR are exempt from edge floors.
@@ -722,6 +739,24 @@ class BestBetsAggregator:
                 filter_counts['line_dropped_over'] += 1
                 _record_filtered(pred, 'line_dropped_over_obs', pred_edge)
                 # continue  # Session 428: observation mode — do NOT block
+
+            # Session 451: Line anomaly extreme drop — ACTIVE filter.
+            # When a player's line drops >= 40% OR >= 6 points from their previous
+            # game line, the edge is manufactured from information asymmetry (injury,
+            # restriction, etc.) that the model doesn't see. Mar 8: Derrick White
+            # line 16.5 → 8.5 (51% drop) created artificial ULTRA edge 7.4 — lost.
+            # Safety net filter — rare trigger, clear mechanism.
+            if (prop_line_delta is not None
+                    and line_val > 0
+                    and pred.get('recommendation') == 'OVER'):
+                prev_line = line_val - prop_line_delta  # prop_line_delta = current - prev
+                if prev_line > 0:
+                    drop_pct = (prev_line - line_val) / prev_line
+                    drop_abs = prev_line - line_val
+                    if drop_pct >= 0.40 or drop_abs >= 6.0:
+                        filter_counts['line_anomaly_extreme_drop'] += 1
+                        _record_filtered(pred, 'line_anomaly_extreme_drop', pred_edge)
+                        continue
 
             # Neg +/- streak UNDER — DEMOTED to observation (Session 428).
             # Original 13.1% HR was from early data. Full-season CF HR = 64.5%
@@ -1166,6 +1201,32 @@ class BestBetsAggregator:
                 _record_filtered(pred, 'hot_streak_under_obs', pred_edge, len(qualifying), tags)
                 # Observation only — does NOT block
 
+            # Session 451 O1: UNDER low real_sc observation.
+            # 6/7 UNDER losses on Mar 8 had real_sc 1-2. Base signals inflate
+            # raw signal_count to pass SC >= 3 gate, but real_sc == 1 means
+            # minimal signal quality. Track real_sc < 2 UNDER picks (edge < 7)
+            # for counterfactual — if consistently <50% HR, promote to active.
+            if (pred.get('recommendation') == 'UNDER'
+                    and real_sc < 2
+                    and real_sc > 0
+                    and pred_edge < 7.0):
+                filter_counts['under_low_rsc_obs'] += 1
+                _record_filtered(pred, 'under_low_rsc_obs', pred_edge, len(qualifying), tags)
+                # Observation only — does NOT block
+
+            # Session 451 O2: FT variance UNDER observation.
+            # HIGH_FTA (avg >= 5) + HIGH_CV (>= 0.5) = 47.8% UNDER HR vs
+            # 70.6% for stable high-FTA players (22.8pp gap). FTA avg and CV
+            # are stable player traits — pre-game computable.
+            fta_avg = pred.get('fta_avg_last_10') or 0
+            fta_cv = pred.get('fta_cv_last_10') or 0
+            if (pred.get('recommendation') == 'UNDER'
+                    and fta_avg >= 5.0
+                    and fta_cv >= 0.5):
+                filter_counts['ft_variance_under_obs'] += 1
+                _record_filtered(pred, 'ft_variance_under_obs', pred_edge, len(qualifying), tags)
+                # Observation only — does NOT block
+
             scored.append({
                 **pred,
                 'trend_slope': pred.get('trend_slope') or 0.0,
@@ -1366,6 +1427,30 @@ class BestBetsAggregator:
                 f"Solo game pick (observation): tagged "
                 f"{filter_counts['solo_game_pick_obs']} picks from games with only 1 BB pick "
                 f"(52.2% HR solo vs 75.3% multi)"
+            )
+        if filter_counts['line_anomaly_extreme_drop'] > 0:
+            logger.info(
+                f"Line anomaly extreme drop: blocked "
+                f"{filter_counts['line_anomaly_extreme_drop']} OVER picks with line drop >= 40% or >= 6 pts "
+                f"(manufactured edge from info asymmetry)"
+            )
+        if filter_counts['player_under_suppression_obs'] > 0:
+            logger.info(
+                f"Player UNDER suppression (observation): tagged "
+                f"{filter_counts['player_under_suppression_obs']} UNDER picks on players with "
+                f"< 35% UNDER HR at N >= 20"
+            )
+        if filter_counts['under_low_rsc_obs'] > 0:
+            logger.info(
+                f"UNDER low rsc (observation): tagged "
+                f"{filter_counts['under_low_rsc_obs']} UNDER picks with real_sc < 2 "
+                f"(Mar 8: 6/7 UNDER losses had rsc 1-2)"
+            )
+        if filter_counts['ft_variance_under_obs'] > 0:
+            logger.info(
+                f"FT variance UNDER (observation): tagged "
+                f"{filter_counts['ft_variance_under_obs']} UNDER picks on high-FTA + high-CV players "
+                f"(47.8% HR vs 70.6% stable, 22.8pp gap)"
             )
         if filter_counts['team_cap'] > 0:
             logger.info(

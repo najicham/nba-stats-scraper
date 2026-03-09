@@ -172,3 +172,113 @@ def compute_player_blacklist(
     except Exception as e:
         logger.warning(f"Player blacklist computation failed (non-fatal): {e}")
         return empty_result
+
+
+UNDER_SUPPRESSION_MIN_PICKS = 20
+UNDER_SUPPRESSION_HR_THRESHOLD = 35.0
+
+
+def compute_player_under_suppression(
+    bq_client: bigquery.Client,
+    target_date: str,
+    min_picks: int = UNDER_SUPPRESSION_MIN_PICKS,
+    hr_threshold: float = UNDER_SUPPRESSION_HR_THRESHOLD,
+    project_id: str = 'nba-props-platform',
+) -> Tuple[Set[str], Dict[str, Any]]:
+    """Compute players to suppress from UNDER best bets picks.
+
+    Session 451: Direction-specific suppression. Players with consistently
+    poor UNDER hit rate (< 35% at N >= 20) across enabled models are
+    suppressed from UNDER picks only. OVER picks for same player are allowed.
+
+    Unlike the general blacklist (any direction < 40%), this targets
+    systematic model blind spots where UNDER is always wrong (e.g., KAT 28%
+    UNDER HR N=32, Herro 12.5% N=8).
+
+    Returns:
+        Tuple of (suppressed_set, stats_dict).
+    """
+    empty_result = (set(), {'evaluated': 0, 'suppressed': 0, 'players': []})
+
+    try:
+        target = date.fromisoformat(target_date) if isinstance(target_date, str) else target_date
+        season_year = get_season_year_from_date(target)
+        season_start = get_season_start_date(season_year, use_schedule_service=False)
+
+        query = f"""
+        WITH enabled_models AS (
+            SELECT model_id FROM `{project_id}.nba_predictions.model_registry`
+            WHERE enabled = TRUE AND status NOT IN ('blocked', 'disabled')
+        )
+        SELECT
+            pa.player_lookup,
+            COUNTIF(pa.prediction_correct = TRUE) AS wins,
+            COUNTIF(pa.prediction_correct = FALSE) AS losses,
+            COUNT(*) AS total_picks,
+            ROUND(100.0 * COUNTIF(pa.prediction_correct = TRUE) / COUNT(*), 1) AS hit_rate
+        FROM `{project_id}.nba_predictions.prediction_accuracy` pa
+        INNER JOIN enabled_models em ON pa.system_id = em.model_id
+        WHERE pa.game_date >= @season_start
+          AND pa.game_date < @target_date
+          AND pa.recommendation = 'UNDER'
+          AND ABS(pa.predicted_points - pa.line_value) >= 3
+          AND pa.is_voided = FALSE
+        GROUP BY pa.player_lookup
+        HAVING COUNT(*) >= @min_picks
+        """
+
+        query_params = [
+            bigquery.ScalarQueryParameter('season_start', 'DATE', season_start.isoformat()),
+            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+            bigquery.ScalarQueryParameter('min_picks', 'INT64', min_picks),
+        ]
+
+        job_config = bigquery.QueryJobConfig(query_parameters=query_params)
+        result = bq_client.query(query, job_config=job_config).result(timeout=60)
+        rows = [dict(row) for row in result]
+
+        suppressed = set()
+        player_stats = []
+
+        for row in rows:
+            hr = row['hit_rate']
+            if hr < hr_threshold:
+                suppressed.add(row['player_lookup'])
+                player_stats.append({
+                    'player_lookup': row['player_lookup'],
+                    'hit_rate': hr,
+                    'wins': row['wins'],
+                    'losses': row['losses'],
+                    'total_picks': row['total_picks'],
+                })
+
+        player_stats.sort(key=lambda x: x['hit_rate'])
+
+        stats = {
+            'evaluated': len(rows),
+            'suppressed': len(suppressed),
+            'players': player_stats,
+        }
+
+        if suppressed:
+            top5 = player_stats[:5]
+            top5_str = ', '.join(
+                f"{p['player_lookup']} ({p['hit_rate']}% on {p['total_picks']})"
+                for p in top5
+            )
+            logger.info(
+                f"Player UNDER suppression: {len(suppressed)} suppressed out of "
+                f"{len(rows)} evaluated (min_picks={min_picks}, "
+                f"hr_threshold={hr_threshold}%). Worst: {top5_str}"
+            )
+        else:
+            logger.info(
+                f"Player UNDER suppression: 0 suppressed out of {len(rows)} evaluated "
+                f"(min_picks={min_picks}, hr_threshold={hr_threshold}%)"
+            )
+
+        return suppressed, stats
+
+    except Exception as e:
+        logger.warning(f"Player UNDER suppression computation failed (non-fatal): {e}")
+        return empty_result

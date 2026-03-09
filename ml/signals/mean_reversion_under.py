@@ -30,6 +30,7 @@ class MeanReversionUnderSignal(BaseSignal):
     MIN_SLOPE = 1.5  # Session 419: Relaxed from 2.0. Core variant at 1.0 = 68% HR (N=565).
     MIN_ABOVE_LINE = 1.5  # Session 419: Relaxed from 2.0. Enables more qualifying candidates.
     MIN_LINE = 12.0  # Filter noise from very low lines
+    MAX_OVER_RATE = 0.60  # Session 451: Don't fire on structural high-scorers
     CONFIDENCE_BASE = 0.80
     CONFIDENCE_MAX_SLOPE = 4.0  # Slope at which confidence maxes
 
@@ -42,6 +43,14 @@ class MeanReversionUnderSignal(BaseSignal):
 
         line = prediction.get('line_value') or 0
         if line < self.MIN_LINE:
+            return self._no_qualify()
+
+        # Session 451: Guard against structural high-scorers.
+        # Players with 60%+ season OVER rate have a structural trend, not a
+        # statistical anomaly. Mean reversion assumes short-term hot streak —
+        # breaks on Wemby/Herro (66.7% OVER rate). Uses feature 55 (0-1 scale).
+        over_rate = prediction.get('over_rate_last_10') or 0
+        if over_rate >= self.MAX_OVER_RATE:
             return self._no_qualify()
 
         slope = prediction.get('trend_slope') or 0
