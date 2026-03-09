@@ -2,46 +2,65 @@
 Unit Tests for SignalBestBetsExporter
 
 Tests cover:
-1. 0-prediction path includes all metadata fields
+1. 0-prediction path includes all metadata fields (via per-model pipeline)
 2. filter_summary and edge_distribution in output
 3. Status exporter best_bets service check
 """
 
 import pytest
 from unittest.mock import Mock, patch, MagicMock
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Set
+
+
+# Mock SharedContext for tests (matches per_model_pipeline.SharedContext)
+@dataclass
+class _MockSharedContext:
+    target_date: str = '2026-02-20'
+    all_predictions: Dict[str, List[Dict]] = field(default_factory=dict)
+    supplemental_map: Dict[str, Dict] = field(default_factory=dict)
+    model_health_map: Dict[str, Optional[float]] = field(default_factory=dict)
+    default_model_health_hr: Optional[float] = 65.0
+    signal_health: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    combo_registry: Optional[Dict] = None
+    player_blacklist: Set[str] = field(default_factory=set)
+    blacklist_stats: Dict[str, Any] = field(default_factory=dict)
+    model_direction_blocks: Set[tuple] = field(default_factory=set)
+    model_direction_affinity_stats: Dict[str, Any] = field(default_factory=dict)
+    model_profile_store: Any = None
+    regime_context: Dict[str, Any] = field(default_factory=dict)
+    games_vs_opponent: Dict[tuple, int] = field(default_factory=dict)
+    runtime_demoted_filters: Set[str] = field(default_factory=set)
+    direction_health: Dict[str, Any] = field(default_factory=dict)
+    opponent_stars_out: Dict[str, int] = field(default_factory=dict)
 
 
 class TestZeroPredictionPath:
     """Test that the 0-prediction early return includes full metadata."""
 
     def _make_exporter(self):
-        """Create exporter with all external calls mocked."""
-        with patch('data_processors.publishing.signal_best_bets_exporter.get_signal_health_summary') as mock_sh, \
-             patch('data_processors.publishing.signal_best_bets_exporter.compute_player_blacklist') as mock_bl, \
-             patch('data_processors.publishing.signal_best_bets_exporter.query_model_health') as mock_mh, \
-             patch('data_processors.publishing.signal_best_bets_exporter.query_predictions_with_supplements') as mock_preds, \
+        """Create exporter with per-model pipeline returning 0 predictions."""
+        # Build a SharedContext with no predictions (0-prediction path)
+        shared_ctx = _MockSharedContext(
+            target_date='2026-02-20',
+            all_predictions={},
+            signal_health={'high_edge': {'regime': 'NORMAL'}},
+            blacklist_stats={'evaluated': 10, 'blacklisted': 0, 'players': []},
+            direction_health={
+                'over_hr_14d': 60.0, 'under_hr_14d': 55.0,
+                'over_n': 20, 'under_n': 15,
+            },
+            default_model_health_hr=65.0,
+        )
+
+        with patch('data_processors.publishing.signal_best_bets_exporter.run_all_model_pipelines') as mock_pipelines, \
              patch('data_processors.publishing.base_exporter.storage.Client'), \
              patch('data_processors.publishing.signal_best_bets_exporter.get_best_bets_model_id', return_value='catboost_v9'):
 
+            mock_pipelines.return_value = ({}, shared_ctx)
+
             from data_processors.publishing.signal_best_bets_exporter import SignalBestBetsExporter
             exporter = SignalBestBetsExporter()
-
-            # Mock model health
-            mock_mh.return_value = {'hit_rate_7d_edge3': 65.0, 'graded_count': 50}
-
-            # Mock 0 predictions
-            mock_preds.return_value = ([], {})
-
-            # Mock signal health
-            mock_sh.return_value = {'high_edge': {'regime': 'NORMAL'}}
-
-            # Mock player blacklist
-            mock_bl.return_value = (set(), {'evaluated': 10, 'blacklisted': 0, 'players': []})
-
-            # Mock direction health
-            exporter._query_direction_health = Mock(return_value={
-                'over_hr_14d': 60.0, 'under_hr_14d': 55.0, 'over_n': 20, 'under_n': 15
-            })
 
             # Mock record
             exporter._get_best_bets_record = Mock(return_value={
@@ -97,72 +116,127 @@ class TestZeroPredictionPath:
         assert result['total_picks'] == 0
 
 
-class TestHealthGate:
-    """Test that health gate blocks picks when model HR < breakeven."""
+class TestPerModelPipelineIntegration:
+    """Test that per-model pipeline results are correctly merged and formatted.
 
-    def _make_blocked_exporter(self):
-        """Create exporter with model health BLOCKED (HR below breakeven)."""
-        with patch('data_processors.publishing.signal_best_bets_exporter.get_signal_health_summary') as mock_sh, \
-             patch('data_processors.publishing.signal_best_bets_exporter.compute_player_blacklist') as mock_bl, \
-             patch('data_processors.publishing.signal_best_bets_exporter.query_model_health') as mock_mh, \
-             patch('data_processors.publishing.signal_best_bets_exporter.query_predictions_with_supplements') as mock_preds, \
+    Session 443: Replaces the old TestHealthGate class. The health gate was
+    removed in Session 347 — model health is now informational only (status
+    reported in JSON, does NOT block picks). Per-model pipeline architecture
+    handles all model health via shared context.
+    """
+
+    def _make_exporter_with_picks(self):
+        """Create exporter with per-model pipeline returning picks."""
+        shared_ctx = _MockSharedContext(
+            target_date='2026-02-20',
+            all_predictions={
+                'model_a': [
+                    {'player_lookup': 'player1', 'game_id': '20260220_ATL_BOS',
+                     'edge': 5.0, 'recommendation': 'OVER'},
+                ],
+            },
+            signal_health={'high_edge': {'regime': 'NORMAL'}},
+            blacklist_stats={'evaluated': 5, 'blacklisted': 0, 'players': []},
+            direction_health={
+                'over_hr_14d': 60.0, 'under_hr_14d': 55.0,
+                'over_n': 20, 'under_n': 15,
+            },
+            default_model_health_hr=45.0,  # Below breakeven
+        )
+
+        # Mock pipeline result with one candidate
+        mock_pick = {
+            'player_lookup': 'player1',
+            'player_name': 'Test Player',
+            'game_id': '20260220_ATL_BOS',
+            'team_abbr': 'ATL',
+            'opponent_team_abbr': 'BOS',
+            'predicted_points': 25.0,
+            'line_value': 20.0,
+            'recommendation': 'OVER',
+            'edge': 5.0,
+            'confidence_score': 70.0,
+            'system_id': 'model_a',
+            'source_pipeline': 'model_a',
+            'source_model_id': 'model_a',
+            'source_model_family': 'test',
+            'composite_score': 8.5,
+            'signal_tags': ['high_edge'],
+            'signal_count': 1,
+            'real_signal_count': 1,
+            'rank': 1,
+        }
+
+        with patch('data_processors.publishing.signal_best_bets_exporter.run_all_model_pipelines') as mock_pipelines, \
+             patch('data_processors.publishing.signal_best_bets_exporter.merge_model_pipelines') as mock_merge, \
+             patch('data_processors.publishing.signal_best_bets_exporter.build_pick_angles', return_value=['Edge 5.0']), \
+             patch('data_processors.publishing.signal_best_bets_exporter.compute_ultra_live_hrs', return_value={}), \
+             patch('data_processors.publishing.signal_best_bets_exporter.check_ultra_over_gate', return_value={'gate_met': False, 'n': 0, 'hr': None}), \
+             patch('data_processors.publishing.signal_best_bets_exporter.SignalSubsetMaterializer'), \
+             patch('ml.signals.registry.build_default_registry') as mock_registry, \
              patch('data_processors.publishing.base_exporter.storage.Client'), \
              patch('data_processors.publishing.signal_best_bets_exporter.get_best_bets_model_id', return_value='catboost_v9'):
+
+            # Mock PipelineResult
+            mock_result = Mock()
+            mock_result.candidates = [mock_pick]
+            mock_result.all_predictions = shared_ctx.all_predictions['model_a']
+            mock_result.filter_summary = {
+                'total_candidates': 1, 'passed_filters': 1,
+                'rejected': {}, 'filtered_picks': [],
+            }
+            mock_result.signal_results = {}
+
+            mock_pipelines.return_value = ({'model_a': mock_result}, shared_ctx)
+            mock_merge.return_value = ([mock_pick], {
+                'total_candidates': 1, 'unique_players': 1,
+                'models_contributing': 1, 'selected_count': 1,
+                'direction_over': 1, 'direction_under': 0,
+                'algorithm_version': 'v443_per_model_pipelines',
+            })
+
+            # Mock signal registry for signals_evaluated (inline import)
+            mock_signal = Mock()
+            mock_signal.tag = 'high_edge'
+            mock_registry.return_value.all.return_value = [mock_signal]
 
             from data_processors.publishing.signal_best_bets_exporter import SignalBestBetsExporter
             exporter = SignalBestBetsExporter()
 
-            # Model health BELOW breakeven (52.4%)
-            mock_mh.return_value = {'hit_rate_7d_edge3': 45.0, 'graded_count': 30}
-
-            # These should NOT be called (early return before predictions query)
-            mock_preds.return_value = (
-                [{'player_lookup': 'should_not_appear', 'game_id': 'g1',
-                  'edge': 8.0, 'recommendation': 'OVER'}],
-                {},
-            )
-
-            mock_sh.return_value = {'high_edge': {'regime': 'HOT'}}
-            mock_bl.return_value = (set(), {'evaluated': 5, 'blacklisted': 1, 'players': []})
-
-            exporter._query_direction_health = Mock(return_value={
-                'over_hr_14d': 50.0, 'under_hr_14d': 40.0, 'over_n': 10, 'under_n': 10
-            })
             exporter._get_best_bets_record = Mock(return_value={
                 'season': {'wins': 20, 'losses': 15, 'pct': 57.1},
                 'month': {'wins': 2, 'losses': 5, 'pct': 28.6},
                 'week': {'wins': 0, 'losses': 3, 'pct': 0.0},
             })
+            exporter._filter_started_games = Mock(return_value=([mock_pick], set()))
+            exporter._query_game_times = Mock(return_value={})
 
             result = exporter.generate_json('2026-02-20')
 
-            # Verify predictions were NOT queried (early return before Step 2)
-            mock_preds.assert_not_called()
-
         return result
 
-    def test_health_gate_returns_zero_picks(self):
-        result = self._make_blocked_exporter()
-        assert result['picks'] == []
-        assert result['total_picks'] == 0
-
-    def test_health_gate_flag_present(self):
-        result = self._make_blocked_exporter()
-        assert result['health_gate_active'] is True
-        assert 'below breakeven' in result['health_gate_reason']
-
-    def test_health_gate_preserves_metadata(self):
-        result = self._make_blocked_exporter()
+    def test_below_breakeven_still_returns_picks(self):
+        """Session 347: Health gate removed — picks returned even when HR < breakeven."""
+        result = self._make_exporter_with_picks()
+        assert result['total_picks'] == 1
         assert result['model_health']['status'] == 'blocked'
-        assert result['model_health']['hit_rate_7d'] == 45.0
-        assert result['record']['season']['wins'] == 20
-        assert result['signal_health'] == {'high_edge': {'regime': 'HOT'}}
-        assert result['direction_health']['over_hr_14d'] == 50.0
+        assert result['health_gate_active'] is False
 
-    def test_health_gate_has_empty_filter_summary(self):
-        result = self._make_blocked_exporter()
-        assert result['filter_summary']['total_candidates'] == 0
-        assert result['edge_distribution']['total_predictions'] == 0
+    def test_merge_summary_included(self):
+        result = self._make_exporter_with_picks()
+        assert 'merge_summary' in result
+        assert result['merge_summary']['algorithm_version'] == 'v443_per_model_pipelines'
+
+    def test_picks_have_pipeline_provenance(self):
+        result = self._make_exporter_with_picks()
+        pick = result['picks'][0]
+        assert pick['source_model'] == 'model_a'
+        assert pick['source_pipeline'] == 'model_a'
+
+    def test_model_bb_candidates_collected(self):
+        result = self._make_exporter_with_picks()
+        assert '_model_bb_candidates' in result
+        assert len(result['_model_bb_candidates']) == 1
 
 
 class TestStatusExporterBestBets:

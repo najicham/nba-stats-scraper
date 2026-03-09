@@ -325,6 +325,9 @@ def compute_for_date(bq_client: bigquery.Client, target_date: date,
 
     results = list(bq_client.query(query, job_config=job_config).result())
 
+    # Get pipeline candidate stats (graceful if table doesn't exist)
+    pipeline_stats = _get_pipeline_stats(bq_client, target_date, active_models)
+
     # Get previous day states for consecutive-day tracking
     if prev_day_states is None:
         prev_day_states = _get_previous_day_states(bq_client, target_date)
@@ -384,6 +387,9 @@ def compute_for_date(bq_client: bigquery.Client, target_date: date,
             daily_hr = round(100.0 * row.daily_wins / row.daily_picks, 1)
             daily_roi = round(100.0 * (row.daily_wins - row.daily_losses) / row.daily_picks, 1)
 
+        # Pipeline candidate stats (empty dict if table doesn't exist)
+        ps = pipeline_stats.get(model_id, {})
+
         rows.append({
             'game_date': target_date.isoformat(),
             'model_id': model_id,
@@ -425,10 +431,86 @@ def compute_for_date(bq_client: bigquery.Client, target_date: date,
             'brier_score_7d': round(row.brier_score_7d, 4) if getattr(row, 'brier_score_7d', None) is not None else None,
             'brier_score_14d': round(row.brier_score_14d, 4) if getattr(row, 'brier_score_14d', None) is not None else None,
             'brier_score_30d': round(row.brier_score_30d, 4) if getattr(row, 'brier_score_30d', None) is not None else None,
+            # Session 443: Pipeline candidate metrics from model_bb_candidates
+            'pipeline_candidates': ps.get('pipeline_candidates'),
+            'pipeline_selected': ps.get('pipeline_selected'),
+            'pipeline_hr_21d': ps.get('pipeline_hr_21d'),
+            'pipeline_over_hr_21d': ps.get('pipeline_over_hr_21d'),
+            'pipeline_under_hr_21d': ps.get('pipeline_under_hr_21d'),
+            'pipeline_n_graded_21d': ps.get('pipeline_n_graded_21d'),
             'computed_at': now.isoformat(),
         })
 
     return rows
+
+
+def _get_pipeline_stats(bq_client: bigquery.Client,
+                        target_date: date,
+                        model_ids: List[str]) -> Dict[str, dict]:
+    """Fetch pipeline candidate metrics from model_bb_candidates.
+
+    Queries the model_bb_candidates table for 21-day rolling stats per model.
+    Returns empty dict if the table doesn't exist or query fails (graceful
+    degradation for when the table hasn't been created yet).
+
+    Returns:
+        Dict of model_id -> {pipeline_candidates, pipeline_selected,
+        pipeline_hr_21d, pipeline_over_hr_21d, pipeline_under_hr_21d,
+        pipeline_n_graded_21d}
+    """
+    query = """
+    SELECT
+      mbc.system_id AS model_id,
+      COUNTIF(mbc.game_date = @target_date) AS pipeline_candidates_today,
+      COUNTIF(mbc.game_date = @target_date AND mbc.was_selected) AS pipeline_selected_today,
+      COUNT(*) AS pipeline_candidates_total,
+      COUNTIF(mbc.was_selected) AS pipeline_selected_total,
+      COUNTIF(pa.prediction_correct IS NOT NULL) AS pipeline_n_graded,
+      SAFE_DIVIDE(
+        COUNTIF(pa.prediction_correct),
+        NULLIF(COUNTIF(pa.prediction_correct IS NOT NULL), 0)
+      ) AS pipeline_hr,
+      SAFE_DIVIDE(
+        COUNTIF(pa.prediction_correct AND mbc.recommendation = 'OVER'),
+        NULLIF(COUNTIF(pa.prediction_correct IS NOT NULL AND mbc.recommendation = 'OVER'), 0)
+      ) AS pipeline_over_hr,
+      SAFE_DIVIDE(
+        COUNTIF(pa.prediction_correct AND mbc.recommendation = 'UNDER'),
+        NULLIF(COUNTIF(pa.prediction_correct IS NOT NULL AND mbc.recommendation = 'UNDER'), 0)
+      ) AS pipeline_under_hr
+    FROM `nba-props-platform.nba_predictions.model_bb_candidates` mbc
+    LEFT JOIN `nba-props-platform.nba_predictions.prediction_accuracy` pa
+      ON mbc.player_lookup = pa.player_lookup
+      AND mbc.game_date = pa.game_date
+      AND mbc.system_id = pa.system_id
+      AND pa.has_prop_line = TRUE
+      AND pa.recommendation IN ('OVER', 'UNDER')
+    WHERE mbc.game_date BETWEEN DATE_SUB(@target_date, INTERVAL 21 DAY) AND @target_date
+      AND mbc.system_id IN UNNEST(@model_ids)
+    GROUP BY mbc.system_id
+    """
+    try:
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+                bigquery.ArrayQueryParameter('model_ids', 'STRING', model_ids),
+            ]
+        )
+        rows = list(bq_client.query(query, job_config=job_config).result())
+        result = {}
+        for r in rows:
+            result[r.model_id] = {
+                'pipeline_candidates': r.pipeline_candidates_today,
+                'pipeline_selected': r.pipeline_selected_today,
+                'pipeline_hr_21d': round(r.pipeline_hr * 100.0, 1) if r.pipeline_hr is not None else None,
+                'pipeline_over_hr_21d': round(r.pipeline_over_hr * 100.0, 1) if r.pipeline_over_hr is not None else None,
+                'pipeline_under_hr_21d': round(r.pipeline_under_hr * 100.0, 1) if r.pipeline_under_hr is not None else None,
+                'pipeline_n_graded_21d': r.pipeline_n_graded,
+            }
+        return result
+    except Exception as e:
+        logger.warning(f"Pipeline stats query failed (table may not exist yet): {e}")
+        return {}
 
 
 def _get_previous_day_states(bq_client: bigquery.Client,
@@ -576,9 +658,11 @@ def main():
             under_str = f"UNDER {r['rolling_hr_under_7d']}% N={r['rolling_n_under_7d']}" if r.get('rolling_hr_under_7d') is not None else ""
             bb_str = f"BB {r['best_bets_hr_21d']}% N={r['best_bets_n_21d']}" if r.get('best_bets_hr_21d') is not None else ""
             brier_str = f"Brier 7d={r['brier_score_7d']}" if r.get('brier_score_7d') is not None else ""
+            pipe_str = f"Pipeline {r['pipeline_hr_21d']}% N={r['pipeline_n_graded_21d']}" if r.get('pipeline_hr_21d') is not None else ""
             print(f"  {r['model_id']}: {r['rolling_hr_7d']}% HR 7d "
                   f"(N={r['rolling_n_7d']}), state={r['state']}"
-                  f"  {over_str}  {under_str}  {bb_str}  {brier_str}")
+                  f"  {over_str}  {under_str}  {bb_str}  {brier_str}"
+                  f"  {pipe_str}")
     else:
         parser.print_help()
 

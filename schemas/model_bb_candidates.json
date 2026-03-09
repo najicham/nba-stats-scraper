@@ -1,0 +1,272 @@
+[
+  {
+    "name": "game_date",
+    "type": "DATE",
+    "mode": "REQUIRED",
+    "description": "Game date (partition key)"
+  },
+  {
+    "name": "player_lookup",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Normalized player lookup key"
+  },
+  {
+    "name": "game_id",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "NBA game identifier"
+  },
+  {
+    "name": "system_id",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Model system_id that generated the prediction"
+  },
+  {
+    "name": "source_pipeline",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Which model pipeline produced this candidate"
+  },
+  {
+    "name": "source_model_family",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Model family classification (v9_mae, v12_noveg, etc.)"
+  },
+  {
+    "name": "player_name",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Player display name"
+  },
+  {
+    "name": "team_abbr",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Player team tricode"
+  },
+  {
+    "name": "opponent_team_abbr",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Opponent team tricode"
+  },
+  {
+    "name": "predicted_points",
+    "type": "FLOAT64",
+    "mode": "NULLABLE",
+    "description": "Model predicted points"
+  },
+  {
+    "name": "line_value",
+    "type": "FLOAT64",
+    "mode": "NULLABLE",
+    "description": "Vegas line at pick time"
+  },
+  {
+    "name": "recommendation",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "OVER or UNDER"
+  },
+  {
+    "name": "edge",
+    "type": "FLOAT64",
+    "mode": "NULLABLE",
+    "description": "Absolute edge: |predicted_points - line_value|"
+  },
+  {
+    "name": "confidence_score",
+    "type": "FLOAT64",
+    "mode": "NULLABLE",
+    "description": "Model confidence score"
+  },
+  {
+    "name": "composite_score",
+    "type": "FLOAT64",
+    "mode": "NULLABLE",
+    "description": "Aggregator-computed rank score (edge + signal quality weighting)"
+  },
+  {
+    "name": "signal_count",
+    "type": "INT64",
+    "mode": "NULLABLE",
+    "description": "Total signals fired for this pick"
+  },
+  {
+    "name": "real_signal_count",
+    "type": "INT64",
+    "mode": "NULLABLE",
+    "description": "Non-base, non-shadow signal count"
+  },
+  {
+    "name": "signal_tags",
+    "type": "STRING",
+    "mode": "REPEATED",
+    "description": "List of all fired signal names"
+  },
+  {
+    "name": "signal_rescued",
+    "type": "BOOL",
+    "mode": "NULLABLE",
+    "description": "Whether admitted via rescue pathway"
+  },
+  {
+    "name": "rescue_signal",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Which signal rescued this pick"
+  },
+  {
+    "name": "model_hr_weight",
+    "type": "FLOAT64",
+    "mode": "NULLABLE",
+    "description": "Model HR weight used in scoring"
+  },
+  {
+    "name": "pipeline_hr_21d",
+    "type": "FLOAT64",
+    "mode": "NULLABLE",
+    "description": "Model pipeline HR (21d rolling) at time of pick"
+  },
+  {
+    "name": "pipeline_hr_source",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Source of pipeline HR: pipeline, bb_legacy, or raw_fallback"
+  },
+  {
+    "name": "feature_quality_score",
+    "type": "FLOAT64",
+    "mode": "NULLABLE",
+    "description": "Feature store quality score (0-1)"
+  },
+  {
+    "name": "combo_classification",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Matched combo pattern from combo registry"
+  },
+  {
+    "name": "combo_hit_rate",
+    "type": "FLOAT64",
+    "mode": "NULLABLE",
+    "description": "Historical combo HR"
+  },
+  {
+    "name": "rank_in_pipeline",
+    "type": "INT64",
+    "mode": "NULLABLE",
+    "description": "Rank within source model pipeline (before merge)"
+  },
+  {
+    "name": "qualifying_subsets",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Dynamic subsets this pick qualifies for (JSON array)"
+  },
+  {
+    "name": "was_selected",
+    "type": "BOOL",
+    "mode": "NULLABLE",
+    "description": "TRUE if survived merge into final best bets"
+  },
+  {
+    "name": "selection_reason",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Why selected or dropped: selected, player_dedup, team_cap, volume_cap, rescue_cap"
+  },
+  {
+    "name": "merge_rank",
+    "type": "INT64",
+    "mode": "NULLABLE",
+    "description": "Final rank in merged output (NULL if not selected)"
+  },
+  {
+    "name": "pipeline_agreement_count",
+    "type": "INT64",
+    "mode": "NULLABLE",
+    "description": "How many model pipelines nominated this player"
+  },
+  {
+    "name": "pipeline_agreement_models",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "JSON array of pipeline system_ids that nominated this player"
+  },
+  {
+    "name": "direction_conflict_count",
+    "type": "INT64",
+    "mode": "NULLABLE",
+    "description": "How many pipelines disagreed on direction for this player"
+  },
+  {
+    "name": "filters_passed",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "JSON array of filters this pick survived"
+  },
+  {
+    "name": "filters_failed",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "JSON array of filters that blocked this pick"
+  },
+  {
+    "name": "observation_flags",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "JSON array of observation filters that fired but did not block"
+  },
+  {
+    "name": "player_line_tier",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "bench/role/starter/star based on line value"
+  },
+  {
+    "name": "home_away",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "HOME or AWAY"
+  },
+  {
+    "name": "spread",
+    "type": "FLOAT64",
+    "mode": "NULLABLE",
+    "description": "Game spread at pick time"
+  },
+  {
+    "name": "over_rate_last_10",
+    "type": "FLOAT64",
+    "mode": "NULLABLE",
+    "description": "Player over rate in last 10 games"
+  },
+  {
+    "name": "is_back_to_back",
+    "type": "BOOL",
+    "mode": "NULLABLE",
+    "description": "Whether this is a back-to-back game"
+  },
+  {
+    "name": "star_teammates_out",
+    "type": "INT64",
+    "mode": "NULLABLE",
+    "description": "Number of star teammates missing"
+  },
+  {
+    "name": "algorithm_version",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Algorithm version that produced this candidate (e.g., v443_per_model_pipelines)"
+  },
+  {
+    "name": "created_at",
+    "type": "TIMESTAMP",
+    "mode": "NULLABLE",
+    "description": "When this record was created"
+  }
+]

@@ -246,6 +246,7 @@ class BestBetsAggregator:
         model_profile_store: Optional[Any] = None,
         regime_context: Optional[Dict[str, Any]] = None,
         runtime_demoted_filters: Optional[Set[str]] = None,
+        mode: str = 'production',
     ):
         if combo_registry is not None:
             self._registry = combo_registry
@@ -263,6 +264,7 @@ class BestBetsAggregator:
         # Session 432: Runtime filter overrides from filter_overrides table.
         # Filters in this set still record to filtered_picks but don't block.
         self._runtime_demoted = runtime_demoted_filters or set()
+        self._mode = mode
 
     def aggregate(self, predictions: List[Dict],
                   signal_results: Dict[str, List[SignalResult]]) -> Tuple[List[Dict], Dict]:
@@ -1450,55 +1452,59 @@ class BestBetsAggregator:
         # lowest-edge rescues to filtered_picks. Rescue was designed as an
         # exception mechanism but generates 67% of slate during edge compression.
         # Minimum 1 rescue always kept.
-        rescued_picks = [p for p in scored if p.get('signal_rescued')]
-        non_rescued = [p for p in scored if not p.get('signal_rescued')]
-        if scored and len(rescued_picks) > 0:
-            max_rescue = max(1, int(len(scored) * 0.4))
-            if len(rescued_picks) > max_rescue:
-                # Session 437 P4: Sort by (priority, edge) ascending — drop
-                # lowest-priority rescues first. Old sort was edge-only, which
-                # dropped HSE (100% HR, 3-0) in favor of combo_he_ms (40% HR).
-                rescued_picks.sort(key=lambda x: (
-                    RESCUE_SIGNAL_PRIORITY.get(x.get('rescue_signal', ''), 0),
-                    x.get('edge', 0),
-                ))
-                to_drop = rescued_picks[:len(rescued_picks) - max_rescue]
-                to_keep = rescued_picks[len(rescued_picks) - max_rescue:]
-                for drop_pick in to_drop:
-                    filter_counts['rescue_cap'] += 1
-                    _record_filtered(
-                        drop_pick, 'rescue_cap',
-                        drop_pick.get('edge', 0),
-                    )
-                    logger.info(
-                        f"Rescue cap: dropping {drop_pick['player_lookup']} "
-                        f"edge={drop_pick.get('edge', 0):.1f} "
-                        f"rescue={drop_pick.get('rescue_signal', '?')} "
-                        f"priority={RESCUE_SIGNAL_PRIORITY.get(drop_pick.get('rescue_signal', ''), 0)}"
-                    )
-                scored = non_rescued + to_keep
+        # Skipped in per_model mode — caps are production-only.
+        if self._mode != 'per_model':
+            rescued_picks = [p for p in scored if p.get('signal_rescued')]
+            non_rescued = [p for p in scored if not p.get('signal_rescued')]
+            if scored and len(rescued_picks) > 0:
+                max_rescue = max(1, int(len(scored) * 0.4))
+                if len(rescued_picks) > max_rescue:
+                    # Session 437 P4: Sort by (priority, edge) ascending — drop
+                    # lowest-priority rescues first. Old sort was edge-only, which
+                    # dropped HSE (100% HR, 3-0) in favor of combo_he_ms (40% HR).
+                    rescued_picks.sort(key=lambda x: (
+                        RESCUE_SIGNAL_PRIORITY.get(x.get('rescue_signal', ''), 0),
+                        x.get('edge', 0),
+                    ))
+                    to_drop = rescued_picks[:len(rescued_picks) - max_rescue]
+                    to_keep = rescued_picks[len(rescued_picks) - max_rescue:]
+                    for drop_pick in to_drop:
+                        filter_counts['rescue_cap'] += 1
+                        _record_filtered(
+                            drop_pick, 'rescue_cap',
+                            drop_pick.get('edge', 0),
+                        )
+                        logger.info(
+                            f"Rescue cap: dropping {drop_pick['player_lookup']} "
+                            f"edge={drop_pick.get('edge', 0):.1f} "
+                            f"rescue={drop_pick.get('rescue_signal', '?')} "
+                            f"priority={RESCUE_SIGNAL_PRIORITY.get(drop_pick.get('rescue_signal', ''), 0)}"
+                        )
+                    scored = non_rescued + to_keep
 
         # Session 441: Per-team cap — prevent correlated exposure.
         # Mar 7: 3 UTA OVER picks in same blowout all lost simultaneously.
         # Keep highest-edge picks per team, drop excess to filtered_picks.
         # Sort by composite_score desc first so we keep the best picks.
-        scored.sort(key=lambda x: x['composite_score'], reverse=True)
-        team_counts: Dict[str, int] = {}
-        team_kept: List[Dict] = []
-        for pick in scored:
-            team = pick.get('team_abbr', '')
-            team_counts[team] = team_counts.get(team, 0) + 1
-            if team_counts[team] > MAX_PICKS_PER_TEAM:
-                filter_counts['team_cap'] += 1
-                _record_filtered(pick, 'team_cap', pick.get('composite_score', 0))
-                logger.info(
-                    f"Team cap: dropping {pick['player_lookup']} "
-                    f"({team}, #{team_counts[team]} pick) "
-                    f"edge={pick.get('composite_score', 0):.1f}"
-                )
-            else:
-                team_kept.append(pick)
-        scored = team_kept
+        # Skipped in per_model mode — caps are production-only.
+        if self._mode != 'per_model':
+            scored.sort(key=lambda x: x['composite_score'], reverse=True)
+            team_counts: Dict[str, int] = {}
+            team_kept: List[Dict] = []
+            for pick in scored:
+                team = pick.get('team_abbr', '')
+                team_counts[team] = team_counts.get(team, 0) + 1
+                if team_counts[team] > MAX_PICKS_PER_TEAM:
+                    filter_counts['team_cap'] += 1
+                    _record_filtered(pick, 'team_cap', pick.get('composite_score', 0))
+                    logger.info(
+                        f"Team cap: dropping {pick['player_lookup']} "
+                        f"({team}, #{team_counts[team]} pick) "
+                        f"edge={pick.get('composite_score', 0):.1f}"
+                    )
+                else:
+                    team_kept.append(pick)
+            scored = team_kept
 
         # Assign ranks — natural sizing (Session 298: no artificial cap)
         for i, pick in enumerate(scored):
@@ -1515,7 +1521,8 @@ class BestBetsAggregator:
         # multi-pick games = 75.3% (N=73). 23pp gap across both directions.
         # Mechanism: solo games had poor model coverage overall.
         # Observation mode — tags picks for counterfactual tracking.
-        if scored:
+        # Skipped in per_model mode — observation counts are meaningless per-model.
+        if self._mode != 'per_model' and scored:
             game_pick_counts: Dict[str, int] = {}
             for pick in scored:
                 gid = pick.get('game_id', '')

@@ -1893,3 +1893,61 @@ class TestAlgorithmVersionV442:
         assert ALGORITHM_VERSION.startswith('v442'), (
             f"Expected ALGORITHM_VERSION to start with 'v442', got '{ALGORITHM_VERSION}'"
         )
+
+
+# ============================================================================
+# PER-MODEL MODE TESTS
+# ============================================================================
+
+class TestPerModelMode:
+    """Test that per_model mode skips production-only caps and observations.
+
+    per_model mode is used for model-level simulation where rescue caps,
+    team caps, and solo game observations are not meaningful.
+    """
+
+    def test_per_model_mode_skips_team_cap(self):
+        """3 picks from same team should all survive in per_model mode."""
+        preds = []
+        for i, edge in enumerate([8.0, 6.0, 4.0]):
+            p = _make_prediction(
+                player_lookup=f'player_{i}',
+                game_id='20260307_LAL_MIL',
+                edge=edge,
+                is_home=False,
+            )
+            p['team_abbr'] = 'LAL'
+            preds.append(p)
+        key_fn = lambda p: f"{p['player_lookup']}::{p['game_id']}"
+        signals = {}
+        for p in preds:
+            signals[key_fn(p)] = [_make_signal_result(f'sig_{i}') for i in range(5)]
+        agg = BestBetsAggregator(mode='per_model')
+        picks, summary = agg.aggregate(preds, signals)
+        assert len(picks) == 3  # All 3 kept — team cap skipped
+        assert summary['rejected']['team_cap'] == 0
+
+    def test_per_model_mode_skips_rescue_cap(self):
+        """All rescued picks should survive in per_model mode even when >40%."""
+        # Create 5 picks: 4 rescued + 1 organic = 80% rescued (well above 40% cap)
+        preds = []
+        for i in range(5):
+            p = _make_prediction(
+                player_lookup=f'player_{i}',
+                game_id=f'20260307_G{i}_MIL',
+                edge=2.0 + i,  # Low edge to trigger rescue
+                is_home=False,
+            )
+            p['team_abbr'] = f'T{i}'  # Different teams to avoid team cap
+            if i < 4:
+                # Mark as rescued — aggregator checks signal_rescued flag
+                p['signal_rescued'] = True
+                p['rescue_signal'] = 'high_signal_edge'
+            preds.append(p)
+        key_fn = lambda p: f"{p['player_lookup']}::{p['game_id']}"
+        signals = {}
+        for p in preds:
+            signals[key_fn(p)] = [_make_signal_result(f'sig_{j}') for j in range(5)]
+        agg = BestBetsAggregator(mode='per_model')
+        picks, summary = agg.aggregate(preds, signals)
+        assert summary['rejected']['rescue_cap'] == 0  # No rescues dropped

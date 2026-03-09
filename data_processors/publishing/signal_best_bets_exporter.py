@@ -29,25 +29,14 @@ from typing import Any, Dict, List, Optional
 from google.cloud import bigquery
 
 from data_processors.publishing.base_exporter import BaseExporter
-from ml.signals.registry import build_default_registry
 from ml.signals.aggregator import BestBetsAggregator
-from ml.signals.combo_registry import load_combo_registry
 from ml.signals.model_health import BREAKEVEN_HR
-from ml.signals.signal_health import get_signal_health_summary
-from ml.signals.cross_model_scorer import CrossModelScorer
 from ml.signals.pick_angle_builder import build_pick_angles
-from ml.signals.player_blacklist import compute_player_blacklist
-from ml.signals.model_direction_affinity import compute_model_direction_affinities
-from ml.signals.model_profile_loader import load_model_profiles
-from ml.signals.subset_membership_lookup import lookup_qualifying_subsets
 from ml.signals.aggregator import ALGORITHM_VERSION
 from ml.signals.ultra_bets import compute_ultra_live_hrs, check_ultra_over_gate
 from data_processors.publishing.signal_subset_materializer import SignalSubsetMaterializer
-from ml.signals.supplemental_data import (
-    query_model_health,
-    query_predictions_with_supplements,
-    query_games_vs_opponent,
-)
+from ml.signals.per_model_pipeline import run_all_model_pipelines
+from ml.signals.pipeline_merger import merge_model_pipelines, ALGORITHM_VERSION as MERGER_ALGORITHM_VERSION
 from shared.config.model_selection import get_best_bets_model_id
 
 logger = logging.getLogger(__name__)
@@ -69,11 +58,22 @@ class SignalBestBetsExporter(BaseExporter):
     """
 
     def generate_json(self, target_date: str, **kwargs) -> Dict[str, Any]:
-        """Generate signal best bets JSON for a specific date."""
-        # Step 1: Query model health
-        model_health = self._query_model_health()
-        hr_7d = model_health.get('hit_rate_7d_edge3')
+        """Generate signal best bets JSON for a specific date.
 
+        Session 443: Uses per-model pipelines + merger instead of single-pipeline.
+        Each model runs the full signal/filter stack independently, then a merge
+        layer pools candidates and applies team cap, rescue cap, volume cap.
+        """
+        # ── Step 1: Run all per-model pipelines (builds shared context internally) ──
+        # This replaces the old steps 1-6 (model health, signal health, blacklist,
+        # affinity, predictions, signals, cross-model scorer, aggregator).
+        # One big query per date + satellite queries, then pure Python per model.
+        pipeline_results, shared_ctx = run_all_model_pipelines(
+            self.bq_client, target_date
+        )
+
+        # Extract metadata from shared context for JSON output
+        hr_7d = shared_ctx.default_model_health_hr
         health_status = 'unknown'
         if hr_7d is not None:
             if hr_7d < BREAKEVEN_HR:
@@ -83,14 +83,6 @@ class SignalBestBetsExporter(BaseExporter):
             else:
                 health_status = 'healthy'
 
-        # Session 347: Health gate REMOVED. The gate blocked ALL picks when the
-        # champion model's raw edge 3+ HR dropped below 52.4%, but the actual
-        # signal best bets (after 10+ negative filters) were hitting 62.8%
-        # (27-16 since Jan 28). The gate measured single-model raw HR to block
-        # multi-model filtered output — a category error. The filter pipeline
-        # (player blacklist, model-direction affinity, bench-under block, etc.)
-        # is the correct quality control mechanism, not a blunt system shutdown.
-        # Health status is still computed and included in JSON for transparency.
         if health_status == 'blocked':
             logger.info(
                 f"Model health below breakeven for {target_date} — "
@@ -98,53 +90,11 @@ class SignalBestBetsExporter(BaseExporter):
                 f"(informational only, picks NOT blocked)"
             )
 
-        # Step 1b: Query prediction-independent metadata (needed for both
-        # 0-prediction early return and full path)
-        signal_health = {}
-        try:
-            signal_health = get_signal_health_summary(self.bq_client, target_date)
-        except Exception as e:
-            logger.warning(f"Signal health query failed (non-fatal): {e}")
-
-        direction_health = {'over_hr_14d': None, 'under_hr_14d': None,
-                            'over_n': 0, 'under_n': 0}
-        try:
-            direction_health = self._query_direction_health(target_date)
-        except Exception as e:
-            logger.warning(f"Direction health query failed (non-fatal): {e}")
-
-        player_blacklist = set()
-        blacklist_stats = {'evaluated': 0, 'blacklisted': 0, 'players': []}
-        try:
-            player_blacklist, blacklist_stats = compute_player_blacklist(
-                self.bq_client, target_date
-            )
-        except Exception as e:
-            logger.warning(f"Player blacklist computation failed (non-fatal): {e}")
-
-        # Model-direction affinity (Session 330): compute which model+direction
-        # +edge combos have proven poor hit rates
-        model_dir_affinities = {}
-        model_dir_blocks = set()
-        model_dir_stats = {'combos_evaluated': 0, 'combos_blocked': 0,
-                           'blocked_list': [], 'observation_mode': True}
-        try:
-            model_dir_affinities, model_dir_blocks, model_dir_stats = \
-                compute_model_direction_affinities(
-                    self.bq_client, target_date, PROJECT_ID
-                )
-        except Exception as e:
-            logger.warning(f"Model-direction affinity computation failed (non-fatal): {e}")
-
-        # Model profile store (Session 384): per-model dimension profiles for
-        # observation-mode logging in the aggregator
-        model_profile_store = None
-        try:
-            model_profile_store = load_model_profiles(
-                self.bq_client, target_date, PROJECT_ID
-            )
-        except Exception as e:
-            logger.warning(f"Model profile loading failed (non-fatal): {e}")
+        signal_health = shared_ctx.signal_health
+        direction_health = shared_ctx.direction_health
+        blacklist_stats = shared_ctx.blacklist_stats
+        model_dir_stats = shared_ctx.model_direction_affinity_stats
+        regime_ctx = shared_ctx.regime_context
 
         record = self._get_best_bets_record(target_date)
 
@@ -153,18 +103,14 @@ class SignalBestBetsExporter(BaseExporter):
             p['player_lookup'] for p in blacklist_stats.get('players', [])[:10]
         ]
 
-        # Step 2: Query predictions and supplemental data
-        predictions, supplemental_map = self._query_predictions_and_supplements(
-            target_date
-        )
+        # ── Step 1b: Early return if no predictions found ──
+        all_predictions_flat = [
+            pred
+            for preds in shared_ctx.all_predictions.values()
+            for pred in preds
+        ]
 
-        # Step 2b: Filter out predictions for games already started (Session 370)
-        # Hourly re-exports were adding picks for in-progress/finished games
-        predictions, started_game_ids = self._filter_started_games(
-            target_date, predictions
-        )
-
-        if not predictions:
+        if not all_predictions_flat:
             logger.info(f"No predictions found for {target_date}")
             target_0 = (
                 date.fromisoformat(target_date) if isinstance(target_date, str)
@@ -181,7 +127,7 @@ class SignalBestBetsExporter(BaseExporter):
                 'model_health': {
                     'status': health_status,
                     'hit_rate_7d': hr_7d,
-                    'graded_count': model_health.get('graded_count', 0),
+                    'graded_count': 0,
                 },
                 'signal_health': signal_health,
                 'player_blacklist': {
@@ -198,7 +144,7 @@ class SignalBestBetsExporter(BaseExporter):
                     'combos_blocked': model_dir_stats.get('combos_blocked', 0),
                     'blocked_list': model_dir_stats.get('blocked_list', []),
                     'would_block_at_45': model_dir_stats.get('would_block_at_45', []),
-                    'affinities': model_dir_affinities,
+                    'affinities': {},
                 },
                 'filter_summary': {
                     'total_candidates': 0,
@@ -212,40 +158,85 @@ class SignalBestBetsExporter(BaseExporter):
                     'edge_7_plus': 0,
                     'max_edge': None,
                 },
-                'started_games_filtered': sorted(started_game_ids) if started_game_ids else [],
+                'started_games_filtered': [],
                 'picks': [],
                 'total_picks': 0,
                 'signals_evaluated': [],
             }
 
-        # Step 4: Evaluate all signals
-        registry = build_default_registry()
-        signal_results = {}
+        # ── Step 2: Merge model pipelines ──
+        # Collect candidates from each model's pipeline result
+        model_candidates = {
+            system_id: result.candidates
+            for system_id, result in pipeline_results.items()
+        }
+        top_picks, merge_summary = merge_model_pipelines(model_candidates)
 
-        for pred in predictions:
-            key = f"{pred['player_lookup']}::{pred['game_id']}"
-            supplements = supplemental_map.get(pred['player_lookup'], {})
-            # Inject model health into supplemental for the gate signal
-            supplements['model_health'] = {
-                'hit_rate_7d_edge3': hr_7d,
-            }
+        # ── Step 2b: Filter started games on merged picks ──
+        top_picks, started_game_ids = self._filter_started_games(
+            target_date, top_picks
+        )
 
-            results_for_pred = []
-            for signal in registry.all():
-                result = signal.evaluate(pred, features=None, supplemental=supplements)
-                results_for_pred.append(result)
-            signal_results[key] = results_for_pred
+        # ── Step 2c: Compute edge distribution from all predictions (pre-filter) ──
+        edges = [abs(p.get('edge') or 0) for p in all_predictions_flat]
+        edge_distribution = {
+            'total_predictions': len(all_predictions_flat),
+            'edge_3_plus': sum(1 for e in edges if e >= 3.0),
+            'edge_5_plus': sum(1 for e in edges if e >= 5.0),
+            'edge_7_plus': sum(1 for e in edges if e >= 7.0),
+            'max_edge': round(max(edges), 1) if edges else None,
+        }
 
-        # Step 4b: Materialize signal subsets (Session 311)
-        # Writes signal-based subset picks to current_subset_picks for grading
+        # ── Step 2d: Build aggregate filter_summary from all per-model runs ──
+        # Merge per-model filter summaries into a unified view for the JSON output
+        # and for the filter_audit / filtered_picks writes in export().
+        total_candidates_all = 0
+        total_passed_all = 0
+        merged_rejected: Dict[str, int] = {}
+        merged_filtered_picks: List[Dict] = []
+        for result in pipeline_results.values():
+            fs = result.filter_summary
+            total_candidates_all += fs.get('total_candidates', 0)
+            total_passed_all += fs.get('passed_filters', 0)
+            for filter_name, count in fs.get('rejected', {}).items():
+                merged_rejected[filter_name] = merged_rejected.get(filter_name, 0) + count
+            merged_filtered_picks.extend(fs.get('filtered_picks', []))
+
+        filter_summary = {
+            'total_candidates': total_candidates_all,
+            'passed_filters': total_passed_all,
+            'rejected': merged_rejected,
+            'filtered_picks': merged_filtered_picks,
+            'regime_context': regime_ctx,
+            'merge_summary': merge_summary,
+        }
+
+        # ── Step 2e: Materialize signal subsets (Session 311) ──
+        # Uses combined signal_results and a representative prediction list
+        # (first model's predictions that have signal results)
         version_id = kwargs.get('version_id')
+        combined_signal_results: Dict[str, List] = {}
+        for result in pipeline_results.values():
+            for key, sigs in result.signal_results.items():
+                if key not in combined_signal_results:
+                    combined_signal_results[key] = sigs
+
+        # Use all_predictions_flat deduplicated by player_lookup for subset materialization
+        seen_players_for_mat: set = set()
+        deduped_predictions_for_mat: List[Dict] = []
+        for pred in all_predictions_flat:
+            pl = pred.get('player_lookup', '')
+            if pl not in seen_players_for_mat:
+                seen_players_for_mat.add(pl)
+                deduped_predictions_for_mat.append(pred)
+
         try:
             signal_mat = SignalSubsetMaterializer()
             signal_mat_result = signal_mat.materialize(
                 game_date=target_date,
                 version_id=version_id or f"v_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-                predictions=predictions,
-                signal_results=signal_results,
+                predictions=deduped_predictions_for_mat,
+                signal_results=combined_signal_results,
             )
             logger.info(
                 f"Signal subsets: {signal_mat_result.get('total_picks', 0)} picks "
@@ -254,83 +245,32 @@ class SignalBestBetsExporter(BaseExporter):
         except Exception as e:
             logger.warning(f"Signal subset materialization failed (non-fatal): {e}", exc_info=True)
 
-        # Step 5: Compute cross-model consensus factors (Session 277)
-        cross_model_factors = {}
-        try:
-            scorer = CrossModelScorer()
-            cross_model_factors = scorer.compute_factors(
-                self.bq_client, target_date, PROJECT_ID
-            )
-        except Exception as e:
-            logger.warning(f"Cross-model scoring failed (non-fatal): {e}")
+        # ── Step 3: Post-merge enrichment (pick angles, ultra bets, game times) ──
 
-        # Step 5b: Look up qualifying subsets (Session 279 — pick provenance)
-        qual_subsets = {}
-        if version_id:
-            try:
-                qual_subsets = lookup_qualifying_subsets(
-                    self.bq_client, target_date, version_id, PROJECT_ID
-                )
-            except Exception as e:
-                logger.warning(f"Qualifying subsets lookup failed (non-fatal): {e}")
-
-        # Step 5c: Enrich predictions with games_vs_opponent (Session 284)
-        # Avoid-familiar filter: players with 6+ games vs opponent regress
-        try:
-            gvo_map = query_games_vs_opponent(self.bq_client, target_date)
-            for pred in predictions:
-                opp = pred.get('opponent_team_abbr', '')
-                pred['games_vs_opponent'] = gvo_map.get(
-                    (pred['player_lookup'], opp), 0
-                )
-        except Exception as e:
-            logger.warning(f"Games vs opponent enrichment failed (non-fatal): {e}")
-
-        # Step 5d: Compute edge distribution before filtering
-        edges = [abs(p.get('edge') or 0) for p in predictions]
-        edge_distribution = {
-            'total_predictions': len(predictions),
-            'edge_3_plus': sum(1 for e in edges if e >= 3.0),
-            'edge_5_plus': sum(1 for e in edges if e >= 5.0),
-            'edge_7_plus': sum(1 for e in edges if e >= 7.0),
-            'max_edge': round(max(edges), 1) if edges else None,
-        }
-
-        # Step 5e: Regime context — yesterday's BB HR autocorrelation (Session 412)
-        from ml.signals.regime_context import get_regime_context, get_market_compression
-        regime_ctx = get_regime_context(self.bq_client, target_date)
-        logger.info(f"Regime: {regime_ctx['regime_state']} (yesterday HR={regime_ctx.get('yesterday_bb_hr')})")
-
-        # Session 421: Market compression detector (observation mode)
-        compression_ctx = get_market_compression(self.bq_client, target_date)
-        regime_ctx['market_compression'] = compression_ctx
-
-        # Step 5f: Query runtime filter overrides (Session 432: auto-demote system)
-        runtime_demoted = self._query_filter_overrides()
-
-        # Step 6: Aggregate to top picks (with combo registry + signal health weighting + consensus)
-        combo_registry = load_combo_registry(bq_client=self.bq_client)
-        aggregator = BestBetsAggregator(
-            combo_registry=combo_registry,
-            signal_health=signal_health,
-            cross_model_factors=cross_model_factors,
-            qualifying_subsets=qual_subsets,
-            player_blacklist=player_blacklist,
-            model_direction_blocks=model_dir_blocks,
-            model_direction_affinity_stats=model_dir_stats,
-            model_profile_store=model_profile_store,
-            regime_context=regime_ctx,
-            runtime_demoted_filters=runtime_demoted,
-        )
-        top_picks, filter_summary = aggregator.aggregate(predictions, signal_results)
-
-        # Step 6b: Build pick angles (Session 278, 284: direction health, 330: model-direction)
+        # Build pick angles — cross_model_factors replaced by pipeline agreement.
+        # build_pick_angles expects a dict with model_agreement_count, majority_direction,
+        # avg_edge_agreeing. Build compatibility dicts from merger's pipeline_agreement data.
         for pick in top_picks:
             key = f"{pick['player_lookup']}::{pick['game_id']}"
+            # Build compatibility cross_model_factors from pipeline agreement metadata
+            agreement_count = pick.get('pipeline_agreement_count', 0)
+            agreement_models = pick.get('pipeline_agreement_models', [])
+            compat_factors = {
+                'model_agreement_count': agreement_count,
+                'majority_direction': pick.get('recommendation', ''),
+                'avg_edge_agreeing': abs(pick.get('edge') or 0),
+            }
+            # Also set the pick-level fields that pick_angles/JSON formatting reads
+            pick['model_agreement_count'] = agreement_count
+            pick['agreeing_model_ids'] = agreement_models
+            pick['feature_set_diversity'] = 0  # Not applicable in per-model pipeline
+            pick['consensus_bonus'] = pick.get('consensus_bonus', 0)
+
             pick['pick_angles'] = build_pick_angles(
-                pick, signal_results.get(key, []), cross_model_factors.get(key, {}),
+                pick,
+                combined_signal_results.get(key, []),
+                compat_factors,
                 direction_health=direction_health,
-                model_direction_affinities=model_dir_affinities,
             )
 
         # Step 6c: Enrich ultra criteria with live HRs (Session 327)
@@ -353,11 +293,28 @@ class SignalBestBetsExporter(BaseExporter):
         except Exception as e:
             logger.warning(f"Ultra OVER gate check failed (non-fatal): {e}")
 
-        # Step 6e: Look up game times from schedule (Session 328)
+        # Step 3b: Enrich ultra criteria with live HRs (Session 327)
+        try:
+            ultra_live = compute_ultra_live_hrs(self.bq_client, PROJECT_ID)
+            for pick in top_picks:
+                for crit in pick.get('ultra_criteria', []):
+                    live = ultra_live.get(crit['id'], {})
+                    crit['live_hr'] = live.get('live_hr')
+                    crit['live_n'] = live.get('live_n', 0)
+        except Exception as e:
+            logger.warning(f"Ultra live HR enrichment failed (non-fatal): {e}")
+
+        # Step 3c: Check ultra OVER gate for public exposure (Session 328)
+        ultra_over_gate = {'gate_met': False, 'n': 0, 'hr': None}
+        try:
+            ultra_over_gate = check_ultra_over_gate(self.bq_client, PROJECT_ID)
+        except Exception as e:
+            logger.warning(f"Ultra OVER gate check failed (non-fatal): {e}")
+
+        # Step 3d: Look up game times from schedule (Session 328)
         game_times = self._query_game_times(target_date, top_picks)
 
-        # Step 6f: 1-pick day low conviction annotation (Session 369)
-        # 1-pick days = 50.0% HR (7W-7L) vs multi-pick days = 69.8% (67W-29L)
+        # Step 3e: 1-pick day low conviction annotation (Session 369)
         daily_pick_count = len(top_picks)
         if daily_pick_count == 1:
             top_picks[0].setdefault('warning_tags', []).append('low_conviction_day')
@@ -366,7 +323,7 @@ class SignalBestBetsExporter(BaseExporter):
             )
             logger.info("1-pick day: added low_conviction_day warning")
 
-        # Step 7: Format for JSON
+        # ── Step 4: Format for JSON ──
         # ultra_tier included on OVER picks ONLY when the gate is met.
         # ultra_criteria always excluded from public JSON.
         picks_json = []
@@ -381,7 +338,7 @@ class SignalBestBetsExporter(BaseExporter):
             )
 
             pick_dict = {
-                'rank': pick['rank'],
+                'rank': pick.get('rank') or pick.get('merge_rank'),
                 'player': pick.get('player_name', ''),
                 'player_lookup': pick['player_lookup'],
                 'game_id': game_id,
@@ -409,17 +366,21 @@ class SignalBestBetsExporter(BaseExporter):
                 'quantile_under_consensus': pick.get('quantile_consensus_under', False),
                 'qualifying_subsets': pick.get('qualifying_subsets', []),
                 'qualifying_subset_count': pick.get('qualifying_subset_count', 0),
-                'algorithm_version': pick.get('algorithm_version', ALGORITHM_VERSION),
+                'algorithm_version': pick.get('algorithm_version', MERGER_ALGORITHM_VERSION),
                 'system_id': pick.get('system_id'),
                 # Signal rescue (Session 398)
                 'signal_rescued': pick.get('signal_rescued', False),
                 'rescue_signal': pick.get('rescue_signal'),
-                # Multi-source attribution (Session 307)
-                'source_model': pick.get('source_model_id'),
+                # Multi-source attribution (Session 307 / 443 per-model pipeline)
+                'source_model': pick.get('source_model_id') or pick.get('source_pipeline'),
                 'source_model_family': pick.get('source_model_family'),
                 'n_models_eligible': pick.get('n_models_eligible', 0),
                 'champion_edge': pick.get('champion_edge'),
                 'direction_conflict': pick.get('direction_conflict', False),
+                # Session 443: Per-model pipeline provenance
+                'pipeline_agreement': pick.get('pipeline_agreement_count', 0),
+                'pipeline_agreement_models': pick.get('pipeline_agreement_models', []),
+                'source_pipeline': pick.get('source_pipeline'),
                 # Session 422b: Fields that were in BQ write but missing from pick_dict
                 'under_signal_quality': pick.get('under_signal_quality'),
                 'model_hr_weight': pick.get('model_hr_weight'),
@@ -453,6 +414,13 @@ class SignalBestBetsExporter(BaseExporter):
         season_start_year = target.year if target.month >= 10 else target.year - 1
         season_label = f"{season_start_year}-{str(season_start_year + 1)[-2:]}"
 
+        # Build signals_evaluated from the signal registry used in pipelines
+        from ml.signals.registry import build_default_registry
+        _signal_registry = build_default_registry()
+        signals_evaluated = [
+            s.tag for s in _signal_registry.all() if s.tag != 'model_health'
+        ]
+
         return {
             'date': target_date,
             'season': season_label,
@@ -462,7 +430,7 @@ class SignalBestBetsExporter(BaseExporter):
             'model_health': {
                 'status': health_status,
                 'hit_rate_7d': hr_7d,
-                'graded_count': model_health.get('graded_count', 0),
+                'graded_count': 0,
             },
             'signal_health': signal_health,
             'player_blacklist': {
@@ -479,20 +447,22 @@ class SignalBestBetsExporter(BaseExporter):
                 'combos_blocked': model_dir_stats.get('combos_blocked', 0),
                 'blocked_list': model_dir_stats.get('blocked_list', []),
                 'would_block_at_45': model_dir_stats.get('would_block_at_45', []),
-                'affinities': model_dir_affinities,
+                'affinities': {},
             },
             'health_gate_active': False,
             'filter_summary': filter_summary,
             'edge_distribution': edge_distribution,
+            'merge_summary': merge_summary,
             'started_games_filtered': sorted(started_game_ids) if started_game_ids else [],
             'daily_pick_count': daily_pick_count,
             'low_conviction_day': daily_pick_count == 1,
-            # ultra_bets removed from JSON (Session 327 — internal-only, in BQ)
             'picks': picks_json,
             'total_picks': len(picks_json),
-            'signals_evaluated': [
-                s.tag for s in registry.all() if s.tag != 'model_health'
-            ],
+            'signals_evaluated': signals_evaluated,
+            # Session 443: Store all model candidates for BQ write in export()
+            '_model_bb_candidates': self._collect_all_model_candidates(
+                pipeline_results, target_date
+            ),
         }
 
     def export(self, target_date: str, version_id: str = None) -> str:
@@ -557,6 +527,12 @@ class SignalBestBetsExporter(BaseExporter):
                 filter_summary=json_data.get('filter_summary'),
             )
 
+        # Session 443: Write ALL model candidates to model_bb_candidates BQ table
+        # for historical analysis and pipeline-level HR computation.
+        model_bb_candidates = json_data.pop('_model_bb_candidates', [])
+        if model_bb_candidates:
+            self._write_model_bb_candidates(target_date, model_bb_candidates)
+
         # Session 391: Write filter summary audit trail for historical analysis.
         # Persists rejection counts so we can retroactively detect patterns like
         # "legacy_block dominated 77% of candidates for 3 days before being caught."
@@ -616,10 +592,6 @@ class SignalBestBetsExporter(BaseExporter):
 
     # ── Private helpers ──────────────────────────────────────────────────
 
-    def _query_model_health(self) -> Dict[str, Any]:
-        """Query rolling 7-day hit rate for edge 3+ picks."""
-        return query_model_health(self.bq_client)
-
     def _query_disabled_model_ids(self) -> set:
         """Return set of model_ids that are disabled/blocked in model_registry.
 
@@ -637,16 +609,6 @@ class SignalBestBetsExporter(BaseExporter):
         except Exception as e:
             logger.warning(f"Disabled model query failed (non-fatal): {e}")
             return set()
-
-    def _query_predictions_and_supplements(self, target_date: str) -> tuple:
-        """Query today's active predictions with supplemental signal data.
-
-        Uses multi_model=True to query all CatBoost families and pick the
-        highest-edge prediction per player (Session 307 Phase A).
-        """
-        return query_predictions_with_supplements(
-            self.bq_client, target_date, multi_model=True,
-        )
 
     def _write_to_bigquery(
         self,
@@ -940,76 +902,6 @@ class SignalBestBetsExporter(BaseExporter):
             # Non-fatal — don't fail export if counterfactual write fails
             logger.warning(f"Failed to write filtered picks for {target_date}: {e}")
 
-    def _query_filter_overrides(self) -> set:
-        """Session 432: Query runtime filter overrides for auto-demoted filters.
-
-        Returns set of filter names that are currently demoted via
-        the filter_overrides table (populated by filter-counterfactual-evaluator CF).
-        """
-        try:
-            query = f"""
-            SELECT filter_name
-            FROM `{PROJECT_ID}.nba_predictions.filter_overrides`
-            WHERE active = TRUE
-            """
-            rows = list(self.bq_client.query(query).result(timeout=15))
-            demoted = {row.filter_name for row in rows}
-            if demoted:
-                logger.info(f"Runtime filter overrides active: {sorted(demoted)}")
-            return demoted
-        except Exception as e:
-            logger.warning(f"Failed to query filter_overrides (non-fatal): {e}")
-            return set()
-
-    def _query_direction_health(self, target_date: str) -> Dict[str, Any]:
-        """Query 14-day rolling hit rate by direction (OVER vs UNDER).
-
-        Returns dict with over_hr_14d, under_hr_14d, over_n, under_n.
-        Observation-only (Session 284): monitors direction stability.
-        """
-        model_id = get_best_bets_model_id()
-
-        query = f"""
-        SELECT
-            recommendation,
-            COUNT(*) AS n,
-            ROUND(100.0 * COUNTIF(prediction_correct = TRUE) / COUNT(*), 1) AS hr
-        FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy`
-        WHERE game_date >= DATE_SUB(@target_date, INTERVAL 14 DAY)
-          AND game_date < @target_date
-          AND system_id = @model_id
-          AND ABS(predicted_points - line_value) >= 3
-          AND is_voided = FALSE
-          AND recommendation IN ('OVER', 'UNDER')
-        GROUP BY recommendation
-        """
-
-        job_config = bigquery.QueryJobConfig(
-            query_parameters=[
-                bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
-                bigquery.ScalarQueryParameter('model_id', 'STRING', model_id),
-            ]
-        )
-
-        result = self.bq_client.query(query, job_config=job_config).result(timeout=30)
-
-        health = {'over_hr_14d': None, 'under_hr_14d': None,
-                  'over_n': 0, 'under_n': 0}
-        for row in result:
-            if row.recommendation == 'OVER':
-                health['over_hr_14d'] = float(row.hr) if row.hr else None
-                health['over_n'] = row.n
-            elif row.recommendation == 'UNDER':
-                health['under_hr_14d'] = float(row.hr) if row.hr else None
-                health['under_n'] = row.n
-
-        logger.info(
-            f"Direction health 14d: OVER={health['over_hr_14d']}% "
-            f"(N={health['over_n']}), UNDER={health['under_hr_14d']}% "
-            f"(N={health['under_n']})"
-        )
-        return health
-
     def _query_game_times(
         self, target_date: str, picks: List[Dict]
     ) -> Dict[str, str]:
@@ -1189,6 +1081,126 @@ class SignalBestBetsExporter(BaseExporter):
             )
         except Exception as e:
             logger.warning(f"Late picks audit write failed (non-fatal): {e}")
+
+    def _collect_all_model_candidates(
+        self,
+        pipeline_results: Dict,
+        target_date: str,
+    ) -> List[Dict]:
+        """Collect all candidates from all model pipelines for BQ write.
+
+        Session 443: Every candidate from every model pipeline is recorded
+        with full provenance — whether it was selected by the merger or not.
+        The merger has already tagged each candidate with was_selected,
+        selection_reason, merge_rank, pipeline_agreement_count, etc.
+
+        Returns:
+            Flat list of candidate dicts ready for BQ batch write.
+        """
+        all_candidates = []
+        for system_id, result in pipeline_results.items():
+            for candidate in result.candidates:
+                all_candidates.append({
+                    'game_date': target_date,
+                    'player_lookup': candidate.get('player_lookup', ''),
+                    'game_id': candidate.get('game_id', ''),
+                    'system_id': candidate.get('system_id', system_id),
+                    'source_pipeline': candidate.get('source_pipeline', system_id),
+                    'source_model_family': candidate.get('source_model_family', ''),
+                    'player_name': candidate.get('player_name', ''),
+                    'team_abbr': candidate.get('team_abbr', ''),
+                    'opponent_team_abbr': candidate.get('opponent_team_abbr', ''),
+                    'predicted_points': candidate.get('predicted_points'),
+                    'line_value': candidate.get('line_value'),
+                    'recommendation': candidate.get('recommendation', ''),
+                    'edge': round(abs(float(candidate.get('edge') or 0)), 1),
+                    'confidence_score': candidate.get('confidence_score'),
+                    'composite_score': candidate.get('composite_score'),
+                    'signal_count': candidate.get('signal_count', 0),
+                    'real_signal_count': candidate.get('real_signal_count', 0),
+                    'signal_tags': candidate.get('signal_tags', []),
+                    'signal_rescued': candidate.get('signal_rescued', False),
+                    'rescue_signal': candidate.get('rescue_signal'),
+                    'model_hr_weight': candidate.get('model_hr_weight'),
+                    # Merge metadata (set by pipeline_merger._tag_candidate)
+                    'was_selected': candidate.get('was_selected', False),
+                    'selection_reason': candidate.get('selection_reason', ''),
+                    'merge_rank': candidate.get('merge_rank'),
+                    'pipeline_agreement_count': candidate.get('pipeline_agreement_count', 0),
+                    'pipeline_agreement_models': candidate.get('pipeline_agreement_models', []),
+                    'direction_conflict_count': candidate.get('direction_conflict_count', 0),
+                    'algorithm_version': candidate.get('algorithm_version', MERGER_ALGORITHM_VERSION),
+                    'created_at': datetime.now(timezone.utc).isoformat(),
+                })
+        return all_candidates
+
+    def _write_model_bb_candidates(
+        self,
+        target_date: str,
+        candidates: List[Dict],
+    ) -> None:
+        """Write all model pipeline candidates to BQ for historical analysis.
+
+        Session 443: Records EVERY candidate from EVERY model pipeline —
+        whether selected or not. Enables post-hoc analysis of why picks were
+        made, which models contributed, and merge decisions.
+
+        Uses DELETE+APPEND pattern for re-export safety.
+        """
+        table_ref = f'{PROJECT_ID}.nba_predictions.model_bb_candidates'
+
+        if not candidates:
+            return
+
+        try:
+            # Delete existing rows for this game_date (re-export safe)
+            delete_query = f"""
+            DELETE FROM `{table_ref}`
+            WHERE game_date = @target_date
+            """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+                ]
+            )
+            self.bq_client.query(delete_query, job_config=job_config).result(timeout=30)
+        except Exception as e:
+            logger.warning(
+                f"Failed to delete existing model_bb_candidates for {target_date} "
+                f"(will append anyway): {e}"
+            )
+
+        try:
+            # Convert pipeline_agreement_models list to JSON string for BQ
+            rows_to_insert = []
+            for c in candidates:
+                row = dict(c)
+                if isinstance(row.get('pipeline_agreement_models'), list):
+                    row['pipeline_agreement_models'] = json.dumps(
+                        row['pipeline_agreement_models']
+                    )
+                if isinstance(row.get('signal_tags'), list):
+                    row['signal_tags'] = row['signal_tags']  # BQ REPEATED field
+                rows_to_insert.append(row)
+
+            load_config = bigquery.LoadJobConfig(
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                create_disposition=bigquery.CreateDisposition.CREATE_NEVER,
+            )
+            load_job = self.bq_client.load_table_from_json(
+                rows_to_insert, table_ref, job_config=load_config
+            )
+            load_job.result(timeout=60)
+            logger.info(
+                f"Batch-loaded {len(rows_to_insert)} model_bb_candidates "
+                f"for {target_date} into {table_ref}"
+            )
+        except Exception as e:
+            # Non-fatal — don't fail export if candidates write fails
+            logger.warning(
+                f"Failed to write model_bb_candidates for {target_date}: {e}",
+                exc_info=True,
+            )
 
     def _get_best_bets_record(self, target_date: str) -> Dict[str, Any]:
         """Query W-L record for the best_bets subset across season/month/week.

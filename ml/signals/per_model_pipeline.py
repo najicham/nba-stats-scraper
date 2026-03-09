@@ -1,127 +1,156 @@
-"""Shared supplemental data queries for signal evaluation.
+"""Per-model pipeline runner for best bets.
 
-Provides the BigQuery queries and row-parsing logic needed to build
-the supplemental dicts that signals require (3PT stats, minutes stats,
-model health, games_vs_opponent). Used by both SignalBestBetsExporter
-and SignalAnnotator to avoid duplicating SQL.
+Session 443: Each model runs the full BB filter/signal stack independently.
+Results feed into the merge layer (pipeline_merger.py).
 
-Session 314: Added query_games_vs_opponent() with module-level cache.
-    Previously a private method on SignalBestBetsExporter — extracted here
-    so both exporters can call it without duplicate BQ scans.
+Architecture:
+    1. build_shared_context() — one-time BQ queries for model-independent data
+       (~12 queries total: predictions for ALL models, 10 satellite queries,
+       model health, regime context, etc.)
+    2. run_single_model_pipeline() — pure Python per-model: signals + aggregator
+    3. run_all_model_pipelines() — orchestrator: build context, fan out per model
+
+Key optimization: ALL models' predictions are fetched in a single BQ scan
+(no ROW_NUMBER dedup), then partitioned by system_id in Python.
+Supplemental data (satellite queries) is player-level, not model-specific,
+so it's computed once and shared across all model runs.
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from collections import defaultdict
+from dataclasses import dataclass, field
+from datetime import date
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from google.cloud import bigquery
 
-from shared.config.cross_model_subsets import build_system_id_sql_filter, build_noveg_mae_sql_filter, classify_system_id
-from shared.config.model_selection import get_best_bets_model_id
+from ml.signals.aggregator import BestBetsAggregator
+from ml.signals.combo_registry import load_combo_registry
+from ml.signals.model_health import BREAKEVEN_HR
+from ml.signals.player_blacklist import compute_player_blacklist
+from ml.signals.model_direction_affinity import compute_model_direction_affinities
+from ml.signals.model_profile_loader import load_model_profiles
+from ml.signals.regime_context import get_regime_context, get_market_compression
+from ml.signals.registry import SignalRegistry, build_default_registry
+from ml.signals.signal_health import get_signal_health_summary
+from ml.signals.supplemental_data import (
+    query_games_vs_opponent,
+    query_model_health,
+)
+from shared.config.cross_model_subsets import (
+    build_system_id_sql_filter,
+    classify_system_id,
+)
 
 logger = logging.getLogger(__name__)
 
 PROJECT_ID = 'nba-props-platform'
 
 
-def query_model_health(
-    bq_client: bigquery.Client,
-    system_id: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Query rolling 7-day hit rate for edge 3+ picks.
+# ---------------------------------------------------------------------------
+# Data classes
+# ---------------------------------------------------------------------------
 
-    Args:
-        bq_client: BigQuery client.
-        system_id: Model to check health for. Defaults to best bets model.
+@dataclass
+class SharedContext:
+    """Model-independent data computed once per date.
 
-    Returns:
-        Dict with hit_rate_7d_edge3 (float or None), graded_count (int).
-    """
-    model_id = system_id or get_best_bets_model_id()
-    query = f"""
-    SELECT
-      COUNTIF(prediction_correct) as wins,
-      COUNT(*) as graded_count,
-      ROUND(100.0 * COUNTIF(prediction_correct) / NULLIF(COUNT(*), 0), 1)
-        AS hit_rate_7d_edge3
-    FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy`
-    WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
-      AND game_date < CURRENT_DATE()
-      AND system_id = '{model_id}'
-      AND ABS(predicted_points - line_value) >= 3.0
-      AND prediction_correct IS NOT NULL
-      AND is_voided IS NOT TRUE
+    Contains all the BQ query results that are shared across every model's
+    pipeline run. Built by build_shared_context().
     """
 
-    try:
-        result = bq_client.query(query).result(timeout=30)
-        row = next(result, None)
-        if row and (row.graded_count or 0) > 0:
-            return dict(row)
-    except Exception as e:
-        logger.error(f"Model health query failed: {e}", exc_info=True)
+    target_date: str
 
-    return {'hit_rate_7d_edge3': None, 'graded_count': 0}
+    # Predictions keyed by system_id -> list of pred dicts
+    # (no ROW_NUMBER dedup — every model's predictions preserved)
+    all_predictions: Dict[str, List[Dict]] = field(default_factory=dict)
+
+    # Supplemental data keyed by player_lookup -> enrichment dict
+    supplemental_map: Dict[str, Dict] = field(default_factory=dict)
+
+    # Per-model 7d hit rate at edge 3+: system_id -> float or None
+    model_health_map: Dict[str, Optional[float]] = field(default_factory=dict)
+
+    # Default model health (champion model)
+    default_model_health_hr: Optional[float] = None
+
+    # Signal health: signal_tag -> {hr_7d, hr_season, regime, status}
+    signal_health: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+
+    # Combo registry for aggregator
+    combo_registry: Optional[Dict] = None
+
+    # Player blacklist: set of player_lookup strings
+    player_blacklist: Set[str] = field(default_factory=set)
+    blacklist_stats: Dict[str, Any] = field(default_factory=dict)
+
+    # Model-direction affinity blocks
+    model_direction_blocks: Set[tuple] = field(default_factory=set)
+    model_direction_affinity_stats: Dict[str, Any] = field(default_factory=dict)
+
+    # Model profile store
+    model_profile_store: Any = None
+
+    # Regime context
+    regime_context: Dict[str, Any] = field(default_factory=dict)
+
+    # Games vs opponent map: (player_lookup, opponent) -> count
+    games_vs_opponent: Dict[tuple, int] = field(default_factory=dict)
+
+    # Runtime demoted filters from filter_overrides table
+    runtime_demoted_filters: Set[str] = field(default_factory=set)
+
+    # Direction health (observation-only)
+    direction_health: Dict[str, Any] = field(default_factory=dict)
+
+    # Opponent stars out: team_abbr -> count
+    opponent_stars_out: Dict[str, int] = field(default_factory=dict)
 
 
-def query_predictions_with_supplements(
+@dataclass
+class PipelineResult:
+    """Output of a single model's pipeline run."""
+
+    system_id: str
+    candidates: List[Dict]  # Picks that survived filters
+    all_predictions: List[Dict]  # All predictions for this model (pre-filter)
+    filter_summary: Dict  # Per-filter rejection counts
+    signal_results: Dict[str, List]  # key -> list of SignalResults
+
+
+# ---------------------------------------------------------------------------
+# Batch prediction query (no ROW_NUMBER dedup)
+# ---------------------------------------------------------------------------
+
+def _query_all_model_predictions(
     bq_client: bigquery.Client,
     target_date: str,
-    system_id: Optional[str] = None,
-    multi_model: bool = False,
-    skip_disabled_filter: bool = False,
-) -> Tuple[List[Dict], Dict[str, Dict]]:
-    """Query active predictions with supplemental signal data.
+) -> Tuple[Dict[str, List[Dict]], Dict[str, Dict]]:
+    """Query predictions for ALL models in a single BQ scan.
 
-    Args:
-        bq_client: BigQuery client.
-        target_date: Date string in YYYY-MM-DD format.
-        system_id: Model to query predictions for. Defaults to best bets model.
-        multi_model: If True, query all CatBoost families and pick highest-edge
-            prediction per player. Adds source_model_id, n_models_eligible,
-            champion_edge, direction_conflict to each prediction dict.
-        skip_disabled_filter: If True, include predictions from disabled/blocked
-            models. Used by simulation tools to evaluate historical periods
-            where models were active but are now disabled.
+    Unlike query_predictions_with_supplements(multi_model=True), this does NOT
+    apply ROW_NUMBER per-player dedup. Every model's prediction is preserved
+    so each model can be run through the pipeline independently.
+
+    Also runs the 10 satellite queries for supplemental data (player-level,
+    model-independent) and returns the supplemental_map.
 
     Returns:
-        Tuple of (predictions list, supplemental_map keyed by player_lookup).
+        Tuple of:
+            predictions_by_model: Dict[system_id, List[Dict]]
+            supplemental_map: Dict[player_lookup, Dict]
     """
-    model_id = system_id or get_best_bets_model_id()
+    system_filter = build_system_id_sql_filter('p')
 
-    if multi_model:
-        system_filter = build_system_id_sql_filter('p')
-        # Session 395: skip_disabled_filter for historical simulation.
-        # When evaluating historical periods, models that were active then
-        # may be disabled now. The simulator needs to bypass this filter.
-        if skip_disabled_filter:
-            disabled_models_cte = """
-    -- Session 395: Disabled model filter SKIPPED (historical simulation mode)
-    WITH disabled_models AS (
-      SELECT CAST(NULL AS STRING) AS model_id FROM UNNEST(ARRAY<STRING>[]) AS model_id
-    ),"""
-        else:
-            disabled_models_cte = f"""
-    -- Session 366: Model HR weight with post-filter fallback chain.
-    -- Priority: best-bets HR (21d, N>=8) → raw HR (14d, N>=10) → 50% default.
-    -- Self-bootstrapping: new models use raw HR until they accumulate 8+ best-bets picks.
-    -- Session 378c: Registry cascade — disabled/blocked models auto-excluded from best bets.
-    -- Safe degradation: if registry query returns empty, NOT IN (empty) excludes nothing.
-    -- Session 391: Defense-in-depth — hardcoded legacy models that bypass registry
-    -- (loaded directly by worker.py) are explicitly excluded here to prevent them
-    -- from winning per-player selection then being blocked by LEGACY_MODEL_BLOCKLIST.
-    -- Root cause: catboost_v12/v9 won selection for 47/61 players → all blocked → 0 best bets.
+    # Build the same CTE structure as multi_model path but WITHOUT QUALIFY
+    query = f"""
+    -- Session 443: Per-model pipeline — fetch ALL models without dedup
     WITH disabled_models AS (
       SELECT model_id
       FROM `{PROJECT_ID}.nba_predictions.model_registry`
       WHERE enabled = FALSE OR status IN ('blocked', 'disabled')
          OR model_id IN ('catboost_v12', 'catboost_v9')
-    ),"""
-        preds_cte = f"""{disabled_models_cte}
-
-    -- Session 378c warmup REMOVED: created_at reflects registry insertion date,
-    -- not actual model deployment date. Re-registering models resets created_at,
-    -- blocking established models. The model HR weight system (Session 365) and
-    -- model sanity guard (Session 378c) provide sufficient protection for new models.
+    ),
 
     model_hr AS (
       SELECT
@@ -137,7 +166,7 @@ def query_predictions_with_supplements(
       )
     ),
 
-    all_model_preds AS (
+    preds AS (
       SELECT
         p.player_lookup,
         p.game_id,
@@ -149,8 +178,6 @@ def query_predictions_with_supplements(
         CAST(p.predicted_points - p.current_points_line AS FLOAT64) AS edge,
         CAST(p.confidence_score AS FLOAT64) AS confidence_score,
         COALESCE(p.feature_quality_score, 0) AS feature_quality_score,
-        -- Session 366: Post-filter HR fallback chain for model weight.
-        -- best-bets HR (21d, N>=8) → raw HR (14d, N>=10) → 50% default
         LEAST(1.0, COALESCE(
           CASE WHEN mh.bb_n_21d >= 8 THEN mh.bb_hr_21d ELSE NULL END,
           CASE WHEN mh.n_14d >= 10 THEN mh.hr_14d ELSE NULL END,
@@ -162,89 +189,12 @@ def query_predictions_with_supplements(
       WHERE p.game_date = @target_date
         AND {system_filter}
         AND p.is_active = TRUE
-        AND p.is_actionable = TRUE  -- Session 414: exclude worker-filtered predictions
+        AND p.is_actionable = TRUE
         AND p.recommendation IN ('OVER', 'UNDER')
         AND p.line_source IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS')
-        AND dm.model_id IS NULL  -- Exclude disabled/blocked models
-        -- warmup_models filter removed (see comment above)
+        AND dm.model_id IS NULL
+      -- NO QUALIFY ROW_NUMBER — keep ALL models' predictions
     ),
-
-    -- Per-player model counts: how many models have edge 5+ for this player
-    model_counts AS (
-      SELECT
-        player_lookup,
-        game_id,
-        COUNT(*) AS n_models_eligible,
-        MAX(CASE WHEN system_id = '{model_id}' THEN edge END) AS champion_edge,
-        COUNTIF(recommendation = 'OVER' AND ABS(edge) >= 5.0) AS n_over,
-        COUNTIF(recommendation = 'UNDER' AND ABS(edge) >= 5.0) AS n_under
-      FROM all_model_preds
-      WHERE ABS(edge) >= 5.0
-      GROUP BY player_lookup, game_id
-    ),
-
-    preds AS (
-      SELECT
-        amp.*,
-        mc.n_models_eligible,
-        mc.champion_edge,
-        CASE
-          WHEN mc.n_over > 0 AND mc.n_under > 0 THEN TRUE
-          ELSE FALSE
-        END AS direction_conflict
-      FROM all_model_preds amp
-      LEFT JOIN model_counts mc
-        ON mc.player_lookup = amp.player_lookup AND mc.game_id = amp.game_id
-      -- Session 365: Rank by HR-weighted edge so better-performing models
-      -- win per-player selection over poorly-performing ones
-      QUALIFY ROW_NUMBER() OVER (
-        PARTITION BY amp.player_lookup, amp.game_id
-        ORDER BY ABS(amp.edge) * amp.model_hr_weight DESC, amp.system_id DESC
-      ) = 1
-    ),"""
-    else:
-        if skip_disabled_filter:
-            single_disabled_cte = """
-    -- Session 395: Disabled model filter SKIPPED (historical simulation mode)
-    WITH disabled_models AS (
-      SELECT CAST(NULL AS STRING) AS model_id FROM UNNEST(ARRAY<STRING>[]) AS model_id
-    ),"""
-        else:
-            single_disabled_cte = f"""
-    -- Session 378c: Registry cascade for single-model path (warmup removed)
-    -- Session 391: Defense-in-depth — include hardcoded legacy models
-    WITH disabled_models AS (
-      SELECT model_id
-      FROM `{PROJECT_ID}.nba_predictions.model_registry`
-      WHERE enabled = FALSE OR status IN ('blocked', 'disabled')
-         OR model_id IN ('catboost_v12', 'catboost_v9')
-    ),"""
-        preds_cte = f"""{single_disabled_cte}
-    preds AS (
-      SELECT
-        p.player_lookup,
-        p.game_id,
-        p.game_date,
-        p.system_id,
-        CAST(p.predicted_points AS FLOAT64) AS predicted_points,
-        CAST(p.current_points_line AS FLOAT64) AS line_value,
-        p.recommendation,
-        CAST(p.predicted_points - p.current_points_line AS FLOAT64) AS edge,
-        CAST(p.confidence_score AS FLOAT64) AS confidence_score,
-        COALESCE(p.feature_quality_score, 0) AS feature_quality_score
-      FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions` p
-      LEFT JOIN disabled_models dm ON p.system_id = dm.model_id
-      WHERE p.game_date = @target_date
-        AND p.system_id = '{model_id}'
-        AND p.is_active = TRUE
-        AND p.is_actionable = TRUE  -- Session 414: exclude worker-filtered predictions
-        AND p.recommendation IN ('OVER', 'UNDER')
-        AND p.line_source IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS')
-        AND dm.model_id IS NULL  -- Exclude disabled/blocked models
-        -- warmup_models filter removed (see comment above)
-    ),"""
-
-    query = f"""{preds_cte}
 
     -- Rolling stats for 3PT and minutes signals
     game_stats AS (
@@ -273,7 +223,6 @@ def query_predictions_with_supplements(
         AVG(minutes_played)
           OVER (PARTITION BY player_lookup ORDER BY game_date
                 ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS minutes_avg_season,
-        -- FG% rolling stats (for fg_cold_continuation signal)
         SAFE_DIVIDE(fg_makes, NULLIF(fg_attempts, 0)) AS fg_pct,
         AVG(SAFE_DIVIDE(fg_makes, NULLIF(fg_attempts, 0)))
           OVER (PARTITION BY player_lookup ORDER BY game_date
@@ -284,7 +233,6 @@ def query_predictions_with_supplements(
         STDDEV(SAFE_DIVIDE(fg_makes, NULLIF(fg_attempts, 0)))
           OVER (PARTITION BY player_lookup ORDER BY game_date
                 ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS fg_pct_std,
-        -- Player profile stats (for market-pattern UNDER signals, Session 274)
         starter_flag,
         AVG(CAST(points AS FLOAT64))
           OVER (PARTITION BY player_lookup ORDER BY game_date
@@ -301,7 +249,6 @@ def query_predictions_with_supplements(
         STDDEV(CAST(points AS FLOAT64))
           OVER (PARTITION BY player_lookup ORDER BY game_date
                 ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING) AS points_std_last_5,
-        -- FT rate and starter rate (Session 336 — player profile signals)
         SAFE_DIVIDE(
           SUM(ft_attempts) OVER (PARTITION BY player_lookup ORDER BY game_date
             ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING),
@@ -310,11 +257,9 @@ def query_predictions_with_supplements(
         ) AS ft_rate_season,
         AVG(CAST(starter_flag AS INT64)) OVER (PARTITION BY player_lookup ORDER BY game_date
           ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS starter_rate_season,
-        -- Self-creation rate: rolling 10-game unassisted FG ratio (Session 380)
         AVG(SAFE_DIVIDE(unassisted_fg_makes, NULLIF(fg_makes, 0)))
           OVER (PARTITION BY player_lookup ORDER BY game_date
                 ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING) AS self_creation_rate_last_10,
-        -- Plus/minus streak (Session 294 — neg_pm_under anti-pattern)
         plus_minus,
         LAG(CASE WHEN plus_minus < 0 THEN 1 ELSE 0 END, 1)
           OVER (PARTITION BY player_lookup ORDER BY game_date) AS neg_pm_1,
@@ -330,14 +275,25 @@ def query_predictions_with_supplements(
     latest_stats AS (
       SELECT gs.*
       FROM game_stats gs
-      INNER JOIN preds p ON gs.player_lookup = p.player_lookup
+      INNER JOIN (SELECT DISTINCT player_lookup FROM preds) dp
+        ON gs.player_lookup = dp.player_lookup
       WHERE gs.game_date < @target_date
       QUALIFY ROW_NUMBER() OVER (
         PARTITION BY gs.player_lookup ORDER BY gs.game_date DESC
       ) = 1
     ),
 
-    -- Streak data: prior actual over/under outcomes + prediction correctness
+    -- Streak data: use champion model system_id for prior outcomes.
+    -- Per-model streak would require N separate queries — use a single
+    -- representative model (any V12 noveg MAE). Signals that use streak
+    -- data are contextual, not model-specific.
+    streak_source AS (
+      SELECT DISTINCT system_id
+      FROM preds
+      WHERE system_id LIKE 'catboost_v12_noveg_train%'
+      LIMIT 1
+    ),
+
     streak_data AS (
       SELECT
         player_lookup,
@@ -353,15 +309,16 @@ def query_predictions_with_supplements(
         LAG(CASE WHEN actual_points > line_value THEN 1 ELSE 0 END, 4) OVER w AS prev_over_4,
         LAG(CASE WHEN actual_points > line_value THEN 1 ELSE 0 END, 5) OVER w AS prev_over_5
       FROM (
-        SELECT *
-        FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy`
-        WHERE game_date >= '2025-10-22'
-          AND system_id = '{model_id}'
-          AND prediction_correct IS NOT NULL
-          AND is_voided IS NOT TRUE
-          AND line_source IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS')
+        SELECT pa.*
+        FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy` pa
+        CROSS JOIN streak_source ss
+        WHERE pa.game_date >= '2025-10-22'
+          AND pa.system_id = ss.system_id
+          AND pa.prediction_correct IS NOT NULL
+          AND pa.is_voided IS NOT TRUE
+          AND pa.line_source IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS')
         QUALIFY ROW_NUMBER() OVER (
-          PARTITION BY player_lookup, game_id ORDER BY graded_at DESC
+          PARTITION BY pa.player_lookup, pa.game_id ORDER BY pa.graded_at DESC
         ) = 1
       )
       WINDOW w AS (PARTITION BY player_lookup ORDER BY game_date)
@@ -370,16 +327,15 @@ def query_predictions_with_supplements(
     latest_streak AS (
       SELECT sd.*
       FROM streak_data sd
-      INNER JOIN preds p ON sd.player_lookup = p.player_lookup
+      INNER JOIN (SELECT DISTINCT player_lookup FROM preds) dp
+        ON sd.player_lookup = dp.player_lookup
       WHERE sd.game_date < @target_date
       QUALIFY ROW_NUMBER() OVER (
         PARTITION BY sd.player_lookup ORDER BY sd.game_date DESC
       ) = 1
     ),
 
-    -- V12 predictions for cross-model consensus scoring
-    -- Dedup: if multiple V12 MAE models exist, pick the one with latest system_id
-    -- Session 335: Uses build_noveg_mae_sql_filter() instead of hardcoded pattern
+    -- V12 noveg MAE predictions for cross-model consensus scoring
     v12_preds AS (
       SELECT
         p2.player_lookup,
@@ -390,16 +346,18 @@ def query_predictions_with_supplements(
         CAST(p2.confidence_score AS FLOAT64) AS v12_confidence
       FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions` p2
       WHERE p2.game_date = @target_date
-        AND {build_noveg_mae_sql_filter('p2')}
+        AND (p2.system_id LIKE 'catboost_v12_noveg%' AND p2.system_id NOT LIKE '%_q4%' AND p2.system_id NOT LIKE '%_q5%'
+            AND p2.system_id NOT LIKE '%_q6%' AND p2.system_id NOT LIKE '%_classify%'
+            AND p2.system_id NOT LIKE '%_star%' AND p2.system_id NOT LIKE '%_starter%' AND p2.system_id NOT LIKE '%_role%')
         AND p2.is_active = TRUE
-        AND p2.is_actionable = TRUE  -- Session 414: exclude worker-filtered predictions
+        AND p2.is_actionable = TRUE
         AND p2.recommendation IN ('OVER', 'UNDER')
       QUALIFY ROW_NUMBER() OVER (
         PARTITION BY p2.player_lookup, p2.game_id ORDER BY p2.system_id DESC
       ) = 1
     ),
 
-    -- Multi-book line std, teammate_usage, star_teammates_out, prop_under_streak for signals (Session 303, 355, 367, 371, 374)
+    -- Feature store values (player-level, model-independent)
     book_stats AS (
       SELECT
         player_lookup,
@@ -428,9 +386,7 @@ def query_predictions_with_supplements(
       WHERE game_date = @target_date
     ),
 
-    -- Previous game prop line for line delta signal (Session 294)
-    -- Gets the most recent previous line for each player across ANY model
-    -- Fixed Session 387: was model-specific (dead champion = always NULL)
+    -- Previous game prop line for line delta signal
     prev_prop_lines AS (
       SELECT
         pp.player_lookup,
@@ -446,8 +402,7 @@ def query_predictions_with_supplements(
       ) = 1
     ),
 
-    -- DraftKings intra-day line movement: opening vs closing line (Session 380)
-    -- Line up 2.0+ on OVER = 67.8% HR (69% Feb-resilient)
+    -- DraftKings intra-day line movement
     dk_line_movement AS (
       SELECT
         player_lookup,
@@ -474,8 +429,7 @@ def query_predictions_with_supplements(
       WHERE opening_line IS NOT NULL AND closing_line IS NOT NULL
     ),
 
-    -- Session 418: Previous game context for bounce-back and streak signals.
-    -- Fetches each player's most recent game stats to detect bad misses, shooting slumps, etc.
+    -- Previous game context for bounce-back and streak signals
     prev_game_context AS (
       SELECT
         player_lookup,
@@ -567,7 +521,7 @@ def query_predictions_with_supplements(
     LEFT JOIN book_stats bs ON bs.player_lookup = p.player_lookup AND bs.game_date = p.game_date
     LEFT JOIN dk_line_movement dlm ON dlm.player_lookup = p.player_lookup
     LEFT JOIN prev_game_context pgc ON pgc.player_lookup = p.player_lookup
-    ORDER BY p.player_lookup
+    ORDER BY p.system_id, p.player_lookup
     """
 
     job_config = bigquery.QueryJobConfig(
@@ -576,9 +530,11 @@ def query_predictions_with_supplements(
         ]
     )
 
-    rows = bq_client.query(query, job_config=job_config).result(timeout=60)
+    rows = bq_client.query(query, job_config=job_config).result(timeout=120)
 
-    # Session 374b: Query opponent stars out separately (team_abbr derived in Python)
+    # --- Run satellite queries in parallel with row parsing ---
+
+    # Opponent stars out
     opp_stars_query = f"""
     SELECT
       ir.team AS team_abbr,
@@ -595,17 +551,14 @@ def query_predictions_with_supplements(
       AND ir.injury_status IN ('out', 'doubtful', 'Out', 'Doubtful')
     GROUP BY ir.team
     """
+    team_stars_out = {}
     try:
         opp_stars_rows = bq_client.query(opp_stars_query, job_config=job_config).result(timeout=30)
         team_stars_out = {row['team_abbr']: row['stars_out'] for row in opp_stars_rows}
     except Exception as e:
         logger.warning(f"Failed to query opponent stars out: {e}")
-        team_stars_out = {}
 
-    # Session 399: Mean-median gap for high_skew_over_block filter.
-    # Players with right-skewed scoring (mean >> median) have inflated OVER
-    # predictions because the model predicts mean but books set lines at median.
-    # mean_median_gap > 2.0 = 49.1% OVER HR — below breakeven.
+    # Mean-median gap (skew) for high_skew_over_block filter
     skew_query = f"""
     WITH player_last_10 AS (
       SELECT
@@ -627,17 +580,14 @@ def query_predictions_with_supplements(
     GROUP BY player_lookup
     HAVING COUNT(*) >= 5
     """
+    skew_map = {}
     try:
         skew_rows = bq_client.query(skew_query, job_config=job_config).result(timeout=30)
         skew_map = {row['player_lookup']: float(row['mean_median_gap']) for row in skew_rows}
-        logger.info(f"Loaded mean-median gap for {len(skew_map)} players")
     except Exception as e:
         logger.warning(f"Failed to query mean-median gap: {e}")
-        skew_map = {}
 
-    # Session 397: Q4 scoring ratio from BDL play-by-play.
-    # Players with high Q4 scoring ratio (35%+) have 34.0% UNDER HR (N=359) —
-    # the model undershoots them because Q4 scoring isn't captured in averages.
+    # Q4 scoring ratio
     q4_ratio_query = f"""
     WITH player_game_q4 AS (
       SELECT
@@ -666,24 +616,14 @@ def query_predictions_with_supplements(
     WHERE rn <= 5
     GROUP BY 1
     """
+    q4_ratio_map = {}
     try:
         q4_rows = bq_client.query(q4_ratio_query, job_config=job_config).result(timeout=30)
         q4_ratio_map = {row['player_lookup']: float(row['q4_scoring_ratio']) for row in q4_rows}
-        logger.info(f"Loaded Q4 scoring ratios for {len(q4_ratio_map)} players")
     except Exception as e:
         logger.warning(f"Failed to query Q4 scoring ratios: {e}")
-        q4_ratio_map = {}
 
-    # Session 401/403/407: Projection alignment from external sources.
-    # Compare external projected_points to prop line to count how many sources
-    # agree with each direction. 1+ source above line + OVER = aligned signal.
-    # Session 407: Switched to single-source mode (NumberFire only).
-    # Session 434: Added ESPN Fantasy projections as second source (shadow validation).
-    # - FantasyPros EXCLUDED: Dead (Playwright timeout, wrong data type — DFS season totals)
-    # - Dimers EXCLUDED: Page shows generic projections, NOT game-date-specific
-    # - DFF EXCLUDED: Only provides DraftKings fantasy points (FPTS)
-    # NumberFire (via FanDuel Research GraphQL) provides 120+ valid per-game projections.
-    # ESPN Fantasy provides season-average per-game projections for ~500 players.
+    # Projection consensus (NumberFire + ESPN)
     projection_query = f"""
     WITH nf AS (
       SELECT REPLACE(player_lookup, '-', '') AS player_lookup, projected_points,
@@ -716,16 +656,14 @@ def query_predictions_with_supplements(
             projection_map[row['player_lookup']] = {
                 'numberfire': float(row['nf_projected_points']) if row['nf_projected_points'] is not None else None,
                 'fantasypros': float(row['fp_projected_points']) if row['fp_projected_points'] is not None else None,
-                # DFF excluded: only has DFS fantasy points, not real NBA points
                 'dailyfantasyfuel': None,
                 'dimers': float(row['dm_projected_points']) if row['dm_projected_points'] is not None else None,
                 'espn': float(row['espn_projected_points']) if row['espn_projected_points'] is not None else None,
             }
-        logger.info(f"Loaded projection data for {len(projection_map)} players from NumberFire + ESPN")
     except Exception as e:
         logger.warning(f"Failed to query projection consensus data: {e}")
 
-    # Session 401: TeamRankings predicted pace for predicted_pace_over signal.
+    # TeamRankings predicted pace
     pace_query = f"""
     SELECT team, pace
     FROM `{PROJECT_ID}.nba_raw.teamrankings_team_stats`
@@ -739,14 +677,10 @@ def query_predictions_with_supplements(
     try:
         pace_rows = bq_client.query(pace_query, job_config=job_config).result(timeout=30)
         team_pace_map = {row['team']: float(row['pace']) for row in pace_rows}
-        logger.info(f"Loaded TeamRankings pace for {len(team_pace_map)} teams")
     except Exception as e:
         logger.warning(f"Failed to query TeamRankings pace: {e}")
 
-    # Session 401/406: DvP data for dvp_favorable_over signal.
-    # Session 406: rank column is NULL in BQ — compute from points_allowed.
-    # Rank 1 = most points allowed (worst defender). Deduplicate scraper rows.
-    # Session 433: Fallback to gamebook self-computation when Hashtag unavailable.
+    # DvP data
     dvp_query = f"""
     WITH deduped AS (
       SELECT DISTINCT team, position, points_allowed
@@ -763,7 +697,7 @@ def query_predictions_with_supplements(
       RANK() OVER (ORDER BY points_allowed DESC) AS rank
     FROM deduped
     """
-    dvp_map = {}  # {team: {position: {points_allowed, rank}}}
+    dvp_map = {}
     try:
         dvp_rows = bq_client.query(dvp_query, job_config=job_config).result(timeout=30)
         for row in dvp_rows:
@@ -774,20 +708,17 @@ def query_predictions_with_supplements(
                 'points_allowed': float(row['points_allowed']),
                 'rank': int(row['rank']) if row['rank'] is not None else None,
             }
-        logger.info(f"Loaded DvP data for {len(dvp_map)} teams")
     except Exception as e:
         logger.warning(f"Failed to query DvP data: {e}")
 
-    # Session 433: Fallback — self-compute DvP from gamebook when Hashtag
-    # is unavailable (SPOF mitigation). Uses last 30 days of opponent scoring.
-    # Only fires when primary Hashtag source returned 0 teams.
+    # DvP gamebook fallback
     if len(dvp_map) == 0:
         logger.warning("Hashtag DvP unavailable — falling back to gamebook self-computation")
         dvp_fallback_query = f"""
         WITH opponent_scoring AS (
           SELECT
             g.opponent_team_abbr AS defending_team,
-            g.points,
+            g.points
           FROM `{PROJECT_ID}.nba_analytics.player_game_summary` g
           WHERE g.game_date >= DATE_SUB(@target_date, INTERVAL 30 DAY)
             AND g.game_date < @target_date
@@ -818,16 +749,10 @@ def query_predictions_with_supplements(
                     'points_allowed': float(row['points_allowed']),
                     'rank': int(row['rank']) if row['rank'] is not None else None,
                 }
-            logger.info(f"DvP fallback loaded for {len(dvp_map)} teams (from gamebook)")
         except Exception as e:
             logger.warning(f"DvP fallback query also failed: {e}")
 
-    # Session 401: CLV tracking — opening vs closing line comparison.
-    # Session 408: snapshot_type='closing' never populated.
-    # Session 427: Fixed snapshot selection — was using MIN/MAX on string
-    # snapshot_tag, picking snap-0006 (midnight) and snap-2201 (sparse late).
-    # Now uses first snapshot >= 0600 (morning market open) and last <= 2200
-    # (evening pre-game). Produces 5x more CLV-qualified players (10 vs 2).
+    # CLV tracking
     clv_query = f"""
     WITH tagged AS (
       SELECT player_lookup, points_line, snapshot_tag,
@@ -874,15 +799,10 @@ def query_predictions_with_supplements(
                 'closing_line': float(row['closing_line']),
                 'clv': float(row['clv']),
             }
-        logger.info(f"Loaded CLV data for {len(clv_map)} players")
     except Exception as e:
         logger.warning(f"Failed to query CLV data: {e}")
 
-    # Session 399: Sharp vs soft book line lean for sharp_book_lean signal.
-    # Sharp books (FanDuel, DraftKings) set efficient lines; soft books
-    # (BetRivers, Bovada, Fliff) lag. Divergence predicts direction:
-    # sharp_lean >= 1.5 → OVER 70.3% HR (N=508)
-    # sharp_lean <= -1.5 → UNDER 84.7% HR (N=202)
+    # Sharp book lean
     sharp_lean_query = f"""
     WITH latest_lines AS (
       SELECT
@@ -907,17 +827,17 @@ def query_predictions_with_supplements(
     HAVING COUNT(DISTINCT CASE WHEN bookmaker IN ('fanduel', 'draftkings') THEN bookmaker END) >= 1
        AND COUNT(DISTINCT CASE WHEN bookmaker IN ('betrivers', 'bovada', 'fliff') THEN bookmaker END) >= 1
     """
+    sharp_lean_map = {}
     try:
         sharp_lean_rows = bq_client.query(sharp_lean_query, job_config=job_config).result(timeout=30)
-        sharp_lean_map = {row['player_lookup']: float(row['sharp_lean']) for row in sharp_lean_rows if row['sharp_lean'] is not None}
-        logger.info(f"Loaded sharp book lean for {len(sharp_lean_map)} players")
+        sharp_lean_map = {
+            row['player_lookup']: float(row['sharp_lean'])
+            for row in sharp_lean_rows if row['sharp_lean'] is not None
+        }
     except Exception as e:
         logger.warning(f"Failed to query sharp book lean: {e}")
-        sharp_lean_map = {}
 
-    # Session 404: VSiN sharp money data — handle% vs ticket% divergence.
-    # When handle (money) diverges from tickets, sharp bettors are on the money side.
-    # This is a game-level signal: over_money_pct vs over_ticket_pct.
+    # VSiN sharp money
     vsin_query = f"""
     SELECT away_team, home_team,
       over_ticket_pct, under_ticket_pct,
@@ -927,7 +847,7 @@ def query_predictions_with_supplements(
       AND over_money_pct IS NOT NULL
       AND over_ticket_pct IS NOT NULL
     """
-    vsin_map = {}  # {(away, home): {over_money_pct, over_ticket_pct, ...}}
+    vsin_map = {}
     try:
         vsin_rows = bq_client.query(vsin_query, job_config=job_config).result(timeout=30)
         for row in vsin_rows:
@@ -938,12 +858,10 @@ def query_predictions_with_supplements(
                 'over_ticket_pct': float(row['over_ticket_pct']),
                 'under_ticket_pct': float(row['under_ticket_pct']),
             }
-        logger.info(f"Loaded VSiN betting splits for {len(vsin_map)} games")
     except Exception as e:
         logger.warning(f"Failed to query VSiN betting splits: {e}")
 
-    # Session 404: RotoWire projected minutes for minutes_surge_over signal.
-    # Session 405: Normalize player_lookup (remove hyphens) to match prediction format.
+    # RotoWire projected minutes
     rotowire_query = f"""
     SELECT REPLACE(player_lookup, '-', '') AS player_lookup, projected_minutes
     FROM `{PROJECT_ID}.nba_raw.rotowire_lineups`
@@ -958,16 +876,18 @@ def query_predictions_with_supplements(
             row['player_lookup']: float(row['projected_minutes'])
             for row in rw_rows if row['projected_minutes']
         }
-        logger.info(f"Loaded RotoWire minutes for {len(rotowire_minutes_map)} players")
     except Exception as e:
         logger.warning(f"Failed to query RotoWire minutes: {e}")
 
-    predictions = []
+    # --- Parse main query rows and build predictions + supplemental ---
+    predictions_by_model: Dict[str, List[Dict]] = defaultdict(list)
     supplemental_map: Dict[str, Dict] = {}
 
     for row in rows:
         row_dict = dict(row)
-        # Derive team/opponent from game_id (YYYYMMDD_AWAY_HOME)
+        system_id = row_dict['system_id']
+
+        # Derive team/opponent from game_id
         game_id = row_dict.get('game_id', '')
         parts = game_id.split('_') if game_id else []
         team_abbr = row_dict.get('team_abbr', '')
@@ -983,7 +903,7 @@ def query_predictions_with_supplements(
             'player_lookup': row_dict['player_lookup'],
             'game_id': game_id,
             'game_date': row_dict['game_date'],
-            'system_id': row_dict['system_id'],
+            'system_id': system_id,
             'player_name': row_dict.get('player_full_name', ''),
             'team_abbr': team_abbr,
             'opponent_team_abbr': opponent,
@@ -995,159 +915,18 @@ def query_predictions_with_supplements(
             'is_home': is_home,
             'rest_days': row_dict.get('rest_days'),
             'feature_quality_score': row_dict.get('feature_quality_score') or 0,
+            # Source model attribution
+            'source_model_id': system_id,
+            'source_model_family': classify_system_id(system_id),
+            # Model HR weight from the query
+            'model_hr_weight': float(row_dict.get('model_hr_weight') or 0.91),
+            # Multi-model fields (populated since we query all models)
+            'n_models_eligible': 0,  # Will be set if needed by merger
+            'champion_edge': None,
+            'direction_conflict': False,
         }
 
-        # Source model attribution (always set — needed by V9 UNDER 7+ filter etc.)
-        source_sid = row_dict['system_id']
-        pred['source_model_id'] = source_sid
-        pred['source_model_family'] = classify_system_id(source_sid)
-
-        # Multi-source attribution (Session 307)
-        if multi_model:
-            pred['n_models_eligible'] = row_dict.get('n_models_eligible') or 0
-            champ_edge = row_dict.get('champion_edge')
-            pred['champion_edge'] = float(champ_edge) if champ_edge is not None else None
-            pred['direction_conflict'] = bool(row_dict.get('direction_conflict'))
-            # Session 365: Model HR weight used in per-player selection
-            pred['model_hr_weight'] = float(row_dict.get('model_hr_weight') or 0.91)
-
-        predictions.append(pred)
-
-        supp: Dict[str, Any] = {}
-
-        # Player context
-        supp['player_context'] = {
-            'position': '',  # Not available in player_game_summary
-        }
-
-        if row_dict.get('three_pct_last_3') is not None:
-            supp['three_pt_stats'] = {
-                'three_pct_last_3': float(row_dict['three_pct_last_3']),
-                'three_pct_season': float(row_dict.get('three_pct_season') or 0),
-                'three_pct_std': float(row_dict.get('three_pct_std') or 0),
-                'three_pa_per_game': float(row_dict.get('three_pa_per_game') or 0),
-            }
-
-        if row_dict.get('minutes_avg_last_3') is not None:
-            supp['minutes_stats'] = {
-                'minutes_avg_last_3': float(row_dict['minutes_avg_last_3']),
-                'minutes_avg_season': float(row_dict.get('minutes_avg_season') or 0),
-            }
-
-        # Streak stats (for cold_snap, cold_continuation_2)
-        if row_dict.get('prev_over_1') is not None:
-            prev_correct = [
-                row_dict.get('prev_correct_1'),
-                row_dict.get('prev_correct_2'),
-                row_dict.get('prev_correct_3'),
-                row_dict.get('prev_correct_4'),
-                row_dict.get('prev_correct_5'),
-            ]
-            prev_over = [
-                row_dict.get('prev_over_1'),
-                row_dict.get('prev_over_2'),
-                row_dict.get('prev_over_3'),
-                row_dict.get('prev_over_4'),
-                row_dict.get('prev_over_5'),
-            ]
-
-            # Calculate consecutive beats/misses from most recent backwards
-            consecutive_beats = 0
-            for val in prev_correct:
-                if val == 1:
-                    consecutive_beats += 1
-                else:
-                    break
-
-            consecutive_misses = 0
-            last_miss_direction = None
-            for i, val in enumerate(prev_correct):
-                if val == 0:
-                    consecutive_misses += 1
-                    if i < len(prev_over) and prev_over[i] is not None:
-                        last_miss_direction = 'OVER' if prev_over[i] == 1 else 'UNDER'
-                else:
-                    break
-
-            supp['streak_stats'] = {
-                'prev_correct': prev_correct,
-                'prev_over': prev_over,
-                'consecutive_line_beats': consecutive_beats,
-                'consecutive_line_misses': consecutive_misses,
-                'last_miss_direction': last_miss_direction,
-            }
-
-            # Also provide streak_data in backtest format for cold_continuation_2
-            player_key = f"{row_dict['player_lookup']}::{row_dict['game_date']}"
-            supp['streak_data'] = {
-                player_key: {
-                    'consecutive_line_beats': consecutive_beats,
-                    'consecutive_line_misses': consecutive_misses,
-                    'last_miss_direction': last_miss_direction,
-                }
-            }
-
-        # Recovery stats (for blowout_recovery)
-        if (row_dict.get('prev_minutes') is not None
-                and row_dict.get('minutes_avg_season') is not None):
-            supp['recovery_stats'] = {
-                'prev_minutes': float(row_dict['prev_minutes']),
-                'minutes_avg_season': float(row_dict['minutes_avg_season']),
-            }
-
-        # FG% stats (for fg_cold_continuation)
-        if row_dict.get('fg_pct_last_3') is not None:
-            supp['fg_stats'] = {
-                'fg_pct_last_3': float(row_dict['fg_pct_last_3']),
-                'fg_pct_season': float(row_dict.get('fg_pct_season') or 0),
-                'fg_pct_std': float(row_dict.get('fg_pct_std') or 0),
-            }
-
-        # Rest stats (for b2b_fatigue_under)
-        if row_dict.get('rest_days') is not None:
-            supp['rest_stats'] = {
-                'rest_days': int(row_dict['rest_days']),
-            }
-
-        # Player profile stats (for market-pattern UNDER signals, Session 274)
-        supp['player_profile'] = {
-            'starter_flag': row_dict.get('starter_flag'),
-            'points_avg_season': float(row_dict.get('points_avg_season') or 0),
-            'usage_avg_season': float(row_dict.get('usage_avg_season') or 0),
-            'fta_season': float(row_dict.get('fta_season') or 0),
-            'unassisted_fg_season': float(row_dict.get('unassisted_fg_season') or 0),
-            'points_std_last_5': float(row_dict.get('points_std_last_5') or 0),
-            'ft_rate_season': float(row_dict.get('ft_rate_season') or 0),
-            'starter_rate_season': float(row_dict.get('starter_rate_season') or 0),
-        }
-
-        # V12 prediction (for cross-model consensus scoring)
-        if row_dict.get('v12_recommendation'):
-            supp['v12_prediction'] = {
-                'recommendation': row_dict['v12_recommendation'],
-                'edge': float(row_dict.get('v12_edge') or 0),
-                'predicted_points': float(row_dict.get('v12_predicted_points') or 0),
-                'confidence': float(row_dict.get('v12_confidence') or 0),
-            }
-
-        # Book disagreement stats (for book_disagreement signal, Session 303)
-        if row_dict.get('multi_book_line_std') is not None:
-            supp['book_stats'] = {
-                'multi_book_line_std': float(row_dict['multi_book_line_std']),
-                'book_std_source': row_dict.get('book_std_source', ''),
-            }
-
-        # Prop line delta stats (for prop_line_drop_over signal, Session 294)
-        if row_dict.get('prev_line_value') is not None:
-            current_line = float(row_dict.get('line_value') or 0)
-            prev_line = float(row_dict['prev_line_value'])
-            supp['prop_line_stats'] = {
-                'prev_line_value': prev_line,
-                'current_line_value': current_line,
-                'line_delta': round(current_line - prev_line, 1),
-            }
-
-        # Copy player profile fields to prediction dict for signals that check pred directly
+        # Copy player profile fields to prediction dict
         pred['starter_flag'] = row_dict.get('starter_flag')
         pred['points_avg_season'] = float(row_dict.get('points_avg_season') or 0)
         pred['usage_avg_season'] = float(row_dict.get('usage_avg_season') or 0)
@@ -1157,37 +936,23 @@ def query_predictions_with_supplements(
         pred['ft_rate_season'] = float(row_dict.get('ft_rate_season') or 0)
         pred['starter_rate_season'] = float(row_dict.get('starter_rate_season') or 0)
 
-        # Teammate usage from feature store for aggregator filter (Session 355)
+        # Feature store values
         tu = row_dict.get('teammate_usage_available')
         pred['teammate_usage_available'] = float(tu) if tu is not None else 0
-
-        # Star teammates out from feature store for star_under filter (Session 367)
         sto = row_dict.get('star_teammates_out')
         pred['star_teammates_out'] = float(sto) if sto is not None else 0
-
-        # Prop under streak from feature store for scoring_cold_streak_over signal (Session 371)
         pus = row_dict.get('prop_under_streak')
         pred['prop_under_streak'] = float(pus) if pus is not None else 0
-
-        # Implied team total from feature store for high_scoring_environment_over signal (Session 373)
         itt = row_dict.get('implied_team_total')
         pred['implied_team_total'] = float(itt) if itt is not None else 0
-
-        # Opponent pace from feature store for fast_pace_over signal (Session 374)
         op = row_dict.get('opponent_pace')
         pred['opponent_pace'] = float(op) if op is not None else 0
-
-        # Points std last 10 from feature store for volatile_scoring_over signal (Session 374)
         pstd = row_dict.get('points_std_last_10')
         pred['points_std_last_10'] = float(pstd) if pstd is not None else 0
-
-        # Points avg last 5/10 from feature store for hot_form_over signal (Session 410)
         pa5 = row_dict.get('points_avg_last_5')
         pred['points_avg_last_5'] = float(pa5) if pa5 is not None else 0
         pa10 = row_dict.get('points_avg_last_10')
         pred['points_avg_last_10'] = float(pa10) if pa10 is not None else 0
-
-        # Session 411: Feature store values for new shadow signals
         pred['avg_pts_vs_opp'] = float(row_dict.get('avg_pts_vs_opp') or 0)
         pred['games_vs_opp'] = float(row_dict.get('games_vs_opp') or 0)
         pred['minutes_load_7d'] = float(row_dict.get('minutes_load_7d') or 0)
@@ -1195,11 +960,7 @@ def query_predictions_with_supplements(
         pred['trend_slope'] = float(row_dict.get('trend_slope') or 0)
         pred['usage_rate_l5'] = float(row_dict.get('usage_rate_l5') or 0)
         pred['blowout_risk'] = float(row_dict.get('blowout_risk') or 0)
-
-        # Spread magnitude for high_spread_over observation filter (Session 413)
         pred['spread_magnitude'] = float(row_dict.get('spread_magnitude') or 0)
-
-        # Session 418: Previous game context for bounce-back and streak signals
         pred['prev_game_ratio'] = float(row_dict.get('prev_game_ratio') or 0)
         pred['prev_game_fg_pct'] = float(row_dict.get('prev_game_fg_pct') or 0)
         pred['prev_game_points'] = float(row_dict.get('prev_game_points') or 0)
@@ -1209,48 +970,44 @@ def query_predictions_with_supplements(
         pred['prop_over_streak'] = float(pos) if pos is not None else 0
         orl = row_dict.get('over_rate_last_10')
         pred['over_rate_last_10'] = float(orl) if orl is not None else 0
-
-        # Over trend: prev_over_1..5 from streak data for over_trend_over signal (Session 410)
         pred['prev_over_1'] = row_dict.get('prev_over_1')
         pred['prev_over_2'] = row_dict.get('prev_over_2')
         pred['prev_over_3'] = row_dict.get('prev_over_3')
         pred['prev_over_4'] = row_dict.get('prev_over_4')
         pred['prev_over_5'] = row_dict.get('prev_over_5')
 
-        # Opponent stars out for opponent_depleted_under filter (Session 374b)
-        # Uses team_stars_out dict queried separately, keyed by opponent team
+        # Opponent stars out
         pred['opponent_stars_out'] = team_stars_out.get(opponent, 0)
 
-        # Multi-book line std for high_book_std_under filter (Session 377)
+        # Multi-book line std
         mbls = row_dict.get('multi_book_line_std')
         pred['multi_book_line_std'] = float(mbls) if mbls is not None else 0
 
-        # Self-creation rate (rolling 10-game) for self_creation_over signal (Session 380)
+        # Self-creation rate
         scr = row_dict.get('self_creation_rate_last_10')
         pred['self_creation_rate_last_10'] = float(scr) if scr is not None else 0
 
-        # DraftKings intra-day line movement for sharp_line_move_over signal (Session 380)
+        # DraftKings intra-day line movement
         dlm_val = row_dict.get('dk_line_move_direction')
         pred['dk_line_move_direction'] = float(dlm_val) if dlm_val is not None else None
 
-        # Copy prop line delta for aggregator pre-filter (Session 294)
+        # Prop line delta
         if row_dict.get('prev_line_value') is not None:
             current_line = float(row_dict.get('line_value') or 0)
             prev_line = float(row_dict['prev_line_value'])
             pred['prop_line_delta'] = round(current_line - prev_line, 1)
 
-        # Q4 scoring ratio for q4_scorer_under_block filter (Session 397)
+        # Q4 scoring ratio
         pred['q4_scoring_ratio'] = q4_ratio_map.get(row_dict['player_lookup'], 0)
 
-        # Mean-median gap for high_skew_over_block filter (Session 399)
+        # Mean-median gap
         pred['mean_median_gap'] = skew_map.get(row_dict['player_lookup'], 0)
 
-        # Sharp book lean for sharp_book_lean_over/under signals (Session 399)
+        # Sharp book lean
         sbl = sharp_lean_map.get(row_dict['player_lookup'])
         pred['sharp_book_lean'] = float(sbl) if sbl is not None else None
 
-        # Session 401/403: Projection consensus data (5 sources)
-        # Session 434: Added ESPN Fantasy projections as fifth source
+        # Projection consensus
         proj_data = projection_map.get(row_dict['player_lookup'])
         if proj_data:
             line = float(pred.get('line_value') or 0)
@@ -1283,7 +1040,7 @@ def query_predictions_with_supplements(
             pred['projection_sources_above_line'] = 0
             pred['projection_sources_below_line'] = 0
 
-        # Session 401: Predicted game pace from TeamRankings
+        # Predicted game pace
         team_pace = team_pace_map.get(pred.get('team_abbr'))
         opp_pace = team_pace_map.get(opponent)
         pred['team_predicted_pace'] = team_pace
@@ -1293,12 +1050,9 @@ def query_predictions_with_supplements(
         else:
             pred['predicted_game_pace'] = None
 
-        # Session 401: DvP data for opponent's defense vs player position
+        # DvP data
         opp_dvp = dvp_map.get(opponent, {})
-        # We don't have player position in the main query, so check ALL position
-        # or use the best available position data
         if opp_dvp:
-            # Use "ALL" position if available, otherwise check common positions
             best_dvp = opp_dvp.get('ALL', {})
             pred['opponent_dvp_rank'] = best_dvp.get('rank')
             pred['opponent_dvp_points_allowed'] = best_dvp.get('points_allowed')
@@ -1306,7 +1060,7 @@ def query_predictions_with_supplements(
             pred['opponent_dvp_rank'] = None
             pred['opponent_dvp_points_allowed'] = None
 
-        # Session 401: CLV data
+        # CLV data
         clv_data = clv_map.get(row_dict['player_lookup'])
         if clv_data:
             pred['closing_line_value'] = clv_data['clv']
@@ -1315,8 +1069,7 @@ def query_predictions_with_supplements(
         else:
             pred['closing_line_value'] = None
 
-        # Compute consecutive negative +/- streak for pre-filter (Session 294)
-        # neg_3plus + UNDER = 13.1% HR (N=84) — catastrophic anti-pattern
+        # Negative +/- streak
         neg_pm_streak = 0
         for lag_val in [row_dict.get('neg_pm_1'), row_dict.get('neg_pm_2'), row_dict.get('neg_pm_3')]:
             if lag_val == 1:
@@ -1326,8 +1079,7 @@ def query_predictions_with_supplements(
         if neg_pm_streak > 0:
             pred['neg_pm_streak'] = neg_pm_streak
 
-        # Session 404: VSiN sharp money data — game-level handle vs ticket divergence.
-        # Join via away_team/home_team from game_id parts.
+        # VSiN sharp money
         if len(parts) >= 3:
             vsin_data = vsin_map.get((parts[1], parts[2]))
             if vsin_data:
@@ -1340,208 +1092,530 @@ def query_predictions_with_supplements(
         else:
             pred['vsin_over_money_pct'] = None
 
-        # Session 404: RotoWire projected minutes for minutes_surge_over signal.
+        # RotoWire projected minutes
         rw_minutes = rotowire_minutes_map.get(row_dict['player_lookup'])
         pred['rotowire_projected_minutes'] = rw_minutes
-        # Compare to season avg from player_profile
-        season_minutes = supp.get('minutes_stats', {}).get('minutes_avg_season')
-        if rw_minutes and season_minutes and season_minutes > 0:
-            pred['minutes_projection_delta'] = rw_minutes - season_minutes
-        else:
-            pred['minutes_projection_delta'] = None
 
-        supplemental_map[row_dict['player_lookup']] = supp
+        predictions_by_model[system_id].append(pred)
 
-    return predictions, supplemental_map
+        # Build supplemental map (player-level, write once per player)
+        player_key = row_dict['player_lookup']
+        if player_key not in supplemental_map:
+            supp: Dict[str, Any] = {}
 
+            supp['player_context'] = {'position': ''}
 
-def query_streak_data(
-    bq_client: bigquery.Client,
-    start_date: str,
-    end_date: str,
-    system_id: Optional[str] = None,
-) -> Dict[str, Dict]:
-    """Query consecutive line beats/misses for each player-game.
+            if row_dict.get('three_pct_last_3') is not None:
+                supp['three_pt_stats'] = {
+                    'three_pct_last_3': float(row_dict['three_pct_last_3']),
+                    'three_pct_season': float(row_dict.get('three_pct_season') or 0),
+                    'three_pct_std': float(row_dict.get('three_pct_std') or 0),
+                    'three_pa_per_game': float(row_dict.get('three_pa_per_game') or 0),
+                }
 
-    Args:
-        bq_client: BigQuery client.
-        start_date: Start date for streak calculation window.
-        end_date: End date for streak calculation window.
-        system_id: Model to query streak data for. Defaults to best bets model.
+            if row_dict.get('minutes_avg_last_3') is not None:
+                supp['minutes_stats'] = {
+                    'minutes_avg_last_3': float(row_dict['minutes_avg_last_3']),
+                    'minutes_avg_season': float(row_dict.get('minutes_avg_season') or 0),
+                }
 
-    Returns:
-        Dict keyed by 'player_lookup::game_date' with streak information.
-    """
-    model_id = system_id or get_best_bets_model_id()
-    query = f"""
-    WITH graded_predictions AS (
-      SELECT
-        pa.player_lookup,
-        pa.game_date,
-        pa.prediction_correct,
-        pa.actual_points,
-        pa.line_value,
-        CASE
-          WHEN pa.actual_points > pa.line_value THEN 'OVER'
-          WHEN pa.actual_points < pa.line_value THEN 'UNDER'
-          ELSE 'PUSH'
-        END as actual_direction
-      FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy` pa
-      WHERE pa.game_date BETWEEN DATE_SUB(@start_date, INTERVAL 30 DAY) AND @end_date
-        AND pa.system_id = '{model_id}'
-        AND pa.prediction_correct IS NOT NULL
-        AND pa.is_voided IS NOT TRUE
-      QUALIFY ROW_NUMBER() OVER (
-        PARTITION BY pa.player_lookup, pa.game_id
-        ORDER BY pa.graded_at DESC
-      ) = 1
-    ),
+            # Streak stats
+            if row_dict.get('prev_over_1') is not None:
+                prev_correct = [
+                    row_dict.get('prev_correct_1'),
+                    row_dict.get('prev_correct_2'),
+                    row_dict.get('prev_correct_3'),
+                    row_dict.get('prev_correct_4'),
+                    row_dict.get('prev_correct_5'),
+                ]
+                prev_over = [
+                    row_dict.get('prev_over_1'),
+                    row_dict.get('prev_over_2'),
+                    row_dict.get('prev_over_3'),
+                    row_dict.get('prev_over_4'),
+                    row_dict.get('prev_over_5'),
+                ]
 
-    streak_calc AS (
-      SELECT
-        player_lookup,
-        game_date,
-        prediction_correct,
-        actual_direction,
+                consecutive_beats = 0
+                for val in prev_correct:
+                    if val == 1:
+                        consecutive_beats += 1
+                    else:
+                        break
 
-        -- Count consecutive beats (looking back, excluding current game)
-        SUM(CASE WHEN prediction_correct THEN 1 ELSE 0 END)
-          OVER (
-            PARTITION BY player_lookup
-            ORDER BY game_date
-            ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING
-          ) as total_beats_last_10,
+                consecutive_misses = 0
+                last_miss_direction = None
+                for i, val in enumerate(prev_correct):
+                    if val == 0:
+                        consecutive_misses += 1
+                        if i < len(prev_over) and prev_over[i] is not None:
+                            last_miss_direction = 'OVER' if prev_over[i] == 1 else 'UNDER'
+                    else:
+                        break
 
-        -- Count consecutive misses (looking back, excluding current game)
-        SUM(CASE WHEN NOT prediction_correct THEN 1 ELSE 0 END)
-          OVER (
-            PARTITION BY player_lookup
-            ORDER BY game_date
-            ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING
-          ) as total_misses_last_10,
+                supp['streak_stats'] = {
+                    'prev_correct': prev_correct,
+                    'prev_over': prev_over,
+                    'consecutive_line_beats': consecutive_beats,
+                    'consecutive_line_misses': consecutive_misses,
+                    'last_miss_direction': last_miss_direction,
+                }
 
-        -- Get last 10 results as array to calculate true consecutive streaks
-        ARRAY_AGG(prediction_correct)
-          OVER (
-            PARTITION BY player_lookup
-            ORDER BY game_date
-            ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING
-          ) as last_10_results,
+                player_streak_key = f"{row_dict['player_lookup']}::{row_dict['game_date']}"
+                supp['streak_data'] = {
+                    player_streak_key: {
+                        'consecutive_line_beats': consecutive_beats,
+                        'consecutive_line_misses': consecutive_misses,
+                        'last_miss_direction': last_miss_direction,
+                    }
+                }
 
-        ARRAY_AGG(actual_direction)
-          OVER (
-            PARTITION BY player_lookup
-            ORDER BY game_date
-            ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING
-          ) as last_10_directions
+            # Recovery stats
+            if (row_dict.get('prev_minutes') is not None
+                    and row_dict.get('minutes_avg_season') is not None):
+                supp['recovery_stats'] = {
+                    'prev_minutes': float(row_dict['prev_minutes']),
+                    'minutes_avg_season': float(row_dict['minutes_avg_season']),
+                }
 
-      FROM graded_predictions
+            # FG% stats
+            if row_dict.get('fg_pct_last_3') is not None:
+                supp['fg_stats'] = {
+                    'fg_pct_last_3': float(row_dict['fg_pct_last_3']),
+                    'fg_pct_season': float(row_dict.get('fg_pct_season') or 0),
+                    'fg_pct_std': float(row_dict.get('fg_pct_std') or 0),
+                }
+
+            # Rest stats
+            if row_dict.get('rest_days') is not None:
+                supp['rest_stats'] = {
+                    'rest_days': int(row_dict['rest_days']),
+                }
+
+            # Player profile stats
+            supp['player_profile'] = {
+                'starter_flag': row_dict.get('starter_flag'),
+                'points_avg_season': float(row_dict.get('points_avg_season') or 0),
+                'usage_avg_season': float(row_dict.get('usage_avg_season') or 0),
+                'fta_season': float(row_dict.get('fta_season') or 0),
+                'unassisted_fg_season': float(row_dict.get('unassisted_fg_season') or 0),
+                'points_std_last_5': float(row_dict.get('points_std_last_5') or 0),
+                'ft_rate_season': float(row_dict.get('ft_rate_season') or 0),
+                'starter_rate_season': float(row_dict.get('starter_rate_season') or 0),
+            }
+
+            # V12 prediction
+            if row_dict.get('v12_recommendation'):
+                supp['v12_prediction'] = {
+                    'recommendation': row_dict['v12_recommendation'],
+                    'edge': float(row_dict.get('v12_edge') or 0),
+                    'predicted_points': float(row_dict.get('v12_predicted_points') or 0),
+                    'confidence': float(row_dict.get('v12_confidence') or 0),
+                }
+
+            # Book disagreement stats
+            if row_dict.get('multi_book_line_std') is not None:
+                supp['book_stats'] = {
+                    'multi_book_line_std': float(row_dict['multi_book_line_std']),
+                    'book_std_source': row_dict.get('book_std_source', ''),
+                }
+
+            # Prop line delta stats
+            if row_dict.get('prev_line_value') is not None:
+                current_line = float(row_dict.get('line_value') or 0)
+                prev_line = float(row_dict['prev_line_value'])
+                supp['prop_line_stats'] = {
+                    'prev_line_value': prev_line,
+                    'current_line_value': current_line,
+                    'line_delta': round(current_line - prev_line, 1),
+                }
+
+            # RotoWire minutes comparison
+            season_minutes = supp.get('minutes_stats', {}).get('minutes_avg_season')
+            rw_mins = rotowire_minutes_map.get(row_dict['player_lookup'])
+            if rw_mins and season_minutes and season_minutes > 0:
+                pred['minutes_projection_delta'] = rw_mins - season_minutes
+            else:
+                pred['minutes_projection_delta'] = None
+
+            supplemental_map[player_key] = supp
+
+    logger.info(
+        f"Batch prediction query: {sum(len(v) for v in predictions_by_model.values())} "
+        f"total predictions across {len(predictions_by_model)} models, "
+        f"{len(supplemental_map)} unique players"
     )
 
-    SELECT
-      player_lookup,
-      game_date,
-      total_beats_last_10,
-      total_misses_last_10,
-      last_10_results,
-      last_10_directions
-    FROM streak_calc
-    WHERE game_date >= @start_date
-    ORDER BY player_lookup, game_date
-    """
-
-    job_config = bigquery.QueryJobConfig(
-        query_parameters=[
-            bigquery.ScalarQueryParameter('start_date', 'DATE', start_date),
-            bigquery.ScalarQueryParameter('end_date', 'DATE', end_date),
-        ]
-    )
-
-    rows = bq_client.query(query, job_config=job_config).result(timeout=60)
-
-    streak_map: Dict[str, Dict] = {}
-
-    for row in rows:
-        row_dict = dict(row)
-        key = f"{row_dict['player_lookup']}::{row_dict['game_date']}"
-
-        # Calculate consecutive streaks from the arrays
-        last_10_results = row_dict.get('last_10_results', [])
-        last_10_directions = row_dict.get('last_10_directions', [])
-
-        # Count consecutive beats (from most recent backwards)
-        consecutive_beats = 0
-        if last_10_results:
-            for result in reversed(last_10_results):
-                if result is True:
-                    consecutive_beats += 1
-                else:
-                    break
-
-        # Count consecutive misses (from most recent backwards)
-        consecutive_misses = 0
-        last_miss_direction = None
-        if last_10_results and last_10_directions:
-            for i, result in enumerate(reversed(last_10_results)):
-                if result is False:
-                    consecutive_misses += 1
-                    if i < len(last_10_directions):
-                        last_miss_direction = list(reversed(last_10_directions))[i]
-                else:
-                    break
-
-        streak_map[key] = {
-            'consecutive_line_beats': consecutive_beats,
-            'consecutive_line_misses': consecutive_misses,
-            'last_miss_direction': last_miss_direction,
-            'total_beats_last_10': row_dict.get('total_beats_last_10', 0),
-            'total_misses_last_10': row_dict.get('total_misses_last_10', 0)
-        }
-
-    logger.info(f"Loaded streak data for {len(streak_map)} player-games")
-    return streak_map
+    return dict(predictions_by_model), supplemental_map
 
 
-# Module-level cache for games_vs_opponent (keyed by target_date)
-_gvo_cache: Dict[str, Dict[tuple, int]] = {}
+# ---------------------------------------------------------------------------
+# Shared context builder
+# ---------------------------------------------------------------------------
 
-
-def query_games_vs_opponent(
+def _query_all_model_health_map(
     bq_client: bigquery.Client,
     target_date: str,
-) -> Dict[tuple, int]:
-    """Query season games played per player-opponent pair.
+) -> Dict[str, Optional[float]]:
+    """Query 7d hit rate at edge 3+ for ALL models in one scan.
 
-    Returns dict keyed by (player_lookup, opponent_team_abbr) -> count.
-    Used by avoid-familiar filter in aggregator (Session 284).
-
-    Results are cached per target_date within the same process.
+    Returns:
+        Dict mapping system_id -> hit_rate_7d_edge3 (float or None).
     """
-    if target_date in _gvo_cache:
-        logger.info(f"games_vs_opponent cache hit for {target_date}")
-        return _gvo_cache[target_date]
+    system_filter = build_system_id_sql_filter()
+    query = f"""
+    SELECT
+      system_id,
+      ROUND(100.0 * COUNTIF(prediction_correct) / NULLIF(COUNT(*), 0), 1)
+        AS hit_rate_7d_edge3,
+      COUNT(*) AS graded_count
+    FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy`
+    WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+      AND game_date < CURRENT_DATE()
+      AND ABS(predicted_points - line_value) >= 3.0
+      AND prediction_correct IS NOT NULL
+      AND is_voided IS NOT TRUE
+      AND {system_filter}
+    GROUP BY system_id
+    """
+    health_map: Dict[str, Optional[float]] = {}
+    try:
+        rows = bq_client.query(query).result(timeout=30)
+        for row in rows:
+            if (row['graded_count'] or 0) > 0:
+                health_map[row['system_id']] = float(row['hit_rate_7d_edge3'])
+            else:
+                health_map[row['system_id']] = None
+    except Exception as e:
+        logger.error(f"All-model health query failed: {e}", exc_info=True)
+    return health_map
+
+
+def _query_filter_overrides(bq_client: bigquery.Client) -> Set[str]:
+    """Query runtime filter overrides (auto-demoted filters).
+
+    Returns set of filter names that are currently demoted.
+    """
+    try:
+        query = f"""
+        SELECT filter_name
+        FROM `{PROJECT_ID}.nba_predictions.filter_overrides`
+        WHERE active = TRUE
+        """
+        rows = list(bq_client.query(query).result(timeout=15))
+        demoted = {row.filter_name for row in rows}
+        if demoted:
+            logger.info(f"Runtime filter overrides active: {sorted(demoted)}")
+        return demoted
+    except Exception as e:
+        logger.warning(f"Failed to query filter_overrides (non-fatal): {e}")
+        return set()
+
+
+def _query_direction_health(
+    bq_client: bigquery.Client,
+    target_date: str,
+) -> Dict[str, Any]:
+    """Query 14-day rolling hit rate by direction (OVER vs UNDER).
+
+    Returns dict with over_hr_14d, under_hr_14d, over_n, under_n.
+    """
+    from shared.config.model_selection import get_best_bets_model_id
+    model_id = get_best_bets_model_id()
 
     query = f"""
-    SELECT player_lookup, opponent_team_abbr, COUNT(*) as games_played
-    FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
-    WHERE game_date >= '2025-10-22'
+    SELECT
+        recommendation,
+        COUNT(*) AS n,
+        ROUND(100.0 * COUNTIF(prediction_correct = TRUE) / COUNT(*), 1) AS hr
+    FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy`
+    WHERE game_date >= DATE_SUB(@target_date, INTERVAL 14 DAY)
       AND game_date < @target_date
-      AND minutes_played > 0
-    GROUP BY 1, 2
+      AND system_id = @model_id
+      AND ABS(predicted_points - line_value) >= 3
+      AND is_voided = FALSE
+      AND recommendation IN ('OVER', 'UNDER')
+    GROUP BY recommendation
     """
 
     job_config = bigquery.QueryJobConfig(
         query_parameters=[
             bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+            bigquery.ScalarQueryParameter('model_id', 'STRING', model_id),
         ]
     )
 
-    result = bq_client.query(query, job_config=job_config).result(timeout=60)
+    health = {'over_hr_14d': None, 'under_hr_14d': None,
+              'over_n': 0, 'under_n': 0}
+    try:
+        result = bq_client.query(query, job_config=job_config).result(timeout=30)
+        for row in result:
+            if row.recommendation == 'OVER':
+                health['over_hr_14d'] = float(row.hr) if row.hr else None
+                health['over_n'] = row.n
+            elif row.recommendation == 'UNDER':
+                health['under_hr_14d'] = float(row.hr) if row.hr else None
+                health['under_n'] = row.n
+    except Exception as e:
+        logger.warning(f"Direction health query failed (non-fatal): {e}")
 
-    gvo_map: Dict[tuple, int] = {}
-    for row in result:
-        gvo_map[(row.player_lookup, row.opponent_team_abbr)] = row.games_played
+    return health
 
-    logger.info(f"Loaded games_vs_opponent for {len(gvo_map)} player-opponent pairs")
-    _gvo_cache[target_date] = gvo_map
-    return gvo_map
+
+def build_shared_context(
+    bq_client: bigquery.Client,
+    target_date: str,
+    **kwargs,
+) -> SharedContext:
+    """Build all model-independent context. ~12 BQ queries total.
+
+    This is the expensive step: one big prediction query (all models, no dedup),
+    10 satellite queries for supplemental data, plus model health, signal health,
+    combo registry, player blacklist, model-direction affinity, regime context,
+    games vs opponent, and filter overrides.
+
+    Args:
+        bq_client: BigQuery client.
+        target_date: YYYY-MM-DD date string.
+        **kwargs: Optional overrides:
+            - signal_registry: Pre-built SignalRegistry (skips build_default_registry).
+            - combo_registry: Pre-loaded combo registry.
+
+    Returns:
+        SharedContext with all data needed for per-model pipeline runs.
+    """
+    ctx = SharedContext(target_date=target_date)
+
+    # 1. Batch-query ALL models' predictions + supplemental data (1 big query + 10 satellites)
+    logger.info(f"Building shared context for {target_date}...")
+    predictions_by_model, supplemental_map = _query_all_model_predictions(
+        bq_client, target_date
+    )
+    ctx.all_predictions = predictions_by_model
+    ctx.supplemental_map = supplemental_map
+
+    if not predictions_by_model:
+        logger.warning(f"No predictions found for any model on {target_date}")
+        return ctx
+
+    # 2. Model health for ALL models (1 query)
+    ctx.model_health_map = _query_all_model_health_map(bq_client, target_date)
+    # Default model health (champion)
+    default_health = query_model_health(bq_client)
+    ctx.default_model_health_hr = default_health.get('hit_rate_7d_edge3')
+
+    # 3. Signal health (1 query)
+    try:
+        ctx.signal_health = get_signal_health_summary(bq_client, target_date)
+    except Exception as e:
+        logger.warning(f"Signal health query failed (non-fatal): {e}")
+
+    # 4. Combo registry
+    ctx.combo_registry = kwargs.get('combo_registry') or load_combo_registry(bq_client=bq_client)
+
+    # 5. Player blacklist (1 query)
+    try:
+        ctx.player_blacklist, ctx.blacklist_stats = compute_player_blacklist(
+            bq_client, target_date
+        )
+    except Exception as e:
+        logger.warning(f"Player blacklist computation failed (non-fatal): {e}")
+
+    # 6. Model-direction affinity (1 query)
+    try:
+        _, ctx.model_direction_blocks, ctx.model_direction_affinity_stats = \
+            compute_model_direction_affinities(bq_client, target_date, PROJECT_ID)
+    except Exception as e:
+        logger.warning(f"Model-direction affinity failed (non-fatal): {e}")
+
+    # 7. Model profile store (1 query)
+    try:
+        ctx.model_profile_store = load_model_profiles(bq_client, target_date, PROJECT_ID)
+    except Exception as e:
+        logger.warning(f"Model profile loading failed (non-fatal): {e}")
+
+    # 8. Regime context (2 queries: yesterday HR + market compression)
+    try:
+        ctx.regime_context = get_regime_context(bq_client, target_date)
+        compression_ctx = get_market_compression(bq_client, target_date)
+        ctx.regime_context['market_compression'] = compression_ctx
+    except Exception as e:
+        logger.warning(f"Regime context query failed (non-fatal): {e}")
+
+    # 9. Games vs opponent (1 query)
+    try:
+        ctx.games_vs_opponent = query_games_vs_opponent(bq_client, target_date)
+    except Exception as e:
+        logger.warning(f"Games vs opponent query failed (non-fatal): {e}")
+
+    # 10. Runtime filter overrides (1 query)
+    ctx.runtime_demoted_filters = _query_filter_overrides(bq_client)
+
+    # 11. Direction health (1 query)
+    try:
+        ctx.direction_health = _query_direction_health(bq_client, target_date)
+    except Exception as e:
+        logger.warning(f"Direction health query failed (non-fatal): {e}")
+
+    logger.info(
+        f"Shared context built: {len(predictions_by_model)} models, "
+        f"{sum(len(v) for v in predictions_by_model.values())} total predictions, "
+        f"{len(ctx.player_blacklist)} blacklisted players"
+    )
+
+    return ctx
+
+
+# ---------------------------------------------------------------------------
+# Single-model pipeline runner
+# ---------------------------------------------------------------------------
+
+def run_single_model_pipeline(
+    system_id: str,
+    shared_ctx: SharedContext,
+    signal_registry: Optional[SignalRegistry] = None,
+) -> PipelineResult:
+    """Run signals + aggregator for one model. Pure Python -- no BQ queries.
+
+    Args:
+        system_id: Model system_id to run pipeline for.
+        shared_ctx: SharedContext built by build_shared_context().
+        signal_registry: Optional pre-built registry (reuse across models).
+
+    Returns:
+        PipelineResult with candidates, filter summary, and signal results.
+    """
+    predictions = shared_ctx.all_predictions.get(system_id, [])
+    if not predictions:
+        logger.debug(f"No predictions for {system_id}")
+        return PipelineResult(
+            system_id=system_id,
+            candidates=[],
+            all_predictions=[],
+            filter_summary={'total_candidates': 0, 'rejected': {}},
+            signal_results={},
+        )
+
+    # Enrich predictions with games_vs_opponent
+    for pred in predictions:
+        opp = pred.get('opponent_team_abbr', '')
+        pred['games_vs_opponent'] = shared_ctx.games_vs_opponent.get(
+            (pred['player_lookup'], opp), 0
+        )
+
+    # Get per-model health (use model-specific if available, else default)
+    model_hr_7d = shared_ctx.model_health_map.get(
+        system_id, shared_ctx.default_model_health_hr
+    )
+
+    # Build signal registry if not provided
+    if signal_registry is None:
+        signal_registry = build_default_registry()
+
+    # Evaluate signals for each prediction
+    signal_results_map: Dict[str, List] = {}
+    for pred in predictions:
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        supplements = shared_ctx.supplemental_map.get(pred['player_lookup'], {})
+        # Inject model health into supplemental
+        supplements_copy = dict(supplements)
+        supplements_copy['model_health'] = {'hit_rate_7d_edge3': model_hr_7d}
+
+        results_for_pred = []
+        for signal in signal_registry.all():
+            result = signal.evaluate(pred, features=None, supplemental=supplements_copy)
+            results_for_pred.append(result)
+        signal_results_map[key] = results_for_pred
+
+    # Run aggregator in per_model mode
+    aggregator = BestBetsAggregator(
+        combo_registry=shared_ctx.combo_registry,
+        signal_health=shared_ctx.signal_health,
+        player_blacklist=shared_ctx.player_blacklist,
+        model_direction_blocks=shared_ctx.model_direction_blocks,
+        model_direction_affinity_stats=shared_ctx.model_direction_affinity_stats,
+        model_profile_store=shared_ctx.model_profile_store,
+        regime_context=shared_ctx.regime_context,
+        runtime_demoted_filters=shared_ctx.runtime_demoted_filters,
+        mode='per_model',
+    )
+
+    candidates, filter_summary = aggregator.aggregate(predictions, signal_results_map)
+
+    logger.info(
+        f"Pipeline {system_id}: {len(predictions)} predictions -> "
+        f"{len(candidates)} candidates (filtered {filter_summary.get('total_rejected', 0)})"
+    )
+
+    return PipelineResult(
+        system_id=system_id,
+        candidates=candidates,
+        all_predictions=predictions,
+        filter_summary=filter_summary,
+        signal_results=signal_results_map,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Orchestrator: run all models
+# ---------------------------------------------------------------------------
+
+def run_all_model_pipelines(
+    bq_client: bigquery.Client,
+    target_date: str,
+    **kwargs,
+) -> Tuple[Dict[str, PipelineResult], SharedContext]:
+    """Main entry point. Build context once, run each model, return all results.
+
+    Args:
+        bq_client: BigQuery client.
+        target_date: YYYY-MM-DD date string.
+        **kwargs: Passed to build_shared_context (combo_registry, etc.)
+
+    Returns:
+        Tuple of:
+            results: Dict[system_id, PipelineResult] for each model.
+            shared_ctx: SharedContext (for downstream merger use).
+    """
+    # Build shared context (all BQ queries happen here)
+    shared_ctx = build_shared_context(bq_client, target_date, **kwargs)
+
+    if not shared_ctx.all_predictions:
+        logger.warning(f"No predictions for any model on {target_date}")
+        return {}, shared_ctx
+
+    # Build signal registry once (stateless — safe to share across models)
+    signal_registry = build_default_registry()
+
+    # Run each model through the pipeline
+    results: Dict[str, PipelineResult] = {}
+    for system_id in sorted(shared_ctx.all_predictions.keys()):
+        try:
+            result = run_single_model_pipeline(
+                system_id, shared_ctx, signal_registry=signal_registry
+            )
+            results[system_id] = result
+        except Exception as e:
+            logger.error(
+                f"Pipeline failed for {system_id}: {e}", exc_info=True
+            )
+            results[system_id] = PipelineResult(
+                system_id=system_id,
+                candidates=[],
+                all_predictions=shared_ctx.all_predictions.get(system_id, []),
+                filter_summary={'total_candidates': 0, 'rejected': {}, 'error': str(e)},
+                signal_results={},
+            )
+
+    # Summary
+    total_candidates = sum(len(r.candidates) for r in results.values())
+    total_predictions = sum(len(r.all_predictions) for r in results.values())
+    models_with_picks = sum(1 for r in results.values() if r.candidates)
+
+    logger.info(
+        f"All pipelines complete for {target_date}: "
+        f"{len(results)} models, {total_predictions} total predictions, "
+        f"{total_candidates} total candidates from {models_with_picks} models"
+    )
+
+    return results, shared_ctx
