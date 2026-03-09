@@ -1,4 +1,4 @@
-"""Tests for pipeline_merger.py — Session 452+: game cap + slate observations."""
+"""Tests for pipeline_merger.py — Session 452: game cap."""
 
 import pytest
 
@@ -6,7 +6,6 @@ from ml.signals.pipeline_merger import (
     MAX_PICKS_PER_GAME,
     MAX_PICKS_PER_TEAM,
     merge_model_pipelines,
-    _compute_slate_observations,
 )
 
 
@@ -120,93 +119,3 @@ class TestGameCap:
     def test_default_game_cap_is_3(self):
         """Default MAX_PICKS_PER_GAME should be 3."""
         assert MAX_PICKS_PER_GAME == 3
-
-
-class TestSlateObservations:
-    """Session 453: Slate-level structural observations."""
-
-    def test_heavy_over_lean(self):
-        """80%+ OVER picks with 5+ total should tag slate_heavy_over_lean."""
-        picks = [
-            {'recommendation': 'OVER', 'game_id': f'g{i}'} for i in range(5)
-        ]
-        result = _compute_slate_observations(picks, {f'g{i}': 1 for i in range(5)})
-        assert 'slate_heavy_over_lean' in result['tags']
-
-    def test_heavy_under_lean(self):
-        """80%+ UNDER picks with 5+ total should tag slate_heavy_under_lean."""
-        picks = [
-            {'recommendation': 'UNDER', 'game_id': f'g{i}'} for i in range(5)
-        ]
-        result = _compute_slate_observations(picks, {f'g{i}': 1 for i in range(5)})
-        assert 'slate_heavy_under_lean' in result['tags']
-
-    def test_no_lean_at_60_pct(self):
-        """60% OVER should NOT trigger directional lean."""
-        picks = [
-            {'recommendation': 'OVER', 'game_id': f'g{i}'} for i in range(3)
-        ] + [
-            {'recommendation': 'UNDER', 'game_id': f'g{i}'} for i in range(3, 5)
-        ]
-        result = _compute_slate_observations(picks, {f'g{i}': 1 for i in range(5)})
-        assert 'slate_heavy_over_lean' not in result['tags']
-        assert 'slate_heavy_under_lean' not in result['tags']
-
-    def test_no_lean_with_few_picks(self):
-        """Even 100% OVER should NOT trigger with <5 picks."""
-        picks = [
-            {'recommendation': 'OVER', 'game_id': f'g{i}'} for i in range(3)
-        ]
-        result = _compute_slate_observations(picks, {f'g{i}': 1 for i in range(3)})
-        assert 'slate_heavy_over_lean' not in result['tags']
-
-    def test_same_game_same_direction(self):
-        """2+ picks from same game in same direction should tag."""
-        picks = [
-            {'recommendation': 'OVER', 'game_id': 'g1', 'player_lookup': 'p1'},
-            {'recommendation': 'OVER', 'game_id': 'g1', 'player_lookup': 'p2'},
-        ]
-        result = _compute_slate_observations(picks, {'g1': 2})
-        assert 'slate_same_game_same_dir' in result['tags']
-
-    def test_same_game_different_direction_no_tag(self):
-        """Picks from same game in opposite directions should NOT tag same_dir."""
-        picks = [
-            {'recommendation': 'OVER', 'game_id': 'g1'},
-            {'recommendation': 'UNDER', 'game_id': 'g1'},
-        ]
-        result = _compute_slate_observations(picks, {'g1': 2})
-        assert 'slate_same_game_same_dir' not in result['tags']
-
-    def test_game_concentration(self):
-        """3+ picks from one game should tag slate_game_concentration."""
-        picks = [
-            {'recommendation': 'OVER', 'game_id': 'g1'},
-            {'recommendation': 'UNDER', 'game_id': 'g1'},
-            {'recommendation': 'OVER', 'game_id': 'g1'},
-        ]
-        result = _compute_slate_observations(picks, {'g1': 3})
-        assert 'slate_game_concentration' in result['tags']
-
-    def test_empty_slate(self):
-        """Empty slate should return empty tags."""
-        result = _compute_slate_observations([], {})
-        assert result['tags'] == []
-
-    def test_slate_obs_on_merged_picks(self):
-        """Slate observations should be attached to selected picks after merge."""
-        candidates = {
-            'model_a': [
-                _make_candidate('p1', 'SAS', 'g1', composite_score=10, recommendation='OVER'),
-                _make_candidate('p2', 'HOU', 'g1', composite_score=9, recommendation='OVER'),
-                _make_candidate('p3', 'BOS', 'g2', composite_score=8, recommendation='OVER'),
-                _make_candidate('p4', 'CLE', 'g2', composite_score=7, recommendation='OVER'),
-                _make_candidate('p5', 'LAL', 'g3', composite_score=6, recommendation='OVER'),
-            ],
-        }
-        selected, summary = merge_model_pipelines(candidates)
-        # 5 OVER picks = 100% lean
-        assert 'slate_heavy_over_lean' in summary['slate_observations']['tags']
-        # All picks should have the observation tags
-        for pick in selected:
-            assert 'slate_observation_tags' in pick
