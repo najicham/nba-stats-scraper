@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 MAX_MERGED_PICKS_PER_DAY = 15
 MAX_PICKS_PER_TEAM = 2
 RESCUE_CAP_PCT = 0.40
-ALGORITHM_VERSION = 'v443_per_model_pipelines'
+ALGORITHM_VERSION = 'v446_per_model_deployed'
 
 # Rescue signal priority weights — mirrors aggregator.RESCUE_SIGNAL_PRIORITY.
 # When rescue cap trims, drop lowest-priority rescues first (ascending sort).
