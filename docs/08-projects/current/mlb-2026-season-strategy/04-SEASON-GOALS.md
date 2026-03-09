@@ -1,36 +1,38 @@
 # MLB 2026 — Season Goals & Monitoring
 
+*Updated Session 444 with full season replay validation (Apr-Sep 2025, V3 config)*
+
 ## Season Targets
 
 ### Best Bets (1u flat)
 
-| Metric | Floor | Target | Stretch | Backtest |
-|--------|-------|--------|---------|----------|
-| Season HR | 58% | 62% | 66% | 64.6% |
-| Monthly HR (median) | 56% | 62% | 68% | 63.6% |
-| Losing months | ≤ 3 | ≤ 2 | 0 | 1/13 |
-| Picks/day | 1.5 | 2.5 | 3.0 | 2.4 |
-| Season profit | +30u | +100u | +175u | +174u |
-| ROI | 8% | 18% | 25% | 23.3% |
+| Metric | Floor | Target | Stretch | Walk-Forward | Replay V3 |
+|--------|-------|--------|---------|-------------|-----------|
+| Season HR | 58% | 62% | 66% | 64.6% | **63.4%** |
+| Monthly HR (worst) | 55% | 58% | 62% | 52.4% | **59.5%** |
+| Losing months | ≤ 2 | ≤ 1 | 0 | 1/13 | **0/6** |
+| Picks/day | 1.5 | 2.5 | 3.0 | 2.4 | **2.7** |
+| Season profit | +30u | +100u | +175u | +174u | **+170u** |
+| ROI | 8% | 18% | 30% | 23.3% | **36.2%** |
 
-### Ultra (2u)
+### Ultra (2u) — edge >= 1.1 (raised from 1.0 in Session 444)
 
-| Metric | Floor | Target | Stretch | Backtest |
-|--------|-------|--------|---------|----------|
-| Season HR | 63% | 70% | 75% | 72.9% |
-| Monthly HR (median) | 58% | 70% | 78% | 72.7% |
-| Losing months | ≤ 2 | ≤ 1 | 0 | 1/13 |
-| Picks/day | 0.8 | 1.4 | 2.0 | 1.4 |
-| Season profit | +40u | +120u | +175u | +173u |
-| ROI | 15% | 30% | 40% | 39.1% |
+| Metric | Floor | Target | Stretch | Walk-Forward | Replay V3 |
+|--------|-------|--------|---------|-------------|-----------|
+| Season HR | 65% | 75% | 85% | 72.9% | **81.4%** |
+| Losing months | ≤ 2 | ≤ 1 | 0 | 1/13 | **N/A (0.4/day)** |
+| Picks/day | 0.3 | 0.4 | 0.8 | 1.4 | **0.4** |
+| Season profit | +30u | +70u | +100u | +173u | **+88u** |
+| ROI | 20% | 35% | 50% | 39.1% | **62.9%** |
 
 ### Combined Portfolio
 
-| Metric | Floor | Target | Stretch | Backtest |
-|--------|-------|--------|---------|----------|
-| Total profit | +60u | +200u | +300u | +270u |
-| ROI | 10% | 23% | 30% | 27.3% |
-| Max drawdown | < 25% | < 15% | < 10% | 13.2% |
+| Metric | Floor | Target | Stretch | Walk-Forward | Replay V3 |
+|--------|-------|--------|---------|-------------|-----------|
+| Total profit | +60u | +170u | +250u | +270u | **+170u** |
+| ROI | 10% | 23% | 35% | 27.3% | **36.2%** |
+| Winning days | 55% | 60% | 65% | N/A | **64%** |
+| Max losing streak | ≤ 5 | ≤ 4 | ≤ 3 | N/A | **4 days** |
 
 ## Monthly Checkpoints
 

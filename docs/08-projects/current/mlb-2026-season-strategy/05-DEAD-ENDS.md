@@ -43,8 +43,12 @@ Everything below was tested with walk-forward data across 2024-2025 and rejected
 | month_of_season | ZERO importance | Constant within training window |
 | days_into_season | ZERO importance | Same |
 | is_postseason | ZERO importance | No postseason in training data |
+| season_starts (f67) | Duplicate of season_games (f08) | Perfect correlation (Session 444) |
+| recent_workload_ratio (f69) | Duplicate of games_last_30d/6.0 | Exact derivation (Session 444) |
 
 **Lesson: CatBoost's tree structure captures non-linear interactions internally. Explicit derived features add noise.**
+
+**Session 444 A/B test:** 41 features (with dead) = 63.4% HR, Ultra 73.8%. 36 features (cleaned) = 62.4% baseline → 63.4% with other improvements. Dead features hurt Ultra by 2.2pp — cleaned set preferred.
 
 ## Pick Selection
 
@@ -97,3 +101,21 @@ Everything below was tested with walk-forward data across 2024-2025 and rejected
 | Edge-proportional | 15.1% ROI | No improvement over flat |
 | Progressive | 15.9% ROI | No improvement over flat |
 | Adaptive volume (rolling HR) | +4.6u season | Not worth the complexity |
+
+## Signals (Session 444)
+
+| Signal | Result | Why It Failed |
+|--------|--------|---------------|
+| swstr_surge as rescue | 54.9% HR | Drags every signal combo to 51-55%. Removed from rescue. |
+| Ultra at edge 1.0 | 63% HR (edge 1.0-1.1 bucket) | Below non-ultra baseline. Raised to 1.1. |
+| Ultra at edge 1.2 | 87% HR but only 46 picks | Too restrictive, -36u P&L vs 1.0. Edge 1.1 is sweet spot. |
+
+## Season Replay Observations (Session 444)
+
+| Observation | Result | Action |
+|-------------|--------|--------|
+| Home advantage +9.7pp | 66.8% home vs 57.1% away | Ultra requires home. No separate filter needed. |
+| Edge 0.75-1.0 marginal | 57-58% HR | Rescue system brings these in. Net positive but low quality. |
+| Model v1 (77 samples) barely viable | 50% HR, 6 picks | System self-limits via filters. No intervention needed. |
+| June seasonal trough | 59.5% worst month | Not significant enough for seasonal adjustment |
+| Wednesday best, Friday worst | 75.7% vs 56.2% | N too small for DOW filters. Monitor in live. |

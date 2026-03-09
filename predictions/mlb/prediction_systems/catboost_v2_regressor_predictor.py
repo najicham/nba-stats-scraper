@@ -25,28 +25,30 @@ from predictions.mlb.config import get_config
 logger = logging.getLogger(__name__)
 
 # Feature order — MUST match training feature order exactly
-# IDENTICAL to catboost_v1_predictor.py
+# Session 444: Reduced from 40 to 36 features (5 dead/duplicate removed)
 CATBOOST_V2_FEATURES = [
     'f00_k_avg_last_3', 'f01_k_avg_last_5', 'f02_k_avg_last_10',
     'f03_k_std_last_10', 'f04_ip_avg_last_5',
     'f05_season_k_per_9', 'f06_season_era', 'f07_season_whip',
     'f08_season_games', 'f09_season_k_total',
     'f10_is_home', 'f15_opponent_team_k_rate', 'f16_ballpark_k_factor',
-    'f17_month_of_season', 'f18_days_into_season',
+    # f17, f18, f24 REMOVED (dead features — Session 444)
     'f19_season_swstr_pct', 'f19b_season_csw_pct',
     'f20_days_rest', 'f21_games_last_30_days', 'f22_pitch_count_avg',
-    'f23_season_ip_total', 'f24_is_postseason',
+    'f23_season_ip_total', 'f25_is_day_game',
     'f30_k_avg_vs_line', 'f32_line_level',
     'f40_bp_projection', 'f41_projection_diff', 'f44_over_implied_prob',
     'f50_swstr_pct_last_3', 'f51_fb_velocity_last_3',
     'f52_swstr_trend', 'f53_velocity_change',
     'f65_vs_opp_k_per_9', 'f66_vs_opp_games',
-    'f67_season_starts', 'f68_k_per_pitch', 'f69_recent_workload_ratio',
+    # f67 REMOVED (duplicate of f08 — Session 444)
+    'f68_k_per_pitch',
+    # f69 REMOVED (duplicate of f21/6.0 — Session 444)
     'f70_o_swing_pct', 'f71_z_contact_pct', 'f72_fip', 'f73_gb_pct',
 ]
 
 # Raw name -> model feature name mapping
-# IDENTICAL to catboost_v1_predictor.py
+# Session 444: Removed mappings for dead features (f17, f18, f24, f67, f69)
 RAW_TO_MODEL_MAPPING = {
     'k_avg_last_3': 'f00_k_avg_last_3',
     'k_avg_last_5': 'f01_k_avg_last_5',
@@ -63,15 +65,13 @@ RAW_TO_MODEL_MAPPING = {
     'is_home': 'f10_is_home',
     'opponent_team_k_rate': 'f15_opponent_team_k_rate',
     'ballpark_k_factor': 'f16_ballpark_k_factor',
-    'month_of_season': 'f17_month_of_season',
-    'days_into_season': 'f18_days_into_season',
     'season_swstr_pct': 'f19_season_swstr_pct',
     'season_csw_pct': 'f19b_season_csw_pct',
     'days_rest': 'f20_days_rest',
     'games_last_30_days': 'f21_games_last_30_days',
     'pitch_count_avg_last_5': 'f22_pitch_count_avg',
     'season_innings': 'f23_season_ip_total',
-    'is_postseason': 'f24_is_postseason',
+    'is_day_game': 'f25_is_day_game',
     'k_avg_vs_line': 'f30_k_avg_vs_line',
     'line_level': 'f32_line_level',
     'strikeouts_line': 'f32_line_level',
@@ -87,9 +87,7 @@ RAW_TO_MODEL_MAPPING = {
     'vs_opponent_k_per_9': 'f65_vs_opp_k_per_9',
     'vs_opp_games': 'f66_vs_opp_games',
     'vs_opponent_games': 'f66_vs_opp_games',
-    'season_starts': 'f67_season_starts',
     'k_per_pitch': 'f68_k_per_pitch',
-    'recent_workload_ratio': 'f69_recent_workload_ratio',
     'o_swing_pct': 'f70_o_swing_pct',
     'z_contact_pct': 'f71_z_contact_pct',
     'fip': 'f72_fip',
@@ -193,19 +191,20 @@ class CatBoostV2RegressorPredictor(BaseMLBPredictor):
             # Handle boolean conversions
             if 'is_home' in raw_features:
                 normalized['f10_is_home'] = 1.0 if raw_features.get('is_home') else 0.0
-            if 'is_postseason' in raw_features:
-                normalized['f24_is_postseason'] = 1.0 if raw_features.get('is_postseason') else 0.0
+            if 'is_day_game' in raw_features:
+                normalized['f25_is_day_game'] = 1.0 if raw_features.get('is_day_game') else 0.0
 
             # Build feature vector — track defaults
             # Statcast features (f50-f53) and advanced features are NaN-tolerant:
             # CatBoost handles them natively.
             # Core features still use zero-tolerance.
             NAN_TOLERANT_FEATURES = {
+                'f25_is_day_game',
                 'f50_swstr_pct_last_3', 'f51_fb_velocity_last_3',
                 'f52_swstr_trend', 'f53_velocity_change',
                 'f19_season_swstr_pct', 'f19b_season_csw_pct',
                 'f65_vs_opp_k_per_9', 'f66_vs_opp_games',
-                'f67_season_starts', 'f68_k_per_pitch', 'f69_recent_workload_ratio',
+                'f68_k_per_pitch',
                 'f70_o_swing_pct', 'f71_z_contact_pct', 'f72_fip', 'f73_gb_pct',
             }
             feature_vector = []

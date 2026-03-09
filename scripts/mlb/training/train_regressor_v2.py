@@ -46,6 +46,11 @@ PROJECT_ID = "nba-props-platform"
 # ============================================================================
 # Feature contract — MUST match production predictor exactly
 # Source: predictions/mlb/prediction_systems/catboost_v2_regressor_predictor.py
+#
+# Session 444: Removed 5 dead/duplicate features (36 features, was 40):
+#   - f17_month_of_season, f18_days_into_season, f24_is_postseason (dead)
+#   - f67_season_starts (duplicate of f08_season_games)
+#   - f69_recent_workload_ratio (duplicate of f21_games_last_30_days / 6.0)
 # ============================================================================
 FEATURE_COLS = [
     'f00_k_avg_last_3', 'f01_k_avg_last_5', 'f02_k_avg_last_10',
@@ -53,16 +58,15 @@ FEATURE_COLS = [
     'f05_season_k_per_9', 'f06_season_era', 'f07_season_whip',
     'f08_season_games', 'f09_season_k_total',
     'f10_is_home', 'f15_opponent_team_k_rate', 'f16_ballpark_k_factor',
-    'f17_month_of_season', 'f18_days_into_season',
     'f19_season_swstr_pct', 'f19b_season_csw_pct',
     'f20_days_rest', 'f21_games_last_30_days', 'f22_pitch_count_avg',
-    'f23_season_ip_total', 'f24_is_postseason',
+    'f23_season_ip_total', 'f25_is_day_game',
     'f30_k_avg_vs_line', 'f32_line_level',
     'f40_bp_projection', 'f41_projection_diff', 'f44_over_implied_prob',
     'f50_swstr_pct_last_3', 'f51_fb_velocity_last_3',
     'f52_swstr_trend', 'f53_velocity_change',
     'f65_vs_opp_k_per_9', 'f66_vs_opp_games',
-    'f67_season_starts', 'f68_k_per_pitch', 'f69_recent_workload_ratio',
+    'f68_k_per_pitch',
     'f70_o_swing_pct', 'f71_z_contact_pct', 'f72_fip', 'f73_gb_pct',
 ]
 

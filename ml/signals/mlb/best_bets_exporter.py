@@ -1,6 +1,6 @@
 """MLB Signal Best Bets Exporter — regressor-based pipeline.
 
-Pipeline (v5 cross-season validated — Session 443):
+Pipeline (v6 season-replay validated — Session 444):
   1. Load predictions for game_date
   1b. Overconfidence cap: edge > MAX_EDGE (2.0) blocked
   1c. Probability cap: p_over > MAX_PROB_OVER (0.85) blocked (relaxed for regressor)
@@ -11,9 +11,11 @@ Pipeline (v5 cross-season validated — Session 443):
   5. Evaluate all active + shadow signals
   6. Gate: signal_count >= 2 (OVER) or >= 3 (UNDER, higher bar)
   7. Rank: OVER by pure edge (composite scoring fails cross-season validation)
-  8. Build pick angles (human-readable reasoning)
-  9. Write to mlb_predictions.signal_best_bets_picks
- 10. Write filter audit to mlb_predictions.best_bets_filter_audit
+  8. Ultra tier: tag picks meeting all 5 criteria (home + proj + half-line + edge 1.1+ + not-blacklisted)
+  9. Ultra overlay: ultra picks outside top-3 still published at 2u
+ 10. Build pick angles (human-readable reasoning)
+ 11. Write to mlb_predictions.signal_best_bets_picks
+ 12. Write filter audit to mlb_predictions.best_bets_filter_audit
 
 Session 443 changes (11-agent cross-season validation):
   - Pitcher blacklist expanded 10 → 18 (validated bad pitchers)
@@ -21,8 +23,13 @@ Session 443 changes (11-agent cross-season validation):
   - bad_opponent/bad_venue demoted to observation (cross-season r=-0.29)
   - DOW filter removed (confirmed noise)
   - Pure edge ranking confirmed optimal (composite scoring fails cross-season)
-  - CatBoost Regressor defaults confirmed (hyperparameter sweep: defaults win)
-  - Ensembles rejected (CatBoost solo outperforms all ensembles)
+
+Session 444 changes (full-season replay Apr-Sep 2025):
+  - Pitcher blacklist expanded 18 → 23 (5 new 0% or <40% HR pitchers)
+  - swstr_surge removed from rescue signals (54.9% HR, drags all combos to 51-55%)
+  - 5 dead features removed from training (36 features, was 40)
+  - Ultra tier: edge >= 1.1 + home + projection agrees + half-line (81.4% HR, N=70)
+  - Replay validated: 63.4% BB HR, +170u, 13 retrains, zero losing months
 """
 
 import logging
@@ -68,8 +75,8 @@ MIN_SIGNAL_COUNT = 2
 BASE_SIGNAL_TAGS = frozenset(['high_edge'])
 
 # Signal rescue tags — picks can bypass edge floor if they have these signals
+# Session 444: swstr_surge REMOVED (54.9% HR, drags all signal combos to 51-55%)
 RESCUE_SIGNAL_TAGS = frozenset([
-    'swstr_surge',
     'opponent_k_prone',
     'ballpark_k_boost',
 ])
@@ -82,6 +89,15 @@ UNDER_SIGNAL_WEIGHTS = {
     'weather_cold_under': 1.0,
     'pitch_count_limit_under': 2.0,
 }
+
+# =============================================================================
+# ULTRA TIER CONFIGURATION (Session 444 — season replay validated)
+# Edge 1.0-1.1 was 63% HR (noise), edge 1.1+ = 81.4% HR (N=70)
+# =============================================================================
+ULTRA_MIN_EDGE = float(os.environ.get('MLB_ULTRA_MIN_EDGE', '1.1'))
+ULTRA_REQUIRES_HOME = True
+ULTRA_REQUIRES_PROJECTION_AGREES = True
+ULTRA_REQUIRES_HALF_LINE = True
 
 
 class MLBBestBetsExporter:
@@ -363,29 +379,113 @@ class MLBBestBetsExporter:
         ranked_picks = over_picks + under_picks
 
         # 6b. Daily pick limit — truncate to MAX_PICKS_PER_DAY
-        if len(ranked_picks) > MAX_PICKS_PER_DAY:
-            trimmed = len(ranked_picks) - MAX_PICKS_PER_DAY
-            logger.info(f"[MLB BB] Trimming {trimmed} picks to daily limit of {MAX_PICKS_PER_DAY}")
-            ranked_picks = ranked_picks[:MAX_PICKS_PER_DAY]
+        top_picks = ranked_picks[:MAX_PICKS_PER_DAY]
+        remaining_picks = ranked_picks[MAX_PICKS_PER_DAY:]
+
+        if remaining_picks:
+            logger.info(f"[MLB BB] Trimming {len(remaining_picks)} picks to daily limit "
+                        f"of {MAX_PICKS_PER_DAY}")
+
+        # 7. Ultra tier tagging (Session 444 — 81.4% HR, N=70)
+        # Ultra picks in top-N get 2u stake. Ultra picks NOT in top-N still get published.
+        ultra_overlay = []
+        for pick in top_picks:
+            is_ultra, criteria = self._check_ultra(pick, features_by_pitcher)
+            pick['ultra_tier'] = is_ultra
+            pick['ultra_criteria'] = criteria
+            pick['staking_multiplier'] = 2 if is_ultra else 1
+
+        # Check remaining picks for ultra overlay
+        for pick in remaining_picks:
+            is_ultra, criteria = self._check_ultra(pick, features_by_pitcher)
+            if is_ultra:
+                pick['ultra_tier'] = True
+                pick['ultra_criteria'] = criteria
+                pick['staking_multiplier'] = 2
+                ultra_overlay.append(pick)
+
+        # Final picks = top-N + ultra overlay
+        ranked_picks = top_picks + ultra_overlay
 
         for i, pick in enumerate(ranked_picks, 1):
             pick['rank'] = i
 
-        # 7. Build pick angles + stamp algorithm version
-        algo_version = f'mlb_v5_cross_validated_top{MAX_PICKS_PER_DAY}'
+        n_ultra = sum(1 for p in ranked_picks if p.get('ultra_tier'))
+        n_overlay = len(ultra_overlay)
+        if n_ultra > 0:
+            logger.info(f"[MLB BB] Ultra tier: {n_ultra} picks ({n_overlay} via overlay)")
+
+        # 8. Build pick angles + stamp algorithm version
+        algo_version = 'mlb_v6_season_replay_validated'
         for pick in ranked_picks:
             pick['pick_angles'] = self._build_pick_angles(pick)
             pick['algorithm_version'] = algo_version
 
-        # 8. Write to BigQuery
+        # 9. Write to BigQuery
         if not dry_run and ranked_picks:
             self._write_best_bets(ranked_picks, game_date)
             self._write_filter_audit(game_date)
 
         logger.info(f"[MLB BB] Final best bets: {len(ranked_picks)} "
-                    f"(OVER: {len(over_picks)}, UNDER: {len(under_picks)})")
+                    f"(OVER: {len(over_picks)}, UNDER: {len(under_picks)}, "
+                    f"ultra: {n_ultra})")
 
         return ranked_picks
+
+    def _check_ultra(self, pick: Dict, features_by_pitcher: Dict) -> Tuple[bool, List[str]]:
+        """Check if a pick qualifies for Ultra tier.
+
+        Ultra = OVER + half-line + not-blacklisted + edge >= 1.1 + home + projection agrees.
+        Season replay: 81.4% HR (N=70), +88u at 2u staking.
+
+        Returns:
+            (is_ultra, criteria_list)
+        """
+        if pick.get('recommendation') != 'OVER':
+            return False, []
+
+        criteria = []
+
+        # Must be half-line
+        line = pick.get('strikeouts_line')
+        if line is not None and line != int(line):
+            criteria.append('half_line')
+        elif ULTRA_REQUIRES_HALF_LINE:
+            return False, []
+
+        # Edge >= ULTRA_MIN_EDGE
+        edge = abs(pick.get('edge', 0))
+        if edge >= ULTRA_MIN_EDGE:
+            criteria.append(f'edge_{edge:.1f}')
+        else:
+            return False, []
+
+        # Home pitcher
+        pitcher = pick.get('pitcher_lookup', '')
+        features = features_by_pitcher.get(pitcher, {})
+        is_home = (pick.get('is_home')
+                   or features.get('is_home')
+                   or 'home_pitcher_over' in pick.get('signal_tags', []))
+        if is_home:
+            criteria.append('is_home')
+        elif ULTRA_REQUIRES_HOME:
+            return False, []
+
+        # Projection agrees
+        signal_tags = pick.get('signal_tags', [])
+        proj_agrees = ('projection_agrees_over' in signal_tags
+                       or 'regressor_projection_agrees_over' in signal_tags)
+        if proj_agrees:
+            criteria.append('projection_agrees')
+        elif ULTRA_REQUIRES_PROJECTION_AGREES:
+            return False, []
+
+        # Not blacklisted (already filtered by pipeline, but safety check)
+        from ml.signals.mlb.signals import PitcherBlacklistFilter
+        if pitcher in PitcherBlacklistFilter.BLACKLIST:
+            return False, []
+
+        return True, criteria
 
     def _build_pick_angles(self, pick: Dict) -> List[str]:
         """Build human-readable pick angles from signal results."""
@@ -460,6 +560,10 @@ class MLBBestBetsExporter:
             meta = signal_results['long_rest_over'].metadata
             angles.append(f"Extended rest: {meta.get('days_rest', '?')} days (fresh arm)")
 
+        if pick.get('ultra_tier'):
+            criteria = pick.get('ultra_criteria', [])
+            angles.append(f"ULTRA: {', '.join(criteria)} — 2u stake")
+
         return angles
 
     def _write_best_bets(self, picks: List[Dict], game_date: str):
@@ -506,6 +610,9 @@ class MLBBestBetsExporter:
                 'signal_rescued': pick.get('signal_rescued', False),
                 'rescue_signal': pick.get('rescue_signal'),
                 'under_signal_quality': pick.get('under_signal_quality'),
+                'ultra_tier': pick.get('ultra_tier', False),
+                'ultra_criteria': pick.get('ultra_criteria', []),
+                'staking_multiplier': pick.get('staking_multiplier', 1),
                 'created_at': now,
             })
 

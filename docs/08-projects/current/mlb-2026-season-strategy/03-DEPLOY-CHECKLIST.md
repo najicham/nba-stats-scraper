@@ -1,5 +1,7 @@
 # MLB 2026 — Deploy Checklist
 
+*Updated Session 444: 36 features (5 dead removed), 23-pitcher blacklist*
+
 ## Pre-Season (Mar 18-23)
 
 ### Step 1: Train Final Model (Mar 18-20)
@@ -9,7 +11,8 @@ PYTHONPATH=. python scripts/mlb/training/train_regressor_v2.py \
     --window 120
 ```
 - Verify model file created in `models/mlb/`
-- Check training metrics (MAE should be ~1.7-1.8)
+- Check training metrics (MAE should be ~1.4-1.6 based on replay)
+- **Feature count should be 36** (5 dead features removed in Session 444)
 
 ### Step 2: Upload Model to GCS
 ```bash
@@ -99,14 +102,22 @@ GROUP BY 1;
 ```
 
 ### Verify Ultra Tags
-Ultra picks should have `home_pitcher_over` and `regressor_projection_agrees_over` in signal_tags.
+Ultra picks should have `ultra_tier=true`, `staking_multiplier=2`, and criteria including
+`half_line`, `is_home`, `projection_agrees`.
+
+```sql
+SELECT game_date, pitcher_lookup, edge, ultra_tier, ultra_criteria, staking_multiplier
+FROM mlb_predictions.signal_best_bets_picks
+WHERE game_date >= '2026-03-27' AND ultra_tier = TRUE
+ORDER BY game_date;
+```
 
 ## Week 1 Monitoring
 
 - [ ] Predictions generating daily for both v1 and v2
 - [ ] Best bets publishing 2-3 picks/day
 - [ ] Filter audit shows whole_line_over and pitcher_blacklist firing
-- [ ] Algorithm version = `mlb_v5_cross_validated_top3`
+- [ ] Algorithm version = `mlb_v6_season_replay_validated`
 - [ ] v1 vs v2 predictions side-by-side comparison
 - [ ] No errors in Cloud Run logs
 

@@ -382,5 +382,255 @@ class TestExporterIntegration:
         assert len(overconf_blocks) >= 1
 
 
+class TestUltraTier:
+    """Test ultra tier tagging (Session 444 — 81.4% HR, N=70)."""
+
+    def _make_ultra_eligible_prediction(self, **overrides):
+        """Build a prediction that meets all ultra criteria."""
+        defaults = dict(
+            pitcher_lookup='ace_pitcher',
+            edge=1.2,
+            predicted_strikeouts=6.7,
+            strikeouts_line=5.5,  # half-line
+            projection_value=6.2,  # > line
+            is_home=True,
+        )
+        defaults.update(overrides)
+        return _make_prediction(**defaults)
+
+    def _make_ultra_features(self, **overrides):
+        """Build features that trigger enough signals including ultra requirements."""
+        return _make_features_for_signals(is_home=True, **overrides)
+
+    def test_ultra_pick_tagged(self):
+        """Pick meeting all ultra criteria should be tagged ultra_tier=True."""
+        exporter = MLBBestBetsExporter(bq_client=MagicMock())
+        pred = self._make_ultra_eligible_prediction()
+        features = self._make_ultra_features()
+
+        result = exporter.export(
+            predictions=[pred],
+            game_date='2026-06-15',
+            features_by_pitcher={'ace_pitcher': features},
+            dry_run=True,
+        )
+
+        assert len(result) >= 1
+        pick = result[0]
+        assert pick['ultra_tier'] is True
+        assert 'half_line' in pick['ultra_criteria']
+        assert 'is_home' in pick['ultra_criteria']
+        assert 'projection_agrees' in pick['ultra_criteria']
+        assert pick['staking_multiplier'] == 2
+
+    def test_non_ultra_pick_has_1u(self):
+        """Pick that doesn't meet ultra criteria should have staking_multiplier=1."""
+        exporter = MLBBestBetsExporter(bq_client=MagicMock())
+
+        # Away pitcher — fails home requirement
+        pred = _make_prediction(
+            pitcher_lookup='away_pitcher',
+            edge=1.2,
+            predicted_strikeouts=6.7,
+            strikeouts_line=5.5,
+        )
+        features = _make_features_for_signals(is_home=False)
+
+        result = exporter.export(
+            predictions=[pred],
+            game_date='2026-06-15',
+            features_by_pitcher={'away_pitcher': features},
+            dry_run=True,
+        )
+
+        if result:
+            assert result[0]['ultra_tier'] is False
+            assert result[0]['staking_multiplier'] == 1
+
+    def test_ultra_requires_edge_1_1(self):
+        """Edge 1.0 should NOT qualify for ultra (threshold is 1.1)."""
+        exporter = MLBBestBetsExporter(bq_client=MagicMock())
+        pred = self._make_ultra_eligible_prediction(edge=1.0)
+        features = self._make_ultra_features()
+
+        result = exporter.export(
+            predictions=[pred],
+            game_date='2026-06-15',
+            features_by_pitcher={'ace_pitcher': features},
+            dry_run=True,
+        )
+
+        if result:
+            assert result[0]['ultra_tier'] is False
+
+    def test_ultra_requires_home(self):
+        """Away pitcher should NOT qualify for ultra."""
+        exporter = MLBBestBetsExporter(bq_client=MagicMock())
+        pred = self._make_ultra_eligible_prediction(is_home=False)
+        features = _make_features_for_signals(is_home=False)
+
+        result = exporter.export(
+            predictions=[pred],
+            game_date='2026-06-15',
+            features_by_pitcher={'ace_pitcher': features},
+            dry_run=True,
+        )
+
+        if result:
+            assert result[0]['ultra_tier'] is False
+
+    def test_ultra_requires_half_line(self):
+        """Whole-number line should NOT qualify for ultra (also blocked by filter)."""
+        exporter = MLBBestBetsExporter(bq_client=MagicMock())
+        pred = self._make_ultra_eligible_prediction(strikeouts_line=6.0)
+        features = self._make_ultra_features()
+
+        # Whole-line is blocked by the whole_line_over filter before ultra check
+        result = exporter.export(
+            predictions=[pred],
+            game_date='2026-06-15',
+            features_by_pitcher={'ace_pitcher': features},
+            dry_run=True,
+        )
+        assert len(result) == 0  # Blocked by whole_line filter
+
+    def test_ultra_requires_projection_agrees(self):
+        """No projection agreement should NOT qualify for ultra."""
+        exporter = MLBBestBetsExporter(bq_client=MagicMock())
+        pred = self._make_ultra_eligible_prediction(projection_value=None)
+        features = _make_features_for_signals(
+            is_home=True,
+            bp_projection=4.0,    # projection < line
+            projection_diff=-1.5, # fails projection_agrees_over
+        )
+
+        result = exporter.export(
+            predictions=[pred],
+            game_date='2026-06-15',
+            features_by_pitcher={'ace_pitcher': features},
+            dry_run=True,
+        )
+
+        if result:
+            assert result[0]['ultra_tier'] is False
+
+    def test_blacklisted_pitcher_not_ultra(self):
+        """Blacklisted pitcher should not qualify for ultra (also blocked by filter)."""
+        exporter = MLBBestBetsExporter(bq_client=MagicMock())
+        pred = self._make_ultra_eligible_prediction(pitcher_lookup='tanner_bibee')
+        features = self._make_ultra_features()
+
+        result = exporter.export(
+            predictions=[pred],
+            game_date='2026-06-15',
+            features_by_pitcher={'tanner_bibee': features},
+            dry_run=True,
+        )
+        assert len(result) == 0  # Blocked by blacklist filter
+
+    def test_ultra_overlay_outside_top3(self):
+        """Ultra pick outside top-3 should still be published via overlay."""
+        exporter = MLBBestBetsExporter(bq_client=MagicMock())
+
+        # 4 picks: first 3 non-ultra (away), 4th is ultra (home)
+        preds = [
+            _make_prediction(
+                pitcher_lookup=f'pitcher_{i}',
+                edge=2.0 - i * 0.3,
+                predicted_strikeouts=6.5,
+                strikeouts_line=5.5,
+            )
+            for i in range(3)
+        ]
+        # 4th pick: lower edge but ultra-eligible
+        preds.append(self._make_ultra_eligible_prediction(
+            pitcher_lookup='ultra_overlay_pitcher',
+            edge=1.1,
+            predicted_strikeouts=6.6,
+        ))
+
+        features_map = {
+            f'pitcher_{i}': _make_features_for_signals(is_home=False)
+            for i in range(3)
+        }
+        features_map['ultra_overlay_pitcher'] = self._make_ultra_features()
+
+        result = exporter.export(
+            predictions=preds,
+            game_date='2026-06-15',
+            features_by_pitcher=features_map,
+            dry_run=True,
+        )
+
+        # Should have 4 picks (3 regular + 1 ultra overlay)
+        result_pitchers = {p['pitcher_lookup'] for p in result}
+        assert 'ultra_overlay_pitcher' in result_pitchers
+
+        ultra_pick = [p for p in result if p['pitcher_lookup'] == 'ultra_overlay_pitcher'][0]
+        assert ultra_pick['ultra_tier'] is True
+        assert ultra_pick['staking_multiplier'] == 2
+
+    def test_ultra_angle_in_pick_angles(self):
+        """Ultra picks should have 'ULTRA:' in their pick angles."""
+        exporter = MLBBestBetsExporter(bq_client=MagicMock())
+        pred = self._make_ultra_eligible_prediction()
+        features = self._make_ultra_features()
+
+        result = exporter.export(
+            predictions=[pred],
+            game_date='2026-06-15',
+            features_by_pitcher={'ace_pitcher': features},
+            dry_run=True,
+        )
+
+        if result and result[0].get('ultra_tier'):
+            ultra_angles = [a for a in result[0]['pick_angles'] if 'ULTRA' in a]
+            assert len(ultra_angles) == 1
+            assert '2u stake' in ultra_angles[0]
+
+    def test_algorithm_version_updated(self):
+        """Algorithm version should be mlb_v6_season_replay_validated."""
+        exporter = MLBBestBetsExporter(bq_client=MagicMock())
+        pred = self._make_ultra_eligible_prediction()
+        features = self._make_ultra_features()
+
+        result = exporter.export(
+            predictions=[pred],
+            game_date='2026-06-15',
+            features_by_pitcher={'ace_pitcher': features},
+            dry_run=True,
+        )
+
+        assert len(result) >= 1
+        assert result[0]['algorithm_version'] == 'mlb_v6_season_replay_validated'
+
+    def test_bq_row_includes_ultra_fields(self):
+        """BQ row should include ultra_tier, ultra_criteria, staking_multiplier."""
+        mock_bq = MagicMock()
+        mock_bq.query.return_value.result.return_value = None
+        mock_bq.insert_rows_json.return_value = []
+
+        exporter = MLBBestBetsExporter(bq_client=mock_bq)
+        pred = self._make_ultra_eligible_prediction()
+        features = self._make_ultra_features()
+
+        exporter.export(
+            predictions=[pred],
+            game_date='2026-06-15',
+            features_by_pitcher={'ace_pitcher': features},
+            dry_run=False,
+        )
+
+        # Check insert_rows_json was called
+        calls = mock_bq.insert_rows_json.call_args_list
+        bb_call = [c for c in calls if 'signal_best_bets_picks' in str(c)]
+        assert len(bb_call) >= 1
+
+        rows = bb_call[0][0][1]  # Second arg is rows list
+        assert 'ultra_tier' in rows[0]
+        assert 'ultra_criteria' in rows[0]
+        assert 'staking_multiplier' in rows[0]
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

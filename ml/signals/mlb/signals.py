@@ -2,7 +2,7 @@
 
 Active Signals (14):
   high_edge                       — Edge >= 1.0 K (base signal)
-  swstr_surge                     — SwStr% last 3 > season avg + 2%
+  swstr_surge                     — SwStr% last 3 > season avg + 2% (demoted from rescue, Session 444)
   velocity_drop_under             — FB velocity down 1.5+ mph
   opponent_k_prone                — Team K-rate top 25%
   short_rest_under                — < 4 days rest
@@ -29,7 +29,7 @@ Negative Filters (6):
   il_return_skip        — First start from IL
   pitch_count_cap_skip  — Under-only: documented pitch count cap
   insufficient_data_skip — < 3 career starts
-  pitcher_blacklist     — Block pitchers with <45% HR (Session 443, expanded to 18)
+  pitcher_blacklist     — Block pitchers with <45% HR (Session 444, expanded to 23)
   whole_line_over       — Block OVER on whole-number lines (Session 443, +9.6pp structural)
 
 Observation Filters (2) — log but don't block, cross-season unstable:
@@ -605,11 +605,11 @@ class PitcherBlacklistFilter(BaseMLBSignal):
     direction = "OVER"
     is_negative_filter = True
 
-    # Session 443: Regressor walk-forward validated, <45% HR at N >= 10
+    # Session 443-444: Walk-forward + season replay validated, <45% HR
     BLACKLIST = frozenset([
         # Kept from original (confirmed bad in regressor data)
         'tanner_bibee', 'mitchell_parker', 'casey_mize', 'mitch_keller',
-        # New additions (Session 443 pitcher deep dive + filter optimization)
+        # Session 443 additions (walk-forward <45% HR at N >= 10)
         'logan_webb',          # 37.5% HR, N=24
         'jose_berrios',        # 38.1% HR, N=21
         'logan_gilbert',       # 38.5% HR, N=26
@@ -624,6 +624,12 @@ class PitcherBlacklistFilter(BaseMLBSignal):
         'ryan_feltner',        # 33.3% HR, N=12
         'luis_severino',       # 42.1% HR, N=19
         'randy_vasquez',       # 27.8% HR, N=18
+        # Session 444 additions (season replay 0% or <40% HR at N >= 3)
+        'adrian_houser',       # 0-4 (0% HR)
+        'stephen_kolek',       # 0-3 (0% HR)
+        'dean_kremer',         # 1-3 (25% HR)
+        'michael_mcgreevy',    # 1-3 (25% HR)
+        'tyler_mahle',         # 1-3 (25% HR)
     ])
 
     def evaluate(self, prediction: Dict,

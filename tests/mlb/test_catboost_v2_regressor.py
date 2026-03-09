@@ -18,7 +18,7 @@ from predictions.mlb.prediction_systems.catboost_v2_regressor_predictor import (
 
 
 def _make_features(**overrides):
-    """Build a minimal valid feature dict (all 40 features present)."""
+    """Build a minimal valid feature dict (36 active features + legacy extras)."""
     base = {
         'k_avg_last_3': 6.0,
         'k_avg_last_5': 5.8,
