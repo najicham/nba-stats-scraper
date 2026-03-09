@@ -166,10 +166,12 @@ class SignalBestBetsExporter(BaseExporter):
 
         # ── Step 2: Merge model pipelines ──
         # Collect candidates from each model's pipeline result
-        model_candidates = {
-            system_id: result.candidates
-            for system_id, result in pipeline_results.items()
-        }
+        # Tag source_pipeline BEFORE merge (merger uses it for agreement counting)
+        model_candidates = {}
+        for system_id, result in pipeline_results.items():
+            for cand in result.candidates:
+                cand['source_pipeline'] = system_id
+            model_candidates[system_id] = result.candidates
         top_picks, merge_summary = merge_model_pipelines(model_candidates)
 
         # ── Step 2b: Filter started games on merged picks ──

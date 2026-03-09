@@ -223,6 +223,7 @@ def replay_date(
     try:
         model_results, shared_ctx = run_all_model_pipelines(
             bq_client, game_date,
+            include_disabled=True,
         )
     except Exception as e:
         logger.error(f"[{game_date}] Pipeline failed: {e}")

@@ -1,8 +1,16 @@
-# Multi-Model Best Bets Architecture
+# Multi-Model Best Bets Architecture (DEPRECATED)
+
+> **DEPRECATED — Session 446 (2026-03-08)**
+> Replaced by per-model pipelines + pool-and-rank merge.
+> See: `docs/08-projects/current/per-model-pipelines/00-ARCHITECTURE.md`
+>
+> **Why deprecated:** Winner-take-all dedup + LEGACY_MODEL_BLOCKLIST silently blocked
+> the best model in the fleet (catboost_v9_train1102_0108, 87.5% OVER 3-4).
+> Per-model pipelines eliminate this class of bug entirely.
 
 **Session:** 277
 **Date:** 2026-02-16
-**Status:** Implemented, pending deploy
+**Status:** DEPRECATED (replaced by per-model pipelines, Session 445-446)
 
 ## Overview
 

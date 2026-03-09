@@ -239,6 +239,10 @@ def build_system_id_sql_filter(alias: str = '') -> str:
             clauses.append(f"{col} LIKE '{info['pattern']}%'")
             if 'alt_pattern' in info:
                 clauses.append(f"{col} LIKE '{info['alt_pattern']}%'")
+    # Catch-all for V9 trained variants (catboost_v9_train*) — mirrors
+    # classify_system_id() fallback. SQL exact match on 'catboost_v9' misses these.
+    col = f"{prefix}system_id"
+    clauses.append(f"{col} LIKE 'catboost_v9_%'")
     return '(' + ' OR '.join(clauses) + ')'
 
 

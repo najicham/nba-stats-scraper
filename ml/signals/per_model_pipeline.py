@@ -125,6 +125,7 @@ class PipelineResult:
 def _query_all_model_predictions(
     bq_client: bigquery.Client,
     target_date: str,
+    include_disabled: bool = False,
 ) -> Tuple[Dict[str, List[Dict]], Dict[str, Dict]]:
     """Query predictions for ALL models in a single BQ scan.
 
@@ -135,6 +136,11 @@ def _query_all_model_predictions(
     Also runs the 10 satellite queries for supplemental data (player-level,
     model-independent) and returns the supplemental_map.
 
+    Args:
+        bq_client: BigQuery client.
+        target_date: YYYY-MM-DD date string.
+        include_disabled: If True, skip disabled_models filter (for historical replay).
+
     Returns:
         Tuple of:
             predictions_by_model: Dict[system_id, List[Dict]]
@@ -142,15 +148,24 @@ def _query_all_model_predictions(
     """
     system_filter = build_system_id_sql_filter('p')
 
-    # Build the same CTE structure as multi_model path but WITHOUT QUALIFY
-    query = f"""
-    -- Session 443: Per-model pipeline — fetch ALL models without dedup
-    WITH disabled_models AS (
+    # For replay: skip disabled_models filter so historical models are included
+    if include_disabled:
+        disabled_cte = "disabled_models AS (SELECT CAST(NULL AS STRING) AS model_id FROM UNNEST([]) AS x)"
+        disabled_join = ""
+        disabled_where = ""
+    else:
+        disabled_cte = f"""disabled_models AS (
       SELECT model_id
       FROM `{PROJECT_ID}.nba_predictions.model_registry`
       WHERE enabled = FALSE OR status IN ('blocked', 'disabled')
-         OR model_id IN ('catboost_v12', 'catboost_v9')
-    ),
+    )"""
+        disabled_join = "LEFT JOIN disabled_models dm ON p.system_id = dm.model_id"
+        disabled_where = "AND dm.model_id IS NULL"
+
+    # Build the same CTE structure as multi_model path but WITHOUT QUALIFY
+    query = f"""
+    -- Session 443: Per-model pipeline — fetch ALL models without dedup
+    WITH {disabled_cte},
 
     model_hr AS (
       SELECT
@@ -185,14 +200,14 @@ def _query_all_model_predictions(
         ) / 55.0) AS model_hr_weight
       FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions` p
       LEFT JOIN model_hr mh ON mh.model_id = p.system_id
-      LEFT JOIN disabled_models dm ON p.system_id = dm.model_id
+      {disabled_join}
       WHERE p.game_date = @target_date
         AND {system_filter}
         AND p.is_active = TRUE
         AND p.is_actionable = TRUE
         AND p.recommendation IN ('OVER', 'UNDER')
         AND p.line_source IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS')
-        AND dm.model_id IS NULL
+        {disabled_where}
       -- NO QUALIFY ROW_NUMBER — keep ALL models' predictions
     ),
 
@@ -1387,9 +1402,10 @@ def build_shared_context(
     ctx = SharedContext(target_date=target_date)
 
     # 1. Batch-query ALL models' predictions + supplemental data (1 big query + 10 satellites)
+    include_disabled = kwargs.get('include_disabled', False)
     logger.info(f"Building shared context for {target_date}...")
     predictions_by_model, supplemental_map = _query_all_model_predictions(
-        bq_client, target_date
+        bq_client, target_date, include_disabled=include_disabled,
     )
     ctx.all_predictions = predictions_by_model
     ctx.supplemental_map = supplemental_map
@@ -1487,7 +1503,7 @@ def run_single_model_pipeline(
     """
     predictions = shared_ctx.all_predictions.get(system_id, [])
     if not predictions:
-        logger.debug(f"No predictions for {system_id}")
+        logger.warning(f"No predictions for {system_id} on {shared_ctx.target_date}")
         return PipelineResult(
             system_id=system_id,
             candidates=[],
