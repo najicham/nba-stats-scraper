@@ -487,93 +487,47 @@ ORDER BY roi DESC
 
 ## Signal Discovery Framework & Best Bets
 
-**Implemented:** Sessions 253-275 (Feb 14-16, 2026)
-**Purpose:** Curate a daily "Best Bets" list (up to 5 picks) by evaluating independent signal sources on top of CatBoost predictions.
+**Implemented:** Sessions 253-275, major refactor Session 445-446
+**Purpose:** Curate a daily "Best Bets" list by evaluating independent signal sources on top of ML model predictions.
 
-### Architecture
+### Architecture (Per-Model Pipelines — Session 446)
 
-Two-layer system:
-1. **Signal Annotation** — Every prediction is evaluated against all 18 registered signals. Results stored in `pick_signal_tags`.
-2. **Best Bets Curation** — Top 5 picks by composite score (signal count + edge + combo weight). MIN_SIGNAL_COUNT=2 (model_health always fires, so effectively 1 real signal). Stored in `signal_best_bets_picks`.
-3. **Combo Registry** — 10 validated entries (8 SYNERGISTIC boost score, 2 ANTI_PATTERN block). Loaded from BQ, Python fallback.
-4. **Signal Health** — Per-signal HOT/NORMAL/COLD regime. HOT=1.2x, NORMAL=1.0x, COLD behavioral=0.5x, COLD model-dependent=0.0x.
-5. **Health Gate** — REMOVED (Session 270). Best bets produced every game day. 2-signal minimum provides quality filtering.
+Per-model pipeline architecture replaced the old winner-take-all consensus system:
 
-### Active Signals (18)
+1. **Batch Query** — ONE BQ scan fetches ALL enabled models' predictions (no ROW_NUMBER dedup)
+2. **Shared Context** — Signal health, filters, combos, regime, blacklist computed once
+3. **Per-Model Pipeline** — Each model runs independently through signals + aggregator (`mode='per_model'`, skips team/rescue caps)
+4. **Pool-and-Rank Merge** — All candidates pooled, sorted by `composite_score`, first-occurrence player dedup
+5. **Enforcement** — Team cap (2/team), volume cap (15/day), rescue cap (40%)
+6. **Output** — Final picks written to `signal_best_bets_picks`, all candidates to `model_bb_candidates`
 
-| Signal | Tag | Direction | AVG HR | Status |
-|--------|-----|-----------|--------|--------|
-| Model Health | `model_health` | BOTH | 52.6% | PRODUCTION (always fires) |
-| High Edge | `high_edge` | BOTH | 66.7% | Standalone BLOCKED, combo OK |
-| Edge Spread Optimal | `edge_spread_optimal` | BOTH | 67.2% | PRODUCTION (anti-pattern detect) |
-| Combo HE+MS | `combo_he_ms` | OVER | **94.9%** | PRODUCTION (best combo) |
-| Combo 3-Way | `combo_3way` | BOTH | 78.1% | PRODUCTION (premium) |
-| 3PT Bounce | `3pt_bounce` | OVER | 74.9% | CONDITIONAL |
-| Cold Snap | `cold_snap` | OVER | 93.3% (home) | CONDITIONAL |
-| Blowout Recovery | `blowout_recovery` | OVER | 56.9% | WATCH |
-| Minutes Surge | `minutes_surge` | BOTH | 53.7% | WATCH |
-| Rest Advantage 2D | `rest_advantage_2d` | BOTH | 64.8% | CONDITIONAL |
-| Dual Agree | `dual_agree` | BOTH | 45.5% | WATCH |
-| Model Consensus | `model_consensus_v9_v12` | BOTH | 45.5% | WATCH |
-| **Bench Under** | `bench_under` | UNDER | **76.9%** | PRODUCTION |
-| **High FT Under** | `high_ft_under` | UNDER | 64.1% | CONDITIONAL |
-| **B2B Fatigue Under** | `b2b_fatigue_under` | UNDER | **85.7%** | CONDITIONAL (N=14) |
-| Self-Creator Under | `self_creator_under` | UNDER | 61.8% | WATCH |
-| Volatile Under | `volatile_under` | UNDER | 60.0% | WATCH |
-| High Usage Under | `high_usage_under` | UNDER | 58.7% | WATCH |
+**Why refactored:** Old winner-take-all + LEGACY_MODEL_BLOCKLIST silently blocked the best model in fleet. Per-model pipelines ensure every model contributes its best picks.
 
-**10 signals removed Session 275:** hot_streak_2 (45.8% HR, N=416), hot_streak_3, cold_continuation_2, fg_cold_continuation (all below breakeven), plus 6 never-fire signals.
-
-**Direction balance:** 5 OVER + 6 UNDER + 7 BOTH (OVER bias resolved Session 274-275).
-
-### Post-Cleanup Backtest (Session 275)
-
-Aggregator top-5 simulation: **73.9% AVG HR** (up from 60.3% pre-cleanup). W2: 80.0%, W3: 78.5%, W4: 63.2%.
+**28 active signals + 26 shadow signals, 22 negative filters + 6 observation.**
+Full inventory: `docs/08-projects/current/signal-discovery-framework/SIGNAL-INVENTORY.md`
 
 ### BQ Tables
 
 | Table | Purpose |
 |-------|---------|
 | `nba_predictions.pick_signal_tags` | Signal annotations on ALL predictions |
-| `nba_predictions.signal_best_bets_picks` | Curated top 5 best bets per day |
-| `nba_predictions.signal_combo_registry` | 10 combo entries (8 SYNERGISTIC, 2 ANTI_PATTERN) |
+| `nba_predictions.signal_best_bets_picks` | Curated best bets per day |
+| `nba_predictions.signal_combo_registry` | 11 combo entries (SYNERGISTIC/ANTI_PATTERN) |
 | `nba_predictions.signal_health_daily` | Per-signal HOT/NORMAL/COLD regime |
-| `nba_predictions.v_signal_performance` | View: per-signal hit rate and ROI (30d rolling) |
-
-### Subset Definition
-
-Best Bets is subset `best_bets` (public ID 26, name "Best Bets") in `dynamic_subset_definitions`.
-
-### Performance Monitoring
-
-```sql
--- Best Bets daily performance
-SELECT game_date, COUNT(*) AS picks,
-  COUNTIF(prediction_correct) AS wins,
-  ROUND(100.0 * COUNTIF(prediction_correct) / COUNT(*), 1) AS hit_rate
-FROM nba_predictions.signal_best_bets_picks
-WHERE prediction_correct IS NOT NULL
-GROUP BY game_date ORDER BY game_date;
-
--- Per-signal performance (30d rolling)
-SELECT * FROM nba_predictions.v_signal_performance ORDER BY hit_rate DESC;
-
--- Combo registry
-SELECT combo_id, classification, status, hit_rate, score_weight
-FROM nba_predictions.signal_combo_registry ORDER BY score_weight DESC;
-```
+| `nba_predictions.model_bb_candidates` | Per-model pipeline candidates with full provenance |
 
 ### Key Files
 
 | File | Purpose |
 |------|---------|
-| `ml/signals/registry.py` | Signal registration (18 signals) |
-| `ml/signals/combo_registry.py` | Combo registry loader + Python fallback |
-| `ml/signals/supplemental_data.py` | Production data queries for signals |
-| `data_processors/publishing/signal_annotator.py` | Production annotator + Best Bets writer |
-| `ml/experiments/signal_backtest.py` | Backtest harness |
+| `ml/signals/per_model_pipeline.py` | Per-model pipeline runner (batch query, shared context, per-model execution) |
+| `ml/signals/pipeline_merger.py` | Pool-and-rank merge with provenance tracking |
+| `ml/signals/aggregator.py` | Signal aggregation + filtering (supports `mode='per_model'`) |
+| `ml/signals/registry.py` | Signal registration |
+| `ml/signals/combo_registry.py` | Combo registry loader |
+| `data_processors/publishing/signal_best_bets_exporter.py` | Production exporter wired to per-model pipelines |
 
-**References:** `docs/08-projects/current/signal-discovery-framework/SIGNAL-INVENTORY.md`
+**References:** `docs/08-projects/current/per-model-pipelines/00-ARCHITECTURE.md`, `docs/08-projects/current/signal-discovery-framework/SIGNAL-INVENTORY.md`
 
 ---
 

@@ -589,7 +589,7 @@ class TestUltraTier:
             assert '2u stake' in ultra_angles[0]
 
     def test_algorithm_version_updated(self):
-        """Algorithm version should be mlb_v6_season_replay_validated."""
+        """Algorithm version should be mlb_v7_s447_blacklist28_rescue_tightened."""
         exporter = MLBBestBetsExporter(bq_client=MagicMock())
         pred = self._make_ultra_eligible_prediction()
         features = self._make_ultra_features()
@@ -602,7 +602,7 @@ class TestUltraTier:
         )
 
         assert len(result) >= 1
-        assert result[0]['algorithm_version'] == 'mlb_v6_season_replay_validated'
+        assert result[0]['algorithm_version'] == 'mlb_v7_s447_blacklist28_rescue_tightened'
 
     def test_bq_row_includes_ultra_fields(self):
         """BQ row should include ultra_tier, ultra_criteria, staking_multiplier."""

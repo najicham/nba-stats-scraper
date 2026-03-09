@@ -365,6 +365,7 @@ def run_multi_system_batch_predictions(game_date: date, pitcher_lookups: Optiona
     # OPTIMIZATION: Load features ONCE using shared feature loader
     # This avoids redundant BigQuery queries (previously 3x queries, now 1x)
     from predictions.mlb.pitcher_loader import load_batch_features
+    from predictions.mlb.supplemental_loader import load_supplemental_by_pitcher
 
     logger.info(f"Loading features for {game_date} (pitcher_lookups={pitcher_lookups})")
     features_by_pitcher = load_batch_features(
@@ -378,6 +379,13 @@ def run_multi_system_batch_predictions(game_date: date, pitcher_lookups: Optiona
         return []
 
     logger.info(f"Loaded features for {len(features_by_pitcher)} pitchers")
+
+    # Load supplemental data (umpire K-rate, weather) for signal evaluation
+    supplemental_by_pitcher = load_supplemental_by_pitcher(
+        game_date=game_date,
+        pitcher_lookups=pitcher_lookups,
+        project_id=PROJECT_ID
+    )
 
     # For each pitcher, run predictions through ALL active systems
     for pitcher_lookup, features in features_by_pitcher.items():
@@ -541,6 +549,113 @@ def execute_shadow_mode():
         return jsonify({
             'error': str(e),
             'status': 'failed',
+            'duration_seconds': round(time.time() - start_time, 3)
+        }), 500
+
+
+@app.route('/best-bets', methods=['POST'])
+def generate_best_bets():
+    """
+    Generate signal-based best bets for a game date.
+
+    Runs the full pipeline: predictions → signals → filters → ranking → ultra → BQ.
+    Wires supplemental data (umpire K-rate, weather) into signal evaluation.
+
+    Request body:
+    {
+        "game_date": "2026-06-15",
+        "dry_run": false  // optional, default: false
+    }
+    """
+    start_time = time.time()
+
+    try:
+        data = request.get_json() or {}
+        game_date_str = data.get('game_date')
+        dry_run = data.get('dry_run', False)
+
+        if not game_date_str:
+            return jsonify({'error': 'game_date is required'}), 400
+
+        game_date = datetime.strptime(game_date_str, '%Y-%m-%d').date()
+
+        # 1. Generate predictions across all active systems
+        predictions = run_multi_system_batch_predictions(game_date)
+
+        if not predictions:
+            return jsonify({
+                'game_date': game_date_str,
+                'best_bets': [],
+                'message': 'No predictions generated',
+                'duration_seconds': round(time.time() - start_time, 3)
+            }), 200
+
+        # Write raw predictions to BQ
+        rows_written = write_predictions_to_bigquery(predictions, game_date)
+        logger.info(f"Wrote {rows_written} raw predictions to BigQuery")
+
+        # 2. Load features and supplemental for signal evaluation
+        from predictions.mlb.pitcher_loader import load_batch_features
+        from predictions.mlb.supplemental_loader import load_supplemental_by_pitcher
+
+        features_by_pitcher = load_batch_features(
+            game_date=game_date, project_id=PROJECT_ID
+        )
+        supplemental_by_pitcher = load_supplemental_by_pitcher(
+            game_date=game_date, project_id=PROJECT_ID
+        )
+
+        # 3. Run best bets pipeline
+        from ml.signals.mlb.best_bets_exporter import MLBBestBetsExporter
+
+        exporter = MLBBestBetsExporter(project_id=PROJECT_ID)
+        best_bets = exporter.export(
+            predictions=predictions,
+            game_date=game_date_str,
+            features_by_pitcher=features_by_pitcher,
+            supplemental_by_pitcher=supplemental_by_pitcher,
+            dry_run=dry_run,
+        )
+
+        # 4. Publish completion event
+        publish_completion_event(game_date_str, len(predictions))
+
+        n_ultra = sum(1 for p in best_bets if p.get('ultra_tier'))
+        return jsonify({
+            'game_date': game_date_str,
+            'predictions_count': len(predictions),
+            'best_bets_count': len(best_bets),
+            'ultra_count': n_ultra,
+            'dry_run': dry_run,
+            'best_bets': [
+                {
+                    'pitcher_lookup': p.get('pitcher_lookup'),
+                    'recommendation': p.get('recommendation'),
+                    'edge': p.get('edge'),
+                    'signal_tags': p.get('signal_tags', []),
+                    'ultra_tier': p.get('ultra_tier', False),
+                    'rank': p.get('rank'),
+                    'pick_angles': p.get('pick_angles', []),
+                }
+                for p in best_bets
+            ],
+            'duration_seconds': round(time.time() - start_time, 3)
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Best bets error: {e}", exc_info=True)
+        send_mlb_alert(
+            severity='critical',
+            title='MLB Best Bets Generation Failed',
+            message=str(e),
+            context={
+                'endpoint': '/best-bets',
+                'game_date': data.get('game_date') if 'data' in dir() else None,
+                'error_type': type(e).__name__
+            }
+        )
+        return jsonify({
+            'error': str(e),
             'duration_seconds': round(time.time() - start_time, 3)
         }), 500
 

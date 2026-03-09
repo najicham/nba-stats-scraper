@@ -57,7 +57,7 @@ UNDER_ENABLED = False
 # Sigmoid scale for edge -> p_over
 SIGMOID_SCALE = 0.7
 
-# Pitcher blacklist (Session 443 base + Session 444 replay additions)
+# Pitcher blacklist (Session 443 base + Session 444 + Session 447 replay additions)
 PITCHER_BLACKLIST = frozenset([
     # Session 443 (18 pitchers — walk-forward <45% HR at N >= 10)
     'tanner_bibee', 'mitchell_parker', 'casey_mize', 'mitch_keller',
@@ -71,10 +71,16 @@ PITCHER_BLACKLIST = frozenset([
     'dean_kremer',             # 1-3 (25% HR)
     'michael_mcgreevy',        # 1-3 (25% HR)
     'tyler_mahle',             # 1-3 (25% HR)
+    # Session 447 additions — season replay <45% HR at N >= 5
+    'ranger_suárez',           # 33.3% HR, N=6
+    'cade_horton',             # 37.5% HR, N=8
+    'blake_snell',             # 40.0% HR, N=5
+    'luis_castillo',           # 42.9% HR, N=7
+    'paul_skenes',             # 44.4% HR, N=9
 ])
 
-# Signal rescue tags — swstr_surge REMOVED (54.9% HR, drags all combos to 51-55%)
-RESCUE_SIGNAL_TAGS = frozenset(['opponent_k_prone', 'ballpark_k_boost'])
+# Signal rescue tags — swstr_surge REMOVED S444 (54.9% HR), ballpark_k_boost REMOVED S447 (41.2% solo)
+RESCUE_SIGNAL_TAGS = frozenset(['opponent_k_prone'])
 
 # Base signals (inflate signal count with zero value)
 BASE_SIGNAL_TAGS = frozenset(['high_edge'])

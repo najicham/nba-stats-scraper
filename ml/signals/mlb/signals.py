@@ -1,8 +1,7 @@
-"""MLB Pitcher Strikeout Signals — 14 active + 6 shadow + 6 negative filters + 2 observation.
+"""MLB Pitcher Strikeout Signals — 13 active + 7 shadow + 6 negative filters + 2 observation.
 
-Active Signals (14):
+Active Signals (13):
   high_edge                       — Edge >= 1.0 K (base signal)
-  swstr_surge                     — SwStr% last 3 > season avg + 2% (demoted from rescue, Session 444)
   velocity_drop_under             — FB velocity down 1.5+ mph
   opponent_k_prone                — Team K-rate top 25%
   short_rest_under                — < 4 days rest
@@ -16,7 +15,8 @@ Active Signals (14):
   home_pitcher_over               — Pitcher is at home (Session 441)
   long_rest_over                  — Pitcher on 8+ days rest (Session 441)
 
-Shadow Signals (6):
+Shadow Signals (7):
+  swstr_surge           — SwStr% last 3 > season avg + 2% (demoted S447, 55.2% HR)
   line_movement_over    — Line dropped 0.5+ from open
   weather_cold_under    — Temp < 50F
   platoon_advantage     — Pitcher hand vs lineup handedness
@@ -29,7 +29,7 @@ Negative Filters (6):
   il_return_skip        — First start from IL
   pitch_count_cap_skip  — Under-only: documented pitch count cap
   insufficient_data_skip — < 3 career starts
-  pitcher_blacklist     — Block pitchers with <45% HR (Session 444, expanded to 23)
+  pitcher_blacklist     — Block pitchers with <45% HR (Session 447, expanded to 28)
   whole_line_over       — Block OVER on whole-number lines (Session 443, +9.6pp structural)
 
 Observation Filters (2) — log but don't block, cross-season unstable:
@@ -67,10 +67,15 @@ class HighEdgeSignal(BaseMLBSignal):
 
 
 class SwStrSurgeSignal(BaseMLBSignal):
-    """SwStr% last 3 starts > season avg + 2% — pitcher stuff is improving."""
+    """SwStr% last 3 starts > season avg + 2% — pitcher stuff is improving.
+
+    Session 447: Demoted to shadow. 55.2% HR on 58 picks in season replay — inflates
+    signal_count without adding value. Removed from rescue in Session 444.
+    """
     tag = "swstr_surge"
     description = "SwStr% last 3 starts elevated vs season average"
     direction = "OVER"
+    is_shadow = True
 
     def evaluate(self, prediction: Dict,
                  features: Optional[Dict] = None,
@@ -596,16 +601,17 @@ class PitcherBlacklistFilter(BaseMLBSignal):
     Walk-forward regressor: blocked picks at 37.5% HR -> +3.1pp lift.
 
     Session 443 deep dive: Expanded from 10 to 18 pitchers.
-    Removed: freddy_peralta (54.5%), tyler_glasnow (66.7%), paul_skenes (61.9%),
+    Removed: freddy_peralta (54.5%), tyler_glasnow (66.7%),
              hunter_greene (46.2%), yusei_kikuchi (51.9%), jose_soriano (no data).
     Added: 12 new pitchers with <45% HR at N >= 10 in regressor walk-forward.
+    Session 447: +5 from season replay (40% combined HR on 35 picks, +4u P&L lift).
     """
     tag = "pitcher_blacklist"
     description = "Pitcher on blacklist (walk-forward <45% HR at edge >= 0.75)"
     direction = "OVER"
     is_negative_filter = True
 
-    # Session 443-444: Walk-forward + season replay validated, <45% HR
+    # Session 443-444-447: Walk-forward + season replay validated, <45% HR
     BLACKLIST = frozenset([
         # Kept from original (confirmed bad in regressor data)
         'tanner_bibee', 'mitchell_parker', 'casey_mize', 'mitch_keller',
@@ -630,6 +636,12 @@ class PitcherBlacklistFilter(BaseMLBSignal):
         'dean_kremer',         # 1-3 (25% HR)
         'michael_mcgreevy',    # 1-3 (25% HR)
         'tyler_mahle',         # 1-3 (25% HR)
+        # Session 447 additions (season replay <45% HR at N >= 5)
+        'ranger_suárez',       # 33.3% HR, N=6
+        'cade_horton',         # 37.5% HR, N=8
+        'blake_snell',         # 40.0% HR, N=5
+        'luis_castillo',       # 42.9% HR, N=7
+        'paul_skenes',         # 44.4% HR, N=9
     ])
 
     def evaluate(self, prediction: Dict,

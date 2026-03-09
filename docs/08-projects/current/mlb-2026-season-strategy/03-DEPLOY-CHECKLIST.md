@@ -1,6 +1,6 @@
 # MLB 2026 — Deploy Checklist
 
-*Updated Session 444: 36 features (5 dead removed), 23-pitcher blacklist*
+*Updated Session 447: Supplemental loader + /best-bets endpoint + BQ tables created*
 
 ## Pre-Season (Mar 18-23)
 

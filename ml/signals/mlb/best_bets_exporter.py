@@ -76,9 +76,9 @@ BASE_SIGNAL_TAGS = frozenset(['high_edge'])
 
 # Signal rescue tags — picks can bypass edge floor if they have these signals
 # Session 444: swstr_surge REMOVED (54.9% HR, drags all signal combos to 51-55%)
+# Session 447: ballpark_k_boost REMOVED (41.2% solo rescue HR on 17 picks — net negative)
 RESCUE_SIGNAL_TAGS = frozenset([
     'opponent_k_prone',
-    'ballpark_k_boost',
 ])
 
 # UNDER signal weights for quality-based ranking
@@ -416,7 +416,7 @@ class MLBBestBetsExporter:
             logger.info(f"[MLB BB] Ultra tier: {n_ultra} picks ({n_overlay} via overlay)")
 
         # 8. Build pick angles + stamp algorithm version
-        algo_version = 'mlb_v6_season_replay_validated'
+        algo_version = 'mlb_v7_s447_blacklist28_rescue_tightened'
         for pick in ranked_picks:
             pick['pick_angles'] = self._build_pick_angles(pick)
             pick['algorithm_version'] = algo_version
