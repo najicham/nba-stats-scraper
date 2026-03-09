@@ -22,8 +22,11 @@ logger = logging.getLogger(__name__)
 
 MAX_MERGED_PICKS_PER_DAY = 15
 MAX_PICKS_PER_TEAM = 2
+MAX_PICKS_PER_GAME = 3  # Session 452: Mar 8 had 3 losses from SAS-HOU game
 RESCUE_CAP_PCT = 0.40
-ALGORITHM_VERSION = 'v451_session451_filters'
+# Session 452: Single source of truth for algorithm version.
+# aggregator.py imports this constant — bump here for all changes.
+ALGORITHM_VERSION = 'v452_mar8_game_cap_ft_rsc'
 
 # Rescue signal priority weights — mirrors aggregator.RESCUE_SIGNAL_PRIORITY.
 # When rescue cap trims, drop lowest-priority rescues first (ascending sort).
@@ -128,6 +131,7 @@ def merge_model_pipelines(
     model_candidates: Dict[str, List[Dict[str, Any]]],
     max_picks: int = MAX_MERGED_PICKS_PER_DAY,
     max_per_team: int = MAX_PICKS_PER_TEAM,
+    max_per_game: int = MAX_PICKS_PER_GAME,
     rescue_cap_pct: float = RESCUE_CAP_PCT,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """Pool all model candidates, rank, dedup, apply constraints.
@@ -203,6 +207,7 @@ def merge_model_pipelines(
     selected: List[Dict[str, Any]] = []
     seen_players: set = set()
     team_counts: Dict[str, int] = defaultdict(int)
+    game_counts: Dict[str, int] = defaultdict(int)
     rescue_count = 0
 
     rejection_counts: Dict[str, int] = defaultdict(int)
@@ -210,6 +215,7 @@ def merge_model_pipelines(
     for pick in pool:
         player = pick.get('player_lookup', '')
         team = pick.get('team_abbr', '')
+        game_id = pick.get('game_id', '')
         is_rescued = bool(pick.get('signal_rescued'))
 
         # --- Player dedup: first occurrence wins ---
@@ -229,6 +235,20 @@ def merge_model_pipelines(
             )
             # Mark player as seen so duplicate entries don't get a second
             # chance via a different model's lower-composite candidate.
+            seen_players.add(player)
+            continue
+
+        # --- Game cap (Session 452) ---
+        # Mar 8: 3 picks from SAS-HOU game, all lost. Team cap (2/team)
+        # didn't help because picks were on different teams in the same game.
+        if game_id and game_counts[game_id] >= max_per_game:
+            _tag_candidate(pick, agreement_info, False, 'game_cap', None)
+            rejection_counts['game_cap'] += 1
+            logger.info(
+                f"Merge game cap: dropping {player} (game {game_id}, "
+                f"#{game_counts[game_id] + 1} pick) "
+                f"composite={pick.get('composite_score', 0):.2f}"
+            )
             seen_players.add(player)
             continue
 
@@ -262,6 +282,8 @@ def merge_model_pipelines(
         selected.append(pick)
         seen_players.add(player)
         team_counts[team] += 1
+        if game_id:
+            game_counts[game_id] += 1
         if is_rescued:
             rescue_count += 1
 

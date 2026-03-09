@@ -50,8 +50,10 @@ from shared.config.model_selection import get_min_confidence
 
 logger = logging.getLogger(__name__)
 
-# Bump whenever scoring formula, filters, or combo weights change
-ALGORITHM_VERSION = 'v451_session451_filters'
+# Bump whenever scoring formula, filters, or combo weights change.
+# Session 452: Imported from pipeline_merger to ensure single source of truth.
+# All picks (aggregator and merger) use the same version string.
+from ml.signals.pipeline_merger import ALGORITHM_VERSION
 
 # Session 441: Max picks per team per game.
 # Prevents correlated exposure from same-game concentration.
@@ -352,8 +354,8 @@ class BestBetsAggregator:
             'solo_game_pick_obs': 0,
             'line_anomaly_extreme_drop': 0,
             'player_under_suppression_obs': 0,
-            'under_low_rsc_obs': 0,
-            'ft_variance_under_obs': 0,
+            'under_low_rsc': 0,        # Session 452: promoted from under_low_rsc_obs
+            'ft_variance_under': 0,     # Session 452: promoted from ft_variance_under_obs
             'team_cap': 0,
         }
 
@@ -1201,31 +1203,33 @@ class BestBetsAggregator:
                 _record_filtered(pred, 'hot_streak_under_obs', pred_edge, len(qualifying), tags)
                 # Observation only — does NOT block
 
-            # Session 451 O1: UNDER low real_sc observation.
-            # 6/7 UNDER losses on Mar 8 had real_sc 1-2. Base signals inflate
+            # Session 452: UNDER low real_sc — PROMOTED to active filter.
+            # Mar 8: 6/7 UNDER losses had real_sc 1-2. Base signals inflate
             # raw signal_count to pass SC >= 3 gate, but real_sc == 1 means
-            # minimal signal quality. Track real_sc < 2 UNDER picks (edge < 7)
-            # for counterfactual — if consistently <50% HR, promote to active.
+            # minimal signal quality. Blocks UNDER picks with real_sc < 2
+            # at edge < 7 (high-edge UNDER bypasses).
             if (pred.get('recommendation') == 'UNDER'
                     and real_sc < 2
                     and real_sc > 0
                     and pred_edge < 7.0):
-                filter_counts['under_low_rsc_obs'] += 1
-                _record_filtered(pred, 'under_low_rsc_obs', pred_edge, len(qualifying), tags)
-                # Observation only — does NOT block
+                filter_counts['under_low_rsc'] += 1
+                _record_filtered(pred, 'under_low_rsc', pred_edge, len(qualifying), tags)
+                if 'under_low_rsc' not in self._runtime_demoted:
+                    continue
 
-            # Session 451 O2: FT variance UNDER observation.
+            # Session 452: FT variance UNDER — PROMOTED to active filter.
             # HIGH_FTA (avg >= 5) + HIGH_CV (>= 0.5) = 47.8% UNDER HR vs
-            # 70.6% for stable high-FTA players (22.8pp gap). FTA avg and CV
-            # are stable player traits — pre-game computable.
+            # 70.6% for stable high-FTA players (22.8pp gap). Mar 8: Booker
+            # 15/15 FT, KAT 8/8 FT, Wemby 9/10 FT all killed UNDER picks.
             fta_avg = pred.get('fta_avg_last_10') or 0
             fta_cv = pred.get('fta_cv_last_10') or 0
             if (pred.get('recommendation') == 'UNDER'
                     and fta_avg >= 5.0
                     and fta_cv >= 0.5):
-                filter_counts['ft_variance_under_obs'] += 1
-                _record_filtered(pred, 'ft_variance_under_obs', pred_edge, len(qualifying), tags)
-                # Observation only — does NOT block
+                filter_counts['ft_variance_under'] += 1
+                _record_filtered(pred, 'ft_variance_under', pred_edge, len(qualifying), tags)
+                if 'ft_variance_under' not in self._runtime_demoted:
+                    continue
 
             scored.append({
                 **pred,
@@ -1440,16 +1444,16 @@ class BestBetsAggregator:
                 f"{filter_counts['player_under_suppression_obs']} UNDER picks on players with "
                 f"< 35% UNDER HR at N >= 20"
             )
-        if filter_counts['under_low_rsc_obs'] > 0:
+        if filter_counts['under_low_rsc'] > 0:
             logger.info(
-                f"UNDER low rsc (observation): tagged "
-                f"{filter_counts['under_low_rsc_obs']} UNDER picks with real_sc < 2 "
+                f"UNDER low rsc (ACTIVE): blocked "
+                f"{filter_counts['under_low_rsc']} UNDER picks with real_sc < 2 "
                 f"(Mar 8: 6/7 UNDER losses had rsc 1-2)"
             )
-        if filter_counts['ft_variance_under_obs'] > 0:
+        if filter_counts['ft_variance_under'] > 0:
             logger.info(
-                f"FT variance UNDER (observation): tagged "
-                f"{filter_counts['ft_variance_under_obs']} UNDER picks on high-FTA + high-CV players "
+                f"FT variance UNDER (ACTIVE): blocked "
+                f"{filter_counts['ft_variance_under']} UNDER picks on high-FTA + high-CV players "
                 f"(47.8% HR vs 70.6% stable, 22.8pp gap)"
             )
         if filter_counts['team_cap'] > 0:

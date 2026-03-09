@@ -138,8 +138,8 @@ class TestAggregatorReturnType:
             'solo_game_pick_obs',
             'line_anomaly_extreme_drop',
             'player_under_suppression_obs',
-            'under_low_rsc_obs',
-            'ft_variance_under_obs',
+            'under_low_rsc',
+            'ft_variance_under',
             'team_cap',
             'unreliable_over_low_mins_obs', 'unreliable_under_flat_trend_obs',
             'b2b_under_block', 'blowout_risk_under_block_obs',
@@ -1888,14 +1888,22 @@ class TestSoloGamePickObservation:
         assert all(p['picks_in_game'] == 2 for p in picks)
 
 
-class TestAlgorithmVersionV442:
-    """Session 442: Algorithm version bump."""
+class TestAlgorithmVersionV452:
+    """Session 452: Algorithm version bump + single source of truth."""
 
-    def test_algorithm_version_v451(self):
-        """ALGORITHM_VERSION should start with 'v451'."""
+    def test_algorithm_version_v452(self):
+        """ALGORITHM_VERSION should start with 'v452'."""
         from ml.signals.aggregator import ALGORITHM_VERSION
-        assert ALGORITHM_VERSION.startswith('v451'), (
-            f"Expected ALGORITHM_VERSION to start with 'v451', got '{ALGORITHM_VERSION}'"
+        assert ALGORITHM_VERSION.startswith('v452'), (
+            f"Expected ALGORITHM_VERSION to start with 'v452', got '{ALGORITHM_VERSION}'"
+        )
+
+    def test_aggregator_and_merger_versions_match(self):
+        """Session 452: aggregator imports from merger — versions must match."""
+        from ml.signals.aggregator import ALGORITHM_VERSION as AGG_V
+        from ml.signals.pipeline_merger import ALGORITHM_VERSION as MERGER_V
+        assert AGG_V == MERGER_V, (
+            f"Version mismatch: aggregator={AGG_V}, merger={MERGER_V}"
         )
 
 
@@ -2093,14 +2101,14 @@ class TestMeanReversionInShadowSignals:
         assert 'mean_reversion_under' in SHADOW_SIGNALS
 
 
-class TestFtVarianceUnderObs:
-    """Session 451: FT variance observation tags high-FTA + high-CV UNDER picks."""
+class TestFtVarianceUnder:
+    """Session 452: FT variance ACTIVE filter blocks high-FTA + high-CV UNDER picks."""
 
     def _make_signals(self, pred, n=5):
         key = f"{pred['player_lookup']}::{pred['game_id']}"
         return {key: [_make_signal_result(f'sig_{i}') for i in range(n)]}
 
-    def test_tags_high_fta_high_cv(self):
+    def test_blocks_high_fta_high_cv(self):
         pred = _make_prediction(
             edge=5.0, recommendation='UNDER', trend_slope=2.0,
         )
@@ -2108,10 +2116,10 @@ class TestFtVarianceUnderObs:
         pred['fta_cv_last_10'] = 0.55
         agg = BestBetsAggregator()
         picks, summary = agg.aggregate([pred], self._make_signals(pred))
-        assert summary['rejected']['ft_variance_under_obs'] == 1
-        assert len(picks) == 1  # Observation — still passes
+        assert summary['rejected']['ft_variance_under'] == 1
+        assert len(picks) == 0  # Session 452: now BLOCKED
 
-    def test_does_not_tag_low_fta(self):
+    def test_does_not_block_low_fta(self):
         pred = _make_prediction(
             edge=5.0, recommendation='UNDER', trend_slope=2.0,
         )
@@ -2119,9 +2127,9 @@ class TestFtVarianceUnderObs:
         pred['fta_cv_last_10'] = 0.55
         agg = BestBetsAggregator()
         picks, summary = agg.aggregate([pred], self._make_signals(pred))
-        assert summary['rejected']['ft_variance_under_obs'] == 0
+        assert summary['rejected']['ft_variance_under'] == 0
 
-    def test_does_not_tag_low_cv(self):
+    def test_does_not_block_low_cv(self):
         pred = _make_prediction(
             edge=5.0, recommendation='UNDER', trend_slope=2.0,
         )
@@ -2129,4 +2137,74 @@ class TestFtVarianceUnderObs:
         pred['fta_cv_last_10'] = 0.3  # Below 0.5 threshold
         agg = BestBetsAggregator()
         picks, summary = agg.aggregate([pred], self._make_signals(pred))
-        assert summary['rejected']['ft_variance_under_obs'] == 0
+        assert summary['rejected']['ft_variance_under'] == 0
+
+
+class TestUnderLowRsc:
+    """Session 452: UNDER low real_sc ACTIVE filter blocks real_sc < 2 UNDER picks."""
+
+    def _make_signals_with_real_sc(self, pred, real_count=1):
+        """Build signal results that pass SC >= 3 gate but with controlled real_sc.
+
+        Uses BASE_SIGNALS (model_health, starter_under, blowout_risk_under)
+        to pad signal_count to 3+, then adds `real_count` non-base signals
+        for real_sc control.
+        """
+        key = f"{pred['player_lookup']}::{pred['game_id']}"
+        # Base signals don't count toward real_sc
+        base = [
+            _make_signal_result('model_health'),
+            _make_signal_result('starter_under'),
+            _make_signal_result('blowout_risk_under'),
+        ]
+        # Real signals count toward real_sc
+        real = [_make_signal_result(f'home_under_{i}') for i in range(real_count)]
+        return {key: base + real}
+
+    def test_blocks_under_rsc_1_low_edge(self):
+        """UNDER with real_sc=1, edge < 7 should be BLOCKED."""
+        pred = _make_prediction(
+            edge=5.0, recommendation='UNDER', trend_slope=2.0,
+        )
+        agg = BestBetsAggregator()
+        # 3 base + 1 real = signal_count 4 (passes SC gate), real_sc=1
+        picks, summary = agg.aggregate(
+            [pred], self._make_signals_with_real_sc(pred, real_count=1),
+        )
+        assert summary['rejected']['under_low_rsc'] == 1
+        assert len(picks) == 0  # Blocked
+
+    def test_passes_under_rsc_2(self):
+        """UNDER with real_sc=2 should pass through."""
+        pred = _make_prediction(
+            edge=5.0, recommendation='UNDER', trend_slope=2.0,
+        )
+        agg = BestBetsAggregator()
+        # 3 base + 2 real = signal_count 5, real_sc=2
+        picks, summary = agg.aggregate(
+            [pred], self._make_signals_with_real_sc(pred, real_count=2),
+        )
+        assert summary['rejected']['under_low_rsc'] == 0
+        assert len(picks) == 1
+
+    def test_passes_under_rsc_1_high_edge(self):
+        """UNDER with real_sc=1 but edge >= 7 should bypass filter."""
+        pred = _make_prediction(
+            edge=8.0, recommendation='UNDER', trend_slope=2.0,
+        )
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate(
+            [pred], self._make_signals_with_real_sc(pred, real_count=1),
+        )
+        assert summary['rejected']['under_low_rsc'] == 0
+
+    def test_over_not_affected(self):
+        """OVER picks should never be affected by under_low_rsc filter."""
+        pred = _make_prediction(
+            edge=5.0, recommendation='OVER', trend_slope=2.0,
+        )
+        agg = BestBetsAggregator()
+        picks, summary = agg.aggregate(
+            [pred], self._make_signals_with_real_sc(pred, real_count=1),
+        )
+        assert summary['rejected']['under_low_rsc'] == 0

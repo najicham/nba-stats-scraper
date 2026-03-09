@@ -32,11 +32,10 @@ from data_processors.publishing.base_exporter import BaseExporter
 from ml.signals.aggregator import BestBetsAggregator
 from ml.signals.model_health import BREAKEVEN_HR
 from ml.signals.pick_angle_builder import build_pick_angles
-from ml.signals.aggregator import ALGORITHM_VERSION
 from ml.signals.ultra_bets import compute_ultra_live_hrs, check_ultra_over_gate
 from data_processors.publishing.signal_subset_materializer import SignalSubsetMaterializer
 from ml.signals.per_model_pipeline import run_all_model_pipelines
-from ml.signals.pipeline_merger import merge_model_pipelines, ALGORITHM_VERSION as MERGER_ALGORITHM_VERSION
+from ml.signals.pipeline_merger import merge_model_pipelines, ALGORITHM_VERSION
 from shared.config.model_selection import get_best_bets_model_id
 
 logger = logging.getLogger(__name__)
@@ -368,7 +367,7 @@ class SignalBestBetsExporter(BaseExporter):
                 'quantile_under_consensus': pick.get('quantile_consensus_under', False),
                 'qualifying_subsets': pick.get('qualifying_subsets', []),
                 'qualifying_subset_count': pick.get('qualifying_subset_count', 0),
-                'algorithm_version': pick.get('algorithm_version', MERGER_ALGORITHM_VERSION),
+                'algorithm_version': pick.get('algorithm_version', ALGORITHM_VERSION),
                 'system_id': pick.get('system_id'),
                 # Signal rescue (Session 398)
                 'signal_rescued': pick.get('signal_rescued', False),
@@ -403,8 +402,11 @@ class SignalBestBetsExporter(BaseExporter):
 
             # Ultra data: always include for BQ write.
             # Public JSON visibility gated by show_ultra (stripped in export()).
-            pick_dict['ultra_tier'] = pick.get('ultra_tier', False)
-            pick_dict['ultra_criteria'] = pick.get('ultra_criteria', [])
+            # Session 452: Derive ultra_tier from ultra_criteria presence to prevent
+            # stale ultra_tier=True with empty criteria (76% of ultra picks were hollow).
+            ultra_criteria = pick.get('ultra_criteria', [])
+            pick_dict['ultra_tier'] = bool(ultra_criteria)
+            pick_dict['ultra_criteria'] = ultra_criteria
             pick_dict['_show_ultra_public'] = show_ultra
 
             picks_json.append(pick_dict)
@@ -729,8 +731,8 @@ class SignalBestBetsExporter(BaseExporter):
                 # Signal rescue (Session 398)
                 'signal_rescued': pick.get('signal_rescued', False),
                 'rescue_signal': pick.get('rescue_signal'),
-                # Ultra Bets (Session 326)
-                'ultra_tier': pick.get('ultra_tier', False),
+                # Ultra Bets (Session 326, Session 452: derive from criteria)
+                'ultra_tier': bool(pick.get('ultra_criteria')),
                 'ultra_criteria': json.dumps(pick.get('ultra_criteria', []), default=str),
                 # Session 414/422b: Additional pick context for analysis
                 'under_signal_quality': pick.get('under_signal_quality'),
@@ -1131,7 +1133,7 @@ class SignalBestBetsExporter(BaseExporter):
                     'pipeline_agreement_count': candidate.get('pipeline_agreement_count', 0),
                     'pipeline_agreement_models': candidate.get('pipeline_agreement_models', []),
                     'direction_conflict_count': candidate.get('direction_conflict_count', 0),
-                    'algorithm_version': candidate.get('algorithm_version', MERGER_ALGORITHM_VERSION),
+                    'algorithm_version': candidate.get('algorithm_version', ALGORITHM_VERSION),
                     'created_at': datetime.now(timezone.utc).isoformat(),
                 })
         return all_candidates
