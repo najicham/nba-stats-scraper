@@ -28,6 +28,9 @@ from .mlb_batter_props_processor import MlbBatterPropsProcessor
 from .mlb_events_processor import MlbEventsProcessor
 from .mlb_game_lines_processor import MlbGameLinesProcessor
 from .mlb_statcast_daily_processor import MlbStatcastDailyProcessor
+from .mlb_umpire_assignments_processor import MlbUmpireAssignmentsProcessor
+from .mlb_umpire_stats_processor import MlbUmpireStatsProcessor
+from .mlb_weather_processor import MlbWeatherProcessor
 
 __all__ = [
     'MlbPitcherStatsProcessor',
@@ -41,4 +44,7 @@ __all__ = [
     'MlbEventsProcessor',
     'MlbGameLinesProcessor',
     'MlbStatcastDailyProcessor',
+    'MlbUmpireAssignmentsProcessor',
+    'MlbUmpireStatsProcessor',
+    'MlbWeatherProcessor',
 ]

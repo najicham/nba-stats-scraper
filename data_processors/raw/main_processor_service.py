@@ -116,6 +116,9 @@ from data_processors.raw.mlb import (
     MlbBatterPropsProcessor,
     MlbEventsProcessor,
     MlbGameLinesProcessor,
+    MlbUmpireAssignmentsProcessor,
+    MlbUmpireStatsProcessor,
+    MlbWeatherProcessor,
 )
 
 
@@ -194,6 +197,9 @@ PROCESSOR_REGISTRY = {
     'mlb-odds-api/batter-props': MlbBatterPropsProcessor,
     'mlb-odds-api/events': MlbEventsProcessor,
     'mlb-odds-api/game-lines': MlbGameLinesProcessor,
+    'mlb-stats-api/umpire-assignments': MlbUmpireAssignmentsProcessor,
+    'mlb-external/umpire-stats': MlbUmpireStatsProcessor,
+    'mlb-external/weather': MlbWeatherProcessor,
 }
 
 # Paths that are intentionally not processed (event IDs, metadata, etc.)
