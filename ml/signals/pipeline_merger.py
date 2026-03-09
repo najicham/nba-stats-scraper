@@ -26,7 +26,7 @@ MAX_PICKS_PER_GAME = 3  # Session 452: Mar 8 had 3 losses from SAS-HOU game
 RESCUE_CAP_PCT = 0.40
 # Session 452: Single source of truth for algorithm version.
 # aggregator.py imports this constant — bump here for all changes.
-ALGORITHM_VERSION = 'v452_mar8_game_cap_ft_rsc'
+ALGORITHM_VERSION = 'v453_slate_observations'
 
 # Rescue signal priority weights — mirrors aggregator.RESCUE_SIGNAL_PRIORITY.
 # When rescue cap trims, drop lowest-priority rescues first (ascending sort).
@@ -302,7 +302,12 @@ def merge_model_pipelines(
                 rejection_counts['volume_cap'] += 1
                 seen_players.add(player)
 
-    # ---- 5. Build summary ----
+    # ---- 5. Tag slate-level observations ----
+    slate_obs = _compute_slate_observations(selected, game_counts)
+    for pick in selected:
+        pick['slate_observation_tags'] = slate_obs['tags']
+
+    # ---- 6. Build summary ----
     summary = _build_summary(
         total_candidates=total_candidates,
         unique_players=unique_players,
@@ -311,6 +316,7 @@ def merge_model_pipelines(
         selected=selected,
         rejection_counts=dict(rejection_counts),
         agreement_info=agreement_info,
+        slate_observations=slate_obs,
     )
 
     logger.info(
@@ -320,6 +326,101 @@ def merge_model_pipelines(
     )
 
     return selected, summary
+
+
+# ------------------------------------------------------------------
+# Slate-level observations (Session 453)
+# ------------------------------------------------------------------
+
+# Thresholds for slate observations — all observation-only (no blocking).
+DIRECTIONAL_LEAN_THRESHOLD = 0.80  # >80% same direction = observation
+SAME_GAME_SAME_DIR_MIN = 2         # 2+ picks from same game in same direction
+CONCENTRATED_GAME_THRESHOLD = 3    # 3+ picks from any single game
+
+
+def _compute_slate_observations(
+    selected: List[Dict[str, Any]],
+    game_counts: Dict[str, int],
+) -> Dict[str, Any]:
+    """Compute slate-level structural observations on the merged slate.
+
+    These are pure observation tags — they do NOT block picks. They flag
+    slate-level risks that per-pick filters can't detect:
+    - Directional lean (>80% OVER or UNDER)
+    - Same-game same-direction concentration
+    - Heavy concentration in a single game
+
+    Returns:
+        Dict with 'tags' (list of observation strings) and detail fields.
+    """
+    if not selected:
+        return {'tags': [], 'detail': {}}
+
+    tags: List[str] = []
+    detail: Dict[str, Any] = {}
+
+    total = len(selected)
+
+    # --- Directional lean ---
+    over_count = sum(1 for p in selected if p.get('recommendation') == 'OVER')
+    under_count = total - over_count
+    over_pct = over_count / total if total else 0
+    under_pct = under_count / total if total else 0
+
+    if over_pct >= DIRECTIONAL_LEAN_THRESHOLD and total >= 5:
+        tags.append('slate_heavy_over_lean')
+        detail['over_pct'] = round(over_pct * 100, 1)
+        logger.info(
+            f"Slate obs: heavy OVER lean — {over_count}/{total} "
+            f"({detail['over_pct']}%) picks are OVER"
+        )
+    elif under_pct >= DIRECTIONAL_LEAN_THRESHOLD and total >= 5:
+        tags.append('slate_heavy_under_lean')
+        detail['under_pct'] = round(under_pct * 100, 1)
+        logger.info(
+            f"Slate obs: heavy UNDER lean — {under_count}/{total} "
+            f"({detail['under_pct']}%) picks are UNDER"
+        )
+
+    # --- Same-game same-direction concentration ---
+    game_direction: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    for p in selected:
+        gid = p.get('game_id', '')
+        direction = p.get('recommendation', '')
+        if gid and direction:
+            game_direction[gid][direction] += 1
+
+    for gid, dirs in game_direction.items():
+        for direction, count in dirs.items():
+            if count >= SAME_GAME_SAME_DIR_MIN:
+                tags.append('slate_same_game_same_dir')
+                detail.setdefault('same_game_same_dir', []).append({
+                    'game_id': gid,
+                    'direction': direction,
+                    'count': count,
+                })
+                logger.info(
+                    f"Slate obs: {count} {direction} picks from game {gid}"
+                )
+
+    # --- Heavy game concentration ---
+    for gid, count in game_counts.items():
+        if count >= CONCENTRATED_GAME_THRESHOLD:
+            tags.append('slate_game_concentration')
+            detail.setdefault('concentrated_games', []).append({
+                'game_id': gid,
+                'count': count,
+            })
+            logger.info(
+                f"Slate obs: {count} picks from game {gid} (max={MAX_PICKS_PER_GAME})"
+            )
+
+    if tags:
+        logger.info(f"Slate observations: {tags}")
+    else:
+        logger.info("Slate observations: none")
+
+    return {'tags': tags, 'detail': detail}
 
 
 # ------------------------------------------------------------------
@@ -334,6 +435,7 @@ def _build_summary(
     selected: List[Dict[str, Any]],
     rejection_counts: Dict[str, int],
     agreement_info: Dict[str, Dict[str, Any]],
+    slate_observations: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Build merge_summary dict with statistics for logging and audit.
 
@@ -342,7 +444,7 @@ def _build_summary(
         models_contributing, per_model_counts, selected_count,
         rejection_counts, direction_over, direction_under,
         avg_agreement_selected, avg_agreement_rejected,
-        algorithm_version.
+        algorithm_version, slate_observations.
     """
     direction_over = sum(
         1 for p in selected if p.get('recommendation') == 'OVER'
@@ -385,4 +487,5 @@ def _build_summary(
         'avg_agreement_selected': round(avg_agreement_selected, 2),
         'avg_agreement_rejected': round(avg_agreement_rejected, 2),
         'algorithm_version': ALGORITHM_VERSION,
+        'slate_observations': slate_observations or {'tags': [], 'detail': {}},
     }

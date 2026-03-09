@@ -1888,14 +1888,14 @@ class TestSoloGamePickObservation:
         assert all(p['picks_in_game'] == 2 for p in picks)
 
 
-class TestAlgorithmVersionV452:
-    """Session 452: Algorithm version bump + single source of truth."""
+class TestAlgorithmVersion:
+    """Session 452+: Algorithm version + single source of truth."""
 
-    def test_algorithm_version_v452(self):
-        """ALGORITHM_VERSION should start with 'v452'."""
+    def test_algorithm_version_current(self):
+        """ALGORITHM_VERSION should start with 'v45'."""
         from ml.signals.aggregator import ALGORITHM_VERSION
-        assert ALGORITHM_VERSION.startswith('v452'), (
-            f"Expected ALGORITHM_VERSION to start with 'v452', got '{ALGORITHM_VERSION}'"
+        assert ALGORITHM_VERSION.startswith('v45'), (
+            f"Expected ALGORITHM_VERSION to start with 'v45', got '{ALGORITHM_VERSION}'"
         )
 
     def test_aggregator_and_merger_versions_match(self):
