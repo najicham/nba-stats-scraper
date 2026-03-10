@@ -318,4 +318,9 @@ def build_default_registry() -> SignalRegistry:
     from ml.signals.star_line_under import StarLineUnderSignal
     registry.register(StarLineUnderSignal())
 
+    # Session 463: Sharp book disaggregation experiment
+    # sharp_consensus_under: 69.3% HR (N=205), 5-season consistent. Line dropped + high book std
+    from ml.signals.sharp_consensus_under import SharpConsensusUnderSignal
+    registry.register(SharpConsensusUnderSignal())
+
     return registry

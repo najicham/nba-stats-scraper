@@ -113,6 +113,7 @@ SHADOW_SIGNALS = frozenset({
     'ft_anomaly_under',            # 63.3% HR (N=278) 5-season — FTA CV >= 0.5, FTA >= 5/game
     'slow_pace_under',             # 56.6% HR (N=777) 5-season — opponent pace <= 99
     'star_line_under',             # 57.6% HR (N=1,018) 5-season — line >= 25, edge 3-7
+    'sharp_consensus_under',       # 69.3% HR (N=205) 5-season — line dropped + high book std
 })
 
 # Session 400: UNDER signal quality weights for signal-first ranking.
@@ -372,6 +373,8 @@ class BestBetsAggregator:
             'over_line_rose_heavy_obs': 0,
             # Session 463: FTA anomaly OVER block — high FTA volatility on OVER
             'ft_anomaly_over_block': 0,
+            # Session 463: Counter-market UNDER — line rose + high book disagreement
+            'counter_market_under': 0,
         }
 
         # Session 393: Counterfactual tracking — log filtered-out picks so we
@@ -1292,6 +1295,20 @@ class BestBetsAggregator:
                 if 'ft_anomaly_over_block' not in self._runtime_demoted:
                     continue
 
+            # Session 463: Counter-market UNDER block — ACTIVE filter. Block UNDER when
+            # line rose >= 0.5 AND cross-book std >= 1.0. Model fights both market
+            # direction and smart money — consistently loses.
+            # 5-season cross-validated: blocked picks = 43.2% HR (N=447).
+            _book_std = pred.get('multi_book_line_std') or 0
+            if (pred.get('recommendation') == 'UNDER'
+                    and bp_move is not None
+                    and bp_move >= 0.5
+                    and _book_std >= 1.0):
+                filter_counts['counter_market_under'] += 1
+                _record_filtered(pred, 'counter_market_under', pred_edge, len(qualifying), tags)
+                if 'counter_market_under' not in self._runtime_demoted:
+                    continue
+
             scored.append({
                 **pred,
                 'trend_slope': pred.get('trend_slope') or 0.0,
@@ -1522,6 +1539,12 @@ class BestBetsAggregator:
                 f"FTA anomaly OVER block: blocked "
                 f"{filter_counts['ft_anomaly_over_block']} OVER picks with high FTA CV "
                 f"(fta_avg>=5, cv>=0.6, backtest 37.5% HR)"
+            )
+        if filter_counts['counter_market_under'] > 0:
+            logger.info(
+                f"Counter-market UNDER block: blocked "
+                f"{filter_counts['counter_market_under']} UNDER picks fighting market direction "
+                f"(line rose 0.5+ with book std 1.0+, backtest 43.2% HR)"
             )
         if filter_counts['team_cap'] > 0:
             logger.info(

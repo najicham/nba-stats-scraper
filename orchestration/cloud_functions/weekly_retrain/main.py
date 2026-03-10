@@ -405,7 +405,7 @@ def register_model(
     WHEN MATCHED THEN
       UPDATE SET
         gcs_path = '{gcs_path}',
-        model_sha256 = '{sha256}',
+        sha256_hash = '{sha256}',
         training_start_date = '{train_start}',
         training_end_date = '{train_end}',
         training_samples = {training_samples},
@@ -416,7 +416,7 @@ def register_model(
         evaluation_n_edge_3plus = {n_e3},
         notes = 'Auto-retrained by weekly-retrain CF'
     WHEN NOT MATCHED THEN
-      INSERT (model_id, model_version, model_type, gcs_path, model_sha256,
+      INSERT (model_id, model_version, model_type, gcs_path, sha256_hash,
          feature_count, feature_set, model_family, loss_function, quantile_alpha,
          training_start_date, training_end_date, training_samples,
          evaluation_mae, evaluation_hit_rate,

@@ -85,6 +85,7 @@ SIGNAL_ANGLE_MAP = {
     'ft_anomaly_under': "FT anomaly regression: FTA volatile (CV >= 0.5) with 5+ FTA/game — UNDER (63.3% HR)",
     'slow_pace_under': "Slow opponent pace (<= 99): fewer possessions favors UNDER (56.6% HR)",
     'star_line_under': "Star line UNDER: market overprices stars (line 25+), edge 3-7 sweet spot (57.6% HR)",
+    'sharp_consensus_under': "Sharp consensus UNDER: line dropped + books disagree — smart money sees UNDER (69.3% HR)",
 }
 
 # Warning tag → warning angle
