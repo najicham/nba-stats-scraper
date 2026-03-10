@@ -624,7 +624,7 @@ class PlayerShotZoneAnalysisProcessor(
         SELECT MIN(game_date) as season_start
         FROM `{self.project_id}.nba_reference.nba_schedule`
         WHERE game_date >= '{season_year}-10-01'
-          AND game_date <= '{season_year}-11-30'
+          AND game_date <= '{season_year}-11-30'  -- <= is correct: finding season start within Oct-Nov range
         """
         season_start_result = self.bq_client.query(season_start_query).result()
         row = next(season_start_result, None)
@@ -673,7 +673,7 @@ class PlayerShotZoneAnalysisProcessor(
                 ) as game_rank
                 
             FROM `{self.project_id}.nba_analytics.player_game_summary`
-            WHERE game_date <= '{analysis_date}'
+            WHERE game_date < '{analysis_date}'  -- FIX: Changed <= to < (must not include analysis_date games)
               AND game_date >= '{season_start_date}'
               AND is_active = TRUE
               AND (minutes_played > 0 OR fg_attempts > 0)  -- Fallback for historical data where minutes_played is NULL
@@ -717,7 +717,7 @@ class PlayerShotZoneAnalysisProcessor(
             query = f"""
             SELECT data_hash
             FROM `{self.project_id}.nba_analytics.player_game_summary`
-            WHERE game_date <= '{self.opts['analysis_date']}'
+            WHERE game_date < '{self.opts['analysis_date']}'  -- FIX: Changed <= to < for consistency
               AND data_hash IS NOT NULL
             ORDER BY processed_at DESC
             LIMIT 1
@@ -753,7 +753,7 @@ class PlayerShotZoneAnalysisProcessor(
             player_lookup,
             universal_player_id
         FROM `{self.project_id}.nba_analytics.player_game_summary`
-        WHERE game_date <= '{analysis_date}'
+        WHERE game_date < '{analysis_date}'  -- FIX: Changed <= to < (must not include analysis_date games)
           AND game_date >= DATE_SUB('{analysis_date}', INTERVAL 30 DAY)
           AND is_active = TRUE
         """

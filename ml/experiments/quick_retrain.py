@@ -202,7 +202,7 @@ def parse_args():
     parser.add_argument('--eval-end', help='Eval end (YYYY-MM-DD)')
 
     # Relative dates (defaults)
-    parser.add_argument('--train-days', type=int, default=60, help='Days of training (default: 60)')
+    parser.add_argument('--train-days', type=int, default=56, help='Days of training (default: 56, walk-forward validated Session 455)')
     parser.add_argument('--eval-days', type=int, default=7, help='Days of eval (default: 7)')
 
     # Feature set selection

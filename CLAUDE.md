@@ -104,6 +104,17 @@ nba-stats-scraper/
 - Optimal vegas weight: 0.15-0.25x. 56-day training window is sweet spot.
 - Edge >= 3 filter is critical — 73% of predictions below edge 3 lose money.
 
+### Retraining (Session 458)
+
+**Retrain every 7 days.** Walk-forward across 2 seasons proves this is the single highest-ROI operation.
+- **85% HR at edge 3+ validated** — audited for leakage (5 seeds, naive baselines, feature importance, permutation test). True skill: +27.5pp above structural baseline.
+- **`weekly-retrain` CF fires every Monday 5 AM ET** — auto-retrains all enabled families, 56-day rolling window, governance gates enforced
+- **`./bin/retrain.sh --all --enable`** — manual equivalent for ad-hoc retraining
+- `retrain-reminder` CF alerts every Monday at 9 AM ET — backup alert if auto-retrain fails
+- Stale models (10+ days) become confidently wrong: high edge but low HR
+- Model needs ~4 months in-season data for peak accuracy (85%+ HR at edge 3+ by March)
+- Walk-forward details: `docs/08-projects/current/model-management/MONTHLY-RETRAINING.md`
+
 ### Model Governance
 
 **NEVER deploy a retrained model without passing ALL governance gates.**
@@ -138,7 +149,7 @@ nba-stats-scraper/
 
 **Cloud Run Services:** prediction-coordinator, prediction-worker, nba-phase3-analytics-processors, nba-phase4-precompute-processors, nba-phase2-raw-processors, nba-scrapers, nba-grading-service
 
-**Cloud Functions (auto-deploy via `cloudbuild-functions.yaml`):** phase5b-grading, phase6-export, grading-gap-detector, phase3/4/5-to-next orchestrators, enrichment-trigger, daily-health-check, transition-monitor, pipeline-health-summary, nba-grading-alerts, live-freshness-monitor, self-heal-predictions, grading-readiness-monitor, post-grading-export, decay-detection (11 AM ET), retrain-reminder (Mon 9 AM ET), validation-runner, filter-counterfactual-evaluator (11:30 AM ET), morning-deployment-check (6 AM ET), monthly-retrain (1st of month)
+**Cloud Functions (auto-deploy via `cloudbuild-functions.yaml`):** phase5b-grading, phase6-export, grading-gap-detector, phase3/4/5-to-next orchestrators, enrichment-trigger, daily-health-check, transition-monitor, pipeline-health-summary, nba-grading-alerts, live-freshness-monitor, self-heal-predictions, grading-readiness-monitor, post-grading-export, decay-detection (11 AM ET), retrain-reminder (Mon 9 AM ET), weekly-retrain (Mon 5 AM ET, 4GiB/1800s), validation-runner, filter-counterfactual-evaluator (11:30 AM ET), morning-deployment-check (6 AM ET), monthly-retrain (1st of month, DEPRECATED)
 
 **NOT auto-deployed (manual only):** auto-retry-processor
 

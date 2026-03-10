@@ -278,11 +278,11 @@ class TeamDefenseZoneAnalysisProcessor(
                     COUNT(*) as game_count,
                     MAX(processed_at) as last_updated
                 FROM `{self.project_id}.{table_name}`
-                WHERE game_date <= '{analysis_date}'
+                WHERE game_date < '{analysis_date}'  -- FIX: Changed <= to < (must not include analysis_date games)
                   AND game_date >= '{self.season_start_date}'
                 GROUP BY {entity_field}
             )
-            SELECT 
+            SELECT
                 COUNT(*) as teams_with_min_games,
                 SUM(game_count) as total_games,
                 MAX(last_updated) as last_updated,
@@ -426,11 +426,11 @@ class TeamDefenseZoneAnalysisProcessor(
                 ORDER BY game_date DESC
               ) as game_rank
             FROM `{self.project_id}.nba_analytics.team_defense_game_summary`
-            WHERE game_date <= '{self.opts['analysis_date']}'
+            WHERE game_date < '{self.opts['analysis_date']}'  -- FIX: Changed <= to < (must not include analysis_date games)
               AND game_date >= '{self.season_start_date}'
         )
-        SELECT * 
-        FROM ranked_games 
+        SELECT *
+        FROM ranked_games
         WHERE game_rank <= {self.min_games_required}
         ORDER BY defending_team_abbr, game_date DESC
         """
@@ -541,7 +541,7 @@ class TeamDefenseZoneAnalysisProcessor(
             query = f"""
             SELECT data_hash
             FROM `{self.project_id}.nba_analytics.team_defense_game_summary`
-            WHERE game_date <= '{self.opts['analysis_date']}'
+            WHERE game_date < '{self.opts['analysis_date']}'  -- FIX: Changed <= to < for consistency
               AND game_date >= '{self.season_start_date}'
               AND data_hash IS NOT NULL
             ORDER BY processed_at DESC
@@ -1312,7 +1312,7 @@ class TeamDefenseZoneAnalysisProcessor(
             SELECT COUNT(*) as game_count
             FROM `{self.project_id}.nba_analytics.team_defense_game_summary`
             WHERE defending_team_abbr = '{team_abbr}'
-              AND game_date <= '{self.opts['analysis_date']}'
+              AND game_date < '{self.opts['analysis_date']}'  -- FIX: Changed <= to < (must not include analysis_date games)
               AND game_date >= '{self.season_start_date}'
             """
             

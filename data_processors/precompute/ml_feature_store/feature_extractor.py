@@ -183,7 +183,7 @@ class FeatureExtractor:
                         DAY
                     ) AS days_since_last
                 FROM `{self.project_id}.nba_analytics.player_game_summary`
-                WHERE game_date <= '{game_date}'
+                WHERE game_date <= '{game_date}'  -- <= is correct: LAG() needs target date in window to compute days_rest
             )
             SELECT
                 pgs.player_lookup,
@@ -1556,7 +1556,7 @@ class FeatureExtractor:
                     ) as rn
                 FROM `{self.project_id}.nba_raw.odds_api_player_points_props`
                 WHERE game_date >= DATE_SUB('{game_date}', INTERVAL 14 DAY)
-                  AND game_date <= '{game_date}'
+                  AND game_date <= '{game_date}'  -- <= is correct: pre-game odds data, not game results
                   AND points_line IS NOT NULL
                   AND points_line > 0
             )

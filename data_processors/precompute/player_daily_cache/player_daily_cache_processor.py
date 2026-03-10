@@ -436,7 +436,7 @@ class PlayerDailyCacheProcessor(
             WHERE game_date < '{analysis_date.isoformat()}'  -- FIX: Changed <= to < (cache should only include games BEFORE analysis_date)
               AND season_year = {season_year}
               AND is_active = TRUE
-              AND is_dnp = FALSE  -- Session 2026-02-04: Exclude DNP players from cache (was causing 32.5% pollution)
+              AND (is_dnp IS NULL OR is_dnp = FALSE)  -- Session 2026-02-04: Exclude DNP players. NULL = pre-is_dnp era records (not DNP).
               AND (minutes_played > 0 OR points > 0)  -- Fallback for historical data with NULL minutes
         )
         SELECT *
@@ -682,14 +682,14 @@ class PlayerDailyCacheProcessor(
             query = f"""
             (SELECT 'player_game_summary' as source, data_hash
              FROM `{self.project_id}.nba_analytics.player_game_summary`
-             WHERE game_date <= '{analysis_date}' AND data_hash IS NOT NULL
+             WHERE game_date < '{analysis_date}' AND data_hash IS NOT NULL  -- FIX: Changed <= to < for consistency
              ORDER BY processed_at DESC LIMIT 1)
 
             UNION ALL
 
             (SELECT 'team_offense_game_summary' as source, data_hash
              FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
-             WHERE game_date <= '{analysis_date}' AND data_hash IS NOT NULL
+             WHERE game_date < '{analysis_date}' AND data_hash IS NOT NULL  -- FIX: Changed <= to < for consistency
              ORDER BY processed_at DESC LIMIT 1)
 
             UNION ALL

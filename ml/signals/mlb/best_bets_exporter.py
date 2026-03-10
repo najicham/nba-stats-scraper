@@ -1,35 +1,35 @@
 """MLB Signal Best Bets Exporter — regressor-based pipeline.
 
-Pipeline (v6 season-replay validated — Session 444):
+Pipeline (V3 FINAL — Session 456, vig-adjusted cross-season validated):
   1. Load predictions for game_date
   1b. Overconfidence cap: edge > MAX_EDGE (2.0) blocked
   1c. Probability cap: p_over > MAX_PROB_OVER (0.85) blocked (relaxed for regressor)
   2. Apply direction filter (OVER + optional UNDER via env var)
   3. Apply negative filters (bullpen, il_return, pitch_count, insufficient_data,
      pitcher_blacklist, whole_line_over)
-  4. Apply edge floor (DEFAULT_EDGE_FLOOR = 0.75 K) — with signal rescue
+  4. Apply edge floor:
+     - Home OVER: 0.75 K (with signal rescue)
+     - Away OVER: 1.25 K (no rescue — 51% HR cross-season)
   5. Evaluate all active + shadow signals
+     - long_rest_over, k_trending_over → tracking-only (excluded from real_signal_count)
   6. Gate: signal_count >= 2 (OVER) or >= 3 (UNDER, higher bar)
   7. Rank: OVER by pure edge (composite scoring fails cross-season validation)
-  8. Ultra tier: tag picks meeting all 5 criteria (home + proj + half-line + edge 1.1+ + not-blacklisted)
-  9. Ultra overlay: ultra picks outside top-3 still published at 2u
+  8. Ultra tier: home + proj agrees + edge >= 0.5 + not rescued
+  9. Ultra overlay: ultra picks outside top-5 still published at 2u
  10. Build pick angles (human-readable reasoning)
  11. Write to mlb_predictions.signal_best_bets_picks
  12. Write filter audit to mlb_predictions.best_bets_filter_audit
 
-Session 443 changes (11-agent cross-season validation):
-  - Pitcher blacklist expanded 10 → 18 (validated bad pitchers)
-  - Whole-number line filter added (49% HR vs 58.6% half-lines, p<0.001)
-  - bad_opponent/bad_venue demoted to observation (cross-season r=-0.29)
-  - DOW filter removed (confirmed noise)
-  - Pure edge ranking confirmed optimal (composite scoring fails cross-season)
+V3 FINAL config (120d/14d retrain, 4-season cross-validation):
+  61.5% HR, +377u, 10.2% ROI across 2022-2025 (vig-adjusted).
 
-Session 444 changes (full-season replay Apr-Sep 2025):
-  - Pitcher blacklist expanded 18 → 23 (5 new 0% or <40% HR pitchers)
-  - swstr_surge removed from rescue signals (54.9% HR, drags all combos to 51-55%)
-  - 5 dead features removed from training (36 features, was 40)
-  - Ultra tier: edge >= 1.1 + home + projection agrees + half-line (81.4% HR, N=70)
-  - Replay validated: 63.4% BB HR, +170u, 13 retrains, zero losing months
+Session 455 changes (vig-adjusted P&L, away filters):
+  - Away edge floor 1.25 K (home remains 0.75 K)
+  - Away rescued picks blocked (51% HR cross-season)
+  - MAX_PICKS_PER_DAY raised 3 → 5 (rank 5 still profitable: 58.4%/+32u)
+  - long_rest_over → tracking-only (55.4% HR, -36u cross-season)
+  - k_trending_over → tracking-only (55.6% HR, -18u cross-season)
+  - Ultra redesigned: edge 0.5+ (was 1.1), no half-line req, rescued excluded
 """
 
 import logging
@@ -49,6 +49,13 @@ logger = logging.getLogger(__name__)
 # Regressor sweet spot at 0.75 K — walk-forward validated
 DEFAULT_EDGE_FLOOR = float(os.environ.get('MLB_EDGE_FLOOR', '0.75'))
 
+# Away pitcher edge floor — higher bar for away OVER pitchers
+# Cross-season: away 54.1% HR vs home 64.2%. Edge 1.25+ needed for profitability.
+AWAY_EDGE_FLOOR = float(os.environ.get('MLB_AWAY_EDGE_FLOOR', '1.25'))
+
+# Block rescued picks for away pitchers (51% HR cross-season — coin flip)
+BLOCK_AWAY_RESCUE = os.environ.get('MLB_BLOCK_AWAY_RESCUE', 'true').lower() == 'true'
+
 # UNDER direction control (env var override: MLB_UNDER_ENABLED)
 # UNDER is unprofitable without signal filtering (47-49% HR walk-forward)
 # Only surface UNDER with strong signal backing
@@ -65,8 +72,8 @@ MAX_EDGE = float(os.environ.get('MLB_MAX_EDGE', '2.0'))
 MAX_PROB_OVER = float(os.environ.get('MLB_MAX_PROB_OVER', '0.85'))
 
 # Daily pick limit — truncate ranked picks to this count
-# Walk-forward (Session 438b): Top-3 at prob 0.60-0.70 = 63.1% HR, +20.4% ROI, zero losing months
-MAX_PICKS_PER_DAY = int(os.environ.get('MLB_MAX_PICKS_PER_DAY', '3'))
+# V3 FINAL: Rank 5 still profitable (58.4%/+32u cross-season)
+MAX_PICKS_PER_DAY = int(os.environ.get('MLB_MAX_PICKS_PER_DAY', '5'))
 
 # Minimum real signal count for best bets (OVER)
 MIN_SIGNAL_COUNT = 2
@@ -74,9 +81,15 @@ MIN_SIGNAL_COUNT = 2
 # Base signals that inflate signal count with zero value
 BASE_SIGNAL_TAGS = frozenset(['high_edge'])
 
+# Tracking-only signals — evaluated and tagged but excluded from real_signal_count
+# long_rest_over: 55.4% HR, -36u P&L across 4 seasons — actively losing money
+# k_trending_over: 55.6% HR, -18u P&L across 4 seasons — coin flip
+TRACKING_ONLY_SIGNALS = frozenset(['long_rest_over', 'k_trending_over'])
+
 # Signal rescue tags — picks can bypass edge floor if they have these signals
 # Session 444: swstr_surge REMOVED (54.9% HR, drags all signal combos to 51-55%)
 # Session 447: ballpark_k_boost REMOVED (41.2% solo rescue HR on 17 picks — net negative)
+# V3 FINAL: Away pitchers blocked from rescue (BLOCK_AWAY_RESCUE)
 RESCUE_SIGNAL_TAGS = frozenset([
     'opponent_k_prone',
 ])
@@ -91,13 +104,14 @@ UNDER_SIGNAL_WEIGHTS = {
 }
 
 # =============================================================================
-# ULTRA TIER CONFIGURATION (Session 444 — season replay validated)
-# Edge 1.0-1.1 was 63% HR (noise), edge 1.1+ = 81.4% HR (N=70)
+# ULTRA TIER CONFIGURATION (V3 FINAL — Session 455 cross-season redesign)
+# Removed: half_line (vacuous — all K lines are x.5), edge 1.1 (hurt 2022-2023)
+# Added: rescued picks excluded (lowest confidence shouldn't get 2u)
 # =============================================================================
-ULTRA_MIN_EDGE = float(os.environ.get('MLB_ULTRA_MIN_EDGE', '1.1'))
+ULTRA_MIN_EDGE = float(os.environ.get('MLB_ULTRA_MIN_EDGE', '0.5'))
 ULTRA_REQUIRES_HOME = True
 ULTRA_REQUIRES_PROJECTION_AGREES = True
-ULTRA_REQUIRES_HALF_LINE = True
+ULTRA_REQUIRES_HALF_LINE = False
 
 
 class MLBBestBetsExporter:
@@ -142,13 +156,15 @@ class MLBBestBetsExporter:
         features_by_pitcher = features_by_pitcher or {}
         supplemental_by_pitcher = supplemental_by_pitcher or {}
         self.filter_audit = []
+        self._blacklist_blocked = []  # Shadow tracking for blacklisted pitchers
 
         # Unified edge floor (no phase logic — regressor sweet spot)
         effective_edge_floor = edge_floor if edge_floor is not None else DEFAULT_EDGE_FLOOR
         under_enabled = UNDER_ENABLED
 
         logger.info(f"[MLB BB] Processing {len(predictions)} predictions for {game_date}")
-        logger.info(f"[MLB BB] Edge floor: {effective_edge_floor}, UNDER enabled: {under_enabled}")
+        logger.info(f"[MLB BB] Edge floor: {effective_edge_floor} (away: {AWAY_EDGE_FLOOR}), "
+                    f"UNDER enabled: {under_enabled}, max picks: {MAX_PICKS_PER_DAY}")
 
         # 1. Filter to actionable predictions (OVER/UNDER with line)
         allowed_directions = ['OVER']
@@ -243,6 +259,7 @@ class MLBBestBetsExporter:
             supplemental = supplemental_by_pitcher.get(pitcher, {})
 
             blocked = False
+            blocked_by_blacklist = False
             for filt in self.registry.negative_filters():
                 result = filt.evaluate(pred, features, supplemental)
                 audit_entry = {
@@ -260,28 +277,70 @@ class MLBBestBetsExporter:
 
                 if result.qualifies:
                     blocked = True
+                    if filt.tag == 'pitcher_blacklist':
+                        blocked_by_blacklist = True
                     logger.debug(f"[MLB BB] {pitcher} BLOCKED by {filt.tag}: {result.metadata}")
                     break
 
             if not blocked:
                 passed_filters.append(pred)
+            elif blocked_by_blacklist:
+                # Save for shadow pick tracking — we'll evaluate signals later
+                self._blacklist_blocked.append(pred)
 
         logger.info(f"[MLB BB] {len(passed_filters)} passed negative filters "
                     f"({len(actionable) - len(passed_filters)} blocked)")
 
-        # 3. Edge floor + signal rescue
+        # 3. Edge floor + signal rescue (with away pitcher adjustments)
         edge_eligible = []
+        away_blocked = 0
         for pred in passed_filters:
             edge = abs(pred.get('edge', 0))
             pitcher = pred.get('pitcher_lookup', '')
+            features = features_by_pitcher.get(pitcher, {})
+            supplemental = supplemental_by_pitcher.get(pitcher, {})
 
-            if edge >= effective_edge_floor:
+            # Determine home/away for edge floor adjustment
+            is_home = pred.get('is_home')
+            if is_home is None:
+                is_home = features.get('is_home')
+            is_away = (is_home is not None and not bool(is_home))
+
+            # Away OVER: higher edge floor (1.25 vs 0.75)
+            if pred.get('recommendation') == 'OVER' and is_away:
+                pick_edge_floor = AWAY_EDGE_FLOOR
+            else:
+                pick_edge_floor = effective_edge_floor
+
+            if edge >= pick_edge_floor:
                 edge_eligible.append((pred, False))  # (pred, rescued)
                 continue
 
-            # Signal rescue: check if any rescue signals fire
-            features = features_by_pitcher.get(pitcher, {})
-            supplemental = supplemental_by_pitcher.get(pitcher, {})
+            # Away OVER below away edge floor: block (no rescue)
+            if is_away and pred.get('recommendation') == 'OVER' and BLOCK_AWAY_RESCUE:
+                away_blocked += 1
+                filter_name = 'away_edge_floor'
+                if edge >= effective_edge_floor:
+                    # Would pass home floor but not away floor
+                    filter_reason = (f'Away OVER edge {edge:.2f} < {AWAY_EDGE_FLOOR} '
+                                     f'(no rescue for away)')
+                else:
+                    filter_reason = (f'Away OVER edge {edge:.2f} < {AWAY_EDGE_FLOOR} '
+                                     f'(rescue blocked for away)')
+                self.filter_audit.append({
+                    'game_date': game_date,
+                    'pitcher_lookup': pitcher,
+                    'system_id': pred.get('system_id', 'unknown'),
+                    'filter_name': filter_name,
+                    'filter_result': 'BLOCKED',
+                    'filter_reason': filter_reason,
+                    'recommendation': pred.get('recommendation'),
+                    'edge': pred.get('edge'),
+                    'line_value': pred.get('strikeouts_line'),
+                })
+                continue
+
+            # Home/unknown pitchers: signal rescue
             rescued = False
             rescue_signal = None
             for tag in RESCUE_SIGNAL_TAGS:
@@ -302,12 +361,15 @@ class MLBBestBetsExporter:
                     'system_id': pred.get('system_id', 'unknown'),
                     'filter_name': 'edge_floor',
                     'filter_result': 'BLOCKED',
-                    'filter_reason': f'Edge {edge:.1f} < {effective_edge_floor}',
+                    'filter_reason': f'Edge {edge:.1f} < {pick_edge_floor}',
                     'recommendation': pred.get('recommendation'),
                     'edge': pred.get('edge'),
                     'line_value': pred.get('strikeouts_line'),
                 })
 
+        if away_blocked:
+            logger.info(f"[MLB BB] {away_blocked} away OVER picks blocked "
+                        f"(edge < {AWAY_EDGE_FLOOR} or rescue blocked)")
         logger.info(f"[MLB BB] {len(edge_eligible)} passed edge floor")
 
         # 4. Evaluate all signals for eligible picks
@@ -330,7 +392,8 @@ class MLBBestBetsExporter:
                     signal_tags.append(signal.tag)
                     signal_count += 1
                     signal_results[signal.tag] = result
-                    if signal.tag not in BASE_SIGNAL_TAGS:
+                    if (signal.tag not in BASE_SIGNAL_TAGS
+                            and signal.tag not in TRACKING_ONLY_SIGNALS):
                         real_signal_count += 1
 
             annotated_picks.append({
@@ -416,15 +479,23 @@ class MLBBestBetsExporter:
             logger.info(f"[MLB BB] Ultra tier: {n_ultra} picks ({n_overlay} via overlay)")
 
         # 8. Build pick angles + stamp algorithm version
-        algo_version = 'mlb_v7_s447_blacklist28_rescue_tightened'
+        algo_version = 'mlb_v8_s456_v3final_away_5picks'
         for pick in ranked_picks:
             pick['pick_angles'] = self._build_pick_angles(pick)
             pick['algorithm_version'] = algo_version
+
+        # 8b. Evaluate shadow picks for blacklisted pitchers
+        shadow_picks = self._evaluate_shadow_picks(
+            game_date, ranked_picks, features_by_pitcher,
+            supplemental_by_pitcher, effective_edge_floor, min_signals,
+        )
 
         # 9. Write to BigQuery
         if not dry_run and ranked_picks:
             self._write_best_bets(ranked_picks, game_date)
             self._write_filter_audit(game_date)
+        if not dry_run and shadow_picks:
+            self._write_shadow_picks(shadow_picks, game_date)
 
         logger.info(f"[MLB BB] Final best bets: {len(ranked_picks)} "
                     f"(OVER: {len(over_picks)}, UNDER: {len(under_picks)}, "
@@ -435,8 +506,9 @@ class MLBBestBetsExporter:
     def _check_ultra(self, pick: Dict, features_by_pitcher: Dict) -> Tuple[bool, List[str]]:
         """Check if a pick qualifies for Ultra tier.
 
-        Ultra = OVER + half-line + not-blacklisted + edge >= 1.1 + home + projection agrees.
-        Season replay: 81.4% HR (N=70), +88u at 2u staking.
+        V3 FINAL: OVER + home + projection agrees + edge >= 0.5 + not rescued.
+        Removed: half_line (vacuous — all K lines are x.5), edge 1.1 (hurt 2022-2023).
+        Cross-season validated across 2022-2025.
 
         Returns:
             (is_ultra, criteria_list)
@@ -444,9 +516,13 @@ class MLBBestBetsExporter:
         if pick.get('recommendation') != 'OVER':
             return False, []
 
+        # Rescued picks cannot be Ultra (lowest confidence shouldn't get 2u)
+        if pick.get('signal_rescued'):
+            return False, []
+
         criteria = []
 
-        # Must be half-line
+        # Half-line check (optional — ULTRA_REQUIRES_HALF_LINE = False in V3)
         line = pick.get('strikeouts_line')
         if line is not None and line != int(line):
             criteria.append('half_line')
@@ -565,6 +641,145 @@ class MLBBestBetsExporter:
             angles.append(f"ULTRA: {', '.join(criteria)} — 2u stake")
 
         return angles
+
+    def _evaluate_shadow_picks(
+        self,
+        game_date: str,
+        ranked_picks: List[Dict],
+        features_by_pitcher: Dict,
+        supplemental_by_pitcher: Dict,
+        edge_floor: float,
+        min_signals: int,
+    ) -> List[Dict]:
+        """Evaluate blacklist-blocked picks as shadow picks for counterfactual tracking.
+
+        Runs the same signal evaluation and ranking logic as real picks, then
+        computes where each shadow pick would have ranked if not blacklisted.
+        """
+        if not self._blacklist_blocked:
+            return []
+
+        shadow_picks = []
+        for pred in self._blacklist_blocked:
+            pitcher = pred.get('pitcher_lookup', '')
+            edge = abs(pred.get('edge', 0))
+            features = features_by_pitcher.get(pitcher, {})
+            supplemental = supplemental_by_pitcher.get(pitcher, {})
+
+            # Apply edge floor with away adjustment (same as real picks)
+            is_home = pred.get('is_home')
+            if is_home is None:
+                is_home = features.get('is_home')
+            is_away = (is_home is not None and not bool(is_home))
+
+            pick_edge_floor = edge_floor
+            if pred.get('recommendation') == 'OVER' and is_away:
+                pick_edge_floor = AWAY_EDGE_FLOOR
+
+            if edge < pick_edge_floor:
+                # Away OVER below away floor: no rescue
+                if is_away and pred.get('recommendation') == 'OVER' and BLOCK_AWAY_RESCUE:
+                    continue  # Would have been blocked by away edge floor
+
+                # Check rescue signals
+                rescued = False
+                for tag in RESCUE_SIGNAL_TAGS:
+                    signal = self.registry.get(tag)
+                    result = signal.evaluate(pred, features, supplemental)
+                    if result.qualifies:
+                        rescued = True
+                        break
+                if not rescued:
+                    continue  # Would have been blocked by edge floor anyway
+
+            # Evaluate all signals (same as step 4)
+            signal_tags = []
+            signal_count = 0
+            real_signal_count = 0
+            signal_results = {}
+            for signal in self.registry.all():
+                if signal.is_negative_filter:
+                    continue
+                result = signal.evaluate(pred, features, supplemental)
+                if result.qualifies:
+                    signal_tags.append(signal.tag)
+                    signal_count += 1
+                    signal_results[signal.tag] = result
+                    if (signal.tag not in BASE_SIGNAL_TAGS
+                            and signal.tag not in TRACKING_ONLY_SIGNALS):
+                        real_signal_count += 1
+
+            # Apply signal count gate (same as step 5)
+            rec = pred.get('recommendation', 'OVER')
+            required = UNDER_MIN_SIGNALS if rec == 'UNDER' else min_signals
+            if real_signal_count < required:
+                continue  # Would have been blocked by signal gate
+
+            # Compute rank position: where would this pick fall among real picks?
+            # For OVER picks, rank by edge
+            rank_position = 1
+            for real_pick in ranked_picks:
+                if abs(real_pick.get('edge', 0)) > edge:
+                    rank_position += 1
+            would_be_selected = rank_position <= MAX_PICKS_PER_DAY
+
+            # Check ultra tier
+            shadow_pred = {**pred, 'signal_tags': signal_tags}
+            is_ultra, ultra_criteria = self._check_ultra(shadow_pred, features_by_pitcher)
+
+            # Build pick angles
+            annotated = {
+                **pred,
+                'signal_tags': signal_tags,
+                'signal_results': signal_results,
+                'ultra_tier': is_ultra,
+            }
+            pick_angles = self._build_pick_angles(annotated)
+
+            shadow_picks.append({
+                'game_date': game_date,
+                'pitcher_lookup': pitcher,
+                'game_pk': pred.get('game_pk'),
+                'system_id': pred.get('system_id', 'unknown'),
+                'pitcher_name': pred.get('pitcher_name'),
+                'team_abbr': pred.get('team_abbr'),
+                'opponent_team_abbr': pred.get('opponent_team_abbr'),
+                'predicted_strikeouts': pred.get('predicted_strikeouts'),
+                'line_value': pred.get('strikeouts_line'),
+                'recommendation': rec,
+                'edge': pred.get('edge'),
+                'confidence_score': pred.get('confidence'),
+                'signal_tags': ','.join(signal_tags),
+                'signal_count': signal_count,
+                'real_signal_count': real_signal_count,
+                'rank_position': rank_position,
+                'would_be_selected': would_be_selected,
+                'ultra_tier': is_ultra,
+                'pick_angles': ','.join(pick_angles),
+            })
+
+        if shadow_picks:
+            logger.info(f"[MLB BB] {len(shadow_picks)} shadow picks from blacklist "
+                        f"({sum(1 for s in shadow_picks if s['would_be_selected'])} would be selected)")
+
+        return shadow_picks
+
+    def _write_shadow_picks(self, shadow_picks: List[Dict], game_date: str):
+        """Write shadow picks to blacklist_shadow_picks table for counterfactual tracking."""
+        client = self._get_bq_client()
+        table_id = f"{self.project_id}.mlb_predictions.blacklist_shadow_picks"
+
+        now = datetime.now(timezone.utc).isoformat()
+        rows = [{**pick, 'created_at': now} for pick in shadow_picks]
+
+        try:
+            errors = client.insert_rows_json(table_id, rows)
+            if errors:
+                logger.error(f"Shadow picks insert errors: {errors[:3]}")
+            else:
+                logger.info(f"Wrote {len(rows)} shadow picks to {table_id}")
+        except Exception as e:
+            logger.error(f"Failed to write shadow picks: {e}")
 
     def _write_best_bets(self, picks: List[Dict], game_date: str):
         """Write best bets to signal_best_bets_picks table."""

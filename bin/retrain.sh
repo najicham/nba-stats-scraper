@@ -30,7 +30,7 @@ set -e
 PROJECT="nba-props-platform"
 REGION="us-west2"
 GCS_BUCKET="gs://nba-props-platform-models"
-ROLLING_WINDOW_DAYS=42  # Rolling training window (Session 284: +$5,370 P&L vs expanding)
+ROLLING_WINDOW_DAYS=56  # Rolling training window (Session 455: walk-forward validated 56d > 42d across 2 seasons)
 
 # Parse arguments
 DRY_RUN=false
@@ -135,6 +135,7 @@ fi
 
 # Rolling training window: TRAIN_END - ROLLING_WINDOW_DAYS
 # Session 284: 42-day rolling beats expanding window by +$5,370 P&L
+# Session 455: Walk-forward cross-season validation confirms 56-day > 42-day (+2pp HR)
 TRAINING_START=$(date -d "$TRAIN_END - $ROLLING_WINDOW_DAYS days" +%Y-%m-%d)
 
 # ============================================================================

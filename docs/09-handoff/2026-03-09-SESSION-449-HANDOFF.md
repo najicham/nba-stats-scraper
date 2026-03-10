@@ -1,94 +1,158 @@
-# Session 449 Handoff — Session 448 Cleanup + Next Priorities
+# Session 449 Handoff — Multi-Season Backfill + Pitcher Watchlist System
 
-**Date:** 2026-03-09
-**Focus:** Completed all remaining Session 448 TODOs + identified next priorities
+*Date: 2026-03-09*
 
 ## What Was Done
 
-This session finished the Session 448 infrastructure fixes that were interrupted by context loss.
+### 1. Season Replay (2025) — Improved Results
+Ran fresh 2025 season replay with updated statcast/ballpark data:
+- **BB HR: 65.5%** (300-158) — up from 62.4% last session
+- **Ultra HR: 81.5%** (53-12) — up from 76.0%
+- **Bankroll: +183u, ROI 35%**
+- Results in `results/mlb_season_replay_449/`
 
-### Fixes Applied (Session 448b continuation)
+### 2. MLB Pitcher Watchlist System — BUILT
+Full shadow pick tracking + dynamic blacklist management:
 
-| Fix | Details |
-|-----|---------|
-| `monthly-retrain` CF redeployed | `db-dtypes` dependency now included. Revision `monthly-retrain-00002-biy` ACTIVE |
-| `monthly-retrain/deploy.sh` hardened | `--set-env-vars` → `--update-env-vars`, `--allow-unauthenticated` → `--no-allow-unauthenticated` |
-| `decay-detection` SQL bug fixed | `check_pick_volume_anomaly`: `BETWEEN...AND game_date <` → `>= ... AND game_date <` |
-| Cloud Build trigger: `deploy-morning-deployment-check` | Auto-deploys on push to main, watches `functions/monitoring/morning_deployment_check/**` |
-| Cloud Build trigger: `deploy-monthly-retrain` | Auto-deploys on push to main, watches `orchestration/cloud_functions/monthly_retrain/**` |
-| `bin/deploy-function.sh` | Added `morning-deployment-check` + `monthly-retrain` to function registry + usage help |
-| `CLAUDE.md` | Updated auto-deploy list with both new CFs |
-| Session 448 handoff doc | Updated with all resolutions, all TODOs marked ✅ |
+**Files created/modified:**
+| File | Change |
+|------|--------|
+| `ml/signals/mlb/best_bets_exporter.py` | Added shadow pick tracking for blacklisted pitchers |
+| `data_processors/grading/mlb/main_mlb_grading_service.py` | Added `_backfill_shadow_picks()` grading backfill |
+| `orchestration/cloud_functions/mlb_pitcher_watchlist/main.py` | **NEW** — Weekly watchlist evaluator CF |
+| `orchestration/cloud_functions/mlb_pitcher_watchlist/requirements.txt` | **NEW** |
+| `tests/mlb/test_shadow_picks.py` | **NEW** — 10 tests, all passing |
+| `scripts/mlb/backfill_pitcher_stats.py` | **NEW** — Backfill pitcher stats from MLB API |
 
-### Verified Working
+**BQ Tables created:**
+- `mlb_predictions.blacklist_shadow_picks` — partitioned by game_date
+- `mlb_predictions.pitcher_watchlist` — partitioned by evaluation_date
 
-- `decay-detection-daily` scheduler: fired at 16:00 UTC Mar 8, HTTP 200
-- 7 BLOCKED models detected in `model_performance_daily` (Mar 7): xgb_v12_noveg, catboost_v12_noveg, catboost_v16_noveg, lgbm_v12_noveg (3 variants), xgb_v12_noveg_s42
-- Auto-disable should fire on next decay-detection run (16:00 UTC today)
-- All 8 scheduler job fixes from Session 448 still cached old status — will clear on next scheduled execution
+**How it works:**
+1. Exporter records shadow picks when blacklist blocks a pitcher (full signal evaluation + rank position)
+2. After grading, `_backfill_shadow_picks()` fills in actuals from prediction_accuracy
+3. Weekly CF evaluates: ADD (BB HR < 45%, N >= 8), REMOVE (shadow HR >= 60%, N >= 8)
+4. Slack digest to `#nba-alerts` with recommendations (manual approval required)
 
-## Uncommitted Changes
+**Still TODO for watchlist:**
+- Deploy CF: `./bin/deploy-function.sh mlb-pitcher-watchlist`
+- Create Cloud Scheduler: weekly Monday 10 AM ET, April-October
+- Set `SLACK_WEBHOOK_URL_ALERTS` env var on the CF
 
-```
-Modified:
-  CLAUDE.md                                          (auto-deploy list, common issues)
-  bin/deploy-function.sh                             (morning-deployment-check + monthly-retrain entries)
-  orchestration/cloud_functions/decay_detection/main.py  (SQL bug fix)
-  orchestration/cloud_functions/monthly_retrain/deploy.sh  (--update-env-vars, --no-allow-unauthenticated)
-  docs/02-operations/session-learnings.md            (Gen2 CF URL mismatch + timeout patterns)
-  docs/02-operations/troubleshooting-matrix.md       (3 new rows)
-  docs/09-handoff/2026-03-08-SESSION-448-HANDOFF.md  (all TODOs resolved)
+### 3. Multi-Season Backfill — IN PROGRESS
 
-Also modified (from prior sessions, not yet committed):
-  bin/replay_per_model_pipeline.py
-  ml/signals/per_model_pipeline.py
-  shared/config/cross_model_subsets.py
-  + several MLB files
-  + several new untracked files (docker/, results/, docs/)
-```
+**Goal:** Backfill 2022-2023 data so we can run multi-season replay to validate strategy isn't overfit to 2025.
 
-**ACTION NEEDED:** These changes need to be committed and pushed. The decay-detection SQL fix and deploy.sh fixes will auto-deploy on push.
+**Completed backfills:**
+| Data | 2022 | 2023 | Status |
+|------|------|------|--------|
+| `mlb_raw.mlbapi_pitcher_stats` | 21,117 rows | 21,277 rows | **DONE** |
+| `mlb_raw.mlb_pitcher_stats` (copy) | 21,117 rows | 21,277 rows | **DONE** (game_id = `YYYY-MM-DD_UNK_UNK`) |
+| `mlb_raw.mlb_schedule` | 2,459 games | 2,475 games | **DONE** (9,881 total across 4 seasons) |
+| `mlb_raw.fangraphs_pitcher_season_stats` | ~850 rows | ~850 rows | **DONE** (5,120 total across 4 seasons) |
 
-## Next Priorities (Ranked)
+**Still running (background processes):**
 
-### 1. Commit & Push (immediate)
-Push the accumulated changes from Sessions 445-449. This triggers auto-deploy of the decay-detection SQL fix.
-
-### 2. Verify Scheduler Jobs Clear (after next execution cycle)
-Run `/validate-daily` — all 8 previously-failing scheduler jobs should show code=0.
-
-### 3. Verify BLOCKED Models Auto-Disabled (after 16:00 UTC)
-After decay-detection fires today, check:
-```sql
-SELECT system_id, is_active FROM nba_predictions.model_registry
-WHERE system_id IN ('xgb_v12_noveg_train0107_0219', 'lgbm_v12_noveg_train1102_0209',
-  'lgbm_v12_noveg_vw015_train1215_0208', 'lgbm_v12_noveg_train0103_0227',
-  'catboost_v12_noveg_train0107_0219', 'catboost_v16_noveg_train0105_0221',
-  'xgb_v12_noveg_s42_train1215_0208')
-```
-
-### 4. Per-Model Pipeline Replay & Deploy (biggest pending feature)
-Session 445 built `per_model_pipeline.py` (1,621 lines) + `pipeline_merger.py` (366 lines). Replaces winner-take-all with per-model aggregation + pool-and-rank merge. **NOT YET DEPLOYED** — needs:
+#### pitcher_game_summary processor (CRITICAL — must finish before replay)
 ```bash
-python bin/replay_per_model_pipeline.py  # Season replay validation
+# Check progress:
+grep "Processed" /tmp/mlb-backfill-logs/pgs_2022.log | tail -1
+grep "Processed" /tmp/mlb-backfill-logs/pgs_2023.log | tail -1
+
+# Check BQ:
+bq query --use_legacy_sql=false "
+SELECT EXTRACT(YEAR FROM game_date) as season, COUNT(DISTINCT game_date) as dates, COUNT(*) as total
+FROM mlb_analytics.pitcher_game_summary WHERE game_date >= '2022-01-01'
+GROUP BY 1 ORDER BY 1"
 ```
-Then compare results vs current system, get user sign-off, deploy.
+- **2022**: ~79/179 dates done when session ended (~45%)
+- **2023**: ~74/182 dates done when session ended (~41%)
+- **ETA**: ~15-20 more minutes each
+- **Expected when done**: ~5,000 rows per season, ~180 dates each
 
-### 5. Re-enable catboost_v9_train1102_0108
-On the TODO list since Session 445.
+**If PGS processes died**, restart with:
+```bash
+PYTHONPATH=/home/naji/code/nba-stats-scraper SPORT=mlb nohup /home/naji/code/nba-stats-scraper/.venv/bin/python /home/naji/code/nba-stats-scraper/data_processors/analytics/mlb/pitcher_game_summary_processor.py --start-date 2022-04-07 --end-date 2022-10-05 > /tmp/mlb-backfill-logs/pgs_2022.log 2>&1 &
 
-### 6. Observation Promotion Check
-Several observations accumulating data — check if any hit promotion thresholds (HR >= 60% + N >= 30):
-- `hot_shooting_reversion_obs`, `over_low_rsc`, `mae_gap`, `thin_slate`
-- `hot_streak_under`, `solo_game_pick`, `depleted_stars_over_obs`
+PYTHONPATH=/home/naji/code/nba-stats-scraper SPORT=mlb nohup /home/naji/code/nba-stats-scraper/.venv/bin/python /home/naji/code/nba-stats-scraper/data_processors/analytics/mlb/pitcher_game_summary_processor.py --start-date 2023-03-30 --end-date 2023-10-01 > /tmp/mlb-backfill-logs/pgs_2023.log 2>&1 &
+```
+**CRITICAL: Must set `SPORT=mlb`** or processor reads from `nba_raw` instead of `mlb_raw`.
 
-### 7. UNDER Signal Expansion
-UNDER is 71% HR but bottlenecked by signal coverage (907 candidates/day → 25 BB picks at 2.8%). Signals are OVER-oriented — UNDER picks left on table.
+#### Statcast backfills (NICE-TO-HAVE — not blocking replay)
+```bash
+# Check statcast progress:
+tail -1 /tmp/mlb-backfill-logs/statcast_2022.log
+tail -1 /tmp/mlb-backfill-logs/statcast_2023.log
+tail -1 /tmp/mlb-backfill-logs/statcast_2024_gap.log
+tail -1 /tmp/mlb-backfill-logs/statcast_2025_gap.log
+```
+- Baseball Savant is slow (~2s per day + timeouts). Will take hours.
+- **Not blocking** — training SQL uses `COALESCE(statcast, season_avg)` fallback.
+- After raw statcast completes, `pitcher_rolling_statcast` analytics also needs reprocessing.
 
-## Key Context for New Session
+### 4. Key Fixes/Discoveries
+- **`mlb_pitcher_stats` vs `mlbapi_pitcher_stats`**: Two different tables with different schemas. PGS processor reads `mlb_pitcher_stats`. Backfill script writes to `mlbapi_pitcher_stats`. Solution: INSERT...SELECT with column mapping, set `game_id = 'YYYY-MM-DD_UNK_UNK'`.
+- **`SPORT=mlb` env var**: Required for all MLB analytics processors. Without it, `sport_config.py` defaults to `nba` and reads from wrong dataset.
 
-- **Algorithm version:** `v442_autopsy_observations`
-- **9 enabled models**, 7 BLOCKED (pending auto-disable)
-- **Top performers:** catboost_v12_train0104_0222 (82.4%), catboost_v12_noveg_train0104_0215 (76.9%)
-- **Mar 8 was a caution day** — 7/9 models showed UNDER_HEAVY (RED signal)
-- **Per-model pipeline** is the biggest unreleased feature — read Session 445 handoff for architecture
+## What's Next (Priority Order)
+
+### 1. Verify PGS Backfill Completed
+Check that `pitcher_game_summary` has ~5,000 rows per season for 2022 and 2023:
+```bash
+bq query --use_legacy_sql=false "
+SELECT EXTRACT(YEAR FROM game_date) as season, COUNT(DISTINCT game_date) as dates, COUNT(*) as total
+FROM mlb_analytics.pitcher_game_summary WHERE game_date >= '2022-01-01'
+GROUP BY 1 ORDER BY 1"
+```
+
+### 2. Run Multi-Season Replay
+Validate strategy across 4 seasons — the big test for overfitting:
+```bash
+# 2022 season
+PYTHONPATH=. .venv/bin/python scripts/mlb/training/season_replay.py \
+    --start-date 2022-05-01 --end-date 2022-09-28 \
+    --output-dir results/mlb_season_replay_2022/
+
+# 2023 season
+PYTHONPATH=. .venv/bin/python scripts/mlb/training/season_replay.py \
+    --start-date 2023-05-01 --end-date 2023-09-28 \
+    --output-dir results/mlb_season_replay_2023/
+
+# 2024 season
+PYTHONPATH=. .venv/bin/python scripts/mlb/training/season_replay.py \
+    --start-date 2024-05-01 --end-date 2024-09-28 \
+    --output-dir results/mlb_season_replay_2024/
+```
+2025 already done: `results/mlb_season_replay_449/` (65.5% BB HR)
+
+**Evaluation framework:**
+- **Layer 1 (must work cross-season):** Model arch, edge floor, probability caps, core filters, core signals
+- **Layer 2 (season-adaptive):** Pitcher blacklist (dynamic via watchlist), signal weights, whole-number line filter
+- Compare BB HR, Ultra HR, ROI across all 4 seasons
+- Flag any parameter that only works in 2025
+
+**NOTE:** The replay script's `PITCHER_BLACKLIST` is 2025-specific. For honest cross-season testing, consider running with NO blacklist first to see base performance, then with blacklist to measure the lift.
+
+**NOTE:** 2022 and 2023 have NO prop lines data for the first ~3 weeks (April) because `bp_pitcher_props` coverage starts ~April. Use `--start-date` at May 1 for cleaner comparison.
+
+### 3. Season-Specific Indicators
+User wants to identify signals that are season-specific vs universal:
+- Run each signal's lift per season independently
+- Some signals may be era-dependent (K rates change year to year)
+- League-level K rate, pace of play rules, dead ball era shifts
+
+### 4. Deploy Watchlist CF + Prepare for 2026 Season
+- Deploy `mlb-pitcher-watchlist` CF
+- Mar 18-23: Train final model
+- Mar 24: Resume schedulers
+- Mar 27: Opening Day
+
+## Existing Tests
+- `tests/mlb/test_shadow_picks.py` — 10 tests passing
+- `tests/mlb/test_exporter_with_regressor.py` — 19 tests passing
+
+## No Code Was Pushed
+All changes are local only. The following need to be committed:
+- Watchlist system (exporter changes, grading backfill, CF, tests)
+- `backfill_pitcher_stats.py` script
+- This handoff doc

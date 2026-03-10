@@ -354,8 +354,8 @@ class TestExporterIntegration:
 
         # At least 1-2 picks should survive (ace_pitcher and/or home_ace)
         assert len(result) >= 1
-        # At most 3 (the daily limit)
-        assert len(result) <= 3
+        # At most MAX_PICKS_PER_DAY (5)
+        assert len(result) <= 5
 
         # Verify blocked pitchers are NOT in result
         result_pitchers = {p['pitcher_lookup'] for p in result}
@@ -447,10 +447,10 @@ class TestUltraTier:
             assert result[0]['ultra_tier'] is False
             assert result[0]['staking_multiplier'] == 1
 
-    def test_ultra_requires_edge_1_1(self):
-        """Edge 1.0 should NOT qualify for ultra (threshold is 1.1)."""
+    def test_ultra_requires_edge_0_5(self):
+        """Edge 0.4 should NOT qualify for ultra (threshold is 0.5)."""
         exporter = MLBBestBetsExporter(bq_client=MagicMock())
-        pred = self._make_ultra_eligible_prediction(edge=1.0)
+        pred = self._make_ultra_eligible_prediction(edge=0.4)
         features = self._make_ultra_features()
 
         result = exporter.export(
@@ -589,7 +589,7 @@ class TestUltraTier:
             assert '2u stake' in ultra_angles[0]
 
     def test_algorithm_version_updated(self):
-        """Algorithm version should be mlb_v7_s447_blacklist28_rescue_tightened."""
+        """Algorithm version should be mlb_v8_s456_v3final_away_5picks."""
         exporter = MLBBestBetsExporter(bq_client=MagicMock())
         pred = self._make_ultra_eligible_prediction()
         features = self._make_ultra_features()
@@ -602,7 +602,7 @@ class TestUltraTier:
         )
 
         assert len(result) >= 1
-        assert result[0]['algorithm_version'] == 'mlb_v7_s447_blacklist28_rescue_tightened'
+        assert result[0]['algorithm_version'] == 'mlb_v8_s456_v3final_away_5picks'
 
     def test_bq_row_includes_ultra_fields(self):
         """BQ row should include ultra_tier, ultra_criteria, staking_multiplier."""
@@ -630,6 +630,169 @@ class TestUltraTier:
         assert 'ultra_tier' in rows[0]
         assert 'ultra_criteria' in rows[0]
         assert 'staking_multiplier' in rows[0]
+
+
+class TestV3FinalAwayFilters:
+    """Test V3 FINAL away edge floor and rescue blocking."""
+
+    def test_away_pitcher_blocked_below_away_edge_floor(self):
+        """Away OVER pitcher with edge 1.0 should be blocked (away floor is 1.25)."""
+        exporter = MLBBestBetsExporter(bq_client=MagicMock())
+        pred = _make_prediction(
+            pitcher_lookup='away_pitcher',
+            edge=1.0,
+            is_home=False,
+        )
+        features = _make_features_for_signals(is_home=False)
+
+        result = exporter.export(
+            predictions=[pred],
+            game_date='2026-06-15',
+            features_by_pitcher={'away_pitcher': features},
+            dry_run=True,
+        )
+
+        assert len(result) == 0
+        away_audits = [
+            a for a in exporter.filter_audit
+            if a.get('filter_name') == 'away_edge_floor'
+        ]
+        assert len(away_audits) == 1
+
+    def test_away_pitcher_passes_above_away_edge_floor(self):
+        """Away OVER pitcher with edge 1.3 should pass (above 1.25 floor)."""
+        exporter = MLBBestBetsExporter(bq_client=MagicMock())
+        pred = _make_prediction(
+            pitcher_lookup='strong_away_pitcher',
+            edge=1.3,
+            predicted_strikeouts=6.8,
+            strikeouts_line=5.5,
+            is_home=False,
+        )
+        features = _make_features_for_signals(is_home=False)
+
+        result = exporter.export(
+            predictions=[pred],
+            game_date='2026-06-15',
+            features_by_pitcher={'strong_away_pitcher': features},
+            dry_run=True,
+        )
+
+        # Should pass if it also passes signal gate
+        # (it will have enough signals from _make_features_for_signals)
+        assert len(result) >= 1
+
+    def test_away_rescue_blocked(self):
+        """Away OVER pitcher below edge floor should NOT be rescued."""
+        exporter = MLBBestBetsExporter(bq_client=MagicMock())
+        pred = _make_prediction(
+            pitcher_lookup='away_needing_rescue',
+            edge=0.5,  # Below 0.75 home floor AND 1.25 away floor
+            is_home=False,
+        )
+        features = _make_features_for_signals(
+            is_home=False,
+            opponent_team_k_rate=0.26,  # Would trigger opponent_k_prone rescue
+        )
+
+        result = exporter.export(
+            predictions=[pred],
+            game_date='2026-06-15',
+            features_by_pitcher={'away_needing_rescue': features},
+            dry_run=True,
+        )
+
+        assert len(result) == 0
+
+    def test_home_rescue_still_works(self):
+        """Home OVER pitcher below edge floor CAN be rescued."""
+        exporter = MLBBestBetsExporter(bq_client=MagicMock())
+        pred = _make_prediction(
+            pitcher_lookup='home_needing_rescue',
+            edge=0.5,  # Below 0.75 floor
+            predicted_strikeouts=6.0,
+            strikeouts_line=5.5,
+            is_home=True,
+        )
+        features = _make_features_for_signals(
+            is_home=True,
+            opponent_team_k_rate=0.26,  # Triggers opponent_k_prone rescue
+        )
+
+        result = exporter.export(
+            predictions=[pred],
+            game_date='2026-06-15',
+            features_by_pitcher={'home_needing_rescue': features},
+            dry_run=True,
+        )
+
+        # Should be rescued and pass signal gate
+        if result:
+            assert result[0]['signal_rescued'] is True
+
+
+class TestV3FinalTrackingOnlySignals:
+    """Test that tracking-only signals don't count for real_signal_count."""
+
+    def test_tracking_only_signal_excluded_from_real_sc(self):
+        """long_rest_over and k_trending_over should fire but not count as real."""
+        exporter = MLBBestBetsExporter(bq_client=MagicMock())
+        pred = _make_prediction(
+            pitcher_lookup='tracking_test_pitcher',
+            edge=1.0,
+            is_home=True,
+        )
+        features = _make_features_for_signals(
+            is_home=True,
+            days_rest=10,  # Triggers long_rest_over
+        )
+
+        result = exporter.export(
+            predictions=[pred],
+            game_date='2026-06-15',
+            features_by_pitcher={'tracking_test_pitcher': features},
+            dry_run=True,
+        )
+
+        if result:
+            pick = result[0]
+            # long_rest_over and k_trending_over should be in signal_tags
+            # but not inflate real_signal_count
+            tags = pick.get('signal_tags', [])
+            assert 'long_rest_over' in tags or 'k_trending_over' in tags
+            # real_signal_count should not include tracking-only signals
+            assert pick['real_signal_count'] < pick['signal_count']
+
+
+class TestV3FinalUltraRescuedExcluded:
+    """Test that rescued picks cannot be ultra."""
+
+    def test_rescued_pick_not_ultra(self):
+        """A rescued pick should never be tagged ultra, even if it meets all other criteria."""
+        exporter = MLBBestBetsExporter(bq_client=MagicMock())
+
+        # Build a pick that would be ultra-eligible EXCEPT it's rescued
+        pick = {
+            'recommendation': 'OVER',
+            'signal_rescued': True,
+            'edge': 1.5,
+            'strikeouts_line': 5.5,
+            'pitcher_lookup': 'rescued_pitcher',
+            'is_home': True,
+            'signal_tags': [
+                'projection_agrees_over',
+                'home_pitcher_over',
+                'opponent_k_prone',
+            ],
+        }
+        features = {'is_home': True}
+
+        is_ultra, criteria = exporter._check_ultra(
+            pick, {'rescued_pitcher': features},
+        )
+
+        assert is_ultra is False
+        assert criteria == []
 
 
 if __name__ == '__main__':

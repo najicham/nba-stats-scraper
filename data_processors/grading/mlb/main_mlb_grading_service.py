@@ -20,6 +20,7 @@ import base64
 
 from data_processors.grading.mlb.mlb_prediction_grading_processor import MlbPredictionGradingProcessor
 from data_processors.grading.mlb.mlb_shadow_grading_processor import MLBShadowGradingProcessor
+from google.cloud import bigquery
 
 # Specific exceptions for better error handling
 from google.api_core.exceptions import GoogleAPIError
@@ -95,6 +96,9 @@ def process_grading():
 
         if success:
             stats = processor.get_grading_stats()
+            # Backfill shadow picks with actuals
+            shadow_count = _backfill_shadow_picks(game_date)
+            stats['shadow_picks_graded'] = shadow_count
             return jsonify({
                 "status": "success",
                 "game_date": game_date,
@@ -145,6 +149,9 @@ def grade_date():
 
         if success:
             stats = processor.get_grading_stats()
+            # Backfill shadow picks with actuals
+            shadow_count = _backfill_shadow_picks(game_date)
+            stats['shadow_picks_graded'] = shadow_count
             return jsonify({
                 "status": "success",
                 "game_date": game_date,
@@ -203,6 +210,43 @@ def grade_shadow():
     except (GoogleAPIError, ValueError) as e:
         logger.error(f"Error in grade-shadow: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
+
+
+def _backfill_shadow_picks(game_date: str):
+    """Backfill actuals into blacklist_shadow_picks after grading completes.
+
+    Joins shadow picks with prediction_accuracy to fill in actual_strikeouts,
+    prediction_correct, and is_voided for counterfactual analysis.
+    """
+    try:
+        client = bigquery.Client(project="nba-props-platform")
+        query = f"""
+        UPDATE `mlb_predictions.blacklist_shadow_picks` sp
+        SET
+            sp.actual_strikeouts = pa.actual_strikeouts,
+            sp.prediction_correct = CASE
+                WHEN pa.actual_strikeouts IS NULL THEN NULL
+                WHEN sp.recommendation = 'OVER' AND pa.actual_strikeouts > sp.line_value THEN TRUE
+                WHEN sp.recommendation = 'UNDER' AND pa.actual_strikeouts < sp.line_value THEN TRUE
+                ELSE FALSE
+            END,
+            sp.is_voided = pa.is_voided,
+            sp.graded_at = CURRENT_TIMESTAMP()
+        FROM `mlb_predictions.prediction_accuracy` pa
+        WHERE sp.game_date = '{game_date}'
+          AND pa.game_date = '{game_date}'
+          AND sp.pitcher_lookup = pa.pitcher_lookup
+          AND sp.system_id = pa.system_id
+          AND sp.graded_at IS NULL
+        """
+        result = client.query(query).result()
+        rows_affected = result.num_dml_affected_rows or 0
+        if rows_affected > 0:
+            logger.info(f"Backfilled {rows_affected} shadow picks for {game_date}")
+        return rows_affected
+    except Exception as e:
+        logger.warning(f"Shadow picks backfill failed for {game_date}: {e}")
+        return 0
 
 
 def _resolve_date(target_date_str: str) -> str:

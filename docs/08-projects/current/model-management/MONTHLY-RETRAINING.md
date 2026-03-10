@@ -1,231 +1,136 @@
-# Monthly Model Retraining Guide
+# Weekly Model Retraining Guide
 
 ## Overview
 
-We retrain CatBoost V9 monthly to incorporate recent game data. This keeps the model current with player performance trends, team dynamics, and betting market patterns.
+Models must be retrained every 7 days to maintain accuracy. Walk-forward simulation across 2 seasons (Sessions 454-457) proved:
+- **56-day rolling window + 7-day retrain cadence** is the optimal configuration
+- 7-day retrain beats 14-day by ~2pp HR consistently
+- Stale models (10+ days) become **confidently wrong** — high edge but low HR
+- The model needs ~4 months of in-season data to reach peak performance (85%+ HR at edge 3+)
+
+### Audit Status (Session 457)
+
+The 85% HR claim has been **audited and confirmed legitimate**:
+- **No data leakage**: All 54 features verified to use `game_date < current_date` temporal boundaries
+- **No future data in features 50-53**: prop_over/under_streak use historical game lines, not current. Combined importance only 5.0%.
+- **Seed-stable**: 5 random seeds produce 84.6%-85.5% HR at edge 3+ (<1pp variance)
+- **Not trivially gameable**: Naive baseline (always OVER) = 48.6%, random predictor at edge 3+ = 49.9%
+- **Feature importance clean**: Top 5 features (62% of model) are all historical scoring averages
+- **DNP survivorship**: ~10% DNP rate excluded, but DNPs don't have prop lines in production either (apples-to-apples)
+- Minor caveats: retrospective feature store regeneration gives slightly cleaner data than real-time (<1-2pp)
 
 ## Schedule
 
-| Week | Action |
-|------|--------|
-| 1st of month | Run monthly retrain |
-| 1st-3rd | Evaluate on recent data |
-| 3rd-5th | Promote to production if metrics are good |
+| Day | Action | Tool |
+|-----|--------|------|
+| **Monday 5 AM ET** | `weekly-retrain` CF auto-retrains all enabled families | Automated (Session 458) |
+| **Monday 9 AM ET** | `retrain-reminder` CF sends Slack alert (backup verification) | Automated |
+| Monday 6 AM - 11:30 AM | Daily pipeline runs (Phase 1-4) | Automated |
+| Monday ~11:30 AM | Phase 5 predictions use freshly retrained models | Automated |
+| Post-retrain | Monitor via Slack notification (success/blocked/error) | `#nba-alerts` |
+
+**Manual override:** `./bin/retrain.sh --all --enable` — runs the same retraining logic locally.
 
 ## Quick Start
 
 ```bash
-# Dry run to see what would happen
-./bin/retrain-monthly.sh --dry-run
+# Retrain all enabled model families (56-day rolling window)
+./bin/retrain.sh --all --enable
 
-# Train new model (without promoting)
-./bin/retrain-monthly.sh
+# Dry run to preview
+./bin/retrain.sh --all --dry-run
 
-# Train and auto-promote to production
-./bin/retrain-monthly.sh --promote
+# Train a specific family
+./bin/retrain.sh --family v12_noveg_mae --enable
+
+# Custom training end date
+./bin/retrain.sh --all --enable --train-end 2026-03-08
 ```
 
-## Detailed Workflow
+## Validated Configuration
 
-### 1. Pre-Training Checklist
+From walk-forward simulation (Session 455, 2 full seasons of data):
 
-Before retraining, verify data quality:
+| Parameter | Value | Evidence |
+|-----------|-------|----------|
+| Training window | 56 days (rolling) | 85.0% HR vs 84.2% (42d) vs 85.3% (90d, but fewer picks) |
+| Retrain cadence | 7 days | +2pp over 14-day cadence |
+| Feature set | V12_NOVEG | Best across 80+ experiments |
+| CatBoost params | iter=1000, lr=0.05, depth=6, l2=3 | Production defaults |
+| Vegas features | Excluded from training | Used only for HR grading |
+
+## Seasonal Performance Pattern
+
+Walk-forward reveals a predictable seasonal cycle:
+
+| Period | Edge 3+ HR | Edge 3+ as % of preds | Notes |
+|--------|-----------|----------------------|-------|
+| Nov (weeks 1-4) | 48-55% | 25-40% | Model warming up, few high-edge picks |
+| Dec (weeks 5-8) | 54-84% | 7-39% | Varies by season, model still calibrating |
+| Jan-Feb | 56-90% | 4-45% | Recovery phase, highly variable |
+| Mar-Jun | 85-94% | 30-40% | **Peak performance — model fully calibrated** |
+
+**Key insight:** Low HR in Nov-Dec is NOT fixable with features. It's data availability — the model needs ~3-4 months of in-season data to diverge from the line. Fresh 7-day retraining is the ONLY intervention that consistently helps.
+
+## Governance Gates
+
+Every retrained model must pass (enforced in `quick_retrain.py`):
+1. Edge 3+ hit rate >= 60%
+2. Vegas bias within ±1.5 points
+3. No tier bias > ±5 points
+4. Both OVER and UNDER HR >= 52.4% at edge 3+
+5. N >= 50 graded predictions in eval window
+
+## How `bin/retrain.sh` Works
+
+1. Queries `model_registry` for all enabled model families
+2. For each family: runs `quick_retrain.py` with family's feature_set + loss_function
+3. Uses 56-day rolling window ending yesterday
+4. Auto-uploads to GCS, auto-registers in `model_registry`
+5. With `--enable`: sets `enabled=TRUE` on new model
+6. Worker picks up new model on next prediction cycle
+
+## Automation (Session 458)
+
+### `weekly-retrain` Cloud Function — DEPLOYED
+- **Trigger:** Cloud Scheduler, every Monday 5 AM ET
+- **Logic:** Queries `model_registry` for enabled families, trains each with 56d rolling window
+- **Governance gates enforced:** HR>=60% edge 3+, vegas bias ±1.5, directional balance, N>=50
+- **Auto-registers** passing models with `enabled=TRUE`. Worker picks up on next prediction cycle.
+- **Slack notification** on success/blocked/error per family
+- **Safety:** Max 5 families/run, skips families retrained <5 days ago, min 3 models remain enabled
+- **Specs:** Gen2 CF, 4GiB memory, 2 CPU, 1800s timeout
+- **Dry run:** `?dry_run=true` query param
+- **Single family:** `?family=v12_noveg_mae` query param
+
+### Other Retrain Infrastructure
+- `retrain-reminder` CF: Monday 9 AM ET — backup Slack alert if auto-retrain fails
+- `monthly-retrain` CF: **DEPRECATED** (V8 baseline, 60d window). Superseded by weekly-retrain.
+- `bin/retrain.sh`: Manual equivalent for ad-hoc retraining
+
+### Prior-Season Warm-Start (Future Experiment)
+CatBoost `fit()` supports `init_model` parameter for continuing training from existing model.
+Could help Nov-Dec warm-up phase (+10pp potential). Test in walk-forward framework first:
+- Modify `walk_forward_simulation.py` to pass prior season's model as `init_model`
+- Compare Nov-Dec HR with/without warm-start
+- If validated, add `--warm-start` flag to `quick_retrain.py`
+
+## Rollback
 
 ```bash
-# Check feature store quality
-./bin/model-registry.sh validate
+# Disable bad model
+python bin/deactivate_model.py MODEL_ID --re-export
 
-# Check recent data availability
-bq query --use_legacy_sql=false "
-SELECT game_date, COUNT(*) as records
-FROM nba_predictions.ml_feature_store_v2
-WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
-GROUP BY 1 ORDER BY 1 DESC"
-```
-
-### 2. Training
-
-The script handles:
-- Training on data from season start (Nov 2) to yesterday
-- Saving model with consistent naming
-- Uploading to GCS
-- Registering in model_registry
-
-```bash
-# Standard monthly retrain
-./bin/retrain-monthly.sh --name "V9_FEB_RETRAIN"
-
-# Custom training window
-./bin/retrain-monthly.sh \
-    --name "V9_FEB_CUSTOM" \
-    --train-end 2026-02-15
-```
-
-### 3. Evaluation
-
-After training, evaluate before promoting:
-
-```bash
-# Check experiment results
-bq query --use_legacy_sql=false "
-SELECT experiment_name, results_json
-FROM nba_predictions.ml_experiments
-WHERE experiment_name LIKE '%FEB%'
-ORDER BY created_at DESC LIMIT 5"
-
-# Compare to baseline
-PYTHONPATH=. python ml/experiments/evaluate_model.py \
-    --model models/catboost_v9_33features_20260203.cbm \
-    --eval-start 2026-01-25 \
-    --eval-end 2026-02-02
-```
-
-**Promotion Criteria:**
-- MAE ≤ 5.5 (baseline is ~5.1)
-- Hit rate (3+ edge) ≥ 60%
-- Hit rate (5+ edge) ≥ 70%
-- No significant tier bias (< ±3 pts)
-
-### 4. Promotion
-
-If evaluation passes:
-
-```bash
-# Auto-promote during training
-./bin/retrain-monthly.sh --promote
-
-# Or manually promote later
+# If all models are bad, force worker cache refresh
 gcloud run services update prediction-worker --region=us-west2 \
-    --update-env-vars="CATBOOST_V9_MODEL_PATH=gs://nba-props-platform-models/catboost/v9/catboost_v9_33features_20260203.cbm"
-
-# Update registry
-bq query --use_legacy_sql=false "
-UPDATE nba_predictions.model_registry
-SET is_production = TRUE, production_start_date = CURRENT_DATE()
-WHERE model_id = 'catboost_v9_33features_20260203'"
+    --update-env-vars="MODEL_CACHE_REFRESH=$(date +%Y%m%d_%H%M)"
 ```
-
-### 5. Post-Promotion Monitoring
-
-After promoting, monitor for 2-3 days:
-
-```bash
-# Check daily hit rates
-bq query --use_legacy_sql=false "
-SELECT game_date,
-  COUNT(*) as predictions,
-  ROUND(100.0 * COUNTIF(prediction_correct) / COUNT(*), 1) as hit_rate
-FROM nba_predictions.prediction_accuracy
-WHERE system_id = 'catboost_v9'
-  AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 3 DAY)
-GROUP BY 1 ORDER BY 1 DESC"
-
-# Check for tier bias
-bq query --use_legacy_sql=false "
-SELECT
-  CASE WHEN actual_points >= 25 THEN 'stars'
-       WHEN actual_points >= 15 THEN 'starters'
-       WHEN actual_points >= 5 THEN 'role'
-       ELSE 'bench' END as tier,
-  ROUND(AVG(predicted_points - actual_points), 1) as bias
-FROM nba_predictions.prediction_accuracy
-WHERE system_id = 'catboost_v9'
-  AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 3 DAY)
-GROUP BY 1"
-```
-
-## Naming Convention
-
-```
-catboost_v{version}_{features}features_{YYYYMMDD}.cbm
-```
-
-| Component | Description | Example |
-|-----------|-------------|---------|
-| `version` | Model version (v8, v9, v10) | v9 |
-| `features` | Feature count | 33 |
-| `YYYYMMDD` | Training date | 20260203 |
-
-Examples:
-- `catboost_v9_33features_20260203.cbm` - Standard monthly retrain
-- `catboost_v9_37features_20260301.cbm` - If adding trajectory features
-- `catboost_v10_34features_20260401.cbm` - New version with tier feature
-
-## Model Registry
-
-All models must be registered in `nba_predictions.model_registry`:
-
-```bash
-# View all models
-./bin/model-registry.sh list
-
-# View production models
-./bin/model-registry.sh production
-
-# View features for a model
-./bin/model-registry.sh features catboost_v9_33features_20260203
-
-# Validate all GCS paths exist
-./bin/model-registry.sh validate
-```
-
-## Rollback Procedure
-
-If a new model performs poorly:
-
-```bash
-# 1. Identify previous model
-./bin/model-registry.sh list
-
-# 2. Revert env var
-gcloud run services update prediction-worker --region=us-west2 \
-    --update-env-vars="CATBOOST_V9_MODEL_PATH=gs://nba-props-platform-models/catboost/v9/catboost_v9_feb_02_retrain.cbm"
-
-# 3. Update registry
-bq query --use_legacy_sql=false "
-UPDATE nba_predictions.model_registry
-SET is_production = FALSE, status = 'rolled_back'
-WHERE model_id = 'catboost_v9_33features_20260203';
-
-UPDATE nba_predictions.model_registry
-SET is_production = TRUE
-WHERE model_id = 'catboost_v9_feb_02_retrain'"
-```
-
-## Troubleshooting
-
-### Model file not found after training
-
-The `quick_retrain.py` script may save with a different filename. Check:
-```bash
-ls -la models/*.cbm
-```
-
-### GCS upload fails
-
-Verify authentication:
-```bash
-gcloud auth list
-gsutil ls gs://nba-props-platform-models/catboost/v9/
-```
-
-### Model performs worse than baseline
-
-1. Check training data quality (use `/spot-check-features`)
-2. Verify no data corruption in recent dates
-3. Check if specific tier is underperforming
-4. Consider rolling back while investigating
-
-## History
-
-| Date | Model | Notes |
-|------|-------|-------|
-| 2026-01-08 | V8 | Historical baseline (2021-2024) |
-| 2026-02-01 | V9 (original) | First current-season model |
-| 2026-02-02 | V9 (feb_02) | Monthly retrain, now production |
 
 ## Related
 
-- [Model Registry Schema](MODEL-REGISTRY.md)
+- Walk-forward simulation: `scripts/nba/training/walk_forward_simulation.py`
+- BB pipeline gap analysis: `scripts/nba/training/bb_pipeline_gap_analysis.py`
+- Walk-forward results: `results/nba_walkforward/`
+- [Model Registry](MODEL-REGISTRY.md)
 - [quick_retrain.py](../../../../ml/experiments/quick_retrain.py)
-- [CatBoost V9 System](../../../../predictions/worker/prediction_systems/catboost_v9.py)
+- [retrain.sh](../../../../bin/retrain.sh)

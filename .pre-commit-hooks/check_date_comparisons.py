@@ -70,6 +70,11 @@ EXCEPTION_PATTERNS = [
     r"end_date",            # End of a date range is OK
     r"to_date",             # End of a date range
     r"max_date",            # Finding max date
+    r"FIX:",                # Explicitly marked as reviewed/fixed
+    r"<=.*correct",         # Explicitly marked as correct usage
+    r"snapshot_timestamp",  # Pre-game odds data, not game results
+    r"odds_api",            # Betting lines are pre-game data
+    r"LAG\(",               # LAG window functions need <= for the window boundary
 ]
 
 # File patterns to check
@@ -196,9 +201,10 @@ def main():
         print("add a comment explaining why (e.g., '# <= is correct for range end').")
         print("=" * 70)
 
-        # Exit with warning (0) - we don't block commits, just warn
-        # Change to sys.exit(1) to block commits
-        return 0
+        # Session 458: Changed from warning to BLOCKING after discovering
+        # widespread data leakage from game_date <= in precompute processors.
+        # 72% of feature_0 values were leaked (included today's actual score).
+        return 1
     else:
         print("Date comparison check: OK (no suspicious patterns found)")
         return 0
