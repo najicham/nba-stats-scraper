@@ -76,7 +76,11 @@ SIGNAL_ANGLE_MAP = {
     'mean_reversion_under': "Hot streak regression — 3-game avg well above line with steep upward trend (77.8% HR)",
     # Session 418: player profile signals
     'bounce_back_over': "Bounce-back: bad miss last game + away game — scoring regression (56.2% HR)",
-    'over_streak_reversion_under': "Over-streak reversion: 4+ overs in last 5 games — due for correction (56% UNDER)",
+    # over_streak_reversion_under REMOVED Session 462: 51.6% HR 5-season — harmful
+    # Session 462: BB pipeline simulator validated signals
+    'hot_3pt_under': "Hot 3PT shooter regression: recent 3PT% 10%+ above season avg — UNDER (62.5% HR)",
+    'cold_3pt_over': "Cold 3PT shooter bounce-back: recent 3PT% 15%+ below season avg — OVER (60.2% HR)",
+    'line_drifted_down_under': "BettingPros line drifted down: smart money nudging UNDER (59.8% HR)",
 }
 
 # Warning tag → warning angle

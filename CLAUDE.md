@@ -102,17 +102,19 @@ nba-stats-scraper/
 **Key settings:**
 - V12_NOVEG is the strongest base feature set. Adding features consistently hurts.
 - Optimal vegas weight: 0.15-0.25x. 56-day training window is sweet spot.
-- Edge >= 3 filter is critical — 73% of predictions below edge 3 lose money.
+- **Raw model HR is ~53% at edge 3+.** The BB pipeline (signals+filters) is where the value lives: 60%+ overall, 65%+ at edge 5+.
+- **Edge 5+ is the money zone.** Edge 3-5 picks are net-negative (36-44% HR). Only edge 5+ should be in best bets.
 
 ### Retraining (Session 458)
 
-**Retrain every 7 days.** Walk-forward across 2 seasons proves this is the single highest-ROI operation.
-- **85% HR at edge 3+ validated** — audited for leakage (5 seeds, naive baselines, feature importance, permutation test). True skill: +27.5pp above structural baseline.
+**Retrain every 7 days.** Walk-forward on CLEAN data (Session 458 leakage fix) confirms w56_r7 is optimal.
+- **Raw model: 53.4% HR at edge 3+** (2 seasons, N=2,193). Previous 85% was data leakage.
+- **BB pipeline: 60-66% HR** — signals/filters add +7-12pp above raw model.
+- **Top combos: 74-83% HR** — edge 5+ with combo_3way, rest_advantage, or book_disagreement.
 - **`weekly-retrain` CF fires every Monday 5 AM ET** — auto-retrains all enabled families, 56-day rolling window, governance gates enforced
 - **`./bin/retrain.sh --all --enable`** — manual equivalent for ad-hoc retraining
 - `retrain-reminder` CF alerts every Monday at 9 AM ET — backup alert if auto-retrain fails
 - Stale models (10+ days) become confidently wrong: high edge but low HR
-- Model needs ~4 months in-season data for peak accuracy (85%+ HR at edge 3+ by March)
 - Walk-forward details: `docs/08-projects/current/model-management/MONTHLY-RETRAINING.md`
 
 ### Model Governance
@@ -326,7 +328,7 @@ python bin/analysis/model_correlation.py         # Inter-model agreement
 
 ## Signal System [Keyword: SIGNALS]
 
-**28 active signals + 27 shadow signals** (24 removed/disabled). **23 negative filters + 10 observation.**
+**28 active signals + 30 shadow signals** (25 removed/disabled). **20 negative filters + 13 observation.**
 **Full inventory:** `docs/08-projects/current/signal-discovery-framework/SIGNAL-INVENTORY.md`
 
 **Best Bets Pipeline:** `edge 3+ (or signal rescue) → negative filters → signal_count ≥ 3 → real_sc gate → rank by edge (OVER) or signal quality (UNDER)`
@@ -338,6 +340,31 @@ python bin/analysis/model_correlation.py         # Inter-model agreement
 - **Shadow signals** (Sessions 401-423): projection_consensus, predicted_pace, dvp_favorable, CLV, sharp_money, minutes_surge, hot_form, consistent_scorer, over_trend, usage_surge, scoring_momentum, career_matchup, minutes_load, blowout_risk, volatile_starter_under, downtrend_under, star_favorite_under, starter_away_overtrend_under — accumulating data.
 
 **Top signals by HR:** `combo_3way` 95.5%, `combo_he_ms` 94.9%, `line_rising_over` 96.6%, `book_disagreement` 93.0%, `sharp_line_drop_under` 87.5%, `fast_pace_over` 81.5%
+
+### BB Pipeline Simulator (Session 461)
+
+**5-season cross-validated findings** using walk-forward predictions + BettingPros multi-book data. Simulator at `scripts/nba/training/bb_enriched_simulator.py`.
+
+**Validated signals to ADD (pre-game clean, 5-season consistent):**
+- `hot_3pt_under`: 3PT_last_3 - 3PT_season >= 10% → **62.5% HR** (N=670). Books anchor to season avg; hot streak is temporary.
+- `cold_3pt_over`: 3PT_last_3 - 3PT_season <= -15% → **60.2% HR** (N=123). Bounce-back from cold streak.
+- `line_drifted_down_under`: BettingPros line movement [-0.5, -0.1) → **59.8% HR** (N=336). Smart money nudging under.
+
+**Validated filters to ADD (block losing picks):**
+- `cold_fg_under`: Block UNDER when FG_last_3 - FG_season <= -10% → **38.5% HR** (N=457). Cold shooter bounces back.
+- `cold_3pt_under`: Block UNDER when 3PT_last_3 - 3PT_season <= -10% → **45.6% HR** (N=735). Same mechanism.
+- `over_line_rose_heavy`: Block OVER when BettingPros line rose >= 1.0 → **38.9% HR** (N=54). Fighting the market.
+
+**Filters to REMOVE (blocking winners, 5-season confirmed):**
+- `ft_variance_under`: 56.0% CF HR — remove
+- `b2b_under`: 54.0% CF HR — remove
+- `familiar_matchup`: 54.4% CF HR — remove
+
+**Harmful signals to REMOVE:** `starter_away_overtrend_under` (48.2%), `sharp_book_lean_over` (41.7%), `over_streak_reversion_under` (51.6%)
+
+**WARNING:** bench_under 76.5% HR used post-game `starter_flag` (look-ahead bias). Pre-game proxy = 51.8%. Not actionable without reliable pre-game lineup data.
+
+**Edge strategy:** Use edge 6-8 (not 6-7). Edge 6-7 breaks in 2022-23 (31.2%). Edge 6-8 = 61.4% HR, consistent all 5 seasons.
 
 **Pick Angles:** Each pick includes `pick_angles` — human-readable reasoning. See `ml/signals/pick_angle_builder.py`.
 

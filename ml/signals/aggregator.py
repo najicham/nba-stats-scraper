@@ -100,10 +100,15 @@ SHADOW_SIGNALS = frozenset({
     'minutes_surge_over',          # Permanently blocked (no RotoWire minutes)
     'dvp_favorable_over',          # Insufficient BB data
     'day_of_week_under',           # 33.3% HR (N=9) — bad start
-    'over_streak_reversion_under', # Insufficient BB data
+    'over_streak_reversion_under', # 51.6% HR 5-season — harmful, kept for tracking
     'star_favorite_under',         # +0.7pp = noise (Session 427)
-    'starter_away_overtrend_under',  # Insufficient BB data
+    'starter_away_overtrend_under',  # Session 462: 48.2% HR 5-season — harmful, demoted from weights
     'mean_reversion_under',  # Session 451: decayed to 53% vs 54.3% baseline, removed from weights/rescue Session 429. Stop real_sc inflation.
+    'sharp_book_lean_over',  # Session 462: 41.7% HR 5-season — harmful, demoted from weights/rescue
+    # Session 462: New shadow signals (BB simulator validated, accumulating data)
+    'hot_3pt_under',               # 62.5% HR (N=670) 5-season — promote when BB N >= 30
+    'cold_3pt_over',               # 60.2% HR (N=123) 5-season — promote when BB N >= 30
+    'line_drifted_down_under',     # 59.8% HR (N=336) 5-season — promote when BB N >= 30
 })
 
 # Session 400: UNDER signal quality weights for signal-first ranking.
@@ -116,7 +121,7 @@ UNDER_SIGNAL_WEIGHTS: Dict[str, float] = {
     'book_disagreement': 1.0,        # Session 434: reduced 2.5→1.0. 47.4% HR 7d (N=19), below breakeven
     'bench_under': 2.0,              # 76.9% HR
     'home_under': 2.0,               # Session 422c: boosted from 1.5. 60.6% HR (N=4,253) model-level
-    'starter_away_overtrend_under': 1.5,  # Session 423: 68.1% HR (N=213), monthly stable, shadow
+    # starter_away_overtrend_under removed Session 462: 48.2% HR 5-season cross-validated — harmful
     'extended_rest_under': 1.5,      # 61.8% HR
     'volatile_starter_under': 2.0,   # Session 427: promoted 1.5→2.0. Cross-season +11.1pp lift (best UNDER signal)
     'downtrend_under': 2.0,          # Session 427: promoted 1.5→2.0. Cross-season +8.1pp lift, increasing trend
@@ -132,7 +137,7 @@ UNDER_EDGE_TIEBREAKER = 0.1  # Edge as minor tiebreaker for UNDER
 # combo_he_ms 40% HR because HSE had lower edge).
 RESCUE_SIGNAL_PRIORITY: Dict[str, int] = {
     'high_scoring_environment_over': 3,  # 100% BB HR (3-0)
-    'sharp_book_lean_over': 2,           # 100% BB HR (1-0)
+    # sharp_book_lean_over removed Session 462: 41.7% HR 5-season — demoted to shadow
     'home_under': 2,                     # Solid UNDER rescue signal
     'combo_3way': 1,                     # Co-fires with combo_he_ms
     'combo_he_ms': 1,                    # 53.8% BB HR — weak at low edge
@@ -159,7 +164,7 @@ OVER_SIGNAL_WEIGHTS: Dict[str, float] = {
     'book_disagreement': 2.0,               # 93.0% signal HR
     'rest_advantage_2d': 2.0,               # Session 442: 74.0% BB HR (N=50), strongest unweighted signal
     'scoring_cold_streak_over': 1.5,        # Post-cold bounce signal
-    'sharp_book_lean_over': 1.5,            # 70.3% signal HR
+    # sharp_book_lean_over removed Session 462: 41.7% HR 5-season cross-validated — harmful
     'b2b_boost_over': 1.0,                  # Active signal
     'q4_scorer_over': 1.0,                  # Active signal
     'self_creation_over': 1.0,              # Active signal
@@ -355,8 +360,12 @@ class BestBetsAggregator:
             'line_anomaly_extreme_drop': 0,
             'player_under_suppression_obs': 0,
             'under_low_rsc': 0,        # Session 452: promoted from under_low_rsc_obs
-            'ft_variance_under': 0,     # Session 452: promoted from ft_variance_under_obs
+            'ft_variance_under': 0,     # Session 452→462: demoted back to observation
             'team_cap': 0,
+            # Session 462: New observation filters (BB simulator validated)
+            'cold_fg_under_obs': 0,
+            'cold_3pt_under_obs': 0,
+            'over_line_rose_heavy_obs': 0,
         }
 
         # Session 393: Counterfactual tracking — log filtered-out picks so we
@@ -501,7 +510,7 @@ class BestBetsAggregator:
                     # volatile_scoring_over removed Session 436: 0% BB HR, 20% overall.
                     # Rescues bench players with high CV (trivially satisfied at low lines).
                     'high_scoring_environment_over',  # Session 420: restored (71.4% HR)
-                    'sharp_book_lean_over',
+                    # sharp_book_lean_over removed Session 462: 41.7% HR 5-season
                     # sharp_book_lean_under removed Session 431: zero production fires in 2026
                     # mean_reversion_under removed Session 427: cross-season decay
                     # 75.7%(2024)→65.2%(2025)→53.0%(2026), below 2026 baseline
@@ -643,13 +652,13 @@ class BestBetsAggregator:
             # 61.0% AWAY vs 63.3% HOME. March AWAY noveg = 60.0% (N=45).
             # Filter was #1 blocker (9 rejections in 2 days), blocking winning picks.
 
-            # Avoid familiar matchups (Session 284)
+            # Avoid familiar matchups — DEMOTED to observation (Session 462).
+            # 5-season cross-validation: CF HR = 54.4% — blocking winners.
             games_vs_opp = pred.get('games_vs_opponent') or 0
             if games_vs_opp >= 6:
                 filter_counts['familiar_matchup'] += 1
-                _record_filtered(pred, 'familiar_matchup', pred_edge)
-                if 'familiar_matchup' not in self._runtime_demoted:
-                    continue
+                _record_filtered(pred, 'familiar_matchup_obs', pred_edge)
+                # continue  # Session 462: observation mode — do NOT block
 
             # Feature quality floor (Session 278): quality < 85 = 24.0% HR
             # Session 310: quality=0 (missing) must also be blocked, not passed through
@@ -697,15 +706,14 @@ class BestBetsAggregator:
                 if 'med_usage_under' not in self._runtime_demoted:
                     continue
 
-            # B2B UNDER block (Session 422c): 30.8% HR (N=52) — B2B players go OVER
-            # at high rates. Market underprices fatigue or model overestimates it.
+            # B2B UNDER block — DEMOTED to observation (Session 462).
+            # 5-season cross-validation: CF HR = 54.0% — blocking winners.
             rest_days = pred.get('rest_days') or 99
             if (pred.get('recommendation') == 'UNDER'
                     and rest_days <= 1):
                 filter_counts['b2b_under_block'] += 1
-                _record_filtered(pred, 'b2b_under_block', pred_edge)
-                if 'b2b_under_block' not in self._runtime_demoted:
-                    continue
+                _record_filtered(pred, 'b2b_under_block_obs', pred_edge)
+                # continue  # Session 462: observation mode — do NOT block
 
             # starter_v12_under REMOVED (Session 422b): Dead filter — zero fires
             # across entire season. startswith('v12') missed lgbm/xgb models,
@@ -1217,19 +1225,55 @@ class BestBetsAggregator:
                 if 'under_low_rsc' not in self._runtime_demoted:
                     continue
 
-            # Session 452: FT variance UNDER — PROMOTED to active filter.
-            # HIGH_FTA (avg >= 5) + HIGH_CV (>= 0.5) = 47.8% UNDER HR vs
-            # 70.6% for stable high-FTA players (22.8pp gap). Mar 8: Booker
-            # 15/15 FT, KAT 8/8 FT, Wemby 9/10 FT all killed UNDER picks.
+            # FT variance UNDER — DEMOTED to observation (Session 462).
+            # 5-season cross-validation: CF HR = 56.0% — blocking winners.
+            # Original Session 452 promotion was based on single-season data.
             fta_avg = pred.get('fta_avg_last_10') or 0
             fta_cv = pred.get('fta_cv_last_10') or 0
             if (pred.get('recommendation') == 'UNDER'
                     and fta_avg >= 5.0
                     and fta_cv >= 0.5):
                 filter_counts['ft_variance_under'] += 1
-                _record_filtered(pred, 'ft_variance_under', pred_edge, len(qualifying), tags)
-                if 'ft_variance_under' not in self._runtime_demoted:
-                    continue
+                _record_filtered(pred, 'ft_variance_under_obs', pred_edge, len(qualifying), tags)
+                # continue  # Session 462: observation mode — do NOT block
+
+            # Session 462: Cold FG UNDER observation — block UNDER when
+            # FG% last_3 is 10%+ below season avg. Cold shooter bounces back.
+            # 5-season cross-validated: blocked picks = 38.5% HR (N=457).
+            _fg_last_3 = pred.get('fg_pct_last_3')
+            _fg_season = pred.get('fg_pct_season')
+            if (pred.get('recommendation') == 'UNDER'
+                    and _fg_last_3 is not None and _fg_season is not None
+                    and _fg_season - _fg_last_3 >= 0.10):
+                filter_counts['cold_fg_under_obs'] += 1
+                _record_filtered(pred, 'cold_fg_under_obs', pred_edge, len(qualifying), tags)
+                # Observation only — does NOT block
+
+            # Session 462: Cold 3PT UNDER observation — block UNDER when
+            # 3PT% last_3 is 10%+ below season avg. Same bounce-back mechanism.
+            # 5-season cross-validated: blocked picks = 45.6% HR (N=735).
+            # Uses three_pct data already in supplemental (accessed via signals).
+            # For observation tracking, we check if the signal would fire by
+            # looking at pred dict fields that come from the main query.
+            _tpt_last_3 = pred.get('three_pct_last_3')
+            _tpt_season = pred.get('three_pct_season')
+            if (pred.get('recommendation') == 'UNDER'
+                    and _tpt_last_3 is not None and _tpt_season is not None
+                    and _tpt_season - _tpt_last_3 >= 0.10):
+                filter_counts['cold_3pt_under_obs'] += 1
+                _record_filtered(pred, 'cold_3pt_under_obs', pred_edge, len(qualifying), tags)
+                # Observation only — does NOT block
+
+            # Session 462: OVER + line rose heavy observation — block OVER when
+            # BettingPros line rose >= 1.0. Fighting the market = losing.
+            # 5-season cross-validated: blocked picks = 38.9% HR (N=54).
+            bp_move = pred.get('bp_line_movement')
+            if (pred.get('recommendation') == 'OVER'
+                    and bp_move is not None
+                    and bp_move >= 1.0):
+                filter_counts['over_line_rose_heavy_obs'] += 1
+                _record_filtered(pred, 'over_line_rose_heavy_obs', pred_edge, len(qualifying), tags)
+                # Observation only — does NOT block
 
             scored.append({
                 **pred,

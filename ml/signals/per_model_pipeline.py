@@ -820,6 +820,29 @@ def _query_all_model_predictions(
     except Exception as e:
         logger.warning(f"Failed to query CLV data: {e}")
 
+    # Session 462: BettingPros line movement
+    bp_line_move_query = f"""
+    SELECT player_lookup,
+      AVG(points_line - opening_line) AS bp_line_movement
+    FROM `{PROJECT_ID}.nba_raw.bettingpros_player_points_props`
+    WHERE game_date = @target_date
+      AND market_type = 'points'
+      AND opening_line IS NOT NULL
+      AND points_line IS NOT NULL
+      AND is_best_line = TRUE
+    GROUP BY player_lookup
+    HAVING ABS(AVG(points_line - opening_line)) > 0
+    """
+    bp_line_movement_map = {}
+    try:
+        bp_rows = bq_client.query(bp_line_move_query, job_config=job_config).result(timeout=30)
+        bp_line_movement_map = {
+            row['player_lookup']: float(row['bp_line_movement'])
+            for row in bp_rows if row['bp_line_movement'] is not None
+        }
+    except Exception as e:
+        logger.warning(f"Failed to query BettingPros line movement: {e}")
+
     # Sharp book lean
     sharp_lean_query = f"""
     WITH latest_lines AS (
@@ -1086,6 +1109,16 @@ def _query_all_model_predictions(
             pred['closing_line'] = clv_data['closing_line']
         else:
             pred['closing_line_value'] = None
+
+        # Session 462: BettingPros line movement
+        bp_lm = bp_line_movement_map.get(row_dict['player_lookup'])
+        pred['bp_line_movement'] = float(bp_lm) if bp_lm is not None else None
+
+        # Session 462: Copy shooting stats to pred dict for new signals/observation filters
+        pred['fg_pct_last_3'] = float(row_dict['fg_pct_last_3']) if row_dict.get('fg_pct_last_3') is not None else None
+        pred['fg_pct_season'] = float(row_dict['fg_pct_season']) if row_dict.get('fg_pct_season') is not None else None
+        pred['three_pct_last_3'] = float(row_dict['three_pct_last_3']) if row_dict.get('three_pct_last_3') is not None else None
+        pred['three_pct_season'] = float(row_dict['three_pct_season']) if row_dict.get('three_pct_season') is not None else None
 
         # Negative +/- streak
         neg_pm_streak = 0

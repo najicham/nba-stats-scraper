@@ -143,6 +143,8 @@ class TestAggregatorReturnType:
             'team_cap',
             'unreliable_over_low_mins_obs', 'unreliable_under_flat_trend_obs',
             'b2b_under_block', 'blowout_risk_under_block_obs',
+            # Session 462: New observation filters
+            'cold_fg_under_obs', 'cold_3pt_under_obs', 'over_line_rose_heavy_obs',
         }
         assert set(summary['rejected'].keys()) == expected_keys
         # All counts should be 0 for empty input
@@ -1142,23 +1144,17 @@ class TestRuntimeDemotion:
         # edge_floor is NOT gated by runtime_demoted — always blocks
         assert len(picks) == 0
 
-    def test_b2b_under_demoted(self):
-        """B2B UNDER block can be runtime-demoted."""
+    def test_b2b_under_observation(self):
+        """Session 462: B2B UNDER is now observation mode — always passes through."""
         pred = _make_prediction(recommendation='UNDER', edge=4.0)
         pred['rest_days'] = 1  # B2B
         signals = self._make_signal_results_for(pred)
 
-        # Without demotion: blocked by b2b_under_block
+        # Session 462: b2b_under_block is now observation — counts but does NOT block
         agg = BestBetsAggregator()
         picks, summary = agg.aggregate([pred], signals)
         assert summary['rejected']['b2b_under_block'] == 1
-        assert len(picks) == 0
-
-        # With demotion: passes through
-        agg2 = BestBetsAggregator(runtime_demoted_filters={'b2b_under_block'})
-        picks2, summary2 = agg2.aggregate([pred], signals)
-        assert summary2['rejected']['b2b_under_block'] == 1
-        assert len(picks2) == 1
+        assert len(picks) == 1  # Passes through (observation mode)
 
     def test_empty_demotion_set_no_effect(self):
         """Empty runtime_demoted_filters set has no effect on behavior."""
@@ -1191,10 +1187,12 @@ class TestRescueCapPrioritySort:
         assert RESCUE_SIGNAL_PRIORITY['high_scoring_environment_over'] > RESCUE_SIGNAL_PRIORITY.get('combo_he_ms', 0)
 
     def test_rescue_priority_ordering(self):
-        """Priority map has HSE > sharp_book > combo signals."""
+        """Priority map has HSE > home_under > combo signals."""
         from ml.signals.aggregator import RESCUE_SIGNAL_PRIORITY
         assert RESCUE_SIGNAL_PRIORITY['high_scoring_environment_over'] == 3
-        assert RESCUE_SIGNAL_PRIORITY['sharp_book_lean_over'] == 2
+        # sharp_book_lean_over removed Session 462 (41.7% HR 5-season)
+        assert 'sharp_book_lean_over' not in RESCUE_SIGNAL_PRIORITY
+        assert RESCUE_SIGNAL_PRIORITY['home_under'] == 2
         assert RESCUE_SIGNAL_PRIORITY['combo_he_ms'] == 1
 
 
@@ -1892,10 +1890,10 @@ class TestAlgorithmVersion:
     """Session 452+: Algorithm version + single source of truth."""
 
     def test_algorithm_version_current(self):
-        """ALGORITHM_VERSION should start with 'v45'."""
+        """ALGORITHM_VERSION should start with 'v46'."""
         from ml.signals.aggregator import ALGORITHM_VERSION
-        assert ALGORITHM_VERSION.startswith('v45'), (
-            f"Expected ALGORITHM_VERSION to start with 'v45', got '{ALGORITHM_VERSION}'"
+        assert ALGORITHM_VERSION.startswith('v46'), (
+            f"Expected ALGORITHM_VERSION to start with 'v46', got '{ALGORITHM_VERSION}'"
         )
 
     def test_aggregator_and_merger_versions_match(self):
@@ -2108,7 +2106,8 @@ class TestFtVarianceUnder:
         key = f"{pred['player_lookup']}::{pred['game_id']}"
         return {key: [_make_signal_result(f'sig_{i}') for i in range(n)]}
 
-    def test_blocks_high_fta_high_cv(self):
+    def test_tracks_high_fta_high_cv_observation(self):
+        """Session 462: ft_variance_under is now observation mode — counts but does NOT block."""
         pred = _make_prediction(
             edge=5.0, recommendation='UNDER', trend_slope=2.0,
         )
@@ -2117,7 +2116,7 @@ class TestFtVarianceUnder:
         agg = BestBetsAggregator()
         picks, summary = agg.aggregate([pred], self._make_signals(pred))
         assert summary['rejected']['ft_variance_under'] == 1
-        assert len(picks) == 0  # Session 452: now BLOCKED
+        assert len(picks) == 1  # Session 462: observation mode — passes through
 
     def test_does_not_block_low_fta(self):
         pred = _make_prediction(

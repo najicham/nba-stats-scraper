@@ -277,11 +277,9 @@ def build_default_registry() -> SignalRegistry:
 
     # Session 418: Player profile signals (shadow mode — validating)
     # bounce_back_over: Bad miss (<70% of line) + AWAY = 56.2% raw, 60%+ with model (N=379)
-    # over_streak_reversion_under: 4+ overs in last 5 = 56% UNDER (N=366)
     from ml.signals.bounce_back_over import BounceBackOverSignal
-    from ml.signals.over_streak_reversion_under import OverStreakReversionUnderSignal
     registry.register(BounceBackOverSignal())
-    registry.register(OverStreakReversionUnderSignal())
+    # OverStreakReversionUnderSignal REMOVED Session 462: 51.6% HR 5-season cross-validated — harmful
 
     # Session 422c: New UNDER signals (shadow mode — filling UNDER signal vacuum)
     from ml.signals.volatile_starter_under import VolatileStarterUnderSignal
@@ -292,8 +290,19 @@ def build_default_registry() -> SignalRegistry:
     registry.register(StarFavoriteUnderSignal())
 
     # Session 423: Starter away overtrend UNDER (shadow mode)
-    # Starter (18-25) + AWAY + over_rate > 50% = 68.1% HR (N=213), stable monthly
+    # Session 462: 48.2% HR 5-season — harmful, demoted to shadow. Keep registered for tracking.
     from ml.signals.starter_away_overtrend_under import StarterAwayOvertrendUnderSignal
     registry.register(StarterAwayOvertrendUnderSignal())
+
+    # Session 462: BB pipeline simulator validated signals (shadow mode — accumulating BB data)
+    # hot_3pt_under: 62.5% HR (N=670), 5-season cross-validated
+    # cold_3pt_over: 60.2% HR (N=123), 5-season cross-validated
+    # line_drifted_down_under: 59.8% HR (N=336), 5-season cross-validated
+    from ml.signals.hot_3pt_under import Hot3ptUnderSignal
+    from ml.signals.cold_3pt_over import Cold3ptOverSignal
+    from ml.signals.line_drifted_down_under import LineDriftedDownUnderSignal
+    registry.register(Hot3ptUnderSignal())
+    registry.register(Cold3ptOverSignal())
+    registry.register(LineDriftedDownUnderSignal())
 
     return registry

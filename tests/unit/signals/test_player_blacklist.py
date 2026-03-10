@@ -338,8 +338,8 @@ class TestAvoidFamiliarFilter:
         ]
 
     @patch('ml.signals.aggregator.load_combo_registry', return_value={})
-    def test_familiar_player_excluded(self, mock_registry):
-        """Player with 6+ games vs opponent should be excluded."""
+    def test_familiar_player_observation(self, mock_registry):
+        """Session 462: Familiar matchup is now observation — player passes through."""
         predictions = [
             self._make_prediction('familiar_player', games_vs_opponent=7),
             self._make_prediction('fresh_player', games_vs_opponent=2),
@@ -350,15 +350,18 @@ class TestAvoidFamiliarFilter:
         }
 
         aggregator = BestBetsAggregator(combo_registry={})
-        picks, _ = aggregator.aggregate(predictions, signal_results)
+        picks, summary = aggregator.aggregate(predictions, signal_results)
 
+        # Both pass through (familiar_matchup is observation only)
         player_lookups = [p['player_lookup'] for p in picks]
-        assert 'familiar_player' not in player_lookups
+        assert 'familiar_player' in player_lookups
         assert 'fresh_player' in player_lookups
+        # Counter still tracks
+        assert summary['rejected']['familiar_matchup'] == 1
 
     @patch('ml.signals.aggregator.load_combo_registry', return_value={})
-    def test_exactly_6_games_excluded(self, mock_registry):
-        """Exactly 6 games vs opponent = excluded (>= 6 threshold)."""
+    def test_exactly_6_games_observation(self, mock_registry):
+        """Session 462: Exactly 6 games = observation (counted but not blocked)."""
         predictions = [
             self._make_prediction('border_player', games_vs_opponent=6),
         ]
@@ -367,9 +370,10 @@ class TestAvoidFamiliarFilter:
         }
 
         aggregator = BestBetsAggregator(combo_registry={})
-        picks, _ = aggregator.aggregate(predictions, signal_results)
+        picks, summary = aggregator.aggregate(predictions, signal_results)
 
-        assert len(picks) == 0
+        assert len(picks) == 1  # Passes through (observation mode)
+        assert summary['rejected']['familiar_matchup'] == 1
 
     @patch('ml.signals.aggregator.load_combo_registry', return_value={})
     def test_5_games_not_excluded(self, mock_registry):

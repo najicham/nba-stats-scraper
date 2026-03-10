@@ -26,13 +26,13 @@ MAX_PICKS_PER_GAME = 3  # Session 452: Mar 8 had 3 losses from SAS-HOU game
 RESCUE_CAP_PCT = 0.40
 # Session 452: Single source of truth for algorithm version.
 # aggregator.py imports this constant — bump here for all changes.
-ALGORITHM_VERSION = 'v452_mar8_game_cap_ft_rsc'
+ALGORITHM_VERSION = 'v462_simulator_validated'
 
 # Rescue signal priority weights — mirrors aggregator.RESCUE_SIGNAL_PRIORITY.
 # When rescue cap trims, drop lowest-priority rescues first (ascending sort).
 RESCUE_SIGNAL_PRIORITY: Dict[str, int] = {
     'high_scoring_environment_over': 3,
-    'sharp_book_lean_over': 2,
+    # sharp_book_lean_over removed Session 462: 41.7% HR 5-season — demoted to shadow
     'home_under': 2,
     'combo_3way': 1,
     'combo_he_ms': 1,
