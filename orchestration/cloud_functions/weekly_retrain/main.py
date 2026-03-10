@@ -57,7 +57,9 @@ SLACK_WEBHOOK = os.environ.get('SLACK_WEBHOOK_URL')
 
 # Walk-forward validated configuration (Sessions 454-457)
 ROLLING_WINDOW_DAYS = 56
-EVAL_DAYS = 7
+# Session 463: Extended from 7→14 days. 7-day window yielded N=18-20 at edge 3+,
+# consistently below min_n_graded=25. 14 days doubles the candidate pool.
+EVAL_DAYS = 14
 MAX_FAMILIES_PER_RUN = 5
 MIN_ENABLED_MODELS = 3  # Safety floor: don't disable old if too few would remain
 
