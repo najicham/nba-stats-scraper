@@ -261,6 +261,18 @@ def _query_all_model_predictions(
         AVG(CAST(ft_attempts AS FLOAT64))
           OVER (PARTITION BY player_lookup ORDER BY game_date
                 ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS fta_season,
+        -- Session 463: FTA variance for ft_anomaly signals
+        AVG(CAST(ft_attempts AS FLOAT64))
+          OVER (PARTITION BY player_lookup ORDER BY game_date
+                ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING) AS fta_avg_last_10,
+        SAFE_DIVIDE(
+          STDDEV(CAST(ft_attempts AS FLOAT64))
+            OVER (PARTITION BY player_lookup ORDER BY game_date
+                  ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING),
+          NULLIF(AVG(CAST(ft_attempts AS FLOAT64))
+            OVER (PARTITION BY player_lookup ORDER BY game_date
+                  ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING), 0)
+        ) AS fta_cv_last_10,
         AVG(CAST(unassisted_fg_makes AS FLOAT64))
           OVER (PARTITION BY player_lookup ORDER BY game_date
                 ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS unassisted_fg_season,
@@ -489,6 +501,8 @@ def _query_all_model_predictions(
       ls.points_avg_season,
       ls.usage_avg_season,
       ls.fta_season,
+      ls.fta_avg_last_10,
+      ls.fta_cv_last_10,
       ls.unassisted_fg_season,
       ls.points_std_last_5,
       ls.ft_rate_season,
@@ -972,6 +986,8 @@ def _query_all_model_predictions(
         pred['points_avg_season'] = float(row_dict.get('points_avg_season') or 0)
         pred['usage_avg_season'] = float(row_dict.get('usage_avg_season') or 0)
         pred['fta_season'] = float(row_dict.get('fta_season') or 0)
+        pred['fta_avg_last_10'] = float(row_dict.get('fta_avg_last_10') or 0)
+        pred['fta_cv_last_10'] = float(row_dict.get('fta_cv_last_10') or 0)
         pred['unassisted_fg_season'] = float(row_dict.get('unassisted_fg_season') or 0)
         pred['points_std_last_5'] = float(row_dict.get('points_std_last_5') or 0)
         pred['ft_rate_season'] = float(row_dict.get('ft_rate_season') or 0)
@@ -1249,6 +1265,8 @@ def _query_all_model_predictions(
                 'points_avg_season': float(row_dict.get('points_avg_season') or 0),
                 'usage_avg_season': float(row_dict.get('usage_avg_season') or 0),
                 'fta_season': float(row_dict.get('fta_season') or 0),
+                'fta_avg_last_10': float(row_dict.get('fta_avg_last_10') or 0),
+                'fta_cv_last_10': float(row_dict.get('fta_cv_last_10') or 0),
                 'unassisted_fg_season': float(row_dict.get('unassisted_fg_season') or 0),
                 'points_std_last_5': float(row_dict.get('points_std_last_5') or 0),
                 'ft_rate_season': float(row_dict.get('ft_rate_season') or 0),

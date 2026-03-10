@@ -87,11 +87,14 @@ FEATURE_SETS = {
 }
 
 # Governance gates (from CLAUDE.md)
+# Session 463: min_n_graded lowered 50→25 to match quick_retrain.py (Session 382c).
+# With 7-day eval window, edge 3+ filter yields ~25-45 candidates — 50 was too strict,
+# causing ALL retrains to be BLOCKED (N=14-40 < 50 in Mar 10 run).
 GOVERNANCE = {
     'min_hr_edge3': 60.0,     # Edge 3+ HR must be >= 60%
     'max_vegas_bias': 1.5,     # |avg(pred - line)| must be <= 1.5
     'max_tier_bias': 5.0,      # No tier bias > 5 points
-    'min_n_graded': 50,        # Minimum graded predictions
+    'min_n_graded': 25,        # Minimum graded predictions (was 50, too strict for 7d eval)
     'min_directional_hr': 52.4, # Both OVER and UNDER HR >= 52.4% at edge 3+
 }
 

@@ -145,6 +145,8 @@ class TestAggregatorReturnType:
             'b2b_under_block', 'blowout_risk_under_block_obs',
             # Session 462→463: Cold shooting filters (promoted to active)
             'cold_fg_under', 'cold_3pt_under', 'over_line_rose_heavy_obs',
+            # Session 463: FTA anomaly OVER block
+            'ft_anomaly_over_block',
         }
         assert set(summary['rejected'].keys()) == expected_keys
         # All counts should be 0 for empty input

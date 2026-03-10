@@ -305,4 +305,12 @@ def build_default_registry() -> SignalRegistry:
     registry.register(Cold3ptOverSignal())
     registry.register(LineDriftedDownUnderSignal())
 
+    # Session 463: P0 simulator experiments (shadow mode — accumulating BB data)
+    # ft_anomaly_under: 63.3% HR (N=278), 5-season cross-validated. FTA CV >= 0.5 + FTA >= 5/game
+    # slow_pace_under: 56.6% HR (N=777), 5-season cross-validated. Opponent pace <= 99
+    from ml.signals.ft_anomaly_under import FtAnomalyUnderSignal
+    from ml.signals.slow_pace_under import SlowPaceUnderSignal
+    registry.register(FtAnomalyUnderSignal())
+    registry.register(SlowPaceUnderSignal())
+
     return registry

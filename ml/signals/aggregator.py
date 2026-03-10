@@ -109,6 +109,9 @@ SHADOW_SIGNALS = frozenset({
     'hot_3pt_under',               # 62.5% HR (N=670) 5-season — promote when BB N >= 30
     'cold_3pt_over',               # 60.2% HR (N=123) 5-season — promote when BB N >= 30
     'line_drifted_down_under',     # 59.8% HR (N=336) 5-season — promote when BB N >= 30
+    # Session 463: P0 simulator experiment validated signals
+    'ft_anomaly_under',            # 63.3% HR (N=278) 5-season — FTA CV >= 0.5, FTA >= 5/game
+    'slow_pace_under',             # 56.6% HR (N=777) 5-season — opponent pace <= 99
 })
 
 # Session 400: UNDER signal quality weights for signal-first ranking.
@@ -366,6 +369,8 @@ class BestBetsAggregator:
             'cold_fg_under': 0,       # Session 463: promoted from cold_fg_under_obs
             'cold_3pt_under': 0,      # Session 463: promoted from cold_3pt_under_obs
             'over_line_rose_heavy_obs': 0,
+            # Session 463: FTA anomaly OVER block — high FTA volatility on OVER
+            'ft_anomaly_over_block': 0,
         }
 
         # Session 393: Counterfactual tracking — log filtered-out picks so we
@@ -1274,6 +1279,18 @@ class BestBetsAggregator:
                 _record_filtered(pred, 'over_line_rose_heavy_obs', pred_edge, len(qualifying), tags)
                 # Observation only — does NOT block
 
+            # Session 463: FTA anomaly OVER block — ACTIVE filter. Block OVER when
+            # FTA is volatile (CV >= 0.5) and player averages 5+ FTA/game.
+            # High FTA variance means scoring was inflated by unsustainable FT volume.
+            # 5-season cross-validated: blocked picks = 37.5% HR (N=56) at CV>=0.6.
+            if (pred.get('recommendation') == 'OVER'
+                    and fta_avg >= 5.0
+                    and fta_cv >= 0.6):
+                filter_counts['ft_anomaly_over_block'] += 1
+                _record_filtered(pred, 'ft_anomaly_over_block', pred_edge, len(qualifying), tags)
+                if 'ft_anomaly_over_block' not in self._runtime_demoted:
+                    continue
+
             scored.append({
                 **pred,
                 'trend_slope': pred.get('trend_slope') or 0.0,
@@ -1498,6 +1515,12 @@ class BestBetsAggregator:
                 f"FT variance UNDER (ACTIVE): blocked "
                 f"{filter_counts['ft_variance_under']} UNDER picks on high-FTA + high-CV players "
                 f"(47.8% HR vs 70.6% stable, 22.8pp gap)"
+            )
+        if filter_counts['ft_anomaly_over_block'] > 0:
+            logger.info(
+                f"FTA anomaly OVER block: blocked "
+                f"{filter_counts['ft_anomaly_over_block']} OVER picks with high FTA CV "
+                f"(fta_avg>=5, cv>=0.6, backtest 37.5% HR)"
             )
         if filter_counts['team_cap'] > 0:
             logger.info(

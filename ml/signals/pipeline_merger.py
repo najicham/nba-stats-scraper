@@ -26,7 +26,7 @@ MAX_PICKS_PER_GAME = 3  # Session 452: Mar 8 had 3 losses from SAS-HOU game
 RESCUE_CAP_PCT = 0.40
 # Session 452: Single source of truth for algorithm version.
 # aggregator.py imports this constant — bump here for all changes.
-ALGORITHM_VERSION = 'v462_simulator_validated'
+ALGORITHM_VERSION = 'v463_ft_anomaly_slow_pace'
 
 # Rescue signal priority weights — mirrors aggregator.RESCUE_SIGNAL_PRIORITY.
 # When rescue cap trims, drop lowest-priority rescues first (ascending sort).

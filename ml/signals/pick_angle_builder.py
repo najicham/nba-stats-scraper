@@ -81,6 +81,9 @@ SIGNAL_ANGLE_MAP = {
     'hot_3pt_under': "Hot 3PT shooter regression: recent 3PT% 10%+ above season avg — UNDER (62.5% HR)",
     'cold_3pt_over': "Cold 3PT shooter bounce-back: recent 3PT% 15%+ below season avg — OVER (60.2% HR)",
     'line_drifted_down_under': "BettingPros line drifted down: smart money nudging UNDER (59.8% HR)",
+    # Session 463: P0 simulator experiment validated signals
+    'ft_anomaly_under': "FT anomaly regression: FTA volatile (CV >= 0.5) with 5+ FTA/game — UNDER (63.3% HR)",
+    'slow_pace_under': "Slow opponent pace (<= 99): fewer possessions favors UNDER (56.6% HR)",
 }
 
 # Warning tag → warning angle
