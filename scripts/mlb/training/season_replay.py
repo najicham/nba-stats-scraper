@@ -167,6 +167,15 @@ def parse_args():
                        help="Disable all rescue signals (picks must meet edge floor)")
     parser.add_argument("--max-edge-cap", type=float, default=0.0,
                        help="Override MAX_EDGE cap (e.g. 1.5). 0=use default 2.0")
+    # P2 experiments — CatBoost hyperparameters
+    parser.add_argument("--depth", type=int, default=5,
+                       help="CatBoost tree depth (default: 5)")
+    parser.add_argument("--lr", type=float, default=0.015,
+                       help="CatBoost learning rate (default: 0.015)")
+    parser.add_argument("--iters", type=int, default=500,
+                       help="CatBoost iterations (default: 500)")
+    parser.add_argument("--l2-reg", type=float, default=3.0,
+                       help="CatBoost l2_leaf_reg (default: 3.0)")
     return parser.parse_args()
 
 
@@ -309,15 +318,17 @@ def load_data(client: bigquery.Client, earliest_date: str = "2024-01-01") -> pd.
 # MODEL TRAINING
 # =============================================================================
 
-def train_regressor(X_train: pd.DataFrame, y_train: pd.Series, seed: int = 42):
+def train_regressor(X_train: pd.DataFrame, y_train: pd.Series, seed: int = 42,
+                    depth: int = 5, learning_rate: float = 0.015,
+                    iterations: int = 500, l2_leaf_reg: float = 3):
     """Train CatBoost Regressor with production config."""
     from catboost import CatBoostRegressor
 
     model = CatBoostRegressor(
-        depth=5,
-        learning_rate=0.015,
-        iterations=500,
-        l2_leaf_reg=3,
+        depth=depth,
+        learning_rate=learning_rate,
+        iterations=iterations,
+        l2_leaf_reg=l2_leaf_reg,
         subsample=0.8,
         random_seed=seed,
         loss_function='RMSE',
@@ -733,7 +744,11 @@ def run_replay(df: pd.DataFrame, feature_cols: List[str],
                     continue  # Skip this day, no model yet
                 # Keep using previous model
             else:
-                current_model = train_regressor(X_train, y_train, seed=args.seed)
+                current_model = train_regressor(
+                    X_train, y_train, seed=args.seed,
+                    depth=args.depth, learning_rate=args.lr,
+                    iterations=args.iters, l2_leaf_reg=args.l2_reg,
+                )
                 last_train_date = game_date
                 model_version += 1
 
