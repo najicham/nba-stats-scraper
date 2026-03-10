@@ -362,9 +362,9 @@ class BestBetsAggregator:
             'under_low_rsc': 0,        # Session 452: promoted from under_low_rsc_obs
             'ft_variance_under': 0,     # Session 452→462: demoted back to observation
             'team_cap': 0,
-            # Session 462: New observation filters (BB simulator validated)
-            'cold_fg_under_obs': 0,
-            'cold_3pt_under_obs': 0,
+            # Session 462→463: Cold shooting UNDER filters (BB simulator validated)
+            'cold_fg_under': 0,       # Session 463: promoted from cold_fg_under_obs
+            'cold_3pt_under': 0,      # Session 463: promoted from cold_3pt_under_obs
             'over_line_rose_heavy_obs': 0,
         }
 
@@ -1237,7 +1237,7 @@ class BestBetsAggregator:
                 _record_filtered(pred, 'ft_variance_under_obs', pred_edge, len(qualifying), tags)
                 # continue  # Session 462: observation mode — do NOT block
 
-            # Session 462: Cold FG UNDER observation — block UNDER when
+            # Session 462→463: Cold FG UNDER — ACTIVE filter. Block UNDER when
             # FG% last_3 is 10%+ below season avg. Cold shooter bounces back.
             # 5-season cross-validated: blocked picks = 38.5% HR (N=457).
             _fg_last_3 = pred.get('fg_pct_last_3')
@@ -1245,24 +1245,23 @@ class BestBetsAggregator:
             if (pred.get('recommendation') == 'UNDER'
                     and _fg_last_3 is not None and _fg_season is not None
                     and _fg_season - _fg_last_3 >= 0.10):
-                filter_counts['cold_fg_under_obs'] += 1
-                _record_filtered(pred, 'cold_fg_under_obs', pred_edge, len(qualifying), tags)
-                # Observation only — does NOT block
+                filter_counts['cold_fg_under'] += 1
+                _record_filtered(pred, 'cold_fg_under', pred_edge, len(qualifying), tags)
+                if 'cold_fg_under' not in self._runtime_demoted:
+                    continue
 
-            # Session 462: Cold 3PT UNDER observation — block UNDER when
+            # Session 462→463: Cold 3PT UNDER — ACTIVE filter. Block UNDER when
             # 3PT% last_3 is 10%+ below season avg. Same bounce-back mechanism.
             # 5-season cross-validated: blocked picks = 45.6% HR (N=735).
-            # Uses three_pct data already in supplemental (accessed via signals).
-            # For observation tracking, we check if the signal would fire by
-            # looking at pred dict fields that come from the main query.
             _tpt_last_3 = pred.get('three_pct_last_3')
             _tpt_season = pred.get('three_pct_season')
             if (pred.get('recommendation') == 'UNDER'
                     and _tpt_last_3 is not None and _tpt_season is not None
                     and _tpt_season - _tpt_last_3 >= 0.10):
-                filter_counts['cold_3pt_under_obs'] += 1
-                _record_filtered(pred, 'cold_3pt_under_obs', pred_edge, len(qualifying), tags)
-                # Observation only — does NOT block
+                filter_counts['cold_3pt_under'] += 1
+                _record_filtered(pred, 'cold_3pt_under', pred_edge, len(qualifying), tags)
+                if 'cold_3pt_under' not in self._runtime_demoted:
+                    continue
 
             # Session 462: OVER + line rose heavy observation — block OVER when
             # BettingPros line rose >= 1.0. Fighting the market = losing.

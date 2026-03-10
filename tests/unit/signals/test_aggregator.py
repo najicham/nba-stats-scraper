@@ -143,8 +143,8 @@ class TestAggregatorReturnType:
             'team_cap',
             'unreliable_over_low_mins_obs', 'unreliable_under_flat_trend_obs',
             'b2b_under_block', 'blowout_risk_under_block_obs',
-            # Session 462: New observation filters
-            'cold_fg_under_obs', 'cold_3pt_under_obs', 'over_line_rose_heavy_obs',
+            # Session 462→463: Cold shooting filters (promoted to active)
+            'cold_fg_under', 'cold_3pt_under', 'over_line_rose_heavy_obs',
         }
         assert set(summary['rejected'].keys()) == expected_keys
         # All counts should be 0 for empty input

@@ -1,10 +1,10 @@
 # Signal Inventory — Complete List
 
-**Last Updated:** 2026-03-09 (Session 451)
-**Active Signals:** 28 (+ 27 shadow/observation accumulating data)
-**Negative Filters:** 23 (+ 10 observation)
+**Last Updated:** 2026-03-10 (Session 462)
+**Active Signals:** 28 (+ 30 shadow/observation accumulating data)
+**Negative Filters:** 22 active (+ 12 observation)
 **Combo Registry:** 11 SYNERGISTIC entries
-**Algorithm Version:** `v451_session451_filters`
+**Algorithm Version:** `v462_simulator_validated`
 
 ---
 
@@ -18,7 +18,7 @@
 
 **Signal Rescue (Session 398):** Picks below edge 3.0 (or OVER below 5.0) bypass edge floors if they have a validated high-HR signal or 2+ real signals. Tracked via `signal_rescued` + `rescue_signal` in BQ.
 
-Rescue tags: `combo_3way`, `combo_he_ms`, `book_disagreement` (72%), `home_under` (75%), `volatile_scoring_over` (66.7%), `high_scoring_environment_over` (71.4%), `sharp_book_lean_over` (70.3%). Signal stacking: 2+ real signals = 62.2% HR (N=45). Session 415: removed `low_line_over` from rescue. Session 420: restored `high_scoring_environment_over`. Session 427: removed `mean_reversion_under` (cross-season decay to 53.0%). Session 431: removed `sharp_book_lean_under` (zero production fires in 2026).
+Rescue tags: `combo_3way`, `combo_he_ms`, `home_under` (75%), `high_scoring_environment_over` (71.4%). Signal stacking: 2+ real signals = 62.2% HR (N=45). Session 415: removed `low_line_over` from rescue. Session 420: restored `high_scoring_environment_over`. Session 427: removed `mean_reversion_under` (cross-season decay to 53.0%). Session 431: removed `sharp_book_lean_under` (zero production fires in 2026). Session 462: removed `sharp_book_lean_over` (41.7% HR 5-season cross-validated), removed `book_disagreement` (Session 434), removed `volatile_scoring_over` (Session 436).
 
 **Rescue Cap (Session 415):** Maximum percentage of picks that can be rescue-sourced per slate. Prevents rescue from dominating when edge compression makes most picks low-edge. Threshold: 40% of total picks. Excess rescue picks are dropped by weakest rescue signal.
 
@@ -92,7 +92,7 @@ Rescue tags: `combo_3way`, `combo_he_ms`, `book_disagreement` (72%), `home_under
 
 ---
 
-## Shadow Signals (22) — Sessions 401 + 404 + 410 + 411 + 418, accumulating data
+## Shadow Signals (30) — Sessions 401 + 404 + 410 + 411 + 418 + 462, accumulating data
 
 All shadow signals are registered and firing but NOT wired into aggregator rescue/ranking. They record to `pick_signal_tags` and `signal_health_daily` for validation.
 
@@ -147,7 +147,7 @@ Signals derived from feature store distributions. Discovered via toxic window an
 | Signal | Direction | Source | Notes |
 |--------|-----------|--------|-------|
 | `bounce_back_over` | OVER | prev_game_context | Bad miss (FG% < 35% OR actual < line-5) + AWAY = 56.2% over (N=379). HOME bounce disappears. |
-| `over_streak_reversion_under` | UNDER | f55 (over_rate_last_10), f53 (prop_over_streak) | 4+ overs in last 5 = 44.0% over next (56% UNDER, N=366). Progressive reversion. |
+| ~~`over_streak_reversion_under`~~ | UNDER | — | **REMOVED Session 462:** 51.6% HR 5-season cross-validated — harmful. |
 
 ### Session 422c/423 — UNDER Signal Development
 
@@ -158,7 +158,18 @@ Three new UNDER signals to fill the UNDER signal vacuum. 98.4% of model-level UN
 | `volatile_starter_under` | UNDER | line_value, f3 (points_std_last_10), edge | Starter (18-25) + volatile (std>8) + edge 5+. 65.5% HR (N=637). Monthly stable: Nov 63.6%, Dec 70.5%, Jan 61.9%, Feb 63.4%. |
 | `downtrend_under` | UNDER | f44 (trend_slope) | Slight downtrend (slope -1.5 to -0.5). 63.9% HR (N=1,654). Highest-volume UNDER segment. |
 | `star_favorite_under` | UNDER | line_value, f41 (spread_magnitude) | Star (line 25+) + team favored by 3+. ~73% HR (N=88). Blowout pull effect. |
-| `starter_away_overtrend_under` | UNDER | line_value, is_home, f55 (over_rate_last_10) | Starter (18-25) + AWAY + over_rate > 50%. 68.1% HR (N=213). Monthly stable. |
+| `starter_away_overtrend_under` | UNDER | line_value, is_home, f55 (over_rate_last_10) | **Session 462: 48.2% HR 5-season — harmful.** Demoted to shadow, removed from UNDER_SIGNAL_WEIGHTS. |
+
+### Session 462 — BB Pipeline Simulator Validated (5-season cross-validation)
+
+| Signal | Direction | Source | HR | N | Notes |
+|--------|-----------|--------|----|---|-------|
+| `hot_3pt_under` | UNDER | supplemental['three_pt_stats'] | 62.5% | 670 | 3PT_last_3 - 3PT_season >= 10%. Books anchor to season avg; hot streak temporary. |
+| `cold_3pt_over` | OVER | supplemental['three_pt_stats'] | 60.2% | 123 | 3PT_last_3 - 3PT_season <= -15%. Bounce-back from cold streak. |
+| `line_drifted_down_under` | UNDER | pred['bp_line_movement'] (BettingPros) | 59.8% | 336 | BettingPros line movement [-0.5, -0.1). Smart money nudge. |
+| `sharp_book_lean_over` | OVER | pred['sharp_book_lean'] | — | — | **Demoted from active.** 41.7% HR 5-season. Removed from OVER_SIGNAL_WEIGHTS and rescue. |
+
+**Graduation criteria:** HR >= 60% + N >= 30 at BB level → promote to active. Check after 7+ days of production data.
 
 ---
 
@@ -176,12 +187,12 @@ Three new UNDER signals to fill the UNDER signal vacuum. 98.4% of model-level UN
 
 ---
 
-## Negative Filters (23 active + 1 safety)
+## Negative Filters (22 active + 1 safety)
 
 | # | Filter | Condition | HR | Session |
 |---|--------|-----------|-----|---------|
 | 1 | Player blacklist | <40% HR on 8+ edge-3+ picks | varies | — |
-| 2 | Avoid familiar | 6+ games vs opponent | varies | — |
+| — | ~~Avoid familiar~~ | ~~6+ games vs opponent~~ | 54.4% CF | **→obs 462** |
 | 3 | Edge floor | edge < 3.0 (bypassed by rescue) | — | 352 |
 | 4 | Model-direction affinity | HR < 45% on 15+ picks for model+direction+edge combo | <45% | 343 |
 | 5 | Feature quality floor | quality < 85 | 24.0% | — |
@@ -201,14 +212,16 @@ Three new UNDER signals to fill the UNDER signal vacuum. 98.4% of model-level UN
 | 19 | UNDER after streak | UNDER + 3+ consecutive unders | 44.7% | 418 |
 | 20 | Med usage UNDER block | UNDER + teammate_usage 15-30 | 32.0% | 355 |
 | 21 | UNDER edge 7+ (V9) | UNDER + edge 7+ + V9 family | 34.1% | 297 |
-| 22 | B2B UNDER block | UNDER + rest_days <= 1 | 30.8% | 422c |
+| — | ~~B2B UNDER block~~ | ~~UNDER + rest_days <= 1~~ | 54.0% CF | **→obs 462** |
 | 23 | Prediction sanity | pred > 2x season_avg + line < 18 | 40.9% (N=88) | 440 |
 | 24 | Team cap | > 2 picks from same team | — | 441 |
 | 25 | Line anomaly extreme drop | OVER + line drop >= 40% or >= 6pts from prev game | — | 451 |
+| 26 | **Cold FG UNDER** | **UNDER + fg_last_3 - fg_season <= -10%** | **38.5% (N=457)** | **462** |
+| 27 | **Cold 3PT UNDER** | **UNDER + 3pt_last_3 - 3pt_season <= -10%** | **45.6% (N=735)** | **462** |
 | — | Away block | REMOVED Session 401 | — | 401 |
 | — | UNDER + line jumped 2+ | Demoted to observation Session 417 (5/5 winners blocked) | — | 417 |
 
-### Observation-Only Filters (10 + 3 new Session 451)
+### Observation-Only Filters (12 + Session 462 changes)
 
 | Filter | Condition | HR | Session | Notes |
 |--------|-----------|-----|---------|-------|
@@ -226,8 +239,11 @@ Three new UNDER signals to fill the UNDER signal vacuum. 98.4% of model-level UN
 | `thin_slate_obs` | All picks on 4-6 game slates | 51.2% (76.7% OVER-heavy mix) | 442 | 7-9 games = 72.0% HR. Small slates = lower quality picks and OVER-heavy skew. Observation mode. |
 | `hot_streak_under_obs` | UNDER + over_rate_last_10 >= 0.7 (feature 55) | 44.4% UNDER HR (N=18) vs 81-87% when cold | 442 | Betting UNDER on a hot player is anti-signal. Uses f55 (over_rate_last_10). Observation mode. |
 | `player_under_suppression_obs` | UNDER + player UNDER HR < 35% at N >= 20 (enabled models) | Herro 22.5% (all models, N=40) | 451 | Direction-specific. Won't fire until fleet has 4-6 weeks history (~Mar 24). Check date: **Mar 24**. |
-| `under_low_rsc_obs` | UNDER + real_sc < 2 + edge < 7 | Mar 8: 6/7 UNDER losses had rsc 1-2 | 451 | Would also block wins (Zion rsc=1). Needs N >= 30 to assess risk. Check date: **Mar 24**. |
-| `ft_variance_under_obs` | UNDER + fta_avg_last_10 >= 5 + fta_cv >= 0.5 | 47.8% UNDER HR vs 70.6% stable (22.8pp gap) | 451 | FTA avg and CV are stable player traits. Booker flagged on Mar 8. Check date: **Mar 24**. |
+| `under_low_rsc` | UNDER + real_sc < 2 + edge < 7 | Mar 8: 6/7 UNDER losses had rsc 1-2 | 452 | **PROMOTED Session 452** to active filter. |
+| `ft_variance_under_obs` | UNDER + fta_avg_last_10 >= 5 + fta_cv >= 0.5 | 56.0% CF HR (5-season) | 462 | **DEMOTED Session 462** from active. 5-season CF HR shows blocking winners. |
+| `familiar_matchup_obs` | 6+ games vs opponent | 54.4% CF HR (5-season) | 462 | **DEMOTED Session 462** from active. 5-season CF HR shows blocking winners. |
+| `b2b_under_block_obs` | UNDER + rest_days <= 1 | 54.0% CF HR (5-season) | 462 | **DEMOTED Session 462** from active. 5-season CF HR shows blocking winners. |
+| `over_line_rose_heavy_obs` | OVER + BettingPros line rose >= 1.0 | 38.9% (N=54) | 462 | Line fighting = losing. N=54 thin — accumulate data. Promote at N >= 100. |
 
 ---
 
