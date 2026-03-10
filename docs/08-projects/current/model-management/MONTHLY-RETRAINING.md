@@ -2,22 +2,20 @@
 
 ## Overview
 
-Models must be retrained every 7 days to maintain accuracy. Walk-forward simulation across 2 seasons (Sessions 454-457) proved:
+Models must be retrained every 7 days to maintain accuracy. Walk-forward simulation across 2 seasons (Session 458, CLEAN data after leakage fix) proved:
 - **56-day rolling window + 7-day retrain cadence** is the optimal configuration
-- 7-day retrain beats 14-day by ~2pp HR consistently
+- 7-day retrain beats 14-day by ~1pp HR consistently
 - Stale models (10+ days) become **confidently wrong** — high edge but low HR
-- The model needs ~4 months of in-season data to reach peak performance (85%+ HR at edge 3+)
 
-### Audit Status (Session 457)
+### Critical Finding: Model vs Pipeline (Session 458)
 
-The 85% HR claim has been **audited and confirmed legitimate**:
-- **No data leakage**: All 54 features verified to use `game_date < current_date` temporal boundaries
-- **No future data in features 50-53**: prop_over/under_streak use historical game lines, not current. Combined importance only 5.0%.
-- **Seed-stable**: 5 random seeds produce 84.6%-85.5% HR at edge 3+ (<1pp variance)
-- **Not trivially gameable**: Naive baseline (always OVER) = 48.6%, random predictor at edge 3+ = 49.9%
-- **Feature importance clean**: Top 5 features (62% of model) are all historical scoring averages
-- **DNP survivorship**: ~10% DNP rate excluded, but DNPs don't have prop lines in production either (apples-to-apples)
-- Minor caveats: retrospective feature store regeneration gives slightly cleaner data than real-time (<1-2pp)
+**The raw model is ~53% HR at edge 3+.** The BB pipeline (signals + filters) is where the value lives:
+- Raw model edge 3+: **53.4%** (N=2,193 across 2 seasons)
+- BB pipeline overall: **60.3%** (156 picks, 3.6/day)
+- BB edge 5+: **65.6%** (122 picks, 2.9/day)
+- BB edge 5+ with combo signals: **74-83%** (18-50 picks)
+
+Previous 85% HR claim (Sessions 454-457) was **entirely due to data leakage** — features 0-4 included today's actual game score in rolling averages. See Session 458 handoff for full details.
 
 ## Schedule
 
@@ -47,30 +45,32 @@ The 85% HR claim has been **audited and confirmed legitimate**:
 ./bin/retrain.sh --all --enable --train-end 2026-03-08
 ```
 
-## Validated Configuration
-
-From walk-forward simulation (Session 455, 2 full seasons of data):
+## Validated Configuration (Session 458 — Clean Data)
 
 | Parameter | Value | Evidence |
 |-----------|-------|----------|
-| Training window | 56 days (rolling) | 85.0% HR vs 84.2% (42d) vs 85.3% (90d, but fewer picks) |
-| Retrain cadence | 7 days | +2pp over 14-day cadence |
+| Training window | 56 days (rolling) | 53.4% HR vs 52.8% (42d) vs 52.2% (90d) |
+| Retrain cadence | 7 days | +1pp over 14-day cadence |
 | Feature set | V12_NOVEG | Best across 80+ experiments |
 | CatBoost params | iter=1000, lr=0.05, depth=6, l2=3 | Production defaults |
 | Vegas features | Excluded from training | Used only for HR grading |
 
-## Seasonal Performance Pattern
+## BB Pipeline Performance (2025-26 Season)
 
-Walk-forward reveals a predictable seasonal cycle:
+The BB pipeline is where profitability comes from, not raw model accuracy:
 
-| Period | Edge 3+ HR | Edge 3+ as % of preds | Notes |
-|--------|-----------|----------------------|-------|
-| Nov (weeks 1-4) | 48-55% | 25-40% | Model warming up, few high-edge picks |
-| Dec (weeks 5-8) | 54-84% | 7-39% | Varies by season, model still calibrating |
-| Jan-Feb | 56-90% | 4-45% | Recovery phase, highly variable |
-| Mar-Jun | 85-94% | 30-40% | **Peak performance — model fully calibrated** |
+| Tier | Rule | HR | N | Picks/Day |
+|------|------|-----|-----|-----------|
+| Platinum | Edge 5+ with combo_3way/combo_he_ms | **83.3%** | 18 | 1.3 |
+| Gold | Edge 7+ | **78.8%** | 33 | 1.6 |
+| Silver | Edge 5+ with rest_advantage_2d | **74.0%** | 50 | 2.4 |
+| Ultra (current) | Current ultra_tier=true | **73.0%** | 37 | 1.9 |
+| Edge 5+ OVER | All OVER at edge 5+ | **67.1%** | 73 | 2.1 |
+| Edge 5+ (all) | All picks at edge 5+ | **65.6%** | 122 | 2.9 |
+| All BB | Everything | **60.3%** | 156 | 3.6 |
+| **Edge 3-5** | Low-edge picks | **40.0%** | 34 | — |
 
-**Key insight:** Low HR in Nov-Dec is NOT fixable with features. It's data availability — the model needs ~3-4 months of in-season data to diverge from the line. Fresh 7-day retraining is the ONLY intervention that consistently helps.
+**Key insight:** Edge 3-5 picks are net-negative. The path to 70%+ is raising the edge floor and using signal combos, not improving the raw model.
 
 ## Governance Gates
 
@@ -80,15 +80,6 @@ Every retrained model must pass (enforced in `quick_retrain.py`):
 3. No tier bias > ±5 points
 4. Both OVER and UNDER HR >= 52.4% at edge 3+
 5. N >= 50 graded predictions in eval window
-
-## How `bin/retrain.sh` Works
-
-1. Queries `model_registry` for all enabled model families
-2. For each family: runs `quick_retrain.py` with family's feature_set + loss_function
-3. Uses 56-day rolling window ending yesterday
-4. Auto-uploads to GCS, auto-registers in `model_registry`
-5. With `--enable`: sets `enabled=TRUE` on new model
-6. Worker picks up new model on next prediction cycle
 
 ## Automation (Session 458)
 
@@ -108,13 +99,6 @@ Every retrained model must pass (enforced in `quick_retrain.py`):
 - `monthly-retrain` CF: **DEPRECATED** (V8 baseline, 60d window). Superseded by weekly-retrain.
 - `bin/retrain.sh`: Manual equivalent for ad-hoc retraining
 
-### Prior-Season Warm-Start (Future Experiment)
-CatBoost `fit()` supports `init_model` parameter for continuing training from existing model.
-Could help Nov-Dec warm-up phase (+10pp potential). Test in walk-forward framework first:
-- Modify `walk_forward_simulation.py` to pass prior season's model as `init_model`
-- Compare Nov-Dec HR with/without warm-start
-- If validated, add `--warm-start` flag to `quick_retrain.py`
-
 ## Rollback
 
 ```bash
@@ -129,8 +113,8 @@ gcloud run services update prediction-worker --region=us-west2 \
 ## Related
 
 - Walk-forward simulation: `scripts/nba/training/walk_forward_simulation.py`
-- BB pipeline gap analysis: `scripts/nba/training/bb_pipeline_gap_analysis.py`
-- Walk-forward results: `results/nba_walkforward/`
+- Walk-forward results (clean): `results/nba_walkforward_clean/`
+- Walk-forward results (leaked, historical reference): `results/nba_walkforward/`
 - [Model Registry](MODEL-REGISTRY.md)
 - [quick_retrain.py](../../../../ml/experiments/quick_retrain.py)
 - [retrain.sh](../../../../bin/retrain.sh)

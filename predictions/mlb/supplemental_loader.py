@@ -1,20 +1,25 @@
 """
 MLB Supplemental Data Loader
 
-Loads umpire K-rate and weather data for game-day pitchers.
+Loads umpire K-rate, weather, and game context data for game-day pitchers.
 Provides supplemental_by_pitcher dict consumed by signals:
   - UmpireKFriendlySignal: sup.get('umpire_k_rate')
   - WeatherColdUnderSignal: sup.get('temperature')
+  - ColdWeatherKOverSignal: sup.get('temperature'), sup.get('is_dome')
+  - GameTotalLowOverSignal: sup.get('game_total_line')
+  - HeavyFavoriteOverSignal: sup.get('team_moneyline')
 
 Tables:
   - mlb_raw.mlb_umpire_assignments: game_pk → umpire_name (daily scrape)
   - mlb_raw.mlb_umpire_stats: umpire_name → k_zone_tendency (seasonal)
   - mlb_raw.mlb_weather: team_abbr → temperature_f (daily scrape)
   - mlb_raw.mlb_schedule: game_pk → teams + probable pitchers
+  - mlb_raw.oddsa_game_lines: game_pk → moneyline, game total (Session 460)
 
 Gracefully returns empty dict if tables have no data (pre-season).
 
 Created: 2026-03-08 (Session 447)
+Updated: 2026-03-10 (Session 460) — game context: moneyline, game total
 """
 
 import logging
@@ -76,6 +81,9 @@ def load_supplemental_by_pitcher(
     # Load weather data
     weather_by_team = _load_weather(client, game_date, proj_id)
 
+    # Load game context (moneyline, game total) — Session 460
+    game_context_by_game = _load_game_context(client, game_date, proj_id)
+
     # Load schedule to map game_pk → pitchers
     schedule = _load_schedule(client, game_date, proj_id)
 
@@ -87,6 +95,7 @@ def load_supplemental_by_pitcher(
     for game in schedule:
         game_pk = game['game_pk']
         home_team = game['home_team_abbr']
+        away_team = game['away_team_abbr']
 
         # Get umpire K-rate for this game
         umpire_data = umpire_by_game.get(game_pk, {})
@@ -98,31 +107,48 @@ def load_supplemental_by_pitcher(
         is_dome = weather_data.get('is_dome', False)
         k_weather_factor = weather_data.get('k_weather_factor')
 
-        supplemental = {}
-        if umpire_k_rate is not None:
-            supplemental['umpire_k_rate'] = umpire_k_rate
-        if temperature is not None:
-            supplemental['temperature'] = temperature
-        if is_dome is not None:
-            supplemental['is_dome'] = is_dome
-        if k_weather_factor is not None:
-            supplemental['k_weather_factor'] = k_weather_factor
+        # Get game context (moneyline, game total) — Session 460
+        game_ctx = game_context_by_game.get(game_pk, {})
+        game_total = game_ctx.get('game_total_line')
+        home_ml = game_ctx.get('home_moneyline')
+        away_ml = game_ctx.get('away_moneyline')
 
-        if not supplemental:
-            continue
+        # Build per-pitcher supplemental (home vs away get different moneylines)
+        for pitcher_key, is_home_pitcher in [
+            ('home_pitcher_lookup', True),
+            ('away_pitcher_lookup', False),
+        ]:
+            pitcher_lookup = game.get(pitcher_key)
+            if not pitcher_lookup:
+                continue
+            if pitcher_lookups and pitcher_lookup not in pitcher_lookups:
+                continue
 
-        # Map to both home and away pitchers
-        for pitcher_lookup in [game.get('home_pitcher_lookup'),
-                               game.get('away_pitcher_lookup')]:
-            if pitcher_lookup:
-                if pitcher_lookups and pitcher_lookup not in pitcher_lookups:
-                    continue
-                result[pitcher_lookup] = supplemental.copy()
+            supplemental = {}
+            if umpire_k_rate is not None:
+                supplemental['umpire_k_rate'] = umpire_k_rate
+            if temperature is not None:
+                supplemental['temperature'] = temperature
+            if is_dome is not None:
+                supplemental['is_dome'] = is_dome
+            if k_weather_factor is not None:
+                supplemental['k_weather_factor'] = k_weather_factor
+            # Game context — Session 460
+            if game_total is not None:
+                supplemental['game_total_line'] = game_total
+            team_ml = home_ml if is_home_pitcher else away_ml
+            if team_ml is not None:
+                supplemental['team_moneyline'] = team_ml
+
+            if supplemental:
+                result[pitcher_lookup] = supplemental
 
     n_with_umpire = sum(1 for v in result.values() if 'umpire_k_rate' in v)
     n_with_weather = sum(1 for v in result.values() if 'temperature' in v)
+    n_with_context = sum(1 for v in result.values() if 'game_total_line' in v)
     logger.info(f"[MLB Supplemental] Loaded supplemental for {len(result)} pitchers "
-                f"(umpire: {n_with_umpire}, weather: {n_with_weather})")
+                f"(umpire: {n_with_umpire}, weather: {n_with_weather}, "
+                f"game_ctx: {n_with_context})")
 
     return result
 
@@ -233,6 +259,70 @@ def _load_weather(
 
     except Exception as e:
         logger.warning(f"[MLB Supplemental] Weather data unavailable: {e}")
+        return {}
+
+
+def _load_game_context(
+    client: bigquery.Client, game_date: date, project_id: str
+) -> Dict[int, Dict]:
+    """Load game context (moneyline, game total) by game_pk.
+
+    Session 460: Game total and moneyline provide game-script context
+    for K prop signals. Low totals → deeper outings. Heavy favorites →
+    starter stays in longer.
+
+    Prioritizes DraftKings → FanDuel → any other book.
+
+    Returns:
+        Dict[game_pk, {game_total_line, home_moneyline, away_moneyline}]
+    """
+    query = f"""
+    WITH ranked_lines AS (
+        SELECT
+            game_pk,
+            total_line,
+            home_moneyline,
+            away_moneyline,
+            bookmaker,
+            ROW_NUMBER() OVER (
+                PARTITION BY game_pk
+                ORDER BY
+                    CASE
+                        WHEN bookmaker = 'draftkings' THEN 0
+                        WHEN bookmaker = 'fanduel' THEN 1
+                        WHEN bookmaker = 'betmgm' THEN 2
+                        ELSE 3
+                    END,
+                    snapshot_time DESC
+            ) as rn
+        FROM `{project_id}.mlb_raw.oddsa_game_lines`
+        WHERE game_date = @game_date
+          AND total_line IS NOT NULL
+    )
+    SELECT game_pk, total_line, home_moneyline, away_moneyline
+    FROM ranked_lines
+    WHERE rn = 1
+    """
+
+    try:
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+            ]
+        )
+        rows = client.query(query, job_config=job_config).result()
+
+        result = {}
+        for row in rows:
+            result[row['game_pk']] = {
+                'game_total_line': row.get('total_line'),
+                'home_moneyline': row.get('home_moneyline'),
+                'away_moneyline': row.get('away_moneyline'),
+            }
+        return result
+
+    except Exception as e:
+        logger.warning(f"[MLB Supplemental] Game context unavailable: {e}")
         return {}
 
 

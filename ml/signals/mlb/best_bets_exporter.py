@@ -84,7 +84,16 @@ BASE_SIGNAL_TAGS = frozenset(['high_edge'])
 # Tracking-only signals — evaluated and tagged but excluded from real_signal_count
 # long_rest_over: 55.4% HR, -36u P&L across 4 seasons — actively losing money
 # k_trending_over: 55.6% HR, -18u P&L across 4 seasons — coin flip
-TRACKING_ONLY_SIGNALS = frozenset(['long_rest_over', 'k_trending_over'])
+TRACKING_ONLY_SIGNALS = frozenset([
+    'long_rest_over', 'k_trending_over',
+    # Session 464 shadow signals — evaluate but don't count
+    'k_rate_reversion_under', 'k_rate_bounce_over', 'umpire_csw_combo_over',
+    'rest_workload_stress_under', 'low_era_high_k_combo_over',
+    # Session 464 round 2 shadow signals
+    'chase_rate_over', 'contact_specialist_under', 'humidity_over',
+    'fresh_opponent_over',
+    # PROMOTED: pitcher_on_roll_over, day_game_shadow_over (S464)
+])
 
 # Signal rescue tags — picks can bypass edge floor if they have these signals
 # Session 444: swstr_surge REMOVED (54.9% HR, drags all signal combos to 51-55%)
@@ -392,8 +401,10 @@ class MLBBestBetsExporter:
                     signal_tags.append(signal.tag)
                     signal_count += 1
                     signal_results[signal.tag] = result
+                    # Shadow signals and tracking-only don't count toward gate
                     if (signal.tag not in BASE_SIGNAL_TAGS
-                            and signal.tag not in TRACKING_ONLY_SIGNALS):
+                            and signal.tag not in TRACKING_ONLY_SIGNALS
+                            and not signal.is_shadow):
                         real_signal_count += 1
 
             annotated_picks.append({
@@ -636,6 +647,97 @@ class MLBBestBetsExporter:
             meta = signal_results['long_rest_over'].metadata
             angles.append(f"Extended rest: {meta.get('days_rest', '?')} days (fresh arm)")
 
+        # Session 460 — new shadow signal angles
+        if 'cold_weather_k_over' in signal_results:
+            meta = signal_results['cold_weather_k_over'].metadata
+            angles.append(f"Cold weather {meta.get('temperature', '?'):.0f}°F — harder to barrel")
+
+        if 'lineup_k_spike_over' in signal_results:
+            meta = signal_results['lineup_k_spike_over'].metadata
+            angles.append(f"Lineup K-prone: {meta.get('lineup_k_vs_hand', 0):.1%} vs pitcher hand")
+
+        if 'pitch_efficiency_depth_over' in signal_results:
+            meta = signal_results['pitch_efficiency_depth_over'].metadata
+            angles.append(f"Deep starter: {meta.get('ip_avg_last_5', '?')} IP avg")
+
+        if 'high_csw_over' in signal_results:
+            meta = signal_results['high_csw_over'].metadata
+            angles.append(f"Elite pitch quality: {meta.get('season_csw_pct', 0):.1%} CSW%")
+
+        if 'elite_peripherals_over' in signal_results:
+            meta = signal_results['elite_peripherals_over'].metadata
+            angles.append(f"Ace peripherals: {meta.get('fip', '?')} FIP, "
+                         f"{meta.get('k_per_9', '?')} K/9")
+
+        if 'game_total_low_over' in signal_results:
+            meta = signal_results['game_total_low_over'].metadata
+            angles.append(f"Low game total {meta.get('game_total_line', '?')} — deeper outings")
+
+        if 'heavy_favorite_over' in signal_results:
+            meta = signal_results['heavy_favorite_over'].metadata
+            angles.append(f"Heavy favorite ML {meta.get('team_moneyline', '?')} — starter stays in")
+
+        if 'bottom_up_agrees_over' in signal_results:
+            meta = signal_results['bottom_up_agrees_over'].metadata
+            angles.append(f"Bottom-up lineup K estimate: {meta.get('bottom_up_k_expected', '?')} "
+                         f"(+{meta.get('diff', '?')} vs line)")
+
+        if 'short_starter_under' in signal_results:
+            meta = signal_results['short_starter_under'].metadata
+            angles.append(f"Short starter: {meta.get('ip_avg_last_5', '?')} IP avg — K upside capped")
+
+        if 'catcher_framing_poor_under' in signal_results:
+            meta = signal_results['catcher_framing_poor_under'].metadata
+            angles.append(f"Poor catcher framing: {meta.get('catcher_framing_runs', '?')} runs")
+
+        # Session 464 — new shadow signal angles
+        if 'k_rate_reversion_under' in signal_results:
+            meta = signal_results['k_rate_reversion_under'].metadata
+            angles.append(f"K hot streak reversion: {meta.get('k_avg_last_3', '?')} avg "
+                         f"vs {meta.get('expected_k', '?')} expected (+{meta.get('k_excess', '?')})")
+
+        if 'k_rate_bounce_over' in signal_results:
+            meta = signal_results['k_rate_bounce_over'].metadata
+            angles.append(f"K cold streak bounce: {meta.get('k_avg_last_3', '?')} avg "
+                         f"vs {meta.get('expected_k', '?')} expected (-{meta.get('k_deficit', '?')})")
+
+        if 'umpire_csw_combo_over' in signal_results:
+            meta = signal_results['umpire_csw_combo_over'].metadata
+            angles.append(f"K-friendly ump ({meta.get('umpire_k_rate', 0):.1%}) "
+                         f"+ high CSW ({meta.get('season_csw_pct', 0):.1%})")
+
+        if 'rest_workload_stress_under' in signal_results:
+            meta = signal_results['rest_workload_stress_under'].metadata
+            angles.append(f"Fatigue compound: {meta.get('days_rest', '?')}d rest "
+                         f"+ {meta.get('games_last_30_days', '?')} games/30d")
+
+        if 'low_era_high_k_combo_over' in signal_results:
+            meta = signal_results['low_era_high_k_combo_over'].metadata
+            angles.append(f"Dominant ace: {meta.get('season_era', '?')} ERA, "
+                         f"{meta.get('k_per_9', '?')} K/9")
+
+        if 'pitcher_on_roll_over' in signal_results:
+            meta = signal_results['pitcher_on_roll_over'].metadata
+            angles.append(f"On a roll: L3={meta.get('k_avg_last_3', '?')}, "
+                         f"L5={meta.get('k_avg_last_5', '?')} > {meta.get('line', '?')} line")
+
+        # Session 464 round 2 — research-backed shadow signal angles
+        if 'chase_rate_over' in signal_results:
+            meta = signal_results['chase_rate_over'].metadata
+            angles.append(f"High chase rate: {meta.get('o_swing_pct', 0):.1%} O-Swing%")
+
+        if 'contact_specialist_under' in signal_results:
+            meta = signal_results['contact_specialist_under'].metadata
+            angles.append(f"Contact-heavy lineup: {meta.get('z_contact_pct', 0):.1%} Z-Contact%")
+
+        if 'humidity_over' in signal_results:
+            meta = signal_results['humidity_over'].metadata
+            angles.append(f"High humidity {meta.get('humidity_pct', '?')}% — reduced ball carry")
+
+        if 'fresh_opponent_over' in signal_results:
+            meta = signal_results['fresh_opponent_over'].metadata
+            angles.append(f"Fresh opponent matchup ({meta.get('vs_opponent_games', '?')} prior games)")
+
         if pick.get('ultra_tier'):
             criteria = pick.get('ultra_criteria', [])
             angles.append(f"ULTRA: {', '.join(criteria)} — 2u stake")
@@ -705,8 +807,10 @@ class MLBBestBetsExporter:
                     signal_tags.append(signal.tag)
                     signal_count += 1
                     signal_results[signal.tag] = result
+                    # Shadow signals and tracking-only don't count toward gate
                     if (signal.tag not in BASE_SIGNAL_TAGS
-                            and signal.tag not in TRACKING_ONLY_SIGNALS):
+                            and signal.tag not in TRACKING_ONLY_SIGNALS
+                            and not signal.is_shadow):
                         real_signal_count += 1
 
             # Apply signal count gate (same as step 5)

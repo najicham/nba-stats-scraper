@@ -88,7 +88,19 @@ BASE_SIGNAL_TAGS = frozenset(['high_edge'])
 # Tracking-only signals — computed but excluded from real_signal_count (Session 454)
 # k_trending_over: 55.6% cross-season — coin flip
 # long_rest_over: 55.4% HR, -36u P&L across 4 seasons — actively losing money
-TRACKING_ONLY_SIGNALS = frozenset(['k_trending_over', 'long_rest_over'])
+# Session 460: All new shadow signals are tracking-only until cross-season validated
+TRACKING_ONLY_SIGNALS = frozenset([
+    'k_trending_over', 'long_rest_over',
+    # Session 460 shadow signals — still accumulating data
+    'cold_weather_k_over', 'short_starter_under', 'game_total_low_over',
+    # Session 460 round 2 shadow signals
+    'rematch_familiarity_under', 'cumulative_arm_stress_under',
+    # Session 464 shadow signals
+    'k_rate_reversion_under', 'k_rate_bounce_over', 'umpire_csw_combo_over',
+    'rest_workload_stress_under', 'low_era_high_k_combo_over',
+    # PROMOTED: high_csw_over, elite_peripherals_over, pitch_efficiency_depth_over (S460)
+    # PROMOTED: day_game_shadow_over, pitcher_on_roll_over (S464)
+])
 
 # Ultra tier criteria — Session 452 cross-season redesign
 # Removed: half_line (vacuous — all K lines are x.5), edge >= 1.1 (hurt 2022-2023)
@@ -168,14 +180,14 @@ def parse_args():
     parser.add_argument("--max-edge-cap", type=float, default=0.0,
                        help="Override MAX_EDGE cap (e.g. 1.5). 0=use default 2.0")
     # P2 experiments — CatBoost hyperparameters
-    parser.add_argument("--depth", type=int, default=5,
-                       help="CatBoost tree depth (default: 5)")
+    parser.add_argument("--depth", type=int, default=4,
+                       help="CatBoost tree depth (default: 4, Session 459 winner)")
     parser.add_argument("--lr", type=float, default=0.015,
                        help="CatBoost learning rate (default: 0.015)")
     parser.add_argument("--iters", type=int, default=500,
                        help="CatBoost iterations (default: 500)")
-    parser.add_argument("--l2-reg", type=float, default=3.0,
-                       help="CatBoost l2_leaf_reg (default: 3.0)")
+    parser.add_argument("--l2-reg", type=float, default=10.0,
+                       help="CatBoost l2_leaf_reg (default: 10.0, Session 459 winner)")
     return parser.parse_args()
 
 
@@ -278,7 +290,14 @@ def load_data(client: bigquery.Client, earliest_date: str = "2024-01-01") -> pd.
         fg.o_swing_pct as f70_o_swing_pct,
         fg.z_contact_pct as f71_z_contact_pct,
         fg.fip as f72_fip,
-        fg.gb_pct as f73_gb_pct
+        fg.gb_pct as f73_gb_pct,
+
+        -- Session 460: Additional columns for new signals
+        pgs.game_total_line,
+        pgs.team_implied_runs,
+        -- Weather (joined via game home team)
+        w.temperature_f,
+        w.is_dome
 
     FROM `mlb_raw.bp_pitcher_props` bp
     JOIN `mlb_analytics.pitcher_game_summary` pgs
@@ -291,6 +310,13 @@ def load_data(client: bigquery.Client, earliest_date: str = "2024-01-01") -> pd.
         ON LOWER(REGEXP_REPLACE(NORMALIZE(fg.player_lookup, NFD), r'[\\W_]+', ''))
             = LOWER(REGEXP_REPLACE(NORMALIZE(pgs.player_lookup, NFD), r'[\\W_]+', ''))
         AND fg.season_year = EXTRACT(YEAR FROM pgs.game_date)
+    -- Session 460: Weather data for cold_weather_k_over signal
+    LEFT JOIN (
+        SELECT team_abbr, scrape_date, temperature_f, is_dome,
+               ROW_NUMBER() OVER (PARTITION BY team_abbr, scrape_date ORDER BY created_at DESC) as rn
+        FROM `mlb_raw.mlb_weather`
+    ) w ON w.team_abbr = CASE WHEN pgs.is_home THEN pgs.team_abbr ELSE pgs.opponent_team_abbr END
+        AND w.scrape_date = pgs.game_date AND w.rn = 1
     WHERE bp.market_id = 285
       AND bp.actual_value IS NOT NULL
       AND bp.projection_value IS NOT NULL
@@ -424,6 +450,127 @@ def evaluate_signals(row: pd.Series, predicted_k: float, edge: float,
             signals['long_rest_over'] = {'confidence': 0.7, 'days_rest': days_rest}
             signal_tags.append('long_rest_over')
 
+        # --- Session 460: New shadow signals (OVER) ---
+
+        # --- cold_weather_k_over ---
+        temp = _safe_float(row, 'temperature_f')
+        is_dome = row.get('is_dome')
+        if temp is not None and temp < 60 and not is_dome:
+            signals['cold_weather_k_over'] = {
+                'confidence': min(1.0, (65 - temp) / 25.0),
+                'temperature': temp,
+            }
+            signal_tags.append('cold_weather_k_over')
+
+        # --- lineup_k_spike_over ---
+        # NOTE: lineup_k_vs_hand not in pitcher_game_summary (computed by pitcher_loader at prediction time)
+        # Signal fires in production only. Will backfill when bottom-up data is in analytics.
+
+        # --- pitch_efficiency_depth_over ---
+        ip_avg = _safe_float(row, 'f04_ip_avg_last_5')
+        pitch_avg = _safe_float(row, 'f22_pitch_count_avg')
+        if ip_avg is not None and ip_avg >= 6.0:
+            is_efficient = (pitch_avg is not None and pitch_avg < 95)
+            signals['pitch_efficiency_depth_over'] = {
+                'confidence': 0.8 if is_efficient else 0.6,
+                'ip_avg': ip_avg,
+                'pitch_avg': pitch_avg,
+            }
+            signal_tags.append('pitch_efficiency_depth_over')
+
+        # --- high_csw_over ---
+        csw = _safe_float(row, 'f19b_season_csw_pct')
+        if csw is not None and csw >= 0.30:
+            signals['high_csw_over'] = {
+                'confidence': min(1.0, (csw - 0.25) / 0.10),
+                'csw_pct': csw,
+            }
+            signal_tags.append('high_csw_over')
+
+        # --- elite_peripherals_over ---
+        fip = _safe_float(row, 'f72_fip')
+        k9 = _safe_float(row, 'f05_season_k_per_9')
+        if fip is not None and k9 is not None and fip < 3.5 and k9 >= 9.0:
+            fip_score = max(0, (3.5 - fip) / 1.5)
+            k9_score = max(0, (k9 - 8.0) / 4.0)
+            signals['elite_peripherals_over'] = {
+                'confidence': min(1.0, (fip_score + k9_score) / 2.0),
+                'fip': fip,
+                'k_per_9': k9,
+            }
+            signal_tags.append('elite_peripherals_over')
+
+        # --- game_total_low_over ---
+        game_total = _safe_float(row, 'game_total_line')
+        if game_total is not None and game_total <= 7.5:
+            signals['game_total_low_over'] = {
+                'confidence': min(1.0, (9.0 - game_total) / 3.0),
+                'game_total_line': game_total,
+            }
+            signal_tags.append('game_total_low_over')
+
+        # --- bottom_up_agrees_over ---
+        # NOTE: bottom_up_k_expected not in pitcher_game_summary (computed by pitcher_loader)
+        # Signal fires in production only. Will backfill when bottom-up data is in analytics.
+
+        # --- day_game_shadow_over ---
+        is_day = _safe_float(row, 'f25_is_day_game')
+        if is_day is not None and is_day > 0.5:
+            signals['day_game_shadow_over'] = {
+                'confidence': 0.5,
+            }
+            signal_tags.append('day_game_shadow_over')
+
+        # --- Session 464: New shadow signals (OVER) ---
+
+        # --- k_rate_bounce_over ---
+        k_avg_3_bounce = _safe_float(row, 'f00_k_avg_last_3')
+        k9_bounce = _safe_float(row, 'f05_season_k_per_9')
+        ip_avg_bounce = _safe_float(row, 'f04_ip_avg_last_5')
+        if k_avg_3_bounce is not None and k9_bounce is not None and ip_avg_bounce is not None:
+            expected_k = k9_bounce * ip_avg_bounce / 9.0
+            deficit = expected_k - k_avg_3_bounce
+            if deficit >= 2.0:
+                signals['k_rate_bounce_over'] = {
+                    'confidence': min(1.0, deficit / 4.0),
+                    'k_avg_last_3': k_avg_3_bounce,
+                    'expected_k': expected_k,
+                    'k_deficit': deficit,
+                }
+                signal_tags.append('k_rate_bounce_over')
+
+        # --- umpire_csw_combo_over ---
+        # NOTE: umpire_k_rate not in replay SQL (supplemental-only). Skipped in replay.
+
+        # --- low_era_high_k_combo_over ---
+        era_combo = _safe_float(row, 'f06_season_era')
+        k9_combo = _safe_float(row, 'f05_season_k_per_9')
+        if era_combo is not None and k9_combo is not None:
+            if era_combo < 3.0 and k9_combo >= 8.5:
+                era_s = max(0, (3.0 - era_combo) / 1.5)
+                k9_s = max(0, (k9_combo - 7.5) / 4.0)
+                signals['low_era_high_k_combo_over'] = {
+                    'confidence': min(1.0, (era_s + k9_s) / 2.0),
+                    'era': era_combo,
+                    'k_per_9': k9_combo,
+                }
+                signal_tags.append('low_era_high_k_combo_over')
+
+        # --- pitcher_on_roll_over ---
+        k3_roll = _safe_float(row, 'f00_k_avg_last_3')
+        k5_roll = _safe_float(row, 'f01_k_avg_last_5')
+        line_roll = _safe_float(row, 'over_line')
+        if k3_roll is not None and k5_roll is not None and line_roll is not None:
+            if k3_roll > line_roll and k5_roll > line_roll:
+                margin = ((k3_roll - line_roll) + (k5_roll - line_roll)) / 2.0
+                signals['pitcher_on_roll_over'] = {
+                    'confidence': min(1.0, margin / 2.0),
+                    'k_avg_last_3': k3_roll,
+                    'k_avg_last_5': k5_roll,
+                    'line': line_roll,
+                }
+                signal_tags.append('pitcher_on_roll_over')
+
     elif recommendation == 'UNDER':
         # --- velocity_drop_under ---
         vel_change = _safe_float(row, 'f53_velocity_change')
@@ -445,6 +592,71 @@ def evaluate_signals(row: pd.Series, predicted_k: float, edge: float,
             signals['high_variance_under'] = {'confidence': min(1.0, (k_std - 3.0) / 3.0),
                                                'k_std': k_std}
             signal_tags.append('high_variance_under')
+
+        # --- Session 460: New shadow signals (UNDER) ---
+
+        # --- short_starter_under ---
+        ip_avg_u = _safe_float(row, 'f04_ip_avg_last_5')
+        if ip_avg_u is not None and ip_avg_u < 5.0:
+            signals['short_starter_under'] = {
+                'confidence': min(1.0, (5.0 - ip_avg_u) / 2.0),
+                'ip_avg': ip_avg_u,
+            }
+            signal_tags.append('short_starter_under')
+
+        # --- rematch_familiarity_under ---
+        vs_games = _safe_float(row, 'f66_vs_opp_games')
+        if vs_games is not None and vs_games >= 3:
+            signals['rematch_familiarity_under'] = {
+                'confidence': min(1.0, vs_games / 6.0),
+                'vs_games': vs_games,
+            }
+            signal_tags.append('rematch_familiarity_under')
+
+        # --- cumulative_arm_stress_under ---
+        pitch_avg_u = _safe_float(row, 'f22_pitch_count_avg')
+        games_30d_u = _safe_float(row, 'f21_games_last_30_days')
+        if (pitch_avg_u is not None and games_30d_u is not None
+                and pitch_avg_u >= 100 and games_30d_u >= 6):
+            stress = (pitch_avg_u / 100.0) * (games_30d_u / 6.0)
+            signals['cumulative_arm_stress_under'] = {
+                'confidence': min(1.0, (stress - 1.0) / 1.0),
+                'pitch_avg': pitch_avg_u,
+                'games_30d': games_30d_u,
+            }
+            signal_tags.append('cumulative_arm_stress_under')
+
+        # --- Session 464: New shadow signals (UNDER) ---
+
+        # --- k_rate_reversion_under ---
+        k_avg_3_rev = _safe_float(row, 'f00_k_avg_last_3')
+        k9_rev = _safe_float(row, 'f05_season_k_per_9')
+        ip_avg_rev = _safe_float(row, 'f04_ip_avg_last_5')
+        if k_avg_3_rev is not None and k9_rev is not None and ip_avg_rev is not None:
+            expected_k_rev = k9_rev * ip_avg_rev / 9.0
+            excess = k_avg_3_rev - expected_k_rev
+            if excess >= 2.0:
+                signals['k_rate_reversion_under'] = {
+                    'confidence': min(1.0, excess / 4.0),
+                    'k_avg_last_3': k_avg_3_rev,
+                    'expected_k': expected_k_rev,
+                    'k_excess': excess,
+                }
+                signal_tags.append('k_rate_reversion_under')
+
+        # --- rest_workload_stress_under ---
+        rest_stress = _safe_float(row, 'f20_days_rest')
+        games_stress = _safe_float(row, 'f21_games_last_30_days')
+        if rest_stress is not None and games_stress is not None:
+            if rest_stress <= 5 and games_stress >= 6:
+                rest_s = max(0, (5 - rest_stress) / 2.0)
+                wl_s = max(0, (games_stress - 5) / 3.0)
+                signals['rest_workload_stress_under'] = {
+                    'confidence': min(1.0, (rest_s + wl_s) / 2.0),
+                    'days_rest': rest_stress,
+                    'games_30d': games_stress,
+                }
+                signal_tags.append('rest_workload_stress_under')
 
     real_signal_count = sum(1 for t in signal_tags
                             if t not in BASE_SIGNAL_TAGS and t not in TRACKING_ONLY_SIGNALS)
