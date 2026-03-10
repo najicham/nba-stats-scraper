@@ -313,4 +313,9 @@ def build_default_registry() -> SignalRegistry:
     registry.register(FtAnomalyUnderSignal())
     registry.register(SlowPaceUnderSignal())
 
+    # Session 463: P1 simulator experiment — star overpricing
+    # star_line_under: 57.6% HR (N=1,018), 5-season cross-validated. Line >= 25, edge 3-7
+    from ml.signals.star_line_under import StarLineUnderSignal
+    registry.register(StarLineUnderSignal())
+
     return registry

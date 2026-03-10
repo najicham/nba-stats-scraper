@@ -112,6 +112,7 @@ SHADOW_SIGNALS = frozenset({
     # Session 463: P0 simulator experiment validated signals
     'ft_anomaly_under',            # 63.3% HR (N=278) 5-season — FTA CV >= 0.5, FTA >= 5/game
     'slow_pace_under',             # 56.6% HR (N=777) 5-season — opponent pace <= 99
+    'star_line_under',             # 57.6% HR (N=1,018) 5-season — line >= 25, edge 3-7
 })
 
 # Session 400: UNDER signal quality weights for signal-first ranking.
