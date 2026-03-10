@@ -85,12 +85,18 @@ RESCUE_SIGNAL_TAGS = frozenset(['opponent_k_prone'])
 # Base signals (inflate signal count with zero value)
 BASE_SIGNAL_TAGS = frozenset(['high_edge'])
 
-# Ultra tier criteria — edge raised from 1.0 to 1.1 (Session 444)
-# Edge 1.0-1.1 ultra was 63% HR (noise), edge 1.1+ is 78%+
-ULTRA_MIN_EDGE = 1.1
+# Tracking-only signals — computed but excluded from real_signal_count (Session 454)
+# k_trending_over: 55.6% cross-season — coin flip
+# long_rest_over: 55.4% HR, -36u P&L across 4 seasons — actively losing money
+TRACKING_ONLY_SIGNALS = frozenset(['k_trending_over', 'long_rest_over'])
+
+# Ultra tier criteria — Session 452 cross-season redesign
+# Removed: half_line (vacuous — all K lines are x.5), edge >= 1.1 (hurt 2022-2023)
+# New: Home + Projection Agrees + edge >= 0.5 (minimal guard)
+# Rescued picks CANNOT be Ultra (lowest-confidence picks shouldn't get 2u)
+ULTRA_MIN_EDGE = 0.5
 ULTRA_REQUIRES_HOME = True
 ULTRA_REQUIRES_PROJECTION_AGREES = True
-ULTRA_REQUIRES_HALF_LINE = True
 
 # Feature columns — CLEANED (5 dead features removed)
 FEATURE_COLS = [
@@ -134,6 +140,33 @@ def parse_args():
     parser.add_argument("--include-dead-features", action="store_true",
                        help="Include the 5 dead features for A/B comparison")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--use-blacklist", action="store_true",
+                       help="Enable static pitcher blacklist (disabled by default)")
+    parser.add_argument("--no-blacklist", action="store_true",
+                       help="(deprecated, blacklist is now off by default)")
+    parser.add_argument("--away-edge-floor", type=float, default=0.0,
+                       help="Minimum edge for away OVER pitchers (0 = use default edge floor)")
+    parser.add_argument("--block-away-rescue", action="store_true",
+                       help="Block rescued picks for away pitchers")
+    # Dynamic blacklist — walk-forward pitcher suppression
+    parser.add_argument("--dynamic-blacklist", action="store_true",
+                       help="Enable walk-forward pitcher suppression (replaces static blacklist)")
+    parser.add_argument("--bl-min-n", type=int, default=10,
+                       help="Min BB picks before suppression can trigger (default: 10)")
+    parser.add_argument("--bl-max-hr", type=float, default=0.45,
+                       help="Max HR threshold — suppress if HR < this (default: 0.45)")
+    # P0 experiments — odds-aware ranking and juice filter
+    parser.add_argument("--ev-ranking", action="store_true",
+                       help="Rank OVER picks by EV (edge × payout_multiplier) instead of raw edge")
+    parser.add_argument("--max-juice", type=int, default=0,
+                       help="Block picks with odds worse than this (e.g. -160 blocks -170). 0=disabled")
+    # P1 experiments — edge floor, RSC cap, rescue, max-edge, training
+    parser.add_argument("--max-rsc", type=int, default=0,
+                       help="Cap real signal count (e.g. 5 = block rsc>=6). 0=disabled")
+    parser.add_argument("--no-rescue", action="store_true",
+                       help="Disable all rescue signals (picks must meet edge floor)")
+    parser.add_argument("--max-edge-cap", type=float, default=0.0,
+                       help="Override MAX_EDGE cap (e.g. 1.5). 0=use default 2.0")
     return parser.parse_args()
 
 
@@ -141,11 +174,15 @@ def parse_args():
 # DATA LOADING
 # =============================================================================
 
-def load_data(client: bigquery.Client) -> pd.DataFrame:
-    """Load all data for replay period."""
-    print("Loading data from BigQuery...")
+def load_data(client: bigquery.Client, earliest_date: str = "2024-01-01") -> pd.DataFrame:
+    """Load all data for replay period.
 
-    query = """
+    Args:
+        earliest_date: Earliest date to load (training window start). Default 2024-01-01.
+    """
+    print(f"Loading data from BigQuery (from {earliest_date})...")
+
+    query = f"""
     WITH statcast_rolling AS (
         SELECT DISTINCT
             player_lookup,
@@ -251,7 +288,7 @@ def load_data(client: bigquery.Client) -> pd.DataFrame:
       AND bp.over_line IS NOT NULL
       AND pgs.innings_pitched >= 3.0
       AND pgs.rolling_stats_games >= 3
-      AND pgs.game_date >= '2024-01-01'
+      AND pgs.game_date >= '{earliest_date}'
     ORDER BY bp.game_date
     """
 
@@ -398,7 +435,8 @@ def evaluate_signals(row: pd.Series, predicted_k: float, edge: float,
                                                'k_std': k_std}
             signal_tags.append('high_variance_under')
 
-    real_signal_count = sum(1 for t in signal_tags if t not in BASE_SIGNAL_TAGS)
+    real_signal_count = sum(1 for t in signal_tags
+                            if t not in BASE_SIGNAL_TAGS and t not in TRACKING_ONLY_SIGNALS)
     return {
         'signal_tags': signal_tags,
         'signal_count': len(signal_tags),
@@ -418,12 +456,134 @@ def _safe_float(row: pd.Series, col: str) -> Optional[float]:
         return None
 
 
+def payout_multiplier(odds: float) -> float:
+    """Convert American odds to payout multiplier (profit per $1 risked)."""
+    if odds < 0:
+        return 100.0 / abs(odds)
+    else:
+        return odds / 100.0
+
+
+def compute_pnl(stake: float, correct: bool, odds: float = -110) -> float:
+    """Compute P&L using American odds.
+
+    Negative odds (e.g. -110): win pays stake * 100/|odds|
+    Positive odds (e.g. +120): win pays stake * odds/100
+    Loss always pays -stake.
+    """
+    if not correct:
+        return -stake
+    if odds < 0:
+        return stake * (100.0 / abs(odds))
+    else:
+        return stake * (odds / 100.0)
+
+
+# =============================================================================
+# DYNAMIC BLACKLIST — Walk-Forward Pitcher Suppression
+# =============================================================================
+
+class DynamicBlacklist:
+    """Walk-forward pitcher suppression based on trailing BB pick performance.
+
+    Replaces static blacklist with self-correcting logic:
+    - Track each pitcher's BB pick results (wins/losses)
+    - If pitcher has >= min_n picks AND HR < max_hr, suppress them
+    - Re-evaluates every day (or after cooldown period)
+    - Only uses data available at prediction time (walk-forward safe)
+    """
+
+    def __init__(self, min_n: int = 10, max_hr: float = 0.45):
+        self.min_n = min_n
+        self.max_hr = max_hr
+        # {pitcher_lookup: [(game_date_str, correct_bool)]}
+        self._history: Dict[str, List[Tuple[str, bool]]] = defaultdict(list)
+        # {pitcher_lookup: suppress_start_date_str}
+        self._suppress_log: Dict[str, List[Dict]] = defaultdict(list)
+        self._blocks_today: Dict[str, Dict] = {}  # Today's blocks for reporting
+
+    def record_pick(self, pitcher_lookup: str, game_date: str, correct: bool):
+        """Record a graded BB pick for a pitcher."""
+        self._history[pitcher_lookup].append((game_date, correct))
+
+    def is_suppressed(self, pitcher_lookup: str, game_date: str) -> Optional[Dict]:
+        """Check if pitcher is dynamically suppressed.
+
+        Returns None if not suppressed, or dict with suppression details if suppressed.
+        """
+        history = self._history.get(pitcher_lookup, [])
+        if len(history) < self.min_n:
+            return None
+
+        wins = sum(1 for _, c in history if c)
+        total = len(history)
+        hr = wins / total
+
+        if hr < self.max_hr:
+            details = {
+                'pitcher_lookup': pitcher_lookup,
+                'game_date': game_date,
+                'wins': wins,
+                'losses': total - wins,
+                'hr': round(hr * 100, 1),
+                'n': total,
+            }
+            self._blocks_today[pitcher_lookup] = details
+            # Log suppression events
+            if not self._suppress_log[pitcher_lookup] or \
+               self._suppress_log[pitcher_lookup][-1].get('end_date') is not None:
+                self._suppress_log[pitcher_lookup].append({
+                    'start_date': game_date,
+                    'end_date': None,
+                    'hr_at_start': round(hr * 100, 1),
+                    'n_at_start': total,
+                })
+            return details
+
+        # Pitcher is above threshold — close any open suppression
+        if self._suppress_log[pitcher_lookup] and \
+           self._suppress_log[pitcher_lookup][-1].get('end_date') is None:
+            self._suppress_log[pitcher_lookup][-1]['end_date'] = game_date
+            self._suppress_log[pitcher_lookup][-1]['hr_at_end'] = round(hr * 100, 1)
+            self._suppress_log[pitcher_lookup][-1]['n_at_end'] = total
+
+        return None
+
+    def reset_daily(self):
+        """Reset daily tracking."""
+        self._blocks_today = {}
+
+    def summary(self) -> Dict:
+        """Return summary of dynamic blacklist activity."""
+        pitchers_ever_suppressed = {
+            p: logs for p, logs in self._suppress_log.items() if logs
+        }
+        total_blocks = sum(
+            len([d for d, c in self._history[p]])
+            for p in pitchers_ever_suppressed
+        )
+        return {
+            'pitchers_suppressed': len(pitchers_ever_suppressed),
+            'suppression_events': sum(len(v) for v in pitchers_ever_suppressed.values()),
+            'pitcher_details': {
+                p: {
+                    'total_picks': len(self._history[p]),
+                    'wins': sum(1 for _, c in self._history[p] if c),
+                    'hr': round(sum(1 for _, c in self._history[p] if c)
+                                / max(len(self._history[p]), 1) * 100, 1),
+                    'suppression_periods': logs,
+                }
+                for p, logs in pitchers_ever_suppressed.items()
+            },
+        }
+
+
 # =============================================================================
 # NEGATIVE FILTERS
 # =============================================================================
 
 def apply_negative_filters(row: pd.Series, recommendation: str,
-                           pitcher_lookup: str) -> Optional[str]:
+                           pitcher_lookup: str, use_blacklist: bool = True) -> Optional[str]:
     """Apply negative filters. Returns filter name if blocked, None if passed."""
 
     # 1. bullpen_game_skip
@@ -437,7 +597,7 @@ def apply_negative_filters(row: pd.Series, recommendation: str,
         return 'insufficient_data_skip'
 
     # 3. pitcher_blacklist (OVER only)
-    if recommendation == 'OVER' and pitcher_lookup in PITCHER_BLACKLIST:
+    if use_blacklist and recommendation == 'OVER' and pitcher_lookup in PITCHER_BLACKLIST:
         return 'pitcher_blacklist'
 
     # 4. whole_line_over (OVER only)
@@ -454,21 +614,26 @@ def apply_negative_filters(row: pd.Series, recommendation: str,
 # =============================================================================
 
 def check_ultra(row: pd.Series, edge: float, recommendation: str,
-                signal_tags: List[str], pitcher_lookup: str) -> Tuple[bool, List[str]]:
-    """Check if pick qualifies for Ultra tier. Returns (is_ultra, criteria_list)."""
+                signal_tags: List[str], pitcher_lookup: str,
+                was_rescued: bool = False, use_blacklist: bool = False) -> Tuple[bool, List[str]]:
+    """Check if pick qualifies for Ultra tier. Returns (is_ultra, criteria_list).
+
+    Session 452 cross-season redesign:
+    - Removed half_line (vacuous — all K lines are x.5)
+    - Lowered edge floor from 1.1 to 0.5 (edge floor hurt 2022-2023)
+    - Rescued picks cannot be Ultra (lowest confidence shouldn't get 2u)
+    - Blacklist check respects --use-blacklist flag
+    """
     if recommendation != 'OVER':
+        return False, []
+
+    # Rescued picks cannot be Ultra — they barely passed the edge floor
+    if was_rescued:
         return False, []
 
     criteria = []
 
-    # Must be half-line (already passed whole_line filter, but double-check)
-    line = _safe_float(row, 'over_line')
-    if line is not None and line != int(line):
-        criteria.append('half_line')
-    else:
-        return False, []
-
-    # Edge >= 1.0
+    # Edge >= 0.5 (minimal guard against near-coin-flip predictions)
     if edge >= ULTRA_MIN_EDGE:
         criteria.append(f'edge_{edge:.1f}')
     else:
@@ -489,8 +654,8 @@ def check_ultra(row: pd.Series, edge: float, recommendation: str,
     elif ULTRA_REQUIRES_PROJECTION_AGREES:
         return False, []
 
-    # Not blacklisted (already filtered, but safety)
-    if pitcher_lookup in PITCHER_BLACKLIST:
+    # Not blacklisted (only when blacklist is active)
+    if use_blacklist and pitcher_lookup in PITCHER_BLACKLIST:
         return False, []
 
     return True, criteria
@@ -504,6 +669,16 @@ def run_replay(df: pd.DataFrame, feature_cols: List[str],
                sim_start: pd.Timestamp, sim_end: pd.Timestamp,
                args) -> Dict:
     """Run the full season replay."""
+    use_blacklist = getattr(args, 'use_blacklist', False)
+    use_dynamic_bl = getattr(args, 'dynamic_blacklist', False)
+
+    # Initialize dynamic blacklist if enabled
+    dyn_bl = None
+    if use_dynamic_bl:
+        dyn_bl = DynamicBlacklist(
+            min_n=args.bl_min_n,
+            max_hr=args.bl_max_hr,
+        )
 
     retrain_log = []
     daily_summary = []
@@ -660,7 +835,8 @@ def run_replay(df: pd.DataFrame, feature_cols: List[str],
                 continue
 
             # --- Overconfidence cap ---
-            if recommendation == 'OVER' and abs(edge) > MAX_EDGE:
+            max_edge_effective = args.max_edge_cap if args.max_edge_cap > 0 else MAX_EDGE
+            if recommendation == 'OVER' and abs(edge) > max_edge_effective:
                 filter_audit['overconfidence_cap'] += 1
                 continue
 
@@ -670,18 +846,49 @@ def run_replay(df: pd.DataFrame, feature_cols: List[str],
                 continue
 
             # --- Negative filters ---
-            blocked_by = apply_negative_filters(row, recommendation, pitcher_lookup)
+            blocked_by = apply_negative_filters(row, recommendation, pitcher_lookup, use_blacklist=use_blacklist)
             if blocked_by:
                 filter_audit[blocked_by] += 1
                 continue
 
+            # --- Dynamic blacklist (walk-forward pitcher suppression) ---
+            if dyn_bl and recommendation == 'OVER':
+                suppression = dyn_bl.is_suppressed(pitcher_lookup, str(game_date.date()))
+                if suppression:
+                    filter_audit['dynamic_blacklist'] += 1
+                    # Record the actual outcome so suppressed pitchers can recover
+                    # (without this, history freezes and pitcher can never un-suppress)
+                    actual = float(row['actual_value'])
+                    would_correct = (actual > line)
+                    dyn_bl.record_pick(pitcher_lookup, str(game_date.date()), would_correct)
+                    continue
+
             # --- Edge floor + rescue ---
-            if abs(edge) < args.edge_floor:
+            is_home_pitcher = _safe_float(row, 'f10_is_home')
+            is_away = is_home_pitcher is not None and is_home_pitcher < 0.5
+
+            # Away pitchers: higher edge floor, optionally block rescue
+            effective_edge_floor = args.edge_floor
+            if recommendation == 'OVER' and is_away and args.away_edge_floor > 0:
+                effective_edge_floor = args.away_edge_floor
+
+            if abs(edge) < effective_edge_floor:
+                # Away rescue blocked?
+                if is_away and args.block_away_rescue:
+                    filter_audit['away_rescue_blocked'] += 1
+                    continue
+                # No rescue mode?
+                if args.no_rescue:
+                    filter_audit['edge_floor'] += 1
+                    continue
                 # Check rescue signals
                 sig_result = evaluate_signals(row, pred_k, edge, recommendation)
                 rescued = any(t in RESCUE_SIGNAL_TAGS for t in sig_result['signal_tags'])
                 if not rescued:
-                    filter_audit['edge_floor'] += 1
+                    if is_away and args.away_edge_floor > 0 and abs(edge) >= args.edge_floor:
+                        filter_audit['away_low_edge'] += 1
+                    else:
+                        filter_audit['edge_floor'] += 1
                     continue
                 # Rescued — proceed with rescue flag
                 was_rescued = True
@@ -699,7 +906,23 @@ def run_replay(df: pd.DataFrame, feature_cols: List[str],
                 filter_audit['signal_count_gate'] += 1
                 continue
 
+            # --- RSC cap (e.g. --max-rsc 5 blocks rsc >= 6) ---
+            if args.max_rsc > 0 and real_sc > args.max_rsc:
+                filter_audit['rsc_cap'] = filter_audit.get('rsc_cap', 0) + 1
+                continue
+
             # Passed all filters!
+            raw_odds = row.get('over_odds')
+            if raw_odds is None or (isinstance(raw_odds, float) and math.isnan(raw_odds)):
+                over_odds = -110  # standard juice default
+            else:
+                over_odds = float(raw_odds)
+
+            # --- Max juice filter (e.g. --max-juice -160 blocks -170, -180) ---
+            if args.max_juice < 0 and over_odds < args.max_juice:
+                filter_audit['max_juice'] = filter_audit.get('max_juice', 0) + 1
+                continue
+
             candidates.append({
                 'game_date': str(game_date.date()),
                 'pitcher_lookup': pitcher_lookup,
@@ -711,6 +934,7 @@ def run_replay(df: pd.DataFrame, feature_cols: List[str],
                 'actual_k': actual,
                 'line': line,
                 'edge': round(edge, 2),
+                'over_odds': over_odds,
                 'recommendation': recommendation,
                 'p_over': round(p_over, 4),
                 'signal_tags': signal_tags,
@@ -726,8 +950,13 @@ def run_replay(df: pd.DataFrame, feature_cols: List[str],
         over_cands = [c for c in candidates if c['recommendation'] == 'OVER']
         under_cands = [c for c in candidates if c['recommendation'] == 'UNDER']
 
-        # OVER: pure edge ranking
-        over_cands.sort(key=lambda c: abs(c['edge']), reverse=True)
+        # OVER: pure edge ranking (or EV ranking if --ev-ranking)
+        if args.ev_ranking:
+            for c in over_cands:
+                c['ev'] = round(abs(c['edge']) * payout_multiplier(c['over_odds']), 4)
+            over_cands.sort(key=lambda c: c['ev'], reverse=True)
+        else:
+            over_cands.sort(key=lambda c: abs(c['edge']), reverse=True)
 
         # UNDER: weighted signal quality
         for c in under_cands:
@@ -750,7 +979,9 @@ def run_replay(df: pd.DataFrame, feature_cols: List[str],
             # Check ultra
             is_ultra, ultra_criteria = check_ultra(
                 row_data, pick['edge'], pick['recommendation'],
-                pick['signal_tags'], pick['pitcher_lookup']
+                pick['signal_tags'], pick['pitcher_lookup'],
+                was_rescued=pick.get('was_rescued', False),
+                use_blacklist=use_blacklist,
             )
 
             actual_k = pick['actual_k']
@@ -760,9 +991,10 @@ def run_replay(df: pd.DataFrame, feature_cols: List[str],
                 (pick['recommendation'] == 'UNDER' and actual_k <= line)
             )
 
-            # Staking
+            # Staking — use actual American odds for P&L
             stake = 2.0 if is_ultra else 1.0
-            pnl = stake if correct else -stake
+            odds = pick.get('over_odds', -110)
+            pnl = compute_pnl(stake, bool(correct), odds)
 
             pick.update({
                 'rank': rank_idx,
@@ -770,7 +1002,7 @@ def run_replay(df: pd.DataFrame, feature_cols: List[str],
                 'is_ultra': is_ultra,
                 'ultra_criteria': ultra_criteria if is_ultra else [],
                 'stake': stake,
-                'pnl': pnl,
+                'pnl': round(pnl, 4),
             })
             day_picks.append(pick)
 
@@ -790,7 +1022,9 @@ def run_replay(df: pd.DataFrame, feature_cols: List[str],
             row_data = pick.pop('_row')
             is_ultra, ultra_criteria = check_ultra(
                 row_data, pick['edge'], pick['recommendation'],
-                pick['signal_tags'], pick['pitcher_lookup']
+                pick['signal_tags'], pick['pitcher_lookup'],
+                was_rescued=pick.get('was_rescued', False),
+                use_blacklist=use_blacklist,
             )
             if is_ultra:
                 actual_k = pick['actual_k']
@@ -800,14 +1034,15 @@ def run_replay(df: pd.DataFrame, feature_cols: List[str],
                     (pick['recommendation'] == 'UNDER' and actual_k <= line)
                 )
                 stake = 2.0
-                pnl = stake if correct else -stake
+                odds = pick.get('over_odds', -110)
+                pnl = compute_pnl(stake, bool(correct), odds)
                 pick.update({
                     'rank': len(day_picks) + len(ultra_extras) + 1,
                     'correct': correct,
                     'is_ultra': True,
                     'ultra_criteria': ultra_criteria,
                     'stake': stake,
-                    'pnl': pnl,
+                    'pnl': round(pnl, 4),
                     'ultra_extra': True,  # Not in top-3 but added as ultra overlay
                 })
                 ultra_extras.append(pick)
@@ -826,6 +1061,16 @@ def run_replay(df: pd.DataFrame, feature_cols: List[str],
             pick.pop('_row', None)
 
         all_picks.extend(day_picks)
+
+        # Update dynamic blacklist with today's graded picks
+        if dyn_bl:
+            dyn_bl.reset_daily()
+            for pick in day_picks:
+                dyn_bl.record_pick(
+                    pick['pitcher_lookup'],
+                    str(game_date.date()),
+                    bool(pick['correct']),
+                )
 
         # Daily summary
         day_correct = sum(p['correct'] for p in day_picks)
@@ -854,7 +1099,7 @@ def run_replay(df: pd.DataFrame, feature_cols: List[str],
                   f"BB: {bb_wins}-{bb_losses} ({hr:.1f}%) | "
                   f"Bankroll: {bankroll:+.1f}u | Model: v{model_version}")
 
-    return {
+    results = {
         'picks': all_picks,
         'predictions': all_predictions,
         'daily_summary': daily_summary,
@@ -865,6 +1110,11 @@ def run_replay(df: pd.DataFrame, feature_cols: List[str],
         'bb_record': (bb_wins, bb_losses),
         'ultra_record': (ultra_wins, ultra_losses),
     }
+
+    if dyn_bl:
+        results['dynamic_blacklist'] = dyn_bl.summary()
+
+    return results
 
 
 # =============================================================================
@@ -885,12 +1135,14 @@ def print_report(results: Dict, args):
     print("=" * 80)
 
     # Overall
+    total_staked = sum(p.get('stake', 1.0) for p in picks)
     print(f"\n{'─' * 40}")
     print(f"  OVERALL RECORD")
     print(f"{'─' * 40}")
     print(f"  Best Bets:  {bb_w}-{bb_l} ({hr:.1f}% HR)")
     print(f"  Bankroll:   {results['bankroll']:+.1f}u")
-    print(f"  ROI:        {results['bankroll'] / total * 100:.1f}%" if total > 0 else "  ROI: N/A")
+    print(f"  Total staked: {total_staked:.0f}u")
+    print(f"  ROI:        {results['bankroll'] / total_staked * 100:.1f}%" if total_staked > 0 else "  ROI: N/A")
     print(f"  Avg picks/day: {total / len(daily):.1f}" if daily else "")
 
     # Ultra tier
@@ -928,6 +1180,27 @@ def print_report(results: Dict, args):
         uw = sum(p['correct'] for p in under_picks)
         print(f"  UNDER:  {uw}-{len(under_picks)-uw} ({uw/len(under_picks)*100:.1f}% HR, N={len(under_picks)})")
 
+    # Home vs Away breakdown
+    home_picks = [p for p in picks if p.get('is_home')]
+    away_picks = [p for p in picks if not p.get('is_home')]
+    if home_picks and away_picks:
+        print(f"\n{'─' * 40}")
+        print(f"  HOME vs AWAY")
+        print(f"{'─' * 40}")
+        hw = sum(p['correct'] for p in home_picks)
+        hp = sum(p['pnl'] for p in home_picks)
+        print(f"  Home:   {hw}-{len(home_picks)-hw} ({hw/len(home_picks)*100:.1f}% HR, N={len(home_picks)}, P&L={hp:+.1f}u)")
+        aw = sum(p['correct'] for p in away_picks)
+        ap = sum(p['pnl'] for p in away_picks)
+        print(f"  Away:   {aw}-{len(away_picks)-aw} ({aw/len(away_picks)*100:.1f}% HR, N={len(away_picks)}, P&L={ap:+.1f}u)")
+
+        # Rescued breakdown
+        rescued_picks = [p for p in picks if p.get('was_rescued')]
+        if rescued_picks:
+            rw = sum(p['correct'] for p in rescued_picks)
+            rp = sum(p['pnl'] for p in rescued_picks)
+            print(f"  Rescued: {rw}-{len(rescued_picks)-rw} ({rw/len(rescued_picks)*100:.1f}% HR, N={len(rescued_picks)}, P&L={rp:+.1f}u)")
+
     # Monthly breakdown
     picks_df = pd.DataFrame(picks)
     if len(picks_df) > 0:
@@ -952,6 +1225,26 @@ def print_report(results: Dict, args):
     print(f"{'─' * 40}")
     for filt, count in sorted(results['filter_audit'].items(), key=lambda x: -x[1]):
         print(f"  {filt:<25} {count:>6}")
+
+    # Dynamic blacklist report
+    if 'dynamic_blacklist' in results:
+        bl = results['dynamic_blacklist']
+        print(f"\n{'─' * 40}")
+        print(f"  DYNAMIC BLACKLIST")
+        print(f"{'─' * 40}")
+        print(f"  Pitchers suppressed:   {bl['pitchers_suppressed']}")
+        print(f"  Suppression events:    {bl['suppression_events']}")
+        if bl.get('pitcher_details'):
+            print(f"\n  {'Pitcher':<25} {'Picks':>6} {'W-L':>8} {'HR%':>6} {'Periods':>8}")
+            for pitcher, details in sorted(
+                bl['pitcher_details'].items(),
+                key=lambda x: x[1]['hr'],
+            ):
+                w = details['wins']
+                l = details['total_picks'] - w
+                n_periods = len(details.get('suppression_periods', []))
+                print(f"  {pitcher:<25} {details['total_picks']:>6} "
+                      f"{w:>3}-{l:<3} {details['hr']:>5.1f}% {n_periods:>8}")
 
     # Model inventory
     print(f"\n{'─' * 40}")
@@ -1086,19 +1379,25 @@ def save_results(results: Dict, output_dir: Path):
     inv_df.to_csv(output_dir / "model_inventory.csv", index=False)
 
     # Summary JSON
+    total_staked = sum(p.get('stake', 1.0) for p in results['picks'])
     summary = {
         'simulation_period': f"{results['daily_summary'][0]['game_date']} to "
                              f"{results['daily_summary'][-1]['game_date']}" if results['daily_summary'] else 'N/A',
         'total_picks': len(results['picks']),
         'total_predictions': len(results['predictions']),
+        'total_staked': round(total_staked, 2),
         'retrains': len(results['retrain_log']),
         'bb_record': {'wins': results['bb_record'][0], 'losses': results['bb_record'][1],
                        'hr': round(results['bb_record'][0] / max(sum(results['bb_record']), 1) * 100, 2)},
         'ultra_record': {'wins': results['ultra_record'][0], 'losses': results['ultra_record'][1],
                           'hr': round(results['ultra_record'][0] / max(sum(results['ultra_record']), 1) * 100, 2)},
         'bankroll': round(results['bankroll'], 2),
+        'roi_pct': round(results['bankroll'] / max(total_staked, 1) * 100, 2),
+        'pnl_uses_actual_odds': True,
         'filter_audit': results['filter_audit'],
     }
+    if 'dynamic_blacklist' in results:
+        summary['dynamic_blacklist'] = results['dynamic_blacklist']
     with open(output_dir / "simulation_summary.json", 'w') as f:
         json.dump(summary, f, indent=2)
 
@@ -1119,12 +1418,24 @@ def main():
     print(f"Config: {args.training_window}d window, {args.retrain_interval}d retrains")
     print(f"Edge floor: {args.edge_floor} K, Max picks/day: {args.max_picks}")
     print(f"UNDER enabled: {args.enable_under}")
+    use_blacklist = getattr(args, 'use_blacklist', False)
+    print(f"Blacklist: {'ENABLED (' + str(len(PITCHER_BLACKLIST)) + ' pitchers)' if use_blacklist else 'DISABLED'}")
     print(f"Dead features removed: {'NO' if args.include_dead_features else 'YES'}")
+    if args.away_edge_floor > 0:
+        print(f"Away edge floor: {args.away_edge_floor} K")
+    if args.block_away_rescue:
+        print(f"Away rescue: BLOCKED")
+    if args.dynamic_blacklist:
+        print(f"Dynamic blacklist: ON (HR < {args.bl_max_hr*100:.0f}% at N >= {args.bl_min_n})")
     print()
+
+    # Compute earliest date needed (start_date minus training window buffer)
+    sim_start_dt = datetime.strptime(args.start_date, "%Y-%m-%d")
+    earliest_date = (sim_start_dt - timedelta(days=args.training_window + 30)).strftime("%Y-%m-%d")
 
     # Load data
     client = bigquery.Client(project=PROJECT_ID)
-    df = load_data(client)
+    df = load_data(client, earliest_date=earliest_date)
 
     # Select features
     if args.include_dead_features:
