@@ -27,6 +27,7 @@
 | Scheduler | NO scheduler job existed | `weekly-retrain-trigger` created (Mon 5 AM ET) |
 | Governance gate | `min_n_graded = 50` (blocked ALL retrains) | `min_n_graded = 25` (matches quick_retrain.py) |
 | Registration SQL | `model_sha256` (column doesn't exist) | `sha256_hash` (correct column name) |
+| Eval window | `EVAL_DAYS = 7` (N=18-20, still too few) | `EVAL_DAYS = 14` (doubles candidate pool) |
 
 ### FTA Data Pipeline
 - Added `fta_avg_last_10` and `fta_cv_last_10` window functions to `per_model_pipeline.py`
@@ -74,7 +75,7 @@ Weekly-retrain scheduler was NEVER created. Fixed this session.
 | `ml/signals/per_model_pipeline.py` | FTA window functions + pred dict |
 | `ml/signals/pipeline_merger.py` | Version bump to v463 |
 | `ml/signals/pick_angle_builder.py` | +5 angle templates |
-| `orchestration/cloud_functions/weekly_retrain/main.py` | N=50→25, sha256→sha256_hash |
+| `orchestration/cloud_functions/weekly_retrain/main.py` | N=50→25, sha256→sha256_hash, eval 7→14d |
 | `tests/unit/signals/test_aggregator.py` | +2 filter keys (236 tests passing) |
 
 ## Monitoring
@@ -88,8 +89,9 @@ Weekly-retrain scheduler was NEVER created. Fixed this session.
 ## Next Steps
 
 ### P1: Retrain validation
-- Confirm retrain succeeds after sha256 fix deploys
-- If N=25 still blocks some families, extend eval window to 14 days
+- Retrain triggered with all 3 fixes (N=25, sha256, 14d eval). Awaiting results.
+- Check Monday 5 AM ET auto-fire: `gcloud functions logs read weekly-retrain --region=us-west2 --limit=20`
+- If retrain still fails, investigate which families have N < 25 even with 14d window
 
 ### P2: Signal graduation (7+ days)
 - Monitor 5 new shadow signals for BB-level HR
