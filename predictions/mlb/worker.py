@@ -184,6 +184,30 @@ def get_prediction_systems() -> Dict:
                 systems['ensemble_v1'] = ensemble
                 logger.info(f"Ensemble V1 initialized (V1:{config.systems.ensemble_v1_weight:.0%}, V1.6:{config.systems.ensemble_v1_6_weight:.0%})")
 
+        # LightGBM V1 Regressor (opt-in via MLB_ACTIVE_SYSTEMS)
+        if 'lightgbm_v1_regressor' in active_systems:
+            from predictions.mlb.prediction_systems.lightgbm_v1_regressor_predictor import LightGBMV1RegressorPredictor
+            lgbm_model_path = os.environ.get('MLB_LIGHTGBM_V1_MODEL_PATH')
+            lgbm_v1 = LightGBMV1RegressorPredictor(
+                model_path=lgbm_model_path,
+                project_id=PROJECT_ID
+            )
+            lgbm_v1.load_model()
+            systems['lightgbm_v1_regressor'] = lgbm_v1
+            logger.info("LightGBM V1 Regressor predictor initialized")
+
+        # XGBoost V1 Regressor (opt-in via MLB_ACTIVE_SYSTEMS)
+        if 'xgboost_v1_regressor' in active_systems:
+            from predictions.mlb.prediction_systems.xgboost_v1_regressor_predictor import XGBoostV1RegressorPredictor
+            xgb_model_path = os.environ.get('MLB_XGBOOST_V1_MODEL_PATH')
+            xgb_v1 = XGBoostV1RegressorPredictor(
+                model_path=xgb_model_path,
+                project_id=PROJECT_ID
+            )
+            xgb_v1.load_model()
+            systems['xgboost_v1_regressor'] = xgb_v1
+            logger.info("XGBoost V1 Regressor predictor initialized")
+
         logger.info(f"Initialized {len(systems)} prediction systems")
         _prediction_systems = systems
 

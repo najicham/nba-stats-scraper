@@ -199,15 +199,14 @@ def load_data(client: bigquery.Client, training_start: pd.Timestamp,
         IF(pgs.is_home, 1.0, 0.0) as f10_is_home,
         pgs.opponent_team_k_rate as f15_opponent_team_k_rate,
         pgs.ballpark_k_factor as f16_ballpark_k_factor,
-        pgs.month_of_season as f17_month_of_season,
-        pgs.days_into_season as f18_days_into_season,
+        -- f17_month_of_season, f18_days_into_season REMOVED (dead features, Session 444)
         pgs.season_swstr_pct as f19_season_swstr_pct,
         pgs.season_csw_pct as f19b_season_csw_pct,
         pgs.days_rest as f20_days_rest,
         pgs.games_last_30_days as f21_games_last_30_days,
         pgs.pitch_count_avg_last_5 as f22_pitch_count_avg,
         pgs.season_innings as f23_season_ip_total,
-        IF(pgs.is_postseason, 1.0, 0.0) as f24_is_postseason,
+        -- f24_is_postseason REMOVED (dead feature, Session 444)
         IF(pgs.is_day_game, 1.0, 0.0) as f25_is_day_game,
 
         -- Line-relative features
@@ -233,9 +232,9 @@ def load_data(client: bigquery.Client, training_start: pd.Timestamp,
         pgs.vs_opponent_games as f66_vs_opp_games,
 
         -- Deep workload features
-        pgs.season_games_started as f67_season_starts,
+        -- f67_season_starts REMOVED (duplicate of f08, Session 444)
         SAFE_DIVIDE(pgs.k_avg_last_5, NULLIF(pgs.pitch_count_avg_last_5, 0)) as f68_k_per_pitch,
-        SAFE_DIVIDE(pgs.games_last_30_days, 6.0) as f69_recent_workload_ratio,
+        -- f69_recent_workload_ratio REMOVED (duplicate of f21/6.0, Session 444)
 
         -- FanGraphs advanced pitching features
         fg.o_swing_pct as f70_o_swing_pct,
@@ -292,7 +291,7 @@ def load_data(client: bigquery.Client, training_start: pd.Timestamp,
 
 
 def verify_features(df: pd.DataFrame) -> list:
-    """Verify all 40 features are present in the DataFrame."""
+    """Verify all 36 features are present in the DataFrame."""
     missing = [f for f in FEATURE_COLS if f not in df.columns]
     if missing:
         print(f"\nFATAL: {len(missing)} features missing from query results:")
@@ -301,7 +300,7 @@ def verify_features(df: pd.DataFrame) -> list:
         sys.exit(1)
 
     present = [f for f in FEATURE_COLS if f in df.columns]
-    print(f"\nFeature contract verified: {len(present)}/40 features present")
+    print(f"\nFeature contract verified: {len(present)}/{len(FEATURE_COLS)} features present")
     return present
 
 

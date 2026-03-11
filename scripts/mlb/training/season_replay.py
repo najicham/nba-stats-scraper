@@ -49,7 +49,7 @@ RETRAIN_INTERVAL_DAYS = 14
 DEFAULT_EDGE_FLOOR = 0.75
 MAX_EDGE = 2.0
 MAX_PROB_OVER = 0.85
-MAX_PICKS_PER_DAY = 3
+MAX_PICKS_PER_DAY = 5
 MIN_SIGNAL_COUNT = 2
 UNDER_MIN_SIGNALS = 3
 UNDER_ENABLED = False
@@ -1281,7 +1281,11 @@ def run_replay(df: pd.DataFrame, feature_cols: List[str],
                 c['ev'] = round(abs(c['edge']) * payout_multiplier(c['over_odds']), 4)
             over_cands.sort(key=lambda c: c['ev'], reverse=True)
         else:
-            over_cands.sort(key=lambda c: abs(c['edge']), reverse=True)
+            # Tiebreaker: small bonus for umpire_k_friendly signal (doesn't inflate RSC)
+            over_cands.sort(
+                key=lambda c: abs(c['edge']) + (0.01 if 'umpire_k_friendly' in c.get('signal_tags', []) else 0.0),
+                reverse=True,
+            )
 
         # UNDER: weighted signal quality
         for c in under_cands:

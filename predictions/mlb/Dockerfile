@@ -17,6 +17,9 @@ COPY shared/ ./shared/
 # Copy predictions/shared module (contains mock models, etc.)
 COPY predictions/shared/ ./predictions/shared/
 
+# Copy ML signals module (required for /best-bets endpoint)
+COPY ml/ ./ml/
+
 # Copy MLB worker code and dependencies
 COPY predictions/mlb/ ./predictions/mlb/
 

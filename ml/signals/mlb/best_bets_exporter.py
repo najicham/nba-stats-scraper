@@ -116,6 +116,12 @@ UNDER_SIGNAL_WEIGHTS = {
     'pitch_count_limit_under': 2.0,
 }
 
+# Tiebreaker signals — don't count toward RSC, but break ties in ranking
+# Umpire signal: 64.2% HR but inflates RSC when active (Session 465: -1.7pp, -33u)
+# Used as tiebreaker only: when two picks have similar edge (within 0.25 K),
+# prefer the one with a favorable umpire assignment.
+TIEBREAKER_SIGNALS = frozenset(['umpire_k_friendly'])
+
 # =============================================================================
 # ULTRA TIER CONFIGURATION (V3 FINAL — Session 455 cross-season redesign)
 # Removed: half_line (vacuous — all K lines are x.5), edge 1.1 (hurt 2022-2023)
@@ -441,8 +447,16 @@ class MLBBestBetsExporter:
         over_picks = [p for p in gated_picks if p['recommendation'] == 'OVER']
         under_picks = [p for p in gated_picks if p['recommendation'] == 'UNDER']
 
-        # OVER: rank by edge (higher = better)
-        over_picks.sort(key=lambda p: abs(p.get('edge', 0)), reverse=True)
+        # OVER: rank by edge (higher = better), tiebreaker signals break ties
+        # Tiebreaker: small bonus (0.01) for picks with favorable umpire assignment
+        # This only affects picks within ~0.25 K of each other
+        def _over_sort_key(p):
+            edge = abs(p.get('edge', 0))
+            tiebreaker = 0.01 if any(
+                t in p.get('signal_tags', []) for t in TIEBREAKER_SIGNALS
+            ) else 0.0
+            return (edge + tiebreaker)
+        over_picks.sort(key=_over_sort_key, reverse=True)
 
         # UNDER: rank by weighted signal quality (same lesson as NBA)
         for pick in under_picks:
