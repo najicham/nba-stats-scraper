@@ -40,30 +40,39 @@
 
 **Note:** S464 showed RSC=2 at 57.8% across 4 seasons. Single-season can diverge. The key insight: RSC=2 is NOT the problem bucket.
 
-### 4. Three Combo Signals Implemented (Shadow Mode)
+### 4. Combo + xFIP Signals Implemented (Shadow Mode)
 
 | Signal | Replay HR | N | Mechanism |
 |--------|----------|---|-----------|
-| `day_game_high_csw_combo_over` | 73.3% | 131 | Day game visibility stress + elite CSW (>= 30%) |
-| `day_game_elite_peripherals_combo_over` | 72.6% | 190 | Day game + FIP < 3.5 + K/9 >= 9.0 |
-| `high_csw_low_era_high_k_combo_over` | 71.0% | 169 | CSW >= 30% + ERA < 3.0 + K/9 >= 8.5 |
+| `xfip_elite_over` | **73.8%** | 202 | xFIP < 3.5 — elite underlying stuff regardless of ERA |
+| `day_game_elite_peripherals_combo_over` | **86.7%** | 45 | Day game + FIP < 3.5 + K/9 >= 9.0 |
+| `day_game_high_csw_combo_over` | **82.1%** | 28 | Day game visibility stress + elite CSW (>= 30%) |
+| `high_csw_low_era_high_k_combo_over` | 67.3% | 55 | CSW >= 30% + ERA < 3.0 + K/9 >= 8.5 |
 
 All registered as shadow (TRACKING_ONLY) in production exporter and replay script.
 
-**Signal count now: 19 active + 25 shadow + 6 filters + 2 observation = 52 total**
+**Note:** Original `xfip_regression_over` (ERA >> xFIP gap) had structural misalignment — pitchers with high ERA get UNDER recommendations from the model, so they never appear in OVER best bets. Replaced with standalone xFIP quality signal.
+
+**Signal count now: 18 active + 32 shadow + 6 filters = 56 total**
 
 ### 5. Catcher Framing Infrastructure — WIRED
 
 | Component | Status |
 |-----------|--------|
-| Scraper (`mlb_catcher_framing.py`) | Complete (existed) |
+| Scraper (`mlb_catcher_framing.py`) | **Fixed** (DownloadType.HTML, type=catcher, correct columns) |
 | BQ table (`mlb_raw.catcher_framing`) | **Created** (0 rows, ready for data) |
 | Processor (`mlb_catcher_framing_processor.py`) | **Created** |
 | Scraper registry entry | **Added** |
 | Supplemental loader (`_load_catcher_framing()`) | **Wired** — maps team → primary catcher → framing_runs |
 | Signals (`catcher_framing_over`, `catcher_framing_poor_under`) | Already existed (shadow, waiting for data) |
 
-Data will populate when scraper runs during season (weekly cadence).
+Data will populate when scraper runs during season (weekly cadence). Tested locally: 57 catchers parsed for 2025.
+
+### 6. Umpire Historical Backfill
+
+- Created `scripts/mlb/backfill_umpire_assignments.py` — date range backfill from MLB Stats API
+- Fixed schema (added `source_file_path`, `processed_at` required fields)
+- 2025 full season backfill running (Mar 27 - Oct 2)
 
 ## Files Modified (7) + Created (1)
 

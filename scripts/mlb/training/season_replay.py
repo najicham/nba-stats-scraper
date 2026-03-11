@@ -101,6 +101,8 @@ TRACKING_ONLY_SIGNALS = frozenset([
     # Session 465 combo shadow signals
     'day_game_high_csw_combo_over', 'day_game_elite_peripherals_combo_over',
     'high_csw_low_era_high_k_combo_over',
+    # Session 465 new shadow signals
+    'xfip_elite_over',
     # PROMOTED: high_csw_over, elite_peripherals_over, pitch_efficiency_depth_over (S460)
     # PROMOTED: day_game_shadow_over, pitcher_on_roll_over (S464)
 ])
@@ -294,6 +296,7 @@ def load_data(client: bigquery.Client, earliest_date: str = "2024-01-01") -> pd.
         fg.z_contact_pct as f71_z_contact_pct,
         fg.fip as f72_fip,
         fg.gb_pct as f73_gb_pct,
+        fg.xfip as f74_xfip,
 
         -- Session 460: Additional columns for new signals
         pgs.game_total_line,
@@ -574,6 +577,46 @@ def evaluate_signals(row: pd.Series, predicted_k: float, edge: float,
                 }
                 signal_tags.append('pitcher_on_roll_over')
 
+        # --- Session 465: combo signals (shadow) ---
+        # day_game_high_csw_combo_over: day game + CSW >= 30%
+        is_day = _safe_float(row, 'f25_is_day_game')
+        csw_combo = _safe_float(row, 'f19b_season_csw_pct')
+        if is_day is not None and is_day > 0.5 and csw_combo is not None and csw_combo >= 0.30:
+            signals['day_game_high_csw_combo_over'] = {
+                'confidence': min(1.0, 0.25 + (csw_combo - 0.25) / 0.10 * 0.5),
+                'is_day_game': True,
+                'csw_pct': csw_combo,
+            }
+            signal_tags.append('day_game_high_csw_combo_over')
+
+        # day_game_elite_peripherals_combo_over: day game + FIP < 3.5 + K/9 >= 9.0
+        fip_combo = _safe_float(row, 'f72_fip')
+        k9_combo2 = _safe_float(row, 'f05_season_k_per_9')
+        if (is_day is not None and is_day > 0.5 and fip_combo is not None
+                and k9_combo2 is not None and fip_combo < 3.5 and k9_combo2 >= 9.0):
+            fip_s = max(0, (3.5 - fip_combo) / 1.5)
+            k9_s2 = max(0, (k9_combo2 - 8.0) / 4.0)
+            signals['day_game_elite_peripherals_combo_over'] = {
+                'confidence': min(1.0, 0.15 + (fip_s + k9_s2) / 2.0 * 0.7),
+                'is_day_game': True, 'fip': fip_combo, 'k_per_9': k9_combo2,
+            }
+            signal_tags.append('day_game_elite_peripherals_combo_over')
+
+        # high_csw_low_era_high_k_combo_over: CSW >= 30% + ERA < 3.0 + K/9 >= 8.5
+        era_combo3 = _safe_float(row, 'f06_season_era')
+        k9_combo3 = _safe_float(row, 'f05_season_k_per_9')
+        csw_combo3 = _safe_float(row, 'f19b_season_csw_pct')
+        if (csw_combo3 is not None and era_combo3 is not None and k9_combo3 is not None
+                and csw_combo3 >= 0.30 and era_combo3 < 3.0 and k9_combo3 >= 8.5):
+            csw_s = min(1.0, (csw_combo3 - 0.25) / 0.10)
+            era_s3 = max(0, (3.0 - era_combo3) / 1.5)
+            k9_s3 = max(0, (k9_combo3 - 7.5) / 4.0)
+            signals['high_csw_low_era_high_k_combo_over'] = {
+                'confidence': min(1.0, (csw_s + era_s3 + k9_s3) / 3.0),
+                'csw_pct': csw_combo3, 'era': era_combo3, 'k_per_9': k9_combo3,
+            }
+            signal_tags.append('high_csw_low_era_high_k_combo_over')
+
     elif recommendation == 'UNDER':
         # --- velocity_drop_under ---
         vel_change = _safe_float(row, 'f53_velocity_change')
@@ -660,6 +703,18 @@ def evaluate_signals(row: pd.Series, predicted_k: float, edge: float,
                     'games_30d': games_stress,
                 }
                 signal_tags.append('rest_workload_stress_under')
+
+    # --- Session 465: xfip_elite_over (direction-agnostic, fires on OVER only) ---
+    # xFIP < 3.5 = elite underlying stuff. Wider than elite_peripherals
+    # (FIP + K/9). Must be outside if/elif OVER/UNDER block to fire correctly.
+    xfip = _safe_float(row, 'f74_xfip')
+    if xfip is not None and xfip < 3.5:
+        conf = min(1.0, (3.5 - xfip) / 1.5)
+        signals['xfip_elite_over'] = {
+            'confidence': conf,
+            'xfip': xfip,
+        }
+        signal_tags.append('xfip_elite_over')
 
     real_signal_count = sum(1 for t in signal_tags
                             if t not in BASE_SIGNAL_TAGS and t not in TRACKING_ONLY_SIGNALS)

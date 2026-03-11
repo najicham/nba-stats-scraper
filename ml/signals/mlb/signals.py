@@ -1935,3 +1935,46 @@ class HighCSWLowEraHighKComboOverSignal(BaseMLBSignal):
                 reason=f'Elite on all fronts: {csw:.1%} CSW, {era:.2f} ERA, {k_per_9:.1f} K/9',
             )
         return self._no_qualify()
+
+
+class XfipEliteOverSignal(BaseMLBSignal):
+    """xFIP < 3.5 — elite underlying pitching skill regardless of ERA.
+
+    Session 465: xFIP normalizes HR/FB rate to league average, revealing
+    true pitching talent independent of luck. xFIP < 3.5 identifies
+    pitchers with elite stuff even when ERA is inflated by bad luck.
+    Wider than elite_peripherals (FIP < 3.5 + K/9 >= 9.0) — captures
+    pitchers whose ERA doesn't reflect their true quality.
+
+    Note: original xfip_regression_over (ERA >> xFIP gap) had structural
+    misalignment — pitchers with high ERA get UNDER recommendations,
+    so they never appear in OVER best bets. Replaced with standalone
+    xFIP quality signal.
+    """
+    tag = "xfip_elite_over"
+    description = "xFIP < 3.5 — elite underlying stuff"
+    direction = "OVER"
+    is_shadow = True
+
+    XFIP_THRESHOLD = 3.5
+
+    def evaluate(self, prediction: Dict,
+                 features: Optional[Dict] = None,
+                 supplemental: Optional[Dict] = None) -> MLBSignalResult:
+        if prediction.get('recommendation') != 'OVER':
+            return self._no_qualify()
+        if not features:
+            return self._no_qualify()
+
+        xfip = features.get('xfip')
+        if xfip is None:
+            return self._no_qualify()
+
+        if xfip < self.XFIP_THRESHOLD:
+            conf = min(1.0, (self.XFIP_THRESHOLD - xfip) / 1.5)
+            return self._qualify(
+                confidence=conf,
+                xfip=round(xfip, 2),
+                reason=f'Elite xFIP ({xfip:.2f}) — top-tier underlying stuff',
+            )
+        return self._no_qualify()
