@@ -1476,3 +1476,35 @@ See `docs/08-projects/current/fleet-lifecycle-automation/00-PLAN.md` for the 3-t
 **Fix:** Added `hot_shooting_over_block` filter — blocks OVER when FG diff >= 10% OR 3PT diff >= 15%.
 
 **Lesson:** Mean reversion is asymmetric. Hot shooting kills OVER (24-29% HR) but hot 3PT shooting doesn't help UNDER as strongly. The market already partially prices hot streaks into lines, but not enough.
+
+### Picks Vanish From Site After Model Disable (Session 468)
+
+**Symptom:** March 10 had 7 published picks visible on playerprops.io. After Session 466 disabled 5 stale models, all 7 picks disappeared from the site.
+
+**Root Cause (two bugs):**
+1. `all.json` read history exclusively from `signal_best_bets_picks`, which had 0 rows for March 10 (BQ write failure during original export). The `best_bets_published_picks` table had all 7 picks, but wasn't used for historical dates.
+2. `model_disabled` status (Session 386) caused published picks to be marked as hidden. The `_merge_and_lock_picks` method set `signal_status='model_disabled'` when a pick's source model was later disabled, effectively removing it from display.
+
+**Fix:**
+1. `_query_all_picks()` now UNIONs with `best_bets_published_picks` as fallback for dates missing from `signal_best_bets_picks`. Published picks are the source of truth for "was this shown to users."
+2. `model_disabled` no longer hides picks. Once published, a pick stays `signal_status='active'` regardless of whether the source model is later disabled. Model disablement is logged for audit but doesn't affect visibility.
+
+**Lesson:** "True pick locking" must be end-to-end. Locking picks in one table while reading history from another creates a gap. Published picks = user-visible commitment — they should never vanish. Internal model lifecycle events (disable, retrain) should not retroactively erase user-facing data.
+
+### Static Signal Weights Miss Health Regime Changes (Session 469)
+
+**Symptom:** `home_under` signal at 33.3% 7d HR (COLD regime) still had 2.0 weight in UNDER composite scoring, boosting bad UNDER picks to the top of rankings.
+
+**Root Cause:** `UNDER_SIGNAL_WEIGHTS` and `OVER_SIGNAL_WEIGHTS` were static dictionaries. Signal health regime (HOT/NORMAL/COLD from `signal_health_daily`) was only used for pick angle context and rescue health gates, NOT for composite scoring. A COLD signal boosted picks identically to a HOT signal.
+
+**Fix:** Added `_health_multiplier()` method to `BestBetsAggregator`. Composite scoring now applies health-regime multipliers: COLD behavioral → 0.5x, COLD model-dependent → 0.0x, HOT → 1.2x, NORMAL → 1.0x. Self-correcting — signals recover weight when HR improves.
+
+**Lesson:** Any data-driven weight should be health-aware. Static weights ignore regime changes and can amplify bad signals during cold streaks. The rescue health gate (Session 437) caught this for rescue eligibility but not for ranking weights.
+
+### Fighting the Market is Consistently Losing (Session 469)
+
+**Symptom:** OVER picks where BettingPros line rose >= 1.0 (market moving against OVER) had 38.9% HR (N=54, 5-season cross-validated).
+
+**Fix:** Promoted `over_line_rose_heavy` from observation to active blocking filter. 5-season confirmation provides sufficient evidence.
+
+**Lesson:** When the market moves strongly in one direction (line rising = books raising the bar), betting the opposite is structurally disadvantaged. The model's edge is real but the market already priced in the same information — and then some.

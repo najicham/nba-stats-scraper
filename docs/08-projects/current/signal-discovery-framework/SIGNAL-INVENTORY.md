@@ -2,7 +2,7 @@
 
 **Last Updated:** 2026-03-11 (Session 469)
 **Active Signals:** 28 (+ 32 shadow/observation accumulating data)
-**Negative Filters:** 24 active (+ 11 observation)
+**Negative Filters:** 25 active (+ 11 observation)
 **Combo Registry:** 11 SYNERGISTIC entries
 **Algorithm Version:** `v469_health_aware_weights_line_rose_block`
 

@@ -329,7 +329,7 @@ python bin/analysis/model_correlation.py         # Inter-model agreement
 
 ## Signal System [Keyword: SIGNALS]
 
-**28 active signals + 32 shadow signals** (25 removed/disabled). **24 negative filters + 12 observation.**
+**28 active signals + 32 shadow signals** (25 removed/disabled). **25 negative filters + 11 observation.**
 **Full inventory:** `docs/08-projects/current/signal-discovery-framework/SIGNAL-INVENTORY.md`
 
 **Best Bets Pipeline:** `edge 3+ (or signal rescue) → OVER edge 5+ floor → negative filters → signal_count ≥ 3 → real_sc gate → rank by edge (OVER) or signal quality (UNDER)`
