@@ -1811,15 +1811,15 @@ class FreshOpponentOverSignal(BaseMLBSignal):
 class DayGameHighCSWComboOverSignal(BaseMLBSignal):
     """Day game + high CSW pitcher — visibility stress + elite pitch quality.
 
-    Session 465: 4-season replay: 73.3% HR (N=131). Day game shadow effects
-    (mound sun, batter box shade) combined with pitcher CSW% >= 30% creates
-    compounding K advantage. Hitters already struggling with visibility face
-    elite borderline pitch quality.
+    Session 465: 4-season cross-validated: 73.0% HR (N=122).
+    2022: 68.4%, 2023: 65.0%, 2024: 75.0%, 2025: 82.1%.
+    Day game visibility stress + pitcher CSW% >= 30% = compounding K advantage.
+    PROMOTED Session 465 — consistent all 4 seasons.
     """
     tag = "day_game_high_csw_combo_over"
     description = "Day game + high CSW (>= 30%) — visibility + pitch quality"
     direction = "OVER"
-    is_shadow = True
+    is_shadow = False  # PROMOTED Session 465
 
     CSW_THRESHOLD = 0.30
 
@@ -1940,21 +1940,16 @@ class HighCSWLowEraHighKComboOverSignal(BaseMLBSignal):
 class XfipEliteOverSignal(BaseMLBSignal):
     """xFIP < 3.5 — elite underlying pitching skill regardless of ERA.
 
-    Session 465: xFIP normalizes HR/FB rate to league average, revealing
-    true pitching talent independent of luck. xFIP < 3.5 identifies
-    pitchers with elite stuff even when ERA is inflated by bad luck.
-    Wider than elite_peripherals (FIP < 3.5 + K/9 >= 9.0) — captures
-    pitchers whose ERA doesn't reflect their true quality.
-
-    Note: original xfip_regression_over (ERA >> xFIP gap) had structural
-    misalignment — pitchers with high ERA get UNDER recommendations,
-    so they never appear in OVER best bets. Replaced with standalone
-    xFIP quality signal.
+    Session 465: 4-season cross-validated: 67.5% HR (N=704).
+    2022: 63.2%, 2023: 68.0%, 2024: 67.5%, 2025: 71.9%.
+    xFIP normalizes HR/FB rate to league average — identifies elite stuff
+    even when ERA is inflated by bad luck. Wider than elite_peripherals.
+    PROMOTED Session 465 — consistent all 4 seasons, large N.
     """
     tag = "xfip_elite_over"
     description = "xFIP < 3.5 — elite underlying stuff"
     direction = "OVER"
-    is_shadow = True
+    is_shadow = False  # PROMOTED Session 465
 
     XFIP_THRESHOLD = 3.5
 

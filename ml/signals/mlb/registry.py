@@ -1,7 +1,7 @@
 """MLB Signal Registry — discovers and instantiates all MLB signal classes.
 
 Ports the NBA ml/signals/registry.py pattern for MLB pitcher strikeouts.
-18 active signals + 32 shadow/observation signals + 6 negative filters = 56 total.
+20 active signals + 30 shadow/observation signals + 6 negative filters = 56 total.
 """
 
 from typing import Dict, List

@@ -40,6 +40,16 @@ TABLE_ID = f'{PROJECT_ID}.mlb_raw.mlb_umpire_assignments'
 
 MLB_SCHEDULE_URL = 'https://statsapi.mlb.com/api/v1/schedule'
 
+# MLB team ID → abbreviation mapping (schedule endpoint doesn't include abbreviation)
+MLB_TEAM_ABBR = {
+    108: 'LAA', 109: 'ARI', 110: 'BAL', 111: 'BOS', 112: 'CHC',
+    113: 'CIN', 114: 'CLE', 115: 'COL', 116: 'DET', 117: 'HOU',
+    118: 'KC', 119: 'LAD', 120: 'WSH', 121: 'NYM', 133: 'OAK',
+    134: 'PIT', 135: 'SD', 136: 'SEA', 137: 'SF', 138: 'STL',
+    139: 'TB', 140: 'TEX', 141: 'TOR', 142: 'MIN', 143: 'PHI',
+    144: 'ATL', 145: 'CWS', 146: 'MIA', 147: 'NYY', 158: 'MIL',
+}
+
 
 def fetch_umpire_assignments(game_date: date) -> list:
     """Fetch umpire assignments from MLB Stats API for a single date."""
@@ -56,9 +66,12 @@ def fetch_umpire_assignments(game_date: date) -> list:
     for date_entry in data.get('dates', []):
         for game in date_entry.get('games', []):
             game_pk = game.get('gamePk')
-            game_dt = game.get('gameDate', '')
             home = game.get('teams', {}).get('home', {}).get('team', {})
             away = game.get('teams', {}).get('away', {}).get('team', {})
+
+            # Resolve abbreviation from ID (API doesn't include it)
+            home_abbr = home.get('abbreviation', '') or MLB_TEAM_ABBR.get(home.get('id'), '')
+            away_abbr = away.get('abbreviation', '') or MLB_TEAM_ABBR.get(away.get('id'), '')
 
             # Find home plate umpire
             for official in game.get('officials', []):
@@ -70,8 +83,8 @@ def fetch_umpire_assignments(game_date: date) -> list:
                         'game_pk': game_pk,
                         'umpire_name': umpire.get('fullName', ''),
                         'umpire_id': umpire.get('id'),
-                        'home_team_abbr': home.get('abbreviation', ''),
-                        'away_team_abbr': away.get('abbreviation', ''),
+                        'home_team_abbr': home_abbr,
+                        'away_team_abbr': away_abbr,
                         'source_file_path': f'backfill/umpire_assignments/{game_date.isoformat()}',
                         'created_at': now_ts,
                         'processed_at': now_ts,

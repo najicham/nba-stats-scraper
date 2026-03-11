@@ -98,13 +98,12 @@ TRACKING_ONLY_SIGNALS = frozenset([
     # Session 464 shadow signals
     'k_rate_reversion_under', 'k_rate_bounce_over', 'umpire_csw_combo_over',
     'rest_workload_stress_under', 'low_era_high_k_combo_over',
-    # Session 465 combo shadow signals
-    'day_game_high_csw_combo_over', 'day_game_elite_peripherals_combo_over',
+    # Session 465 combo shadow signals (2 remaining shadow)
+    'day_game_elite_peripherals_combo_over',
     'high_csw_low_era_high_k_combo_over',
-    # Session 465 new shadow signals
-    'xfip_elite_over',
     # PROMOTED: high_csw_over, elite_peripherals_over, pitch_efficiency_depth_over (S460)
     # PROMOTED: day_game_shadow_over, pitcher_on_roll_over (S464)
+    # PROMOTED: xfip_elite_over, day_game_high_csw_combo_over (S465)
 ])
 
 # Ultra tier criteria — Session 452 cross-season redesign
@@ -303,7 +302,11 @@ def load_data(client: bigquery.Client, earliest_date: str = "2024-01-01") -> pd.
         pgs.team_implied_runs,
         -- Weather (joined via game home team)
         w.temperature_f,
-        w.is_dome
+        w.is_dome,
+        -- Session 465: Umpire data
+        ua.umpire_name,
+        ump_stats.umpire_k_rate,
+        ump_stats.umpire_games
 
     FROM `mlb_raw.bp_pitcher_props` bp
     JOIN `mlb_analytics.pitcher_game_summary` pgs
@@ -323,6 +326,25 @@ def load_data(client: bigquery.Client, earliest_date: str = "2024-01-01") -> pd.
         FROM `mlb_raw.mlb_weather`
     ) w ON w.team_abbr = CASE WHEN pgs.is_home THEN pgs.team_abbr ELSE pgs.opponent_team_abbr END
         AND w.scrape_date = pgs.game_date AND w.rn = 1
+    -- Session 465: Umpire assignment → compute historical K-rate per umpire
+    LEFT JOIN `mlb_raw.mlb_umpire_assignments` ua
+        ON ua.game_date = pgs.game_date
+        AND (ua.home_team_abbr = pgs.team_abbr OR ua.away_team_abbr = pgs.team_abbr)
+    LEFT JOIN (
+        -- Umpire K-rate from pitcher game data (K per IP * 9 / 4.3 ≈ K per PA)
+        SELECT ua2.umpire_name,
+               SAFE_DIVIDE(SUM(pgs2.strikeouts), NULLIF(SUM(pgs2.innings_pitched) * 4.3, 0)) as umpire_k_rate,
+               COUNT(*) as umpire_games
+        FROM `mlb_raw.mlb_umpire_assignments` ua2
+        JOIN `mlb_analytics.pitcher_game_summary` pgs2
+            ON pgs2.game_date = ua2.game_date
+            AND (pgs2.team_abbr = ua2.home_team_abbr OR pgs2.team_abbr = ua2.away_team_abbr)
+            AND pgs2.innings_pitched >= 3.0
+        WHERE ua2.game_date >= '{earliest_date}'
+          AND ua2.home_team_abbr IS NOT NULL AND ua2.home_team_abbr != ''
+        GROUP BY ua2.umpire_name
+        HAVING COUNT(*) >= 20
+    ) ump_stats ON ump_stats.umpire_name = ua.umpire_name
     WHERE bp.market_id = 285
       AND bp.actual_value IS NOT NULL
       AND bp.projection_value IS NOT NULL
@@ -545,8 +567,25 @@ def evaluate_signals(row: pd.Series, predicted_k: float, edge: float,
                 }
                 signal_tags.append('k_rate_bounce_over')
 
+        # --- umpire_k_friendly (Session 465: now in replay SQL) ---
+        ump_k = _safe_float(row, 'umpire_k_rate')
+        if ump_k is not None and ump_k >= 0.22:
+            signals['umpire_k_friendly'] = {
+                'confidence': min(1.0, (ump_k - 0.18) / 0.08),
+                'umpire_k_rate': ump_k,
+                'umpire_name': str(row.get('umpire_name', '')),
+            }
+            signal_tags.append('umpire_k_friendly')
+
         # --- umpire_csw_combo_over ---
-        # NOTE: umpire_k_rate not in replay SQL (supplemental-only). Skipped in replay.
+        csw_ump = _safe_float(row, 'f19b_season_csw_pct')
+        if ump_k is not None and csw_ump is not None and ump_k >= 0.22 and csw_ump >= 0.30:
+            signals['umpire_csw_combo_over'] = {
+                'confidence': min(1.0, (ump_k - 0.18) / 0.08 * 0.5 + (csw_ump - 0.25) / 0.10 * 0.5),
+                'umpire_k_rate': ump_k,
+                'csw_pct': csw_ump,
+            }
+            signal_tags.append('umpire_csw_combo_over')
 
         # --- low_era_high_k_combo_over ---
         era_combo = _safe_float(row, 'f06_season_era')
