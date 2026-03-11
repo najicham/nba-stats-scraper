@@ -184,6 +184,45 @@ Sweet spot is rsc=4-6 (63-66% HR). RSC=2 is marginal (57.8%).
 6. **Contact specialist UNDER** — z_contact >= 85% from FanGraphs (f71)
 7. **Dynamic blacklist** — Walk-forward pitcher suppression vs static 28 pitchers
 
+## Session 465 — Replay C/D Results
+
+### Replay C: Dynamic Blacklist (2025, max-picks 5, away 1.25)
+- **Result:** 65.9% HR, 548-283, +249u, 20.0% ROI
+- **Pitchers suppressed:** Only 3 (Logan Webb, Schwellenbach, Cade Horton)
+- **Picks blocked:** 12 total
+- **Verdict:** Not worth deploying — marginal impact
+
+### Replay D: Away Edge Floor Sensitivity (2025)
+
+| Away Floor | HR | Record | P&L | ROI |
+|-----------|-----|--------|-----|-----|
+| 1.0 | 65.8% | 574-298 | +258u | 20.0% |
+| **1.25 (current)** | **~66%** | **baseline** | **baseline** | **baseline** |
+| 1.5 | 66.0% | 530-273 | +250u | 20.5% |
+
+**Verdict:** 1.0/1.25/1.5 all within noise. Keep 1.25.
+
+### RSC Gate Analysis (2025 single-season)
+
+| RSC | HR | N |
+|-----|-----|---|
+| 2 | **75.9%** | 29 |
+| 3 | 55.7% | 79 |
+| 4 | 59.7% | 149 |
+| 5 | 62.6% | 163 |
+| 6 | 69.1% | 207 |
+| 7+ | 72.5% | 204 |
+
+**RSC=2 is the BEST bucket.** Do NOT raise gate from 2 to 3. Cross-season (S464) showed 57.8% at RSC=2 — single-season can diverge. Either way, not the weak link.
+
+### Session 465 Combo Signals Added (Shadow)
+
+| Signal | 4-Season HR | N | Status |
+|--------|-----------|---|--------|
+| `day_game_high_csw_combo_over` | 73.3% | 131 | Shadow |
+| `day_game_elite_peripherals_combo_over` | 72.6% | 190 | Shadow |
+| `high_csw_low_era_high_k_combo_over` | 71.0% | 169 | Shadow |
+
 ## Deployment Timeline
 
 | Step | Action | Status |
@@ -193,5 +232,7 @@ Sweet spot is rsc=4-6 (63-66% HR). RSC=2 is marginal (57.8%).
 | 3 | Promote winners to active | DONE (2 promoted) |
 | 4 | Train fresh model with L2=10+D4 | DONE (69.2% HR) |
 | 5 | Upload to GCS + deploy MLB worker | DONE |
-| 6 | Paper trade April 1-14 | Opening day |
-| 7 | Live bets April 15+ | After paper trade validates |
+| 6 | Replay C/D experiments | DONE (S465) |
+| 7 | Combo signals + catcher framing | DONE (S465) |
+| 8 | Paper trade Mar 27 - Apr 14 | Opening day |
+| 9 | Live bets Apr 15+ | After paper trade validates |

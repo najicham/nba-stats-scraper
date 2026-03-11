@@ -98,6 +98,9 @@ TRACKING_ONLY_SIGNALS = frozenset([
     # Session 464 shadow signals
     'k_rate_reversion_under', 'k_rate_bounce_over', 'umpire_csw_combo_over',
     'rest_workload_stress_under', 'low_era_high_k_combo_over',
+    # Session 465 combo shadow signals
+    'day_game_high_csw_combo_over', 'day_game_elite_peripherals_combo_over',
+    'high_csw_low_era_high_k_combo_over',
     # PROMOTED: high_csw_over, elite_peripherals_over, pitch_efficiency_depth_over (S460)
     # PROMOTED: day_game_shadow_over, pitcher_on_roll_over (S464)
 ])

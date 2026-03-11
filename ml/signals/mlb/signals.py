@@ -1801,3 +1801,137 @@ class FreshOpponentOverSignal(BaseMLBSignal):
                 reason=f'Fresh opponent matchup ({vs_games} prior games)',
             )
         return self._no_qualify()
+
+
+# =============================================================================
+# Session 465 — Combo signals (4-season replay validated pairs)
+# =============================================================================
+
+
+class DayGameHighCSWComboOverSignal(BaseMLBSignal):
+    """Day game + high CSW pitcher — visibility stress + elite pitch quality.
+
+    Session 465: 4-season replay: 73.3% HR (N=131). Day game shadow effects
+    (mound sun, batter box shade) combined with pitcher CSW% >= 30% creates
+    compounding K advantage. Hitters already struggling with visibility face
+    elite borderline pitch quality.
+    """
+    tag = "day_game_high_csw_combo_over"
+    description = "Day game + high CSW (>= 30%) — visibility + pitch quality"
+    direction = "OVER"
+    is_shadow = True
+
+    CSW_THRESHOLD = 0.30
+
+    def evaluate(self, prediction: Dict,
+                 features: Optional[Dict] = None,
+                 supplemental: Optional[Dict] = None) -> MLBSignalResult:
+        if prediction.get('recommendation') != 'OVER':
+            return self._no_qualify()
+        if not features:
+            return self._no_qualify()
+
+        is_day = features.get('is_day_game')
+        csw = features.get('season_csw_pct')
+        if is_day is None or csw is None:
+            return self._no_qualify()
+
+        if is_day and csw >= self.CSW_THRESHOLD:
+            csw_score = min(1.0, (csw - 0.25) / 0.10)
+            conf = min(1.0, 0.25 + csw_score * 0.5)
+            return self._qualify(
+                confidence=conf,
+                is_day_game=is_day,
+                season_csw_pct=round(csw, 3),
+                reason=f'Day game + elite CSW ({csw:.1%}) — visibility stress + pitch quality',
+            )
+        return self._no_qualify()
+
+
+class DayGameElitePeripheralsComboOverSignal(BaseMLBSignal):
+    """Day game + elite peripherals (FIP < 3.5, K/9 >= 9.0) — ace in visibility stress.
+
+    Session 465: 4-season replay: 72.6% HR (N=190). Elite pitchers compound
+    the visibility disadvantage from day games. Hitters facing elite stuff
+    in difficult visibility conditions = elevated K rate.
+    """
+    tag = "day_game_elite_peripherals_combo_over"
+    description = "Day game + elite peripherals (FIP < 3.5, K/9 >= 9.0)"
+    direction = "OVER"
+    is_shadow = True
+
+    FIP_THRESHOLD = 3.5
+    K9_THRESHOLD = 9.0
+
+    def evaluate(self, prediction: Dict,
+                 features: Optional[Dict] = None,
+                 supplemental: Optional[Dict] = None) -> MLBSignalResult:
+        if prediction.get('recommendation') != 'OVER':
+            return self._no_qualify()
+        if not features:
+            return self._no_qualify()
+
+        is_day = features.get('is_day_game')
+        fip = features.get('fip')
+        k_per_9 = features.get('season_k_per_9')
+        if is_day is None or fip is None or k_per_9 is None:
+            return self._no_qualify()
+
+        if is_day and fip < self.FIP_THRESHOLD and k_per_9 >= self.K9_THRESHOLD:
+            fip_score = max(0, (self.FIP_THRESHOLD - fip) / 1.5)
+            k9_score = max(0, (k_per_9 - 8.0) / 4.0)
+            conf = min(1.0, 0.15 + (fip_score + k9_score) / 2.0 * 0.7)
+            return self._qualify(
+                confidence=conf,
+                is_day_game=is_day,
+                fip=round(fip, 2),
+                k_per_9=round(k_per_9, 1),
+                reason=f'Day game + elite ace: {fip:.2f} FIP, {k_per_9:.1f} K/9',
+            )
+        return self._no_qualify()
+
+
+class HighCSWLowEraHighKComboOverSignal(BaseMLBSignal):
+    """High CSW + low ERA + high K/9 — elite pitcher across all dimensions.
+
+    Session 465: 4-season replay: 71.0% HR (N=169). Three independent markers
+    of elite pitch quality: called strike dominance (CSW >= 30%), results-based
+    dominance (ERA < 3.0), and strikeout ability (K/9 >= 8.5). Pitcher excelling
+    in all three = peak K environment.
+    """
+    tag = "high_csw_low_era_high_k_combo_over"
+    description = "High CSW (>= 30%) + low ERA (< 3.0) + K/9 (>= 8.5)"
+    direction = "OVER"
+    is_shadow = True
+
+    CSW_THRESHOLD = 0.30
+    ERA_THRESHOLD = 3.0
+    K9_THRESHOLD = 8.5
+
+    def evaluate(self, prediction: Dict,
+                 features: Optional[Dict] = None,
+                 supplemental: Optional[Dict] = None) -> MLBSignalResult:
+        if prediction.get('recommendation') != 'OVER':
+            return self._no_qualify()
+        if not features:
+            return self._no_qualify()
+
+        csw = features.get('season_csw_pct')
+        era = features.get('season_era')
+        k_per_9 = features.get('season_k_per_9')
+        if csw is None or era is None or k_per_9 is None:
+            return self._no_qualify()
+
+        if csw >= self.CSW_THRESHOLD and era < self.ERA_THRESHOLD and k_per_9 >= self.K9_THRESHOLD:
+            csw_score = min(1.0, (csw - 0.25) / 0.10)
+            era_score = max(0, (self.ERA_THRESHOLD - era) / 1.5)
+            k9_score = max(0, (k_per_9 - 7.5) / 4.0)
+            conf = min(1.0, (csw_score + era_score + k9_score) / 3.0)
+            return self._qualify(
+                confidence=conf,
+                season_csw_pct=round(csw, 3),
+                season_era=round(era, 2),
+                k_per_9=round(k_per_9, 1),
+                reason=f'Elite on all fronts: {csw:.1%} CSW, {era:.2f} ERA, {k_per_9:.1f} K/9',
+            )
+        return self._no_qualify()

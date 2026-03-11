@@ -1,13 +1,17 @@
 """
 MLB Supplemental Data Loader
 
-Loads umpire K-rate, weather, and game context data for game-day pitchers.
+Loads umpire K-rate, weather, game context, and catcher framing data
+for game-day pitchers.
+
 Provides supplemental_by_pitcher dict consumed by signals:
   - UmpireKFriendlySignal: sup.get('umpire_k_rate')
   - WeatherColdUnderSignal: sup.get('temperature')
   - ColdWeatherKOverSignal: sup.get('temperature'), sup.get('is_dome')
   - GameTotalLowOverSignal: sup.get('game_total_line')
   - HeavyFavoriteOverSignal: sup.get('team_moneyline')
+  - CatcherFramingOverSignal: sup.get('catcher_framing_runs')
+  - CatcherFramingPoorUnderSignal: sup.get('catcher_framing_runs')
 
 Tables:
   - mlb_raw.mlb_umpire_assignments: game_pk → umpire_name (daily scrape)
@@ -15,11 +19,13 @@ Tables:
   - mlb_raw.mlb_weather: team_abbr → temperature_f (daily scrape)
   - mlb_raw.mlb_schedule: game_pk → teams + probable pitchers
   - mlb_raw.oddsa_game_lines: game_pk → moneyline, game total (Session 460)
+  - mlb_raw.catcher_framing: team_abbr → framing_runs (Session 465, weekly)
 
 Gracefully returns empty dict if tables have no data (pre-season).
 
 Created: 2026-03-08 (Session 447)
 Updated: 2026-03-10 (Session 460) — game context: moneyline, game total
+Updated: 2026-03-10 (Session 465) — catcher framing data
 """
 
 import logging
@@ -84,6 +90,9 @@ def load_supplemental_by_pitcher(
     # Load game context (moneyline, game total) — Session 460
     game_context_by_game = _load_game_context(client, game_date, proj_id)
 
+    # Load catcher framing by team — Session 465
+    framing_by_team = _load_catcher_framing(client, game_date, proj_id)
+
     # Load schedule to map game_pk → pitchers
     schedule = _load_schedule(client, game_date, proj_id)
 
@@ -139,6 +148,14 @@ def load_supplemental_by_pitcher(
             team_ml = home_ml if is_home_pitcher else away_ml
             if team_ml is not None:
                 supplemental['team_moneyline'] = team_ml
+            # Catcher framing — Session 465
+            # Map pitcher's team → primary catcher framing runs
+            pitcher_team = home_team if is_home_pitcher else away_team
+            framing_data = framing_by_team.get(pitcher_team, {})
+            if framing_data.get('framing_runs') is not None:
+                supplemental['catcher_framing_runs'] = framing_data['framing_runs']
+                supplemental['catcher_framing_runs_per_game'] = framing_data.get(
+                    'framing_runs_per_game')
 
             if supplemental:
                 result[pitcher_lookup] = supplemental
@@ -146,9 +163,10 @@ def load_supplemental_by_pitcher(
     n_with_umpire = sum(1 for v in result.values() if 'umpire_k_rate' in v)
     n_with_weather = sum(1 for v in result.values() if 'temperature' in v)
     n_with_context = sum(1 for v in result.values() if 'game_total_line' in v)
+    n_with_framing = sum(1 for v in result.values() if 'catcher_framing_runs' in v)
     logger.info(f"[MLB Supplemental] Loaded supplemental for {len(result)} pitchers "
                 f"(umpire: {n_with_umpire}, weather: {n_with_weather}, "
-                f"game_ctx: {n_with_context})")
+                f"game_ctx: {n_with_context}, framing: {n_with_framing})")
 
     return result
 
@@ -323,6 +341,67 @@ def _load_game_context(
 
     except Exception as e:
         logger.warning(f"[MLB Supplemental] Game context unavailable: {e}")
+        return {}
+
+
+def _load_catcher_framing(
+    client: bigquery.Client, game_date: date, project_id: str
+) -> Dict[str, Dict]:
+    """Load primary catcher framing data by team_abbr.
+
+    Session 465: Maps team → primary catcher (most games) → framing metrics.
+    Catcher framing data is scraped weekly; use most recent scrape for the
+    current season.
+
+    Returns:
+        Dict[team_abbr, {framing_runs, framing_runs_per_game}]
+    """
+    season = game_date.year
+    query = f"""
+    WITH latest_scrape AS (
+        SELECT MAX(scrape_date) as max_scrape
+        FROM `{project_id}.mlb_raw.catcher_framing`
+        WHERE season = @season
+    ),
+    primary_catchers AS (
+        SELECT
+            cf.team_abbr,
+            cf.player_lookup,
+            cf.framing_runs,
+            cf.framing_runs_per_game,
+            cf.games,
+            ROW_NUMBER() OVER (
+                PARTITION BY cf.team_abbr
+                ORDER BY cf.games DESC
+            ) as rn
+        FROM `{project_id}.mlb_raw.catcher_framing` cf
+        CROSS JOIN latest_scrape ls
+        WHERE cf.scrape_date = ls.max_scrape
+          AND cf.season = @season
+    )
+    SELECT team_abbr, player_lookup, framing_runs, framing_runs_per_game, games
+    FROM primary_catchers
+    WHERE rn = 1
+    """
+
+    try:
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("season", "INT64", season),
+            ]
+        )
+        rows = client.query(query, job_config=job_config).result()
+
+        result = {}
+        for row in rows:
+            result[row['team_abbr']] = {
+                'framing_runs': row.get('framing_runs'),
+                'framing_runs_per_game': row.get('framing_runs_per_game'),
+            }
+        return result
+
+    except Exception as e:
+        logger.warning(f"[MLB Supplemental] Catcher framing data unavailable: {e}")
         return {}
 
 

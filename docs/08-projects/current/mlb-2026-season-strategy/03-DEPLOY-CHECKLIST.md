@@ -1,6 +1,6 @@
 # MLB 2026 — Deploy Checklist
 
-*Updated Session 447: Supplemental loader + /best-bets endpoint + BQ tables created*
+*Updated Session 465: Paper trade verified, replay experiments done, combo signals added, catcher framing wired*
 
 ## Pre-Season (Mar 18-23)
 
@@ -12,7 +12,8 @@ PYTHONPATH=. python scripts/mlb/training/train_regressor_v2.py \
 ```
 - Verify model file created in `models/mlb/`
 - Check training metrics (MAE should be ~1.4-1.6 based on replay)
-- **Feature count should be 36** (5 dead features removed in Session 444)
+- **Feature count should be 40** (68 active features minus 5 dead = 63, but 40 model features)
+- **Hyperparams:** depth=4, lr=0.015, iters=500, l2=10 (L2=10+D4 validated S460)
 
 ### Step 2: Upload Model to GCS
 ```bash
@@ -47,11 +48,13 @@ gcloud run services describe mlb-prediction-worker --region=us-west2 \
 gcloud run services update mlb-prediction-worker \
     --region=us-west2 \
     --update-env-vars="\
-MLB_ACTIVE_SYSTEMS=catboost_v1,catboost_v2_regressor,\
-MLB_CATBOOST_V2_MODEL_PATH=gs://nba-props-platform-ml-models/mlb/catboost_mlb_v2_regressor_YYYYMMDD.cbm,\
+MLB_ACTIVE_SYSTEMS=catboost_v1,\
+MLB_CATBOOST_V1_MODEL_PATH=gs://nba-props-platform-ml-models/mlb/catboost_mlb_v2_regressor_YYYYMMDD.cbm,\
 MLB_EDGE_FLOOR=0.75,\
+MLB_AWAY_EDGE_FLOOR=1.25,\
+MLB_BLOCK_AWAY_RESCUE=true,\
 MLB_MAX_EDGE=2.0,\
-MLB_MAX_PICKS_PER_DAY=3,\
+MLB_MAX_PICKS_PER_DAY=5,\
 MLB_UNDER_ENABLED=false"
 ```
 
@@ -114,11 +117,14 @@ ORDER BY game_date;
 
 ## Week 1 Monitoring
 
-- [ ] Predictions generating daily for both v1 and v2
-- [ ] Best bets publishing 2-3 picks/day
+- [ ] Predictions generating daily
+- [ ] Best bets publishing 3-5 picks/day
 - [ ] Filter audit shows whole_line_over and pitcher_blacklist firing
-- [ ] Algorithm version = `mlb_v6_season_replay_validated`
-- [ ] v1 vs v2 predictions side-by-side comparison
+- [ ] Umpire data flowing (umpire_k_friendly signal fires)
+- [ ] Weather data flowing (temperature in supplemental)
+- [ ] Game context flowing (moneyline, game total)
+- [ ] Catcher framing scraper run weekly (check BQ row count)
+- [ ] Shadow combo signals firing (day_game_high_csw, etc.)
 - [ ] No errors in Cloud Run logs
 
 ## 3-Week Checkpoint (Apr 14)

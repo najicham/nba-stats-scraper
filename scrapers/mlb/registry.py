@@ -98,6 +98,10 @@ MLB_SCRAPER_REGISTRY: Dict[str, Tuple[str, str]] = {
         "scrapers.mlb.external.mlb_umpire_stats",
         "MlbUmpireStatsScraper"
     ),
+    "mlb_catcher_framing": (
+        "scrapers.mlb.external.mlb_catcher_framing",
+        "MlbCatcherFramingScraper"
+    ),
 
     # ========================================================================
     # Statcast Scrapers (2 total)
@@ -193,7 +197,7 @@ def get_scrapers_by_source(source: str) -> list:
                     'mlb_game_lines_his', 'mlb_pitcher_props', 'mlb_pitcher_props_his',
                     'mlb_batter_props', 'mlb_batter_props_his'],
         'external': ['mlb_weather', 'mlb_ballpark_factors', 'mlb_umpire_stats',
-                     'mlb_reddit_discussion'],
+                     'mlb_catcher_framing', 'mlb_reddit_discussion'],
         'statcast': ['mlb_statcast_pitcher', 'mlb_statcast_daily'],
     }
     return source_map.get(source, [])

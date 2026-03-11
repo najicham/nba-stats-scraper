@@ -1,7 +1,7 @@
 """MLB Signal Registry — discovers and instantiates all MLB signal classes.
 
 Ports the NBA ml/signals/registry.py pattern for MLB pitcher strikeouts.
-18 active signals + 22 shadow/observation signals + 6 negative filters.
+19 active signals + 25 shadow/observation signals + 6 negative filters.
 """
 
 from typing import Dict, List
@@ -95,6 +95,10 @@ def build_mlb_registry() -> MLBSignalRegistry:
         ContactSpecialistUnderSignal,
         HumidityOverSignal,
         FreshOpponentOverSignal,
+        # Session 465 — combo signals (4-season replay validated pairs)
+        DayGameHighCSWComboOverSignal,
+        DayGameElitePeripheralsComboOverSignal,
+        HighCSWLowEraHighKComboOverSignal,
         # Negative filters (6)
         BullpenGameFilter,
         ILReturnFilter,
@@ -167,6 +171,10 @@ def build_mlb_registry() -> MLBSignalRegistry:
     registry.register(ContactSpecialistUnderSignal())
     registry.register(HumidityOverSignal())
     registry.register(FreshOpponentOverSignal())
+    # Session 465 — combo signals (4-season replay validated pairs)
+    registry.register(DayGameHighCSWComboOverSignal())
+    registry.register(DayGameElitePeripheralsComboOverSignal())
+    registry.register(HighCSWLowEraHighKComboOverSignal())
 
     # Negative filters (6) — block picks
     registry.register(BullpenGameFilter())

@@ -4,28 +4,37 @@
 
 ## System State at Season Start
 
+*Updated Session 465 (2026-03-10)*
+
 | Component | Status | Details |
 |-----------|--------|---------|
-| Model | CatBoost V2 Regressor, 36 features | Needs retrain with 120d window ending Mar 20 |
-| Blacklist | 28 pitchers | +5 in Session 447 (Suarez, Horton, Snell, Castillo, Skenes) |
-| Signals | 13 active + 7 shadow | swstr_surge demoted to shadow (55.2% HR) |
-| Rescue | opponent_k_prone only | ballpark_k_boost removed (41.2% solo HR) |
-| Ultra tier | edge 1.1 + home + proj + half-line | 81.4% HR (N=70) in replay |
-| Umpire pipeline | BQ tables created, scraper exists | No data yet — scraper PAUSED |
-| Weather pipeline | BQ tables created, scraper exists | No data yet — scraper PAUSED |
-| Algorithm | `mlb_v7_s447_blacklist28_rescue_tightened` | |
+| Model | CatBoost V2 Regressor, 40 features, L2=10+D4 | 69.2% HR at edge >= 0.75. Retrain before Mar 27. |
+| Blacklist | 28 pitchers | +5 in Session 447 |
+| Signals | **19 active + 25 shadow + 6 filters + 2 obs = 52 total** | Sessions 460-465 |
+| Combo signals | 3 new shadow (S465) | day_game+high_csw (73.3%), day_game+elite_peripherals (72.6%), csw+era+k9 (71.0%) |
+| Rescue | opponent_k_prone only | ballpark_k_boost removed (41.2%) |
+| Ultra tier | edge 0.5 + home + proj agrees + not rescued | Redesigned S455 |
+| Umpire pipeline | BQ tables + scraper + supplemental loader | Ready, PAUSED |
+| Weather pipeline | BQ tables + scraper + supplemental loader | Ready, PAUSED |
+| Catcher framing | BQ table + scraper + processor + supplemental | Ready (S465), PAUSED |
+| Game context | Moneyline + game total via supplemental | Wired S460 |
+| Away edge | 1.25 K (validated S465: 1.0/1.25/1.5 all similar) | |
+| Dynamic blacklist | NOT deploying (only 3 pitchers suppressed in replay) | S465 finding |
+| RSC gate | Keep at 2 (RSC=2 = 75.9% HR in 2025) | S465 finding |
 | 24 schedulers | ALL PAUSED | Resume Mar 24 |
 | 2026 schedule | Not loaded | First scrape after resume |
 
-## Expected Performance (Replay-Based)
+## Expected Performance (4-Season Replay, L2=10+D4)
 
-| Metric | V6 (Session 444) | V7 (Session 447 est.) |
-|--------|-------------------|------------------------|
-| BB HR | 63.4% (298-172) | ~65.3% (+1.9pp from blacklist) |
-| Ultra HR | 81.4% (57-13) | ~81% (unchanged) |
-| P&L | +170u | ~+174u |
-| Picks/day | 2.7 | ~2.5 (blacklist reduces volume slightly) |
-| Losing months | 0/6 | 0/6 |
+| Metric | 4-Season Total | 2025 Only |
+|--------|---------------|-----------|
+| BB HR | 63.4% | 65.9% |
+| BB Record | 1538-916 | 548-283 |
+| Ultra HR | 69.6% | 69.6% |
+| P&L | +470.7u | +249u |
+| ROI | 12.8% | 20.0% |
+| Picks/day | ~5 | ~5 |
+| Profitable seasons | 4/4 | — |
 
 ## Timeline
 
