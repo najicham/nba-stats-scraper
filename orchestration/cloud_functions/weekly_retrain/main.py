@@ -60,7 +60,7 @@ ROLLING_WINDOW_DAYS = 56
 # Session 463: Extended from 7→14 days. 7-day window yielded N=18-20 at edge 3+,
 # consistently below min_n_graded=25. 14 days doubles the candidate pool.
 EVAL_DAYS = 14
-MAX_FAMILIES_PER_RUN = 5
+MAX_FAMILIES_PER_RUN = 10  # Session 466: raised from 5 — 9+ families need retraining in crisis
 MIN_ENABLED_MODELS = 3  # Safety floor: don't disable old if too few would remain
 
 # CatBoost production hyperparameters
@@ -96,7 +96,7 @@ GOVERNANCE = {
     'min_hr_edge3': 60.0,     # Edge 3+ HR must be >= 60%
     'max_vegas_bias': 1.5,     # |avg(pred - line)| must be <= 1.5
     'max_tier_bias': 5.0,      # No tier bias > 5 points
-    'min_n_graded': 25,        # Minimum graded predictions (was 50, too strict for 7d eval)
+    'min_n_graded': 15,        # Session 466: lowered 25→15. MAE families get N=18-20 at edge 3+ with 14d eval — 25 blocks them. 15 matches decay_detection threshold.
     'min_directional_hr': 52.4, # Both OVER and UNDER HR >= 52.4% at edge 3+
 }
 

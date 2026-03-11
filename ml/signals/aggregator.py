@@ -105,10 +105,8 @@ SHADOW_SIGNALS = frozenset({
     'starter_away_overtrend_under',  # Session 462: 48.2% HR 5-season — harmful, demoted from weights
     'mean_reversion_under',  # Session 451: decayed to 53% vs 54.3% baseline, removed from weights/rescue Session 429. Stop real_sc inflation.
     'sharp_book_lean_over',  # Session 462: 41.7% HR 5-season — harmful, demoted from weights/rescue
-    # Session 462: New shadow signals (BB simulator validated, accumulating data)
-    'hot_3pt_under',               # 62.5% HR (N=670) 5-season — promote when BB N >= 30
-    'cold_3pt_over',               # 60.2% HR (N=123) 5-season — promote when BB N >= 30
-    'line_drifted_down_under',     # 59.8% HR (N=336) 5-season — promote when BB N >= 30
+    # Session 462→466: hot_3pt_under, cold_3pt_over, line_drifted_down_under PROMOTED to active
+    # (62.5%, 60.2%, 59.8% HR, 5-season cross-validated, pre-game clean)
     # Session 463: P0 simulator experiment validated signals
     'ft_anomaly_under',            # 63.3% HR (N=278) 5-season — FTA CV >= 0.5, FTA >= 5/game
     'slow_pace_under',             # 56.6% HR (N=777) 5-season — opponent pace <= 99
@@ -132,6 +130,9 @@ UNDER_SIGNAL_WEIGHTS: Dict[str, float] = {
     'downtrend_under': 2.0,          # Session 427: promoted 1.5→2.0. Cross-season +8.1pp lift, increasing trend
     # star_favorite_under removed Session 427: +0.7pp lift = noise, 73% HR from N=88 was single-season artifact
     # starter_under removed Session 419 (38.7% signal HR N=31, demoted to BASE_SIGNALS)
+    # Session 466: Promoted from shadow — 5-season cross-validated, pre-game clean
+    'hot_3pt_under': 2.5,            # 62.5% HR (N=670) — 3PT hot streak regresses, strongest structural signal
+    'line_drifted_down_under': 2.0,  # 59.8% HR (N=336) — smart money nudging under
 }
 UNDER_EDGE_TIEBREAKER = 0.1  # Edge as minor tiebreaker for UNDER
 
@@ -141,11 +142,12 @@ UNDER_EDGE_TIEBREAKER = 0.1  # Edge as minor tiebreaker for UNDER
 # Old behavior: sorted by edge ascending (dropped HSE 100% HR while keeping
 # combo_he_ms 40% HR because HSE had lower edge).
 RESCUE_SIGNAL_PRIORITY: Dict[str, int] = {
-    'high_scoring_environment_over': 3,  # 100% BB HR (3-0)
-    # sharp_book_lean_over removed Session 462: 41.7% HR 5-season — demoted to shadow
+    'high_scoring_environment_over': 3,  # 100% BB HR (3-0) — only OVER rescue
+    'hot_3pt_under': 3,                  # Session 466: 62.5% HR 5-season
+    'line_drifted_down_under': 2,        # Session 466: 59.8% HR 5-season
     'home_under': 2,                     # Solid UNDER rescue signal
-    'combo_3way': 1,                     # Co-fires with combo_he_ms
-    'combo_he_ms': 1,                    # 53.8% BB HR — weak at low edge
+    'combo_3way': 1,                     # UNDER only (COLD for OVER)
+    'combo_he_ms': 1,                    # UNDER only
 }
 
 # Session 437 P5: Minimum 7d HR for a signal to qualify as rescue.
@@ -169,6 +171,7 @@ OVER_SIGNAL_WEIGHTS: Dict[str, float] = {
     'book_disagreement': 2.0,               # 93.0% signal HR
     'rest_advantage_2d': 2.0,               # Session 442: 74.0% BB HR (N=50), strongest unweighted signal
     'scoring_cold_streak_over': 1.5,        # Post-cold bounce signal
+    'cold_3pt_over': 2.0,                   # Session 466: 60.2% HR (N=123) 5-season — cold from 3 bounces back
     # sharp_book_lean_over removed Session 462: 41.7% HR 5-season cross-validated — harmful
     'b2b_boost_over': 1.0,                  # Active signal
     'q4_scorer_over': 1.0,                  # Active signal
@@ -512,23 +515,23 @@ class BestBetsAggregator:
                 # Session 420: Restored high_scoring_environment_over —
                 # 71.4% HR (5-7) overall, 3-0 on Mar 5. Removal killed
                 # OVER pipeline (0 OVER picks at edge 5+ on Mar 6).
-                rescue_tags = {
-                    'combo_3way',
-                    # book_disagreement removed Session 434: 47.4% HR (N=19), rescuing losers
-                    'home_under',
-                    # volatile_scoring_over removed Session 436: 0% BB HR, 20% overall.
-                    # Rescues bench players with high CV (trivially satisfied at low lines).
-                    'high_scoring_environment_over',  # Session 420: restored (71.4% HR)
-                    # sharp_book_lean_over removed Session 462: 41.7% HR 5-season
-                    # sharp_book_lean_under removed Session 431: zero production fires in 2026
-                    # mean_reversion_under removed Session 427: cross-season decay
-                    # 75.7%(2024)→65.2%(2025)→53.0%(2026), below 2026 baseline
-                }
-                # Session 437 P6: combo_he_ms removed from OVER rescue.
-                # combo_he_ms at edge < 4 = 25% HR (1-3), even at edge 4.0+
-                # recent HR is 53.8%. Keep for UNDER where it performs well.
-                if pred.get('recommendation') != 'OVER':
-                    rescue_tags.add('combo_he_ms')
+                # Session 466: OVER rescue restricted to HSE only.
+                # March 2026: 18 rescued OVER at avg edge 3.9, combo_he_ms 40% HR,
+                # signal_stack 33% HR, volatile_scoring 0% HR. Only HSE works (3-0).
+                # combo_3way is COLD (28.6% 7d) — health gate blocks it but be explicit.
+                # UNDER rescue kept broad (home_under, combo_3way, combo_he_ms).
+                if pred.get('recommendation') == 'OVER':
+                    rescue_tags = {
+                        'high_scoring_environment_over',  # 100% BB HR (3-0), only validated OVER rescue
+                    }
+                else:
+                    rescue_tags = {
+                        'combo_3way',
+                        'combo_he_ms',
+                        'home_under',
+                        'hot_3pt_under',          # Session 466: 62.5% HR 5-season, promoted
+                        'line_drifted_down_under', # Session 466: 59.8% HR 5-season, promoted
+                    }
 
                 # Session 437 P5: Dynamic rescue health gate.
                 # Signals with 7d HR < RESCUE_MIN_HR_7D lose rescue eligibility.

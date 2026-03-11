@@ -26,16 +26,17 @@ MAX_PICKS_PER_GAME = 3  # Session 452: Mar 8 had 3 losses from SAS-HOU game
 RESCUE_CAP_PCT = 0.40
 # Session 452: Single source of truth for algorithm version.
 # aggregator.py imports this constant — bump here for all changes.
-ALGORITHM_VERSION = 'v463_ft_anomaly_slow_pace'
+ALGORITHM_VERSION = 'v466_rescue_restrict_signal_promote'
 
 # Rescue signal priority weights — mirrors aggregator.RESCUE_SIGNAL_PRIORITY.
 # When rescue cap trims, drop lowest-priority rescues first (ascending sort).
 RESCUE_SIGNAL_PRIORITY: Dict[str, int] = {
-    'high_scoring_environment_over': 3,
-    # sharp_book_lean_over removed Session 462: 41.7% HR 5-season — demoted to shadow
+    'high_scoring_environment_over': 3,  # Only OVER rescue (Session 466)
+    'hot_3pt_under': 3,                  # Session 466: promoted
+    'line_drifted_down_under': 2,        # Session 466: promoted
     'home_under': 2,
-    'combo_3way': 1,
-    'combo_he_ms': 1,
+    'combo_3way': 1,                     # UNDER only
+    'combo_he_ms': 1,                    # UNDER only
 }
 
 
