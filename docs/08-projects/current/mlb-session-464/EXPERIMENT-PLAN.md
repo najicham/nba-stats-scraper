@@ -234,5 +234,8 @@ Sweet spot is rsc=4-6 (63-66% HR). RSC=2 is marginal (57.8%).
 | 5 | Upload to GCS + deploy MLB worker | DONE |
 | 6 | Replay C/D experiments | DONE (S465) |
 | 7 | Combo signals + catcher framing | DONE (S465) |
-| 8 | Paper trade Mar 27 - Apr 14 | Opening day |
-| 9 | Live bets Apr 15+ | After paper trade validates |
+| 8 | xFIP + combo cross-season validation | DONE (S465) |
+| 9 | Promote xfip_elite + day_game_csw | DONE (S465, 4-season validated) |
+| 10 | Umpire backfill + replay infra | DONE (S465, 2025 data loaded) |
+| 11 | Paper trade Mar 27 - Apr 14 | Opening day |
+| 12 | Live bets Apr 15+ | After paper trade validates |

@@ -96,7 +96,8 @@ TRACKING_ONLY_SIGNALS = frozenset([
     # Session 460 round 2 shadow signals
     'rematch_familiarity_under', 'cumulative_arm_stress_under',
     # Session 464 shadow signals
-    'k_rate_reversion_under', 'k_rate_bounce_over', 'umpire_csw_combo_over',
+    'k_rate_reversion_under', 'k_rate_bounce_over',
+    'umpire_k_friendly', 'umpire_csw_combo_over',  # S465: 64.2% HR but inflates RSC, hurts pick quality
     'rest_workload_stress_under', 'low_era_high_k_combo_over',
     # Session 465 combo shadow signals (2 remaining shadow)
     'day_game_elite_peripherals_combo_over',
