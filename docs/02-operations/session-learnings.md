@@ -1456,3 +1456,23 @@ See `docs/08-projects/current/fleet-lifecycle-automation/00-PLAN.md` for the 3-t
 **Fix:** Changed DELETE scope from "all rows for date" to "only rows for players being refreshed" (`player_lookup IN UNNEST(@player_lookups)`). Picks dropped by signal on re-run stay in the table. Published picks always get `signal_status='active'` (no more 'dropped').
 
 **Lesson:** Write operations on grading-critical tables must be scoped. Never delete rows that might be needed for downstream processes (grading, record tracking). Use upsert patterns instead of delete-all+insert.
+
+### OVER Edge 3-5 Net-Negative in 4/5 Seasons (Session 468)
+
+**Symptom:** OVER picks at edge 3-5 consistently losing money despite edge appearing viable.
+
+**Root Cause:** 5-season discovery analysis across 79K predictions showed OVER at edge 3-5 is net-negative in 4 of 5 historical seasons: 2021-22 (43%), 2022-23 (45%), 2023-24 (49%), 2024-25 (50%). Only 2025-26 (58%) was profitable — a single-season artifact. UNDER at edge 3-5 was stable at 56.7%.
+
+**Fix:** Raised OVER edge floor from 4.0 to 5.0 in `aggregator.py`. Only HSE rescue bypasses this floor.
+
+**Lesson:** Direction-specific edge floors matter. OVER and UNDER have fundamentally different edge-HR curves. Cross-season validation is essential — single-season results are unreliable.
+
+### Hot Shooting Mean Reversion Kills OVER (Session 468)
+
+**Symptom:** OVER picks on players with hot recent shooting consistently lose.
+
+**Root Cause:** Archetype analysis showed FG% hot (diff >= 10%) = 24.1% OVER HR (N=58), 3PT% hot (diff >= 15%) = 28.6% OVER HR (N=56). Players shooting significantly above season average regress, making OVER a losing bet.
+
+**Fix:** Added `hot_shooting_over_block` filter — blocks OVER when FG diff >= 10% OR 3PT diff >= 15%.
+
+**Lesson:** Mean reversion is asymmetric. Hot shooting kills OVER (24-29% HR) but hot 3PT shooting doesn't help UNDER as strongly. The market already partially prices hot streaks into lines, but not enough.
