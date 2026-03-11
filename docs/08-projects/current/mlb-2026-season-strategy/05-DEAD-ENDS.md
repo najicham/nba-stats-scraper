@@ -6,13 +6,13 @@ Everything below was tested with walk-forward data across 2024-2025 and rejected
 
 | Approach | Result | Why It Failed |
 |----------|--------|---------------|
-| LightGBM Regressor | 55.7% HR (vs CatBoost 57.8%) | Lower accuracy, higher MAE |
-| XGBoost Regressor | 55.7% HR | Same as LightGBM |
+| LightGBM Regressor | 55.7% HR (vs CatBoost 57.8%) | Lower accuracy, higher MAE. **S468: re-created with updated hyperparams + 36 features for fleet diversity. Not for ensembling — independent shadow evaluation.** |
+| XGBoost Regressor | 55.7% HR | Same as LightGBM. **S468: same re-attempt rationale. Test independently.** |
 | Ridge Regression | 56.2% HR | Linear model can't capture interactions |
 | Ensemble (avg 3 trees) | 57.5% HR | Averaging dilutes CatBoost's unique signal |
 | Ensemble (stacked) | 57.5% HR | Meta-learner adds complexity for -0.2pp |
 | Weighted ensemble | 57.4% HR | No weighting scheme beats solo CatBoost |
-| Cross-model agreement | -3.1pp when unanimous | Agreement is anti-correlated with winning |
+| Cross-model agreement | -3.1pp when unanimous | Agreement is anti-correlated with winning. **Do NOT use for filtering.** |
 
 ## Hyperparameters
 

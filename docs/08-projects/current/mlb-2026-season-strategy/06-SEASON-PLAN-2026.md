@@ -4,23 +4,27 @@
 
 ## System State at Season Start
 
-*Updated Session 465 (2026-03-10)*
+*Updated Session 468 (2026-03-11)*
 
 | Component | Status | Details |
 |-----------|--------|---------|
-| Model | CatBoost V2 Regressor, 40 features, L2=10+D4 | 69.2% HR at edge >= 0.75. Retrain before Mar 27. |
-| Blacklist | 28 pitchers | +5 in Session 447 |
-| Signals | **19 active + 25 shadow + 6 filters + 2 obs = 52 total** | Sessions 460-465 |
-| Combo signals | 3 new shadow (S465) | day_game+high_csw (73.3%), day_game+elite_peripherals (72.6%), csw+era+k9 (71.0%) |
+| Model | CatBoost V2 Regressor, **36 features**, L2=10+D4 | 63.4% HR 4-season replay. Retrain before Mar 27. |
+| **Multi-model fleet** | LightGBM V1 + XGBoost V1 ready | Opt-in via `MLB_ACTIVE_SYSTEMS`. Same 36-feature contract. |
+| Blacklist | 28 pitchers | +5 in Session 447. Review script: `bin/mlb/review_blacklist.py` |
+| Signals | **20 active + 30 shadow + 6 filters + 2 obs = 58 total** | Sessions 460-468 |
+| Combo signals | 3 new shadow (S465) | day_game+high_csw (73.0%), day_game+elite_peripherals (72.0%), csw+era+k9 (70.6%) |
 | Rescue | opponent_k_prone only | ballpark_k_boost removed (41.2%) |
 | Ultra tier | edge 0.5 + home + proj agrees + not rescued | Redesigned S455 |
+| **Umpire tiebreaker** | Ranking uses umpire signal to break edge ties | S468: no RSC inflation, +0.01 bonus |
 | Umpire pipeline | BQ tables + scraper + supplemental loader | Ready, PAUSED |
 | Weather pipeline | BQ tables + scraper + supplemental loader | Ready, PAUSED |
 | Catcher framing | BQ table + scraper + processor + supplemental | Ready (S465), PAUSED |
 | Game context | Moneyline + game total via supplemental | Wired S460 |
 | Away edge | 1.25 K (validated S465: 1.0/1.25/1.5 all similar) | |
-| Dynamic blacklist | NOT deploying (only 3 pitchers suppressed in replay) | S465 finding |
+| Dynamic blacklist | NOT deploying (only 3 suppressed in replay) | S465. Manual review via `review_blacklist.py` |
 | RSC gate | Keep at 2 (RSC=2 = 75.9% HR in 2025) | S465 finding |
+| **Dockerfile** | Fixed: `COPY ml/` added (was missing — /best-bets would 500) | S468 CRITICAL fix |
+| **BQ tables** | All 4 training + 3 output tables verified OK | S468 verification |
 | 24 schedulers | ALL PAUSED | Resume Mar 24 |
 | 2026 schedule | Not loaded | First scrape after resume |
 
@@ -48,6 +52,13 @@
 - [x] **Ballpark factors loaded** — 2025+2026 seasons (30 teams each) in `mlb_reference.ballpark_factors`
 - [x] **Statcast backfill running** — 2024-03-28 to 2025-06-30 (was only Jul-Sep 2025, now full coverage)
 - [x] **Feature store audit completed** (Session 448) — all 36 features traced to data sources
+- [x] **Dockerfile fixed** (Session 468) — `COPY ml/` was missing, /best-bets endpoint would crash
+- [x] **Multi-model fleet** (Session 468) — LightGBM V1 + XGBoost V1 predictors + training scripts
+- [x] **Umpire tiebreaker** (Session 468) — ranking breaks ties via umpire signal (no RSC inflation)
+- [x] **Training SQL cleanup** (Session 468) — 5 dead features removed, contract 40→36
+- [x] **Replay sync** (Session 468) — MAX_PICKS_PER_DAY 3→5 matches production
+- [x] **Blacklist review script** (Session 468) — `bin/mlb/review_blacklist.py`
+- [x] **BQ verification** (Session 468) — all training + output tables confirmed healthy
 - [ ] **TODO: Backfill 2025 umpire assignments from MLB API** (historical data for signal validation)
 
 ### Week -1: Model Training (Mar 18-23)
@@ -68,15 +79,18 @@ gcloud builds submit --config cloudbuild-mlb-worker.yaml
 gcloud run services update-traffic mlb-prediction-worker \
     --region=us-west2 --to-latest
 
-# 5. Set env vars
+# 5. Set env vars (ALWAYS use --update-env-vars, NEVER --set-env-vars)
 gcloud run services update mlb-prediction-worker \
     --region=us-west2 \
     --update-env-vars="\
-MLB_ACTIVE_SYSTEMS=catboost_v1,catboost_v2_regressor,\
+MLB_ACTIVE_SYSTEMS=catboost_v2_regressor,\
 MLB_CATBOOST_V2_MODEL_PATH=gs://nba-props-platform-ml-models/mlb/catboost_mlb_v2_regressor_YYYYMMDD.cbm,\
 MLB_EDGE_FLOOR=0.75,\
+MLB_AWAY_EDGE_FLOOR=1.25,\
+MLB_BLOCK_AWAY_RESCUE=true,\
 MLB_MAX_EDGE=2.0,\
-MLB_MAX_PICKS_PER_DAY=3,\
+MLB_MAX_PROB_OVER=0.85,\
+MLB_MAX_PICKS_PER_DAY=5,\
 MLB_UNDER_ENABLED=false"
 ```
 
@@ -98,17 +112,17 @@ MLB_UNDER_ENABLED=false"
 
 ### Week 1 (Mar 27 - Apr 2)
 - [ ] Predictions generating daily
-- [ ] Best bets publishing 2-3 picks/day
+- [ ] Best bets publishing 3-5 picks/day (MAX_PICKS=5)
 - [ ] Ultra picks appearing (expect ~0.4/day)
-- [ ] Umpire data flowing to BQ (verify umpire_k_friendly signal fires)
+- [ ] Umpire data flowing to BQ (umpire_k_friendly fires as tiebreaker)
 - [ ] Weather data flowing to BQ (verify weather_cold_under logs in shadow)
-- [ ] Algorithm version = `mlb_v7_s447_blacklist28_rescue_tightened`
+- [ ] Algorithm version = `mlb_v8_s456_v3final_away_5picks`
 
 ### 3-Week Checkpoint (Apr 14)
 - [ ] Force retrain with first 2 weeks of in-season data
-- [ ] Compare v1 classifier vs v2 regressor live HR
-- [ ] Review blacklist — any pitchers with improved 2026 performance?
-- [ ] Check umpire_k_friendly signal: is it firing? What's the HR?
+- [ ] If multi-model: compare CatBoost vs LightGBM vs XGBoost live HR
+- [ ] Review blacklist: `PYTHONPATH=. python bin/mlb/review_blacklist.py --since 2026-03-27`
+- [ ] Check umpire_k_friendly tiebreaker: any edge in pick selection?
 - [ ] Check weather_cold_under signal: accumulating data?
 
 ### 6-Week Review (May 5)

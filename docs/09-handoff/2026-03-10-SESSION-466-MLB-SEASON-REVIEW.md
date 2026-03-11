@@ -257,6 +257,7 @@ The system needs ~6-7 weeks to reach full performance:
 
 | When | Task | Status |
 |------|------|--------|
+| **Mar 11** | Phase 1: Dockerfile fix, multi-model, umpire tiebreaker, BQ verify | **DONE (Session 468)** |
 | **Mar 18-20** | Retrain model (120d window through Mar 20) | TODO |
 | **Mar 20-23** | Upload to GCS, update env var, deploy worker | TODO |
 | **Mar 24** | Resume 24 MLB schedulers | TODO |
