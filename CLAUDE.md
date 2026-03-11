@@ -265,6 +265,7 @@ WHERE game_date >= CURRENT_DATE() - 7 ORDER BY game_date DESC;
 | **CLV scheduler wrong target** | Evening CLV scheduler was targeting legacy `nba-phase1-scrapers`. Fixed to `nba-scrapers`. |
 | **SQL escape `\_` in Python** | BigQuery LIKE doesn't need backslash-escaping underscores. Use `%_q4%` not `%\\_q4%`. |
 | **Re-exports destroy picks** | FIXED Session 412. `signal_best_bets_picks` now uses scoped DELETE (only refreshed players). Published picks stay `signal_status='active'`. |
+| **Picks vanish from site after model disable** | FIXED Session 468. `all.json` now falls back to `best_bets_published_picks` for history. `model_disabled` no longer hides published picks. |
 | **`win_flag` always FALSE** | `player_game_summary.win_flag` is FALSE for ALL teams/players. Use `plus_minus > 0` as win proxy. |
 | **Gen2 CF scheduler URL mismatch** | Scheduler targeting Gen1 URL returns 500/INTERNAL. Update URI to `serviceConfig.uri` + add OIDC auth + IAM. Session 448. |
 | **Scheduler DEADLINE_EXCEEDED** | Workflow scrapers (multi-source) need 1800s timeout, not 900s. Data still arrives despite timeout. Session 448. |
@@ -328,7 +329,7 @@ python bin/analysis/model_correlation.py         # Inter-model agreement
 
 ## Signal System [Keyword: SIGNALS]
 
-**28 active signals + 30 shadow signals** (25 removed/disabled). **23 negative filters + 13 observation.**
+**28 active signals + 32 shadow signals** (25 removed/disabled). **24 negative filters + 12 observation.**
 **Full inventory:** `docs/08-projects/current/signal-discovery-framework/SIGNAL-INVENTORY.md`
 
 **Best Bets Pipeline:** `edge 3+ (or signal rescue) → OVER edge 5+ floor → negative filters → signal_count ≥ 3 → real_sc gate → rank by edge (OVER) or signal quality (UNDER)`
@@ -402,7 +403,7 @@ High-confidence classification layer on best bets. Internal-only (stripped from 
 
 ## Per-Model Best Bets Pipelines [Keyword: PIPELINES]
 
-Per-model pipeline architecture (Session 445). Replaced winner-take-all with independent pipelines + pool-and-rank merge. Algorithm version: `v468_over_edge5_hot_shooting_block`.
+Per-model pipeline architecture (Session 445). Replaced winner-take-all with independent pipelines + pool-and-rank merge. Algorithm version: `v469_health_aware_weights_line_rose_block`.
 
 **How it works:**
 1. Batch query ALL enabled models' predictions (1 BQ scan, no ROW_NUMBER dedup)

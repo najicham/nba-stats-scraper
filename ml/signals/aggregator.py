@@ -112,6 +112,11 @@ SHADOW_SIGNALS = frozenset({
     'slow_pace_under',             # 56.6% HR (N=777) 5-season — opponent pace <= 99
     'star_line_under',             # 57.6% HR (N=1,018) 5-season — line >= 25, edge 3-7
     'sharp_consensus_under',       # 69.3% HR (N=205) 5-season — line dropped + high book std
+    # Session 469: Direction-specific book disagreement (shadow — accumulating BB data)
+    # book_disagree_over: 79.6% HR (N=211) 5-season. Gets OVER_SIGNAL_WEIGHTS but excluded from real_sc until N>=30 BB
+    # book_disagree_under: direction-specific validation. Gets UNDER_SIGNAL_WEIGHTS but excluded from real_sc
+    'book_disagree_over',
+    'book_disagree_under',
 })
 
 # Session 400: UNDER signal quality weights for signal-first ranking.
@@ -122,6 +127,7 @@ UNDER_SIGNAL_WEIGHTS: Dict[str, float] = {
     # mean_reversion_under removed Session 429: cross-season decay below 2026 baseline (53.0% vs 54.3%). Was 2.5→1.5→removed.
     'sharp_line_drop_under': 2.5,   # Session 422c: 87.5% HR (N=8) — already fires, now weighted
     'book_disagreement': 1.0,        # Session 434: reduced 2.5→1.0. 47.4% HR 7d (N=19), below breakeven
+    'book_disagree_under': 1.5,      # Session 469: direction-specific version (shadow, accumulating data)
     'bench_under': 2.0,              # 76.9% HR
     'home_under': 2.0,               # Session 422c: boosted from 1.5. 60.6% HR (N=4,253) model-level
     # starter_away_overtrend_under removed Session 462: 48.2% HR 5-season cross-validated — harmful
@@ -165,10 +171,11 @@ RESCUE_MIN_HR_7D = 60.0
 # non-zero weight — shadow signals default to 0.0 (via SHADOW_SIGNALS check).
 OVER_SIGNAL_WEIGHTS: Dict[str, float] = {
     'line_rising_over': 3.0,                # 96.6% signal HR
+    'book_disagree_over': 3.0,              # Session 469: 79.6% HR (N=211, 5-season) — strongest directional signal
     'combo_3way': 2.5,                      # 95.5% season signal HR
     'fast_pace_over': 2.5,                  # 81.5% signal HR
     'high_scoring_environment_over': 2.0,   # 100% BB HR (3-0)
-    'book_disagreement': 2.0,               # 93.0% signal HR
+    'book_disagreement': 2.0,               # 93.0% signal HR (direction-neutral, kept for backward compat)
     'rest_advantage_2d': 2.0,               # Session 442: 74.0% BB HR (N=50), strongest unweighted signal
     'scoring_cold_streak_over': 1.5,        # Post-cold bounce signal
     'cold_3pt_over': 2.0,                   # Session 466: 60.2% HR (N=123) 5-season — cold from 3 bounces back
@@ -284,6 +291,30 @@ class BestBetsAggregator:
         self._runtime_demoted = runtime_demoted_filters or set()
         self._mode = mode
 
+    def _health_multiplier(self, signal_tag: str) -> float:
+        """Get health-aware weight multiplier for a signal.
+
+        Session 469: COLD signals get reduced weight in composite scoring.
+        Model-dependent COLD signals → 0.0x (already existed for pick angles).
+        Behavioral COLD signals → 0.5x (new — prevents cold signals from
+        boosting bad picks during temporary downturns).
+        HOT → 1.2x, NORMAL → 1.0x.
+
+        Fail-open: if no health data, returns 1.0 (full weight).
+        """
+        if not self._signal_health:
+            return 1.0
+        health = self._signal_health.get(signal_tag)
+        if not health:
+            return 1.0
+        regime = health.get('regime', 'NORMAL')
+        is_model_dep = health.get('is_model_dependent', False)
+        if regime == 'COLD':
+            return 0.0 if is_model_dep else 0.5
+        elif regime == 'HOT':
+            return 1.2
+        return 1.0
+
     def aggregate(self, predictions: List[Dict],
                   signal_results: Dict[str, List[SignalResult]]) -> Tuple[List[Dict], Dict]:
         """Select top picks for a single game date.
@@ -373,7 +404,7 @@ class BestBetsAggregator:
             # Session 462→463: Cold shooting UNDER filters (BB simulator validated)
             'cold_fg_under': 0,       # Session 463: promoted from cold_fg_under_obs
             'cold_3pt_under': 0,      # Session 463: promoted from cold_3pt_under_obs
-            'over_line_rose_heavy_obs': 0,
+            'over_line_rose_heavy': 0,  # Session 469: promoted from obs to active
             # Session 463: FTA anomaly OVER block — high FTA volatility on OVER
             'ft_anomaly_over_block': 0,
             # Session 463: Counter-market UNDER — line rose + high book disagreement
@@ -1145,8 +1176,12 @@ class BestBetsAggregator:
             over_signal_quality = None
             if pred.get('recommendation') == 'UNDER':
                 real_signal_tags = [t for t in tags if t not in BASE_SIGNALS]
+                # Session 469: Health-aware signal weighting. COLD signals get
+                # reduced weight (0.5x behavioral, 0.0x model-dependent) so that
+                # temporarily struggling signals don't boost bad UNDER picks.
                 under_signal_quality = sum(
-                    UNDER_SIGNAL_WEIGHTS.get(t, 1.0) for t in real_signal_tags
+                    UNDER_SIGNAL_WEIGHTS.get(t, 1.0) * self._health_multiplier(t)
+                    for t in real_signal_tags
                 )
                 composite_score = round(under_signal_quality + pred_edge * UNDER_EDGE_TIEBREAKER, 4)
             else:
@@ -1155,8 +1190,10 @@ class BestBetsAggregator:
                 # Shadow signals default to 0.0 weight (excluded from real tags).
                 over_real_tags = [t for t in tags
                                  if t not in BASE_SIGNALS and t not in SHADOW_SIGNALS]
+                # Session 469: Health-aware OVER signal weighting.
                 over_signal_quality = sum(
-                    OVER_SIGNAL_WEIGHTS.get(t, 0.5) for t in over_real_tags
+                    OVER_SIGNAL_WEIGHTS.get(t, 0.5) * self._health_multiplier(t)
+                    for t in over_real_tags
                 )
                 composite_score = round(
                     pred_edge + over_signal_quality * OVER_QUALITY_WEIGHT, 4
@@ -1280,16 +1317,18 @@ class BestBetsAggregator:
                 if 'cold_3pt_under' not in self._runtime_demoted:
                     continue
 
-            # Session 462: OVER + line rose heavy observation — block OVER when
+            # Session 462→469: OVER + line rose heavy — PROMOTED to active.
             # BettingPros line rose >= 1.0. Fighting the market = losing.
             # 5-season cross-validated: blocked picks = 38.9% HR (N=54).
+            # Was observation since Session 462. Promoted after 5-season confirmation.
             bp_move = pred.get('bp_line_movement')
             if (pred.get('recommendation') == 'OVER'
                     and bp_move is not None
                     and bp_move >= 1.0):
-                filter_counts['over_line_rose_heavy_obs'] += 1
-                _record_filtered(pred, 'over_line_rose_heavy_obs', pred_edge, len(qualifying), tags)
-                # Observation only — does NOT block
+                filter_counts['over_line_rose_heavy'] += 1
+                _record_filtered(pred, 'over_line_rose_heavy', pred_edge, len(qualifying), tags)
+                if 'over_line_rose_heavy' not in self._runtime_demoted:
+                    continue
 
             # Session 463: FTA anomaly OVER block — ACTIVE filter. Block OVER when
             # FTA is volatile (CV >= 0.5) and player averages 5+ FTA/game.
@@ -1577,6 +1616,12 @@ class BestBetsAggregator:
                 f"Counter-market UNDER block: blocked "
                 f"{filter_counts['counter_market_under']} UNDER picks fighting market direction "
                 f"(line rose 0.5+ with book std 1.0+, backtest 43.2% HR)"
+            )
+        if filter_counts['over_line_rose_heavy'] > 0:
+            logger.info(
+                f"OVER line rose heavy block: blocked "
+                f"{filter_counts['over_line_rose_heavy']} OVER picks where BettingPros "
+                f"line rose >= 1.0 (38.9% HR, fighting the market)"
             )
         if filter_counts['team_cap'] > 0:
             logger.info(

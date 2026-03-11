@@ -86,6 +86,9 @@ SIGNAL_ANGLE_MAP = {
     'slow_pace_under': "Slow opponent pace (<= 99): fewer possessions favors UNDER (56.6% HR)",
     'star_line_under': "Star line UNDER: market overprices stars (line 25+), edge 3-7 sweet spot (57.6% HR)",
     'sharp_consensus_under': "Sharp consensus UNDER: line dropped + books disagree — smart money sees UNDER (69.3% HR)",
+    # Session 469: Direction-specific book disagreement
+    'book_disagree_over': "Sportsbooks heavily disagree on line + OVER — 79.6% HR (N=211, 5-season)",
+    'book_disagree_under': "Sportsbooks heavily disagree on line + UNDER — direction-specific validation",
 }
 
 # Warning tag → warning angle

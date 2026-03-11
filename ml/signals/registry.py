@@ -323,4 +323,12 @@ def build_default_registry() -> SignalRegistry:
     from ml.signals.sharp_consensus_under import SharpConsensusUnderSignal
     registry.register(SharpConsensusUnderSignal())
 
+    # Session 469: Direction-specific book disagreement
+    # book_disagree_over: 79.6% HR (N=211, 5-season cross-validated)
+    # book_disagree_under: direction-specific validation (shadow mode)
+    from ml.signals.book_disagree_over import BookDisagreeOverSignal
+    from ml.signals.book_disagree_under import BookDisagreeUnderSignal
+    registry.register(BookDisagreeOverSignal())
+    registry.register(BookDisagreeUnderSignal())
+
     return registry

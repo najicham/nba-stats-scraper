@@ -1,10 +1,10 @@
 # Signal Inventory — Complete List
 
-**Last Updated:** 2026-03-11 (Session 468)
-**Active Signals:** 28 (+ 30 shadow/observation accumulating data)
-**Negative Filters:** 23 active (+ 12 observation)
+**Last Updated:** 2026-03-11 (Session 469)
+**Active Signals:** 28 (+ 32 shadow/observation accumulating data)
+**Negative Filters:** 24 active (+ 11 observation)
 **Combo Registry:** 11 SYNERGISTIC entries
-**Algorithm Version:** `v468_over_edge5_hot_shooting_block`
+**Algorithm Version:** `v469_health_aware_weights_line_rose_block`
 
 ---
 
@@ -180,6 +180,19 @@ Three new UNDER signals to fill the UNDER signal vacuum. 98.4% of model-level UN
 
 **Edge 5+ scanner:** All 4 validated signals are UNDER (away_UNDER 58.4% N=2216, Fri_UNDER 58.8% N=386, Sun_UNDER 57.5% N=426, line_movement_low_UNDER 59.5% N=168).
 
+### Session 469 — Direction-Specific Book Disagreement + Health-Aware Weights
+
+**Direction-specific book_disagreement signals:**
+| Signal | Direction | HR | N | Notes |
+|--------|-----------|-----|---|-------|
+| `book_disagree_over` | OVER | 79.6% | 211 | 5-season. Strongest directional signal — high book disagreement + OVER |
+| `book_disagree_under` | UNDER | — | — | Shadow mode. Accumulating data for directional validation |
+
+**Health-aware signal weighting (Session 469):**
+Composite scores now apply signal health multipliers to weights. COLD behavioral signals get 0.5x weight (was 1.0x static). COLD model-dependent signals get 0.0x (unchanged). HOT signals get 1.2x. Prevents temporarily struggling signals (e.g., home_under at 33% 7d) from boosting bad picks.
+
+**`over_line_rose_heavy` promoted to active filter:** OVER + BettingPros line rose >= 1.0 = 38.9% HR (N=54, 5-season). Fighting the market is losing.
+
 ### Session 462 — BB Pipeline Simulator Validated (5-season cross-validation)
 
 | Signal | Direction | Source | HR | N | Notes |
@@ -239,6 +252,7 @@ Three new UNDER signals to fill the UNDER signal vacuum. 98.4% of model-level UN
 | 26 | **Cold FG UNDER** | **UNDER + fg_last_3 - fg_season <= -10%** | **38.5% (N=457)** | **462** |
 | 27 | **Cold 3PT UNDER** | **UNDER + 3pt_last_3 - 3pt_season <= -10%** | **45.6% (N=735)** | **462** |
 | 28 | **Hot shooting OVER block** | **OVER + FG diff >= 10% OR 3PT diff >= 15%** | **24-29% (N=58/56)** | **468** |
+| 29 | **OVER line rose heavy** | **OVER + BettingPros line rose >= 1.0** | **38.9% (N=54)** | **469** |
 | — | Away block | REMOVED Session 401 | — | 401 |
 | — | UNDER + line jumped 2+ | Demoted to observation Session 417 (5/5 winners blocked) | — | 417 |
 
@@ -264,7 +278,7 @@ Three new UNDER signals to fill the UNDER signal vacuum. 98.4% of model-level UN
 | `ft_variance_under_obs` | UNDER + fta_avg_last_10 >= 5 + fta_cv >= 0.5 | 56.0% CF HR (5-season) | 462 | **DEMOTED Session 462** from active. 5-season CF HR shows blocking winners. |
 | `familiar_matchup_obs` | 6+ games vs opponent | 54.4% CF HR (5-season) | 462 | **DEMOTED Session 462** from active. 5-season CF HR shows blocking winners. |
 | `b2b_under_block_obs` | UNDER + rest_days <= 1 | 54.0% CF HR (5-season) | 462 | **DEMOTED Session 462** from active. 5-season CF HR shows blocking winners. |
-| `over_line_rose_heavy_obs` | OVER + BettingPros line rose >= 1.0 | 38.9% (N=54) | 462 | Line fighting = losing. N=54 thin — accumulate data. Promote at N >= 100. |
+| ~~`over_line_rose_heavy_obs`~~ | ~~OVER + BettingPros line rose >= 1.0~~ | 38.9% (N=54) | 462→**469** | **PROMOTED to active filter Session 469.** 5-season confirmed. |
 
 ---
 
