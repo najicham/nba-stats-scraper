@@ -328,14 +328,15 @@ python bin/analysis/model_correlation.py         # Inter-model agreement
 
 ## Signal System [Keyword: SIGNALS]
 
-**28 active signals + 30 shadow signals** (25 removed/disabled). **20 negative filters + 13 observation.**
+**28 active signals + 30 shadow signals** (25 removed/disabled). **23 negative filters + 13 observation.**
 **Full inventory:** `docs/08-projects/current/signal-discovery-framework/SIGNAL-INVENTORY.md`
 
-**Best Bets Pipeline:** `edge 3+ (or signal rescue) → negative filters → signal_count ≥ 3 → real_sc gate → rank by edge (OVER) or signal quality (UNDER)`
+**Best Bets Pipeline:** `edge 3+ (or signal rescue) → OVER edge 5+ floor → negative filters → signal_count ≥ 3 → real_sc gate → rank by edge (OVER) or signal quality (UNDER)`
 
 **Key concepts:**
 - `real_sc` = non-base signal count. Base signals (model_health, high_edge, edge_spread_optimal, blowout_recovery, starter_under, blowout_risk_under) inflate SC to 3 with zero value. All SC gates use `real_sc`.
 - **Signal rescue** (Session 398): Picks bypass edge floors via validated high-HR signals or 2+ real signals. Tags: `combo_3way`, `combo_he_ms`, `book_disagreement`, `sharp_book_lean_*`, `mean_reversion_under`, etc.
+- **OVER edge floor = 5.0** (Session 468): Raised from 4.0. 5-season discovery (79K predictions) shows OVER at edge 3-5 is net-negative in 4/5 seasons (43-50% HR). Only HSE rescue bypasses this floor.
 - **UNDER ranking** is signal-first (Session 400): UNDER edge is flat at 52-53% — meaningless for ranking. Weighted signal quality scores rank UNDER. 11 weighted UNDER signals in `UNDER_SIGNAL_WEIGHTS`.
 - **Shadow signals** (Sessions 401-423): projection_consensus, predicted_pace, dvp_favorable, CLV, sharp_money, minutes_surge, hot_form, consistent_scorer, over_trend, usage_surge, scoring_momentum, career_matchup, minutes_load, blowout_risk, volatile_starter_under, downtrend_under, star_favorite_under, starter_away_overtrend_under — accumulating data.
 
@@ -368,6 +369,21 @@ python bin/analysis/model_correlation.py         # Inter-model agreement
 
 **Pick Angles:** Each pick includes `pick_angles` — human-readable reasoning. See `ml/signals/pick_angle_builder.py`.
 
+### Signal Discovery System (Session 466-468)
+
+**5-season analysis tools** at `scripts/nba/training/discovery/`:
+- `feature_scanner.py` — Scans features × thresholds × directions with BH FDR + cross-season validation
+- `combo_tester.py` — Tests 2-way/3-way signal interactions, classifies SYNERGISTIC/ADDITIVE/REDUNDANT
+- `archetype_analyzer.py` — Clusters players by usage/line/variance, finds profitable/losing archetypes
+- `expanded_scanner.py` — Rolling window and interaction hypotheses with edge stratification
+- `data_loader.py` + `stats_utils.py` — Shared infrastructure (79K predictions, 5 seasons)
+
+**Key discovery findings (Session 468):**
+- **OVER is net-negative in 4/5 seasons at edge 3-5** (43-50% HR). Only 2025-26 profitable. OVER floor raised to 5.0.
+- **Hot shooting kills OVER:** FG% hot (diff >= 10%) = 24.1% HR, 3PT hot (diff >= 15%) = 28.6%. Filter added.
+- **UNDER stable at 57-58% across all edge levels** — doesn't benefit from higher edge. Signal-based ranking confirmed correct.
+- **Most profitable archetype:** low line + low variance UNDER (62.0% HR, N=819, 4/4 seasons consistent).
+
 ## Ultra Bets [Keyword: ULTRA]
 
 High-confidence classification layer on best bets. Internal-only (stripped from public JSON until live-validated).
@@ -386,7 +402,7 @@ High-confidence classification layer on best bets. Internal-only (stripped from 
 
 ## Per-Model Best Bets Pipelines [Keyword: PIPELINES]
 
-Per-model pipeline architecture (Session 445). Replaced winner-take-all with independent pipelines + pool-and-rank merge. Algorithm version: `v451_session451_filters`.
+Per-model pipeline architecture (Session 445). Replaced winner-take-all with independent pipelines + pool-and-rank merge. Algorithm version: `v468_over_edge5_hot_shooting_block`.
 
 **How it works:**
 1. Batch query ALL enabled models' predictions (1 BQ scan, no ROW_NUMBER dedup)

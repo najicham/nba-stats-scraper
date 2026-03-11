@@ -601,7 +601,12 @@ class BestBetsAggregator:
             # Session 436: Apply floor to rescued OVER too — rescued OVER = 50% HR
             # vs non-rescued 66.7%. combo_he_ms rescue at edge <4 = 40% HR (2-3).
             # Exempt HSE rescue (3-0, 100% HR) — HSE identifies genuine scoring env.
-            over_floor = 4.0  # Session 435: raised from 3.0 (was 5.0 pre-419)
+            # Session 468: Raised from 4.0 to 5.0. 5-season discovery analysis (79K
+            # predictions) shows OVER at edge 3-5 is net-negative in 4/5 seasons:
+            #   2021-22: 43%, 2022-23: 45%, 2023-24: 49%, 2024-25: 50%.
+            # Only 2025-26 (58%) was profitable at edge 3-5 — single-season artifact.
+            # UNDER at edge 3-5 is 56.7% consistently. OVER needs edge 5+ to be viable.
+            over_floor = 5.0
             regime_delta = self._regime_context.get('over_edge_floor_delta', 0)
             hse_rescued = signal_rescued and rescue_signal == 'high_scoring_environment_over'
             if (pred.get('recommendation') == 'OVER'
@@ -1297,6 +1302,30 @@ class BestBetsAggregator:
                 _record_filtered(pred, 'ft_anomaly_over_block', pred_edge, len(qualifying), tags)
                 if 'ft_anomaly_over_block' not in self._runtime_demoted:
                     continue
+
+            # Session 468: Hot shooting OVER block — ACTIVE filter. Block OVER when
+            # FG% or 3PT% last_3 is significantly above season average. Hot shooting
+            # is mean-reverting — player regresses, making OVER a loser.
+            # 5-season discovery analysis (79K predictions):
+            #   FG% hot (diff >= 10%): 24.1% OVER HR (N=58)
+            #   3PT% hot (diff >= 15%): 28.6% OVER HR (N=56)
+            # Combined check: FG diff >= 10% OR 3PT diff >= 15%.
+            if pred.get('recommendation') == 'OVER':
+                _fg_hot = (
+                    _fg_last_3 is not None
+                    and _fg_season is not None
+                    and _fg_last_3 - _fg_season >= 0.10
+                )
+                _tpt_hot = (
+                    _tpt_last_3 is not None
+                    and _tpt_season is not None
+                    and _tpt_last_3 - _tpt_season >= 0.15
+                )
+                if _fg_hot or _tpt_hot:
+                    filter_counts['hot_shooting_over_block'] += 1
+                    _record_filtered(pred, 'hot_shooting_over_block', pred_edge, len(qualifying), tags)
+                    if 'hot_shooting_over_block' not in self._runtime_demoted:
+                        continue
 
             # Session 463: Counter-market UNDER block — ACTIVE filter. Block UNDER when
             # line rose >= 0.5 AND cross-book std >= 1.0. Model fights both market

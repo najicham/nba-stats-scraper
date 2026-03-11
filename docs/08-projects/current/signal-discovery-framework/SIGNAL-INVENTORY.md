@@ -1,10 +1,10 @@
 # Signal Inventory — Complete List
 
-**Last Updated:** 2026-03-10 (Session 462)
+**Last Updated:** 2026-03-11 (Session 468)
 **Active Signals:** 28 (+ 30 shadow/observation accumulating data)
-**Negative Filters:** 22 active (+ 12 observation)
+**Negative Filters:** 23 active (+ 12 observation)
 **Combo Registry:** 11 SYNERGISTIC entries
-**Algorithm Version:** `v462_simulator_validated`
+**Algorithm Version:** `v468_over_edge5_hot_shooting_block`
 
 ---
 
@@ -17,6 +17,8 @@
 **Best Bets Pipeline:** `edge 3+ (or signal rescue) → negative filters → signal count ≥ 3 → real_sc gate (OVER: real_sc>0, UNDER edge<7: real_sc>0) → rank by edge`
 
 **Signal Rescue (Session 398):** Picks below edge 3.0 (or OVER below 5.0) bypass edge floors if they have a validated high-HR signal or 2+ real signals. Tracked via `signal_rescued` + `rescue_signal` in BQ.
+
+**OVER Edge Floor (Session 468):** Raised from 4.0 to 5.0. 5-season discovery analysis (79K predictions) showed OVER at edge 3-5 is net-negative in 4/5 historical seasons (43-50% HR). Only 2025-26 showed profitability at edge 3-5. UNDER at edge 3-5 is consistently 56.7%. OVER only viable at edge 5+.
 
 Rescue tags: `combo_3way`, `combo_he_ms`, `home_under` (75%), `high_scoring_environment_over` (71.4%). Signal stacking: 2+ real signals = 62.2% HR (N=45). Session 415: removed `low_line_over` from rescue. Session 420: restored `high_scoring_environment_over`. Session 427: removed `mean_reversion_under` (cross-season decay to 53.0%). Session 431: removed `sharp_book_lean_under` (zero production fires in 2026). Session 462: removed `sharp_book_lean_over` (41.7% HR 5-season cross-validated), removed `book_disagreement` (Session 434), removed `volatile_scoring_over` (Session 436).
 
@@ -160,6 +162,24 @@ Three new UNDER signals to fill the UNDER signal vacuum. 98.4% of model-level UN
 | `star_favorite_under` | UNDER | line_value, f41 (spread_magnitude) | Star (line 25+) + team favored by 3+. ~73% HR (N=88). Blowout pull effect. |
 | `starter_away_overtrend_under` | UNDER | line_value, is_home, f55 (over_rate_last_10) | **Session 462: 48.2% HR 5-season — harmful.** Demoted to shadow, removed from UNDER_SIGNAL_WEIGHTS. |
 
+### Session 468 — Archetype Analyzer + OVER Bias Discovery
+
+**Discovery tools built:** `scripts/nba/training/discovery/archetype_analyzer.py`, `expanded_scanner.py`
+
+**OVER bias (79K predictions, 5 seasons):** OVER is net-negative in 4/5 seasons at edge 3-5 (43-50% HR). Only 2025-26 is profitable. OVER needs edge 5+ minimum. UNDER is stable at 57-58% across all edge levels and seasons.
+
+**Archetype findings (cross-season validated):**
+| Archetype | Dir | HR | N | Seasons |
+|-----------|-----|-----|---|---------|
+| low_line + low_var | UNDER | 62.0% | 819 | 4/4 |
+| high_line + high_var | UNDER | 59.0% | 739 | 4/5 |
+| low_line + mid_var | OVER | 58.3% | 657 | 3/4 |
+| high_line + mid_var | UNDER | 56.8% | 621 | **5/5** |
+
+**Hot shooting OVER is catastrophic:** FG% hot (diff >= 10%) = 24.1% OVER HR. 3PT hot (diff >= 15%) = 28.6%. Mean reversion kills OVER. → `hot_shooting_over_block` filter (Session 468).
+
+**Edge 5+ scanner:** All 4 validated signals are UNDER (away_UNDER 58.4% N=2216, Fri_UNDER 58.8% N=386, Sun_UNDER 57.5% N=426, line_movement_low_UNDER 59.5% N=168).
+
 ### Session 462 — BB Pipeline Simulator Validated (5-season cross-validation)
 
 | Signal | Direction | Source | HR | N | Notes |
@@ -218,6 +238,7 @@ Three new UNDER signals to fill the UNDER signal vacuum. 98.4% of model-level UN
 | 25 | Line anomaly extreme drop | OVER + line drop >= 40% or >= 6pts from prev game | — | 451 |
 | 26 | **Cold FG UNDER** | **UNDER + fg_last_3 - fg_season <= -10%** | **38.5% (N=457)** | **462** |
 | 27 | **Cold 3PT UNDER** | **UNDER + 3pt_last_3 - 3pt_season <= -10%** | **45.6% (N=735)** | **462** |
+| 28 | **Hot shooting OVER block** | **OVER + FG diff >= 10% OR 3PT diff >= 15%** | **24-29% (N=58/56)** | **468** |
 | — | Away block | REMOVED Session 401 | — | 401 |
 | — | UNDER + line jumped 2+ | Demoted to observation Session 417 (5/5 winners blocked) | — | 417 |
 

@@ -1447,7 +1447,7 @@ class TestPredictionSanityFilter:
     def test_sanity_not_triggered_when_pred_below_2x(self):
         """Sanity should NOT trigger when predicted < 2x season avg."""
         pred = _make_prediction(
-            edge=4.0,
+            edge=5.0,               # Session 468: OVER floor raised to 5.0
             line_value=12.0,         # role player
             points_avg_season=10.0,  # 10 pts avg
             is_home=False,
@@ -1506,13 +1506,13 @@ class TestEdgeZscore:
 
     def test_high_variance_low_zscore(self):
         """High variance player should have low z-score despite decent edge."""
-        pred = _make_prediction(edge=4.0, line_value=27.0)
-        pred['points_std_last_10'] = 8.0  # z = 4.0 / 8.0 = 0.5
+        pred = _make_prediction(edge=5.0, line_value=27.0)  # Session 468: OVER floor raised to 5.0
+        pred['points_std_last_10'] = 8.0  # z = 5.0 / 8.0 = 0.625
         signals = self._make_signals_for(pred)
         agg = BestBetsAggregator()
         picks, _ = agg.aggregate([pred], signals)
         assert len(picks) == 1
-        assert picks[0]['edge_zscore'] == 0.5
+        assert picks[0]['edge_zscore'] == 0.625
 
 
 class TestDepletedStarsOverObservation:
@@ -1610,7 +1610,7 @@ class TestTeamCap:
     def test_third_pick_from_same_team_dropped(self):
         """3rd pick from same team should be dropped (cap=2)."""
         preds = []
-        for i, edge in enumerate([8.0, 6.0, 4.0]):
+        for i, edge in enumerate([8.0, 6.0, 5.0]):  # Session 468: OVER floor raised to 5.0
             p = _make_prediction(
                 player_lookup=f'player_{i}',
                 game_id='20260307_UTA_MIL',
@@ -1629,7 +1629,7 @@ class TestTeamCap:
         assert summary['rejected']['team_cap'] == 1
         # Highest edge picks should be kept
         kept_edges = sorted([p['edge'] for p in picks], reverse=True)
-        assert kept_edges == [8.0, 6.0]
+        assert kept_edges == [8.0, 6.0]  # 5.0-edge pick dropped by team_cap
 
     def test_two_picks_from_same_team_allowed(self):
         """2 picks from same team is within cap — both should pass."""
@@ -1922,7 +1922,7 @@ class TestPerModelMode:
     def test_per_model_mode_skips_team_cap(self):
         """3 picks from same team should all survive in per_model mode."""
         preds = []
-        for i, edge in enumerate([8.0, 6.0, 4.0]):
+        for i, edge in enumerate([8.0, 6.0, 5.0]):  # Session 468: OVER floor raised to 5.0
             p = _make_prediction(
                 player_lookup=f'player_{i}',
                 game_id='20260307_LAL_MIL',
