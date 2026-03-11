@@ -78,12 +78,21 @@ def compute_player_blacklist(
         # blacklist from 0 to 113 players. INNER JOIN ensures only predictions
         # from registered+enabled models count toward player HR.
         if multi_model:
+            # Session 466: After fleet swap, new models have zero prediction history.
+            # Expand scope to same model_family as enabled models (includes predecessors).
+            # Falls back to enabled-only if all families have fresh history.
+            # This prevents the blacklist going blind after retraining.
             enabled_cte = f"""
-            WITH enabled_models AS (
-                SELECT model_id FROM `{project_id}.nba_predictions.model_registry`
+            WITH enabled_families AS (
+                SELECT DISTINCT model_family FROM `{project_id}.nba_predictions.model_registry`
                 WHERE enabled = TRUE AND status NOT IN ('blocked', 'disabled')
+            ),
+            family_models AS (
+                SELECT mr.model_id FROM `{project_id}.nba_predictions.model_registry` mr
+                INNER JOIN enabled_families ef ON mr.model_family = ef.model_family
+                WHERE mr.status NOT IN ('disabled')
             )"""
-            enabled_join = """INNER JOIN enabled_models em ON pa.system_id = em.model_id"""
+            enabled_join = """INNER JOIN family_models em ON pa.system_id = em.model_id"""
             enabled_filter = ""
         else:
             enabled_cte = ""
@@ -205,10 +214,16 @@ def compute_player_under_suppression(
         season_year = get_season_year_from_date(target)
         season_start = get_season_start_date(season_year, use_schedule_service=False)
 
+        # Session 466: Same family-expansion as compute_player_blacklist
         query = f"""
-        WITH enabled_models AS (
-            SELECT model_id FROM `{project_id}.nba_predictions.model_registry`
+        WITH enabled_families AS (
+            SELECT DISTINCT model_family FROM `{project_id}.nba_predictions.model_registry`
             WHERE enabled = TRUE AND status NOT IN ('blocked', 'disabled')
+        ),
+        family_models AS (
+            SELECT mr.model_id FROM `{project_id}.nba_predictions.model_registry` mr
+            INNER JOIN enabled_families ef ON mr.model_family = ef.model_family
+            WHERE mr.status NOT IN ('disabled')
         )
         SELECT
             pa.player_lookup,
@@ -217,7 +232,7 @@ def compute_player_under_suppression(
             COUNT(*) AS total_picks,
             ROUND(100.0 * COUNTIF(pa.prediction_correct = TRUE) / COUNT(*), 1) AS hit_rate
         FROM `{project_id}.nba_predictions.prediction_accuracy` pa
-        INNER JOIN enabled_models em ON pa.system_id = em.model_id
+        INNER JOIN family_models em ON pa.system_id = em.model_id
         WHERE pa.game_date >= @season_start
           AND pa.game_date < @target_date
           AND pa.recommendation = 'UNDER'
