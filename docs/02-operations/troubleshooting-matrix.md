@@ -2457,7 +2457,39 @@ gcloud scheduler jobs describe nba-clv-evening-snapshot --location=us-west2 --fo
 **Maintained By**: Engineering Team
 **Review Frequency**: Monthly or after major incidents
 
+---
+
+## Section 10: Pick Locking & Publishing Issues (Session 468)
+
+### 10.1 — Published Picks Vanish From Site After Model Disable
+
+**Symptom:** Picks visible on playerprops.io disappear hours later. `best_bets_published_picks` shows all picks as `signal_status='model_disabled'`. `signal_best_bets_picks` has 0 rows for the date. `all.json` history is missing the date entirely.
+
+**Root Cause:** Two bugs worked together:
+1. `_query_all_picks()` in `best_bets_all_exporter.py` read history exclusively from `signal_best_bets_picks`. If that table has no rows for a date (BQ write failure, or picks were never written), the date vanishes from `all.json` history — even though `best_bets_published_picks` has the picks safely locked.
+2. `model_disabled` status (Session 386) caused the `_merge_and_lock_picks` method to mark picks as hidden when their source model was later disabled, overriding the "true pick locking" guarantee from Session 412.
+
+**Fix (Session 468):**
+1. `_query_all_picks()` now UNIONs with `best_bets_published_picks` as fallback for dates missing from `signal_best_bets_picks`.
+2. `model_disabled` no longer hides picks. Once published, picks stay `signal_status='active'`. Model disablement is logged for audit but doesn't affect visibility.
+
+**Recovery:** If picks are already stuck as `model_disabled`:
+```sql
+-- Fix published picks status
+UPDATE nba_predictions.best_bets_published_picks
+SET signal_status = 'active'
+WHERE game_date = 'YYYY-MM-DD' AND signal_status = 'model_disabled';
+
+-- Backfill missing rows into signal_best_bets_picks from published
+-- (see Session 468 for full backfill procedure)
+```
+
+**Lesson:** Published picks = user-visible commitment. Internal model lifecycle events (disable, retrain) must never retroactively erase user-facing data.
+
+---
+
 **Version History:**
+- v1.6 (2026-03-11): Added Section 10: Pick Locking & Publishing Issues (Session 468 — picks vanish after model disable)
 - v1.5 (2026-03-04): Added Section 9: New Data Source Scraper Issues (Session 401-402 — date=TODAY, Playwright, NumberFire redirect, VSiN AJAX, NBA Tracking timeout, CLV scheduler)
 - v1.4 (2026-03-02): Added Section 8: Signal System Issues (Session 387 — silent signal failures, prop_line_delta, negative edges)
 - v1.3 (2026-02-01): Added Section 7.4: Monitoring metrics permissions troubleshooting

@@ -19,8 +19,11 @@ Pick Locking (Session 340, 412):
   Once a pick is published, it is TRULY locked:
     - signal_best_bets_picks rows are never deleted (only upserted)
     - Published picks always get signal_status='active' (no 'dropped')
-    - Only game_started and model_disabled get special statuses
+    - Only game_started gets special status (Session 468: model_disabled
+      no longer hides picks — once published, always visible)
     - Locked picks rank equally with fresh signal picks (no demotion)
+    - History falls back to best_bets_published_picks for dates missing
+      from signal_best_bets_picks (Session 468: prevents pick vanishing)
 
 Created: 2026-02-21 (Session 319)
 Updated: 2026-02-28 (Session 340) — Pick locking + audit trail
@@ -235,35 +238,87 @@ class BestBetsAllExporter(BaseExporter):
     # ── Private helpers ──────────────────────────────────────────────────
 
     def _query_all_picks(self, target_date: str, season_start: str) -> List[Dict]:
-        """Query all signal best bets for the season with grading and angles."""
+        """Query all signal best bets for the season with grading and angles.
+
+        Session 468: Uses UNION with best_bets_published_picks as a fallback
+        for dates where signal_best_bets_picks has no rows. This prevents
+        picks from vanishing from site history when signal_best_bets_picks
+        rows are lost (e.g., BQ write failure, model disable during export).
+        Published picks are the source of truth for "was this pick shown to users".
+        """
         query = """
-        SELECT
-          b.game_date,
-          b.game_id,
-          b.player_name,
-          b.player_lookup,
-          b.team_abbr,
-          b.opponent_team_abbr,
-          b.recommendation,
-          b.line_value,
-          b.edge,
-          b.predicted_points,
-          b.rank,
-          b.pick_angles,
-          b.ultra_tier,
-          b.system_id,
-          COALESCE(pa.prediction_correct, b.prediction_correct) AS prediction_correct,
-          COALESCE(pa.actual_points, b.actual_points) AS actual_points,
-          COALESCE(pa.is_voided, FALSE) AS is_voided,
-          pa.void_reason
-        FROM `nba-props-platform.nba_predictions.signal_best_bets_picks` b
-        LEFT JOIN `nba-props-platform.nba_predictions.prediction_accuracy` pa
-          ON b.player_lookup = pa.player_lookup
-          AND b.game_date = pa.game_date
-          AND b.system_id = pa.system_id
-        WHERE b.game_date >= @season_start
-          AND b.game_date <= @target_date
-        ORDER BY b.game_date DESC, b.rank ASC, b.edge DESC
+        WITH signal_picks AS (
+          SELECT
+            b.game_date,
+            b.game_id,
+            b.player_name,
+            b.player_lookup,
+            b.team_abbr,
+            b.opponent_team_abbr,
+            b.recommendation,
+            b.line_value,
+            b.edge,
+            b.predicted_points,
+            b.rank,
+            b.pick_angles,
+            b.ultra_tier,
+            b.system_id,
+            COALESCE(pa.prediction_correct, b.prediction_correct) AS prediction_correct,
+            COALESCE(pa.actual_points, b.actual_points) AS actual_points,
+            COALESCE(pa.is_voided, FALSE) AS is_voided,
+            pa.void_reason
+          FROM `nba-props-platform.nba_predictions.signal_best_bets_picks` b
+          LEFT JOIN `nba-props-platform.nba_predictions.prediction_accuracy` pa
+            ON b.player_lookup = pa.player_lookup
+            AND b.game_date = pa.game_date
+            AND b.system_id = pa.system_id
+          WHERE b.game_date >= @season_start
+            AND b.game_date <= @target_date
+        ),
+        -- Dates that have picks in signal_best_bets_picks
+        signal_dates AS (
+          SELECT DISTINCT game_date FROM signal_picks
+        ),
+        -- Fallback: published picks for dates MISSING from signal_best_bets_picks.
+        -- These are picks that were shown to users but lost from the signal table.
+        -- best_bets_published_picks lacks predicted_points/actual_points/prediction_correct
+        -- so we pull grading from prediction_accuracy.
+        published_fallback AS (
+          SELECT
+            pp.game_date,
+            pp.game_id,
+            pp.player_name,
+            pp.player_lookup,
+            pp.team_abbr,
+            pp.opponent_team_abbr,
+            pp.recommendation,
+            pp.line_value,
+            pp.edge,
+            CAST(NULL AS FLOAT64) AS predicted_points,
+            pp.rank,
+            pp.pick_angles,
+            -- ultra_tier is BOOLEAN in signal_best_bets_picks but STRING in published
+            CASE WHEN pp.ultra_tier IS NOT NULL AND pp.ultra_tier != ''
+              THEN TRUE ELSE FALSE END AS ultra_tier,
+            pp.system_id,
+            pa.prediction_correct,
+            pa.actual_points,
+            COALESCE(pa.is_voided, FALSE) AS is_voided,
+            pa.void_reason
+          FROM `nba-props-platform.nba_predictions.best_bets_published_picks` pp
+          LEFT JOIN `nba-props-platform.nba_predictions.prediction_accuracy` pa
+            ON pp.player_lookup = pa.player_lookup
+            AND pp.game_date = pa.game_date
+            AND pp.system_id = pa.system_id
+          WHERE pp.game_date >= @season_start
+            AND pp.game_date <= @target_date
+            AND pp.game_date NOT IN (SELECT game_date FROM signal_dates)
+            AND pp.signal_status != 'game_started'
+        )
+        SELECT * FROM signal_picks
+        UNION ALL
+        SELECT * FROM published_fallback
+        ORDER BY game_date DESC, rank ASC, edge DESC
         """
 
         params = [
@@ -999,13 +1054,17 @@ class BestBetsAllExporter(BaseExporter):
                 game_id = pick.get('game_id') or pub.get('game_id', '')
                 if game_id in started:
                     pick['_signal_status'] = 'game_started'
-                # Check if source model is disabled (Session 386)
+                # Session 468: model_disabled no longer hides picks. Once
+                # published, a pick stays active on the site regardless of
+                # whether the source model is later disabled. We still log
+                # for auditing but do NOT set _signal_status — the pick
+                # remains visible to users.
                 pick_model = pick.get('system_id') or pub.get('system_id')
                 if pick_model and pick_model in disabled:
-                    pick['_signal_status'] = 'model_disabled'
+                    pick['_model_disabled'] = True
                     pick['_drop_reason'] = f'model_disabled:{pick_model}'
-                    logger.warning(
-                        f"Published pick from disabled model: {key} "
+                    logger.info(
+                        f"Published pick from disabled model (preserved): {key} "
                         f"model={pick_model}"
                     )
                     stats.setdefault('model_disabled', 0)
@@ -1122,12 +1181,10 @@ class BestBetsAllExporter(BaseExporter):
         rows = []
         for p in merged_picks:
             # Session 412: True pick locking — published = active, always.
-            # Only game_started and model_disabled get special statuses.
-            # No more 'dropped' status — locked picks stay active.
+            # Session 468: model_disabled no longer a special status — once
+            # published, picks stay active. Only game_started is legitimate.
             if p.get('_signal_status') == 'game_started':
                 signal_status = 'game_started'
-            elif p.get('_signal_status') == 'model_disabled':
-                signal_status = 'model_disabled'
             else:
                 signal_status = 'active'
 
@@ -1222,8 +1279,9 @@ class BestBetsAllExporter(BaseExporter):
             if p.get('_signal_status') == 'game_started':
                 event_type = 'game_started_removal'
                 event_reason = 'game_in_progress_or_final'
-            elif p.get('_signal_status') == 'model_disabled':
-                event_type = 'model_disabled'
+            elif p.get('_model_disabled'):
+                # Session 468: Still log for audit, but pick stays active
+                event_type = 'model_disabled_preserved'
                 event_reason = p.get('_drop_reason', 'model_disabled')
             elif p.get('_locked'):
                 event_type = 'locked_retained'
@@ -1293,6 +1351,8 @@ class BestBetsAllExporter(BaseExporter):
                 snap['drop_reason'] = p['_drop_reason']
             if p.get('_signal_status'):
                 snap['signal_status'] = p['_signal_status']
+            if p.get('_model_disabled'):
+                snap['model_disabled'] = True
             snapshot.append(snap)
 
         row = {
