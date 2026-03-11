@@ -10,20 +10,20 @@ S465 code uncommitted — ready to commit. Umpire backfill running in background
 ### MLB System Status
 - **Model:** `catboost_mlb_v1_40f_train20250517_20250914_20260308_090647.cbm` — L2=10, D4, 69.2% HR
 - **Worker:** `mlb-prediction-worker` deployed, /health returning 200
-- **Signals:** 18 active + 32 shadow + 6 filters = 56 total
+- **Signals:** 20 active + 30 shadow + 6 filters = 56 total
 - **4-season replay:** 63.4% HR, +470.7u P&L, 12.8% ROI (4/4 seasons profitable)
 - **MLB season opens:** March 27 (17 days away)
 - **Catcher framing:** Scraper fixed + tested (57 catchers), BQ table ready, supplemental loader wired
 - **Umpire backfill:** 2025 full season loading to BQ (check status on next session)
 
-### Session 465 Signal Results (2025 single-season replay)
+### Session 465 Signal Results (4-season cross-validated)
 
-| Signal | Replay HR | N | Status |
-|--------|----------|---|--------|
-| `xfip_elite_over` | **73.8%** | 202 | Shadow — strong candidate for promotion |
-| `day_game_elite_peripherals_combo_over` | **86.7%** | 45 | Shadow — exceptional |
-| `day_game_high_csw_combo_over` | **82.1%** | 28 | Shadow — needs more N |
-| `high_csw_low_era_high_k_combo_over` | 67.3% | 55 | Shadow |
+| Signal | 4-Season HR | N | Status |
+|--------|-----------|---|--------|
+| `xfip_elite_over` | **67.5%** | 704 | **PROMOTED** — consistent all 4 seasons |
+| `day_game_high_csw_combo_over` | **73.0%** | 122 | **PROMOTED** — consistent all 4 seasons |
+| `day_game_elite_peripherals_combo_over` | 72.0% | 182 | Shadow — 2023 dip (55.2%) |
+| `high_csw_low_era_high_k_combo_over` | 70.6% | 170 | Shadow — 2023 dip (50.0%) |
 
 ### Bugs Fixed in S465
 - `xfip_elite_over` was inside `elif recommendation == 'UNDER'` block — OVER signal never fired
@@ -57,10 +57,12 @@ Then: upload to GCS, update env var, deploy worker.
 - [ ] Check shadow combo signals firing
 - [ ] Verify umpire backfill completed (check BQ row count)
 
-### P3 — Signal Promotion Candidates (Post Paper Trade)
-- `xfip_elite_over` — 73.8% HR, N=202. Strong. Needs live validation.
-- `day_game_elite_peripherals_combo_over` — 86.7% but N=45. Wait for more data.
-- Consider cross-season replay for xfip_elite_over before promoting.
+### P3 — Umpire Signal Validation (Post Backfill)
+- Umpire assignments backfilled for 2025 (2,400+ records). Team abbr fix in progress.
+- Umpire K-rate computation added to replay SQL.
+- `umpire_k_friendly`: only 8 fires in partial-data replay (37.5% HR) — inconclusive.
+- Re-run umpire replay after full team_abbr backfill completes.
+- **NOTE:** Only 2025 umpire data exists. Multi-season validation not possible yet.
 
 ### P4 — NBA Season Maintenance
 - [ ] Check NBA daily pipeline health

@@ -72,7 +72,20 @@ Data will populate when scraper runs during season (weekly cadence). Tested loca
 
 - Created `scripts/mlb/backfill_umpire_assignments.py` — date range backfill from MLB Stats API
 - Fixed schema (added `source_file_path`, `processed_at` required fields)
-- 2025 full season backfill running (Mar 27 - Oct 2)
+- Fixed team abbr mapping (MLB API doesn't include abbreviation in schedule endpoint)
+- 2025 full season loaded: 2,400+ records across 179 dates
+- Added umpire K-rate join to replay SQL + signal evaluation
+
+### 7. Signal Promotions (Cross-Season Validated)
+
+| Signal | 4-Season HR | N | Decision |
+|--------|-----------|---|----------|
+| `xfip_elite_over` | **67.5%** | 704 | **PROMOTED** — 63-72% all 4 seasons |
+| `day_game_high_csw_combo_over` | **73.0%** | 122 | **PROMOTED** — 65-82% all 4 seasons |
+| `day_game_elite_peripherals_combo_over` | 72.0% | 182 | Keep shadow — 2023: 55.2% |
+| `high_csw_low_era_high_k_combo_over` | 70.6% | 170 | Keep shadow — 2023: 50.0% |
+
+**Impact on 2025 replay:** HR 66.2% (was 65.9%), P&L +255.6u (was +249u). Marginal improvement — signals mostly overlap with existing elite_peripherals/high_csw.
 
 ## Files Modified (7) + Created (1)
 
