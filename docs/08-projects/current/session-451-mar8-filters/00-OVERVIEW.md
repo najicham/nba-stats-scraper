@@ -1,8 +1,8 @@
 # Session 451 — Mar 8 Autopsy Filters
 
 **Date:** 2026-03-09
-**Algorithm:** `v451_session451_filters`
-**Status:** DEPLOYED (pending push)
+**Algorithm:** `v451_session451_filters` (historical — current: `v469_health_aware_weights_line_rose_block`)
+**Status:** HISTORICAL — superseded by Sessions 452-469
 
 ## What Was Implemented
 
