@@ -87,26 +87,108 @@ Changes from v468:
 
 ## Priority Tasks (Next Session)
 
-### P0 — Monitor v469 Performance
-6 games tonight (Mar 11), full slate all week. Check:
-- Does health-aware weighting improve UNDER quality?
-- Does over_line_rose_heavy block fire on any picks?
-- Are book_disagree_over/under signals firing?
+### P0 — Monitor v469 Performance (CRITICAL)
 
-Decision gate: v469 HR >= 50% over 3 days → keep. HR < 40% → investigate regression.
+**Context:** System is in a prolonged downturn — 37.5% 7d HR, 41.2% 14d, 45.7% 30d. v468+v469 deployed today with multiple fixes. 6 games tonight (Mar 11), full slate all week (6-10 games/day through Mar 18).
 
-### P1 — Address 5/7 Models LOSING at Edge 5+
-5 of 7 models are LOSING at edge 5+ (14d). The pipeline's source material is degraded.
-Options:
-- Trigger retrain (`./bin/retrain.sh --all --enable`)
-- Weekly retrain CF fires Monday 5 AM ET — may have already run today
-- Check `model_performance_daily` for retrain impact
+**Steps:**
+1. Run `/daily-steering` to get fresh model health + BB performance
+2. Check Mar 11 picks: `SELECT * FROM nba_predictions.signal_best_bets_picks WHERE game_date = '2026-03-11'`
+3. Check if new filters fired:
+   ```sql
+   -- Did over_line_rose_heavy block anything?
+   SELECT * FROM nba_predictions.best_bets_filtered_picks
+   WHERE game_date = '2026-03-11' AND filter_reason = 'over_line_rose_heavy'
 
-### P2 — Investigate starter_under 10.5% 7d HR
-`starter_under` is in BASE_SIGNALS (no ranking impact) but still fires for tracking. At 10.5% 7d (N=21), this is the worst-performing active signal. Consider if its presence in tracking is creating noise.
+   -- Did hot_shooting_over_block fire?
+   SELECT * FROM nba_predictions.best_bets_filtered_picks
+   WHERE game_date = '2026-03-11' AND filter_reason = 'hot_shooting_over_block'
 
-### P3 — Graduated book_disagree Signals
-When `book_disagree_over` reaches N >= 30 at BB level with HR >= 60%, remove from SHADOW_SIGNALS. This enables it to contribute to real_sc.
+   -- Are book_disagree signals firing?
+   SELECT signal_tag, COUNT(*) FROM nba_predictions.signal_best_bets_picks,
+   UNNEST(signal_tags) AS signal_tag
+   WHERE game_date >= '2026-03-11' AND signal_tag LIKE 'book_disagree%'
+   GROUP BY 1
+   ```
+4. Grade Mar 11 results when available (grading runs ~9 AM ET next day)
+
+**Decision gates:**
+- v469 HR >= 50% over 3 days → keep
+- v469 HR < 40% over 3 days → investigate whether new filters are helping or hurting
+- If `over_line_rose_heavy` or `hot_shooting_over_block` blocked a winner → check CF HR
+
+### P1 — Check Weekly Retrain Status (URGENT)
+
+**Context:** 5 of 7 models are LOSING at edge 5+ (14d). The `weekly-retrain` CF fires every Monday 5 AM ET. It should have fired today (Mar 11).
+
+**Steps:**
+1. Check if retrain ran:
+   ```bash
+   gcloud functions logs read weekly-retrain --region=us-west2 --limit=20 --format="table(timestamp,severity,textPayload)" 2>&1
+   ```
+2. Check for new models in registry:
+   ```sql
+   SELECT model_id, model_family, created_at, enabled
+   FROM nba_predictions.model_registry
+   WHERE created_at >= '2026-03-10'
+   ORDER BY created_at DESC
+   ```
+3. If retrain did NOT run, trigger manually: `./bin/retrain.sh --all --enable`
+4. If retrain DID run, check governance gates passed:
+   ```sql
+   SELECT * FROM nba_predictions.model_registry
+   WHERE created_at >= '2026-03-10' AND enabled = TRUE
+   ```
+
+**Why this matters:** The 37.5% 7d BB HR is partly driven by stale models. Edge 5+ HR across models:
+- catboost_v12: 60% PROFITABLE
+- v9_low_vegas: 57.1% MARGINAL
+- ALL others: 40-50% LOSING
+Fresh models with recent data should improve edge 5+ HR.
+
+### P2 — Uncommitted Changes in Working Tree
+
+Two files modified from a previous session are still uncommitted:
+- `data_processors/publishing/best_bets_all_exporter.py` (136 lines changed — picks vanish fix from Session 468)
+- `docs/02-operations/session-learnings.md` (20 lines — pre-existing entries)
+
+**Action:** Review these changes. If they look correct (the exporter fix for picks vanishing after model disable), commit them:
+```bash
+git diff data_processors/publishing/best_bets_all_exporter.py  # Review
+git add data_processors/publishing/best_bets_all_exporter.py docs/02-operations/session-learnings.md
+git commit -m "fix: best_bets_all_exporter reads published_picks as fallback (Session 468)"
+git push origin main
+```
+
+### P3 — Graduate book_disagree Signals (Check ~Mar 18)
+
+When `book_disagree_over` reaches N >= 30 at BB level with HR >= 60%:
+1. Remove `'book_disagree_over'` from `SHADOW_SIGNALS` in `aggregator.py`
+2. This allows it to contribute to `real_sc` (currently excluded)
+3. Run tests, bump algorithm version, deploy
+
+Query to check readiness:
+```sql
+SELECT signal_tag, COUNT(*) as n,
+  ROUND(100.0 * COUNTIF(pa.prediction_correct) / NULLIF(COUNT(*), 0), 1) as hr
+FROM nba_predictions.signal_best_bets_picks bb,
+UNNEST(bb.signal_tags) AS signal_tag
+JOIN nba_predictions.prediction_accuracy pa
+  ON bb.player_lookup = pa.player_lookup AND bb.game_date = pa.game_date AND bb.system_id = pa.system_id
+WHERE signal_tag LIKE 'book_disagree%' AND pa.prediction_correct IS NOT NULL
+GROUP BY 1
+```
+
+### P4 — Investigate starter_under 10.5% 7d HR
+
+`starter_under` is in BASE_SIGNALS (no ranking impact, excluded from real_sc) but still fires for tracking at 10.5% 7d HR (N=21). This is the worst-performing signal by far. It's not directly harming picks, but worth understanding why it collapsed — could indicate a broader market regime shift for starter-tier UNDER.
+
+### P5 — Season-End Planning
+
+NBA regular season ends ~Apr 13. Consider:
+- When to stop making picks (last 2 weeks = tanking teams, meaningless games)
+- Season autopsy: `/season-autopsy` across full season for cross-day pattern mining
+- Model versioning: what to preserve for 2026-27 pre-season
 
 ## Key Files
 
