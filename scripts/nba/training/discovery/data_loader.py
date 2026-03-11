@@ -57,26 +57,32 @@ class DiscoveryDataset:
         """Load all CSVs and join into enriched DataFrame."""
         logger.info("Loading discovery dataset...")
 
-        # 1. Predictions — combine walk-forward (2023-25) + current season (2025-26)
+        # 1. Predictions — combine all walk-forward seasons
         pred_frames = []
 
-        # Walk-forward predictions (2023-24, 2024-25) — clean, no leakage
-        wf_paths = [
-            Path('results/nba_walkforward_clean/predictions_w56_r7.csv'),
-            Path('results/nba_walkforward/predictions_w56_r7.csv'),
+        # Walk-forward predictions by season (all use w56_r7 — validated optimal)
+        wf_sources = [
+            ('2021-22', Path('results/nba_walkforward_2021/predictions_w56_r7.csv')),
+            ('2022-23', Path('results/nba_walkforward_2022/predictions_w56_r7.csv')),
+            ('2023-25', Path('results/nba_walkforward_clean/predictions_w56_r7.csv')),
+            ('2023-25-fallback', Path('results/nba_walkforward/predictions_w56_r7.csv')),
         ]
-        for wf_path in wf_paths:
-            if wf_path.exists():
+        loaded_seasons = set()
+        for label, wf_path in wf_sources:
+            if wf_path.exists() and label not in loaded_seasons:
                 wf = pd.read_csv(wf_path)
-                logger.info(f"  Walk-forward predictions: {len(wf)} rows from {wf_path}")
+                logger.info(f"  Walk-forward [{label}]: {len(wf)} rows from {wf_path}")
                 pred_frames.append(wf)
-                break
+                loaded_seasons.add(label)
+                # Skip fallback if clean version loaded
+                if label == '2023-25':
+                    loaded_seasons.add('2023-25-fallback')
 
         # Current season multi-model predictions (2025-26)
         current_path = self.data_dir / 'predictions_2025_26_all_models.csv'
         if current_path.exists():
             current = pd.read_csv(current_path)
-            logger.info(f"  Current season predictions: {len(current)} rows")
+            logger.info(f"  Current season [2025-26]: {len(current)} rows")
             pred_frames.append(current)
 
         if not pred_frames:
