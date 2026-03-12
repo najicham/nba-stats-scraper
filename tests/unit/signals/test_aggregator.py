@@ -1893,10 +1893,10 @@ class TestAlgorithmVersion:
     """Session 452+: Algorithm version + single source of truth."""
 
     def test_algorithm_version_current(self):
-        """ALGORITHM_VERSION should start with 'v46'."""
+        """ALGORITHM_VERSION should start with 'v47'."""
         from ml.signals.aggregator import ALGORITHM_VERSION
-        assert ALGORITHM_VERSION.startswith('v46'), (
-            f"Expected ALGORITHM_VERSION to start with 'v46', got '{ALGORITHM_VERSION}'"
+        assert ALGORITHM_VERSION.startswith('v47'), (
+            f"Expected ALGORITHM_VERSION to start with 'v47', got '{ALGORITHM_VERSION}'"
         )
 
     def test_aggregator_and_merger_versions_match(self):

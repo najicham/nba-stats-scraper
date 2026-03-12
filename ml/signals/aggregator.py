@@ -875,16 +875,15 @@ class BestBetsAggregator:
                 except (ValueError, TypeError):
                     pass
 
-            # High skew OVER block (Session 399): OVER + mean_median_gap > 2.0 = 49.1% HR.
-            # Right-skewed scoring distributions cause model to predict mean while books
-            # set lines at median. When mean >> median, OVER is systematically over-predicted.
+            # High skew OVER block — DEMOTED to observation (Session 470).
+            # Original thesis (Session 399): OVER + mean_median_gap > 2.0 = 49.1% HR.
+            # In-season CF HR: 75% (3/4 graded) — blocking winners. Thesis too thin
+            # (49.1% vs 50%) to justify active blocking. Track counterfactual only.
             mean_median_gap = pred.get('mean_median_gap') or 0
             if (pred.get('recommendation') == 'OVER'
                     and mean_median_gap > 2.0):
                 filter_counts['high_skew_over_block'] += 1
-                _record_filtered(pred, 'high_skew_over_block', pred_edge)
-                if 'high_skew_over_block' not in self._runtime_demoted:
-                    continue
+                _record_filtered(pred, 'high_skew_over_block_obs', pred_edge)
 
             # High book std UNDER block (Session 377): UNDER + multi_book_line_std 1.0-1.5 = 14.8% HR (N=142).
             # When books disagree significantly on the line, UNDER predictions are unreliable.
@@ -1446,7 +1445,7 @@ class BestBetsAggregator:
         if filter_counts['friday_over_block'] > 0:
             logger.info(f"Friday OVER block: skipped {filter_counts['friday_over_block']} OVER picks on Friday (37.5% HR at best bets)")
         if filter_counts['high_skew_over_block'] > 0:
-            logger.info(f"High skew OVER block: skipped {filter_counts['high_skew_over_block']} OVER picks with mean-median gap > 2.0 (49.1% HR)")
+            logger.info(f"High skew OVER (observation): tagged {filter_counts['high_skew_over_block']} OVER picks with mean-median gap > 2.0")
         if filter_counts['flat_trend_under'] > 0:
             logger.info(f"Flat trend UNDER (observation): tagged {filter_counts['flat_trend_under']} UNDER picks with trend slope -0.5 to 0.5")
         if filter_counts['under_after_streak'] > 0:
