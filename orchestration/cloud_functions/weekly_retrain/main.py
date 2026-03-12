@@ -29,6 +29,7 @@ Scheduler (Every Monday at 5 AM ET):
         --project=nba-props-platform
 
 Session 458 - Weekly Auto-Retrain
+Session 471 - Added LightGBM and XGBoost support (was CatBoost-only)
 """
 
 import hashlib
@@ -45,8 +46,10 @@ import numpy as np
 import pandas as pd
 from google.cloud import bigquery, storage
 
-# Lazy import for catboost (large library, ~100MB)
+# Lazy imports for ML libraries (large, ~100MB each)
 cb = None
+lgb_module = None
+xgb_module = None
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -110,6 +113,60 @@ def get_catboost():
     return cb
 
 
+def get_lightgbm():
+    """Lazy load lightgbm."""
+    global lgb_module
+    if lgb_module is None:
+        import lightgbm
+        lgb_module = lightgbm
+    return lgb_module
+
+
+def get_xgboost():
+    """Lazy load xgboost."""
+    global xgb_module
+    if xgb_module is None:
+        import xgboost
+        xgb_module = xgboost
+    return xgb_module
+
+
+# LightGBM production hyperparameters (from quick_retrain.py)
+LIGHTGBM_PARAMS = {
+    'verbose': -1,
+    'seed': 42,
+    'num_leaves': 63,
+    'learning_rate': 0.05,
+    'feature_fraction': 0.8,
+    'bagging_fraction': 0.8,
+    'bagging_freq': 5,
+    'objective': 'regression',
+    'metric': 'mae',
+}
+
+# XGBoost production hyperparameters (from quick_retrain.py)
+XGBOOST_PARAMS = {
+    'verbosity': 0,
+    'seed': 42,
+    'max_depth': 6,
+    'learning_rate': 0.05,
+    'subsample': 0.8,
+    'colsample_bytree': 0.8,
+    'min_child_weight': 5,
+    'reg_alpha': 0.1,
+    'reg_lambda': 1.0,
+    'objective': 'reg:absoluteerror',
+    'eval_metric': 'mae',
+}
+
+# Framework prefix for model IDs and GCS paths
+FRAMEWORK_PREFIXES = {
+    'catboost': 'catboost',
+    'lightgbm': 'lgbm',
+    'xgboost': 'xgb',
+}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Data Loading
 # ─────────────────────────────────────────────────────────────────────────────
@@ -121,12 +178,13 @@ def get_enabled_families(client: bigquery.Client) -> List[Dict[str, Any]]:
         model_family,
         feature_set,
         loss_function,
+        model_type,
         CAST(quantile_alpha AS FLOAT64) as quantile_alpha,
         MAX(training_end_date) as latest_train_end
     FROM `{PROJECT_ID}.nba_predictions.model_registry`
     WHERE enabled = TRUE AND status IN ('active', 'production')
       AND model_family IS NOT NULL
-    GROUP BY model_family, feature_set, loss_function, quantile_alpha
+    GROUP BY model_family, feature_set, loss_function, model_type, quantile_alpha
     ORDER BY model_family
     """
     df = client.query(query).to_dataframe()
@@ -136,6 +194,7 @@ def get_enabled_families(client: bigquery.Client) -> List[Dict[str, Any]]:
             'model_family': row['model_family'],
             'feature_set': row['feature_set'],
             'loss_function': row['loss_function'],
+            'model_type': row['model_type'] or 'catboost',
             'quantile_alpha': row['quantile_alpha'] if pd.notna(row['quantile_alpha']) else None,
             'latest_train_end': row['latest_train_end'],
         })
@@ -231,19 +290,51 @@ def train_model(
     y_val: pd.Series,
     loss_function: str = 'MAE',
     quantile_alpha: Optional[float] = None,
+    model_type: str = 'catboost',
 ) -> object:
-    """Train CatBoost model with production hyperparameters."""
-    catboost = get_catboost()
+    """Train model with production hyperparameters. Dispatches by framework."""
+    if model_type == 'lightgbm':
+        lgb = get_lightgbm()
+        params = dict(LIGHTGBM_PARAMS)
+        if quantile_alpha is not None:
+            params['objective'] = 'quantile'
+            params['alpha'] = quantile_alpha
+            params['metric'] = 'quantile'
+        dtrain = lgb.Dataset(X_train, y_train)
+        dval = lgb.Dataset(X_val, y_val)
+        model = lgb.train(
+            params, dtrain, num_boost_round=1000,
+            valid_sets=[dval], callbacks=[lgb.early_stopping(50, verbose=False)],
+        )
+        return model
 
-    params = dict(CATBOOST_PARAMS)
-    if quantile_alpha is not None:
-        params['loss_function'] = f'Quantile:alpha={quantile_alpha}'
-    elif loss_function and loss_function.upper() != 'MAE':
-        params['loss_function'] = loss_function
+    elif model_type == 'xgboost':
+        xgb = get_xgboost()
+        params = dict(XGBOOST_PARAMS)
+        if quantile_alpha is not None:
+            params['objective'] = 'reg:quantileerror'
+            params['quantile_alpha'] = quantile_alpha
+        feature_names = list(X_train.columns)
+        dtrain = xgb.DMatrix(X_train, label=y_train, feature_names=feature_names)
+        dval = xgb.DMatrix(X_val, label=y_val, feature_names=feature_names)
+        model = xgb.train(
+            params, dtrain, num_boost_round=1000,
+            evals=[(dval, 'eval')],
+            early_stopping_rounds=50, verbose_eval=0,
+        )
+        return model
 
-    model = catboost.CatBoostRegressor(**params)
-    model.fit(X_train, y_train, eval_set=(X_val, y_val), verbose=0)
-    return model
+    else:
+        # CatBoost (default)
+        catboost = get_catboost()
+        params = dict(CATBOOST_PARAMS)
+        if quantile_alpha is not None:
+            params['loss_function'] = f'Quantile:alpha={quantile_alpha}'
+        elif loss_function and loss_function.upper() != 'MAE':
+            params['loss_function'] = loss_function
+        model = catboost.CatBoostRegressor(**params)
+        model.fit(X_train, y_train, eval_set=(X_val, y_val), verbose=0)
+        return model
 
 
 def compute_hit_rate(
@@ -336,33 +427,46 @@ def upload_model_to_gcs(
     feature_set: str,
     train_start: str,
     train_end: str,
+    model_type: str = 'catboost',
 ) -> Tuple[str, str, str]:
     """Save model to GCS. Returns (gcs_path, model_id, sha256)."""
-    catboost = get_catboost()
+    prefix = FRAMEWORK_PREFIXES.get(model_type, 'catboost')
 
-    # Generate model ID: catboost_{feature_set}_train{MMDD}_{MMDD}
+    # Generate model ID: {prefix}_{feature_set}_train{MMDD}_{MMDD}
     ts = train_start.replace('-', '')[4:]  # MMDD
     te = train_end.replace('-', '')[4:]
-    timestamp = datetime.utcnow().strftime('%H%M%S')
-    model_id = f"catboost_{feature_set}_train{ts}_{te}"
+    model_id = f"{prefix}_{feature_set}_train{ts}_{te}"
 
-    # Save to temp file
-    with tempfile.NamedTemporaryFile(suffix='.cbm', delete=False) as f:
-        temp_path = f.name
-    model.save_model(temp_path)
+    # Framework-specific file extensions and save logic
+    if model_type == 'lightgbm':
+        ext = '.txt'
+        with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as f:
+            temp_path = f.name
+        model.save_model(temp_path)
+    elif model_type == 'xgboost':
+        ext = '.json'
+        with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as f:
+            temp_path = f.name
+        model.save_model(temp_path)
+    else:
+        ext = '.cbm'
+        with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as f:
+            temp_path = f.name
+        model.save_model(temp_path)
 
     # Compute SHA256
     with open(temp_path, 'rb') as f:
         sha256 = hashlib.sha256(f.read()).hexdigest()
 
-    # Upload to GCS
+    # Upload to GCS with framework-specific directory
     base_fs = feature_set.replace('_noveg', '')
-    gcs_dir = f"catboost/{base_fs}/monthly"
-    gcs_path = f"gs://{GCS_BUCKET}/{gcs_dir}/{model_id}.cbm"
+    gcs_dir = f"{prefix}/{base_fs}/monthly"
+    filename = f"{model_id}{ext}"
+    gcs_path = f"gs://{GCS_BUCKET}/{gcs_dir}/{filename}"
 
     storage_client = storage.Client(project=PROJECT_ID)
     bucket = storage_client.bucket(GCS_BUCKET)
-    blob = bucket.blob(f"{gcs_dir}/{model_id}.cbm")
+    blob = bucket.blob(f"{gcs_dir}/{filename}")
     blob.upload_from_filename(temp_path)
 
     os.unlink(temp_path)
@@ -390,6 +494,7 @@ def register_model(
     """Register model in model_registry using DML MERGE."""
     feature_set = family['feature_set']
     model_family = family['model_family']
+    model_type = family.get('model_type', 'catboost')
     loss_function = family['loss_function'] or 'MAE'
     qa = family['quantile_alpha']
     model_version = feature_set.split('_')[0]  # v9, v12, v16, etc.
@@ -427,7 +532,7 @@ def register_model(
          status, is_production, enabled,
          notes, created_at, created_by)
       VALUES
-        ('{model_id}', '{model_version}', 'catboost', '{gcs_path}', '{sha256}',
+        ('{model_id}', '{model_version}', '{model_type}', '{gcs_path}', '{sha256}',
          {feature_count}, '{feature_set}', '{model_family}', '{loss_function}', {qa_val},
          '{train_start}', '{train_end}', {training_samples},
          {round(mae, 4)}, {hr_all_val},
@@ -439,7 +544,7 @@ def register_model(
     """
     job = client.query(query)
     job.result()
-    logger.info(f"  Registered: {model_id} (enabled={enabled})")
+    logger.info(f"  Registered: {model_id} (enabled={enabled}, type={model_type})")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -488,11 +593,14 @@ def retrain_family(
     X_train_full = X_train_full.drop(columns=['_idx'])
 
     # Train
-    logger.info(f"  Training CatBoost ({len(X_train):,} train, {len(X_val):,} val)...")
+    model_type = family.get('model_type', 'catboost')
+    fw_label = model_type.replace('lightgbm', 'LightGBM').replace('xgboost', 'XGBoost').replace('catboost', 'CatBoost')
+    logger.info(f"  Training {fw_label} ({len(X_train):,} train, {len(X_val):,} val)...")
     model = train_model(
         X_train, y_train, X_val, y_val,
         loss_function=family.get('loss_function', 'MAE'),
         quantile_alpha=family.get('quantile_alpha'),
+        model_type=model_type,
     )
 
     # Load eval data
@@ -506,8 +614,14 @@ def retrain_family(
         result['reason'] = f"Insufficient eval data: {len(X_eval)}"
         return result
 
-    # Evaluate
-    preds = model.predict(X_eval)
+    # Evaluate — framework-specific prediction
+    if model_type == 'xgboost':
+        xgb = get_xgboost()
+        feature_names = [f'f{i}' for i in feature_indices]
+        deval = xgb.DMatrix(X_eval, feature_names=feature_names)
+        preds = model.predict(deval)
+    else:
+        preds = model.predict(X_eval)
     mae = float(np.mean(np.abs(preds - y_eval.values)))
     hr_all, n_all = compute_hit_rate(preds, y_eval.values, lines, min_edge=1.0)
     hr_e3, n_e3 = compute_hit_rate(preds, y_eval.values, lines, min_edge=3.0)
@@ -530,7 +644,7 @@ def retrain_family(
     # Upload to GCS
     logger.info(f"  Governance gates PASSED. Uploading to GCS...")
     gcs_path, model_id, sha256 = upload_model_to_gcs(
-        model, feature_set, train_start, train_end
+        model, feature_set, train_start, train_end, model_type=model_type,
     )
 
     # Register in model_registry
@@ -721,7 +835,7 @@ def weekly_retrain(request):
         for family in families:
             logger.info(f"\n{'─' * 50}")
             logger.info(f"RETRAINING: {family['model_family']}")
-            logger.info(f"  feature_set={family['feature_set']}, loss={family['loss_function']}")
+            logger.info(f"  feature_set={family['feature_set']}, loss={family['loss_function']}, type={family.get('model_type', 'catboost')}")
             logger.info(f"{'─' * 50}")
 
             try:
