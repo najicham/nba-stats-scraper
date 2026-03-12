@@ -178,7 +178,10 @@ ORDER BY game_date;
 - [ ] Catcher framing scraper run weekly (check BQ row count)
 - [ ] Shadow combo signals firing (day_game_high_csw, etc.)
 - [ ] No errors in Cloud Run logs
-- [ ] Algorithm version = `mlb_v8_s456_v3final_away_5picks`
+- [ ] Algorithm version = `mlb_v8_s456_v3final_away_5picks` (in `best_bets_exporter.py`)
+- [ ] Blacklist filtering correctly (23 pitchers — Session 469)
+
+**Full launch runbook with contingencies:** `07-LAUNCH-RUNBOOK.md`
 
 ## 3-Week Checkpoint (Apr 14)
 
