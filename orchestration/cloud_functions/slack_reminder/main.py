@@ -78,10 +78,19 @@ def send_reminder(request):
 
     Returns 200 if at least one delivery succeeds.
     """
+    # Parse JSON body — try get_json first, fall back to raw body parsing
+    data = {}
     try:
-        data = request.get_json(silent=True) or {}
+        data = request.get_json(silent=True, force=True) or {}
     except Exception:
-        data = {}
+        pass
+    if not data:
+        try:
+            raw = request.get_data(as_text=True)
+            if raw:
+                data = json.loads(raw)
+        except Exception:
+            pass
 
     message = data.get('message', '')
     source = data.get('source', 'unknown')
