@@ -27,7 +27,8 @@ TIMEZONE="America/New_York"
 # that hits a lightweight CF which forwards to Slack.
 # Alternative: use Slack webhook URL directly if available.
 
-ALERT_CF_URL="https://${REGION}-${PROJECT_ID}.cloudfunctions.net/nba-grading-alerts"
+# Slack+Pushover reminder forwarder CF (deployed Session 469)
+ALERT_CF_URL="https://slack-reminder-f7p3g7f6ya-wl.a.run.app"
 
 DRY_RUN=false
 if [[ "${1:-}" == "--dry-run" ]]; then
