@@ -632,6 +632,11 @@ class PitcherBlacklistFilter(BaseMLBSignal):
     is_negative_filter = True
 
     # Session 443-444-447: Walk-forward + season replay validated, <45% HR
+    # Session 469: Removed 5 pitchers (new team or tiny sample + elite 2025):
+    #   mackenzie_gore (WSH→TEX), luis_severino (NYM→OAK), ranger_suárez (PHI→BOS),
+    #   paul_skenes (Cy Young, N=9), cade_horton (2.67 ERA, N=8)
+    # Monitor early 2026: adrian_houser (TB→SF), tyler_mahle (TEX→SF),
+    #   stephen_kolek (SD→KC), casey_mize (breakout 2025)
     BLACKLIST = frozenset([
         # Kept from original (confirmed bad in regressor data)
         'tanner_bibee', 'mitchell_parker', 'casey_mize', 'mitch_keller',
@@ -642,26 +647,21 @@ class PitcherBlacklistFilter(BaseMLBSignal):
         'logan_allen',         # 36.2% HR, N=47
         'jake_irvin',          # 33.3% HR, N=15
         'george_kirby',        # 40.0% HR, N=25
-        'mackenzie_gore',      # 40.9% HR, N=22
         'bailey_ober',         # 40.0% HR, N=20
         'zach_eflin',          # 30.0% HR, N=10
         'ryne_nelson',         # 30.8% HR, N=13
         'jameson_taillon',     # 33.3% HR, N=12
         'ryan_feltner',        # 33.3% HR, N=12
-        'luis_severino',       # 42.1% HR, N=19
         'randy_vasquez',       # 27.8% HR, N=18
         # Session 444 additions (season replay 0% or <40% HR at N >= 3)
-        'adrian_houser',       # 0-4 (0% HR)
-        'stephen_kolek',       # 0-3 (0% HR)
+        'adrian_houser',       # 0-4 (0% HR) — monitor: signed SF Giants
+        'stephen_kolek',       # 0-3 (0% HR) — monitor: traded to KC Royals
         'dean_kremer',         # 1-3 (25% HR)
         'michael_mcgreevy',    # 1-3 (25% HR)
-        'tyler_mahle',         # 1-3 (25% HR)
+        'tyler_mahle',         # 1-3 (25% HR) — monitor: signed SF Giants
         # Session 447 additions (season replay <45% HR at N >= 5)
-        'ranger_suárez',       # 33.3% HR, N=6
-        'cade_horton',         # 37.5% HR, N=8
         'blake_snell',         # 40.0% HR, N=5
         'luis_castillo',       # 42.9% HR, N=7
-        'paul_skenes',         # 44.4% HR, N=9
     ])
 
     def evaluate(self, prediction: Dict,

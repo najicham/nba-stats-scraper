@@ -10,7 +10,7 @@
 |-----------|--------|---------|
 | Model | CatBoost V2 Regressor, **36 features**, L2=10+D4 | 63.4% HR 4-season replay. Retrain before Mar 27. |
 | **Multi-model fleet** | LightGBM V1 + XGBoost V1 ready | Opt-in via `MLB_ACTIVE_SYSTEMS`. Same 36-feature contract. |
-| Blacklist | 28 pitchers | +5 in Session 447. Review script: `bin/mlb/review_blacklist.py` |
+| Blacklist | 23 pitchers | Session 469: -5 (new teams + tiny sample elite). Review: `bin/mlb/review_blacklist.py` |
 | Signals | **20 active + 30 shadow + 6 filters + 2 obs = 58 total** | Sessions 460-468 |
 | Combo signals | 3 new shadow (S465) | day_game+high_csw (73.0%), day_game+elite_peripherals (72.0%), csw+era+k9 (70.6%) |
 | Rescue | opponent_k_prone only | ballpark_k_boost removed (41.2%) |

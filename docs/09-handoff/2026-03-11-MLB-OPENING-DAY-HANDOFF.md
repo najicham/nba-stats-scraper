@@ -166,7 +166,7 @@ Pipeline flow:
 1. Direction filter → OVER only (UNDER disabled)
 2. Overconfidence cap → edge > 2.0 K blocked
 3. Probability cap → p_over > 0.85 blocked
-4. **6 negative filters:** bullpen_game, il_return, pitch_count_cap, insufficient_data, pitcher_blacklist (28 pitchers), whole_line_over
+4. **6 negative filters:** bullpen_game, il_return, pitch_count_cap, insufficient_data, pitcher_blacklist (23 pitchers), whole_line_over
 5. Edge floor → Home 0.75 K (with rescue), Away 1.25 K (no rescue)
 6. **20 active signals** evaluated → real_signal_count computed
 7. RSC gate → OVER needs >= 2, UNDER needs >= 3
@@ -191,10 +191,13 @@ Pipeline flow:
 
 **Promotion criteria:** HR >= 60% + N >= 30 in live data.
 
-## 28-Pitcher Blacklist
+## 23-Pitcher Blacklist
 
 Pitchers with < 45% HR in walk-forward replay (defined in `ml/signals/mlb/signals.py` line 635):
-tanner_bibee, logan_webb, mitchell_parker, casey_mize, logan_gilbert, jake_irvin, george_kirby, bailey_ober, blake_snell, paul_skenes, mitch_keller, jose_berrios, logan_allen, mackenzie_gore, zach_eflin, ryne_nelson, jameson_taillon, ryan_feltner, luis_severino, randy_vasquez, adrian_houser, stephen_kolek, dean_kremer, michael_mcgreevy, tyler_mahle, ranger_suárez, cade_horton, luis_castillo
+tanner_bibee, logan_webb, mitchell_parker, casey_mize, logan_gilbert, jake_irvin, george_kirby, bailey_ober, blake_snell, mitch_keller, jose_berrios, logan_allen, zach_eflin, ryne_nelson, jameson_taillon, ryan_feltner, randy_vasquez, adrian_houser, stephen_kolek, dean_kremer, michael_mcgreevy, tyler_mahle, luis_castillo
+
+**Removed (Session 469):** mackenzie_gore (WSH→TEX), luis_severino (NYM→OAK), ranger_suárez (PHI→BOS), paul_skenes (Cy Young, N=9), cade_horton (2.67 ERA, N=8)
+**Monitor early 2026:** adrian_houser (TB→SF), tyler_mahle (TEX→SF), stephen_kolek (SD→KC), casey_mize (breakout 2025)
 
 **Review tool:** `PYTHONPATH=. python bin/mlb/review_blacklist.py --since 2026-03-27` (run after 4-6 weeks of data)
 
