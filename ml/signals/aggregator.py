@@ -409,6 +409,8 @@ class BestBetsAggregator:
             'ft_anomaly_over_block': 0,
             # Session 463: Counter-market UNDER — line rose + high book disagreement
             'counter_market_under': 0,
+            # Session 468: Hot shooting OVER block — hot FG%/3PT% kills OVER
+            'hot_shooting_over_block': 0,
         }
 
         # Session 393: Counterfactual tracking — log filtered-out picks so we
