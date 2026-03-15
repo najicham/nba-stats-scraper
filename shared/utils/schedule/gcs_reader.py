@@ -69,11 +69,18 @@ class ScheduleGCSReader:
 
     # Known exhibition/All-Star team codes (silently skip these)
     EXHIBITION_TEAMS = {
-        # International exhibition teams
+        # International exhibition / preseason teams
         'RMD', 'CNS', 'NZB', 'MRA', 'FLA', 'JAL', 'TAM', 'DLF', 'PAU',
         'ULM', 'KEN', 'CHK', 'CAN', 'SHQ',
+        'GUA',  # Guangzhou Loong-Lions (CBA)
+        'HAP',  # Hapoel Jerusalem B.C.
+        'SEM',  # S.E. Melbourne Phoenix (NBL)
+        'MEL',  # Melbourne United (NBL) / Team Melo (Rising Stars)
         # All-Star teams
-        'WST', 'EST',  # West/East
+        'WST', 'EST',  # West/East (legacy)
+        'STR', 'STP',  # Stars, Stripes (2026 All-Star format)
+        'WLD',  # World (2026 All-Star format)
+        'AUS', 'VIN',  # Team Austin, Team Vince (Rising Stars 2026)
         'TMG', 'TMM', 'TMC', 'TML', 'TMD', 'TMS',  # Team variations
         # G-League and other exhibition
         'WOR', 'RIS',  # World, Rising Stars

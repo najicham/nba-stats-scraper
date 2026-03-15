@@ -40,6 +40,7 @@ Prior history (Sessions 259-298):
 """
 
 import logging
+from collections import defaultdict
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from ml.signals.base_signal import SignalResult
@@ -336,82 +337,7 @@ class BestBetsAggregator:
             logger.info(f"Runtime-demoted filters (auto-obs): {sorted(self._runtime_demoted)}")
 
         # Track all filter rejections
-        filter_counts = {
-            'blacklist': 0,
-            'edge_floor': 0,
-            'over_edge_floor': 0,
-            'under_edge_7plus': 0,
-            'familiar_matchup': 0,
-            'quality_floor': 0,
-            'bench_under': 0,
-            'line_jumped_under': 0,
-            'line_dropped_under': 0,
-            'line_dropped_over': 0,
-            'neg_pm_streak': 0,
-            'signal_count': 0,
-            'sc3_edge_floor': 0,  # Retained for schema continuity — subsumed by edge-tiered SC (Session 388)
-            'sc3_over_block': 0,
-            'opponent_depleted_under': 0,
-            'high_book_std_under': 0,
-            'confidence': 0,
-            'anti_pattern': 0,
-            'model_direction_affinity': 0,
-            'away_noveg': 0,
-            'star_under': 0,
-            'under_star_away': 0,
-            'med_usage_under': 0,
-            'starter_v12_under': 0,
-            'starter_over_sc_floor': 0,
-            'opponent_under_block': 0,
-            'q4_scorer_under_block': 0,
-            'friday_over_block': 0,
-            'high_skew_over_block': 0,
-            'signal_density': 0,
-            'legacy_block': 0,
-            'model_profile_would_block': 0,
-            'toxic_starter_over_would_block': 0,
-            'toxic_star_over_would_block': 0,
-            'regime_over_floor': 0,
-            'regime_rescue_blocked': 0,
-            'high_spread_over_would_block': 0,
-            'flat_trend_under': 0,
-            'under_after_streak': 0,
-            'under_after_bad_miss': 0,
-            'mid_line_over_obs': 0,
-            'monday_over_obs': 0,
-            'home_over_obs': 0,
-            'signal_stack_2plus_obs': 0,
-            'rescue_cap': 0,
-            'rescue_health_gate': 0,
-            'unreliable_over_low_mins_obs': 0,
-            'unreliable_under_flat_trend_obs': 0,
-            'b2b_under_block': 0,
-            'blowout_risk_under_block_obs': 0,
-            'bias_regime_over_obs': 0,
-            'prediction_sanity': 0,
-            'depleted_stars_over_obs': 0,
-            'hot_shooting_reversion_obs': 0,
-            'over_low_rsc_obs': 0,
-            'mae_gap_obs': 0,
-            'thin_slate_obs': 0,
-            'hot_streak_under_obs': 0,
-            'solo_game_pick_obs': 0,
-            'line_anomaly_extreme_drop': 0,
-            'player_under_suppression_obs': 0,
-            'under_low_rsc': 0,        # Session 452: promoted from under_low_rsc_obs
-            'ft_variance_under': 0,     # Session 452→462: demoted back to observation
-            'team_cap': 0,
-            # Session 462→463: Cold shooting UNDER filters (BB simulator validated)
-            'cold_fg_under': 0,       # Session 463: promoted from cold_fg_under_obs
-            'cold_3pt_under': 0,      # Session 463: promoted from cold_3pt_under_obs
-            'over_line_rose_heavy': 0,  # Session 469: promoted from obs to active
-            # Session 463: FTA anomaly OVER block — high FTA volatility on OVER
-            'ft_anomaly_over_block': 0,
-            # Session 463: Counter-market UNDER — line rose + high book disagreement
-            'counter_market_under': 0,
-            # Session 468: Hot shooting OVER block — hot FG%/3PT% kills OVER
-            'hot_shooting_over_block': 0,
-        }
+        filter_counts = defaultdict(int)
 
         # Session 393: Counterfactual tracking — log filtered-out picks so we
         # can grade them post-hoc and validate each filter's value.
@@ -443,7 +369,6 @@ class BestBetsAggregator:
         # model (e.g., XGBoost version mismatch producing all UNDER with
         # inflated edges) can dominate per-player selection and poison all
         # best bets picks. This catches the problem at the aggregator level.
-        from collections import defaultdict
         model_direction_counts: Dict[str, Dict[str, int]] = defaultdict(lambda: {'OVER': 0, 'UNDER': 0})
         for pred in predictions:
             rec = pred.get('recommendation')
@@ -1120,6 +1045,11 @@ class BestBetsAggregator:
             # - OVER with no real signals = 45.5% HR (Session 394) → block
             # - UNDER with no real signals at edge < 7 = 57.1% HR (Session 348) → block
             # - UNDER with no real signals at edge 7+ = allowed (Session 352 bypass)
+            #   BUT Session 475 fix: bypass requires predicted_points >= 55% of line.
+            #   Root cause: line-update re-runs cause model to over-anchor to the new
+            #   line value (e.g., line 17.5 → predicted 8.8, edge 8.7). These are model
+            #   artifacts — no real signals, prediction < 55% of line = impossible without
+            #   injury context. This filter is named zero_signal_extreme_underprediction.
             if real_sc == 0:
                 if pred.get('recommendation') == 'OVER':
                     filter_counts['sc3_over_block'] += 1
@@ -1129,6 +1059,17 @@ class BestBetsAggregator:
                     filter_counts['signal_density'] += 1
                     _record_filtered(pred, 'signal_density', pred_edge, len(qualifying), tags)
                     continue
+                else:
+                    # Session 352 bypass: UNDER + edge >= 7 + real_sc=0 is allowed,
+                    # but only if the model's prediction is >= 55% of the line.
+                    # A predicted/line ratio < 0.55 with zero real signals indicates
+                    # a model artifact from mid-day line movement, not genuine conviction.
+                    predicted_pts = float(pred.get('predicted_points') or 0)
+                    if line_val > 0 and predicted_pts > 0 and (predicted_pts / line_val) < 0.55:
+                        filter_counts['zero_signal_extreme_underprediction'] += 1
+                        _record_filtered(pred, 'zero_signal_extreme_underprediction',
+                                         pred_edge, len(qualifying), tags)
+                        continue
 
             # Starter OVER SC floor (Session 382c, relaxed Session 393):
             # Starter OVER collapsed 90% Jan → 33.3% Feb. Need at least 1 real
@@ -1476,6 +1417,12 @@ class BestBetsAggregator:
             )
         if filter_counts['signal_density'] > 0:
             logger.info(f"Signal density filter: skipped {filter_counts['signal_density']} base-only picks")
+        if filter_counts['zero_signal_extreme_underprediction'] > 0:
+            logger.warning(
+                f"Zero-signal extreme underprediction: blocked "
+                f"{filter_counts['zero_signal_extreme_underprediction']} picks where "
+                f"predicted_pts < 55% of line with real_sc=0 — likely model artifact from line movement"
+            )
         if filter_counts['legacy_block'] > 0:
             logger.info(f"Legacy model blocklist: skipped {filter_counts['legacy_block']} predictions from {LEGACY_MODEL_BLOCKLIST}")
         if filter_counts['model_profile_would_block'] > 0:
