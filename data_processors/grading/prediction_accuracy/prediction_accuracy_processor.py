@@ -535,7 +535,17 @@ class PredictionAccuracyProcessor:
             FROM `{self.predictions_table}`
             WHERE game_date = '{game_date}'
                 -- v3.10: Only grade active predictions (exclude deactivated duplicates)
-                AND is_active = TRUE
+                -- v5.3: Also grade is_active=FALSE predictions that sourced a BB pick
+                -- (race condition: decay_detection blocks model AFTER BB pipeline runs that morning,
+                --  leaving picks in signal_best_bets_picks with no gradeable prediction)
+                AND (
+                  is_active = TRUE
+                  OR (player_lookup, system_id) IN (
+                    SELECT player_lookup, system_id
+                    FROM `{self.project_id}.nba_predictions.signal_best_bets_picks`
+                    WHERE game_date = '{game_date}'
+                  )
+                )
                 -- PHASE 1 FIX: Exclude placeholder lines from grading
                 -- v3.8: Added BETTINGPROS as valid line source (fallback when odds_api unavailable)
                 -- v4.1 FIX: Removed has_prop_line filter - line_source is authoritative
