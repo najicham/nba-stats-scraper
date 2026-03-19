@@ -25,8 +25,11 @@
 
 ### Step 1.1: Train CatBoost
 ```bash
-PYTHONPATH=. python scripts/mlb/training/train_regressor_v2.py \
-    --training-end 2026-03-20 \
+# NOTE: --training-end must be the LAST DAY OF AVAILABLE DATA (end of prior season).
+# The data ends 2025-09-28 — using a 2026 date with window=120 would yield 0 rows.
+# Session 473: confirmed this is the correct command for pre-season retrain.
+PYTHONPATH=. .venv/bin/python scripts/mlb/training/train_regressor_v2.py \
+    --training-end 2025-09-28 \
     --window 120
 ```
 
