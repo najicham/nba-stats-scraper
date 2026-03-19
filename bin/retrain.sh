@@ -142,13 +142,14 @@ TRAINING_START=$(date -d "$TRAIN_END - $ROLLING_WINDOW_DAYS days" +%Y-%m-%d)
 # Query model_registry for family configurations
 # ============================================================================
 get_families() {
-    # Returns: model_family, feature_set, loss_function, quantile_alpha (tab-separated)
+    # Returns: model_family, feature_set, loss_function, quantile_alpha, model_type (comma-separated)
     bq query --use_legacy_sql=false --format=csv --quiet "
     SELECT DISTINCT
         model_family,
         feature_set,
         loss_function,
-        CAST(quantile_alpha AS STRING) as quantile_alpha
+        CAST(quantile_alpha AS STRING) as quantile_alpha,
+        COALESCE(model_type, 'catboost') as model_type
     FROM \`${PROJECT}.nba_predictions.model_registry\`
     WHERE enabled = TRUE AND status IN ('active', 'production')
       AND model_family IS NOT NULL
@@ -161,15 +162,17 @@ declare -a FAMILIES_TO_TRAIN
 declare -A FAMILY_FEATURE_SET
 declare -A FAMILY_LOSS_FUNCTION
 declare -A FAMILY_QUANTILE_ALPHA
+declare -A FAMILY_MODEL_TYPE
 
 if [ "$ALL_FAMILIES" = true ]; then
     echo "Querying model_registry for enabled families..."
-    while IFS=',' read -r fam fs lf qa; do
+    while IFS=',' read -r fam fs lf qa mt; do
         if [ -n "$fam" ] && [ "$fam" != "model_family" ]; then
             FAMILIES_TO_TRAIN+=("$fam")
             FAMILY_FEATURE_SET["$fam"]="$fs"
             FAMILY_LOSS_FUNCTION["$fam"]="$lf"
             FAMILY_QUANTILE_ALPHA["$fam"]="$qa"
+            FAMILY_MODEL_TYPE["$fam"]="${mt:-catboost}"
         fi
     done < <(get_families)
 
@@ -183,12 +186,13 @@ elif [ -n "$FAMILY" ]; then
     # Single family specified — look up its config
     echo "Querying model_registry for family '$FAMILY'..."
     FOUND=false
-    while IFS=',' read -r fam fs lf qa; do
+    while IFS=',' read -r fam fs lf qa mt; do
         if [ "$fam" = "$FAMILY" ]; then
             FAMILIES_TO_TRAIN+=("$fam")
             FAMILY_FEATURE_SET["$fam"]="$fs"
             FAMILY_LOSS_FUNCTION["$fam"]="$lf"
             FAMILY_QUANTILE_ALPHA["$fam"]="$qa"
+            FAMILY_MODEL_TYPE["$fam"]="${mt:-catboost}"
             FOUND=true
         fi
     done < <(get_families)
@@ -243,6 +247,7 @@ for FAMILY_NAME in "${FAMILIES_TO_TRAIN[@]}"; do
     FS="${FAMILY_FEATURE_SET[$FAMILY_NAME]}"
     LF="${FAMILY_LOSS_FUNCTION[$FAMILY_NAME]}"
     QA="${FAMILY_QUANTILE_ALPHA[$FAMILY_NAME]}"
+    MT="${FAMILY_MODEL_TYPE[$FAMILY_NAME]:-catboost}"
 
     # Derive quick_retrain.py arguments from family config
     RETRAIN_ARGS=""
@@ -254,6 +259,13 @@ for FAMILY_NAME in "${FAMILIES_TO_TRAIN[@]}"; do
     # No-vegas flag
     if [[ "$FS" == *"_noveg"* ]] || [[ "$FS" == *"noveg"* ]]; then
         RETRAIN_ARGS="$RETRAIN_ARGS --no-vegas"
+    fi
+
+    # Framework (lightgbm or xgboost families need explicit flag; catboost is default)
+    if [ "$MT" = "lightgbm" ]; then
+        RETRAIN_ARGS="$RETRAIN_ARGS --framework lightgbm"
+    elif [ "$MT" = "xgboost" ]; then
+        RETRAIN_ARGS="$RETRAIN_ARGS --framework xgboost"
     fi
 
     # Quantile alpha
