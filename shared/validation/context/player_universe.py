@@ -395,6 +395,7 @@ def _query_prop_players(
             points_line
         FROM `{PROJECT_ID}.nba_raw.bettingpros_player_points_props`
         WHERE game_date = @game_date
+          AND market_type = 'points'
           AND player_lookup IS NOT NULL
 
         UNION DISTINCT

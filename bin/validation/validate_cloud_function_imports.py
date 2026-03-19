@@ -242,10 +242,14 @@ except Exception as e:
     sys.exit(2)
 '''.format(cf_dir=cf_dir)
 
+    # Use venv Python if available (has google packages needed by shared.utils)
+    venv_python = project_root / ".venv" / "bin" / "python"
+    python_exe = str(venv_python) if venv_python.exists() else sys.executable
+
     # Run in subprocess to isolate from current Python environment
     try:
         result = subprocess.run(
-            [sys.executable, "-c", test_code],
+            [python_exe, "-c", test_code],
             capture_output=True,
             text=True,
             timeout=30,
@@ -326,7 +330,7 @@ def main():
     cf_base = project_root / "orchestration" / "cloud_functions"
 
     cloud_functions = [
-        ("phase2_to_phase3", cf_base / "phase2_to_phase3"),
+        # phase2_to_phase3 removed: Phase 2→3 uses direct Pub/Sub, no orchestrator CF
         ("phase3_to_phase4", cf_base / "phase3_to_phase4"),
         ("phase4_to_phase5", cf_base / "phase4_to_phase5"),
         ("phase5_to_phase6", cf_base / "phase5_to_phase6"),

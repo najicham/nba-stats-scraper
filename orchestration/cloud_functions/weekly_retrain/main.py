@@ -775,12 +775,12 @@ def weekly_retrain(request):
         else:
             train_end = date.today() - timedelta(days=1)  # Yesterday
 
-        train_start = train_end - timedelta(days=ROLLING_WINDOW_DAYS)
-        eval_start = (train_end + timedelta(days=1) - timedelta(days=EVAL_DAYS))
+        # Out-of-sample eval: reserve the most recent EVAL_DAYS for evaluation,
+        # training ends the day before the eval window starts.
         eval_end = train_end
-
-        # Eval overlaps with end of training window (last EVAL_DAYS of window)
-        # This matches how quick_retrain.py evaluates
+        eval_start = eval_end - timedelta(days=EVAL_DAYS - 1)
+        train_end = eval_start - timedelta(days=1)
+        train_start = train_end - timedelta(days=ROLLING_WINDOW_DAYS)
         eval_start_str = eval_start.isoformat()
         eval_end_str = eval_end.isoformat()
         train_start_str = train_start.isoformat()

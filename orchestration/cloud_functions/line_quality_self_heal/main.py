@@ -149,6 +149,7 @@ class LineQualitySelfHealer:
                 game_date
             FROM `{self.project_id}.nba_raw.bettingpros_player_points_props`
             WHERE game_date >= '{cutoff_date}'
+              AND market_type = 'points'
         )
         SELECT
             pp.game_date,

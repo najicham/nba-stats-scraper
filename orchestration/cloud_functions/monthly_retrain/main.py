@@ -119,6 +119,7 @@ def load_eval_data(client: bigquery.Client, start: str, end: str) -> pd.DataFram
       SELECT game_date, player_lookup, points_line as line
       FROM `{PROJECT_ID}.nba_raw.bettingpros_player_points_props`
       WHERE bookmaker = 'BettingPros Consensus' AND bet_side = 'over'
+        AND market_type = 'points'
         AND game_date BETWEEN '{start}' AND '{end}'
       QUALIFY ROW_NUMBER() OVER (PARTITION BY game_date, player_lookup ORDER BY processed_at DESC) = 1
     )

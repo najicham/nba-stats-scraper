@@ -39,10 +39,15 @@ REQUIRED_FILTERS = [
     r"market_type\s*IN\s*\([^)]*['\"]points['\"]",
 ]
 
-# Exclusions (files that intentionally query all market types)
+# Exclusions (files that intentionally query all market types, or legacy archive)
 EXCLUDED_FILES = [
     "bettingpros_player_props_processor.py",  # Raw processor handles all types
     "test_",  # Test files may intentionally query all types
+]
+
+# Directories to exclude entirely
+EXCLUDED_DIRS = [
+    "ml/archive",  # Legacy archived scripts — not production code
 ]
 
 
@@ -58,7 +63,12 @@ def find_python_files() -> list[Path]:
 
 def should_exclude(filepath: Path) -> bool:
     """Check if file should be excluded from validation."""
-    return any(excl in str(filepath) for excl in EXCLUDED_FILES)
+    fp = str(filepath)
+    if any(excl in fp for excl in EXCLUDED_FILES):
+        return True
+    if any(fp.startswith(d) or ('/' + d + '/') in fp for d in EXCLUDED_DIRS):
+        return True
+    return False
 
 
 def extract_query_blocks(content: str) -> list[tuple[int, str]]:
@@ -82,9 +92,11 @@ def check_query_for_issues(query: str) -> list[str]:
     """Check a SQL query for missing market_type filter on bettingpros table."""
     issues = []
 
-    # Check if query references bettingpros table
+    # Only check when the table appears in SQL context (inside backticks).
+    # This avoids false-positives from docstrings that mention the table name
+    # in plain text (e.g. "bettingpros_player_points_props - BACKUP prop lines").
     has_bettingpros = any(
-        re.search(pattern, query, re.IGNORECASE)
+        re.search(r'`[^`]*' + pattern + r'[^`]*`', query, re.IGNORECASE)
         for pattern in BETTINGPROS_TABLE_PATTERNS
     )
 

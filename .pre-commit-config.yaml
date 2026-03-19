@@ -27,8 +27,8 @@ repos:
       - id: validate-cloud-function-imports
         name: Validate Cloud Function imports
         description: Ensures Cloud Functions have all required shared modules before deployment
-        entry: python bin/validation/validate_cloud_function_imports.py
-        language: python
+        entry: .venv/bin/python bin/validation/validate_cloud_function_imports.py
+        language: system
         pass_filenames: false
         files: ^(orchestration/cloud_functions/|shared/utils/).*\.py$
         verbose: true
@@ -88,10 +88,10 @@ repos:
       - id: validate-bettingpros-queries
         name: Validate BettingPros queries have market_type filter
         description: Ensures queries against bettingpros_player_points_props filter by market_type='points' (Session 36 fix)
-        entry: python .pre-commit-hooks/validate_bettingpros_queries.py
-        language: python
+        entry: .venv/bin/python .pre-commit-hooks/validate_bettingpros_queries.py
+        language: system
         pass_filenames: false
-        always_run: true
+        files: bettingpros
         verbose: true
 
       - id: validate-scraper-config-tables

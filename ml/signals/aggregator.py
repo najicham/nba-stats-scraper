@@ -106,6 +106,7 @@ SHADOW_SIGNALS = frozenset({
     'starter_away_overtrend_under',  # Session 462: 48.2% HR 5-season — harmful, demoted from weights
     'mean_reversion_under',  # Session 451: decayed to 53% vs 54.3% baseline, removed from weights/rescue Session 429. Stop real_sc inflation.
     'sharp_book_lean_over',  # Session 462: 41.7% HR 5-season — harmful, demoted from weights/rescue
+    'downtrend_under',       # Session 471: 16.7% HR 7d (N=6) — catastrophic, demoted from UNDER_SIGNAL_WEIGHTS
     # Session 462→466: hot_3pt_under, cold_3pt_over, line_drifted_down_under PROMOTED to active
     # (62.5%, 60.2%, 59.8% HR, 5-season cross-validated, pre-game clean)
     # Session 463: P0 simulator experiment validated signals
@@ -134,7 +135,7 @@ UNDER_SIGNAL_WEIGHTS: Dict[str, float] = {
     # starter_away_overtrend_under removed Session 462: 48.2% HR 5-season cross-validated — harmful
     'extended_rest_under': 1.5,      # 61.8% HR
     'volatile_starter_under': 2.0,   # Session 427: promoted 1.5→2.0. Cross-season +11.1pp lift (best UNDER signal)
-    'downtrend_under': 2.0,          # Session 427: promoted 1.5→2.0. Cross-season +8.1pp lift, increasing trend
+    # downtrend_under removed Session 471: 16.7% HR 7d (N=6) — catastrophic. Demoted to SHADOW_SIGNALS.
     # star_favorite_under removed Session 427: +0.7pp lift = noise, 73% HR from N=88 was single-season artifact
     # starter_under removed Session 419 (38.7% signal HR N=31, demoted to BASE_SIGNALS)
     # Session 466: Promoted from shadow — 5-season cross-validated, pre-game clean

@@ -328,6 +328,7 @@ WITH real_prop_lines AS (
   FROM `nba-props-platform.nba_raw.bettingpros_player_points_props`
   WHERE bookmaker = 'BettingPros Consensus'
     AND bet_side = 'over'
+    AND market_type = 'points'
     AND game_date BETWEEN '{eval_start}' AND '{eval_end}'
   QUALIFY ROW_NUMBER() OVER (
     PARTITION BY game_date, player_lookup
