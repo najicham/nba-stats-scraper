@@ -976,6 +976,160 @@ def check_filter_audit_jammed(bq_client: bigquery.Client, lookback_days: int = 3
         return False, {}, f"Filter audit check error: {e}"
 
 
+def check_registry_blocked_enabled(bq_client: bigquery.Client) -> Tuple[bool, Dict, Optional[str]]:
+    """Session 477: Alert when enabled models have status=blocked in the registry.
+
+    This fires same-day. Root cause: decay CF sets status=blocked on degradation and
+    never auto-unblocks. After manual re-enable or HR recovery, status stays blocked.
+    BB pipeline skips ALL blocked models → 0 picks despite healthy predictions.
+
+    Seen: Mar 20-21 2026 — v9_low_vegas + lgbm_0103_0227 both enabled=true but
+    status=blocked. Produced 0 picks for 2 days undetected.
+    Fix: ./bin/unblock-model.sh MODEL_ID
+    """
+    try:
+        query = f"""
+        SELECT
+            COUNT(*) as blocked_enabled_count,
+            STRING_AGG(model_id, ', ' ORDER BY model_id) as model_ids
+        FROM `{PROJECT_ID}.nba_predictions.model_registry`
+        WHERE enabled = TRUE AND status = 'blocked'
+        """
+        rows = list(bq_client.query(query).result(timeout=30))
+        if not rows:
+            return True, {}, None
+
+        row = rows[0]
+        count = row.blocked_enabled_count or 0
+        model_ids = row.model_ids or ''
+        metrics = {'blocked_enabled_count': count, 'model_ids': model_ids}
+
+        if count > 0:
+            return False, metrics, (
+                f"REGISTRY MISMATCH: {count} model(s) enabled=TRUE but status='blocked'. "
+                f"BB pipeline skips blocked models — these are invisible to best bets. "
+                f"Models: {model_ids}. "
+                f"Fix: `./bin/unblock-model.sh MODEL_ID` for each, then `./bin/refresh-model-cache.sh --verify`."
+            )
+        return True, metrics, None
+
+    except Exception as e:
+        logger.error(f"Error in registry blocked enabled check: {e}")
+        return False, {}, f"Registry blocked enabled check error: {e}"
+
+
+def check_model_recovery_gap(bq_client: bigquery.Client) -> Tuple[bool, Dict, Optional[str]]:
+    """Session 477: Alert when a blocked model has recovered to HEALTHY performance.
+
+    Decay CF is one-directional (HEALTHY→BLOCKED). Models that recover require manual
+    unblock. This check surfaces models where model_performance_daily shows HEALTHY
+    but registry still shows blocked — safe to unblock.
+    """
+    try:
+        query = f"""
+        WITH latest_perf AS (
+            SELECT system_id, model_state, rolling_hr_7d, n_graded_7d
+            FROM (
+                SELECT system_id, model_state, rolling_hr_7d, n_graded_7d,
+                    ROW_NUMBER() OVER (PARTITION BY system_id ORDER BY game_date DESC) as rn
+                FROM `{PROJECT_ID}.nba_predictions.model_performance_daily`
+                WHERE game_date >= CURRENT_DATE() - 7
+            )
+            WHERE rn = 1
+        )
+        SELECT
+            mr.model_id,
+            lp.model_state,
+            ROUND(lp.rolling_hr_7d, 1) as rolling_hr_7d,
+            lp.n_graded_7d
+        FROM `{PROJECT_ID}.nba_predictions.model_registry` mr
+        JOIN latest_perf lp ON mr.model_id = lp.system_id
+        WHERE mr.enabled = TRUE
+          AND mr.status = 'blocked'
+          AND lp.model_state = 'HEALTHY'
+          AND lp.rolling_hr_7d >= 52.4
+          AND lp.n_graded_7d >= 10
+        ORDER BY lp.rolling_hr_7d DESC
+        """
+        rows = list(bq_client.query(query).result(timeout=30))
+        if not rows:
+            return True, {'recovery_gap_count': 0}, None
+
+        recovery_models = [
+            f"{r.model_id} ({r.rolling_hr_7d}% HR, N={r.n_graded_7d})"
+            for r in rows
+        ]
+        metrics = {'recovery_gap_count': len(rows), 'models': recovery_models}
+        return False, metrics, (
+            f"MODEL RECOVERY GAP: {len(rows)} model(s) HEALTHY in performance "
+            f"but still blocked in registry. Safe to unblock. "
+            f"Models: {', '.join(recovery_models)}. "
+            f"Fix: `./bin/unblock-model.sh MODEL_ID` for each."
+        )
+
+    except Exception as e:
+        logger.error(f"Error in model recovery gap check: {e}")
+        return False, {}, f"Model recovery gap check error: {e}"
+
+
+def check_bb_candidates_today(bq_client: bigquery.Client) -> Tuple[bool, Dict, Optional[str]]:
+    """Session 477: Alert when Phase 4 completed but BB pipeline produced 0 candidates.
+
+    Distinguishes from normal 0-pick days: here the pipeline stalled entirely
+    (0 rows in model_bb_candidates) vs. pipeline ran but found no picks.
+    Only fires 2+ hours after Phase 4 completion to avoid false positives during normal run.
+    """
+    try:
+        query = f"""
+        WITH phase4_done AS (
+            SELECT MAX(completed_at) as phase4_completed_at
+            FROM `{PROJECT_ID}.nba_orchestration.phase_completions`
+            WHERE game_date = CURRENT_DATE()
+              AND phase_name IN ('phase4', 'ml_feature_store', 'precompute')
+        ),
+        bb_candidates AS (
+            SELECT COUNT(*) as candidate_count
+            FROM `{PROJECT_ID}.nba_predictions.model_bb_candidates`
+            WHERE game_date = CURRENT_DATE()
+        )
+        SELECT
+            p.phase4_completed_at,
+            b.candidate_count,
+            CASE
+                WHEN p.phase4_completed_at IS NOT NULL
+                  AND b.candidate_count = 0
+                  AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), p.phase4_completed_at, HOUR) >= 2
+                THEN 1
+                ELSE 0
+            END as pipeline_stalled
+        FROM phase4_done p
+        CROSS JOIN bb_candidates b
+        """
+        rows = list(bq_client.query(query).result(timeout=30))
+        if not rows:
+            return True, {'skipped': True, 'reason': 'no_phase_completion_data'}, None
+
+        row = rows[0]
+        metrics = {
+            'phase4_completed_at': str(row.phase4_completed_at) if row.phase4_completed_at else None,
+            'candidate_count': row.candidate_count,
+            'pipeline_stalled': row.pipeline_stalled,
+        }
+        if row.pipeline_stalled:
+            return False, metrics, (
+                f"BB PIPELINE STALLED: Phase 4 completed at {row.phase4_completed_at} "
+                f"but 0 BB candidates after 2+ hours. BB pipeline did not run. "
+                f"Fix: `gcloud pubsub topics publish nba-phase6-export-trigger "
+                f"--project=nba-props-platform "
+                f"--message='{{\"export_types\": [\"signal-best-bets\"], \"target_date\": \"YYYY-MM-DD\"}}'`"
+            )
+        return True, metrics, None
+
+    except Exception as e:
+        logger.error(f"Error in BB candidates today check: {e}")
+        return False, {}, f"BB candidates today check error: {e}"
+
+
 def _is_break_window(client) -> bool:
     """Return True if no regular-season games in the last 3 days (i.e., we're in a break)."""
     from shared.utils.schedule_guard import has_regular_season_games
@@ -1105,6 +1259,51 @@ def main():
                 )
     else:
         logger.info("Break day — skipping shadow model auto-heal")
+
+    # Session 477: Registry integrity checks — fire regardless of break day
+    # (registry state is always relevant, not just on game days)
+    registry_check = CanaryCheck(
+        name="Registry Blocked Models",
+        phase="registry_blocked_enabled",
+        query="",
+        thresholds={},
+        description="Detects enabled models with status=blocked — invisible to BB pipeline (Session 477)"
+    )
+    registry_passed, registry_metrics, registry_error = check_registry_blocked_enabled(client)
+    registry_status = "✅ PASS" if registry_passed else "❌ FAIL"
+    logger.info(f"Registry Blocked Models: {registry_status}")
+    if not registry_passed:
+        logger.warning(f"  Error: {registry_error}")
+    results.append((registry_check, registry_passed, registry_metrics, registry_error))
+
+    recovery_check = CanaryCheck(
+        name="Model Recovery Gap",
+        phase="model_recovery_gap",
+        query="",
+        thresholds={},
+        description="Detects HEALTHY models still blocked in registry — safe to unblock (Session 477)"
+    )
+    recovery_passed, recovery_metrics, recovery_error = check_model_recovery_gap(client)
+    recovery_status = "✅ PASS" if recovery_passed else "❌ FAIL"
+    logger.info(f"Model Recovery Gap: {recovery_status}")
+    if not recovery_passed:
+        logger.warning(f"  Error: {recovery_error}")
+    results.append((recovery_check, recovery_passed, recovery_metrics, recovery_error))
+
+    if not is_break:
+        bb_pipeline_check = CanaryCheck(
+            name="BB Pipeline Today",
+            phase="bb_candidates_today",
+            query="",
+            thresholds={},
+            description="Detects Phase 4 complete but BB pipeline stalled with 0 candidates (Session 477)"
+        )
+        bb_pipeline_passed, bb_pipeline_metrics, bb_pipeline_error = check_bb_candidates_today(client)
+        bb_pipeline_status = "✅ PASS" if bb_pipeline_passed else "❌ FAIL"
+        logger.info(f"BB Pipeline Today: {bb_pipeline_status}")
+        if not bb_pipeline_passed:
+            logger.warning(f"  Error: {bb_pipeline_error}")
+        results.append((bb_pipeline_check, bb_pipeline_passed, bb_pipeline_metrics, bb_pipeline_error))
 
     # Session 302: Auto-heal Phase 3 partial game coverage gaps
     if not is_break:
