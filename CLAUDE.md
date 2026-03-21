@@ -250,6 +250,9 @@ WHERE game_date >= CURRENT_DATE() - 7 ORDER BY game_date DESC;
 | BDL scraper 0 records | EXPECTED — BDL intentionally disabled |
 | Orchestrator not triggering P3 | NOT a bug — Phase 3 uses direct Pub/Sub |
 | Docker cache stale deploy | `./bin/hot-deploy.sh SERVICE` |
+| **Registry change no effect on predictions** | Worker auto-refreshes model list every 4h (Session 474 TTL). For immediate same-day effect: `./bin/refresh-model-cache.sh --verify`. Old manual `MODEL_CACHE_REFRESH` env var still works as override. |
+| **Pick drought (0 picks/day)** | Canary alerts fire every 30min. Root causes: (1) edge collapse — `AVG(ABS(predicted_points-current_points_line)) < 1.5` (use Feb-trained models), (2) model coverage gap — enabled models not generating predictions (check `./bin/refresh-model-cache.sh`), (3) fleet BLOCKED — all models <52.4% HR. |
+| **signal_health_daily/model_performance_daily stale** | Fixed Session 474: `post_grading_export` now runs analytics even when `graded_count=0`. Manual backfill: `PYTHONPATH=. .venv/bin/python3 ml/signals/signal_health.py --date YYYY-MM-DD` |
 | Cloud Function env vars | Use `gcloud functions describe FUNC`, not `gcloud run services describe`. CFs are NOT Cloud Run services. |
 | **Phase 6 trigger message format** | Use `{"export_types": ["signal-best-bets"], "target_date": "2026-02-24"}` — NOT `game_date`. See `phase6_export/main.py`. |
 | **Worker requirements-lock.txt** | Worker Dockerfile uses `requirements-lock.txt`, NOT `requirements.txt`. Always update the lock file for dependency changes. |
