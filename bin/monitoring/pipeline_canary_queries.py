@@ -1130,6 +1130,145 @@ def check_bb_candidates_today(bq_client: bigquery.Client) -> Tuple[bool, Dict, O
         return False, {}, f"BB candidates today check error: {e}"
 
 
+def check_edge_collapse_alert(bq_client: bigquery.Client) -> Tuple[bool, Dict, Optional[str]]:
+    """Session 477 Error 004: Alert when enabled models drop below avg_abs_diff collapse threshold.
+
+    CatBoost collapse threshold: 1.2 (below this, symmetric trees reconstruct the line —
+    picks are indistinguishable from noise). LGBM/XGBoost threshold: 1.4.
+    Only fires when model has >= 30 predictions (guards against early-morning false positives).
+
+    Root cause: Models trained on tight-market data (Vegas MAE < 5.0) predict close to the
+    line by design. Fix: Use Feb-trained LGBM models (train_end <= Feb 28).
+    """
+    try:
+        query = f"""
+        WITH enabled_models AS (
+            SELECT model_id,
+                   CASE
+                       WHEN LOWER(model_id) LIKE '%lgbm%' OR LOWER(model_id) LIKE '%xgb%' THEN 'lgbm_xgb'
+                       ELSE 'catboost'
+                   END AS framework
+            FROM `{PROJECT_ID}.nba_predictions.model_registry`
+            WHERE enabled = TRUE AND status = 'active'
+        ),
+        model_edges AS (
+            SELECT p.system_id,
+                   COUNT(*) AS n_predictions,
+                   ROUND(AVG(ABS(p.predicted_points - p.current_points_line)), 3) AS avg_abs_diff
+            FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions` p
+            WHERE p.game_date = CURRENT_DATE()
+              AND p.is_active = TRUE
+              AND p.current_points_line IS NOT NULL
+            GROUP BY p.system_id
+        )
+        SELECT
+            m.model_id,
+            m.framework,
+            e.n_predictions,
+            e.avg_abs_diff,
+            CASE
+                WHEN m.framework = 'catboost' AND e.avg_abs_diff < 1.2 THEN TRUE
+                WHEN m.framework = 'lgbm_xgb' AND e.avg_abs_diff < 1.4 THEN TRUE
+                ELSE FALSE
+            END AS collapsed
+        FROM enabled_models m
+        JOIN model_edges e ON m.model_id = e.system_id
+        WHERE e.n_predictions >= 30
+        ORDER BY e.avg_abs_diff ASC
+        """
+        rows = list(bq_client.query(query).result(timeout=30))
+        if not rows:
+            return True, {'skipped': True, 'reason': 'no_model_predictions_yet'}, None
+
+        collapsed = [r for r in rows if r.collapsed]
+        all_models = {r.model_id: {'framework': r.framework, 'avg_abs_diff': float(r.avg_abs_diff), 'n': r.n_predictions} for r in rows}
+        metrics = {
+            'models_checked': len(rows),
+            'collapsed_count': len(collapsed),
+            'all_models': all_models,
+        }
+
+        if collapsed:
+            details = ', '.join(f"{r.model_id} ({r.avg_abs_diff:.2f})" for r in collapsed)
+            return False, metrics, (
+                f"EDGE COLLAPSE ({len(collapsed)} model(s)): avg_abs_diff below threshold "
+                f"(CatBoost<1.2, LGBM/XGB<1.4). Models: {details}. "
+                f"Picks from collapsed models are statistically indistinguishable from noise. "
+                f"Fix: Disable collapsed models, use Feb-trained LGBM (train_end <= Feb 28)."
+            )
+        return True, metrics, None
+
+    except Exception as e:
+        logger.error(f"Error in edge collapse alert check: {e}")
+        return False, {}, f"Edge collapse alert check error: {e}"
+
+
+def check_new_model_no_predictions(bq_client: bigquery.Client) -> Tuple[bool, Dict, Optional[str]]:
+    """Session 477 Error 005: Alert when a newly registered model has 0 predictions today.
+
+    Models registered < 48h ago with enabled=TRUE and status='active' should appear
+    in player_prop_predictions today if games are scheduled. Zero predictions means
+    the worker hasn't loaded the new registry entry (4h TTL auto-refresh).
+
+    Fix: ./bin/refresh-model-cache.sh --verify
+    """
+    try:
+        query = f"""
+        WITH new_models AS (
+            SELECT model_id
+            FROM `{PROJECT_ID}.nba_predictions.model_registry`
+            WHERE enabled = TRUE
+              AND status = 'active'
+              AND created_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 48 HOUR)
+        ),
+        games_today AS (
+            SELECT COUNT(*) AS game_count
+            FROM `{PROJECT_ID}.nba_reference.nba_schedule`
+            WHERE game_date = CURRENT_DATE()
+              AND game_status IN (1, 2, 3)
+        ),
+        model_predictions AS (
+            SELECT system_id, COUNT(*) AS prediction_count
+            FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
+            WHERE game_date = CURRENT_DATE()
+              AND is_active = TRUE
+            GROUP BY system_id
+        )
+        SELECT
+            nm.model_id,
+            COALESCE(mp.prediction_count, 0) AS prediction_count,
+            (SELECT game_count FROM games_today) AS games_today
+        FROM new_models nm
+        LEFT JOIN model_predictions mp ON nm.model_id = mp.system_id
+        WHERE (SELECT game_count FROM games_today) > 0
+        """
+        rows = list(bq_client.query(query).result(timeout=30))
+        if not rows:
+            return True, {'skipped': True, 'reason': 'no_new_models_or_no_games'}, None
+
+        missing = [r for r in rows if r.prediction_count == 0]
+        all_new = {r.model_id: r.prediction_count for r in rows}
+        metrics = {
+            'new_models_checked': len(rows),
+            'missing_predictions_count': len(missing),
+            'model_details': all_new,
+        }
+
+        if missing:
+            model_ids = ', '.join(r.model_id for r in missing)
+            return False, metrics, (
+                f"NEW MODEL NO PREDICTIONS: {len(missing)} newly registered model(s) have 0 predictions today. "
+                f"Models: {model_ids}. "
+                f"Worker 4h TTL cache hasn't loaded new registry entries. "
+                f"Fix: `./bin/refresh-model-cache.sh --verify`"
+            )
+        return True, metrics, None
+
+    except Exception as e:
+        logger.error(f"Error in new model no predictions check: {e}")
+        return False, {}, f"New model no predictions check error: {e}"
+
+
 def _is_break_window(client) -> bool:
     """Return True if no regular-season games in the last 3 days (i.e., we're in a break)."""
     from shared.utils.schedule_guard import has_regular_season_games
@@ -1304,6 +1443,44 @@ def main():
         if not bb_pipeline_passed:
             logger.warning(f"  Error: {bb_pipeline_error}")
         results.append((bb_pipeline_check, bb_pipeline_passed, bb_pipeline_metrics, bb_pipeline_error))
+
+    # Session 477 Error 004: Edge collapse alert (game-day only — needs today's predictions)
+    if not is_break:
+        edge_collapse_check = CanaryCheck(
+            name="Edge Collapse Alert",
+            phase="edge_collapse_alert",
+            query="",
+            thresholds={},
+            description="Alerts when enabled CatBoost avg_abs_diff<1.2 or LGBM<1.4 — picks indistinguishable from noise (Session 477)"
+        )
+        edge_passed, edge_metrics, edge_error = check_edge_collapse_alert(client)
+        edge_status = "✅ PASS" if edge_passed else "❌ FAIL"
+        if edge_metrics.get('skipped'):
+            logger.info(f"Edge Collapse Alert: ⏭️  SKIPPED ({edge_metrics.get('reason')})")
+        else:
+            logger.info(f"Edge Collapse Alert: {edge_status}")
+            if not edge_passed:
+                logger.warning(f"  Error: {edge_error}")
+        results.append((edge_collapse_check, edge_passed, edge_metrics, edge_error))
+
+    # Session 477 Error 005: New model with no predictions (game-day only)
+    if not is_break:
+        new_model_check = CanaryCheck(
+            name="New Model No Predictions",
+            phase="new_model_no_predictions",
+            query="",
+            thresholds={},
+            description="Alerts when model registered <48h ago has 0 predictions — worker cache not refreshed (Session 477)"
+        )
+        nm_passed, nm_metrics, nm_error = check_new_model_no_predictions(client)
+        nm_status = "✅ PASS" if nm_passed else "❌ FAIL"
+        if nm_metrics.get('skipped'):
+            logger.info(f"New Model No Predictions: ⏭️  SKIPPED ({nm_metrics.get('reason')})")
+        else:
+            logger.info(f"New Model No Predictions: {nm_status}")
+            if not nm_passed:
+                logger.warning(f"  Error: {nm_error}")
+        results.append((new_model_check, nm_passed, nm_metrics, nm_error))
 
     # Session 302: Auto-heal Phase 3 partial game coverage gaps
     if not is_break:

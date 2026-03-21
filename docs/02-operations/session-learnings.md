@@ -1508,3 +1508,32 @@ See `docs/08-projects/current/fleet-lifecycle-automation/00-PLAN.md` for the 3-t
 **Fix:** Promoted `over_line_rose_heavy` from observation to active blocking filter. 5-season confirmation provides sufficient evidence.
 
 **Lesson:** When the market moves strongly in one direction (line rising = books raising the bar), betting the opposite is structurally disadvantaged. The model's edge is real but the market already priced in the same information — and then some.
+
+### Registry Status Stale After Model Re-Enable (Session 477)
+
+**Symptom:** Models re-enabled in `model_registry` (`enabled=TRUE`) still produced 0 picks for 2+ days. BB pipeline ran daily but silently skipped all picks. No alert fired.
+
+**Root Cause:** The decay CF (`decay-detection`) is one-directional: it sets `status='blocked'` when HR drops, but never auto-unblocks when HR recovers. After manual re-enable (`UPDATE ... SET enabled=TRUE`), the `status` column remained `'blocked'`. The BB aggregator checks `status != 'blocked'` before processing any model — so `enabled=TRUE, status='blocked'` models are completely invisible to the pipeline.
+
+**Fix:**
+1. `./bin/unblock-model.sh MODEL_ID` — resets `status='active'` for re-enabled models
+2. Three new canaries added: `check_registry_blocked_enabled`, `check_model_recovery_gap`, `check_bb_candidates_today`
+3. New script `bin/unblock-model.sh` documents the two-step re-enable process
+
+**Lesson:** `enabled` and `status` are independent registry fields with no sync enforcement. Re-enabling a model resets `enabled` only — `status` must be separately reset. Any re-enable workflow must include both fields. The BB pipeline's silent skip (no error, no log, just 0 picks) makes this failure mode invisible without explicit monitoring.
+
+### BB Pipeline Stall — Phase 4 Complete, Phase 5 Never Triggered (Session 477)
+
+**Symptom:** Phase 4 precompute completed at ~9 AM ET. Best bets pipeline produced 0 picks for 2 consecutive days. No Slack alert. Workers showed as healthy in Cloud Run.
+
+**Root Cause:** Phase 5 → Phase 6 (BB export) is triggered by a Pub/Sub message from the Phase 5 orchestrator. The Pub/Sub trigger was not received — either the message was never published or the subscription ACKed it without delivery. The BB pipeline uses a separate execution path from regular predictions (Phase 5 covers predictions; Phase 6 covers BB export). Phase 4 completion does not directly trigger Phase 6.
+
+**Fix:** Manual trigger via Pub/Sub:
+```bash
+gcloud pubsub topics publish nba-phase6-export-trigger \
+  --project=nba-props-platform \
+  --message='{"export_types": ["signal-best-bets"], "target_date": "YYYY-MM-DD"}'
+```
+Added `check_bb_candidates_today` canary: fires when Phase 4 complete but `model_bb_candidates` has 0 rows after 2+ hours.
+
+**Lesson:** Pub/Sub delivery is not guaranteed for low-frequency messages. The orchestration chain (Phase 4 → 5 → 6) has no end-to-end validation. A stall anywhere silently produces 0 picks with no error surfaced to operators. Every phase boundary needs an explicit "did the next phase start?" check, not just "did this phase complete?"
