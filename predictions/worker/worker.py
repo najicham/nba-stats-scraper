@@ -1985,9 +1985,12 @@ def format_prediction_for_bigquery(
 
         # Star UNDER bias filter: Model under-predicts stars by ~9 pts
         # High-edge UNDERs on stars are systematically wrong (Feb 2: 0/7)
+        # Session 476: Exempt v9_low_vegas — specifically calibrated with low vegas weight
+        # to avoid star underprediction bias. 57.3% UNDER HR at edge 3+ in March 2026.
         season_avg = features.get('points_avg_season', 0)
         if (season_avg >= 25 and recommendation == 'UNDER' and edge >= 5
-                and '_q4' not in system_id):
+                and '_q4' not in system_id
+                and 'v9_low_vegas' not in system_id):
             is_actionable = False
             filter_reason = 'star_under_bias_suspect'
             logger.info(

@@ -565,10 +565,14 @@ class BestBetsAggregator:
             #   2021-22: 43%, 2022-23: 45%, 2023-24: 49%, 2024-25: 50%.
             # Only 2025-26 (58%) was profitable at edge 3-5 — single-season artifact.
             # UNDER at edge 3-5 is 56.7% consistently. OVER needs edge 5+ to be viable.
-            # Session 475: Raised from 5.0 to 6.0. 9-agent analysis (Mar 20 2026) shows
-            # OVER edge 5-7 collapsing to 28.6% HR in final stretch (Mar 7+). Both OVER
-            # and UNDER collapsed symmetrically at edge 5+ in tight-market March regime.
-            over_floor = 6.0
+            # Session 475: Raised from 5.0 to 6.0 based on Mar 7+ collapse (28.6% HR).
+            # Session 476: Lowered back to 5.0. 9-agent analysis (Mar 21 2026) found:
+            #   - The Mar 7+ collapse was N=3 per bucket (statistically meaningless)
+            #   - Season-long edge 5-6 HR: 63.0% (N=27) — viable tier
+            #   - The 6.0 floor was blocking everything since enabled fleet avg_abs_diff
+            #     peaked at 1.53 (LGBM), producing zero edge-6+ OVER candidates
+            #   - v9_low_vegas (enabled Session 476) produces edge 5-6 OVER picks
+            over_floor = 5.0
             regime_delta = self._regime_context.get('over_edge_floor_delta', 0)
             hse_rescued = signal_rescued and rescue_signal == 'high_scoring_environment_over'
             if (pred.get('recommendation') == 'OVER'
@@ -767,13 +771,15 @@ class BestBetsAggregator:
 
             # Opponent depleted UNDER block (Session 374b): UNDER + 3+ opponent stars out = 44.4% HR (N=207).
             # When opponent is depleted, game becomes less competitive, UNDER less predictable.
+            # Session 476: Demoted to observation. 9-agent analysis found CF HR = 83.3% (N=6)
+            # — blocking winners in recent data. Original 44.4% HR (N=207) may not hold in
+            # late-season tight market where depleted rosters create scoring variance.
             opponent_stars_out = pred.get('opponent_stars_out') or 0
             if (pred.get('recommendation') == 'UNDER'
                     and opponent_stars_out >= 3):
                 filter_counts['opponent_depleted_under'] += 1
                 _record_filtered(pred, 'opponent_depleted_under', pred_edge)
-                if 'opponent_depleted_under' not in self._runtime_demoted:
-                    continue
+                # continue  # Session 476: observation mode — CF HR 83.3% (N=6) blocking winners
 
             # Q4 scorer UNDER block (Session 397): UNDER + q4_scoring_ratio >= 0.35 = 34.0% HR (N=359).
             # Players who score disproportionately in Q4 → model undershoots them.
