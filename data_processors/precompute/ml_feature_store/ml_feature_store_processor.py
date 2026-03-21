@@ -461,7 +461,7 @@ class MLFeatureStoreProcessor(
 
     Consumers: All 5 Phase 5 prediction systems (especially CatBoost V8)
     """
-    
+
     # Processor configuration
     table_name = "ml_feature_store_v2"
     dataset_id = "nba_predictions"  # Cross-dataset write!
@@ -762,7 +762,7 @@ class MLFeatureStoreProcessor(
     # ========================================================================
     # DATA EXTRACTION
     # ========================================================================
-    
+
     def extract_raw_data(self) -> None:
         """
         Extract data from Phase 3/4 tables.
@@ -898,6 +898,20 @@ class MLFeatureStoreProcessor(
         self._timing['extract_raw_data'] = time.time() - extract_start
         logger.info(f"Extract phase complete in {self._timing['extract_raw_data']:.2f}s")
 
+    def _has_games_on_date(self, analysis_date) -> bool:
+        """Check if any NBA regular-season games are scheduled for analysis_date."""
+        query = f"""
+            SELECT COUNT(*) as game_count
+            FROM `{self.project_id}.nba_reference.nba_schedule`
+            WHERE game_date = '{analysis_date}'
+        """
+        try:
+            result = list(self.bq_client.query(query).result(timeout=30))
+            return result[0].game_count > 0
+        except Exception as e:
+            logger.warning(f"Could not check schedule for {analysis_date}: {e}")
+            return True  # Assume games exist if we can't check — safer to raise ValueError
+
     def _extract_source_hashes(self, analysis_date: date) -> None:
         """
         Extract data_hash from all 4 Phase 4 upstream tables.
@@ -1000,11 +1014,11 @@ class MLFeatureStoreProcessor(
             return True
 
         return False
-    
+
     def _create_early_season_placeholders(self, analysis_date: date) -> None:
         """
         Create placeholder records for early season.
-        
+
         All features set to NULL, early_season_flag = TRUE.
         Source tracking still populated to show Phase 4 status.
         """
@@ -1022,23 +1036,23 @@ class MLFeatureStoreProcessor(
                 'universal_player_id': player_row.get('universal_player_id'),
                 'game_date': analysis_date.isoformat(),
                 'game_id': player_row['game_id'],
-                
+
                 # NULL feature array
                 'features': [None] * FEATURE_COUNT,
                 'feature_names': FEATURE_NAMES,
                 'feature_count': FEATURE_COUNT,
                 'feature_version': FEATURE_VERSION,
-                
+
                 # Context
                 'opponent_team_abbr': player_row.get('opponent_team_abbr'),
                 'is_home': player_row.get('is_home'),
                 'days_rest': player_row.get('days_rest'),
-                
+
                 # Quality
                 'feature_quality_score': 0.0,
                 'feature_generation_time_ms': None,
                 'data_source': 'early_season',
-                
+
                 # v4.0 Source tracking (still populated!)
                 **self.build_source_tracking_fields(),
 
@@ -1087,7 +1101,7 @@ class MLFeatureStoreProcessor(
             record['data_hash'] = self.compute_data_hash(record)
 
             self.transformed_data.append(record)
-        
+
         logger.info(f"Created {len(self.transformed_data)} early season placeholder records")
 
     # ========================================================================
@@ -1289,7 +1303,7 @@ class MLFeatureStoreProcessor(
     # ========================================================================
     # CALCULATION - MAIN FLOW
     # ========================================================================
-    
+
     def calculate_precompute(self) -> None:
         """
         Calculate 25 features for each player.
@@ -1645,17 +1659,17 @@ class MLFeatureStoreProcessor(
             'feature_names': FEATURE_NAMES,
             'feature_count': FEATURE_COUNT,
             'feature_version': FEATURE_VERSION,
-            
+
             # Context
             'opponent_team_abbr': player_row.get('opponent_team_abbr'),
             'is_home': player_row.get('is_home'),
             'days_rest': phase3_data.get('days_rest'),
-            
+
             # Quality (quality_tier uses feature store visibility tiers)
             'quality_tier': get_feature_quality_tier(quality_score),
             'feature_quality_score': quality_score,
             'data_source': data_source,
-            
+
             # v4.0 Source tracking (one line via base class method!)
             **self.build_source_tracking_fields(),
 
@@ -1768,7 +1782,7 @@ class MLFeatureStoreProcessor(
                 record[f'feature_{i}_value'] = val
 
         return record
-    
+
     def _extract_all_features(self, phase4_data: Dict, phase3_data: Dict,
                                player_lookup: str = None, opponent: str = None) -> tuple:
         """
@@ -1787,47 +1801,47 @@ class MLFeatureStoreProcessor(
         """
         features = []
         feature_sources = {}
-        
+
         # Features 0-4: Recent Performance
         features.append(self._get_feature_with_fallback(0, 'points_avg_last_5', phase4_data, phase3_data, 10.0, feature_sources))
         features.append(self._get_feature_with_fallback(1, 'points_avg_last_10', phase4_data, phase3_data, 10.0, feature_sources))
         features.append(self._get_feature_with_fallback(2, 'points_avg_season', phase4_data, phase3_data, 10.0, feature_sources))
         features.append(self._get_feature_with_fallback(3, 'points_std_last_10', phase4_data, phase3_data, 5.0, feature_sources))
         features.append(self._get_feature_with_fallback(4, 'games_in_last_7_days', phase4_data, phase3_data, 3.0, feature_sources))
-        
+
         # Features 5-8: Composite Factors (Phase 4 ONLY)
         features.append(self._get_feature_phase4_only(5, 'fatigue_score', phase4_data, 50.0, feature_sources))
         features.append(self._get_feature_phase4_only(6, 'shot_zone_mismatch_score', phase4_data, 0.0, feature_sources))
         features.append(self._get_feature_phase4_only(7, 'pace_score', phase4_data, 0.0, feature_sources))
         features.append(self._get_feature_phase4_only(8, 'usage_spike_score', phase4_data, 0.0, feature_sources))
-        
+
         # Features 9-12: Derived Factors (CALCULATE)
         features.append(self.feature_calculator.calculate_rest_advantage(phase3_data))
         feature_sources[9] = 'calculated'
-        
+
         features.append(self.feature_calculator.calculate_injury_risk(phase3_data))
         feature_sources[10] = 'calculated'
-        
+
         features.append(self.feature_calculator.calculate_recent_trend(phase3_data))
         feature_sources[11] = 'calculated'
-        
+
         features.append(self.feature_calculator.calculate_minutes_change(phase4_data, phase3_data))
         feature_sources[12] = 'calculated'
-        
+
         # Features 13-14: Matchup Context
         features.append(self._get_feature_with_fallback(13, 'opponent_def_rating', phase4_data, phase3_data, 112.0, feature_sources))
         features.append(self._get_feature_with_fallback(14, 'opponent_pace', phase4_data, phase3_data, 100.0, feature_sources))
-        
+
         # Features 15-17: Game Context (Phase 3 only)
         features.append(float(phase3_data.get('home_game') or 0))
         feature_sources[15] = 'phase3'
 
         features.append(float(phase3_data.get('back_to_back') or 0))
         feature_sources[16] = 'phase3'
-        
+
         features.append(1.0 if (phase3_data.get('season_phase') or '').lower() == 'playoffs' else 0.0)
         feature_sources[17] = 'phase3'
-        
+
         # Features 18-21: Shot Zones (NULLABLE - use NULL instead of defaults)
         # Shot zone features - use NULL instead of defaults when data missing
         paint_rate = self._get_feature_nullable(18, 'paint_rate_last_10', phase4_data, phase3_data, feature_sources)
@@ -1841,11 +1855,11 @@ class MLFeatureStoreProcessor(
 
         features.append(self.feature_calculator.calculate_pct_free_throw(phase3_data))
         feature_sources[21] = 'calculated'
-        
+
         # Features 22-24: Team Context
         features.append(self._get_feature_with_fallback(22, 'team_pace_last_10', phase4_data, phase3_data, 100.0, feature_sources))
         features.append(self._get_feature_with_fallback(23, 'team_off_rating_last_10', phase4_data, phase3_data, 112.0, feature_sources))
-        
+
         features.append(self.feature_calculator.calculate_team_win_pct(phase3_data))
         feature_sources[24] = 'calculated'
 
@@ -2202,7 +2216,7 @@ class MLFeatureStoreProcessor(
         # Data not available - return None instead of default
         feature_sources[index] = 'missing'
         return None
-    
+
     def _get_injured_teammates_ppg(self, team_abbr: str, game_date: date) -> float:
         """
         Calculate total PPG of injured teammates (OUT/QUESTIONABLE/DOUBTFUL).
@@ -2313,15 +2327,15 @@ class MLFeatureStoreProcessor(
         feature_sources[index] = 'default'
         logger.warning(f"Feature {index} ({field_name}) missing from Phase 4, using default={default}")
         return float(default)
-    
+
     # ========================================================================
     # SAVE TO BIGQUERY (Override base class)
     # ========================================================================
-    
+
     def save_precompute(self) -> None:
         """
         Save feature vectors to BigQuery using BatchWriter.
-        
+
         Overrides base class because:
         1. Cross-dataset write (nba_predictions not nba_precompute)
         2. Uses specialized BatchWriter with retry logic
@@ -2330,9 +2344,9 @@ class MLFeatureStoreProcessor(
         if not self.transformed_data:
             logger.warning("No transformed data to write")
             return
-        
+
         analysis_date = self.opts['analysis_date']
-        
+
         logger.info(f"Writing {len(self.transformed_data)} feature records to {self.dataset_id}.{self.table_name}")
 
         # Session 49: Validate batch variance BEFORE writing
@@ -2371,16 +2385,16 @@ class MLFeatureStoreProcessor(
             table_name=self.table_name,   # ml_feature_store_v2
             game_date=analysis_date
         )
-        
+
         # Track stats for monitoring
         self.stats['rows_processed'] = write_stats['rows_processed']
         self.stats['rows_failed'] = write_stats['rows_failed']
         self.stats['batches_written'] = write_stats['batches_written']
         self.stats['batches_failed'] = write_stats['batches_failed']
-        
+
         if write_stats['errors']:
             logger.error(f"Write errors: {write_stats['errors']}")
-        
+
         logger.info(f"Write complete: {write_stats['rows_processed']}/{len(self.transformed_data)} rows "
                    f"({write_stats['batches_written']} batches)")
 
