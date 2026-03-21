@@ -38,20 +38,23 @@ Key structural finding: **CatBoost is architecturally 40% tighter than LGBM** �
 - [x] Worker cache refreshed (revision 00415+)
 - [x] Pushed to main → auto-deploy triggered
 
-### Training (in progress)
-- [ ] **LGBM Dec-Feb anchored**: `--train-start 2025-12-15 --train-end 2026-02-14` (background)
+### Training (COMPLETE)
+- [x] **LGBM Dec-Feb anchored** `lgbm_v12_noveg_train1215_0214`: ALL GATES PASSED
+  - HR edge 3+: 63.04%, HR edge 5+: 84.62% (N=13), OVER: 61.9%, UNDER: 64.0%
+  - Vegas bias: -0.05, MAE: 5.16 vs 5.50 baseline
+  - Best segments: edge 5-7 at 88.9% (N=9), Starters UNDER 72.7% (N=11)
+  - Registered as `lgbm_v12_noveg_train1215_0214`, enabled=TRUE, worker cache refreshed
 
 ---
 
-## Current Fleet After Session 476
+## Final Fleet After Session 476
 
-| Model | avg_abs_diff | Status | Type |
-|-------|-------------|--------|------|
-| `catboost_v9_low_vegas_train0106_0205` | 2.85 | enabled (NEW) | CatBoost low-vegas |
-| `lgbm_v12_noveg_train0103_0227` | 1.53 | enabled | LGBM |
-| `catboost_v12_noveg_train0103_0214` | ~0.95 (est) | enabled | CatBoost (new Feb-anchored) |
-
-Plus any models that pass governance from active retrains.
+| Model | avg_abs_diff (Mar 21) | Status | Notes |
+|-------|----------------------|--------|-------|
+| `catboost_v9_low_vegas_train0106_0205` | **2.85** | enabled | Re-enabled; trained to Feb 5; watch HR closely |
+| `lgbm_v12_noveg_train1215_0214` | ~2.0 (est) | **NEW** | Dec 15-Feb 14, 63% HR gate |
+| `lgbm_v12_noveg_train0103_0227` | 1.53 | enabled | Feb 27 training end |
+| `catboost_v12_noveg_train0103_0214` | ~0.95 (est) | enabled | Feb-anchored CatBoost; backup only |
 
 ---
 
@@ -75,9 +78,15 @@ WHERE game_date = '2026-03-22' AND is_active = TRUE AND current_points_line IS N
 GROUP BY 1 ORDER BY 2 DESC
 ```
 
-### Priority 2 — LGBM Retrain Result
-Check if `LGBM_DEC_FEB_ANCHORED` passes governance and what avg_abs_diff it produces.
-If passes: worker auto-picks it up via 4h TTL (or refresh cache manually).
+### Priority 2 — hot_streak_under_risk Audit (next session)
+Filter blocked Kawhi, Wemby, Jalen Green UNDER today.
+Check CF HR — if > 55%, demote to observation.
+```sql
+SELECT filter_name, counterfactual_hr, n_blocked, game_date
+FROM nba_predictions.filter_counterfactual_daily
+WHERE filter_name = 'hot_streak_under_risk' AND game_date >= '2026-03-01'
+ORDER BY game_date DESC
+```
 
 ### Priority 3 — Verify Grading Catchup
 After Mar 16-20 grading completes, league_macro_daily will update with true MAE trajectory.
@@ -88,17 +97,7 @@ This model is 44 days stale (trained to Feb 5). Watch 7d rolling HR closely.
 If 7d HR drops below 45%: disable immediately.
 Governance threshold: disable if `rolling_hr_7d < 47%` at N >= 10.
 
-### Priority 5 — hot_streak_under_risk Audit
-This filter blocked Kawhi, Wemby, Jalen Green UNDER today.
-Check CF HR for this filter in recent data — if > 55%, demote to observation.
-```sql
-SELECT filter_name, counterfactual_hr, n_blocked, game_date
-FROM nba_predictions.filter_counterfactual_daily
-WHERE filter_name = 'hot_streak_under_risk' AND game_date >= '2026-03-01'
-ORDER BY game_date DESC
-```
-
-### Priority 6 — CatBoost Architecture Fix (longer term)
+### Priority 5 — CatBoost Architecture Fix (post-season)
 Per 9-agent finding: remove `line_vs_season_avg` from v12 no-vegas features.
 This feature literally encodes `vegas_line - season_avg`, allowing CatBoost to reconstruct the line.
 Alternative: increase CatBoost l2_leaf_reg to 10-20, reduce depth to 4.
