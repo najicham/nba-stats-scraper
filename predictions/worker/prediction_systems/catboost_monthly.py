@@ -160,7 +160,7 @@ MONTHLY_MODELS = {
         "backtest_hit_rate_all": 53.8,
         "backtest_hit_rate_edge_3plus": 56.3,
         "backtest_n_edge_3plus": 48,
-        "enabled": True,
+        "enabled": False,  # Session 391: registry enabled=False. Dict was incorrectly True.
         "feature_set": "v9",
         "description": "V9_LOW_VEGAS — 0.25x vegas weight, 5x more edge picks, UNDER 61.1%",
     },
@@ -299,7 +299,7 @@ def get_enabled_models_from_registry() -> List[dict]:
         FROM `nba-props-platform.nba_predictions.model_registry`
         WHERE enabled = TRUE
           AND is_production = FALSE
-          AND status IN ('active', 'shadow')
+          AND status IN ('active', 'shadow', 'blocked')
         ORDER BY model_family, training_end_date DESC
         """
         results = list(bq.query(query).result())
