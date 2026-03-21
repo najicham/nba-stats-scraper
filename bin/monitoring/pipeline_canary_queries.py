@@ -842,6 +842,140 @@ def check_live_grading_content(bq_client: bigquery.Client) -> Tuple[bool, Dict, 
         return False, {}, f"Live grading content check error: {e}"
 
 
+def check_pick_drought(bq_client: bigquery.Client, lookback_days: int = 3) -> Tuple[bool, Dict, Optional[str]]:
+    """Session 474: Alert when best-bets picks are zero for 2+ consecutive game days.
+
+    Checks signal_best_bets_picks against the game schedule. Zero picks on scheduled
+    game days means the BB pipeline is producing no output — the most critical failure mode.
+
+    Returns:
+        Tuple of (passed, metrics, error_message)
+    """
+    try:
+        query = f"""
+        WITH game_days AS (
+            SELECT DISTINCT game_date
+            FROM `{PROJECT_ID}.nba_reference.nba_schedule`
+            WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY)
+              AND game_date < CURRENT_DATE()
+              AND game_status IN (1, 2, 3)
+        ),
+        pick_counts AS (
+            SELECT game_date, COUNT(*) AS pick_count
+            FROM `{PROJECT_ID}.nba_predictions.signal_best_bets_picks`
+            WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY)
+              AND game_date < CURRENT_DATE()
+            GROUP BY game_date
+        )
+        SELECT
+            g.game_date,
+            COALESCE(p.pick_count, 0) AS pick_count
+        FROM game_days g
+        LEFT JOIN pick_counts p USING (game_date)
+        ORDER BY g.game_date DESC
+        """
+        rows = list(bq_client.query(query).result(timeout=30))
+
+        if not rows:
+            return True, {'skipped': True, 'reason': 'no_game_days_in_window'}, None
+
+        zero_days = [str(r.game_date) for r in rows if r.pick_count == 0]
+        per_day = {str(r.game_date): r.pick_count for r in rows}
+        metrics = {
+            'game_days_checked': len(rows),
+            'zero_pick_days': zero_days,
+            'per_day': per_day,
+        }
+
+        if len(zero_days) >= 2:
+            return False, metrics, (
+                f"PICK DROUGHT: {len(zero_days)} consecutive game day(s) with 0 best-bet picks "
+                f"({', '.join(zero_days)}). BB pipeline producing no output. "
+                f"Check: model edge distribution (avg_abs_diff), filter audit, model registry."
+            )
+        if len(zero_days) == 1:
+            return True, metrics, None  # Single zero day — warning only, check again next cycle
+
+        return True, metrics, None
+
+    except Exception as e:
+        logger.error(f"Error in pick drought check: {e}")
+        return False, {}, f"Pick drought check error: {e}"
+
+
+def check_filter_audit_jammed(bq_client: bigquery.Client, lookback_days: int = 3) -> Tuple[bool, Dict, Optional[str]]:
+    """Session 474: Alert when BB pipeline has candidates but 0 pass filters for 2+ game days.
+
+    Distinguishes two drought modes:
+    - candidates > 0 but passed = 0: filter blockage or edge floor blocking everything
+    - candidates = 0: upstream problem (edge collapse, model coverage gap)
+
+    Returns:
+        Tuple of (passed, metrics, error_message)
+    """
+    try:
+        query = f"""
+        WITH game_days AS (
+            SELECT DISTINCT game_date
+            FROM `{PROJECT_ID}.nba_reference.nba_schedule`
+            WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY)
+              AND game_date < CURRENT_DATE()
+              AND game_status IN (1, 2, 3)
+        ),
+        audit AS (
+            SELECT game_date,
+                   SUM(total_candidates) AS candidates,
+                   SUM(passed_filters) AS passed
+            FROM `{PROJECT_ID}.nba_predictions.best_bets_filter_audit`
+            WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY)
+              AND game_date < CURRENT_DATE()
+            GROUP BY game_date
+        )
+        SELECT
+            g.game_date,
+            COALESCE(a.candidates, 0) AS candidates,
+            COALESCE(a.passed, 0) AS passed
+        FROM game_days g
+        LEFT JOIN audit a USING (game_date)
+        ORDER BY g.game_date DESC
+        """
+        rows = list(bq_client.query(query).result(timeout=30))
+
+        if not rows:
+            return True, {'skipped': True, 'reason': 'no_game_days_in_window'}, None
+
+        jammed_days = [str(r.game_date) for r in rows if r.candidates > 0 and r.passed == 0]
+        empty_days = [str(r.game_date) for r in rows if r.candidates == 0]
+        per_day = {str(r.game_date): {'candidates': r.candidates, 'passed': r.passed} for r in rows}
+        metrics = {
+            'game_days_checked': len(rows),
+            'jammed_days': jammed_days,
+            'empty_days': empty_days,
+            'per_day': per_day,
+        }
+
+        if len(jammed_days) >= 2:
+            return False, metrics, (
+                f"BB PIPELINE JAMMED: {len(jammed_days)} game day(s) with candidates but 0 passed "
+                f"({', '.join(jammed_days)}). Filters or edge floor blocking all candidates. "
+                f"Check: avg_abs_diff on player_prop_predictions (edge collapse?), "
+                f"signal count gates (real_sc), OVER edge 5+ floor."
+            )
+
+        if len(empty_days) >= 2:
+            return False, metrics, (
+                f"BB PIPELINE EMPTY: {len(empty_days)} game day(s) with 0 candidates entering "
+                f"the pipeline ({', '.join(empty_days)}). Likely edge collapse (avg_abs_diff < 1.5) "
+                f"or model coverage gap (enabled models not generating predictions)."
+            )
+
+        return True, metrics, None
+
+    except Exception as e:
+        logger.error(f"Error in filter audit check: {e}")
+        return False, {}, f"Filter audit check error: {e}"
+
+
 def _is_break_window(client) -> bool:
     """Return True if no regular-season games in the last 3 days (i.e., we're in a break)."""
     from shared.utils.schedule_guard import has_regular_season_games
@@ -895,6 +1029,36 @@ def main():
     if not sched_passed:
         logger.warning(f"  Error: {sched_error}")
     results.append((scheduler_check, sched_passed, sched_metrics, sched_error))
+
+    # Session 474: Check best-bets pick drought (zero picks on game days)
+    if not is_break:
+        drought_check = CanaryCheck(
+            name="Best Bets Pick Drought",
+            phase="bb_pick_drought",
+            query="",
+            thresholds={},
+            description="Alerts when 0 best-bet picks published for 2+ consecutive game days"
+        )
+        drought_passed, drought_metrics, drought_error = check_pick_drought(client)
+        drought_status = "✅ PASS" if drought_passed else "❌ FAIL"
+        logger.info(f"Best Bets Pick Drought: {drought_status}")
+        if not drought_passed:
+            logger.warning(f"  Error: {drought_error}")
+        results.append((drought_check, drought_passed, drought_metrics, drought_error))
+
+        filter_check = CanaryCheck(
+            name="BB Filter Audit",
+            phase="bb_filter_audit",
+            query="",
+            thresholds={},
+            description="Alerts when candidates enter BB pipeline but 0 pass filters for 2+ game days"
+        )
+        filter_passed, filter_metrics, filter_error = check_filter_audit_jammed(client)
+        filter_status = "✅ PASS" if filter_passed else "❌ FAIL"
+        logger.info(f"BB Filter Audit: {filter_status}")
+        if not filter_passed:
+            logger.warning(f"  Error: {filter_error}")
+        results.append((filter_check, filter_passed, filter_metrics, filter_error))
 
     # Session 302: Check live-grading content quality (hybrid GCS+BQ)
     if not is_break:

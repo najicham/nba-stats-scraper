@@ -765,6 +765,64 @@ def send_slack_notification(results: HealthCheckResult):
         logger.warning("SLACK_WEBHOOK_URL not configured, skipping daily summary")
 
 
+def check_enabled_models_producing(game_date: str) -> Tuple[str, str]:
+    """Session 474: Detect enabled registry models that are NOT producing predictions.
+
+    The inverse of check_model_registry_consistency (which catches unregistered models
+    producing predictions). This catches the case where a model is enabled=TRUE in the
+    registry but silently absent from actual predictions — indicating stale model cache
+    in the prediction worker.
+
+    Returns:
+        Tuple of (status, message)
+    """
+    try:
+        # Check if any games are scheduled today first
+        games_query = f"""
+        SELECT COUNT(*) as game_count
+        FROM `{PROJECT_ID}.nba_reference.nba_schedule`
+        WHERE game_date = '{game_date}'
+          AND game_status IN (1, 2, 3)
+        """
+        games_result = list(bq.query(games_query).result())
+        if not games_result or games_result[0].game_count == 0:
+            return ('pass', f'No games scheduled for {game_date} — skipping model coverage check')
+
+        query = f"""
+        WITH enabled_models AS (
+          SELECT model_id
+          FROM `{PROJECT_ID}.nba_predictions.model_registry`
+          WHERE enabled = TRUE
+        ),
+        predicting_models AS (
+          SELECT DISTINCT system_id
+          FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
+          WHERE game_date = '{game_date}'
+            AND is_active = TRUE
+        )
+        SELECT e.model_id
+        FROM enabled_models e
+        LEFT JOIN predicting_models p ON e.model_id = p.system_id
+        WHERE p.system_id IS NULL
+        """
+        results = list(bq.query(query).result())
+        silent = [row.model_id for row in results]
+
+        if not silent:
+            return ('pass', 'All enabled registry models are producing predictions')
+
+        return (
+            'warn',
+            f'{len(silent)} enabled model(s) produced 0 predictions today: {", ".join(silent)}. '
+            f'Likely cause: stale worker model cache. '
+            f'Fix: gcloud run services update prediction-worker --region=us-west2 '
+            f'--update-env-vars="MODEL_CACHE_REFRESH=$(date +%Y%m%d_%H%M)"'
+        )
+    except Exception as e:
+        logger.warning(f"Enabled models producing check failed: {e}")
+        return ('warn', f'Check failed: {e}')
+
+
 def check_model_registry_consistency(game_date: str) -> Tuple[str, str]:
     """Session 391: Detect prediction system_ids that aren't in model_registry.
 
@@ -895,6 +953,14 @@ def daily_health_check(request):
 
     status, message = check_model_registry_consistency(today)
     results.add("Model Registry Consistency", status, message)
+
+    # ========================================================================
+    # CHECK 8b: Enabled Models Actually Producing (Session 474)
+    # ========================================================================
+    logger.info("Checking enabled models are producing predictions...")
+
+    status, message = check_enabled_models_producing(today)
+    results.add("Model Coverage (enabled→predicting)", status, message)
 
     # ========================================================================
     # CHECK 9: GCS Export Freshness

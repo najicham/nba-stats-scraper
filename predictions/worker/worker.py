@@ -210,6 +210,11 @@ _injury_filter: Optional['InjuryFilter'] = None
 _breakout_classifier = None  # Session 128: Breakout classifier for shadow mode
 _catboost_v12 = None  # Session 230: CatBoost V12 no-vegas shadow model
 _systems_initialized = False  # Session 391: Separate sentinel from _catboost (may be None when V9 disabled)
+_monthly_models_loaded_at: Optional[float] = None  # epoch timestamp of last registry read
+# Session 474: TTL-based registry refresh — re-read BQ model registry every N seconds
+# so enabled/disabled changes take effect within one batch cycle (default: 4 hours).
+# Eliminates the need to manually update MODEL_CACHE_REFRESH after registry changes.
+_MONTHLY_MODELS_CACHE_TTL = int(os.environ.get('MODEL_CACHE_TTL_SECONDS', '14400'))
 
 def get_data_loader() -> 'PredictionDataLoader':
     """Lazy-load data loader on first use"""
@@ -289,7 +294,7 @@ def get_prediction_systems() -> tuple:
     from prediction_systems.catboost_v9 import CatBoostV9
     from prediction_systems.catboost_monthly import get_enabled_monthly_models
 
-    global _moving_average, _zone_matchup, _catboost, _monthly_models, _systems_initialized
+    global _moving_average, _zone_matchup, _catboost, _monthly_models, _systems_initialized, _monthly_models_loaded_at
     if not _systems_initialized:
         logger.info("Initializing prediction systems...")
         # Session 393: Gate moving_average and zone_matchup behind env vars.
@@ -322,6 +327,7 @@ def get_prediction_systems() -> tuple:
         # Load monthly models (Session 68, Session 273: DB-driven from model_registry)
         logger.info("Loading monthly models (registry + dict fallback)...")
         _monthly_models = get_enabled_monthly_models()
+        _monthly_models_loaded_at = time.time()
         if _monthly_models:
             registry_count = sum(1 for m in _monthly_models if m.config.get('source') == 'registry')
             dict_count = len(_monthly_models) - registry_count
@@ -360,6 +366,30 @@ def get_prediction_systems() -> tuple:
         zm_loaded = _zone_matchup is not None
         total_systems = (1 if ma_loaded else 0) + (1 if zm_loaded else 0) + (1 if v9_loaded else 0) + monthly_count + (1 if v12_loaded else 0)
         logger.info(f"All prediction systems initialized ({total_systems} systems: MovingAvg={'YES' if ma_loaded else 'DISABLED'}, ZoneMatchup={'YES' if zm_loaded else 'DISABLED'}, V9={'YES' if v9_loaded else 'DISABLED'}, {monthly_count} monthly models, V12={'YES' if v12_loaded else 'DISABLED'})")
+    elif _monthly_models_loaded_at is not None:
+        # Session 474: TTL-based registry refresh. Re-read BQ model_registry every
+        # _MONTHLY_MODELS_CACHE_TTL seconds so enable/disable changes propagate
+        # automatically (default 4h) without needing a manual MODEL_CACHE_REFRESH update.
+        age = time.time() - _monthly_models_loaded_at
+        if age > _MONTHLY_MODELS_CACHE_TTL:
+            logger.info(
+                f"Monthly model registry cache expired (age={age:.0f}s, TTL={_MONTHLY_MODELS_CACHE_TTL}s). "
+                f"Refreshing from BQ registry..."
+            )
+            try:
+                new_models = get_enabled_monthly_models()
+                old_ids = sorted(m.model_id for m in (_monthly_models or []))
+                new_ids = sorted(m.model_id for m in new_models)
+                if old_ids != new_ids:
+                    logger.info(f"Registry changed! Removed: {set(old_ids)-set(new_ids)}, Added: {set(new_ids)-set(old_ids)}")
+                else:
+                    logger.info(f"Registry unchanged: {len(new_models)} models")
+                _monthly_models = new_models
+                _monthly_models_loaded_at = time.time()
+            except Exception as e:
+                # Keep existing models on failure — don't break predictions over a refresh error
+                logger.warning(f"Registry refresh failed (keeping {len(_monthly_models or [])} cached models): {e}")
+                _monthly_models_loaded_at = time.time()  # Reset TTL to avoid retry storm
     return _moving_average, _zone_matchup, _catboost
 
 _circuit_breaker: Optional['SystemCircuitBreaker'] = None
@@ -1588,7 +1618,7 @@ def process_player_predictions(
                 metadata['systems_failed'].append(system_id)
                 metadata['system_errors'][system_id] = error_msg
                 system_predictions['zone_matchup_v1'] = None
-        
+
         # Session 343: Removed Systems 3 (similarity_balanced_v1) and 4 (xgboost_v1/catboost_v8)
         # — zero best bets contribution, decommissioned as zombie models
 
@@ -1640,7 +1670,7 @@ def process_player_predictions(
                 metadata['systems_failed'].append(system_id)
                 metadata['system_errors'][system_id] = error_msg
                 system_predictions[system_id] = None
-        
+
         # Session 343: Removed Systems 6 (ensemble_v1) and 7 (ensemble_v1_1)
         # — zero best bets contribution, decommissioned as zombie models
 
@@ -1764,7 +1794,7 @@ def process_player_predictions(
         for system_id, prediction in system_predictions.items():
             if prediction is None:
                 continue
-            
+
             # Format prediction for BigQuery
             bq_prediction = format_prediction_for_bigquery(
                 system_id=system_id,
@@ -1775,7 +1805,7 @@ def process_player_predictions(
                 line_value=line_value,
                 features=features
             )
-            
+
             all_predictions.append(bq_prediction)
 
     # Session 378c: Batch-level sanity alert — if >50% of a model's predictions
@@ -2261,7 +2291,7 @@ def format_prediction_for_bigquery(
             'model_expected_hit_rate': catboost_meta.get('model_expected_hit_rate'),
             'model_trained_at': catboost_meta.get('model_trained_at'),
         })
-    
+
     # Session 343: Removed ensemble_v1, ensemble_v1_1, xgboost_v1 metadata blocks
 
     elif system_id == 'moving_average':
@@ -2443,7 +2473,7 @@ def publish_completion_event(player_lookup: str, game_date: str, prediction_coun
         'timestamp': datetime.utcnow().isoformat(),
         'worker_instance': os.environ.get('K_REVISION', 'unknown')
     }
-    
+
     try:
         message_bytes = json.dumps(message_data).encode('utf-8')
         future = pubsub_publisher.publish(topic_path, data=message_bytes)
