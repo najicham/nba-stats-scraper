@@ -131,7 +131,7 @@ UNDER_SIGNAL_WEIGHTS: Dict[str, float] = {
     'book_disagreement': 1.0,        # Session 434: reduced 2.5→1.0. 47.4% HR 7d (N=19), below breakeven
     'book_disagree_under': 1.5,      # Session 469: direction-specific version (shadow, accumulating data)
     'bench_under': 2.0,              # 76.9% HR
-    'home_under': 2.0,               # Session 422c: boosted from 1.5. 60.6% HR (N=4,253) model-level
+    'home_under': 1.0,               # Session 422c: boosted from 1.5. 60.6% HR (N=4,253) model-level. Session 475: reduced from 2.0→1.0, 44.9% HR in March 2026 (N=49)
     # starter_away_overtrend_under removed Session 462: 48.2% HR 5-season cross-validated — harmful
     'extended_rest_under': 1.5,      # 61.8% HR
     'volatile_starter_under': 2.0,   # Session 427: promoted 1.5→2.0. Cross-season +11.1pp lift (best UNDER signal)
@@ -565,7 +565,10 @@ class BestBetsAggregator:
             #   2021-22: 43%, 2022-23: 45%, 2023-24: 49%, 2024-25: 50%.
             # Only 2025-26 (58%) was profitable at edge 3-5 — single-season artifact.
             # UNDER at edge 3-5 is 56.7% consistently. OVER needs edge 5+ to be viable.
-            over_floor = 5.0
+            # Session 475: Raised from 5.0 to 6.0. 9-agent analysis (Mar 20 2026) shows
+            # OVER edge 5-7 collapsing to 28.6% HR in final stretch (Mar 7+). Both OVER
+            # and UNDER collapsed symmetrically at edge 5+ in tight-market March regime.
+            over_floor = 6.0
             regime_delta = self._regime_context.get('over_edge_floor_delta', 0)
             hse_rescued = signal_rescued and rescue_signal == 'high_scoring_environment_over'
             if (pred.get('recommendation') == 'OVER'
