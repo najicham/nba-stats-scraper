@@ -317,65 +317,75 @@ def main(cloud_event):
         )
         return
 
-    if graded_count == 0:
-        logger.info(f"[{correlation_id}] Skipping re-export — 0 predictions graded")
-        return
+    # Analytics steps (4, 4b, 4c, 5, 5b, 5c) run regardless of graded_count — they use
+    # rolling historical windows and are meaningful even on days with 0 picks.
+    # Picks-related exports (1-3, 3b, 6-9) are gated behind graded_count > 0.
+    skip_picks_exports = (graded_count == 0)
+    if skip_picks_exports:
+        logger.info(
+            f"[{correlation_id}] graded_count=0 — skipping picks exports, "
+            f"but still running analytics (signal health, model performance, league macro)"
+        )
 
     results = {}
 
     # 1. Re-export picks/{date}.json with actuals
-    try:
-        exporter = get_picks_exporter()
-        picks_path = exporter.export(target_date, trigger_source='post-grading')
-        results['picks_path'] = picks_path
-        logger.info(f"[{correlation_id}] Re-exported picks to {picks_path}")
-    except Exception as e:
-        logger.error(
-            f"[{correlation_id}] Failed to re-export picks for {target_date}: {e}",
-            exc_info=True
-        )
-        results['picks_error'] = str(e)
+    if not skip_picks_exports:
+        try:
+            exporter = get_picks_exporter()
+            picks_path = exporter.export(target_date, trigger_source='post-grading')
+            results['picks_path'] = picks_path
+            logger.info(f"[{correlation_id}] Re-exported picks to {picks_path}")
+        except Exception as e:
+            logger.error(
+                f"[{correlation_id}] Failed to re-export picks for {target_date}: {e}",
+                exc_info=True
+            )
+            results['picks_error'] = str(e)
 
     # 2. Refresh subsets/season.json
-    try:
-        season_exporter = get_season_exporter()
-        season_path = season_exporter.export()
-        results['season_path'] = season_path
-        logger.info(f"[{correlation_id}] Refreshed season.json at {season_path}")
-    except Exception as e:
-        logger.error(
-            f"[{correlation_id}] Failed to refresh season.json: {e}",
-            exc_info=True
-        )
-        results['season_error'] = str(e)
+    if not skip_picks_exports:
+        try:
+            season_exporter = get_season_exporter()
+            season_path = season_exporter.export()
+            results['season_path'] = season_path
+            logger.info(f"[{correlation_id}] Refreshed season.json at {season_path}")
+        except Exception as e:
+            logger.error(
+                f"[{correlation_id}] Failed to refresh season.json: {e}",
+                exc_info=True
+            )
+            results['season_error'] = str(e)
 
     # 3. Backfill actuals into signal_best_bets_picks
-    try:
-        backfilled = backfill_signal_best_bets(target_date)
-        results['signal_backfill'] = backfilled
-        logger.info(
-            f"[{correlation_id}] Backfilled {backfilled} signal best bets for {target_date}"
-        )
-    except Exception as e:
-        logger.error(
-            f"[{correlation_id}] Failed to backfill signal best bets for {target_date}: {e}",
-            exc_info=True
-        )
-        results['signal_backfill_error'] = str(e)
+    if not skip_picks_exports:
+        try:
+            backfilled = backfill_signal_best_bets(target_date)
+            results['signal_backfill'] = backfilled
+            logger.info(
+                f"[{correlation_id}] Backfilled {backfilled} signal best bets for {target_date}"
+            )
+        except Exception as e:
+            logger.error(
+                f"[{correlation_id}] Failed to backfill signal best bets for {target_date}: {e}",
+                exc_info=True
+            )
+            results['signal_backfill_error'] = str(e)
 
     # 3b. Backfill actuals into best_bets_filtered_picks (Session 414)
-    try:
-        filtered_backfilled = backfill_filtered_picks(target_date)
-        results['filtered_backfill'] = filtered_backfilled
-        logger.info(
-            f"[{correlation_id}] Backfilled {filtered_backfilled} filtered picks for {target_date}"
-        )
-    except Exception as e:
-        logger.error(
-            f"[{correlation_id}] Failed to backfill filtered picks for {target_date}: {e}",
-            exc_info=True
-        )
-        results['filtered_backfill_error'] = str(e)
+    if not skip_picks_exports:
+        try:
+            filtered_backfilled = backfill_filtered_picks(target_date)
+            results['filtered_backfill'] = filtered_backfilled
+            logger.info(
+                f"[{correlation_id}] Backfilled {filtered_backfilled} filtered picks for {target_date}"
+            )
+        except Exception as e:
+            logger.error(
+                f"[{correlation_id}] Failed to backfill filtered picks for {target_date}: {e}",
+                exc_info=True
+            )
+            results['filtered_backfill_error'] = str(e)
 
     # 4. Compute signal health for the graded date (Session 259)
     try:
@@ -523,6 +533,11 @@ def main(cloud_event):
             exc_info=True
         )
         results['league_macro_error'] = str(e)
+
+    # Steps 6-9 are picks JSON exports — skip when nothing was graded
+    if skip_picks_exports:
+        logger.info(f"[{correlation_id}] Skipping picks JSON exports (graded_count=0)")
+        return results
 
     # 6. Re-export tonight/all-players.json with actuals (Session 332)
     try:
