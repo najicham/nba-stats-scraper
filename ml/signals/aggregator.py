@@ -886,6 +886,18 @@ class BestBetsAggregator:
                 if 'high_spread_over_would_block' not in self._runtime_demoted:
                     continue
 
+            # Tanking risk observation (Session 474): season-end games where a team tanks
+            # for draft position. Heavy spreads (>= 10) create blowout conditions where the
+            # losing team's stars play full minutes (coach plays them regardless) while
+            # winners may sit starters early → UNDER picks in lopsided UNDER contexts fail.
+            # Using spread_magnitude >= 10 as proxy (top ~15% most lopsided games).
+            # Observation only — accumulating data through season end to validate direction.
+            if (spread_mag >= 10.0
+                    and pred.get('recommendation') == 'UNDER'):
+                filter_counts['tanking_risk_obs'] += 1
+                _record_filtered(pred, 'tanking_risk_obs', pred_edge)
+                # continue  # Session 474: observation only — no blocking until validated
+
             # Mid-line OVER — DEMOTED to observation (Session 428).
             # Original 47.9% BB HR (N=213) was toxic-window-biased. Full-season
             # CF HR = 55.8% (N=926) — above breakeven. Weekly stddev 13.6pp on
@@ -1572,6 +1584,13 @@ class BestBetsAggregator:
                 f"{filter_counts['over_line_rose_heavy']} OVER picks where BettingPros "
                 f"line rose >= 1.0 (38.9% HR, fighting the market)"
             )
+        if filter_counts['tanking_risk_obs'] > 0:
+            logger.info(
+                f"Tanking risk (observation): tagged "
+                f"{filter_counts['tanking_risk_obs']} UNDER picks with spread >= 10 "
+                f"(season-end lopsided games, accumulating data)"
+            )
+
         if filter_counts['team_cap'] > 0:
             logger.info(
                 f"Team cap ({MAX_PICKS_PER_TEAM}/team): dropped "

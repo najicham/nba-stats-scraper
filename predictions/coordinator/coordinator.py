@@ -92,7 +92,10 @@ from shared.utils.postponement_detector import PostponementDetector
 from predictions.coordinator.signal_calculator import calculate_daily_signals
 
 # Session 191: Per-system quality gate - import shadow model config
-from predictions.worker.prediction_systems.catboost_monthly import MONTHLY_MODELS
+from predictions.worker.prediction_systems.catboost_monthly import (
+    MONTHLY_MODELS,
+    get_enabled_models_from_registry,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -608,23 +611,55 @@ logger.info(
 )
 
 
+# Session 474: TTL cache for coordinator registry reads (mirrors 4h worker TTL).
+_registry_cache: List[str] = []
+_registry_cache_time: float = 0.0
+_REGISTRY_TTL_SECONDS = 4 * 3600  # 4 hours
+
+
 def get_active_system_ids() -> List[str]:
     """
     Get list of active system IDs for per-system quality gate.
 
     Session 191: Returns champion + enabled shadow models.
+    Session 474: Reads from BQ registry with 4h TTL instead of baked-in MONTHLY_MODELS dict.
+    Falls back to MONTHLY_MODELS on BQ failure.
 
     Returns:
         List of system_ids: [champion_model_id, shadow_models...]
     """
-    active_systems = [get_champion_model_id()]  # Champion model from config
+    import time
+    global _registry_cache, _registry_cache_time
 
-    # Add enabled shadow models from MONTHLY_MODELS
-    for model_id, config in MONTHLY_MODELS.items():
-        if config.get('enabled', False):
-            active_systems.append(model_id)
+    active_systems = [get_champion_model_id()]
 
-    logger.info(f"Active systems for quality gate: {active_systems}")
+    now = time.time()
+    if _registry_cache and (now - _registry_cache_time) < _REGISTRY_TTL_SECONDS:
+        active_systems.extend(_registry_cache)
+        logger.info(
+            f"Active systems for quality gate (cache hit, age={int(now - _registry_cache_time)}s): "
+            f"{active_systems}"
+        )
+        return active_systems
+
+    try:
+        registry_models = get_enabled_models_from_registry()
+        shadow_ids = [m['model_id'] for m in registry_models]
+        _registry_cache = shadow_ids
+        _registry_cache_time = now
+        active_systems.extend(shadow_ids)
+        logger.info(
+            f"Active systems for quality gate (registry refresh, {len(shadow_ids)} shadows): "
+            f"{active_systems}"
+        )
+    except Exception as e:
+        logger.warning(
+            f"Registry fetch failed for quality gate, falling back to MONTHLY_MODELS: {e}"
+        )
+        fallback = [mid for mid, cfg in MONTHLY_MODELS.items() if cfg.get('enabled', False)]
+        active_systems.extend(fallback)
+        logger.info(f"Active systems for quality gate (fallback): {active_systems}")
+
     return active_systems
 
 
@@ -1049,7 +1084,7 @@ def start_prediction_batch():
             except Exception as _e:
                 # Fail-open: allow batch to start if Firestore check fails
                 logger.warning(f"Firestore cross-instance dedup check failed (proceeding): {_e}")
-        
+
         # Create batch ID
         batch_id = f"batch_{game_date.isoformat()}_{int(time.time())}"
         current_batch_id = batch_id
@@ -1531,7 +1566,7 @@ def start_prediction_batch():
             'summary': summary_stats,
             'monitor_url': f'/status?batch_id={batch_id}'
         }), 202  # Accepted
-        
+
     except Exception as e:
         logger.error(f"Error starting batch: {e}", exc_info=True)
         return jsonify({
@@ -2824,7 +2859,7 @@ def handle_completion_event():
         # Decode message data
         message_data = base64.b64decode(pubsub_message['data']).decode('utf-8')
         event = json.loads(message_data)
-        
+
         player_lookup = event.get('player_lookup')
         batch_id = event.get('batch_id')  # Workers should include batch_id in completion events
         predictions_count = event.get('predictions_generated', 0)
