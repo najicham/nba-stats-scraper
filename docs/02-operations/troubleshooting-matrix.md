@@ -2488,7 +2488,36 @@ WHERE game_date = 'YYYY-MM-DD' AND signal_status = 'model_disabled';
 
 ---
 
+### 10.2 — MLB Cloud Run Service Returns 503 on All Endpoints
+
+**Symptom:** `mlb-phase6-grading` health check returns 503 (Service Unavailable). Scheduler jobs targeting it return NOT_FOUND (gRPC 5) or INTERNAL. Logs show `Worker failed to boot` with an `ImportError`.
+
+**Root Cause:** Python import error at startup causes gunicorn to fail before any route is registered. Common causes: class name mismatch (e.g., `MLBShadowGradingProcessor` vs `MlbShadowModeGradingProcessor`), missing dependency in `requirements.txt`, or broken relative import path.
+
+**Diagnosis:**
+```bash
+gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="mlb-phase6-grading"' \
+  --project=nba-props-platform --freshness=1h --limit=10 --format="table(timestamp,textPayload)"
+# Look for: ImportError, ModuleNotFoundError, Worker failed to boot
+```
+
+**Fix:** Correct the import error and redeploy:
+```bash
+# Build (from repo root)
+gcloud builds submit . --config cloudbuild.yaml \
+  --project=nba-props-platform --region=us-west2 \
+  --substitutions="_SERVICE=mlb-phase6-grading,_DOCKERFILE=data_processors/grading/mlb/Dockerfile,SHORT_SHA=$(git rev-parse --short HEAD),_BUILD_TIMESTAMP=$(date +%Y%m%d_%H%M%S)"
+
+# After build: route traffic to latest
+gcloud run services update-traffic mlb-phase6-grading --region=us-west2 --to-latest
+```
+
+**Lesson:** Always test `/health` immediately after any MLB service deploy. MLB services are NOT auto-deployed — import errors can silently persist until the next cold start.
+
+---
+
 **Version History:**
+- v1.7 (2026-03-22): Added Section 10.2: MLB grading 503 startup crash (Session 482 — import error pattern)
 - v1.6 (2026-03-11): Added Section 10: Pick Locking & Publishing Issues (Session 468 — picks vanish after model disable)
 - v1.5 (2026-03-04): Added Section 9: New Data Source Scraper Issues (Session 401-402 — date=TODAY, Playwright, NumberFire redirect, VSiN AJAX, NBA Tracking timeout, CLV scheduler)
 - v1.4 (2026-03-02): Added Section 8: Signal System Issues (Session 387 — silent signal failures, prop_line_delta, negative edges)

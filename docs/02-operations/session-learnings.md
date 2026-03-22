@@ -1537,3 +1537,50 @@ gcloud pubsub topics publish nba-phase6-export-trigger \
 Added `check_bb_candidates_today` canary: fires when Phase 4 complete but `model_bb_candidates` has 0 rows after 2+ hours.
 
 **Lesson:** Pub/Sub delivery is not guaranteed for low-frequency messages. The orchestration chain (Phase 4 → 5 → 6) has no end-to-end validation. A stall anywhere silently produces 0 picks with no error surfaced to operators. Every phase boundary needs an explicit "did the next phase start?" check, not just "did this phase complete?"
+
+### Cloud Run Traffic Stays Pinned After `services update --image` (Session 482)
+
+**Symptom:** `gcloud run services update mlb-prediction-worker --image=NEW_IMAGE` reports "Creating Revision... Done" but the service keeps serving the old image. New revisions appear in `gcloud run revisions list` with status `Retired`.
+
+**Root Cause:** When a Cloud Run service has explicit revision routing (e.g., `100% → 00022-mlg`), `gcloud run services update --image` creates a new revision but does NOT automatically route traffic to it. The new revision gets immediately retired because nothing sends it traffic.
+
+**Fix:** After `services update`, always follow with:
+```bash
+gcloud run services update-traffic SERVICE --region=us-west2 --to-latest
+```
+Or deploy with `gcloud run deploy` (which defaults to routing to latest).
+
+**Lesson:** `services update` and traffic routing are independent operations in Cloud Run when explicit revision pinning is active. Verify with `gcloud run services describe SERVICE --format="yaml(status.traffic)"` after any image update.
+
+### MLB Cloud Service Class Name Mismatch → Silent 503 (Session 482)
+
+**Symptom:** `mlb-phase6-grading` health check returns 503. Logs show `ImportError: cannot import name 'MLBShadowGradingProcessor'`. All endpoints return 503 — service never boots.
+
+**Root Cause:** `main_mlb_grading_service.py` imported `MLBShadowGradingProcessor` but the class in `mlb_shadow_grading_processor.py` is named `MlbShadowModeGradingProcessor`. Python class naming inconsistency (one all-caps acronym, one camelCase) caused a startup crash on every cold start.
+
+**Fix:**
+```python
+# Before (broken)
+from data_processors.grading.mlb.mlb_shadow_grading_processor import MLBShadowGradingProcessor
+
+# After (fixed)
+from data_processors.grading.mlb.mlb_shadow_grading_processor import MlbShadowModeGradingProcessor as MLBShadowGradingProcessor
+```
+
+**Detection:** The `mlb-shadow-grading-daily` scheduler showed `NOT_FOUND (gRPC 5)` — but the real symptom was `health` endpoint returning 503, not 404. Always test `/health` endpoint after MLB service deploys.
+
+**Lesson:** MLB services are manually deployed (not auto-deployed from main). Import errors go undetected until the next cold start. After any MLB service deploy, immediately test `curl /health` before closing the session.
+
+### `.gcloudignore` Missing `.venv/` Inflates Cloud Build Uploads 10x (Session 482)
+
+**Symptom:** `gcloud builds submit` output shows "15,166 file(s) totalling 1.1 GiB" and upload takes 10+ minutes. Expected: ~3,000 files, ~100 MB.
+
+**Root Cause:** `.gcloudignore` had `venv/` (no dot) but not `.venv/` (with dot prefix). Virtual environment at `.venv/` (1.7 GB) and `models/` (327 MB) were included in every Cloud Build archive.
+
+**Fix:** Add to `.gcloudignore`:
+```
+.venv/
+models/
+```
+
+**Lesson:** When Cloud Build uploads are unexpectedly large, check `.gcloudignore` for dotfile directories (`.venv/`, `.cache/`, `.pytest_cache/`). The `venv/` pattern does NOT match `.venv/`.
