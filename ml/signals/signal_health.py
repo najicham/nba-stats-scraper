@@ -501,8 +501,14 @@ def compute_signal_health(
         is_model_dep = row.signal_tag in MODEL_DEPENDENT_SIGNALS
 
         # Status
+        # Session 478: guard DEGRADING with picks_7d >= 5 to suppress false alarms
+        # from grading outages (fewer graded picks → COLD regime from small-N noise,
+        # not real signal degradation). Insufficient data → WATCH, not DEGRADING.
         if regime == 'COLD' and is_model_dep:
-            status = 'DEGRADING'
+            if row.picks_7d >= 5:
+                status = 'DEGRADING'
+            else:
+                status = 'WATCH'  # Too few picks to distinguish degradation from grading gap
         elif div_7d is not None and div_7d < -5.0:
             status = 'WATCH'
         else:

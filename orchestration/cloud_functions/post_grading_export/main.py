@@ -296,32 +296,41 @@ def main(cloud_event):
     # Parse incoming message
     message_data = parse_pubsub_message(cloud_event)
 
-    target_date = message_data.get('target_date')
+    # Accept both 'target_date' and deprecated 'graded_date' key names (Session 478)
+    target_date = message_data.get('target_date') or message_data.get('graded_date')
     status = message_data.get('status')
     graded_count = message_data.get('graded_count', 0)
     correlation_id = message_data.get('correlation_id', 'unknown')
 
     if not target_date:
-        logger.error("No target_date in grading completion message")
+        logger.error(
+            f"No target_date in grading completion message. "
+            f"Received keys: {list(message_data.keys())}. "
+            f"Use 'target_date' (required) + 'status'='success' + 'graded_count'=N."
+        )
         return
+
+    if 'graded_date' in message_data and 'target_date' not in message_data:
+        logger.warning(
+            f"[{correlation_id}] Deprecated 'graded_date' key used — please switch to 'target_date'."
+        )
 
     logger.info(
         f"[{correlation_id}] Post-grading export for {target_date} "
         f"(status={status}, graded_count={graded_count})"
     )
 
-    # Only re-export on successful grading
+    # Analytics steps (signal health, model performance, league macro) always run —
+    # they use rolling historical windows and stay fresh even when grading had errors.
+    # Only the picks JSON exports are gated behind status='success'. (Session 478)
+    skip_picks_exports = (status != 'success') or (graded_count == 0)
     if status != 'success':
         logger.info(
-            f"[{correlation_id}] Skipping re-export — grading status was '{status}', not 'success'"
+            f"[{correlation_id}] Grading status='{status}' — skipping picks exports "
+            f"but still running analytics (signal health, model performance, league macro)"
         )
-        return
 
-    # Analytics steps (4, 4b, 4c, 5, 5b, 5c) run regardless of graded_count — they use
-    # rolling historical windows and are meaningful even on days with 0 picks.
-    # Picks-related exports (1-3, 3b, 6-9) are gated behind graded_count > 0.
-    skip_picks_exports = (graded_count == 0)
-    if skip_picks_exports:
+    if skip_picks_exports and graded_count == 0 and status == 'success':
         logger.info(
             f"[{correlation_id}] graded_count=0 — skipping picks exports, "
             f"but still running analytics (signal health, model performance, league macro)"

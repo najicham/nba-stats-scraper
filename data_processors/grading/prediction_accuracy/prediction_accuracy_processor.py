@@ -586,9 +586,16 @@ class PredictionAccuracyProcessor:
             ):
                 result = self.bq_client.query(query).to_dataframe()
                 return result.to_dict('records')
-        except (gcp_exceptions.BadRequest, gcp_exceptions.NotFound,
-                gcp_exceptions.ServiceUnavailable, gcp_exceptions.DeadlineExceeded,
-                GoogleCloudError) as e:
+        except gcp_exceptions.BadRequest as e:
+            # BadRequest = permanent SQL error (wrong syntax, unsupported pattern, bad schema).
+            # Re-raise so Pub/Sub treats this as failure and retries, and Cloud Logging
+            # captures the error at CRITICAL severity instead of silently returning [].
+            # Session 478: multi-column IN subquery caused 6-day silent outage because this
+            # was lumped with transient errors and returned []. Do NOT catch BadRequest here.
+            raise
+        except (gcp_exceptions.NotFound, gcp_exceptions.ServiceUnavailable,
+                gcp_exceptions.DeadlineExceeded, GoogleCloudError) as e:
+            # Transient errors — return [] to allow Pub/Sub retry with backoff
             # Error already logged by ErrorContext with structured fields
             return []
         except Exception as e:

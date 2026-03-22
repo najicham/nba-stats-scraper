@@ -1188,19 +1188,104 @@ def check_edge_collapse_alert(bq_client: bigquery.Client) -> Tuple[bool, Dict, O
             'all_models': all_models,
         }
 
+        healthy_count = len(rows) - len(collapsed)
+        metrics['healthy_count'] = healthy_count
+
         if collapsed:
             details = ', '.join(f"{r.model_id} ({r.avg_abs_diff:.2f})" for r in collapsed)
-            return False, metrics, (
+            error_msg = (
                 f"EDGE COLLAPSE ({len(collapsed)} model(s)): avg_abs_diff below threshold "
                 f"(CatBoost<1.2, LGBM/XGB<1.4). Models: {details}. "
                 f"Picks from collapsed models are statistically indistinguishable from noise. "
                 f"Fix: Disable collapsed models, use Feb-trained LGBM (train_end <= Feb 28)."
             )
+            # Session 478: escalate when only 1 healthy model remains — fleet is critically thin
+            if healthy_count < 2:
+                error_msg += (
+                    f" CRITICAL: only {healthy_count} healthy-edge model(s) remain — "
+                    f"entire BB pipeline depends on a single model."
+                )
+            return False, metrics, error_msg
         return True, metrics, None
 
     except Exception as e:
         logger.error(f"Error in edge collapse alert check: {e}")
         return False, {}, f"Edge collapse alert check error: {e}"
+
+
+def check_grading_freshness(bq_client: bigquery.Client) -> Tuple[bool, Dict, Optional[str]]:
+    """Session 478: Alert when prediction_accuracy has no records for 2+ recent game days.
+
+    This is the catch-all for any grading outage regardless of cause. A SQL bug,
+    CF crash, or Pub/Sub failure all produce the same symptom: no graded records.
+    The 30-minute cadence means outages are caught within hours, not days.
+
+    Root cause this prevented: multi-column IN subquery in prediction_accuracy_processor.py
+    caused BadRequest that was silently swallowed, returning [] as if no predictions existed.
+    This ran 6 days undetected because no canary checked prediction_accuracy freshness.
+    """
+    try:
+        query = f"""
+        WITH recent_game_days AS (
+            SELECT DISTINCT game_date
+            FROM `{PROJECT_ID}.nba_reference.nba_schedule`
+            WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 5 DAY)
+              AND game_date < CURRENT_DATE()
+              AND game_status = 3
+            ORDER BY game_date DESC
+            LIMIT 2
+        ),
+        graded AS (
+            SELECT game_date, COUNT(*) AS graded_count
+            FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy`
+            WHERE game_date IN (SELECT game_date FROM recent_game_days)
+              AND prediction_correct IS NOT NULL
+            GROUP BY game_date
+        )
+        SELECT
+            (SELECT COUNT(*) FROM recent_game_days) AS game_days_with_finals,
+            (SELECT COUNT(*) FROM graded WHERE graded_count > 0) AS game_days_with_grades,
+            ARRAY_AGG(gd.game_date ORDER BY gd.game_date DESC) AS recent_game_days,
+            ARRAY_AGG(COALESCE(g.graded_count, 0) ORDER BY gd.game_date DESC) AS grade_counts
+        FROM recent_game_days gd
+        LEFT JOIN graded g USING (game_date)
+        """
+        rows = list(bq_client.query(query).result(timeout=30))
+        if not rows or rows[0].game_days_with_finals == 0:
+            return True, {'skipped': True, 'reason': 'no_recent_completed_games'}, None
+
+        row = rows[0]
+        finals = int(row.game_days_with_finals)
+        graded = int(row.game_days_with_grades)
+        game_days = [str(d) for d in (row.recent_game_days or [])]
+        grade_counts = list(row.grade_counts or [])
+
+        metrics = {
+            'game_days_with_finals': finals,
+            'game_days_with_grades': graded,
+            'recent_game_days': game_days,
+            'grade_counts': grade_counts,
+        }
+
+        if finals >= 2 and graded == 0:
+            return False, metrics, (
+                f"GRADING OUTAGE: prediction_accuracy has 0 graded records for "
+                f"the last {finals} game days ({', '.join(game_days)}). "
+                f"Grading pipeline is broken. Check phase5b-grading CF logs for BadRequest errors. "
+                f"Recovery: fix the root cause, push, then run: "
+                f"./bin/recover-grading.sh {game_days[-1] if game_days else 'DATE'} "
+                f"{game_days[0] if game_days else 'DATE'}"
+            )
+        if finals >= 1 and graded == 0:
+            return False, metrics, (
+                f"GRADING STALE: no graded records for {game_days[0] if game_days else 'last game day'}. "
+                f"Check phase5b-grading CF logs."
+            )
+        return True, metrics, None
+
+    except Exception as e:
+        logger.error(f"Error in grading freshness check: {e}")
+        return False, {}, f"Grading freshness check error: {e}"
 
 
 def check_new_model_no_predictions(bq_client: bigquery.Client) -> Tuple[bool, Dict, Optional[str]]:
@@ -1443,6 +1528,25 @@ def main():
         if not bb_pipeline_passed:
             logger.warning(f"  Error: {bb_pipeline_error}")
         results.append((bb_pipeline_check, bb_pipeline_passed, bb_pipeline_metrics, bb_pipeline_error))
+
+    # Session 478: Grading freshness — runs every 30 min, catches any grading outage
+    # regardless of cause. Highest-ROI canary added this session.
+    grading_freshness_check = CanaryCheck(
+        name="Grading Freshness",
+        phase="grading_freshness",
+        query="",
+        thresholds={},
+        description="Session 478: Alerts when prediction_accuracy has 0 graded records for 2+ recent game days — catches any grading outage within one canary cycle"
+    )
+    gf_passed, gf_metrics, gf_error = check_grading_freshness(client)
+    gf_status = "✅ PASS" if gf_passed else "❌ FAIL"
+    if gf_metrics.get('skipped'):
+        logger.info(f"Grading Freshness: ⏭️  SKIPPED ({gf_metrics.get('reason')})")
+    else:
+        logger.info(f"Grading Freshness: {gf_status}")
+        if not gf_passed:
+            logger.warning(f"  Error: {gf_error}")
+    results.append((grading_freshness_check, gf_passed, gf_metrics, gf_error))
 
     # Session 477 Error 004: Edge collapse alert (game-day only — needs today's predictions)
     if not is_break:

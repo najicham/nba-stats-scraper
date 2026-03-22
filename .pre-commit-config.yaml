@@ -103,6 +103,17 @@ repos:
         files: ^shared/config/scraper_retry_config\.yaml$
         verbose: true
 
+      - id: validate-bq-sql-patterns
+        name: Validate BigQuery-compatible SQL patterns
+        description: >
+          Session 478 prevention: Detects SQL valid in ANSI/Postgres but rejected by BigQuery at
+          runtime — multi-column IN subqueries, ::cast operator, ILIKE, EXCEPT/INTERSECT ALL.
+          A multi-column IN subquery caused a 6-day grading outage (invisible to mocked BQ tests).
+        entry: python .pre-commit-hooks/validate_bq_sql_patterns.py
+        language: python
+        types: [python, sql]
+        verbose: true
+
       - id: validate-sql-queries
         name: Validate SQL validation queries
         description: Checks for Session 123 anti-patterns (cache_date = game_date, missing partition filters, etc.)

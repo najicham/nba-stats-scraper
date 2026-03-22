@@ -96,7 +96,12 @@ def _compute_mae_metrics(bq_client: bigquery.Client, target_date: date) -> Optio
         AND recommendation IN ('OVER', 'UNDER')
         AND prediction_correct IS NOT NULL
         AND actual_points IS NOT NULL
-        AND (system_id = 'catboost_v12' OR system_id LIKE 'catboost_v12_%')
+        -- Session 478: extended from catboost_v12-only to all enabled models.
+        -- Hardcoding a family caused gaps on dates where only LGBM models ran.
+        AND system_id IN (
+            SELECT model_id FROM `nba-props-platform.nba_predictions.model_registry`
+            WHERE enabled = TRUE
+        )
     ),
     daily AS (
       SELECT game_date, vegas_error, model_error, edge, line_value, recommendation
