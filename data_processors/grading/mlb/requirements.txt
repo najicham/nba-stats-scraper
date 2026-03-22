@@ -1,0 +1,6 @@
+flask==3.0.0
+gunicorn==21.2.0
+google-cloud-bigquery==3.13.0
+google-cloud-pubsub==2.21.0
+requests==2.31.0
+python-dateutil==2.9.0

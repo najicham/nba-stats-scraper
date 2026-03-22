@@ -92,6 +92,12 @@ class MlbPredictionGradingProcessor:
             game_date = opts.get('game_date')
             if isinstance(game_date, date):
                 game_date = game_date.isoformat()
+            elif isinstance(game_date, str):
+                if game_date.upper() == 'TODAY':
+                    game_date = date.today().isoformat()
+                elif game_date.upper() == 'YESTERDAY':
+                    from datetime import timedelta
+                    game_date = (date.today() - timedelta(days=1)).isoformat()
 
             logger.info(f"Grading MLB predictions for {game_date}")
 

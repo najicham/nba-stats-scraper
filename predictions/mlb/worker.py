@@ -474,6 +474,10 @@ def predict_batch():
         if not game_date_str:
             return jsonify({'error': 'game_date is required'}), 400
 
+        # Resolve TODAY literal
+        if game_date_str.upper() == 'TODAY':
+            game_date_str = date.today().isoformat()
+
         # Parse date
         game_date = datetime.strptime(game_date_str, '%Y-%m-%d').date()
 
