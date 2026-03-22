@@ -31,5 +31,7 @@ test_*.py
 .env
 .env.*
 venv/
+.venv/
 env/
 ENV/
+models/
