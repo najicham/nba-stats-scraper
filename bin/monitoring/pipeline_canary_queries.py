@@ -259,57 +259,40 @@ CANARY_CHECKS = [
         name="Phase 5 - Shadow Model Coverage",
         phase="phase5_shadow_coverage",
         query="""
-        WITH champion AS (
-            SELECT COUNT(*) as champion_count
-            FROM `nba-props-platform.nba_predictions.player_prop_predictions`
-            WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
-              AND system_id = 'catboost_v9'
-              AND is_active = TRUE
-        ),
-        known_models AS (
-            SELECT DISTINCT system_id
-            FROM `nba-props-platform.nba_predictions.player_prop_predictions`
-            WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
-              AND system_id LIKE 'catboost_v9_%'
+        WITH enabled_models AS (
+            SELECT model_id
+            FROM `nba-props-platform.nba_predictions.model_registry`
+            WHERE enabled = TRUE AND status = 'active'
         ),
         yesterday_models AS (
             SELECT system_id, COUNT(*) as predictions
             FROM `nba-props-platform.nba_predictions.player_prop_predictions`
             WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
-              AND system_id LIKE 'catboost_v9_%'
               AND is_active = TRUE
+              AND system_id IN (SELECT model_id FROM enabled_models)
             GROUP BY 1
         )
         SELECT
-            c.champion_count,
-            (SELECT COUNT(*) FROM known_models) as known_shadow_models,
-            (SELECT COUNT(*) FROM yesterday_models) as active_shadow_models,
-            (SELECT COUNT(*) FROM known_models k
-             LEFT JOIN yesterday_models y ON k.system_id = y.system_id
+            (SELECT COUNT(*) FROM enabled_models) as enabled_models,
+            (SELECT COUNT(*) FROM yesterday_models) as active_models,
+            (SELECT COUNT(*) FROM enabled_models e
+             LEFT JOIN yesterday_models y ON e.model_id = y.system_id
              WHERE y.system_id IS NULL) as missing_models,
-            (SELECT COUNT(*) FROM yesterday_models y, champion c2
-             WHERE c2.champion_count > 0
-               AND 100.0 * y.predictions / c2.champion_count < 50) as critical_models,
             CASE
-                WHEN c.champion_count = 0 THEN 0
+                WHEN (SELECT COUNT(*) FROM enabled_models) = 0 THEN 0
                 WHEN EXISTS(
-                    SELECT 1 FROM known_models k
-                    LEFT JOIN yesterday_models y ON k.system_id = y.system_id
+                    SELECT 1 FROM enabled_models e
+                    LEFT JOIN yesterday_models y ON e.model_id = y.system_id
                     WHERE y.system_id IS NULL
-                ) THEN 1
-                WHEN EXISTS(
-                    SELECT 1 FROM yesterday_models y
-                    WHERE 100.0 * y.predictions / c.champion_count < 50
                 ) THEN 1
                 ELSE 0
             END as shadow_gap_detected
-        FROM champion c
         """,
         thresholds={
-            'shadow_gap_detected': {'max': 0},  # FAIL if any model missing or <50%
-            'missing_models': {'max': 0},  # FAIL if known models completely absent
+            'shadow_gap_detected': {'max': 0},  # FAIL if any enabled model missing predictions
+            'missing_models': {'max': 0},  # FAIL if enabled models have no predictions yesterday
         },
-        description="Detects shadow models with zero or critically low prediction counts vs champion"
+        description="Detects enabled models with zero prediction counts yesterday (per-model pipeline)"
     ),
 
     CanaryCheck(
@@ -324,7 +307,10 @@ CANARY_CHECKS = [
             `nba-props-platform.nba_predictions.daily_prediction_signals`
         WHERE
             game_date = CURRENT_DATE()
-            AND system_id = 'catboost_v9'
+            AND system_id IN (
+                SELECT model_id FROM `nba-props-platform.nba_predictions.model_registry`
+                WHERE enabled = TRUE
+            )
         """,
         thresholds={
             'signal_records': {'min': 1},  # At least 1 signal record
@@ -1028,10 +1014,10 @@ def check_model_recovery_gap(bq_client: bigquery.Client) -> Tuple[bool, Dict, Op
     try:
         query = f"""
         WITH latest_perf AS (
-            SELECT system_id, model_state, rolling_hr_7d, n_graded_7d
+            SELECT model_id, state AS model_state, rolling_hr_7d, rolling_n_7d AS n_graded_7d
             FROM (
-                SELECT system_id, model_state, rolling_hr_7d, n_graded_7d,
-                    ROW_NUMBER() OVER (PARTITION BY system_id ORDER BY game_date DESC) as rn
+                SELECT model_id, state, rolling_hr_7d, rolling_n_7d,
+                    ROW_NUMBER() OVER (PARTITION BY model_id ORDER BY game_date DESC) as rn
                 FROM `{PROJECT_ID}.nba_predictions.model_performance_daily`
                 WHERE game_date >= CURRENT_DATE() - 7
             )
@@ -1043,7 +1029,7 @@ def check_model_recovery_gap(bq_client: bigquery.Client) -> Tuple[bool, Dict, Op
             ROUND(lp.rolling_hr_7d, 1) as rolling_hr_7d,
             lp.n_graded_7d
         FROM `{PROJECT_ID}.nba_predictions.model_registry` mr
-        JOIN latest_perf lp ON mr.model_id = lp.system_id
+        JOIN latest_perf lp ON mr.model_id = lp.model_id
         WHERE mr.enabled = TRUE
           AND mr.status = 'blocked'
           AND lp.model_state = 'HEALTHY'
@@ -1085,7 +1071,7 @@ def check_bb_candidates_today(bq_client: bigquery.Client) -> Tuple[bool, Dict, O
             SELECT MAX(completed_at) as phase4_completed_at
             FROM `{PROJECT_ID}.nba_orchestration.phase_completions`
             WHERE game_date = CURRENT_DATE()
-              AND phase_name IN ('phase4', 'ml_feature_store', 'precompute')
+              AND phase IN ('phase4', 'ml_feature_store', 'precompute')
         ),
         bb_candidates AS (
             SELECT COUNT(*) as candidate_count
