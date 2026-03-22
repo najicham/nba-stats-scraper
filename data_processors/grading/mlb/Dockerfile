@@ -17,6 +17,8 @@ LABEL build.timestamp="${BUILD_TIMESTAMP}"
 WORKDIR /app
 
 COPY shared/ ./shared/
+COPY predictions/__init__.py ./predictions/__init__.py
+COPY predictions/shared/ ./predictions/shared/
 COPY data_processors/__init__.py ./data_processors/__init__.py
 COPY data_processors/grading/ ./data_processors/grading/
 
