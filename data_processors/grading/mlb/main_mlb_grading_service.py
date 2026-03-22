@@ -19,7 +19,7 @@ from datetime import datetime, timezone, date, timedelta
 import base64
 
 from data_processors.grading.mlb.mlb_prediction_grading_processor import MlbPredictionGradingProcessor
-from data_processors.grading.mlb.mlb_shadow_grading_processor import MLBShadowGradingProcessor
+from data_processors.grading.mlb.mlb_shadow_grading_processor import MlbShadowModeGradingProcessor as MLBShadowGradingProcessor
 from google.cloud import bigquery
 
 # Specific exceptions for better error handling
