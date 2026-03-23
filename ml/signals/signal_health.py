@@ -491,9 +491,15 @@ def compute_signal_health(
         div_14d = round(row.hr_14d - hr_season, 1) if row.hr_14d is not None and hr_season is not None else None
 
         # Regime classification
+        # Session 483: HOT gate — require picks_7d >= 5 AND hr_30d >= 50%.
+        # Previously a signal could go HOT on N=1 (one lucky pick → divergence +83pp),
+        # inflating the 1.2x multiplier for signals with terrible 30d records.
+        # Example: bounce_back_over 100% 7d (N=1), 16.7% 30d — NOT legitimately HOT.
         if div_7d is not None and div_7d < COLD_THRESHOLD:
             regime = 'COLD'
-        elif div_7d is not None and div_7d > HOT_THRESHOLD:
+        elif (div_7d is not None and div_7d > HOT_THRESHOLD
+              and row.picks_7d >= 5
+              and (row.hr_30d is None or row.hr_30d >= 50.0)):
             regime = 'HOT'
         else:
             regime = 'NORMAL'

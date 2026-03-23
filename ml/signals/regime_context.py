@@ -41,6 +41,7 @@ def get_regime_context(bq_client, target_date: date) -> Dict[str, Any]:
         'over_edge_floor_delta': 0.0,
         'disable_over_rescue': False,
         'mae_gap_7d': None,
+        'vegas_mae_7d': None,
         'num_games_on_slate': None,
     }
 
@@ -111,9 +112,12 @@ def get_regime_context(bq_client, target_date: date) -> Dict[str, Any]:
     )
 
     # Session 442: MAE gap — when model MAE exceeds Vegas MAE, BB HR craters.
+    # Session 483: Also fetch vegas_mae_7d and market_regime. When TIGHT (MAE < 4.5),
+    # raise OVER floor +1.0 and disable rescue — the market is too accurate to exploit.
+    # March 8 root cause: vegas_mae was 4.40 (TIGHT) but system kept generating picks.
     try:
         macro_query = """
-            SELECT mae_gap_7d
+            SELECT mae_gap_7d, vegas_mae_7d, market_regime
             FROM `nba-props-platform.nba_predictions.league_macro_daily`
             WHERE game_date = @yesterday
         """
@@ -124,11 +128,27 @@ def get_regime_context(bq_client, target_date: date) -> Dict[str, Any]:
             ]
         )
         macro_rows = list(bq_client.query(macro_query, job_config=macro_config).result())
-        if macro_rows and macro_rows[0].mae_gap_7d is not None:
-            result['mae_gap_7d'] = round(float(macro_rows[0].mae_gap_7d), 3)
-            logger.info(f"MAE gap (yesterday): {result['mae_gap_7d']}")
+        if macro_rows:
+            row = macro_rows[0]
+            if row.mae_gap_7d is not None:
+                result['mae_gap_7d'] = round(float(row.mae_gap_7d), 3)
+                logger.info(f"MAE gap (yesterday): {result['mae_gap_7d']}")
+            if row.vegas_mae_7d is not None:
+                vegas_mae = float(row.vegas_mae_7d)
+                result['vegas_mae_7d'] = round(vegas_mae, 3)
+                market_regime = getattr(row, 'market_regime', None)
+                logger.info(f"Vegas MAE (yesterday): {vegas_mae:.2f}, regime: {market_regime}")
+                # TIGHT market: books are highly accurate, OVER edge is model noise not opportunity.
+                # Raise floor +1.0 (5.0→6.0) and disable all OVER rescue.
+                if vegas_mae < 4.5:
+                    result['over_edge_floor_delta'] = max(result['over_edge_floor_delta'], 1.0)
+                    result['disable_over_rescue'] = True
+                    logger.warning(
+                        f"TIGHT market (vegas_mae={vegas_mae:.2f} < 4.5): "
+                        f"raising OVER floor +1.0 and disabling OVER rescue"
+                    )
     except Exception as e:
-        logger.warning(f"MAE gap query failed (non-fatal): {e}")
+        logger.warning(f"MAE gap / Vegas MAE query failed (non-fatal): {e}")
 
     # Session 442: Slate size — thin slates (4-6 games) have 51.2% BB HR.
     try:

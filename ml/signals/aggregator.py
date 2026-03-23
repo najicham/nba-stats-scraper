@@ -73,6 +73,8 @@ BASE_SIGNALS = frozenset({
     'blowout_risk_under', # Session 422b: 16.7% HR (N=12), inflating SC on bad picks
     'day_of_week_over',   # Session 436: 40% BB HR (N=15), on ALL 5 Mar 7 losers — noise
     'predicted_pace_over',  # Session 436: 43% BB HR (N=21), fires on ~50% matchups — noise
+    'home_under',         # Session 483: 48.1% HR 30d (N=49 Mar 2026). Was in UNDER_SIGNAL_WEIGHTS
+                          # at 1.0 weight and in rescue_tags — below breakeven, demoted.
     'low_line_over',        # Session 438: 20% BB HR (1-4), 50% model HR — confirmed anti-signal
     'prop_line_drop_over',  # Session 438: 57.9% BB HR (11-19) — below 60% graduation, inflating real_sc
 })
@@ -131,7 +133,8 @@ UNDER_SIGNAL_WEIGHTS: Dict[str, float] = {
     'book_disagreement': 1.0,        # Session 434: reduced 2.5→1.0. 47.4% HR 7d (N=19), below breakeven
     'book_disagree_under': 1.5,      # Session 469: direction-specific version (shadow, accumulating data)
     'bench_under': 2.0,              # 76.9% HR
-    'home_under': 1.0,               # Session 422c: boosted from 1.5. 60.6% HR (N=4,253) model-level. Session 475: reduced from 2.0→1.0, 44.9% HR in March 2026 (N=49)
+    # home_under removed Session 483: demoted to BASE_SIGNALS. 48.1% HR 30d (N=49)
+    # — below breakeven. Was also in rescue_tags; BASE_SIGNALS classification excludes it.
     # starter_away_overtrend_under removed Session 462: 48.2% HR 5-season cross-validated — harmful
     'extended_rest_under': 1.5,      # 61.8% HR
     'volatile_starter_under': 2.0,   # Session 427: promoted 1.5→2.0. Cross-season +11.1pp lift (best UNDER signal)
@@ -153,7 +156,7 @@ RESCUE_SIGNAL_PRIORITY: Dict[str, int] = {
     'high_scoring_environment_over': 3,  # 100% BB HR (3-0) — only OVER rescue
     'hot_3pt_under': 3,                  # Session 466: 62.5% HR 5-season
     'line_drifted_down_under': 2,        # Session 466: 59.8% HR 5-season
-    'home_under': 2,                     # Solid UNDER rescue signal
+    # home_under removed Session 483: demoted to BASE_SIGNALS
     'combo_3way': 1,                     # UNDER only (COLD for OVER)
     'combo_he_ms': 1,                    # UNDER only
 }
@@ -487,7 +490,7 @@ class BestBetsAggregator:
                     rescue_tags = {
                         'combo_3way',
                         'combo_he_ms',
-                        'home_under',
+                        # home_under removed Session 483: demoted to BASE_SIGNALS (48.1% HR 30d)
                         'hot_3pt_under',          # Session 466: 62.5% HR 5-season, promoted
                         'line_drifted_down_under', # Session 466: 59.8% HR 5-season, promoted
                     }
@@ -534,15 +537,16 @@ class BestBetsAggregator:
                         )
 
                 # Session 412: Regime gating — during cautious regime (yesterday
-                # BB HR < 50%), track what WOULD be blocked for counterfactual.
-                # Session 413: Observation-only — regime on N=7 nuked 10/12 picks.
-                # Next-day avg after bad day is still 53.9% (above breakeven).
+                # BB HR < 50%) or TIGHT market (vegas_mae < 4.5), disable OVER rescue.
+                # Session 483: PROMOTED TO ACTIVE. Observation mode let March 8 happen:
+                # 3 rescued OVER picks at edge 3.1-3.2 all lost in a TIGHT market.
+                # Rescue is only valid when the market is soft enough to exploit.
                 if (signal_rescued
                         and self._regime_context.get('disable_over_rescue')
                         and pred.get('recommendation') == 'OVER'):
                     filter_counts['regime_rescue_blocked'] += 1
                     _record_filtered(pred, 'regime_rescue_blocked', pred_edge)
-                    # Observation mode — do NOT disable rescue
+                    continue
 
             if below_edge_floor:
                 if not signal_rescued:
@@ -572,22 +576,22 @@ class BestBetsAggregator:
             #   - The 6.0 floor was blocking everything since enabled fleet avg_abs_diff
             #     peaked at 1.53 (LGBM), producing zero edge-6+ OVER candidates
             #   - v9_low_vegas (enabled Session 476) produces edge 5-6 OVER picks
-            over_floor = 5.0
-            regime_delta = self._regime_context.get('over_edge_floor_delta', 0)
+            # Session 483: regime_delta now ACTIVELY raises the floor.
+            # Previously observation-only — it tracked WOULD-block but never blocked.
+            # delta is +1.0 when cautious (yesterday HR < 50%) or TIGHT market
+            # (vegas_mae_7d < 4.5). Result: floor rises 5.0 → 6.0 in those regimes.
+            over_floor = 5.0 + self._regime_context.get('over_edge_floor_delta', 0)
             hse_rescued = signal_rescued and rescue_signal == 'high_scoring_environment_over'
             if (pred.get('recommendation') == 'OVER'
                     and pred_edge < over_floor
                     and not hse_rescued):
-                filter_counts['over_edge_floor'] += 1
-                _record_filtered(pred, 'over_edge_floor', pred_edge)
+                if over_floor > 5.0:
+                    filter_counts['regime_over_floor'] += 1
+                    _record_filtered(pred, 'regime_over_floor', pred_edge)
+                else:
+                    filter_counts['over_edge_floor'] += 1
+                    _record_filtered(pred, 'over_edge_floor', pred_edge)
                 continue
-            # Observation: track what regime floor WOULD block
-            if (regime_delta > 0
-                    and pred.get('recommendation') == 'OVER'
-                    and over_floor <= pred_edge < over_floor + regime_delta
-                    and not signal_rescued):
-                filter_counts['regime_over_floor'] += 1
-                _record_filtered(pred, 'regime_over_floor', pred_edge)
 
             # Session 437 P8: Bias-regime OVER volume gate (observation mode).
             # When >70% of predictions are UNDER and this is a rescued OVER
@@ -1074,9 +1078,17 @@ class BestBetsAggregator:
             #   injury context. This filter is named zero_signal_extreme_underprediction.
             if real_sc == 0:
                 if pred.get('recommendation') == 'OVER':
-                    filter_counts['sc3_over_block'] += 1
-                    _record_filtered(pred, 'sc3_over_block', pred_edge, len(qualifying), tags)
-                    continue
+                    if pred_edge >= 7.0:
+                        # Session 483: Edge 7+ OVER bypass — mirrors existing UNDER bypass.
+                        # Edge 7+ OVER = 78.8% HR (N=33 this season). High conviction
+                        # without explicit signal context is still profitable at this edge.
+                        # UNDER already had this bypass (Session 352); OVER had no reason
+                        # to be asymmetrically blocked.
+                        pass
+                    else:
+                        filter_counts['sc3_over_block'] += 1
+                        _record_filtered(pred, 'sc3_over_block', pred_edge, len(qualifying), tags)
+                        continue
                 elif pred_edge < 7.0:
                     filter_counts['signal_density'] += 1
                     _record_filtered(pred, 'signal_density', pred_edge, len(qualifying), tags)
@@ -1201,14 +1213,19 @@ class BestBetsAggregator:
                 _record_filtered(pred, 'over_low_rsc_obs', pred_edge, len(qualifying), tags)
                 # Observation only — does NOT block
 
-            # Session 442 O2: MAE gap observation.
-            # When model MAE exceeds Vegas MAE by 0.15+ (mae_gap_7d), BB HR craters to 40-50%.
+            # Session 442 O2 → Session 483: MAE gap filter — PARTIALLY PROMOTED TO ACTIVE.
+            # When model MAE exceeds Vegas MAE, BB HR craters to 40-50%.
             # When model beats Vegas (negative gap), HR is 80-100%.
+            # Session 483: When gap > 0.5 (model badly losing to books), block OVER picks.
+            # UNDER stays observation-only — UNDER is stable at 57-58% regardless of regime.
             mae_gap = self._regime_context.get('mae_gap_7d')
             if mae_gap is not None and mae_gap > 0.15:
                 filter_counts['mae_gap_obs'] += 1
                 _record_filtered(pred, 'mae_gap_obs', pred_edge, len(qualifying), tags)
-                # Observation only — does NOT block
+                if mae_gap > 0.5 and pred.get('recommendation') == 'OVER':
+                    filter_counts['mae_gap_over_block'] += 1
+                    _record_filtered(pred, 'mae_gap_over_block', pred_edge, len(qualifying), tags)
+                    continue
 
             # Session 442 O3: Thin slate observation.
             # 4-6 game slates = 51.2% HR with 76.7% OVER-heavy mix.
@@ -1532,6 +1549,12 @@ class BestBetsAggregator:
                 f"MAE gap (observation): tagged "
                 f"{filter_counts['mae_gap_obs']} picks with model MAE > Vegas MAE by 0.15+ "
                 f"(40-50% BB HR in this regime)"
+            )
+        if filter_counts.get('mae_gap_over_block', 0) > 0:
+            mae_gap = self._regime_context.get('mae_gap_7d', 0)
+            logger.info(
+                f"MAE gap OVER block: blocked {filter_counts['mae_gap_over_block']} OVER picks "
+                f"(mae_gap={mae_gap:.2f} > 0.5 — model badly losing to Vegas)"
             )
         if filter_counts['thin_slate_obs'] > 0:
             logger.info(
