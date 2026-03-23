@@ -396,14 +396,28 @@ def export_date(
 
     # Signal best bets exporter (Session 254 - curated picks via Signal Framework)
     if 'signal-best-bets' in export_types:
-        try:
-            exporter = SignalBestBetsExporter()
-            path = exporter.export(target_date, version_id=mat_version_id)
-            result['paths']['signal_best_bets'] = path
-            logger.info(f"  Signal Best Bets: {path}")
-        except Exception as e:
-            result['errors'].append(f"signal-best-bets: {e}")
-            logger.error(f"  Signal Best Bets error: {e}")
+        # Session 483: Playoff shadow mode — picks still generated and stored in
+        # signal_best_bets_picks (BQ) for analysis, but NOT exported to GCS/API.
+        # Set NBA_PLAYOFF_SHADOW_START=YYYY-MM-DD env var to activate.
+        # Clear to resume public export (e.g., if playoffs prove profitable).
+        playoff_shadow_start = os.environ.get('NBA_PLAYOFF_SHADOW_START', '')
+        if playoff_shadow_start and target_date >= playoff_shadow_start:
+            logger.info(
+                f"  Signal Best Bets: PLAYOFF SHADOW MODE "
+                f"(shadow_start={playoff_shadow_start}, target={target_date}) — "
+                f"picks in BQ signal_best_bets_picks but NOT exported to GCS. "
+                f"Clear NBA_PLAYOFF_SHADOW_START env var to resume public export."
+            )
+            result['paths']['signal_best_bets'] = None
+        else:
+            try:
+                exporter = SignalBestBetsExporter()
+                path = exporter.export(target_date, version_id=mat_version_id)
+                result['paths']['signal_best_bets'] = path
+                logger.info(f"  Signal Best Bets: {path}")
+            except Exception as e:
+                result['errors'].append(f"signal-best-bets: {e}")
+                logger.error(f"  Signal Best Bets error: {e}")
 
     # Signal health exporter (Session 267 - per-signal HOT/COLD/NORMAL for frontend)
     if 'signal-health' in export_types:
