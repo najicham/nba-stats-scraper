@@ -118,3 +118,37 @@ cascade fixed it. Always run `bin/deactivate_model.py` for confirmed-dead models
 registry updates.
 
 **MLB pitcher-props-validator was April-only.** Season starts March 27. Fixed to March-October.
+
+---
+
+## ADDENDUM: Retrain Completed (end of session)
+
+### New Model: `lgbm_v12_noveg_train0103_0228`
+- **Training:** Jan 3 → Feb 28, 2026 (57 days, avoids March tight-market data)
+- **Eval:** Mar 1–21, DraftKings lines (production-lines query was unusable — see below)
+- **HR edge 3+:** 61.54% (N=234) ✅
+- **Vegas bias:** +0.15 ✅
+- **MAE:** 5.097 vs 5.5 baseline ✅
+- **Directional:** OVER 62.0%, UNDER 61.0% ✅
+- **All governance gates passed.** Registered, enabled, serving 100% traffic.
+
+### Fleet (final state, 3 enabled models — above safety floor)
+| Model | Window | State |
+|-------|--------|-------|
+| `lgbm_v12_noveg_train0103_0228` | Jan 3–Feb 28 | NEW, all gates passed |
+| `lgbm_v12_noveg_train0103_0227` | Jan 3–Feb 27 | HEALTHY 60% 7d |
+| `lgbm_v12_noveg_train1215_0214` | Dec 15–Feb 14 | HEALTHY 60% 7d, avg_edge 1.34 |
+
+### Retrain Gotcha: `load_eval_data_from_production` hardcoded to `catboost_v9`
+`quick_retrain.py` line 569: `load_eval_data_from_production(client, start, end, system_id='catboost_v9')`.
+When `catboost_v9` has no predictions in the eval window (it's INSUFFICIENT_DATA), the
+eval dataset returns 39 rows regardless of date range — always below the 100-row minimum.
+**Workaround:** `--no-production-lines` uses DraftKings lines from the feature store directly.
+**Permanent fix needed:** Change default system_id or make it auto-detect from enabled models.
+
+### Pending After Session 483
+- [ ] Fix `load_eval_data_from_production` hardcoded catboost_v9 (quick_retrain.py:569)
+- [ ] Verify MLB orchestrator payload has `write_to_bigquery: true`
+- [ ] Monitoring: single-model dominance alert (>40% from one model) — not coded
+- [ ] Fix `deployment/scheduler/mlb/validator-schedules.yaml` multi-doc YAML (pre-commit fails)
+- [ ] Potentially retrain CatBoost family (entire CatBoost fleet was deactivated, only LGBMs remain)

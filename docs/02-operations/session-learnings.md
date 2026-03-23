@@ -1660,3 +1660,23 @@ when the grading HTTP call returns non-200. Previously only logged.
 
 **Lesson:** After any MLB service deploy, immediately test a functional endpoint (not just
 `/health`). For the grading service, test `curl /grade-date` with a recent date.
+
+### `quick_retrain.py` Eval Query Hardcoded to `catboost_v9` (Session 483)
+
+**Symptom:** `quick_retrain.py` with `--use-production-lines` (default) always returns 39 eval
+samples regardless of the eval date range. Hit the `df_eval < 100` threshold — "ERROR: Not
+enough data" — on every attempt with a March eval window.
+
+**Root cause:** `load_eval_data_from_production()` at line 569 has `system_id='catboost_v9'`
+hardcoded. The eval query JOINs on `prediction_accuracy WHERE system_id = 'catboost_v9'`.
+When `catboost_v9` is INSUFFICIENT_DATA (no recent predictions), the join returns almost
+nothing. March 2026: only 39 catboost_v9 predictions existed in the entire month.
+
+**Workaround:** `--no-production-lines` uses `load_eval_data()` with DraftKings lines from
+the feature store — returns all players, no system_id filter. HR eval is slightly different
+(raw line vs production line) but governance gates still valid.
+
+**Permanent fix:** In `quick_retrain.py`, change default `system_id` to auto-detect from
+enabled models in the registry, or accept it as a CLI argument.
+
+**Impact for future retrains:** If CatBoost is disabled or INSUFFICIENT_DATA, all `--use-production-lines` retrains will silently fail with "Not enough data". Use `--no-production-lines` as the standard flag until this is fixed.
