@@ -79,7 +79,11 @@ MAX_PICKS_PER_DAY = int(os.environ.get('MLB_MAX_PICKS_PER_DAY', '5'))
 MIN_SIGNAL_COUNT = 2
 
 # Base signals that inflate signal count with zero value
-BASE_SIGNAL_TAGS = frozenset(['high_edge'])
+# Session 483: home_pitcher_over added — fires for every home OVER pick (~50% of candidates),
+# providing zero discriminatory power while pushing picks past the MIN_SIGNAL_COUNT=2 gate.
+# Walk-forward stat (64.9% home vs 59.7% away) measures general home advantage, not signal value.
+# Still available for Ultra tier evaluation (line 573) and pick angle generation.
+BASE_SIGNAL_TAGS = frozenset(['high_edge', 'home_pitcher_over'])
 
 # Tracking-only signals — evaluated and tagged but excluded from real_signal_count
 # long_rest_over: 55.4% HR, -36u P&L across 4 seasons — actively losing money
@@ -148,6 +152,72 @@ class MLBBestBetsExporter:
             self.bq_client = get_bigquery_client(project_id=self.project_id)
         return self.bq_client
 
+    def _get_regime_context(self, game_date: str) -> dict:
+        """Query yesterday's MLB macro data for market regime awareness.
+
+        Session 483: Ports the NBA regime_context pattern to MLB.
+        The mlb_predictions.league_macro_daily table exists (mlb_league_macro.py
+        populates it) but was never read by the pipeline — same gap as NBA pre-Session 483.
+
+        Returns dict with:
+            vegas_mae_7d: float or None — book accuracy on K lines (7d rolling)
+            mae_gap_7d: float or None — model_mae - vegas_mae (positive = model worse)
+            market_regime: str or None — TIGHT/NORMAL/LOOSE
+            over_edge_floor_delta: float — additional edge to add when TIGHT
+            disable_rescue: bool — True when TIGHT (rescue is noise in efficient market)
+            block_all_over: bool — True when mae_gap too large (model not competitive)
+
+        Thresholds (K-specific, narrower than NBA points):
+            TIGHT:        vegas_mae_7d < 1.7 K  → raise floor +0.5 K, disable rescue
+            MAE gap:      mae_gap_7d > 0.3 K    → block all OVER (model losing to Vegas)
+        """
+        from datetime import date, timedelta
+        result = {
+            'vegas_mae_7d': None,
+            'mae_gap_7d': None,
+            'market_regime': None,
+            'over_edge_floor_delta': 0.0,
+            'disable_rescue': False,
+            'block_all_over': False,
+        }
+        try:
+            yesterday = (date.fromisoformat(game_date) - timedelta(days=1)).isoformat()
+            bq = self._get_bq_client()
+            query = f"""
+                SELECT vegas_mae_7d, mae_gap_7d, market_regime
+                FROM `{self.project_id}.mlb_predictions.league_macro_daily`
+                WHERE game_date = '{yesterday}'
+                LIMIT 1
+            """
+            rows = list(bq.query(query).result())
+            if rows:
+                row = rows[0]
+                if row.vegas_mae_7d is not None:
+                    result['vegas_mae_7d'] = float(row.vegas_mae_7d)
+                if row.mae_gap_7d is not None:
+                    result['mae_gap_7d'] = float(row.mae_gap_7d)
+                result['market_regime'] = getattr(row, 'market_regime', None)
+
+                vegas_mae = result['vegas_mae_7d']
+                mae_gap = result['mae_gap_7d']
+
+                if vegas_mae is not None and vegas_mae < 1.7:
+                    result['over_edge_floor_delta'] = 0.5
+                    result['disable_rescue'] = True
+                    logger.warning(
+                        f"[MLB BB] TIGHT market: vegas_mae={vegas_mae:.2f} < 1.7 K. "
+                        f"Raising OVER floor +0.5 K and disabling rescue."
+                    )
+                if mae_gap is not None and mae_gap > 0.3:
+                    result['block_all_over'] = True
+                    logger.warning(
+                        f"[MLB BB] MAE gap={mae_gap:.2f} > 0.3 K: model worse than Vegas. "
+                        f"Blocking all OVER picks for today."
+                    )
+        except Exception as e:
+            logger.warning(f"[MLB BB] Regime context query failed (non-fatal): {e}")
+        return result
+
     def export(
         self,
         predictions: List[Dict],
@@ -177,13 +247,32 @@ class MLBBestBetsExporter:
         self.filter_audit = []
         self._blacklist_blocked = []  # Shadow tracking for blacklisted pitchers
 
+        # Session 483: Query market regime before pipeline starts.
+        # Same pattern as NBA regime_context.py — reads mlb_predictions.league_macro_daily.
+        # The table existed but was never read by the exporter (same gap as NBA pre-Session 483).
+        regime = self._get_regime_context(game_date)
+        regime_delta = regime['over_edge_floor_delta']
+
         # Unified edge floor (no phase logic — regressor sweet spot)
-        effective_edge_floor = edge_floor if edge_floor is not None else DEFAULT_EDGE_FLOOR
+        effective_edge_floor = (edge_floor if edge_floor is not None else DEFAULT_EDGE_FLOOR) + regime_delta
+        effective_rescue_tags = frozenset() if regime['disable_rescue'] else RESCUE_SIGNAL_TAGS
         under_enabled = UNDER_ENABLED
 
         logger.info(f"[MLB BB] Processing {len(predictions)} predictions for {game_date}")
-        logger.info(f"[MLB BB] Edge floor: {effective_edge_floor} (away: {AWAY_EDGE_FLOOR}), "
-                    f"UNDER enabled: {under_enabled}, max picks: {MAX_PICKS_PER_DAY}")
+        logger.info(
+            f"[MLB BB] Edge floor: {effective_edge_floor:.2f}K (base {DEFAULT_EDGE_FLOOR:.2f}K "
+            f"+ regime_delta {regime_delta:.2f}K), away: {AWAY_EDGE_FLOOR}K, "
+            f"regime: {regime['market_regime']}, rescue: {'disabled' if regime['disable_rescue'] else 'enabled'}, "
+            f"UNDER: {under_enabled}, max picks: {MAX_PICKS_PER_DAY}"
+        )
+
+        # Block all OVER picks when model is badly losing to Vegas (mae_gap > 0.3 K)
+        if regime['block_all_over']:
+            logger.warning(
+                f"[MLB BB] MAE gap gate: blocking all OVER picks for {game_date}. "
+                f"mae_gap={regime['mae_gap_7d']:.2f} K — model not competitive with books."
+            )
+            return []
 
         # 1. Filter to actionable predictions (OVER/UNDER with line)
         allowed_directions = ['OVER']
@@ -360,9 +449,10 @@ class MLBBestBetsExporter:
                 continue
 
             # Home/unknown pitchers: signal rescue
+            # Session 483: uses effective_rescue_tags (frozenset() when market is TIGHT)
             rescued = False
             rescue_signal = None
-            for tag in RESCUE_SIGNAL_TAGS:
+            for tag in effective_rescue_tags:
                 signal = self.registry.get(tag)
                 result = signal.evaluate(pred, features, supplemental)
                 if result.qualifies:
@@ -801,9 +891,9 @@ class MLBBestBetsExporter:
                 if is_away and pred.get('recommendation') == 'OVER' and BLOCK_AWAY_RESCUE:
                     continue  # Would have been blocked by away edge floor
 
-                # Check rescue signals
+                # Check rescue signals (Session 483: effective_rescue_tags, empty when TIGHT)
                 rescued = False
-                for tag in RESCUE_SIGNAL_TAGS:
+                for tag in effective_rescue_tags:
                     signal = self.registry.get(tag)
                     result = signal.evaluate(pred, features, supplemental)
                     if result.qualifies:
