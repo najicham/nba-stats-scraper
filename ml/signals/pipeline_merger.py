@@ -320,6 +320,19 @@ def merge_model_pipelines(
         f"rejected: {dict(rejection_counts)}"
     )
 
+    # Single-model dominance alert: warn if one model sources >40% of selected picks
+    if selected:
+        selected_per_model: Dict[str, int] = defaultdict(int)
+        for pick in selected:
+            selected_per_model[pick.get('source_pipeline', 'unknown')] += 1
+        for model_id, count in selected_per_model.items():
+            pct = count / len(selected)
+            if pct > 0.40:
+                logger.warning(
+                    f"SINGLE_MODEL_DOMINANCE: {model_id} sourced {count}/{len(selected)} "
+                    f"selected picks ({pct:.0%}) — fleet diversity at risk"
+                )
+
     return selected, summary
 
 

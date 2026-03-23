@@ -28,7 +28,7 @@ kind: Job
 metadata:
   name: mlb-pitcher-props-validator-4hourly
 spec:
-  schedule: "0 10,14,18,22,2,6 * 4-10 *"  # Every 4 hours, April-October
+  schedule: "0 10,14,18,22,2,6 * 3-10 *"  # Every 4 hours, March-October (Opening Day is Mar 27)
   timeZone: "UTC"
   httpTarget:
     uri: "https://us-west2-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/nba-props-platform/jobs/mlb-pitcher-props-validator:run"
@@ -87,7 +87,7 @@ spec:
 #
 # gcloud scheduler jobs create http mlb-pitcher-props-validator-4hourly \
 #   --location=us-west2 \
-#   --schedule="0 10,14,18,22,2,6 * 4-10 *" \
+#   --schedule="0 10,14,18,22,2,6 * 3-10 *" \
 #   --time-zone="UTC" \
 #   --uri="https://us-west2-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/nba-props-platform/jobs/mlb-pitcher-props-validator:run" \
 #   --http-method=POST \

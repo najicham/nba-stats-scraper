@@ -182,7 +182,8 @@ def trigger_predictions(game_date: str, correlation_id: str, trigger_reason: str
             "correlation_id": correlation_id,
             "trigger_source": "orchestrator",
             "triggered_by": "mlb_phase4_to_phase5_orchestrator",
-            "trigger_reason": trigger_reason
+            "trigger_reason": trigger_reason,
+            "write_to_bigquery": True
         }
 
         response = requests.post(
