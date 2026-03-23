@@ -566,7 +566,32 @@ def load_train_data(client, start, end, min_quality_score=70,
     )
 
 
-def load_eval_data_from_production(client, start, end, system_id='catboost_v9'):
+def _detect_best_eval_system_id(client, start, end):
+    """Auto-detect the system_id with the most predictions in the eval window.
+
+    Session 483: The old default 'catboost_v9' caused silent failures when
+    catboost_v9 was INSUFFICIENT_DATA (no recent predictions). Returns the
+    model with the most graded predictions in the eval window.
+    """
+    query = f"""
+        SELECT system_id, COUNT(*) as n
+        FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy`
+        WHERE game_date BETWEEN '{start}' AND '{end}'
+          AND recommendation IN ('OVER', 'UNDER')
+          AND prediction_correct IS NOT NULL
+          AND line_value IS NOT NULL
+        GROUP BY system_id
+        ORDER BY n DESC
+        LIMIT 1
+    """
+    rows = list(client.query(query).result())
+    if rows:
+        detected = rows[0].system_id
+        return detected
+    return 'catboost_v9'  # Final fallback
+
+
+def load_eval_data_from_production(client, start, end, system_id=None):
     """Load eval features + production lines for apples-to-apples comparison.
 
     Uses prediction_accuracy which has the EXACT lines production used at prediction
@@ -574,15 +599,22 @@ def load_eval_data_from_production(client, start, end, system_id='catboost_v9'):
     This eliminates the mismatch between experiment eval and production performance.
 
     Session 166: Replaces DraftKings-only eval with production line matching.
+    Session 483: system_id auto-detected from most-active model in eval window.
+                 Old default 'catboost_v9' caused eval to return ~39 rows when
+                 catboost_v9 was INSUFFICIENT_DATA, silently failing governance.
 
     Args:
         client: BigQuery client
         start: Start date (YYYY-MM-DD)
         end: End date (YYYY-MM-DD)
-        system_id: Model system ID to match (default: 'catboost_v9')
+        system_id: Model system ID to match. If None, auto-detected from registry.
     """
     from shared.ml.training_data_loader import get_quality_where_clause
     quality_clause = get_quality_where_clause("mf")
+
+    if system_id is None:
+        system_id = _detect_best_eval_system_id(client, start, end)
+        print(f"  Auto-detected eval system_id: {system_id}")
 
     query = f"""
     WITH production_lines AS (
@@ -2993,8 +3025,11 @@ def main():
     if args.use_production_lines:
         print("  Using production lines (prediction_accuracy — multi-source cascade)")
         df_eval = load_eval_data_from_production(client, dates['eval_start'], dates['eval_end'])
-        if len(df_eval) == 0:
-            print("  WARNING: No production predictions found for eval period.")
+        # Session 483: fallback threshold raised from 0 to 100 — the df_eval < 100 gate
+        # in governance means 0 < N < 100 was silently failing downstream even when
+        # the fallback was never triggered (e.g., 39 rows from a thin catboost_v9 window).
+        if len(df_eval) < 100:
+            print(f"  WARNING: Only {len(df_eval)} production predictions in eval period (need >= 100).")
             print(f"  Falling back to raw {args.line_source} lines...")
             df_eval = load_eval_data(client, dates['eval_start'], dates['eval_end'], args.line_source)
     else:
