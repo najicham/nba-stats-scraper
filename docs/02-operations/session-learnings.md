@@ -1584,3 +1584,79 @@ models/
 ```
 
 **Lesson:** When Cloud Build uploads are unexpectedly large, check `.gcloudignore` for dotfile directories (`.venv/`, `.cache/`, `.pytest_cache/`). The `venv/` pattern does NOT match `.venv/`.
+
+### 9-Agent Review: Observation-Mode Guardrails Never Block (Session 483)
+
+**Context:** After the March 8 disaster (4-12, 25% HR on 16 picks), a 9-agent review
+(5 Opus 4 + 4 Sonnet) reviewed all system code and identified the root cause pattern.
+
+**Finding:** The system had built every necessary market-awareness guard. None were blocking.
+- `mae_gap_obs` filter in `aggregator.py`: written, fires, comment says "BB HR craters to
+  40-50%" — but had `# Observation only — does NOT block`
+- `regime_context.disable_over_rescue`: computed, passed to aggregator — but aggregator had
+  `# Observation mode — do NOT disable rescue`
+- `regime_context.over_edge_floor_delta`: fetched from regime_context but the floor code
+  had `# Observation: track what regime floor WOULD block` and never applied it
+- `market_regime = 'TIGHT'` stored in `league_macro_daily` — never read by aggregator
+
+**Root quote from Opus agent:** *"This is a system that built the guardrails, labeled them
+'observation,' and then watched itself drive off the cliff while logging the event."*
+
+**Fixes (Session 483):**
+1. `mae_gap_obs` → blocks OVER when gap > 0.5 (model badly losing to books)
+2. `regime_rescue_blocked` → now actually blocks OVER rescue when `disable_over_rescue=True`
+3. `over_edge_floor_delta` → now actually raises the floor (5.0 → 6.0 when regime triggered)
+4. `regime_context.py` → now queries `vegas_mae_7d`; when < 4.5 sets floor +1.0 + disables rescue
+5. `sc3_over_block` → OVER edge 7+ now bypasses (mirrors existing UNDER bypass)
+6. `home_under` → moved to BASE_SIGNALS (48% 30d HR, was active in rescue_tags + UNDER_SIGNAL_WEIGHTS)
+7. `signal_health.py` HOT gate → requires picks_7d >= 5 AND hr_30d >= 50% to be HOT
+
+**Lesson:** When adding observation mode for a new filter, set a calendar reminder to
+promote it. Every observation filter should have a "promote by N=30" threshold in comments.
+
+### March 8 Root Cause: One Model + Tight Market + Correlated Losses (Session 483)
+
+**What happened:** 16 picks, 4-12 (25% HR). Root causes in priority order:
+1. `lgbm_v12_noveg_vw015_train1215_0208` sourced 9 of 16 picks (56%) — fleet concentration risk
+2. Vegas MAE was 4.40 (TIGHT) — books were highly accurate, our "edge" was model noise
+3. UNDER collapse: blowout_risk_under + starter_under + downtrend_under all fired on same
+   night as scoring eruption. Stars all exceeded lines by +5 to +7.5 points.
+4. 3 rescue picks (all OVER, edge 3.1-3.2) all lost — `sharp_book_lean_over` rescued low-line
+   role players in a tight market.
+
+**Without March 8** (ex-disaster): 30d HR was 57.4%. The system ex-disaster is OK.
+30d window fully washes out March 8 around April 7.
+
+**Model fleet consequence:** Fleet went from 6 enabled to 2 after decay detection correctly
+blocked the bad models. With 2 models, you're below the MIN_ENABLED_MODELS=3 safety floor.
+
+**Lesson:** Single-model dominance (>40% of picks from one model) is a red flag now
+monitored by `signal_decay_monitor.py`. Target fleet size: 4-6 enabled models.
+
+### Retrain Gate Logic Was Backwards (Session 483)
+
+The weekly-retrain CF was PAUSED because "Vegas MAE 5.43, gate requires MAE < 5.0 to retrain."
+But 5.43 is a LOOSE market — the best time to train. The gate was blocking training DURING
+loose markets when it should be blocking training ON tight-market DATA.
+
+**Correct logic:** Retrain continuously on schedule, but cap `train_end` to the last date
+where `vegas_mae_7d >= 5.0`. This prevents edge-collapsed models (trained through tight
+markets) while allowing retraining whenever the market is exploitable.
+
+**Short-term workaround:** `./bin/retrain.sh --all --enable --train-end 2026-02-28`
+pins training data to pre-tightening period manually.
+
+### MLB Grading Service Silent 503 (Session 482, follow-up 483)
+
+The mlb-phase6-grading service was 503 on all endpoints for weeks due to an import name
+mismatch. The `/health` endpoint was decoupled from the actual grading code — it returned
+200 even when every functional endpoint was 503.
+
+**Pattern:** Cloud Run health checks only test the `/health` route. Import errors or missing
+dependencies only surface when the first functional route is called.
+
+**Detection fix:** `mlb_phase5_to_phase6` orchestrator now sends a Slack alert to `#nba-alerts`
+when the grading HTTP call returns non-200. Previously only logged.
+
+**Lesson:** After any MLB service deploy, immediately test a functional endpoint (not just
+`/health`). For the grading service, test `curl /grade-date` with a recent date.

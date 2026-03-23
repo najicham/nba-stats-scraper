@@ -143,7 +143,20 @@ def orchestrate_mlb_phase5_to_phase6(cloud_event):
         if success:
             logger.info(f"Successfully triggered grading for {game_date}")
         else:
-            logger.error(f"Failed to trigger grading for {game_date}", exc_info=True)
+            logger.error(f"Failed to trigger grading for {game_date}")
+            # Session 483: Alert on grading failure so silent 503s get caught immediately.
+            # The mlb-phase6-grading service was broken for weeks (import error → 503 on all
+            # endpoints) and nobody noticed because this error was only logged, not alerted.
+            try:
+                from shared.utils.slack_alerts import send_slack_alert
+                send_slack_alert(
+                    f"🚨 MLB grading trigger FAILED for {game_date}. "
+                    f"Check mlb-phase6-grading service health: curl /health and /grade-date. "
+                    f"Last seen: mlb_phase5_to_phase6 orchestrator non-200 response.",
+                    channel='#nba-alerts'
+                )
+            except Exception as slack_e:
+                logger.warning(f"Could not send Slack alert: {slack_e}")
 
     except Exception as e:
         logger.error(f"Error in MLB Phase 5→6 orchestrator: {e}", exc_info=True)

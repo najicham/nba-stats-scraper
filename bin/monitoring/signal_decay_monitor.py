@@ -162,6 +162,106 @@ def format_report(results, target_date):
     return '\n'.join(lines)
 
 
+def query_market_health(bq_client: bigquery.Client, target_date: str) -> dict:
+    """Session 483: Check market regime and fleet BB HR for pre-game risk alerting.
+
+    Returns dict with:
+        consecutive_tight_days: int — days Vegas MAE has been < 4.5
+        vegas_mae_7d: float or None
+        market_regime: str or None
+        bb_hr_7d: float or None
+        bb_n_7d: int
+        consecutive_low_bb_hr_days: int — days fleet BB HR has been < 58%
+        alerts: list of alert dicts with 'type', 'message', 'channel', 'auto_action'
+    """
+    result = {
+        'consecutive_tight_days': 0,
+        'vegas_mae_7d': None,
+        'market_regime': None,
+        'bb_hr_7d': None,
+        'bb_n_7d': 0,
+        'consecutive_low_bb_hr_days': 0,
+        'alerts': [],
+    }
+    try:
+        query = """
+            SELECT
+                game_date,
+                vegas_mae_7d,
+                market_regime,
+                bb_hr_7d,
+                bb_n_7d
+            FROM `nba-props-platform.nba_predictions.league_macro_daily`
+            WHERE game_date >= DATE_SUB(@target_date, INTERVAL 7 DAY)
+              AND game_date <= @target_date
+            ORDER BY game_date DESC
+        """
+        from google.cloud.bigquery import QueryJobConfig, ScalarQueryParameter
+        rows = list(bq_client.query(
+            query,
+            job_config=QueryJobConfig(query_parameters=[
+                ScalarQueryParameter('target_date', 'DATE', target_date)
+            ])
+        ).result())
+
+        if not rows:
+            return result
+
+        latest = rows[0]
+        result['vegas_mae_7d'] = float(latest.vegas_mae_7d) if latest.vegas_mae_7d else None
+        result['market_regime'] = latest.market_regime
+        result['bb_hr_7d'] = float(latest.bb_hr_7d) if latest.bb_hr_7d else None
+        result['bb_n_7d'] = int(latest.bb_n_7d) if latest.bb_n_7d else 0
+
+        # Count consecutive TIGHT days (vegas_mae < 4.5)
+        for row in rows:
+            if row.vegas_mae_7d and float(row.vegas_mae_7d) < 4.5:
+                result['consecutive_tight_days'] += 1
+            else:
+                break
+
+        # Count consecutive low BB HR days (< 58%, N >= 20)
+        for row in rows:
+            if (row.bb_hr_7d and float(row.bb_hr_7d) < 58.0
+                    and row.bb_n_7d and int(row.bb_n_7d) >= 20):
+                result['consecutive_low_bb_hr_days'] += 1
+            else:
+                break
+
+        # Generate alerts
+        # Alert 1: TIGHT market for 2+ consecutive days → raise OVER floor (auto-action)
+        if result['consecutive_tight_days'] >= 2:
+            result['alerts'].append({
+                'type': 'TIGHT_MARKET',
+                'message': (
+                    f"⚠️ TIGHT MARKET — Day {result['consecutive_tight_days']} "
+                    f"(vegas_mae={result['vegas_mae_7d']:.2f} < 4.5). "
+                    f"OVER edge floor auto-raised to 6.0 by regime_context. "
+                    f"OVER rescue disabled. Monitor pick volume."
+                ),
+                'channel': '#nba-betting-signals',
+                'auto_action': True,
+            })
+
+        # Alert 2: Fleet BB HR below 58% for 3+ consecutive days
+        if result['consecutive_low_bb_hr_days'] >= 3:
+            result['alerts'].append({
+                'type': 'LOW_BB_HR',
+                'message': (
+                    f"📉 FLEET BB HR DECLINING — Day {result['consecutive_low_bb_hr_days']} "
+                    f"below 58% (current: {result['bb_hr_7d']:.1f}%, N={result['bb_n_7d']}). "
+                    f"Review enabled model states and market regime."
+                ),
+                'channel': '#nba-betting-signals',
+                'auto_action': False,
+            })
+
+    except Exception as e:
+        logger.warning(f"Market health query failed (non-fatal): {e}")
+
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description='Signal decay monitor')
     parser.add_argument('--date', help='Target date (YYYY-MM-DD)', default=str(date.today()))
@@ -187,19 +287,34 @@ def main():
     report = format_report(results, args.date)
     print(report)
 
-    # Alert on degrading or recovered signals
+    # Session 483: Check market health (regime + BB HR trend)
+    market = query_market_health(bq_client, args.date)
+    if market['alerts']:
+        print(f"\nMARKET ALERTS ({len(market['alerts'])}):")
+        for a in market['alerts']:
+            print(f"  [{a['type']}] {a['message']}")
+
+    # Alert on degrading / recovered signals AND market alerts
     if not args.dry_run:
-        alerts = results['degrading'] + results['recovered']
-        if alerts:
+        signal_alerts = results['degrading'] + results['recovered']
+        if signal_alerts:
             try:
                 from shared.utils.slack_alerts import send_slack_alert
                 alert_lines = ["Signal Decay Monitor Alert:"]
-                for a in alerts:
+                for a in signal_alerts:
                     alert_lines.append(f"  {a['signal_tag']}: {a['recommendation']}")
                 send_slack_alert('\n'.join(alert_lines), channel='#nba-alerts')
-                logger.info(f"Sent alerts for {len(alerts)} signals")
+                logger.info(f"Sent alerts for {len(signal_alerts)} signals")
             except Exception as e:
                 logger.warning(f"Failed to send Slack alert: {e}")
+
+        for market_alert in market['alerts']:
+            try:
+                from shared.utils.slack_alerts import send_slack_alert
+                send_slack_alert(market_alert['message'], channel=market_alert['channel'])
+                logger.info(f"Sent market alert: {market_alert['type']}")
+            except Exception as e:
+                logger.warning(f"Failed to send market alert: {e}")
 
 
 def http_handler(request=None):
