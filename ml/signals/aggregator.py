@@ -1402,7 +1402,7 @@ class BestBetsAggregator:
         if filter_counts.get('signal_rescue', 0) > 0:
             logger.info(f"Signal rescue: rescued {filter_counts['signal_rescue']} picks below edge floor via high-HR signals")
         if filter_counts['over_edge_floor'] > 0:
-            logger.info(f"OVER edge floor (4.0): skipped {filter_counts['over_edge_floor']} OVER picks with edge < 4.0")
+            logger.info(f"OVER edge floor (5.0 base, regime-adaptive): skipped {filter_counts['over_edge_floor']} OVER picks below OVER edge floor")
         if filter_counts['under_edge_7plus'] > 0:
             logger.info(f"UNDER edge 7+ block: skipped {filter_counts['under_edge_7plus']} predictions")
         if filter_counts['model_direction_affinity'] > 0:
