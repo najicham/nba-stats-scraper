@@ -201,6 +201,64 @@ def get_enabled_families(client: bigquery.Client) -> List[Dict[str, Any]]:
     return families
 
 
+def cap_to_last_loose_market_date(
+    client: bigquery.Client,
+    train_end: date,
+    tight_mae_threshold: float = 4.5,
+    recovery_days: int = 7,
+) -> date:
+    """
+    Cap train_end to avoid training through a recent TIGHT market period.
+
+    When vegas_mae_7d < 4.5 (TIGHT), models learn Vegas is accurate and produce
+    edge-collapsed predictions. If train_end falls within `recovery_days` of the
+    last TIGHT day, cap it to the day before the TIGHT window started — ensuring
+    the model's most recent signal is LOOSE data.
+
+    After `recovery_days` of LOOSE market, TIGHT data is sufficiently diluted in
+    the 56-day window and the cap no longer applies.
+
+    Session 486: Fixes the backwards gate that manually paused the scheduler on
+    LOOSE markets. Now the CF always runs but automatically protects training data.
+    """
+    lookback_start = train_end - timedelta(days=30)
+    query = f"""
+    SELECT game_date
+    FROM `{PROJECT_ID}.nba_predictions.league_macro_daily`
+    WHERE game_date BETWEEN '{lookback_start.isoformat()}' AND '{train_end.isoformat()}'
+      AND vegas_mae_7d < {tight_mae_threshold}
+    ORDER BY game_date ASC
+    """
+    df = client.query(query).to_dataframe()
+    if df.empty:
+        return train_end  # No TIGHT days in lookback range
+
+    tight_dates = sorted(df['game_date'].tolist())
+    latest_tight = tight_dates[-1]
+    if hasattr(latest_tight, 'date'):
+        latest_tight = latest_tight.date()
+
+    days_since_tight = (train_end - latest_tight).days
+    if days_since_tight >= recovery_days:
+        logger.info(
+            f"  Market recovered: {days_since_tight}d since last TIGHT day "
+            f"({latest_tight}) — no training cap needed"
+        )
+        return train_end
+
+    # Cap to the day before the TIGHT period started
+    earliest_tight = tight_dates[0]
+    if hasattr(earliest_tight, 'date'):
+        earliest_tight = earliest_tight.date()
+
+    cap_date = earliest_tight - timedelta(days=1)
+    logger.info(
+        f"  TIGHT protection: last TIGHT day {latest_tight} was {days_since_tight}d ago "
+        f"(< {recovery_days}d threshold) — capping train_end {train_end} → {cap_date}"
+    )
+    return cap_date
+
+
 def load_training_data(
     client: bigquery.Client,
     start_date: str,
@@ -794,6 +852,19 @@ def weekly_retrain(request):
 
         # Get families
         client = bigquery.Client(project=PROJECT_ID)
+
+        # Cap training to avoid TIGHT market contamination (Session 486)
+        # Models trained through TIGHT periods (vegas_mae < 4.5) produce edge collapse.
+        # Skip cap if train_end was explicitly overridden (caller knows what they want).
+        if not train_end_override:
+            capped = cap_to_last_loose_market_date(client, train_end)
+            if capped != train_end:
+                train_end = capped
+                train_start = train_end - timedelta(days=ROLLING_WINDOW_DAYS)
+                train_start_str = train_start.isoformat()
+                train_end_str = train_end.isoformat()
+                logger.info(f"  (Adjusted) Training: {train_start_str} to {train_end_str}")
+
         families = get_enabled_families(client)
 
         if family_filter:
