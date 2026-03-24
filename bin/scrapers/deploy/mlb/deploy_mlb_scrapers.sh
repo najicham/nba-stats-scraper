@@ -47,7 +47,7 @@ echo ""
 # Build Docker image
 echo "Building Docker image..."
 docker build \
-    -f docker/scrapers.Dockerfile \
+    -f scrapers/Dockerfile \
     -t "$IMAGE_FULL" \
     -t "$IMAGE_LATEST" \
     .

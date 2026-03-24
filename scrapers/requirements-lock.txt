@@ -73,6 +73,7 @@ six==1.17.0
 slack_sdk==3.35.0
 soupsieve==2.8.3
 typing-inspection==0.4.2
+pybaseball==2.2.7
 typing_extensions==4.15.0
 uritemplate==4.2.0
 urllib3==2.6.3
