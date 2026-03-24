@@ -121,6 +121,7 @@ SHADOW_SIGNALS = frozenset({
     # book_disagree_under: direction-specific validation. Gets UNDER_SIGNAL_WEIGHTS but excluded from real_sc
     'book_disagree_over',
     'book_disagree_under',
+    'volatile_scoring_over',  # Session 487: 20% BB HR (1-4, N=5) — harmful, inflating real_sc
 })
 
 # Session 400: UNDER signal quality weights for signal-first ranking.
