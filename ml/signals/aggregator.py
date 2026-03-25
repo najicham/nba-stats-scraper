@@ -683,16 +683,18 @@ class BestBetsAggregator:
                 _record_filtered(pred, 'under_star_away', pred_edge)
                 # Observation mode — do NOT continue/filter
 
-            # Medium teammate usage UNDER — DEMOTED to observation (Session 488).
-            # CF HR = 45.9% (N=37) — blocking winners. Original Session 355 finding
-            # (32.0% HR, N=25) was early-season; full-season data shows near-breakeven.
-            # Threshold band (15-30) is arbitrary and not reliably predictive.
+            # Medium teammate usage UNDER — ACTIVE filter (Session 488 demote REVERTED).
+            # CF HR = 45.9% (N=37) — blocking losers (54% of blocked picks lose).
+            # Session 488 misread CF HR: 45.9% < 55% threshold means filter is doing its job.
+            # Session 355 finding (32.0% HR, N=25) validates direction — medium teammates
+            # available means line-setter already priced in volume for supporting cast.
             teammate_usage = pred.get('teammate_usage_available') or 0
             if (pred.get('recommendation') == 'UNDER'
                     and 15 <= teammate_usage <= 30):
                 filter_counts['med_usage_under'] += 1
                 _record_filtered(pred, 'med_usage_under', pred_edge)
-                # Observation mode — do NOT block
+                if 'med_usage_under' not in self._runtime_demoted:
+                    continue
 
             # B2B UNDER block — DEMOTED to observation (Session 462).
             # 5-season cross-validation: CF HR = 54.0% — blocking winners.
@@ -718,15 +720,17 @@ class BestBetsAggregator:
                 _record_filtered(pred, 'line_jumped_under_obs', pred_edge)
                 # continue  # Session 417: observation only — do not block
 
-            # Line dropped UNDER — DEMOTED to observation (Session 488).
-            # CF HR = 37.5% (N=8) — blocking winners at 62.5% rate. Tiny sample
-            # but extreme HR suggests line drops on UNDER picks are misleading.
+            # Line dropped UNDER — ACTIVE filter (Session 488 demote REVERTED).
+            # CF HR = 37.5% (N=8) — blocking losers (62.5% of blocked picks lose).
+            # Session 488 misread CF HR: 37.5% is well below 55% threshold — filter correct.
+            # Line drops on UNDER picks suggest market moved away from UNDER thesis.
             if (prop_line_delta is not None
                     and prop_line_delta <= -2.0
                     and pred.get('recommendation') == 'UNDER'):
                 filter_counts['line_dropped_under'] += 1
                 _record_filtered(pred, 'line_dropped_under', pred_edge)
-                # Observation mode — do NOT block
+                if 'line_dropped_under' not in self._runtime_demoted:
+                    continue
 
             # Line dropped OVER — DEMOTED to observation (Session 428).
             # Original 39.1% HR was Feb toxic window (N=23). Full-season CF HR = 60.0%
@@ -850,17 +854,18 @@ class BestBetsAggregator:
                 _record_filtered(pred, 'flat_trend_under_obs', pred_edge)
                 # continue  # Session 428: observation mode — do NOT block
 
-            # UNDER after streak — DEMOTED to observation (Session 488).
-            # CF HR = 45.5% (N=11) — blocking winners at 54.5% rate. Session 418
-            # finding (44.7% HR, N=515) was prediction-level; BB-level sample too
-            # small (N=11) to justify active blocking at current CF HR.
+            # UNDER after streak — ACTIVE filter (Session 488 demote REVERTED).
+            # CF HR = 45.5% (N=11) — blocking losers (54.5% of blocked picks lose).
+            # Session 418 N=515 prediction-level finding (44.7% HR) validates direction.
+            # Session 488 misread CF HR: 45.5% < 55% threshold = filter correctly blocking.
             prop_under_streak = pred.get('prop_under_streak') or 0
             if (pred.get('recommendation') == 'UNDER'
                     and prop_under_streak >= 3
                     and pred_edge < 5.0):
                 filter_counts['under_after_streak'] += 1
                 _record_filtered(pred, 'under_after_streak', pred_edge)
-                # Observation mode — do NOT block
+                if 'under_after_streak' not in self._runtime_demoted:
+                    continue
 
             # UNDER after bad miss + bad shooting + AWAY (Session 427):
             # Mirror image of bounce_back_over's strongest tier. Player shot badly
@@ -1095,10 +1100,10 @@ class BestBetsAggregator:
                 elif pred_edge < 7.0:
                     filter_counts['signal_density'] += 1
                     _record_filtered(pred, 'signal_density', pred_edge, len(qualifying), tags)
-                    # DEMOTED to observation (Session 488): CF HR = 40.0% (N=35).
-                    # Blocking 60% winners. Base signals inflate real_sc=0 count;
-                    # model conviction at edge 3-7 should be allowed through.
-                    # do NOT continue
+                    # ACTIVE filter (Session 488 demote REVERTED): CF HR = 40.0% (N=35) —
+                    # blocking losers (60% of blocked picks lose). Well below 55% threshold.
+                    # UNDER with real_sc=0 at edge 3-7 lacks signal support and is correctly blocked.
+                    continue
                 else:
                     # Session 352 bypass: UNDER + edge >= 7 + real_sc=0 is allowed,
                     # but only if the model's prediction is >= 55% of the line.
@@ -1424,6 +1429,8 @@ class BestBetsAggregator:
         # sc3_edge_floor retained for schema continuity — subsumed by edge-tiered SC (Session 388)
         if filter_counts['sc3_over_block'] > 0:
             logger.info(f"SC=3 OVER block: skipped {filter_counts['sc3_over_block']} OVER picks with SC=3 (45.5% HR, net loser)")
+        if filter_counts['line_dropped_under'] > 0:
+            logger.info(f"Line dropped UNDER block: skipped {filter_counts['line_dropped_under']} UNDER picks with line drop >= 2 (37.5% CF HR)")
         if filter_counts['line_dropped_over'] > 0:
             logger.info(f"Line dropped OVER (observation): tagged {filter_counts['line_dropped_over']} OVER picks with line drop >= 2")
         if filter_counts['opponent_depleted_under'] > 0:
