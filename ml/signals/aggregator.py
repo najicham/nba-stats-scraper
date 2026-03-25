@@ -683,16 +683,16 @@ class BestBetsAggregator:
                 _record_filtered(pred, 'under_star_away', pred_edge)
                 # Observation mode — do NOT continue/filter
 
-            # Medium teammate usage UNDER block (Session 355): 32.0% HR (N=25)
-            # Model has 0% importance on teammate_usage_available but production
-            # data shows when moderate usage is available (15-30), UNDER = catastrophic.
+            # Medium teammate usage UNDER — DEMOTED to observation (Session 488).
+            # CF HR = 45.9% (N=37) — blocking winners. Original Session 355 finding
+            # (32.0% HR, N=25) was early-season; full-season data shows near-breakeven.
+            # Threshold band (15-30) is arbitrary and not reliably predictive.
             teammate_usage = pred.get('teammate_usage_available') or 0
             if (pred.get('recommendation') == 'UNDER'
                     and 15 <= teammate_usage <= 30):
                 filter_counts['med_usage_under'] += 1
                 _record_filtered(pred, 'med_usage_under', pred_edge)
-                if 'med_usage_under' not in self._runtime_demoted:
-                    continue
+                # Observation mode — do NOT block
 
             # B2B UNDER block — DEMOTED to observation (Session 462).
             # 5-season cross-validation: CF HR = 54.0% — blocking winners.
@@ -718,14 +718,15 @@ class BestBetsAggregator:
                 _record_filtered(pred, 'line_jumped_under_obs', pred_edge)
                 # continue  # Session 417: observation only — do not block
 
-            # Line dropped UNDER block (Session 294, lowered 306): 35.2% HR at 2.0 (N=108)
+            # Line dropped UNDER — DEMOTED to observation (Session 488).
+            # CF HR = 37.5% (N=8) — blocking winners at 62.5% rate. Tiny sample
+            # but extreme HR suggests line drops on UNDER picks are misleading.
             if (prop_line_delta is not None
                     and prop_line_delta <= -2.0
                     and pred.get('recommendation') == 'UNDER'):
                 filter_counts['line_dropped_under'] += 1
                 _record_filtered(pred, 'line_dropped_under', pred_edge)
-                if 'line_dropped_under' not in self._runtime_demoted:
-                    continue
+                # Observation mode — do NOT block
 
             # Line dropped OVER — DEMOTED to observation (Session 428).
             # Original 39.1% HR was Feb toxic window (N=23). Full-season CF HR = 60.0%
@@ -765,14 +766,15 @@ class BestBetsAggregator:
                 _record_filtered(pred, 'neg_pm_streak_obs', pred_edge)
                 # continue  # Session 428: observation mode — do NOT block
 
-            # Opponent team UNDER block (Session 372)
-            # MIN 43.8%, MEM 46.7%, MIL 48.7% UNDER HR (edge 3+, N>=190)
+            # Opponent team UNDER — DEMOTED to observation (Session 488).
+            # CF HR = 52.4% (N=21) — coin flip. Session 372 baseline (MIN/MEM/MIL/IND
+            # at 43-49% UNDER HR) was N>=190 from 2023-24; rosters have changed.
+            # 2025-26 data shows 52.4% CF HR — not sufficient to block picks.
             if (pred.get('recommendation') == 'UNDER'
                     and pred.get('opponent_team_abbr', '') in UNDER_TOXIC_OPPONENTS):
                 filter_counts['opponent_under_block'] += 1
                 _record_filtered(pred, 'opponent_under_block', pred_edge)
-                if 'opponent_under_block' not in self._runtime_demoted:
-                    continue
+                # Observation mode — do NOT block
 
             # Opponent depleted UNDER block (Session 374b): UNDER + 3+ opponent stars out = 44.4% HR (N=207).
             # When opponent is depleted, game becomes less competitive, UNDER less predictable.
@@ -848,17 +850,17 @@ class BestBetsAggregator:
                 _record_filtered(pred, 'flat_trend_under_obs', pred_edge)
                 # continue  # Session 428: observation mode — do NOT block
 
-            # UNDER after streak (Session 418): 3+ consecutive unders + model UNDER = 44.7% HR (N=515)
-            # Model blind spot: it chases the downtrend, but bounce-back makes these UNDER calls lose.
-            # Edge guard: only suppress low-mid edge; at edge 5+ the model's conviction may override.
+            # UNDER after streak — DEMOTED to observation (Session 488).
+            # CF HR = 45.5% (N=11) — blocking winners at 54.5% rate. Session 418
+            # finding (44.7% HR, N=515) was prediction-level; BB-level sample too
+            # small (N=11) to justify active blocking at current CF HR.
             prop_under_streak = pred.get('prop_under_streak') or 0
             if (pred.get('recommendation') == 'UNDER'
                     and prop_under_streak >= 3
                     and pred_edge < 5.0):
                 filter_counts['under_after_streak'] += 1
                 _record_filtered(pred, 'under_after_streak', pred_edge)
-                if 'under_after_streak' not in self._runtime_demoted:
-                    continue
+                # Observation mode — do NOT block
 
             # UNDER after bad miss + bad shooting + AWAY (Session 427):
             # Mirror image of bounce_back_over's strongest tier. Player shot badly
@@ -1093,7 +1095,10 @@ class BestBetsAggregator:
                 elif pred_edge < 7.0:
                     filter_counts['signal_density'] += 1
                     _record_filtered(pred, 'signal_density', pred_edge, len(qualifying), tags)
-                    continue
+                    # DEMOTED to observation (Session 488): CF HR = 40.0% (N=35).
+                    # Blocking 60% winners. Base signals inflate real_sc=0 count;
+                    # model conviction at edge 3-7 should be allowed through.
+                    # do NOT continue
                 else:
                     # Session 352 bypass: UNDER + edge >= 7 + real_sc=0 is allowed,
                     # but only if the model's prediction is >= 55% of the line.
