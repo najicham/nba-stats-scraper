@@ -35,8 +35,9 @@ import google.oauth2.id_token
 
 from shared.config.service_urls import get_service_url, Services
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure logging — level controlled via LOG_LEVEL env var (default: INFO)
+_log_level = getattr(logging, os.environ.get('LOG_LEVEL', 'INFO').upper(), logging.INFO)
+logging.basicConfig(level=_log_level)
 logger = logging.getLogger(__name__)
 
 # Configuration

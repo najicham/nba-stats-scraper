@@ -97,9 +97,10 @@ from predictions.worker.prediction_systems.catboost_monthly import (
     get_enabled_models_from_registry,
 )
 
-# Configure logging
+# Configure logging — level controlled via LOG_LEVEL env var (default: INFO)
+_log_level = getattr(logging, os.environ.get('LOG_LEVEL', 'INFO').upper(), logging.INFO)
 logging.basicConfig(
-    level=logging.INFO,
+    level=_log_level,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)

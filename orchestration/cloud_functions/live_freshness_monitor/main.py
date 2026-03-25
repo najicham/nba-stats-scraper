@@ -27,7 +27,9 @@ import logging
 import os
 import json
 
-logging.basicConfig(level=logging.INFO)
+# Level controlled via LOG_LEVEL env var (default: INFO)
+_log_level = getattr(logging, os.environ.get('LOG_LEVEL', 'INFO').upper(), logging.INFO)
+logging.basicConfig(level=_log_level)
 logger = logging.getLogger(__name__)
 
 # Configuration

@@ -21,8 +21,10 @@ Performance:
 
 # Early logging setup for debugging import issues
 import logging
+import os as _os  # needed here before full os import below
+_log_level = getattr(logging, _os.environ.get('LOG_LEVEL', 'INFO').upper(), logging.INFO)
 logging.basicConfig(
-    level=logging.INFO,
+    level=_log_level,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)

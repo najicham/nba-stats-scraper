@@ -150,14 +150,15 @@ from .mixins import (
 )
 
 ##############################################################################
-# Configure a default logger so INFO messages appear in the console.
+# Configure a default logger — level controlled via LOG_LEVEL env var (default: INFO).
 ##############################################################################
+_log_level = getattr(logging, os.environ.get('LOG_LEVEL', 'INFO').upper(), logging.INFO)
 logging.basicConfig(
-    level=logging.INFO,
+    level=_log_level,
     format="%(levelname)s:%(name)s:%(message)s"
 )
 logger = logging.getLogger("scraper_base")
-logger.setLevel(logging.INFO)
+logger.setLevel(_log_level)
 
 
 # --------------------------------------------------------------------------- #
