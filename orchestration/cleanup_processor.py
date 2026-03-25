@@ -37,16 +37,16 @@ _workflow_config = WorkflowConfig()
 class CleanupProcessor:
     """
     Finds GCS files that were never processed by Phase 2 and republishes them.
-    
+
     How it works:
     1. Query scraper_execution_log for successful scrapes (last hour)
     2. Check if those files have corresponding BigQuery records in Phase 2 tables
     3. If missing, republish Pub/Sub message
     4. Log cleanup operation
     """
-    
+
     VERSION = "1.0"
-    
+
     # Default notification threshold if not configured
     DEFAULT_NOTIFICATION_THRESHOLD = 5
 
@@ -99,58 +99,58 @@ class CleanupProcessor:
             TOPICS.PHASE1_SCRAPERS_COMPLETE
         )
         logger.info(f"CleanupProcessor initialized with topic: {self.topic_path}")
-    
+
     def run(self) -> Dict[str, Any]:
         """
         Main cleanup operation.
-        
+
         Returns:
             Dict with cleanup summary
         """
         cleanup_id = str(uuid.uuid4())
         start_time = datetime.now(timezone.utc)
-        
+
         logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         logger.info("🔧 Cleanup Processor: Starting self-healing check")
         logger.info(f"   Cleanup ID: {cleanup_id}")
         logger.info(f"   Lookback: {self.lookback_hours}h")
         logger.info(f"   Min Age: {self.min_file_age_minutes}min")
         logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        
+
         try:
             # Step 1: Find successful scraper executions
             scraper_files = self._get_recent_scraper_files()
             logger.info(f"📊 Found {len(scraper_files)} scraper files in last {self.lookback_hours}h")
-            
+
             if not scraper_files:
                 logger.info("✅ No files to check, cleanup complete")
                 return self._log_cleanup(cleanup_id, start_time, [], 0, 0)
-            
+
             # Step 2: Check which were processed by Phase 2
             processed_files = self._get_processed_files()
             logger.info(f"📊 Found {len(processed_files)} files processed by Phase 2")
-            
+
             # Step 3: Find the gap (files not processed)
             missing_files = self._find_missing_files(scraper_files, processed_files)
-            
+
             if not missing_files:
                 logger.info("✅ All files processed, no cleanup needed")
                 return self._log_cleanup(cleanup_id, start_time, [], len(scraper_files), 0)
-            
+
             logger.warning(f"⚠️  Found {len(missing_files)} files not processed by Phase 2")
-            
+
             # Step 4: Republish Pub/Sub messages
             republished_count = self._republish_messages(missing_files)
-            
+
             # Step 5: Log cleanup operation
             summary = self._log_cleanup(
-                cleanup_id, 
-                start_time, 
-                missing_files, 
+                cleanup_id,
+                start_time,
+                missing_files,
                 len(scraper_files),
                 republished_count
             )
-            
+
             # CRITICAL: Detect retry storm (likely bug in table name or config)
             # If >80% of files are "missing", something is wrong with our detection
             # NOTE: Lowered threshold from 50 to 10 to catch small scrapers at 100% missing
@@ -198,16 +198,16 @@ class CleanupProcessor:
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
             logger.info(f"✅ Cleanup complete: {republished_count}/{len(missing_files)} republished")
             logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            
+
             return summary
-            
+
         except Exception as e:
             logger.error(f"Cleanup processor failed: {e}", exc_info=True)
-            
+
             try:
                 notify_error(
                     title="Phase 1 Cleanup Processor Failed",
@@ -221,7 +221,7 @@ class CleanupProcessor:
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send error notification: {notify_ex}")
-            
+
             # Log failed cleanup
             self._log_cleanup(
                 cleanup_id,
@@ -231,16 +231,16 @@ class CleanupProcessor:
                 0,
                 errors=[str(e)]
             )
-            
+
             raise
-    
+
     def _get_recent_scraper_files(self) -> List[Dict[str, Any]]:
         """
         Get successful scraper executions from last N hours.
         Only include files old enough to have been processed.
         """
         query = f"""
-            SELECT 
+            SELECT
                 execution_id,
                 scraper_name,
                 gcs_path,
@@ -253,25 +253,34 @@ class CleanupProcessor:
               AND gcs_path IS NOT NULL
             ORDER BY triggered_at DESC
         """
-        
+
         return execute_bigquery(query)
-    
+
     def _get_processed_files(self) -> set:
         """
         Get files that were processed by Phase 2.
         Checks all Phase 2 raw tables for source_file_path.
-        
+
         Note: This assumes Phase 2 tables have source_file_path field
         Adjust query based on your actual Phase 2 schema
         """
         # All Phase 2 raw tables that track source_file_path AND have processed_at column
         # IMPORTANT: Table names must match actual processor output tables
         # Verified against: grep -rh "table_name = 'nba_raw" data_processors/raw/
-        # Last verified: Session 73 (2026-02-02)
+        # Last verified: Session 488 (2026-03-25)
         #
         # NOTE: Some tables (nbac_player_movement, nbac_team_rosters, nbac_player_list,
         # nbac_gamebook_game_info) do not have processed_at column and are excluded
         # from this cleanup query to prevent BigQuery errors.
+        #
+        # BDL tables EXCLUDED: BDL (Ball Don't Lie) is intentionally disabled.
+        # All BDL tables have 0 records since disablement. Scanning them wastes
+        # ~30-40 GB/day with no benefit. bdl_live_boxscores doesn't even exist.
+        # Removed: bdl_player_boxscores, bdl_active_players_current, bdl_injuries,
+        #          bdl_standings, bdl_live_boxscores
+        #
+        # br_rosters_current EXCLUDED: no game_date partition column, scraped
+        # infrequently, not worth a full-table scan every 15 minutes.
         phase2_tables = [
             # NBAC (nba.com) tables
             'nbac_schedule',
@@ -282,18 +291,10 @@ class CleanupProcessor:
             'nbac_gamebook_player_stats',  # Was: nbac_gamebook_pdf
             # Excluded: 'nbac_player_movement' - no processed_at column
             'nbac_referee_game_assignments',  # Was: nbac_referee
-            # BallDontLie tables
-            'bdl_player_boxscores',
-            'bdl_active_players_current',  # Was: bdl_active_players
-            'bdl_injuries',
-            'bdl_standings',
-            'bdl_live_boxscores',
             # ESPN tables
             'espn_scoreboard',
             'espn_team_rosters',  # Was: espn_rosters
             'espn_boxscores',  # Was: espn_box_scores
-            # Basketball Reference tables
-            'br_rosters_current',  # Was: br_rosters
             # BigDataBall tables
             'bigdataball_play_by_play',
             # Odds API tables
@@ -319,11 +320,15 @@ class CleanupProcessor:
             # Add partition filter if table is known to be partitioned
             # Using 7-day lookback for partition filter (much wider than lookback_hours)
             # to ensure we don't miss any files while satisfying BigQuery requirements
+            # Session 488: added nbac_injury_report, nbac_gamebook_player_stats,
+            # odds_api_player_points_props — all have game_date columns, were previously
+            # doing full-table scans on every cleanup run.
             partitioned_tables = [
-                'bdl_player_boxscores', 'espn_scoreboard', 'espn_team_rosters',
+                'espn_scoreboard', 'espn_team_rosters',
                 'espn_boxscores', 'bigdataball_play_by_play', 'odds_api_game_lines',
                 'bettingpros_player_points_props', 'nbac_schedule', 'nbac_team_boxscore',
-                'nbac_play_by_play', 'nbac_scoreboard_v2', 'nbac_referee_game_assignments'
+                'nbac_play_by_play', 'nbac_scoreboard_v2', 'nbac_referee_game_assignments',
+                'nbac_injury_report', 'nbac_gamebook_player_stats', 'odds_api_player_points_props',
             ]
 
             if table in partitioned_tables:
@@ -344,7 +349,7 @@ class CleanupProcessor:
             )
             WHERE source_file_path IS NOT NULL
         """
-        
+
         try:
             result = execute_bigquery(query)
             return {row['source_file_path'] for row in result}
@@ -352,23 +357,23 @@ class CleanupProcessor:
             logger.error(f"Failed to get processed files: {e}", exc_info=True)
             # Return empty set to be safe - will trigger republish
             return set()
-    
+
     def _find_missing_files(self, scraper_files: List[Dict], processed_files: set) -> List[Dict]:
         """Find files that weren't processed by Phase 2."""
         missing = []
-        
+
         for file_info in scraper_files:
             gcs_path = file_info['gcs_path']
-            
+
             if gcs_path not in processed_files:
                 missing.append(file_info)
                 logger.warning(
                     f"⚠️  Missing: {file_info['scraper_name']} - {gcs_path} "
                     f"(age: {file_info['age_minutes']}min)"
                 )
-        
+
         return missing
-    
+
     def _republish_messages(self, missing_files: List[Dict]) -> int:
         """
         Republish Pub/Sub messages for missing files to trigger Phase 2 reprocessing.
@@ -477,7 +482,7 @@ class CleanupProcessor:
                 logger.warning(f"Failed to send failure notification: {notify_ex}")
 
         return republished_count
-    
+
     def _log_cleanup(
         self,
         cleanup_id: str,
@@ -489,7 +494,7 @@ class CleanupProcessor:
     ) -> Dict[str, Any]:
         """Log cleanup operation to BigQuery."""
         duration = (datetime.now(timezone.utc) - start_time).total_seconds()
-        
+
         # Prepare missing files details
         missing_files_records = []
         for f in missing_files:
@@ -507,7 +512,7 @@ class CleanupProcessor:
                 'age_minutes': f['age_minutes'],
                 'republished': True  # Assume success if in this list
             })
-        
+
         record = {
             'cleanup_id': cleanup_id,
             'cleanup_time': datetime.now(timezone.utc).isoformat(),
@@ -518,13 +523,13 @@ class CleanupProcessor:
             'errors': errors or [],
             'duration_seconds': duration
         }
-        
+
         try:
             insert_bigquery_rows('nba_orchestration.cleanup_operations', [record])
             logger.info(f"✅ Logged cleanup operation to BigQuery")
         except GoogleAPIError as e:
             logger.error(f"Failed to log cleanup operation: {e}", exc_info=True)
-        
+
         return {
             'cleanup_id': cleanup_id,
             'files_checked': files_checked,

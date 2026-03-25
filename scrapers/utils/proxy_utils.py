@@ -46,6 +46,15 @@ DECODO_PORTS = [10001, 10002, 10003]
 CIRCUIT_FAILURE_THRESHOLD = 3  # Consecutive failures to open circuit
 CIRCUIT_COOLDOWN_MINUTES = 5   # Time before testing OPEN circuit
 
+# Module-level circuit breaker state cache to avoid BigQuery on every HTTP request.
+# The ProxyCircuitBreaker is re-instantiated per scraper call, so its _local_cache
+# was empty on every request, causing 499+ BQ queries/day (one per scraper HTTP call).
+# This module-level cache persists across requests within the same Cloud Run instance.
+# TTL = 5 minutes — matches CIRCUIT_COOLDOWN_MINUTES so state transitions are seen promptly.
+_MODULE_CIRCUIT_CACHE: dict = {}          # key -> CircuitStatus
+_MODULE_CIRCUIT_CACHE_TS: dict = {}       # key -> datetime (when cached)
+_MODULE_CIRCUIT_CACHE_TTL_SECONDS = 300   # 5 minutes
+
 
 class CircuitState(Enum):
     """Circuit breaker states."""
@@ -296,14 +305,30 @@ class ProxyCircuitBreaker:
         ))
 
     def _get_status(self, proxy_provider: str, target_host: str) -> Optional[CircuitStatus]:
-        """Get current status from cache or BigQuery."""
+        """Get current status from cache or BigQuery.
+
+        Uses a two-level cache:
+        1. Instance _local_cache (per-request, zero latency)
+        2. Module-level _MODULE_CIRCUIT_CACHE with 5-min TTL (persists across Cloud Run
+           requests within the same instance, avoids BigQuery on every scraper HTTP call)
+        3. BigQuery fallback (only when module cache is stale or cold)
+        """
         cache_key = self._cache_key(proxy_provider, target_host)
 
-        # Check local cache first
+        # Level 1: instance-local cache (within a single scraper run)
         if cache_key in self._local_cache:
             return self._local_cache[cache_key]
 
-        # Try BigQuery
+        # Level 2: module-level TTL cache (across requests in the same Cloud Run instance)
+        if cache_key in _MODULE_CIRCUIT_CACHE:
+            cached_at = _MODULE_CIRCUIT_CACHE_TS.get(cache_key)
+            age_seconds = (datetime.now(timezone.utc) - cached_at).total_seconds() if cached_at else 9999
+            if age_seconds < _MODULE_CIRCUIT_CACHE_TTL_SECONDS:
+                status = _MODULE_CIRCUIT_CACHE[cache_key]
+                self._local_cache[cache_key] = status
+                return status
+
+        # Level 3: BigQuery (only when cache is cold or expired)
         if self.use_bigquery:
             client = self._get_bq_client()
             if client:
@@ -332,6 +357,8 @@ class ProxyCircuitBreaker:
                             opened_at=row.opened_at
                         )
                         self._local_cache[cache_key] = status
+                        _MODULE_CIRCUIT_CACHE[cache_key] = status
+                        _MODULE_CIRCUIT_CACHE_TS[cache_key] = datetime.now(timezone.utc)
                         return status
                 except Exception as e:
                     logger.debug(f"BigQuery circuit breaker query failed: {e}")
@@ -351,6 +378,9 @@ class ProxyCircuitBreaker:
         """Upsert status to cache and BigQuery."""
         cache_key = self._cache_key(proxy_provider, target_host)
         self._local_cache[cache_key] = status
+        # Update module-level cache so other requests in this instance see the new state
+        _MODULE_CIRCUIT_CACHE[cache_key] = status
+        _MODULE_CIRCUIT_CACHE_TS[cache_key] = datetime.now(timezone.utc)
 
         if self.use_bigquery:
             client = self._get_bq_client()
