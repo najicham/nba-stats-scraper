@@ -47,6 +47,7 @@ SOURCE_WEIGHTS = {
     'calculated': 100,      # Calculated features always high quality
     'default': 40,
     'vegas': 100,           # Vegas data is high quality when available
+    'bettingpros': 100,     # BettingPros multi-book fallback (Session 488) — same quality as vegas
     'opponent_history': 90, # Opponent history from Phase 4
     'minutes_ppm': 95,      # Minutes/PPM from Phase 4 daily cache
     'fallback': 40,         # Fallback = using default value
@@ -60,6 +61,7 @@ SOURCE_TYPE_CANONICAL = {
     'calculated': 'calculated',
     'default': 'default',
     'vegas': 'phase4',
+    'bettingpros': 'bettingpros',  # Session 488: kept distinct for shadow tracking
     'opponent_history': 'phase4',
     'minutes_ppm': 'phase4',
     'fallback': 'default',
@@ -359,7 +361,7 @@ class QualityScorer:
         # ================================================================
         # Source distribution counts
         # ================================================================
-        canonical_counts = {'phase4': 0, 'phase3': 0, 'calculated': 0, 'default': 0}
+        canonical_counts = {'phase4': 0, 'phase3': 0, 'calculated': 0, 'default': 0, 'bettingpros': 0}
         for idx in range(num_features):
             canonical = per_feature_source.get(idx, 'default')
             canonical_counts[canonical] = canonical_counts.get(canonical, 0) + 1

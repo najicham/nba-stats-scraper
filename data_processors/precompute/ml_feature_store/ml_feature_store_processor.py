@@ -2070,9 +2070,14 @@ class MLFeatureStoreProcessor(
         feature_sources[49] = 'calculated' if gsc is not None else 'missing'
 
         # Feature 50: multi_book_line_std
+        # Session 488: source may be 'odds_api' (tagged as 'vegas') or 'bettingpros' (fallback)
         line_std = self.feature_extractor.get_multi_book_line_std(player_lookup) if player_lookup else None
         features.append(float(line_std) if line_std is not None else float('nan'))
-        feature_sources[50] = 'vegas' if line_std is not None else 'missing'
+        if line_std is not None:
+            _f50_raw_src = self.feature_extractor.get_multi_book_line_std_source(player_lookup)
+            feature_sources[50] = 'bettingpros' if _f50_raw_src == 'bettingpros' else 'vegas'
+        else:
+            feature_sources[50] = 'missing'
 
         # Feature 51: prop_over_streak (from UPCG)
         streaks = self.feature_extractor.get_prop_streaks(player_lookup) if player_lookup else {}

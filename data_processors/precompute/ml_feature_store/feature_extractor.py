@@ -68,6 +68,7 @@ class FeatureExtractor:
 
         # Feature 50: multi_book_line_std — line disagreement across sportsbooks
         self._multi_book_std_lookup: Dict[str, float] = {}
+        self._multi_book_std_source_lookup: Dict[str, str] = {}  # 'odds_api' or 'bettingpros'
 
         # Feature 54: prop_line_delta — line change from previous game (Session 294)
         self._prop_line_delta_lookup: Dict[str, float] = {}
@@ -116,11 +117,11 @@ class FeatureExtractor:
             logger.error(f"BigQuery query timed out after {timeout}s [{query_name}]")
             logger.debug(f"Timed out query:\n{query[:500]}...")
             raise
-    
+
     # ========================================================================
     # PLAYER LIST
     # ========================================================================
-    
+
     def get_players_with_games(self, game_date: date, backfill_mode: bool = False) -> List[Dict[str, Any]]:
         """
         Get list of all players with games on game_date.
@@ -456,6 +457,7 @@ class FeatureExtractor:
         # Feature 47/50/54/55-56/57-59
         self._teammate_usage_lookup = {}
         self._multi_book_std_lookup = {}
+        self._multi_book_std_source_lookup = {}
         self._prop_line_delta_lookup = {}
         self._v16_line_history_lookup = {}
         self._v17_opportunity_risk_lookup = {}
@@ -1234,6 +1236,10 @@ class FeatureExtractor:
         """Get std dev of player points prop line across sportsbooks (feature 50)."""
         return self._multi_book_std_lookup.get(player_lookup)
 
+    def get_multi_book_line_std_source(self, player_lookup: str) -> str:
+        """Get source of feature 50 data: 'odds_api' or 'bettingpros'."""
+        return self._multi_book_std_source_lookup.get(player_lookup, 'odds_api')
+
     def get_prop_line_delta(self, player_lookup: str) -> Optional[float]:
         """Get prop line delta from previous game (feature 54, Session 294)."""
         return self._prop_line_delta_lookup.get(player_lookup)
@@ -1489,9 +1495,13 @@ class FeatureExtractor:
         Session 371: Excludes Bovada — 73.6% outlier rate with 2.15 avg deviation
         from median inflates std by ~68%. Removing it tightens the signal.
 
-        Source: nba_raw.odds_api_player_points_props
+        Session 488: BettingPros fallback when odds_api is effectively dead
+        (no players found or MAX(line_std) < 0.3). Excludes DFS-only platforms.
+
+        Source: nba_raw.odds_api_player_points_props (primary),
+                nba_raw.bettingpros_player_points_props (fallback)
         """
-        query = f"""
+        odds_api_query = f"""
         WITH latest_per_book AS (
             SELECT
                 player_lookup,
@@ -1516,15 +1526,78 @@ class FeatureExtractor:
         GROUP BY player_lookup
         HAVING COUNT(DISTINCT bookmaker) >= 2
         """
-        result = self._safe_query(query, "batch_extract_multi_book_line_std")
+        result = self._safe_query(odds_api_query, "batch_extract_multi_book_line_std")
 
+        odds_api_players = 0
+        max_std = 0.0
         if not result.empty:
             for record in result.to_dict('records'):
                 val = record.get('line_std')
                 if val is not None:
                     self._multi_book_std_lookup[record['player_lookup']] = float(val)
+                    self._multi_book_std_source_lookup[record['player_lookup']] = 'odds_api'
+                    odds_api_players += 1
+                    if float(val) > max_std:
+                        max_std = float(val)
 
-        logger.debug(f"Batch multi_book_std: {len(self._multi_book_std_lookup)} players")
+        # Session 488: Fall back to BettingPros when odds_api is effectively dead.
+        # "Dead" = no players found OR MAX line_std < 0.3 (all books agree identically).
+        # Excludes DFS-only platforms that don't set sharp lines (PrizePicks, PropSwap,
+        # Fliff, Underdog, Sleeper). Running in shadow — source tagged as 'bettingpros'
+        # in feature_50_source for 2-3 week evaluation before threshold tuning.
+        if odds_api_players == 0 or max_std < 0.3:
+            logger.info(
+                f"Feature 50 odds_api dead (players={odds_api_players}, max_std={max_std:.3f}) "
+                f"— falling back to BettingPros"
+            )
+            dfs_books = ('prizepicks', 'propswap', 'fliff', 'underdog', 'sleeper')
+            dfs_exclusion = ' AND '.join(
+                f"LOWER(bookmaker) != '{b}'" for b in dfs_books
+            )
+            bp_query = f"""
+            WITH latest_per_book AS (
+                SELECT
+                    player_lookup,
+                    bookmaker,
+                    points_line,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY player_lookup, bookmaker
+                        ORDER BY created_at DESC
+                    ) as rn
+                FROM `{self.project_id}.nba_raw.bettingpros_player_points_props`
+                WHERE game_date = '{game_date}'
+                  AND market_type = 'points'
+                  AND points_line IS NOT NULL
+                  AND points_line > 0
+                  AND {dfs_exclusion}
+            )
+            SELECT
+                player_lookup,
+                STDDEV(points_line) as line_std,
+                COUNT(DISTINCT bookmaker) as book_count
+            FROM latest_per_book
+            WHERE rn = 1
+            GROUP BY player_lookup
+            HAVING COUNT(DISTINCT bookmaker) >= 2
+            """
+            bp_result = self._safe_query(bp_query, "batch_extract_multi_book_line_std_bp")
+            bp_players = 0
+            if not bp_result.empty:
+                for record in bp_result.to_dict('records'):
+                    val = record.get('line_std')
+                    if val is not None:
+                        player = record['player_lookup']
+                        # Only fill in players not already found from odds_api
+                        if player not in self._multi_book_std_lookup:
+                            self._multi_book_std_lookup[player] = float(val)
+                            self._multi_book_std_source_lookup[player] = 'bettingpros'
+                            bp_players += 1
+            logger.info(f"Feature 50 BettingPros fallback: {bp_players} additional players")
+
+        logger.debug(
+            f"Batch multi_book_std: {len(self._multi_book_std_lookup)} players "
+            f"(odds_api={odds_api_players})"
+        )
 
     def _batch_extract_prop_line_delta(self, game_date: date) -> None:
         """Batch extract prop line delta from previous game (feature 54, Session 294).
@@ -1813,7 +1886,7 @@ class FeatureExtractor:
     # ========================================================================
     # PHASE 4 EXTRACTION (PREFERRED)
     # ========================================================================
-    
+
     def extract_phase4_data(self, player_lookup: str, game_date: date,
                             opponent_team_abbr: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -1945,16 +2018,16 @@ class FeatureExtractor:
             points_avg_season,
             points_std_last_10,
             games_in_last_7_days,
-            
+
             -- Features 18-20: Shot Zones (partial)
             paint_rate_last_10,
             three_pt_rate_last_10,
             assisted_rate_last_10,
-            
+
             -- Features 22-23: Team Context
             team_pace_last_10,
             team_off_rating_last_10,
-            
+
             -- Additional context
             minutes_avg_last_10,
             player_age
@@ -1962,17 +2035,17 @@ class FeatureExtractor:
         WHERE player_lookup = '{player_lookup}'
           AND cache_date = '{game_date}'
         """
-        
+
         result: pd.DataFrame = self._safe_query(query, "feature_extract")
-        
+
         if result.empty:
             logger.debug(f"No player_daily_cache data for {player_lookup} on {game_date}")
             return {}
-        
+
         data: Dict[str, Any] = result.iloc[0].to_dict()
         logger.debug(f"player_daily_cache: {len(data)} fields retrieved for {player_lookup}")
         return data
-    
+
     def _query_composite_factors(self, player_lookup: str, game_date: date) -> Dict[str, Any]:
         """Query player_composite_factors table."""
         query = f"""
@@ -1986,17 +2059,17 @@ class FeatureExtractor:
         WHERE player_lookup = '{player_lookup}'
           AND game_date = '{game_date}'
         """
-        
+
         result: pd.DataFrame = self._safe_query(query, "feature_extract")
-        
+
         if result.empty:
             logger.debug(f"No composite_factors data for {player_lookup} on {game_date}")
             return {}
-        
+
         data: Dict[str, Any] = result.iloc[0].to_dict()
         logger.debug(f"composite_factors: {len(data)} fields retrieved for {player_lookup}")
         return data
-    
+
     def _query_shot_zone_analysis(self, player_lookup: str, game_date: date) -> Dict[str, Any]:
         """Query player_shot_zone_analysis table."""
         query = f"""
@@ -2009,17 +2082,17 @@ class FeatureExtractor:
         WHERE player_lookup = '{player_lookup}'
           AND analysis_date = '{game_date}'
         """
-        
+
         result: pd.DataFrame = self._safe_query(query, "feature_extract")
-        
+
         if result.empty:
             logger.debug(f"No shot_zone_analysis data for {player_lookup} on {game_date}")
             return {}
-        
+
         data: Dict[str, Any] = result.iloc[0].to_dict()
         logger.debug(f"shot_zone_analysis: {len(data)} fields retrieved for {player_lookup}")
         return data
-    
+
     def _query_team_defense(self, team_abbr: str, game_date: date) -> Dict[str, Any]:
         """Query team_defense_zone_analysis table."""
         query = f"""
@@ -2031,21 +2104,21 @@ class FeatureExtractor:
         WHERE team_abbr = '{team_abbr}'
           AND analysis_date = '{game_date}'
         """
-        
+
         result: pd.DataFrame = self._safe_query(query, "feature_extract")
-        
+
         if result.empty:
             logger.debug(f"No team_defense data for {team_abbr} on {game_date}")
             return {}
-        
+
         data: Dict[str, Any] = result.iloc[0].to_dict()
         logger.debug(f"team_defense: {len(data)} fields retrieved for {team_abbr}")
         return data
-    
+
     # ========================================================================
     # PHASE 3 EXTRACTION (FALLBACK)
     # ========================================================================
-    
+
     def extract_phase3_data(self, player_lookup: str, game_date: date) -> Dict[str, Any]:
         """
         Extract Phase 3 data for a player.
@@ -2150,7 +2223,7 @@ class FeatureExtractor:
                 phase3_data['team_season_games'] = team_games
 
         return phase3_data
-    
+
     def _query_player_context(self, player_lookup: str, game_date: date) -> Dict[str, Any]:
         """Query upcoming_player_game_context."""
         query = f"""
@@ -2175,17 +2248,17 @@ class FeatureExtractor:
         WHERE player_lookup = '{player_lookup}'
           AND game_date = '{game_date}'
         """
-        
+
         result: pd.DataFrame = self._safe_query(query, "feature_extract")
-        
+
         if result.empty:
             logger.warning(f"No upcoming_player_game_context for {player_lookup} on {game_date}")
             return {}
-        
+
         data: Dict[str, Any] = result.iloc[0].to_dict()
         logger.debug(f"player_context: {len(data)} fields retrieved for {player_lookup}")
         return data
-    
+
     def _query_last_n_games(self, player_lookup: str, game_date: date, n: int) -> List[Dict[str, Any]]:
         """Query last N games for a player."""
         query = f"""
@@ -2204,21 +2277,21 @@ class FeatureExtractor:
         ORDER BY game_date DESC
         LIMIT {n}
         """
-        
+
         result: pd.DataFrame = self._safe_query(query, "feature_extract")
-        
+
         if result.empty:
             logger.debug(f"No historical games for {player_lookup} before {game_date}")
             return []
-        
+
         games: List[Dict[str, Any]] = result.to_dict('records')
         logger.debug(f"Retrieved {len(games)} games for {player_lookup}")
         return games
-    
+
     def _query_season_stats(self, player_lookup: str, game_date: date) -> Dict[str, Any]:
         """Query season-level stats."""
         season_year = game_date.year if game_date.month >= 10 else game_date.year - 1
-        
+
         query = f"""
         SELECT
             AVG(points) AS points_avg_season,
@@ -2229,18 +2302,18 @@ class FeatureExtractor:
           AND season_year = {season_year}
           AND game_date < '{game_date}'
         """
-        
+
         result: pd.DataFrame = self._safe_query(query, "feature_extract")
-        
+
         if result.empty:
             logger.debug(f"No season stats for {player_lookup} in {season_year}")
             return {}
-        
+
         data: Dict[str, Any] = result.iloc[0].to_dict()
         logger.debug(f"season_stats: {data.get('games_played_season', 0)} games for {player_lookup}")
         return data
-    
-    def _query_team_season_games(self, team_abbr: str, season_year: int, 
+
+    def _query_team_season_games(self, team_abbr: str, season_year: int,
                                  game_date: date) -> List[Dict[str, Any]]:
         """Query team's season games for win percentage."""
         query = f"""
@@ -2253,13 +2326,13 @@ class FeatureExtractor:
           AND game_date < '{game_date}'
         ORDER BY game_date
         """
-        
+
         result: pd.DataFrame = self._safe_query(query, "feature_extract")
-        
+
         if result.empty:
             logger.debug(f"No team games for {team_abbr} in {season_year}")
             return []
-        
+
         games: List[Dict[str, Any]] = result.to_dict('records')
         logger.debug(f"Retrieved {len(games)} team games for {team_abbr}")
         return games
