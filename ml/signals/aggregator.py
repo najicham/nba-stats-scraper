@@ -246,22 +246,22 @@ TIER_EDGE_CAPS = {
 #   - mae_gap_obs: partially promoted for OVER (mae_gap>0.5), UNDER still obs
 #
 # (B) HAS ENOUGH DATA — FLAG FOR PROMOTION REVIEW (CF HR suggests can block):
-#   - monday_over_obs: 49.0% HR (N=251) — large N, consistently below 50%
-#   - home_over_obs: 49.7% HR (N=4,278) — massive N, consistently below 50%
+#   - monday_over_obs: PROMOTED to active block 2026-03-26 (49.0% HR, N=251)
+#   - home_over_obs: PROMOTED to active block 2026-03-26 (49.7% HR, N=4,278)
 #   - hot_shooting_reversion_obs: UNDER HR 59.2% (N=250) — strong signal
 #   - player_under_suppression_obs: check date (Mar 24) passed — review BQ data
 #   - under_star_away: 73.0% post-ASB HR — demoted during toxic Feb, review
 #
 # (C) CLEARLY HARMFUL DIRECTION — DATA SHOWS BLOCKING WINNERS, CONSIDER REMOVAL:
-#   - familiar_matchup_obs: CF HR 54.4% (N=large, 5-season) — blocking winners
-#   - b2b_under_block_obs: CF HR 54.0% (5-season) — blocking winners
+#   - familiar_matchup_obs: REMOVED 2026-03-26 (CF HR 54.4%, 5-season confirmed)
+#   - b2b_under_block_obs: REMOVED 2026-03-26 (CF HR 54.0%, 5-season confirmed)
+#   - ft_variance_under_obs: REMOVED 2026-03-26 (CF HR 56.0%, 5-season confirmed)
+#   - line_dropped_over_obs: REMOVED 2026-03-26 (CF HR 60.0%, N=477)
+#   - neg_pm_streak_obs: REMOVED 2026-03-26 (CF HR 64.5%, N=758 — highest of any filter)
 #   - line_jumped_under_obs: CF HR 100% (5/5 winners blocked) — strong anti-signal
-#   - line_dropped_over_obs: CF HR 60.0% (N=477) — blocking winners
-#   - neg_pm_streak_obs: CF HR 64.5% (N=758) — strongest anti-signal, clearly harmful
 #   - flat_trend_under_obs: CF HR 59.2% (N=211) — blocking winners
 #   - high_skew_over_block_obs: CF HR 75% (N=4) — blocking winners, low N
 #   - bench_under_obs: CF HR 100% (N=2) — blocking winners, very low N
-#   - ft_variance_under_obs: CF HR 56.0% (5-season) — blocking winners
 #   - opponent_under_block: CF HR 52.4% (N=21) — coin flip, demoted Session 488
 #   - opponent_depleted_under: CF HR 83.3% (N=6) — blocking winners, low N
 #
@@ -688,13 +688,8 @@ class BestBetsAggregator:
             # 61.0% AWAY vs 63.3% HOME. March AWAY noveg = 60.0% (N=45).
             # Filter was #1 blocker (9 rejections in 2 days), blocking winning picks.
 
-            # Avoid familiar matchups — DEMOTED to observation (Session 462).
-            # 5-season cross-validation: CF HR = 54.4% — blocking winners.
-            games_vs_opp = pred.get('games_vs_opponent') or 0
-            if games_vs_opp >= 6:
-                filter_counts['familiar_matchup'] += 1
-                _record_filtered(pred, 'familiar_matchup_obs', pred_edge)
-                # continue  # Session 462: observation mode — do NOT block
+            # familiar_matchup_obs REMOVED 2026-03-26: 5-season CF HR = 54.4% (N=large),
+            # confirmed blocking winners across all seasons. Filter is conceptually wrong.
 
             # Feature quality floor (Session 278): quality < 85 = 24.0% HR
             # Session 310: quality=0 (missing) must also be blocked, not passed through
@@ -744,14 +739,8 @@ class BestBetsAggregator:
                 if 'med_usage_under' not in self._runtime_demoted:
                     continue
 
-            # B2B UNDER block — DEMOTED to observation (Session 462).
-            # 5-season cross-validation: CF HR = 54.0% — blocking winners.
-            rest_days = pred.get('rest_days') or 99
-            if (pred.get('recommendation') == 'UNDER'
-                    and rest_days <= 1):
-                filter_counts['b2b_under_block'] += 1
-                _record_filtered(pred, 'b2b_under_block_obs', pred_edge)
-                # continue  # Session 462: observation mode — do NOT block
+            # b2b_under_block_obs REMOVED 2026-03-26: 5-season CF HR = 54.0% — blocking winners.
+            # Filter is conceptually wrong; B2B fatigue doesn't hurt UNDER picks.
 
             # starter_v12_under REMOVED (Session 422b): Dead filter — zero fires
             # across entire season. startswith('v12') missed lgbm/xgb models,
@@ -780,16 +769,8 @@ class BestBetsAggregator:
                 if 'line_dropped_under' not in self._runtime_demoted:
                     continue
 
-            # Line dropped OVER — DEMOTED to observation (Session 428).
-            # Original 39.1% HR was Feb toxic window (N=23). Full-season CF HR = 60.0%
-            # (N=477) — blocking profitable picks. Market line drops may reflect injury
-            # news that the model already incorporates.
-            if (prop_line_delta is not None
-                    and prop_line_delta <= -2.0
-                    and pred.get('recommendation') == 'OVER'):
-                filter_counts['line_dropped_over'] += 1
-                _record_filtered(pred, 'line_dropped_over_obs', pred_edge)
-                # continue  # Session 428: observation mode — do NOT block
+            # line_dropped_over_obs REMOVED 2026-03-26: CF HR = 60.0% (N=477) — blocking winners.
+            # Market line drops already incorporated by model; filter direction was wrong.
 
             # Session 451: Line anomaly extreme drop — ACTIVE filter.
             # When a player's line drops >= 40% OR >= 6 points from their previous
@@ -809,14 +790,8 @@ class BestBetsAggregator:
                         _record_filtered(pred, 'line_anomaly_extreme_drop', pred_edge)
                         continue
 
-            # Neg +/- streak UNDER — DEMOTED to observation (Session 428).
-            # Original 13.1% HR was from early data. Full-season CF HR = 64.5%
-            # (N=758) — highest CF HR of any filter. Blocking the most profitable picks.
-            neg_pm_streak = pred.get('neg_pm_streak') or 0
-            if neg_pm_streak >= 3 and pred.get('recommendation') == 'UNDER':
-                filter_counts['neg_pm_streak'] += 1
-                _record_filtered(pred, 'neg_pm_streak_obs', pred_edge)
-                # continue  # Session 428: observation mode — do NOT block
+            # neg_pm_streak_obs REMOVED 2026-03-26: CF HR = 64.5% (N=758) — highest CF HR of
+            # any filter. Blocking the most profitable UNDER picks. Filter is clearly harmful.
 
             # Opponent team UNDER — DEMOTED to observation (Session 488).
             # CF HR = 52.4% (N=21) — coin flip. Session 372 baseline (MIN/MEM/MIL/IND
@@ -977,8 +952,8 @@ class BestBetsAggregator:
                 _record_filtered(pred, 'mid_line_over_obs', pred_edge)
                 # continue  # Session 428: observation mode — do NOT block
 
-            # Monday OVER observation (Session 414): OVER on Monday = 49.0% HR (N=251).
-            # Complements active friday_over_block. Reuses date parsing from Friday filter.
+            # Monday OVER block — PROMOTED to active 2026-03-26: 49.0% HR (N=251), large N,
+            # consistently below breakeven across 4+ seasons. Mirrors friday_over_block.
             if pred.get('recommendation') == 'OVER':
                 _gd_raw_obs = pred.get('game_date', '')
                 if _gd_raw_obs:
@@ -993,17 +968,19 @@ class BestBetsAggregator:
                         if _gd_obs and _gd_obs.weekday() == 0:  # 0 = Monday
                             filter_counts['monday_over_obs'] += 1
                             _record_filtered(pred, 'monday_over_obs', pred_edge)
-                            # Observation mode — do NOT continue/filter
+                            if 'monday_over_obs' not in self._runtime_demoted:
+                                continue
                     except (ValueError, TypeError):
                         pass
 
-            # Home OVER observation (Session 414): OVER + is_home = 49.7% HR (N=4,278).
-            # Large N, consistently below breakeven.
+            # Home OVER block — PROMOTED to active 2026-03-26: 49.7% HR (N=4,278), massive N,
+            # consistently below breakeven. Home OVER picks lose at the same rate as Friday OVER.
             if (pred.get('recommendation') == 'OVER'
                     and pred.get('is_home')):
                 filter_counts['home_over_obs'] += 1
                 _record_filtered(pred, 'home_over_obs', pred_edge)
-                # Observation mode — do NOT continue/filter
+                if 'home_over_obs' not in self._runtime_demoted:
+                    continue
 
             # Session 438 P10 → Session 440: Prediction sanity check (ACTIVE).
             # Block predictions where predicted_points > 2x season avg on
@@ -1319,17 +1296,8 @@ class BestBetsAggregator:
                 if 'under_low_rsc' not in self._runtime_demoted:
                     continue
 
-            # FT variance UNDER — DEMOTED to observation (Session 462).
-            # 5-season cross-validation: CF HR = 56.0% — blocking winners.
-            # Original Session 452 promotion was based on single-season data.
-            fta_avg = pred.get('fta_avg_last_10') or 0
-            fta_cv = pred.get('fta_cv_last_10') or 0
-            if (pred.get('recommendation') == 'UNDER'
-                    and fta_avg >= 5.0
-                    and fta_cv >= 0.5):
-                filter_counts['ft_variance_under'] += 1
-                _record_filtered(pred, 'ft_variance_under_obs', pred_edge, len(qualifying), tags)
-                # continue  # Session 462: observation mode — do NOT block
+            # ft_variance_under_obs REMOVED 2026-03-26: 5-season CF HR = 56.0% — blocking winners.
+            # Original Session 452 promotion based on single-season data; 5-season confirms wrong direction.
 
             # Session 462→463: Cold FG UNDER — ACTIVE filter. Block UNDER when
             # FG% last_3 is 10%+ below season avg. Cold shooter bounces back.
@@ -1479,8 +1447,6 @@ class BestBetsAggregator:
             logger.info(f"SC=3 OVER block: skipped {filter_counts['sc3_over_block']} OVER picks with SC=3 (45.5% HR, net loser)")
         if filter_counts['line_dropped_under'] > 0:
             logger.info(f"Line dropped UNDER block: skipped {filter_counts['line_dropped_under']} UNDER picks with line drop >= 2 (37.5% CF HR)")
-        if filter_counts['line_dropped_over'] > 0:
-            logger.info(f"Line dropped OVER (observation): tagged {filter_counts['line_dropped_over']} OVER picks with line drop >= 2")
         if filter_counts['opponent_depleted_under'] > 0:
             logger.info(f"Opponent depleted UNDER block: skipped {filter_counts['opponent_depleted_under']} UNDER picks with 3+ opponent stars out")
         if filter_counts['q4_scorer_under_block'] > 0:
@@ -1507,13 +1473,13 @@ class BestBetsAggregator:
             )
         if filter_counts['monday_over_obs'] > 0:
             logger.info(
-                f"Monday OVER (observation): tagged "
-                f"{filter_counts['monday_over_obs']} OVER picks on Monday (49.0% HR)"
+                f"Monday OVER block (ACTIVE 2026-03-26): blocked "
+                f"{filter_counts['monday_over_obs']} OVER picks on Monday (49.0% HR, N=251)"
             )
         if filter_counts['home_over_obs'] > 0:
             logger.info(
-                f"Home OVER (observation): tagged "
-                f"{filter_counts['home_over_obs']} home OVER picks (49.7% HR)"
+                f"Home OVER block (ACTIVE 2026-03-26): blocked "
+                f"{filter_counts['home_over_obs']} home OVER picks (49.7% HR, N=4,278)"
             )
         if filter_counts['signal_density'] > 0:
             logger.info(f"Signal density filter: skipped {filter_counts['signal_density']} base-only picks")
@@ -1652,12 +1618,6 @@ class BestBetsAggregator:
                 f"UNDER low rsc (ACTIVE): blocked "
                 f"{filter_counts['under_low_rsc']} UNDER picks with real_sc < 2 "
                 f"(Mar 8: 6/7 UNDER losses had rsc 1-2)"
-            )
-        if filter_counts['ft_variance_under'] > 0:
-            logger.info(
-                f"FT variance UNDER (ACTIVE): blocked "
-                f"{filter_counts['ft_variance_under']} UNDER picks on high-FTA + high-CV players "
-                f"(47.8% HR vs 70.6% stable, 22.8pp gap)"
             )
         if filter_counts['ft_anomaly_over_block'] > 0:
             logger.info(
