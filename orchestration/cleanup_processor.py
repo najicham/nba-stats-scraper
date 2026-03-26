@@ -318,8 +318,9 @@ class CleanupProcessor:
             partition_field = partition_fields.get(table, 'game_date')
 
             # Add partition filter if table is known to be partitioned
-            # Using 7-day lookback for partition filter (much wider than lookback_hours)
-            # to ensure we don't miss any files while satisfying BigQuery requirements
+            # Using 1-day lookback for partition filter: cleanup only checks files processed
+            # in the last ~5 hours, so there is no reason to scan 7 days of partitions.
+            # Reduced from 7 DAY → 1 DAY to cut BQ scan cost ~7x (~$0.53/day savings).
             # Session 488: added nbac_injury_report, nbac_gamebook_player_stats,
             # odds_api_player_points_props — all have game_date columns, were previously
             # doing full-table scans on every cleanup run.
@@ -332,7 +333,7 @@ class CleanupProcessor:
             ]
 
             if table in partitioned_tables:
-                partition_filter = f"AND {partition_field} >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)"
+                partition_filter = f"AND {partition_field} >= DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)"
             else:
                 partition_filter = ""
 

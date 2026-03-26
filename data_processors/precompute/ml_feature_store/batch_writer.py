@@ -393,7 +393,8 @@ class BatchWriter:
                 FROM `{temp_table_id}`
             ) WHERE row_num = 1
         ) AS source
-        ON target.player_lookup = source.player_lookup
+        ON target.game_date = '{game_date}'
+           AND target.player_lookup = source.player_lookup
            AND target.game_date = source.game_date
         WHEN MATCHED THEN
             UPDATE SET

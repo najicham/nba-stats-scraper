@@ -566,7 +566,8 @@ class BatchConsolidator:
             )
             WHERE row_num = 1
         ) S
-        ON T.game_id = S.game_id
+        ON T.game_date = S.game_date
+           AND T.game_id = S.game_id
            AND T.player_lookup = S.player_lookup
            AND T.system_id = S.system_id
            AND CAST(COALESCE(T.current_points_line, -1) AS INT64) = CAST(COALESCE(S.current_points_line, -1) AS INT64)
