@@ -84,6 +84,8 @@ class BestBetsRecordExporter(BaseExporter):
             ON b.player_lookup = pa.player_lookup
             AND b.game_date = pa.game_date
             AND b.system_id = pa.system_id
+            AND pa.recommendation = b.recommendation
+            AND pa.line_value = b.line_value
           WHERE b.game_date >= @season_start
             AND b.game_date <= @target_date
             AND pa.prediction_correct IS NOT NULL
@@ -211,6 +213,8 @@ class BestBetsRecordExporter(BaseExporter):
           ON b.player_lookup = pa.player_lookup
           AND b.game_date = pa.game_date
           AND b.system_id = pa.system_id
+          AND pa.recommendation = b.recommendation
+          AND pa.line_value = b.line_value
         WHERE b.game_date >= @season_start
           AND b.game_date <= @target_date
           AND pa.prediction_correct IS NOT NULL
@@ -309,6 +313,8 @@ class BestBetsRecordExporter(BaseExporter):
           ON b.player_lookup = pa.player_lookup
           AND b.game_date = pa.game_date
           AND b.system_id = pa.system_id
+          AND pa.recommendation = b.recommendation
+          AND pa.line_value = b.line_value
         WHERE b.game_date >= @season_start
           AND b.game_date <= @target_date
         ORDER BY b.game_date DESC, b.edge DESC

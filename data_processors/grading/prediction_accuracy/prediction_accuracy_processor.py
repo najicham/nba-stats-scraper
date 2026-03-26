@@ -547,6 +547,7 @@ class PredictionAccuracyProcessor:
                     WHERE bb.game_date = '{game_date}'
                       AND bb.player_lookup = p.player_lookup
                       AND bb.system_id = p.system_id
+                      AND bb.line_value = p.current_points_line
                   )
                 )
                 -- PHASE 1 FIX: Exclude placeholder lines from grading
@@ -563,12 +564,12 @@ class PredictionAccuracyProcessor:
                 AND invalidation_reason IS NULL
         ),
         -- v5.0: Deduplicate by business key, keeping the latest prediction
-        -- v5.1: Cast line_value to STRING for partitioning (FLOAT64 not allowed)
+        -- v5.5: Removed line_value from partition — one row per (player, game, model)
         deduped AS (
             SELECT * EXCEPT(rn) FROM (
                 SELECT *,
                     ROW_NUMBER() OVER (
-                        PARTITION BY player_lookup, game_id, system_id, CAST(line_value AS STRING)
+                        PARTITION BY player_lookup, game_id, system_id
                         ORDER BY created_at DESC
                     ) as rn
                 FROM predictions_raw
@@ -890,7 +891,7 @@ class PredictionAccuracyProcessor:
         """
         Check for duplicate business keys after grading (SESSION 94 FIX).
 
-        Business key: (player_lookup, game_id, system_id, line_value)
+        Business key: (player_lookup, game_id, system_id)
 
         Args:
             game_date: Date to check for duplicates
@@ -907,11 +908,10 @@ class PredictionAccuracyProcessor:
                 player_lookup,
                 game_id,
                 system_id,
-                line_value,
                 COUNT(*) as occurrence_count
             FROM `{self.accuracy_table}`
             WHERE game_date = '{game_date}'
-            GROUP BY player_lookup, game_id, system_id, line_value
+            GROUP BY player_lookup, game_id, system_id
             HAVING COUNT(*) > 1
         )
         """

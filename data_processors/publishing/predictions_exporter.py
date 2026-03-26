@@ -99,6 +99,8 @@ class PredictionsExporter(BaseExporter):
             AND p.game_id = pa.game_id
             AND p.game_date = pa.game_date
             AND pa.system_id = @champion_model_id
+            AND pa.recommendation = p.recommendation
+            AND pa.line_value = p.current_points_line
         WHERE p.game_date = @target_date
           AND p.is_active = TRUE
         ORDER BY p.game_id, p.confidence_score DESC
