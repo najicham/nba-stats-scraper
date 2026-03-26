@@ -227,7 +227,15 @@ if dupes:
 - [x] PR 1: Grading processor fix + HIGH severity exporters + view creation (commit a0a62bf1)
 - [x] PR 3: MEDIUM severity JOINs — decay_detection, regime_context, signal_health, model_performance, league_macro (commit 68f6ab8d)
 - [x] session-learnings.md updated with prediction_accuracy JOIN pattern
-- [ ] Verify `best_bets_record_exporter.py` W-L record is not currently inflated (check record.json)
-- [ ] Deploy `prediction_accuracy_deduped` view to BigQuery (run the SQL in schemas/bigquery/nba_predictions/prediction_accuracy_deduped.sql)
-- [ ] PR 2: Migrate remaining consumers to `prediction_accuracy_deduped` view
-- [ ] PR 4: Layer 5 canaries + Layer 6 structural fixes
+- [x] Verify `best_bets_record_exporter.py` W-L record — **record.json shows 103-68 (60.2%), matches BQ query with fixed JOIN exactly. No inflation.**
+- [x] Deploy `prediction_accuracy_deduped` view to BigQuery (deployed this session)
+- [x] PR 2: All remaining consumers fixed (commit fd432516)
+- [x] PR 4: Canary + safety net deployed (commit fd432516). Layer 6 structural fixes deferred (lower urgency, no user-facing impact).
+
+## Session 493 Complete — All Critical Fixes Deployed
+
+All 22 vulnerable `prediction_accuracy` JOIN locations are fixed. The duplicate picks bug is fully resolved:
+- Source: grading processor no longer produces duplicates (dedup by player/game/model, not by line)
+- Consumers: all 22 JOIN locations hardened with `recommendation` + `line_value` conditions
+- Detection: `prediction_accuracy_deduped` view + BQ canary + pre-export safety net
+- Verification: W-L record confirmed clean (103-68, 60.2%)
