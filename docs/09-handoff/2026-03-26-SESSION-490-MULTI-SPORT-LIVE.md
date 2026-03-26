@@ -142,25 +142,40 @@ gcloud storage cat gs://nba-props-platform-api/v1/mlb/best-bets/all.json \
 
 ---
 
-## Known Issues / Future Work
+## Additional Changes (Session 490 continued)
 
-### Immediate
-- **`game_time` is `null` for all MLB picks** — the `pitcher_strikeouts` table has no
-  game_time column. Impact: no game time shown on pick cards. Enhancement: join with
-  MLB schedule table to populate. Not blocking for launch.
+### Sport switcher moved to global header
 
-- **MLB tab shows error until Opening Day** — `v1/mlb/best-bets/all.json` doesn't exist
-  until first export runs. Proxy returns 404 → frontend shows error state. Acceptable for
-  pre-season, but consider a static stub file if the error state is jarring.
+**Commits:** `111c34f`, `3b5ab63`
 
-### Future sessions
-- MLB results export (next-morning grading refresh): needs `mlb-daily-results-publish`
-  scheduler + `export_types: ["results","best-bets"]` for yesterday
-- `game_time` from schedule join
-- `SEASON_START = '2026-03-27'` is hardcoded — dynamic from min(game_date) in future
-- MLB Tonight page (pitcher matchups, lineups)
-- Sport switcher in global nav/header
-- Additional MLB stats beyond strikeouts
+- `SportContext` created at `src/contexts/SportContext.tsx` — global `sport: Sport` state
+- `SportProvider` added to `src/app/providers.tsx` inside `NavigationProvider`
+- `Header.tsx` now renders compact `NBA | MLB` toggle (right side, before Settings)
+  - Only shown on `/`, `/best-bets`, `/trends`
+  - `cursor-pointer` on buttons — fixes the hover cursor bug
+  - Sticky header position means no layout flicker on switch
+- `best-bets/page.tsx` uses `useSport()` — local sport state and in-page tabs removed
+- `page.tsx` (Tonight): `sport === "mlb"` → "MLB Tonight — Coming Soon" placeholder
+- `trends/page.tsx`: `sport === "mlb"` → "MLB Trends — Coming Soon" placeholder
+- Pre-season stub `v1/mlb/best-bets/all.json` published with `season_start: "2026-03-27"`
+- Best Bets MLB tab shows: ⚾ "MLB Season Begins / March 27, 2026"
+
+### All bugs found and fixed
+
+| Bug | File | Fix |
+|-----|------|-----|
+| CF MLB block crashes if export fails (`result=None`) | `phase6_export/main.py` | try/except, returns `status: partial` |
+| WeeklyHistory no-op signature mismatch | `best-bets/page.tsx` | `(_l: string, _d?: string) => {}` |
+| `game_time` not in `pitcher_strikeouts` table | `mlb_best_bets_exporter.py` | removed from query, set to `null` |
+| Provider nesting indentation wrong | `providers.tsx` | fixed indentation |
+
+### Known Issues / Future Work
+
+- **`game_time` is `null` for all MLB picks** — no game_time in BQ table. Enhancement: join MLB schedule table. Not blocking.
+- **MLB results export** — next-morning grading refresh needs `mlb-daily-results-publish` scheduler targeting `["results","best-bets"]` for yesterday
+- **`SEASON_START = '2026-03-27'` hardcoded** — make dynamic from `min(game_date)` in future
+- **MLB Tonight / Trends data** — backend work needed (pitcher matchup data, strikeout trends)
+- **Additional MLB stats** — beyond strikeouts (H, IP, ERA)
 
 ---
 
