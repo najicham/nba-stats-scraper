@@ -1686,11 +1686,14 @@ class FeatureExtractor:
                     ORDER BY pgs.game_date DESC
                 ) AS games_ago
             FROM `{self.project_id}.nba_analytics.player_game_summary` pgs
-            INNER JOIN `{self.project_id}.nba_predictions.prediction_accuracy` pa
-                ON pa.player_lookup = pgs.player_lookup
+            INNER JOIN (
+                SELECT player_lookup, game_date, MAX(line_value) AS line_value
+                FROM `{self.project_id}.nba_predictions.prediction_accuracy`
+                WHERE line_value > 0
+                GROUP BY player_lookup, game_date
+            ) pa ON pa.player_lookup = pgs.player_lookup
                 AND pa.game_date = pgs.game_date
-            WHERE pa.line_value > 0
-                AND pgs.points IS NOT NULL
+            WHERE pgs.points IS NOT NULL
                 AND pgs.game_date < '{game_date}'
                 AND pgs.game_date >= DATE_SUB('{game_date}', INTERVAL 60 DAY)
         )

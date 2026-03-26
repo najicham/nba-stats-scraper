@@ -143,8 +143,9 @@ def get_old_system_picks(bq_client: bigquery.Client, game_date: str) -> List[Dic
       ON bb.player_lookup = pa.player_lookup
       AND bb.game_date = pa.game_date
       AND bb.system_id = pa.system_id
+      AND pa.recommendation = bb.recommendation
+      AND pa.line_value = bb.line_value
       AND pa.has_prop_line = TRUE
-      AND pa.recommendation IN ('OVER', 'UNDER')
     WHERE bb.game_date = '{game_date}'
     """
     rows = list(bq_client.query(query).result())

@@ -82,6 +82,24 @@ class BestBetsAllExporter(BaseExporter):
         # One query gets all picks for the season (including today's ungraded)
         all_picks = self._query_all_picks(target_date, season_start.isoformat())
 
+        # Session 493: Pre-export dedup safety net — catches any duplicate player-date
+        # combos that slipped through (e.g., during historical PA backfill).
+        _seen: set = set()
+        _deduped = []
+        _dupe_count = 0
+        for _p in all_picks:
+            _k = (_p.get('player_lookup'), str(_p.get('game_date')))
+            if _k in _seen:
+                _dupe_count += 1
+            else:
+                _seen.add(_k)
+                _deduped.append(_p)
+        if _dupe_count:
+            logger.warning(
+                f"DUPLICATE PICKS in _query_all_picks: {_dupe_count} duplicate entries removed"
+            )
+            all_picks = _deduped
+
         # Split into today vs history
         today_signal_picks = []
         history_picks = []

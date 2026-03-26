@@ -1599,6 +1599,31 @@ def main():
     else:
         logger.info("Break day — skipping Phase 3 partial coverage auto-heal")
 
+    # Session 493: Check prediction_accuracy for duplicate (player, game_date, system_id) groups
+    pa_dup_check = CanaryCheck(
+        name="prediction_accuracy Duplicate Groups",
+        phase="pa_duplicate_groups",
+        query=f"""
+            SELECT COUNT(*) AS duplicate_group_count
+            FROM (
+              SELECT player_lookup, game_date, system_id
+              FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy`
+              WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+                AND recommendation IN ('OVER', 'UNDER')
+              GROUP BY player_lookup, game_date, system_id
+              HAVING COUNT(*) > 1
+            )
+        """,
+        thresholds={"duplicate_group_count": {"max": 50}},
+        description="Alerts when prediction_accuracy has >50 duplicate (player,date,model) groups in last 7 days — indicates grading processor dedup regression (Session 493)"
+    )
+    pa_dup_passed, pa_dup_metrics, pa_dup_error = run_canary_query(client, pa_dup_check)
+    pa_dup_status = "✅ PASS" if pa_dup_passed else "❌ FAIL"
+    logger.info(f"prediction_accuracy Duplicates: {pa_dup_status} (count={pa_dup_metrics.get('duplicate_group_count', '?')})")
+    if not pa_dup_passed:
+        logger.warning(f"  Error: {pa_dup_error}")
+    results.append((pa_dup_check, pa_dup_passed, pa_dup_metrics, pa_dup_error))
+
     # Check if any failures
     failures = [r for r in results if not r[1]]
 

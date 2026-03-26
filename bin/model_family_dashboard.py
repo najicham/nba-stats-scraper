@@ -76,6 +76,8 @@ def main():
         ON bb.player_lookup = pa.player_lookup
         AND bb.game_date = pa.game_date
         AND bb.system_id = pa.system_id
+        AND pa.recommendation = bb.recommendation
+        AND pa.line_value = bb.line_value
         AND pa.is_voided IS NOT TRUE
       WHERE bb.game_date BETWEEN '{start_date}' AND '{end_date}'
         AND bb.source_model_id IS NOT NULL

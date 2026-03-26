@@ -265,6 +265,8 @@ class ScoringTierProcessor:
             ON p.player_lookup = pa.player_lookup
             AND p.game_date = pa.game_date
             AND p.system_id = pa.system_id
+            AND pa.recommendation = p.recommendation
+            AND pa.line_value = p.current_points_line
           WHERE p.system_id = '{system_id}'
             AND p.scoring_tier IS NOT NULL
             AND p.game_date BETWEEN '{start_date}' AND '{end_date}'

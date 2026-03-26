@@ -23,7 +23,8 @@ WITH tagged_predictions AS (
     ABS(pa.predicted_points - pa.line_value) AS edge
   FROM `nba-props-platform.nba_predictions.pick_signal_tags` pst
   CROSS JOIN UNNEST(pst.signal_tags) AS signal_tag
-  INNER JOIN `nba-props-platform.nba_predictions.prediction_accuracy` pa
+  -- Session 493: use deduped view — pick_signal_tags has no recommendation/line_value
+  INNER JOIN `nba-props-platform.nba_predictions.prediction_accuracy_deduped` pa
     ON pst.player_lookup = pa.player_lookup
     AND pst.game_date = pa.game_date
     AND pst.system_id = pa.system_id

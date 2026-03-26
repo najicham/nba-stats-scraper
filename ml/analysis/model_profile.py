@@ -112,7 +112,24 @@ def compute_profiles_for_date(
     edge_band_case = _build_edge_band_case()
 
     query = f"""
-    WITH base AS (
+    -- Session 493: Pre-dedup prediction_accuracy for pick_signal_tags JOIN below
+    -- (pick_signal_tags has no recommendation/line_value columns)
+    WITH deduped_pa AS (
+      SELECT * EXCEPT(rn) FROM (
+        SELECT *,
+          ROW_NUMBER() OVER (
+            PARTITION BY player_lookup, game_date, system_id
+            ORDER BY
+              CASE WHEN recommendation IN ('OVER','UNDER') THEN 0 ELSE 1 END,
+              CASE WHEN prediction_correct IS NOT NULL THEN 0 ELSE 1 END,
+              graded_at DESC
+          ) AS rn
+        FROM `{project_id}.nba_predictions.prediction_accuracy`
+        WHERE game_date > DATE_SUB(@target_date, INTERVAL 14 DAY)
+          AND game_date <= @target_date
+      ) WHERE rn = 1
+    ),
+    base AS (
         SELECT
             system_id,
             {affinity_case} AS affinity_group,
@@ -148,6 +165,8 @@ def compute_profiles_for_date(
             ON sbp.player_lookup = pa.player_lookup
             AND sbp.game_date = pa.game_date
             AND sbp.system_id = pa.system_id
+            AND pa.recommendation = sbp.recommendation
+            AND pa.line_value = sbp.line_value
             AND pa.is_voided IS NOT TRUE
         WHERE sbp.game_date > DATE_SUB(@target_date, INTERVAL 14 DAY)
           AND sbp.game_date <= @target_date
@@ -163,7 +182,7 @@ def compute_profiles_for_date(
             pa.prediction_correct
         FROM `{project_id}.nba_predictions.pick_signal_tags` pst
         CROSS JOIN UNNEST(pst.signal_tags) AS tag
-        JOIN `{project_id}.nba_predictions.prediction_accuracy` pa
+        JOIN deduped_pa pa
             ON pst.player_lookup = pa.player_lookup
             AND pst.game_date = pa.game_date
             AND pst.system_id = pa.system_id
