@@ -311,7 +311,7 @@ for FAMILY_NAME in "${FAMILIES_TO_TRAIN[@]}"; do
 
     echo ""
     echo "Training $FAMILY_NAME..."
-    if PYTHONPATH=. python ml/experiments/quick_retrain.py \
+    if PYTHONPATH=. .venv/bin/python3 ml/experiments/quick_retrain.py \
         --name "$EXP_NAME" \
         --train-start "$TRAINING_START" \
         --train-end "$TRAIN_END" \
@@ -405,7 +405,7 @@ if [ ${#TRAINED_MODELS[@]} -gt 0 ]; then
     echo "=============================================="
     echo "POST-RETRAIN REGISTRY VALIDATION"
     echo "=============================================="
-    python bin/validation/validate_model_registry.py --skip-gcs
+    PYTHONPATH=. .venv/bin/python3 bin/validation/validate_model_registry.py --skip-gcs
     if [ $? -ne 0 ]; then
         echo "WARNING: Registry validation found issues. Review above output."
     fi
