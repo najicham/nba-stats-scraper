@@ -272,6 +272,8 @@ class BestBetsAllExporter(BaseExporter):
             ON b.player_lookup = pa.player_lookup
             AND b.game_date = pa.game_date
             AND b.system_id = pa.system_id
+            AND pa.recommendation = b.recommendation
+            AND pa.line_value = b.line_value
           WHERE b.game_date >= @season_start
             AND b.game_date <= @target_date
         ),
@@ -310,6 +312,8 @@ class BestBetsAllExporter(BaseExporter):
             ON pp.player_lookup = pa.player_lookup
             AND pp.game_date = pa.game_date
             AND pp.system_id = pa.system_id
+            AND pa.recommendation = pp.recommendation
+            AND pa.line_value = pp.line_value
           WHERE pp.game_date >= @season_start
             AND pp.game_date <= @target_date
             AND pp.game_date NOT IN (SELECT game_date FROM signal_dates)
