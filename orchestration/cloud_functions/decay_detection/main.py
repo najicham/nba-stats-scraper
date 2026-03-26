@@ -273,6 +273,8 @@ def get_aggregate_best_bets_hr(target_date: Optional[str] = None) -> Optional[Di
         ON bb.player_lookup = pa.player_lookup
         AND bb.game_date = pa.game_date
         AND bb.system_id = pa.system_id
+        AND pa.recommendation = bb.recommendation
+        AND pa.line_value = bb.line_value
         AND pa.is_voided IS NOT TRUE
         AND pa.game_date BETWEEN DATE_SUB(t.target_date, INTERVAL 21 DAY) AND t.target_date
       WHERE bb.game_date BETWEEN DATE_SUB(t.target_date, INTERVAL 21 DAY) AND t.target_date
@@ -426,6 +428,8 @@ def get_best_bets_hr_short_window(target_date: Optional[str] = None) -> Optional
         ON bb.player_lookup = pa.player_lookup
         AND bb.game_date = pa.game_date
         AND bb.system_id = pa.system_id
+        AND pa.recommendation = bb.recommendation
+        AND pa.line_value = bb.line_value
         AND pa.is_voided IS NOT TRUE
         AND pa.game_date BETWEEN DATE_SUB(t.target_date, INTERVAL {BB_HR_SHORT_WINDOW_DAYS} DAY) AND t.target_date
       WHERE bb.game_date BETWEEN DATE_SUB(t.target_date, INTERVAL {BB_HR_SHORT_WINDOW_DAYS} DAY) AND t.target_date
@@ -538,6 +542,8 @@ def get_previous_bb_hr(game_date) -> Optional[float]:
         ON bb.player_lookup = pa.player_lookup
         AND bb.game_date = pa.game_date
         AND bb.system_id = pa.system_id
+        AND pa.recommendation = bb.recommendation
+        AND pa.line_value = bb.line_value
         AND pa.is_voided IS NOT TRUE
         AND pa.game_date BETWEEN DATE_SUB({prev_date}, INTERVAL 21 DAY) AND {prev_date}
       WHERE bb.game_date BETWEEN DATE_SUB({prev_date}, INTERVAL 21 DAY) AND {prev_date}

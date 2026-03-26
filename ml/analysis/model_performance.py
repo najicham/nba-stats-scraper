@@ -260,6 +260,8 @@ def compute_for_date(bq_client: bigquery.Client, target_date: date,
         ON bb.player_lookup = pa.player_lookup
         AND bb.game_date = pa.game_date
         AND bb.system_id = pa.system_id
+        AND pa.recommendation = bb.recommendation
+        AND pa.line_value = bb.line_value
         AND pa.is_voided IS NOT TRUE
       WHERE bb.game_date BETWEEN DATE_SUB(@target_date, INTERVAL 21 DAY) AND @target_date
         AND bb.source_model_id IS NOT NULL
@@ -483,8 +485,9 @@ def _get_pipeline_stats(bq_client: bigquery.Client,
       ON mbc.player_lookup = pa.player_lookup
       AND mbc.game_date = pa.game_date
       AND mbc.system_id = pa.system_id
+      AND pa.recommendation = mbc.recommendation
+      AND pa.line_value = mbc.line_value
       AND pa.has_prop_line = TRUE
-      AND pa.recommendation IN ('OVER', 'UNDER')
     WHERE mbc.game_date BETWEEN DATE_SUB(@target_date, INTERVAL 21 DAY) AND @target_date
       AND mbc.system_id IN UNNEST(@model_ids)
     GROUP BY mbc.system_id

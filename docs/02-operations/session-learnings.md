@@ -15,6 +15,7 @@ For current troubleshooting, see `troubleshooting-matrix.md`.
 6. [Monitoring Issues](#monitoring-issues)
 7. [Anti-Patterns Discovered](#anti-patterns-discovered)
 8. [Established Patterns](#established-patterns)
+9. [prediction_accuracy JOIN Pattern](#prediction_accuracy-join-pattern)
 
 ---
 
@@ -1680,3 +1681,70 @@ the feature store — returns all players, no system_id filter. HR eval is sligh
 enabled models in the registry, or accept it as a CLI argument.
 
 **Impact for future retrains:** If CatBoost is disabled or INSUFFICIENT_DATA, all `--use-production-lines` retrains will silently fail with "Not enough data". Use `--no-production-lines` as the standard flag until this is fixed.
+
+---
+
+## prediction_accuracy JOIN Pattern
+
+### Always include `recommendation` + `line_value` in JOINs to prediction_accuracy (Session 493)
+
+**Symptom:** Duplicate picks appeared in the best bets UI (every pick shown 2-3x). Root cause
+traced to `prediction_accuracy` containing multiple rows per `(player_lookup, game_date, system_id)`
+due to two bugs in the grading processor.
+
+**Root cause — two grading bugs:**
+1. **Dedup partition included `line_value`:** When lines move during the day (23.5 → 24.5),
+   each version was treated as a distinct business key and survived dedup — producing 2+ rows per
+   player/game/model. Fixed: partition now `(player_lookup, game_id, system_id)`.
+2. **EXISTS rescue clause too broad:** When any BB pick existed for a player/model, ALL historical
+   line versions of that prediction passed the EXISTS filter. Fixed: added
+   `AND bb.line_value = p.current_points_line` to the EXISTS clause.
+
+**Downstream effect:** Any JOIN to `prediction_accuracy` on only `(player_lookup, game_date, system_id)`
+fans out — one BB pick produces 2-3 result rows, inflating W-L counts and HR by up to +6.9pp.
+
+**The fix (always include in JOINs):**
+```sql
+JOIN prediction_accuracy pa
+  ON bb.player_lookup = pa.player_lookup
+  AND bb.game_date = pa.game_date
+  AND bb.system_id = pa.system_id
+  AND pa.recommendation = bb.recommendation   -- NEW: prevents direction fan-out
+  AND pa.line_value = bb.line_value           -- NEW: pins to the matched line version
+```
+
+**Exception — `pick_signal_tags` JOINs:** `pick_signal_tags` has no `recommendation`/`line_value`
+columns. When joining PA through `pick_signal_tags`, pre-dedup `prediction_accuracy` inline:
+```sql
+WITH deduped_pa AS (
+  SELECT * EXCEPT(rn) FROM (
+    SELECT *,
+      ROW_NUMBER() OVER (
+        PARTITION BY player_lookup, game_date, system_id
+        ORDER BY
+          CASE WHEN recommendation IN ('OVER','UNDER') THEN 0 ELSE 1 END,
+          CASE WHEN prediction_correct IS NOT NULL THEN 0 ELSE 1 END,
+          graded_at DESC
+      ) AS rn
+    FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy`
+    WHERE game_date >= @start AND game_date <= @end
+  ) WHERE rn = 1
+)
+```
+
+**Long-term fix:** `prediction_accuracy_deduped` BQ view in
+`schemas/bigquery/nba_predictions/prediction_accuracy_deduped.sql` — self-heals all 854
+existing duplicate groups. Deploy and migrate all 22 consumers once validated.
+
+**Files fixed (Session 493):**
+- `data_processors/grading/prediction_accuracy/prediction_accuracy_processor.py` — source fix
+- `data_processors/publishing/best_bets_all_exporter.py` — commit `0b7c4a88`
+- `data_processors/publishing/best_bets_record_exporter.py`, `today_best_bets_exporter.py`,
+  `admin_dashboard_exporter.py`, `admin_picks_exporter.py`, `predictions_exporter.py` — PR 1
+- `orchestration/cloud_functions/decay_detection/main.py` — PR 3 (model auto-disable)
+- `ml/signals/regime_context.py`, `signal_health.py` — PR 3 (OVER floor, HOT/COLD weights)
+- `ml/analysis/model_performance.py`, `league_macro.py` — PR 3
+
+**Still to fix (PR 2):** `model_profile.py`, `edge_calibrator.py`, `model_family_dashboard.py`,
+`replay_per_model_pipeline.py`, `scoring_tier_processor.py`, `feature_extractor.py`,
+`v_signal_performance.sql`, `v_signal_combo_performance.sql`, `bin/` analysis scripts.

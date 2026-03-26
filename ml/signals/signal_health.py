@@ -304,6 +304,8 @@ def check_signal_rescue_performance(
         ON bb.player_lookup = pa.player_lookup
         AND bb.game_date = pa.game_date
         AND bb.system_id = pa.system_id
+        AND pa.recommendation = bb.recommendation
+        AND pa.line_value = bb.line_value
     WHERE bb.game_date > DATE_SUB(@target_date, INTERVAL 14 DAY)
       AND bb.game_date <= @target_date
     """
@@ -372,7 +374,24 @@ def compute_signal_health(
     -- Session 433: Dedup pick_signal_tags to handle intermittent 2x row duplication.
     -- Root cause: signal_annotator._write_rows() can append without DELETE on error.
     -- ROW_NUMBER deduplicates per (game_date, player_lookup, system_id).
-    WITH deduped_pst AS (
+    -- Session 493: Pre-dedup prediction_accuracy — pick_signal_tags lacks recommendation/line_value
+    -- so we can't filter in the JOIN; deduplicate PA to one row per (player,date,model) first.
+    WITH deduped_pa AS (
+      SELECT * EXCEPT(rn) FROM (
+        SELECT *,
+          ROW_NUMBER() OVER (
+            PARTITION BY player_lookup, game_date, system_id
+            ORDER BY
+              CASE WHEN recommendation IN ('OVER','UNDER') THEN 0 ELSE 1 END,
+              CASE WHEN prediction_correct IS NOT NULL THEN 0 ELSE 1 END,
+              graded_at DESC
+          ) AS rn
+        FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy`
+        WHERE game_date >= '2025-10-22'
+          AND game_date <= @target_date
+      ) WHERE rn = 1
+    ),
+    deduped_pst AS (
       SELECT * FROM (
         SELECT *, ROW_NUMBER() OVER (
           PARTITION BY game_date, player_lookup, system_id
@@ -395,7 +414,7 @@ def compute_signal_health(
         pa.recommendation
       FROM deduped_pst pst
       CROSS JOIN UNNEST(pst.signal_tags) AS signal_tag
-      INNER JOIN `{PROJECT_ID}.nba_predictions.prediction_accuracy` pa
+      INNER JOIN deduped_pa pa
         ON pst.player_lookup = pa.player_lookup
         AND pst.game_date = pa.game_date
         AND pst.system_id = pa.system_id

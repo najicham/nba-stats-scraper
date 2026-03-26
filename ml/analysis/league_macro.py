@@ -243,6 +243,7 @@ def _compute_bb_metrics(bq_client: bigquery.Client, target_date: date) -> dict:
         ON bb.game_date = pa.game_date
         AND bb.player_lookup = pa.player_lookup
         AND bb.recommendation = pa.recommendation
+        AND bb.line_value = pa.line_value
         AND bb.system_id = pa.system_id
         AND pa.has_prop_line = TRUE
       WHERE bb.game_date BETWEEN @d14 AND @target_date

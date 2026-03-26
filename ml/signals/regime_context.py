@@ -76,6 +76,8 @@ def get_regime_context(bq_client, target_date: date) -> Dict[str, Any]:
               ON bb.player_lookup = p.player_lookup
               AND bb.game_date = p.game_date
               AND bb.system_id = p.system_id
+              AND p.recommendation = bb.recommendation
+              AND p.line_value = bb.line_value
             WHERE bb.game_date = @yesterday
               AND p.prediction_correct IS NOT NULL
         """
