@@ -354,13 +354,18 @@ def main(cloud_event):
 
             from data_processors.publishing.mlb.mlb_best_bets_exporter import MlbBestBetsExporter
             mlb_exporter = MlbBestBetsExporter()
+            mlb_errors = []
 
             if 'best-bets' in export_types_list:
-                mlb_exporter.export(game_date=target_date)
-                mlb_exporter.export_all(today=target_date)
+                try:
+                    mlb_exporter.export(game_date=target_date)
+                    mlb_exporter.export_all(today=target_date)
+                except Exception as mlb_err:
+                    logger.error(f"[{correlation_id}] MLB export failed: {mlb_err}", exc_info=True)
+                    mlb_errors.append(str(mlb_err))
 
             result = {
-                'status': 'success',
+                'status': 'success' if not mlb_errors else 'partial',
                 'target_date': target_date,
                 'sport': 'mlb',
                 'export_types': export_types_list,
@@ -368,7 +373,7 @@ def main(cloud_event):
                     'all': 'mlb/best-bets/all.json',
                     'date': f'mlb/best-bets/{target_date}.json',
                 },
-                'errors': [],
+                'errors': mlb_errors,
             }
 
         # Determine NBA export type
