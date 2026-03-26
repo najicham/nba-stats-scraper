@@ -343,8 +343,36 @@ def main(cloud_event):
     export_type = None
 
     try:
-        # Determine export type
-        if message_data.get('players'):
+        sport = message_data.get('sport', 'nba')
+
+        if sport == 'mlb':
+            # MLB export — runs directly, skips NBA validation checks
+            export_type = 'mlb'
+            target_date_str = message_data.get('target_date', 'today')
+            target_date = get_target_date(target_date_str)
+            export_types_list = message_data.get('export_types', ['best-bets'])
+
+            from data_processors.publishing.mlb.mlb_best_bets_exporter import MlbBestBetsExporter
+            mlb_exporter = MlbBestBetsExporter()
+
+            if 'best-bets' in export_types_list:
+                mlb_exporter.export(game_date=target_date)
+                mlb_exporter.export_all(today=target_date)
+
+            result = {
+                'status': 'success',
+                'target_date': target_date,
+                'sport': 'mlb',
+                'export_types': export_types_list,
+                'paths': {
+                    'all': 'mlb/best-bets/all.json',
+                    'date': f'mlb/best-bets/{target_date}.json',
+                },
+                'errors': [],
+            }
+
+        # Determine NBA export type
+        elif message_data.get('players'):
             # Player profiles export
             export_type = 'players'
             min_games = message_data.get('min_games', 5)
