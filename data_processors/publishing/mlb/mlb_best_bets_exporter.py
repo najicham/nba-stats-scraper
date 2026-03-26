@@ -207,10 +207,6 @@ class MlbBestBetsExporter(BaseExporter):
         else:
             result = None
 
-        game_time = row.get('game_time')
-        if game_time and hasattr(game_time, 'isoformat'):
-            game_time = game_time.isoformat()
-
         return {
             'rank': rank,
             'player': row.get('pitcher_name'),
@@ -223,7 +219,7 @@ class MlbBestBetsExporter(BaseExporter):
             'line': safe_float(row.get('strikeouts_line'), default=0.0),
             'edge': safe_float(row.get('edge'), default=0.0),
             'angles': [],
-            'game_time': game_time,
+            'game_time': None,
             'is_ultra': False,
             'actual': safe_int(actual) if actual is not None else None,
             'result': result,
@@ -383,8 +379,7 @@ class MlbBestBetsExporter(BaseExporter):
             edge,
             model_version,
             is_correct,
-            actual_strikeouts,
-            game_time
+            actual_strikeouts
         FROM `{self.project_id}.mlb_predictions.pitcher_strikeouts`
         WHERE game_date >= '{SEASON_START}'
           AND game_date <= '{today}'
