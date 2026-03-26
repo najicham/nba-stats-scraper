@@ -419,6 +419,7 @@ class MlbBestBetsExporter(BaseExporter):
         json_data = {
             'date': today,
             'season': today[:4],
+            'season_start': SEASON_START,
             'generated_at': self.get_generated_at(),
             'record': record,
             'streak': streak,
