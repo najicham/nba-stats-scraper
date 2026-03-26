@@ -187,11 +187,11 @@ if dupes:
 
 ## Recommended Execution Order
 
-**PR 1 (now):** Layer 1 (grading processor dedup fix) + Layer 3 (HIGH severity exporter JOINs) + Layer 2 (create view, no consumer migration yet)
+**PR 1 (done, commit a0a62bf1):** Layer 1 (grading processor dedup fix) + Layer 3 (HIGH severity exporter JOINs) + Layer 2 (create view, no consumer migration yet)
 
-**PR 2:** Migrate all 22 consumers to `prediction_accuracy_deduped` view
+**PR 2:** Migrate all 22 consumers to `prediction_accuracy_deduped` view (requires BQ DDL deploy first)
 
-**PR 3:** Layer 4 (MEDIUM severity — decay_detection, regime_context, signal_health)
+**PR 3 (done, commit 68f6ab8d):** Layer 4 (MEDIUM severity — decay_detection x3, regime_context, signal_health x2, model_performance x2, league_macro)
 
 **PR 4:** Layer 5 (canaries) + Layer 6 (structural)
 
@@ -199,11 +199,22 @@ if dupes:
 
 ## Files Changed This Session
 
-| File | Change |
-|------|--------|
-| `data_processors/publishing/best_bets_all_exporter.py` | Added `recommendation`+`line_value` to both PA JOINs |
-
-**Commit:** `0b7c4a88` — "fix: prevent duplicate picks in best-bets/all.json from PA join fan-out"
+| File | Change | Commit |
+|------|--------|--------|
+| `data_processors/publishing/best_bets_all_exporter.py` | Added `recommendation`+`line_value` to both PA JOINs | `0b7c4a88` |
+| `data_processors/grading/prediction_accuracy/prediction_accuracy_processor.py` | Dedup partition fix + EXISTS rescue fix | `a0a62bf1` |
+| `schemas/bigquery/nba_predictions/prediction_accuracy_deduped.sql` | New deduped view (Layer 2) | `a0a62bf1` |
+| `data_processors/publishing/best_bets_record_exporter.py` | 3 JOINs fixed | `a0a62bf1` |
+| `data_processors/publishing/today_best_bets_exporter.py` | 1 JOIN fixed | `a0a62bf1` |
+| `data_processors/publishing/admin_dashboard_exporter.py` | 1 JOIN fixed | `a0a62bf1` |
+| `data_processors/publishing/admin_picks_exporter.py` | 1 JOIN fixed | `a0a62bf1` |
+| `data_processors/publishing/predictions_exporter.py` | 1 JOIN fixed | `a0a62bf1` |
+| `orchestration/cloud_functions/decay_detection/main.py` | 3 JOINs fixed | `68f6ab8d` |
+| `ml/signals/regime_context.py` | 1 JOIN fixed | `68f6ab8d` |
+| `ml/signals/signal_health.py` | 2 JOINs fixed (deduped_pa CTE for pick_signal_tags path) | `68f6ab8d` |
+| `ml/analysis/model_performance.py` | 2 JOINs fixed | `68f6ab8d` |
+| `ml/analysis/league_macro.py` | 1 JOIN fixed (already had recommendation, added line_value) | `68f6ab8d` |
+| `docs/02-operations/session-learnings.md` | Added full prediction_accuracy JOIN pattern section | `68f6ab8d` |
 
 ---
 
@@ -213,6 +224,10 @@ if dupes:
 - [x] `best_bets_all_exporter.py` fixed and deployed
 - [x] `best-bets/all.json` manually re-exported (March 25 shows 7 picks, not 12)
 - [x] 9-agent review complete — full scope mapped
-- [ ] PR 1: Grading processor fix + HIGH severity exporters + view creation
+- [x] PR 1: Grading processor fix + HIGH severity exporters + view creation (commit a0a62bf1)
+- [x] PR 3: MEDIUM severity JOINs — decay_detection, regime_context, signal_health, model_performance, league_macro (commit 68f6ab8d)
+- [x] session-learnings.md updated with prediction_accuracy JOIN pattern
 - [ ] Verify `best_bets_record_exporter.py` W-L record is not currently inflated (check record.json)
-- [ ] Update session-learnings.md with the prediction_accuracy JOIN pattern
+- [ ] Deploy `prediction_accuracy_deduped` view to BigQuery (run the SQL in schemas/bigquery/nba_predictions/prediction_accuracy_deduped.sql)
+- [ ] PR 2: Migrate remaining consumers to `prediction_accuracy_deduped` view
+- [ ] PR 4: Layer 5 canaries + Layer 6 structural fixes
