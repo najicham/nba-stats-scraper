@@ -75,9 +75,26 @@ are in `us-west2`. No functional impact, just an inconsistency.
 ## State Right Now
 
 - **MLB predictions in BQ:** NONE (expected — Opening Day is March 27)
-- **`v1/mlb/best-bets/all.json` in GCS:** Does NOT exist yet
-- **Frontend `/best-bets`:** Shows `🏀 NBA | ⚾ MLB` tabs. MLB tab will fail or show empty
-  until Opening Day predictions are published.
+- **`v1/mlb/best-bets/all.json` in GCS:** ✅ EXISTS — pre-season stub with `today:[]`, `season_start:"2026-03-27"`
+- **Frontend `/best-bets`:** ✅ Shows segmented control `🏀 nba | ⚾ mlb`. MLB tab shows pre-season card.
+- **Pre-season card:** ⚾ "MLB Season Begins / March 27, 2026 / Pitcher strikeout picks will appear here on Opening Day."
+
+### Agent review results (both completed)
+
+**Backend review found 1 bug (FIXED):**
+- Phase 6 CF MLB block had no try/except — export failure left `result = None` → crash at `result.get('status')`.
+  Fixed: wrapped in try/except, returns `status: "partial"` with error logged.
+
+**Frontend review found 1 bug (FIXED):**
+- `WeeklyHistory` MLB no-op `() => {}` was TS-invalid — signature requires `(string, string?) => void`.
+  Fixed: changed to `(_l: string, _d?: string) => {}`.
+
+**All else verified correct:**
+- `_compute_record()` uses `is True`/`is False` — `None` properly excluded ✅
+- Date string sorting/comparison — CAST in SQL, `str()` idempotent ✅
+- `sportRef` pattern — standard latest-value ref, safe ✅
+- `games_scheduled ?? 0` — handles missing MLB field ✅
+- Proxy cache TTL order — `mlb/best-bets` fires before default ✅
 
 ---
 
