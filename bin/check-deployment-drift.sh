@@ -34,7 +34,7 @@ declare -A SERVICE_SOURCES=(
     ["prediction-coordinator"]="predictions/coordinator shared"
 
     # NBA Processing
-    ["nba-phase1-scrapers"]="scrapers"
+    ["nba-scrapers"]="scrapers"
     ["nba-phase2-raw-processors"]="data_processors/phase2"
     ["nba-phase3-analytics-processors"]="data_processors/phase3 shared"
     ["nba-phase4-precompute-processors"]="data_processors/phase4 shared"

@@ -643,6 +643,7 @@ class SignalBestBetsExporter(BaseExporter):
         if not new_player_lookups:
             return
 
+        delete_succeeded = False
         try:
             delete_query = f"""
             DELETE FROM `{table_ref}`
@@ -676,11 +677,20 @@ class SignalBestBetsExporter(BaseExporter):
                     f"Deleted {deleted} rows for {len(new_player_lookups)} "
                     f"refreshed players on {target_date} from {table_ref}"
                 )
+            delete_succeeded = True
         except Exception as e:
-            logger.warning(
-                f"Failed to delete existing rows for {target_date} "
-                f"(will append anyway): {e}"
+            logger.error(
+                f"Failed to delete existing rows for {target_date} — "
+                f"aborting APPEND to prevent duplicate picks: {e}",
+                exc_info=True,
             )
+
+        if not delete_succeeded:
+            logger.error(
+                f"Skipping APPEND for {target_date}: DELETE did not complete successfully. "
+                f"Re-run the export to retry."
+            )
+            return
 
         # Session 386/403: Disabled model filtering now happens in export() before
         # both BQ and GCS writes for consistency. Kept as comment for history.
@@ -856,13 +866,16 @@ class SignalBestBetsExporter(BaseExporter):
         Enables post-hoc validation: query actual_points after games complete
         to see if filtered picks would have won. Validates each filter's value.
 
-        Uses DELETE+INSERT (not MERGE) to handle re-exports cleanly.
+        Uses DELETE + load_table_from_json(WRITE_TRUNCATE on partition) for
+        atomicity. If DELETE fails the APPEND is aborted to prevent duplicates.
         """
         table_ref = f'{PROJECT_ID}.nba_predictions.best_bets_filtered_picks'
         now = datetime.now(timezone.utc).isoformat()
 
+        # Step 1: DELETE existing rows for this partition (re-export safe).
+        # Gate the APPEND on DELETE success to prevent duplicates.
+        delete_succeeded = False
         try:
-            # Delete existing rows for this game_date (re-export safe)
             delete_query = f"DELETE FROM `{table_ref}` WHERE game_date = @game_date"
             job_config = bigquery.QueryJobConfig(
                 query_parameters=[
@@ -870,38 +883,62 @@ class SignalBestBetsExporter(BaseExporter):
                 ]
             )
             self.bq_client.query(delete_query, job_config=job_config).result(timeout=30)
+            delete_succeeded = True
+        except Exception as e:
+            logger.error(
+                f"Failed to delete existing filtered picks for {target_date} — "
+                f"aborting APPEND to prevent duplicate rows: {e}",
+                exc_info=True,
+            )
 
-            # Insert filtered picks
-            rows = []
-            for pick in filtered_picks:
-                rows.append({
-                    'game_date': target_date,
-                    'player_lookup': pick.get('player_lookup', ''),
-                    'game_id': pick.get('game_id', ''),
-                    'system_id': pick.get('system_id', ''),
-                    'team_abbr': pick.get('team_abbr', ''),
-                    'opponent_team_abbr': pick.get('opponent_team_abbr', ''),
-                    'recommendation': pick.get('recommendation', ''),
-                    'predicted_points': pick.get('predicted_points'),
-                    'line_value': pick.get('line_value'),
-                    'edge': pick.get('edge'),
-                    'signal_count': pick.get('signal_count', 0),
-                    'signal_tags': pick.get('signal_tags', []),
-                    'filter_reason': pick.get('filter_reason', ''),
-                    'actual_points': None,  # Filled by grading
-                    'prediction_correct': None,  # Filled by grading
-                    'created_at': now,
-                })
+        if not delete_succeeded:
+            logger.error(
+                f"Skipping filtered picks APPEND for {target_date}: DELETE did not "
+                f"complete successfully. Re-run the export to retry."
+            )
+            return
 
-            if rows:
-                errors = self.bq_client.insert_rows_json(table_ref, rows)
-                if errors:
-                    logger.warning(f"Filtered picks write errors: {errors[:3]}")
-                else:
-                    logger.info(
-                        f"Filtered picks written for {target_date}: {len(rows)} picks "
-                        f"({len(set(p['filter_reason'] for p in filtered_picks))} distinct filters)"
-                    )
+        # Step 2: Build rows and load atomically via load_table_from_json
+        # (WRITE_TRUNCATE on the partition avoids streaming-buffer DML conflicts).
+        rows = []
+        for pick in filtered_picks:
+            rows.append({
+                'game_date': target_date,
+                'player_lookup': pick.get('player_lookup', ''),
+                'game_id': pick.get('game_id', ''),
+                'system_id': pick.get('system_id', ''),
+                'team_abbr': pick.get('team_abbr', ''),
+                'opponent_team_abbr': pick.get('opponent_team_abbr', ''),
+                'recommendation': pick.get('recommendation', ''),
+                'predicted_points': pick.get('predicted_points'),
+                'line_value': pick.get('line_value'),
+                'edge': pick.get('edge'),
+                'signal_count': pick.get('signal_count', 0),
+                'signal_tags': pick.get('signal_tags', []),
+                'filter_reason': pick.get('filter_reason', ''),
+                'actual_points': None,  # Filled by grading
+                'prediction_correct': None,  # Filled by grading
+                'created_at': now,
+            })
+
+        if not rows:
+            return
+
+        try:
+            load_config = bigquery.LoadJobConfig(
+                write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+                create_disposition=bigquery.CreateDisposition.CREATE_NEVER,
+            )
+            load_job = self.bq_client.load_table_from_json(
+                rows,
+                f'{table_ref}${target_date.replace("-", "")}',
+                job_config=load_config,
+            )
+            load_job.result(timeout=60)
+            logger.info(
+                f"Filtered picks written for {target_date}: {len(rows)} picks "
+                f"({len(set(p['filter_reason'] for p in filtered_picks))} distinct filters)"
+            )
         except Exception as e:
             # Non-fatal — don't fail export if counterfactual write fails
             logger.warning(f"Failed to write filtered picks for {target_date}: {e}")

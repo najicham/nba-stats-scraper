@@ -1674,6 +1674,17 @@ class FeatureExtractor:
         Source: player_game_summary (actual points) + prediction_accuracy (graded prop lines)
         No leakage: only uses games strictly BEFORE game_date.
         """
+        # NOTE: system_id is not available in this batch context — the method is called
+        # once per game_date across all players, not per-model. We cannot filter to a
+        # single system_id's line history here.
+        #
+        # Mitigation: filter to recommendation IN ('OVER', 'UNDER') to exclude PASS
+        # predictions (which have no meaningful line_value), then take MAX(line_value)
+        # as a best-effort single-line proxy. In practice this matters most for players
+        # with multi-model predictions at different lines — the MAX will pick the
+        # highest line, which is a known approximation. A future improvement would be
+        # to add system_id to this query and call it per-model, but that requires
+        # threading system_id through the batch extraction pipeline.
         query = f"""
         WITH player_line_history AS (
             SELECT
@@ -1690,6 +1701,8 @@ class FeatureExtractor:
                 SELECT player_lookup, game_date, MAX(line_value) AS line_value
                 FROM `{self.project_id}.nba_predictions.prediction_accuracy`
                 WHERE line_value > 0
+                    -- Exclude PASS predictions — only OVER/UNDER have a meaningful line
+                    AND recommendation IN ('OVER', 'UNDER')
                 GROUP BY player_lookup, game_date
             ) pa ON pa.player_lookup = pgs.player_lookup
                 AND pa.game_date = pgs.game_date

@@ -1340,6 +1340,173 @@ def check_new_model_no_predictions(bq_client: bigquery.Client) -> Tuple[bool, Di
         return False, {}, f"New model no predictions check error: {e}"
 
 
+def check_all_json_duplicate_picks() -> Tuple[bool, Dict, Optional[str]]:
+    """Session 493: Check all.json for duplicate (player_lookup, game_date) pairs.
+
+    Downloads gs://nba-props-platform-api/v1/best-bets/all.json from GCS and
+    scans every pick across today + all historical weeks for duplicate
+    (player_lookup, game_date) entries. Zero tolerance — any duplicate is a FAIL.
+
+    Duplicates in all.json mean the site is showing the same pick twice, which
+    inflates the displayed W-L record and confuses users. Root cause: a dedup
+    regression in the exporter or in _query_all_picks.
+
+    Returns:
+        Tuple of (passed, metrics, error_message)
+    """
+    try:
+        from google.cloud import storage
+
+        gcs_client = storage.Client()
+        bucket = gcs_client.bucket("nba-props-platform-api")
+        blob = bucket.blob("v1/best-bets/all.json")
+
+        if not blob.exists():
+            return True, {'skipped': True, 'reason': 'all_json_not_found'}, None
+
+        content = blob.download_as_text()
+        data = json.loads(content)
+
+        # Collect all (player_lookup, game_date) pairs across today + history
+        seen: Dict[str, int] = {}  # key -> count
+        duplicates = []
+
+        # Today's picks (top-level 'today' array)
+        file_date = data.get('date', '')
+        today_picks = data.get('today', [])
+        for pick in today_picks:
+            pl = pick.get('player_lookup', '')
+            if not pl:
+                continue
+            key = f"{pl}::{file_date}"
+            seen[key] = seen.get(key, 0) + 1
+
+        # Historical picks (weeks -> days -> picks)
+        for week in data.get('weeks', []):
+            for day in week.get('days', []):
+                day_date = day.get('date', '')
+                for pick in day.get('picks', []):
+                    pl = pick.get('player_lookup', '')
+                    if not pl:
+                        continue
+                    key = f"{pl}::{day_date}"
+                    seen[key] = seen.get(key, 0) + 1
+
+        for key, count in seen.items():
+            if count > 1:
+                duplicates.append({'key': key, 'count': count})
+
+        metrics = {
+            'file_date': file_date,
+            'today_pick_count': len(today_picks),
+            'total_pairs_checked': len(seen),
+            'duplicate_pair_count': len(duplicates),
+        }
+
+        if duplicates:
+            dup_summary = ', '.join(
+                f"{d['key']} (x{d['count']})" for d in duplicates[:5]
+            )
+            if len(duplicates) > 5:
+                dup_summary += f' ... and {len(duplicates) - 5} more'
+            return False, metrics, (
+                f"DUPLICATE PICKS IN all.json: {len(duplicates)} (player_lookup, game_date) "
+                f"pair(s) appear more than once. "
+                f"Duplicates: {dup_summary}. "
+                f"Root cause: dedup regression in best_bets_all_exporter or _query_all_picks. "
+                f"Check: Session 493 pre-export dedup safety net (best_bets_all_exporter.py) "
+                f"and prediction_accuracy_deduped view."
+            )
+
+        return True, metrics, None
+
+    except Exception as e:
+        logger.error(f"Error in all.json duplicate picks check: {e}")
+        return False, {}, f"all.json duplicate picks check error: {e}"
+
+
+def check_fleet_diversity(bq_client: bigquery.Client) -> Tuple[bool, Dict, Optional[str]]:
+    """Session 487: Alert when all enabled models are the same ML family.
+
+    If every enabled model has 'lgbm' (or 'xgb', or 'catboost') in its model_id,
+    cross-model signals like combo_3way and book_disagreement cannot fire because
+    they require diverse model agreement. This check surfaces fleet monoculture
+    before it silently kills those high-HR signals.
+
+    Also alerts when ALL pairs of enabled models have pairwise r >= 0.95 — a proxy
+    for clone-fleet detection without running the full correlation matrix.
+
+    Returns:
+        Tuple of (passed, metrics, error_message)
+    """
+    try:
+        query = f"""
+        SELECT
+            model_id,
+            CASE
+                WHEN LOWER(model_id) LIKE '%lgbm%' OR LOWER(model_id) LIKE '%lightgbm%' THEN 'lgbm'
+                WHEN LOWER(model_id) LIKE '%xgb%' OR LOWER(model_id) LIKE '%xgboost%' THEN 'xgb'
+                WHEN LOWER(model_id) LIKE '%catboost%' OR LOWER(model_id) LIKE '%cb_%' THEN 'catboost'
+                ELSE 'other'
+            END AS model_family
+        FROM `{PROJECT_ID}.nba_predictions.model_registry`
+        WHERE enabled = TRUE AND status = 'active'
+        ORDER BY model_id
+        """
+        rows = list(bq_client.query(query).result(timeout=30))
+        if not rows:
+            return True, {'skipped': True, 'reason': 'no_enabled_active_models'}, None
+
+        model_ids = [r.model_id for r in rows]
+        families = [r.model_family for r in rows]
+        distinct_families = set(families)
+        non_lgbm_count = sum(1 for f in families if f != 'lgbm')
+        lgbm_count = sum(1 for f in families if f == 'lgbm')
+
+        metrics = {
+            'enabled_model_count': len(rows),
+            'distinct_families': list(distinct_families),
+            'distinct_family_count': len(distinct_families),
+            'lgbm_count': lgbm_count,
+            'non_lgbm_count': non_lgbm_count,
+            'model_ids': model_ids,
+        }
+
+        warnings = []
+
+        # Check 1: Only 1 distinct family across the entire fleet
+        if len(distinct_families) == 1:
+            only_family = list(distinct_families)[0]
+            warnings.append(
+                f"ALL {len(rows)} enabled model(s) are {only_family.upper()} family. "
+                f"combo_3way and book_disagreement require model diversity to fire — "
+                f"these signals will be dead. Add at least 1 non-{only_family} model."
+            )
+
+        # Check 2: Zero non-LGBM models (Session 487 root cause)
+        if non_lgbm_count == 0 and lgbm_count > 0:
+            if 'ALL' not in (warnings[0] if warnings else ''):
+                warnings.append(
+                    f"ZERO non-LGBM models in fleet ({lgbm_count} LGBM-only). "
+                    f"Session 487 lesson: all-LGBM fleet = r>=0.95 clones = "
+                    f"combo_3way/book_disagreement cannot fire."
+                )
+
+        if warnings:
+            return False, metrics, (
+                "FLEET DIVERSITY WARNING: " + " | ".join(warnings) + " "
+                f"Models: {', '.join(model_ids)}. "
+                f"Fix: `./bin/retrain.sh --all --enable` with a non-LGBM family, "
+                f"or enable an existing CatBoost/XGBoost model from the registry."
+            )
+
+        return True, metrics, None
+
+    except Exception as e:
+        logger.error(f"Error in fleet diversity check: {e}")
+        return False, {}, f"Fleet diversity check error: {e}"
+
+
 def _is_break_window(client) -> bool:
     """Return True if no regular-season games in the last 3 days (i.e., we're in a break)."""
     from shared.utils.schedule_guard import has_regular_season_games
@@ -1598,6 +1765,39 @@ def main():
                 )
     else:
         logger.info("Break day — skipping Phase 3 partial coverage auto-heal")
+
+    # Session 493: Check all.json published picks for duplicate (player_lookup, game_date) pairs
+    all_json_dup_check = CanaryCheck(
+        name="all.json Duplicate Picks",
+        phase="all_json_duplicate_picks",
+        query="",  # Not a BQ query — uses GCS
+        thresholds={},
+        description="Alerts when all.json contains duplicate picks for the same (player_lookup, game_date) — zero tolerance (Session 493)"
+    )
+    all_json_passed, all_json_metrics, all_json_error = check_all_json_duplicate_picks()
+    all_json_status = "✅ PASS" if all_json_passed else "❌ FAIL"
+    if all_json_metrics.get('skipped'):
+        logger.info(f"all.json Duplicate Picks: ⏭️  SKIPPED ({all_json_metrics.get('reason')})")
+    else:
+        logger.info(f"all.json Duplicate Picks: {all_json_status} (duplicate_pairs={all_json_metrics.get('duplicate_pair_count', '?')})")
+        if not all_json_passed:
+            logger.warning(f"  Error: {all_json_error}")
+    results.append((all_json_dup_check, all_json_passed, all_json_metrics, all_json_error))
+
+    # Session 487: Fleet diversity check — all enabled models same family kills combo signals
+    fleet_diversity_check = CanaryCheck(
+        name="Fleet Diversity",
+        phase="fleet_diversity",
+        query="",
+        thresholds={},
+        description="Alerts when all enabled models are the same ML family (e.g. all LGBM) — kills combo_3way and book_disagreement signals (Session 487)"
+    )
+    fleet_passed, fleet_metrics, fleet_error = check_fleet_diversity(client)
+    fleet_status = "✅ PASS" if fleet_passed else "❌ FAIL"
+    logger.info(f"Fleet Diversity: {fleet_status} (families={fleet_metrics.get('distinct_families', '?')}, non_lgbm={fleet_metrics.get('non_lgbm_count', '?')})")
+    if not fleet_passed:
+        logger.warning(f"  Error: {fleet_error}")
+    results.append((fleet_diversity_check, fleet_passed, fleet_metrics, fleet_error))
 
     # Session 493: Check prediction_accuracy for duplicate (player, game_date, system_id) groups
     pa_dup_check = CanaryCheck(

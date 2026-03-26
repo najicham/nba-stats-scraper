@@ -150,7 +150,25 @@ TRAINING_QUALITY_THRESHOLD = 85.0
 # Quality schema version
 QUALITY_SCHEMA_VERSION = 'v1_hybrid_20260205'
 
-# Total feature count
+# Total feature count scored by the quality scorer.
+#
+# WHY 54, not 60:
+# ml_feature_store_processor.py has FEATURE_COUNT=60, which represents the full
+# feature vector written to BigQuery (features 0-59). However, features 54-59
+# (V16/V17/V18 additions) do not yet have corresponding per-feature BQ schema
+# columns (feature_N_quality, feature_N_source for N=54-59). The processor
+# explicitly truncates before calling the scorer:
+#
+#   scored_sources = {k: v for k, v in feature_sources.items() if k < FEATURE_COUNT}
+#
+# ...where FEATURE_COUNT there is 60. The scorer then further caps at its own
+# FEATURE_COUNT=54 inside calculate_quality_score() and build_quality_visibility_fields().
+# This two-level truncation ensures features 54-59 (always 'default'/'missing' for
+# many players) don't penalize the quality score or generate spurious BQ column writes.
+#
+# If the BQ schema is extended to add feature_54_quality ... feature_59_quality columns,
+# update this constant to 60 and add entries to FEATURE_CATEGORIES, OPTIONAL_FEATURES,
+# FEATURE_UPSTREAM_TABLES, and DEFAULT_FALLBACK_REASONS accordingly.
 FEATURE_COUNT = 54
 
 

@@ -295,14 +295,13 @@ class BestBetsAllExporter(BaseExporter):
           WHERE b.game_date >= @season_start
             AND b.game_date <= @target_date
         ),
-        -- Dates that have picks in signal_best_bets_picks
-        signal_dates AS (
-          SELECT DISTINCT game_date FROM signal_picks
-        ),
-        -- Fallback: published picks for dates MISSING from signal_best_bets_picks.
+        -- Fallback: published picks for player-dates MISSING from signal_best_bets_picks.
         -- These are picks that were shown to users but lost from the signal table.
         -- best_bets_published_picks lacks predicted_points/actual_points/prediction_correct
         -- so we pull grading from prediction_accuracy.
+        -- NOTE: exclusion is per-player-date (NOT EXISTS), not per-date (NOT IN signal_dates).
+        -- A date with 2 signal picks but 5 published picks for different players will
+        -- correctly include the 3 uncovered published picks in the fallback.
         published_fallback AS (
           SELECT
             pp.game_date,
@@ -334,7 +333,11 @@ class BestBetsAllExporter(BaseExporter):
             AND pa.line_value = pp.line_value
           WHERE pp.game_date >= @season_start
             AND pp.game_date <= @target_date
-            AND pp.game_date NOT IN (SELECT game_date FROM signal_dates)
+            AND NOT EXISTS (
+              SELECT 1 FROM signal_picks sp
+              WHERE sp.player_lookup = pp.player_lookup
+                AND sp.game_date = pp.game_date
+            )
             AND pp.signal_status != 'game_started'
         )
         SELECT * FROM signal_picks

@@ -33,6 +33,76 @@ def color_corr(r):
     return f'{GREEN}{r:.4f}{RESET}'
 
 
+# Fleet diversity check — Session 487 lesson: if all models are LGBM clones,
+# combo_3way and book_disagreement cannot fire (cross-model signals die silently).
+def print_fleet_diversity_summary(models: list, pairs: list) -> None:
+    """Print a fleet diversity summary and warn if all models are the same family.
+
+    Session 487 root cause: all enabled models were r>=0.95 LGBM clones.
+    combo_3way and book_disagreement require diverse model agreement to fire —
+    when all models output near-identical predictions, these high-HR signals
+    (combo_3way 95.5%, book_disagreement 93.0%) produce zero picks.
+
+    Args:
+        models: List of model_id strings from the correlation run.
+        pairs: List of (model_a, model_b, r, overlap) tuples already computed.
+    """
+    if not models:
+        return
+
+    print(f"\n{'='*80}")
+    print("  FLEET DIVERSITY CHECK (Session 487)")
+    print(f"{'='*80}")
+
+    def _family(model_id: str) -> str:
+        m = model_id.lower()
+        if 'lgbm' in m or 'lightgbm' in m:
+            return 'lgbm'
+        if 'xgb' in m or 'xgboost' in m:
+            return 'xgb'
+        if 'catboost' in m or m.startswith('cb_') or '_cb_' in m:
+            return 'catboost'
+        return 'other'
+
+    families = {m: _family(m) for m in models}
+    distinct = set(families.values())
+    non_lgbm = [m for m, f in families.items() if f != 'lgbm']
+    lgbm_models = [m for m, f in families.items() if f == 'lgbm']
+
+    print(f"  Enabled models : {len(models)}")
+    print(f"  Distinct families: {', '.join(sorted(distinct)) or 'none'}")
+    for fam in sorted(distinct):
+        members = [m for m, f in families.items() if f == fam]
+        print(f"    {fam:10s}: {len(members)} model(s) — {', '.join(m[:40] for m in members)}")
+
+    # Check 1: clone fleet — all pairs r >= 0.95
+    import numpy as np
+    valid_pairs = [(a, b, r) for a, b, r, _ in pairs if not np.isnan(r)]
+    if valid_pairs:
+        all_clones = all(r >= 0.95 for _, _, r in valid_pairs)
+        clone_count = sum(1 for _, _, r in valid_pairs if r >= 0.95)
+        print(f"\n  Redundant pairs (r>=0.95): {clone_count} / {len(valid_pairs)}")
+        if all_clones and len(valid_pairs) > 0:
+            print(f"\n  {RED}WARNING: ALL {len(valid_pairs)} model pair(s) are r>=0.95 clones.{RESET}")
+            print(f"  {RED}         combo_3way and book_disagreement CANNOT fire.{RESET}")
+            print(f"  {RED}         These signals require diverse model predictions.{RESET}")
+
+    # Check 2: single-family fleet
+    if len(distinct) == 1:
+        only_fam = list(distinct)[0]
+        print(f"\n  {RED}WARNING: ALL models are {only_fam.upper()} family.{RESET}")
+        print(f"  {RED}         Add at least 1 non-{only_fam} model to restore signal diversity.{RESET}")
+    elif len(lgbm_models) == len(models):
+        print(f"\n  {RED}WARNING: 0 non-LGBM models in fleet.{RESET}")
+        print(f"  {RED}         Session 487: all-LGBM fleet killed combo signals for 2 days.{RESET}")
+    elif not non_lgbm:
+        print(f"\n  {YELLOW}CAUTION : No non-LGBM models. Recommend keeping >=1 CatBoost/XGBoost.{RESET}")
+    else:
+        print(f"\n  {GREEN}OK: {len(non_lgbm)} non-LGBM model(s) present — signal diversity intact.{RESET}")
+
+    print()
+
+
 def run_analysis(days: int, csv_path: str = None):
     from google.cloud import bigquery
     import numpy as np
@@ -181,6 +251,10 @@ def run_analysis(days: int, csv_path: str = None):
         print("\nRedundant pairs — consider decommissioning one from each:")
         for a, b, r in redundant:
             print(f"  {a} <-> {b} (r={r:.4f})")
+
+    # Fleet diversity check — Session 487 lesson: if all models are LGBM clones,
+    # combo_3way and book_disagreement cannot fire (cross-model signals die silently).
+    print_fleet_diversity_summary(models, pairs)
 
     # CSV export
     if csv_path:

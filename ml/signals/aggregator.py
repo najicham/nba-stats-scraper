@@ -221,6 +221,54 @@ TIER_EDGE_CAPS = {
     'star': None,      # line 25+: uncapped
 }
 
+# =============================================================================
+# OBSERVATION FILTER AUDIT — 2026-03-26
+# =============================================================================
+# 30 observation-mode filter instances currently in this file.
+# Promotion requires: N >= 30 BB-level picks at CF HR >= 55% for 7 consecutive days.
+# Demotion/removal threshold: CF HR >= 55% (blocking too many winners).
+#
+# Categorized by readiness:
+#
+# (A) CLEARLY TOO-NEW / LOW-N — keep observing:
+#   - signal_stack_2plus_obs: 50% HR at N=6 — needs data
+#   - bias_regime_over_obs: accumulating data
+#   - blowout_risk_under_block_obs: 16.7% HR at N=12 — low N
+#   - tanking_risk_obs: new, accumulating data (season end)
+#   - over_low_rsc_obs: 45.5% at N=11 — promote when N>=30
+#   - hot_streak_under_obs: 44.4% at N=18 — below threshold, needs more data
+#   - unreliable_over_low_mins_obs: no HR data in comments
+#   - unreliable_under_flat_trend_obs: no HR data in comments
+#   - model_profile_would_block: Phase 1 validation ongoing
+#   - solo_game_pick_obs: 52.2% HR (N=69) — below 55% CF HR threshold for blocking
+#   - thin_slate_obs: 51.2% HR — accumulating data
+#   - depleted_stars_over_obs: BB 0% (N=4) — too low N for reliable signal
+#   - mae_gap_obs: partially promoted for OVER (mae_gap>0.5), UNDER still obs
+#
+# (B) HAS ENOUGH DATA — FLAG FOR PROMOTION REVIEW (CF HR suggests can block):
+#   - monday_over_obs: 49.0% HR (N=251) — large N, consistently below 50%
+#   - home_over_obs: 49.7% HR (N=4,278) — massive N, consistently below 50%
+#   - hot_shooting_reversion_obs: UNDER HR 59.2% (N=250) — strong signal
+#   - player_under_suppression_obs: check date (Mar 24) passed — review BQ data
+#   - under_star_away: 73.0% post-ASB HR — demoted during toxic Feb, review
+#
+# (C) CLEARLY HARMFUL DIRECTION — DATA SHOWS BLOCKING WINNERS, CONSIDER REMOVAL:
+#   - familiar_matchup_obs: CF HR 54.4% (N=large, 5-season) — blocking winners
+#   - b2b_under_block_obs: CF HR 54.0% (5-season) — blocking winners
+#   - line_jumped_under_obs: CF HR 100% (5/5 winners blocked) — strong anti-signal
+#   - line_dropped_over_obs: CF HR 60.0% (N=477) — blocking winners
+#   - neg_pm_streak_obs: CF HR 64.5% (N=758) — strongest anti-signal, clearly harmful
+#   - flat_trend_under_obs: CF HR 59.2% (N=211) — blocking winners
+#   - high_skew_over_block_obs: CF HR 75% (N=4) — blocking winners, low N
+#   - bench_under_obs: CF HR 100% (N=2) — blocking winners, very low N
+#   - ft_variance_under_obs: CF HR 56.0% (5-season) — blocking winners
+#   - opponent_under_block: CF HR 52.4% (N=21) — coin flip, demoted Session 488
+#   - opponent_depleted_under: CF HR 83.3% (N=6) — blocking winners, low N
+#
+# NOTE: Do NOT promote/demote based on this code analysis alone.
+# Run BQ CF HR queries against filter_counterfactual_daily for current N and HR.
+# =============================================================================
+
 
 class BestBetsAggregator:
     """Edge-first best bets selection with signal-based filtering.
