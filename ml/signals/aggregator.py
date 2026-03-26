@@ -224,7 +224,10 @@ TIER_EDGE_CAPS = {
 # =============================================================================
 # OBSERVATION FILTER AUDIT — 2026-03-26
 # =============================================================================
-# 30 observation-mode filter instances currently in this file.
+# 23 observation-mode filter instances currently in this file.
+# (Was 30. Removed 5: familiar_matchup_obs, b2b_under_block_obs, ft_variance_under_obs,
+#  neg_pm_streak_obs, line_dropped_over_obs. Promoted 2 to active blocks: monday_over_obs,
+#  home_over_obs. Promoted 1 from obs to active block: hot_shooting_reversion_obs.)
 # Promotion requires: N >= 30 BB-level picks at CF HR >= 55% for 7 consecutive days.
 # Demotion/removal threshold: CF HR >= 55% (blocking too many winners).
 #
@@ -248,7 +251,7 @@ TIER_EDGE_CAPS = {
 # (B) HAS ENOUGH DATA — FLAG FOR PROMOTION REVIEW (CF HR suggests can block):
 #   - monday_over_obs: PROMOTED to active block 2026-03-26 (49.0% HR, N=251)
 #   - home_over_obs: PROMOTED to active block 2026-03-26 (49.7% HR, N=4,278)
-#   - hot_shooting_reversion_obs: UNDER HR 59.2% (N=250) — strong signal
+#   - hot_shooting_reversion_obs: PROMOTED to active block 2026-03-26 (OVER CF HR ~40.8%, N=250 pred-level)
 #   - player_under_suppression_obs: check date (Mar 24) passed — review BQ data
 #   - under_star_away: 73.0% post-ASB HR — demoted during toxic Feb, review
 #
@@ -866,16 +869,8 @@ class BestBetsAggregator:
                 if 'high_book_std_under' not in self._runtime_demoted:
                     continue
 
-            # Flat trend UNDER — DEMOTED to observation (Session 428).
-            # Original 53% HR (N=2,720) was marginally above breakeven but full-season
-            # CF HR = 59.2% (N=211) within BB pipeline — blocking profitable picks.
-            # 68% directional consistency is moderate but not enough to justify blocking.
-            trend_slope = pred.get('trend_slope') or 0
-            if (pred.get('recommendation') == 'UNDER'
-                    and -0.5 <= trend_slope <= 0.5):
-                filter_counts['flat_trend_under'] += 1
-                _record_filtered(pred, 'flat_trend_under_obs', pred_edge)
-                # continue  # Session 428: observation mode — do NOT block
+            # flat_trend_under_obs: REMOVED 2026-03-26 Session 494.
+            # CF HR 59.2% (N=211) — was blocking profitable UNDER picks. Removed.
 
             # UNDER after streak — ACTIVE filter (Session 488 demote REVERTED).
             # CF HR = 45.5% (N=11) — blocking losers (54.5% of blocked picks lose).
@@ -1010,10 +1005,11 @@ class BestBetsAggregator:
                 _record_filtered(pred, 'depleted_stars_over_obs', pred_edge)
                 # Observation mode — do NOT continue/filter
 
-            # Session 441: Hot shooting reversion UNDER (observation mode).
-            # After 70%+ FG games (with real minutes), UNDER HR = 59.2% (N=250).
+            # Session 441→494: Hot shooting reversion OVER block — PROMOTED to active.
+            # After 70%+ FG games (with real minutes), OVER HR = 40.8% (CF HR, N=250 pred-level).
             # Efficiency mean-reverts at the extreme — 60-69% shows NO signal.
             # Uses prev_game_fg_pct + prev_game_minutes as proxy for FGA >= 12.
+            # Promoted Session 494: prediction-level N=250, CF HR ~40% well below 55% threshold.
             prev_fg_pct = pred.get('prev_game_fg_pct') or 0
             prev_mins = pred.get('prev_game_minutes') or 0
             if (pred.get('recommendation') == 'OVER'
@@ -1021,7 +1017,8 @@ class BestBetsAggregator:
                     and prev_mins >= 20):
                 filter_counts['hot_shooting_reversion_obs'] += 1
                 _record_filtered(pred, 'hot_shooting_reversion_obs', pred_edge)
-                # Observation mode — do NOT continue/filter
+                if 'hot_shooting_reversion_obs' not in self._runtime_demoted:
+                    continue
 
             # Session 421: Feature-based unreliable high-edge observation.
             # Wrong OVER fingerprint: edge 5+ + low minutes_load (<45).
@@ -1561,9 +1558,9 @@ class BestBetsAggregator:
 
         if filter_counts['hot_shooting_reversion_obs'] > 0:
             logger.info(
-                f"Hot shooting reversion (observation): tagged "
+                f"Hot shooting reversion OVER block (ACTIVE 2026-03-26): blocked "
                 f"{filter_counts['hot_shooting_reversion_obs']} OVER picks after "
-                f"70%+ FG game (59.2% UNDER HR N=250)"
+                f"70%+ FG game (~40.8% CF HR, N=250 pred-level)"
             )
         if filter_counts['over_low_rsc_obs'] > 0:
             logger.info(

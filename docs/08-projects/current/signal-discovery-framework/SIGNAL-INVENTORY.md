@@ -2,7 +2,7 @@
 
 **Last Updated:** 2026-03-26 (Session 494 audit)
 **Active Signals:** 28 (+ 32 shadow/observation accumulating data)
-**Negative Filters:** 25 active (+ 30 observation — see aggregator.py audit block)
+**Negative Filters:** 27 active (+ 23 observation — see aggregator.py audit block)
 **Combo Registry:** 11 SYNERGISTIC entries
 **Algorithm Version:** `v469_health_aware_weights_line_rose_block`
 
@@ -220,7 +220,7 @@ Composite scores now apply signal health multipliers to weights. COLD behavioral
 
 ---
 
-## Negative Filters (22 active + 1 safety)
+## Negative Filters (24 active + 1 safety)
 
 | # | Filter | Condition | HR | Session |
 |---|--------|-----------|-----|---------|
@@ -253,10 +253,13 @@ Composite scores now apply signal health multipliers to weights. COLD behavioral
 | 27 | **Cold 3PT UNDER** | **UNDER + 3pt_last_3 - 3pt_season <= -10%** | **45.6% (N=735)** | **462** |
 | 28 | **Hot shooting OVER block** | **OVER + FG diff >= 10% OR 3PT diff >= 15%** | **24-29% (N=58/56)** | **468** |
 | 29 | **OVER line rose heavy** | **OVER + BettingPros line rose >= 1.0** | **38.9% (N=54)** | **469** |
+| 30 | **Monday OVER block** | **OVER + Monday** | **49.0% (N=251)** | **494** |
+| 31 | **Home OVER block** | **OVER + is_home** | **49.7% (N=4,278)** | **494** |
+| 32 | **Hot shooting reversion OVER** | **OVER + prev_game FG% >= 70% + 20+ min** | **~40.8% CF HR (N=250)** | **494** |
 | — | Away block | REMOVED Session 401 | — | 401 |
 | — | UNDER + line jumped 2+ | Demoted to observation Session 417 (5/5 winners blocked) | — | 417 |
 
-### Observation-Only Filters (12 + Session 462 changes)
+### Observation-Only Filters (23 remaining as of Session 494)
 
 | Filter | Condition | HR | Session | Notes |
 |--------|-----------|-----|---------|-------|
@@ -266,19 +269,26 @@ Composite scores now apply signal health multipliers to weights. COLD behavioral
 | `unreliable_under_flat_trend_obs` | UNDER + edge 5+ + minutes_load > 58 + flat trend | — | 421 | Wrong UNDER fingerprint during toxic window. |
 | `blowout_risk_under_block_obs` | UNDER + blowout_risk >= 0.40 + line >= 15 | 16.7% (N=12) | 423 | Blowout benching → players get pulled → OVER. |
 | `depleted_stars_over_obs` | OVER + star_teammates_out >= 3 | BB 0% (N=4), model 48.2% (N=137) | 439 | Skeleton crew = team offense degrades, volume boost doesn't materialize. |
-| `hot_shooting_reversion_obs` | OVER + prev_game FG% >= 70% + 20+ min | 59.2% UNDER HR (N=250) | 441 | Efficiency mean-reverts at extreme — 60-69% shows no signal. |
+| ~~`hot_shooting_reversion_obs`~~ | ~~OVER + prev_game FG% >= 70% + 20+ min~~ | CF HR ~40.8% (N=250) | **→active 494** | **PROMOTED to active block Session 494.** Prediction-level N=250 confirms direction. |
 | `public_fade_filter` | 80%+ public tickets OVER | — | 404 | VSiN data accumulating |
 | `negative_clv_filter` | CLV contradicts pick direction | — | 401 | CLV data accumulating |
 | `over_low_rsc_obs` | OVER + real_signal_count < 4 | 45.5% (rsc=3, N=11) vs 65.4% (rsc=4, N=26) | 442 | OVER rsc=3 underperforms significantly. Accumulating data. Promote at N >= 30. |
 | `mae_gap_obs` | All picks when model MAE > Vegas MAE by 0.15+ (mae_gap_7d from league_macro_daily) | 40-50% | 442 | BB HR craters when model loses edge over Vegas. Observation mode. |
 | `thin_slate_obs` | All picks on 4-6 game slates | 51.2% (76.7% OVER-heavy mix) | 442 | 7-9 games = 72.0% HR. Small slates = lower quality picks and OVER-heavy skew. Observation mode. |
 | `hot_streak_under_obs` | UNDER + over_rate_last_10 >= 0.7 (feature 55) | 44.4% UNDER HR (N=18) vs 81-87% when cold | 442 | Betting UNDER on a hot player is anti-signal. Uses f55 (over_rate_last_10). Observation mode. |
-| `player_under_suppression_obs` | UNDER + player UNDER HR < 35% at N >= 20 (enabled models) | Herro 22.5% (all models, N=40) | 451 | Direction-specific. Won't fire until fleet has 4-6 weeks history (~Mar 24). Check date: **Mar 24**. |
+| `player_under_suppression_obs` | UNDER + player UNDER HR < 35% at N >= 20 (enabled models) | Herro 22.5% (all models, N=40) | 451 | Direction-specific. Check date Mar 24 passed — still observation, needs BQ review for current N. |
 | `under_low_rsc` | UNDER + real_sc < 2 + edge < 7 | Mar 8: 6/7 UNDER losses had rsc 1-2 | 452 | **PROMOTED Session 452** to active filter. |
 | `ft_variance_under_obs` | UNDER + fta_avg_last_10 >= 5 + fta_cv >= 0.5 | 56.0% CF HR (5-season) | 462 | **DEMOTED Session 462** from active. 5-season CF HR shows blocking winners. |
 | `familiar_matchup_obs` | 6+ games vs opponent | 54.4% CF HR (5-season) | 462 | **DEMOTED Session 462** from active. 5-season CF HR shows blocking winners. |
 | `b2b_under_block_obs` | UNDER + rest_days <= 1 | 54.0% CF HR (5-season) | 462 | **DEMOTED Session 462** from active. 5-season CF HR shows blocking winners. |
 | ~~`over_line_rose_heavy_obs`~~ | ~~OVER + BettingPros line rose >= 1.0~~ | 38.9% (N=54) | 462→**469** | **PROMOTED to active filter Session 469.** 5-season confirmed. |
+| ~~`monday_over_obs`~~ | ~~OVER + Monday~~ | 49.0% (N=251) | — → **494** | **PROMOTED to active block Session 494.** Large N, consistently below breakeven 4+ seasons. |
+| ~~`home_over_obs`~~ | ~~OVER + is_home~~ | 49.7% (N=4,278) | — → **494** | **PROMOTED to active block Session 494.** Massive N (4,278), mirrors Friday OVER block. |
+| ~~`familiar_matchup_obs`~~ | ~~6+ games vs opponent~~ | 54.4% CF HR (5-season) | 462→**494** | **REMOVED Session 494.** Blocking winners across all seasons. |
+| ~~`b2b_under_block_obs`~~ | ~~UNDER + rest_days <= 1~~ | 54.0% CF HR (5-season) | 462→**494** | **REMOVED Session 494.** Blocking winners. |
+| ~~`ft_variance_under_obs`~~ | ~~UNDER + FTA CV >= 0.5~~ | 56.0% CF HR (5-season) | 452→**494** | **REMOVED Session 494.** Blocking winners. |
+| ~~`neg_pm_streak_obs`~~ | ~~UNDER + 3+ neg PM games~~ | 64.5% CF HR (N=758) | — → **494** | **REMOVED Session 494.** Highest CF HR of any filter — clearly harmful. |
+| ~~`line_dropped_over_obs`~~ | ~~OVER + line drop >= 2~~ | 60.0% CF HR (N=477) | — → **494** | **REMOVED Session 494.** Blocking winners; market incorporation already priced. |
 
 ---
 
@@ -333,7 +343,7 @@ Source: `ml/signals/regime_context.py::get_market_compression()`.
 
 ---
 
-**Last Updated:** 2026-03-08, Session 442
+**Last Updated:** 2026-03-26, Session 494
 **Source of truth for active signals.** CLAUDE.md has a summary; this is the full reference.
 
 ### Shadow Signal Promotion Criteria
