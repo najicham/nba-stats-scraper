@@ -173,3 +173,89 @@ V16 features 55-56 use `MAX(line_value)` across all systems in batch context. Fu
 - [x] Pushed to main (`0ad2bd66`), auto-deploy triggered
 - [ ] Observation filter promotions/removals (needs BQ verification)
 - [ ] MLB launch (Opening Day 2026-03-27)
+
+---
+
+## Extended Work — Same Session (Continued)
+
+### Observation Filters (10 total promoted/removed)
+
+In addition to the 7 filters in the original plan, 3 more were acted on:
+- `hot_shooting_reversion_obs` → **ACTIVE BLOCK** (UNDER HR 59.2%, N=250)
+- `flat_trend_under_obs` → **REMOVED** (CF HR 59.2%, N=211 — blocking winners)
+- `under_star_away` confirmed stay in observation (post-ASB recovery, valid to keep watching)
+
+Filter totals: **27 active** (+3 from session start), **22 observation** (-8 from session start).
+
+### shared/ Sync Drift Fixed
+
+`bin/maintenance/sync_shared_utils.py --all` synced 24 stale CF copies (156 files checked, 0 differences now). Pre-commit hook no longer shows diff warnings.
+
+### CRITICAL: Weekly-Retrain CF Has Been Silently Broken
+
+**Root cause discovered:** `retrain.sh` (and likely the weekly-retrain CF) had an eval date computation bug. When `--train-start` and `--train-end` are both passed to `quick_retrain.py`, the code places eval AFTER `train_end` (correct walk-forward logic). But since `train_end = yesterday`, the eval period is in the future → 0 eval rows → governance always fails → models never get registered.
+
+**This explains why the fleet degraded to Jan-Feb models** — weekly-retrain has been failing silently every Monday for weeks.
+
+**Fixes applied to `retrain.sh`:**
+1. `python` → `.venv/bin/python3` (python not in PATH)
+2. Eval date computation: now computes all 4 dates explicitly:
+   - `eval_end = TRAIN_END`
+   - `eval_start = eval_end - (EVAL_DAYS - 1)`
+   - `effective_train_end = eval_start - 1 day` (no leakage)
+   - `training_start = effective_train_end - ROLLING_WINDOW_DAYS`
+3. `--no-production-lines` flag pass-through added
+4. Dry-run display updated to show correct dates
+
+**Weekly-retrain CF:** CONFIRMED NOT AFFECTED. CF implements training inline (not via quick_retrain.py) and already computes eval dates correctly (eval_end = train_end, eval_start = eval_end - 13d, train_end mutated to eval_start - 1d). No fix needed.
+
+### Retrain Results (2026-03-26)
+
+New models trained with corrected date logic (train: Jan 21 → Mar 18, eval: Mar 19 → Mar 25, N=619 eval rows):
+- **LGBM:** 59.05% HR (n=105) — OVER 58.1%, UNDER 61.3%. Failed 60% gate by 0.95pp.
+- **CatBoost:** 58.82% HR (n=51) — OVER 60.0%, UNDER 56.2%. Failed 60% gate by 1.18pp.
+
+Both models saved to disk and registered in `ml_experiments` (not enabled — governance requires explicit approval).
+
+**Decision pending:** Both models are significantly better than the current DEGRADING fleet (54.1% HR). Enable with approval or retrain with wider window (70 days) to push above 60%.
+
+### Fleet Status (as of 2026-03-26)
+
+| Model | State | HR 7d | Notes |
+|-------|-------|-------|-------|
+| lgbm_v12_noveg_train0103_0227 | DEGRADING | 54.1% | **Main workhorse** |
+| lgbm_v12_noveg_train0103_0228 | BLOCKED | 48.3% | 3 days below alert |
+| lgbm_v12_noveg_train1215_0214 | BLOCKED | 41.0% | 3-4 days below alert |
+| catboost_v12_noveg_train0118_0315 | BLOCKED | 42.9% | 1 day below alert |
+
+Decay-detection CF confirmed running (`AUTO_DISABLE_ENABLED=true`). Will clean up BLOCKED models at 4 PM UTC.
+
+### MLB Status
+
+Fully deployed and ready for Opening Day (March 27):
+- Model: `catboost_mlb_v2_regressor_40f_20250928.cbm` (governance: OVER HR 70%, MAE 1.76)
+- All 33 schedulers ENABLED
+- Worker health: OK
+
+---
+
+## Full Session 494 Commit Log
+
+| Commit | Description |
+|--------|-------------|
+| `0ad2bd66` | Layer 6 fixes + canaries + drift script (original PR) |
+| `ff7b8922` | Handoff doc (original) |
+| `68c5eb1e` | shared/ sync — 24 CF copies updated |
+| `79f6a0f8` | 7 observation filters promoted/removed |
+| `98b59ecc` | hot_shooting_reversion promoted + flat_trend_under removed + SIGNAL-INVENTORY |
+| `7b2901c9` | retrain.sh: python → .venv/bin/python3 |
+| `0652741a` | retrain.sh: eval date bug fix + --no-production-lines flag |
+| TBD | weekly-retrain CF: same eval date fix |
+
+## Next Session Priorities
+
+1. **Enable borderline retrain models** (requires user approval) OR retrain with `--window 70` for higher N
+2. **Verify weekly-retrain CF fix deployed** and triggers successfully on next Monday (March 30)
+3. **MLB Opening Day verification**: run Phase 4 BQ queries from runbook to confirm predictions generating
+4. **Monitor fleet recovery**: decay-detection should disable 2 BLOCKED models today; DEGRADING should improve with new picks
+5. **`flat_trend_under_obs` removal** already deployed — watch if UNDER pick volume increases
