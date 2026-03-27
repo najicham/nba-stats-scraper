@@ -2,13 +2,62 @@
 
 **Date:** 2026-03-27 (morning)
 **Previous handoffs:** `2026-03-26-SESSION-495-SIGNAL-DROUGHT-FIX.md`, `2026-03-26-SESSION-495-HANDOFF.md`
-**Commits this session:** `1b5cbf8a`, `9d3e081c`
+**Commits this session:** `1b5cbf8a`, `9d3e081c`, `2da15d31`, `a176e89a`
 
 ---
 
-## ACTIVE ISSUES — FIX IN PROGRESS
+## UPDATED STATUS (as of ~11 AM ET, 2026-03-27)
 
-Two issues are being fixed by background agents right now. The new chat must verify completion.
+### Issue 1 — NBA 0 Picks: Root Cause Updated
+
+**The duplicate predictions were NOT the cause of 0 picks.** The deduplication was done (112 rows removed, 952 unique predictions now). Phase 6 DID run at 14:03 UTC. It found 68 candidates but ALL 68 were blocked by filters:
+
+| Filter | Picks Blocked | Direction |
+|--------|--------------|-----------|
+| `med_usage_under` | 18 | UNDER |
+| `friday_over_block` | 14 | OVER (it's Friday) |
+| `over_edge_floor` | 14 | OVER (below 5.0) |
+| `signal_density` (real_sc=0) | 9 | mixed |
+| `under_low_rsc` (real_sc=1) | 4 | UNDER |
+| other | 9 | mixed |
+
+**Real root cause: Filter stack too aggressive + signal drought still active**
+- `home_over_obs` was promoted to active blocking in Session 494 — blocks ALL home OVER picks (every home player, every game)
+- Combined with `friday_over_block` (Friday OVER) + `over_edge_floor` (OVER < 5.0): OVER is effectively shut down today
+- `under_low_rsc≥2` requires two real signals; `home_under` restoration gives real_sc=1 but most picks need a second signal
+- 69% of filtered picks had real_sc=0 — signal drought persists
+
+**Lines still loading** (121/161 per model at 10 AM ET). Phase 6 re-runs at 11 AM, 1 PM, 5 PM ET. May produce picks later if lines improve edge distribution.
+
+**Decision needed (user approval):** Should `home_over_obs` be reverted to observation mode? It blocks all home OVER picks at a claimed 49.7% CF HR — but that HR was measured on raw predictions, not best-bets level picks. The current system is generating 0 picks on a 10-game slate.
+
+### Issue 2 — MLB: Bootstrapped but Needs Scheduler Fix
+
+**Props scraped manually.** All 8 today's events have pitcher props in BQ. MLB predictions scheduler triggered. Predictions should generate by early afternoon.
+
+**Permanent fix deployed (commit a176e89a):** `scrapers/routes/scraper.py` now auto-discovers MLB event IDs when `mlb_pitcher_props` is called without `event_id`. Scheduler calling `{"scraper":"mlb_pitcher_props","date":"TODAY"}` will now work automatically going forward.
+
+**Still needed:** Deploy `mlb-events-morning` and `mlb-events-pregame` schedulers to GCP (defined in `setup_mlb_schedulers.sh` but not yet created). Run:
+```bash
+./bin/schedulers/setup_mlb_schedulers.sh
+# OR manually:
+gcloud scheduler jobs create http mlb-events-morning \
+  --location=us-west2 --schedule="15 10 * * *" \
+  --uri="https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape" \
+  --message-body='{"scraper":"mlb_events","game_date":"TODAY"}' \
+  --oidc-service-account-email="756957797294-compute@developer.gserviceaccount.com" \
+  --project=nba-props-platform --time-zone="America/New_York"
+```
+
+### Code Fixes Deployed (commit a176e89a)
+
+1. **Streaming buffer resilience** (`batch_staging_writer.py`): Added `_check_for_active_duplicates()` — checks only `is_active=TRUE` rows, preventing false-positive consolidation failures when streaming buffer causes transient duplicates.
+2. **Filtered picks partition bug** (`signal_best_bets_exporter.py`): Removed `$YYYYMMDD` partition decorator from `best_bets_filtered_picks` writes (table isn't partitioned).
+3. **MLB auto-event-discovery** (`scrapers/routes/scraper.py`): `mlb_pitcher_props` auto-discovers events when called without `event_id`.
+
+---
+
+## CRITICAL DECISION FOR NEW CHAT
 
 ### Issue 1: NBA — 0 picks due to duplicate predictions
 
