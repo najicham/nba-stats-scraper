@@ -225,7 +225,7 @@ TIER_EDGE_CAPS = {
 # =============================================================================
 # OBSERVATION FILTER AUDIT — 2026-03-27
 # =============================================================================
-# 24 observation-mode filter instances currently in this file.
+# ~20 observation-mode filter instances currently in this file.
 # (Was 30. Removed 5: familiar_matchup_obs, b2b_under_block_obs, ft_variance_under_obs,
 #  neg_pm_streak_obs, line_dropped_over_obs. Promoted 1 to active block: monday_over_obs.
 #  Promoted 1 from obs to active block: hot_shooting_reversion_obs.
