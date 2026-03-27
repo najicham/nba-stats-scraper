@@ -112,7 +112,7 @@ SHADOW_SIGNALS = frozenset({
     # Session 463: P0 simulator experiment validated signals
     'ft_anomaly_under',            # 63.3% HR (N=278) 5-season — FTA CV >= 0.5, FTA >= 5/game
     'slow_pace_under',             # 56.6% HR (N=777) 5-season — opponent pace <= 99
-    'star_line_under',             # 57.6% HR (N=1,018) 5-season — line >= 25, edge 3-7
+    'star_line_under',             # 57.6% HR (N=1,018) 5-season BUT 35.3% HR this season (N=17) — do NOT graduate
     'sharp_consensus_under',       # 69.3% HR (N=205) 5-season — line dropped + high book std
     # Session 469: Direction-specific book disagreement (shadow — accumulating BB data)
     # book_disagree_over: 79.6% HR (N=211) 5-season. Gets OVER_SIGNAL_WEIGHTS but excluded from real_sc until N>=30 BB
