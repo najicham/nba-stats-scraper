@@ -158,3 +158,47 @@ WHERE game_date = CURRENT_DATE() - 1
 | Commit | Description |
 |--------|-------------|
 | `7fc1e01b` | home_over_obs observation + streaming buffer fix + algorithm v496 |
+
+---
+
+## Session 496 Addendum — Later in Session
+
+### Additional Changes Made
+
+**MLB Pipeline fully wired (5 subscriptions created):**
+```
+mlb-phase1-scrapers-complete → mlb-phase2-raw-processors (OIDC, fixed URL)
+mlb-phase2-raw-complete → mlb-phase3-analytics-processors
+mlb-phase3-analytics-complete → mlb-phase4-precompute-processors
+mlb-phase4-precompute-complete → mlb-prediction-worker
+mlb-phase5-predictions-complete → mlb-phase6-grading
+```
+
+**Bugs fixed via 5-agent review:**
+1. `mlb-phase2-raw-sub` had wrong OIDC URL (756957797294 format vs actual f7p3g7f6ya) — fixed
+2. `cross_model_subset_materializer.py` missing Decimal→float conversion (commit 4f4b610b)
+3. `main_processor_service.py` relative imports failed when service runs as top-level module — fixed to absolute imports (commit 9321a039)
+4. Observation filter count comment updated: 24 → ~20 (commit 69d3e1b9)
+5. `star_line_under` shadow comment updated: 35.3% HR this season — do NOT graduate (commit 142347b1)
+
+**Verified working:**
+- `best_bets_filtered_picks`: 57 records written today ✓ (partition fix from a176e89a confirmed)
+- `current_subset_picks`: 34 rows for today ✓ (streaming buffer fix working)
+- MLB Phase 2 service: receiving messages, 400 on malformed test (correct), 500 ImportError gone ✓
+
+### Tomorrow (March 28 — Saturday)
+- 6 NBA games: SAS@MIL, PHI@CHA, SAC@ATL, CHI@MEM, DET@MIN, UTA@PHX
+- Phase 5 runs ~10-11 AM ET → picks by 1 PM ET
+- `home_over_obs` now observation → home OVER picks eligible
+- No `friday_over_block` on Saturday → expect OVER picks
+
+### CatBoost_v12_noveg_train0121_0318 Note
+Model is strongly UNDER-biased: 0 OVER predictions out of 160+ active predictions.
+LGBM_0121 is more balanced (9 OVER, 22 UNDER). Both are in warm-up phase.
+Monitor through April 3 to see if CatBoost calibrates or stays UNDER-heavy.
+
+### Monday March 30 — Retrain Watch
+- weekly-retrain CF fires 5 AM ET
+- 4 enabled models currently (safety floor = 3)
+- lgbm_v12_noveg_train0103_0227 is 54 days old (training_end 2026-02-27) — likely to be retrained
+- Governance: 60% HR gate at edge 3+
