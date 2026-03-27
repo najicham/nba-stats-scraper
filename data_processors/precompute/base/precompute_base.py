@@ -60,6 +60,7 @@ except ImportError:
 
 # Import unified publisher for Phase 4→5 completion messages
 from shared.publishers.unified_pubsub_publisher import UnifiedPubSubPublisher
+from shared.config.pubsub_topics import TOPICS
 
 # Import sport configuration for multi-sport support
 from shared.config.sport_config import get_precompute_dataset, get_project_id
@@ -634,9 +635,9 @@ class PrecomputeProcessorBase(
             # Calculate duration
             duration_seconds = self.stats.get('total_runtime', 0)
 
-            # Publish unified message
+            # Publish unified message (sport-aware topic via TOPICS singleton)
             message_id = publisher.publish_completion(
-                topic='nba-phase4-precompute-complete',
+                topic=TOPICS.PHASE4_PRECOMPUTE_COMPLETE,
                 processor_name=self.__class__.__name__,
                 phase='phase_4_precompute',
                 execution_id=getattr(self, 'run_id', None) or self.correlation_id,
@@ -663,7 +664,7 @@ class PrecomputeProcessorBase(
 
             if message_id:
                 logger.info(
-                    f"✅ Published Phase 4 completion message to nba-phase4-precompute-complete "
+                    f"✅ Published Phase 4 completion message to {TOPICS.PHASE4_PRECOMPUTE_COMPLETE} "
                     f"(message_id: {message_id}, correlation_id: {self.correlation_id})"
                 )
             else:
