@@ -24,6 +24,9 @@ PHASE4_URL="https://mlb-phase4-precompute-processors-f7p3g7f6ya-wl.a.run.app"
 PHASE5_URL="https://mlb-prediction-worker-f7p3g7f6ya-wl.a.run.app"
 PHASE6_URL="https://mlb-phase6-grading-f7p3g7f6ya-wl.a.run.app"
 
+# Service account for OIDC authentication (required for Cloud Run endpoints)
+OIDC_SA="756957797294-compute@developer.gserviceaccount.com"
+
 # Common subscription settings
 ACK_DEADLINE=600
 RETENTION="1h"
@@ -40,6 +43,8 @@ create_subscription() {
     local TOPIC=$2
     local ENDPOINT=$3
     local DLQ_TOPIC=$4
+    # Base URL for OIDC audience (endpoint without path, e.g. https://service-hash-wl.a.run.app)
+    local BASE_URL=$5
 
     echo -n "Creating $SUB_NAME... "
 
@@ -49,10 +54,12 @@ create_subscription() {
         return 0
     fi
 
-    # Build command
+    # Build command - always include OIDC for Cloud Run endpoints
     CMD="gcloud pubsub subscriptions create $SUB_NAME \
         --topic=$TOPIC \
         --push-endpoint=$ENDPOINT \
+        --push-auth-service-account=$OIDC_SA \
+        --push-auth-token-audience=$BASE_URL \
         --ack-deadline=$ACK_DEADLINE \
         --message-retention-duration=$RETENTION \
         --project=$PROJECT_ID"
@@ -70,28 +77,32 @@ create_subscription \
     "mlb-phase3-analytics-sub" \
     "mlb-phase2-raw-complete" \
     "$PHASE3_URL/process" \
-    "mlb-phase2-raw-complete-dlq"
+    "mlb-phase2-raw-complete-dlq" \
+    "$PHASE3_URL"
 
 # Phase 3 -> Phase 4: Analytics completion triggers Precompute
 create_subscription \
     "mlb-phase4-precompute-sub" \
     "mlb-phase3-analytics-complete" \
     "$PHASE4_URL/process" \
-    ""
+    "" \
+    "$PHASE4_URL"
 
 # Phase 4 -> Phase 5: Precompute completion triggers Predictions
 create_subscription \
     "mlb-phase5-predictions-sub" \
     "mlb-phase4-precompute-complete" \
     "$PHASE5_URL/pubsub" \
-    ""
+    "" \
+    "$PHASE5_URL"
 
 # Phase 5 -> Phase 6: Predictions completion triggers Grading
 create_subscription \
     "mlb-phase6-grading-sub" \
     "mlb-phase5-predictions-complete" \
     "$PHASE6_URL/grade" \
-    ""
+    "" \
+    "$PHASE6_URL"
 
 echo ""
 echo "=============================================="
