@@ -389,12 +389,17 @@ class CrossModelSubsetMaterializer:
         when Phase 6 runs multiple times per day (can't DELETE streaming rows).
         """
         try:
+            from decimal import Decimal
+            cleaned_rows = [
+                {k: float(v) if isinstance(v, Decimal) else v for k, v in row.items()}
+                for row in rows
+            ]
             load_config = bigquery.LoadJobConfig(
                 write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
                 create_disposition=bigquery.CreateDisposition.CREATE_NEVER,
             )
             load_job = self.bq_client.load_table_from_json(
-                rows, SUBSET_TABLE_ID, job_config=load_config
+                cleaned_rows, SUBSET_TABLE_ID, job_config=load_config
             )
             load_job.result(timeout=60)
             logger.info(
