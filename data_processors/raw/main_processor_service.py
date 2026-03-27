@@ -132,14 +132,14 @@ logger = logging.getLogger(__name__)
 # Processor registry
 PROCESSOR_REGISTRY = {
     'basketball-ref/season-rosters': BasketballRefRosterProcessor,
-    
+
     'odds-api/player-props': OddsApiPropsProcessor,
     'odds-api/game-lines-history': OddsGameLinesProcessor,
     'odds-api/game-lines': OddsGameLinesProcessor,  # Current/live game lines (non-historical)
-    
+
     'nba-com/gamebooks-data': NbacGamebookProcessor,
     'nba-com/player-list': NbacPlayerListProcessor,
-    
+
     'ball-dont-lie/standings': BdlStandingsProcessor,
     'ball-dont-lie/injuries': BdlInjuriesProcessor,
     # NOTE: player-box-scores MUST come before boxscores due to substring matching
@@ -147,7 +147,7 @@ PROCESSOR_REGISTRY = {
     'ball-dont-lie/boxscores': BdlBoxscoresProcessor,  # /boxscores endpoint
     'ball-dont-lie/live-boxscores': BdlLiveBoxscoresProcessor,
     'ball-dont-lie/active-players': BdlActivePlayersProcessor,
-    
+
     'nba-com/player-movement': NbacPlayerMovementProcessor,
     'nba-com/scoreboard-v2': NbacScoreboardV2Processor,
     'nba-com/player-boxscores': NbacPlayerBoxscoreProcessor,
@@ -236,7 +236,7 @@ def sweep_odds():
     Request body:
         {"game_date": "2026-02-19"}  (optional, defaults to today)
     """
-    from .handlers import OddsAPIBatchHandler
+    from data_processors.raw.handlers import OddsAPIBatchHandler
 
     try:
         body = request.get_json(silent=True) or {}
@@ -497,7 +497,7 @@ def process_pubsub():
 
     Routes to appropriate batch or file processor.
     """
-    from .handlers import (
+    from data_processors.raw.handlers import (
         MessageHandler,
         BatchDetector,
         ESPNBatchHandler,
@@ -654,7 +654,7 @@ def extract_opts_from_path(file_path: str) -> dict:
         - nba-com/scoreboard-v2/2024-01-15/timestamp.json
         - espn/rosters/2025-01-15/team_GS/timestamp.json
     """
-    return _path_extractor_registry.extract_opts(file_path)    
+    return _path_extractor_registry.extract_opts(file_path)
 
 
 if __name__ == '__main__':
