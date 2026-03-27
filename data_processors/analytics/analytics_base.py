@@ -146,6 +146,7 @@ from data_processors.analytics.operations.failure_tracking import FailureTrackin
 # Import unified publishing and change detection
 from shared.publishers.unified_pubsub_publisher import UnifiedPubSubPublisher
 from shared.change_detection.change_detector import ChangeDetector
+from shared.config.pubsub_topics import TOPICS
 
 # Import sport configuration for multi-sport support
 from shared.config.sport_config import (
@@ -266,7 +267,7 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
     DEBUG_FILE_PREFIX: str = 'analytics_debug'  # For debug file naming
     OUTPUT_TABLE: str = ''  # Set to table_name in run()
     OUTPUT_DATASET: str = None  # Will be set from sport_config in __init__
-    
+
     def __init__(self):
         """Initialize analytics processor with default state.
 
@@ -1146,7 +1147,7 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
     # - check_dependencies()
     # - _check_table_data()
 
-    
+
     # Metadata tracking methods extracted to mixins/metadata_mixin.py
     # - track_source_usage()
     # - build_source_tracking_fields()
@@ -1157,7 +1158,7 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
     # =========================================================================
     # Options Management
     # =========================================================================
-    
+
     def set_opts(self, opts: Dict) -> None:
         """Store processing options and inject run_id.
 
@@ -1170,7 +1171,7 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
         """
         self.opts = opts
         self.opts["run_id"] = self.run_id
-        
+
     def validate_opts(self) -> None:
         """Validate that all required options are present.
 
@@ -1202,7 +1203,7 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
                     logger.warning(f"Failed to send notification: {notify_ex}")
 
                 raise ValueError(error_msg)
-    
+
     def set_additional_opts(self) -> None:
         """Add derived or default options after validation.
 
@@ -1215,7 +1216,7 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
         """
         if "timestamp" not in self.opts:
             self.opts["timestamp"] = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    
+
     def validate_additional_opts(self) -> None:
         """Validate additional options set by set_additional_opts().
 
@@ -1226,7 +1227,7 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
             ValueError: If additional options fail validation.
         """
         pass
-    
+
     def init_clients(self) -> None:
         """Initialize GCP clients (BigQuery) with error notification.
 
@@ -1261,11 +1262,11 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
             raise
-    
+
     # =========================================================================
     # Abstract Methods (Child Classes Must Implement)
     # =========================================================================
-    
+
     def extract_raw_data(self) -> None:
         """
         Extract raw data from source BigQuery tables for analytics processing.
@@ -1295,7 +1296,7 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
                 self.raw_data = self.bq_client.query(query, job_config=job_config).to_dataframe()
         """
         raise NotImplementedError("Child classes must implement extract_raw_data()")
-    
+
     def _check_target_data_exists(self, start_date: str, end_date: str) -> tuple:
         """Check if data already exists in the target analytics table.
 
@@ -1375,7 +1376,7 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
             raise ValueError("No data extracted")
-    
+
     def calculate_analytics(self) -> None:
         """
         Calculate analytics metrics from extracted raw data.
@@ -1462,7 +1463,7 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
             )
 
         return deduplicated
-    
+
     # =========================================================================
     # BigQuery save operations extracted to operations/bigquery_save_ops.py
     # - save_analytics()
@@ -1478,7 +1479,7 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
     # =========================================================================
     # Logging & Monitoring
     # =========================================================================
-    
+
     def log_processing_run(self, success: bool, error: str = None, skip_reason: str = None) -> None:
         """Log processing run metadata to analytics_processor_runs table.
 
@@ -1532,7 +1533,7 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
 
         except Exception as e:
             logger.warning(f"Failed to log processing run: {e}")
-    
+
     def post_process(self) -> None:
         """Perform post-processing after successful save.
 
@@ -1570,7 +1571,7 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
             )
         elif self.table_name:
             self._publish_completion_message(success=True)
-    
+
     def get_analytics_stats(self) -> Dict:
         """Return processor-specific statistics for logging.
 
@@ -1633,9 +1634,9 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
             # Calculate duration
             duration_seconds = self.stats.get('total_runtime', 0)
 
-            # Publish unified message
+            # Publish unified message (sport-aware topic via TOPICS singleton)
             message_id = publisher.publish_completion(
-                topic='nba-phase3-analytics-complete',
+                topic=TOPICS.PHASE3_ANALYTICS_COMPLETE,
                 processor_name=self.__class__.__name__,
                 phase='phase_3_analytics',
                 execution_id=self.run_id,
@@ -1673,7 +1674,7 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
 
             if message_id:
                 logger.info(
-                    f"✅ Published unified completion message to nba-phase3-analytics-complete "
+                    f"✅ Published unified completion message to {TOPICS.PHASE3_ANALYTICS_COMPLETE} "
                     f"(message_id: {message_id}, correlation_id: {self.correlation_id})"
                 )
             else:
