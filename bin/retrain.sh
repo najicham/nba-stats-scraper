@@ -43,6 +43,7 @@ EVAL_DAYS=7
 FAMILY=""
 ALL_FAMILIES=false
 ENABLE_AFTER=false
+EXTRA_ARGS=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -72,6 +73,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --all)
             ALL_FAMILIES=true
+            shift
+            ;;
+        --no-production-lines)
+            EXTRA_ARGS="$EXTRA_ARGS --no-production-lines"
             shift
             ;;
         --enable)
@@ -133,10 +138,18 @@ if [ -z "$TRAIN_END" ]; then
     TRAIN_END=$(date -d "yesterday" +%Y-%m-%d)
 fi
 
-# Rolling training window: TRAIN_END - ROLLING_WINDOW_DAYS
+# Eval window: last EVAL_DAYS of the training range (eval WITHIN training window, not after)
+# When quick_retrain.py receives both --train-start and --train-end, it places eval AFTER
+# train_end (correct walk-forward logic). We want eval to be the last N days of the window.
+# Fix: compute all 4 dates here and pass explicitly → triggers "all specified" branch in py.
+EVAL_END="$TRAIN_END"
+EVAL_START=$(date -d "$EVAL_END - $((EVAL_DAYS - 1)) days" +%Y-%m-%d)
+EFFECTIVE_TRAIN_END=$(date -d "$EVAL_START - 1 day" +%Y-%m-%d)
+
+# Rolling training window: EFFECTIVE_TRAIN_END - ROLLING_WINDOW_DAYS
 # Session 284: 42-day rolling beats expanding window by +$5,370 P&L
 # Session 455: Walk-forward cross-season validation confirms 56-day > 42-day (+2pp HR)
-TRAINING_START=$(date -d "$TRAIN_END - $ROLLING_WINDOW_DAYS days" +%Y-%m-%d)
+TRAINING_START=$(date -d "$EFFECTIVE_TRAIN_END - $ROLLING_WINDOW_DAYS days" +%Y-%m-%d)
 
 # ============================================================================
 # Query model_registry for family configurations
@@ -291,12 +304,14 @@ for FAMILY_NAME in "${FAMILIES_TO_TRAIN[@]}"; do
 
     if [ "$DRY_RUN" = true ]; then
         echo "[DRY RUN] Would execute:"
-        echo "  PYTHONPATH=. python ml/experiments/quick_retrain.py \\"
+        echo "  PYTHONPATH=. .venv/bin/python3 ml/experiments/quick_retrain.py \\"
         echo "      --name \"$EXP_NAME\" \\"
         echo "      --train-start $TRAINING_START \\"
-        echo "      --train-end $TRAIN_END \\"
-        echo "      --eval-days $EVAL_DAYS \\"
-        echo "      $RETRAIN_ARGS"
+        echo "      --train-end $EFFECTIVE_TRAIN_END \\"
+        echo "      --eval-start $EVAL_START \\"
+        echo "      --eval-end $EVAL_END \\"
+        echo "      $RETRAIN_ARGS \\"
+        echo "      $EXTRA_ARGS"
         echo ""
         continue
     fi
@@ -314,11 +329,13 @@ for FAMILY_NAME in "${FAMILIES_TO_TRAIN[@]}"; do
     if PYTHONPATH=. .venv/bin/python3 ml/experiments/quick_retrain.py \
         --name "$EXP_NAME" \
         --train-start "$TRAINING_START" \
-        --train-end "$TRAIN_END" \
-        --eval-days "$EVAL_DAYS" \
+        --train-end "$EFFECTIVE_TRAIN_END" \
+        --eval-start "$EVAL_START" \
+        --eval-end "$EVAL_END" \
         --force \
         $ENABLE_ARG \
-        $RETRAIN_ARGS; then
+        $RETRAIN_ARGS \
+        $EXTRA_ARGS; then
 
         echo "$FAMILY_NAME: Training complete"
         TRAINED_MODELS+=("$FAMILY_NAME")
