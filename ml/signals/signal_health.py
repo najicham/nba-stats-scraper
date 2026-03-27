@@ -124,8 +124,7 @@ ACTIVE_SIGNALS = frozenset({
     # Session 469: Direction-specific book disagreement (shadow — accumulating BB data)
     'book_disagree_over',
     'book_disagree_under',
-    # Session 495: usage_surge_over graduated from shadow
-    'usage_surge_over',
+    # usage_surge_over: graduated from shadow Session 495 (68.8% HR, N=32) — see line 94
 })
 
 # Regime thresholds (Session 257 analysis)
