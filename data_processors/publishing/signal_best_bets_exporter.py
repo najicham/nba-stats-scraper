@@ -926,12 +926,14 @@ class SignalBestBetsExporter(BaseExporter):
 
         try:
             load_config = bigquery.LoadJobConfig(
-                write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+                # WRITE_APPEND because DELETE above already cleared this date's rows.
+                # Table is NOT partitioned — partition decorator ($YYYYMMDD) removed.
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
                 create_disposition=bigquery.CreateDisposition.CREATE_NEVER,
             )
             load_job = self.bq_client.load_table_from_json(
                 rows,
-                f'{table_ref}${target_date.replace("-", "")}',
+                table_ref,
                 job_config=load_config,
             )
             load_job.result(timeout=60)

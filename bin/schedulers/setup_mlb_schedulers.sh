@@ -90,9 +90,26 @@ echo "=== Phase 1: Scrapers ==="
 create_job \
     "mlb-schedule-daily" \
     "0 10 * * *" \
-    "$SCRAPERS_URL/execute-workflow" \
-    '{"workflow": "mlb_schedule"}' \
+    "$SCRAPERS_URL/scrape" \
+    '{"scraper": "mlb_schedule"}' \
     "Fetch MLB schedule and probable pitchers"
+
+# Events discovery (MUST run before pitcher props / game lines / batter props)
+# Route auto-discovers events when event_id is omitted, but explicit events
+# schedulers ensure data is in GCS for Phase 2 even if props scheduler fails.
+create_job \
+    "mlb-events-morning" \
+    "15 10 * * *" \
+    "$SCRAPERS_URL/scrape" \
+    '{"scraper": "mlb_events", "game_date": "TODAY"}' \
+    "Fetch MLB event IDs from Odds API (must run before pitcher props)"
+
+create_job \
+    "mlb-events-pregame" \
+    "15 12 * * *" \
+    "$SCRAPERS_URL/scrape" \
+    '{"scraper": "mlb_events", "game_date": "TODAY"}' \
+    "Refresh MLB event IDs (pregame, before pitcher props refresh)"
 
 # Lineups - multiple times as they're announced
 create_job \
@@ -109,20 +126,20 @@ create_job \
     '{"scraper": "mlb_lineups", "date": "TODAY"}' \
     "Refresh starting lineups (pregame)"
 
-# Pitcher props
+# Pitcher props - auto-discovers events if event_id not provided
 create_job \
     "mlb-props-morning" \
     "30 10 * * *" \
     "$SCRAPERS_URL/scrape" \
-    '{"scraper": "mlb_pitcher_props", "date": "TODAY"}' \
-    "Fetch pitcher strikeout lines (morning)"
+    '{"scraper": "mlb_pitcher_props", "game_date": "TODAY"}' \
+    "Fetch pitcher strikeout lines (morning, auto-discovers events)"
 
 create_job \
     "mlb-props-pregame" \
     "30 12 * * *" \
     "$SCRAPERS_URL/scrape" \
-    '{"scraper": "mlb_pitcher_props", "date": "TODAY"}' \
-    "Refresh pitcher strikeout lines (pregame)"
+    '{"scraper": "mlb_pitcher_props", "game_date": "TODAY"}' \
+    "Refresh pitcher strikeout lines (pregame, auto-discovers events)"
 
 # Live box scores during games (1 PM - 11 PM ET, every 5 minutes)
 create_job \
@@ -216,12 +233,14 @@ echo "=============================================="
 echo "  Scheduler Setup Complete"
 echo "=============================================="
 echo ""
-echo "Jobs created (13 total):"
+echo "Jobs created (15 total):"
 echo "  mlb-schedule-daily        10:00 AM - Fetch schedule"
+echo "  mlb-events-morning        10:15 AM - Discover event IDs (before props)"
+echo "  mlb-props-morning         10:30 AM - Get K lines (auto-discovers events)"
 echo "  mlb-lineups-morning       11:00 AM - Get lineups"
+echo "  mlb-events-pregame        12:15 PM - Refresh event IDs (pregame)"
+echo "  mlb-props-pregame         12:30 PM - Refresh K lines (auto-discovers events)"
 echo "  mlb-lineups-pregame        1:00 PM - Refresh lineups"
-echo "  mlb-props-morning         10:30 AM - Get K lines"
-echo "  mlb-props-pregame         12:30 PM - Refresh K lines"
 echo "  mlb-live-boxscores        Every 5 min (1-11 PM)"
 echo "  mlb-overnight-results      2:00 AM - Final scores (MLB Stats API)"
 echo "  mlb-statcast-daily         3:00 AM - Statcast pitcher metrics"

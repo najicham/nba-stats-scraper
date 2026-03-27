@@ -734,6 +734,50 @@ class BatchConsolidator:
             # Return -1 to indicate validation error (not the same as 0 duplicates)
             return -1
 
+    def _check_for_active_duplicates(self, game_date: str) -> int:
+        """
+        Check for duplicate business keys among ACTIVE predictions only.
+
+        SESSION 495: When multiple prediction runs occur in a day, the streaming
+        buffer can cause duplicates that the MERGE can't deduplicate. The
+        deactivation step marks older copies as is_active=FALSE, which is
+        sufficient since all downstream queries filter on is_active=TRUE.
+        This method checks only active rows to avoid false-positive failures.
+
+        Args:
+            game_date: Game date to check (YYYY-MM-DD)
+
+        Returns:
+            Number of active duplicate business keys (0 = validation passed)
+        """
+        main_table = f"{self.project_id}.{self.staging_dataset}.{MAIN_PREDICTIONS_TABLE}"
+
+        validation_query = f"""
+        SELECT COUNT(*) as duplicate_count
+        FROM (
+            SELECT
+                game_id,
+                player_lookup,
+                system_id,
+                CAST(COALESCE(current_points_line, -1) AS INT64) as line,
+                COUNT(*) as occurrence_count
+            FROM `{main_table}`
+            WHERE game_date = '{game_date}'
+              AND is_active = TRUE
+            GROUP BY game_id, player_lookup, system_id, line
+            HAVING COUNT(*) > 1
+        )
+        """
+
+        try:
+            query_job = self.bq_client.query(validation_query)
+            result = query_job.result(timeout=30)
+            row = next(iter(result), None)
+            return (row.duplicate_count or 0) if row else 0
+        except Exception as e:
+            logger.error(f"Error checking active duplicates: {e}", exc_info=True)
+            return -1
+
     def cleanup_duplicate_predictions(
         self,
         game_date: str,
@@ -1032,20 +1076,35 @@ class BatchConsolidator:
             duplicate_count = self._check_for_duplicates(game_date)
 
             if duplicate_count > 0:
-                error_msg = (
-                    f"POST-CONSOLIDATION VALIDATION FAILED: Found {duplicate_count} duplicate "
-                    f"business keys for game_date={game_date} after MERGE. "
-                    f"This indicates a race condition or lock failure. "
-                    f"NOT cleaning up staging tables for investigation."
+                # SESSION 495 FIX: Pre-existing duplicates from streaming buffer race
+                # conditions (multiple prediction runs within the same day) should not
+                # block consolidation. Deactivation (which already ran above) marks older
+                # duplicates as is_active=FALSE. Check if any ACTIVE duplicates remain —
+                # only those matter since all downstream queries filter is_active=TRUE.
+                logger.warning(
+                    f"Found {duplicate_count} total duplicate business keys for game_date={game_date}. "
+                    f"Checking for active duplicates after deactivation..."
                 )
-                logger.error(error_msg)
-                return ConsolidationResult(
-                    rows_affected=rows_affected,
-                    staging_tables_merged=len(staging_tables),
-                    staging_tables_cleaned=0,
-                    success=False,  # Mark as failure - duplicates detected!
-                    error_message=f"Duplicate business keys detected: {duplicate_count}"
-                )
+                active_dup_count = self._check_for_active_duplicates(game_date)
+                if active_dup_count > 0:
+                    error_msg = (
+                        f"POST-CONSOLIDATION VALIDATION FAILED: {active_dup_count} ACTIVE duplicate "
+                        f"business keys for game_date={game_date} after deactivation. "
+                        f"NOT cleaning up staging tables for investigation."
+                    )
+                    logger.error(error_msg)
+                    return ConsolidationResult(
+                        rows_affected=rows_affected,
+                        staging_tables_merged=len(staging_tables),
+                        staging_tables_cleaned=0,
+                        success=False,
+                        error_message=f"Active duplicate business keys detected: {active_dup_count}"
+                    )
+                else:
+                    logger.info(
+                        f"{duplicate_count} total duplicates exist but 0 are active (all older "
+                        f"copies deactivated). Proceeding with consolidation."
+                    )
             else:
                 logger.info(f"Post-consolidation validation PASSED: 0 duplicates for game_date={game_date}")
 
