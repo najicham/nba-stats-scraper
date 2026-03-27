@@ -46,7 +46,7 @@ kind: Job
 metadata:
   name: mlb-prediction-coverage-validator-pregame
 spec:
-  schedule: "0 22 * 4-10 *"  # 5 PM ET = 10 PM UTC, April-October
+  schedule: "0 22 * 3-10 *"  # 5 PM ET = 10 PM UTC, March-October (Opening Day is late March)
   timeZone: "UTC"
   httpTarget:
     uri: "https://us-west2-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/nba-props-platform/jobs/mlb-prediction-coverage-validator:run"
@@ -64,7 +64,7 @@ kind: Job
 metadata:
   name: mlb-prediction-coverage-validator-postgame
 spec:
-  schedule: "0 7 * 4-10 *"  # 2 AM ET = 7 AM UTC, April-October
+  schedule: "0 7 * 3-10 *"  # 2 AM ET = 7 AM UTC, March-October (Opening Day is late March)
   timeZone: "UTC"
   httpTarget:
     uri: "https://us-west2-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/nba-props-platform/jobs/mlb-prediction-coverage-validator:run"

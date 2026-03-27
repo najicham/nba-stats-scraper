@@ -243,7 +243,8 @@ echo "=============================================="
 echo "MULTI-FAMILY MODEL RETRAINING"
 echo "=============================================="
 echo "Families:        ${FAMILIES_TO_TRAIN[*]}"
-echo "Training Range:  $TRAINING_START to $TRAIN_END"
+echo "Training Range:  $TRAINING_START to $EFFECTIVE_TRAIN_END"
+echo "Eval Range:      $EVAL_START to $EVAL_END"
 echo "Eval Days:       $EVAL_DAYS"
 echo "Promote:         $PROMOTE"
 echo "Enable After:    $ENABLE_AFTER"
@@ -438,9 +439,6 @@ if [ "$VALIDATE_FILTERS" = true ] && [ ${#TRAINED_MODELS[@]} -gt 0 ]; then
     echo "=============================================="
     echo "FILTER VALIDATION REPORT"
     echo "=============================================="
-
-    EVAL_START=$(date -d "$TRAIN_END + 1 day" +%Y-%m-%d)
-    EVAL_END=$(date -d "$TRAIN_END + $EVAL_DAYS days" +%Y-%m-%d)
 
     # Get the latest trained model's system_id
     FIRST_FAMILY="${TRAINED_MODELS[0]}"

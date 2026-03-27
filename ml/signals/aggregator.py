@@ -73,8 +73,6 @@ BASE_SIGNALS = frozenset({
     'blowout_risk_under', # Session 422b: 16.7% HR (N=12), inflating SC on bad picks
     'day_of_week_over',   # Session 436: 40% BB HR (N=15), on ALL 5 Mar 7 losers — noise
     'predicted_pace_over',  # Session 436: 43% BB HR (N=21), fires on ~50% matchups — noise
-    'home_under',         # Session 483: 48.1% HR 30d (N=49 Mar 2026). Was in UNDER_SIGNAL_WEIGHTS
-                          # at 1.0 weight and in rescue_tags — below breakeven, demoted.
     'low_line_over',        # Session 438: 20% BB HR (1-4), 50% model HR — confirmed anti-signal
     'prop_line_drop_over',  # Session 438: 57.9% BB HR (11-19) — below 60% graduation, inflating real_sc
 })
@@ -92,7 +90,7 @@ SHADOW_SIGNALS = frozenset({
     'positive_clv_under',          # Insufficient BB data
     'hot_form_over',               # 0% BB HR (0-2) — catastrophic
     'scoring_momentum_over',       # 0% BB HR (0-2) — catastrophic
-    'usage_surge_over',            # 75% HR (N=8) — promising but N too small
+    # usage_surge_over graduated Session 495: 68.8% HR (N=32) — meets graduation criteria (N>=30, HR>=60%)
     'career_matchup_over',         # 0% BB HR (0-1)
     'consistent_scorer_over',      # 71.4% HR (N=7) — promising but N too small
     'over_trend_over',             # Insufficient BB data
@@ -134,8 +132,10 @@ UNDER_SIGNAL_WEIGHTS: Dict[str, float] = {
     'book_disagreement': 1.0,        # Session 434: reduced 2.5→1.0. 47.4% HR 7d (N=19), below breakeven
     'book_disagree_under': 1.5,      # Session 469: direction-specific version (shadow, accumulating data)
     'bench_under': 2.0,              # 76.9% HR
-    # home_under removed Session 483: demoted to BASE_SIGNALS. 48.1% HR 30d (N=49)
-    # — below breakeven. Was also in rescue_tags; BASE_SIGNALS classification excludes it.
+    'home_under': 1.0,           # Session 495: restored from BASE_SIGNALS. Structural signal
+                                  # (UNDER + home + line>=15), no data deps, 63.9% backtest HR (N=1,386).
+                                  # Session 483 demotion (48.1% 30d) was toxic Feb-March window artifact.
+                                  # Current 7d HR: 69.2% (HOT). NOT in rescue_tags or RESCUE_SIGNAL_PRIORITY.
     # starter_away_overtrend_under removed Session 462: 48.2% HR 5-season cross-validated — harmful
     'extended_rest_under': 1.5,      # 61.8% HR
     'volatile_starter_under': 2.0,   # Session 427: promoted 1.5→2.0. Cross-season +11.1pp lift (best UNDER signal)
@@ -191,6 +191,7 @@ OVER_SIGNAL_WEIGHTS: Dict[str, float] = {
     'self_creation_over': 1.0,              # Active signal
     'sharp_line_move_over': 1.0,            # Active signal
     'combo_he_ms': 1.0,                     # 53.8% BB HR — low weight
+    'usage_surge_over': 2.0,               # Session 495: graduated from shadow. 68.8% HR (N=32) — meets graduation criteria (N>=30, HR>=60%)
 }
 # OVER quality tiebreaker weight: how much signal quality affects ranking
 # relative to edge. Edge is still dominant (1.0x), quality is secondary.
@@ -532,16 +533,16 @@ class BestBetsAggregator:
                 # Session 466: OVER rescue restricted to HSE only.
                 # March 2026: 18 rescued OVER at avg edge 3.9, combo_he_ms 40% HR,
                 # signal_stack 33% HR, volatile_scoring 0% HR. Only HSE works (3-0).
-                # combo_3way is COLD (28.6% 7d) — health gate blocks it but be explicit.
-                # UNDER rescue kept broad (home_under, combo_3way, combo_he_ms).
+                # Session 494: Removed combo_3way/combo_he_ms from UNDER rescue_tags.
+                # Both signals have OVER-only gates (combo_3way.py:46, combo_he_ms.py:39)
+                # — they return no-qualify for UNDER predictions, so they were dead code
+                # here. No UNDER picks were ever rescued by them.
                 if pred.get('recommendation') == 'OVER':
                     rescue_tags = {
                         'high_scoring_environment_over',  # 100% BB HR (3-0), only validated OVER rescue
                     }
                 else:
                     rescue_tags = {
-                        'combo_3way',
-                        'combo_he_ms',
                         # home_under removed Session 483: demoted to BASE_SIGNALS (48.1% HR 30d)
                         'hot_3pt_under',          # Session 466: 62.5% HR 5-season, promoted
                         'line_drifted_down_under', # Session 466: 59.8% HR 5-season, promoted

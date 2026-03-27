@@ -1,7 +1,7 @@
 # Signal Inventory — Complete List
 
 **Last Updated:** 2026-03-26 (Session 494 audit)
-**Active Signals:** 28 (+ 32 shadow/observation accumulating data)
+**Active Signals:** 25 (+ 34 shadow/observation accumulating data) — NOTE: previously listed as 28; 3 signals corrected from PRODUCTION: `volatile_scoring_over` → SHADOW, `sharp_book_lean_over` → SHADOW, `rest_advantage_2d` → DISABLED. `low_line_over` corrected to BASE.
 **Negative Filters:** 27 active (+ 23 observation — see aggregator.py audit block)
 **Combo Registry:** 11 SYNERGISTIC entries
 **Algorithm Version:** `v469_health_aware_weights_line_rose_block`
@@ -22,6 +22,8 @@
 
 Rescue tags: `combo_3way`, `combo_he_ms`, `home_under` (75%), `high_scoring_environment_over` (71.4%). Signal stacking: 2+ real signals = 62.2% HR (N=45). Session 415: removed `low_line_over` from rescue. Session 420: restored `high_scoring_environment_over`. Session 427: removed `mean_reversion_under` (cross-season decay to 53.0%). Session 431: removed `sharp_book_lean_under` (zero production fires in 2026). Session 462: removed `sharp_book_lean_over` (41.7% HR 5-season cross-validated), removed `book_disagreement` (Session 434), removed `volatile_scoring_over` (Session 436).
 
+**NOTE — `combo_3way`/`combo_he_ms` in UNDER rescue_tags:** These are OVER-only combo signals (see Combo Signals table). Their presence in the UNDER `rescue_tags` block in aggregator.py (lines 543-544) is dead code — they never fire on UNDER predictions because they require `recommendation == 'OVER'`. The rescue effectively functions as UNDER rescue via `hot_3pt_under` and `line_drifted_down_under` only.
+
 **Rescue Cap (Session 415):** Maximum percentage of picks that can be rescue-sourced per slate. Prevents rescue from dominating when edge compression makes most picks low-edge. Threshold: 40% of total picks. Excess rescue picks are dropped by weakest rescue signal.
 
 **`signal_stack_2plus` demotion (Session 415):** Demoted from rescue qualification to observation-only. 50% HR at N=6 — thinnest quality tier with only 2 real signals. Still tracked in `pick_signal_tags` for monitoring.
@@ -32,7 +34,7 @@ Rescue tags: `combo_3way`, `combo_he_ms`, `home_under` (75%), `high_scoring_envi
 
 ---
 
-## Active Signals (28)
+## Active Signals (25 true active; section also contains 3 shadow/base/disabled — see header note)
 
 ### Base/Infrastructure (3) — fire on ~100% of picks
 
@@ -49,7 +51,7 @@ Rescue tags: `combo_3way`, `combo_he_ms`, `home_under` (75%), `high_scoring_envi
 | `combo_he_ms` | OVER | 94.9% | PRODUCTION | High edge + minutes surge |
 | `combo_3way` | OVER | 95.5% | PRODUCTION | ESO + high edge + minutes surge |
 
-### OVER Signals (12)
+### OVER Signals (9 active + 3 shadow/base)
 
 | Signal | Direction | HR | Status | Notes |
 |--------|-----------|-----|--------|-------|
@@ -58,13 +60,13 @@ Rescue tags: `combo_3way`, `combo_he_ms`, `home_under` (75%), `high_scoring_envi
 | `scoring_cold_streak_over` | OVER | 65.1% | CONDITIONAL | Session 371 |
 | `high_scoring_environment_over` | OVER | 70.2% | CONDITIONAL | Session 373 |
 | `fast_pace_over` | OVER | 81.5% | PRODUCTION | Session 374, fixed 387 (threshold was raw 102 on 0-1 scale) |
-| `volatile_scoring_over` | OVER | 77.8% post-toxic | PRODUCTION | Session 374, disabled 391 (toxic 50%), re-enabled 411 (77.8% recovery) |
-| `low_line_over` | OVER | 78.1% | PRODUCTION | Session 374 |
+| `volatile_scoring_over` | OVER | 77.8% post-toxic | SHADOW (does not count toward real_sc) | Session 374, disabled 391 (toxic 50%), re-enabled 411 (77.8% recovery), moved to SHADOW_SIGNALS Session 487 (20% BB HR, 1-4, N=5 — harmful, inflating real_sc) |
+| `low_line_over` | OVER | 78.1% | BASE (does not count toward real_sc) | Session 374; moved to BASE_SIGNALS Session 438 (20% BB HR, 1-4 — confirmed anti-signal) |
 | `b2b_boost_over` | OVER | 64.3% | PRODUCTION | Session 396, inverse of b2b_fatigue_under |
 | `q4_scorer_over` | OVER | 64.4% | PRODUCTION | Session 397, from BDL PBP Q4 ratio |
 | `denver_visitor_over` | OVER | 67.8% | PRODUCTION | Session 398, altitude effect |
 | `day_of_week_over` | OVER | 66-70% | PRODUCTION | Session 398, Mon/Thu/Sat boost |
-| `sharp_book_lean_over` | OVER | 70.3% | PRODUCTION | Session 399, sharp books 1.5+ higher than soft |
+| `sharp_book_lean_over` | OVER | 70.3% | SHADOW (does not count toward real_sc) | Session 399, sharp books 1.5+ higher than soft; moved to SHADOW_SIGNALS Session 462 (41.7% HR 5-season — harmful, removed from OVER_SIGNAL_WEIGHTS and rescue) |
 
 ### UNDER Signals (7)
 
@@ -85,12 +87,12 @@ Rescue tags: `combo_3way`, `combo_he_ms`, `home_under` (75%), `high_scoring_envi
 |--------|-----------|-----|--------|-------|
 | `book_disagreement` | BOTH | 93.0% | WATCH | |
 
-### WATCH / Special (2)
+### WATCH / Special (1 active + 1 disabled)
 
 | Signal | Direction | HR | Status | Notes |
 |--------|-----------|-----|--------|-------|
 | `ft_rate_bench_over` | OVER | 72.5% | WATCH | |
-| `rest_advantage_2d` | BOTH | 74.0% BB (N=50) | PRODUCTION (weight 2.0) | Session 396 (disabled) → Session 442: added to OVER_SIGNAL_WEIGHTS at 2.0 (74.0% BB HR, N=50) |
+| `rest_advantage_2d` | BOTH | 74.0% BB (N=50) | DISABLED (unregistered, never fires) | Session 396 (disabled — registry.register commented out); Session 442 added weight to OVER_SIGNAL_WEIGHTS but signal is never registered → weight is dead code. Fires 0 times in production. |
 
 ---
 

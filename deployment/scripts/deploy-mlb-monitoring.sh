@@ -260,10 +260,10 @@ if [ "$SKIP_SCHEDULERS" = false ]; then
     # Monitoring schedulers
     declare -A MONITORING_SCHEDULERS=(
         ["mlb-gap-detection-daily"]="0 13 * * *|America/New_York|mlb-gap-detection"
-        ["mlb-freshness-checker-hourly"]="0 11-5/2 * 4-10 *|UTC|mlb-freshness-checker"
-        ["mlb-prediction-coverage-pregame"]="0 22 * 4-10 *|UTC|mlb-prediction-coverage"
-        ["mlb-prediction-coverage-postgame"]="0 7 * 4-10 *|UTC|mlb-prediction-coverage"
-        ["mlb-stall-detector-hourly"]="0 11-5 * 4-10 *|UTC|mlb-stall-detector"
+        ["mlb-freshness-checker-hourly"]="0 11-5/2 * 3-10 *|UTC|mlb-freshness-checker"
+        ["mlb-prediction-coverage-pregame"]="0 22 * 3-10 *|UTC|mlb-prediction-coverage"
+        ["mlb-prediction-coverage-postgame"]="0 7 * 3-10 *|UTC|mlb-prediction-coverage"
+        ["mlb-stall-detector-hourly"]="0 11-5 * 3-10 *|UTC|mlb-stall-detector"
     )
 
     for scheduler_name in "${!MONITORING_SCHEDULERS[@]}"; do
@@ -293,9 +293,9 @@ if [ "$SKIP_SCHEDULERS" = false ]; then
     # Validator schedulers
     declare -A VALIDATOR_SCHEDULERS=(
         ["mlb-schedule-validator-daily"]="0 11 * * *|America/New_York|mlb-schedule-validator"
-        ["mlb-pitcher-props-validator-4hourly"]="0 10,14,18,22,2,6 * 4-10 *|UTC|mlb-pitcher-props-validator"
-        ["mlb-prediction-coverage-validator-pregame"]="0 22 * 4-10 *|UTC|mlb-prediction-coverage-validator"
-        ["mlb-prediction-coverage-validator-postgame"]="0 7 * 4-10 *|UTC|mlb-prediction-coverage-validator"
+        ["mlb-pitcher-props-validator-4hourly"]="0 10,14,18,22,2,6 * 3-10 *|UTC|mlb-pitcher-props-validator"
+        ["mlb-prediction-coverage-validator-pregame"]="0 22 * 3-10 *|UTC|mlb-prediction-coverage-validator"
+        ["mlb-prediction-coverage-validator-postgame"]="0 7 * 3-10 *|UTC|mlb-prediction-coverage-validator"
     )
 
     for scheduler_name in "${!VALIDATOR_SCHEDULERS[@]}"; do

@@ -112,6 +112,20 @@ ACTIVE_SIGNALS = frozenset({
     'downtrend_under',
     'star_favorite_under',
     'starter_away_overtrend_under',
+    # Session 462-466: Promoted to active — 5-season cross-validated (were missing from ACTIVE_SIGNALS)
+    'hot_3pt_under',
+    'cold_3pt_over',
+    'line_drifted_down_under',
+    # Session 463: P0/P1 simulator signals (shadow — accumulating BB data)
+    'ft_anomaly_under',
+    'slow_pace_under',
+    'star_line_under',
+    'sharp_consensus_under',
+    # Session 469: Direction-specific book disagreement (shadow — accumulating BB data)
+    'book_disagree_over',
+    'book_disagree_under',
+    # Session 495: usage_surge_over graduated from shadow
+    'usage_surge_over',
 })
 
 # Regime thresholds (Session 257 analysis)
