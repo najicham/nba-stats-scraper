@@ -223,12 +223,13 @@ TIER_EDGE_CAPS = {
 }
 
 # =============================================================================
-# OBSERVATION FILTER AUDIT — 2026-03-26
+# OBSERVATION FILTER AUDIT — 2026-03-27
 # =============================================================================
-# 23 observation-mode filter instances currently in this file.
+# 24 observation-mode filter instances currently in this file.
 # (Was 30. Removed 5: familiar_matchup_obs, b2b_under_block_obs, ft_variance_under_obs,
-#  neg_pm_streak_obs, line_dropped_over_obs. Promoted 2 to active blocks: monday_over_obs,
-#  home_over_obs. Promoted 1 from obs to active block: hot_shooting_reversion_obs.)
+#  neg_pm_streak_obs, line_dropped_over_obs. Promoted 1 to active block: monday_over_obs.
+#  Promoted 1 from obs to active block: hot_shooting_reversion_obs.
+#  REVERTED to observation: home_over_obs (2026-03-27, BB-level CF HR = 70%, N=10 — blocking winners).)
 # Promotion requires: N >= 30 BB-level picks at CF HR >= 55% for 7 consecutive days.
 # Demotion/removal threshold: CF HR >= 55% (blocking too many winners).
 #
@@ -251,7 +252,7 @@ TIER_EDGE_CAPS = {
 #
 # (B) HAS ENOUGH DATA — FLAG FOR PROMOTION REVIEW (CF HR suggests can block):
 #   - monday_over_obs: PROMOTED to active block 2026-03-26 (49.0% HR, N=251)
-#   - home_over_obs: PROMOTED to active block 2026-03-26 (49.7% HR, N=4,278)
+#   - home_over_obs: REVERTED to observation 2026-03-27 (BB CF HR 70%, N=10 — blocking winners)
 #   - hot_shooting_reversion_obs: PROMOTED to active block 2026-03-26 (OVER CF HR ~40.8%, N=250 pred-level)
 #   - player_under_suppression_obs: check date (Mar 24) passed — review BQ data
 #   - under_star_away: 73.0% post-ASB HR — demoted during toxic Feb, review
@@ -969,14 +970,17 @@ class BestBetsAggregator:
                     except (ValueError, TypeError):
                         pass
 
-            # Home OVER block — PROMOTED to active 2026-03-26: 49.7% HR (N=4,278), massive N,
-            # consistently below breakeven. Home OVER picks lose at the same rate as Friday OVER.
+            # Home OVER — REVERTED to observation 2026-03-27.
+            # Raw prediction CF HR was 49.7% (N=4,278) — below breakeven.
+            # But BB-level CF HR = 70% (N=10) — blocking winners at the BB-qualified level.
+            # The raw-prediction dataset includes many bad picks; BB pipeline already filters
+            # to high-quality. Applying a raw-prediction filter on BB-qualified picks is too broad.
+            # Keep observing until BB-level N >= 30 with CF HR consistently <= 45%.
             if (pred.get('recommendation') == 'OVER'
                     and pred.get('is_home')):
                 filter_counts['home_over_obs'] += 1
                 _record_filtered(pred, 'home_over_obs', pred_edge)
-                if 'home_over_obs' not in self._runtime_demoted:
-                    continue
+                # continue  # OBSERVATION MODE — do not block
 
             # Session 438 P10 → Session 440: Prediction sanity check (ACTIVE).
             # Block predictions where predicted_points > 2x season avg on
@@ -1476,8 +1480,8 @@ class BestBetsAggregator:
             )
         if filter_counts['home_over_obs'] > 0:
             logger.info(
-                f"Home OVER block (ACTIVE 2026-03-26): blocked "
-                f"{filter_counts['home_over_obs']} home OVER picks (49.7% HR, N=4,278)"
+                f"Home OVER (OBS 2026-03-27): logged "
+                f"{filter_counts['home_over_obs']} home OVER picks (BB CF HR 70% — observation only)"
             )
         if filter_counts['signal_density'] > 0:
             logger.info(f"Signal density filter: skipped {filter_counts['signal_density']} base-only picks")

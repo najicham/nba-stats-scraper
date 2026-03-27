@@ -382,15 +382,24 @@ class CrossModelSubsetMaterializer:
             )
 
     def _write_rows(self, rows: List[Dict[str, Any]]) -> None:
-        """Write cross-model subset rows using streaming insert."""
+        """Write cross-model subset rows using batch load (not streaming insert).
+
+        Batch load avoids the streaming buffer — DELETE works on previously
+        batch-loaded rows. Streaming insert caused 'streaming buffer' errors
+        when Phase 6 runs multiple times per day (can't DELETE streaming rows).
+        """
         try:
-            errors = self.bq_client.insert_rows_json(SUBSET_TABLE_ID, rows)
-            if errors:
-                logger.error(f"Errors writing cross-model subsets: {errors}")
-            else:
-                logger.info(
-                    f"Wrote {len(rows)} cross-model subset rows to {SUBSET_TABLE_ID}"
-                )
+            load_config = bigquery.LoadJobConfig(
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                create_disposition=bigquery.CreateDisposition.CREATE_NEVER,
+            )
+            load_job = self.bq_client.load_table_from_json(
+                rows, SUBSET_TABLE_ID, job_config=load_config
+            )
+            load_job.result(timeout=60)
+            logger.info(
+                f"Batch-loaded {len(rows)} cross-model subset rows to {SUBSET_TABLE_ID}"
+            )
         except Exception as e:
             logger.error(
                 f"Failed to write cross-model subsets: {e}", exc_info=True
