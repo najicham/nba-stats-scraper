@@ -342,10 +342,11 @@ def load_batch_features(
         pitcher_filter = ""
 
     # Query: Same as PitcherStrikeoutsPredictor.batch_predict() but returns features
-    # Joins 3 tables:
+    # Joins 4 tables:
     # 1. mlb_analytics.pitcher_game_summary - Core features
     # 2. mlb_analytics.pitcher_rolling_statcast - Statcast features (V1.6)
     # 3. mlb_raw.bp_pitcher_props - BettingPros projections (V1.6)
+    # 4. mlb_raw.oddsa_pitcher_props - Odds API lines (fallback when bp has no data)
     query = f"""
     WITH latest_features AS (
         SELECT
@@ -415,6 +416,31 @@ def load_batch_features(
         FROM `{proj_id}.mlb_raw.bp_pitcher_props`
         WHERE game_date = @game_date
           AND market_name = 'pitcher-strikeouts'
+    ),
+    -- Fallback: best Odds API line per pitcher (sportsbook priority order)
+    oddsa_ranked AS (
+        SELECT
+            player_lookup,
+            point as oddsa_line,
+            over_price as oddsa_over_price,
+            over_implied_prob as oddsa_over_implied_prob,
+            ROW_NUMBER() OVER (
+                PARTITION BY player_lookup
+                ORDER BY
+                    CASE bookmaker
+                        WHEN 'draftkings' THEN 0
+                        WHEN 'fanduel'    THEN 1
+                        WHEN 'betmgm'     THEN 2
+                        WHEN 'caesars'    THEN 3
+                        WHEN 'pointsbet'  THEN 4
+                        ELSE 5
+                    END,
+                    snapshot_time DESC
+            ) as rn
+        FROM `{proj_id}.mlb_raw.oddsa_pitcher_props`
+        WHERE game_date = @game_date
+          AND market_key = 'pitcher_strikeouts'
+          AND point IS NOT NULL
     )
     SELECT
         lf.*,
@@ -424,19 +450,24 @@ def load_batch_features(
         COALESCE(s.swstr_pct_last_3 - s.swstr_pct_season_prior, 0) as swstr_trend,
         COALESCE(s.fb_velocity_season_prior - s.fb_velocity_last_3, 0) as velocity_change,
         -- Line-relative features (CatBoost V1 f30/f32)
-        (lf.k_avg_last_5 - bp.bp_over_line) as k_avg_vs_line,
+        -- Fallback to oddsa_line when bp has no row for this pitcher (bp_pitcher_props has no 2026 data)
+        (lf.k_avg_last_5 - COALESCE(bp.bp_over_line, oddsa.oddsa_line)) as k_avg_vs_line,
         -- BettingPros (f40-f44)
         bp.bp_projection,
         COALESCE(bp.bp_projection - bp.bp_over_line, 0) as projection_diff,
         bp.perf_last_5_pct,
         bp.perf_last_10_pct,
-        bp.bp_over_line as strikeouts_line,
+        COALESCE(bp.bp_over_line, oddsa.oddsa_line) as strikeouts_line,
         -- Over implied probability (CatBoost V1 f44)
-        CASE
-            WHEN bp.over_odds < 0 THEN ABS(bp.over_odds) / (ABS(bp.over_odds) + 100.0)
-            WHEN bp.over_odds > 0 THEN 100.0 / (bp.over_odds + 100.0)
-            ELSE NULL
-        END as over_implied_prob,
+        -- Primary: derive from bp.over_odds; fallback to pre-computed oddsa.over_implied_prob
+        COALESCE(
+            CASE
+                WHEN bp.over_odds < 0 THEN ABS(bp.over_odds) / (ABS(bp.over_odds) + 100.0)
+                WHEN bp.over_odds > 0 THEN 100.0 / (bp.over_odds + 100.0)
+                ELSE NULL
+            END,
+            oddsa.oddsa_over_implied_prob
+        ) as over_implied_prob,
         -- Pitcher matchup features (f65-f66, Session 435)
         lf.avg_k_vs_opponent as vs_opp_k_per_9,
         lf.games_vs_opponent as vs_opp_games,
@@ -452,6 +483,7 @@ def load_batch_features(
     FROM latest_features lf
     LEFT JOIN statcast_latest s ON lf.player_lookup = s.player_lookup AND s.rn = 1
     LEFT JOIN bp_features bp ON lf.player_lookup = bp.player_lookup
+    LEFT JOIN oddsa_ranked oddsa ON lf.player_lookup = oddsa.player_lookup AND oddsa.rn = 1
     LEFT JOIN `{proj_id}.mlb_raw.fangraphs_pitcher_season_stats` fg
         ON LOWER(REGEXP_REPLACE(NORMALIZE(fg.player_lookup, NFD), r'[\\W_]+', ''))
             = LOWER(REGEXP_REPLACE(NORMALIZE(lf.player_lookup, NFD), r'[\\W_]+', ''))

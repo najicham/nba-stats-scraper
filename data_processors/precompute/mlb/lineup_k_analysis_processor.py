@@ -165,7 +165,6 @@ class MlbLineupKAnalysisProcessor(PrecomputeProcessorBase):
             player_lookup,
             k_rate_last_5,
             k_rate_last_10,
-            k_rate_last_30,
             k_avg_last_5,
             k_avg_last_10,
             season_k_rate,
@@ -215,7 +214,7 @@ class MlbLineupKAnalysisProcessor(PrecomputeProcessorBase):
         SELECT DISTINCT
             player_lookup,
             throws
-        FROM `{self.project_id}.mlb_raw.bdl_pitchers`
+        FROM `{self.project_id}.mlb_raw.mlb_pitcher_stats`
         WHERE throws IS NOT NULL
         """
         try:

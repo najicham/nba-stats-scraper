@@ -206,6 +206,9 @@ class CatBoostV2RegressorPredictor(BaseMLBPredictor):
                 'f65_vs_opp_k_per_9', 'f66_vs_opp_games',
                 'f68_k_per_pitch',
                 'f70_o_swing_pct', 'f71_z_contact_pct', 'f72_fip', 'f73_gb_pct',
+                # BettingPros projection — NULL when bp_pitcher_props has no 2026 data;
+                # oddsa_pitcher_props has no projection equivalent so we pass NaN.
+                'f40_bp_projection',
             }
             feature_vector = []
             default_feature_count = 0
