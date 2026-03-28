@@ -110,6 +110,8 @@ from data_processors.raw.projections.espn_processor import ESPNProjectionsProces
 from data_processors.raw.mlb import (
     MlbPitcherStatsProcessor,
     MlbBatterStatsProcessor,
+    MlbApiPitcherStatsProcessor,
+    MlbApiBatterStatsProcessor,  # noqa: F401 - used in PATH_PROCESSORS list
     MlbScheduleProcessor,
     MlbLineupsProcessor,
     MlbPitcherPropsProcessor,
@@ -200,6 +202,7 @@ PROCESSOR_REGISTRY = {
     'mlb-stats-api/umpire-assignments': MlbUmpireAssignmentsProcessor,
     'mlb-external/umpire-stats': MlbUmpireStatsProcessor,
     'mlb-external/weather': MlbWeatherProcessor,
+    'mlb-stats-api/box-scores': [MlbApiPitcherStatsProcessor, MlbApiBatterStatsProcessor],  # Pitcher + batter stats (BDL replacement)
 }
 
 # Paths that are intentionally not processed (event IDs, metadata, etc.)

@@ -137,14 +137,24 @@ class ConfigMixin:
         if "timestamp" not in self.opts:
             self.opts["timestamp"] = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
 
-        # Resolve "TODAY" to actual Eastern date (scheduler jobs pass date=TODAY)
-        if self.opts.get("date", "").upper() == "TODAY":
+        # Resolve "TODAY" / "YESTERDAY" to actual dates (scheduler jobs may pass these literals)
+        date_upper = self.opts.get("date", "").upper()
+        if date_upper == "TODAY":
             try:
                 import pytz
                 eastern = pytz.timezone('US/Eastern')
                 self.opts["date"] = datetime.now(eastern).strftime("%Y-%m-%d")
             except (ImportError, KeyError):
                 self.opts["date"] = datetime.utcnow().strftime("%Y-%m-%d")
+        elif date_upper == "YESTERDAY":
+            try:
+                import pytz
+                from datetime import timedelta
+                eastern = pytz.timezone('US/Eastern')
+                self.opts["date"] = (datetime.now(eastern) - timedelta(days=1)).strftime("%Y-%m-%d")
+            except (ImportError, KeyError):
+                from datetime import timedelta
+                self.opts["date"] = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
 
         # Add Eastern date if not provided as parameter
         if "date" not in self.opts:

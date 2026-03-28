@@ -58,14 +58,15 @@ class FileProcessor:
         else:
             logger.info(f"📥 Processing file: gs://{bucket}/{file_path}")
 
-        # Determine processor based on file path
-        processor_class = None
-        for path_prefix, proc_class in processor_registry.items():
+        # Determine processor(s) based on file path
+        # Registry values may be a single class or a list of classes (for multi-table files)
+        matched_entry = None
+        for path_prefix, proc_entry in processor_registry.items():
             if path_prefix in file_path:
-                processor_class = proc_class
+                matched_entry = proc_entry
                 break
 
-        if not processor_class:
+        if not matched_entry:
             # Check if this is an intentionally skipped path (events, metadata, etc.)
             is_skip_path = any(skip_path in file_path for skip_path in SKIP_PROCESSING_PATHS)
 
@@ -84,6 +85,9 @@ class FileProcessor:
                 "file": file_path,
                 "registered_patterns": list(processor_registry.keys())
             }
+
+        # Normalize to list so we can handle single or multiple processors uniformly
+        processor_classes = matched_entry if isinstance(matched_entry, list) else [matched_entry]
 
         # Extract metadata from file path
         try:
@@ -104,22 +108,30 @@ class FileProcessor:
         opts['workflow'] = normalized_message.get('_workflow', 'N/A')
         opts['execution_id'] = normalized_message.get('_execution_id', 'N/A')
 
-        # Process the file
-        processor = processor_class()
-        success = processor.run(opts)
+        # Process the file through each registered processor
+        all_stats = []
+        any_error = False
+        for processor_class in processor_classes:
+            processor = processor_class()
+            success = processor.run(opts)
 
-        if success:
-            stats = processor.get_processor_stats()
-            logger.info(f"✅ Successfully processed {file_path}: {stats}")
-            return {
-                "status": "success",
-                "file": file_path,
-                "stats": stats
-            }
-        else:
-            # Note: ProcessorBase already sent detailed error notification
-            logger.error(f"❌ Failed to process {file_path}")
+            if success:
+                stats = processor.get_processor_stats()
+                logger.info(f"✅ Successfully processed {file_path} via {processor_class.__name__}: {stats}")
+                all_stats.append(stats)
+            else:
+                # Note: ProcessorBase already sent detailed error notification
+                logger.error(f"❌ Failed to process {file_path} via {processor_class.__name__}")
+                any_error = True
+
+        if any_error:
             return {
                 "status": "error",
                 "file": file_path
             }
+
+        return {
+            "status": "success",
+            "file": file_path,
+            "stats": all_stats[0] if len(all_stats) == 1 else all_stats
+        }
