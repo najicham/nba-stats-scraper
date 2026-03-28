@@ -154,7 +154,7 @@ class MlbPitcherGameSummaryProcessor(CircuitBreakerMixin, AnalyticsProcessorBase
                 CASE WHEN home_away = 'home' THEN TRUE ELSE FALSE END as is_home,
                 season_year,
                 FALSE as is_postseason,  -- Not tracked in mlbapi_pitcher_stats
-                NULL as venue,           -- Not tracked in mlbapi_pitcher_stats
+                CAST(NULL AS STRING) as venue,  -- Not tracked in mlbapi_pitcher_stats
                 'Final' as game_status,
                 NULL as win,             -- Not tracked as boolean win (use win column below)
 
