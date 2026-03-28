@@ -362,7 +362,9 @@ def load_batch_features(
             pgs.k_avg_last_10,
             pgs.k_std_last_10,
             pgs.ip_avg_last_5,
-            pgs.season_k_per_9,
+            -- season_k_per_9 is NULL on Opening Day (no prior season games).
+            -- Fall back to rolling K/9 from last 10 starts (populated from 2025 season data).
+            COALESCE(pgs.season_k_per_9, pgs.k_per_9_rolling_10) as season_k_per_9,
             pgs.era_rolling_10,
             pgs.whip_rolling_10,
             pgs.season_games_started,
