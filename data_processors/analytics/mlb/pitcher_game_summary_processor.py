@@ -229,7 +229,7 @@ class MlbPitcherGameSummaryProcessor(CircuitBreakerMixin, AnalyticsProcessorBase
             SELECT
                 CAST(NULL AS STRING) as vkf_venue,
                 CAST(NULL AS FLOAT64) as ballpark_k_factor
-            WHERE FALSE
+            FROM (SELECT 1) WHERE 1 = 0
         ),
 
         -- FanGraphs season stats for SwStr% (leading indicator)

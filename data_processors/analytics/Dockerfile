@@ -11,6 +11,7 @@ FROM python:3.11-slim
 # Build-time arguments for tracking what code is in this image
 ARG BUILD_COMMIT=unknown
 ARG BUILD_TIMESTAMP=unknown
+ARG APP_MODULE=main_analytics_service:app
 
 # Store build info as environment variables (queryable at runtime)
 ENV BUILD_COMMIT=${BUILD_COMMIT}
@@ -52,6 +53,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
 # - 4 threads for concurrent processing
 # - 300s timeout for long-running analytics
 # - Bind to PORT env var (Cloud Run default: 8080)
+ENV APP_MODULE=${APP_MODULE}
 CMD exec gunicorn \
   --bind :${PORT:-8080} \
   --workers 1 \
@@ -60,4 +62,4 @@ CMD exec gunicorn \
   --access-logfile - \
   --error-logfile - \
   --log-level info \
-  main_analytics_service:app
+  ${APP_MODULE}
