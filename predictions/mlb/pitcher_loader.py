@@ -483,7 +483,7 @@ def load_batch_features(
     FROM latest_features lf
     LEFT JOIN statcast_latest s ON lf.player_lookup = s.player_lookup AND s.rn = 1
     LEFT JOIN bp_features bp ON lf.player_lookup = bp.player_lookup
-    LEFT JOIN oddsa_ranked oddsa ON lf.player_lookup = oddsa.player_lookup AND oddsa.rn = 1
+    LEFT JOIN oddsa_ranked oddsa ON REPLACE(lf.player_lookup, '_', '') = oddsa.player_lookup AND oddsa.rn = 1
     LEFT JOIN `{proj_id}.mlb_raw.fangraphs_pitcher_season_stats` fg
         ON LOWER(REGEXP_REPLACE(NORMALIZE(fg.player_lookup, NFD), r'[\\W_]+', ''))
             = LOWER(REGEXP_REPLACE(NORMALIZE(lf.player_lookup, NFD), r'[\\W_]+', ''))
