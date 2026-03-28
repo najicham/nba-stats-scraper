@@ -50,6 +50,12 @@ class MessageHandler:
 
         # Decode base64 message data
         data = base64.b64decode(pubsub_message['data']).decode('utf-8')
+
+        # Empty data is sent by Pub/Sub OIDC validation probes — acknowledge without processing
+        if not data:
+            logger.info("Received empty Pub/Sub message data (OIDC probe). Acknowledging.")
+            return None
+
         message = json.loads(data)
 
         return message

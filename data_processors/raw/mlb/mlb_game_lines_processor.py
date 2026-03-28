@@ -108,6 +108,10 @@ class MlbGameLinesProcessor(ProcessorBase):
     - Multiple snapshots per day
     """
 
+    # Each file is a unique time-series snapshot — multiple snapshots per day.
+    # Deduplication by date would skip all but the first snapshot per day.
+    SKIP_DEDUPLICATION = True
+
     def __init__(self):
         self.dataset_id = get_raw_dataset()
         super().__init__()

@@ -1344,6 +1344,8 @@ class BestBetsAggregator:
             # FTA is volatile (CV >= 0.5) and player averages 5+ FTA/game.
             # High FTA variance means scoring was inflated by unsustainable FT volume.
             # 5-season cross-validated: blocked picks = 37.5% HR (N=56) at CV>=0.6.
+            fta_avg = pred.get('fta_avg_last_10', 0) or 0
+            fta_cv = pred.get('fta_cv_last_10', 0) or 0
             if (pred.get('recommendation') == 'OVER'
                     and fta_avg >= 5.0
                     and fta_cv >= 0.6):

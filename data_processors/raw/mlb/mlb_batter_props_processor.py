@@ -97,6 +97,10 @@ class MlbBatterPropsProcessor(ProcessorBase):
     - Multiple snapshots per game for line movement tracking
     """
 
+    # Each file is a unique time-series snapshot — multiple files per game per day.
+    # Deduplication by date would skip all but the first file per day.
+    SKIP_DEDUPLICATION = True
+
     def __init__(self):
         self.dataset_id = get_raw_dataset()
         super().__init__()

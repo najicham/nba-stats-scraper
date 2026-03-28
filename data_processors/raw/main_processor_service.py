@@ -525,6 +525,9 @@ def process_pubsub():
         # Decode and normalize message
         handler = MessageHandler()
         message = handler.decode_message(envelope)
+        if message is None:
+            # Empty data — OIDC probe; acknowledge with 200
+            return jsonify({"status": "ok", "message": "empty probe acknowledged"}), 200
         normalized_message = handler.normalize_format(message)
 
         # Handle skip processing cases
