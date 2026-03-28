@@ -5,7 +5,7 @@ MLB Pitcher Game Summary Analytics Processor
 Transforms raw pitcher stats into analytics features with rolling averages.
 Key output: Strikeout prediction features for ML model.
 
-Source: mlb_raw.mlb_pitcher_stats
+Source: mlb_raw.mlbapi_pitcher_stats
 Target: mlb_analytics.pitcher_game_summary
 
 Key Features Generated:
@@ -78,7 +78,7 @@ class MlbPitcherGameSummaryProcessor(CircuitBreakerMixin, AnalyticsProcessorBase
         return f"""
         SELECT
             COUNT(*) > 0 AS data_available
-        FROM `{self.project_id}.{self.raw_dataset}.mlb_pitcher_stats`
+        FROM `{self.project_id}.{self.raw_dataset}.mlbapi_pitcher_stats`
         WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
         """
 
@@ -141,49 +141,49 @@ class MlbPitcherGameSummaryProcessor(CircuitBreakerMixin, AnalyticsProcessorBase
         query = f"""
         WITH pitcher_history AS (
             -- Get all pitcher stats with game ordering
-            -- Updated to use mlb_pitcher_stats from MLB Stats API
+            -- Source: mlbapi_pitcher_stats from MLB Stats API
             SELECT
                 player_lookup,
                 player_name as player_full_name,
-                game_id,
+                CAST(game_pk AS STRING) as game_id,
                 game_date,
                 team_abbr,
-                -- Derive home/away team abbrs from game_id format: YYYY-MM-DD_AWAY_HOME
-                SPLIT(game_id, '_')[SAFE_OFFSET(2)] as home_team_abbr,
-                SPLIT(game_id, '_')[SAFE_OFFSET(1)] as away_team_abbr,
-                opponent_team_abbr,
-                is_home,
+                -- mlbapi_pitcher_stats uses opponent_abbr (not opponent_team_abbr)
+                opponent_abbr as opponent_team_abbr,
+                -- mlbapi_pitcher_stats uses home_away string ('home'/'away'), not is_home boolean
+                CASE WHEN home_away = 'home' THEN TRUE ELSE FALSE END as is_home,
                 season_year,
-                FALSE as is_postseason,  -- Not tracked in mlb_pitcher_stats
-                venue,
-                game_status,
-                NULL as win,  -- Not tracked in mlb_pitcher_stats
+                FALSE as is_postseason,  -- Not tracked in mlbapi_pitcher_stats
+                NULL as venue,           -- Not tracked in mlbapi_pitcher_stats
+                'Final' as game_status,
+                NULL as win,             -- Not tracked as boolean win (use win column below)
 
                 -- Actual performance
                 strikeouts,
-                innings_pitched,
-                pitch_count,
-                0 as strikes,  -- Not tracked
-                COALESCE(walks_allowed, 0) as walks_allowed,
+                -- innings_pitched is STRING in mlbapi_pitcher_stats, cast to FLOAT64
+                CAST(innings_pitched AS FLOAT64) as innings_pitched,
+                pitches_thrown as pitch_count,  -- mlbapi uses pitches_thrown, not pitch_count
+                strikes,
+                COALESCE(walks, 0) as walks_allowed,  -- mlbapi uses walks, not walks_allowed
                 hits_allowed,
                 earned_runs,
-                SAFE_DIVIDE(earned_runs * 9, innings_pitched) as era,
+                SAFE_DIVIDE(earned_runs * 9, CAST(innings_pitched AS FLOAT64)) as era,
 
                 -- Row number for ordering
                 ROW_NUMBER() OVER (
                     PARTITION BY player_lookup
-                    ORDER BY game_date DESC, game_id DESC
+                    ORDER BY game_date DESC, game_pk DESC
                 ) as game_recency,
 
                 -- Previous game date for days_rest calculation
                 LAG(game_date) OVER (
                     PARTITION BY player_lookup
-                    ORDER BY game_date, game_id
+                    ORDER BY game_date, game_pk
                 ) as prev_game_date
 
-            FROM `{self.project_id}.{self.raw_dataset}.mlb_pitcher_stats`
+            FROM `{self.project_id}.{self.raw_dataset}.mlbapi_pitcher_stats`
             WHERE game_date <= '{date_str}'
-              AND innings_pitched >= 1.0  -- Filter to meaningful appearances
+              AND CAST(innings_pitched AS FLOAT64) >= 1.0  -- Filter to meaningful appearances
               AND is_starter = TRUE  -- Only starting pitchers
         ),
 
@@ -223,25 +223,13 @@ class MlbPitcherGameSummaryProcessor(CircuitBreakerMixin, AnalyticsProcessorBase
         ),
 
         -- Ballpark K factor from historical data (Session 438)
-        -- Rolling average of K/IP ratio per venue over last 2 seasons
+        -- mlbapi_pitcher_stats has no venue column, so this CTE returns no rows
+        -- (ballpark_k_factor defaults to 1.0 via COALESCE in rolling_stats)
         venue_k_factors AS (
             SELECT
-                venue as vkf_venue,
-                SAFE_DIVIDE(
-                    AVG(strikeouts),
-                    AVG(innings_pitched) * AVG(k_per_9) / 9
-                ) as ballpark_k_factor
-            FROM (
-                SELECT venue, strikeouts, innings_pitched,
-                    AVG(strikeouts) OVER (PARTITION BY player_lookup ORDER BY game_date ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING) * 9 /
-                    NULLIF(AVG(innings_pitched) OVER (PARTITION BY player_lookup ORDER BY game_date ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING), 0) as k_per_9
-                FROM `{self.project_id}.{self.raw_dataset}.mlb_pitcher_stats`
-                WHERE game_date BETWEEN DATE_SUB('{date_str}', INTERVAL 2 YEAR) AND DATE_SUB('{date_str}', INTERVAL 1 DAY)
-                  AND innings_pitched >= 3.0 AND is_starter = TRUE
-            )
-            WHERE k_per_9 IS NOT NULL AND k_per_9 > 0
-            GROUP BY venue
-            HAVING COUNT(*) >= 20
+                CAST(NULL AS STRING) as vkf_venue,
+                CAST(NULL AS FLOAT64) as ballpark_k_factor
+            WHERE FALSE
         ),
 
         -- FanGraphs season stats for SwStr% (leading indicator)
