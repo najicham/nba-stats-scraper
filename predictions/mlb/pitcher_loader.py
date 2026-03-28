@@ -388,7 +388,7 @@ def load_batch_features(
             ROW_NUMBER() OVER (PARTITION BY pgs.player_lookup ORDER BY pgs.game_date DESC) as rn
         FROM `{proj_id}.mlb_analytics.pitcher_game_summary` pgs
         WHERE pgs.game_date < @game_date
-          AND pgs.game_date >= DATE_SUB(@game_date, INTERVAL 30 DAY)
+          AND pgs.game_date >= DATE_SUB(@game_date, INTERVAL 365 DAY)
           AND pgs.rolling_stats_games >= 3
           {pitcher_filter}
     ),
