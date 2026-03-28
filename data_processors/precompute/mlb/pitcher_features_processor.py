@@ -163,18 +163,18 @@ class MlbPitcherFeaturesProcessor(PrecomputeProcessorBase):
             game_date,
             home_team_abbr,
             away_team_abbr,
-            home_pitcher_id,
-            home_pitcher_name,
-            home_pitcher_lookup,
-            away_pitcher_id,
-            away_pitcher_name,
-            away_pitcher_lookup,
+            home_probable_pitcher_id AS home_pitcher_id,
+            home_probable_pitcher_name AS home_pitcher_name,
+            LOWER(REGEXP_REPLACE(home_probable_pitcher_name, r'[^a-zA-Z0-9]', '_')) AS home_pitcher_lookup,
+            away_probable_pitcher_id AS away_pitcher_id,
+            away_probable_pitcher_name AS away_pitcher_name,
+            LOWER(REGEXP_REPLACE(away_probable_pitcher_name, r'[^a-zA-Z0-9]', '_')) AS away_pitcher_lookup,
             venue_name,
-            game_datetime,
-            is_day_game
+            game_time_utc AS game_datetime,
+            CASE WHEN day_night = 'day' THEN TRUE ELSE FALSE END AS is_day_game
         FROM `{self.project_id}.mlb_raw.mlb_schedule`
         WHERE game_date = '{game_date}'
-          AND status IN ('Scheduled', 'Pre-Game', 'In Progress')
+          AND status_code IN ('S', 'PW', 'IP', 'MA', 'F', 'FR')
         """
         try:
             df = self.bq_client.query(query).to_dataframe()
@@ -232,10 +232,12 @@ class MlbPitcherFeaturesProcessor(PrecomputeProcessorBase):
             games_last_30_days
         FROM `{self.project_id}.mlb_analytics.pitcher_game_summary`
         WHERE player_lookup IN (
-            SELECT DISTINCT home_pitcher_lookup FROM `{self.project_id}.mlb_raw.mlb_schedule`
+            SELECT DISTINCT LOWER(REGEXP_REPLACE(home_probable_pitcher_name, r'[^a-zA-Z0-9]', '_'))
+            FROM `{self.project_id}.mlb_raw.mlb_schedule`
             WHERE game_date = '{game_date}'
             UNION DISTINCT
-            SELECT DISTINCT away_pitcher_lookup FROM `{self.project_id}.mlb_raw.mlb_schedule`
+            SELECT DISTINCT LOWER(REGEXP_REPLACE(away_probable_pitcher_name, r'[^a-zA-Z0-9]', '_'))
+            FROM `{self.project_id}.mlb_raw.mlb_schedule`
             WHERE game_date = '{game_date}'
         )
         QUALIFY ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY game_date DESC) = 1
