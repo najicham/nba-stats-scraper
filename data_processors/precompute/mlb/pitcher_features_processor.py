@@ -1156,9 +1156,23 @@ class MlbPitcherFeaturesProcessor(PrecomputeProcessorBase):
         except Exception as e:
             logger.warning(f"Delete failed (table may not exist): {e}")
 
+        # Serialize date/datetime objects before insert_rows_json (not JSON-serializable)
+        from datetime import date as date_type, datetime as datetime_type
+        serializable_features = []
+        for row in features_list:
+            serialized = {}
+            for k, v in row.items():
+                if isinstance(v, datetime_type):
+                    serialized[k] = v.isoformat()
+                elif isinstance(v, date_type):
+                    serialized[k] = v.isoformat()
+                else:
+                    serialized[k] = v
+            serializable_features.append(serialized)
+
         # Insert new records
         table_ref = self.bq_client.dataset('mlb_precompute').table('pitcher_ml_features')
-        errors = self.bq_client.insert_rows_json(table_ref, features_list)
+        errors = self.bq_client.insert_rows_json(table_ref, serializable_features)
 
         if errors:
             logger.error(f"BigQuery insert errors: {errors}")
