@@ -732,9 +732,6 @@ class MlbPitcherFeaturesProcessor(PrecomputeProcessorBase):
             'actual_strikeouts': None,  # Filled after game
             'strikeouts_line': k_line,
 
-            # Bottom-up calculation (legacy field)
-            'bottom_up_k_expected': f25_bottom_up_k,
-
             # Grading support (V1)
             'actual_innings': None,  # Filled after game
             'actual_k_per_9': None,  # Filled after game
