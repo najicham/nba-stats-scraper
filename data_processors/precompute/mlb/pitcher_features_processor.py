@@ -60,6 +60,10 @@ class MlbPitcherFeaturesProcessor(PrecomputeProcessorBase):
             }
         }
 
+    def extract_raw_data(self) -> None:
+        """Stub — MLB processors use process_date() directly, not the base class run() lifecycle."""
+        pass
+
     def process_date(self, game_date: date) -> Dict[str, Any]:
         """Process features for all pitchers on a given date."""
         logger.info(f"Processing pitcher features for {game_date}")
