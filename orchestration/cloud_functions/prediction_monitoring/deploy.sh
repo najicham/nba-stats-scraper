@@ -34,7 +34,7 @@ gcloud functions deploy validate-freshness \
     --trigger-http \
     --allow-unauthenticated \
     --service-account=$SERVICE_ACCOUNT \
-    --set-env-vars=GCP_PROJECT_ID=$PROJECT_ID \
+    --update-env-vars=GCP_PROJECT_ID=$PROJECT_ID \
     --memory=512MB \
     --timeout=540s \
     --max-instances=10
@@ -53,7 +53,7 @@ gcloud functions deploy check-missing \
     --trigger-http \
     --allow-unauthenticated \
     --service-account=$SERVICE_ACCOUNT \
-    --set-env-vars=GCP_PROJECT_ID=$PROJECT_ID \
+    --update-env-vars=GCP_PROJECT_ID=$PROJECT_ID \
     --set-secrets=SLACK_WEBHOOK_URL_ERROR=slack-webhook-monitoring-error:latest \
     --memory=512MB \
     --timeout=540s \
@@ -73,7 +73,7 @@ gcloud functions deploy reconcile \
     --trigger-http \
     --allow-unauthenticated \
     --service-account=$SERVICE_ACCOUNT \
-    --set-env-vars=GCP_PROJECT_ID=$PROJECT_ID \
+    --update-env-vars=GCP_PROJECT_ID=$PROJECT_ID \
     --set-secrets=SLACK_WEBHOOK_URL_ERROR=slack-webhook-monitoring-error:latest \
     --memory=512MB \
     --timeout=540s \

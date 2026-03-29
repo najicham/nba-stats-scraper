@@ -64,7 +64,7 @@ gcloud run jobs deploy "${JOB_NAME}" \
   --max-retries="${MAX_RETRIES}" \
   --task-timeout="${TIMEOUT}" \
   --args="${DEFAULT_ARGS}" \
-  --set-env-vars="${ENV_VARS}"
+  --update-env-vars="${ENV_VARS}"
 
 DEPLOY_STATUS=$?
 

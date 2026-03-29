@@ -23,7 +23,7 @@ Scheduler (Every Monday at 5 AM ET):
         --time-zone="America/New_York" \
         --uri=https://FUNCTION_URL \
         --http-method=POST \
-        --oidc-service-account-email=756957797294-compute@developer.gserviceaccount.com \
+        --oidc-service-account-email=<PROJECT_NUMBER>-compute@developer.gserviceaccount.com \
         --oidc-token-audience=https://FUNCTION_URL \
         --attempt-deadline=1800s \
         --project=nba-props-platform

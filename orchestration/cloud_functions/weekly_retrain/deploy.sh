@@ -13,7 +13,7 @@ ENVIRONMENT=${1:-prod}
 REGION="us-west2"
 PROJECT_ID="nba-props-platform"
 GCS_BUCKET="nba-props-platform-models"
-SERVICE_ACCOUNT="756957797294-compute@developer.gserviceaccount.com"
+SERVICE_ACCOUNT="${DEPLOY_SERVICE_ACCOUNT:-756957797294-compute@developer.gserviceaccount.com}"
 
 if [ "$ENVIRONMENT" = "prod" ]; then
     FUNCTION_NAME="weekly-retrain"

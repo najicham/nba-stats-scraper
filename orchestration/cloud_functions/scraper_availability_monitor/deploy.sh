@@ -27,7 +27,7 @@ gcloud functions deploy ${FUNCTION_NAME} \
     --entry-point=check_scraper_availability_handler \
     --timeout=120s \
     --memory=256MB \
-    --set-env-vars="GCP_PROJECT=${PROJECT_ID}" \
+    --update-env-vars="GCP_PROJECT=${PROJECT_ID}" \
     --service-account=${SERVICE_ACCOUNT} \
     --no-allow-unauthenticated \
     --source=.

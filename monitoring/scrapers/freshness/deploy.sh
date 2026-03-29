@@ -80,7 +80,7 @@ fi
 if [ -n "${SLACK_WEBHOOK_URL}" ]; then
     ENV_VARS+=("SLACK_ALERTS_ENABLED=${SLACK_ALERTS_ENABLED:-true}")
     ENV_VARS+=("SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL}")
-    
+
     # Add level-specific webhooks if configured
     [ -n "${SLACK_WEBHOOK_URL_ERROR}" ] && ENV_VARS+=("SLACK_WEBHOOK_URL_ERROR=${SLACK_WEBHOOK_URL_ERROR}")
     [ -n "${SLACK_WEBHOOK_URL_CRITICAL}" ] && ENV_VARS+=("SLACK_WEBHOOK_URL_CRITICAL=${SLACK_WEBHOOK_URL_CRITICAL}")
@@ -124,7 +124,7 @@ JOB_EXISTS=$(gcloud run jobs describe "${SERVICE_NAME}" \
 
 if [ "${JOB_EXISTS}" = "yes" ]; then
     echo -e "${GREEN}Updating existing Cloud Run job...${NC}"
-    
+
     gcloud run jobs update "${SERVICE_NAME}" \
         --image="${IMAGE_NAME}" \
         --region="${REGION}" \
@@ -133,11 +133,11 @@ if [ "${JOB_EXISTS}" = "yes" ]; then
         --task-timeout="${TASK_TIMEOUT}" \
         --memory="${MEMORY}" \
         --cpu="${CPU}" \
-        --set-env-vars="${ENV_VARS_STRING}" \
+        --update-env-vars="${ENV_VARS_STRING}" \
         --labels="component=monitoring,type=freshness-check"
 else
     echo -e "${GREEN}Creating new Cloud Run job...${NC}"
-    
+
     gcloud run jobs create "${SERVICE_NAME}" \
         --image="${IMAGE_NAME}" \
         --region="${REGION}" \
@@ -146,7 +146,7 @@ else
         --task-timeout="${TASK_TIMEOUT}" \
         --memory="${MEMORY}" \
         --cpu="${CPU}" \
-        --set-env-vars="${ENV_VARS_STRING}" \
+        --update-env-vars="${ENV_VARS_STRING}" \
         --labels="component=monitoring,type=freshness-check"
 fi
 

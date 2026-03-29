@@ -35,7 +35,7 @@ for FUNC in "${!FUNCTIONS[@]}"; do
 
   # If the function name contains 'oddsapi' (or 'odds_api'), set the env var
   if [[ "$FUNC" == *"oddsa"* ]]; then
-    EXTRA_ENV="--set-env-vars ODDS_API_KEY=$SECRET_VALUE"
+    EXTRA_ENV="--update-env-vars ODDS_API_KEY=$SECRET_VALUE"
   fi
 
   gcloud functions deploy "$FUNC" \

@@ -19,6 +19,10 @@ LABEL build.timestamp="${BUILD_TIMESTAMP}"
 
 WORKDIR /app
 
+# Install libgomp1 for CatBoost/LightGBM/XGBoost (OpenMP dependency)
+RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy shared modules from repository root
 COPY shared/ ./shared/
 

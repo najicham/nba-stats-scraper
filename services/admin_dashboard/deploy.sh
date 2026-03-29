@@ -48,7 +48,7 @@ gcloud run deploy "${SERVICE_NAME}" \
     --min-instances 0 \
     --max-instances 2 \
     --timeout 120 \
-    --set-env-vars "GCP_PROJECT_ID=${PROJECT_ID},ADMIN_DASHBOARD_API_KEY=${API_KEY}" \
+    --update-env-vars "GCP_PROJECT_ID=${PROJECT_ID},ADMIN_DASHBOARD_API_KEY=${API_KEY}" \
     --allow-unauthenticated \
     --quiet
 

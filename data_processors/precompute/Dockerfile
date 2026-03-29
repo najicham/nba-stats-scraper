@@ -24,7 +24,7 @@ LABEL build.timestamp="${BUILD_TIMESTAMP}"
 # Install tzdata for timezone support (Session 198: Fix for "TODAY" date resolution bug)
 # python:3.11-slim doesn't include timezone data by default
 # Without this, ZoneInfo('America/New_York') falls back to UTC
-RUN apt-get update && apt-get install -y tzdata && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y tzdata libgomp1 && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app

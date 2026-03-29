@@ -155,7 +155,7 @@ if gcloud run deploy $SERVICE_NAME \
     --concurrency=8 \
     --min-instances=$MIN_INSTANCES \
     --max-instances=$MAX_INSTANCES \
-    --set-env-vars="$ENV_VARS" \
+    --update-env-vars="$ENV_VARS" \
     --labels="commit-sha=$GIT_COMMIT_SHA,git-branch=${GIT_BRANCH//\//-},environment=$ENVIRONMENT" \
     --clear-base-image; then
 

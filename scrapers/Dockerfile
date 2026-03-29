@@ -44,6 +44,7 @@ RUN apt-get update && apt-get install -y \
     libxfixes3 \
     libxrandr2 \
     libgbm1 \
+    libgomp1 \
     libpango-1.0-0 \
     libcairo2 \
     libasound2 \

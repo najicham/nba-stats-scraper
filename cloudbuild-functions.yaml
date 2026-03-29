@@ -111,7 +111,7 @@ steps:
           --source /workspace/deploy_pkg \
           --entry-point ${_ENTRY_POINT} \
           $$TRIGGER_ARGS \
-          --service-account=756957797294-compute@developer.gserviceaccount.com \
+          --service-account=${_SERVICE_ACCOUNT} \
           --update-env-vars "GCP_PROJECT=nba-props-platform,BUILD_COMMIT=${SHORT_SHA},BUILD_TIMESTAMP=${_BUILD_TIMESTAMP}" \
           --update-labels "commit-sha=${SHORT_SHA}" \
           --memory ${_MEMORY} \
@@ -136,7 +136,7 @@ steps:
         fi
 
         echo "Setting IAM permissions for Pub/Sub invocation..."
-        SERVICE_ACCOUNT="756957797294-compute@developer.gserviceaccount.com"
+        SERVICE_ACCOUNT="${_SERVICE_ACCOUNT}"
 
         # Add IAM binding to allow Pub/Sub to invoke the function
         gcloud run services add-iam-policy-binding ${_FUNCTION_NAME} \
@@ -168,6 +168,7 @@ substitutions:
   _TIMEOUT: '300s'
   _MIN_INSTANCES: '0'
   _BUILD_TIMESTAMP: '${BUILD_TIMESTAMP:-unknown}'  # Set by Cloud Build trigger
+  _SERVICE_ACCOUNT: '756957797294-compute@developer.gserviceaccount.com'
 
 timeout: 600s
 

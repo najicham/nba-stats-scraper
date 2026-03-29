@@ -16,6 +16,10 @@ LABEL build.timestamp="${BUILD_TIMESTAMP}"
 
 WORKDIR /app
 
+# Install libgomp1 for CatBoost/LightGBM/XGBoost (OpenMP dependency)
+RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY shared/ ./shared/
 COPY predictions/__init__.py ./predictions/__init__.py
 COPY predictions/shared/ ./predictions/shared/

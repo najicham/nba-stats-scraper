@@ -24,6 +24,10 @@ LABEL build.timestamp="${BUILD_TIMESTAMP}"
 # Set working directory
 WORKDIR /app
 
+# Install libgomp1 for CatBoost/LightGBM/XGBoost (OpenMP dependency)
+RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy ONLY requirements first (cached layer - deps rarely change)
 COPY shared/requirements.txt ./shared/requirements.txt
 COPY data_processors/analytics/requirements-lock.txt ./data_processors/analytics/requirements-lock.txt
