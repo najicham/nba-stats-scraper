@@ -569,7 +569,7 @@ class BigQueryService:
         Get grading status for recent days.
 
         Shows prediction counts vs graded counts with accuracy metrics.
-        Updated to use prediction_grades table (Session 85).
+        Updated to use prediction_accuracy table (migrated from prediction_grades, Session H).
         """
         query = f"""
         WITH predictions AS (
@@ -586,11 +586,11 @@ class BigQueryService:
             SELECT
                 game_date,
                 COUNT(*) as graded_count,
-                ROUND(AVG(margin_of_error), 2) as mae,
+                ROUND(AVG(absolute_error), 2) as mae,  -- prediction_accuracy uses absolute_error (was margin_of_error in prediction_grades)
                 COUNTIF(prediction_correct) as correct,
                 COUNTIF(NOT prediction_correct) as incorrect,
                 ROUND(100.0 * COUNTIF(prediction_correct) / COUNTIF(prediction_correct IS NOT NULL), 1) as accuracy_pct
-            FROM `{PROJECT_ID}.{self.datasets['predictions']}.prediction_grades`
+            FROM `{PROJECT_ID}.{self.datasets['predictions']}.prediction_accuracy`
             WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)
               AND game_date < CURRENT_DATE()
             GROUP BY game_date
@@ -1576,12 +1576,12 @@ class BigQueryService:
             SELECT
                 game_date,
                 COUNT(*) as graded_count,
-                ROUND(AVG(margin_of_error), 2) as mae,
+                ROUND(AVG(absolute_error), 2) as mae,  -- prediction_accuracy uses absolute_error (was margin_of_error in prediction_grades)
                 COUNTIF(prediction_correct) as correct,
                 COUNTIF(NOT prediction_correct) as incorrect,
                 ROUND(100.0 * COUNTIF(prediction_correct) /
                     NULLIF(COUNT(*), 0), 1) as accuracy_pct
-            FROM `{PROJECT_ID}.{self.datasets['predictions']}.prediction_grades`
+            FROM `{PROJECT_ID}.{self.datasets['predictions']}.prediction_accuracy`
             WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)
               AND game_date < CURRENT_DATE()
             GROUP BY game_date
@@ -1640,9 +1640,9 @@ class BigQueryService:
             SELECT
                 game_date,
                 DATE_TRUNC(game_date, WEEK(MONDAY)) as week_start,
-                margin_of_error,
+                absolute_error AS margin_of_error,  -- prediction_accuracy uses absolute_error (was margin_of_error in prediction_grades)
                 prediction_correct
-            FROM `{PROJECT_ID}.{self.datasets['predictions']}.prediction_grades`
+            FROM `{PROJECT_ID}.{self.datasets['predictions']}.prediction_accuracy`
             WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {weeks} WEEK)
               AND game_date < CURRENT_DATE()
         )
@@ -1700,8 +1700,8 @@ class BigQueryService:
                 COUNTIF(prediction_correct) as correct,
                 ROUND(100.0 * COUNTIF(prediction_correct) /
                     NULLIF(COUNT(*), 0), 1) as accuracy_pct,
-                ROUND(AVG(margin_of_error), 2) as avg_mae
-            FROM `{PROJECT_ID}.{self.datasets['predictions']}.prediction_grades`
+                ROUND(AVG(absolute_error), 2) as avg_mae  -- prediction_accuracy uses absolute_error (was margin_of_error in prediction_grades)
+            FROM `{PROJECT_ID}.{self.datasets['predictions']}.prediction_accuracy`
             WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)
               AND game_date < CURRENT_DATE()
         ),
@@ -1712,8 +1712,8 @@ class BigQueryService:
                 COUNTIF(prediction_correct) as correct,
                 ROUND(100.0 * COUNTIF(prediction_correct) /
                     NULLIF(COUNT(*), 0), 1) as accuracy_pct,
-                ROUND(AVG(margin_of_error), 2) as avg_mae
-            FROM `{PROJECT_ID}.{self.datasets['predictions']}.prediction_grades`
+                ROUND(AVG(absolute_error), 2) as avg_mae  -- prediction_accuracy uses absolute_error (was margin_of_error in prediction_grades)
+            FROM `{PROJECT_ID}.{self.datasets['predictions']}.prediction_accuracy`
             WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {days * 2} DAY)
               AND game_date < DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)
         )
@@ -1946,7 +1946,7 @@ class BigQueryService:
                 game_date,
                 COUNT(*) as graded_count,
                 COUNTIF(prediction_correct = TRUE) as correct_count
-            FROM `{PROJECT_ID}.{self.datasets['predictions']}.prediction_grades`
+            FROM `{PROJECT_ID}.{self.datasets['predictions']}.prediction_accuracy`
             WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)
               AND game_date < CURRENT_DATE()
             GROUP BY game_date

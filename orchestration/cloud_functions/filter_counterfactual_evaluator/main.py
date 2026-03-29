@@ -167,9 +167,11 @@ def check_auto_demote(bq: bigquery.Client, target_date: str) -> List[Dict]:
     """Check which eligible filters meet the 7-day consecutive auto-demote criteria.
 
     Criteria: CF HR >= 55% AND cumulative N >= 20 for 7 consecutive days.
+    Uses a 10-day window to ensure enough game days are captured (Mon-Sun may
+    only have 5-7 game days in a calendar week).
     Returns list of filters that should be demoted.
     """
-    # Query the last 7 days of filter_counterfactual_daily for eligible filters
+    # Query the last 10 days of filter_counterfactual_daily for eligible filters
     eligible_list = ', '.join(f"'{f}'" for f in ELIGIBLE_FOR_AUTO_DEMOTE)
 
     query = f"""
@@ -180,10 +182,30 @@ def check_auto_demote(bq: bigquery.Client, target_date: str) -> List[Dict]:
         blocked_count,
         wins,
         losses,
-        counterfactual_hr
+        counterfactual_hr,
+        ROW_NUMBER() OVER (PARTITION BY filter_name ORDER BY game_date) AS rn
       FROM `{PROJECT_ID}.nba_predictions.filter_counterfactual_daily`
-      WHERE game_date BETWEEN DATE_SUB(@target_date, INTERVAL 6 DAY) AND @target_date
+      WHERE game_date BETWEEN DATE_SUB(@target_date, INTERVAL 9 DAY) AND @target_date
         AND filter_name IN ({eligible_list})
+    ),
+    streak_groups AS (
+      SELECT
+        filter_name,
+        game_date,
+        wins,
+        losses,
+        counterfactual_hr,
+        DATE_SUB(game_date, INTERVAL CAST(rn AS INT64) DAY) AS grp
+      FROM daily
+      WHERE counterfactual_hr >= {CF_HR_THRESHOLD}
+    ),
+    streak_sizes AS (
+      SELECT
+        filter_name,
+        grp,
+        COUNT(*) AS streak_len
+      FROM streak_groups
+      GROUP BY filter_name, grp
     ),
     rolling AS (
       SELECT
@@ -192,9 +214,7 @@ def check_auto_demote(bq: bigquery.Client, target_date: str) -> List[Dict]:
         SUM(wins + losses) AS total_graded,
         SUM(wins) AS total_wins,
         ROUND(100.0 * SUM(wins) / NULLIF(SUM(wins + losses), 0), 1) AS hr_7d,
-        MIN(counterfactual_hr) AS min_daily_hr,
-        -- Check if ALL days with data have CF HR >= threshold
-        COUNTIF(counterfactual_hr >= {CF_HR_THRESHOLD}) AS days_above_threshold
+        MIN(counterfactual_hr) AS min_daily_hr
       FROM daily
       GROUP BY filter_name
     )
@@ -204,12 +224,15 @@ def check_auto_demote(bq: bigquery.Client, target_date: str) -> List[Dict]:
       total_graded,
       total_wins,
       hr_7d,
-      min_daily_hr,
-      days_above_threshold
+      min_daily_hr
     FROM rolling
     WHERE days_with_data >= {CONSECUTIVE_DAYS}
       AND total_graded >= {MIN_PICKS_7D}
-      AND days_above_threshold >= {CONSECUTIVE_DAYS}
+      AND (
+        SELECT MAX(streak_len)
+        FROM streak_sizes
+        WHERE filter_name = rolling.filter_name
+      ) >= {CONSECUTIVE_DAYS}
       AND hr_7d >= {CF_HR_THRESHOLD}
     ORDER BY hr_7d DESC
     """
@@ -251,8 +274,8 @@ def apply_demotion(bq: bigquery.Client, filter_name: str, cf_hr: float,
         triggered_at = @triggered_at,
         triggered_by = 'auto_demote'
     WHEN NOT MATCHED THEN INSERT
-        (filter_name, override_type, reason, cf_hr_7d, n_7d, triggered_at, triggered_by, active)
-    VALUES (@filter_name, 'demote_to_observation', @reason, @cf_hr, @n_graded, @triggered_at, 'auto_demote', TRUE)
+        (filter_name, override_type, reason, cf_hr_7d, n_7d, triggered_at, triggered_by, active, demote_start_date, re_eval_date)
+    VALUES (@filter_name, 'demote_to_observation', @reason, @cf_hr, @n_graded, @triggered_at, 'auto_demote', TRUE, CURRENT_DATE(), DATE_ADD(CURRENT_DATE(), INTERVAL 14 DAY))
     """
     job_config = bigquery.QueryJobConfig(
         query_parameters=[
@@ -316,6 +339,71 @@ def find_latest_graded_date(bq: bigquery.Client) -> Optional[str]:
     return None
 
 
+def check_reactivation(bq: bigquery.Client, target_date: str) -> int:
+    """Reactivate filters where re_eval_date has passed AND last 3-day CF HR < 50%.
+
+    Returns number of filters reactivated.
+    Called at start of main() before daily CF computation.
+    Wrapped in try/except — never blocks normal CF evaluation.
+    """
+    due_query = f"""
+    SELECT filter_name
+    FROM `{PROJECT_ID}.nba_predictions.filter_overrides`
+    WHERE active = TRUE
+      AND re_eval_date IS NOT NULL
+      AND re_eval_date <= @target_date
+    """
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[bigquery.ScalarQueryParameter('target_date', 'DATE', target_date)]
+    )
+    try:
+        due_rows = list(bq.query(due_query, job_config=job_config).result(timeout=30))
+    except Exception as e:
+        logger.warning(f"check_reactivation: due query failed: {e}")
+        return 0
+
+    reactivated = 0
+    for row in due_rows:
+        filter_name = row.filter_name
+        # Check last 3 days CF HR
+        hr_query = f"""
+        SELECT ROUND(100.0 * SUM(wins) / NULLIF(SUM(wins + losses), 0), 1) AS hr_3d
+        FROM `{PROJECT_ID}.nba_predictions.filter_counterfactual_daily`
+        WHERE filter_name = @filter_name
+          AND game_date BETWEEN DATE_SUB(@target_date, INTERVAL 2 DAY) AND @target_date
+        """
+        hr_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter('filter_name', 'STRING', filter_name),
+                bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+            ]
+        )
+        try:
+            hr_rows = list(bq.query(hr_query, job_config=hr_config).result(timeout=30))
+            hr_3d = hr_rows[0].hr_3d if hr_rows and hr_rows[0].hr_3d is not None else 100.0
+        except Exception as e:
+            logger.warning(f"check_reactivation: CF HR query failed for {filter_name}: {e}")
+            continue
+
+        if hr_3d < 50.0:
+            # Reactivate: set active = FALSE
+            reactivate_query = f"""
+            UPDATE `{PROJECT_ID}.nba_predictions.filter_overrides`
+            SET active = FALSE
+            WHERE filter_name = @filter_name AND active = TRUE
+            """
+            try:
+                bq.query(reactivate_query, job_config=bigquery.QueryJobConfig(
+                    query_parameters=[bigquery.ScalarQueryParameter('filter_name', 'STRING', filter_name)]
+                )).result(timeout=30)
+                logger.info(f"Reactivated filter '{filter_name}': re_eval_date passed, 3d CF HR={hr_3d}% < 50%")
+                reactivated += 1
+            except Exception as e:
+                logger.warning(f"check_reactivation: reactivate UPDATE failed for {filter_name}: {e}")
+
+    return reactivated
+
+
 @functions_framework.http
 def main(request: Request):
     """HTTP entry point for Cloud Scheduler."""
@@ -325,6 +413,15 @@ def main(request: Request):
 
     # Step 1: Find the latest graded game date
     target_date = find_latest_graded_date(bq)
+
+    # Re-evaluate demoted filters whose re_eval_date has passed
+    if target_date:
+        try:
+            reactivated = check_reactivation(bq, target_date)
+            if reactivated > 0:
+                logger.info(f"Reactivated {reactivated} filter(s) after re-evaluation")
+        except Exception as e:
+            logger.warning(f"check_reactivation failed (non-blocking): {e}")
     if not target_date:
         logger.info("No graded filtered picks found in last 3 days, skipping")
         return 'No graded data', 200

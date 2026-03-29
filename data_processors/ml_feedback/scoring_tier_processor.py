@@ -18,6 +18,7 @@ Usage:
 import logging
 from datetime import datetime, timedelta
 from decimal import Decimal
+from typing import Optional
 from google.cloud import bigquery
 from shared.clients.bigquery_pool import get_bigquery_client
 
@@ -48,17 +49,37 @@ class ScoringTierProcessor:
         self.min_sample_size = min_sample_size
         self.table_id = 'nba-props-platform.nba_predictions.scoring_tier_adjustments'
 
-    def process(self, as_of_date: str, system_id: str = 'ensemble_v1') -> dict:
+    def _get_champion_system_id(self, bq_client) -> str:
+        """Get current champion system_id from model registry.
+
+        Falls back to 'catboost_v12' if no champion found or query fails.
+        """
+        try:
+            query = """
+            SELECT model_id
+            FROM `nba-props-platform.nba_predictions.model_registry`
+            WHERE is_champion = TRUE AND enabled = TRUE
+            ORDER BY registered_at DESC
+            LIMIT 1
+            """
+            rows = list(bq_client.query(query).result(timeout=10))
+            return rows[0].model_id if rows else 'catboost_v12'
+        except Exception:
+            return 'catboost_v12'
+
+    def process(self, as_of_date: str, system_id: Optional[str] = None) -> dict:
         """
         Compute scoring tier adjustments as of a specific date.
 
         Args:
             as_of_date: Date to compute adjustments for (YYYY-MM-DD)
-            system_id: Prediction system to analyze (default: ensemble_v1)
+            system_id: Prediction system to analyze (default: champion model)
 
         Returns:
             dict with status and metrics
         """
+        if system_id is None:
+            system_id = self._get_champion_system_id(self.client)
         logger.info(f"Computing scoring tier adjustments for {as_of_date}")
 
         # Compute tier metrics from prediction_accuracy
@@ -234,7 +255,7 @@ class ScoringTierProcessor:
         self,
         start_date: str,
         end_date: str,
-        system_id: str = 'ensemble_v1'
+        system_id: Optional[str] = None
     ) -> dict:
         """
         Validate that tier adjustments are actually improving MAE.
@@ -245,7 +266,7 @@ class ScoringTierProcessor:
         Args:
             start_date: Start of date range to validate
             end_date: End of date range to validate
-            system_id: Prediction system to validate
+            system_id: Prediction system to validate (default: champion model)
 
         Returns:
             dict with validation results including mae_raw, mae_adjusted,
@@ -254,6 +275,8 @@ class ScoringTierProcessor:
         Raises:
             ValueError: If adjustments are making MAE worse by > 0.1 points
         """
+        if system_id is None:
+            system_id = self._get_champion_system_id(self.client)
         query = f"""
         WITH predictions_with_actuals AS (
           SELECT

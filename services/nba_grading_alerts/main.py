@@ -81,14 +81,16 @@ def check_grading_coverage(client: bigquery.Client, game_date: str) -> Dict:
 
 def check_grading_health(client: bigquery.Client, game_date: str) -> Dict:
     """Check if grading ran successfully for a date."""
+    # TODO: prediction_accuracy has no has_issues or player_dnp columns.
+    # issue_count is approximated as is_voided count; dnp_count uses is_voided with void_reason.
     query = f"""
     SELECT
         COUNT(*) as total_grades,
-        COUNTIF(has_issues) as issue_count,
-        ROUND(100.0 * COUNTIF(has_issues) / NULLIF(COUNT(*), 0), 1) as issue_pct,
-        COUNTIF(player_dnp) as dnp_count,
+        COUNTIF(is_voided = TRUE) as issue_count,  -- approximation: was COUNTIF(has_issues) in prediction_grades
+        ROUND(100.0 * COUNTIF(is_voided = TRUE) / NULLIF(COUNT(*), 0), 1) as issue_pct,
+        COUNTIF(void_reason LIKE '%dnp%') as dnp_count,  -- approximation: was COUNTIF(player_dnp) in prediction_grades
         COUNTIF(actual_points IS NULL) as missing_actuals
-    FROM `nba-props-platform.nba_predictions.prediction_grades`
+    FROM `nba-props-platform.nba_predictions.prediction_accuracy`
     WHERE game_date = '{game_date}'
     """
 
@@ -173,6 +175,7 @@ def check_calibration_health(client: bigquery.Client, days: int = 7, threshold: 
 
 def get_weekly_summary(client: bigquery.Client, days: int = 7) -> Dict:
     """Get weekly summary with trends and insights."""
+    # TODO: prediction_accuracy has no has_issues column. Filter removed; use is_voided = FALSE as approximation if needed.
     query = f"""
     SELECT
         system_id,
@@ -180,11 +183,11 @@ def get_weekly_summary(client: bigquery.Client, days: int = 7) -> Dict:
         COUNTIF(prediction_correct) as correct,
         COUNTIF(NOT prediction_correct) as incorrect,
         ROUND(100.0 * COUNTIF(prediction_correct) / COUNTIF(prediction_correct IS NOT NULL), 2) as accuracy_pct,
-        ROUND(AVG(CASE WHEN prediction_correct IS NOT NULL THEN margin_of_error END), 2) as avg_margin_of_error,
+        ROUND(AVG(CASE WHEN prediction_correct IS NOT NULL THEN absolute_error END), 2) as avg_margin_of_error,  -- prediction_accuracy uses absolute_error (was margin_of_error in prediction_grades)
         ROUND(AVG(CASE WHEN prediction_correct IS NOT NULL THEN confidence_score END) * 100, 2) as avg_confidence
-    FROM `nba-props-platform.nba_predictions.prediction_grades`
+    FROM `nba-props-platform.nba_predictions.prediction_accuracy`
     WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)
-      AND has_issues = FALSE
+      AND (is_voided IS NULL OR is_voided = FALSE)
     GROUP BY system_id
     ORDER BY accuracy_pct DESC
     """

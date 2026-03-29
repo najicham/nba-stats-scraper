@@ -207,6 +207,40 @@ def check_phase4_completion(game_date: str) -> Tuple[str, str]:
         return ('fail', f'Error checking Phase 4: {str(e)[:100]}')
 
 
+def check_grading_freshness() -> Dict:
+    """Check if grading ran recently (within last 2 hours).
+
+    Returns warn if graded count is 0 in last 2 hours AND current time is
+    past 10 AM ET (grading should have run by then on game days).
+    """
+    import pytz
+    from datetime import datetime as dt
+
+    query = f"""
+    SELECT COUNT(*) AS recent_graded
+    FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy`
+    WHERE graded_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 2 HOUR)
+    """
+    try:
+        rows = list(bq.query(query).result(timeout=30))
+        recent_graded = rows[0].recent_graded if rows else 0
+
+        # Only warn if it's past 10 AM ET (grading should have completed)
+        et = pytz.timezone('America/New_York')
+        now_et = dt.now(et)
+        past_10am = now_et.hour >= 10
+
+        status = 'warn' if (recent_graded == 0 and past_10am) else 'ok'
+        return {
+            'recent_graded': recent_graded,
+            'status': status,
+            'message': f"{recent_graded} predictions graded in last 2h"
+        }
+    except Exception as e:
+        logger.error(f"check_grading_freshness failed: {e}")
+        return {'recent_graded': -1, 'status': 'error', 'message': str(e)}
+
+
 def check_predictions(game_date: str) -> Tuple[str, str]:
     """Check if predictions exist for a date."""
     try:
@@ -920,6 +954,18 @@ def daily_health_check(request):
 
     status, message = check_game_completeness(yesterday)
     results.add(f"Game Completeness ({yesterday})", status, message)
+
+    # ========================================================================
+    # CHECK 4b: Grading Freshness
+    # ========================================================================
+    logger.info("Checking grading freshness...")
+
+    grading_freshness = check_grading_freshness()
+    results.add(
+        "Grading Freshness",
+        grading_freshness['status'] if grading_freshness['status'] in ('warn', 'error') else 'pass',
+        grading_freshness['message']
+    )
 
     # ========================================================================
     # CHECK 5: BigQuery Quota Usage (prevent cascading failures)

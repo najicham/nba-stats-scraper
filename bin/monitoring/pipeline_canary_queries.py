@@ -450,6 +450,50 @@ CANARY_CHECKS = [
         },
         description="Session 294: Detects duplicate rows that cause -1 days_rest in exports"
     ),
+
+    CanaryCheck(
+        name="MLB Phase 5 - Pitcher Strikeout Predictions",
+        phase="mlb_phase5_predictions",
+        query="""
+        SELECT COUNT(*) as prediction_count
+        FROM `nba-props-platform.mlb_predictions.pitcher_strikeouts`
+        WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+        """,
+        thresholds={
+            'prediction_count': {'min': 3}
+        },
+        description="Validates MLB pitcher strikeout predictions generated for yesterday (min 3 on game days)"
+    ),
+
+    CanaryCheck(
+        name="MLB Phase 6 - Best Bets Published",
+        phase="mlb_phase6_best_bets",
+        query="""
+        SELECT COUNT(*) as pick_count
+        FROM `nba-props-platform.mlb_predictions.pitcher_strikeouts`
+        WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+          AND recommended_bet IN ('OVER', 'UNDER')
+          AND confidence >= 70
+          AND ABS(ensemble_prediction - strikeouts_line) >= 1.0
+        """,
+        thresholds={
+            'pick_count': {'min': 0}
+        },
+        description="Validates MLB best bets pipeline ran yesterday (soft check — 0 allowed on no-game days)"
+    ),
+
+    CanaryCheck(
+        name="Signal Health Daily - Freshness",
+        phase="monitoring_meta",
+        query="""
+        SELECT DATE_DIFF(CURRENT_DATE(), MAX(game_date), DAY) AS staleness_days
+        FROM `nba-props-platform.nba_predictions.signal_health_daily`
+        """,
+        thresholds={
+            'staleness_days': {'max': 2}
+        },
+        description="Alerts if signal_health_daily table is more than 2 days stale — decay detection runs on stale data"
+    ),
 ]
 
 

@@ -33,6 +33,7 @@ import statistics
 from google.cloud import bigquery
 
 from shared.validation.config import PROJECT_ID, BQ_QUERY_TIMEOUT_SECONDS
+from shared.ml.feature_contract import FEATURE_STORE_NAMES
 
 logger = logging.getLogger(__name__)
 
@@ -43,47 +44,28 @@ logger = logging.getLogger(__name__)
 
 FEATURE_STORE_TABLE = "nba_predictions.ml_feature_store_v2"
 
-# Feature names for the 34-element feature array
-# (indices 0-33)
-FEATURE_NAMES = [
-    "points_l5_avg",           # 0
-    "points_l10_avg",          # 1
-    "rebounds_l5_avg",         # 2
-    "rebounds_l10_avg",        # 3
-    "assists_l5_avg",          # 4
-    "assists_l10_avg",         # 5
-    "minutes_l5_avg",          # 6
-    "minutes_l10_avg",         # 7
-    "fg_pct_l5",               # 8
-    "fg_pct_l10",              # 9
-    "fg3_pct_l5",              # 10
-    "fg3_pct_l10",             # 11
-    "ft_pct_l5",               # 12
-    "ft_pct_l10",              # 13
-    "usage_rate_l5",           # 14
-    "usage_rate_l10",          # 15
-    "days_rest",               # 16
-    "is_home",                 # 17
-    "opp_def_rating",          # 18
-    "opp_pace",                # 19
-    "team_pace",               # 20
-    "season_games_played",     # 21
-    "career_ppg",              # 22
-    "age",                     # 23
-    "height_inches",           # 24
-    "weight_lbs",              # 25
-    "experience_years",        # 26
-    "position_encoded",        # 27
-    "back_to_back",            # 28
-    "games_last_7d",           # 29
-    "points_variance_l10",     # 30
-    "line_value",              # 31
-    "line_movement",           # 32
-    "prop_confidence",         # 33
-]
+# Use the authoritative 60-feature list from feature_contract (indices 0-59)
+FEATURE_NAMES = FEATURE_STORE_NAMES[:60]
 
-# Key features to monitor for drift (most important for predictions)
-KEY_FEATURES = [0, 1, 6, 7, 14, 15, 18, 19, 21, 22, 30, 31]
+# Key features to monitor for drift — mix of original important features + new V12/V16 ones
+KEY_FEATURES = [
+    0,   # pts_avg_last_5
+    1,   # pts_avg_last_10
+    6,   # pace_factor
+    7,   # usage_spike
+    14,  # is_back_to_back
+    15,  # is_away
+    18,  # shot_zone_paint_pct
+    19,  # shot_zone_mid_pct
+    21,  # shot_zone_3pt_pct
+    22,  # team_pace
+    25,  # vegas_points_line (feature index 25)
+    30,  # opponent_avg_pts_allowed
+    31,  # minutes_avg
+    39,  # rest_days_vs_opponent (V12)
+    54,  # prop_line_delta
+    55,  # over_rate_last_10 (V16)
+]
 
 # Drift thresholds
 MEAN_DRIFT_THRESHOLD = 0.15  # 15% change in mean
@@ -395,7 +377,7 @@ def main():
     """Command-line interface for feature drift detection."""
     parser = argparse.ArgumentParser(description="Detect feature drift in ML feature store")
     parser.add_argument("--days", type=int, default=7, help="Days per comparison period")
-    parser.add_argument("--all-features", action="store_true", help="Check all 34 features")
+    parser.add_argument("--all-features", action="store_true", help="Check all 60 features")
     parser.add_argument("--json", action="store_true", help="Output as JSON")
     parser.add_argument("--ci", action="store_true", help="Exit with code 1 if critical drift")
 
