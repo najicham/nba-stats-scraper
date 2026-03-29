@@ -480,7 +480,11 @@ class MlbPitcherFeaturesProcessor(PrecomputeProcessorBase):
             return {}
 
     def _get_batter_splits(self, game_date: date) -> Dict[str, Dict]:
-        """Get batter splits vs LHP/RHP (V1/V2 features)."""
+        """Get batter splits vs LHP/RHP (V1/V2 features).
+
+        Note: bdl_batter_splits is not yet scheduled; platoon_advantage (f27) falls back to 0.0
+        when this returns {}.
+        """
         query = f"""
         SELECT
             player_lookup,
@@ -507,17 +511,22 @@ class MlbPitcherFeaturesProcessor(PrecomputeProcessorBase):
             return {}
 
     def _get_pitcher_handedness(self) -> Dict[str, str]:
-        """Get pitcher throwing hand (L/R)."""
+        """Get pitcher throwing hand (L/R).
+
+        Uses bdl_active_pitchers view (latest snapshot, is_pitcher=TRUE) and extracts
+        the throwing hand from bats_throws field (format: "Right/Right" → "Right").
+        """
         query = f"""
         SELECT DISTINCT
             player_lookup,
-            throws
-        FROM `{self.project_id}.mlb_raw.bdl_pitchers`
-        WHERE throws IS NOT NULL
+            SPLIT(bats_throws, '/')[SAFE_OFFSET(1)] AS throws
+        FROM `{self.project_id}.mlb_raw.bdl_active_pitchers`
+        WHERE bats_throws IS NOT NULL
         """
         try:
             df = self.bq_client.query(query).to_dataframe()
-            return {row['player_lookup']: row['throws'] for _, row in df.iterrows()}
+            return {row['player_lookup']: row['throws'] for _, row in df.iterrows()
+                    if row['throws'] is not None}
         except Exception as e:
             logger.warning(f"Pitcher handedness query failed: {e}")
             return {}
