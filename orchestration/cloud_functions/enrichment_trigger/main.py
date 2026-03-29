@@ -64,7 +64,7 @@ def get_processor():
 
 COORDINATOR_URL = os.environ.get(
     'COORDINATOR_URL',
-    'https://prediction-coordinator-756957797294.us-west2.run.app'
+    'https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app'
 )
 
 

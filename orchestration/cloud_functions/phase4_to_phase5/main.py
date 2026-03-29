@@ -136,7 +136,7 @@ PROCESSOR_NAME_MAPPING = {
 }
 PREDICTION_COORDINATOR_URL = os.environ.get(
     'PREDICTION_COORDINATOR_URL',
-    'https://prediction-coordinator-756957797294.us-west2.run.app'
+    'https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app'
 )
 SLACK_WEBHOOK_URL = os.environ.get('SLACK_WEBHOOK_URL')
 
