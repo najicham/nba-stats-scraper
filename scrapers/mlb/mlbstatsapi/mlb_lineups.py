@@ -274,10 +274,11 @@ class MlbLineupsScraper(ScraperBase, ScraperFlaskMixin):
             venue = game_data.get("venue", {})
             status = game_data.get("status", {})
 
-            # Teams
+            # Teams — abbreviation lives in gameData.teams, not boxscore teams
             teams = boxscore_data.get("teams", {})
             away_team = teams.get("away", {})
             home_team = teams.get("home", {})
+            game_teams = game_data.get("teams", {})
 
             # Extract lineups (batting order)
             away_lineup = self._extract_lineup(away_team)
@@ -297,10 +298,10 @@ class MlbLineupsScraper(ScraperBase, ScraperFlaskMixin):
                 # Teams
                 "away_team_id": away_team.get("team", {}).get("id"),
                 "away_team_name": away_team.get("team", {}).get("name"),
-                "away_team_abbr": away_team.get("team", {}).get("abbreviation"),
+                "away_team_abbr": game_teams.get("away", {}).get("abbreviation"),
                 "home_team_id": home_team.get("team", {}).get("id"),
                 "home_team_name": home_team.get("team", {}).get("name"),
-                "home_team_abbr": home_team.get("team", {}).get("abbreviation"),
+                "home_team_abbr": game_teams.get("home", {}).get("abbreviation"),
 
                 # Venue
                 "venue_name": venue.get("name"),
