@@ -170,6 +170,53 @@ def detect_grading_gaps(
     return gaps
 
 
+def detect_per_model_grading_gaps(
+    bq_client: bigquery.Client,
+    game_date: str,
+    project_id: str = 'nba-props-platform',
+) -> List[Dict]:
+    """Detect models with <80% grading coverage on a given date.
+
+    Returns list of models with grading gaps. Empty list = all models healthy.
+    Catches the case where aggregate coverage looks fine (7 models at 90%)
+    but one model is at 0% (silently failed).
+    """
+    query = f"""
+    WITH model_stats AS (
+      SELECT
+        system_id,
+        COUNT(*) AS total_predictions,
+        COUNTIF(prediction_correct IS NOT NULL) AS graded,
+        COUNTIF(has_prop_line = TRUE AND recommendation IN ('OVER', 'UNDER')) AS gradable
+      FROM `{project_id}.nba_predictions.prediction_accuracy`
+      WHERE game_date = @game_date
+      GROUP BY system_id
+    )
+    SELECT
+      system_id,
+      total_predictions,
+      graded,
+      gradable,
+      CASE
+        WHEN gradable = 0 THEN NULL
+        ELSE ROUND(100.0 * graded / gradable, 1)
+      END AS grading_pct
+    FROM model_stats
+    WHERE gradable > 0
+      AND (gradable = 0 OR ROUND(100.0 * graded / gradable, 1) < 80.0)
+    ORDER BY grading_pct ASC
+    """
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[bigquery.ScalarQueryParameter('game_date', 'DATE', game_date)]
+    )
+    try:
+        rows = list(bq_client.query(query, job_config=job_config).result(timeout=60))
+        return [dict(row) for row in rows]
+    except Exception as e:
+        logger.warning(f"Per-model grading gap query failed: {e}")
+        return []
+
+
 def trigger_grading_backfill(
     game_date: str,
     dry_run: bool = False
@@ -289,6 +336,18 @@ def main():
 
     # Detect gaps
     gaps = detect_grading_gaps(client, lookback_days=args.days)
+
+    # Per-model grading gap check for most recent completed date
+    today = date.today()
+    yesterday = str(today - timedelta(days=1))
+    per_model_gaps = detect_per_model_grading_gaps(client, yesterday)
+    if per_model_gaps:
+        for gap in per_model_gaps:
+            logger.warning(
+                f"Per-model grading gap: {gap['system_id']} has "
+                f"{gap['grading_pct']}% grading coverage "
+                f"({gap['graded']}/{gap['gradable']} gradable predictions)"
+            )
 
     if not gaps:
         logger.info(f"✅ No grading gaps found in last {args.days} days")

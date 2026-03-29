@@ -354,4 +354,18 @@ def build_pick_angles(
                     f"Warning: UNDER direction at {hr:.0f}% HR last 14d — below breakeven"
                 )
 
+    # 9. Signal rescue angle — pick bypassed OVER edge floor via a validated signal
+    if pick.get('signal_rescued'):
+        rescue_signal = pick.get('rescue_signal') or 'unknown'
+        angles.append(
+            f"Signal rescue: bypassed OVER edge floor via {rescue_signal}"
+        )
+
+    # 10. TIGHT market angle — elevated OVER floor was active when pick was generated
+    market_regime = pick.get('market_regime')
+    if market_regime == 'TIGHT':
+        angles.append(
+            "TIGHT market: elevated OVER floor active (vegas_mae < 4.5)"
+        )
+
     return angles[:MAX_ANGLES]

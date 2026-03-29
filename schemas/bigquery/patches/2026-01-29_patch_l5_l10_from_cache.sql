@@ -53,8 +53,8 @@ FROM `nba_predictions.ml_feature_store_v2` fs
 JOIN `nba_precompute.player_daily_cache` c
   ON fs.player_lookup = c.player_lookup AND fs.game_date = c.cache_date
 WHERE fs.game_date BETWEEN '2024-10-01' AND '2025-06-30'
-  AND (ABS(fs.features[OFFSET(0)] - c.points_avg_last_5) >= 0.1
-       OR ABS(fs.features[OFFSET(1)] - c.points_avg_last_10) >= 0.1);
+  AND (ABS(fs.feature_0_value - c.points_avg_last_5) >= 0.1
+       OR ABS(fs.feature_1_value - c.points_avg_last_10) >= 0.1);
 
 -- =============================================================================
 -- STEP 3: INSERT AUDIT RECORDS
@@ -66,18 +66,18 @@ SELECT
   CURRENT_TIMESTAMP() as patch_date,
   fs.player_lookup,
   fs.game_date,
-  fs.features[OFFSET(0)] as old_l5,
+  fs.feature_0_value as old_l5,
   c.points_avg_last_5 as new_l5,
-  fs.features[OFFSET(1)] as old_l10,
+  fs.feature_1_value as old_l10,
   c.points_avg_last_10 as new_l10,
-  c.points_avg_last_5 - fs.features[OFFSET(0)] as l5_diff,
-  c.points_avg_last_10 - fs.features[OFFSET(1)] as l10_diff
+  c.points_avg_last_5 - fs.feature_0_value as l5_diff,
+  c.points_avg_last_10 - fs.feature_1_value as l10_diff
 FROM `nba_predictions.ml_feature_store_v2` fs
 JOIN `nba_precompute.player_daily_cache` c
   ON fs.player_lookup = c.player_lookup AND fs.game_date = c.cache_date
 WHERE fs.game_date BETWEEN '2024-10-01' AND '2025-06-30'
-  AND (ABS(fs.features[OFFSET(0)] - c.points_avg_last_5) >= 0.1
-       OR ABS(fs.features[OFFSET(1)] - c.points_avg_last_10) >= 0.1);
+  AND (ABS(fs.feature_0_value - c.points_avg_last_5) >= 0.1
+       OR ABS(fs.feature_1_value - c.points_avg_last_10) >= 0.1);
 
 -- =============================================================================
 -- STEP 4: APPLY PATCH VIA MERGE
@@ -97,8 +97,8 @@ USING (
   JOIN `nba_precompute.player_daily_cache` c
     ON fs.player_lookup = c.player_lookup AND fs.game_date = c.cache_date
   WHERE fs.game_date BETWEEN '2024-10-01' AND '2025-06-30'
-    AND (ABS(fs.features[OFFSET(0)] - c.points_avg_last_5) >= 0.1
-         OR ABS(fs.features[OFFSET(1)] - c.points_avg_last_10) >= 0.1)
+    AND (ABS(fs.feature_0_value - c.points_avg_last_5) >= 0.1
+         OR ABS(fs.feature_1_value - c.points_avg_last_10) >= 0.1)
 ) AS source
 ON target.player_lookup = source.player_lookup AND target.game_date = source.game_date
 WHEN MATCHED THEN
@@ -115,8 +115,8 @@ WITH comparison AS (
   SELECT
     fs.player_lookup,
     fs.game_date,
-    ABS(fs.features[OFFSET(0)] - c.points_avg_last_5) < 0.1 as l5_match,
-    ABS(fs.features[OFFSET(1)] - c.points_avg_last_10) < 0.1 as l10_match
+    ABS(fs.feature_0_value - c.points_avg_last_5) < 0.1 as l5_match,
+    ABS(fs.feature_1_value - c.points_avg_last_10) < 0.1 as l10_match
   FROM `nba_predictions.ml_feature_store_v2` fs
   JOIN `nba_precompute.player_daily_cache` c
     ON fs.player_lookup = c.player_lookup AND fs.game_date = c.cache_date
@@ -134,9 +134,9 @@ FROM comparison;
 SELECT
   fs.player_lookup,
   fs.game_date,
-  fs.features[OFFSET(0)] as l5_value,
+  fs.feature_0_value as l5_value,
   c.points_avg_last_5 as cache_l5,
-  fs.features[OFFSET(1)] as l10_value,
+  fs.feature_1_value as l10_value,
   c.points_avg_last_10 as cache_l10
 FROM `nba_predictions.ml_feature_store_v2` fs
 JOIN `nba_precompute.player_daily_cache` c

@@ -129,6 +129,8 @@ Complete catalog of all 40+ production scrapers organized by data type and sourc
 - **Use Case:** Player point projections for consensus signal
 - **SPOF Warning:** Single point of failure — no backup projection source
 
+> **⚠️ SPOF WARNING:** NumberFire is the only working projection source. FantasyPros (Playwright timeout), DailyFantasyFuel (DFS points only), and Dimers (generic non-date-specific projections) are all non-functional. If FanDuel changes the NumberFire GraphQL API, projection features will be unavailable.
+
 ### fantasypros_projections (FantasyPros) — DEAD
 - **Status:** ❌ DEAD — Playwright timeout, scraping DFS season totals not daily
 - **Use Case:** Was consensus projected points. Not producing usable data.

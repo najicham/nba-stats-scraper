@@ -275,7 +275,7 @@ class PlayerGameSummaryProcessor(
                 'max_age_hours_fail': 72,  # Increased from 36h - BDL has documented reliability issues (30-40% gaps)
                 'critical': False  # NBA.com gamebook is primary (100% reliable), BDL is fallback only
             },
-            
+
             # SOURCE 3: Big Ball Data (OPTIONAL - shot zones primary)
             'nba_raw.bigdataball_play_by_play': {
                 'field_prefix': 'source_bbd',
@@ -287,7 +287,7 @@ class PlayerGameSummaryProcessor(
                 'max_age_hours_fail': 24,
                 'critical': False  # Optional, has fallbacks
             },
-            
+
             # SOURCE 4: NBA.com Play-by-Play (BACKUP - shot zones unverified)
             'nba_raw.nbac_play_by_play': {
                 'field_prefix': 'source_nbac_pbp',
@@ -299,7 +299,7 @@ class PlayerGameSummaryProcessor(
                 'max_age_hours_fail': 24,
                 'critical': False  # Backup only
             },
-            
+
             # SOURCE 5: Odds API (OPTIONAL - prop lines primary)
             # Note: Props for past games are not updated, so use longer staleness threshold
             'nba_raw.odds_api_player_points_props': {
@@ -312,7 +312,7 @@ class PlayerGameSummaryProcessor(
                 'max_age_hours_fail': 168,  # 7 days - props aren't updated after games
                 'critical': False  # Optional, has backup
             },
-            
+
             # SOURCE 6: BettingPros (BACKUP - prop lines)
             # Note: Props for past games are not updated, so use longer staleness threshold
             'nba_raw.bettingpros_player_points_props': {
@@ -926,7 +926,7 @@ class PlayerGameSummaryProcessor(
                 AND player_status IN ('active', 'dnp', 'inactive')  -- Include DNP players
                 {player_filter_clause}
         ),
-        
+
         bdl_data AS (
             SELECT
                 game_id,
@@ -967,7 +967,7 @@ class PlayerGameSummaryProcessor(
                 -- Metadata
                 processed_at as source_processed_at,
                 'bdl_boxscores' as primary_source
-                
+
             FROM `{self.project_id}.nba_raw.bdl_player_boxscores`
             WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
                 {player_filter_clause}
@@ -1100,7 +1100,7 @@ class PlayerGameSummaryProcessor(
                 AND c.player_lookup = p.player_lookup
                 AND p.rn = 1
         ),
-        
+
         -- Add opponent context
         -- Expected game_id format: YYYYMMDD_AWAY_HOME (e.g., "20251229_ATL_OKC")
         -- See: shared/utils/game_id_converter.py for standard format
@@ -1215,7 +1215,7 @@ class PlayerGameSummaryProcessor(
         try:
             self.raw_data = self.bq_client.query(query, job_config=job_config).to_dataframe()
             logger.info(f"✅ Extracted {len(self.raw_data)} player-game records")
-            
+
             if not self.raw_data.empty:
                 source_counts = self.raw_data['primary_source'].value_counts()
                 logger.info(f"Source distribution: {dict(source_counts)}")
@@ -1247,7 +1247,7 @@ class PlayerGameSummaryProcessor(
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-                    
+
         except Exception as e:
             logger.error(f"BigQuery extraction failed: {e}")
             raise
@@ -1271,17 +1271,17 @@ class PlayerGameSummaryProcessor(
         # Handle case where base class returned early (data exists via alternate source)
         if self.raw_data is None or self.raw_data.empty:
             return
-        
+
         # Clean data types before validation
         self._clean_numeric_columns()
-        
+
         # Run validation suite
         self._validate_critical_fields()
         self._validate_player_data()
         self._validate_statistical_integrity()
-        
+
         logger.info("✅ Validation complete")
-    
+
     def _clean_numeric_columns(self) -> None:
         """Ensure numeric columns have consistent data types."""
         numeric_columns = [
@@ -1292,83 +1292,83 @@ class PlayerGameSummaryProcessor(
         ]
         # NOTE: 'minutes' is NOT included because it's in "MM:SS" format and must be
         # parsed by _parse_minutes_to_decimal() later, not coerced to numeric here
-        
+
         for col in numeric_columns:
             if col in self.raw_data.columns:
                 self.raw_data[col] = pd.to_numeric(self.raw_data[col], errors='coerce')
-        
+
         # Handle plus_minus separately (can have '+' prefix)
         if 'plus_minus' in self.raw_data.columns:
             self.raw_data['plus_minus'] = self.raw_data['plus_minus'].astype(str).str.replace('+', '')
             self.raw_data['plus_minus'] = pd.to_numeric(self.raw_data['plus_minus'], errors='coerce')
-    
+
     def _validate_critical_fields(self) -> None:
         """Check for missing critical fields."""
         critical_fields = ['game_id', 'player_lookup', 'points', 'team_abbr']
-        
+
         for field in critical_fields:
             # Use isna() and convert to int to handle pd.NA gracefully
             null_count = int(self.raw_data[field].isna().sum())
             if null_count > 0:
                 logger.warning(f"⚠️ {field}: {null_count} null values ({null_count/len(self.raw_data)*100:.1f}%)")
-    
+
     def _validate_player_data(self) -> None:
         """Validate player names and lookups."""
         # Check for duplicates
         duplicates = self.raw_data.groupby(['game_id', 'player_lookup']).size()
         duplicate_records = duplicates[duplicates > 1]
-        
+
         if not duplicate_records.empty:
             logger.warning(f"⚠️ Found {len(duplicate_records)} duplicate player-game records")
-    
+
     def _validate_statistical_integrity(self) -> None:
         """Check for statistical anomalies in shooting stats."""
-        
+
         # Check Field Goals
         if 'field_goals_made' in self.raw_data.columns:
             valid_fg = self.raw_data[
                 (self.raw_data['field_goals_made'].notna()) &
                 (self.raw_data['field_goals_attempted'].notna())
             ]
-            
+
             if not valid_fg.empty:
                 impossible = valid_fg[
                     valid_fg['field_goals_made'] > valid_fg['field_goals_attempted']
                 ]
-                
+
                 if not impossible.empty:
                     logger.warning(f"⚠️ Found {len(impossible)} records with FGM > FGA")
-        
+
         # Check Three-Pointers (NEW)
         if 'three_pointers_made' in self.raw_data.columns:
             valid_3pt = self.raw_data[
                 (self.raw_data['three_pointers_made'].notna()) &
                 (self.raw_data['three_pointers_attempted'].notna())
             ]
-            
+
             if not valid_3pt.empty:
                 impossible_3pt = valid_3pt[
                     valid_3pt['three_pointers_made'] > valid_3pt['three_pointers_attempted']
                 ]
-                
+
                 if not impossible_3pt.empty:
                     logger.warning(f"⚠️ Found {len(impossible_3pt)} records with 3PM > 3PA")
-        
+
         # Check Free Throws (NEW)
         if 'free_throws_made' in self.raw_data.columns:
             valid_ft = self.raw_data[
                 (self.raw_data['free_throws_made'].notna()) &
                 (self.raw_data['free_throws_attempted'].notna())
             ]
-            
+
             if not valid_ft.empty:
                 impossible_ft = valid_ft[
                     valid_ft['free_throws_made'] > valid_ft['free_throws_attempted']
                 ]
-                
+
                 if not impossible_ft.empty:
                     logger.warning(f"⚠️ Found {len(impossible_ft)} records with FTM > FTA")
-    
+
     def calculate_analytics(self) -> None:
         """
         Calculate analytics with full source tracking.
@@ -1409,7 +1409,7 @@ class PlayerGameSummaryProcessor(
             unique_players,
             season_year=season_year
         )
-        
+
         # =====================================================================
         # Process records - PARALLEL OR SERIAL based on environment variable
         # =====================================================================
@@ -1497,7 +1497,7 @@ class PlayerGameSummaryProcessor(
             # Catch any other unexpected exceptions
             logger.error(f"Unexpected error parsing minutes: {repr(minutes_str)}, error: {e}")
             return None
-    
+
     def _parse_plus_minus(self, plus_minus_val) -> Optional[int]:
         """Parse plus/minus value to integer (+7 → 7, -4.0 → -4)."""
         if pd.isna(plus_minus_val):
@@ -1508,7 +1508,7 @@ class PlayerGameSummaryProcessor(
         except (ValueError, TypeError) as e:
             logger.debug(f"Could not parse plus/minus: {plus_minus_val}: {e}")
             return None
-    
+
     def get_analytics_stats(self) -> Dict:
         """Return processing stats for monitoring including data quality metrics."""
         if not self.transformed_data:
@@ -1594,7 +1594,7 @@ class PlayerGameSummaryProcessor(
                 logger.info(f"Saved {len(failures)} registry failure records")
         except Exception as e:
             logger.warning(f"Failed to save registry failures: {e}")
-    
+
     def post_process(self) -> None:
         """Send success notification and run post-processing validations."""
         super().post_process()
@@ -1866,7 +1866,7 @@ class PlayerGameSummaryProcessor(
         except Exception as e:
             logger.warning(f"Failed to send player count gap alert: {e}")
             return False
-    
+
     def finalize(self) -> None:
         """Cleanup - flush unresolved players and save failures."""
         logger.info("Flushing unresolved players...")
@@ -2127,7 +2127,7 @@ class PlayerGameSummaryProcessor(
                 'ts_pct': round(ts_pct, 3) if ts_pct else None,
                 'efg_pct': round(efg_pct, 3) if efg_pct else None,
                 'starter_flag': bool(minutes_decimal and minutes_decimal > 20) if minutes_decimal else False,
-                'win_flag': False,
+                'win_flag': False,  # Known issue: win/loss not computed — always False. Use plus_minus > 0 as win proxy.
 
                 # Prop betting (using PropCalculator)
                 **PropCalculator.get_prop_fields(
@@ -2763,7 +2763,7 @@ class PlayerGameSummaryProcessor(
                     'ts_pct': round(ts_pct, 3) if ts_pct else None,
                     'efg_pct': round(efg_pct, 3) if efg_pct else None,
                     'starter_flag': bool(minutes_decimal and minutes_decimal > 20) if minutes_decimal else False,
-                    'win_flag': False,
+                    'win_flag': False,  # Known issue: win/loss not computed — always False. Use plus_minus > 0 as win proxy.
 
                     # Prop betting
                     'points_line': float(row['points_line']) if pd.notna(row['points_line']) else None,

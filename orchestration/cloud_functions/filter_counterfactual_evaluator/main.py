@@ -42,6 +42,7 @@ ELIGIBLE_FOR_AUTO_DEMOTE = {
     'under_after_bad_miss',
     'familiar_matchup',
     'model_direction_affinity',
+    'book_disagreement',    # 47.4% HR 7d as of 2026-03-29 — below breakeven; CF evaluator will auto-demote if trend continues
 }
 
 # Core safety filters — NEVER auto-demote
