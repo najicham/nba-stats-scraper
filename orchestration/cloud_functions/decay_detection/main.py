@@ -73,6 +73,11 @@ BB_HR_SHORT_MIN_N = 5           # Minimum picks in short window
 PICK_VOLUME_MIN_STD_DEVS = 2.0  # Alert when 2+ std devs from 14-day average
 PICK_VOLUME_LOOKBACK_DAYS = 14  # Days to compute average pick volume
 
+# Stale BLOCKED model retrain trigger
+MAX_BLOCKED_DAYS = 7  # Trigger retrain alert after model is BLOCKED for this many days
+RETRAIN_ON_BLOCKED = os.environ.get('RETRAIN_ON_BLOCKED', 'false').lower() == 'true'
+WEEKLY_RETRAIN_URL = os.environ.get('WEEKLY_RETRAIN_URL', '')
+
 
 def get_latest_performance(target_date: Optional[str] = None) -> List[Dict]:
     """Query model_performance_daily for the latest date with data."""
@@ -1011,6 +1016,118 @@ def auto_disable_blocked_models(models: List[Dict], best_bets_model: str,
     return disabled, payload
 
 
+def trigger_retrain_if_stale(
+    bq: bigquery.Client,
+    target_date: str,
+) -> List[str]:
+    """Alert (or trigger) retrain for BLOCKED models stale for MAX_BLOCKED_DAYS days.
+
+    When RETRAIN_ON_BLOCKED=false (default): logs warning and sends Slack alert.
+    When RETRAIN_ON_BLOCKED=true: additionally POSTs to WEEKLY_RETRAIN_URL to
+    trigger an immediate retrain for the blocked family.
+
+    Returns list of model IDs that triggered the alert/retrain.
+    """
+    query = f"""
+    SELECT
+        mpd.model_id,
+        mpd.consecutive_days_below_alert,
+        mpd.rolling_hr_7d,
+        mr.training_end_date
+    FROM `{PROJECT_ID}.nba_predictions.model_performance_daily` mpd
+    JOIN `{PROJECT_ID}.nba_predictions.model_registry` mr
+        ON mpd.model_id = mr.model_id
+    WHERE mpd.game_date = @target_date
+      AND mpd.state = 'BLOCKED'
+      AND mpd.consecutive_days_below_alert >= {MAX_BLOCKED_DAYS}
+      AND mr.enabled = TRUE
+    """
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[bigquery.ScalarQueryParameter('target_date', 'DATE', target_date)]
+    )
+    try:
+        rows = list(bq.query(query, job_config=job_config).result(timeout=60))
+    except Exception as e:
+        logger.error(f"trigger_retrain_if_stale: query failed: {e}")
+        return []
+
+    if not rows:
+        return []
+
+    triggered = []
+    for row in rows:
+        model_id = row.model_id
+        days_blocked = row.consecutive_days_below_alert
+        hr_7d = row.rolling_hr_7d
+
+        msg = (
+            f"Model `{model_id}` has been BLOCKED for {days_blocked} days "
+            f"(7d HR={hr_7d:.1f}%). "
+        )
+
+        if RETRAIN_ON_BLOCKED and WEEKLY_RETRAIN_URL:
+            # Trigger immediate retrain for this model
+            try:
+                import urllib.request
+                import json as _json
+                payload = _json.dumps({"model_id": model_id, "force": True}).encode()
+                req = urllib.request.Request(
+                    WEEKLY_RETRAIN_URL,
+                    data=payload,
+                    headers={"Content-Type": "application/json"},
+                    method="POST"
+                )
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    status_code = resp.status
+                msg += f"Auto-retrain triggered (HTTP {status_code})."
+                logger.info(f"Auto-retrain triggered for model '{model_id}': {msg}")
+            except Exception as e:
+                msg += f"Auto-retrain FAILED: {e}. Manual retrain required."
+                logger.error(f"Auto-retrain failed for '{model_id}': {e}")
+        else:
+            msg += (
+                "Set `RETRAIN_ON_BLOCKED=true` + `WEEKLY_RETRAIN_URL` env vars on "
+                "decay-detection CF to enable auto-retrain."
+            )
+            logger.warning(f"Stale BLOCKED model detected (retrain disabled): {msg}")
+
+        # Send Slack alert
+        slack_payload = {
+            'attachments': [{
+                'color': '#FF8C00',
+                'blocks': [
+                    {
+                        'type': 'header',
+                        'text': {
+                            'type': 'plain_text',
+                            'text': ':rotating_light: Stale BLOCKED Model Alert',
+                            'emoji': True,
+                        }
+                    },
+                    {
+                        'type': 'section',
+                        'text': {'type': 'mrkdwn', 'text': msg}
+                    },
+                    {
+                        'type': 'context',
+                        'elements': [{
+                            'type': 'mrkdwn',
+                            'text': (
+                                f"Date: {target_date} | "
+                                f"Run: {datetime.now(timezone.utc).strftime('%H:%M UTC')}"
+                            )
+                        }]
+                    }
+                ]
+            }]
+        }
+        send_slack_alert(slack_payload)
+
+        triggered.append(model_id)
+
+    return triggered
+
+
 def detect_front_loading(game_date) -> Tuple[List[Dict], Optional[Dict]]:
     """Detect models exhibiting front-loading pattern.
 
@@ -1425,6 +1542,16 @@ def decay_detection(request: Request):
         else:
             logger.info("Skipping auto-disable during cross-model crash")
 
+        # Check for models that have been BLOCKED for too long and alert/trigger retrain
+        stale_families = []
+        try:
+            bq = _get_bq_client()
+            stale_families = trigger_retrain_if_stale(bq, str(game_date))
+            if stale_families:
+                logger.info(f"Stale BLOCKED model check complete: {len(stale_families)} families alerted")
+        except Exception as e:
+            logger.error(f"trigger_retrain_if_stale failed (non-blocking): {e}")
+
         # Check aggregate best bets HR with transition logic (Sessions 389-390)
         bb_stats = get_aggregate_best_bets_hr(str(game_date))
         bb_alert_sent = False
@@ -1512,6 +1639,7 @@ def decay_detection(request: Request):
             'volume_alert_sent': volume_alert_sent,
             'auto_disabled_models': auto_disabled,
             'auto_disable_alert_sent': auto_disable_alert_sent,
+            'stale_blocked_models_alerted': stale_families,
             'timestamp': datetime.now(timezone.utc).isoformat()
         }), 200, {'Content-Type': 'application/json'}
 
