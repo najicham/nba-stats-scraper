@@ -127,7 +127,7 @@ def check_accuracy_health(client: bigquery.Client, days: int = 7) -> List[Dict]:
         MIN(accuracy_pct) as min_accuracy,
         MAX(accuracy_pct) as max_accuracy,
         COUNT(*) as days_tracked,
-        ROUND(AVG(avg_margin_of_error), 1) as avg_margin
+        ROUND(AVG(avg_absolute_error), 1) as avg_margin
     FROM `nba-props-platform.nba_predictions.prediction_accuracy_summary`
     WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)
     GROUP BY system_id
@@ -263,7 +263,7 @@ def get_daily_summary(client: bigquery.Client, game_date: str) -> Dict:
         total_predictions,
         correct_predictions,
         accuracy_pct,
-        avg_margin_of_error
+        avg_absolute_error as avg_margin_of_error
     FROM `nba-props-platform.nba_predictions.prediction_accuracy_summary`
     WHERE game_date = '{game_date}'
     ORDER BY accuracy_pct DESC

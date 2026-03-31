@@ -471,7 +471,7 @@ def predict_batch():
 
         game_date_str = data.get('game_date')
         pitcher_lookups = data.get('pitcher_lookups')
-        write_to_bigquery = data.get('write_to_bigquery', False)
+        write_to_bigquery = data.get('write_to_bigquery', True)
 
         if not game_date_str:
             return jsonify({'error': 'game_date is required'}), 400

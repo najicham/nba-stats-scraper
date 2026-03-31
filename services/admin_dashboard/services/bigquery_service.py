@@ -713,7 +713,7 @@ class BigQueryService:
             SUM(correct_predictions) as correct_predictions,
             SUM(incorrect_predictions) as incorrect_predictions,
             ROUND(100.0 * SUM(correct_predictions) / NULLIF(SUM(correct_predictions) + SUM(incorrect_predictions), 0), 1) as accuracy_pct,
-            ROUND(AVG(avg_margin_of_error), 1) as avg_margin_of_error,
+            ROUND(AVG(avg_absolute_error), 1) as avg_margin_of_error,
             ROUND(AVG(avg_confidence), 1) as avg_confidence,
             COUNT(DISTINCT game_date) as days_with_data
         FROM `{PROJECT_ID}.{self.datasets['predictions']}.prediction_accuracy_summary`
@@ -763,7 +763,7 @@ class BigQueryService:
             actual_accuracy_pct,
             avg_confidence,
             calibration_error,
-            avg_margin_of_error,
+            avg_absolute_error as avg_margin_of_error,
             first_prediction_date,
             last_prediction_date
         FROM `{PROJECT_ID}.{self.datasets['predictions']}.confidence_calibration`
@@ -956,7 +956,7 @@ class BigQueryService:
                         'total_correct': row.total_correct,
                         'total_incorrect': row.total_incorrect,
                         'avg_accuracy_pct': row.avg_accuracy_pct,
-                        'avg_margin_of_error': row.avg_margin_of_error,
+                        'avg_margin_of_error': row.avg_absolute_error,
                         'over_predictions': row.over_predictions,
                         'under_predictions': row.under_predictions,
                         'best_system': row.best_system,
@@ -972,7 +972,7 @@ class BigQueryService:
                         'total_correct': row.total_correct,
                         'total_incorrect': row.total_incorrect,
                         'avg_accuracy_pct': row.avg_accuracy_pct,
-                        'avg_margin_of_error': row.avg_margin_of_error,
+                        'avg_margin_of_error': row.avg_absolute_error,
                         'over_predictions': row.over_predictions,
                         'under_predictions': row.under_predictions,
                         'best_system': row.best_system,
