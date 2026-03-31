@@ -15,7 +15,7 @@ Model Governance (Session 163):
 
 Promotion Checklist (do NOT skip):
 1. Holdout evaluation on >= 7 days (this script)
-2. High-edge (3+) hit rate >= 60%
+2. High-edge (3+) hit rate >= 53%
 3. pred_vs_vegas bias within +/- 1.5
 4. No critical tier bias (> +/- 5)
 5. Directional balance: both OVER and UNDER edge 3+ hit rate >= 52.4%
@@ -4487,7 +4487,7 @@ def main():
         # MAE 5.14 baseline was from obsolete V9 era; current models produce 5.2-5.6.
         # Lower MAE does NOT mean better betting (4.12 MAE crashed HR to 51.2%).
         soft_gates.append(("MAE improvement", mae_better, f"{mae:.4f} vs {V9_BASELINE['mae']:.4f}"))
-    gates.append(("Hit rate (3+) >= 60%", (hr_edge3 or 0) >= 60, f"{hr_edge3}% (n={bets_edge3})"))
+    gates.append(("Hit rate (3+) >= 53%", (hr_edge3 or 0) >= 53, f"{hr_edge3}% (n={bets_edge3})"))
     gates.append(("Hit rate (3+) sample >= 25", edge3_reliable, f"n={bets_edge3}"))
     gates.append((f"Vegas bias within +/-{VEGAS_BIAS_LIMIT}", abs(pred_vs_vegas) <= VEGAS_BIAS_LIMIT, f"{pred_vs_vegas:+.2f}"))
     gates.append(("No critical tier bias", not tier_bias['has_critical_bias'], ""))

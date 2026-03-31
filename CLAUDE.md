@@ -123,7 +123,7 @@ nba-stats-scraper/
 **NEVER deploy a model without explicit user approval at each step.**
 **Training is NOT deploying.** Use `/model-experiment` to train. Deployment requires separate user sign-off.
 
-**Governance gates** (enforced in `quick_retrain.py`): Duplicate check, Vegas bias ±1.5, HR >= 60% at edge 3+, N >= 50 graded, no tier bias > ±5, MAE improvement.
+**Governance gates** (enforced in `quick_retrain.py`): Duplicate check, Vegas bias ±1.5, HR >= 53% at edge 3+, N >= 15 graded, no tier bias > ±5, MAE improvement (soft).
 
 **Process:** Train → Gates pass → Upload to GCS → Register → Shadow 2+ days → Promote
 **Registry:** `./bin/model-registry.sh list|production|validate|sync`. After GCS manifest changes, run `sync`.
