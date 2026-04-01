@@ -182,6 +182,23 @@ create_job \
     '{"scraper": "mlb_umpire_assignments", "date": "TODAY"}' \
     "Home plate umpire assignments for K predictions"
 
+# BettingPros MLB player props - pitcher strikeouts (default market)
+# Runs after mlb-events-morning (10:15 AM) so event IDs are available in GCS.
+# The scraper auto-fetches event IDs from BettingPros events if needed.
+create_job \
+    "mlb-bp-props-morning" \
+    "45 10 * * *" \
+    "$SCRAPERS_URL/scrape" \
+    '{"scraper": "bp_mlb_player_props", "date": "TODAY", "market_type": "pitcher_strikeouts"}' \
+    "BettingPros MLB pitcher strikeout props (morning)"
+
+create_job \
+    "mlb-bp-props-pregame" \
+    "45 12 * * *" \
+    "$SCRAPERS_URL/scrape" \
+    '{"scraper": "bp_mlb_player_props", "date": "TODAY", "market_type": "pitcher_strikeouts"}' \
+    "BettingPros MLB pitcher strikeout props (pregame refresh)"
+
 # Game lines - run totals (11 AM ET - morning odds)
 create_job \
     "mlb-game-lines-morning" \
@@ -233,13 +250,15 @@ echo "=============================================="
 echo "  Scheduler Setup Complete"
 echo "=============================================="
 echo ""
-echo "Jobs created (15 total):"
+echo "Jobs created (17 total):"
 echo "  mlb-schedule-daily        10:00 AM - Fetch schedule"
 echo "  mlb-events-morning        10:15 AM - Discover event IDs (before props)"
 echo "  mlb-props-morning         10:30 AM - Get K lines (auto-discovers events)"
+echo "  mlb-bp-props-morning      10:45 AM - BettingPros pitcher props (morning)"
 echo "  mlb-lineups-morning       11:00 AM - Get lineups"
 echo "  mlb-events-pregame        12:15 PM - Refresh event IDs (pregame)"
 echo "  mlb-props-pregame         12:30 PM - Refresh K lines (auto-discovers events)"
+echo "  mlb-bp-props-pregame      12:45 PM - BettingPros pitcher props (pregame)"
 echo "  mlb-lineups-pregame        1:00 PM - Refresh lineups"
 echo "  mlb-live-boxscores        Every 5 min (1-11 PM)"
 echo "  mlb-overnight-results      2:00 AM - Final scores (MLB Stats API)"

@@ -138,6 +138,14 @@ MLB_SCRAPER_REGISTRY: Dict[str, Tuple[str, str]] = {
         "scrapers.mlb.external.mlb_reddit_discussion",
         "MlbRedditDiscussionScraper"
     ),
+
+    # ========================================================================
+    # BettingPros Scrapers
+    # ========================================================================
+    "bp_mlb_player_props": (
+        "scrapers.bettingpros.bp_mlb_player_props",
+        "BettingProsMLBPlayerProps"
+    ),
 }
 
 

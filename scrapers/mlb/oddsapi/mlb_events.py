@@ -104,6 +104,15 @@ class MlbEventsOddsScraper(ScraperBase, ScraperFlaskMixin):
         eastern = pytz.timezone('America/New_York')
         game_date_str = self.opts["game_date"]
 
+        # Resolve TODAY/YESTERDAY literals (scheduler jobs pass these as strings)
+        if game_date_str.upper() == "TODAY":
+            game_date_str = datetime.now(eastern).strftime("%Y-%m-%d")
+            self.opts["game_date"] = game_date_str
+        elif game_date_str.upper() == "YESTERDAY":
+            from datetime import timedelta
+            game_date_str = (datetime.now(eastern) - timedelta(days=1)).strftime("%Y-%m-%d")
+            self.opts["game_date"] = game_date_str
+
         # Parse the game date
         game_date = datetime.strptime(game_date_str, "%Y-%m-%d").date()
 
