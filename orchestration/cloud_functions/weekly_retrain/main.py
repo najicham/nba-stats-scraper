@@ -238,7 +238,7 @@ def cap_to_last_loose_market_date(
     if hasattr(latest_tight, 'date'):
         latest_tight = latest_tight.date()
 
-    days_since_tight = (train_end - latest_tight).days
+    days_since_tight = (date.today() - latest_tight).days
     if days_since_tight >= recovery_days:
         logger.info(
             f"  Market recovered: {days_since_tight}d since last TIGHT day "
