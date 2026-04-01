@@ -225,7 +225,7 @@ def cap_to_last_loose_market_date(
     query = f"""
     SELECT game_date
     FROM `{PROJECT_ID}.nba_predictions.league_macro_daily`
-    WHERE game_date BETWEEN '{lookback_start.isoformat()}' AND '{train_end.isoformat()}'
+    WHERE game_date BETWEEN '{lookback_start.isoformat()}' AND '{date.today().isoformat()}'
       AND vegas_mae_7d < {tight_mae_threshold}
     ORDER BY game_date ASC
     """

@@ -256,7 +256,7 @@ WHERE game_date >= CURRENT_DATE() - 7 ORDER BY game_date DESC;
 | **signal_health_daily/model_performance_daily stale** | Fixed Session 474: `post_grading_export` now runs analytics even when `graded_count=0`. Manual backfill: `PYTHONPATH=. .venv/bin/python3 ml/signals/signal_health.py --date YYYY-MM-DD` |
 | **Observation-mode filter debt** | Filters added as "observation only" accumulate silently. Code writes, data computes, nothing blocks. Audit `aggregator.py` for `# Observation` comments. Session 483: 3 such filters stood between the system and March 8 (25% HR). Promotion threshold: N=30 BB-level picks. |
 | **TIGHT market auto-gates (Session 483)** | When `vegas_mae_7d < 4.5`, `regime_context.py` auto-raises OVER floor 5→6 and disables OVER rescue. `signal_decay_monitor.py` alerts `#nba-betting-signals` after 2+ consecutive TIGHT days. March 8 was MAE 4.40. |
-| **Retrain gate backwards (Session 483)** | FIXED Session 486: `cap_to_last_loose_market_date()` auto-caps `train_end` when recent TIGHT days (vegas_mae_7d < 4.5) are within 7 days. CF always runs; no manual scheduler pause needed. Override with `?train_end=YYYY-MM-DD` query param. |
+| **Retrain gate backwards (Session 483)** | FIXED Session 486: `cap_to_last_loose_market_date()` auto-caps `train_end` when recent TIGHT days (vegas_mae_7d < 4.5) are within 7 days. CF always runs; no manual scheduler pause needed. Override with `?train_end=YYYY-MM-DD` query param. Session 507: lookback query extended to `date.today()` (was `train_end`) to close 15-day eval-window blind spot. |
 | **MLB schedulers were April-only** | ALL MLB monitoring/validator schedules were `4-10` (April-October). Fixed to `3-10` (March-October) — MLB Opening Day is late March. If season start shifts, update `deployment/scheduler/mlb/validator-schedules.yaml`, `monitoring-schedules.yaml`, and `deployment/scripts/deploy-mlb-monitoring.sh`. |
 | **`quick_retrain.py` eval hardcoded to `catboost_v9`** | `load_eval_data_from_production()` has `system_id='catboost_v9'` hardcoded at line 569. When catboost_v9 is INSUFFICIENT_DATA, eval returns ~39 rows → "ERROR: Not enough data". **Workaround: always use `--no-production-lines`** for retrains until fixed. Uses DK lines from feature store, governance still valid. (Session 483) |
 | Cloud Function env vars | Use `gcloud functions describe FUNC`, not `gcloud run services describe`. CFs are NOT Cloud Run services. |
@@ -356,22 +356,22 @@ python bin/analysis/model_correlation.py         # Inter-model agreement
 
 **5-season cross-validated findings** using walk-forward predictions + BettingPros multi-book data. Simulator at `scripts/nba/training/bb_enriched_simulator.py`.
 
-**Validated signals to ADD (pre-game clean, 5-season consistent):**
-- `hot_3pt_under`: 3PT_last_3 - 3PT_season >= 10% → **62.5% HR** (N=670). Books anchor to season avg; hot streak is temporary.
-- `cold_3pt_over`: 3PT_last_3 - 3PT_season <= -15% → **60.2% HR** (N=123). Bounce-back from cold streak.
-- `line_drifted_down_under`: BettingPros line movement [-0.5, -0.1) → **59.8% HR** (N=336). Smart money nudging under.
+**Validated signals (ALL IMPLEMENTED as of Session 466/495):**
+- `hot_3pt_under`: active, weight 2.5, rescue priority 3
+- `cold_3pt_over`: active, weight 2.0
+- `line_drifted_down_under`: active, weight 2.0, rescue priority 2
 
-**Validated filters to ADD (block losing picks):**
-- `cold_fg_under`: Block UNDER when FG_last_3 - FG_season <= -10% → **38.5% HR** (N=457). Cold shooter bounces back.
-- `cold_3pt_under`: Block UNDER when 3PT_last_3 - 3PT_season <= -10% → **45.6% HR** (N=735). Same mechanism.
-- `over_line_rose_heavy`: Block OVER when BettingPros line rose >= 1.0 → **38.9% HR** (N=54). Fighting the market.
+**Validated filters (ALL IMPLEMENTED as of Session 462/469):**
+- `cold_fg_under`: active block (FG cold → blocks UNDER)
+- `cold_3pt_under`: active block (3PT cold → blocks UNDER)
+- `over_line_rose_heavy`: active block (line rose ≥1.0 → blocks OVER, promoted Session 469)
 
-**Filters to REMOVE (blocking winners, 5-season confirmed):**
-- `ft_variance_under`: 56.0% CF HR — remove
-- `b2b_under`: 54.0% CF HR — remove
-- `familiar_matchup`: 54.4% CF HR — remove
+**Removed filters (ALL REMOVED Session 494):**
+- `ft_variance_under`: removed (56.0% CF HR was blocking winners)
+- `b2b_under`: removed (54.0% CF HR)
+- `familiar_matchup`: removed (54.4% CF HR)
 
-**Harmful signals to REMOVE:** `starter_away_overtrend_under` (48.2%), `sharp_book_lean_over` (41.7%), `over_streak_reversion_under` (51.6%)
+**Harmful signals (ALL DEMOTED to SHADOW_SIGNALS — no longer contribute to real_sc):** `starter_away_overtrend_under` (48.2%, removed Session 462), `sharp_book_lean_over` (41.7%, removed Session 462), `over_streak_reversion_under` (51.6%, demoted)
 
 **WARNING:** bench_under 76.5% HR used post-game `starter_flag` (look-ahead bias). Pre-game proxy = 51.8%. Not actionable without reliable pre-game lineup data.
 

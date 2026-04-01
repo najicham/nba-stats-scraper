@@ -277,6 +277,7 @@ MLB_SCRAPER_REGISTRY: Dict[str, Tuple[str, str]] = {
     "mlb_weather": ("scrapers.mlb.external.mlb_weather", "MlbWeatherScraper"),
     "mlb_ballpark_factors": ("scrapers.mlb.external.mlb_ballpark_factors", "MlbBallparkFactorsScraper"),
     "mlb_umpire_stats": ("scrapers.mlb.external.mlb_umpire_stats", "MlbUmpireStatsScraper"),
+    "mlb_catcher_framing": ("scrapers.mlb.external.mlb_catcher_framing", "MlbCatcherFramingScraper"),
 
     # ========================================================================
     # Statcast Scrapers (2 total)

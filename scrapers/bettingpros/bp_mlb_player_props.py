@@ -200,8 +200,11 @@ class BettingProsMLBPlayerProps(BettingProsPlayerProps):
 
     def set_additional_opts(self) -> None:
         """Override to use MLB market mappings and MLB events fetcher."""
-        # Resolve TODAY -> actual date and other base opts before MLB-specific processing
-        super().set_additional_opts()
+        # Call grandparent (ScraperBase) directly — skips BettingProsPlayerProps which has
+        # NBA-specific event fetching (_fetch_event_ids_from_date queries nba_reference.nba_schedule)
+        # and NBA market validation (raises DownloadDataException for "pitcher_strikeouts").
+        # During NBA+MLB season overlap (Mar–Jun), calling super() would crash on every NBA game day.
+        super(BettingProsPlayerProps, self).set_additional_opts()
 
         # Set sport to MLB before any processing
         self.opts["sport"] = "MLB"
