@@ -200,6 +200,9 @@ class BettingProsMLBPlayerProps(BettingProsPlayerProps):
 
     def set_additional_opts(self) -> None:
         """Override to use MLB market mappings and MLB events fetcher."""
+        # Resolve TODAY -> actual date and other base opts before MLB-specific processing
+        super().set_additional_opts()
+
         # Set sport to MLB before any processing
         self.opts["sport"] = "MLB"
 

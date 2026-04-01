@@ -26,7 +26,7 @@ GRADING_URL="https://mlb-phase6-grading-f7p3g7f6ya-wl.a.run.app"
 
 # Check for --paused flag (default is enabled)
 PAUSE_AFTER=false
-if [[ "$1" == "--paused" ]]; then
+if [[ "${1:-}" == "--paused" ]]; then
     PAUSE_AFTER=true
     echo "Will PAUSE scheduler jobs after creation"
 else
