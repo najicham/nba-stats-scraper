@@ -90,7 +90,7 @@ SHADOW_SIGNALS = frozenset({
     'positive_clv_under',          # Insufficient BB data
     'hot_form_over',               # 0% BB HR (0-2) — catastrophic
     'scoring_momentum_over',       # 0% BB HR (0-2) — catastrophic
-    # usage_surge_over graduated Session 495: 68.8% HR (N=32) — meets graduation criteria (N>=30, HR>=60%)
+    'usage_surge_over',            # Reverted to shadow — re-evaluate with more data
     'career_matchup_over',         # 0% BB HR (0-1)
     'consistent_scorer_over',      # 71.4% HR (N=7) — promising but N too small
     'over_trend_over',             # Insufficient BB data
@@ -191,7 +191,7 @@ OVER_SIGNAL_WEIGHTS: Dict[str, float] = {
     'self_creation_over': 1.0,              # Active signal
     'sharp_line_move_over': 1.0,            # Active signal
     'combo_he_ms': 1.0,                     # 53.8% BB HR — low weight
-    'usage_surge_over': 2.0,               # Session 495: graduated from shadow. 68.8% HR (N=32) — meets graduation criteria (N>=30, HR>=60%)
+    # usage_surge_over reverted to SHADOW_SIGNALS — re-evaluate with more data
 }
 # OVER quality tiebreaker weight: how much signal quality affects ranking
 # relative to edge. Edge is still dominant (1.0x), quality is secondary.
