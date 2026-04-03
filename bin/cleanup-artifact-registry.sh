@@ -75,7 +75,7 @@ for REPO in "${REPOS[@]}"; do
         else
           echo "  Deleting: ${IMAGE}:${TAG}"
           gcloud artifacts docker images delete \
-            "${REGION}-docker.pkg.dev/${PROJECT}/${REPO}/${IMAGE}:${TAG}" \
+            "${IMAGE}:${TAG}" \
             --quiet 2>/dev/null && echo $(($(cat "$COUNTER_FILE") + 1)) > "$COUNTER_FILE" || true
         fi
       done
@@ -87,7 +87,7 @@ for REPO in "${REPOS[@]}"; do
         else
           echo "  Deleting digest: ${IMAGE}@${DIGEST}"
           gcloud artifacts docker images delete \
-            "${REGION}-docker.pkg.dev/${PROJECT}/${REPO}/${IMAGE}@${DIGEST}" \
+            "${IMAGE}@${DIGEST}" \
             --quiet 2>/dev/null && echo $(($(cat "$COUNTER_FILE") + 1)) > "$COUNTER_FILE" || true
         fi
       fi
