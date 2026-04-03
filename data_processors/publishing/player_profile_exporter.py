@@ -221,6 +221,7 @@ class PlayerProfileExporter(BaseExporter):
             FROM `nba-props-platform.nba_predictions.prediction_accuracy`
             WHERE system_id = @champion_model_id
               AND player_lookup = @player_lookup
+              AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 730 DAY)
             GROUP BY player_lookup
         )
         SELECT
@@ -282,6 +283,7 @@ class PlayerProfileExporter(BaseExporter):
         FROM `nba-props-platform.nba_predictions.prediction_accuracy`
         WHERE system_id = @champion_model_id
           AND player_lookup = @player_lookup
+          AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 730 DAY)
         GROUP BY recommendation
         """
         params = [
@@ -547,6 +549,7 @@ class PlayerProfileExporter(BaseExporter):
         FROM `nba-props-platform.nba_predictions.prediction_accuracy`
         WHERE player_lookup = @player_lookup
           AND system_id = @champion_model_id
+          AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 730 DAY)
         """
         params = [
             bigquery.ScalarQueryParameter('player_lookup', 'STRING', player_lookup),

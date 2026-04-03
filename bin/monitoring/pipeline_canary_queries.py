@@ -1537,9 +1537,37 @@ def _is_break_window(client) -> bool:
     return True
 
 
+CRITICAL_CHECKS = frozenset({
+    "phase3_gap_detection",
+    "phase5_predictions",
+    "phase5_prediction_gap",
+    "phase5_shadow_coverage",
+    "phase6_publishing",
+    "phase3_partial_coverage",
+    "bb_pick_drought",
+    "bb_filter_audit",
+    "registry_blocked_enabled",
+    "bb_candidates_today",
+    "grading_freshness",
+    "edge_collapse_alert",
+})
+
+
 def main():
     """Main entry point."""
-    logger.info("Starting pipeline canary queries")
+    CANARY_TIER = os.environ.get("CANARY_TIER", "all")
+    logger.info(f"Starting pipeline canary queries (CANARY_TIER={CANARY_TIER})")
+
+    def _should_run(phase: str) -> bool:
+        """Return True if this phase should run for the current tier."""
+        if CANARY_TIER == "all":
+            return True
+        if CANARY_TIER == "critical":
+            return phase in CRITICAL_CHECKS
+        if CANARY_TIER == "routine":
+            return phase not in CRITICAL_CHECKS
+        # Unknown tier — run everything to be safe
+        return True
 
     client = bigquery.Client(project=PROJECT_ID)
 
@@ -1551,6 +1579,10 @@ def main():
 
     results = []
     for check in CANARY_CHECKS:
+        if not _should_run(check.phase):
+            logger.info(f"{check.name}: ⏭️  SKIPPED (tier={CANARY_TIER})")
+            continue
+
         if is_break and check.phase in BREAK_DAY_SKIP_PHASES:
             logger.info(f"{check.name}: ⏭️  SKIPPED (break day — no recent regular-season games)")
             results.append((check, True, {'skipped': True, 'reason': 'break_day'}, None))
@@ -1567,52 +1599,55 @@ def main():
         results.append((check, passed, metrics, error))
 
     # Session 242: Check Cloud Scheduler job health
-    scheduler_check = CanaryCheck(
-        name="Scheduler Health",
-        phase="scheduler_health",
-        query="",  # Not a BQ query — uses Cloud Scheduler API
-        thresholds={'failing_jobs': {'max': 3}},
-        description="Detects Cloud Scheduler job failures (regression from Session 219 baseline of 0)"
-    )
-    sched_passed, sched_metrics, sched_error = check_scheduler_health()
-    sched_status = "✅ PASS" if sched_passed else "❌ FAIL"
-    logger.info(f"Scheduler Health: {sched_status}")
-    if not sched_passed:
-        logger.warning(f"  Error: {sched_error}")
-    results.append((scheduler_check, sched_passed, sched_metrics, sched_error))
+    if _should_run("scheduler_health"):
+        scheduler_check = CanaryCheck(
+            name="Scheduler Health",
+            phase="scheduler_health",
+            query="",  # Not a BQ query — uses Cloud Scheduler API
+            thresholds={'failing_jobs': {'max': 3}},
+            description="Detects Cloud Scheduler job failures (regression from Session 219 baseline of 0)"
+        )
+        sched_passed, sched_metrics, sched_error = check_scheduler_health()
+        sched_status = "✅ PASS" if sched_passed else "❌ FAIL"
+        logger.info(f"Scheduler Health: {sched_status}")
+        if not sched_passed:
+            logger.warning(f"  Error: {sched_error}")
+        results.append((scheduler_check, sched_passed, sched_metrics, sched_error))
 
     # Session 474: Check best-bets pick drought (zero picks on game days)
     if not is_break:
-        drought_check = CanaryCheck(
-            name="Best Bets Pick Drought",
-            phase="bb_pick_drought",
-            query="",
-            thresholds={},
-            description="Alerts when 0 best-bet picks published for 2+ consecutive game days"
-        )
-        drought_passed, drought_metrics, drought_error = check_pick_drought(client)
-        drought_status = "✅ PASS" if drought_passed else "❌ FAIL"
-        logger.info(f"Best Bets Pick Drought: {drought_status}")
-        if not drought_passed:
-            logger.warning(f"  Error: {drought_error}")
-        results.append((drought_check, drought_passed, drought_metrics, drought_error))
+        if _should_run("bb_pick_drought"):
+            drought_check = CanaryCheck(
+                name="Best Bets Pick Drought",
+                phase="bb_pick_drought",
+                query="",
+                thresholds={},
+                description="Alerts when 0 best-bet picks published for 2+ consecutive game days"
+            )
+            drought_passed, drought_metrics, drought_error = check_pick_drought(client)
+            drought_status = "✅ PASS" if drought_passed else "❌ FAIL"
+            logger.info(f"Best Bets Pick Drought: {drought_status}")
+            if not drought_passed:
+                logger.warning(f"  Error: {drought_error}")
+            results.append((drought_check, drought_passed, drought_metrics, drought_error))
 
-        filter_check = CanaryCheck(
-            name="BB Filter Audit",
-            phase="bb_filter_audit",
-            query="",
-            thresholds={},
-            description="Alerts when candidates enter BB pipeline but 0 pass filters for 2+ game days"
-        )
-        filter_passed, filter_metrics, filter_error = check_filter_audit_jammed(client)
-        filter_status = "✅ PASS" if filter_passed else "❌ FAIL"
-        logger.info(f"BB Filter Audit: {filter_status}")
-        if not filter_passed:
-            logger.warning(f"  Error: {filter_error}")
-        results.append((filter_check, filter_passed, filter_metrics, filter_error))
+        if _should_run("bb_filter_audit"):
+            filter_check = CanaryCheck(
+                name="BB Filter Audit",
+                phase="bb_filter_audit",
+                query="",
+                thresholds={},
+                description="Alerts when candidates enter BB pipeline but 0 pass filters for 2+ game days"
+            )
+            filter_passed, filter_metrics, filter_error = check_filter_audit_jammed(client)
+            filter_status = "✅ PASS" if filter_passed else "❌ FAIL"
+            logger.info(f"BB Filter Audit: {filter_status}")
+            if not filter_passed:
+                logger.warning(f"  Error: {filter_error}")
+            results.append((filter_check, filter_passed, filter_metrics, filter_error))
 
     # Session 302: Check live-grading content quality (hybrid GCS+BQ)
-    if not is_break:
+    if not is_break and _should_run("live_grading_content"):
         grading_check = CanaryCheck(
             name="Live-Grading Content Quality",
             phase="live_grading_content",
@@ -1629,7 +1664,7 @@ def main():
             if not grading_passed:
                 logger.warning(f"  Error: {grading_error}")
         results.append((grading_check, grading_passed, grading_metrics, grading_error))
-    else:
+    elif is_break:
         logger.info("Break day — skipping live-grading content check")
 
     # Session 210: Auto-heal shadow model gaps (Session 299: skip on break days)
@@ -1659,35 +1694,37 @@ def main():
 
     # Session 477: Registry integrity checks — fire regardless of break day
     # (registry state is always relevant, not just on game days)
-    registry_check = CanaryCheck(
-        name="Registry Blocked Models",
-        phase="registry_blocked_enabled",
-        query="",
-        thresholds={},
-        description="Detects enabled models with status=blocked — invisible to BB pipeline (Session 477)"
-    )
-    registry_passed, registry_metrics, registry_error = check_registry_blocked_enabled(client)
-    registry_status = "✅ PASS" if registry_passed else "❌ FAIL"
-    logger.info(f"Registry Blocked Models: {registry_status}")
-    if not registry_passed:
-        logger.warning(f"  Error: {registry_error}")
-    results.append((registry_check, registry_passed, registry_metrics, registry_error))
+    if _should_run("registry_blocked_enabled"):
+        registry_check = CanaryCheck(
+            name="Registry Blocked Models",
+            phase="registry_blocked_enabled",
+            query="",
+            thresholds={},
+            description="Detects enabled models with status=blocked — invisible to BB pipeline (Session 477)"
+        )
+        registry_passed, registry_metrics, registry_error = check_registry_blocked_enabled(client)
+        registry_status = "✅ PASS" if registry_passed else "❌ FAIL"
+        logger.info(f"Registry Blocked Models: {registry_status}")
+        if not registry_passed:
+            logger.warning(f"  Error: {registry_error}")
+        results.append((registry_check, registry_passed, registry_metrics, registry_error))
 
-    recovery_check = CanaryCheck(
-        name="Model Recovery Gap",
-        phase="model_recovery_gap",
-        query="",
-        thresholds={},
-        description="Detects HEALTHY models still blocked in registry — safe to unblock (Session 477)"
-    )
-    recovery_passed, recovery_metrics, recovery_error = check_model_recovery_gap(client)
-    recovery_status = "✅ PASS" if recovery_passed else "❌ FAIL"
-    logger.info(f"Model Recovery Gap: {recovery_status}")
-    if not recovery_passed:
-        logger.warning(f"  Error: {recovery_error}")
-    results.append((recovery_check, recovery_passed, recovery_metrics, recovery_error))
+    if _should_run("model_recovery_gap"):
+        recovery_check = CanaryCheck(
+            name="Model Recovery Gap",
+            phase="model_recovery_gap",
+            query="",
+            thresholds={},
+            description="Detects HEALTHY models still blocked in registry — safe to unblock (Session 477)"
+        )
+        recovery_passed, recovery_metrics, recovery_error = check_model_recovery_gap(client)
+        recovery_status = "✅ PASS" if recovery_passed else "❌ FAIL"
+        logger.info(f"Model Recovery Gap: {recovery_status}")
+        if not recovery_passed:
+            logger.warning(f"  Error: {recovery_error}")
+        results.append((recovery_check, recovery_passed, recovery_metrics, recovery_error))
 
-    if not is_break:
+    if not is_break and _should_run("bb_candidates_today"):
         bb_pipeline_check = CanaryCheck(
             name="BB Pipeline Today",
             phase="bb_candidates_today",
@@ -1704,25 +1741,26 @@ def main():
 
     # Session 478: Grading freshness — runs every 30 min, catches any grading outage
     # regardless of cause. Highest-ROI canary added this session.
-    grading_freshness_check = CanaryCheck(
-        name="Grading Freshness",
-        phase="grading_freshness",
-        query="",
-        thresholds={},
-        description="Session 478: Alerts when prediction_accuracy has 0 graded records for 2+ recent game days — catches any grading outage within one canary cycle"
-    )
-    gf_passed, gf_metrics, gf_error = check_grading_freshness(client)
-    gf_status = "✅ PASS" if gf_passed else "❌ FAIL"
-    if gf_metrics.get('skipped'):
-        logger.info(f"Grading Freshness: ⏭️  SKIPPED ({gf_metrics.get('reason')})")
-    else:
-        logger.info(f"Grading Freshness: {gf_status}")
-        if not gf_passed:
-            logger.warning(f"  Error: {gf_error}")
-    results.append((grading_freshness_check, gf_passed, gf_metrics, gf_error))
+    if _should_run("grading_freshness"):
+        grading_freshness_check = CanaryCheck(
+            name="Grading Freshness",
+            phase="grading_freshness",
+            query="",
+            thresholds={},
+            description="Session 478: Alerts when prediction_accuracy has 0 graded records for 2+ recent game days — catches any grading outage within one canary cycle"
+        )
+        gf_passed, gf_metrics, gf_error = check_grading_freshness(client)
+        gf_status = "✅ PASS" if gf_passed else "❌ FAIL"
+        if gf_metrics.get('skipped'):
+            logger.info(f"Grading Freshness: ⏭️  SKIPPED ({gf_metrics.get('reason')})")
+        else:
+            logger.info(f"Grading Freshness: {gf_status}")
+            if not gf_passed:
+                logger.warning(f"  Error: {gf_error}")
+        results.append((grading_freshness_check, gf_passed, gf_metrics, gf_error))
 
     # Session 477 Error 004: Edge collapse alert (game-day only — needs today's predictions)
-    if not is_break:
+    if not is_break and _should_run("edge_collapse_alert"):
         edge_collapse_check = CanaryCheck(
             name="Edge Collapse Alert",
             phase="edge_collapse_alert",
@@ -1741,7 +1779,7 @@ def main():
         results.append((edge_collapse_check, edge_passed, edge_metrics, edge_error))
 
     # Session 477 Error 005: New model with no predictions (game-day only)
-    if not is_break:
+    if not is_break and _should_run("new_model_no_predictions"):
         new_model_check = CanaryCheck(
             name="New Model No Predictions",
             phase="new_model_no_predictions",
@@ -1787,62 +1825,65 @@ def main():
         logger.info("Break day — skipping Phase 3 partial coverage auto-heal")
 
     # Session 493: Check all.json published picks for duplicate (player_lookup, game_date) pairs
-    all_json_dup_check = CanaryCheck(
-        name="all.json Duplicate Picks",
-        phase="all_json_duplicate_picks",
-        query="",  # Not a BQ query — uses GCS
-        thresholds={},
-        description="Alerts when all.json contains duplicate picks for the same (player_lookup, game_date) — zero tolerance (Session 493)"
-    )
-    all_json_passed, all_json_metrics, all_json_error = check_all_json_duplicate_picks()
-    all_json_status = "✅ PASS" if all_json_passed else "❌ FAIL"
-    if all_json_metrics.get('skipped'):
-        logger.info(f"all.json Duplicate Picks: ⏭️  SKIPPED ({all_json_metrics.get('reason')})")
-    else:
-        logger.info(f"all.json Duplicate Picks: {all_json_status} (duplicate_pairs={all_json_metrics.get('duplicate_pair_count', '?')})")
-        if not all_json_passed:
-            logger.warning(f"  Error: {all_json_error}")
-    results.append((all_json_dup_check, all_json_passed, all_json_metrics, all_json_error))
+    if _should_run("all_json_duplicate_picks"):
+        all_json_dup_check = CanaryCheck(
+            name="all.json Duplicate Picks",
+            phase="all_json_duplicate_picks",
+            query="",  # Not a BQ query — uses GCS
+            thresholds={},
+            description="Alerts when all.json contains duplicate picks for the same (player_lookup, game_date) — zero tolerance (Session 493)"
+        )
+        all_json_passed, all_json_metrics, all_json_error = check_all_json_duplicate_picks()
+        all_json_status = "✅ PASS" if all_json_passed else "❌ FAIL"
+        if all_json_metrics.get('skipped'):
+            logger.info(f"all.json Duplicate Picks: ⏭️  SKIPPED ({all_json_metrics.get('reason')})")
+        else:
+            logger.info(f"all.json Duplicate Picks: {all_json_status} (duplicate_pairs={all_json_metrics.get('duplicate_pair_count', '?')})")
+            if not all_json_passed:
+                logger.warning(f"  Error: {all_json_error}")
+        results.append((all_json_dup_check, all_json_passed, all_json_metrics, all_json_error))
 
     # Session 487: Fleet diversity check — all enabled models same family kills combo signals
-    fleet_diversity_check = CanaryCheck(
-        name="Fleet Diversity",
-        phase="fleet_diversity",
-        query="",
-        thresholds={},
-        description="Alerts when all enabled models are the same ML family (e.g. all LGBM) — kills combo_3way and book_disagreement signals (Session 487)"
-    )
-    fleet_passed, fleet_metrics, fleet_error = check_fleet_diversity(client)
-    fleet_status = "✅ PASS" if fleet_passed else "❌ FAIL"
-    logger.info(f"Fleet Diversity: {fleet_status} (families={fleet_metrics.get('distinct_families', '?')}, non_lgbm={fleet_metrics.get('non_lgbm_count', '?')})")
-    if not fleet_passed:
-        logger.warning(f"  Error: {fleet_error}")
-    results.append((fleet_diversity_check, fleet_passed, fleet_metrics, fleet_error))
+    if _should_run("fleet_diversity"):
+        fleet_diversity_check = CanaryCheck(
+            name="Fleet Diversity",
+            phase="fleet_diversity",
+            query="",
+            thresholds={},
+            description="Alerts when all enabled models are the same ML family (e.g. all LGBM) — kills combo_3way and book_disagreement signals (Session 487)"
+        )
+        fleet_passed, fleet_metrics, fleet_error = check_fleet_diversity(client)
+        fleet_status = "✅ PASS" if fleet_passed else "❌ FAIL"
+        logger.info(f"Fleet Diversity: {fleet_status} (families={fleet_metrics.get('distinct_families', '?')}, non_lgbm={fleet_metrics.get('non_lgbm_count', '?')})")
+        if not fleet_passed:
+            logger.warning(f"  Error: {fleet_error}")
+        results.append((fleet_diversity_check, fleet_passed, fleet_metrics, fleet_error))
 
     # Session 493: Check prediction_accuracy for duplicate (player, game_date, system_id) groups
-    pa_dup_check = CanaryCheck(
-        name="prediction_accuracy Duplicate Groups",
-        phase="pa_duplicate_groups",
-        query=f"""
-            SELECT COUNT(*) AS duplicate_group_count
-            FROM (
-              SELECT player_lookup, game_date, system_id
-              FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy`
-              WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
-                AND recommendation IN ('OVER', 'UNDER')
-              GROUP BY player_lookup, game_date, system_id
-              HAVING COUNT(*) > 1
-            )
-        """,
-        thresholds={"duplicate_group_count": {"max": 50}},
-        description="Alerts when prediction_accuracy has >50 duplicate (player,date,model) groups in last 7 days — indicates grading processor dedup regression (Session 493)"
-    )
-    pa_dup_passed, pa_dup_metrics, pa_dup_error = run_canary_query(client, pa_dup_check)
-    pa_dup_status = "✅ PASS" if pa_dup_passed else "❌ FAIL"
-    logger.info(f"prediction_accuracy Duplicates: {pa_dup_status} (count={pa_dup_metrics.get('duplicate_group_count', '?')})")
-    if not pa_dup_passed:
-        logger.warning(f"  Error: {pa_dup_error}")
-    results.append((pa_dup_check, pa_dup_passed, pa_dup_metrics, pa_dup_error))
+    if _should_run("pa_duplicate_groups"):
+        pa_dup_check = CanaryCheck(
+            name="prediction_accuracy Duplicate Groups",
+            phase="pa_duplicate_groups",
+            query=f"""
+                SELECT COUNT(*) AS duplicate_group_count
+                FROM (
+                  SELECT player_lookup, game_date, system_id
+                  FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy`
+                  WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+                    AND recommendation IN ('OVER', 'UNDER')
+                  GROUP BY player_lookup, game_date, system_id
+                  HAVING COUNT(*) > 1
+                )
+            """,
+            thresholds={"duplicate_group_count": {"max": 50}},
+            description="Alerts when prediction_accuracy has >50 duplicate (player,date,model) groups in last 7 days — indicates grading processor dedup regression (Session 493)"
+        )
+        pa_dup_passed, pa_dup_metrics, pa_dup_error = run_canary_query(client, pa_dup_check)
+        pa_dup_status = "✅ PASS" if pa_dup_passed else "❌ FAIL"
+        logger.info(f"prediction_accuracy Duplicates: {pa_dup_status} (count={pa_dup_metrics.get('duplicate_group_count', '?')})")
+        if not pa_dup_passed:
+            logger.warning(f"  Error: {pa_dup_error}")
+        results.append((pa_dup_check, pa_dup_passed, pa_dup_metrics, pa_dup_error))
 
     # Check if any failures
     failures = [r for r in results if not r[1]]
