@@ -23,7 +23,8 @@ else
   echo "=== DRY RUN MODE: showing what would be deleted (pass --execute to delete) ==="
 fi
 
-TOTAL_DELETED=0
+COUNTER_FILE=$(mktemp)
+echo 0 > "$COUNTER_FILE"
 
 for REPO in "${REPOS[@]}"; do
   REGISTRY="${REGION}-docker.pkg.dev/${PROJECT}/${REPO}"
@@ -75,7 +76,7 @@ for REPO in "${REPOS[@]}"; do
           echo "  Deleting: ${IMAGE}:${TAG}"
           gcloud artifacts docker images delete \
             "${REGION}-docker.pkg.dev/${PROJECT}/${REPO}/${IMAGE}:${TAG}" \
-            --quiet 2>/dev/null && TOTAL_DELETED=$((TOTAL_DELETED + 1)) || true
+            --quiet 2>/dev/null && echo $(($(cat "$COUNTER_FILE") + 1)) > "$COUNTER_FILE" || true
         fi
       done
 
@@ -87,12 +88,15 @@ for REPO in "${REPOS[@]}"; do
           echo "  Deleting digest: ${IMAGE}@${DIGEST}"
           gcloud artifacts docker images delete \
             "${REGION}-docker.pkg.dev/${PROJECT}/${REPO}/${IMAGE}@${DIGEST}" \
-            --quiet 2>/dev/null && TOTAL_DELETED=$((TOTAL_DELETED + 1)) || true
+            --quiet 2>/dev/null && echo $(($(cat "$COUNTER_FILE") + 1)) > "$COUNTER_FILE" || true
         fi
       fi
     done <<< "$TO_DELETE"
   done <<< "$IMAGES"
 done
+
+TOTAL_DELETED=$(cat "$COUNTER_FILE")
+rm -f "$COUNTER_FILE"
 
 echo ""
 if $DRY_RUN; then
