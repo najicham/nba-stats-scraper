@@ -42,31 +42,53 @@ for REPO in "${REPOS[@]}"; do
   fi
 
   while IFS= read -r IMAGE; do
-    # Get all tags for this image, sorted by creation time (newest first)
-    TAGS=$(gcloud artifacts docker images list "${REGISTRY}" \
+    # Get all digests for this image with their tags, sorted newest first
+    # Format: DIGEST<tab>TAGS<tab>CREATE_TIME
+    ROWS=$(gcloud artifacts docker images list "${REGISTRY}" \
       --include-tags \
       --filter="IMAGE=${IMAGE}" \
-      --format="value(TAGS,CREATE_TIME)" \
+      --format="value(version,TAGS,CREATE_TIME)" \
       --sort-by="~CREATE_TIME" 2>/dev/null | head -50)
 
-    TAG_COUNT=$(echo "$TAGS" | grep -c . || true)
+    ROW_COUNT=$(echo "$ROWS" | grep -c . || true)
 
-    if [[ "$TAG_COUNT" -le "$KEEP" ]]; then
+    if [[ "$ROW_COUNT" -le "$KEEP" ]]; then
       continue
     fi
 
-    # Tags to delete = everything beyond KEEP newest
-    TO_DELETE=$(echo "$TAGS" | tail -n "+$((KEEP + 1))" | awk '{print $1}')
+    # Rows to delete = everything beyond KEEP newest
+    TO_DELETE=$(echo "$ROWS" | tail -n "+$((KEEP + 1))")
 
-    while IFS= read -r TAG; do
-      [[ -z "$TAG" ]] && continue
-      if $DRY_RUN; then
-        echo "  [DRY-RUN] Would delete: ${IMAGE}:${TAG}"
-      else
-        echo "  Deleting: ${IMAGE}:${TAG}"
-        gcloud artifacts docker images delete \
-          "${REGION}-docker.pkg.dev/${PROJECT}/${REPO}/${IMAGE}:${TAG}" \
-          --delete-tags --quiet 2>/dev/null && TOTAL_DELETED=$((TOTAL_DELETED + 1)) || true
+    while IFS=$'\t' read -r DIGEST TAGS _REST; do
+      [[ -z "$DIGEST" ]] && continue
+
+      # Expand comma-separated tags and delete each individually, skipping 'latest'
+      IFS=',' read -ra TAG_LIST <<< "$TAGS"
+      for TAG in "${TAG_LIST[@]}"; do
+        TAG=$(echo "$TAG" | tr -d ' ')
+        [[ -z "$TAG" ]] && continue
+        [[ "$TAG" == "latest" ]] && continue  # Never delete :latest
+
+        if $DRY_RUN; then
+          echo "  [DRY-RUN] Would delete: ${IMAGE}:${TAG}"
+        else
+          echo "  Deleting: ${IMAGE}:${TAG}"
+          gcloud artifacts docker images delete \
+            "${REGION}-docker.pkg.dev/${PROJECT}/${REPO}/${IMAGE}:${TAG}" \
+            --quiet 2>/dev/null && TOTAL_DELETED=$((TOTAL_DELETED + 1)) || true
+        fi
+      done
+
+      # If no named tags (untagged digest), delete by digest
+      if [[ -z "$TAGS" ]]; then
+        if $DRY_RUN; then
+          echo "  [DRY-RUN] Would delete digest: ${IMAGE}@${DIGEST}"
+        else
+          echo "  Deleting digest: ${IMAGE}@${DIGEST}"
+          gcloud artifacts docker images delete \
+            "${REGION}-docker.pkg.dev/${PROJECT}/${REPO}/${IMAGE}@${DIGEST}" \
+            --quiet 2>/dev/null && TOTAL_DELETED=$((TOTAL_DELETED + 1)) || true
+        fi
       fi
     done <<< "$TO_DELETE"
   done <<< "$IMAGES"
