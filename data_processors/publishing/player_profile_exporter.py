@@ -180,6 +180,7 @@ class PlayerProfileExporter(BaseExporter):
                 ROUND(SAFE_DIVIDE(COUNTIF(within_5_points), COUNT(*)), 3) as within_5_pct
             FROM `nba-props-platform.nba_predictions.prediction_accuracy`
             WHERE system_id = @champion_model_id
+              AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 730 DAY)
             GROUP BY player_lookup
             HAVING games_predicted >= 3
         )
@@ -258,6 +259,7 @@ class PlayerProfileExporter(BaseExporter):
         FROM `nba-props-platform.nba_predictions.prediction_accuracy`
         WHERE system_id = @champion_model_id
           AND player_lookup = @player_lookup
+          AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 730 DAY)
         ORDER BY game_date DESC
         LIMIT @limit
         """

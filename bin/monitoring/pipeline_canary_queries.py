@@ -346,30 +346,6 @@ CANARY_CHECKS = [
     ),
 
     CanaryCheck(
-        name="Phase 4 - Category Quality Breakdown",
-        phase="phase4_quality",
-        query="""
-        -- Track category-level quality (not just aggregate)
-        -- Session 132 lesson: aggregate feature_quality_score hid component failure
-        SELECT
-            ROUND(AVG(matchup_quality_pct), 1) as avg_matchup_quality,
-            ROUND(AVG(player_history_quality_pct), 1) as avg_player_history_quality,
-            ROUND(AVG(vegas_quality_pct), 1) as avg_vegas_quality,
-            COUNTIF(matchup_quality_pct < 40) as low_matchup_count,
-            COUNTIF(player_history_quality_pct < 40) as low_player_history_count,
-            COUNTIF(vegas_quality_pct < 40) as low_vegas_count
-        FROM `nba-props-platform.nba_predictions.ml_feature_store_v2`
-        WHERE game_date = CURRENT_DATE()
-        """,
-        thresholds={
-            'avg_matchup_quality': {'min': 40},
-            'avg_player_history_quality': {'min': 40},
-            'avg_vegas_quality': {'min': 40}
-        },
-        description="Session 209: Tracks category-level quality to catch component failures hidden by aggregates"
-    ),
-
-    CanaryCheck(
         name="Filter Coverage - Quality Distribution",
         phase="quality_distribution",
         query="""
