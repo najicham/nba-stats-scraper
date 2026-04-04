@@ -339,6 +339,7 @@ class PlayerProfileExporter(BaseExporter):
             g.dnp_reason
         FROM `nba-props-platform.nba_analytics.player_game_summary` g
         WHERE g.player_lookup = @player_lookup
+          AND g.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 730 DAY)
         ORDER BY g.game_date DESC
         LIMIT @limit
         """
@@ -402,6 +403,7 @@ class PlayerProfileExporter(BaseExporter):
             FROM `nba-props-platform.nba_analytics.player_game_summary` g
             WHERE g.player_lookup = @player_lookup
               AND g.season_year >= 2021
+              AND g.game_date >= '2021-10-01'
         ),
         games_with_rest AS (
             SELECT
@@ -499,6 +501,7 @@ class PlayerProfileExporter(BaseExporter):
         FROM `nba-props-platform.nba_analytics.player_game_summary`
         WHERE player_lookup = @player_lookup
           AND season_year >= 2021
+          AND game_date >= '2021-10-01'
         GROUP BY opponent_team_abbr
         HAVING games >= 2
         ORDER BY games DESC, avg DESC

@@ -205,6 +205,7 @@ class BestBetsExporter(BaseExporter):
                     ROUND(AVG(CASE WHEN prediction_correct THEN 1.0 ELSE 0.0 END), 3) as historical_accuracy
                 FROM `nba-props-platform.nba_predictions.prediction_accuracy`
                 WHERE system_id = @champion_model_id
+                  AND game_date >= DATE_SUB(@target_date, INTERVAL 730 DAY)
                   AND game_date < @target_date
                   AND recommendation = 'UNDER'
                 GROUP BY player_lookup
@@ -291,6 +292,7 @@ class BestBetsExporter(BaseExporter):
                     ROUND(AVG(CASE WHEN prediction_correct THEN 1.0 ELSE 0.0 END), 3) as historical_accuracy
                 FROM `nba-props-platform.nba_predictions.prediction_accuracy`
                 WHERE system_id = @champion_model_id
+                  AND game_date >= DATE_SUB(@target_date, INTERVAL 730 DAY)
                   AND game_date < @target_date
                   AND recommendation = 'UNDER'
                 GROUP BY player_lookup
