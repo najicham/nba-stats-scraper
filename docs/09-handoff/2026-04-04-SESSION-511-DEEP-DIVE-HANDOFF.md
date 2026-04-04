@@ -112,39 +112,72 @@ and MLB prediction systems and identifying concrete improvements.
 Phase 1 (scrapers) → Phase 2 (raw) → Phase 3 (analytics) → Phase 4 (precompute) → Phase 5 (predictions) → Phase 6 (grading)
 ```
 
-### Known Issues (from prior sessions)
-- `mlb-phase1-scrapers` NOT auto-deployed — manual `./bin/scrapers/deploy/mlb/deploy_mlb_scrapers.sh`
-- MLB worker NOT auto-deployed — manual `gcloud builds submit --config cloudbuild-mlb-worker.yaml`
-- `bp_mlb_player_props` super() crash was fixed Session 507
-- `mlb_lineups` scraper reads from `gameData.teams.away.abbreviation` (fixed Session 501)
-- MLB schedulers were `4-10` (April only) → fixed to `3-10` (March-October)
+### Live Assessment (Session 511 Agent Audit): PARTIALLY LIVE — SIGNIFICANT ISSUES
 
-### Key MLB Questions for Deep Dive
+**97-100% of daily predictions are BLOCKED.** The worker writes ~292 rows/day but nearly all have
+`predicted_strikeouts = NULL` and `recommendation = 'BLOCKED'`. April 4: **zero** actionable predictions.
 
-1. **Is the pipeline actually producing predictions daily?** Check:
-   ```sql
-   SELECT game_date, COUNT(*) as predictions
-   FROM mlb_predictions.player_prop_predictions
-   WHERE game_date >= '2026-03-28'
-   GROUP BY 1 ORDER BY 1
-   ```
+#### Prediction Volume (Mar 28 – Apr 4):
+| Date | Total Rows | Actionable (non-BLOCKED) | OVER |
+|------|-----------|--------------------------|------|
+| Mar 28 | 293 | 5 | 4 |
+| Mar 29 | 292 | 13 | 11 |
+| Mar 30 | 292 | 10 | 9 |
+| Mar 31 | 292 | 5 | 4 |
+| Apr 1 | 292 | 4 | 1 |
+| Apr 2 | 292 | 2 | 1 |
+| Apr 3 | 292 | 3 | 1 |
+| **Apr 4** | **292** | **0** | **0** |
 
-2. **Is grading working?** Are March 28+ predictions being graded?
+#### 5 Critical Blockers (Priority Order):
 
-3. **Data pipeline completeness:** Are all MLB scrapers running? Check:
-   - `mlb_schedule` — daily schedule scraper
-   - `mlb_lineups` / `mlb_lineup_batters` — lineup data
-   - `statcast_pitcher_game_stats` — pitcher stats (historical + current season)
-   - `bp_mlb_player_props` — BettingPros lines for grading
-   - `mlb_events` — game results for grading
+**Blocker 1: BettingPros scraper broken — starving 3 features**
+- `bp_events.py` returns null response (`AttributeError: 'NoneType' object has no attribute 'status_code'`)
+- `bp_mlb_player_props.py` can't find events → no 2026 prop line data
+- Missing features: `f30_k_avg_vs_line`, `f32_line_level`, `f44_over_implied_prob` → predictions BLOCKED
+- **This is the #1 blocker.** Fix BettingPros events scraper first.
 
-4. **Feature store health:** Is `mlb_predictions.ml_feature_store` populated?
+**Blocker 2: Game results not flowing — grading impossible**
+- `mlb_pitcher_stats`: no 2026 data (latest = 2025-09-28)
+- `statcast_pitcher_game_stats`: no 2026 data (latest = 2025-10-01)
+- `statcast_pitcher_daily`: no 2026 data
+- `mlb_schedule.is_final = FALSE` for ALL 2026 games — never updated
+- **0 of 35 actionable predictions graded** after 7 days of games
 
-5. **Model registry:** Is the MLB model registered and enabled?
+**Blocker 3: Phase 2 path extractor missing**
+- `mlb-odds-api/events/TODAY/` path not registered → `No extractor found` errors
+- The `TODAY` literal bug (Session 402 NBA fix) has reappeared in MLB Odds API events
+- `oddsa_events` table has only 8 rows total
 
-6. **Best bets pipeline:** Does MLB have a best bets equivalent, or is it raw predictions only?
+**Blocker 4: Phase 3/4 stale**
+- `pitcher_game_summary`: latest = 2026-03-27 (Opening Day only, 7+ days stale)
+- `pitcher_ml_features`: only 30 rows, all from 2026-03-28
+- No game results → no updated analytics → no fresh rolling features
 
-7. **Site integration:** Are MLB predictions showing on playerprops.io?
+**Blocker 5: Scraper data gaps**
+| Source | Latest 2026 Data | Status |
+|--------|-----------------|--------|
+| `mlb_schedule` | Apr 4 | WORKING |
+| `mlb_game_lineups` | Apr 4 | WORKING |
+| `mlb_lineup_batters` | Apr 4 | WORKING |
+| `oddsa_pitcher_props` | Apr 3 | WORKING (Odds API) |
+| `bp_pitcher_props` | **2025-09-28** | **DEAD** |
+| `mlb_pitcher_stats` | **2025-09-28** | **DEAD** |
+| `statcast_pitcher_daily` | **2025-09-28** | **DEAD** |
+| `statcast_pitcher_game_stats` | **2025-10-01** | **DEAD** |
+
+#### Model Status: OK (problem is upstream)
+- Production model: `catboost_mlb_v2_regressor_36f_20250928` — enabled, 36 features, val HR=70% @ edge 1+
+- Model is running daily. The problem is data starvation, not model failure.
+
+### Key MLB Deep Dive Actions
+
+1. **Fix BettingPros events scraper** (`scrapers/bettingpros/bp_events.py` ~line 197) — null response handling
+2. **Fix MLB pitcher stats scraper** — whatever feeds `mlb_pitcher_stats` has no 2026 data
+3. **Fix schedule `is_final` updates** — scraper writes games but never marks them complete
+4. **Register Phase 2 path extractor** for `mlb-odds-api/events/` pattern
+5. **Fix `TODAY` literal** in MLB Odds API events path (same Session 402 bug)
+6. **Verify Phase 3 trigger wiring** for MLB data (analytics processors may not be triggered)
 
 ---
 
