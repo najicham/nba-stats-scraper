@@ -283,8 +283,8 @@ class BestBetsAllExporter(BaseExporter):
             b.system_id,
             COALESCE(pa.prediction_correct, b.prediction_correct) AS prediction_correct,
             COALESCE(pa.actual_points, b.actual_points) AS actual_points,
-            COALESCE(pa.is_voided, FALSE) AS is_voided,
-            pa.void_reason
+            COALESCE(pa.is_voided, b.is_voided, FALSE) AS is_voided,
+            COALESCE(pa.void_reason, b.void_reason) AS void_reason
           FROM `nba-props-platform.nba_predictions.signal_best_bets_picks` b
           LEFT JOIN `nba-props-platform.nba_predictions.prediction_accuracy` pa
             ON b.player_lookup = pa.player_lookup
