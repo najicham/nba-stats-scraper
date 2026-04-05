@@ -33,9 +33,14 @@ echo "Service: $SERVICE_NAME"
 echo ""
 
 # Build Docker image
+# Reuses the shared analytics Dockerfile with MLB-specific APP_MODULE and SPORT env.
+# The deprecated docker/mlb-analytics-processor.Dockerfile has been removed.
 echo "Building Docker image..."
 docker build \
-    -f docker/mlb-analytics-processor.Dockerfile \
+    -f data_processors/analytics/Dockerfile \
+    --build-arg APP_MODULE=data_processors.analytics.mlb.main_mlb_analytics_service:app \
+    --build-arg BUILD_COMMIT="$GIT_COMMIT_SHA" \
+    --build-arg BUILD_TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     -t "$IMAGE_FULL" \
     -t "$IMAGE_LATEST" \
     .

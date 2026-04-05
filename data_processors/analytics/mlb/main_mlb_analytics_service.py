@@ -14,6 +14,7 @@ Endpoints:
 import os
 import json
 import logging
+import uuid
 from flask import Flask, request, jsonify
 from datetime import datetime, timezone, date, timedelta
 import base64
@@ -24,6 +25,14 @@ from data_processors.analytics.mlb import (
     MlbPitcherGameSummaryProcessor,
     MlbBatterGameSummaryProcessor,
 )
+
+# Import Pub/Sub publisher for Phase 3 completion notifications
+try:
+    from shared.publishers.unified_pubsub_publisher import UnifiedPubSubPublisher
+    PUBLISHER_AVAILABLE = True
+except ImportError:
+    PUBLISHER_AVAILABLE = False
+    logging.warning("UnifiedPubSubPublisher not available, completion notifications disabled")
 
 # Import AlertManager for intelligent alerting
 try:
@@ -62,13 +71,82 @@ MLB_ANALYTICS_PROCESSORS = {
     'batter_game_summary': MlbBatterGameSummaryProcessor,
 }
 
+# Reverse mapping: class name -> processor registry key
+# Used for publishing Phase 3 completion messages that the orchestrator can match.
+_CLASS_TO_PROCESSOR_NAME = {
+    cls.__name__: name
+    for name, cls in MLB_ANALYTICS_PROCESSORS.items()
+}
+
 # Trigger mapping: which raw tables trigger which analytics processors
+# Keys MUST match the table_name published by Phase 2 raw processors:
+#   mlbapi_pitcher_stats (MlbApiPitcherStatsProcessor)
+#   mlbapi_batter_stats  (MlbApiBatterStatsProcessor)
+#   mlb_game_lineups     (MlbLineupsProcessor)
 MLB_ANALYTICS_TRIGGERS = {
-    'mlb_pitcher_stats': [MlbPitcherGameSummaryProcessor],
-    'mlb_batter_stats': [MlbBatterGameSummaryProcessor],
+    'mlbapi_pitcher_stats': [MlbPitcherGameSummaryProcessor],
     'mlbapi_batter_stats': [MlbBatterGameSummaryProcessor],
     'mlb_game_lineups': [MlbPitcherGameSummaryProcessor, MlbBatterGameSummaryProcessor],
 }
+
+
+PROJECT_ID = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
+
+# Phase 3 completion topic — must be sport-prefixed for MLB
+MLB_PHASE3_COMPLETE_TOPIC = 'mlb-phase3-analytics-complete'
+
+
+def publish_phase3_completion(game_date: str, processor_name: str, record_count: int = 0,
+                              status: str = 'success', correlation_id: str = None):
+    """
+    Publish Phase 3 completion message to mlb-phase3-analytics-complete.
+
+    This triggers the Phase 3 -> Phase 4 orchestrator (mlb_phase3_to_phase4 CF),
+    which tracks processor completion and fires Phase 4 when all expected
+    processors (pitcher_game_summary, batter_game_summary) have reported.
+
+    Args:
+        game_date: The date that was processed (YYYY-MM-DD)
+        processor_name: Name of the completed processor
+        record_count: Number of records processed
+        status: Processing status ('success' or 'error')
+        correlation_id: Optional correlation ID for tracing
+    """
+    if not PUBLISHER_AVAILABLE:
+        logger.warning("Publisher not available, skipping Phase 3 completion notification")
+        return
+
+    try:
+        publisher = UnifiedPubSubPublisher(project_id=PROJECT_ID)
+        execution_id = str(uuid.uuid4())
+
+        message_id = publisher.publish_completion(
+            topic=MLB_PHASE3_COMPLETE_TOPIC,
+            processor_name=processor_name,
+            phase='phase_3_analytics',
+            execution_id=execution_id,
+            correlation_id=correlation_id or execution_id,
+            game_date=game_date,
+            output_table=processor_name,
+            output_dataset='mlb_analytics',
+            status=status,
+            record_count=record_count,
+            records_failed=0,
+            duration_seconds=0,
+            metadata={'sport': 'mlb'}
+        )
+
+        if message_id:
+            logger.info(
+                f"Published Phase 3 completion: {processor_name} "
+                f"for {game_date} (message_id={message_id})"
+            )
+        else:
+            logger.warning(f"Publish returned None for {processor_name} (non-fatal)")
+
+    except Exception as e:
+        logger.error(f"Failed to publish Phase 3 completion for {processor_name}: {e}", exc_info=True)
+        # Non-fatal — don't crash the request
 
 
 def should_skip_date(game_date_str: str, skip_schedule_check: bool = False) -> tuple:
@@ -230,6 +308,25 @@ def process_analytics():
 
         success_count = sum(1 for r in results if r['status'] == 'success')
 
+        # Publish Phase 3 completion for each successful processor.
+        # The Phase 3->4 orchestrator (mlb_phase3_to_phase4 CF) tracks
+        # per-processor completions and triggers Phase 4 when all are done.
+        correlation_id = message.get('correlation_id')
+        if game_date:
+            for r in results:
+                if r['status'] == 'success':
+                    # Map class name back to registry key for orchestrator matching
+                    class_name = r.get('processor', '')
+                    proc_key = _CLASS_TO_PROCESSOR_NAME.get(class_name, class_name)
+                    record_count = r.get('stats', {}).get('rows_processed', 0) if isinstance(r.get('stats'), dict) else 0
+                    publish_phase3_completion(
+                        game_date=game_date,
+                        processor_name=proc_key,
+                        record_count=record_count,
+                        status='success',
+                        correlation_id=correlation_id,
+                    )
+
         return jsonify({
             "status": "success" if success_count == len(results) else "partial",
             "source_table": source_table,
@@ -304,6 +401,21 @@ def process_date():
             results.append(result)
 
         success_count = sum(1 for r in results if r['status'] == 'success')
+
+        # Publish Phase 3 completion for each successful processor
+        skip_downstream = data.get('skip_downstream_trigger', False)
+        if game_date and not skip_downstream:
+            for r in results:
+                if r['status'] == 'success':
+                    class_name = r.get('processor', '')
+                    proc_key = _CLASS_TO_PROCESSOR_NAME.get(class_name, class_name)
+                    record_count = r.get('stats', {}).get('rows_processed', 0) if isinstance(r.get('stats'), dict) else 0
+                    publish_phase3_completion(
+                        game_date=game_date,
+                        processor_name=proc_key,
+                        record_count=record_count,
+                        status='success',
+                    )
 
         return jsonify({
             "status": "success" if success_count == len(results) else "partial",

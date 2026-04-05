@@ -259,6 +259,33 @@ def cap_to_last_loose_market_date(
     return cap_date
 
 
+def cap_to_pre_late_season(train_end: date) -> date:
+    """
+    Cap train_end to avoid late-season data contamination.
+
+    After ~Feb 28, NBA enters load management / tanking / playoff seeding mode.
+    Models trained through March absorb 41% low-variance data, causing edge
+    compression (avg edge drops from 7.0+ to 1.3). Session 508 diagnosed this
+    as the root cause of the April 2026 pick drought.
+
+    The cap is Feb 28 as a conservative proxy. The NBA All-Star Break moves
+    yearly (mid-Feb to early-Mar), so this may include a few post-ASB days in
+    some seasons. A future improvement could make this ASB-date-aware.
+
+    Session 514: Deployed as permanent guard. Compose with cap_to_last_loose_market_date().
+    """
+    # NBA seasons span two calendar years. The cap year matches train_end's year
+    # (works because Feb 28 is always in the second half of the season).
+    season_cap = date(train_end.year, 2, 28)
+    if train_end > season_cap:
+        logger.info(
+            f"  Late-season protection: capping train_end {train_end} → {season_cap} "
+            f"(avoiding March load-management / tanking data)"
+        )
+        return season_cap
+    return train_end
+
+
 def load_training_data(
     client: bigquery.Client,
     start_date: str,
@@ -853,11 +880,14 @@ def weekly_retrain(request):
         # Get families
         client = bigquery.Client(project=PROJECT_ID)
 
-        # Cap training to avoid TIGHT market contamination (Session 486)
-        # Models trained through TIGHT periods (vegas_mae < 4.5) produce edge collapse.
-        # Skip cap if train_end was explicitly overridden (caller knows what they want).
+        # Cap training to avoid contaminated data (skip if train_end was explicitly overridden).
+        # Two caps compose via min(): late-season cap (Session 514) + TIGHT market cap (Session 486).
         if not train_end_override:
-            capped = cap_to_last_loose_market_date(client, train_end)
+            # Session 514: Prevent March load-management / tanking data from contaminating training
+            late_cap = cap_to_pre_late_season(train_end)
+            # Session 486: Prevent TIGHT market periods (vegas_mae < 4.5) from edge-collapsing models
+            tight_cap = cap_to_last_loose_market_date(client, train_end)
+            capped = min(late_cap, tight_cap)
             if capped != train_end:
                 train_end = capped
                 train_start = train_end - timedelta(days=ROLLING_WINDOW_DAYS)

@@ -144,6 +144,8 @@ class MlbEventsHistoricalScraper(ScraperBase, ScraperFlaskMixin):
 
     def check_download_status(self) -> None:
         """Handle 200 and 204 (empty snapshot) as success."""
+        if self.raw_response is None:
+            raise DownloadDataException("Download returned no response (raw_response is None)")
         if self.raw_response.status_code in (200, 204):
             if self.raw_response.status_code == 204:
                 logger.info("204 response - no events at snapshot %s", self.opts.get("snapshot_timestamp"))

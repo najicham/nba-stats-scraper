@@ -158,6 +158,8 @@ class MlbBatterPropsHistoricalScraper(ScraperBase, ScraperFlaskMixin):
         self.headers = {"Accept": "application/json"}
 
     def check_download_status(self) -> None:
+        if self.raw_response is None:
+            raise DownloadDataException("Download returned no response (raw_response is None)")
         if self.raw_response.status_code in (200, 204):
             return
         super().check_download_status()

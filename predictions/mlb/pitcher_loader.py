@@ -56,6 +56,16 @@ class MLBPitcherLoader:
             'pitchers_without_lines': 0,
         }
 
+    @staticmethod
+    def _normalize_lookup(player_lookup: str) -> str:
+        """Normalize player_lookup for cross-source matching.
+
+        pitcher_game_summary uses 'grant_holmes' (underscore-separated),
+        oddsa_pitcher_props uses 'grantholmes' (concatenated).
+        Stripping underscores and lowercasing handles both directions.
+        """
+        return player_lookup.replace('_', '').lower()
+
     def get_stats(self) -> Dict:
         """Return loader statistics"""
         return self._stats.copy()
@@ -80,15 +90,20 @@ class MLBPitcherLoader:
 
         # Get betting lines with timing
         lines = self._load_betting_lines(game_date)
-        lines_by_pitcher = {line['player_lookup']: line for line in lines}
+        # Build lookup dict using normalized keys (no underscores, lowercase)
+        # to handle format mismatch between pitcher_game_summary ('grant_holmes')
+        # and oddsa_pitcher_props ('grantholmes')
+        lines_by_pitcher = {
+            self._normalize_lookup(line['player_lookup']): line for line in lines
+        }
 
         # Build prediction requests
         requests = []
         for pitcher in pitchers:
             pitcher_lookup = pitcher['pitcher_lookup']
 
-            # Get line info
-            line_info = lines_by_pitcher.get(pitcher_lookup)
+            # Get line info using normalized key to match across formats
+            line_info = lines_by_pitcher.get(self._normalize_lookup(pitcher_lookup))
 
             if line_info:
                 self._stats['pitchers_with_lines'] += 1

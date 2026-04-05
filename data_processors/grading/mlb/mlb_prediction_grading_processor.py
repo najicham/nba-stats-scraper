@@ -150,7 +150,7 @@ class MlbPredictionGradingProcessor:
         self,
         pred: Dict,
         actuals: Dict[str, Dict],
-        game_statuses: Dict[int, str],
+        game_statuses: Dict[str, str],
     ) -> Optional[Dict]:
         """Grade a single prediction with void logic."""
         pitcher_lookup = pred.get('pitcher_lookup')
@@ -339,10 +339,14 @@ class MlbPredictionGradingProcessor:
                 continue
         return {}
 
-    def _get_game_statuses(self, game_date: str) -> Dict[int, str]:
-        """Get game statuses for void detection (postponed/suspended)."""
+    def _get_game_statuses(self, game_date: str) -> Dict[str, str]:
+        """Get game statuses for void detection (postponed/suspended).
+
+        Returns dict keyed by game_pk as STRING to match pitcher_strikeouts.game_id
+        (which is CAST(game_pk AS STRING) from pitcher_game_summary).
+        """
         query = f"""
-        SELECT game_pk, status_detailed AS game_status
+        SELECT CAST(game_pk AS STRING) AS game_pk, status_detailed AS game_status
         FROM `{self.project_id}.mlb_raw.mlb_schedule`
         WHERE game_date = '{game_date}'
         """

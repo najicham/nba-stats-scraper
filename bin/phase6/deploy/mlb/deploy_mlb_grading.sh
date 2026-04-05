@@ -34,7 +34,7 @@ echo ""
 # Build Docker image
 echo "Building Docker image..."
 docker build \
-    -f docker/mlb-grading.Dockerfile \
+    -f data_processors/grading/mlb/Dockerfile \
     -t "$IMAGE_FULL" \
     -t "$IMAGE_LATEST" \
     .
