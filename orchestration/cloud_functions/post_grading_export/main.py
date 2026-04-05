@@ -172,7 +172,32 @@ def backfill_signal_best_bets(target_date: str) -> int:
         logger.info(f"Fallback backfilled {fallback_updated} signal best bets for {target_date}")
         rows_updated += fallback_updated
 
-    logger.info(f"Backfilled {rows_updated} signal best bets for {target_date}")
+    # Third pass: void DNP picks (Session 513)
+    # Sportsbooks void props for DNP players. Mark these so they don't show as pending.
+    dnp_query = f"""
+    UPDATE `{PROJECT_ID}.nba_predictions.signal_best_bets_picks` sbp
+    SET
+      is_voided = TRUE,
+      void_reason = CASE
+        WHEN pgs.is_dnp = TRUE THEN 'dnp'
+        ELSE 'no_stats'
+      END
+    FROM `{PROJECT_ID}.nba_analytics.player_game_summary` pgs
+    WHERE sbp.player_lookup = pgs.player_lookup
+      AND sbp.game_date = pgs.game_date
+      AND sbp.game_date = @target_date
+      AND sbp.actual_points IS NULL
+      AND sbp.is_voided IS NOT TRUE
+      AND (pgs.is_dnp = TRUE OR pgs.points IS NULL)
+    """
+    dnp_job = bq_client.query(dnp_query, job_config=update_config)
+    dnp_job.result(timeout=60)
+    dnp_voided = dnp_job.num_dml_affected_rows or 0
+
+    if dnp_voided > 0:
+        logger.info(f"Voided {dnp_voided} DNP picks in signal best bets for {target_date}")
+
+    logger.info(f"Backfilled {rows_updated} signal best bets for {target_date} ({dnp_voided} DNP voided)")
     return rows_updated
 
 

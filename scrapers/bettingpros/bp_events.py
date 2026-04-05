@@ -195,8 +195,23 @@ class BettingProsEvents(ScraperBase, ScraperFlaskMixin):
     def check_download_status(self) -> None:
         """Handle HTTP errors with notifications."""
         if self.raw_response is None:
-            super().check_download_status()
-            return
+            logger.warning("BettingPros Events: raw_response is None — download returned no response")
+            try:
+                notify_warning(
+                    title="BettingPros Events Download Failed",
+                    message="Download returned no response (raw_response is None)",
+                    details={
+                        'scraper': 'bp_events',
+                        'date': self.opts.get('date', 'unknown'),
+                        'sport': self.opts.get('sport', 'NBA'),
+                    },
+                    processor_name="BettingPros Events Scraper"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
+            raise DownloadDataException(
+                "BettingPros Events download failed: no HTTP response received"
+            )
         if self.raw_response.status_code == 200:
             return
 

@@ -120,6 +120,7 @@ SHADOW_SIGNALS = frozenset({
     'book_disagree_over',
     'book_disagree_under',
     'volatile_scoring_over',  # Session 487: 20% BB HR (1-4, N=5) — harmful, inflating real_sc
+    'extended_rest_under',   # Session 513: 28.6% season HR (N=7), 25% 7d HR — inflating real_sc on bad UNDER picks
 })
 
 # Session 400: UNDER signal quality weights for signal-first ranking.
@@ -137,7 +138,7 @@ UNDER_SIGNAL_WEIGHTS: Dict[str, float] = {
                                   # Session 483 demotion (48.1% 30d) was toxic Feb-March window artifact.
                                   # Current 7d HR: 69.2% (HOT). NOT in rescue_tags or RESCUE_SIGNAL_PRIORITY.
     # starter_away_overtrend_under removed Session 462: 48.2% HR 5-season cross-validated — harmful
-    'extended_rest_under': 1.5,      # 61.8% HR
+    # extended_rest_under removed Session 513: 28.6% season HR (N=7), 25% 7d HR. Inflating real_sc on bad UNDER picks. Moved to SHADOW_SIGNALS.
     'volatile_starter_under': 2.0,   # Session 427: promoted 1.5→2.0. Cross-season +11.1pp lift (best UNDER signal)
     # downtrend_under removed Session 471: 16.7% HR 7d (N=6) — catastrophic. Demoted to SHADOW_SIGNALS.
     # star_favorite_under removed Session 427: +0.7pp lift = noise, 73% HR from N=88 was single-season artifact

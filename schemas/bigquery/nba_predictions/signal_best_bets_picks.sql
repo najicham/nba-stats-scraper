@@ -92,6 +92,8 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.signal_best_bets_
   -- Outcome (populated after grading)
   actual_points INT64,
   prediction_correct BOOLEAN,
+  is_voided BOOLEAN,
+  void_reason STRING,
 
   -- Metadata
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()

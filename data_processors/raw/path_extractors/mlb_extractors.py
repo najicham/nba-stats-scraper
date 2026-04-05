@@ -46,7 +46,7 @@ class MLBBDLStatsExtractor(PathExtractor):
 class MLBStatsAPIExtractor(PathExtractor):
     """Extract options from MLB Stats API paths."""
 
-    PATTERN = re.compile(r'mlb-stats-api/(schedule|lineups)/(\d{4}-\d{2}-\d{2})/')
+    PATTERN = re.compile(r'mlb-stats-api/(schedule|lineups|box-scores|umpire-assignments)/(\d{4}-\d{2}-\d{2})/')
 
     def matches(self, path: str) -> bool:
         return bool(self.PATTERN.search(path))
@@ -56,6 +56,8 @@ class MLBStatsAPIExtractor(PathExtractor):
         Extract from paths:
         - mlb-stats-api/schedule/{date}/{timestamp}.json
         - mlb-stats-api/lineups/{date}/{timestamp}.json
+        - mlb-stats-api/box-scores/{date}/{timestamp}.json
+        - mlb-stats-api/umpire-assignments/{date}/{timestamp}.json
         """
         match = self.PATTERN.search(path)
         if match:
