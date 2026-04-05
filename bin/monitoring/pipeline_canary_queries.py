@@ -2,15 +2,22 @@
 """
 Pipeline Canary Queries (Session 135 - Resilience Layer 2)
 
-Runs end-to-end pipeline validation queries every 30 minutes.
+Tiered pipeline validation queries for cost-efficient monitoring.
 Validates data quality across all 6 phases using yesterday's data.
 
 Usage:
-    python bin/monitoring/pipeline_canary_queries.py
+    python bin/monitoring/pipeline_canary_queries.py                # Run ALL checks
+    python bin/monitoring/pipeline_canary_queries.py --tier critical # Revenue-impacting only (15-min cadence)
+    python bin/monitoring/pipeline_canary_queries.py --tier routine  # Data quality / historical (60-min cadence)
+
+Tier design (Session 509):
+    CRITICAL (15-min): prediction freshness, grading, pick generation, model health, MLB predictions
+    ROUTINE  (60-min): data quality, historical consistency, feature store, fleet info, duplicate audits
 
 Sends alerts to #canary-alerts when validation fails.
 """
 
+import argparse
 import json
 import logging
 import os
@@ -1537,25 +1544,46 @@ def _is_break_window(client) -> bool:
     return True
 
 
+# Tier classification (Session 509 — tiered canary monitoring):
+# CRITICAL (15-min): Revenue-impacting checks needing fast detection
+# ROUTINE  (60-min): Data quality, historical consistency, fleet info
 CRITICAL_CHECKS = frozenset({
+    # NBA prediction & pick generation
     "phase3_gap_detection",
     "phase5_predictions",
     "phase5_prediction_gap",
     "phase5_shadow_coverage",
     "phase6_publishing",
     "phase3_partial_coverage",
+    # Best bets pipeline health
     "bb_pick_drought",
     "bb_filter_audit",
-    "registry_blocked_enabled",
     "bb_candidates_today",
-    "grading_freshness",
+    # Model health
+    "registry_blocked_enabled",
     "edge_collapse_alert",
+    # Grading pipeline
+    "grading_freshness",
+    # MLB predictions (revenue-impacting)
+    "mlb_phase5_predictions",
+    "mlb_phase6_best_bets",
 })
 
 
 def main():
     """Main entry point."""
-    CANARY_TIER = os.environ.get("CANARY_TIER", "all")
+    parser = argparse.ArgumentParser(description="Pipeline canary monitoring queries")
+    parser.add_argument(
+        "--tier",
+        choices=["critical", "routine", "all"],
+        default=None,
+        help="Which tier of checks to run: critical (15-min), routine (60-min), or all (default). "
+             "Falls back to CANARY_TIER env var, then 'all'."
+    )
+    args = parser.parse_args()
+
+    # CLI --tier takes precedence over CANARY_TIER env var, default is "all"
+    CANARY_TIER = args.tier or os.environ.get("CANARY_TIER", "all")
     logger.info(f"Starting pipeline canary queries (CANARY_TIER={CANARY_TIER})")
 
     def _should_run(phase: str) -> bool:

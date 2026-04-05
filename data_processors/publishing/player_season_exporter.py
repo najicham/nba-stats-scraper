@@ -452,6 +452,10 @@ class PlayerSeasonExporter(BaseExporter):
 
     def _query_prop_hit_rates(self, player_lookup: str, season_year: int) -> Dict[str, Any]:
         """Query prop hit rates from predictions."""
+        # Season starts Oct 1 of season_year, ends ~Jun 30 of season_year+1
+        season_start = f"{season_year}-10-01"
+        season_end = f"{season_year + 1}-06-30"
+
         query = """
         SELECT
             COUNT(*) as total,
@@ -462,14 +466,15 @@ class PlayerSeasonExporter(BaseExporter):
         FROM `nba-props-platform.nba_predictions.prediction_accuracy`
         WHERE player_lookup = @player_lookup
           AND system_id = @champion_model_id
-          AND EXTRACT(YEAR FROM game_date) >= @season_year
-          AND (EXTRACT(MONTH FROM game_date) >= 10 OR EXTRACT(YEAR FROM game_date) > @season_year)
+          AND game_date >= @season_start
+          AND game_date <= @season_end
         """
 
         params = [
             bigquery.ScalarQueryParameter('player_lookup', 'STRING', player_lookup),
-            bigquery.ScalarQueryParameter('season_year', 'INT64', season_year),
             bigquery.ScalarQueryParameter('champion_model_id', 'STRING', get_champion_model_id()),
+            bigquery.ScalarQueryParameter('season_start', 'DATE', season_start),
+            bigquery.ScalarQueryParameter('season_end', 'DATE', season_end),
         ]
 
         results = self.query_to_list(query, params)

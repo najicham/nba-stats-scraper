@@ -113,11 +113,12 @@ SHADOW_SIGNALS = frozenset({
     'ft_anomaly_under',            # 63.3% HR (N=278) 5-season — FTA CV >= 0.5, FTA >= 5/game
     'slow_pace_under',             # 56.6% HR (N=777) 5-season — opponent pace <= 99
     'star_line_under',             # 57.6% HR (N=1,018) 5-season BUT 35.3% HR this season (N=17) — do NOT graduate
-    'sharp_consensus_under',       # 69.3% HR (N=205) 5-season — line dropped + high book std
-    # Session 469: Direction-specific book disagreement (shadow — accumulating BB data)
-    # book_disagree_over: 79.6% HR (N=211) 5-season. Gets OVER_SIGNAL_WEIGHTS but excluded from real_sc until N>=30 BB
+    # sharp_consensus_under GRADUATED Session 514: 69.3% HR (N=205) 5-season, consistent 64-73% all seasons.
+    # Moved to UNDER_SIGNAL_WEIGHTS (weight 2.0). N=0 BB after 5 months — too rare to wait for live N≥30.
+    # Session 469: Direction-specific book disagreement
+    # book_disagree_over GRADUATED Session 514: 79.6% HR (N=211) 5-season. Already in OVER_SIGNAL_WEIGHTS (3.0).
+    # N=1 BB after 5 months — too rare to wait for live N≥30. Now counts toward real_sc.
     # book_disagree_under: direction-specific validation. Gets UNDER_SIGNAL_WEIGHTS but excluded from real_sc
-    'book_disagree_over',
     'book_disagree_under',
     'volatile_scoring_over',  # Session 487: 20% BB HR (1-4, N=5) — harmful, inflating real_sc
     'extended_rest_under',   # Session 513: 28.6% season HR (N=7), 25% 7d HR — inflating real_sc on bad UNDER picks
@@ -146,6 +147,8 @@ UNDER_SIGNAL_WEIGHTS: Dict[str, float] = {
     # Session 466: Promoted from shadow — 5-season cross-validated, pre-game clean
     'hot_3pt_under': 2.5,            # 62.5% HR (N=670) — 3PT hot streak regresses, strongest structural signal
     'line_drifted_down_under': 2.0,  # 59.8% HR (N=336) — smart money nudging under
+    'sharp_consensus_under': 2.0,    # Session 514: GRADUATED from shadow. 69.3% HR (N=205) 5-season, consistent 64-73%.
+                                     # Line dropped ≥0.5 + multi-book std ≥1.0 = sharp money + book disagreement.
 }
 UNDER_EDGE_TIEBREAKER = 0.1  # Edge as minor tiebreaker for UNDER
 
@@ -1288,19 +1291,28 @@ class BestBetsAggregator:
             # Session 452: UNDER low real_sc — PROMOTED to active filter.
             # Mar 8: 6/7 UNDER losses had real_sc 1-2. Base signals inflate
             # raw signal_count to pass SC >= 3 gate, but real_sc == 1 means
-            # minimal signal quality. Edge-tiered (Session 512):
-            #   edge < 5: require real_sc >= 3 (real_sc=2 at edge 3-5 = 36.4% HR)
-            #   edge 5-7: require real_sc >= 2 (original gate)
-            #   edge 7+: bypass (high-edge UNDER is profitable)
-            _rsc_floor = 3 if pred_edge < 5.0 else 2
+            # minimal signal quality.
+            # Session 514: Reverted edge-tiered floor (Session 512 was based on
+            # N=7 from one catastrophic day). 5-season simulator: UNDER at edge
+            # 3-5 = 56-58% HR. Uniform floor of 2 across all edge levels.
+            # Edge 7+: bypass (high-edge UNDER is profitable).
+            _rsc_floor = 2
             if (pred.get('recommendation') == 'UNDER'
                     and real_sc < _rsc_floor
                     and real_sc > 0
                     and pred_edge < 7.0):
-                filter_counts['under_low_rsc'] += 1
-                _record_filtered(pred, 'under_low_rsc', pred_edge, len(qualifying), tags)
-                if 'under_low_rsc' not in self._runtime_demoted:
-                    continue
+                # Session 514: Solo high-conviction UNDER signals bypass at edge 5+.
+                # These are cross-season validated and can stand alone:
+                # volatile_starter_under (62.5%), hot_3pt_under (62.5%),
+                # sharp_line_drop_under (87.5%).
+                _hc_under = {'volatile_starter_under', 'hot_3pt_under', 'sharp_line_drop_under'}
+                if pred_edge >= 5.0 and real_sc == 1 and any(t in _hc_under for t in tags):
+                    pass  # high-conviction solo signal can stand alone
+                else:
+                    filter_counts['under_low_rsc'] += 1
+                    _record_filtered(pred, 'under_low_rsc', pred_edge, len(qualifying), tags)
+                    if 'under_low_rsc' not in self._runtime_demoted:
+                        continue
 
             # ft_variance_under_obs REMOVED 2026-03-26: 5-season CF HR = 56.0% — blocking winners.
             # Original Session 452 promotion based on single-season data; 5-season confirms wrong direction.

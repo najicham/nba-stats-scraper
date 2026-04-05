@@ -248,7 +248,8 @@ class StreaksExporter(BaseExporter):
                 a.prediction_correct,
                 ROW_NUMBER() OVER (PARTITION BY a.player_lookup ORDER BY a.game_date DESC) as pred_num
             FROM `nba-props-platform.nba_predictions.prediction_accuracy` a
-            WHERE a.game_date <= @as_of_date
+            WHERE a.game_date >= DATE_SUB(@as_of_date, INTERVAL 180 DAY)
+              AND a.game_date <= @as_of_date
               AND a.system_id = @champion_model_id
               AND a.recommendation IN ('OVER', 'UNDER')  -- Only actionable predictions
         ),
