@@ -1287,10 +1287,13 @@ class BestBetsAggregator:
             # Session 452: UNDER low real_sc — PROMOTED to active filter.
             # Mar 8: 6/7 UNDER losses had real_sc 1-2. Base signals inflate
             # raw signal_count to pass SC >= 3 gate, but real_sc == 1 means
-            # minimal signal quality. Blocks UNDER picks with real_sc < 2
-            # at edge < 7 (high-edge UNDER bypasses).
+            # minimal signal quality. Edge-tiered (Session 512):
+            #   edge < 5: require real_sc >= 3 (real_sc=2 at edge 3-5 = 36.4% HR)
+            #   edge 5-7: require real_sc >= 2 (original gate)
+            #   edge 7+: bypass (high-edge UNDER is profitable)
+            _rsc_floor = 3 if pred_edge < 5.0 else 2
             if (pred.get('recommendation') == 'UNDER'
-                    and real_sc < 2
+                    and real_sc < _rsc_floor
                     and real_sc > 0
                     and pred_edge < 7.0):
                 filter_counts['under_low_rsc'] += 1
@@ -1620,8 +1623,8 @@ class BestBetsAggregator:
         if filter_counts['under_low_rsc'] > 0:
             logger.info(
                 f"UNDER low rsc (ACTIVE): blocked "
-                f"{filter_counts['under_low_rsc']} UNDER picks with real_sc < 2 "
-                f"(Mar 8: 6/7 UNDER losses had rsc 1-2)"
+                f"{filter_counts['under_low_rsc']} UNDER picks "
+                f"(edge-tiered: rsc<3 at edge<5, rsc<2 at edge 5-7)"
             )
         if filter_counts['ft_anomaly_over_block'] > 0:
             logger.info(
