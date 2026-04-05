@@ -60,7 +60,7 @@ logger = logging.getLogger("scraper_base")
 class BettingProsEvents(ScraperBase, ScraperFlaskMixin):
     """
     BettingPros Events API scraper.
-    
+
     Required opts:
         date: Date in YYYY-MM-DD format (e.g., 2021-10-21)
     """
@@ -71,17 +71,17 @@ class BettingProsEvents(ScraperBase, ScraperFlaskMixin):
     optional_params = {
         "sport": "NBA",
     }
-    
+
     required_opts = ["date"]
     download_type = DownloadType.JSON
     decode_download_data = True
     header_profile = "bettingpros"  # Use BettingPros headers from nba_header_utils
     proxy_enabled = True      # BettingPros may need proxy for high volume
-    
+
     # Rate limiting: Add delay between requests to be respectful
     # We'll implement this in a custom method
     RATE_LIMIT_DELAY = 2.0  # 2 seconds between requests
-    
+
     BASE_URL = "https://api.bettingpros.com/v3/events"
 
     # GCS path keys for organized storage
@@ -95,7 +95,7 @@ class BettingProsEvents(ScraperBase, ScraperFlaskMixin):
             "export_mode": ExportMode.DATA,
             "groups": ["prod", "gcs"],
         },
-        
+
         # ========== DEVELOPMENT FILES ==========
         {
             "type": "file",
@@ -111,7 +111,7 @@ class BettingProsEvents(ScraperBase, ScraperFlaskMixin):
             "pretty_print": True,
             "groups": ["dev", "test"],
         },
-        
+
         # ========== CAPTURE GROUP ==========
         {
             "type": "file",
@@ -127,18 +127,18 @@ class BettingProsEvents(ScraperBase, ScraperFlaskMixin):
             "groups": ["capture"],
         },
     ]
-    
+
     def set_additional_opts(self) -> None:
         """Add standard opts and validate date format"""
         super().set_additional_opts()
-        
+
         # Validate date format (YYYY-MM-DD)
         date_str = self.opts["date"]
         try:
             datetime.strptime(date_str, "%Y-%m-%d")
         except ValueError:
             error_msg = f"Invalid date format: {date_str}. Use YYYY-MM-DD"
-            
+
             # Invalid date format notification
             try:
                 notify_error(
@@ -154,49 +154,52 @@ class BettingProsEvents(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise DownloadDataException(error_msg)
-        
+
         # Set sport default
         if "sport" not in self.opts:
             self.opts["sport"] = "NBA"
-            
-        logger.info("BettingPros Events for date: %s, sport: %s", 
+
+        logger.info("BettingPros Events for date: %s, sport: %s",
                    self.opts["date"], self.opts["sport"])
-    
+
     def set_url(self) -> None:
         """Build the BettingPros events API URL"""
         params = {
             "sport": self.opts["sport"],
             "date": self.opts["date"],
         }
-        
+
         # Build query string
         query_params = []
         for key, value in params.items():
             query_params.append(f"{key}={value}")
-        
+
         query_string = "&".join(query_params)
         self.url = f"{self.BASE_URL}?{query_string}"
-        
+
         logger.info("BettingPros Events URL: %s", self.url)
-    
+
     def download_data(self):
         """Override to add rate limiting delay"""
         import time
-        
+
         # Add rate limiting delay before request
         logger.info("Rate limiting: sleeping %.1f seconds before request", self.RATE_LIMIT_DELAY)
         time.sleep(self.RATE_LIMIT_DELAY)
-        
+
         # Call parent download method
         super().download_data()
-    
+
     def check_download_status(self) -> None:
         """Handle HTTP errors with notifications."""
+        if self.raw_response is None:
+            super().check_download_status()
+            return
         if self.raw_response.status_code == 200:
             return
-        
+
         # Non-success status code - send error notification
         status_code = self.raw_response.status_code
         try:
@@ -214,9 +217,9 @@ class BettingProsEvents(ScraperBase, ScraperFlaskMixin):
             )
         except Exception as notify_ex:
             logger.warning(f"Failed to send notification: {notify_ex}")
-        
+
         super().check_download_status()
-    
+
     def validate_download_data(self) -> None:
         """Validate the BettingPros API response"""
         if not isinstance(self.decoded_data, dict):
@@ -236,9 +239,9 @@ class BettingProsEvents(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise DownloadDataException("Response is not a JSON object")
-        
+
         if "events" not in self.decoded_data:
             # Missing events key
             try:
@@ -255,9 +258,9 @@ class BettingProsEvents(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise DownloadDataException("Missing 'events' in response")
-        
+
         events = self.decoded_data["events"]
         if not isinstance(events, list):
             # Events not a list
@@ -275,16 +278,16 @@ class BettingProsEvents(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise DownloadDataException("'events' is not a list")
-        
+
         # Check for _parameters to ensure we got the right response
         if "_parameters" in self.decoded_data:
             params = self.decoded_data["_parameters"]
             if params.get("sport") != self.opts["sport"]:
-                logger.warning("Response sport (%s) differs from requested (%s)", 
+                logger.warning("Response sport (%s) differs from requested (%s)",
                              params.get("sport"), self.opts["sport"])
-                
+
                 # Warning for sport mismatch
                 try:
                     notify_warning(
@@ -301,11 +304,11 @@ class BettingProsEvents(ScraperBase, ScraperFlaskMixin):
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-                    
+
             if params.get("date") != self.opts["date"]:
-                logger.warning("Response date (%s) differs from requested (%s)", 
+                logger.warning("Response date (%s) differs from requested (%s)",
                              params.get("date"), self.opts["date"])
-                
+
                 # Warning for date mismatch
                 try:
                     notify_warning(
@@ -322,7 +325,7 @@ class BettingProsEvents(ScraperBase, ScraperFlaskMixin):
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-        
+
         # Check for no events — only warn if regular-season games were expected (Session 299)
         if len(events) == 0:
             date_str = self.opts.get('date', 'unknown')
@@ -345,14 +348,14 @@ class BettingProsEvents(ScraperBase, ScraperFlaskMixin):
                     logger.warning(f"Failed to send notification: {notify_ex}")
             else:
                 logger.info("No events for %s — confirmed no regular-season games (break day)", date_str)
-        
-        logger.info("Validation passed: %d events found for %s", 
+
+        logger.info("Validation passed: %d events found for %s",
                    len(events), self.opts["date"])
 
     def transform_data(self) -> None:
         """Transform BettingPros events data into structured format"""
         events_data = self.decoded_data["events"]
-        
+
         # Extract useful event information
         processed_events = {}
         game_summary = []
@@ -361,7 +364,7 @@ class BettingProsEvents(ScraperBase, ScraperFlaskMixin):
             event_id = str(event.get("id"))
             home_team = event.get("home", "")
             away_team = event.get("visitor", "")  # BettingPros uses "visitor" not "away"
-            
+
             # Basic event info - now including lineups and other fields
             event_info = {
                 "id": event_id,
@@ -379,12 +382,12 @@ class BettingProsEvents(ScraperBase, ScraperFlaskMixin):
                 "venue": event.get("venue", {}),
                 "popularity": event.get("popularity", 0),
             }
-            
+
             processed_events[event_id] = event_info
-            
+
             # Summary for logging
             game_summary.append(f"{away_team}@{home_team}")
-        
+
         # Store processed data
         self.data = {
             "date": self.opts["date"],
@@ -397,7 +400,7 @@ class BettingProsEvents(ScraperBase, ScraperFlaskMixin):
             "events": processed_events,
             # "raw_events": events_data,  # Keep original data for debugging
         }
-        
+
         # Success notification
         if len(processed_events) > 0:
             try:
@@ -416,11 +419,11 @@ class BettingProsEvents(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-        
-        logger.info("Processed %d events for %s: %s", 
-                len(processed_events), self.opts["date"], 
+
+        logger.info("Processed %d events for %s: %s",
+                len(processed_events), self.opts["date"],
                 ", ".join(game_summary[:5]) + ("..." if len(game_summary) > 5 else ""))
-    
+
     def get_scraper_stats(self) -> dict:
         """Return scraper statistics"""
         event_count = self.data.get("event_count", 0) if hasattr(self, 'data') and isinstance(self.data, dict) else 0

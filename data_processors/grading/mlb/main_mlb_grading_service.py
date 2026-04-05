@@ -142,6 +142,9 @@ def grade_date():
         if not game_date:
             return jsonify({"error": "game_date is required"}), 400
 
+        # Resolve TODAY/YESTERDAY literals before use
+        game_date = _resolve_date(game_date)
+
         logger.info(f"Grading MLB predictions for {game_date}")
 
         processor = MlbPredictionGradingProcessor()

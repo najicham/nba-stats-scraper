@@ -109,6 +109,7 @@ gcloud run deploy $SERVICE_NAME \
     --min-instances 0 \
     --max-instances 5 \
     --update-env-vars="$ENV_VARS" \
+    --set-secrets="ODDS_API_KEY=ODDS_API_KEY:latest,DECODO_PROXY_CREDENTIALS=DECODO_PROXY_CREDENTIALS:latest,SLACK_WEBHOOK_URL=slack-webhook-url:latest,BREVO_SMTP_PASSWORD=brevo-smtp-password:latest" \
     --project $PROJECT_ID
 
 # Get service URL

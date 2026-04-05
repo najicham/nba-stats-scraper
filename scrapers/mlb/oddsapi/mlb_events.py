@@ -80,7 +80,7 @@ class MlbEventsOddsScraper(ScraperBase, ScraperFlaskMixin):
         {
             "type": "gcs",
             "key": GCSPathBuilder.get_path(GCS_PATH_KEY),
-            "export_mode": ExportMode.RAW,
+            "export_mode": ExportMode.DATA,
             "groups": ["prod", "gcs"],
         },
         {
@@ -97,14 +97,14 @@ class MlbEventsOddsScraper(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     def set_additional_opts(self) -> None:
         """Convert game_date to API time filters."""
-        super().set_additional_opts()
-
+        # Resolve TODAY/YESTERDAY BEFORE super() so config_mixin derives
+        # opts["date"] from the real date (not the literal string).
+        # Without this, GCS path becomes mlb-odds-api/events/TODAY/ instead
+        # of mlb-odds-api/events/2026-04-04/.
         import pytz
-
         eastern = pytz.timezone('America/New_York')
-        game_date_str = self.opts["game_date"]
+        game_date_str = self.opts.get("game_date", "")
 
-        # Resolve TODAY/YESTERDAY literals (scheduler jobs pass these as strings)
         if game_date_str.upper() == "TODAY":
             game_date_str = datetime.now(eastern).strftime("%Y-%m-%d")
             self.opts["game_date"] = game_date_str
@@ -112,6 +112,12 @@ class MlbEventsOddsScraper(ScraperBase, ScraperFlaskMixin):
             from datetime import timedelta
             game_date_str = (datetime.now(eastern) - timedelta(days=1)).strftime("%Y-%m-%d")
             self.opts["game_date"] = game_date_str
+
+        super().set_additional_opts()
+
+        # Ensure opts["date"] matches resolved game_date (config_mixin may
+        # have derived it before we resolved the literal)
+        self.opts["date"] = game_date_str
 
         # Parse the game date
         game_date = datetime.strptime(game_date_str, "%Y-%m-%d").date()

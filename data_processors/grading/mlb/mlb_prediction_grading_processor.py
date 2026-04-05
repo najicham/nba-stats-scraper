@@ -282,7 +282,7 @@ class MlbPredictionGradingProcessor:
         SELECT
             prediction_id,
             pitcher_lookup,
-            game_pk,
+            game_id AS game_pk,
             predicted_strikeouts,
             strikeouts_line,
             recommendation,
@@ -342,7 +342,7 @@ class MlbPredictionGradingProcessor:
     def _get_game_statuses(self, game_date: str) -> Dict[int, str]:
         """Get game statuses for void detection (postponed/suspended)."""
         query = f"""
-        SELECT game_pk, game_status
+        SELECT game_pk, status_detailed AS game_status
         FROM `{self.project_id}.mlb_raw.mlb_schedule`
         WHERE game_date = '{game_date}'
         """
