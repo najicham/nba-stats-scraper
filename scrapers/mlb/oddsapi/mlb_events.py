@@ -99,8 +99,6 @@ class MlbEventsOddsScraper(ScraperBase, ScraperFlaskMixin):
         """Convert game_date to API time filters."""
         # Resolve TODAY/YESTERDAY BEFORE super() so config_mixin derives
         # opts["date"] from the real date (not the literal string).
-        # Without this, GCS path becomes mlb-odds-api/events/TODAY/ instead
-        # of mlb-odds-api/events/2026-04-04/.
         import pytz
         eastern = pytz.timezone('America/New_York')
         game_date_str = self.opts.get("game_date", "")
@@ -113,11 +111,18 @@ class MlbEventsOddsScraper(ScraperBase, ScraperFlaskMixin):
             game_date_str = (datetime.now(eastern) - timedelta(days=1)).strftime("%Y-%m-%d")
             self.opts["game_date"] = game_date_str
 
+        # Set opts["date"] BEFORE super() so ConfigMixin doesn't derive it
+        # from the unresolved literal. This is the primary fix for the
+        # TODAY/ GCS path bug — belt-and-suspenders with the post-super set.
+        self.opts["date"] = game_date_str
+
         super().set_additional_opts()
 
-        # Ensure opts["date"] matches resolved game_date (config_mixin may
-        # have derived it before we resolved the literal)
-        self.opts["date"] = game_date_str
+        # Final guard: ensure opts["date"] is a resolved YYYY-MM-DD, never a literal
+        if self.opts.get("date", "").upper() in ("TODAY", "YESTERDAY", ""):
+            self.opts["date"] = game_date_str
+            logger.warning("Fixed unresolved date literal in opts: %s -> %s",
+                          self.opts.get("date"), game_date_str)
 
         # Parse the game date
         game_date = datetime.strptime(game_date_str, "%Y-%m-%d").date()

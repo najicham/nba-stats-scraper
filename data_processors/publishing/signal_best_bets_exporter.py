@@ -97,6 +97,38 @@ class SignalBestBetsExporter(BaseExporter):
 
         record = self._get_best_bets_record(target_date)
 
+        # ── Session 515: Edge-based auto-halt ──
+        # When 7d avg edge < 5.0 AND edge-5+ pick rate < 50%, halt all picks.
+        if regime_ctx.get('bb_auto_halt_active', False):
+            halt_reason = regime_ctx.get('bb_auto_halt_reason', 'Unknown')
+            logger.warning(f"BEST BETS AUTO-HALT ACTIVE for {target_date}: {halt_reason}")
+            target_h = (
+                date.fromisoformat(target_date) if isinstance(target_date, str)
+                else target_date
+            )
+            season_start_year_h = target_h.year if target_h.month >= 10 else target_h.year - 1
+            season_label_h = f"{season_start_year_h}-{str(season_start_year_h + 1)[-2:]}"
+            return {
+                'date': target_date,
+                'season': season_label_h,
+                'generated_at': self.get_generated_at(),
+                'halt_active': True,
+                'halt_reason': halt_reason,
+                'halt_metrics': {
+                    'rolling_7d_avg_edge': regime_ctx.get('rolling_7d_avg_edge'),
+                    'rolling_7d_pct_edge_5plus': regime_ctx.get('rolling_7d_pct_edge_5plus'),
+                    'days_sampled': regime_ctx.get('edge_halt_days_sampled'),
+                },
+                'record': record,
+                'model_health': {
+                    'status': 'halted',
+                    'hit_rate_7d': hr_7d,
+                },
+                'regime_context': regime_ctx,
+                'picks': [],
+                'total_picks': 0,
+            }
+
         # Cap player list in output to top 10 worst (avoid bloating JSON)
         blacklist_players_capped = [
             p['player_lookup'] for p in blacklist_stats.get('players', [])[:10]
