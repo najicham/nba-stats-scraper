@@ -153,7 +153,7 @@ nba-stats-scraper/
 
 **Cloud Functions (auto-deploy via `cloudbuild-functions.yaml`):** phase5b-grading, phase6-export, grading-gap-detector, phase3/4/5-to-next orchestrators, enrichment-trigger, daily-health-check, transition-monitor, pipeline-health-summary, nba-grading-alerts, live-freshness-monitor, self-heal-predictions, grading-readiness-monitor, post-grading-export, decay-detection (11 AM ET), retrain-reminder (Mon 9 AM ET), weekly-retrain (Mon 5 AM ET, 4GiB/1800s), validation-runner, filter-counterfactual-evaluator (11:30 AM ET), morning-deployment-check (6 AM ET), monthly-retrain (1st of month, DEPRECATED)
 
-**NOT auto-deployed (manual only):** auto-retry-processor
+**NOT auto-deployed (manual only):** auto-retry-processor, mlb-phase1-scrapers (use `./bin/scrapers/deploy/mlb/deploy_mlb_scrapers.sh`)
 
 ### CRITICAL: Always deploy from repo root
 ```bash
@@ -251,7 +251,7 @@ WHERE game_date >= CURRENT_DATE() - 7 ORDER BY game_date DESC;
 | Orchestrator not triggering P3 | NOT a bug — Phase 3 uses direct Pub/Sub |
 | Docker cache stale deploy | `./bin/hot-deploy.sh SERVICE` |
 | **Registry change no effect on predictions** | Worker auto-refreshes model list every 4h (Session 474 TTL). For immediate same-day effect: `./bin/refresh-model-cache.sh --verify`. Old manual `MODEL_CACHE_REFRESH` env var still works as override. |
-| **Pick drought (0 picks/day)** | Canary alerts fire every 30min. Root causes: (1) edge collapse — `AVG(ABS(predicted_points-current_points_line)) < 1.5` (use Feb-trained models), (2) model coverage gap — enabled models not generating predictions (check `./bin/refresh-model-cache.sh`), (3) fleet BLOCKED — all models <52.4% HR. (4) TIGHT market — vegas_mae < 4.5 auto-raises OVER floor to 6.0 via regime_context (Session 483). **(5) Fleet diversity collapse (Session 487) — all enabled models are r≥0.95 LGBM clones. Cross-model signals (`combo_3way`, `book_disagreement`) cannot fire. Fix: ensure at least 1 non-LGBM model in fleet.** |
+| **Pick drought (0 picks/day)** | Canary alerts fire every 30min. Root causes: (1) edge collapse — `AVG(ABS(predicted_points-current_points_line)) < 1.5` (use Feb-trained models), (2) model coverage gap — enabled models not generating predictions (check `./bin/refresh-model-cache.sh`), (3) fleet BLOCKED — all models <52.4% HR. (4) TIGHT market — vegas_mae < 4.5 auto-raises OVER floor to 6.0 via regime_context (Session 483). **(5) Fleet diversity collapse (Session 487) — all enabled models are r≥0.95 LGBM clones. Cross-model signals (`combo_3way`, `book_disagreement`) cannot fire. Fix: ensure at least 1 non-LGBM model in fleet.** **(6) Edge-based auto-halt (Session 515) — 7d avg edge < 5.0 AND edge-5+ rate < 50% → zero picks. Check `halt_active` in exported JSON. Recovers automatically when retrained models produce higher edge.** |
 | **`high_spread_over_would_block` CF HR** | **Do NOT demote based on short windows.** All-time CF HR = 50% (7-7, N=14). Filter has been flipped 3x in 19 days based on tiny samples. Low-line OVER picks (line <15) in blowout games correctly blocked at 33%. Need N≥30 graded at CF HR ≥55% before any demotion. (Session 487) |
 | **signal_health_daily/model_performance_daily stale** | Fixed Session 474: `post_grading_export` now runs analytics even when `graded_count=0`. Manual backfill: `PYTHONPATH=. .venv/bin/python3 ml/signals/signal_health.py --date YYYY-MM-DD` |
 | **Observation-mode filter debt** | Filters added as "observation only" accumulate silently. Code writes, data computes, nothing blocks. Audit `aggregator.py` for `# Observation` comments. Session 483: 3 such filters stood between the system and March 8 (25% HR). Promotion threshold: N=30 BB-level picks. |
@@ -278,6 +278,11 @@ WHERE game_date >= CURRENT_DATE() - 7 ORDER BY game_date DESC;
 | **`win_flag` always FALSE** | `player_game_summary.win_flag` is FALSE for ALL teams/players. Use `plus_minus > 0` as win proxy. |
 | **Gen2 CF scheduler URL mismatch** | Scheduler targeting Gen1 URL returns 500/INTERNAL. Update URI to `serviceConfig.uri` + add OIDC auth + IAM. Session 448. |
 | **Scheduler DEADLINE_EXCEEDED** | Workflow scrapers (multi-source) need 1800s timeout, not 900s. Data still arrives despite timeout. Session 448. |
+
+| **BettingPros MLB events empty** | `/v3/events` endpoint doesn't support MLB — only NBA/NFL. Odds API is the correct MLB line source. `bp_mlb_player_props` uses `/v3/props` with FantasyPros headers, not BettingPros events. (Session 515) |
+| **MLB scheduler URLs stale** | MLB scraper schedulers used `756957797294.us-west2.run.app`. Fixed Session 515 to `f7p3g7f6ya-wl.a.run.app`. Always verify with `gcloud run services describe --format="value(status.url)"`. |
+| **MLB predictions 100% BLOCKED** | Missing line features `f30_k_avg_vs_line`, `f32_line_level`, `f44_over_implied_prob`. Check: (1) `oddsa_pitcher_props` has data for today, (2) `BETTINGPROS_API_KEY` mounted on service, (3) events scraper ran. |
+| **Edge-based auto-halt active** | Check `halt_active` in Phase 6 JSON. Recovers when retrained models produce 7d avg edge >= 5.0. Query: `SELECT AVG(ABS(predicted_points-current_points_line)) FROM player_prop_predictions WHERE game_date >= CURRENT_DATE()-7`. |
 
 **Full troubleshooting:** `docs/02-operations/troubleshooting-matrix.md`, `docs/02-operations/session-learnings.md`
 
@@ -341,7 +346,9 @@ python bin/analysis/model_correlation.py         # Inter-model agreement
 **28 active signals + 32 shadow signals** (25 removed/disabled). **25 negative filters + 11 observation.**
 **Full inventory:** `docs/08-projects/current/signal-discovery-framework/SIGNAL-INVENTORY.md`
 
-**Best Bets Pipeline:** `edge 3+ (or signal rescue) → OVER edge 5+ floor → negative filters → signal_count ≥ 3 → real_sc gate → rank by edge (OVER) or signal quality (UNDER)`
+**Best Bets Pipeline:** `edge-based auto-halt check → edge 3+ (or signal rescue) → OVER edge 5+ floor → negative filters → signal_count ≥ 3 → real_sc gate → rank by edge (OVER) or signal quality (UNDER)`
+
+**Edge-based auto-halt (Session 515):** When 7d avg edge < 5.0 AND edge-5+ pick rate < 50%, halts ALL picks (zero output). Lives in `regime_context.py` → checked in `signal_best_bets_exporter.py`. Walk-forward: never fires in normal seasons (2021-2025), fires late Feb in 2025-26.
 
 **Key concepts:**
 - `real_sc` = non-base signal count. Base signals (model_health, high_edge, edge_spread_optimal, blowout_recovery, starter_under, blowout_risk_under) inflate SC to 3 with zero value. All SC gates use `real_sc`.
@@ -371,7 +378,7 @@ python bin/analysis/model_correlation.py         # Inter-model agreement
 - `b2b_under`: removed (54.0% CF HR)
 - `familiar_matchup`: removed (54.4% CF HR)
 
-**Harmful signals (ALL DEMOTED to SHADOW_SIGNALS — no longer contribute to real_sc):** `starter_away_overtrend_under` (48.2%, removed Session 462), `sharp_book_lean_over` (41.7%, removed Session 462), `over_streak_reversion_under` (51.6%, demoted)
+**Harmful signals (ALL DEMOTED to SHADOW_SIGNALS — no longer contribute to real_sc):** `starter_away_overtrend_under` (48.2%, removed Session 462), `sharp_book_lean_over` (41.7%, removed Session 462), `over_streak_reversion_under` (51.6%, demoted), `sharp_consensus_under` (Session 515: reverted — 5-season 69.3% HR was 4-5 book regime, 0-14 BB with 12+ books. Contradicts `high_book_std_under_block`)
 
 **WARNING:** bench_under 76.5% HR used post-game `starter_flag` (look-ahead bias). Pre-game proxy = 51.8%. Not actionable without reliable pre-game lineup data.
 
