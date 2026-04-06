@@ -104,20 +104,26 @@ class MlbEventsProcessor(ProcessorBase):
 
         return team_name[:3].upper() if team_name else ''
 
-    def validate_data(self, data: Dict) -> List[str]:
-        """Validate the JSON structure."""
+    def validate_data(self, data) -> List[str]:
+        """Validate the JSON structure. Accepts both dict and list formats."""
         errors = []
 
         if not data:
             errors.append("Empty data")
             return errors
 
-        if 'events' not in data:
-            errors.append("Missing 'events' field")
+        # Accept raw list format (direct Odds API response) or wrapped dict format
+        if isinstance(data, list):
+            # Raw API response — list of event objects
             return errors
-
-        if not isinstance(data['events'], list):
-            errors.append("'events' is not a list")
+        elif isinstance(data, dict):
+            if 'events' not in data:
+                errors.append("Missing 'events' field")
+                return errors
+            if not isinstance(data['events'], list):
+                errors.append("'events' is not a list")
+        else:
+            errors.append(f"Unexpected data type: {type(data).__name__}")
 
         return errors
 
@@ -134,8 +140,13 @@ class MlbEventsProcessor(ProcessorBase):
                 self.transformed_data = rows
                 return
 
-            game_date = raw_data.get('game_date')
-            events = raw_data.get('events', [])
+            # Handle both formats: raw list or wrapped dict
+            if isinstance(raw_data, list):
+                events = raw_data
+                game_date = None  # Derive from commence_time below
+            else:
+                game_date = raw_data.get('game_date')
+                events = raw_data.get('events', [])
             snapshot_time = datetime.now(timezone.utc)
 
             for event in events:
@@ -156,9 +167,16 @@ class MlbEventsProcessor(ProcessorBase):
                 else:
                     commence_dt = None
 
+                # Derive game_date from commence_time if not provided (raw list format)
+                event_game_date = game_date
+                if not event_game_date and commence_dt:
+                    import pytz
+                    eastern = pytz.timezone('US/Eastern')
+                    event_game_date = commence_dt.astimezone(eastern).strftime('%Y-%m-%d')
+
                 row = {
                     'event_id': event_id,
-                    'game_date': game_date,
+                    'game_date': event_game_date,
                     'commence_time': commence_dt.isoformat() if commence_dt else None,
                     'home_team': home_team,
                     'away_team': away_team,

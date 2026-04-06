@@ -109,7 +109,7 @@ gcloud run deploy $SERVICE_NAME \
     --min-instances 0 \
     --max-instances 5 \
     --update-env-vars="$ENV_VARS" \
-    --set-secrets="DECODO_PROXY_CREDENTIALS=DECODO_PROXY_CREDENTIALS:latest,SLACK_WEBHOOK_URL=slack-webhook-url:latest" \
+    --set-secrets="DECODO_PROXY_CREDENTIALS=DECODO_PROXY_CREDENTIALS:latest,SLACK_WEBHOOK_URL=slack-webhook-url:latest,BETTINGPROS_API_KEY=bettingpros-api-key:latest" \
     --project $PROJECT_ID
 
 # Get service URL

@@ -113,8 +113,11 @@ SHADOW_SIGNALS = frozenset({
     'ft_anomaly_under',            # 63.3% HR (N=278) 5-season — FTA CV >= 0.5, FTA >= 5/game
     'slow_pace_under',             # 56.6% HR (N=777) 5-season — opponent pace <= 99
     'star_line_under',             # 57.6% HR (N=1,018) 5-season BUT 35.3% HR this season (N=17) — do NOT graduate
-    # sharp_consensus_under GRADUATED Session 514: 69.3% HR (N=205) 5-season, consistent 64-73% all seasons.
-    # Moved to UNDER_SIGNAL_WEIGHTS (weight 2.0). N=0 BB after 5 months — too rare to wait for live N≥30.
+    # sharp_consensus_under GRADUATED Session 514 but REVERTED Session 515: 5-season 69.3% HR was from
+    # 4-5 book markets (Odds API) where std>=1.0 is rare/meaningful. With 12+ books (2025-26), std>=0.75
+    # is noise — 0-14 BB record. Contradicts high_book_std_under_block. Needs threshold recalibration
+    # (probably 1.5+ for BettingPros vs 1.0 for Odds API) before re-graduation.
+    'sharp_consensus_under',
     # Session 469: Direction-specific book disagreement
     # book_disagree_over GRADUATED Session 514: 79.6% HR (N=211) 5-season. Already in OVER_SIGNAL_WEIGHTS (3.0).
     # N=1 BB after 5 months — too rare to wait for live N≥30. Now counts toward real_sc.
@@ -146,8 +149,9 @@ UNDER_SIGNAL_WEIGHTS: Dict[str, float] = {
     # Session 466: Promoted from shadow — 5-season cross-validated, pre-game clean
     'hot_3pt_under': 2.5,            # 62.5% HR (N=670) — 3PT hot streak regresses, strongest structural signal
     'line_drifted_down_under': 2.0,  # 59.8% HR (N=336) — smart money nudging under
-    'sharp_consensus_under': 2.0,    # Session 514: GRADUATED from shadow. 69.3% HR (N=205) 5-season, consistent 64-73%.
-                                     # Line dropped ≥0.5 + multi-book std ≥1.0 = sharp money + book disagreement.
+    # sharp_consensus_under removed Session 515: REVERTED to SHADOW. 5-season 69.3% HR was 4-5 book regime;
+    # 12+ books in 2025-26 makes std>=1.0 noise (0-14 BB). Contradicts high_book_std_under_block. Needs
+    # threshold recalibration by book source before re-graduation.
 }
 UNDER_EDGE_TIEBREAKER = 0.1  # Edge as minor tiebreaker for UNDER
 

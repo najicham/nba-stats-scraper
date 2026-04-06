@@ -129,7 +129,7 @@ class MLBOddsAPIGameLinesExtractor(PathExtractor):
 class MLBOddsAPIEventsExtractor(PathExtractor):
     """Extract options from MLB OddsAPI events paths."""
 
-    PATTERN = re.compile(r'mlb-odds-api/events/(\d{4}-\d{2}-\d{2})/')
+    PATTERN = re.compile(r'mlb-odds-api/events/(\d{4}-\d{2}-\d{2}|TODAY|YESTERDAY)/')
 
     def matches(self, path: str) -> bool:
         return bool(self.PATTERN.search(path))
