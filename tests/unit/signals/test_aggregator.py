@@ -118,7 +118,7 @@ class TestAggregatorReturnType:
             'line_jumped_under', 'line_dropped_under', 'line_dropped_over',
             'neg_pm_streak', 'signal_count', 'sc3_edge_floor', 'sc3_over_block',
             'starter_over_sc_floor', 'opponent_depleted_under',
-            'high_book_std_under', 'confidence', 'anti_pattern',
+            'high_book_std_under_block', 'confidence', 'anti_pattern',
             'model_direction_affinity', 'away_noveg', 'star_under',
             'under_star_away', 'med_usage_under', 'starter_v12_under',
             'opponent_under_block', 'q4_scorer_under_block',

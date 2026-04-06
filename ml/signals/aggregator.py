@@ -83,22 +83,22 @@ BASE_SIGNALS = frozenset({
 # Shadow signals inflated real_sc on bad picks (losers avg 5.8 vs winner 3.0).
 # Graduation: when a shadow signal reaches N >= 30 at BB level with HR >= 60%,
 # remove from this set and add to VALIDATED signals.
+# Session 514: Removed 9 actively harmful shadow signals. These had catastrophic BB-level HR
+# and were polluting signal tracking with no path to graduation:
+#   REMOVED: projection_consensus_over (10% BB HR, 1-9), volatile_scoring_over (14.3% BB HR, 1-6),
+#   hot_form_over (28.6% BB HR, 2-5), scoring_momentum_over (25.0% BB HR, 1-3),
+#   bounce_back_over (0% BB HR, 36.4% raw N=11), sharp_money_over (15.4% raw HR N=13),
+#   minutes_surge_over (structurally dead — no RotoWire minutes data),
+#   positive_clv_over (50% raw HR N=24, COLD), positive_clv_under (41.4% raw HR N=29).
+#   Signal evaluation code in ml/signals/ still exists but won't fire since not registered.
 SHADOW_SIGNALS = frozenset({
-    'projection_consensus_over',   # 0% BB HR (0-5) — catastrophic
     'projection_consensus_under',  # Insufficient BB data
-    'positive_clv_over',           # 0% BB HR (0-1)
-    'positive_clv_under',          # Insufficient BB data
-    'hot_form_over',               # 0% BB HR (0-2) — catastrophic
-    'scoring_momentum_over',       # 0% BB HR (0-2) — catastrophic
     'usage_surge_over',            # Reverted to shadow — re-evaluate with more data
     'career_matchup_over',         # 0% BB HR (0-1)
     'consistent_scorer_over',      # 71.4% HR (N=7) — promising but N too small
     'over_trend_over',             # Insufficient BB data
     'minutes_load_over',           # Insufficient BB data
-    'bounce_back_over',            # Insufficient BB data
-    'sharp_money_over',            # No data yet
     'sharp_money_under',           # No data yet
-    'minutes_surge_over',          # Permanently blocked (no RotoWire minutes)
     'dvp_favorable_over',          # Insufficient BB data
     'day_of_week_under',           # 33.3% HR (N=9) — bad start
     'over_streak_reversion_under', # 51.6% HR 5-season — harmful, kept for tracking
@@ -120,7 +120,6 @@ SHADOW_SIGNALS = frozenset({
     # N=1 BB after 5 months — too rare to wait for live N≥30. Now counts toward real_sc.
     # book_disagree_under: direction-specific validation. Gets UNDER_SIGNAL_WEIGHTS but excluded from real_sc
     'book_disagree_under',
-    'volatile_scoring_over',  # Session 487: 20% BB HR (1-4, N=5) — harmful, inflating real_sc
     'extended_rest_under',   # Session 513: 28.6% season HR (N=7), 25% 7d HR — inflating real_sc on bad UNDER picks
 })
 
@@ -227,13 +226,16 @@ TIER_EDGE_CAPS = {
 }
 
 # =============================================================================
-# OBSERVATION FILTER AUDIT — 2026-03-27
+# OBSERVATION FILTER AUDIT — 2026-04-05
 # =============================================================================
-# ~20 observation-mode filter instances currently in this file.
+# ~19 observation-mode filter instances currently in this file.
 # (Was 30. Removed 5: familiar_matchup_obs, b2b_under_block_obs, ft_variance_under_obs,
 #  neg_pm_streak_obs, line_dropped_over_obs. Promoted 1 to active block: monday_over_obs.
 #  Promoted 1 from obs to active block: hot_shooting_reversion_obs.
-#  REVERTED to observation: home_over_obs (2026-03-27, BB-level CF HR = 70%, N=10 — blocking winners).)
+#  REVERTED to observation: home_over_obs (2026-03-27, BB-level CF HR = 70%, N=10 — blocking winners).
+#  Session 514: Demoted high_spread_over_would_block to observation (CF HR 63.6%, N=33).
+#  Session 514: Promoted blowout_risk_under_block to active (CF HR 37.5%, N=72).
+#  Session 514: Re-added flat_trend_under as active block (CF HR 37.0%, N=46).)
 # Promotion requires: N >= 30 BB-level picks at CF HR >= 55% for 7 consecutive days.
 # Demotion/removal threshold: CF HR >= 55% (blocking too many winners).
 #
@@ -242,7 +244,7 @@ TIER_EDGE_CAPS = {
 # (A) CLEARLY TOO-NEW / LOW-N — keep observing:
 #   - signal_stack_2plus_obs: 50% HR at N=6 — needs data
 #   - bias_regime_over_obs: accumulating data
-#   - blowout_risk_under_block_obs: 16.7% HR at N=12 — low N
+#   - blowout_risk_under_block: PROMOTED to active 2026-04-05 (CF HR 37.5%, N=72)
 #   - tanking_risk_obs: new, accumulating data (season end)
 #   - over_low_rsc_obs: 45.5% at N=11 — promote when N>=30
 #   - hot_streak_under_obs: 44.4% at N=18 — below threshold, needs more data
@@ -268,7 +270,7 @@ TIER_EDGE_CAPS = {
 #   - line_dropped_over_obs: REMOVED 2026-03-26 (CF HR 60.0%, N=477)
 #   - neg_pm_streak_obs: REMOVED 2026-03-26 (CF HR 64.5%, N=758 — highest of any filter)
 #   - line_jumped_under_obs: CF HR 100% (5/5 winners blocked) — strong anti-signal
-#   - flat_trend_under_obs: CF HR 59.2% (N=211) — blocking winners
+#   - flat_trend_under: RESTORED + PROMOTED to active 2026-04-05 (CF HR 37.0%, N=46)
 #   - high_skew_over_block_obs: CF HR 75% (N=4) — blocking winners, low N
 #   - bench_under_obs: CF HR 100% (N=2) — blocking winners, very low N
 #   - opponent_under_block: CF HR 52.4% (N=21) — coin flip, demoted Session 488
@@ -865,18 +867,32 @@ class BestBetsAggregator:
                 filter_counts['high_skew_over_block'] += 1
                 _record_filtered(pred, 'high_skew_over_block_obs', pred_edge)
 
-            # High book std UNDER block (Session 377): UNDER + multi_book_line_std 1.0-1.5 = 14.8% HR (N=142).
-            # When books disagree significantly on the line, UNDER predictions are unreliable.
+            # High book std UNDER block (Session 514, replaces Session 377 version).
+            # When books disagree on a player's line (std >= 0.75), UNDER is
+            # unreliable -- 0-14 (0% HR) at BB level, 45.9% raw (N=499).
+            # Cross-season consistent across all 5 seasons. Market uncertainty
+            # means no consensus on the true line, killing UNDER edge.
+            # Previous threshold was 1.0-1.5; broadened to >= 0.75.
             book_std = pred.get('multi_book_line_std') or 0
             if (pred.get('recommendation') == 'UNDER'
-                    and 1.0 <= book_std <= 1.5):
-                filter_counts['high_book_std_under'] += 1
-                _record_filtered(pred, 'high_book_std_under', pred_edge)
-                if 'high_book_std_under' not in self._runtime_demoted:
+                    and book_std >= 0.75):
+                filter_counts['high_book_std_under_block'] += 1
+                _record_filtered(pred, 'high_book_std_under_block', pred_edge, len(qualifying), tags)
+                if 'high_book_std_under_block' not in self._runtime_demoted:
                     continue
 
-            # flat_trend_under_obs: REMOVED 2026-03-26 Session 494.
-            # CF HR 59.2% (N=211) — was blocking profitable UNDER picks. Removed.
+            # Flat trend UNDER — PROMOTED to active block (Session 514).
+            # Session 428: Demoted to observation. Session 494: Removed (CF HR 59.2%, N=211).
+            # Session 514: Re-added as active block — CF HR 37.0% (N=46), saving 13.5u.
+            # Only 37% of blocked picks win — filter correctly blocking losers.
+            # Trend slope -0.5 to 0.5 = flat scoring trend → UNDER is risky.
+            trend_slope = pred.get('trend_slope') or 0
+            if (pred.get('recommendation') == 'UNDER'
+                    and -0.5 <= trend_slope <= 0.5):
+                filter_counts['flat_trend_under'] += 1
+                _record_filtered(pred, 'flat_trend_under', pred_edge)
+                if 'flat_trend_under' not in self._runtime_demoted:
+                    continue
 
             # UNDER after streak — ACTIVE filter (Session 488 demote REVERTED).
             # CF HR = 45.5% (N=11) — blocking losers (54.5% of blocked picks lose).
@@ -908,28 +924,30 @@ class BestBetsAggregator:
                 if 'under_after_bad_miss' not in self._runtime_demoted:
                     continue
 
-            # Blowout risk UNDER block (Session 423→434→436): blowout_risk >= 0.40 + UNDER
+            # Blowout risk UNDER block (Session 423→434→436→514): blowout_risk >= 0.40 + UNDER
             # Session 434: Promoted to active. Session 436: Demoted back to observation.
-            # Raw prediction HR = 57.9% (N=216) — filter blocks profitable UNDER picks.
-            # Threshold 0.40 too broad (captures ~70% of players). Need more data.
+            # Session 514: Promoted to active — CF HR 37.5% (N=72), saving 20.4u.
+            # Only 37.5% of blocked picks win — filter correctly blocking losers.
             blowout_risk_val = pred.get('blowout_risk') or 0
             if (pred.get('recommendation') == 'UNDER'
                     and blowout_risk_val >= 0.40
                     and line_val >= 15):
-                filter_counts['blowout_risk_under_block_obs'] += 1
-                _record_filtered(pred, 'blowout_risk_under_block_obs', pred_edge)
+                filter_counts['blowout_risk_under_block'] += 1
+                _record_filtered(pred, 'blowout_risk_under_block', pred_edge)
+                if 'blowout_risk_under_block' not in self._runtime_demoted:
+                    continue
 
-            # High spread OVER — DEMOTED to observation (Session 419).
+            # High spread OVER — DEMOTED to observation (Session 514).
             # Session 436: Promoted back to active blocking.
-            # Spread >= 7 OVER = 47% HR (N=32) vs 77% in competitive games.
-            # 30pp differential validated over full season. Flagged 4 of 5 Mar 7 losses.
+            # Session 514: Demoted back to observation — CF HR 63.6% (N=33),
+            # leaking +7.1u. Meets N>=30, CF HR>=55% demotion threshold.
+            # Also written to filter_overrides BQ table for runtime demotion.
             spread_mag = pred.get('spread_magnitude') or 0
             if (pred.get('recommendation') == 'OVER'
                     and spread_mag >= 7.0):
                 filter_counts['high_spread_over_would_block'] += 1
                 _record_filtered(pred, 'high_spread_over_would_block', pred_edge)
-                if 'high_spread_over_would_block' not in self._runtime_demoted:
-                    continue
+                # continue  # Session 514: demoted to observation — CF HR 63.6% (N=33)
 
             # Tanking risk observation (Session 474): season-end games where a team tanks
             # for draft position. Heavy spreads (>= 10) create blowout conditions where the
@@ -1476,15 +1494,15 @@ class BestBetsAggregator:
         if filter_counts['high_skew_over_block'] > 0:
             logger.info(f"High skew OVER (observation): tagged {filter_counts['high_skew_over_block']} OVER picks with mean-median gap > 2.0")
         if filter_counts['flat_trend_under'] > 0:
-            logger.info(f"Flat trend UNDER (observation): tagged {filter_counts['flat_trend_under']} UNDER picks with trend slope -0.5 to 0.5")
+            logger.info(f"Flat trend UNDER block: skipped {filter_counts['flat_trend_under']} UNDER picks with trend slope -0.5 to 0.5 (CF HR 37.0%, N=46)")
         if filter_counts['under_after_streak'] > 0:
             logger.info(f"UNDER after streak: skipped {filter_counts['under_after_streak']} UNDER picks on players with 3+ consecutive unders (44.7% HR anti-signal)")
         if filter_counts['under_after_bad_miss'] > 0:
             logger.info(f"UNDER after bad miss: skipped {filter_counts['under_after_bad_miss']} UNDER picks on AWAY players after bad miss + bad shooting (33-45% HR)")
         if filter_counts['high_spread_over_would_block'] > 0:
             logger.info(
-                f"High spread OVER block: skipped "
-                f"{filter_counts['high_spread_over_would_block']} OVER picks with spread >= 7 (44.3% HR)"
+                f"High spread OVER (observation): tagged "
+                f"{filter_counts['high_spread_over_would_block']} OVER picks with spread >= 7 (CF HR 63.6%, N=33)"
             )
         if filter_counts['mid_line_over_obs'] > 0:
             logger.info(
@@ -1565,11 +1583,11 @@ class BestBetsAggregator:
                 f"{filter_counts['unreliable_under_flat_trend_obs']} edge 5+ UNDER picks with high mins + flat trend"
             )
 
-        if filter_counts['blowout_risk_under_block_obs'] > 0:
+        if filter_counts['blowout_risk_under_block'] > 0:
             logger.info(
-                f"Blowout risk UNDER block (observation): tagged "
-                f"{filter_counts['blowout_risk_under_block_obs']} UNDER picks with "
-                f"blowout_risk >= 0.40 (16.7% HR N=12)"
+                f"Blowout risk UNDER block: skipped "
+                f"{filter_counts['blowout_risk_under_block']} UNDER picks with "
+                f"blowout_risk >= 0.40 (CF HR 37.5%, N=72)"
             )
 
         if filter_counts['depleted_stars_over_obs'] > 0:

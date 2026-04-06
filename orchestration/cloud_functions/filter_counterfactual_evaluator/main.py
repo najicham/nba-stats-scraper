@@ -37,7 +37,7 @@ ELIGIBLE_FOR_AUTO_DEMOTE = {
     'q4_scorer_under_block',
     'friday_over_block',
     'high_skew_over_block',
-    'high_book_std_under',
+    'high_book_std_under_block',
     'under_after_streak',
     'under_after_bad_miss',
     'familiar_matchup',
