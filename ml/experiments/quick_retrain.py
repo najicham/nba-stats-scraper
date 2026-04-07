@@ -19,9 +19,10 @@ Promotion Checklist (do NOT skip):
 3. pred_vs_vegas bias within +/- 1.5
 4. No critical tier bias (> +/- 5)
 5. Directional balance: both OVER and UNDER edge 3+ hit rate >= 52.4%
-6. Register in model_registry table
-7. Upload to GCS with standard naming
-8. Shadow test for 2+ days before switching CATBOOST_V9_MODEL_PATH
+6. Avg edge >= 3.0 (soft gate — warns but does not block)
+7. Register in model_registry table
+8. Upload to GCS with standard naming
+9. Shadow test for 2+ days before switching CATBOOST_V9_MODEL_PATH
 
 Usage:
     # Quick retrain with defaults (last 60 days training, last 7 days eval)
@@ -4150,6 +4151,12 @@ def main():
     pred_vs_vegas = np.mean(preds - lines)
     VEGAS_BIAS_LIMIT = 1.5
 
+    # Edge compression gate (Session 516 — retrained models pass governance but produce
+    # avg edge 1.3-1.6, well below 5.0 minimum needed for best bets. Soft gate warns
+    # when avg edge < 3.0 since edge depends partly on market conditions.)
+    avg_edge = float(np.mean(np.abs(preds - lines)))
+    EDGE_COMPRESSION_FLOOR = 3.0
+
     # Determine experiment mode suffix for filename (Session 179)
     n_features = len(active_feature_names)
     mode_suffix = ""
@@ -4328,6 +4335,20 @@ def main():
     if abs(pred_vs_vegas) > VEGAS_BIAS_LIMIT:
         print(f"  BLOCKED: Vegas bias outside +/-{VEGAS_BIAS_LIMIT} — model is miscalibrated vs market")
 
+    # Edge Compression Analysis (Session 516 — models with low avg edge produce 0 best bets)
+    print("\n" + "-" * 40)
+    print("EDGE COMPRESSION (avg_edge)")
+    print("-" * 40)
+    edge_status = "OK" if avg_edge >= EDGE_COMPRESSION_FLOOR else "WARN"
+    edges = np.abs(preds - lines)
+    edge_5_rate = float(np.mean(edges >= 5.0)) * 100
+    print(f"  avg(|predicted - vegas_line|) = {avg_edge:.2f} [{edge_status}]")
+    print(f"  edge distribution: median={float(np.median(edges)):.2f}, p75={float(np.percentile(edges, 75)):.2f}, p90={float(np.percentile(edges, 90)):.2f}")
+    print(f"  edge 5+ rate: {edge_5_rate:.1f}% ({int(np.sum(edges >= 5.0))}/{len(edges)})")
+    print(f"  (floor: {EDGE_COMPRESSION_FLOOR:.1f}. Best bets require edge 5+ for OVER, 3+ for UNDER)")
+    if avg_edge < EDGE_COMPRESSION_FLOOR:
+        print(f"  WARNING: Avg edge {avg_edge:.2f} < {EDGE_COMPRESSION_FLOOR:.1f} — model will produce very few best bets picks")
+
     # Directional Balance Analysis (Session 175 — catches OVER/UNDER collapse)
     BREAKEVEN = 52.4
     print("\n" + "-" * 40)
@@ -4494,6 +4515,12 @@ def main():
     gates.append(("Directional balance (OVER+UNDER >= 52.4%)",
                   directional['directional_balance_ok'],
                   f"OVER={over_str}, UNDER={under_str}"))
+    # Session 516: Edge compression soft gate — models with avg edge < 3.0 produce 0 best bets
+    # picks since OVER requires edge 5+ and UNDER requires edge 3+. Soft gate because edge
+    # depends partly on market conditions (tight markets compress edge for all models).
+    soft_gates.append(("Avg edge >= 3.0 (edge compression)",
+                       avg_edge >= EDGE_COMPRESSION_FLOOR,
+                       f"avg_edge={avg_edge:.2f}, edge_5+_rate={edge_5_rate:.1f}%"))
 
     all_passed = True
     for gate_name, passed, detail in gates:
@@ -4699,6 +4726,8 @@ def main():
             'n_edge3': bets_edge3,
             'n_edge5': bets_edge5,
             'pred_vs_vegas': round(float(pred_vs_vegas), 4),
+            'avg_edge': round(avg_edge, 4),
+            'edge_5_plus_rate': round(edge_5_rate, 2),
             'directional': {
                 'over_hr': directional.get('over_hit_rate'),
                 'under_hr': directional.get('under_hit_rate'),
@@ -4783,6 +4812,8 @@ def main():
                     'tier_bias': {k: {sk: (bool(sv) if isinstance(sv, (bool, np.bool_)) else sv) for sk, sv in v.items()} for k, v in tier_bias.items() if k != 'has_critical_bias'},
                     'has_critical_bias': bool(tier_bias['has_critical_bias']),
                     'pred_vs_vegas_bias': round(float(pred_vs_vegas), 4),
+                    'avg_edge': round(avg_edge, 4),
+                    'edge_5_plus_rate': round(edge_5_rate, 2),
                     'directional_balance': {
                         'over_hit_rate': directional['over_hit_rate'],
                         'under_hit_rate': directional['under_hit_rate'],
