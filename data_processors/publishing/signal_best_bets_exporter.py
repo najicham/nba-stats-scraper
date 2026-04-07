@@ -99,6 +99,11 @@ class SignalBestBetsExporter(BaseExporter):
 
         # ── Session 515: Edge-based auto-halt ──
         # When 7d avg edge < 5.0 AND edge-5+ pick rate < 50%, halt all picks.
+        logger.info(
+            f"Halt check: bb_auto_halt_active={regime_ctx.get('bb_auto_halt_active')}, "
+            f"rolling_7d_avg_edge={regime_ctx.get('rolling_7d_avg_edge')}, "
+            f"edge_halt_days_sampled={regime_ctx.get('edge_halt_days_sampled')}"
+        )
         if regime_ctx.get('bb_auto_halt_active', False):
             halt_reason = regime_ctx.get('bb_auto_halt_reason', 'Unknown')
             logger.warning(f"BEST BETS AUTO-HALT ACTIVE for {target_date}: {halt_reason}")
