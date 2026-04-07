@@ -191,6 +191,7 @@ def get_regime_context(bq_client, target_date: date) -> Dict[str, Any]:
     # Walk-forward validated: in 2025-26, fires late Feb → saves +8 units.
     # In normal seasons (2021-2025): never fires (edge stays 4.0+ through April).
     try:
+        from google.cloud.bigquery import QueryJobConfig, ScalarQueryParameter
         edge_halt_query = """
             WITH daily_edges AS (
               SELECT
