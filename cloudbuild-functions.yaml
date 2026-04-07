@@ -120,6 +120,16 @@ steps:
           --min-instances ${_MIN_INSTANCES} \
           --project nba-props-platform
 
+        # Session 516: Route traffic to latest revision.
+        # Gen2 Cloud Functions are backed by Cloud Run services that may not
+        # auto-route traffic to new revisions on redeploy.
+        echo "Routing traffic to latest revision for ${_FUNCTION_NAME}..."
+        gcloud run services update-traffic ${_FUNCTION_NAME} \
+          --to-latest \
+          --region us-west2 \
+          --project nba-props-platform \
+          --quiet || echo "WARN: Traffic routing failed (non-fatal for new functions)"
+
   # Step 3: Set IAM permissions for Pub/Sub invocation (Session 205/206 - CRITICAL)
   # Without this, Pub/Sub cannot deliver messages to the Cloud Function.
   # Session 205 discovered all orchestrators lacked roles/run.invoker permission,

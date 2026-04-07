@@ -62,6 +62,19 @@ steps:
       - '--update-labels'
       - 'commit-sha=${SHORT_SHA}'
 
+  # Step 3: Route traffic to latest revision (Session 516)
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: bash
+    args:
+      - '-c'
+      - |
+        gcloud run services update-traffic mlb-prediction-worker \
+          --to-latest \
+          --region us-west2 \
+          --project nba-props-platform \
+          --quiet
+        echo "Traffic routed to latest revision for mlb-prediction-worker"
+
 images:
   - 'us-west2-docker.pkg.dev/nba-props-platform/nba-props/mlb-prediction-worker:latest'
   - 'us-west2-docker.pkg.dev/nba-props-platform/nba-props/mlb-prediction-worker:${SHORT_SHA}'

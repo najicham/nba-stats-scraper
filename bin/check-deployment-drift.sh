@@ -250,6 +250,26 @@ except:
     fi
 fi
 
+# Session 516: Check traffic routing — services may deploy new revisions without routing traffic
+echo ""
+echo "=== Traffic Routing Check ==="
+stale_traffic=0
+for service in $SERVICES; do
+    latest=$(gcloud run services describe "$service" \
+        --region="$REGION" \
+        --project="$PROJECT_ID" \
+        --format="value(status.traffic[0].latestRevision)" 2>/dev/null)
+    if [ "$latest" != "True" ]; then
+        echo -e "${RED}❌ $service: Traffic NOT routing to latest revision${NC}"
+        echo "   Fix: gcloud run services update-traffic $service --to-latest --region=$REGION --project=$PROJECT_ID"
+        stale_traffic=$((stale_traffic + 1))
+        drift_found=$((drift_found + 1))
+    fi
+done
+if [ "$stale_traffic" -eq 0 ]; then
+    echo -e "${GREEN}All services routing to latest revisions${NC}"
+fi
+
 echo ""
 echo "=== Summary ==="
 echo "Services checked: $total_checked"

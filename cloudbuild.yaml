@@ -105,6 +105,21 @@ steps:
       - '--min-instances'
       - '${_MIN_INSTANCES}'
 
+  # Step 4: Route traffic to latest revision (Session 516)
+  # Cloud Run may not auto-route traffic to new revisions on redeploy.
+  # Session 516 discovered ALL 21 services stuck on stale revisions.
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: bash
+    args:
+      - '-c'
+      - |
+        gcloud run services update-traffic ${_SERVICE} \
+          --to-latest \
+          --region us-west2 \
+          --project nba-props-platform \
+          --quiet
+        echo "Traffic routed to latest revision for ${_SERVICE}"
+
 images:
   - 'us-west2-docker.pkg.dev/nba-props-platform/nba-props/${_SERVICE}:latest'
   - 'us-west2-docker.pkg.dev/nba-props-platform/nba-props/${_SERVICE}:${SHORT_SHA}'
