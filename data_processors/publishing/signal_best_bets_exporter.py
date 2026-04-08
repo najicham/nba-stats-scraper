@@ -331,24 +331,6 @@ class SignalBestBetsExporter(BaseExporter):
         except Exception as e:
             logger.warning(f"Ultra OVER gate check failed (non-fatal): {e}")
 
-        # Step 3b: Enrich ultra criteria with live HRs (Session 327)
-        try:
-            ultra_live = compute_ultra_live_hrs(self.bq_client, PROJECT_ID)
-            for pick in top_picks:
-                for crit in pick.get('ultra_criteria', []):
-                    live = ultra_live.get(crit['id'], {})
-                    crit['live_hr'] = live.get('live_hr')
-                    crit['live_n'] = live.get('live_n', 0)
-        except Exception as e:
-            logger.warning(f"Ultra live HR enrichment failed (non-fatal): {e}")
-
-        # Step 3c: Check ultra OVER gate for public exposure (Session 328)
-        ultra_over_gate = {'gate_met': False, 'n': 0, 'hr': None}
-        try:
-            ultra_over_gate = check_ultra_over_gate(self.bq_client, PROJECT_ID)
-        except Exception as e:
-            logger.warning(f"Ultra OVER gate check failed (non-fatal): {e}")
-
         # Step 3d: Look up game times from schedule (Session 328)
         game_times = self._query_game_times(target_date, top_picks)
 

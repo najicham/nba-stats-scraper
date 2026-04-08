@@ -83,6 +83,28 @@ SOURCES = {
         'severity': 'WARNING',
         'description': 'NBA.com player tracking/usage data',
     },
+    # Session 516: Pipeline-critical sources previously unmonitored
+    'bettingpros_props': {
+        'table': f'{PROJECT_ID}.nba_raw.bettingpros_player_points_props',
+        'date_column': 'game_date',
+        'min_rows': 500,
+        'severity': 'CRITICAL',
+        'description': 'BettingPros multi-book lines — primary source for line movement, book std, sharp signals',
+    },
+    'odds_api_props': {
+        'table': f'{PROJECT_ID}.nba_raw.odds_api_player_points_props',
+        'date_column': 'game_date',
+        'min_rows': 200,
+        'severity': 'CRITICAL',
+        'description': 'Odds API player props — primary betting line source for predictions',
+    },
+    'espn_projections': {
+        'table': f'{PROJECT_ID}.nba_raw.espn_projections',
+        'date_column': 'game_date',
+        'min_rows': 30,
+        'severity': 'WARNING',
+        'description': 'ESPN projections — shadow validation source',
+    },
 }
 
 # Number of consecutive days with 0 rows before declaring DEAD
