@@ -928,7 +928,6 @@ def start_prediction_batch():
                 logger.info(f"TODAY game_date resolved to: {game_date}")
             elif game_date_str == "TOMORROW":
                 from zoneinfo import ZoneInfo
-                from datetime import timedelta
                 game_date = datetime.now(ZoneInfo('America/New_York')).date() + timedelta(days=1)
                 logger.info(f"TOMORROW game_date resolved to: {game_date}")
             else:
