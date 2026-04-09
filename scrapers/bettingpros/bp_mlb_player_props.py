@@ -162,7 +162,7 @@ class BettingProsMLBPlayerProps(BettingProsPlayerProps):
         {
             "type": "gcs",
             "key": "bettingpros-mlb/%(market_name)s/%(date)s/props.json",
-            "export_mode": "DATA",
+            "export_mode": "data",
             "groups": ["prod", "gcs"],
         },
 
@@ -170,14 +170,14 @@ class BettingProsMLBPlayerProps(BettingProsPlayerProps):
         {
             "type": "file",
             "filename": "/tmp/bp_mlb_%(market_name)s_%(date)s.json",
-            "export_mode": "DATA",
+            "export_mode": "data",
             "pretty_print": True,
             "groups": ["dev", "test"],
         },
         {
             "type": "file",
             "filename": "/tmp/bp_mlb_%(market_name)s_raw_%(date)s.json",
-            "export_mode": "RAW",
+            "export_mode": "raw",
             "pretty_print": True,
             "groups": ["dev", "test"],
         },
@@ -186,13 +186,13 @@ class BettingProsMLBPlayerProps(BettingProsPlayerProps):
         {
             "type": "file",
             "filename": "/tmp/mlb_raw_%(run_id)s.json",
-            "export_mode": "RAW",
+            "export_mode": "raw",
             "groups": ["capture"],
         },
         {
             "type": "file",
             "filename": "/tmp/mlb_exp_%(run_id)s.json",
-            "export_mode": "DECODED",
+            "export_mode": "decoded",
             "pretty_print": True,
             "groups": ["capture"],
         },
