@@ -822,24 +822,24 @@ def process_analytics():
     Also supports legacy format with 'source_table' for backward compatibility.
     """
     envelope = request.get_json()
-    
+
     if not envelope:
         return jsonify({"error": "No Pub/Sub message received"}), 400
-    
+
     # Decode Pub/Sub message
     if 'message' not in envelope:
         return jsonify({"error": "Invalid Pub/Sub message format"}), 400
-    
+
     try:
         # Decode the message
         pubsub_message = envelope['message']
-        
+
         if 'data' in pubsub_message:
             data = base64.b64decode(pubsub_message['data']).decode('utf-8')
             message = json.loads(data)
         else:
             return jsonify({"error": "No data in Pub/Sub message"}), 400
-        
+
         # Extract trigger info
         # Phase 2 processors publish 'output_table' (e.g., "nba_raw.bdl_player_boxscores")
         # For backward compatibility, also check 'source_table'
@@ -870,7 +870,7 @@ def process_analytics():
 
         # Normalize trigger config to group format (handles both list and dict formats)
         processor_groups = normalize_trigger_config(trigger_config)
-        
+
         # Process analytics for date range (single day or small range)
         start_date = game_date
         end_date = game_date
@@ -893,6 +893,15 @@ def process_analytics():
         # Only run this check when triggered by NBA.com gamebook completion
         # This ensures all scheduled games have boxscores before analytics run
         # Skip this check in backfill mode (data is historical, incompleteness is expected)
+        #
+        # Session 516 FIX: Added coverage threshold (80%) and staleness bypass (2+ days old).
+        # Previously, ANY missing game returned 500 + triggered re-scrape, creating an infinite
+        # amplification loop: 500 → re-scrape → new Phase 2 message → 500 → re-scrape → ...
+        # A single permanently missing game (e.g., DAL@MEM 2026-04-01 with no gamebook data)
+        # caused 500+ errors/day for 7 days. The re-scrape can't find data that doesn't exist.
+        COMPLETENESS_COVERAGE_THRESHOLD = float(os.environ.get('COMPLETENESS_COVERAGE_THRESHOLD', '80.0'))
+        COMPLETENESS_STALENESS_DAYS = int(os.environ.get('COMPLETENESS_STALENESS_DAYS', '2'))
+
         if source_table == 'nbac_gamebook_player_stats' and game_date and not opts.get('backfill_mode', False):
             logger.info(f"🔍 Running boxscore completeness check for {game_date}")
             completeness = verify_boxscore_completeness(game_date, opts['project_id'])
@@ -923,24 +932,57 @@ def process_analytics():
                     f"({coverage_pct:.1f}% coverage). Missing: {missing_count} games"
                 )
 
-                # Trigger missing boxscore scrapes
-                trigger_missing_boxscore_scrapes(completeness["missing_games"], game_date)
+                # Session 516: Check if we should proceed anyway despite incomplete data.
+                # Two bypass conditions prevent infinite Pub/Sub retry storms:
+                #
+                # 1. Coverage threshold: If 80%+ of games have boxscores, proceed.
+                #    One missing game out of 10 (90%) should not block analytics for 9 games.
+                #
+                # 2. Staleness bypass: If the game_date is 2+ days old, the missing data
+                #    is unlikely to arrive. Retrying is futile and creates an amplification
+                #    loop (each 500 triggers a re-scrape which publishes a new Pub/Sub message).
+                try:
+                    game_date_obj = date.fromisoformat(game_date)
+                    days_old = (date.today() - game_date_obj).days
+                except (ValueError, TypeError):
+                    days_old = 0
 
-                # Return 500 to trigger Pub/Sub retry
-                # When missing scrapes complete, they'll republish and retry analytics
-                return jsonify({
-                    "status": "delayed",
-                    "reason": "incomplete_boxscores",
-                    "message": f"Processing delayed for {game_date} - incomplete boxscores ({completeness['actual_games']}/{completeness['expected_games']} games available)",
-                    "game_date": game_date,
-                    "completeness": {
-                        "expected": completeness["expected_games"],
-                        "actual": completeness["actual_games"],
-                        "coverage_pct": coverage_pct,
-                        "missing_count": missing_count
-                    },
-                    "action": "Triggered re-scrape and will retry analytics when complete"
-                }), 500  # 500 triggers Pub/Sub retry
+                should_bypass = False
+                bypass_reason = None
+
+                if coverage_pct >= COMPLETENESS_COVERAGE_THRESHOLD:
+                    should_bypass = True
+                    bypass_reason = f"coverage {coverage_pct:.1f}% >= {COMPLETENESS_COVERAGE_THRESHOLD}% threshold"
+                elif days_old >= COMPLETENESS_STALENESS_DAYS:
+                    should_bypass = True
+                    bypass_reason = f"game_date {game_date} is {days_old} days old (>= {COMPLETENESS_STALENESS_DAYS}d staleness limit)"
+
+                if should_bypass:
+                    logger.warning(
+                        f"⚠️ Proceeding with incomplete boxscores for {game_date} "
+                        f"({completeness['actual_games']}/{completeness['expected_games']} games, "
+                        f"{coverage_pct:.1f}% coverage). Bypass reason: {bypass_reason}"
+                    )
+                    # Fall through to run processors with available data
+                else:
+                    # Only trigger re-scrape for recent dates (prevents amplification loop)
+                    trigger_missing_boxscore_scrapes(completeness["missing_games"], game_date)
+
+                    # Return 500 to trigger Pub/Sub retry
+                    # When missing scrapes complete, they'll republish and retry analytics
+                    return jsonify({
+                        "status": "delayed",
+                        "reason": "incomplete_boxscores",
+                        "message": f"Processing delayed for {game_date} - incomplete boxscores ({completeness['actual_games']}/{completeness['expected_games']} games available)",
+                        "game_date": game_date,
+                        "completeness": {
+                            "expected": completeness["expected_games"],
+                            "actual": completeness["actual_games"],
+                            "coverage_pct": coverage_pct,
+                            "missing_count": missing_count
+                        },
+                        "action": "Triggered re-scrape and will retry analytics when complete"
+                    }), 500  # 500 triggers Pub/Sub retry
             else:
                 logger.info(
                     f"✅ Boxscore completeness check PASSED for {game_date}: "
@@ -1142,7 +1184,7 @@ def process_date_range():
             'UpcomingPlayerGameContextProcessor': UpcomingPlayerGameContextProcessor,
             'UpcomingTeamGameContextProcessor': UpcomingTeamGameContextProcessor,
         }
-        
+
         if not processor_names:
             # Default: run all processors
             processors_to_run = list(processor_map.values())
@@ -1222,7 +1264,7 @@ def process_date_range():
             "date_range": f"{start_date} to {end_date}",
             "results": results
         }), 200
-        
+
     except Exception as e:
         logger.error(f"Error in manual date range processing: {e}")
         return jsonify({"error": str(e)}), 500
