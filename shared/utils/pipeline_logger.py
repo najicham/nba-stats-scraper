@@ -58,6 +58,16 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 
+def _is_valid_date_string(value: str) -> bool:
+    """Check if a string looks like a valid YYYY-MM-DD date.
+
+    Used to reject sentinel values like 'TODAY' or 'YESTERDAY' before they
+    reach BigQuery's DATE column and cause a BadRequest error.
+    """
+    import re
+    return bool(re.match(r'^\d{4}-\d{2}-\d{2}$', value))
+
+
 class PipelineEventType(str, Enum):
     """Types of pipeline events that can be logged."""
     PHASE_START = 'phase_start'
@@ -348,6 +358,15 @@ def log_pipeline_event(
             event_type_str = event_type.value
         else:
             event_type_str = str(event_type)
+
+        # Validate game_date: BQ column is DATE type, rejects non-date strings
+        # like "TODAY" or "YESTERDAY" that some scrapers pass before opts resolution
+        if game_date and not _is_valid_date_string(game_date):
+            logger.warning(
+                f"Invalid game_date '{game_date}' for pipeline event "
+                f"(processor={processor_name}), setting to None"
+            )
+            game_date = None
 
         # Build row
         row = {

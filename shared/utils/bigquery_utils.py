@@ -236,7 +236,17 @@ def _insert_bigquery_rows_internal(
 
     load_job = client.load_table_from_json(rows, table_id, job_config=job_config)
     # Wait for completion with timeout to prevent indefinite hangs
-    load_job.result(timeout=60)
+    try:
+        load_job.result(timeout=60)
+    except Exception:
+        # Log the detailed error_result before re-raising — the exception message
+        # says "look into errors[] collection" but doesn't include it.
+        if load_job.errors:
+            logger.error(
+                f"BQ load job errors for {table_id} ({len(rows)} rows): "
+                f"{load_job.errors[:5]}"
+            )
+        raise
 
     if load_job.errors:
         # CRITICAL FIX (Jan 25, 2026): Raise exception instead of returning False
@@ -296,14 +306,14 @@ def table_exists(
 ) -> bool:
     """
     Check if a BigQuery table exists.
-    
+
     Args:
         table_id: Table ID (format: "dataset.table" or "project.dataset.table")
         project_id: GCP project ID (used if table_id doesn't include project)
-        
+
     Returns:
         True if table exists, False otherwise
-        
+
     Example:
         >>> if table_exists("nba_orchestration.scraper_execution_log"):
         ...     print("Table exists!")
@@ -318,7 +328,7 @@ def table_exists(
 
         client.get_table(table_id)
         return True
-        
+
     except NotFound:
         return False
     except Exception as e:
@@ -332,14 +342,14 @@ def get_table_row_count(
 ) -> int:
     """
     Get the number of rows in a BigQuery table.
-    
+
     Args:
         table_id: Table ID (format: "dataset.table" or "project.dataset.table")
         project_id: GCP project ID
-        
+
     Returns:
         Number of rows (0 if table doesn't exist or on error)
-        
+
     Example:
         >>> count = get_table_row_count("nba_orchestration.scraper_execution_log")
         >>> print(f"Table has {count} rows")
@@ -354,7 +364,7 @@ def get_table_row_count(
 
         table = client.get_table(table_id)
         return table.num_rows
-        
+
     except NotFound:
         logger.warning(f"Table not found: {table_id}")
         return 0
@@ -501,10 +511,10 @@ def update_bigquery_rows(
     Args:
         query: DML query (UPDATE, DELETE, MERGE, etc.)
         project_id: GCP project ID
-        
+
     Returns:
         Number of rows affected (or 0 on error)
-        
+
     Example:
         >>> query = '''
         ... UPDATE `project.dataset.table`

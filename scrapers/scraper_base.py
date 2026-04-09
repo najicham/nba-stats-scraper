@@ -339,6 +339,21 @@ class ScraperBase(CostTrackingMixin, ExecutionLoggingMixin, ValidationMixin, Htt
                         game_date = opts.get('date') or opts.get('gamedate', '')
                         if game_date and len(game_date) == 8:  # YYYYMMDD format
                             game_date = f"{game_date[:4]}-{game_date[4:6]}-{game_date[6:8]}"
+                        # Resolve TODAY/YESTERDAY sentinels BEFORE logging to BQ
+                        # (ConfigMixin.set_additional_opts resolves these later, but
+                        # the pipeline_event_log.game_date column is DATE type and
+                        # rejects non-date strings like "TODAY")
+                        if game_date and game_date.upper() in ('TODAY', 'YESTERDAY'):
+                            try:
+                                from datetime import timedelta as _td
+                                import pytz
+                                eastern = pytz.timezone('US/Eastern')
+                                if game_date.upper() == 'TODAY':
+                                    game_date = datetime.now(eastern).strftime("%Y-%m-%d")
+                                else:
+                                    game_date = (datetime.now(eastern) - _td(days=1)).strftime("%Y-%m-%d")
+                            except Exception:
+                                game_date = None  # Skip rather than write bad data
                         self._pipeline_event_id = log_processor_start(
                             phase='phase_2',
                             processor_name=self._get_scraper_name(),

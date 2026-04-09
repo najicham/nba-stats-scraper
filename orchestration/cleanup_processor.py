@@ -353,25 +353,94 @@ class CleanupProcessor:
 
         try:
             result = execute_bigquery(query)
-            return {row['source_file_path'] for row in result}
+            # Build set with BOTH relative and full gs:// forms of each path
+            # so lookups work regardless of which format the scraper_execution_log uses.
+            # Also exclude "unknown" entries — these are from Phase 2 processors that
+            # don't properly track source_file_path (odds_api, bettingpros, etc.).
+            processed = set()
+            default_bucket = 'nba-scraped-data'
+            for row in result:
+                path = row['source_file_path']
+                if not path or path == 'unknown':
+                    continue
+                # Add relative path form
+                processed.add(path)
+                # Also add full gs:// form so it matches scraper_execution_log.gcs_path
+                if not path.startswith('gs://'):
+                    processed.add(f'gs://{default_bucket}/{path}')
+            return processed
         except GoogleAPIError as e:
             logger.error(f"Failed to get processed files: {e}", exc_info=True)
             # Return empty set to be safe - will trigger republish
             return set()
 
+    @staticmethod
+    def _normalize_gcs_path(gcs_path: str) -> str:
+        """
+        Normalize a GCS path by stripping the gs://bucket/ prefix.
+
+        scraper_execution_log stores full URIs: gs://nba-scraped-data/nba-com/schedule/...
+        Phase 2 source_file_path stores relative paths: nba-com/schedule/...
+        This method normalizes to relative form so they can be compared.
+        """
+        if gcs_path and gcs_path.startswith('gs://'):
+            # Strip gs://bucket-name/ prefix → just the object path
+            parts = gcs_path.split('/', 3)  # ['gs:', '', 'bucket', 'path/...']
+            if len(parts) >= 4:
+                return parts[3]
+        return gcs_path
+
+    # Scrapers whose Phase 2 tables reliably track source_file_path.
+    # Only these scrapers can be checked by file-path matching.
+    # All others write source_file_path = "unknown" (or don't have a Phase 2
+    # table at all) and would cause false-positive republishes every cycle.
+    #
+    # Verified 2026-04-09: Only nbac_schedule has real source_file_path values.
+    # All other Phase 2 tables (nbac_team_boxscore, nbac_play_by_play,
+    # odds_api_*, bettingpros_*, espn_*, etc.) write "unknown".
+    # To add a scraper here, first verify its Phase 2 table has non-"unknown"
+    # source_file_path values: bq query "SELECT DISTINCT source_file_path
+    # FROM nba_raw.TABLE WHERE source_file_path != 'unknown' LIMIT 1"
+    TRACKABLE_SCRAPERS = {
+        'nbac_schedule_api',      # nbac_schedule — only table with real paths
+    }
+
     def _find_missing_files(self, scraper_files: List[Dict], processed_files: set) -> List[Dict]:
-        """Find files that weren't processed by Phase 2."""
+        """Find files that weren't processed by Phase 2.
+
+        Only checks scrapers in TRACKABLE_SCRAPERS — i.e., those whose Phase 2
+        tables reliably store source_file_path. Scrapers that write "unknown"
+        (odds_api, bettingpros, injury_report, projections, external analytics)
+        are skipped to prevent false-positive retry storms.
+        """
         missing = []
+        skipped_untrackable = 0
 
         for file_info in scraper_files:
-            gcs_path = file_info['gcs_path']
+            scraper_name = file_info['scraper_name']
 
-            if gcs_path not in processed_files:
+            # Skip scrapers whose Phase 2 tables don't track source_file_path
+            if scraper_name not in self.TRACKABLE_SCRAPERS:
+                skipped_untrackable += 1
+                continue
+
+            gcs_path = file_info['gcs_path']
+            # Normalize to relative path for comparison with source_file_path
+            # scraper_execution_log uses gs://bucket/path, Phase 2 tables use just path
+            normalized_path = self._normalize_gcs_path(gcs_path)
+
+            if normalized_path not in processed_files and gcs_path not in processed_files:
                 missing.append(file_info)
                 logger.warning(
-                    f"⚠️  Missing: {file_info['scraper_name']} - {gcs_path} "
+                    f"⚠️  Missing: {scraper_name} - {gcs_path} "
                     f"(age: {file_info['age_minutes']}min)"
                 )
+
+        if skipped_untrackable > 0:
+            logger.info(
+                f"ℹ️  Skipped {skipped_untrackable} files from scrapers with "
+                f"unreliable source_file_path tracking"
+            )
 
         return missing
 
