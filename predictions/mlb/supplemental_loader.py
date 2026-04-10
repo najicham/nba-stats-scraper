@@ -298,7 +298,7 @@ def _load_game_context(
     WITH ranked_lines AS (
         SELECT
             game_pk,
-            total_line,
+            total_runs,
             home_moneyline,
             away_moneyline,
             bookmaker,
@@ -315,9 +315,9 @@ def _load_game_context(
             ) as rn
         FROM `{project_id}.mlb_raw.oddsa_game_lines`
         WHERE game_date = @game_date
-          AND total_line IS NOT NULL
+          AND total_runs IS NOT NULL
     )
-    SELECT game_pk, total_line, home_moneyline, away_moneyline
+    SELECT game_pk, total_runs, home_moneyline, away_moneyline
     FROM ranked_lines
     WHERE rn = 1
     """
@@ -333,7 +333,7 @@ def _load_game_context(
         result = {}
         for row in rows:
             result[row['game_pk']] = {
-                'game_total_line': row.get('total_line'),
+                'game_total_line': row.get('total_runs'),
                 'home_moneyline': row.get('home_moneyline'),
                 'away_moneyline': row.get('away_moneyline'),
             }

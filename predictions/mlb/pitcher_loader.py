@@ -508,6 +508,10 @@ def load_batch_features(
             = LOWER(REGEXP_REPLACE(NORMALIZE(lf.player_lookup, NFD), r'[\\W_]+', ''))
         AND fg.season_year = EXTRACT(YEAR FROM @game_date)
     WHERE lf.rn = 1
+      -- Session 519: Only return pitchers with betting lines. Without this,
+      -- ~292 pitchers per day get BLOCKED predictions written to pitcher_strikeouts
+      -- (one per pitcher with rolling_stats >= 3 in the past year).
+      AND COALESCE(bp.bp_over_line, oddsa.oddsa_line) IS NOT NULL
     """
 
     try:

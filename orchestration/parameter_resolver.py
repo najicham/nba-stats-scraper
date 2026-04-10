@@ -159,13 +159,13 @@ class ParameterResolver:
         except (FileNotFoundError, yaml.YAMLError, KeyError) as e:
             # Non-blocking - just log and continue
             logger.warning(f"Could not validate workflow date config: {e}")
-    
+
     def _load_config(self) -> Dict[str, Any]:
         """Load parameter configuration from YAML."""
         if not os.path.exists(self.config_path):
             logger.warning(f"Config file not found: {self.config_path}, using defaults")
             return {'simple_scrapers': {}, 'complex_scrapers': []}
-        
+
         try:
             with open(self.config_path, 'r') as f:
                 config = yaml.safe_load(f)
@@ -174,7 +174,7 @@ class ParameterResolver:
         except (FileNotFoundError, yaml.YAMLError, PermissionError) as e:
             logger.error(f"Failed to load parameter config: {e}", exc_info=True)
             return {'simple_scrapers': {}, 'complex_scrapers': []}
-    
+
     def _determine_target_date(
         self,
         workflow_name: str,
@@ -312,7 +312,7 @@ class ParameterResolver:
         )
 
         return context
-    
+
     def resolve_parameters(
         self,
         scraper_name: str,
@@ -320,11 +320,11 @@ class ParameterResolver:
     ) -> Dict[str, Any]:
         """
         Resolve parameters for a scraper.
-        
+
         Args:
             scraper_name: Name of scraper
             workflow_context: Context from build_workflow_context()
-        
+
         Returns:
             Dict of parameters to pass to scraper
         """
@@ -332,15 +332,15 @@ class ParameterResolver:
         if scraper_name in self.complex_resolvers:
             logger.debug(f"Using complex resolver for {scraper_name}")
             return self.complex_resolvers[scraper_name](workflow_context)
-        
+
         # Check if in complex scrapers list (but no resolver yet)
         if scraper_name in self.config.get('complex_scrapers', []):
             logger.warning(f"Scraper {scraper_name} marked complex but no resolver implemented")
             return self._resolve_from_config(scraper_name, workflow_context)
-        
+
         # Use simple YAML config
         return self._resolve_from_config(scraper_name, workflow_context)
-    
+
     def _resolve_from_config(
         self,
         scraper_name: str,
@@ -348,30 +348,30 @@ class ParameterResolver:
     ) -> Dict[str, Any]:
         """
         Resolve parameters from YAML config.
-        
+
         Config format:
             simple_scrapers:
               scraper_name:
                 param1: context.execution_date
                 param2: context.season
                 param3: "literal_value"
-        
+
         Args:
             scraper_name: Name of scraper
             context: Workflow context
-        
+
         Returns:
             Dict of resolved parameters
         """
         simple_scrapers = self.config.get('simple_scrapers', {})
-        
+
         if scraper_name not in simple_scrapers:
             logger.warning(f"No parameter config for {scraper_name}, using defaults")
             return self._get_default_parameters(context)
-        
+
         param_config = simple_scrapers[scraper_name]
         parameters = {}
-        
+
         for param_name, value_expr in param_config.items():
             # Resolve value from context or use literal
             if isinstance(value_expr, str) and value_expr.startswith('context.'):
@@ -381,24 +381,24 @@ class ParameterResolver:
             else:
                 # Literal value
                 parameters[param_name] = value_expr
-        
+
         return parameters
-    
+
     def _get_default_parameters(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """
         Get default parameters if scraper not in config.
-        
+
         Most scrapers need at least date and season.
         """
         return {
             'date': context['execution_date'],
             'season': context['season']
         }
-    
+
     # ========================================================================
     # Complex Resolvers (Game-Specific Scrapers)
     # ========================================================================
-    
+
     def _resolve_nbac_play_by_play(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
         Resolve parameters for play-by-play scraper.
@@ -428,7 +428,7 @@ class ParameterResolver:
 
         logger.info(f"Resolved nbac_play_by_play for {len(params_list)} games")
         return params_list
-    
+
     def _resolve_game_specific(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """
         Resolver for nbac_player_boxscore (date-based API).
@@ -444,7 +444,9 @@ class ParameterResolver:
             # Validate whether empty games is expected (offseason) or not
             self._validate_games_list(games, target_date, 'nbac_player_boxscore', context)
             logger.warning("No games today for game-specific scraper")
-            return {'date': context['execution_date']}
+            # Session 519: Was returning {'date': ...} but scraper expects 'gamedate'
+            # in YYYYMMDD format. Wrong key caused orphan failures in scraper_failures.
+            return {'gamedate': target_date.replace('-', '')}
 
         game = games[0]
         game_date = game.game_date.replace('-', '')  # YYYYMMDD format
@@ -754,7 +756,7 @@ class ParameterResolver:
 
         logger.info(f"Resolved oddsa_game_lines for {len(params_list)} events")
         return params_list
-    
+
     # ========================================================================
     # Helper Methods
     # ========================================================================
@@ -840,36 +842,36 @@ class ParameterResolver:
     def get_current_season(self, current_time: datetime) -> str:
         """
         Determine current NBA season based on date.
-        
+
         NBA season logic:
         - Oct-Dec: Current year season (e.g., 2024-25)
         - Jan-Sep: Previous year season (e.g., 2023-24)
-        
+
         Args:
             current_time: Current datetime
-        
+
         Returns:
             Season string (e.g., "2024-25")
         """
         year = current_time.year
         month = current_time.month
-        
+
         if month >= 10:  # Oct-Dec
             season_start = year
         else:  # Jan-Sep
             season_start = year - 1
-        
+
         season_end = (season_start + 1) % 100
-        
+
         return f"{season_start}-{season_end:02d}"
-    
+
     def get_games_for_date(self, date_str: str) -> List:
         """
         Get games for a specific date.
-        
+
         Args:
             date_str: Date string (YYYY-MM-DD)
-        
+
         Returns:
             List of game objects
         """
