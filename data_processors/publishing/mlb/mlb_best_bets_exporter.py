@@ -196,8 +196,8 @@ class MlbBestBetsExporter(BaseExporter):
     # -----------------------------------------------------------------------
 
     def _map_to_frontend_pick(self, row: Dict, rank: int) -> Dict:
-        """Map a BQ pitcher_strikeouts row to the frontend BestBetsPick shape."""
-        is_correct = row.get('is_correct')
+        """Map a signal_best_bets_picks row to the frontend BestBetsPick shape."""
+        is_correct = row.get('prediction_correct')
         actual = row.get('actual_strikeouts')
 
         if is_correct is True:
@@ -206,6 +206,16 @@ class MlbBestBetsExporter(BaseExporter):
             result = 'LOSS'
         else:
             result = None
+
+        # Parse pick_angles JSON if available
+        angles = []
+        raw_angles = row.get('pick_angles')
+        if raw_angles:
+            try:
+                import json as _json
+                angles = _json.loads(raw_angles) if isinstance(raw_angles, str) else raw_angles
+            except Exception:
+                angles = []
 
         return {
             'rank': rank,
@@ -216,11 +226,11 @@ class MlbBestBetsExporter(BaseExporter):
             'home': bool(row.get('is_home')),
             'direction': row.get('recommendation'),
             'stat': 'K',
-            'line': safe_float(row.get('strikeouts_line'), default=0.0),
+            'line': safe_float(row.get('line_value'), default=0.0),
             'edge': safe_float(row.get('edge'), default=0.0),
-            'angles': [],
+            'angles': angles,
             'game_time': None,
-            'is_ultra': False,
+            'is_ultra': bool(row.get('ultra_tier')),
             'actual': safe_int(actual) if actual is not None else None,
             'result': result,
             'sport': 'mlb',
@@ -228,8 +238,8 @@ class MlbBestBetsExporter(BaseExporter):
 
     def _compute_record(self, graded_rows: List[Dict]) -> Dict:
         """Compute wins/losses/pct from a list of rows with is_correct field."""
-        wins = sum(1 for r in graded_rows if r.get('is_correct') is True)
-        losses = sum(1 for r in graded_rows if r.get('is_correct') is False)
+        wins = sum(1 for r in graded_rows if r.get('prediction_correct') is True)
+        losses = sum(1 for r in graded_rows if r.get('prediction_correct') is False)
         total = wins + losses
         pct = round(wins / total, 3) if total > 0 else 0.0
         return {'wins': wins, 'losses': losses, 'pct': pct}
@@ -256,7 +266,7 @@ class MlbBestBetsExporter(BaseExporter):
         run_count = 0
         run_type: Optional[str] = None
         for row in sorted_rows:
-            t = 'W' if row.get('is_correct') is True else 'L'
+            t = 'W' if row.get('prediction_correct') is True else 'L'
             if t == run_type:
                 run_count += 1
             else:
@@ -270,7 +280,7 @@ class MlbBestBetsExporter(BaseExporter):
         last_type = 'W' if sorted_rows[-1].get('is_correct') is True else 'L'
         current_count = 0
         for row in reversed(sorted_rows):
-            t = 'W' if row.get('is_correct') is True else 'L'
+            t = 'W' if row.get('prediction_correct') is True else 'L'
             if t == last_type:
                 current_count += 1
             else:
@@ -313,8 +323,8 @@ class MlbBestBetsExporter(BaseExporter):
             days = []
             for game_date_str in sorted(dates_in_week.keys(), reverse=True):
                 day_rows = dates_in_week[game_date_str]
-                graded = [r for r in day_rows if r.get('is_correct') is not None]
-                wins = sum(1 for r in graded if r.get('is_correct') is True)
+                graded = [r for r in day_rows if r.get('prediction_correct') is not None]
+                wins = sum(1 for r in graded if r.get('prediction_correct') is True)
                 losses = len(graded) - wins
 
                 if not graded:
@@ -337,7 +347,7 @@ class MlbBestBetsExporter(BaseExporter):
                 })
 
             # Week record across all graded picks in week
-            all_week_graded = [r for rows in dates_in_week.values() for r in rows if r.get('is_correct') is not None]
+            all_week_graded = [r for rows in dates_in_week.values() for r in rows if r.get('prediction_correct') is not None]
 
             weeks.append({
                 'week_start': week_start_str,
@@ -364,36 +374,41 @@ class MlbBestBetsExporter(BaseExporter):
 
         SEASON_START = '2026-03-27'  # MLB Opening Day 2026
 
+        # Query signal_best_bets_picks (actual best bets) with grading from
+        # prediction_accuracy. The old query targeted pitcher_strikeouts with
+        # confidence >= 70 which always returned 0 rows.
         query = f"""
         SELECT
-            CAST(game_date AS STRING) AS game_date,
-            pitcher_lookup,
-            pitcher_name,
-            team_abbr,
-            opponent_team_abbr,
-            is_home,
-            strikeouts_line,
-            predicted_strikeouts,
-            recommendation,
-            confidence,
-            edge,
-            model_version,
-            is_correct,
-            actual_strikeouts
-        FROM `{self.project_id}.mlb_predictions.pitcher_strikeouts`
-        WHERE game_date >= '{SEASON_START}'
-          AND game_date <= '{today}'
-          AND confidence >= {self.min_confidence}
-          AND ABS(edge) >= {self.min_edge}
-          AND recommendation IN ('OVER', 'UNDER')
-        ORDER BY game_date ASC, edge DESC
+            CAST(bb.game_date AS STRING) AS game_date,
+            bb.pitcher_lookup,
+            bb.pitcher_name,
+            bb.team_abbr,
+            bb.opponent_team_abbr,
+            bb.line_value,
+            bb.predicted_strikeouts,
+            bb.recommendation,
+            bb.edge,
+            bb.ultra_tier,
+            bb.pick_angles,
+            bb.system_id,
+            pa.prediction_correct,
+            pa.actual_strikeouts
+        FROM `{self.project_id}.mlb_predictions.signal_best_bets_picks` bb
+        LEFT JOIN `{self.project_id}.mlb_predictions.prediction_accuracy` pa
+            ON bb.pitcher_lookup = pa.pitcher_lookup
+            AND bb.game_date = pa.game_date
+            AND bb.recommendation = pa.recommendation
+            AND bb.line_value = pa.line_value
+        WHERE bb.game_date >= '{SEASON_START}'
+          AND bb.game_date <= '{today}'
+        ORDER BY bb.game_date ASC, bb.edge DESC
         """
 
         all_rows = self.query_to_list(query)
 
         # Split today's picks from history
         today_rows = [r for r in all_rows if r.get('game_date') == today]
-        graded_rows = [r for r in all_rows if r.get('is_correct') is not None]
+        graded_rows = [r for r in all_rows if r.get('prediction_correct') is not None]
 
         # Today's picks ranked by edge
         today_sorted = sorted(today_rows, key=lambda r: abs(r.get('edge') or 0), reverse=True)
