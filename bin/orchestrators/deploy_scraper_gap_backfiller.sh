@@ -31,7 +31,7 @@ PROJECT_ID="nba-props-platform"
 FUNCTION_NAME="scraper-gap-backfiller"
 REGION="us-west2"
 RUNTIME="python311"
-ENTRY_POINT="backfill_gaps"
+ENTRY_POINT="scraper_gap_backfiller"
 MEMORY="512MB"
 TIMEOUT="540s"  # 9 minutes - backfills can take time
 MAX_INSTANCES="1"  # Only one instance to prevent duplicate backfills
@@ -110,6 +110,37 @@ EOF
     echo -e "${GREEN}OK Created requirements.txt${NC}"
 fi
 
+# Session 519: Build staging directory with dependencies.
+# main.py imports orchestration.parameter_resolver which imports
+# shared.utils.schedule. These modules are NOT in the function directory.
+# Revisions 00003 (Jan 30) and 00004 (Feb 5) failed HealthCheckContainerError
+# because of this missing dependency — function has been on Jan 24 code for 2+ months.
+DEPLOY_PKG="/tmp/deploy_scraper_gap_backfiller"
+echo -e "${YELLOW}Building deployment package...${NC}"
+rm -rf "$DEPLOY_PKG"
+mkdir -p "$DEPLOY_PKG"
+
+# Copy function entry point and requirements
+cp "$SOURCE_DIR/main.py" "$DEPLOY_PKG/"
+cp "$SOURCE_DIR/requirements.txt" "$DEPLOY_PKG/"
+
+# Copy orchestration module (parameter_resolver + its __init__)
+# Do NOT copy the entire orchestration/ tree — other Cloud Function
+# main.py files cause gcloud compile check failures.
+mkdir -p "$DEPLOY_PKG/orchestration"
+cp orchestration/__init__.py "$DEPLOY_PKG/orchestration/" 2>/dev/null || touch "$DEPLOY_PKG/orchestration/__init__.py"
+cp orchestration/parameter_resolver.py "$DEPLOY_PKG/orchestration/"
+cp orchestration/schedule_service.py "$DEPLOY_PKG/orchestration/" 2>/dev/null || true
+
+# Copy shared/ (same pattern as cloudbuild-functions.yaml)
+cp -r shared "$DEPLOY_PKG/"
+
+# Copy config/ for parameter resolver YAML
+cp -r config "$DEPLOY_PKG/" 2>/dev/null || true
+
+echo -e "${GREEN}OK Deployment package built at $DEPLOY_PKG${NC}"
+echo ""
+
 # Deploy function (HTTP trigger for scheduler)
 echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}Deploying Cloud Function...${NC}"
@@ -120,7 +151,7 @@ gcloud functions deploy $FUNCTION_NAME \
     --gen2 \
     --runtime $RUNTIME \
     --region $REGION \
-    --source $SOURCE_DIR \
+    --source "$DEPLOY_PKG" \
     --entry-point $ENTRY_POINT \
     --trigger-http \
     --no-allow-unauthenticated \
