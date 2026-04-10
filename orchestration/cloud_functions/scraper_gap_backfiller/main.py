@@ -30,26 +30,26 @@ import boto3
 from botocore.exceptions import ClientError
 from typing import Dict, Any, List, Union
 
-# Add parent directories to path to import orchestration modules
-# Cloud Functions run from the function directory, so we need to add the repo root
-_current_dir = os.path.dirname(os.path.abspath(__file__))
-_repo_root = os.path.abspath(os.path.join(_current_dir, '..', '..', '..'))
-if _repo_root not in sys.path:
-    sys.path.insert(0, _repo_root)
-
-from orchestration.parameter_resolver import ParameterResolver
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Lazily initialized parameter resolver (avoid initialization overhead on cold starts)
+# Lazily initialized parameter resolver (avoid initialization overhead on cold starts).
+# Session 519: Import is FULLY LAZY — the module-level import crashed on startup
+# because shared/ has deep transitive imports (bigquery_client, etc.) that need
+# deps not in requirements.txt. Lazy import defers to first actual use.
 _parameter_resolver = None
 
 
-def get_parameter_resolver() -> ParameterResolver:
+def get_parameter_resolver():
     """Get or create the parameter resolver singleton."""
     global _parameter_resolver
     if _parameter_resolver is None:
+        # Lazy import — only when actually resolving parameters
+        _current_dir = os.path.dirname(os.path.abspath(__file__))
+        _repo_root = os.path.abspath(os.path.join(_current_dir, '..', '..', '..'))
+        if _repo_root not in sys.path:
+            sys.path.insert(0, _repo_root)
+        from orchestration.parameter_resolver import ParameterResolver
         _parameter_resolver = ParameterResolver()
     return _parameter_resolver
 
@@ -261,7 +261,14 @@ def resolve_scraper_parameters(scraper_name: str, target_date: str) -> Union[Dic
     Returns:
         Dict of parameters, or List of parameter dicts for multi-entity scrapers
     """
-    resolver = get_parameter_resolver()
+    try:
+        resolver = get_parameter_resolver()
+    except Exception as e:
+        # Session 519: parameter_resolver has deep transitive imports
+        # (shared.utils.schedule → bigquery_client, etc.) that may not be
+        # available in the Cloud Function runtime. Fall back to simple params.
+        logger.warning(f"ParameterResolver unavailable ({e}), using simple fallback")
+        return {'date': target_date, 'gamedate': target_date.replace('-', '')}
 
     # Build workflow context for the target date
     # Use a generic workflow name since we're backfilling, not running a scheduled workflow

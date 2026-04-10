@@ -124,19 +124,12 @@ mkdir -p "$DEPLOY_PKG"
 cp "$SOURCE_DIR/main.py" "$DEPLOY_PKG/"
 cp "$SOURCE_DIR/requirements.txt" "$DEPLOY_PKG/"
 
-# Copy orchestration module (parameter_resolver + its __init__)
-# Do NOT copy the entire orchestration/ tree — other Cloud Function
-# main.py files cause gcloud compile check failures.
-mkdir -p "$DEPLOY_PKG/orchestration"
-cp orchestration/__init__.py "$DEPLOY_PKG/orchestration/" 2>/dev/null || touch "$DEPLOY_PKG/orchestration/__init__.py"
-cp orchestration/parameter_resolver.py "$DEPLOY_PKG/orchestration/"
-cp orchestration/schedule_service.py "$DEPLOY_PKG/orchestration/" 2>/dev/null || true
-
-# Copy shared/ (same pattern as cloudbuild-functions.yaml)
-cp -r shared "$DEPLOY_PKG/"
-
-# Copy config/ for parameter resolver YAML
-cp -r config "$DEPLOY_PKG/" 2>/dev/null || true
+# Session 519: Do NOT copy orchestration/ or shared/ into the deploy package.
+# parameter_resolver has deep transitive imports (shared.utils.schedule →
+# bigquery_client → etc.) that pull in the entire repo. Instead, main.py
+# uses lazy import with a fallback: if ParameterResolver can't load, it
+# falls back to simple date params {'date': ..., 'gamedate': ...}.
+# The core function (gap detection + alerting) works without it.
 
 echo -e "${GREEN}OK Deployment package built at $DEPLOY_PKG${NC}"
 echo ""
