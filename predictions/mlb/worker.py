@@ -644,9 +644,17 @@ def generate_best_bets():
                 'duration_seconds': round(time.time() - start_time, 3)
             }), 200
 
-        # Write raw predictions to BQ
-        rows_written = write_predictions_to_bigquery(predictions, game_date)
-        logger.info(f"Wrote {rows_written} raw predictions to BigQuery")
+        # Write raw predictions to BQ — skip if predictions already exist for this date
+        # to avoid duplication (daily cron runs /predict-batch separately).
+        existing = _count_predictions_for_date(game_date)
+        if existing == 0:
+            rows_written = write_predictions_to_bigquery(predictions, game_date)
+            logger.info(f"Wrote {rows_written} raw predictions to BigQuery")
+        else:
+            logger.info(
+                f"Skipping raw prediction write — {existing} rows already exist "
+                f"for {game_date} in pitcher_strikeouts"
+            )
 
         # 2. Load features and supplemental for signal evaluation
         from predictions.mlb.pitcher_loader import load_batch_features
@@ -798,6 +806,22 @@ def handle_pubsub():
             }
         )
         return ('Internal Server Error', 500)
+
+
+def _count_predictions_for_date(game_date: date) -> int:
+    """Check if predictions already exist for a game date."""
+    try:
+        client = get_bq_client()
+        query = f"""
+        SELECT COUNT(*) as cnt
+        FROM `{PROJECT_ID}.{PREDICTIONS_TABLE}`
+        WHERE game_date = '{game_date.isoformat()}'
+        """
+        rows = list(client.query(query).result())
+        return rows[0].cnt if rows else 0
+    except Exception as e:
+        logger.warning(f"Could not check existing predictions: {e}")
+        return 0  # Fail open — write if check fails
 
 
 def write_predictions_to_bigquery(predictions: List[Dict], game_date: date) -> int:
