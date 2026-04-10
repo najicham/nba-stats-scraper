@@ -1041,8 +1041,12 @@ class MLBBestBetsExporter:
                 'signal_count': pick.get('signal_count', 0),
                 'real_signal_count': pick.get('real_signal_count', 0),
                 'rank': pick.get('rank'),
+                # Explicitly set REPEATED fields that BQ requires non-null
+                'warning_tags': [],
+                'agreeing_model_ids': [],
                 'pick_angles': pick.get('pick_angles', []),
                 'algorithm_version': pick.get('algorithm_version', 'mlb_v2'),
+                'source_model_id': pick.get('system_id'),
                 'signal_rescued': pick.get('signal_rescued', False),
                 'rescue_signal': pick.get('rescue_signal'),
                 'under_signal_quality': pick.get('under_signal_quality'),

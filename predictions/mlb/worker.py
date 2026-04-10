@@ -390,7 +390,7 @@ def run_multi_system_batch_predictions(game_date: date, pitcher_lookups: Optiona
 
     # OPTIMIZATION: Load features ONCE using shared feature loader
     # This avoids redundant BigQuery queries (previously 3x queries, now 1x)
-    from predictions.mlb.pitcher_loader import load_batch_features
+    from predictions.mlb.pitcher_loader import load_batch_features, load_schedule_context
     from predictions.mlb.supplemental_loader import load_supplemental_by_pitcher
 
     logger.info(f"Loading features for {game_date} (pitcher_lookups={pitcher_lookups})")
@@ -405,6 +405,11 @@ def run_multi_system_batch_predictions(game_date: date, pitcher_lookups: Optiona
         return []
 
     logger.info(f"Loaded features for {len(features_by_pitcher)} pitchers")
+
+    # Session 519: Load schedule to get game_pk, is_home, pitcher_name for today's games.
+    # load_batch_features queries pitcher_game_summary for PAST games only, so game_id and
+    # is_home were always NULL in the prediction dict, causing BQ insert failures downstream.
+    schedule_context = load_schedule_context(game_date=game_date, project_id=PROJECT_ID)
 
     # Load supplemental data (umpire K-rate, weather) for signal evaluation
     supplemental_by_pitcher = load_supplemental_by_pitcher(
@@ -435,6 +440,14 @@ def run_multi_system_batch_predictions(game_date: date, pitcher_lookups: Optiona
                 prediction['game_date'] = game_date.isoformat()
                 prediction['team_abbr'] = team_abbr
                 prediction['opponent_team_abbr'] = opponent_team_abbr
+
+                # Session 519: Populate game_id, is_home, pitcher_name from schedule.
+                # These were always NULL, causing game_pk insert failures and wrong
+                # edge floor gating in the best bets exporter.
+                sched = schedule_context.get(team_abbr, {})
+                prediction['game_id'] = str(sched['game_pk']) if sched.get('game_pk') else None
+                prediction['is_home'] = sched.get('is_home')
+                prediction['pitcher_name'] = sched.get('pitcher_name')
 
                 all_predictions.append(prediction)
 

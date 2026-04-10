@@ -538,6 +538,66 @@ def load_batch_features(
         return {}
 
 
+def load_schedule_context(
+    game_date: date,
+    project_id: str = None
+) -> Dict[str, Dict]:
+    """Load today's schedule to get game_pk and is_home for each team.
+
+    Session 519: The prediction dict was missing game_id and is_home because
+    load_batch_features queries pitcher_game_summary for PAST games (WHERE
+    game_date < @game_date). This function queries mlb_schedule for TODAY's
+    games to provide game_pk, is_home, and pitcher_name.
+
+    Returns:
+        Dict mapping team_abbr → {game_pk: int, is_home: bool, pitcher_name: str}
+    """
+    proj_id = project_id or PROJECT_ID
+    client = bigquery.Client(project=proj_id)
+
+    query = f"""
+    SELECT
+        game_pk,
+        away_team_abbr,
+        home_team_abbr,
+        away_probable_pitcher_name,
+        home_probable_pitcher_name
+    FROM `{proj_id}.mlb_raw.mlb_schedule`
+    WHERE game_date = @game_date
+    """
+
+    try:
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("game_date", "DATE", game_date.isoformat()),
+            ]
+        )
+        result = client.query(query, job_config=job_config).result()
+
+        schedule = {}
+        for row in result:
+            game_pk = row.game_pk
+            # Away team entry
+            schedule[row.away_team_abbr] = {
+                'game_pk': game_pk,
+                'is_home': False,
+                'pitcher_name': row.away_probable_pitcher_name,
+            }
+            # Home team entry
+            schedule[row.home_team_abbr] = {
+                'game_pk': game_pk,
+                'is_home': True,
+                'pitcher_name': row.home_probable_pitcher_name,
+            }
+
+        logger.info(f"Loaded schedule context for {len(schedule)} teams on {game_date}")
+        return schedule
+
+    except Exception as e:
+        logger.error(f"Failed to load schedule context: {e}", exc_info=True)
+        return {}
+
+
 # CLI for testing
 if __name__ == "__main__":
     import argparse
