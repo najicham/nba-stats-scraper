@@ -155,6 +155,13 @@ def grade_date():
             # Backfill shadow picks with actuals
             shadow_count = _backfill_shadow_picks(game_date)
             stats['shadow_picks_graded'] = shadow_count
+
+            # Session 519: Run post-grading analytics (league_macro,
+            # model_performance, signal_health). Same pattern as NBA's
+            # post_grading_export CF but inline to avoid another CF.
+            analytics_stats = _run_post_grading_analytics(game_date)
+            stats['analytics'] = analytics_stats
+
             return jsonify({
                 "status": "success",
                 "game_date": game_date,
@@ -213,6 +220,65 @@ def grade_shadow():
     except (GoogleAPIError, ValueError) as e:
         logger.error(f"Error in grade-shadow: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
+
+
+def _run_post_grading_analytics(game_date: str) -> dict:
+    """Run post-grading analytics: league_macro, model_performance, signal_health.
+
+    Session 519: These tables were schema-only for MLB — never computed.
+    Without them, regime_context reads empty tables and there's no model
+    performance tracking. Each module is best-effort (errors logged, not raised).
+    """
+    from datetime import date as date_type
+    from google.cloud import bigquery as bq
+
+    stats = {}
+    client = bq.Client(project='nba-props-platform')
+    target = date_type.fromisoformat(game_date)
+
+    # 1. League macro
+    try:
+        from ml.analysis.mlb_league_macro import compute_for_date, write_row
+        row = compute_for_date(client, target)
+        if row:
+            written = write_row(client, row)
+            stats['league_macro'] = f'{written} row'
+            logger.info(f"Post-grading: league_macro wrote {written} row for {game_date}")
+        else:
+            stats['league_macro'] = 'no data'
+    except Exception as e:
+        logger.error(f"Post-grading league_macro failed: {e}", exc_info=True)
+        stats['league_macro'] = f'error: {e}'
+
+    # 2. Model performance
+    try:
+        from ml.analysis.mlb_model_performance import compute_for_date as mp_compute, write_rows
+        rows = mp_compute(client, target)
+        if rows:
+            written = write_rows(client, rows)
+            stats['model_performance'] = f'{written} rows'
+            logger.info(f"Post-grading: model_performance wrote {written} rows for {game_date}")
+        else:
+            stats['model_performance'] = 'no data'
+    except Exception as e:
+        logger.error(f"Post-grading model_performance failed: {e}", exc_info=True)
+        stats['model_performance'] = f'error: {e}'
+
+    # 3. Signal health
+    try:
+        from ml.signals.mlb.signal_health import compute_signal_health, write_health_rows
+        rows = compute_signal_health(client, game_date)
+        if rows:
+            written = write_health_rows(client, rows)
+            stats['signal_health'] = f'{written} rows'
+            logger.info(f"Post-grading: signal_health wrote {written} rows for {game_date}")
+        else:
+            stats['signal_health'] = 'no data'
+    except Exception as e:
+        logger.error(f"Post-grading signal_health failed: {e}", exc_info=True)
+        stats['signal_health'] = f'error: {e}'
+
+    return stats
 
 
 def _backfill_shadow_picks(game_date: str):
