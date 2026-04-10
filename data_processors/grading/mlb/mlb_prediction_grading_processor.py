@@ -409,6 +409,10 @@ class MlbPredictionGradingProcessor:
         if not rows:
             return
 
+        # Strip None values — BQ streaming insert treats missing keys as NULL
+        # but sends "cannot be empty" for explicit None on integer fields.
+        rows = [{k: v for k, v in row.items() if v is not None} for row in rows]
+
         try:
             errors = self.bq_client.insert_rows_json(table_id, rows)
             if errors:
