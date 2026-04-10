@@ -500,15 +500,14 @@ def write_row(bq_client: bigquery.Client, row: dict) -> int:
     if deleted > 0:
         logger.info(f"Deleted {deleted} existing rows for {target_date}")
 
-    # Write new row — strip None values to avoid type coercion issues
-    # (load_table_from_json serializes None as string "None" for FLOAT fields)
+    # Write new row using insert_rows_json (streaming) instead of load job.
+    # load_table_from_json infers schema from data, causing REQUIRED/NULLABLE
+    # conflicts when None values are stripped. Streaming insert handles this.
     clean_row = {k: v for k, v in row.items() if v is not None}
-    load_config = bigquery.LoadJobConfig(
-        write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
-        create_disposition=bigquery.CreateDisposition.CREATE_NEVER,
-    )
-    load_job = bq_client.load_table_from_json([clean_row], TABLE_ID, job_config=load_config)
-    load_job.result(timeout=60)
+    errors = bq_client.insert_rows_json(TABLE_ID, [clean_row])
+    if errors:
+        logger.error(f"Failed to write league_macro_daily for {target_date}: {errors}")
+        return 0
 
     logger.info(f"Wrote 1 row to mlb league_macro_daily for {target_date}")
     return 1
