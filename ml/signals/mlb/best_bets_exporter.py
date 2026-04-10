@@ -1015,6 +1015,15 @@ class MLBBestBetsExporter:
         rows = []
         now = datetime.now(timezone.utc).isoformat()
         for pick in picks:
+            # Session 518: clamp confidence to BQ NUMERIC(4,3) bounds [-9.999, 9.999].
+            # The regressor's confidence value can exceed 10 (observed 5-20+) but the
+            # signal_best_bets_picks schema is more constrained than pitcher_strikeouts.
+            raw_conf = pick.get('confidence')
+            confidence_clamped = (
+                max(-9.999, min(9.999, raw_conf))
+                if raw_conf is not None
+                else None
+            )
             rows.append({
                 'pitcher_lookup': pick['pitcher_lookup'],
                 'game_pk': pick.get('game_pk'),
@@ -1027,7 +1036,7 @@ class MLBBestBetsExporter:
                 'line_value': pick.get('strikeouts_line'),
                 'recommendation': pick.get('recommendation'),
                 'edge': pick.get('edge'),
-                'confidence_score': pick.get('confidence'),
+                'confidence_score': confidence_clamped,
                 'signal_tags': pick.get('signal_tags', []),
                 'signal_count': pick.get('signal_count', 0),
                 'real_signal_count': pick.get('real_signal_count', 0),
