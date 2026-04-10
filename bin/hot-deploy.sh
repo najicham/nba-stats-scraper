@@ -144,6 +144,14 @@ gcloud run deploy "$SERVICE" \
     "$CPU_THROTTLE_FLAG" \
     --quiet 2>&1 | grep -E "(Deploying|Routing|Done|Service)" || true
 
+# [3.5/4] Route traffic to latest revision
+# Session 516: Cloud Run may not auto-route traffic to new revisions.
+gcloud run services update-traffic "$SERVICE" \
+    --to-latest \
+    --region="$REGION" \
+    --project="$PROJECT" \
+    --quiet 2>&1 | grep -E "(Routing|Done)" || true
+
 # [4/4] Quick health check
 echo ""
 echo "[4/4] Health check..."

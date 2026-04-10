@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY shared/ ./shared/
+COPY ml/ ./ml/
 COPY predictions/__init__.py ./predictions/__init__.py
 COPY predictions/shared/ ./predictions/shared/
 COPY data_processors/__init__.py ./data_processors/__init__.py

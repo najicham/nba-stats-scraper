@@ -127,8 +127,6 @@ class MlbPredictionGradingProcessor:
                     "prediction_id": pred.get('prediction_id'),
                     "actual_strikeouts": grade.get('actual_strikeouts'),
                     "is_correct": grade.get('prediction_correct'),
-                    "is_voided": grade.get('is_voided', False),
-                    "void_reason": grade.get('void_reason'),
                 })
 
             # 5. Batch write graded records to prediction_accuracy
@@ -264,7 +262,7 @@ class MlbPredictionGradingProcessor:
             "has_prop_line": line is not None,
             "is_voided": is_voided,
             "void_reason": void_reason,
-            "feature_quality_score": pred.get('feature_quality_score'),
+            "feature_quality_score": pred.get('feature_coverage_pct'),
             "model_version": pred.get('model_version'),
             "graded_at": datetime.now(timezone.utc).isoformat(),
         }
@@ -291,7 +289,7 @@ class MlbPredictionGradingProcessor:
             team_abbr,
             opponent_team_abbr,
             model_version,
-            feature_quality_score
+            feature_coverage_pct
         FROM `{self.project_id}.mlb_predictions.pitcher_strikeouts`
         WHERE game_date = '{game_date}'
         """
@@ -437,16 +435,12 @@ class MlbPredictionGradingProcessor:
             elif u['is_correct'] is False:
                 is_correct_str = 'FALSE'
 
-            is_voided_str = 'TRUE' if u.get('is_voided') else 'FALSE'
-            void_reason_str = f"'{u['void_reason']}'" if u.get('void_reason') else 'NULL'
             actual_k = u.get('actual_strikeouts', 0) or 0
 
             struct_rows.append(
                 f"STRUCT('{u['prediction_id']}' AS prediction_id, "
                 f"{actual_k} AS actual_strikeouts, "
-                f"{is_correct_str} AS is_correct, "
-                f"{is_voided_str} AS is_voided, "
-                f"{void_reason_str} AS void_reason)"
+                f"{is_correct_str} AS is_correct)"
             )
 
         # Batch in groups of 500 to stay under query size limits
@@ -466,8 +460,6 @@ class MlbPredictionGradingProcessor:
             WHEN MATCHED THEN UPDATE SET
                 T.actual_strikeouts = S.actual_strikeouts,
                 T.is_correct = S.is_correct,
-                T.is_voided = S.is_voided,
-                T.void_reason = S.void_reason,
                 T.graded_at = CURRENT_TIMESTAMP()
             """
             try:

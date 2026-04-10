@@ -322,9 +322,9 @@ def _resolve_date(target_date_str: str) -> str:
     """Resolve 'today', 'yesterday', or date string to YYYY-MM-DD."""
     today = datetime.now(timezone.utc).date()
 
-    if target_date_str == "today":
+    if target_date_str.lower() == "today":
         return today.isoformat()
-    elif target_date_str == "yesterday":
+    elif target_date_str.lower() == "yesterday":
         return (today - timedelta(days=1)).isoformat()
     else:
         return target_date_str

@@ -433,6 +433,15 @@ gcloud run deploy "$SERVICE" \
     --quiet
 
 echo ""
+echo "[4.5/8] Routing traffic to latest revision..."
+# Session 516: Cloud Run may not auto-route traffic to new revisions.
+gcloud run services update-traffic "$SERVICE" \
+    --to-latest \
+    --region="$REGION" \
+    --project="$PROJECT" \
+    --quiet
+
+echo ""
 echo "[5/8] Verifying deployment..."
 sleep 10
 

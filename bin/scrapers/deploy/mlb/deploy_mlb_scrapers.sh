@@ -112,6 +112,14 @@ gcloud run deploy $SERVICE_NAME \
     --set-secrets="DECODO_PROXY_CREDENTIALS=DECODO_PROXY_CREDENTIALS:latest,SLACK_WEBHOOK_URL=slack-webhook-url:latest,BETTINGPROS_API_KEY=bettingpros-api-key:latest" \
     --project $PROJECT_ID
 
+# Route traffic to latest revision (Session 516/520)
+echo "Routing traffic to latest revision..."
+gcloud run services update-traffic $SERVICE_NAME \
+    --to-latest \
+    --region $REGION \
+    --project $PROJECT_ID \
+    --quiet
+
 # Get service URL
 SERVICE_URL=$(gcloud run services describe $SERVICE_NAME --region $REGION --format 'value(status.url)' --project $PROJECT_ID)
 
