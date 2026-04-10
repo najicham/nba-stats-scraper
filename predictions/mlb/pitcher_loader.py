@@ -499,7 +499,9 @@ def load_batch_features(
         fg.gb_pct
     FROM latest_features lf
     LEFT JOIN statcast_latest s ON lf.player_lookup = s.player_lookup AND s.rn = 1
-    LEFT JOIN bp_features bp ON lf.player_lookup = bp.player_lookup
+    -- Session 518: bp_pitcher_props uses 'anthonykay' format (no underscore),
+    -- pgs uses 'anthony_kay' (underscore-separated). Match oddsa pattern.
+    LEFT JOIN bp_features bp ON REPLACE(lf.player_lookup, '_', '') = bp.player_lookup
     LEFT JOIN oddsa_ranked oddsa ON REPLACE(lf.player_lookup, '_', '') = oddsa.player_lookup AND oddsa.rn = 1
     LEFT JOIN `{proj_id}.mlb_raw.fangraphs_pitcher_season_stats` fg
         ON LOWER(REGEXP_REPLACE(NORMALIZE(fg.player_lookup, NFD), r'[\\W_]+', ''))
