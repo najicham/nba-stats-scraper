@@ -951,7 +951,7 @@ class MLBBestBetsExporter:
             shadow_picks.append({
                 'game_date': game_date,
                 'pitcher_lookup': pitcher,
-                'game_pk': pred.get('game_pk'),
+                'game_pk': int(pred['game_id']) if pred.get('game_id') else None,
                 'system_id': pred.get('system_id', 'unknown'),
                 'pitcher_name': pred.get('pitcher_name'),
                 'team_abbr': pred.get('team_abbr'),
@@ -1026,7 +1026,7 @@ class MLBBestBetsExporter:
             )
             rows.append({
                 'pitcher_lookup': pick['pitcher_lookup'],
-                'game_pk': pick.get('game_pk'),
+                'game_pk': int(pick['game_id']) if pick.get('game_id') else None,
                 'game_date': game_date,
                 'system_id': pick.get('system_id', 'unknown'),
                 'pitcher_name': pick.get('pitcher_name'),
