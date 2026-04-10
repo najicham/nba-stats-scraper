@@ -90,28 +90,31 @@ class MlbBestBetsExporter(BaseExporter):
         }
 
     def _get_best_bets(self, game_date: str) -> List[Dict]:
-        """Get high-confidence picks for a date."""
+        """Get best bets picks for a date from signal_best_bets_picks."""
         query = f"""
         SELECT
-            pitcher_lookup,
-            pitcher_name,
-            team_abbr,
-            opponent_team_abbr,
-            is_home,
-            strikeouts_line,
-            predicted_strikeouts,
-            recommendation,
-            confidence,
-            edge,
-            model_version,
-            is_correct,
-            actual_strikeouts
-        FROM `{self.project_id}.mlb_predictions.pitcher_strikeouts`
-        WHERE game_date = '{game_date}'
-          AND confidence >= {self.min_confidence}
-          AND ABS(edge) >= {self.min_edge}
-          AND recommendation IN ('OVER', 'UNDER')
-        ORDER BY confidence DESC, ABS(edge) DESC
+            bb.pitcher_lookup,
+            bb.pitcher_name,
+            bb.team_abbr,
+            bb.opponent_team_abbr,
+            bb.line_value,
+            bb.predicted_strikeouts,
+            bb.recommendation,
+            bb.confidence_score,
+            bb.edge,
+            bb.ultra_tier,
+            bb.pick_angles,
+            bb.system_id,
+            pa.prediction_correct,
+            pa.actual_strikeouts
+        FROM `{self.project_id}.mlb_predictions.signal_best_bets_picks` bb
+        LEFT JOIN `{self.project_id}.mlb_predictions.prediction_accuracy` pa
+            ON bb.pitcher_lookup = pa.pitcher_lookup
+            AND bb.game_date = pa.game_date
+            AND bb.recommendation = pa.recommendation
+            AND bb.line_value = pa.line_value
+        WHERE bb.game_date = '{game_date}'
+        ORDER BY bb.edge DESC
         """
 
         rows = self.query_to_list(query)
@@ -123,19 +126,17 @@ class MlbBestBetsExporter(BaseExporter):
                 'pitcher_name': row.get('pitcher_name'),
                 'team': row.get('team_abbr'),
                 'opponent': row.get('opponent_team_abbr'),
-                'is_home': bool(row.get('is_home')),
-                'strikeouts_line': safe_float(row.get('strikeouts_line'), default=0.0),
+                'strikeouts_line': safe_float(row.get('line_value'), default=0.0),
                 'predicted_strikeouts': safe_float(row.get('predicted_strikeouts'), default=0.0, precision=1),
                 'recommendation': row.get('recommendation'),
-                'confidence': safe_int(row.get('confidence'), default=0),
+                'confidence': safe_float(row.get('confidence_score'), default=0.0),
                 'edge': safe_float(row.get('edge'), default=0.0),
-                'model_version': row.get('model_version'),
+                'is_ultra': bool(row.get('ultra_tier')),
                 'rank': len(best_bets) + 1
             }
 
-            # Add grading if available
-            if row.get('is_correct') is not None:
-                bet['is_correct'] = row.get('is_correct')
+            if row.get('prediction_correct') is not None:
+                bet['is_correct'] = row.get('prediction_correct')
                 bet['actual_strikeouts'] = row.get('actual_strikeouts')
 
             best_bets.append(bet)

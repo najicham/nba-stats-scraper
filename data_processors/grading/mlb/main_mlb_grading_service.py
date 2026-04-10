@@ -99,6 +99,9 @@ def process_grading():
             # Backfill shadow picks with actuals
             shadow_count = _backfill_shadow_picks(game_date)
             stats['shadow_picks_graded'] = shadow_count
+            # Re-export all.json with grading data
+            export_stats = _re_export_all_json(game_date)
+            stats['export'] = export_stats
             return jsonify({
                 "status": "success",
                 "game_date": game_date,
@@ -161,6 +164,10 @@ def grade_date():
             # post_grading_export CF but inline to avoid another CF.
             analytics_stats = _run_post_grading_analytics(game_date)
             stats['analytics'] = analytics_stats
+
+            # Session 520: Re-export all.json with updated grading data
+            export_stats = _re_export_all_json(game_date)
+            stats['export'] = export_stats
 
             return jsonify({
                 "status": "success",
@@ -279,6 +286,23 @@ def _run_post_grading_analytics(game_date: str) -> dict:
         stats['signal_health'] = f'error: {e}'
 
     return stats
+
+
+def _re_export_all_json(game_date: str) -> dict:
+    """Re-export mlb/best-bets/all.json with updated grading data.
+
+    Session 520: After grading, all.json needs refreshing so the frontend
+    shows updated win/loss records and pick results.
+    """
+    try:
+        from data_processors.publishing.mlb.mlb_best_bets_exporter import MlbBestBetsExporter
+        exporter = MlbBestBetsExporter()
+        path = exporter.export_all(today=game_date)
+        logger.info(f"Post-grading: re-exported all.json to {path}")
+        return {'status': 'ok', 'path': path}
+    except Exception as e:
+        logger.error(f"Post-grading all.json export failed: {e}", exc_info=True)
+        return {'status': f'error: {e}'}
 
 
 def _backfill_shadow_picks(game_date: str):

@@ -60,7 +60,16 @@ class MlbScheduleProcessor(ProcessorBase):
     Processing Strategy: MERGE_UPDATE
     - Deletes existing records for the date before inserting
     - Allows schedule updates as pitchers are announced
+
+    SKIP_DEDUPLICATION is required because the schedule is scraped twice per date:
+    1. Pre-game (10 AM ET) — statuses are "Scheduled"/"Pre-Game"
+    2. Post-game "yesterday" re-scrape (8 AM ET next day) — statuses are "Final"
+    Without this flag, the deduplication check sees the pre-game run as successful
+    and blocks the post-game re-scrape, leaving all games permanently "Scheduled".
     """
+
+    # Must allow re-processing: yesterday re-scrape updates game statuses to Final
+    SKIP_DEDUPLICATION: bool = True
 
     def __init__(self):
         self.dataset_id = get_raw_dataset()  # mlb_raw
