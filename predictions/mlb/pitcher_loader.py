@@ -538,19 +538,32 @@ def load_batch_features(
         return {}
 
 
+def _normalize_pitcher_name(name: str) -> str:
+    """Normalize pitcher name for matching: lowercase, strip non-alpha chars.
+
+    Handles format differences between pitcher_game_summary (underscore-separated)
+    and mlb_schedule (full names with dots, spaces, accents):
+        'jt_ginn' → 'jtginn'
+        'J.T. Ginn' → 'jtginn'
+        'Tomoyuki Sugano' → 'tomoyukisugano'
+    """
+    import re
+    return re.sub(r'[^a-z]', '', name.lower()) if name else ''
+
+
 def load_schedule_context(
     game_date: date,
     project_id: str = None
 ) -> Dict[str, Dict]:
-    """Load today's schedule to get game_pk and is_home for each team.
+    """Load today's schedule to get game_pk, is_home, pitcher_name.
 
     Session 519: The prediction dict was missing game_id and is_home because
-    load_batch_features queries pitcher_game_summary for PAST games (WHERE
-    game_date < @game_date). This function queries mlb_schedule for TODAY's
-    games to provide game_pk, is_home, and pitcher_name.
+    load_batch_features queries pitcher_game_summary for PAST games only.
 
-    Returns:
-        Dict mapping team_abbr → {game_pk: int, is_home: bool, pitcher_name: str}
+    Returns two dicts:
+        by_pitcher: normalized_name → {game_pk, is_home, pitcher_name, team_abbr}
+        by_team: team_abbr → {game_pk, is_home, pitcher_name}
+    Caller should try by_pitcher first (robust to team changes), fall back to by_team.
     """
     proj_id = project_id or PROJECT_ID
     client = bigquery.Client(project=proj_id)
@@ -574,28 +587,40 @@ def load_schedule_context(
         )
         result = client.query(query, job_config=job_config).result()
 
-        schedule = {}
+        by_pitcher = {}
+        by_team = {}
         for row in result:
             game_pk = row.game_pk
-            # Away team entry
-            schedule[row.away_team_abbr] = {
+            # Away
+            away_info = {
                 'game_pk': game_pk,
                 'is_home': False,
                 'pitcher_name': row.away_probable_pitcher_name,
+                'team_abbr': row.away_team_abbr,
             }
-            # Home team entry
-            schedule[row.home_team_abbr] = {
+            by_team[row.away_team_abbr] = away_info
+            if row.away_probable_pitcher_name:
+                by_pitcher[_normalize_pitcher_name(row.away_probable_pitcher_name)] = away_info
+            # Home
+            home_info = {
                 'game_pk': game_pk,
                 'is_home': True,
                 'pitcher_name': row.home_probable_pitcher_name,
+                'team_abbr': row.home_team_abbr,
             }
+            by_team[row.home_team_abbr] = home_info
+            if row.home_probable_pitcher_name:
+                by_pitcher[_normalize_pitcher_name(row.home_probable_pitcher_name)] = home_info
 
-        logger.info(f"Loaded schedule context for {len(schedule)} teams on {game_date}")
-        return schedule
+        logger.info(
+            f"Loaded schedule context: {len(by_pitcher)} pitchers, "
+            f"{len(by_team)} teams on {game_date}"
+        )
+        return by_pitcher, by_team
 
     except Exception as e:
         logger.error(f"Failed to load schedule context: {e}", exc_info=True)
-        return {}
+        return {}, {}
 
 
 # CLI for testing

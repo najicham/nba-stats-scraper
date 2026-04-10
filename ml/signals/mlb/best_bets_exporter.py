@@ -1015,6 +1015,16 @@ class MLBBestBetsExporter:
         rows = []
         now = datetime.now(timezone.utc).isoformat()
         for pick in picks:
+            # game_pk is REQUIRED (NOT NULL). Skip picks without it rather than
+            # letting one bad row sink the entire batch insert.
+            game_pk = int(pick['game_id']) if pick.get('game_id') else None
+            if game_pk is None:
+                logger.error(
+                    f"[MLB BB] Skipping {pick.get('pitcher_lookup')} — no game_pk "
+                    f"(game_id missing from prediction dict, schedule lookup failed)"
+                )
+                continue
+
             # Session 518: clamp confidence to BQ NUMERIC(4,3) bounds [-9.999, 9.999].
             # The regressor's confidence value can exceed 10 (observed 5-20+) but the
             # signal_best_bets_picks schema is more constrained than pitcher_strikeouts.
@@ -1026,7 +1036,7 @@ class MLBBestBetsExporter:
             )
             rows.append({
                 'pitcher_lookup': pick['pitcher_lookup'],
-                'game_pk': int(pick['game_id']) if pick.get('game_id') else None,
+                'game_pk': game_pk,
                 'game_date': game_date,
                 'system_id': pick.get('system_id', 'unknown'),
                 'pitcher_name': pick.get('pitcher_name'),
