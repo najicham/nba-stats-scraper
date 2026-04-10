@@ -26,6 +26,7 @@ COPY predictions/__init__.py ./predictions/__init__.py
 COPY predictions/shared/ ./predictions/shared/
 COPY data_processors/__init__.py ./data_processors/__init__.py
 COPY data_processors/grading/ ./data_processors/grading/
+COPY data_processors/publishing/ ./data_processors/publishing/
 
 WORKDIR /app/data_processors/grading/mlb
 

@@ -500,12 +500,14 @@ def write_row(bq_client: bigquery.Client, row: dict) -> int:
     if deleted > 0:
         logger.info(f"Deleted {deleted} existing rows for {target_date}")
 
-    # Write new row
+    # Write new row — strip None values to avoid type coercion issues
+    # (load_table_from_json serializes None as string "None" for FLOAT fields)
+    clean_row = {k: v for k, v in row.items() if v is not None}
     load_config = bigquery.LoadJobConfig(
         write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
         create_disposition=bigquery.CreateDisposition.CREATE_NEVER,
     )
-    load_job = bq_client.load_table_from_json([row], TABLE_ID, job_config=load_config)
+    load_job = bq_client.load_table_from_json([clean_row], TABLE_ID, job_config=load_config)
     load_job.result(timeout=60)
 
     logger.info(f"Wrote 1 row to mlb league_macro_daily for {target_date}")
