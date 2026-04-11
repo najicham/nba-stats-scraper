@@ -8,7 +8,7 @@ db-dtypes==1.2.0
 Flask==3.0.0
 google-api-core==2.29.0
 google-auth==2.49.0.dev0
-google-cloud-bigquery==3.13.0
+google-cloud-bigquery==3.40.0
 google-cloud-core==2.5.0
 google-cloud-firestore==2.13.0
 google-cloud-pubsub==2.18.4
