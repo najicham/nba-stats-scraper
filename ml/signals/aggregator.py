@@ -113,10 +113,10 @@ SHADOW_SIGNALS = frozenset({
     'ft_anomaly_under',            # 63.3% HR (N=278) 5-season — FTA CV >= 0.5, FTA >= 5/game
     'slow_pace_under',             # 56.6% HR (N=777) 5-season — opponent pace <= 99
     'star_line_under',             # 57.6% HR (N=1,018) 5-season BUT 35.3% HR this season (N=17) — do NOT graduate
-    # sharp_consensus_under GRADUATED Session 514 but REVERTED Session 515: 5-season 69.3% HR was from
-    # 4-5 book markets (Odds API) where std>=1.0 is rare/meaningful. With 12+ books (2025-26), std>=0.75
-    # is noise — 0-14 BB record. Contradicts high_book_std_under_block. Needs threshold recalibration
-    # (probably 1.5+ for BettingPros vs 1.0 for Odds API) before re-graduation.
+    # sharp_consensus_under REVERTED Session 515: 5-season 69.3% HR was from 4-5 book markets (Odds API).
+    # With 12+ books (BettingPros 2025-26), std>=1.0 is noise — 0-14 BB record.
+    # Session 522: book-count-aware thresholds implemented in the signal file (4-6bk: 1.0, 7-11bk: 1.5,
+    # 12+bk: 2.0). Keep in SHADOW until N>=30 at BB level with HR>=60% in the new regime.
     'sharp_consensus_under',
     # Session 469: Direction-specific book disagreement
     # book_disagree_over GRADUATED Session 514: 79.6% HR (N=211) 5-season. Already in OVER_SIGNAL_WEIGHTS (3.0).
@@ -124,6 +124,9 @@ SHADOW_SIGNALS = frozenset({
     # book_disagree_under: direction-specific validation. Gets UNDER_SIGNAL_WEIGHTS but excluded from real_sc
     'book_disagree_under',
     'extended_rest_under',   # Session 513: 28.6% season HR (N=7), 25% 7d HR — inflating real_sc on bad UNDER picks
+    # Session 522: Quantile floor OVER — p25 > line → shadow (N=1 in first test, insufficient to validate)
+    # Only fires for MultiQuantile models. Graduate when N >= 30 at BB level with HR >= 60%.
+    'quantile_floor_over',
 })
 
 # Session 400: UNDER signal quality weights for signal-first ranking.
@@ -152,6 +155,9 @@ UNDER_SIGNAL_WEIGHTS: Dict[str, float] = {
     # sharp_consensus_under removed Session 515: REVERTED to SHADOW. 5-season 69.3% HR was 4-5 book regime;
     # 12+ books in 2025-26 makes std>=1.0 noise (0-14 BB). Contradicts high_book_std_under_block. Needs
     # threshold recalibration by book source before re-graduation.
+    # Session 522: Quantile ceiling UNDER — 90.0% HR (N=10 first test). Only fires for MultiQuantile models.
+    # Weight 3.0 to match combo_3way (both are rare, high-conviction signals).
+    'quantile_ceiling_under': 3.0,
 }
 UNDER_EDGE_TIEBREAKER = 0.1  # Edge as minor tiebreaker for UNDER
 
@@ -199,6 +205,8 @@ OVER_SIGNAL_WEIGHTS: Dict[str, float] = {
     'sharp_line_move_over': 1.0,            # Active signal
     'combo_he_ms': 1.0,                     # 53.8% BB HR — low weight
     # usage_surge_over reverted to SHADOW_SIGNALS — re-evaluate with more data
+    # Session 522: quantile_floor_over in SHADOW_SIGNALS — N=1 first test insufficient.
+    # Will auto-gain weight here once graduated (remove from SHADOW_SIGNALS when N>=30, HR>=60%).
 }
 # OVER quality tiebreaker weight: how much signal quality affects ranking
 # relative to edge. Edge is still dominant (1.0x), quality is secondary.
@@ -643,16 +651,22 @@ class BestBetsAggregator:
             # Session 483: regime_delta now ACTIVELY raises the floor.
             # Previously observation-only — it tracked WOULD-block but never blocked.
             # delta is +1.0 when cautious (yesterday HR < 50%) or TIGHT market
-            # (vegas_mae_7d < 4.5). Result: floor rises 5.0 → 6.0 in those regimes.
-            over_floor = 5.0 + self._regime_context.get('over_edge_floor_delta', 0)
+            # (vegas_mae_7d < 4.5). Result: floor rises 6.0 → 7.0 in those regimes.
+            # Session 468: 5-season analysis — OVER edge 3-5 = 43-50% HR in 4/5 seasons.
+            # Session 476: Reverted 5.0→6.0 because fleet avg_abs_diff was 1.53 (LGBM clones).
+            # Session 522: Restored 6.0 base. Fleet diversity fix (MQ + LGBM + XGB) provides
+            # models that produce edge 6+ picks. Edge 6-8 = 61.4% HR consistent all 5 seasons.
+            over_floor = 6.0 + self._regime_context.get('over_edge_floor_delta', 0)
             hse_rescued = signal_rescued and rescue_signal == 'high_scoring_environment_over'
             if (pred.get('recommendation') == 'OVER'
                     and pred_edge < over_floor
                     and not hse_rescued):
-                if over_floor > 5.0:
+                if over_floor > 6.0:
+                    # Regime-raised floor (cautious/TIGHT delta applied)
                     filter_counts['regime_over_floor'] += 1
                     _record_filtered(pred, 'regime_over_floor', pred_edge)
                 else:
+                    # Base 6.0 floor (Session 522: raised from 5.0)
                     filter_counts['over_edge_floor'] += 1
                     _record_filtered(pred, 'over_edge_floor', pred_edge)
                 continue

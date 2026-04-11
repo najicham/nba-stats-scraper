@@ -331,4 +331,13 @@ def build_default_registry() -> SignalRegistry:
     registry.register(BookDisagreeOverSignal())
     registry.register(BookDisagreeUnderSignal())
 
+    # Session 522: MultiQuantile confidence interval signals
+    # quantile_ceiling_under: p75 < line → 90% HR (N=10 first test) — active with weight
+    # quantile_floor_over: p25 > line → shadow mode (N=1 first test, too small to validate)
+    # Both only fire when quantile_p75/quantile_p25 present (MultiQuantile models only)
+    from ml.signals.quantile_ceiling_under import QuantileCeilingUnderSignal
+    from ml.signals.quantile_floor_over import QuantileFloorOverSignal
+    registry.register(QuantileCeilingUnderSignal())
+    registry.register(QuantileFloorOverSignal())
+
     return registry

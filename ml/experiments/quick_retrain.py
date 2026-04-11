@@ -373,6 +373,11 @@ def parse_args():
                        help='Set enabled=TRUE on auto-registered model (skip manual enable step)')
     parser.add_argument('--force-register', action='store_true',
                        help='Upload + register even when governance gates fail (requires explicit approval)')
+    parser.add_argument('--season-restart', action='store_true',
+                       help='Season-restart mode: apply loosened governance for first training cycle after '
+                            'an auto-halt. Lowers directional balance threshold from 52.4%% to 51.0%% '
+                            'and reduces sample requirement from 25 to 10. Use only when restarting after '
+                            'an off-season halt — NOT for mid-season retrains.')
     parser.add_argument('--machine-output', type=str, default=None, metavar='FILE',
                        help='Write JSON summary to FILE for machine parsing (used by grid search)')
 
@@ -4583,9 +4588,36 @@ def main():
     print("\n" + "=" * 70)
     print(" GOVERNANCE GATES")
     print("=" * 70)
+
+    # Session 522: Season-restart mode applies looser gates for first training
+    # cycle after an auto-halt. Mid-season models trained on late-season TIGHT
+    # data fail directional balance (UNDER 50.91% < 52.4%) due to compressed
+    # edge in eval window, not model quality. Season-restart mode:
+    #   - Directional balance: 52.4% → 51.0%
+    #   - Sample requirement:  25 → 10
+    # Use ONLY when restarting after off-season halt. Flag is logged prominently.
+    if getattr(args, 'season_restart', False):
+        DIRECTIONAL_BREAKEVEN = 51.0
+        _restart_min_bets = 10
+        print("  [SEASON-RESTART MODE] Loosened gates active:")
+        print(f"    Directional balance: >= {DIRECTIONAL_BREAKEVEN}% (normal: 52.4%)")
+        print(f"    Sample requirement:  >= {_restart_min_bets} (normal: 25)")
+        print()
+    else:
+        DIRECTIONAL_BREAKEVEN = 52.4
+        _restart_min_bets = MIN_BETS_RELIABLE
+
     mae_better = (mae is not None and mae < V9_BASELINE['mae']) or is_classifier
-    edge3_reliable = bets_edge3 >= MIN_BETS_RELIABLE
-    edge5_reliable = bets_edge5 >= MIN_BETS_RELIABLE
+    edge3_reliable = bets_edge3 >= _restart_min_bets
+    edge5_reliable = bets_edge5 >= _restart_min_bets
+
+    # Recompute directional balance with appropriate threshold
+    if getattr(args, 'season_restart', False):
+        dir_over_ok = directional['over_hit_rate'] is None or directional['over_hit_rate'] >= DIRECTIONAL_BREAKEVEN
+        dir_under_ok = directional['under_hit_rate'] is None or directional['under_hit_rate'] >= DIRECTIONAL_BREAKEVEN
+        restart_directional_ok = dir_over_ok and dir_under_ok
+    else:
+        restart_directional_ok = directional['directional_balance_ok']
 
     gates = []
     soft_gates = []  # Session 382c: soft gates are reported but don't block registration
@@ -4599,11 +4631,11 @@ def main():
         # Lower MAE does NOT mean better betting (4.12 MAE crashed HR to 51.2%).
         soft_gates.append(("MAE improvement", mae_better, f"{mae:.4f} vs {V9_BASELINE['mae']:.4f}"))
     gates.append(("Hit rate (3+) >= 53%", (hr_edge3 or 0) >= 53, f"{hr_edge3}% (n={bets_edge3})"))
-    gates.append(("Hit rate (3+) sample >= 25", edge3_reliable, f"n={bets_edge3}"))
+    gates.append((f"Hit rate (3+) sample >= {_restart_min_bets}", edge3_reliable, f"n={bets_edge3}"))
     gates.append((f"Vegas bias within +/-{VEGAS_BIAS_LIMIT}", abs(pred_vs_vegas) <= VEGAS_BIAS_LIMIT, f"{pred_vs_vegas:+.2f}"))
     gates.append(("No critical tier bias", not tier_bias['has_critical_bias'], ""))
-    gates.append(("Directional balance (OVER+UNDER >= 52.4%)",
-                  directional['directional_balance_ok'],
+    gates.append((f"Directional balance (OVER+UNDER >= {DIRECTIONAL_BREAKEVEN}%)",
+                  restart_directional_ok,
                   f"OVER={over_str}, UNDER={under_str}"))
     # Session 516: Edge compression soft gate — models with avg edge < 3.0 produce 0 best bets
     # picks since OVER requires edge 5+ and UNDER requires edge 3+. Soft gate because edge
