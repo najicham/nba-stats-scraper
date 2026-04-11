@@ -377,26 +377,47 @@ def load_batch_features(
             pgs.k_avg_last_10,
             pgs.k_std_last_10,
             pgs.ip_avg_last_5,
-            -- season_k_per_9 is NULL on Opening Day (no prior season games).
-            -- Fall back to rolling K/9 from last 10 starts (populated from 2025 season data).
-            COALESCE(pgs.season_k_per_9, pgs.k_per_9_rolling_10) as season_k_per_9,
+            -- Session 523: Cross-season guard. When feature row is from a prior season
+            -- (>120 days stale), NULL out season-accumulation features. CatBoost handles
+            -- NaN natively. Without this, 2025 end-of-season stats (games_started=22,
+            -- season_k_per_9=8.5) make the model think pitchers are mid-season, causing
+            -- +1.15 K over-prediction bias on OVER picks (37.5% HR → should be ~55%).
+            CASE WHEN DATE_DIFF(@game_date, pgs.game_date, DAY) <= 120
+                 THEN COALESCE(pgs.season_k_per_9, pgs.k_per_9_rolling_10)
+                 ELSE pgs.k_per_9_rolling_10  -- rolling is still useful cross-season
+            END as season_k_per_9,
             pgs.era_rolling_10,
             pgs.whip_rolling_10,
-            pgs.season_games_started,
-            pgs.season_strikeouts,
-            pgs.season_innings,
+            CASE WHEN DATE_DIFF(@game_date, pgs.game_date, DAY) <= 120
+                 THEN pgs.season_games_started ELSE NULL
+            END as season_games_started,
+            CASE WHEN DATE_DIFF(@game_date, pgs.game_date, DAY) <= 120
+                 THEN pgs.season_strikeouts ELSE NULL
+            END as season_strikeouts,
+            CASE WHEN DATE_DIFF(@game_date, pgs.game_date, DAY) <= 120
+                 THEN pgs.season_innings ELSE NULL
+            END as season_innings,
             -- V1.4 features
             pgs.opponent_team_k_rate,
             pgs.ballpark_k_factor,
-            pgs.month_of_season,
-            pgs.days_into_season,
+            -- Temporal features: use prediction date, not stale feature date.
+            -- month_of_season: 1=Apr, 2=May, ..., 6=Sep, 7=Oct
+            GREATEST(EXTRACT(MONTH FROM @game_date) - 3, 1) as month_of_season,
+            -- days_into_season: approximate from Apr 1 of prediction year
+            DATE_DIFF(@game_date, DATE(EXTRACT(YEAR FROM @game_date), 4, 1), DAY) as days_into_season,
             pgs.vs_opponent_k_per_9 as avg_k_vs_opponent,
             pgs.vs_opponent_games as games_vs_opponent,
             -- Season Statcast aggregates (CatBoost V1 features f19/f19b)
-            pgs.season_swstr_pct,
-            pgs.season_csw_pct,
-            -- Workload
-            pgs.games_last_30_days,
+            CASE WHEN DATE_DIFF(@game_date, pgs.game_date, DAY) <= 120
+                 THEN pgs.season_swstr_pct ELSE NULL
+            END as season_swstr_pct,
+            CASE WHEN DATE_DIFF(@game_date, pgs.game_date, DAY) <= 120
+                 THEN pgs.season_csw_pct ELSE NULL
+            END as season_csw_pct,
+            -- Workload: games_last_30_days from stale row is meaningless
+            CASE WHEN DATE_DIFF(@game_date, pgs.game_date, DAY) <= 45
+                 THEN pgs.games_last_30_days ELSE 0
+            END as games_last_30_days,
             pgs.pitch_count_avg_last_5,
             pgs.data_completeness_score,
             pgs.rolling_stats_games,
