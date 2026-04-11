@@ -406,11 +406,18 @@ class CatBoostMonthly(CatBoostV8):
         # Detect from GCS path ('_anchor_') or training_config_json.
         self._is_anchor_line = '_anchor_' in (self._model_file_name or '') or '_anchor_' in model_path
 
+        # Session 521: MultiQuantile model detection.
+        # MultiQuantile models output 3 values (p25, p50, p75) per prediction.
+        # Detect from loss_function in config (set by registry or MONTHLY_MODELS).
+        loss_fn = self.config.get('loss_function', '')
+        self._is_multi_quantile = 'MultiQuantile' in (loss_fn or '')
+
         framework_name = 'XGBoost' if getattr(self, '_is_xgboost', False) else ('LightGBM' if getattr(self, '_is_lightgbm', False) else 'CatBoost')
         anchor_str = ', ANCHOR-LINE' if self._is_anchor_line else ''
+        mq_str = ', MULTI-QUANTILE' if self._is_multi_quantile else ''
         logger.info(
             f"{framework_name} Monthly model loaded: {model_id} "
-            f"(feature_set={self._feature_set}{anchor_str}, "
+            f"(feature_set={self._feature_set}{anchor_str}{mq_str}, "
             f"trained {self.config.get('train_start')} to {self.config.get('train_end')}, "
             f"file={self._model_file_name}, sha256={self._model_sha256})"
         )
@@ -565,6 +572,10 @@ class CatBoostMonthly(CatBoostV8):
                 'metadata': {'model_file_name': self._model_file_name},
             }
 
+        # Session 521: quantile_p25/p75 populated only for MultiQuantile models
+        quantile_p25 = None
+        quantile_p75 = None
+
         try:
             if getattr(self, '_is_xgboost', False):
                 import xgboost as xgb
@@ -573,6 +584,13 @@ class CatBoostMonthly(CatBoostV8):
                 feature_names = self._get_v12_feature_names()
                 dmatrix = xgb.DMatrix(feature_vector, feature_names=feature_names)
                 raw_prediction = float(self.model.predict(dmatrix)[0])
+            elif self._is_multi_quantile:
+                # Session 521: MultiQuantile model outputs (1, 3) → [p25, p50, p75]
+                raw_output = self.model.predict(feature_vector)
+                mq_row = raw_output[0]  # shape (3,)
+                quantile_p25 = float(mq_row[0])
+                raw_prediction = float(mq_row[1])  # p50 = median
+                quantile_p75 = float(mq_row[2])
             else:
                 raw_prediction = float(self.model.predict(feature_vector)[0])
         except Exception as e:
@@ -648,7 +666,23 @@ class CatBoostMonthly(CatBoostV8):
             warnings.append('LOW_QUALITY_SCORE')
 
         model_type_str = 'monthly_retrain_lgbm_v12' if getattr(self, '_is_lightgbm', False) else 'monthly_retrain_v12'
-        return {
+
+        metadata = {
+            'model_version': self.model_id,
+            'system_id': self.model_id,
+            'model_file_name': self._model_file_name,
+            'model_sha256': self._model_sha256,
+            'feature_set': self._feature_set,
+        }
+
+        # Session 521: MultiQuantile p25/p75 stored in metadata for signal use.
+        # Clamped to [0, 60] same as predicted_points (p50).
+        if quantile_p25 is not None:
+            metadata['quantile_p25'] = round(max(0, min(60, quantile_p25)), 2)
+        if quantile_p75 is not None:
+            metadata['quantile_p75'] = round(max(0, min(60, quantile_p75)), 2)
+
+        result = {
             'system_id': self.model_id,
             'model_version': self.model_id,
             'predicted_points': round(predicted_points, 2),
@@ -665,14 +699,16 @@ class CatBoostMonthly(CatBoostV8):
             'prediction_warnings': warnings if warnings else None,
             'raw_confidence_score': round(confidence / 100, 3),
             'calibration_method': 'none',
-            'metadata': {
-                'model_version': self.model_id,
-                'system_id': self.model_id,
-                'model_file_name': self._model_file_name,
-                'model_sha256': self._model_sha256,
-                'feature_set': self._feature_set,
-            },
+            'metadata': metadata,
         }
+
+        # Session 521: Top-level quantile fields for signal framework access
+        if quantile_p25 is not None:
+            result['quantile_p25'] = metadata['quantile_p25']
+        if quantile_p75 is not None:
+            result['quantile_p75'] = metadata['quantile_p75']
+
+        return result
 
     def _prepare_v12_feature_vector(self, features: Dict) -> Optional[np.ndarray]:
         """Build feature vector for V12/V16 models from feature store by name.

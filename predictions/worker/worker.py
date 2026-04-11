@@ -2152,6 +2152,10 @@ def format_prediction_for_bigquery(
             'ppm_avg_last_10': features.get('ppm_avg_last_10'),
             'avg_points_vs_opponent': features.get('avg_points_vs_opponent'),
             'team_win_pct': features.get('team_win_pct'),
+            # Session 521: MultiQuantile prediction intervals for signal use
+            **({'quantile_p25': prediction.get('quantile_p25'),
+                'quantile_p75': prediction.get('quantile_p75')}
+               if prediction.get('quantile_p25') is not None else {}),
         }),
 
         # Session 169: Full 33-feature model input snapshot for debugging and reproducibility.
