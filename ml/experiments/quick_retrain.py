@@ -243,6 +243,10 @@ def parse_args():
                        help='Train without vegas features, compute edge as pred - vegas_line at eval time')
     parser.add_argument('--quantile-alpha', type=float, default=None, metavar='ALPHA',
                        help='Use quantile regression with alpha (e.g., 0.55 = predict above median)')
+    parser.add_argument('--multi-quantile', action='store_true',
+                       help='Train CatBoost MultiQuantile model (p25/p50/p75). '
+                            'Outputs prediction intervals. p50 used for standard evaluation. '
+                            'Adds quantile signal analysis: p25 > line = strong OVER, p75 < line = strong UNDER.')
     parser.add_argument('--exclude-features', default=None,
                        help='Comma-separated feature names to exclude from training')
     parser.add_argument('--feature-weights', default=None,
@@ -2572,13 +2576,14 @@ def run_hyperparam_search(X_train, y_train, X_val, y_val, lines_val, w_train=Non
 
 def compute_model_family(feature_set: str, no_vegas: bool, quantile_alpha: float = None,
                          loss_function: str = None, classify: bool = False,
-                         framework: str = 'catboost', player_tier: str = None) -> str:
+                         framework: str = 'catboost', player_tier: str = None,
+                         multi_quantile: bool = False) -> str:
     """Compute model_family string from training parameters.
 
     Convention: {prefix}_{feature_set}_{loss}[_{tier}] where:
       - prefix: lgbm for lightgbm, omitted for catboost (legacy compat)
       - feature_set: v9, v12_noveg, etc.
-      - loss: mae, q43, q45, classify, rmse, etc.
+      - loss: mae, q43, q45, mq, classify, rmse, etc.
       - tier: star, starter, role (optional)
     """
     if no_vegas and not feature_set.endswith('_noveg'):
@@ -2595,6 +2600,8 @@ def compute_model_family(feature_set: str, no_vegas: bool, quantile_alpha: float
     # Loss/mode suffix
     if classify:
         family = f"{fs}_classify"
+    elif multi_quantile:
+        family = f"{fs}_mq"
     elif quantile_alpha:
         alpha_str = str(quantile_alpha).replace('0.', 'q')
         family = f"{fs}_{alpha_str}"
@@ -2890,6 +2897,8 @@ def main():
         print(f"Mode: RESIDUAL (training on actual - vegas_line)")
     if args.two_stage:
         print(f"Mode: TWO-STAGE (train without vegas, edge = pred - vegas at eval)")
+    if args.multi_quantile:
+        print(f"Mode: MULTI-QUANTILE (p25/p50/p75 — CatBoost only)")
     if args.quantile_alpha:
         print(f"Mode: QUANTILE (alpha={args.quantile_alpha})")
     # Session 350: Model diversity experiments
@@ -2924,6 +2933,15 @@ def main():
         return
     if args.classify and args.residual:
         print("ERROR: --classify and --residual are mutually exclusive")
+        return
+    if args.multi_quantile and args.quantile_alpha:
+        print("ERROR: --multi-quantile and --quantile-alpha are mutually exclusive")
+        return
+    if args.multi_quantile and args.classify:
+        print("ERROR: --multi-quantile and --classify are mutually exclusive")
+        return
+    if args.multi_quantile and args.framework != 'catboost':
+        print("ERROR: --multi-quantile is only supported for CatBoost (uses MultiQuantile loss)")
         return
 
     # DATE OVERLAP GUARD (Session 176: 90%+ hit rates were caused by training on eval data)
@@ -3854,7 +3872,10 @@ def main():
         print("\nTraining CatBoost with default params...")
 
     # Quantile regression: override loss function (Session 179)
-    if args.quantile_alpha:
+    if args.multi_quantile:
+        hp['loss_function'] = 'MultiQuantile:alpha=0.25,0.5,0.75'
+        print(f"  MultiQuantile loss: alpha=0.25,0.5,0.75 (p25/p50/p75)")
+    elif args.quantile_alpha:
         hp['loss_function'] = f'Quantile:alpha={args.quantile_alpha}'
         print(f"  Quantile loss: alpha={args.quantile_alpha}")
 
@@ -4117,6 +4138,14 @@ def main():
         print(f"  Base pred stats: mean={base_preds_eval.mean():.2f}, std={base_preds_eval.std():.2f}")
         print(f"  Residual pred stats: mean={raw_preds.mean():.2f}, std={raw_preds.std():.2f}")
         print(f"  Final pred stats: mean={preds.mean():.2f}, std={preds.std():.2f}")
+    elif args.multi_quantile:
+        # MultiQuantile outputs (N, 3) array: [p25, p50, p75]
+        mq_p25, mq_p50, mq_p75 = raw_preds[:, 0], raw_preds[:, 1], raw_preds[:, 2]
+        preds = mq_p50  # Use median for standard evaluation
+        mq_iqr = mq_p75 - mq_p25
+        print(f"  MultiQuantile model ({len(preds)} predictions):")
+        print(f"    p25 mean={mq_p25.mean():.2f}, p50 mean={mq_p50.mean():.2f}, p75 mean={mq_p75.mean():.2f}")
+        print(f"    IQR mean={mq_iqr.mean():.2f}, median={np.median(mq_iqr):.2f}")
     else:
         preds = raw_preds
 
@@ -4147,6 +4176,64 @@ def main():
     if args.walkforward:
         walkforward_results = run_walkforward_eval(model, df_eval, X_eval, y_eval, lines)
 
+    # MultiQuantile signal analysis (Session 521: quantile-as-signal)
+    if args.multi_quantile:
+        print("\n" + "=" * 70)
+        print(" QUANTILE SIGNAL ANALYSIS")
+        print("=" * 70)
+
+        actuals = y_eval.values
+
+        # p25 > line = STRONG OVER (even pessimistic scenario beats line)
+        floor_over_mask = mq_p25 > lines
+        floor_n = floor_over_mask.sum()
+        if floor_n > 0:
+            floor_correct = (actuals[floor_over_mask] > lines[floor_over_mask]).sum()
+            floor_hr = floor_correct / floor_n * 100
+            print(f"  QUANTILE_FLOOR_OVER  (p25 > line): {floor_correct}/{floor_n} = {floor_hr:.1f}% HR")
+        else:
+            print(f"  QUANTILE_FLOOR_OVER  (p25 > line): 0 qualifying picks")
+
+        # p75 < line = STRONG UNDER (even optimistic scenario misses line)
+        ceil_under_mask = mq_p75 < lines
+        ceil_n = ceil_under_mask.sum()
+        if ceil_n > 0:
+            ceil_correct = (actuals[ceil_under_mask] < lines[ceil_under_mask]).sum()
+            ceil_hr = ceil_correct / ceil_n * 100
+            print(f"  QUANTILE_CEIL_UNDER  (p75 < line): {ceil_correct}/{ceil_n} = {ceil_hr:.1f}% HR")
+        else:
+            print(f"  QUANTILE_CEIL_UNDER  (p75 < line): 0 qualifying picks")
+
+        # Combined: either signal fires
+        either_mask = floor_over_mask | ceil_under_mask
+        either_n = either_mask.sum()
+        if either_n > 0:
+            either_correct = np.where(
+                floor_over_mask[either_mask],
+                actuals[either_mask] > lines[either_mask],
+                actuals[either_mask] < lines[either_mask],
+            ).sum()
+            print(f"  EITHER SIGNAL        (union):      {either_correct}/{either_n} = {either_correct/either_n*100:.1f}% HR")
+        print(f"  Coverage: {either_n}/{len(preds)} picks ({either_n/len(preds)*100:.1f}%)")
+
+        # Calibration check
+        print(f"\n  Calibration (expected vs actual % of actuals below quantile):")
+        for alpha, qpred in [(0.25, mq_p25), (0.50, mq_p50), (0.75, mq_p75)]:
+            actual_coverage = (actuals <= qpred).mean()
+            delta = actual_coverage - alpha
+            status = "OK" if abs(delta) < 0.05 else ("HIGH" if delta > 0 else "LOW")
+            print(f"    q={alpha:.2f}: expected={alpha:.2f}, actual={actual_coverage:.3f} ({status})")
+
+        # IQR as confidence: narrow IQR = high certainty
+        median_iqr = np.median(mq_iqr)
+        narrow = mq_iqr < median_iqr
+        wide = ~narrow
+        narrow_hr, narrow_n = compute_hit_rate(preds[narrow], actuals[narrow], lines[narrow], min_edge=3.0)
+        wide_hr, wide_n = compute_hit_rate(preds[wide], actuals[wide], lines[wide], min_edge=3.0)
+        print(f"\n  IQR confidence split (median IQR={median_iqr:.2f}):")
+        print(f"    Narrow IQR (confident): {narrow_hr:.1f}% HR ({narrow_n} edge-3+ picks)")
+        print(f"    Wide IQR (uncertain):   {wide_hr:.1f}% HR ({wide_n} edge-3+ picks)")
+
     # Vegas bias gate (Session 163 — the Feb 2 retrain had good MAE but -2.26 Vegas bias)
     pred_vs_vegas = np.mean(preds - lines)
     VEGAS_BIAS_LIMIT = 1.5
@@ -4166,6 +4253,8 @@ def main():
         mode_suffix = "_resid"
     elif args.two_stage:
         mode_suffix = "_2stg"
+    elif args.multi_quantile:
+        mode_suffix = "_mq"
     elif args.quantile_alpha:
         mode_suffix = f"_q{args.quantile_alpha}"
     if feature_weights_map:
@@ -4263,8 +4352,9 @@ def main():
     # This measures point prediction accuracy across the full player pool
     full_pop_mae = None
     full_pop_n = 0
-    if is_classifier:
-        print("  Skipping full-population MAE (classifier mode)")
+    if is_classifier or args.multi_quantile:
+        reason = "classifier mode" if is_classifier else "multi-quantile mode (using p50 for eval MAE)"
+        print(f"  Skipping full-population MAE ({reason})")
         print()
     else:
         try:
@@ -4545,7 +4635,8 @@ def main():
         # Compute model family (Session 273)
         model_family = compute_model_family(
             args.feature_set, args.no_vegas, args.quantile_alpha, args.loss_function,
-            classify=args.classify, framework=args.framework, player_tier=args.player_tier
+            classify=args.classify, framework=args.framework, player_tier=args.player_tier,
+            multi_quantile=args.multi_quantile
         )
 
         # Build strengths JSON from segmented analysis
@@ -4586,7 +4677,9 @@ def main():
                 id_parts = [fw_prefix, args.feature_set]
                 if args.no_vegas and '_noveg' not in args.feature_set:
                     id_parts.append('noveg')
-                if args.quantile_alpha:
+                if args.multi_quantile:
+                    id_parts.append('mq')
+                elif args.quantile_alpha:
                     alpha_str = str(args.quantile_alpha).replace('0.', 'q')
                     id_parts.append(alpha_str)
                 if args.classify:
@@ -4599,6 +4692,8 @@ def main():
                 loss_fn = 'MAE'
                 if args.classify:
                     loss_fn = 'Logloss'
+                elif args.multi_quantile:
+                    loss_fn = 'MultiQuantile:alpha=0.25,0.5,0.75'
                 elif args.quantile_alpha:
                     loss_fn = f'Quantile:alpha={args.quantile_alpha}'
                 elif args.loss_function:
@@ -4615,7 +4710,7 @@ def main():
                     feature_set=args.feature_set if not args.no_vegas else f"{args.feature_set}_noveg",
                     model_family=model_family,
                     loss_function=loss_fn,
-                    quantile_alpha=args.quantile_alpha,
+                    quantile_alpha=0.5 if args.multi_quantile else args.quantile_alpha,
                     training_start=dates['train_start'],
                     training_end=dates['train_end'],
                     training_samples=len(df_train),
@@ -4765,6 +4860,8 @@ def main():
             experiment_type = 'monthly_retrain_residual'
         elif args.two_stage:
             experiment_type = 'monthly_retrain_two_stage'
+        elif args.multi_quantile:
+            experiment_type = 'monthly_retrain_multi_quantile'
         elif args.quantile_alpha:
             experiment_type = 'monthly_retrain_quantile'
         elif args.feature_weights or args.category_weight:
@@ -4789,6 +4886,7 @@ def main():
                     'residual': args.residual,
                     'two_stage': args.two_stage,
                     'quantile_alpha': args.quantile_alpha,
+                    'multi_quantile': args.multi_quantile,
                     'exclude_features': exclude_features if exclude_features else None,
                     'feature_weights': args.feature_weights,
                     'category_weight': args.category_weight,
