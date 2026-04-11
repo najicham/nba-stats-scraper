@@ -1553,7 +1553,7 @@ class BestBetsAggregator:
                 f"{filter_counts['model_profile_would_block']} predictions"
             )
         if filter_counts['regime_over_floor'] > 0:
-            over_floor = 4.0 + self._regime_context.get('over_edge_floor_delta', 0)
+            over_floor = 6.0 + self._regime_context.get('over_edge_floor_delta', 0)
             logger.info(
                 f"Regime OVER floor ({over_floor}): skipped "
                 f"{filter_counts['regime_over_floor']} OVER picks "
