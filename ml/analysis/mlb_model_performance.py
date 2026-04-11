@@ -12,6 +12,7 @@ Created: 2026-04-10 (Session 519)
 """
 
 import argparse
+import decimal
 import logging
 from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Optional
@@ -136,7 +137,12 @@ def compute_for_date(
     now = datetime.now(timezone.utc).isoformat()
     rows = []
     for r in result:
-        row = dict(r)
+        # Convert BQ Decimal (from AVG of NUMERIC cols like mae_7d) to float
+        # so insert_rows_json can serialize without TypeError.
+        row = {
+            k: float(v) if isinstance(v, decimal.Decimal) else v
+            for k, v in dict(r).items()
+        }
         row['game_date'] = target_date.isoformat()
         row['daily_hr'] = (
             round(row['daily_wins'] / row['daily_picks'] * 100, 1)

@@ -171,8 +171,20 @@ class MlbPredictionGradingProcessor:
             self.stats["voided"] += 1
             return self._build_voided_record(pred, 'suspended')
 
-        # Look up actual result
+        # Look up actual result — exact match first, then fuzzy fallback
+        # Fuzzy fallback handles "j_t_ginn" (box scores API with periods) vs
+        # "jt_ginn" (schedule API without periods). Strip underscores for comparison.
         actual = actuals.get(pitcher_lookup)
+        if actual is None and pitcher_lookup:
+            stripped = pitcher_lookup.replace('_', '')
+            actual = next(
+                (v for k, v in actuals.items() if k.replace('_', '') == stripped),
+                None,
+            )
+            if actual is not None:
+                logger.debug(
+                    f"Fuzzy match: {pitcher_lookup!r} matched via stripped lookup"
+                )
         if actual is None:
             self.stats["no_result"] += 1
             return None

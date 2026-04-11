@@ -69,6 +69,8 @@ def normalize_name(name: str) -> str:
     Follows the NBA player_lookup normalization pattern:
     - Lowercase
     - Remove suffixes (Jr., Sr., III, II, IV)
+    - Strip periods BEFORE underscore replacement (so "J.T. Ginn" → "jt_ginn"
+      not "j_t_ginn"; matches schedule API format used by prediction pipeline)
     - Replace non-alphanumeric chars with underscores
     - Collapse multiple underscores
     """
@@ -76,7 +78,9 @@ def normalize_name(name: str) -> str:
         return ''
     # Remove suffixes like Jr., Sr., III
     name = re.sub(r'\s+(Jr\.|Sr\.|III|II|IV)$', '', name.strip())
-    # Replace spaces and special chars with underscores
+    # Strip periods before underscore conversion so "J.T." → "JT" not "J_T_"
+    name = name.replace('.', '')
+    # Replace spaces and remaining special chars with underscores
     name = re.sub(r'[^a-zA-Z0-9]', '_', name.lower())
     # Collapse multiple underscores
     name = re.sub(r'_+', '_', name).strip('_')

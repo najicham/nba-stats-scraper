@@ -300,27 +300,31 @@ def compute_signal_health(
         else:
             status = 'HEALTHY'
 
+        def _f(v):
+            """Convert BQ Decimal/float to Python float for JSON serialization."""
+            return float(v) if v is not None else None
+
         results.append({
             'game_date': target_date,
             'signal_tag': row.signal_tag,
-            'hr_7d': hr_7d,
-            'hr_14d': row.hr_14d,
-            'hr_30d': row.hr_30d,
-            'hr_season': hr_season,
+            'hr_7d': _f(hr_7d),
+            'hr_14d': _f(row.hr_14d),
+            'hr_30d': _f(row.hr_30d),
+            'hr_season': _f(hr_season),
             'picks_7d': row.picks_7d,
             'picks_14d': row.picks_14d,
             'picks_30d': row.picks_30d,
             'picks_season': row.picks_season,
-            'divergence_7d_vs_season': div_7d,
-            'divergence_14d_vs_season': div_14d,
+            'divergence_7d_vs_season': _f(div_7d),
+            'divergence_14d_vs_season': _f(div_14d),
             'regime': regime,
             'status': status,
             'days_in_current_regime': None,  # Populated below
             # Directional splits
-            'hr_over_7d': row.hr_over_7d,
-            'hr_under_7d': row.hr_under_7d,
-            'hr_over_30d': row.hr_over_30d,
-            'hr_under_30d': row.hr_under_30d,
+            'hr_over_7d': _f(row.hr_over_7d),
+            'hr_under_7d': _f(row.hr_under_7d),
+            'hr_over_30d': _f(row.hr_over_30d),
+            'hr_under_30d': _f(row.hr_under_30d),
             'picks_over_7d': row.picks_over_7d,
             'picks_under_7d': row.picks_under_7d,
             'picks_over_30d': row.picks_over_30d,
