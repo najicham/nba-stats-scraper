@@ -24,6 +24,7 @@ Created: 2026-03-23
 """
 
 import argparse
+import decimal
 import logging
 import sys
 from datetime import datetime, timezone
@@ -426,7 +427,13 @@ def write_health_rows(bq_client: bigquery.Client, rows: List[Dict]) -> int:
     if deleted > 0:
         logger.info(f"Deleted {deleted} existing rows for {target_date}")
 
-    # WRITE_APPEND the new rows
+    # WRITE_APPEND the new rows.
+    # Sanitize: BQ client's load_table_from_json serializes decimal.Decimal as STRING,
+    # causing schema mismatch for FLOAT64 fields. Convert all Decimals to float first.
+    rows = [
+        {k: float(v) if isinstance(v, decimal.Decimal) else v for k, v in row.items()}
+        for row in rows
+    ]
     load_config = bigquery.LoadJobConfig(
         write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
         create_disposition=bigquery.CreateDisposition.CREATE_NEVER,
