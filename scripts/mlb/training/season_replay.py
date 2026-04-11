@@ -316,7 +316,11 @@ def load_data(client: bigquery.Client, earliest_date: str = "2024-01-01") -> pd.
     LEFT JOIN statcast_rolling sc
         ON REPLACE(pgs.player_lookup, '_', '') = REPLACE(sc.player_lookup, '_', '')
         AND pgs.game_date = sc.game_date
-    LEFT JOIN `mlb_raw.fangraphs_pitcher_season_stats` fg
+    LEFT JOIN (
+        SELECT *
+        FROM `mlb_raw.fangraphs_pitcher_season_stats`
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY player_lookup, season_year ORDER BY snapshot_date DESC) = 1
+    ) fg
         ON LOWER(REGEXP_REPLACE(NORMALIZE(fg.player_lookup, NFD), r'[\\W_]+', ''))
             = LOWER(REGEXP_REPLACE(NORMALIZE(pgs.player_lookup, NFD), r'[\\W_]+', ''))
         AND fg.season_year = EXTRACT(YEAR FROM pgs.game_date)

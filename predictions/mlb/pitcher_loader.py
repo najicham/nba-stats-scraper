@@ -524,7 +524,11 @@ def load_batch_features(
     -- pgs uses 'anthony_kay' (underscore-separated). Match oddsa pattern.
     LEFT JOIN bp_features bp ON REPLACE(lf.player_lookup, '_', '') = bp.player_lookup
     LEFT JOIN oddsa_ranked oddsa ON REPLACE(lf.player_lookup, '_', '') = oddsa.player_lookup AND oddsa.rn = 1
-    LEFT JOIN `{proj_id}.mlb_raw.fangraphs_pitcher_season_stats` fg
+    LEFT JOIN (
+        SELECT *
+        FROM `{proj_id}.mlb_raw.fangraphs_pitcher_season_stats`
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY player_lookup, season_year ORDER BY snapshot_date DESC) = 1
+    ) fg
         ON LOWER(REGEXP_REPLACE(NORMALIZE(fg.player_lookup, NFD), r'[\\W_]+', ''))
             = LOWER(REGEXP_REPLACE(NORMALIZE(lf.player_lookup, NFD), r'[\\W_]+', ''))
         AND fg.season_year = EXTRACT(YEAR FROM @game_date)

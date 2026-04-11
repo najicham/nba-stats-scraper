@@ -141,8 +141,13 @@ create_reminder "mlb-asb-prep" \
 
 create_reminder "mlb-biweekly-retrain" \
     "0 9 */14 * *" \
-    "MLB biweekly retrain due (14-day cadence). Run train_regressor_v2.py with 120-day window." \
+    "MLB biweekly retrain due (14-day cadence). Run: PYTHONPATH=. python scripts/mlb/training/train_regressor_v2.py --training-start 2024-04-01 --training-end YYYY-MM-DD --output-dir models/mlb/ (ALWAYS use --training-start 2024-04-01 to include April data; default 120-day window misses April)" \
     "MLB 2026: Biweekly retrain reminder (recurring)"
+
+create_reminder "mlb-monthly-fangraphs-refresh" \
+    "0 10 1 4-10 *" \
+    "MLB monthly FanGraphs refresh due. Run: PYTHONPATH=. python scripts/mlb/backfill_fangraphs_stats.py --season 2026 --qual 0 (activates elite_peripherals_over + xfip_elite_over signals once ~10+ starts accumulated; FanGraphs updates YTD stats mid-season)" \
+    "MLB 2026: Monthly FanGraphs stats refresh (recurring, 1st of month Apr-Oct)"
 
 create_reminder "mlb-weekly-hr-check" \
     "0 10 * * 1" \

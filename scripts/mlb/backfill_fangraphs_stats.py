@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import pandas as pd
+import requests
 from google.cloud import bigquery
 
 # Setup logging
@@ -37,13 +38,25 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Import pybaseball
-try:
-    from pybaseball import pitching_stats, cache
-    cache.enable()
-except ImportError:
-    logger.error("pybaseball not installed. Run: pip install pybaseball")
-    sys.exit(1)
+# FanGraphs v2 API — does not require pybaseball; works mid-season
+FANGRAPHS_API_URL = (
+    "https://www.fangraphs.com/api/leaders/major-league/data"
+    "?age=&pos=P&stats=pit&lg=all&qual=0"
+    "&season={season}&season1={season}&ind=0&team=0"
+    "&pageitems=500&pagenum=1&type=8"
+)
+_SESSION = None
+
+def _get_session() -> requests.Session:
+    global _SESSION
+    if _SESSION is None:
+        _SESSION = requests.Session()
+        _SESSION.headers.update({
+            # NOTE: FanGraphs WAF blocks full Chrome UA strings and
+            # explicit Accept: application/json headers. Use truncated UA.
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        })
+    return _SESSION
 
 
 # BigQuery config
@@ -66,30 +79,35 @@ def normalize_player_name(name: str) -> str:
 
 def fetch_fangraphs_data(season: int, qual: int = 1) -> Optional[pd.DataFrame]:
     """
-    Fetch FanGraphs pitching stats for a season.
+    Fetch FanGraphs pitching stats for a season via the v2 JSON API.
+
+    Uses direct HTTP requests with browser headers — works mid-season for
+    current year (returns YTD stats). The legacy pybaseball path was blocked
+    by FanGraphs 403s; this v2 API is the authoritative replacement.
 
     Args:
-        season: Year to fetch
-        qual: Minimum innings qualifier (1=qualified, 0=all pitchers)
+        season: Year to fetch (current season supported for mid-season snapshots)
+        qual: Ignored — always fetches all pitchers (qual=0 in API call)
 
     Returns:
         DataFrame with pitching stats or None if error
     """
-    logger.info(f"Fetching FanGraphs pitching stats for {season} (qual={qual})...")
+    logger.info(f"Fetching FanGraphs v2 API pitching stats for {season}...")
 
     try:
-        df = pitching_stats(season, qual=qual)
+        session = _get_session()
+        url = FANGRAPHS_API_URL.format(season=season)
+        resp = session.get(url, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
 
-        if df is None or df.empty:
+        rows = data.get("data", [])
+        if not rows:
             logger.warning(f"No data returned for {season}")
             return None
 
-        logger.info(f"Retrieved {len(df)} pitchers for {season}")
-
-        # Log available columns for debugging
-        swstr_cols = [c for c in df.columns if 'sw' in c.lower() or 'whiff' in c.lower()]
-        logger.info(f"SwStr-related columns: {swstr_cols}")
-
+        df = pd.DataFrame(rows)
+        logger.info(f"Retrieved {len(df)} pitchers for {season} (totalCount={data.get('totalCount')})")
         return df
 
     except Exception as e:
@@ -103,11 +121,13 @@ def transform_data(df: pd.DataFrame, season: int) -> pd.DataFrame:
     """
     logger.info("Transforming data...")
 
-    # Column mapping (FanGraphs name -> BigQuery name)
+    # Column mapping: FanGraphs v2 API name → BigQuery name
+    # v2 API uses PlayerName (clean text) instead of pybaseball's HTML-embedded Name
+    # CSW% is "C+SwStr%" in v2 API
     column_mapping = {
-        'IDfg': 'fangraphs_id',
-        'Name': 'player_name',
-        'Team': 'team',
+        'playerid': 'fangraphs_id',
+        'PlayerName': 'player_name',
+        'TeamNameAbb': 'team',
         'Age': 'age',
         'G': 'games',
         'GS': 'games_started',
@@ -122,7 +142,7 @@ def transform_data(df: pd.DataFrame, season: int) -> pd.DataFrame:
         'BB%': 'bb_pct',
         'K/BB': 'k_bb_ratio',
         'SwStr%': 'swstr_pct',
-        'CSW%': 'csw_pct',
+        'C+SwStr%': 'csw_pct',
         'O-Swing%': 'o_swing_pct',
         'Z-Swing%': 'z_swing_pct',
         'Swing%': 'swing_pct',
