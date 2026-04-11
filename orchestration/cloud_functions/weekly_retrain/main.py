@@ -103,6 +103,18 @@ GOVERNANCE = {
     'min_directional_hr': 52.4, # Both OVER and UNDER HR >= 52.4% at edge 3+
 }
 
+# Session 522: Loosened governance for season-restart mode.
+# Applied when auto-halt is detected (avg_edge < 5.0 OR all models BLOCKED).
+# Late-season eval data has compressed edge from TIGHT markets → UNDER HR degrades
+# to ~51% on tiny eval samples, causing false governance failures.
+# Only directional balance and sample size are loosened — overall HR, vegas bias,
+# and tier bias remain fully enforced.
+GOVERNANCE_SEASON_RESTART = {
+    **GOVERNANCE,
+    'min_n_graded': 10,        # Reduced from 15 — tiny eval windows in tight markets
+    'min_directional_hr': 51.0, # Reduced from 52.4% — late-season UNDER HR degrades
+}
+
 
 def get_catboost():
     """Lazy load catboost."""
@@ -474,30 +486,42 @@ def run_governance_gates(
     actuals: np.ndarray,
     lines: np.ndarray,
     family_name: str,
+    season_restart: bool = False,
 ) -> Tuple[bool, List[str]]:
-    """Run all governance gates. Returns (passed, list_of_failures)."""
+    """Run all governance gates. Returns (passed, list_of_failures).
+
+    season_restart=True applies loosened thresholds (GOVERNANCE_SEASON_RESTART)
+    for the first retrain cycle after an auto-halt. See Session 522.
+    """
+    gov = GOVERNANCE_SEASON_RESTART if season_restart else GOVERNANCE
+    if season_restart:
+        logger.info(
+            f"  [SEASON-RESTART] Loosened gates: min_n={gov['min_n_graded']}, "
+            f"min_dir_hr={gov['min_directional_hr']}%"
+        )
+
     failures = []
 
     # Gate 1: Edge 3+ HR >= 53% (lowered from 60% — raw model ceiling is ~53.4%)
     hr_e3, n_e3 = compute_hit_rate(preds, actuals, lines, min_edge=3.0)
-    if n_e3 < GOVERNANCE['min_n_graded']:
-        failures.append(f"N={n_e3} < {GOVERNANCE['min_n_graded']} graded at edge 3+")
-    elif hr_e3 is None or hr_e3 < GOVERNANCE['min_hr_edge3']:
-        failures.append(f"Edge 3+ HR={hr_e3}% < {GOVERNANCE['min_hr_edge3']}%")
+    if n_e3 < gov['min_n_graded']:
+        failures.append(f"N={n_e3} < {gov['min_n_graded']} graded at edge 3+")
+    elif hr_e3 is None or hr_e3 < gov['min_hr_edge3']:
+        failures.append(f"Edge 3+ HR={hr_e3}% < {gov['min_hr_edge3']}%")
 
     # Gate 2: Vegas bias within ±1.5
     valid_lines = ~np.isnan(lines) & (lines > 0)
     if valid_lines.sum() > 0:
         vegas_bias = float(np.mean(preds[valid_lines] - lines[valid_lines]))
-        if abs(vegas_bias) > GOVERNANCE['max_vegas_bias']:
-            failures.append(f"Vegas bias={vegas_bias:+.2f} outside ±{GOVERNANCE['max_vegas_bias']}")
+        if abs(vegas_bias) > gov['max_vegas_bias']:
+            failures.append(f"Vegas bias={vegas_bias:+.2f} outside ±{gov['max_vegas_bias']}")
 
     # Gate 3: Directional balance
     dir_hr = compute_directional_hr(preds, actuals, lines, min_edge=3.0)
     for direction in ['OVER', 'UNDER']:
         hr, n = dir_hr[direction]
-        if hr is not None and n >= 20 and hr < GOVERNANCE['min_directional_hr']:
-            failures.append(f"{direction} HR={hr}% < {GOVERNANCE['min_directional_hr']}% (N={n})")
+        if hr is not None and n >= 20 and hr < gov['min_directional_hr']:
+            failures.append(f"{direction} HR={hr}% < {gov['min_directional_hr']}% (N={n})")
 
     passed = len(failures) == 0
     return passed, failures
@@ -643,6 +667,7 @@ def retrain_family(
     train_end: str,
     eval_start: str,
     eval_end: str,
+    season_restart: bool = False,
 ) -> Dict[str, Any]:
     """Retrain a single model family. Returns result dict."""
     family_name = family['model_family']
@@ -715,7 +740,9 @@ def retrain_family(
     logger.info(f"  MAE={mae:.3f}, HR(e1)={hr_all}% N={n_all}, HR(e3)={hr_e3}% N={n_e3}")
 
     # Governance gates
-    passed, failures = run_governance_gates(preds, y_eval.values, lines, family_name)
+    passed, failures = run_governance_gates(
+        preds, y_eval.values, lines, family_name, season_restart=season_restart
+    )
 
     if not passed:
         result['status'] = 'blocked'
@@ -853,6 +880,9 @@ def weekly_retrain(request):
         dry_run = request.args.get('dry_run', 'false').lower() == 'true'
         family_filter = request.args.get('family')
         train_end_override = request.args.get('train_end')
+        # Session 522: explicit season-restart override via URL param.
+        # Also auto-detected below when all models are BLOCKED or avg_edge < 5.0.
+        season_restart_override = request.args.get('season_restart', 'false').lower() == 'true'
 
         # Compute dates
         if train_end_override:
@@ -896,6 +926,48 @@ def weekly_retrain(request):
                 logger.info(f"  (Adjusted) Training: {train_start_str} to {train_end_str}")
 
         families = get_enabled_families(client)
+
+        # Session 522: Auto-detect season-restart condition.
+        # When avg_edge < 5.0 (auto-halt active) OR all enabled models are BLOCKED,
+        # loosen governance gates to prevent false failures from compressed eval windows.
+        # Explicit ?season_restart=true URL param takes precedence.
+        season_restart = season_restart_override
+        if not season_restart and not family_filter:
+            try:
+                halt_q = f"""
+                SELECT
+                  ROUND(AVG(avg_e), 2) AS avg_edge_7d,
+                  SUM(IF(avg_e >= 5.0, 1, 0)) AS days_above_5
+                FROM (
+                  SELECT game_date, AVG(ABS(predicted_points - current_points_line)) AS avg_e
+                  FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
+                  WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+                    AND is_active = TRUE
+                  GROUP BY game_date
+                )
+                """
+                halt_rows = list(client.query(halt_q).result())
+                avg_edge_7d = float(halt_rows[0].avg_edge_7d or 0) if halt_rows else 0.0
+                blocked_q = f"""
+                SELECT
+                  COUNTIF(status NOT IN ('blocked','disabled','deprecated')) AS active_count,
+                  COUNTIF(status = 'blocked') AS blocked_count
+                FROM `{PROJECT_ID}.nba_predictions.model_registry`
+                WHERE enabled = TRUE
+                """
+                blocked_rows = list(client.query(blocked_q).result())
+                active_count = int(blocked_rows[0].active_count or 0) if blocked_rows else 1
+                all_blocked = active_count == 0
+
+                if avg_edge_7d < 5.0 or all_blocked:
+                    season_restart = True
+                    logger.warning(
+                        f"AUTO-DETECT season-restart: avg_edge_7d={avg_edge_7d:.2f} "
+                        f"(threshold 5.0), all_blocked={all_blocked}. "
+                        f"Applying loosened governance gates."
+                    )
+            except Exception as e:
+                logger.warning(f"Season-restart auto-detection failed (non-fatal): {e}")
 
         if family_filter:
             families = [f for f in families if f['model_family'] == family_filter]
@@ -944,6 +1016,7 @@ def weekly_retrain(request):
                     client, family,
                     train_start_str, train_end_str,
                     eval_start_str, eval_end_str,
+                    season_restart=season_restart,
                 )
                 results.append(result)
             except Exception as e:

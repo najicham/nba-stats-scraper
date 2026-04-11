@@ -671,6 +671,29 @@ class BestBetsAggregator:
                     _record_filtered(pred, 'over_edge_floor', pred_edge)
                 continue
 
+            # Session 522: OVER archetype hard block for bench and role players.
+            # With the 6.0 floor, bench/role OVER picks still qualify but have
+            # terrible backtest HR:
+            #   - bench (line < 12):  34.1% HR at edge 7+ (N=91) — catastrophic
+            #   - role (line 12-17.5): 43.1% HR at edge 7+ (N=72) — below breakeven
+            # Session 468: 5-season analysis confirms bench/role OVER structurally
+            # unprofitable at any edge level. Hard block prevents wasted picks.
+            # Stars (line >= 25) and starters (line 18-24.5) are NOT affected.
+            # HSE rescue still exempt — genuine environment signal overrides.
+            if pred.get('recommendation') == 'OVER' and not hse_rescued:
+                line_val_arch = pred.get('line_value') or 0
+                if line_val_arch < 12:
+                    # bench: 34.1% HR at edge 7+ — block at all edges
+                    filter_counts['bench_over_block'] += 1
+                    _record_filtered(pred, 'bench_over_block', pred_edge)
+                    continue
+                elif line_val_arch < 17.5:
+                    # role: 43.1% HR at edge 7+ — block unless very high edge (7.5+)
+                    if pred_edge < 7.5:
+                        filter_counts['role_over_block'] += 1
+                        _record_filtered(pred, 'role_over_block', pred_edge)
+                        continue
+
             # Session 437 P8: Bias-regime OVER volume gate (observation mode).
             # When >70% of predictions are UNDER and this is a rescued OVER
             # with edge < 5.0, track what would be blocked. Active mode would
