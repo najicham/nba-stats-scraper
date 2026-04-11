@@ -409,16 +409,23 @@ class MlbPredictionGradingProcessor:
         if not rows:
             return
 
-        # Strip None values — BQ streaming insert treats missing keys as NULL
-        # but sends "cannot be empty" for explicit None on integer fields.
+        # Strip None values — BQ load_table_from_json treats missing keys as NULL
+        # but explicit None on integer fields causes schema errors.
         rows = [{k: v for k, v in row.items() if v is not None} for row in rows]
 
         try:
-            errors = self.bq_client.insert_rows_json(table_id, rows)
-            if errors:
-                logger.error(f"Batch insert errors: {errors[:3]}")
-            else:
-                logger.info(f"Inserted {len(rows)} graded records to prediction_accuracy")
+            # Use batch load (not streaming insert) so rows are immediately visible
+            # to the preceding DELETE statement. Streaming inserts go to a buffer
+            # that is invisible to DML for up to 90 minutes, causing duplicates on
+            # re-grading runs.
+            table = self.bq_client.get_table(table_id)
+            job_config = bigquery.LoadJobConfig(
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                schema=table.schema,
+            )
+            load_job = self.bq_client.load_table_from_json(rows, table_id, job_config=job_config)
+            load_job.result()
+            logger.info(f"Inserted {len(rows)} graded records to prediction_accuracy")
         except Exception as e:
             logger.error(f"Batch insert to prediction_accuracy failed: {e}")
 

@@ -1,0 +1,83 @@
+# Cloud Build configuration for MLB Grading Service
+# Builds, pushes, and deploys mlb-phase6-grading to Cloud Run (auto-deploy on push to main)
+#
+# Create the Cloud Build trigger (run once manually):
+#   gcloud builds triggers create github \
+#     --name="deploy-mlb-phase6-grading" \
+#     --repository="projects/nba-props-platform/locations/us-west2/connections/nba-github-connection/repositories/nba-stats-scraper" \
+#     --branch-pattern="^main$" \
+#     --build-config="cloudbuild-mlb-grading.yaml" \
+#     --included-files="data_processors/grading/mlb/**,shared/clients/**,shared/config/**,shared/utils/**,ml/**,cloudbuild-mlb-grading.yaml" \
+#     --service-account="projects/nba-props-platform/serviceAccounts/github-actions-deploy@nba-props-platform.iam.gserviceaccount.com" \
+#     --region="us-west2" \
+#     --project="nba-props-platform"
+
+steps:
+  # Step 0: Build the Docker image
+  # --no-cache ensures fresh source code is always picked up (Session 217/218 fix)
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '--no-cache'
+      - '-f'
+      - 'data_processors/grading/mlb/Dockerfile'
+      - '-t'
+      - 'us-west2-docker.pkg.dev/nba-props-platform/nba-props/mlb-phase6-grading:latest'
+      - '-t'
+      - 'us-west2-docker.pkg.dev/nba-props-platform/nba-props/mlb-phase6-grading:${SHORT_SHA}'
+      - '--build-arg'
+      - 'BUILD_COMMIT=${SHORT_SHA}'
+      - '.'
+
+  # Step 1: Push the image BEFORE deploying
+  # Session 352: deploy step pulls from registry — push first to avoid deploying stale image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'us-west2-docker.pkg.dev/nba-props-platform/nba-props/mlb-phase6-grading:latest'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'us-west2-docker.pkg.dev/nba-props-platform/nba-props/mlb-phase6-grading:${SHORT_SHA}'
+
+  # Step 2: Deploy to Cloud Run
+  # CRITICAL: Uses --update-env-vars (NOT --set-env-vars) to preserve existing env vars
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'mlb-phase6-grading'
+      - '--image'
+      - 'us-west2-docker.pkg.dev/nba-props-platform/nba-props/mlb-phase6-grading:latest'
+      - '--region'
+      - 'us-west2'
+      - '--project'
+      - 'nba-props-platform'
+      - '--update-env-vars'
+      - 'BUILD_COMMIT=${SHORT_SHA}'
+      - '--update-labels'
+      - 'commit-sha=${SHORT_SHA}'
+
+  # Step 3: Route traffic to latest revision (Session 516)
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: bash
+    args:
+      - '-c'
+      - |
+        gcloud run services update-traffic mlb-phase6-grading \
+          --to-latest \
+          --region us-west2 \
+          --project nba-props-platform \
+          --quiet
+        echo "Traffic routed to latest revision for mlb-phase6-grading"
+
+images:
+  - 'us-west2-docker.pkg.dev/nba-props-platform/nba-props/mlb-phase6-grading:latest'
+  - 'us-west2-docker.pkg.dev/nba-props-platform/nba-props/mlb-phase6-grading:${SHORT_SHA}'
+
+timeout: 1200s
+
+options:
+  logging: CLOUD_LOGGING_ONLY

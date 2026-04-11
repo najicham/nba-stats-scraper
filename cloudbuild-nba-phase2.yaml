@@ -1,0 +1,109 @@
+# Cloud Build configuration for NBA Phase 2 raw processors
+# Also deploys mlb-phase2-raw-processors which shares the same Docker image.
+#
+# Replaces generic cloudbuild.yaml for the deploy-nba-phase2-raw-processors trigger.
+# Update the trigger once:
+#   gcloud builds triggers update deploy-nba-phase2-raw-processors \
+#     --build-config="cloudbuild-nba-phase2.yaml" \
+#     --region="us-west2" \
+#     --project="nba-props-platform"
+
+steps:
+  # Step 0: Build the Docker image
+  # --no-cache ensures fresh source code is always picked up (Session 217/218 fix)
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '--no-cache'
+      - '-f'
+      - 'data_processors/raw/Dockerfile'
+      - '-t'
+      - 'us-west2-docker.pkg.dev/nba-props-platform/nba-props/nba-phase2-raw-processors:latest'
+      - '-t'
+      - 'us-west2-docker.pkg.dev/nba-props-platform/nba-props/nba-phase2-raw-processors:${SHORT_SHA}'
+      - '--build-arg'
+      - 'BUILD_COMMIT=${SHORT_SHA}'
+      - '.'
+
+  # Step 1: Push the image BEFORE deploying
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'us-west2-docker.pkg.dev/nba-props-platform/nba-props/nba-phase2-raw-processors:latest'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'us-west2-docker.pkg.dev/nba-props-platform/nba-props/nba-phase2-raw-processors:${SHORT_SHA}'
+
+  # Step 2: Deploy NBA Phase 2 raw processors
+  # CRITICAL: Uses --update-env-vars (NOT --set-env-vars) to preserve existing env vars
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'nba-phase2-raw-processors'
+      - '--image'
+      - 'us-west2-docker.pkg.dev/nba-props-platform/nba-props/nba-phase2-raw-processors:latest'
+      - '--region'
+      - 'us-west2'
+      - '--project'
+      - 'nba-props-platform'
+      - '--update-env-vars'
+      - 'BUILD_COMMIT=${SHORT_SHA}'
+      - '--update-labels'
+      - 'commit-sha=${SHORT_SHA}'
+
+  # Step 3: Route NBA Phase 2 traffic to latest revision (Session 516)
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: bash
+    args:
+      - '-c'
+      - |
+        gcloud run services update-traffic nba-phase2-raw-processors \
+          --to-latest \
+          --region us-west2 \
+          --project nba-props-platform \
+          --quiet
+        echo "Traffic routed to latest revision for nba-phase2-raw-processors"
+
+  # Step 4: Deploy MLB Phase 2 raw processors (same image — no separate build needed)
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'mlb-phase2-raw-processors'
+      - '--image'
+      - 'us-west2-docker.pkg.dev/nba-props-platform/nba-props/nba-phase2-raw-processors:latest'
+      - '--region'
+      - 'us-west2'
+      - '--project'
+      - 'nba-props-platform'
+      - '--update-env-vars'
+      - 'BUILD_COMMIT=${SHORT_SHA}'
+      - '--update-labels'
+      - 'commit-sha=${SHORT_SHA}'
+
+  # Step 5: Route MLB Phase 2 traffic to latest revision (Session 516)
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: bash
+    args:
+      - '-c'
+      - |
+        gcloud run services update-traffic mlb-phase2-raw-processors \
+          --to-latest \
+          --region us-west2 \
+          --project nba-props-platform \
+          --quiet
+        echo "Traffic routed to latest revision for mlb-phase2-raw-processors"
+
+images:
+  - 'us-west2-docker.pkg.dev/nba-props-platform/nba-props/nba-phase2-raw-processors:latest'
+  - 'us-west2-docker.pkg.dev/nba-props-platform/nba-props/nba-phase2-raw-processors:${SHORT_SHA}'
+
+timeout: 1200s
+
+options:
+  logging: CLOUD_LOGGING_ONLY
