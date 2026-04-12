@@ -317,7 +317,13 @@ class BaseMLBPredictor(ABC):
         is_first_start = features.get('is_first_start', False)
         season_games = features.get('season_games_started', 0)
 
-        if is_first_start or season_games == 0:
+        # Use `is None` not `== 0`: a veteran pitcher on their 2nd start of the
+        # season has season_games=1 in the feature store, but a 1-2 day pipeline
+        # lag can leave season_games_started=0 even after their first start is graded.
+        # Changing to IS NULL prevents blocking veterans whose feature row simply
+        # hasn't propagated yet. True debut cases still caught by is_first_start=True
+        # or rolling_stats_games < min_career_starts below. (Session 527 fix)
+        if is_first_start or season_games is None:
             skip_bet = True
             skip_reason = "First start of season - no historical data"
             flags.append("SKIP: First start of season")

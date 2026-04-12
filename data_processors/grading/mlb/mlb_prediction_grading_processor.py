@@ -143,6 +143,16 @@ class MlbPredictionGradingProcessor:
             if graded_records:
                 self._batch_update_best_bets(graded_records, game_date)
 
+            # 8. Backfill bp_pitcher_props.actual_value from pitcher_game_summary.
+            # BettingPros scraper runs pre-game so actual_value is always 0 at
+            # scrape time. pitcher_game_summary is populated post-game by the
+            # MLB analytics pipeline and is the canonical source of actuals.
+            # bp.player_lookup uses no-underscore format (e.g. "shotaimanaga")
+            # while pgs.player_lookup uses underscore format ("shota_imanaga") —
+            # REPLACE normalizes this. Non-fatal: grading succeeds even if this
+            # step errors.
+            self._backfill_bp_pitcher_props(game_date)
+
             logger.info(f"Grading complete for {game_date}: {self.stats}")
             return True
 
@@ -583,6 +593,52 @@ class MlbPredictionGradingProcessor:
                 # Non-fatal: signal_best_bets_picks grading is supplementary —
                 # consumers still have prediction_accuracy as the source of truth.
                 logger.warning(f"signal_best_bets_picks MERGE failed (non-fatal): {e}")
+
+    def _backfill_bp_pitcher_props(self, game_date: str) -> int:
+        """Backfill bp_pitcher_props.actual_value from pitcher_game_summary.
+
+        BettingPros scraper runs pre-game so actual_value is always 0 at scrape
+        time (this broke in 2026 when BettingPros stopped back-populating scored
+        props). pitcher_game_summary is populated post-game by the MLB analytics
+        pipeline and is the canonical source for actual strikeout counts.
+
+        The two tables use different player_lookup formats:
+          bp_pitcher_props: no underscores — "shotaimanaga"
+          pitcher_game_summary: with underscores — "shota_imanaga"
+        We normalize with REPLACE(pgs.player_lookup, '_', '') on the JOIN key.
+
+        Only rows where actual_value = 0 are updated — rows already populated
+        (rare 2025 cases where BettingPros back-fills within the session) are
+        left untouched.
+
+        Returns:
+            Number of rows updated (0 on error or when nothing to update).
+        """
+        query = f"""
+        UPDATE `{self.project_id}.mlb_raw.bp_pitcher_props` bp
+        SET bp.actual_value = pgs.strikeouts
+        FROM `{self.project_id}.mlb_analytics.pitcher_game_summary` pgs
+        WHERE bp.player_lookup = REPLACE(pgs.player_lookup, '_', '')
+          AND bp.game_date = pgs.game_date
+          AND bp.market_id = 285
+          AND bp.actual_value = 0
+          AND pgs.strikeouts IS NOT NULL
+          AND bp.game_date = '{game_date}'
+        """
+        try:
+            result = self.bq_client.query(query).result()
+            rows_updated = result.num_dml_affected_rows or 0
+            if rows_updated > 0:
+                logger.info(
+                    f"Backfilled {rows_updated} bp_pitcher_props rows for {game_date}"
+                )
+            return rows_updated
+        except Exception as e:
+            # Non-fatal: grading pipeline should not fail because of this step.
+            logger.warning(
+                f"bp_pitcher_props backfill failed for {game_date} (non-fatal): {e}"
+            )
+            return 0
 
     def get_grading_stats(self) -> Dict:
         """Get grading statistics."""
