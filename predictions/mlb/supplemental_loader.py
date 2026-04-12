@@ -297,13 +297,13 @@ def _load_game_context(
     query = f"""
     WITH ranked_lines AS (
         SELECT
-            game_pk,
+            game_id,
             total_runs,
-            home_moneyline,
-            away_moneyline,
+            home_ml AS home_moneyline,
+            away_ml AS away_moneyline,
             bookmaker,
             ROW_NUMBER() OVER (
-                PARTITION BY game_pk
+                PARTITION BY game_id
                 ORDER BY
                     CASE
                         WHEN bookmaker = 'draftkings' THEN 0
@@ -317,7 +317,7 @@ def _load_game_context(
         WHERE game_date = @game_date
           AND total_runs IS NOT NULL
     )
-    SELECT game_pk, total_runs, home_moneyline, away_moneyline
+    SELECT game_id, total_runs, home_moneyline, away_moneyline
     FROM ranked_lines
     WHERE rn = 1
     """
@@ -332,7 +332,7 @@ def _load_game_context(
 
         result = {}
         for row in rows:
-            result[row['game_pk']] = {
+            result[row['game_id']] = {
                 'game_total_line': row.get('total_runs'),
                 'home_moneyline': row.get('home_moneyline'),
                 'away_moneyline': row.get('away_moneyline'),
