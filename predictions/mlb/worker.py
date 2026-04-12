@@ -824,21 +824,63 @@ def _count_predictions_for_date(game_date: date) -> int:
         return 0  # Fail open — write if check fails
 
 
+def _get_existing_pitcher_lookups(client, game_date: date) -> set:
+    """Return set of pitcher_lookups that already have predictions for game_date.
+
+    Used by write_predictions_to_bigquery to prevent duplicate writes when
+    backfills or retries re-invoke prediction generation.
+    """
+    try:
+        query = f"""
+        SELECT DISTINCT pitcher_lookup
+        FROM `{PROJECT_ID}.{PREDICTIONS_TABLE}`
+        WHERE game_date = @game_date
+        """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("game_date", "DATE", game_date.isoformat()),
+            ]
+        )
+        rows = client.query(query, job_config=job_config).result()
+        return {row['pitcher_lookup'] for row in rows}
+    except Exception as e:
+        logger.warning(f"Dedup pre-check failed, proceeding with insert: {e}")
+        return set()
+
+
 def write_predictions_to_bigquery(predictions: List[Dict], game_date: date) -> int:
     """
-    Write predictions to BigQuery
+    Write predictions to BigQuery, skipping pitchers that already have rows
+    for this game_date. Idempotent — safe to re-invoke from backfills/retries.
 
     Args:
         predictions: List of prediction dicts (may include multiple systems per pitcher)
         game_date: Game date
 
     Returns:
-        int: Number of rows written
+        int: Number of rows written (excludes skipped duplicates)
     """
     if not predictions:
         return 0
 
     client = get_bq_client()
+
+    # Per-pitcher dedup: skip pitchers that already have a prediction for this
+    # date, but allow new pitchers through. Protects all write paths (/predict-batch,
+    # /best-bets, /pubsub, backfills) against the duplicate-write class of bugs
+    # (1,168 duplicates found in production Apr 1-4 before this guard).
+    existing_lookups = _get_existing_pitcher_lookups(client, game_date)
+    if existing_lookups:
+        before = len(predictions)
+        predictions = [p for p in predictions if p['pitcher_lookup'] not in existing_lookups]
+        skipped = before - len(predictions)
+        if skipped:
+            logger.info(
+                f"Dedup: skipped {skipped} existing predictions for {game_date} "
+                f"({len(predictions)} new to insert)"
+            )
+        if not predictions:
+            return 0
 
     # Format rows for BigQuery
     rows = []
