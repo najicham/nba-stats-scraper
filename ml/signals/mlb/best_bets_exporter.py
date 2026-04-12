@@ -607,6 +607,7 @@ class MLBBestBetsExporter:
         shadow_picks = self._evaluate_shadow_picks(
             game_date, ranked_picks, features_by_pitcher,
             supplemental_by_pitcher, effective_edge_floor, min_signals,
+            effective_rescue_tags=effective_rescue_tags,
         )
 
         # 9. Write to BigQuery
@@ -860,6 +861,7 @@ class MLBBestBetsExporter:
         supplemental_by_pitcher: Dict,
         edge_floor: float,
         min_signals: int,
+        effective_rescue_tags: frozenset = RESCUE_SIGNAL_TAGS,
     ) -> List[Dict]:
         """Evaluate blacklist-blocked picks as shadow picks for counterfactual tracking.
 
