@@ -332,7 +332,11 @@ def _load_game_context(
 
         result = {}
         for row in rows:
-            result[row['game_id']] = {
+            # game_id in oddsa_game_lines is STRING, but game_pk in mlb_schedule is INT64.
+            # Cast to int so the get() lookup at the call site (game_context_by_game.get(game_pk))
+            # matches. Without this cast, GameTotalLowOverSignal and HeavyFavoriteOverSignal
+            # always receive None. (Session 527 fix)
+            result[int(row['game_id'])] = {
                 'game_total_line': row.get('total_runs'),
                 'home_moneyline': row.get('home_moneyline'),
                 'away_moneyline': row.get('away_moneyline'),

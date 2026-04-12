@@ -36,6 +36,8 @@ import logging
 import os
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
+
+from google.cloud import bigquery
 from ml.signals.mlb.registry import build_mlb_registry, MLBSignalRegistry
 from ml.signals.mlb.base_signal import MLBSignalResult
 
@@ -983,6 +985,16 @@ class MLBBestBetsExporter:
         client = self._get_bq_client()
         table_id = f"{self.project_id}.mlb_predictions.blacklist_shadow_picks"
 
+        # Delete existing records for this date before inserting. Without this,
+        # multiple pipeline runs per day (morning + afternoon refresh) accumulate
+        # duplicate shadow picks, inflating shadow HR calculations. (Session 527 fix)
+        try:
+            client.query(
+                f"DELETE FROM `{table_id}` WHERE game_date = '{game_date}'"
+            ).result()
+        except Exception as e:
+            logger.warning(f"Delete before shadow picks insert failed: {e}")
+
         now = datetime.now(timezone.utc).isoformat()
         rows = [{**pick, 'created_at': now} for pick in shadow_picks]
 
@@ -1070,11 +1082,20 @@ class MLBBestBetsExporter:
 
         if rows:
             try:
-                errors = client.insert_rows_json(table_id, rows)
-                if errors:
-                    logger.error(f"Insert errors: {errors[:3]}")
-                else:
-                    logger.info(f"Wrote {len(rows)} best bets to {table_id}")
+                # Use batch load (not streaming insert) so rows are immediately visible
+                # to the preceding scoped DELETE. Streaming inserts go to a buffer that
+                # is invisible to DML for up to 90 minutes — on same-day re-export the
+                # scoped DELETE fails to remove buffered rows, creating duplicates.
+                # (Session 527 fix — same pattern as mlb_prediction_grading_processor)
+                rows_clean = [{k: v for k, v in row.items() if v is not None} for row in rows]
+                table = client.get_table(table_id)
+                job_config = bigquery.LoadJobConfig(
+                    write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                    schema=table.schema,
+                )
+                load_job = client.load_table_from_json(rows_clean, table_id, job_config=job_config)
+                load_job.result()
+                logger.info(f"Wrote {len(rows_clean)} best bets to {table_id}")
             except Exception as e:
                 logger.error(f"Failed to write best bets: {e}")
 
@@ -1085,6 +1106,16 @@ class MLBBestBetsExporter:
 
         client = self._get_bq_client()
         table_id = f"{self.project_id}.mlb_predictions.best_bets_filter_audit"
+
+        # Delete existing records for this date before inserting. Without this,
+        # multiple pipeline runs per day accumulate duplicate filter audit rows,
+        # corrupting CF HR calculations that use this table. (Session 527 fix)
+        try:
+            client.query(
+                f"DELETE FROM `{table_id}` WHERE game_date = '{game_date}'"
+            ).result()
+        except Exception as e:
+            logger.warning(f"Delete before filter audit insert failed: {e}")
 
         now = datetime.now(timezone.utc).isoformat()
         rows = [{**entry, 'created_at': now} for entry in self.filter_audit]
