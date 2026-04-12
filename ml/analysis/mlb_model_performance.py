@@ -173,16 +173,44 @@ def compute_for_date(
 
 
 def write_rows(bq_client: bigquery.Client, rows: List[dict]) -> int:
-    """Write model performance rows to BQ."""
+    """Write model performance rows to BQ.
+
+    Uses DELETE-before-write to prevent duplicates when re-run on the same
+    date (same pattern as ml/analysis/model_performance.py — see NBA version).
+    Uses a load job, not streaming insert, so the DELETE isn't blocked by the
+    streaming buffer when the analytics job runs multiple times in sequence.
+    """
     if not rows:
         return 0
 
+    # All rows share the same game_date (written by compute_for_date once).
+    target_date = rows[0]['game_date']
+
     try:
-        errors = bq_client.insert_rows_json(TABLE_ID, rows)
-        if errors:
-            logger.error(f"Model performance insert errors: {errors[:3]}")
-            return 0
-        logger.info(f"Wrote {len(rows)} model performance rows")
+        delete_query = f"""
+        DELETE FROM `{TABLE_ID}`
+        WHERE game_date = @target_date
+        """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+            ]
+        )
+        delete_job = bq_client.query(delete_query, job_config=job_config)
+        delete_job.result(timeout=60)
+        deleted = delete_job.num_dml_affected_rows or 0
+        if deleted > 0:
+            logger.info(f"Deleted {deleted} existing rows for {target_date}")
+
+        # Load job (not streaming insert) — avoids ~90-min buffer conflict with DELETE
+        load_config = bigquery.LoadJobConfig(
+            write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+            create_disposition=bigquery.CreateDisposition.CREATE_NEVER,
+        )
+        load_job = bq_client.load_table_from_json(rows, TABLE_ID, job_config=load_config)
+        load_job.result(timeout=60)
+
+        logger.info(f"Wrote {len(rows)} model performance rows for {target_date}")
         return len(rows)
     except Exception as e:
         logger.error(f"Failed to write model performance: {e}")
