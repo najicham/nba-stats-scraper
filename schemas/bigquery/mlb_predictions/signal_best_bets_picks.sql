@@ -74,6 +74,11 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.mlb_predictions.signal_best_bets_
   -- Under signal quality
   under_signal_quality FLOAT64,                 -- UNDER signal quality score (weighted, NULL for OVER)
 
+  -- Ultra tier classification (high-confidence picks)
+  ultra_tier BOOLEAN,                           -- True if pick qualifies as ultra-high-confidence
+  ultra_criteria ARRAY<STRING>,                 -- Criteria met for ultra classification
+  staking_multiplier INT64,                     -- Bet sizing multiplier (1=normal, 2=ultra)
+
   -- Bet sizing (planned, not yet implemented)
   bet_size_units FLOAT64,
   bet_size_tier STRING,

@@ -1092,6 +1092,10 @@ class MLBBestBetsExporter:
                 job_config = bigquery.LoadJobConfig(
                     write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
                     schema=table.schema,
+                    # ignore_unknown_values guards against schema lag: if the live BQ
+                    # table hasn't been ALTER TABLE'd yet for a new column, the load
+                    # job silently drops the extra field rather than hard-failing.
+                    ignore_unknown_values=True,
                 )
                 load_job = client.load_table_from_json(rows_clean, table_id, job_config=job_config)
                 load_job.result()
