@@ -137,6 +137,12 @@ class MlbPredictionGradingProcessor:
             if source_updates:
                 self._batch_update_predictions(source_updates, game_date)
 
+            # 7. Propagate actuals to signal_best_bets_picks (skipped until now —
+            # columns existed but were never populated, forcing every consumer to
+            # JOIN with prediction_accuracy). No-op when no best bets exist.
+            if graded_records:
+                self._batch_update_best_bets(graded_records, game_date)
+
             logger.info(f"Grading complete for {game_date}: {self.stats}")
             return True
 
@@ -490,6 +496,74 @@ class MlbPredictionGradingProcessor:
                 logger.info(f"Batch updated {len(batch)} predictions")
             except Exception as e:
                 logger.error(f"Batch MERGE failed: {e}")
+
+    def _batch_update_best_bets(self, graded_records: List[Dict], game_date: str):
+        """Propagate grading outcomes into signal_best_bets_picks.
+
+        Matches on (pitcher_lookup, game_date, system_id) — the natural key in
+        best bets. No-op for graded predictions that weren't picked as best bets.
+        Uses MERGE in batches of 500 to avoid DML locks during catch-up.
+        """
+        if not graded_records:
+            return
+
+        # Escape single quotes in system_ids (e.g., 'catboost_v2_...') defensively.
+        struct_rows = []
+        for g in graded_records:
+            pitcher_lookup = g.get('pitcher_lookup', '').replace("'", "\\'")
+            system_id = g.get('system_id', '').replace("'", "\\'")
+            actual_k = g.get('actual_strikeouts')
+            correct = g.get('prediction_correct')
+
+            if actual_k is None:
+                actual_k_str = 'NULL'
+            else:
+                actual_k_str = str(int(actual_k))
+
+            if correct is True:
+                correct_str = 'TRUE'
+            elif correct is False:
+                correct_str = 'FALSE'
+            else:
+                correct_str = 'NULL'
+
+            struct_rows.append(
+                f"STRUCT('{pitcher_lookup}' AS pitcher_lookup, "
+                f"DATE('{game_date}') AS game_date, "
+                f"'{system_id}' AS system_id, "
+                f"{actual_k_str} AS actual_strikeouts, "
+                f"{correct_str} AS prediction_correct)"
+            )
+
+        batch_size = 500
+        for i in range(0, len(struct_rows), batch_size):
+            batch = struct_rows[i:i + batch_size]
+            values_str = ",\n        ".join(batch)
+
+            query = f"""
+            MERGE `{self.project_id}.mlb_predictions.signal_best_bets_picks` T
+            USING (
+                SELECT * FROM UNNEST([
+                    {values_str}
+                ])
+            ) S
+            ON T.pitcher_lookup = S.pitcher_lookup
+               AND T.game_date = S.game_date
+               AND T.system_id = S.system_id
+            WHEN MATCHED THEN UPDATE SET
+                T.actual_strikeouts = S.actual_strikeouts,
+                T.prediction_correct = S.prediction_correct
+            """
+            try:
+                result = self.bq_client.query(query).result()
+                # Only log when there's actually something to update (most
+                # graded predictions are not best bets — MERGE is cheap but
+                # noisy in logs otherwise).
+                logger.debug(f"MERGE into signal_best_bets_picks: batch of {len(batch)}")
+            except Exception as e:
+                # Non-fatal: signal_best_bets_picks grading is supplementary —
+                # consumers still have prediction_accuracy as the source of truth.
+                logger.warning(f"signal_best_bets_picks MERGE failed (non-fatal): {e}")
 
     def get_grading_stats(self) -> Dict:
         """Get grading statistics."""
