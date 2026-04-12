@@ -382,6 +382,25 @@ class MlbPredictionGradingProcessor:
         """
         table_id = f"{self.project_id}.mlb_predictions.prediction_accuracy"
 
+        # Defense-in-depth dedup: if upstream pitcher_strikeouts had duplicate
+        # rows for the same (pitcher_lookup, system_id) — as happened before
+        # the Session 526 write-path fix — we'd otherwise re-emit the duplicates
+        # to prediction_accuracy. Keep the first occurrence only.
+        seen = set()
+        deduped = []
+        for r in records:
+            key = (r.get('pitcher_lookup'), r.get('system_id'))
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(r)
+        if len(deduped) < len(records):
+            logger.info(
+                f"Deduped graded records: {len(records)} → {len(deduped)} "
+                f"(removed {len(records) - len(deduped)} upstream duplicates)"
+            )
+        records = deduped
+
         # Delete existing records for this date first (idempotent re-grading)
         delete_query = f"""
         DELETE FROM `{table_id}`
