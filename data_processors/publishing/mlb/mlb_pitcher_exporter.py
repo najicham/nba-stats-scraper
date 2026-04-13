@@ -18,6 +18,7 @@ Data sources:
   - mlb_predictions.pitcher_strikeouts  (predictions + graded results)
   - mlb_predictions.signal_best_bets_picks  (curated best bets with signal tags)
   - mlb_analytics.pitcher_game_summary  (per-start pitcher stats)
+  - mlb_analytics.pitcher_pitch_arsenal_latest  (pitch mix from Statcast)
 
 Usage:
     exporter = MlbPitcherExporter()
@@ -134,6 +135,8 @@ class MlbPitcherExporter(BaseExporter):
         all_pitcher_keys.update(season_aggs.keys())
         all_pitcher_keys.update(p['pitcher_lookup'] for p in tonight)
 
+        pitch_arsenals = self._fetch_pitch_arsenal(list(all_pitcher_keys))
+
         # Build display-name map (prefer tonight name, then track record, then season_agg)
         names = self._build_name_map(tonight, ranked_track_records, season_aggs)
 
@@ -162,6 +165,7 @@ class MlbPitcherExporter(BaseExporter):
                 track_record=ranked_track_records.get(pitcher_lookup),
                 season_agg=season_aggs.get(pitcher_lookup),
                 game_log=game_logs.get(pitcher_lookup, []),
+                pitch_arsenal=pitch_arsenals.get(pitcher_lookup, []),
             )
             profiles[pitcher_lookup] = profile
 
@@ -445,6 +449,55 @@ class MlbPitcherExporter(BaseExporter):
             out[r['pitcher_lookup']].append(entry)
         return dict(out)
 
+    def _fetch_pitch_arsenal(self, pitcher_lookups: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+        """Pitch type breakdown for a set of pitchers from Statcast data (last 5 starts).
+
+        Returns Dict[pitcher_lookup -> list of pitch type rows, sorted by usage_pct DESC].
+
+        Note: statcast_pitcher_daily uses no-underscore lookups (e.g. 'seanmanaea')
+        while pitcher_game_summary uses underscore lookups (e.g. 'sean_manaea').
+        We normalize both sides to match them correctly.
+        """
+        if not pitcher_lookups:
+            return {}
+
+        # Build a map from no-underscore → original-with-underscores
+        # so we can translate query results back to the caller's key format
+        lookup_map = {pl.replace('_', ''): pl for pl in pitcher_lookups if pl}
+        cleaned = list(lookup_map.keys())
+
+        quoted = ', '.join(f"'{pl}'" for pl in cleaned)
+        query = f"""
+        SELECT
+            player_lookup AS pitcher_lookup_statcast,
+            pitch_type_code,
+            pitch_type_desc,
+            usage_pct,
+            whiff_rate,
+            avg_velocity,
+            starts_sampled,
+            CAST(last_seen_date AS STRING) AS last_seen_date
+        FROM `{self.project_id}.mlb_analytics.pitcher_pitch_arsenal_latest`
+        WHERE player_lookup IN ({quoted})
+        ORDER BY player_lookup, usage_pct DESC
+        """
+        rows = self.query_to_list(query)
+        out: Dict[str, List[Dict]] = defaultdict(list)
+        for r in rows:
+            # Translate statcast lookup back to the original key format
+            statcast_key = r['pitcher_lookup_statcast']
+            original_key = lookup_map.get(statcast_key, statcast_key)
+            out[original_key].append({
+                'pitch_type': r['pitch_type_code'],
+                'pitch_type_desc': r.get('pitch_type_desc') or r['pitch_type_code'],
+                'usage_pct': safe_float(r.get('usage_pct'), precision=1),
+                'whiff_rate': safe_float(r.get('whiff_rate'), precision=1),
+                'avg_velocity': safe_float(r.get('avg_velocity'), precision=1),
+                'starts_sampled': safe_int(r.get('starts_sampled'), default=0),
+                'last_seen_date': r.get('last_seen_date'),
+            })
+        return dict(out)
+
     # ------------------------------------------------------------------
     # Leaderboard assembly
     # ------------------------------------------------------------------
@@ -607,6 +660,7 @@ class MlbPitcherExporter(BaseExporter):
         track_record: Optional[Dict],
         season_agg: Optional[Dict],
         game_log: List[Dict],
+        pitch_arsenal: Optional[List[Dict]] = None,
     ) -> Dict[str, Any]:
         profile = {
             'generated_at': self.get_generated_at(),
@@ -666,6 +720,11 @@ class MlbPitcherExporter(BaseExporter):
             }
 
         profile['game_log'] = game_log
+
+        # Pitch arsenal from Statcast (last 5 starts). Empty list when data
+        # isn't available yet (early season, off-season, pre-2025 pitchers).
+        profile['pitch_arsenal'] = pitch_arsenal or []
+
         return profile
 
 
