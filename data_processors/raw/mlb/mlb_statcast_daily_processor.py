@@ -395,7 +395,7 @@ if __name__ == "__main__":
         description='Process MLB Statcast daily pitcher summaries from GCS'
     )
     parser.add_argument(
-        '--bucket', default='mlb-scraped-data', help='GCS bucket'
+        '--bucket', default='nba-scraped-data', help='GCS bucket'
     )
     parser.add_argument(
         '--file-path', required=True, help='Path to JSON file in GCS'
@@ -403,10 +403,15 @@ if __name__ == "__main__":
     parser.add_argument(
         '--date', help='Game date (YYYY-MM-DD)'
     )
+    parser.add_argument(
+        '--force', action='store_true', help='Skip deduplication check (for backfills)'
+    )
 
     args = parser.parse_args()
 
     processor = MlbStatcastDailyProcessor()
+    if args.force:
+        processor.SKIP_DEDUPLICATION = True
     success = processor.run({
         'bucket': args.bucket,
         'file_path': args.file_path,
