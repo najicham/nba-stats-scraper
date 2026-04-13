@@ -122,6 +122,7 @@ from data_processors.raw.mlb import (
     MlbUmpireStatsProcessor,
     MlbWeatherProcessor,
     MlbBpHistoricalPropsProcessor,
+    MlbStatcastDailyProcessor,
 )
 
 
@@ -205,6 +206,7 @@ PROCESSOR_REGISTRY = {
     'mlb-external/weather': MlbWeatherProcessor,
     'mlb-stats-api/box-scores': [MlbApiPitcherStatsProcessor, MlbApiBatterStatsProcessor],  # Pitcher + batter stats (BDL replacement)
     'bettingpros-mlb/pitcher-': MlbBpHistoricalPropsProcessor,  # Session 518: live BP MLB pitcher props (was silently dropped — root cause of MLB pipeline blockage)
+    'mlb-statcast/daily-pitcher-summary': MlbStatcastDailyProcessor,
 }
 
 # Paths that are intentionally not processed (event IDs, metadata, etc.)
