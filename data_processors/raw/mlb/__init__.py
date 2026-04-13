@@ -32,6 +32,7 @@ from .mlb_umpire_assignments_processor import MlbUmpireAssignmentsProcessor
 from .mlb_umpire_stats_processor import MlbUmpireStatsProcessor
 from .mlb_weather_processor import MlbWeatherProcessor
 from .mlb_bp_historical_props_processor import MlbBpHistoricalPropsProcessor
+from .mlb_game_feed_processor import MlbGameFeedPitchesProcessor
 
 __all__ = [
     'MlbPitcherStatsProcessor',
@@ -49,4 +50,5 @@ __all__ = [
     'MlbUmpireStatsProcessor',
     'MlbWeatherProcessor',
     'MlbBpHistoricalPropsProcessor',
+    'MlbGameFeedPitchesProcessor',
 ]

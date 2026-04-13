@@ -258,6 +258,7 @@ MLB_SCRAPER_REGISTRY: Dict[str, Tuple[str, str]] = {
     "mlb_schedule": ("scrapers.mlb.mlbstatsapi.mlb_schedule", "MlbScheduleScraper"),
     "mlb_lineups": ("scrapers.mlb.mlbstatsapi.mlb_lineups", "MlbLineupsScraper"),
     "mlb_game_feed": ("scrapers.mlb.mlbstatsapi.mlb_game_feed", "MlbGameFeedScraper"),
+    "mlb_game_feed_daily": ("scrapers.mlb.mlbstatsapi.mlb_game_feed_daily", "MlbGameFeedDailyScraper"),
 
     # ========================================================================
     # Odds API Scrapers (8 total)

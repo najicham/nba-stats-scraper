@@ -166,6 +166,15 @@ create_job \
     '{"scraper": "mlb_statcast_daily", "date": "YESTERDAY"}' \
     "Statcast pitcher metrics (SwStr%, velocity, spin)"
 
+# Per-pitch game feed (3:15 AM ET - after overnight results; MLB Stats API,
+# no Baseball Savant lag). Feeds per-pitch-type velocity + whiff for arsenal panel.
+create_job \
+    "mlb-game-feed-daily" \
+    "15 3 * * *" \
+    "$SCRAPERS_URL/scrape" \
+    '{"scraper": "mlb_game_feed_daily", "date": "YESTERDAY"}' \
+    "Per-pitch data from MLB Stats API game feeds (for arsenal analytics)"
+
 # Reddit community discussion (11 AM ET - morning discussion threads)
 create_job \
     "mlb-reddit-discussion" \
@@ -263,6 +272,7 @@ echo "  mlb-lineups-pregame        1:00 PM - Refresh lineups"
 echo "  mlb-live-boxscores        Every 5 min (1-11 PM)"
 echo "  mlb-overnight-results      2:00 AM - Final scores (MLB Stats API)"
 echo "  mlb-statcast-daily         3:00 AM - Statcast pitcher metrics"
+echo "  mlb-game-feed-daily        3:15 AM - Per-pitch MLB Stats API feed"
 echo "  mlb-reddit-discussion     11:00 AM - Reddit discussion"
 echo "  mlb-predictions-generate   1:00 PM - Make predictions"
 echo "  mlb-shadow-mode-daily      1:30 PM - Shadow mode A/B test"
