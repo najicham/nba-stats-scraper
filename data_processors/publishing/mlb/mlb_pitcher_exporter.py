@@ -136,6 +136,7 @@ class MlbPitcherExporter(BaseExporter):
         all_pitcher_keys.update(p['pitcher_lookup'] for p in tonight)
 
         pitch_arsenals = self._fetch_pitch_arsenal(list(all_pitcher_keys))
+        advanced_arsenals = self._fetch_advanced_arsenal(list(all_pitcher_keys))
 
         # Build display-name map (prefer tonight name, then track record, then season_agg)
         names = self._build_name_map(tonight, ranked_track_records, season_aggs)
@@ -166,6 +167,7 @@ class MlbPitcherExporter(BaseExporter):
                 season_agg=season_aggs.get(pitcher_lookup),
                 game_log=game_logs.get(pitcher_lookup, []),
                 pitch_arsenal=pitch_arsenals.get(pitcher_lookup, []),
+                advanced_arsenal=advanced_arsenals.get(pitcher_lookup),
             )
             profiles[pitcher_lookup] = profile
 
@@ -498,6 +500,77 @@ class MlbPitcherExporter(BaseExporter):
             })
         return dict(out)
 
+    def _fetch_advanced_arsenal(self, pitcher_lookups: List[str]) -> Dict[str, Dict[str, Any]]:
+        """Advanced per-pitcher arsenal metrics from mlb_game_feed_pitches:
+        putaway pitch + whiff, inning velocity fade, arsenal concentration.
+
+        Returns Dict[pitcher_lookup -> nested dict]. Returns {} when the pitcher
+        has no per-pitch data yet (early season / old seasons).
+
+        Same underscore vs no-underscore lookup mismatch as pitch_arsenal.
+        """
+        if not pitcher_lookups:
+            return {}
+
+        lookup_map = {pl.replace('_', ''): pl for pl in pitcher_lookups if pl}
+        cleaned = list(lookup_map.keys())
+        quoted = ', '.join(f"'{pl}'" for pl in cleaned)
+
+        query = f"""
+        SELECT
+            player_lookup AS feed_lookup,
+            starts_l3, starts_l5,
+            putaway_pitch_code, putaway_pitch_desc,
+            putaway_whiff_rate, putaway_usage_pct_on_2k, putaway_2k_pitches,
+            velo_inning_1, velo_inning_5_plus, velo_fade_mph,
+            fb_n_inning_1, fb_n_inning_5_plus,
+            arsenal_concentration, effective_pitch_count,
+            CAST(last_seen_date AS STRING) AS last_seen_date
+        FROM `{self.project_id}.mlb_analytics.pitcher_advanced_arsenal_latest`
+        WHERE player_lookup IN ({quoted})
+        """
+        rows = self.query_to_list(query)
+        out: Dict[str, Dict] = {}
+        for r in rows:
+            original = lookup_map.get(r['feed_lookup'], r['feed_lookup'])
+
+            putaway = None
+            if r.get('putaway_pitch_code'):
+                putaway = {
+                    'pitch_code': r['putaway_pitch_code'],
+                    'pitch_desc': r.get('putaway_pitch_desc') or r['putaway_pitch_code'],
+                    'whiff_rate': safe_float(r.get('putaway_whiff_rate'), precision=1),
+                    'usage_pct_on_2k': safe_float(r.get('putaway_usage_pct_on_2k'), precision=1),
+                    'sample_size': safe_int(r.get('putaway_2k_pitches'), default=0),
+                }
+
+            velo_fade = None
+            if r.get('velo_fade_mph') is not None:
+                velo_fade = {
+                    'inning_1_mph': safe_float(r.get('velo_inning_1'), precision=1),
+                    'inning_5_plus_mph': safe_float(r.get('velo_inning_5_plus'), precision=1),
+                    'fade_mph': safe_float(r.get('velo_fade_mph'), precision=1),
+                    'n_inning_1': safe_int(r.get('fb_n_inning_1'), default=0),
+                    'n_inning_5_plus': safe_int(r.get('fb_n_inning_5_plus'), default=0),
+                }
+
+            concentration = None
+            if r.get('arsenal_concentration') is not None:
+                concentration = {
+                    'herfindahl': safe_float(r.get('arsenal_concentration'), precision=3),
+                    'effective_pitch_count': safe_float(r.get('effective_pitch_count'), precision=2),
+                }
+
+            out[original] = {
+                'starts_l3': safe_int(r.get('starts_l3'), default=0),
+                'starts_l5': safe_int(r.get('starts_l5'), default=0),
+                'last_seen_date': r.get('last_seen_date'),
+                'putaway': putaway,
+                'velo_fade': velo_fade,
+                'concentration': concentration,
+            }
+        return out
+
     # ------------------------------------------------------------------
     # Leaderboard assembly
     # ------------------------------------------------------------------
@@ -661,6 +734,7 @@ class MlbPitcherExporter(BaseExporter):
         season_agg: Optional[Dict],
         game_log: List[Dict],
         pitch_arsenal: Optional[List[Dict]] = None,
+        advanced_arsenal: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         profile = {
             'generated_at': self.get_generated_at(),
@@ -724,6 +798,10 @@ class MlbPitcherExporter(BaseExporter):
         # Pitch arsenal from Statcast (last 5 starts). Empty list when data
         # isn't available yet (early season, off-season, pre-2025 pitchers).
         profile['pitch_arsenal'] = pitch_arsenal or []
+
+        # Advanced per-pitch metrics (putaway, velo fade, concentration).
+        # None when no per-pitch data for this pitcher yet.
+        profile['advanced_arsenal'] = advanced_arsenal
 
         return profile
 
