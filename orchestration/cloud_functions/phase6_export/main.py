@@ -355,24 +355,35 @@ def main(cloud_event):
             from data_processors.publishing.mlb.mlb_best_bets_exporter import MlbBestBetsExporter
             mlb_exporter = MlbBestBetsExporter()
             mlb_errors = []
+            mlb_paths = {}
 
             if 'best-bets' in export_types_list:
                 try:
                     mlb_exporter.export(game_date=target_date)
                     mlb_exporter.export_all(today=target_date)
+                    mlb_paths['best_bets_all'] = 'mlb/best-bets/all.json'
+                    mlb_paths['best_bets_date'] = f'mlb/best-bets/{target_date}.json'
                 except Exception as mlb_err:
-                    logger.error(f"[{correlation_id}] MLB export failed: {mlb_err}", exc_info=True)
-                    mlb_errors.append(str(mlb_err))
+                    logger.error(f"[{correlation_id}] MLB best-bets export failed: {mlb_err}", exc_info=True)
+                    mlb_errors.append(f"best-bets: {mlb_err}")
+
+            if 'pitchers' in export_types_list:
+                try:
+                    from data_processors.publishing.mlb.mlb_pitcher_exporter import MlbPitcherExporter
+                    pitcher_exporter = MlbPitcherExporter()
+                    pitcher_result = pitcher_exporter.export(game_date=target_date)
+                    mlb_paths['pitcher_leaderboard'] = 'mlb/pitchers/leaderboard.json'
+                    mlb_paths['pitcher_profiles_count'] = len(pitcher_result['profile_paths'])
+                except Exception as mlb_err:
+                    logger.error(f"[{correlation_id}] MLB pitcher export failed: {mlb_err}", exc_info=True)
+                    mlb_errors.append(f"pitchers: {mlb_err}")
 
             result = {
                 'status': 'success' if not mlb_errors else 'partial',
                 'target_date': target_date,
                 'sport': 'mlb',
                 'export_types': export_types_list,
-                'paths': {
-                    'all': 'mlb/best-bets/all.json',
-                    'date': f'mlb/best-bets/{target_date}.json',
-                },
+                'paths': mlb_paths,
                 'errors': mlb_errors,
             }
 
