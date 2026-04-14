@@ -643,6 +643,23 @@ class MlbPitcherExporter(BaseExporter):
         for p in tonight:
             pl = p['pitcher_lookup']
             tr = track_records.get(pl, {})
+            # Last 5 starts — mirrors the NBA Last10Grid shape: per-game
+            # O/U/NL results + K totals + lines. game_logs is pre-sorted DESC.
+            log = game_logs.get(pl, [])[:5]
+            last_5_results = []
+            last_5_k = []
+            last_5_lines = []
+            for g in log:
+                ou = g.get('over_under_result')
+                if ou == 'OVER':
+                    last_5_results.append('O')
+                elif ou == 'UNDER':
+                    last_5_results.append('U')
+                else:
+                    last_5_results.append('NL')  # no line / push
+                last_5_k.append(g.get('strikeouts'))
+                last_5_lines.append(g.get('strikeouts_line'))
+
             slate.append({
                 'pitcher_id': pl,
                 'pitcher_name': p.get('pitcher_name') or names.get(pl),
@@ -656,6 +673,9 @@ class MlbPitcherExporter(BaseExporter):
                 'is_best_bet': p.get('is_best_bet', False),
                 'track_record_picks': tr.get('total_picks', 0),
                 'track_record_hr_pct': tr.get('hit_rate_pct'),
+                'last_5_results': last_5_results,
+                'last_5_k': last_5_k,
+                'last_5_lines': last_5_lines,
             })
         slate.sort(
             key=lambda x: (
