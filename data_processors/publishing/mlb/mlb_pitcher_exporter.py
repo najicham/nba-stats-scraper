@@ -19,6 +19,8 @@ Data sources:
   - mlb_predictions.signal_best_bets_picks  (curated best bets with signal tags)
   - mlb_analytics.pitcher_game_summary  (per-start pitcher stats)
   - mlb_analytics.pitcher_pitch_arsenal_latest  (pitch mix from Statcast)
+  - mlb_analytics.pitcher_advanced_arsenal_latest  (putaway / velo fade / concentration)
+  - mlb_analytics.pitcher_expected_arsenal_latest  (expected vs actual whiff by arsenal)
 
 Usage:
     exporter = MlbPitcherExporter()
@@ -137,6 +139,7 @@ class MlbPitcherExporter(BaseExporter):
 
         pitch_arsenals = self._fetch_pitch_arsenal(list(all_pitcher_keys))
         advanced_arsenals = self._fetch_advanced_arsenal(list(all_pitcher_keys))
+        expected_arsenals = self._fetch_expected_arsenal(list(all_pitcher_keys))
 
         # Build display-name map (prefer tonight name, then track record, then season_agg)
         names = self._build_name_map(tonight, ranked_track_records, season_aggs)
@@ -168,6 +171,7 @@ class MlbPitcherExporter(BaseExporter):
                 game_log=game_logs.get(pitcher_lookup, []),
                 pitch_arsenal=pitch_arsenals.get(pitcher_lookup, []),
                 advanced_arsenal=advanced_arsenals.get(pitcher_lookup),
+                expected_arsenal=expected_arsenals.get(pitcher_lookup),
             )
             profiles[pitcher_lookup] = profile
 
@@ -571,6 +575,56 @@ class MlbPitcherExporter(BaseExporter):
             }
         return out
 
+    def _fetch_expected_arsenal(self, pitcher_lookups: List[str]) -> Dict[str, Dict[str, Any]]:
+        """Arsenal-weighted league expectations vs actuals.
+
+        Source: `mlb_analytics.pitcher_expected_arsenal_latest` (joins arsenal
+        usage to `league_pitch_type_stats`). Returns `None` entry when the
+        pitcher's row fails the `is_reliable` gate (≥300 feed-sourced pitches,
+        ≥70% arsenal coverage).
+        """
+        if not pitcher_lookups:
+            return {}
+
+        lookup_map = {pl.replace('_', ''): pl for pl in pitcher_lookups if pl}
+        cleaned = list(lookup_map.keys())
+        quoted = ', '.join(f"'{pl}'" for pl in cleaned)
+
+        query = f"""
+        SELECT
+            player_lookup AS feed_lookup,
+            total_pitches_sampled,
+            starts_sampled,
+            pitch_types_sampled,
+            arsenal_coverage_pct,
+            expected_whiff_pct,
+            actual_whiff_pct,
+            whiff_vs_expected_pp,
+            expected_csw_pct,
+            stuff_velocity_premium,
+            is_reliable,
+            CAST(last_seen_date AS STRING) AS last_seen_date
+        FROM `{self.project_id}.mlb_analytics.pitcher_expected_arsenal_latest`
+        WHERE player_lookup IN ({quoted})
+          AND is_reliable = TRUE
+        """
+        rows = self.query_to_list(query)
+        out: Dict[str, Dict] = {}
+        for r in rows:
+            original = lookup_map.get(r['feed_lookup'], r['feed_lookup'])
+            out[original] = {
+                'expected_whiff_pct': safe_float(r.get('expected_whiff_pct'), precision=1),
+                'actual_whiff_pct': safe_float(r.get('actual_whiff_pct'), precision=1),
+                'whiff_vs_expected_pp': safe_float(r.get('whiff_vs_expected_pp'), precision=1),
+                'expected_csw_pct': safe_float(r.get('expected_csw_pct'), precision=1),
+                'stuff_velocity_premium': safe_float(r.get('stuff_velocity_premium'), precision=1),
+                'total_pitches_sampled': safe_int(r.get('total_pitches_sampled'), default=0),
+                'starts_sampled': safe_int(r.get('starts_sampled'), default=0),
+                'arsenal_coverage_pct': safe_float(r.get('arsenal_coverage_pct'), precision=1),
+                'last_seen_date': r.get('last_seen_date'),
+            }
+        return out
+
     # ------------------------------------------------------------------
     # Leaderboard assembly
     # ------------------------------------------------------------------
@@ -735,6 +789,7 @@ class MlbPitcherExporter(BaseExporter):
         game_log: List[Dict],
         pitch_arsenal: Optional[List[Dict]] = None,
         advanced_arsenal: Optional[Dict[str, Any]] = None,
+        expected_arsenal: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         profile = {
             'generated_at': self.get_generated_at(),
@@ -802,6 +857,10 @@ class MlbPitcherExporter(BaseExporter):
         # Advanced per-pitch metrics (putaway, velo fade, concentration).
         # None when no per-pitch data for this pitcher yet.
         profile['advanced_arsenal'] = advanced_arsenal
+
+        # Expected vs actual whiff, arsenal-weighted against league baselines.
+        # None for pitchers failing reliability gate (<300 pitches sampled, etc.).
+        profile['expected_arsenal'] = expected_arsenal
 
         return profile
 
