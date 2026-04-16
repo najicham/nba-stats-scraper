@@ -1,0 +1,105 @@
+# Cloud Scheduler Jobs for MLB Best Bets Pipeline
+# Three jobs that generate best bets picks and publish pitcher/best-bets exports.
+#
+# Session 534 note: mlb-pitcher-export-morning and mlb-pitcher-export-pregame were
+# EDITED in Session 534 to add "best-bets" to export_types (previously only had "pitchers").
+
+---
+# Best Bets Generator - 12:55 PM ET, Mar-Oct
+# Hits /best-bets on the MLB prediction worker to write signal_best_bets_picks
+# before the pregame publisher runs at 1 PM ET.
+apiVersion: cloudscheduler.googleapis.com/v1
+kind: Job
+metadata:
+  name: mlb-best-bets-generate
+spec:
+  schedule: "55 12 * 3-10 *"  # 12:55 PM ET, March-October
+  timeZone: "America/New_York"
+  description: "Generate MLB best bets picks. Hits /best-bets on MLB worker to write signal_best_bets_picks before pregame publisher runs at 1 PM ET."
+  httpTarget:
+    uri: "https://mlb-prediction-worker-f7p3g7f6ya-wl.a.run.app/best-bets"
+    httpMethod: POST
+    body: "eyJnYW1lX2RhdGUiOiAiVE9EQVkifQ=="  # base64({"game_date": "TODAY"})
+    headers:
+      Content-Type: "application/json"
+    oidcToken:
+      serviceAccountEmail: "756957797294-compute@developer.gserviceaccount.com"
+  attemptDeadline: "180s"
+  retryConfig:
+    retryCount: 1
+    maxRetryDuration: "300s"
+    minBackoffDuration: "30s"
+    maxBackoffDuration: "120s"
+
+---
+# Pitcher Export - Morning (10:45 AM ET, Mar-Oct)
+# MLB pitcher leaderboard + profiles + best-bets export after overnight grading refresh.
+# NOTE (Session 534): "best-bets" added to export_types — previously only had "pitchers".
+apiVersion: cloudscheduler.googleapis.com/v1
+kind: Job
+metadata:
+  name: mlb-pitcher-export-morning
+spec:
+  schedule: "45 10 * 3-10 *"  # 10:45 AM ET, March-October
+  timeZone: "America/New_York"
+  description: "MLB pitcher leaderboard + profiles export (10:45 AM ET, post-grading refresh for track records)"
+  pubsubTarget:
+    topicName: "projects/nba-props-platform/topics/nba-phase6-export-trigger"
+    data: "eyJzcG9ydCI6Im1sYiIsImV4cG9ydF90eXBlcyI6WyJwaXRjaGVycyIsImJlc3QtYmV0cyJdLCJ0YXJnZXRfZGF0ZSI6InRvZGF5In0="
+    # Decoded data: {"sport":"mlb","export_types":["pitchers","best-bets"],"target_date":"today"}
+    attributes:
+      origin: cloud-scheduler
+
+---
+# Pitcher Export - Pregame (1:00 PM ET, Mar-Oct)
+# MLB pitcher leaderboard + profiles + best-bets export just before first pitch window.
+# NOTE (Session 534): "best-bets" added to export_types — previously only had "pitchers".
+apiVersion: cloudscheduler.googleapis.com/v1
+kind: Job
+metadata:
+  name: mlb-pitcher-export-pregame
+spec:
+  schedule: "0 13 * 3-10 *"  # 1:00 PM ET, March-October
+  timeZone: "America/New_York"
+  description: "MLB pitcher leaderboard + profiles export (1 PM ET, pregame)"
+  pubsubTarget:
+    topicName: "projects/nba-props-platform/topics/nba-phase6-export-trigger"
+    data: "eyJzcG9ydCI6Im1sYiIsImV4cG9ydF90eXBlcyI6WyJwaXRjaGVycyIsImJlc3QtYmV0cyJdLCJ0YXJnZXRfZGF0ZSI6InRvZGF5In0="
+    # Decoded data: {"sport":"mlb","export_types":["pitchers","best-bets"],"target_date":"today"}
+    attributes:
+      origin: cloud-scheduler
+
+---
+# Deployment commands (see deploy-bb-schedules.sh for the full idempotent script):
+#
+# --- mlb-best-bets-generate (HTTP + OIDC) ---
+# gcloud scheduler jobs create http mlb-best-bets-generate \
+#   --project=nba-props-platform \
+#   --location=us-west2 \
+#   --schedule="55 12 * 3-10 *" \
+#   --time-zone="America/New_York" \
+#   --description="Generate MLB best bets picks. Hits /best-bets on MLB worker to write signal_best_bets_picks before pregame publisher runs at 1 PM ET." \
+#   --uri="https://mlb-prediction-worker-f7p3g7f6ya-wl.a.run.app/best-bets" \
+#   --http-method=POST \
+#   --message-body='{"game_date": "TODAY"}' \
+#   --headers="Content-Type=application/json" \
+#   --oidc-service-account-email="756957797294-compute@developer.gserviceaccount.com" \
+#   --attempt-deadline=180s
+#
+# --- mlb-pitcher-export-morning (Pub/Sub) ---
+# gcloud scheduler jobs update pubsub mlb-pitcher-export-morning \
+#   --project=nba-props-platform \
+#   --location=us-west2 \
+#   --schedule="45 10 * 3-10 *" \
+#   --time-zone="America/New_York" \
+#   --topic="projects/nba-props-platform/topics/nba-phase6-export-trigger" \
+#   --message-body='{"sport":"mlb","export_types":["pitchers","best-bets"],"target_date":"today"}'
+#
+# --- mlb-pitcher-export-pregame (Pub/Sub) ---
+# gcloud scheduler jobs update pubsub mlb-pitcher-export-pregame \
+#   --project=nba-props-platform \
+#   --location=us-west2 \
+#   --schedule="0 13 * 3-10 *" \
+#   --time-zone="America/New_York" \
+#   --topic="projects/nba-props-platform/topics/nba-phase6-export-trigger" \
+#   --message-body='{"sport":"mlb","export_types":["pitchers","best-bets"],"target_date":"today"}'
