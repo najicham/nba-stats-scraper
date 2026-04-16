@@ -616,12 +616,14 @@ class MlbPredictionGradingProcessor:
         """
         query = f"""
         UPDATE `{self.project_id}.mlb_raw.bp_pitcher_props` bp
-        SET bp.actual_value = pgs.strikeouts
+        SET bp.actual_value = pgs.strikeouts,
+            bp.is_scored = TRUE,
+            bp.is_push = (CAST(pgs.strikeouts AS FLOAT64) = bp.over_line)
         FROM `{self.project_id}.mlb_analytics.pitcher_game_summary` pgs
         WHERE bp.player_lookup = REPLACE(pgs.player_lookup, '_', '')
           AND bp.game_date = pgs.game_date
           AND bp.market_id = 285
-          AND bp.actual_value = 0
+          AND bp.is_scored = FALSE
           AND pgs.strikeouts IS NOT NULL
           AND bp.game_date = '{game_date}'
         """

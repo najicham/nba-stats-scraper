@@ -99,6 +99,12 @@ def process_grading():
             # Backfill shadow picks with actuals
             shadow_count = _backfill_shadow_picks(game_date)
             stats['shadow_picks_graded'] = shadow_count
+
+            # Run post-grading analytics (league_macro, model_performance,
+            # signal_health). Same as /grade-date endpoint.
+            analytics_stats = _run_post_grading_analytics(game_date)
+            stats['analytics'] = analytics_stats
+
             # Re-export all.json with grading data
             export_stats = _re_export_all_json(game_date)
             stats['export'] = export_stats
@@ -245,9 +251,11 @@ def _run_post_grading_analytics(game_date: str) -> dict:
 
     # 1. League macro
     try:
-        from ml.analysis.mlb_league_macro import compute_for_date, write_row
+        from ml.analysis.mlb_league_macro import compute_for_date, write_row, _compute_mae_gap
         row = compute_for_date(client, target)
         if row:
+            gap = _compute_mae_gap(row)
+            row.update(gap)
             written = write_row(client, row)
             stats['league_macro'] = f'{written} row'
             logger.info(f"Post-grading: league_macro wrote {written} row for {game_date}")

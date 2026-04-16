@@ -615,6 +615,7 @@ class MLBBestBetsExporter:
         # 9. Write to BigQuery
         if not dry_run and ranked_picks:
             self._write_best_bets(ranked_picks, game_date)
+        if not dry_run:
             self._write_filter_audit(game_date)
         if not dry_run and shadow_picks:
             self._write_shadow_picks(shadow_picks, game_date)

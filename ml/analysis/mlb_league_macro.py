@@ -236,7 +236,7 @@ def _compute_vegas_accuracy(bq_client: bigquery.Client, target_date: date) -> di
       FROM `nba-props-platform.mlb_raw.bp_pitcher_props`
       WHERE game_date BETWEEN @d30 AND @target_date
         AND market_id = 285
-        AND is_scored = TRUE
+        AND (is_scored = TRUE OR actual_value > 0)
         AND actual_value IS NOT NULL
         AND over_line IS NOT NULL
     ),
@@ -547,7 +547,7 @@ def backfill(bq_client: bigquery.Client, start_date: date,
         FROM `nba-props-platform.mlb_raw.bp_pitcher_props`
         WHERE game_date BETWEEN @start AND @end
           AND market_id = 285
-          AND is_scored = TRUE
+          AND (is_scored = TRUE OR actual_value > 0)
         ORDER BY game_date
         """
         dates = [row.game_date for row in bq_client.query(query2, job_config=job_config).result()]
