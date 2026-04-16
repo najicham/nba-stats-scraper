@@ -360,7 +360,8 @@ class MlbPitcherExporter(BaseExporter):
             opponent_team_k_rate
           FROM `{self.project_id}.mlb_analytics.pitcher_game_summary`
           WHERE game_date = '{game_date}'
-            AND is_starting_pitcher = TRUE
+          -- pitcher_game_summary is one row per starting-pitcher start,
+          -- so no role filter is needed (and `is_starting_pitcher` doesn't exist).
         ),
         season_team_k AS (
           -- Aggregate season-level K rate per team from batter game summaries
