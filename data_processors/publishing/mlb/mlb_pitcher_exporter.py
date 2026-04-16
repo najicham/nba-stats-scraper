@@ -125,6 +125,7 @@ class MlbPitcherExporter(BaseExporter):
     def _build_bundle(self, game_date: str) -> Dict[str, Any]:
         """Fetch all data once and assemble both outputs."""
         tonight = self._fetch_tonight_predictions(game_date)
+        opponent_k_defense = self._fetch_opponent_k_defense(game_date)
         best_bet_keys = self._fetch_best_bet_keys(game_date)
         track_records = self._fetch_track_records()
         ranked_track_records = self._rank_track_records(track_records)
@@ -140,6 +141,7 @@ class MlbPitcherExporter(BaseExporter):
         pitch_arsenals = self._fetch_pitch_arsenal(list(all_pitcher_keys))
         advanced_arsenals = self._fetch_advanced_arsenal(list(all_pitcher_keys))
         expected_arsenals = self._fetch_expected_arsenal(list(all_pitcher_keys))
+        strikeout_zones = self._fetch_strikeout_zones(list(all_pitcher_keys))
 
         # Build display-name map (prefer tonight name, then track record, then season_agg)
         names = self._build_name_map(tonight, ranked_track_records, season_aggs)
@@ -172,6 +174,8 @@ class MlbPitcherExporter(BaseExporter):
                 pitch_arsenal=pitch_arsenals.get(pitcher_lookup, []),
                 advanced_arsenal=advanced_arsenals.get(pitcher_lookup),
                 expected_arsenal=expected_arsenals.get(pitcher_lookup),
+                opponent_k_defense=opponent_k_defense.get(pitcher_lookup),
+                strikeout_zones=strikeout_zones.get(pitcher_lookup),
             )
             profiles[pitcher_lookup] = profile
 
@@ -227,6 +231,178 @@ class MlbPitcherExporter(BaseExporter):
         ) = 1
         """
         return self.query_to_list(query)
+
+    def _fetch_strikeout_zones(
+        self, pitcher_lookups: List[str]
+    ) -> Dict[str, Dict[str, Any]]:
+        """Aggregate K-pitch zone distribution per pitcher over last 5 starts.
+
+        Source table uses MLB zone codes (1-14):
+          - 1-9: in-zone 3x3 grid (1=top-left ... 9=bottom-right)
+          - 11-14: out-of-zone corners (11=up-left, 12=up-right, 13=low-left, 14=low-right)
+
+        Returns per-pitcher:
+          {
+            starts_sampled: int,
+            total_ks: int,
+            zones: [{zone: int, count: int, top_pitch: str, top_pitch_count: int}, ...],
+            last_seen_date: str,
+          }
+
+        Only pitches that end a strikeout at-bat are counted.
+        """
+        if not pitcher_lookups:
+            return {}
+
+        quoted = ', '.join(f"'{pl}'" for pl in pitcher_lookups if pl)
+        if not quoted:
+            return {}
+
+        query = f"""
+        WITH recent_starts AS (
+          -- Last 5 start dates per pitcher
+          SELECT
+            pitcher_lookup,
+            game_date
+          FROM `{self.project_id}.mlb_raw.mlb_game_feed_pitches`
+          WHERE pitcher_lookup IN ({quoted})
+            AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 45 DAY)
+          GROUP BY pitcher_lookup, game_date
+          QUALIFY ROW_NUMBER() OVER (
+            PARTITION BY pitcher_lookup ORDER BY game_date DESC
+          ) <= 5
+        ),
+        k_pitches AS (
+          SELECT
+            p.pitcher_lookup,
+            p.game_date,
+            p.zone,
+            p.pitch_type_code
+          FROM `{self.project_id}.mlb_raw.mlb_game_feed_pitches` p
+          INNER JOIN recent_starts r
+            ON p.pitcher_lookup = r.pitcher_lookup
+           AND p.game_date = r.game_date
+          WHERE p.at_bat_event = 'Strikeout'
+            AND p.is_at_bat_end = TRUE
+            AND p.zone IS NOT NULL
+        ),
+        zone_agg AS (
+          SELECT
+            pitcher_lookup,
+            zone,
+            pitch_type_code,
+            COUNT(*) AS pitches
+          FROM k_pitches
+          GROUP BY pitcher_lookup, zone, pitch_type_code
+        ),
+        zone_totals AS (
+          SELECT
+            pitcher_lookup,
+            zone,
+            SUM(pitches) AS count,
+            ARRAY_AGG(
+              STRUCT(pitch_type_code, pitches AS count)
+              ORDER BY pitches DESC LIMIT 1
+            )[OFFSET(0)] AS top_pitch_row
+          FROM zone_agg
+          GROUP BY pitcher_lookup, zone
+        )
+        SELECT
+          zt.pitcher_lookup,
+          zt.zone,
+          zt.count,
+          zt.top_pitch_row.pitch_type_code AS top_pitch,
+          zt.top_pitch_row.count AS top_pitch_count,
+          (SELECT COUNT(DISTINCT game_date)
+             FROM recent_starts rs
+            WHERE rs.pitcher_lookup = zt.pitcher_lookup) AS starts_sampled,
+          (SELECT MAX(game_date)
+             FROM recent_starts rs
+            WHERE rs.pitcher_lookup = zt.pitcher_lookup) AS last_seen_date
+        FROM zone_totals zt
+        """
+        rows = self.query_to_list(query)
+        out: Dict[str, Dict] = {}
+        for r in rows:
+            pl = r['pitcher_lookup']
+            if pl not in out:
+                out[pl] = {
+                    'starts_sampled': safe_int(r.get('starts_sampled'), default=0),
+                    'last_seen_date': str(r['last_seen_date']) if r.get('last_seen_date') else None,
+                    'zones': [],
+                }
+            out[pl]['zones'].append({
+                'zone': safe_int(r.get('zone')),
+                'count': safe_int(r.get('count'), default=0),
+                'top_pitch': r.get('top_pitch'),
+                'top_pitch_count': safe_int(r.get('top_pitch_count'), default=0),
+            })
+        # Compute total_ks per pitcher
+        for pl, data in out.items():
+            data['total_ks'] = sum(z['count'] or 0 for z in data['zones'])
+        return out
+
+    def _fetch_opponent_k_defense(self, game_date: str) -> Dict[str, Dict[str, Any]]:
+        """Opponent team K-rate and season rank for tonight's pitchers.
+
+        Returns:
+            Dict[pitcher_lookup -> {k_rate: 0.243, rank: 8, rank_of: 30}]
+
+        Rank is computed across all MLB teams for the current season. Higher
+        K rate = higher rank (rank 1 = strikes out the most).
+        """
+        season_year = self._infer_season_year(game_date)
+        query = f"""
+        WITH tonight_pitchers AS (
+          SELECT
+            player_lookup AS pitcher_lookup,
+            opponent_team_abbr,
+            opponent_team_k_rate
+          FROM `{self.project_id}.mlb_analytics.pitcher_game_summary`
+          WHERE game_date = '{game_date}'
+            AND is_starting_pitcher = TRUE
+        ),
+        season_team_k AS (
+          -- Aggregate season-level K rate per team from batter game summaries
+          SELECT
+            team_abbr,
+            SAFE_DIVIDE(SUM(strikeouts), SUM(at_bats)) AS season_k_rate
+          FROM `{self.project_id}.mlb_analytics.batter_game_summary`
+          WHERE season_year = {season_year}
+            AND at_bats > 0
+          GROUP BY team_abbr
+          HAVING SUM(at_bats) >= 100  -- filter noise from early-season / call-ups
+        ),
+        ranked AS (
+          SELECT
+            team_abbr,
+            season_k_rate,
+            RANK() OVER (ORDER BY season_k_rate DESC) AS k_rank,
+            COUNT(*) OVER () AS k_rank_of
+          FROM season_team_k
+        )
+        SELECT
+          t.pitcher_lookup,
+          t.opponent_team_abbr,
+          -- Prefer the season-aggregated rate; fall back to the per-start rolling value
+          COALESCE(r.season_k_rate, t.opponent_team_k_rate) AS k_rate,
+          r.k_rank,
+          r.k_rank_of
+        FROM tonight_pitchers t
+        LEFT JOIN ranked r ON r.team_abbr = t.opponent_team_abbr
+        """
+        rows = self.query_to_list(query)
+        out: Dict[str, Dict] = {}
+        for r in rows:
+            if not r.get('pitcher_lookup'):
+                continue
+            out[r['pitcher_lookup']] = {
+                'opponent': r.get('opponent_team_abbr'),
+                'k_rate': safe_float(r.get('k_rate'), precision=3),
+                'k_rank': safe_int(r.get('k_rank')),
+                'k_rank_of': safe_int(r.get('k_rank_of')),
+            }
+        return out
 
     def _fetch_best_bet_keys(self, game_date: str) -> Set[Tuple[str, str]]:
         """Set of (pitcher_lookup, game_date) flagged as best bets."""
@@ -810,6 +986,8 @@ class MlbPitcherExporter(BaseExporter):
         pitch_arsenal: Optional[List[Dict]] = None,
         advanced_arsenal: Optional[Dict[str, Any]] = None,
         expected_arsenal: Optional[Dict[str, Any]] = None,
+        opponent_k_defense: Optional[Dict[str, Any]] = None,
+        strikeout_zones: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         profile = {
             'generated_at': self.get_generated_at(),
@@ -819,7 +997,7 @@ class MlbPitcherExporter(BaseExporter):
         }
 
         if tonight:
-            profile['tonight'] = {
+            tonight_block = {
                 'has_start': True,
                 'game_date': tonight.get('game_date'),
                 'opponent': tonight.get('opponent'),
@@ -831,6 +1009,11 @@ class MlbPitcherExporter(BaseExporter):
                 'is_best_bet': is_best_bet,
                 'confidence': safe_float(tonight.get('confidence'), precision=3),
             }
+            if opponent_k_defense and opponent_k_defense.get('k_rate') is not None:
+                tonight_block['opponent_k_rate'] = opponent_k_defense.get('k_rate')
+                tonight_block['opponent_k_rank'] = opponent_k_defense.get('k_rank')
+                tonight_block['opponent_k_rank_of'] = opponent_k_defense.get('k_rank_of')
+            profile['tonight'] = tonight_block
         else:
             profile['tonight'] = {'has_start': False}
 
@@ -881,6 +1064,10 @@ class MlbPitcherExporter(BaseExporter):
         # Expected vs actual whiff, arsenal-weighted against league baselines.
         # None for pitchers failing reliability gate (<300 pitches sampled, etc.).
         profile['expected_arsenal'] = expected_arsenal
+
+        # Strikeout zone distribution from last 5 starts (Strike Zone Heartbeat).
+        # None when no per-pitch K data in mlb_game_feed_pitches.
+        profile['strikeout_zones'] = strikeout_zones
 
         return profile
 
