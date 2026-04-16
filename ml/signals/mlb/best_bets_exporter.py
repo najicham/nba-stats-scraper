@@ -111,6 +111,8 @@ TRACKING_ONLY_SIGNALS = frozenset([
 # V3 FINAL: Away pitchers blocked from rescue (BLOCK_AWAY_RESCUE)
 RESCUE_SIGNAL_TAGS = frozenset([
     'opponent_k_prone',
+    'recent_k_above_line',
+    'projection_agrees_over',
 ])
 
 # UNDER signal weights for quality-based ranking
