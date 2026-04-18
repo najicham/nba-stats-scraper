@@ -156,6 +156,26 @@ class MLBBestBetsExporter:
             self.bq_client = get_bigquery_client(project_id=self.project_id)
         return self.bq_client
 
+    @staticmethod
+    def _safe_evaluate(signal, pred, features, supplemental):
+        """Evaluate a signal/filter, returning a non-qualifying result on any exception.
+
+        Why: one misbehaving signal (e.g. Decimal/float arithmetic in a newly-flowing
+        feature) must not kill the entire best-bets pipeline. Apr 17 incident: CSW
+        signal raised TypeError on first qualifying pitcher → zero picks written that
+        day even though 51 other signals would have evaluated fine.
+        """
+        from ml.signals.mlb.base_signal import MLBSignalResult
+        try:
+            return signal.evaluate(pred, features, supplemental)
+        except Exception as e:
+            logger.error(
+                f"[MLB BB] signal '{signal.tag}' raised {type(e).__name__} on "
+                f"pitcher={pred.get('pitcher_lookup')} — skipping: {e}",
+                exc_info=True,
+            )
+            return MLBSignalResult(qualifies=False, confidence=0.0, source_tag=signal.tag)
+
     def _get_regime_context(self, game_date: str) -> dict:
         """Query yesterday's MLB macro data for market regime awareness.
 
@@ -373,7 +393,7 @@ class MLBBestBetsExporter:
             blocked = False
             blocked_by_blacklist = False
             for filt in self.registry.negative_filters():
-                result = filt.evaluate(pred, features, supplemental)
+                result = self._safe_evaluate(filt, pred, features, supplemental)
                 audit_entry = {
                     'game_date': game_date,
                     'pitcher_lookup': pitcher,
@@ -458,7 +478,7 @@ class MLBBestBetsExporter:
             rescue_signal = None
             for tag in effective_rescue_tags:
                 signal = self.registry.get(tag)
-                result = signal.evaluate(pred, features, supplemental)
+                result = self._safe_evaluate(signal, pred, features, supplemental)
                 if result.qualifies:
                     rescued = True
                     rescue_signal = tag
@@ -500,7 +520,7 @@ class MLBBestBetsExporter:
             for signal in self.registry.all():
                 if signal.is_negative_filter:
                     continue
-                result = signal.evaluate(pred, features, supplemental)
+                result = self._safe_evaluate(signal, pred, features, supplemental)
                 if result.qualifies:
                     signal_tags.append(signal.tag)
                     signal_count += 1
@@ -902,7 +922,7 @@ class MLBBestBetsExporter:
                 rescued = False
                 for tag in effective_rescue_tags:
                     signal = self.registry.get(tag)
-                    result = signal.evaluate(pred, features, supplemental)
+                    result = self._safe_evaluate(signal, pred, features, supplemental)
                     if result.qualifies:
                         rescued = True
                         break
@@ -917,7 +937,7 @@ class MLBBestBetsExporter:
             for signal in self.registry.all():
                 if signal.is_negative_filter:
                     continue
-                result = signal.evaluate(pred, features, supplemental)
+                result = self._safe_evaluate(signal, pred, features, supplemental)
                 if result.qualifies:
                     signal_tags.append(signal.tag)
                     signal_count += 1
