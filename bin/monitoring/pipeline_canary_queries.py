@@ -451,18 +451,34 @@ CANARY_CHECKS = [
     CanaryCheck(
         name="MLB Phase 6 - Best Bets Published",
         phase="mlb_phase6_best_bets",
+        # Alerts when the BB pipeline silently produced zero picks despite having
+        # predictions to work from. Previous version queried pitcher_strikeouts with
+        # non-existent columns (recommended_bet, ensemble_prediction) and had min=0,
+        # so 3+ days of zero-pick outages on Apr 15-17 passed silently.
+        # Ratio: pick_count / pred_count. Expect >= 1% on game days. 0 preds → game-less
+        # day (ratio = 1.0 as a pass-through).
         query="""
-        SELECT COUNT(*) as pick_count
-        FROM `nba-props-platform.mlb_predictions.pitcher_strikeouts`
-        WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
-          AND recommended_bet IN ('OVER', 'UNDER')
-          AND confidence >= 70
-          AND ABS(ensemble_prediction - strikeouts_line) >= 1.0
+        WITH counts AS (
+          SELECT
+            (SELECT COUNT(*) FROM `nba-props-platform.mlb_predictions.signal_best_bets_picks`
+             WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)) AS pick_count,
+            (SELECT COUNT(*) FROM `nba-props-platform.mlb_predictions.pitcher_strikeouts`
+             WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)) AS pred_count
+        )
+        SELECT
+          pick_count,
+          pred_count,
+          SAFE_DIVIDE(pick_count, NULLIF(pred_count, 0)) AS pick_ratio,
+          IF(pred_count = 0, 1.0, SAFE_DIVIDE(pick_count, pred_count)) AS pick_ratio_with_floor
+        FROM counts
         """,
         thresholds={
-            'pick_count': {'min': 0}
+            # Fails when predictions exist but ZERO picks landed — signal-pipeline broke.
+            # pick_ratio_with_floor returns 1.0 on no-game days so this only fires when
+            # the pipeline actually ran and silently produced nothing.
+            'pick_ratio_with_floor': {'min': 0.001}
         },
-        description="Validates MLB best bets pipeline ran yesterday (soft check — 0 allowed on no-game days)"
+        description="Alerts when MLB best-bets pipeline produced 0 picks despite predictions existing (silent failure)"
     ),
 
     CanaryCheck(
