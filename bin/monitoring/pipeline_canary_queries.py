@@ -753,7 +753,7 @@ def check_scheduler_health() -> Tuple[bool, Dict, Optional[str]]:
             status_code = job.status.code if job.status else None
             # Skip jobs that have never run (no last_attempt_time) — these are
             # one-time reminders or future-dated jobs, not active failures.
-            has_run = bool(job.last_attempt_time and job.last_attempt_time.seconds > 0)
+            has_run = job.last_attempt_time is not None
             # Code 0 = OK, Code 5 = NOT_FOUND (expected on off-days for prediction jobs)
             if has_run and status_code is not None and status_code not in (0, 5):
                 failing_jobs.append(f"{job.name.split('/')[-1]} (code={status_code})")
