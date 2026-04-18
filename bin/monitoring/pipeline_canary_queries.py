@@ -118,11 +118,11 @@ CANARY_CHECKS = [
             game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
         """,
         thresholds={
-            'records': {'min': 40},  # At least 40 player records
+            'records': {'min': 20},  # At least 20 player records (1 playoff game = 20+)
             'null_minutes': {'max': 0},  # No NULL minutes
             'null_points': {'max': 0},  # No NULL points
             'avg_minutes': {'min': 15},  # Average minutes should be reasonable
-            'avg_points': {'min': 8}  # Average points should be reasonable
+            'avg_points': {'min': 6}  # Lowered from 8 — playoff defense reduces scoring
         },
         description="Validates analytics processing and player stats"
     ),
@@ -148,7 +148,7 @@ CANARY_CHECKS = [
             game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
         """,
         thresholds={
-            'players': {'min': 100},  # At least 100 players tracked
+            'players': {'min': 20},  # Lowered from 100 — playoffs have 1-2 games/night (20+ players)
             'avg_quality': {'min': 70},  # Average quality score > 70
             'low_quality_count': {'max': 100},  # Session 199: Increased from 50 to reduce alert fatigue
             'quality_ready_pct': {'min': 60},  # Session 139: At least 60% quality-ready
@@ -487,6 +487,7 @@ CANARY_CHECKS = [
         query="""
         SELECT DATE_DIFF(CURRENT_DATE(), MAX(game_date), DAY) AS staleness_days
         FROM `nba-props-platform.nba_predictions.signal_health_daily`
+        WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
         """,
         thresholds={
             'staleness_days': {'max': 2}
@@ -750,8 +751,11 @@ def check_scheduler_health() -> Tuple[bool, Dict, Optional[str]]:
         for job in scheduler_client.list_jobs(parent=parent):
             total_jobs += 1
             status_code = job.status.code if job.status else None
+            # Skip jobs that have never run (no last_attempt_time) — these are
+            # one-time reminders or future-dated jobs, not active failures.
+            has_run = bool(job.last_attempt_time and job.last_attempt_time.seconds > 0)
             # Code 0 = OK, Code 5 = NOT_FOUND (expected on off-days for prediction jobs)
-            if status_code is not None and status_code not in (0, 5):
+            if has_run and status_code is not None and status_code not in (0, 5):
                 failing_jobs.append(f"{job.name.split('/')[-1]} (code={status_code})")
 
         metrics = {

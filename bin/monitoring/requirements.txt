@@ -6,6 +6,7 @@ google-cloud-bigquery==3.13.0
 google-cloud-firestore==2.23.0
 google-cloud-storage==2.18.2
 google-cloud-pubsub==2.31.1
+google-cloud-scheduler==2.13.3
 
 # Data processing
 pandas==2.3.0

@@ -115,6 +115,14 @@ class MlbGameLinesScraper(ScraperBase, ScraperFlaskMixin):
         import pytz
         eastern = pytz.timezone('America/New_York')
         game_date_str = self.opts["game_date"]
+        # Resolve TODAY/YESTERDAY sentinels (ConfigMixin only resolves opts["date"])
+        if game_date_str.upper() == "TODAY":
+            game_date_str = datetime.now(eastern).strftime("%Y-%m-%d")
+            self.opts["game_date"] = game_date_str
+        elif game_date_str.upper() == "YESTERDAY":
+            from datetime import timedelta
+            game_date_str = (datetime.now(eastern) - timedelta(days=1)).strftime("%Y-%m-%d")
+            self.opts["game_date"] = game_date_str
         game_date = datetime.strptime(game_date_str, "%Y-%m-%d").date()
 
         day_start = eastern.localize(datetime.combine(game_date, time.min))

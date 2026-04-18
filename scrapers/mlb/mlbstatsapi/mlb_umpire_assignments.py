@@ -98,7 +98,7 @@ class MlbUmpireAssignmentsScraper(ScraperBase, ScraperFlaskMixin):
         assignments = []
 
         all_games = []
-        for date_entry in self.download_data.get("dates", []):
+        for date_entry in self.decoded_data.get("dates", []):
             all_games.extend(date_entry.get("games", []))
 
         for game in all_games:
