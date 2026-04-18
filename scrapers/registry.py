@@ -292,6 +292,11 @@ MLB_SCRAPER_REGISTRY: Dict[str, Tuple[str, str]] = {
     "mlb_box_scores_mlbapi": ("scrapers.mlb.mlbstatsapi.mlb_box_scores", "MlbBoxScoresScraper"),
 
     # ========================================================================
+    # BDL - Live Box Scores (real-time pitcher K tracking during games)
+    # ========================================================================
+    "mlb_live_box_scores": ("scrapers.mlb.balldontlie.mlb_live_box_scores", "MlbLiveBoxScoresScraper"),
+
+    # ========================================================================
     # MLB Stats API - Umpire Assignments
     # ========================================================================
     "mlb_umpire_assignments": ("scrapers.mlb.mlbstatsapi.mlb_umpire_assignments", "MlbUmpireAssignmentsScraper"),
