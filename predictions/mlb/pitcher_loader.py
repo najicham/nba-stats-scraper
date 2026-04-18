@@ -22,11 +22,22 @@ Created: 2026-01-15
 import logging
 import os
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Dict, List, Optional
 
 from google.cloud import bigquery
 
 logger = logging.getLogger(__name__)
+
+
+def _coerce_decimal(value):
+    """Convert decimal.Decimal (BigQuery NUMERIC) to float for downstream signal math.
+
+    Why: BQ returns NUMERIC columns as decimal.Decimal. Signals do `(x - 0.25) / 0.10`
+    which raises TypeError when mixing Decimal with float. Coerce at the loader so
+    every signal receives plain floats.
+    """
+    return float(value) if isinstance(value, Decimal) else value
 
 PROJECT_ID = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
 
@@ -555,7 +566,7 @@ def load_batch_features(
         # Build dictionary mapping pitcher_lookup -> features
         features_by_pitcher = {}
         for row in result:
-            features = dict(row)
+            features = {k: _coerce_decimal(v) for k, v in dict(row).items()}
             pitcher_lookup = features['player_lookup']
             features_by_pitcher[pitcher_lookup] = features
 

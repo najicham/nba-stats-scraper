@@ -158,7 +158,8 @@ def load_supplemental_by_pitcher(
                     'framing_runs_per_game')
 
             if supplemental:
-                result[pitcher_lookup] = supplemental
+                from predictions.mlb.pitcher_loader import _coerce_decimal
+                result[pitcher_lookup] = {k: _coerce_decimal(v) for k, v in supplemental.items()}
 
     n_with_umpire = sum(1 for v in result.values() if 'umpire_k_rate' in v)
     n_with_weather = sum(1 for v in result.values() if 'temperature' in v)

@@ -25,6 +25,7 @@ from datetime import datetime, date
 from typing import Dict, List, Optional
 
 from flask import Flask, request, jsonify
+from google.cloud import bigquery
 
 # Import AlertManager for intelligent alerting
 try:
