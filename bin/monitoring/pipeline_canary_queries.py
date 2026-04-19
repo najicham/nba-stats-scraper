@@ -171,6 +171,7 @@ CANARY_CHECKS = [
             FROM `nba-props-platform.nba_raw.nbac_schedule`
             WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
               AND game_status_text = 'Final'
+              AND game_id NOT LIKE '004%'  -- Exclude playoff games (not processed by Phase 3)
         ),
         actual AS (
             SELECT
@@ -234,6 +235,7 @@ CANARY_CHECKS = [
             FROM `nba-props-platform.nba_reference.nba_schedule`
             WHERE game_date = CURRENT_DATE()
               AND game_status IN (1, 2, 3)  -- Scheduled, In Progress, or Final
+              AND game_id NOT LIKE '004%'  -- Exclude playoffs — predictions halted during playoffs
         ),
         predictions_today AS (
             SELECT COUNT(*) as prediction_count,
@@ -389,6 +391,7 @@ CANARY_CHECKS = [
             FROM `nba-props-platform.nba_reference.nba_schedule`
             WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
               AND game_status = 3
+              AND game_id NOT LIKE '004%'  -- Exclude playoff games (not processed by Phase 3)
         ),
         actual AS (
             SELECT COUNT(DISTINCT game_id) as actual_games
@@ -1564,6 +1567,33 @@ def _is_break_window(client) -> bool:
     return True
 
 
+def _is_playoff_window(client) -> bool:
+    """Return True if NBA playoffs active: recent 004% games exist and regular season ended 3+ days ago."""
+    try:
+        query = """
+        SELECT
+          MAX(CASE WHEN game_id LIKE '002%' THEN game_date END) as last_regular_season,
+          MAX(CASE WHEN game_id LIKE '004%' THEN game_date END) as last_playoff
+        FROM `nba-props-platform.nba_reference.nba_schedule`
+        WHERE game_date >= CURRENT_DATE() - 14
+          AND game_date < CURRENT_DATE()
+        """
+        result = list(client.query(query))
+        if not result:
+            return False
+        row = result[0]
+        if row.last_playoff is None:
+            return False  # No playoff games in last 14 days — not in playoffs yet
+        if row.last_regular_season is None:
+            return True  # Only playoff games in last 14 days
+        # Playoffs active: regular season ended 3+ days ago
+        days_since_regular = (date.today() - row.last_regular_season).days
+        return days_since_regular >= 3
+    except Exception as e:
+        logger.warning("_is_playoff_window check failed, assuming not playoff: %s", e)
+        return False  # Fail closed — don't suppress checks on error
+
+
 # Tier classification (Session 509 — tiered canary monitoring):
 # CRITICAL (15-min): Revenue-impacting checks needing fast detection
 # ROUTINE  (60-min): Data quality, historical consistency, fleet info
@@ -1623,7 +1653,19 @@ def main():
     is_break = _is_break_window(client)
     if is_break:
         logger.info("Break day detected — Phase 1/2 canary checks will be skipped")
+
+    # Session 543: Playoff mode — only 004% games in last 7 days, no regular season (002%)
+    is_playoff = _is_playoff_window(client) if not is_break else False
+    if is_playoff:
+        logger.info("Playoff mode detected — NBA prediction/picks checks will be suppressed")
+
+    # is_nba_offseason = playoffs OR true break — suppresses all NBA prediction checks
+    is_nba_offseason = is_break or is_playoff
+
     BREAK_DAY_SKIP_PHASES = {'phase1_scrapers', 'phase2_raw_processing'}
+    # During playoffs: scrapers don't produce playoff box scores + predictions halted
+    PLAYOFF_SKIP_PHASES = {'phase1_scrapers', 'phase2_raw_processing',
+                           'phase5_predictions', 'phase5_shadow_coverage', 'phase6_publishing'}
 
     results = []
     for check in CANARY_CHECKS:
@@ -1634,6 +1676,11 @@ def main():
         if is_break and check.phase in BREAK_DAY_SKIP_PHASES:
             logger.info(f"{check.name}: ⏭️  SKIPPED (break day — no recent regular-season games)")
             results.append((check, True, {'skipped': True, 'reason': 'break_day'}, None))
+            continue
+
+        if is_playoff and check.phase in PLAYOFF_SKIP_PHASES:
+            logger.info(f"{check.name}: ⏭️  SKIPPED (playoff mode — predictions halted)")
+            results.append((check, True, {'skipped': True, 'reason': 'playoff_mode'}, None))
             continue
 
         passed, metrics, error = run_canary_query(client, check)
@@ -1663,7 +1710,7 @@ def main():
         results.append((scheduler_check, sched_passed, sched_metrics, sched_error))
 
     # Session 474: Check best-bets pick drought (zero picks on game days)
-    if not is_break:
+    if not is_nba_offseason:
         if _should_run("bb_pick_drought"):
             drought_check = CanaryCheck(
                 name="Best Bets Pick Drought",
@@ -1679,7 +1726,7 @@ def main():
                 logger.warning(f"  Error: {drought_error}")
             results.append((drought_check, drought_passed, drought_metrics, drought_error))
 
-        if _should_run("bb_filter_audit"):
+        if _should_run("bb_filter_audit") and not is_nba_offseason:
             filter_check = CanaryCheck(
                 name="BB Filter Audit",
                 phase="bb_filter_audit",
@@ -1695,7 +1742,7 @@ def main():
             results.append((filter_check, filter_passed, filter_metrics, filter_error))
 
     # Session 302: Check live-grading content quality (hybrid GCS+BQ)
-    if not is_break and _should_run("live_grading_content"):
+    if not is_nba_offseason and _should_run("live_grading_content"):
         grading_check = CanaryCheck(
             name="Live-Grading Content Quality",
             phase="live_grading_content",
@@ -1712,11 +1759,11 @@ def main():
             if not grading_passed:
                 logger.warning(f"  Error: {grading_error}")
         results.append((grading_check, grading_passed, grading_metrics, grading_error))
-    elif is_break:
-        logger.info("Break day — skipping live-grading content check")
+    elif is_nba_offseason:
+        logger.info("NBA offseason/playoffs — skipping live-grading content check")
 
     # Session 210: Auto-heal shadow model gaps (Session 299: skip on break days)
-    if not is_break:
+    if not is_nba_offseason:
         for check, passed, metrics, error in results:
             if check.phase == "phase5_shadow_coverage" and not passed:
                 yesterday = (date.today() - timedelta(days=1)).isoformat()
@@ -1738,7 +1785,7 @@ def main():
                     alert_type="SHADOW_MODEL_AUTO_HEAL"
                 )
     else:
-        logger.info("Break day — skipping shadow model auto-heal")
+        logger.info("NBA offseason/playoffs — skipping shadow model auto-heal")
 
     # Session 477: Registry integrity checks — fire regardless of break day
     # (registry state is always relevant, not just on game days)
@@ -1772,7 +1819,7 @@ def main():
             logger.warning(f"  Error: {recovery_error}")
         results.append((recovery_check, recovery_passed, recovery_metrics, recovery_error))
 
-    if not is_break and _should_run("bb_candidates_today"):
+    if not is_nba_offseason and _should_run("bb_candidates_today"):
         bb_pipeline_check = CanaryCheck(
             name="BB Pipeline Today",
             phase="bb_candidates_today",
@@ -1808,7 +1855,7 @@ def main():
         results.append((grading_freshness_check, gf_passed, gf_metrics, gf_error))
 
     # Session 477 Error 004: Edge collapse alert (game-day only — needs today's predictions)
-    if not is_break and _should_run("edge_collapse_alert"):
+    if not is_nba_offseason and _should_run("edge_collapse_alert"):
         edge_collapse_check = CanaryCheck(
             name="Edge Collapse Alert",
             phase="edge_collapse_alert",
@@ -1827,7 +1874,7 @@ def main():
         results.append((edge_collapse_check, edge_passed, edge_metrics, edge_error))
 
     # Session 477 Error 005: New model with no predictions (game-day only)
-    if not is_break and _should_run("new_model_no_predictions"):
+    if not is_nba_offseason and _should_run("new_model_no_predictions"):
         new_model_check = CanaryCheck(
             name="New Model No Predictions",
             phase="new_model_no_predictions",
@@ -1846,7 +1893,7 @@ def main():
         results.append((new_model_check, nm_passed, nm_metrics, nm_error))
 
     # Session 302: Auto-heal Phase 3 partial game coverage gaps
-    if not is_break:
+    if not is_nba_offseason:
         for check, passed, metrics, error in results:
             if check.phase == "phase3_partial_coverage" and not passed:
                 yesterday = (date.today() - timedelta(days=1)).isoformat()
@@ -1870,7 +1917,7 @@ def main():
                     alert_type="PHASE3_PARTIAL_COVERAGE_AUTO_HEAL"
                 )
     else:
-        logger.info("Break day — skipping Phase 3 partial coverage auto-heal")
+        logger.info("NBA offseason/playoffs — skipping Phase 3 partial coverage auto-heal")
 
     # Session 493: Check all.json published picks for duplicate (player_lookup, game_date) pairs
     if _should_run("all_json_duplicate_picks"):
