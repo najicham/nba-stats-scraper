@@ -45,11 +45,12 @@ if [ -z "$SERVICE" ]; then
 fi
 
 # Services that need a warm instance to avoid cold-start pipeline delays.
-# Orchestrators + prediction services get minScale=1; everything else gets 0.
+# Orchestrators + prediction-coordinator get minScale=1; everything else gets 0.
+# prediction-worker intentionally at 0: called by coordinator, not Pub/Sub directly.
 # Session 338: Deployments were silently resetting minScale to 0.
 get_min_instances() {
     case "$1" in
-        prediction-coordinator|prediction-worker|\
+        prediction-coordinator|\
         phase3-to-phase4-orchestrator|phase4-to-phase5-orchestrator|\
         phase5-to-phase6-orchestrator)
             echo "1"
