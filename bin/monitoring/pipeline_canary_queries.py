@@ -1836,7 +1836,8 @@ def main():
 
     # Session 478: Grading freshness — runs every 30 min, catches any grading outage
     # regardless of cause. Highest-ROI canary added this session.
-    if _should_run("grading_freshness"):
+    # Suppressed during NBA offseason/playoffs since predictions are halted then.
+    if not is_nba_offseason and _should_run("grading_freshness"):
         grading_freshness_check = CanaryCheck(
             name="Grading Freshness",
             phase="grading_freshness",
