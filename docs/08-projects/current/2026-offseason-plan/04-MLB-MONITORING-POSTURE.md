@@ -71,19 +71,22 @@ All alerts route to `#canary-alerts` Slack channel via `SLACK_WEBHOOK_URL_CANARY
 
 ---
 
-## Known Gap (Not Fixed This Session)
+## ~~Known Gap~~ — RESOLVED 2026-04-26
 
-### `mlb_self_heal` Cloud Function exists in code but is not deployed
+### `mlb_self_heal` Cloud Function — now deployed
 
-**Location:** `orchestration/cloud_functions/mlb_self_heal/main.py`
+**Status:** Deployed as Gen2 HTTP CF on 2026-04-26 (commit `a1a5ac0d`).
 
-**What it does:** Mirrors the NBA `self-heal-predictions` CF — checks if MLB predictions exist for today, triggers Phase 3→4→predictions cascade if missing. Runs at 12:45 PM ET (45 minutes before Phase 6 export).
+**Location:** `orchestration/cloud_functions/mlb_self_heal/`
+- `main.py` — `mlb_self_heal_check` HTTP entry point
+- `deploy.sh` — reproducible deploy script
+- `requirements.txt`
 
-**Why it's not deployed:** No `deploy.sh` was ever written for this CF. The directory only has `main.py` and `requirements.txt`.
+**What it does:** Mirrors the NBA `self-heal-predictions` CF — checks if MLB predictions exist for today, triggers Phase 3→4→predictions cascade if missing. Provides automatic recovery before manual intervention is needed.
 
-**Impact today:** If MLB predictions silently fail, the canary will alert within 15 minutes (good), but no automatic recovery happens. Manual intervention required to re-run the pipeline. NBA has self-heal-predictions for this exact scenario.
+**Trigger:** `mlb-self-heal-trigger` Cloud Scheduler job at `45 12 * 3-10 *` (12:45 PM ET, March-October only). 540s timeout, OIDC auth via `756957797294-compute@developer.gserviceaccount.com`.
 
-**Recommendation:** Deploy `mlb_self_heal` if MLB becomes higher-priority. Not urgent for a hobby-tier MLB project — Slack alerts are sufficient awareness.
+**Verified working:** Manual scheduler test-fire on 2026-04-26 returned successfully (no error logs, scheduler `lastAttemptTime` updated). Function URL: `https://mlb-self-heal-f7p3g7f6ya-wl.a.run.app`
 
 ---
 
