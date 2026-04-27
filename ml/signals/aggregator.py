@@ -918,7 +918,11 @@ class BestBetsAggregator:
             if (pred.get('recommendation') == 'UNDER'
                     and book_std >= 0.75):
                 filter_counts['high_book_std_under_block'] += 1
-                _record_filtered(pred, 'high_book_std_under_block', pred_edge, len(qualifying), tags)
+                # Use defaults for sig_count/sig_tags — `qualifying` and `tags` are
+                # only defined later (~line 1150), so referencing them here threw
+                # UnboundLocalError on every first qualifying UNDER pick, swallowed
+                # silently by per_model_pipeline and dropping the model's candidates.
+                _record_filtered(pred, 'high_book_std_under_block', pred_edge)
                 if 'high_book_std_under_block' not in self._runtime_demoted:
                     continue
 

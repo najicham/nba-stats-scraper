@@ -582,10 +582,12 @@ def check_game_completeness(game_date: str) -> Tuple[str, str]:
         if expected_games == 0:
             return ('warn', 'No completed games found in schedule (off-day or early morning check)')
 
-        # Query actual games with data in player boxscores (primary data source)
+        # Query actual games with data in player boxscores (primary data source).
+        # Switched from bdl_player_boxscores to nbac_gamebook_player_stats: BDL is
+        # permanently disabled. NBA.com gamebook is the source of truth per CLAUDE.md.
         data_query = f"""
             SELECT COUNT(DISTINCT game_id) as games_with_data
-            FROM `{PROJECT_ID}.nba_raw.bdl_player_boxscores`
+            FROM `{PROJECT_ID}.nba_raw.nbac_gamebook_player_stats`
             WHERE game_date = '{game_date}'
         """
 
@@ -694,7 +696,10 @@ def send_slack_notification(results: HealthCheckResult):
     # ========================================================================
     # WARNING ALERT: Send to #nba-alerts
     # ========================================================================
-    if results.warnings > 0 and not results.critical and SLACK_WEBHOOK_URL_WARNING:
+    # Warnings post independently of criticals. The previous `and not results.critical`
+    # silently dropped warnings during incidents — exactly when secondary issues most need
+    # to be visible.
+    if results.warnings > 0 and SLACK_WEBHOOK_URL_WARNING:
         try:
             warning_payload = {
                 "attachments": [{
