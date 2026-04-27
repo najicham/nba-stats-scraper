@@ -859,6 +859,14 @@ def process_analytics():
         # Strip dataset prefix if present: "nba_raw.bdl_player_boxscores" -> "bdl_player_boxscores"
         source_table = raw_table.split('.')[-1] if '.' in raw_table else raw_table
 
+        # Offseason early-exit: skip Phase 3 work on no-game days unless backfilling.
+        # Stops the Phase 2→3→4 cascade naturally during NBA offseason.
+        if game_date and not message.get('backfill_mode', False):
+            from shared.utils.schedule_guard import has_regular_season_games
+            if not has_regular_season_games(game_date, project=get_project_id()):
+                logger.info(f"No NBA games on {game_date} — offseason skip for {source_table}")
+                return jsonify({"status": "skipped_offseason", "game_date": game_date}), 200
+
         logger.info(f"Processing analytics for {source_table} (from {raw_table}), date: {game_date}")
 
         # Determine which analytics processors to run (Session 124: migrated to group-based execution)
