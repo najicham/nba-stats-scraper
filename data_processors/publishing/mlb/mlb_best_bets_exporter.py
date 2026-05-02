@@ -238,11 +238,17 @@ class MlbBestBetsExporter(BaseExporter):
         }
 
     def _compute_record(self, graded_rows: List[Dict]) -> Dict:
-        """Compute wins/losses/pct from a list of rows with is_correct field."""
+        """Compute wins/losses/pct from a list of rows with is_correct field.
+
+        pct is emitted as a 0–100 percentage (e.g. 52.9), matching NBA
+        best_bets_all_exporter convention so the frontend can render `${pct}%`
+        directly. Earlier MLB versions emitted a 0–1 fraction which rendered
+        as "0.5%" instead of "52.9%".
+        """
         wins = sum(1 for r in graded_rows if r.get('prediction_correct') is True)
         losses = sum(1 for r in graded_rows if r.get('prediction_correct') is False)
         total = wins + losses
-        pct = round(wins / total, 3) if total > 0 else 0.0
+        pct = round(100.0 * wins / total, 1) if total > 0 else 0.0
         return {'wins': wins, 'losses': losses, 'pct': pct}
 
     def _compute_streak(self, graded_rows: List[Dict]) -> Tuple[Dict, Dict]:
