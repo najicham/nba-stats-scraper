@@ -530,12 +530,36 @@ def check_export_freshness() -> List[Tuple[str, str, str]]:
         stale_files = []
         missing_files = []
 
-        for path, config in MONITORED_EXPORTS.items():
+        # Build the monitored set fresh per call so we can include the
+        # date-keyed tonight file for today (and yesterday, since live_export
+        # straddles midnight ET). The latest-pointer monitor catches some
+        # cases but the date-keyed file has a longer cache and is what the
+        # frontend actually deep-links to.
+        monitored = dict(MONITORED_EXPORTS)
+        try:
+            from zoneinfo import ZoneInfo
+            et = ZoneInfo('America/New_York')
+        except ImportError:
+            import pytz
+            et = pytz.timezone('America/New_York')
+        et_today = datetime.now(et).date()
+        et_yest = et_today - timedelta(days=1)
+        for d in (et_today, et_yest):
+            monitored[f'v1/tonight/{d.isoformat()}.json'] = {
+                'max_age_hours': 24,
+                'severity': 'critical',
+            }
+
+        for path, config in monitored.items():
             max_hours = config['max_age_hours']
             severity = config['severity']
 
             blob = bucket.blob(path)
             if not blob.exists():
+                # Date-keyed tonight files for off-days (no schedule) are
+                # legitimately absent — don't flag MISSING for those.
+                if path.startswith('v1/tonight/') and path.endswith('.json') and path != 'v1/tonight/all-players.json':
+                    continue
                 missing_files.append(path)
                 checks.append((
                     f"Export: {path}",
@@ -572,24 +596,25 @@ def check_export_freshness() -> List[Tuple[str, str, str]]:
             # Fresh files are counted in the summary
 
         # Add a summary check
-        fresh_count = len(MONITORED_EXPORTS) - len(stale_files) - len(missing_files)
+        total = len(monitored)
+        fresh_count = total - len(stale_files) - len(missing_files)
         if not stale_files and not missing_files:
             checks.append((
                 'Export Freshness',
                 'pass',
-                f'All {len(MONITORED_EXPORTS)} export files fresh'
+                f'All {total} export files fresh'
             ))
         elif stale_files and not missing_files:
             checks.append((
                 'Export Freshness Summary',
                 'warn',
-                f'{fresh_count}/{len(MONITORED_EXPORTS)} fresh, {len(stale_files)} stale'
+                f'{fresh_count}/{total} fresh, {len(stale_files)} stale'
             ))
         elif missing_files:
             checks.append((
                 'Export Freshness Summary',
                 'fail',
-                f'{fresh_count}/{len(MONITORED_EXPORTS)} fresh, '
+                f'{fresh_count}/{total} fresh, '
                 f'{len(stale_files)} stale, {len(missing_files)} missing'
             ))
 

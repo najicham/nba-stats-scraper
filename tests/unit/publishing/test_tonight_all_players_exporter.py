@@ -690,5 +690,93 @@ class TestLimitedDataFlag:
                 assert result[0]['players'][0]['limited_data'] is False
 
 
+class TestContentGuard:
+    """validate_content() + safe_export() guard rails (Apr 28-May 1 incident).
+
+    See data_processors/publishing/base_exporter.py:safe_export and
+    docs/09-handoff/2026-05-02-tonight-content-guard.md for context.
+    """
+
+    def _make(self):
+        return TonightAllPlayersExporter.__new__(TonightAllPlayersExporter)
+
+    def test_validate_passes_on_off_day(self):
+        e = self._make()
+        assert e.validate_content({'games': [], 'total_players': 0}) is None
+
+    def test_validate_passes_on_full_rosters(self):
+        e = self._make()
+        # 1 game, 16 players (8/side floor)
+        assert e.validate_content({'games': [{'game_id': 'X'}], 'total_players': 16}) is None
+
+    def test_validate_fires_on_games_zero_players(self):
+        # The actual bug: 4 games, 0 players (Apr 28-May 1)
+        e = self._make()
+        reason = e.validate_content({
+            'games': [{'game_id': str(i)} for i in range(4)],
+            'total_players': 0,
+        })
+        assert reason and 'players_below_floor' in reason
+
+    def test_validate_fires_on_partial_rosters(self):
+        # 3 games, 12 players = 4/game (under 8/game floor)
+        e = self._make()
+        reason = e.validate_content({
+            'games': [{'g': i} for i in range(3)],
+            'total_players': 12,
+        })
+        assert reason and 'players_below_floor' in reason
+
+    def test_safe_export_writes_degraded_sentinel(self):
+        e = self._make()
+        captured = []
+        e.upload_to_gcs = lambda data, path, cc: (captured.append({'data': dict(data), 'path': path}), f'gs://x/{path}')[1]
+        bad = {'game_date': '2026-05-01', 'games': [{'g': 1}, {'g': 2}], 'total_players': 0}
+        gcs_path, reason = e.safe_export(bad, 'tonight/2026-05-01.json', 'public, max-age=300')
+        assert reason and 'players_below_floor' in reason
+        assert captured[-1]['data']['status'] == 'degraded'
+        assert captured[-1]['data']['degraded_reason'] == reason
+
+    def test_safe_export_passes_through_healthy(self):
+        e = self._make()
+        captured = []
+        e.upload_to_gcs = lambda data, path, cc: (captured.append({'data': dict(data)}), f'gs://x/{path}')[1]
+        good = {'game_date': '2026-02-01', 'games': [{'g': 1}], 'total_players': 16}
+        _, reason = e.safe_export(good, 'tonight/2026-02-01.json', 'public, max-age=86400')
+        assert reason is None
+        assert 'status' not in captured[-1]['data']
+
+    def test_safe_export_kill_switch(self, monkeypatch):
+        """TONIGHT_GUARD_ENABLED=false bypasses guard without redeploy."""
+        e = self._make()
+        captured = []
+        e.upload_to_gcs = lambda data, path, cc: (captured.append({'data': dict(data)}), f'gs://x/{path}')[1]
+        monkeypatch.setenv('TONIGHT_GUARD_ENABLED', 'false')
+        bad = {'game_date': '2026-05-01', 'games': [{'g': 1}, {'g': 2}], 'total_players': 0}
+        _, reason = e.safe_export(
+            bad, 'tonight/2026-05-01.json', 'public, max-age=300',
+            guard_env_var='TONIGHT_GUARD_ENABLED',
+        )
+        assert reason is None
+        assert 'status' not in captured[-1]['data']
+
+    def test_safe_export_does_not_mutate_caller_dict(self):
+        """Two safe_export() calls in export() share the same json_data; the
+        first call's mutation must not contaminate the second."""
+        e = self._make()
+        e.upload_to_gcs = lambda data, path, cc: f'gs://x/{path}'
+        bad = {'game_date': '2026-05-01', 'games': [{'g': 1}, {'g': 2}], 'total_players': 0}
+        original_keys = set(bad.keys())
+        e.safe_export(bad, 'tonight/all-players.json', 'public, max-age=300')
+        e.safe_export(bad, 'tonight/2026-05-01.json', 'public, max-age=300')
+        assert set(bad.keys()) == original_keys, 'caller dict must not be mutated'
+
+    def test_all_games_final_helper(self):
+        e = self._make()
+        assert e._all_games_final({'games': [{'game_status': 'final'}, {'game_status': 'final'}]}) is True
+        assert e._all_games_final({'games': [{'game_status': 'final'}, {'game_status': 'in_progress'}]}) is False
+        assert e._all_games_final({'games': []}) is False  # off-day → 5min cache
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
