@@ -23,7 +23,7 @@ import logging
 import os
 import requests
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 from google.cloud import firestore, bigquery
 from google.api_core.exceptions import GoogleAPIError
 from google.cloud import storage as cloud_storage
@@ -476,6 +476,40 @@ def check_completion_tracking_staleness() -> Tuple[str, str]:
         return ('warn', f'Error checking staleness: {str(e)[:100]}')
 
 
+_TONIGHT_PLAYERS_PER_GAME_FLOOR = 8
+
+
+def _check_tonight_content(blob, path: str) -> Optional[str]:
+    """Return a degradation message for tonight files, or None if fine.
+
+    Catches the class of bug where the writer overwrote a good file with
+    games-but-no-players (Apr 28 → May 1 incident). Only inspects tonight
+    JSON; cheap no-op for other paths.
+    """
+    if 'tonight' not in path:
+        return None
+    try:
+        data = json.loads(blob.download_as_text())
+    except Exception as e:
+        return f'CONTENT_UNREADABLE — {e}'
+
+    if data.get('status') == 'degraded':
+        return f"DEGRADED — {data.get('degraded_reason', 'unknown')}"
+
+    games = data.get('games') or []
+    if not games:
+        return None  # legitimate off-day
+    total_players = data.get('total_players') or 0
+    floor = _TONIGHT_PLAYERS_PER_GAME_FLOOR * len(games)
+    if total_players < floor:
+        return (
+            f'CONTENT_DEGRADED — total_players={total_players} '
+            f'< {_TONIGHT_PLAYERS_PER_GAME_FLOOR}*games={floor} '
+            f'(games={len(games)})'
+        )
+    return None
+
+
 def check_export_freshness() -> List[Tuple[str, str, str]]:
     """
     Check freshness of GCS export files in the API bucket.
@@ -521,7 +555,20 @@ def check_export_freshness() -> List[Tuple[str, str, str]]:
                     severity,
                     f'STALE — {age_hours:.1f}h old (threshold: {max_hours}h)'
                 ))
-            # Only report individual files if they're stale/missing
+                continue
+
+            # Content-aware check for tonight files: a file with games but
+            # no players is structurally valid but actually broken (was the
+            # Apr 28-May 1 silent-overwrite bug). Catches what age-only misses.
+            content_issue = _check_tonight_content(blob, path)
+            if content_issue:
+                stale_files.append(path)
+                checks.append((
+                    f"Export: {path}",
+                    severity,
+                    content_issue
+                ))
+            # Only report individual files if they're stale/missing/degraded
             # Fresh files are counted in the summary
 
         # Add a summary check

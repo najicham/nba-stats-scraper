@@ -812,13 +812,57 @@ class TonightAllPlayersExporter(BaseExporter):
             'games': []
         }
 
+    # Per-game floor: NBA rosters always have ≥8 active per side. A populated
+    # schedule with fewer than 8*games players means upstream is broken
+    # (e.g., upcoming_player_game_context was empty during NBA playoffs
+    # because its driver `nbac_gamebook_player_stats` is post-game and sparse).
+    PLAYERS_PER_GAME_FLOOR = 8
+
+    def validate_content(self, json_data: Dict[str, Any]) -> Optional[str]:
+        """Refuse to publish a games-but-no-players file.
+
+        Returns degradation reason or None. Caller (export()) routes through
+        safe_export() which writes a status="degraded" sentinel instead of
+        a structurally-valid-but-empty file.
+        """
+        games = json_data.get('games') or []
+        if not games:
+            # Legitimate off-day (no games scheduled). _empty_response() path.
+            return None
+
+        total_players = json_data.get('total_players') or 0
+        floor = self.PLAYERS_PER_GAME_FLOOR * len(games)
+        if total_players < floor:
+            return (
+                f'players_below_floor: total_players={total_players} < '
+                f'{self.PLAYERS_PER_GAME_FLOOR}*games={floor} '
+                f'(games={len(games)})'
+            )
+        return None
+
+    @staticmethod
+    def _all_games_final(json_data: Dict[str, Any]) -> bool:
+        """True if every game has status 'final'. Date-specific cache extends
+        to 24h only after games are immutable; until then 5-min cache lets a
+        corrected version propagate quickly without CDN getting stuck."""
+        games = json_data.get('games') or []
+        if not games:
+            return False
+        return all(g.get('game_status') == 'final' for g in games)
+
     def export(self, target_date: str) -> str:
         """
         Generate and upload tonight's all players JSON.
 
         Outputs TWO files:
         - tonight/all-players.json (always latest, short cache)
-        - tonight/YYYY-MM-DD.json (date-specific, long cache)
+        - tonight/YYYY-MM-DD.json (date-specific; 5-min cache until all games
+          final, then 24h once immutable)
+
+        Content guard: if `validate_content()` flags the data as degraded
+        (e.g., schedule populated but 0 players), writes status="degraded"
+        sentinel instead of an empty-shaped file. Frontend/monitors get an
+        explicit signal. Kill-switch env: TONIGHT_GUARD_ENABLED=false.
 
         Args:
             target_date: Date string in YYYY-MM-DD format
@@ -830,13 +874,29 @@ class TonightAllPlayersExporter(BaseExporter):
 
         json_data = self.generate_json(target_date)
 
+        date_cache = (
+            'public, max-age=86400'
+            if self._all_games_final(json_data)
+            else 'public, max-age=300'
+        )
+
         # Current: tonight/all-players.json (always latest)
         latest_path = 'tonight/all-players.json'
-        self.upload_to_gcs(json_data, latest_path, 'public, max-age=300')
+        self.safe_export(
+            json_data,
+            latest_path,
+            'public, max-age=300',
+            guard_env_var='TONIGHT_GUARD_ENABLED',
+        )
 
-        # New: tonight/YYYY-MM-DD.json (date-specific, cacheable)
+        # Date-specific: tonight/YYYY-MM-DD.json
         date_path = f'tonight/{target_date}.json'
-        gcs_path = self.upload_to_gcs(json_data, date_path, 'public, max-age=86400')
+        gcs_path, _ = self.safe_export(
+            json_data,
+            date_path,
+            date_cache,
+            guard_env_var='TONIGHT_GUARD_ENABLED',
+        )
 
         logger.info(f"Exported to {latest_path} and {date_path}")
         return gcs_path

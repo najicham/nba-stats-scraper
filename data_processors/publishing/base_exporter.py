@@ -15,9 +15,10 @@ Updated: 2026-01-30 - Added Slack alerting for circuit breaker failures
 
 import json
 import logging
+import os
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 
 from google.cloud import bigquery
 from google.cloud import storage
@@ -329,6 +330,57 @@ class BaseExporter(ABC):
     def get_generated_at(self) -> str:
         """Get current UTC timestamp in ISO format."""
         return datetime.now(timezone.utc).isoformat()
+
+    def validate_content(self, json_data: Dict[str, Any]) -> Optional[str]:
+        """Hook for subclasses to enforce content invariants before publishing.
+
+        Return None if content is valid, or a short reason string if degraded.
+        Default: no validation (backward compatible). Subclasses override to
+        refuse-to-publish when upstream silently zeros out and would otherwise
+        overwrite a good GCS file with empty data.
+
+        Callers should use safe_export() to honor this hook.
+        """
+        return None
+
+    def safe_export(
+        self,
+        json_data: Dict[str, Any],
+        path: str,
+        cache_control: str = 'public, max-age=300',
+        guard_env_var: Optional[str] = None,
+    ) -> Tuple[str, Optional[str]]:
+        """Validate-then-upload. Returns (gcs_path, degradation_reason).
+
+        If validate_content() flags the data as degraded:
+          - Logs CRITICAL with the reason
+          - Mutates json_data to include status="degraded" + reason fields
+            so downstream readers (frontend, monitors) get an explicit signal
+            instead of a structurally-valid-but-empty file
+          - Still uploads — caller decides what minimal-shape data to keep
+
+        guard_env_var: if set and the env var equals "false"/"0", validation
+        is skipped (kill-switch for emergency rollback without redeploy).
+        """
+        guard_disabled = (
+            guard_env_var
+            and os.environ.get(guard_env_var, 'true').lower() in ('false', '0', 'no')
+        )
+
+        reason = None if guard_disabled else self.validate_content(json_data)
+
+        if reason:
+            logger.critical(
+                f"CONTENT_GUARD_TRIGGERED path={path} reason={reason} "
+                f"exporter={type(self).__name__} — writing degraded sentinel "
+                f"instead of overwriting last-good file"
+            )
+            json_data = dict(json_data)  # shallow copy to avoid caller mutation
+            json_data['status'] = 'degraded'
+            json_data['degraded_reason'] = reason
+
+        gcs_path = self.upload_to_gcs(json_data, path, cache_control)
+        return gcs_path, reason
 
     def compare_and_upload(
         self,
