@@ -101,6 +101,14 @@ class MlbPitcherExporter(BaseExporter):
             cache_control=CACHE_MEDIUM,
         )
 
+        # Date-keyed history copy so the date selector can show past days.
+        # Frozen once written — past dates never change.
+        history_path = self.upload_to_gcs(
+            bundle['leaderboard'],
+            f'mlb/pitchers/history/{game_date}.json',
+            cache_control=CACHE_LONG,
+        )
+
         profile_paths: List[str] = []
         for pitcher_lookup, profile in bundle['profiles'].items():
             path = self.upload_to_gcs(
@@ -115,6 +123,7 @@ class MlbPitcherExporter(BaseExporter):
         )
         return {
             'leaderboard_path': leaderboard_path,
+            'history_path': history_path,
             'profile_paths': profile_paths,
         }
 
