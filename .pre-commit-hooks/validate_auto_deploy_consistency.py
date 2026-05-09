@@ -70,21 +70,24 @@ def is_cloud_run_service(service_name: str, source_dirs: str) -> bool:
 
     Cloud Functions have source dirs under orchestration/cloud_functions/
     or monitoring/. Cloud Run services have Dockerfiles.
+
+    Anything under shared/ is a supplementary library path (not a service
+    classification signal), so it's filtered out before the decision.
     """
     dirs = source_dirs.strip().split()
-    # If ALL source dirs are under cloud function paths, it's a Cloud Function
     cf_prefixes = (
         'orchestration/cloud_functions/',
         'monitoring/',
     )
+    # Treat 'shared' and any 'shared/...' subpath as supplementary — it doesn't
+    # determine whether the service is Cloud Run or Cloud Function.
+    primary_dirs = [d for d in dirs if d != 'shared' and not d.startswith('shared/')]
+    if not primary_dirs:
+        return False
     all_cf = all(
         any(d.startswith(p) for p in cf_prefixes)
-        for d in dirs if d != 'shared'
+        for d in primary_dirs
     )
-    # Filter out entries where the only non-shared dir is a CF path
-    non_shared_dirs = [d for d in dirs if d != 'shared']
-    if not non_shared_dirs:
-        return False
     return not all_cf
 
 

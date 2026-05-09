@@ -51,7 +51,7 @@ declare -A SERVICE_SOURCES=(
     # Cloud Functions - Monitoring & Validation (Session 219: added after scheduler job audit)
     ["grading-gap-detector"]="orchestration/cloud_functions/grading-gap-detector"
     ["daily-health-check"]="orchestration/cloud_functions/daily_health_check shared"
-    ["validation-runner"]="orchestration/cloud_functions/validation_runner shared"
+    ["validation-runner"]="orchestration/cloud_functions/validation_runner shared/validation"
     ["reconcile"]="orchestration/cloud_functions/prediction_monitoring"
     ["validate-freshness"]="orchestration/cloud_functions/prediction_monitoring"
     ["pipeline-health-summary"]="monitoring/health_summary shared"

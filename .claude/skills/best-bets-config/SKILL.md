@@ -87,13 +87,13 @@ Display the full set of negative filters from `ml/signals/aggregator.py`:
 | 1  | legacy_block                | Model in LEGACY_MODEL_BLOCKLIST               | 332     |
 | 2  | blacklist                   | Player <40% HR on 8+ edge-3+ picks            | 284     |
 | 3  | edge_floor                  | edge < 3.0                                    | 352     |
-| 4  | over_edge_floor             | OVER + edge < 5.0 (v9 only)                   | 297     |
+| 4  | over_edge_floor             | OVER + edge < 6.0 (regime-adaptive)           | 297,522 |
 | 5  | under_edge_7plus            | UNDER + edge >= 7 (v9 only)                   | 297,318 |
 | 6  | model_direction_affinity    | Model+dir+edge combo HR < 45% on 15+ picks    | 343     |
 | 7  | away_noveg                  | v12_noveg/v9 family + AWAY game                | 365     |
-| 8  | familiar_matchup            | 6+ games vs same opponent                      | 284     |
+| 8  | _removed_                   | familiar_matchup REMOVED 2026-03-26 (CF HR 54.4% blocked winners) | 494 |
 | 9  | quality_floor               | Feature quality < 85                            | 278     |
-| 10 | bench_under                 | UNDER + line < 12                               | 278     |
+| 10 | bench_under (obs)           | UNDER + line < 12 — DEMOTED to observation    | 278,419 |
 | 11 | star_under                  | Star UNDER (line >= 23) injury-aware            | 297,367 |
 | 12 | under_star_away             | UNDER + Star + AWAY (line >= 23)                | 371     |
 | 13 | med_usage_under             | Medium teammate usage + UNDER                   | 371     |

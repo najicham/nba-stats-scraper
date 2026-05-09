@@ -93,9 +93,9 @@ case "$SERVICE" in
     IS_CLOUD_FUNCTION=true
     ;;
   live-freshness-monitor)
+    # SLACK_WEBHOOK_URL is fetched via Secret Manager at runtime, not env var.
     REQUIRED_VARS=(
       "GCP_PROJECT"
-      "SLACK_WEBHOOK_URL"
     )
     IS_CLOUD_FUNCTION=true
     ;;
@@ -110,10 +110,13 @@ esac
 echo "Fetching deployed environment variables..."
 if [ "${IS_CLOUD_FUNCTION:-false}" = "true" ]; then
   echo "  (detected as Cloud Function)"
+  # Gen2 stores env vars at .serviceConfig.environmentVariables; Gen1 at .environmentVariables.
+  # Pass --gen2 so describe hits the Gen2 endpoint; jq falls back through both paths.
   DEPLOYED_VARS=$(gcloud functions describe "$SERVICE" \
+    --gen2 \
     --region="$REGION" \
     --project="$PROJECT" \
-    --format="json" 2>/dev/null | jq -r '.environmentVariables // {} | keys[]' 2>/dev/null)
+    --format="json" 2>/dev/null | jq -r '(.serviceConfig.environmentVariables // .environmentVariables // {}) | keys[]' 2>/dev/null)
 else
   DEPLOYED_VARS=$(gcloud run services describe "$SERVICE" \
     --region="$REGION" \
