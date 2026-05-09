@@ -121,11 +121,16 @@ class MlbScheduleScraper(ScraperBase, ScraperFlaskMixin):
     # Additional opts
     # ------------------------------------------------------------------ #
     def set_additional_opts(self) -> None:
-        super().set_additional_opts()
-        # Default to today if no date specified
+        # Default to a 7-day lookahead window when no dates are specified.
+        # Must run BEFORE super(), because ConfigMixin auto-derives `date` to today
+        # whenever it's missing. Setting start_date/end_date here lets ConfigMixin
+        # still fill in `date=today` for GCS path templating, while set_url() picks
+        # the range branch (range takes precedence below) and hits the multi-day API.
         if not self.opts.get("date") and not self.opts.get("start_date"):
             today = datetime.now(timezone.utc).date()
-            self.opts["date"] = today.isoformat()
+            self.opts["start_date"] = today.isoformat()
+            self.opts["end_date"] = (today + timedelta(days=7)).isoformat()
+        super().set_additional_opts()
 
     # ------------------------------------------------------------------ #
     # URL & headers
@@ -136,12 +141,13 @@ class MlbScheduleScraper(ScraperBase, ScraperFlaskMixin):
             f"hydrate={self._HYDRATE}",
         ]
 
-        # Date handling
-        if self.opts.get("date"):
-            params.append(f"date={self.opts['date']}")
-        elif self.opts.get("start_date") and self.opts.get("end_date"):
+        # Date handling — range takes precedence over single date so the daily
+        # default (which sets both for path templating) hits the range endpoint.
+        if self.opts.get("start_date") and self.opts.get("end_date"):
             params.append(f"startDate={self.opts['start_date']}")
             params.append(f"endDate={self.opts['end_date']}")
+        elif self.opts.get("date"):
+            params.append(f"date={self.opts['date']}")
         else:
             # Default to today
             today = datetime.now(timezone.utc).date().isoformat()
