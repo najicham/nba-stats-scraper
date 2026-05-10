@@ -127,9 +127,19 @@ Running log of code changes per phase. Update as work lands.
 
 ---
 
-## Phase F — Backfill Oct 2025 - Feb 2026 (pending)
+## Phase F — Backfill Oct 2025 - Feb 2026 (in_progress, 2026-05-10)
 
-See `03-BACKFILL-MANIFEST.md` for per-date status.
+### F.1 Pub/Sub subscriber CF
+- New entry point `pubsub_subscriber` in `orchestration/cloud_functions/scraper_gap_backfiller/main.py`. Subscribes to `nba-backfill-trigger`. Maps Phase 1 `output_type` → `scraper_name` via `PHASE1_OUTPUT_TO_SCRAPER`, invokes existing `trigger_backfill`, updates `expected_outputs.attempts/last_error/source` so reconciler closes the loop.
+- `deploy-pubsub-subscriber.sh` deploys as a separate Gen2 CF (`backfill-pubsub-subscriber`) sharing source with the existing HTTP backfiller. Different entry points, one source tree.
+- IAM: gap-detector SA grants run.invoker on nba-scrapers (so the subscriber can call the scraper service).
+
+### F.2 Phase 2-6 backfills (deferred)
+- Currently the subscriber only handles `phase1_scrape` outputs. Phase 2-6 outputs require running the upstream processor (e.g. Phase 2 raw processor for `nbac_gamebook_player_stats` → BQ raw table). gap_detector marks those as FAILED at attempts cap.
+- Future: extend `pubsub_subscriber` to dispatch Phase 2-6 backfills via the appropriate processor service.
+
+### F.3 Bulk backfill execution (queued, not yet run)
+- The 109-day NBA recovery (Oct 21 2025 - Feb 6 2026) will run automatically once the subscriber is live: gap_detector publishes overdue rows → subscriber runs scrapers → reconciler flips status. Capped at MAX_PUBLISHES_PER_RUN=50 per gap_detector run; raise to 200 temporarily for bulk catch-up.
 
 ---
 
@@ -170,11 +180,34 @@ See `03-BACKFILL-MANIFEST.md` for per-date status.
 
 ---
 
-## Phase I — Frontend monitoring (pending)
+## Phase I — Frontend monitoring (in_progress, 2026-05-10)
+
+### I.1 Sentry config update
+- `props-web/sentry.client.config.ts` — un-suppressed `Failed to fetch`, `Load failed`, `NetworkError`, `ChunkLoadError`. These were the silent-failure modes that produced the May 2026 Best Bets stuck-loading incident and the April /mlb regression.
+- Kept only `ResizeObserver loop` in ignoreErrors (browser quirk).
+- Added `tracePropagationTargets` for same-origin + GCS-backed JSON proxy.
+- Added `browserTracingIntegration` for automatic pageload + navigation transactions.
+- `beforeSend` filters only browser-extension noise.
+
+### I.2 Stuck-loading watchdog
+- `props-web/src/lib/stuck-loading-watchdog.ts` — `armStuckLoadingWatchdog(label, hasDataRef, timeoutMs)`. Captures `stuck_loading:<label>` Sentry warning if data never arrives within timeout. Stub for now; pages call it in their data-fetch effects.
+
+### I.3 GCP Uptime Checks (3 routes)
+- `monitoring/uptime-checks/playerprops-routes.sh` creates 3 checks via `gcloud monitoring uptime create`:
+  - `playerprops-root` `/` matches `<title>`
+  - `playerprops-mlb` `/mlb` matches `MLB`
+  - `playerprops-nba-best-bets` `/nba/best-bets` matches `Best Bets`
+- 5-min period, 10s timeout, 3 regions (USA Oregon/Virginia/Iowa).
+- Replaces the proposed 5-layer monitoring stack with one external check that catches both reachability AND content presence.
 
 ---
 
-## Phase J — Frontend bug fixes (pending)
+## Phase J — Frontend bug fixes (completed, 2026-05-09 / 2026-05-10)
+
+- `props-web` commit `c08e530`: VirtualizedGrid `minmax(min(100%, 340px), 1fr)` fixes sub-640px overflow; BackendStatusIndicator banner `bannerKey` stabilized in Mode 1 (drop date suffix); sessionStorage persistence on dismiss.
+- `props-web` commit `d5336e5`: DateSelector arrows skip to nearest game-day via `stepToGameDay`; PlayerCard.GameCountdown uses 2-day threshold to switch from "Waiting on Results" to "Result Not Recorded" for stale finals.
+
+These three fixes address the user-reported issues from the 2026-05-09 audit: stuck Best Bets loading (root cause already fixed by Phase A `post_grading_export` split + Phase B halt envelope), banner re-shows, Top Scorers grid spacing, plus the new requirements added mid-session (date picker skip-to-game-day; stale final → "Result Not Recorded").
 
 ---
 
@@ -199,4 +232,23 @@ See `03-BACKFILL-MANIFEST.md` for per-date status.
 
 ---
 
-## Phase L — Pre-presentation verification (pending)
+## Phase L — Pre-presentation verification (in_progress, 2026-05-10)
+
+### L.1 Cloud Monitoring dashboard
+- `monitoring/dashboards/nba-pipeline-health.json` — single pane of glass:
+  - Aggregate `phase_completion` gauge (0-1).
+  - Per-(sport, phase) phase_completion stacked bar.
+  - `halt_state_age_hours` per sport.
+  - Row count emitted per phase.
+- `monitoring/dashboards/deploy-dashboards.sh` creates / updates by displayName.
+- Dashboard ID: `f4680201-e454-40e0-8718-694829d49391`.
+
+### L.2 End-to-end smoke test
+- `bin/verify-pipeline-state.sh` — 9 checks across BQ tables, halt_state freshness, expected_outputs population, CF state, scheduler state, Pub/Sub topic, uptime checks, dashboard, and a coverage summary.
+- Runs in <60s, exits non-zero on any failure. Use before any demo or after any infrastructure change.
+
+### L.3 Notification channel attachment (manual)
+- 3 alert policies created in Phase G have empty notificationChannels — gcloud doesn't support during create. One-time manual step in Cloud Monitoring console: attach the Slack channel to each policy.
+
+### L.4 Demo script (deferred)
+- `04-DEMO-SCRIPT.md` placeholder ready; final scripted walkthrough fills in once notification channels attached and synthetic gap test passes end-to-end.
