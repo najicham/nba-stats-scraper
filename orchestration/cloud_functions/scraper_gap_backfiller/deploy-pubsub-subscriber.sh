@@ -38,13 +38,20 @@ gcloud functions deploy "${FUNCTION_NAME}" \
   --service-account="gap-detector@${PROJECT_ID}.iam.gserviceaccount.com" \
   --update-env-vars="GCP_PROJECT_ID=${PROJECT_ID}"
 
-echo "==> Done."
-echo ""
-echo "Note: subscriber runs as gap-detector SA (already has BQ + Pub/Sub access)."
-echo "      For scraper invocation, the SA also needs run.invoker on nba-scrapers."
-echo ""
-echo "Granting nba-scrapers invoker..."
+echo "==> Granting nba-scrapers invoker to gap-detector SA"
 gcloud run services add-iam-policy-binding nba-scrapers \
   --region="${REGION}" --project="${PROJECT_ID}" \
   --member="serviceAccount:gap-detector@${PROJECT_ID}.iam.gserviceaccount.com" \
   --role="roles/run.invoker" --quiet 2>&1 | tail -1
+
+# CRITICAL: EventArc invokes the subscriber CF using the trigger's SA.
+# Without this binding, every Pub/Sub message gets a 403 and the
+# subscription accumulates undelivered messages. (Hit this 2026-05-10
+# morning — 790 NBA rows incorrectly marked FAILED before this was fixed.)
+echo "==> Granting backfill-pubsub-subscriber invoker to gap-detector SA"
+gcloud run services add-iam-policy-binding "${FUNCTION_NAME}" \
+  --region="${REGION}" --project="${PROJECT_ID}" \
+  --member="serviceAccount:gap-detector@${PROJECT_ID}.iam.gserviceaccount.com" \
+  --role="roles/run.invoker" --quiet 2>&1 | tail -1
+
+echo "==> Done."
