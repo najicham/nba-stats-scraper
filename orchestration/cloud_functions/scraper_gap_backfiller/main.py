@@ -28,7 +28,7 @@ import sys
 import html
 import boto3
 from botocore.exceptions import ClientError
-from typing import Dict, Any, List, Union
+from typing import Dict, Any, List, Optional, Union
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -427,6 +427,150 @@ def mark_as_backfilled(client: bigquery.Client, scraper_name: str, game_date: st
 
     client.query(query, job_config=job_config).result()
     logger.info(f"Marked as backfilled: {scraper_name} / {game_date}")
+
+
+# ===========================================================================
+# Pub/Sub subscriber — pipeline-state-redesign integration (Phase F)
+#
+# Listens on `nba-backfill-trigger` topic populated by gap_detector. Each
+# message carries (sport, game_date, phase, output_type, expected_partition,
+# attempt). For Phase 1 outputs, maps to scraper_name and runs trigger_backfill.
+# Updates `nba_orchestration.expected_outputs` row with success/failure so
+# the reconciler picks up the new actuals on its next pass.
+# ===========================================================================
+
+# output_type → scraper_name mapping. Only Phase 1 outputs are directly
+# scraper-backfillable. Phase 2-6 outputs require running the upstream
+# processor; not handled here yet (gap_detector will mark FAILED at cap).
+PHASE1_OUTPUT_TO_SCRAPER = {
+    'nbac_gamebook_player_stats': 'nbac_gamebook_player_stats',
+    'nbac_injury_report': 'nbac_injury_report',
+    'nbac_play_by_play': 'nbac_play_by_play',
+    'odds_api_player_points_props': 'odds_api_player_points_props',
+    'bettingpros_player_points_props': 'bettingpros_player_points_props',
+    # MLB
+    'mlb_schedule': 'mlb_schedule',
+    'mlb_box_scores': 'mlb_box_scores',
+    'bp_mlb_player_props': 'bp_mlb_player_props',
+}
+
+EXPECTED_OUTPUTS_TABLE = 'nba-props-platform.nba_orchestration.expected_outputs'
+
+
+def _update_expected_output_attempt(
+    bq_client,
+    sport: str,
+    game_date: str,
+    phase: str,
+    output_type: str,
+    success: bool,
+    error: Optional[str] = None,
+) -> None:
+    """Update one expected_outputs row after a backfill attempt.
+
+    Status flow:
+      success → row stays as-is; reconciler will flip to COMPLETE on next pass.
+      failure → bump attempts + record error; reconciler / gap_detector handle
+                escalation to DEGRADED → FAILED.
+    """
+    sql = f"""
+        UPDATE `{EXPECTED_OUTPUTS_TABLE}` T
+        SET attempts = T.attempts + 1,
+            last_run_at = CURRENT_TIMESTAMP(),
+            last_error = @last_error,
+            updated_at = CURRENT_TIMESTAMP(),
+            source = 'pubsub_backfiller'
+        WHERE sport = @sport AND game_date = @game_date
+          AND phase = @phase AND output_type = @output_type
+    """
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter('sport', 'STRING', sport),
+            bigquery.ScalarQueryParameter('game_date', 'DATE', game_date),
+            bigquery.ScalarQueryParameter('phase', 'STRING', phase),
+            bigquery.ScalarQueryParameter('output_type', 'STRING', output_type),
+            bigquery.ScalarQueryParameter('last_error', 'STRING', error or ''),
+        ]
+    )
+    bq_client.query(sql, job_config=job_config).result(timeout=30)
+
+
+@functions_framework.cloud_event
+def pubsub_subscriber(cloud_event):
+    """Pub/Sub-triggered backfiller. Subscribes to `nba-backfill-trigger`.
+
+    Expected message format (JSON):
+      {
+        "sport": "nba",
+        "game_date": "2026-04-18",
+        "phase": "phase1_scrape",
+        "output_type": "nbac_gamebook_player_stats",
+        "expected_partition": "...",
+        "attempt": 1,
+        "requested_at": "2026-05-10T..."
+      }
+
+    Strategy:
+      - Phase 1: look up scraper_name in PHASE1_OUTPUT_TO_SCRAPER, run trigger_backfill.
+      - Phase 2-6: log + skip; gap_detector will mark FAILED after attempt cap.
+    """
+    import base64
+    try:
+        data_b64 = cloud_event.data['message']['data']
+        payload = json.loads(base64.b64decode(data_b64).decode('utf-8'))
+    except Exception as e:
+        logger.error(f"Failed to decode Pub/Sub message: {e}", exc_info=True)
+        return  # Don't ack — let it retry
+
+    sport = payload.get('sport', 'nba')
+    game_date = payload.get('game_date')
+    phase = payload.get('phase')
+    output_type = payload.get('output_type')
+
+    if not (game_date and phase and output_type):
+        logger.error(f"Pub/Sub message missing required fields: {payload}")
+        return
+
+    logger.info(f"Backfill request: {sport}/{phase}/{output_type} for {game_date}")
+
+    bq_client = bigquery.Client()
+
+    if phase != 'phase1_scrape':
+        # Phases 2-6 require running the upstream processor. Out of scope for
+        # this subscriber today; gap_detector will FAIL the row at attempt cap.
+        logger.info(f"Skipping non-Phase-1 backfill: {phase} ({output_type})")
+        _update_expected_output_attempt(
+            bq_client, sport, game_date, phase, output_type,
+            success=False, error=f'Phase {phase} not auto-backfillable yet',
+        )
+        return
+
+    scraper_name = PHASE1_OUTPUT_TO_SCRAPER.get(output_type)
+    if not scraper_name:
+        logger.warning(f"No scraper mapping for output_type={output_type}")
+        _update_expected_output_attempt(
+            bq_client, sport, game_date, phase, output_type,
+            success=False, error=f'No scraper_name mapping for {output_type}',
+        )
+        return
+
+    try:
+        success = trigger_backfill(scraper_name, game_date)
+        _update_expected_output_attempt(
+            bq_client, sport, game_date, phase, output_type,
+            success=success,
+            error=None if success else 'trigger_backfill returned False',
+        )
+        logger.info(
+            f"Pub/Sub backfill {'succeeded' if success else 'failed'}: "
+            f"{scraper_name}/{game_date}"
+        )
+    except Exception as e:
+        logger.error(f"Pub/Sub backfill threw: {e}", exc_info=True)
+        _update_expected_output_attempt(
+            bq_client, sport, game_date, phase, output_type,
+            success=False, error=str(e)[:200],
+        )
 
 
 @functions_framework.http

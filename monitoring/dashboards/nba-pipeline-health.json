@@ -1,0 +1,101 @@
+{
+  "displayName": "NBA Pipeline Health",
+  "description": "Single pane of glass for the pipeline-state-redesign system. Shows phase × date coverage from expected_outputs, halt_state, and the three custom metrics (phase_completion, phase_row_count, halt_state_age_hours).",
+  "mosaicLayout": {
+    "columns": 12,
+    "tiles": [
+      {
+        "xPos": 0, "yPos": 0, "width": 12, "height": 4,
+        "widget": {
+          "title": "Pipeline coverage (1h mean of phase_completion across all phases)",
+          "scorecard": {
+            "timeSeriesQuery": {
+              "timeSeriesFilter": {
+                "filter": "metric.type=\"custom.googleapis.com/nba_pipeline/phase_completion\"",
+                "aggregation": {
+                  "alignmentPeriod": "3600s",
+                  "perSeriesAligner": "ALIGN_MEAN",
+                  "crossSeriesReducer": "REDUCE_MEAN"
+                }
+              }
+            },
+            "gaugeView": {"lowerBound": 0.0, "upperBound": 1.0}
+          }
+        }
+      },
+      {
+        "xPos": 0, "yPos": 4, "width": 6, "height": 5,
+        "widget": {
+          "title": "Phase completion gauge by sport × phase (1h mean)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "metric.type=\"custom.googleapis.com/nba_pipeline/phase_completion\"",
+                    "aggregation": {
+                      "alignmentPeriod": "3600s",
+                      "perSeriesAligner": "ALIGN_MEAN",
+                      "crossSeriesReducer": "REDUCE_MEAN",
+                      "groupByFields": ["metric.label.sport", "metric.label.phase"]
+                    }
+                  }
+                },
+                "plotType": "STACKED_BAR"
+              }
+            ],
+            "yAxis": {"label": "Health (0–1)", "scale": "LINEAR"}
+          }
+        }
+      },
+      {
+        "xPos": 6, "yPos": 4, "width": 6, "height": 5,
+        "widget": {
+          "title": "halt_state writer age (hours) by sport",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "metric.type=\"custom.googleapis.com/nba_pipeline/halt_state_age_hours\"",
+                    "aggregation": {
+                      "alignmentPeriod": "300s",
+                      "perSeriesAligner": "ALIGN_MAX",
+                      "groupByFields": ["metric.label.sport"]
+                    }
+                  }
+                },
+                "plotType": "LINE"
+              }
+            ],
+            "yAxis": {"label": "Hours since last write", "scale": "LINEAR"}
+          }
+        }
+      },
+      {
+        "xPos": 0, "yPos": 9, "width": 12, "height": 4,
+        "widget": {
+          "title": "Row count emitted per phase (1h)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "metric.type=\"custom.googleapis.com/nba_pipeline/phase_row_count\"",
+                    "aggregation": {
+                      "alignmentPeriod": "3600s",
+                      "perSeriesAligner": "ALIGN_SUM",
+                      "groupByFields": ["metric.label.phase", "metric.label.sport"]
+                    }
+                  }
+                },
+                "plotType": "LINE"
+              }
+            ],
+            "yAxis": {"label": "Rows", "scale": "LINEAR"}
+          }
+        }
+      }
+    ]
+  }
+}
