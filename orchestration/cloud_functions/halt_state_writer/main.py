@@ -187,6 +187,57 @@ def _nba_edge_collapse(bq: bigquery.Client, today: date) -> Optional[Dict[str, A
     return None
 
 
+def _predictions_inactive(bq: bigquery.Client, sport: str, today: date) -> Optional[Dict[str, Any]]:
+    """Have NBA predictions been silent for 3+ days while games are scheduled?
+
+    Catches halts that don't fall into the off_season / edge_collapse /
+    fleet_blocked buckets — e.g. operator-paused schedulers, prediction
+    worker crashes, or the late-season dormancy that left the system
+    silent for ~6 weeks of 2026-04 → 2026-05-09.
+
+    Returns a dict if predictions are inactive while games are scheduled.
+    """
+    if sport != 'nba':
+        return None  # MLB has its own prediction pipeline; not modeled here.
+
+    query = f"""
+        WITH recent_preds AS (
+          SELECT COUNT(*) AS n_preds
+          FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
+          WHERE game_date BETWEEN DATE_SUB(@today, INTERVAL 3 DAY) AND @today
+        ),
+        upcoming_games AS (
+          SELECT COUNT(*) AS n_games
+          FROM `{PROJECT_ID}.nba_reference.nba_schedule`
+          WHERE game_date BETWEEN @today AND DATE_ADD(@today, INTERVAL 7 DAY)
+        )
+        SELECT
+          (SELECT n_preds FROM recent_preds) AS recent_preds,
+          (SELECT n_games FROM upcoming_games) AS upcoming_games
+    """
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[bigquery.ScalarQueryParameter('today', 'DATE', today)]
+    )
+    try:
+        rows = list(bq.query(query, job_config=job_config).result(timeout=30))
+    except Exception as e:
+        logger.warning(f"Predictions-inactive query failed: {e}")
+        return None
+
+    if not rows:
+        return None
+    row = rows[0]
+    recent_preds = int(row.recent_preds or 0)
+    upcoming_games = int(row.upcoming_games or 0)
+
+    if recent_preds == 0 and upcoming_games > 0:
+        return {
+            'recent_preds_3d': recent_preds,
+            'upcoming_games_7d': upcoming_games,
+        }
+    return None
+
+
 def _fleet_blocked(bq: bigquery.Client, sport: str, today: date) -> Optional[Dict[str, Any]]:
     """Are all enabled NBA models in BLOCKED state?
 
@@ -278,6 +329,16 @@ def evaluate_halt_state(
             halt_active = True
             halt_reason = 'fleet_blocked'
             halt_metrics.update(fleet_metrics)
+
+    # 4. Predictions inactive (NBA only) — catches operator-paused / late-season
+    #    dormancy where edge_collapse and fleet_blocked checks need recent data
+    #    they don't have. Last-resort signal: games scheduled but no predictions.
+    if not halt_active and sport == 'nba':
+        pred_metrics = _predictions_inactive(bq, sport, today)
+        if pred_metrics is not None:
+            halt_active = True
+            halt_reason = 'predictions_inactive'
+            halt_metrics.update(pred_metrics)
 
     return {
         'halt_active': halt_active,
