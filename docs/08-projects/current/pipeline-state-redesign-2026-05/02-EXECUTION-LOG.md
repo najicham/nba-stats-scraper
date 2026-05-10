@@ -92,11 +92,38 @@ Running log of code changes per phase. Update as work lands.
 
 ---
 
-## Phase D — Unified observability layer (pending)
+## Phase D — Unified observability layer (in_progress, 2026-05-09)
+
+### D.1 shared.observability.metrics — Cloud Monitoring custom metrics emitter
+- New `shared/observability/__init__.py` + `shared/observability/metrics.py`.
+- Single `emit_metric(metric_name, value, labels, kind)` API. Fail-open: if monitoring_v3 is unreachable or not installed, logs and returns rather than crashing the caller.
+- Convenience `emit_phase_completion(phase, output_type, status, sport, row_count)` encodes status as a numeric value (COMPLETE/EMPTY_OK=1.0, EXPECTED/RUNNING=0.5, DEGRADED=0.25, FAILED=0.0) so dashboards can graph it directly.
+- Custom metric domain: `custom.googleapis.com/nba_pipeline/`.
+
+### D.2 phase_completion_reconciler Cloud Function
+- New `orchestration/cloud_functions/phase_completion_reconciler/{main.py, requirements.txt, __init__.py, deploy.sh}`.
+- Reads up to 500 EXPECTED rows whose `expected_by < NOW()`, queries the actual partition (BQ COUNT or GCS object), updates status:
+  - row_count > 0 → COMPLETE
+  - row_count == 0 + halt_active OR no_games → EMPTY_OK
+  - row_count == 0 + games scheduled + attempts < 3 → EXPECTED + attempts++
+  - row_count == 0 + attempts >= 3 → DEGRADED (gap_detector picks this up)
+- Emits `phase_completion` metric per row.
+- Smoke test running locally to verify against the seeded rows.
+
+## Phase E — Self-healing gap detector (in_progress, 2026-05-09)
+
+### E.1 gap_detector Cloud Function
+- New `orchestration/cloud_functions/gap_detector/{main.py, requirements.txt, __init__.py, deploy.sh}`.
+- Reads stale EXPECTED + DEGRADED rows; publishes one `nba-backfill-trigger` Pub/Sub message per row (capped at 50/run).
+- Rows past `MAX_BACKFILL_ATTEMPTS` (3) → FAILED status; alert fires.
+- Scheduled at :15 and :45 of each hour (offset from reconciler at :00 and :30).
+
+### E.2 Pub/Sub topic created
+- `projects/nba-props-platform/topics/nba-backfill-trigger` exists.
+- `scraper-gap-backfiller` will be refactored to subscribe in Phase F.
 
 ---
 
-## Phase E — Self-healing gap detector (pending)
 
 ---
 
