@@ -19,6 +19,18 @@ It replaces the old, phase-siloed completeness checks (`data-completeness-checke
 | `FAILED` | gap_detector exhausted MAX_BACKFILL_ATTEMPTS (3). Permanent loss documented. |
 | `DEGRADED` | Actuals present but failed validation (low row count, content guard tripped). |
 
+## Quick check from the command line
+
+`bin/validate-season.sh` answers the user-facing question "is every past date of the season processed?" in <30 seconds:
+
+```bash
+./bin/validate-season.sh                                # NBA + MLB, season-to-date
+./bin/validate-season.sh nba                            # NBA only
+./bin/validate-season.sh nba 2026-04-01 2026-04-30      # explicit range
+```
+
+It prints (1) coverage % per phase, (2) the 20 oldest unresolved gaps, (3) dates with zero healthy outputs, and writes per-row gap detail to `/tmp/season-gaps.csv`. This is the canonical interactive answer to the recurring "did this date process?" question.
+
 ## Common queries
 
 ### What's missing right now?
