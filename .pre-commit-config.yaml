@@ -176,6 +176,15 @@ repos:
         files: ^(bin/deploy/|cloudbuild).*\.(sh|yaml)$
         verbose: true
 
+      - id: validate-signal-references
+        name: Check signal/filter references in docs match registry
+        description: Prevents drift between shared/registry/{signals,filters}.yaml and docs that mention signal/filter tags. Pipeline-state-redesign Phase H.
+        entry: .venv/bin/python .pre-commit-hooks/validate_signal_references.py
+        language: system
+        pass_filenames: false
+        files: ^(CLAUDE\.md|\.claude/skills/.*\.md|docs/01-architecture/.*\.md|docs/02-operations/.*\.md|shared/registry/.*\.yaml)$
+        verbose: true
+
   # Standard pre-commit hooks
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.5.0

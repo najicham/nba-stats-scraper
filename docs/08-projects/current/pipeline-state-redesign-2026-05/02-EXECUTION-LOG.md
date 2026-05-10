@@ -137,7 +137,20 @@ See `03-BACKFILL-MANIFEST.md` for per-date status.
 
 ---
 
-## Phase H — Registry + drift prevention (pending)
+## Phase H — Registry + drift prevention (in_progress, 2026-05-09)
+
+### H.1 shared/registry — single source of truth for signal + filter names
+- New `shared/registry/{__init__.py, loader.py, signals.yaml, filters.yaml}`.
+- 27 signals (19 active + 8 shadow); 35 filters (26 active + 3 observation + 6 removed).
+- Each entry: tag, status, weight/blocks_direction, description, introduced/deprecated session.
+- Loader exposes `is_known_signal(tag)` + `is_known_filter(tag)` for code consumers.
+
+### H.2 Pre-commit hook
+- New `.pre-commit-hooks/validate_signal_references.py` — greps CLAUDE.md, .claude/skills/, docs/01-architecture/, docs/02-operations/ for signal/filter-shaped tags and fails if any aren't in the registry.
+- Allowlist: docs/09-handoff/, docs/08-projects/{current,completed,archive}/, docs/06-reference/ — these are research/archived docs that legitimately mention historical/aspirational tags.
+- NOT_TAGS exemptions for BQ table + column names that follow signal-shaped naming (`signal_best_bets_picks`, `signal_health_daily`, etc.).
+- Wired into `.pre-commit-config.yaml`.
+- Validator passes clean against the current repo state.
 
 ---
 

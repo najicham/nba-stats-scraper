@@ -1,0 +1,205 @@
+# Signal registry — single source of truth for signal tags + status.
+#
+# Status values:
+#   active      — counts toward real_sc; participates in rescue checks
+#   shadow      — observed but does not contribute to real_sc
+#   removed     — historical; documents that the tag once existed
+#
+# When code adds/removes a signal, update this file in the same commit.
+# .pre-commit-hooks/validate_signal_references.py validates that every
+# signal name mentioned in CLAUDE.md / .claude/skills/ / docs/ is in this file.
+#
+# Pipeline-state-redesign Phase H.
+
+signals:
+
+  # =========================================================================
+  # BASE SIGNALS — not counted in real_sc, included for visibility
+  # =========================================================================
+
+  - tag: model_health
+    status: active
+    weight: 0.0
+    direction: both
+    description: Model health flag — base signal, not counted in real_sc
+
+  - tag: high_edge
+    status: active
+    weight: 0.0
+    direction: both
+    description: Edge >= 7 base flag — not counted in real_sc
+
+  - tag: edge_spread_optimal
+    status: active
+    weight: 0.0
+    direction: both
+    description: Edge in optimal spread base flag
+
+  - tag: blowout_recovery
+    status: active
+    weight: 0.0
+    direction: both
+    description: Bounce-back base flag
+
+  - tag: starter_under
+    status: active
+    weight: 0.0
+    direction: under
+    description: Starter UNDER base flag
+
+  - tag: blowout_risk_under
+    status: active
+    weight: 0.0
+    direction: under
+    description: Blowout-risk UNDER base flag
+
+  # =========================================================================
+  # ACTIVE SIGNALS — count toward real_sc
+  # =========================================================================
+
+  - tag: combo_3way
+    status: active
+    weight: 2.0
+    direction: over
+    rescue_priority: 1
+    description: 3-way combo (HSE + line drift + edge) — 95.5% HR historical
+    introduced_session: 398
+
+  - tag: combo_he_ms
+    status: active
+    weight: 2.0
+    direction: over
+    rescue_priority: 1
+    description: High-edge + market-sharp combo — 94.9% HR historical
+    introduced_session: 398
+
+  - tag: book_disagreement
+    status: active
+    weight: 1.5
+    direction: both
+    description: Multi-book line spread > threshold — 93.0% HR historical
+
+  - tag: book_disagree_over
+    status: active
+    weight: 1.5
+    direction: over
+    description: Book disagreement (OVER specific) — graduated Session 514, 79.6% 5-season HR
+    introduced_session: 514
+
+  - tag: line_rising_over
+    status: active
+    weight: 1.5
+    direction: over
+    description: Line rose pre-game, supports OVER — 96.6% HR historical
+
+  - tag: sharp_line_drop_under
+    status: active
+    weight: 1.5
+    direction: under
+    description: Line dropped pre-game by sharp money — 87.5% HR historical
+
+  - tag: fast_pace_over
+    status: active
+    weight: 1.0
+    direction: over
+    description: Fast-pace matchup — 81.5% HR historical
+
+  - tag: hot_3pt_under
+    status: active
+    weight: 2.5
+    direction: under
+    rescue_priority: 2
+    description: Player 3PT hot — UNDER reversion. 62.5% 5-season HR
+    introduced_session: 466
+
+  - tag: line_drifted_down_under
+    status: active
+    weight: 2.0
+    direction: under
+    rescue_priority: 2
+    description: Line drifted down — UNDER. 59.8% 5-season HR
+    introduced_session: 466
+
+  - tag: home_under
+    status: active
+    weight: 1.0
+    direction: under
+    description: Home UNDER (restored from BASE Session 495). 66.7-69.2% HR 7d hot
+    introduced_session: 495
+
+  - tag: high_scoring_environment_over
+    status: active
+    weight: 1.0
+    direction: over
+    rescue_priority: 3
+    description: HSE rescue — only validated OVER rescue, 100% HR (3-0)
+    introduced_session: 420
+
+  - tag: volatile_starter_under
+    status: active
+    weight: 1.5
+    direction: under
+    description: Starter with high variance — UNDER
+
+  - tag: extended_rest_under
+    status: active
+    weight: 1.0
+    direction: under
+    description: Extended rest day before — UNDER reversion
+
+  # =========================================================================
+  # SHADOW SIGNALS — observed but excluded from real_sc
+  # =========================================================================
+
+  - tag: usage_surge_over
+    status: shadow
+    weight: 0.0
+    direction: over
+    description: Reverted to shadow Session 506 (33.3% HR N=15). Re-promote when HR >= 58%
+    deprecated_session: 506
+
+  - tag: sharp_consensus_under
+    status: shadow
+    weight: 0.0
+    direction: under
+    description: Reverted Session 515. 5-season 69.3% was 4-5 book regime; 12+ book makes std>=1.0 noise
+    deprecated_session: 515
+
+  - tag: starter_away_overtrend_under
+    status: shadow
+    weight: 0.0
+    direction: under
+    description: Demoted Session 462 (48.2% HR)
+    deprecated_session: 462
+
+  - tag: sharp_book_lean_over
+    status: shadow
+    weight: 0.0
+    direction: over
+    description: Demoted Session 462 (41.7% HR)
+    deprecated_session: 462
+
+  - tag: over_streak_reversion_under
+    status: shadow
+    weight: 0.0
+    direction: under
+    description: Demoted (51.6% HR)
+
+  - tag: projection_consensus
+    status: shadow
+    weight: 0.0
+    direction: both
+    description: Cross-source projection agreement — accumulating data
+    introduced_session: 401
+
+  - tag: predicted_pace
+    status: shadow
+    weight: 0.0
+    direction: both
+    description: TeamRankings pace-based — accumulating data
+
+  - tag: dvp_favorable
+    status: shadow
+    weight: 0.0
+    direction: both
+    description: Defense-vs-position favorable — accumulating data

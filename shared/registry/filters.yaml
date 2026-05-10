@@ -1,0 +1,223 @@
+# Filter registry — single source of truth for negative filter tags + status.
+#
+# Status values:
+#   active        — blocks picks when condition met
+#   observation   — logs but doesn't block (CF HR data accumulating)
+#   removed       — historical; documents that the tag once existed
+#
+# When code adds/removes/demotes a filter, update this file in the same commit.
+#
+# Pipeline-state-redesign Phase H.
+
+filters:
+
+  - tag: legacy_block
+    status: active
+    blocks_direction: both
+    description: Model in LEGACY_MODEL_BLOCKLIST
+    introduced_session: 332
+
+  - tag: blacklist
+    status: active
+    blocks_direction: both
+    description: Player <40% HR on 8+ edge-3+ picks
+    introduced_session: 284
+
+  - tag: edge_floor
+    status: active
+    blocks_direction: both
+    description: edge < 3.0
+    introduced_session: 352
+
+  - tag: over_edge_floor
+    status: active
+    blocks_direction: over
+    description: OVER + edge < 6.0 (regime-adaptive to 7.0 in TIGHT)
+    introduced_session: 522
+
+  - tag: under_edge_7plus
+    status: active
+    blocks_direction: under
+    description: UNDER + edge >= 7 (v9 only)
+    introduced_session: 318
+
+  - tag: model_direction_affinity
+    status: active
+    blocks_direction: both
+    description: Model+dir+edge combo HR < 45% on 15+ picks
+    introduced_session: 343
+
+  - tag: quality_floor
+    status: active
+    blocks_direction: both
+    description: Feature quality < 85
+    introduced_session: 278
+
+  - tag: bench_under
+    status: observation
+    blocks_direction: under
+    description: UNDER + line < 12. Demoted to observation Session 419
+    deprecated_session: 419
+
+  - tag: star_under
+    status: active
+    blocks_direction: under
+    description: Star UNDER (line >= 23) injury-aware
+    introduced_session: 367
+
+  - tag: under_star_away
+    status: active
+    blocks_direction: under
+    description: UNDER + Star + AWAY (line >= 23)
+    introduced_session: 371
+
+  - tag: med_usage_under
+    status: active
+    blocks_direction: under
+    description: Medium teammate usage + UNDER
+    introduced_session: 371
+
+  - tag: line_jumped_under
+    status: active
+    blocks_direction: under
+    description: UNDER + prop_line_delta >= 2.0
+    introduced_session: 306
+
+  - tag: line_dropped_under
+    status: active
+    blocks_direction: under
+    description: UNDER + prop_line_delta <= -2.0
+    introduced_session: 306
+
+  - tag: neg_pm_streak
+    status: active
+    blocks_direction: under
+    description: UNDER + 3+ negative +/- games
+    introduced_session: 294
+
+  - tag: opponent_under_block
+    status: observation
+    blocks_direction: under
+    description: UNDER + opponent in {MIN, MEM, MIL}. Demoted Session 488
+    deprecated_session: 488
+
+  - tag: opponent_depleted_under
+    status: active
+    blocks_direction: under
+    description: UNDER + 3+ opponent stars out
+    introduced_session: 374
+
+  - tag: high_book_std_under
+    status: active
+    blocks_direction: under
+    description: UNDER + high multi-book line std
+    introduced_session: 374
+
+  - tag: model_profile_would_block
+    status: observation
+    blocks_direction: both
+    description: Per-model slice HR observation (not enforced)
+    introduced_session: 384
+
+  - tag: signal_count
+    status: active
+    blocks_direction: both
+    description: SC < 4 (edge < 7) or SC < 3 (edge 7+)
+    introduced_session: 388
+
+  - tag: starter_over_sc_floor
+    status: active
+    blocks_direction: over
+    description: Starter OVER (line 15-25) with SC < 5
+    introduced_session: 382
+
+  - tag: confidence
+    status: active
+    blocks_direction: both
+    description: Confidence below MIN_CONFIDENCE
+
+  - tag: anti_pattern
+    status: active
+    blocks_direction: both
+    description: Anti-pattern combo detected
+
+  - tag: signal_density
+    status: active
+    blocks_direction: both
+    description: Base-only signals + edge < 7
+    introduced_session: 352
+
+  - tag: sc3_over_block
+    status: active
+    blocks_direction: over
+    description: OVER + SC=3 (45.5% HR, net loser)
+    introduced_session: 394
+
+  - tag: q4_scorer_under_block
+    status: active
+    blocks_direction: under
+    description: UNDER + Q4_ratio >= 0.35 (34.0% HR)
+    introduced_session: 397
+
+  - tag: friday_over_block
+    status: active
+    blocks_direction: over
+    description: OVER + Friday (37.5% HR best bets)
+    introduced_session: 398
+
+  - tag: cold_fg_under
+    status: active
+    blocks_direction: under
+    description: UNDER + FG hot (diff >= 10%)
+    introduced_session: 462
+
+  - tag: cold_3pt_under
+    status: active
+    blocks_direction: under
+    description: UNDER + 3PT hot (diff >= 15%)
+    introduced_session: 462
+
+  - tag: over_line_rose_heavy
+    status: active
+    blocks_direction: over
+    description: OVER + line rose >= 1.0 (promoted Session 469)
+    introduced_session: 469
+
+  # =========================================================================
+  # REMOVED — kept for doc-validation symmetry
+  # =========================================================================
+
+  - tag: familiar_matchup
+    status: removed
+    blocks_direction: both
+    description: REMOVED 2026-03-26 / Session 494 (CF HR 54.4% blocked winners)
+    deprecated_session: 494
+
+  - tag: away_noveg
+    status: removed
+    blocks_direction: both
+    description: REMOVED Session 401
+    deprecated_session: 401
+
+  - tag: starter_v12_under
+    status: removed
+    blocks_direction: under
+    description: REMOVED Session 422b (dead filter, zero fires)
+    deprecated_session: 422
+
+  - tag: line_dropped_over
+    status: removed
+    blocks_direction: over
+    description: REMOVED 2026-03-26 (CF HR 60.0%)
+
+  - tag: ft_variance_under
+    status: removed
+    blocks_direction: under
+    description: REMOVED Session 494
+    deprecated_session: 494
+
+  - tag: b2b_under
+    status: removed
+    blocks_direction: under
+    description: REMOVED Session 494
+    deprecated_session: 494
