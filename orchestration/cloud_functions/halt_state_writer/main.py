@@ -103,13 +103,22 @@ def _is_in_season_window(today: date, sport: str) -> bool:
     return today_md >= start_md or today_md <= end_md
 
 
-def _has_recent_games(bq: bigquery.Client, today: date, sport: str) -> Tuple[bool, int]:
-    """Are there scheduled games within ±21 days? Returns (has_games, num_today)."""
+def _has_recent_games(bq: bigquery.Client, today: date, sport: str) -> Tuple[bool, int, bool]:
+    """Schedule presence diagnostics. Returns (has_games_in_window, games_today, has_future_games_14d).
+
+    has_games_in_window: any games scheduled in ±21 days. Distinguishes
+        true off-season (no games in window) from "between rounds" / dormant.
+    games_today: count of games on `today`.
+    has_future_games_14d: any games scheduled today through today+14d. When
+        this is False but has_games_in_window is True, the sport is in
+        a between-rounds dormancy (e.g. NBA between playoff rounds in May).
+    """
     lookup = SCHEDULE_LOOKUP[sport]
     query = f"""
         SELECT
           COUNTIF({lookup['date_col']} = @today) AS games_today,
-          COUNT(*) AS games_window
+          COUNT(*) AS games_window,
+          COUNTIF({lookup['date_col']} BETWEEN @today AND @end_14d) AS games_future_14d
         FROM `{lookup['table']}`
         WHERE {lookup['date_col']} BETWEEN @start AND @end
     """
@@ -118,20 +127,21 @@ def _has_recent_games(bq: bigquery.Client, today: date, sport: str) -> Tuple[boo
             bigquery.ScalarQueryParameter('today', 'DATE', today),
             bigquery.ScalarQueryParameter('start', 'DATE', today - timedelta(days=21)),
             bigquery.ScalarQueryParameter('end', 'DATE', today + timedelta(days=21)),
+            bigquery.ScalarQueryParameter('end_14d', 'DATE', today + timedelta(days=14)),
         ]
     )
     try:
         rows = list(bq.query(query, job_config=job_config).result(timeout=60))
         if not rows:
-            return False, 0
+            return False, 0, False
         games_window = int(rows[0].games_window or 0)
         games_today = int(rows[0].games_today or 0)
-        return games_window > 0, games_today
+        games_future_14d = int(rows[0].games_future_14d or 0)
+        return games_window > 0, games_today, games_future_14d > 0
     except Exception as e:
-        # If the schedule table isn't reachable, assume in-season to fail safe
-        # (don't accidentally publish off_season during a transient BQ error).
+        # If the schedule table isn't reachable, assume in-season to fail safe.
         logger.warning(f"Schedule lookup failed for {sport}: {e}; assuming in-season.")
-        return True, 0
+        return True, 0, True
 
 
 def _nba_edge_collapse(bq: bigquery.Client, today: date) -> Optional[Dict[str, Any]]:
@@ -303,16 +313,23 @@ def evaluate_halt_state(
     halt_reason: Optional[str] = None
     halt_metrics: Dict[str, Any] = {}
 
-    # 1. Schedule-presence check — strongest signal for off_season.
-    has_games, games_today = _has_recent_games(bq, today, sport)
+    # 1. Schedule-presence check — strongest signal for off_season / dormant.
+    has_games, games_today, has_future_games_14d = _has_recent_games(bq, today, sport)
     in_window = _is_in_season_window(today, sport)
     halt_metrics['games_today'] = games_today
     halt_metrics['has_games_in_21d_window'] = has_games
+    halt_metrics['has_future_games_14d'] = has_future_games_14d
     halt_metrics['in_season_window'] = in_window
 
     if not has_games or not in_window:
         halt_active = True
         halt_reason = 'off_season'
+    elif not has_future_games_14d:
+        # In-window but no future games in next 14d — between-rounds dormancy
+        # (e.g. NBA between playoff rounds in May). Treat as halted with a
+        # specific reason; auto-clears when the next round's schedule lands.
+        halt_active = True
+        halt_reason = 'between_rounds'
 
     # 2. Edge collapse (NBA only) — only consult when not already off_season.
     if not halt_active and sport == 'nba':
