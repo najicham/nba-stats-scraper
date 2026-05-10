@@ -41,13 +41,19 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_orchestration.halt_state` (
     -- Causes: off_season, edge_collapse, fleet_blocked, manual.
 
   halt_reason STRING,
-    -- Short canonical reason. Enum:
-    --   'off_season'      — outside the sport's regular season + playoffs
-    --   'edge_collapse'   — Session 515 7d avg edge < 5.0 AND edge-5+ < 50%
-    --   'fleet_blocked'   — all enabled models in BLOCKED state
-    --   'tight_market'    — vegas_mae_7d < 4.5 + manual elevation
-    --   'manual'          — operator-set via halt_overrides
-    --   NULL              — not halted
+    -- Short canonical reason. Enum (writer/main.py decision tree order):
+    --   'off_season'           — no games in schedule within ±21d window
+    --                            OR outside the sport's calendar season window
+    --   'between_rounds'       — in-season but no future games in next 14d
+    --                            (e.g. NBA between playoff rounds)
+    --   'edge_collapse'        — Session 515 7d avg edge < 5.0 AND edge-5+ < 50%
+    --   'fleet_blocked'        — all enabled models in BLOCKED state
+    --   'predictions_inactive' — games scheduled but predictions silent for 3+ days
+    --                            (catches operator-paused schedulers, prediction
+    --                            worker crashes, season-restart cold start)
+    --   'manual'               — operator-set via halt_overrides
+    --   NULL                   — not halted
+    -- 'tight_market' is reserved but not yet emitted by the writer.
 
   halt_since DATE,
     -- When the current halt began (inclusive). NULL when halt_active=false.

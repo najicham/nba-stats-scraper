@@ -25,7 +25,7 @@ One row per `(effective_date, sport)`. Single source of truth for "are we produc
 |---|---|
 | `effective_date`, `sport` | Composite key. |
 | `halt_active` | Boolean. Drives every Phase 6 exporter's halt branch. |
-| `halt_reason` | `off_season` \| `edge_collapse` \| `fleet_blocked` \| `tight_market` \| `manual` |
+| `halt_reason` | `off_season` \| `between_rounds` \| `edge_collapse` \| `fleet_blocked` \| `predictions_inactive` \| `manual` (decision tree order, first match wins; `tight_market` reserved but not yet emitted) |
 | `halt_since` | When the current halt began. |
 | `halt_metrics` | JSON diagnostic context. |
 | `source`, `written_at`, `actor` | Provenance. |

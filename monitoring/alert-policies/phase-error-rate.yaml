@@ -55,7 +55,6 @@ enabled: true
 
 alertStrategy:
   autoClose: 604800s
-  notificationRateLimit:
-    period: 3600s
 
-notificationChannels: []
+notificationChannels:
+  - projects/nba-props-platform/notificationChannels/13444328261517403081

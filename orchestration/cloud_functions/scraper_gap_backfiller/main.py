@@ -21,6 +21,8 @@ from flask import jsonify
 from google.cloud import bigquery
 from google.cloud import secretmanager
 from datetime import datetime, timezone
+import base64
+import json
 import requests
 import logging
 import os
@@ -468,31 +470,58 @@ def _update_expected_output_attempt(
 ) -> None:
     """Update one expected_outputs row after a backfill attempt.
 
-    Status flow:
-      success → row stays as-is; reconciler will flip to COMPLETE on next pass.
-      failure → bump attempts + record error; reconciler / gap_detector handle
-                escalation to DEGRADED → FAILED.
+    The subscriber is the canonical writer of `attempts`. gap_detector
+    publishes WITHOUT incrementing; reconciler observes WITHOUT incrementing.
+    Only when the subscriber actually processes a message and tries the
+    backfill does the count advance — one increment per real attempt.
+
+    On success: reset status='EXPECTED' + attempts=0 + last_error=NULL so
+        the next reconciler pass verifies the actuals landed.
+        Critically this also re-eligibilizes rows that came in as DEGRADED.
+    On failure: increment attempts + record error; status untouched. The
+        gap_detector escalates to FAILED at MAX_BACKFILL_ATTEMPTS.
+
+    Truncates last_error to 500 chars to keep BQ row size bounded.
     """
-    sql = f"""
-        UPDATE `{EXPECTED_OUTPUTS_TABLE}` T
-        SET attempts = T.attempts + 1,
-            last_run_at = CURRENT_TIMESTAMP(),
-            last_error = @last_error,
-            updated_at = CURRENT_TIMESTAMP(),
-            source = 'pubsub_backfiller'
-        WHERE sport = @sport AND game_date = @game_date
-          AND phase = @phase AND output_type = @output_type
-    """
-    job_config = bigquery.QueryJobConfig(
-        query_parameters=[
+    if success:
+        sql = f"""
+            UPDATE `{EXPECTED_OUTPUTS_TABLE}` T
+            SET status = 'EXPECTED',
+                attempts = 0,
+                last_run_at = CURRENT_TIMESTAMP(),
+                last_error = NULL,
+                updated_at = CURRENT_TIMESTAMP(),
+                source = 'pubsub_backfiller_success'
+            WHERE sport = @sport AND game_date = @game_date
+              AND phase = @phase AND output_type = @output_type
+        """
+        params = [
             bigquery.ScalarQueryParameter('sport', 'STRING', sport),
             bigquery.ScalarQueryParameter('game_date', 'DATE', game_date),
             bigquery.ScalarQueryParameter('phase', 'STRING', phase),
             bigquery.ScalarQueryParameter('output_type', 'STRING', output_type),
-            bigquery.ScalarQueryParameter('last_error', 'STRING', error or ''),
         ]
-    )
-    bq_client.query(sql, job_config=job_config).result(timeout=30)
+    else:
+        sql = f"""
+            UPDATE `{EXPECTED_OUTPUTS_TABLE}` T
+            SET attempts = T.attempts + 1,
+                last_run_at = CURRENT_TIMESTAMP(),
+                last_error = @last_error,
+                updated_at = CURRENT_TIMESTAMP(),
+                source = 'pubsub_backfiller_failed'
+            WHERE sport = @sport AND game_date = @game_date
+              AND phase = @phase AND output_type = @output_type
+        """
+        params = [
+            bigquery.ScalarQueryParameter('sport', 'STRING', sport),
+            bigquery.ScalarQueryParameter('game_date', 'DATE', game_date),
+            bigquery.ScalarQueryParameter('phase', 'STRING', phase),
+            bigquery.ScalarQueryParameter('output_type', 'STRING', output_type),
+            bigquery.ScalarQueryParameter(
+                'last_error', 'STRING', (error or '')[:500]
+            ),
+        ]
+    bq_client.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=params)).result(timeout=30)
 
 
 @functions_framework.cloud_event
@@ -514,7 +543,6 @@ def pubsub_subscriber(cloud_event):
       - Phase 1: look up scraper_name in PHASE1_OUTPUT_TO_SCRAPER, run trigger_backfill.
       - Phase 2-6: log + skip; gap_detector will mark FAILED after attempt cap.
     """
-    import base64
     try:
         data_b64 = cloud_event.data['message']['data']
         payload = json.loads(base64.b64decode(data_b64).decode('utf-8'))

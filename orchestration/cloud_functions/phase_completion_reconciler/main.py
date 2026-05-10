@@ -221,18 +221,24 @@ def decide_status(
     halt_active: bool,
     has_games: bool,
 ) -> Tuple[str, int]:
-    """Return (new_status, attempts_increment). Pure function."""
+    """Return (new_status, attempts_increment). Pure function.
+
+    Reconciler is the OBSERVER. It does not bump attempts; the subscriber
+    is the canonical writer of attempts. Returned attempts_increment is
+    always 0; signature kept for backward-compat with the batch updater.
+    """
     if error is not None:
-        # Couldn't even read — keep EXPECTED, bump attempts.
-        return ('EXPECTED', 1)
+        # Couldn't even read the actual — leave as-is.
+        return ('EXPECTED', 0)
     if row_count is None or row_count <= 0:
         # No actuals.
         if halt_active or not has_games:
             return ('EMPTY_OK', 0)
-        # Games scheduled but no data — gap.
-        if attempts + 1 >= DEGRADED_ATTEMPT_THRESHOLD:
-            return ('DEGRADED', 1)
-        return ('EXPECTED', 1)
+        # Games scheduled but no data — keep status unchanged; let the
+        # gap_detector → subscriber loop drive attempts.
+        if attempts >= DEGRADED_ATTEMPT_THRESHOLD:
+            return ('DEGRADED', 0)
+        return ('EXPECTED', 0)
     return ('COMPLETE', 0)
 
 
@@ -242,13 +248,20 @@ def decide_status(
 
 
 def reconcile_batch(bq: bigquery.Client, gcs: storage.Client, batch_size: int) -> Dict[str, int]:
-    """Reconcile up to batch_size EXPECTED rows whose expected_by has passed.
+    """Reconcile up to batch_size EXPECTED + DEGRADED rows whose expected_by
+    has passed.
 
     Strategy:
-      1. Pull batch of EXPECTED rows ordered by expected_by ASC.
+      1. Pull EXPECTED *and* DEGRADED rows ordered by expected_by ASC.
+         Including DEGRADED ensures that a row whose subscriber-driven
+         backfill later succeeds gets flipped to COMPLETE rather than stuck
+         (pre-fix, reconciler only read EXPECTED and DEGRADED rows could
+         never recover).
       2. Lookup halt + schedule for the unique (sport, date) pairs.
-      3. For each row, query actual.
-      4. UPDATE each row's status + row_count + last_run_at + attempts.
+      3. For each row, query actual partition.
+      4. UPDATE each row's status, row_count, last_run_at. Reconciler does
+         NOT bump attempts — the subscriber is the canonical writer of
+         attempts (one increment per real backfill attempt).
 
     Returns counts of resulting statuses for telemetry.
     """
@@ -256,7 +269,7 @@ def reconcile_batch(bq: bigquery.Client, gcs: storage.Client, batch_size: int) -
         SELECT season, game_date, sport, phase, output_type,
                expected_partition, attempts
         FROM `{EXPECTED_OUTPUTS_TABLE}`
-        WHERE status = 'EXPECTED'
+        WHERE status IN ('EXPECTED', 'DEGRADED')
           AND expected_by < CURRENT_TIMESTAMP()
         ORDER BY expected_by ASC
         LIMIT @batch_size

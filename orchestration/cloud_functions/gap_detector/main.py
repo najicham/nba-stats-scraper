@@ -200,16 +200,35 @@ def gap_detector(request: Request):
             summary['failed_marked'] = update_status(bq, failable, 'FAILED', bump_attempts=False)
         except Exception as e:
             summary['errors'].append(f"update_status FAILED: {e}")
+        # gap_detector does NOT bump attempts on publish. The subscriber is
+        # the canonical writer of attempts (one increment per real backfill
+        # attempt). Pre-fix this loop bumped attempts here AND in the
+        # subscriber AND in the reconciler — a single round trip burned
+        # the cap of 3 in one cycle, marking rows FAILED before the scraper
+        # had a real chance. We still mark publishable rows DEGRADED so the
+        # state machine reflects "in retry."
         try:
-            # Bump attempts on the rows we just published so reconciler /
-            # next pass sees the right attempts count.
-            update_status(bq, publishable, 'DEGRADED', bump_attempts=True)
+            update_status(bq, publishable, 'DEGRADED', bump_attempts=False)
         except Exception as e:
             summary['errors'].append(f"update_status publishable: {e}")
 
     summary['skipped_at_cap'] = len(failable)
     summary['written_at'] = datetime.now(timezone.utc).isoformat()
     logger.info(f"gap_detector: {summary}")
+
+    # Emit overdue_count metric for the expected-output-overdue alert policy.
+    # Fail-open: telemetry failure never crashes the CF.
+    try:
+        from shared.observability.metrics import emit_metric, MetricKind
+        emit_metric(
+            metric_name='overdue_count',
+            value=float(len(rows)),
+            labels={'project': 'pipeline-state-redesign'},
+            kind=MetricKind.GAUGE,
+        )
+    except Exception as e:
+        logger.warning(f"emit overdue_count failed (non-fatal): {e}")
+
     return summary, 200
 
 

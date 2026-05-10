@@ -71,9 +71,7 @@ enabled: true
 
 alertStrategy:
   autoClose: 604800s  # 7 days
-  notificationRateLimit:
-    period: 3600s     # Max 1 notification per hour
 
-# Notification channels populated by deploy script. See:
-#   monitoring/alert-policies/deploy-alert-policies.sh
-notificationChannels: []
+# NBA Platform Alerts (Slack).
+notificationChannels:
+  - projects/nba-props-platform/notificationChannels/13444328261517403081

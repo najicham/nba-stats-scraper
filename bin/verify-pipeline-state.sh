@@ -61,11 +61,23 @@ check "expected_outputs has rows" \
 
 echo
 echo "==> 4. Cloud Functions are ACTIVE"
-for cf in halt-state-writer expected-outputs-planner phase-completion-reconciler gap-detector; do
+for cf in halt-state-writer expected-outputs-planner phase-completion-reconciler gap-detector backfill-pubsub-subscriber; do
   check "CF: ${cf}" \
     "gcloud functions describe ${cf} --gen2 --region=us-west2 --project=${PROJECT_ID} --format='value(state)' 2>&1" \
     "ACTIVE"
 done
+
+echo
+echo "==> 4b. Subscriber IAM (the bug that hit on 2026-05-10 morning)"
+# EventArc-invoked subscriber must have run.invoker granted to both the
+# trigger SA and the broad-default compute SA. Without these, every
+# Pub/Sub message returns 403 and the system silently doesn't backfill.
+check "Subscriber has gap-detector invoker" \
+  "gcloud run services get-iam-policy backfill-pubsub-subscriber --region=us-west2 --project=${PROJECT_ID} --format=json 2>&1" \
+  "gap-detector@nba-props-platform.iam.gserviceaccount.com"
+check "Subscriber EventArc trigger exists" \
+  "gcloud eventarc triggers list --location=us-west2 --project=${PROJECT_ID} --filter='destination.cloudRun.service=backfill-pubsub-subscriber' --format='value(name)' 2>&1" \
+  "backfill-pubsub-subscriber"
 
 echo
 echo "==> 5. Schedulers are ENABLED"

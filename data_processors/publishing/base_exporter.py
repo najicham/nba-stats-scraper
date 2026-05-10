@@ -348,10 +348,18 @@ class BaseExporter(ABC):
             halt_since         str | None     ISO date when current halt began
             halt_source_date   str            ISO date the envelope was sourced for
 
-        Failure mode: if halt_state is unreachable or has no row for the
-        target date, returns the safe-default envelope (halt_active=False,
-        halt_reason='unknown_state'). Callers should still publish but
-        may want to log; the halt_state_stale alert covers the writer side.
+        Failure modes (two different defaults):
+          - BQ unreachable / transient error → fail-open envelope:
+            halt_active=False, halt_reason='unknown_state'. Telemetry
+            failure should not block publishing.
+          - No row exists for target_date AND target_date is recent (within
+            last 7 days) → fail-CLOSED envelope: halt_active=True,
+            halt_reason='unknown_state'. A missing recent row strongly
+            suggests halt_state_writer is broken; safer to halt than to
+            publish picks during a real halt the writer would have flagged.
+          - No row exists for an older / future date → fail-open
+            (halt_active=False, halt_reason='unknown_state'). Historical
+            re-exports shouldn't be blocked.
 
         Args:
             sport: 'nba' or 'mlb'
@@ -391,8 +399,17 @@ class BaseExporter(ABC):
             return envelope
 
         if not rows:
-            # No row written yet for this date — writer hasn't run, or this
-            # is a historical re-export. Don't fabricate halt; mark unknown.
+            # No row written yet for this date. Distinguish two cases:
+            #   - target_date is in the recent past (≤7 days): writer likely
+            #     broken. Fail-closed: halt_active=True so we don't publish
+            #     picks while halt_state is silent. The halt_state_stale
+            #     alert (>36h) will catch the writer-side failure.
+            #   - target_date is older or future: historical re-export or
+            #     forward seed. Fail-open.
+            today = datetime.now(timezone.utc).date()
+            days_old = (today - target_date).days
+            if 0 <= days_old <= 7:
+                envelope['halt_active'] = True
             envelope['halt_reason'] = 'unknown_state'
             return envelope
 

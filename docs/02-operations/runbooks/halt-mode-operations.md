@@ -8,14 +8,16 @@
 
 ## How it gets set
 
-`halt_state_writer` Cloud Function runs daily at 5 AM ET (scheduler `halt-state-writer-daily`). For each sport (NBA + MLB) it evaluates:
+`halt_state_writer` Cloud Function runs daily at 5 AM ET (scheduler `halt-state-writer-daily`). For each sport (NBA + MLB) it walks this decision tree and returns at the first match:
 
 1. **Schedule presence** — any games in `nba_reference.nba_schedule` / `mlb_raw.mlb_schedule` within ±21 days of today? If not → `halt_reason='off_season'`.
 2. **Calendar window** — is today within the sport's regular season + playoffs window (NBA Oct 1 – Jun 30; MLB Mar 1 – Nov 15)? If not → `halt_reason='off_season'`.
-3. **NBA edge collapse** (Session 515) — 7d avg edge < 5.0 AND edge-5+ pick rate < 50% AND days_sampled ≥ 3 → `halt_reason='edge_collapse'`.
-4. **NBA fleet blocked** — all enabled NBA models in `model_performance_daily` state='BLOCKED' → `halt_reason='fleet_blocked'`.
+3. **Between rounds** — in-season but no games scheduled in the next 14 days (e.g. NBA between playoff rounds) → `halt_reason='between_rounds'`. Auto-clears when next round's schedule lands.
+4. **NBA edge collapse** (Session 515) — 7d avg edge < 5.0 AND edge-5+ pick rate < 50% AND days_sampled ≥ 3 → `halt_reason='edge_collapse'`.
+5. **NBA fleet blocked** — all enabled NBA models in `model_performance_daily` state='BLOCKED' → `halt_reason='fleet_blocked'`.
+6. **Predictions inactive** — games scheduled but zero predictions in last 3 days → `halt_reason='predictions_inactive'`. Catches operator-paused schedulers, prediction worker crashes, and the season-restart cold-start state.
 
-The decision tree returns at the first match. NBA can fall through 1 → 2 → 3 → 4. MLB only checks 1 + 2 today (no edge/fleet logic).
+NBA can fall through 1 → 2 → 3 → 4 → 5 → 6. MLB only checks 1 + 2 + 3 today (no edge/fleet/predictions logic). Reserved-but-not-emitted: `tight_market` (when vegas_mae_7d < 4.5 — to be wired up).
 
 ## How to inspect today's halt state
 
