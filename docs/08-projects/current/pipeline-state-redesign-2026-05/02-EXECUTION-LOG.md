@@ -178,7 +178,24 @@ See `03-BACKFILL-MANIFEST.md` for per-date status.
 
 ---
 
-## Phase K — Documentation refresh (pending)
+## Phase K — Documentation refresh (in_progress, 2026-05-09)
+
+### K.1 Architecture spec
+- New `docs/01-architecture/pipeline-state-redesign.md` — full architecture, files reference, migration order.
+
+### K.2 Operator runbooks
+- New `docs/02-operations/runbooks/halt-mode-operations.md` — operate halt_state.
+- New `docs/02-operations/runbooks/expected-outputs.md` — operate the date-grid.
+- New `docs/02-operations/runbooks/backfill-a-date.md` — recover a missing date.
+- New `docs/02-operations/runbooks/observability-alerts.md` — alert response.
+
+### K.3 CLAUDE.md
+- New "Pipeline State [Keyword: STATE]" section after Data Sources.
+- Documents the two new tables, halt_envelope, observability, registry. Future Claude sessions will read this first.
+
+### K.4 Memory + handoff
+- New `memory/pipeline-state-redesign.md` topic file + MEMORY.md index entry.
+- New `docs/09-handoff/2026-05-09-PIPELINE-STATE-REDESIGN-HANDOFF.md` — complete handoff for next session.
 
 ---
 

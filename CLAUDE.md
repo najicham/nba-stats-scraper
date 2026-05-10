@@ -95,6 +95,20 @@ nba-stats-scraper/
 
 **Naming:** `nbac_*` = NBA.com, `bdl_*` = Ball Don't Lie (disabled), `odds_api_*` = The Odds API, `bettingpros_*` = BettingPros, `numberfire_*`/`fantasypros_*`/`dailyfantasyfuel_*`/`dimers_*` = Projection sources, `teamrankings_*`/`hashtagbasketball_*`/`rotowire_*`/`covers_*`/`vsin_*`/`nba_tracking_*` = External analytics
 
+## Pipeline State [Keyword: STATE]
+
+**Two BQ tables drive everything** (pipeline-state-redesign 2026-05-09 — see `docs/01-architecture/pipeline-state-redesign.md`):
+
+- **`nba_orchestration.halt_state`** — single source of truth for "is the system producing picks today?" One row per (effective_date, sport). Written daily 5 AM ET by `halt_state_writer` CF. Read by every Phase 6 exporter via `BaseExporter.halt_envelope()`. Reasons: `off_season` | `edge_collapse` | `fleet_blocked` | `tight_market` | `manual`.
+
+- **`nba_orchestration.expected_outputs`** — date-grid contract: one row per (sport, season, game_date, phase, output_type). Status: `EXPECTED` | `RUNNING` | `COMPLETE` | `EMPTY_OK` | `FAILED` | `DEGRADED`. Written nightly by `expected_outputs_planner`. Reconciled every 30 min by `phase_completion_reconciler` (queries actuals, flips status). Stale rows escalated by `gap_detector` → `nba-backfill-trigger` Pub/Sub → backfill runs.
+
+**Single observability emitter:** `shared.observability.metrics.emit_metric()` writes Cloud Monitoring custom metrics. Three alert policies (`monitoring/alert-policies/`): `expected-output-overdue` (Critical), `halt-state-stale` (Warning), `phase-error-rate` (Warning).
+
+**Single signal/filter registry:** `shared/registry/{signals,filters}.yaml`. Code imports via `shared.registry.is_known_signal/is_known_filter`. Pre-commit hook validates docs against the registry.
+
+**Runbooks:** `docs/02-operations/runbooks/{halt-mode-operations,expected-outputs,backfill-a-date,observability-alerts}.md`.
+
 ## ML Model [Keyword: MODEL]
 
 **Fleet:** 10+ enabled shadow models (CatBoost, LightGBM, XGBoost). No single production champion — best bets aggregates across all enabled models per player.
