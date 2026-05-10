@@ -331,6 +331,80 @@ class BaseExporter(ABC):
         """Get current UTC timestamp in ISO format."""
         return datetime.now(timezone.utc).isoformat()
 
+    def halt_envelope(
+        self,
+        sport: str,
+        target_date: Any = None,
+    ) -> Dict[str, Any]:
+        """Return canonical halt-state envelope to merge into every Phase 6 JSON.
+
+        Reads `nba_orchestration.halt_state` (written daily by halt_state_writer
+        Cloud Function). One row per (effective_date, sport).
+
+        Returns dict with stable keys — readers can rely on every NBA/MLB JSON
+        carrying these fields, even when the system is healthy:
+            halt_active        bool
+            halt_reason        str | None     ('off_season' | 'edge_collapse' | ...)
+            halt_since         str | None     ISO date when current halt began
+            halt_source_date   str            ISO date the envelope was sourced for
+
+        Failure mode: if halt_state is unreachable or has no row for the
+        target date, returns the safe-default envelope (halt_active=False,
+        halt_reason='unknown_state'). Callers should still publish but
+        may want to log; the halt_state_stale alert covers the writer side.
+
+        Args:
+            sport: 'nba' or 'mlb'
+            target_date: date / datetime / ISO str. Defaults to today.
+        """
+        if target_date is None:
+            target_date = datetime.now(timezone.utc).date()
+        elif isinstance(target_date, str):
+            target_date = datetime.fromisoformat(target_date).date()
+        elif isinstance(target_date, datetime):
+            target_date = target_date.date()
+
+        envelope: Dict[str, Any] = {
+            'halt_active': False,
+            'halt_reason': None,
+            'halt_since': None,
+            'halt_source_date': target_date.isoformat(),
+        }
+
+        query = f"""
+            SELECT halt_active, halt_reason, halt_since
+            FROM `{self.project_id}.nba_orchestration.halt_state`
+            WHERE effective_date = @target_date AND sport = @sport
+            LIMIT 1
+        """
+        params = [
+            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+            bigquery.ScalarQueryParameter('sport', 'STRING', sport),
+        ]
+        try:
+            rows = self.query_to_list(query, params=params)
+        except Exception as e:
+            logger.warning(
+                f"halt_envelope: halt_state query failed ({e}); returning unknown_state envelope"
+            )
+            envelope['halt_reason'] = 'unknown_state'
+            return envelope
+
+        if not rows:
+            # No row written yet for this date — writer hasn't run, or this
+            # is a historical re-export. Don't fabricate halt; mark unknown.
+            envelope['halt_reason'] = 'unknown_state'
+            return envelope
+
+        row = rows[0]
+        envelope['halt_active'] = bool(row.get('halt_active') or False)
+        envelope['halt_reason'] = row.get('halt_reason')
+        halt_since = row.get('halt_since')
+        envelope['halt_since'] = (
+            halt_since.isoformat() if hasattr(halt_since, 'isoformat') else halt_since
+        )
+        return envelope
+
     def validate_content(self, json_data: Dict[str, Any]) -> Optional[str]:
         """Hook for subclasses to enforce content invariants before publishing.
 

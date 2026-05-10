@@ -208,11 +208,19 @@ class BestBetsAllExporter(BaseExporter):
         # from "off day" even before predictions run.
         games_scheduled = self._query_games_scheduled(target_date)
 
+        # Halt envelope — every NBA Phase 6 JSON carries these fields so the
+        # frontend can distinguish off-season / edge-collapse / fleet-blocked
+        # from "picks coming later." Stable shape; readers ignore unknown keys.
+        halt = self.halt_envelope(sport='nba', target_date=target)
+
         result = {
             'date': target_date,
             'season': _compute_season_label(target),
             'generated_at': self.get_generated_at(),
             'algorithm_version': ALGORITHM_VERSION,
+            'halt_active': halt['halt_active'],
+            'halt_reason': halt['halt_reason'],
+            'halt_since': halt['halt_since'],
             'record': record,
             'ultra_record': ultra_record,
             'streak': streak,

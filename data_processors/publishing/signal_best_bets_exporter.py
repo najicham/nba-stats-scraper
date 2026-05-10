@@ -113,12 +113,15 @@ class SignalBestBetsExporter(BaseExporter):
             )
             season_start_year_h = target_h.year if target_h.month >= 10 else target_h.year - 1
             season_label_h = f"{season_start_year_h}-{str(season_start_year_h + 1)[-2:]}"
+            # Augment halt envelope with halt_since from halt_state if available
+            halt_h = self.halt_envelope(sport='nba', target_date=target_h)
             return {
                 'date': target_date,
                 'season': season_label_h,
                 'generated_at': self.get_generated_at(),
                 'halt_active': True,
                 'halt_reason': halt_reason,
+                'halt_since': halt_h.get('halt_since'),
                 'halt_metrics': {
                     'rolling_7d_avg_edge': regime_ctx.get('rolling_7d_avg_edge'),
                     'rolling_7d_pct_edge_5plus': regime_ctx.get('rolling_7d_pct_edge_5plus'),
@@ -154,10 +157,16 @@ class SignalBestBetsExporter(BaseExporter):
             )
             season_start_year_0 = target_0.year if target_0.month >= 10 else target_0.year - 1
             season_label_0 = f"{season_start_year_0}-{str(season_start_year_0 + 1)[-2:]}"
+            # Halt envelope — even on the no-predictions path, every JSON
+            # carries halt_active/halt_reason/halt_since for stable schema.
+            halt_0 = self.halt_envelope(sport='nba', target_date=target_0)
             return {
                 'date': target_date,
                 'season': season_label_0,
                 'generated_at': self.get_generated_at(),
+                'halt_active': halt_0['halt_active'],
+                'halt_reason': halt_0['halt_reason'],
+                'halt_since': halt_0['halt_since'],
                 'min_signal_count': BestBetsAggregator.MIN_SIGNAL_COUNT,
                 'record': record,
                 'model_health': {
@@ -444,10 +453,15 @@ class SignalBestBetsExporter(BaseExporter):
             s.tag for s in _signal_registry.all() if s.tag != 'model_health'
         ]
 
+        # Halt envelope — stable schema across halt + non-halt outputs.
+        halt_n = self.halt_envelope(sport='nba', target_date=target_date)
         return {
             'date': target_date,
             'season': season_label,
             'generated_at': self.get_generated_at(),
+            'halt_active': halt_n['halt_active'],
+            'halt_reason': halt_n['halt_reason'],
+            'halt_since': halt_n['halt_since'],
             'min_signal_count': BestBetsAggregator.MIN_SIGNAL_COUNT,
             'record': record,
             'model_health': {

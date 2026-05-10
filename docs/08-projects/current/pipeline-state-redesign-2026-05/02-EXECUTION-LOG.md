@@ -37,9 +37,32 @@ Running log of code changes per phase. Update as work lands.
 
 ---
 
-## Phase B — halt_state foundation (pending)
+## Phase B — halt_state foundation (in_progress, 2026-05-09)
 
-(Will fill in as work lands.)
+### B.1 Schema + table created
+- New `schemas/bigquery/nba_orchestration/halt_state.sql` — partitioned by effective_date, clustered by sport + halt_active.
+- `bq query` ran the CREATE TABLE; confirmed `nba-props-platform.nba_orchestration.halt_state` exists with all 9 columns.
+- Seeded today's rows: NBA halted (off_season, since 2026-04-19); MLB healthy.
+
+### B.2 halt_state_writer Cloud Function (code landed; not yet deployed)
+- New `orchestration/cloud_functions/halt_state_writer/{main.py, requirements.txt, __init__.py, deploy.sh}`.
+- Inlined the Session 515 edge-collapse logic from `regime_context.py` so the CF doesn't depend on the full ml/signals stack.
+- Decision tree per sport: schedule-presence check → off_season; else NBA edge collapse; else NBA fleet_blocked; else healthy.
+- Idempotent MERGE; daily 5 AM ET schedule; Slack alert on state change.
+- Service account `halt-state-writer@nba-props-platform.iam.gserviceaccount.com` referenced — needs creation before first deploy.
+
+### B.3 BaseExporter.halt_envelope()
+- Added to `data_processors/publishing/base_exporter.py` between `get_generated_at()` and `validate_content()`.
+- Reads halt_state for (sport, target_date) and returns canonical 4-key envelope.
+- Fail-open: if BQ unreachable or row missing, returns `halt_active=False, halt_reason='unknown_state'` so exporters never crash.
+
+### B.4 Wire halt envelope into key exporters
+- `best_bets_all_exporter.py` — added halt_active/halt_reason/halt_since fields to JSON output (line ~217 area). Now every `best-bets/all.json` carries the envelope.
+- `signal_best_bets_exporter.py` — added envelope to BOTH the no-predictions early-return (line ~157) AND the normal return (line ~447). Existing edge-collapse halt branch (line ~107) was already halt-aware; augmented with halt_since from halt_state.
+
+### B.5 Frontend HaltBanner — pending (separate props-web commit)
+- Will read halt_active from any loaded JSON and render explicit halt treatment.
+- Replaces today's misleading "Today's picks aren't out yet — check back around 2 PM ET" copy.
 
 ---
 
