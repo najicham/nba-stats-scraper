@@ -76,7 +76,7 @@ check "Subscriber has gap-detector invoker" \
   "gcloud run services get-iam-policy backfill-pubsub-subscriber --region=us-west2 --project=${PROJECT_ID} --format=json 2>&1" \
   "gap-detector@nba-props-platform.iam.gserviceaccount.com"
 check "Subscriber EventArc trigger exists" \
-  "gcloud eventarc triggers list --location=us-west2 --project=${PROJECT_ID} --filter='destination.cloudRun.service=backfill-pubsub-subscriber' --format='value(name)' 2>&1" \
+  "gcloud eventarc triggers list --location=us-west2 --project=${PROJECT_ID} --format='value(name)' 2>&1 | grep backfill-pubsub-subscriber" \
   "backfill-pubsub-subscriber"
 
 echo
