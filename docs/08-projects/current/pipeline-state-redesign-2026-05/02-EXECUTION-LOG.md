@@ -66,7 +66,29 @@ Running log of code changes per phase. Update as work lands.
 
 ---
 
-## Phase C — expected_outputs date-grid (pending)
+## Phase C — expected_outputs date-grid (in_progress, 2026-05-09)
+
+### C.1 Schema + table + views created
+- New `schemas/bigquery/nba_orchestration/expected_outputs.sql`. Partitioned by game_date, clustered by sport + phase + status.
+- Two views also created:
+  - `expected_outputs_gaps` — overdue EXPECTED rows (canonical "what's missing now?")
+  - `expected_outputs_coverage` — daily completion percentage per phase per sport (powers nba-pipeline-health dashboard)
+- BQ create succeeded; `content_hash` chosen instead of `hash` (reserved word in BQ SQL).
+
+### C.2 expected_outputs_planner Cloud Function (code landed, smoke-tested)
+- New `orchestration/cloud_functions/expected_outputs_planner/{main.py, requirements.txt, __init__.py, deploy.sh}`.
+- OUTPUT_TYPE_REGISTRY centralizes "for sport S phase P, what outputs are expected" — 21 NBA outputs across 6 phases, 6 MLB outputs across 2 phases (initial scope).
+- MERGE pattern: idempotent re-runs update timestamps, never revert COMPLETE/EMPTY_OK back to EXPECTED.
+- Out-of-window dates (e.g. NBA July) seed as EMPTY_OK rather than EXPECTED — keeps gap_detector quiet during off-season while preserving the contract row.
+- Smoke test: 297 rows seeded across 11 (date, sport) pairs in <10s.
+
+### C.3 Historical seed for 2025-26 season (running in background)
+- 2025-10-01 → today + 14d for both sports.
+- Pre-fix scope: NBA had 109 missing days (Oct 21 - Feb 6). After seed completes, every one of those dates has 21 EXPECTED rows ready for gap_detector to surface.
+
+### C.4 phase_completion_reconciler — pending (Phase D)
+- Reconciler will flip EXPECTED → COMPLETE/EMPTY_OK/DEGRADED based on actuals.
+- Will be implemented in Phase D alongside the metrics emitter.
 
 ---
 
