@@ -282,12 +282,17 @@ def cap_to_pre_late_season(train_end: date) -> date:
 
     The cap is Feb 28 as a conservative proxy. The NBA All-Star Break moves
     yearly (mid-Feb to early-Mar), so this may include a few post-ASB days in
-    some seasons. A future improvement could make this ASB-date-aware.
+    some seasons.
 
-    Session 514: Deployed as permanent guard. Compose with cap_to_last_loose_market_date().
+    Only applies when train_end is in the actual late-season window (March or
+    April). Train_ends outside that window pass through unchanged — this is
+    what makes new-season retrains in October-February work correctly.
+    Pre-fix, the cap was unconditional and an Oct 26 train_end would be
+    rewritten to the prior Feb 28 (5 months stale).
     """
-    # NBA seasons span two calendar years. The cap year matches train_end's year
-    # (works because Feb 28 is always in the second half of the season).
+    if train_end.month not in (3, 4):
+        return train_end
+
     season_cap = date(train_end.year, 2, 28)
     if train_end > season_cap:
         logger.info(

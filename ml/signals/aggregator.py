@@ -533,7 +533,7 @@ class BestBetsAggregator:
             # These signals have 65%+ HR at edge 0-3 on N>=5 (validated via BQ).
             signal_rescued = False
             rescue_signal = None
-            if below_edge_floor or (pred.get('recommendation') == 'OVER' and pred_edge < 5.0):
+            if below_edge_floor or (pred.get('recommendation') == 'OVER' and pred_edge < 6.0):
                 key_for_signal_check = f"{pred['player_lookup']}::{pred['game_id']}"
                 signal_check = signal_results.get(key_for_signal_check, [])
                 # Signals that can rescue picks from edge floor:

@@ -81,7 +81,7 @@ Flag:
 Display the full set of negative filters from `ml/signals/aggregator.py`:
 
 ```
-## 3. Negative Filters (27 filters)
+## 3. Negative Filters (24 active + 3 observation)
 | #  | Filter                      | Condition                                     | Session |
 |----|-----------------------------|-----------------------------------------------|---------|
 | 1  | legacy_block                | Model in LEGACY_MODEL_BLOCKLIST               | 332     |
@@ -90,30 +90,36 @@ Display the full set of negative filters from `ml/signals/aggregator.py`:
 | 4  | over_edge_floor             | OVER + edge < 6.0 (regime-adaptive)           | 297,522 |
 | 5  | under_edge_7plus            | UNDER + edge >= 7 (v9 only)                   | 297,318 |
 | 6  | model_direction_affinity    | Model+dir+edge combo HR < 45% on 15+ picks    | 343     |
-| 7  | away_noveg                  | v12_noveg/v9 family + AWAY game                | 365     |
-| 8  | _removed_                   | familiar_matchup REMOVED 2026-03-26 (CF HR 54.4% blocked winners) | 494 |
-| 9  | quality_floor               | Feature quality < 85                            | 278     |
-| 10 | bench_under (obs)           | UNDER + line < 12 — DEMOTED to observation    | 278,419 |
-| 11 | star_under                  | Star UNDER (line >= 23) injury-aware            | 297,367 |
-| 12 | under_star_away             | UNDER + Star + AWAY (line >= 23)                | 371     |
-| 13 | med_usage_under             | Medium teammate usage + UNDER                   | 371     |
-| 14 | starter_v12_under           | Starter V12 UNDER (line 15-20)                  | 371     |
-| 15 | line_jumped_under           | UNDER + prop_line_delta >= 2.0                  | 306     |
-| 16 | line_dropped_under          | UNDER + prop_line_delta <= -2.0                 | 306     |
-| 17 | line_dropped_over           | OVER + prop_line_delta <= -2.0                  | 374b    |
-| 18 | neg_pm_streak               | UNDER + 3+ negative +/- games                   | 294     |
-| 19 | opponent_under_block        | UNDER + opponent in {MIN, MEM, MIL}             | 372     |
-| 20 | opponent_depleted_under     | UNDER + 3+ opponent stars out                    | 374b    |
-| 21 | high_book_std_under         | UNDER + high multi-book line std                 | 374     |
-| 22 | model_profile_would_block   | Per-model slice HR observation (not enforced)    | 384     |
-| 23 | signal_count                | SC < 4 (edge < 7) or SC < 3 (edge 7+)           | 370,388 |
-| 24 | starter_over_sc_floor       | Starter OVER (line 15-25) with SC < 5            | 382c    |
-| 25 | confidence                  | Confidence below MIN_CONFIDENCE                  | -       |
-| 26 | anti_pattern                | Anti-pattern combo detected                      | -       |
-| 27 | signal_density              | Base-only signals + edge < 7                     | 352     |
-| 28 | sc3_over_block              | OVER + SC=3 (45.5% HR, net loser)                | 394     |
-| 29 | q4_scorer_under_block       | UNDER + Q4_ratio >= 0.35 (34.0% HR)              | 397     |
-| 30 | friday_over_block           | OVER + Friday (37.5% HR best bets)               | 398     |
+| 7  | quality_floor               | Feature quality < 85                            | 278     |
+| 8  | bench_under (obs)           | UNDER + line < 12 — DEMOTED to observation    | 278,419 |
+| 9  | star_under                  | Star UNDER (line >= 23) injury-aware            | 297,367 |
+| 10 | under_star_away             | UNDER + Star + AWAY (line >= 23)                | 371     |
+| 11 | med_usage_under             | Medium teammate usage + UNDER                   | 371     |
+| 12 | line_jumped_under           | UNDER + prop_line_delta >= 2.0                  | 306     |
+| 13 | line_dropped_under          | UNDER + prop_line_delta <= -2.0                 | 306     |
+| 14 | neg_pm_streak               | UNDER + 3+ negative +/- games                   | 294     |
+| 15 | opponent_under_block (obs)  | UNDER + opponent in {MIN, MEM, MIL} — DEMOTED  | 372,488 |
+| 16 | opponent_depleted_under     | UNDER + 3+ opponent stars out                    | 374b    |
+| 17 | high_book_std_under         | UNDER + high multi-book line std                 | 374     |
+| 18 | model_profile_would_block (obs) | Per-model slice HR observation (not enforced) | 384  |
+| 19 | signal_count                | SC < 4 (edge < 7) or SC < 3 (edge 7+)           | 370,388 |
+| 20 | starter_over_sc_floor       | Starter OVER (line 15-25) with SC < 5            | 382c    |
+| 21 | confidence                  | Confidence below MIN_CONFIDENCE                  | -       |
+| 22 | anti_pattern                | Anti-pattern combo detected                      | -       |
+| 23 | signal_density              | Base-only signals + edge < 7                     | 352     |
+| 24 | sc3_over_block              | OVER + SC=3 (45.5% HR, net loser)                | 394     |
+| 25 | q4_scorer_under_block       | UNDER + Q4_ratio >= 0.35 (34.0% HR)              | 397     |
+| 26 | friday_over_block           | OVER + Friday (37.5% HR best bets)               | 398     |
+| 27 | cold_fg_under               | UNDER + FG hot (diff >= 10%)                     | 462     |
+| 28 | cold_3pt_under              | UNDER + 3PT hot (diff >= 15%)                    | 462     |
+| 29 | over_line_rose_heavy        | OVER + line rose >= 1.0                          | 469     |
+
+Removed (do not add to dashboard):
+- `familiar_matchup` REMOVED 2026-03-26 / Session 494 (CF HR 54.4% blocked winners)
+- `away_noveg` REMOVED Session 401
+- `starter_v12_under` REMOVED Session 422b (dead filter, zero fires)
+- `line_dropped_over` REMOVED 2026-03-26 (CF HR 60.0%)
+- `ft_variance_under`, `b2b_under` REMOVED Session 494
 ```
 
 ### Section 3.5: Signal Rescue Config (Session 398)
@@ -126,7 +132,7 @@ Picks below edge floors can bypass them via validated high-HR signals. Read `res
 |----------------------------|------------------------------------------------------|
 | Status                     | ENABLED (Session 398)                                |
 | Edge Floor Bypass          | edge < 3.0 AND rescue signal present                 |
-| OVER Edge Floor Bypass     | OVER + edge < 5.0 AND rescue signal present          |
+| OVER Edge Floor Bypass     | OVER + edge < 6.0 AND rescue signal present (S522)   |
 | Single Signal Rescue Tags  | combo_3way, combo_he_ms, book_disagreement,          |
 |                            | home_under, low_line_over, volatile_scoring_over,    |
 |                            | high_scoring_environment_over                        |

@@ -568,9 +568,48 @@ def main(cloud_event):
         )
         results['league_macro_error'] = str(e)
 
-    # Steps 6-9 are picks JSON exports — skip when nothing was graded
+    # Steps 7 + 8 are HISTORY files (best-bets/all.json, record.json, history.json).
+    # They aggregate prior dates and depend only on past picks, not today's grading,
+    # so they always run — re-publishing keeps `data.date` advancing during halts /
+    # off-season so the frontend doesn't display 21-day-old stale "today" copy.
+    # Steps 6 + 9 patch today's picks with actuals; those stay gated on graded_count>0.
+
+    # 7. Re-export best-bets/all.json with updated grading (Session 342)
+    #    Always runs — history file. (Pre-fix: skipped during halts → 21-day stale all.json.)
+    try:
+        from data_processors.publishing.best_bets_all_exporter import BestBetsAllExporter
+        all_exporter = BestBetsAllExporter()
+        all_path = all_exporter.export(target_date)
+        results['best_bets_all_path'] = all_path
+        logger.info(f"[{correlation_id}] Re-exported best-bets/all.json: {all_path}")
+    except Exception as e:
+        logger.error(
+            f"[{correlation_id}] Failed to re-export best-bets/all.json for {target_date}: {e}",
+            exc_info=True
+        )
+        results['best_bets_all_error'] = str(e)
+
+    # 8. Re-export best-bets/record.json and history.json with graded results (Session 343)
+    #    Always runs — history files.
+    try:
+        from data_processors.publishing.best_bets_record_exporter import BestBetsRecordExporter
+        record_exporter = BestBetsRecordExporter()
+        record_paths = record_exporter.export(target_date)
+        results['best_bets_record_path'] = record_paths.get('record', '')
+        results['best_bets_history_path'] = record_paths.get('history', '')
+        logger.info(
+            f"[{correlation_id}] Re-exported best-bets record+history: {record_paths}"
+        )
+    except Exception as e:
+        logger.error(
+            f"[{correlation_id}] Failed to re-export best-bets record for {target_date}: {e}",
+            exc_info=True
+        )
+        results['best_bets_record_error'] = str(e)
+
+    # Steps 6 and 9 patch TODAY'S picks JSON with actuals — skip when nothing was graded
     if skip_picks_exports:
-        logger.info(f"[{correlation_id}] Skipping picks JSON exports (graded_count=0)")
+        logger.info(f"[{correlation_id}] Skipping today's picks JSON patches (graded_count=0)")
         return results
 
     # 6. Re-export tonight/all-players.json with actuals (Session 332)
@@ -588,37 +627,6 @@ def main(cloud_event):
             exc_info=True
         )
         results['tonight_error'] = str(e)
-
-    # 7. Re-export best-bets/all.json with updated grading (Session 342)
-    try:
-        from data_processors.publishing.best_bets_all_exporter import BestBetsAllExporter
-        all_exporter = BestBetsAllExporter()
-        all_path = all_exporter.export(target_date)
-        results['best_bets_all_path'] = all_path
-        logger.info(f"[{correlation_id}] Re-exported best-bets/all.json: {all_path}")
-    except Exception as e:
-        logger.error(
-            f"[{correlation_id}] Failed to re-export best-bets/all.json for {target_date}: {e}",
-            exc_info=True
-        )
-        results['best_bets_all_error'] = str(e)
-
-    # 8. Re-export best-bets/record.json and history.json with graded results (Session 343)
-    try:
-        from data_processors.publishing.best_bets_record_exporter import BestBetsRecordExporter
-        record_exporter = BestBetsRecordExporter()
-        record_paths = record_exporter.export(target_date)
-        results['best_bets_record_path'] = record_paths.get('record', '')
-        results['best_bets_history_path'] = record_paths.get('history', '')
-        logger.info(
-            f"[{correlation_id}] Re-exported best-bets record+history: {record_paths}"
-        )
-    except Exception as e:
-        logger.error(
-            f"[{correlation_id}] Failed to re-export best-bets record for {target_date}: {e}",
-            exc_info=True
-        )
-        results['best_bets_record_error'] = str(e)
 
     # 9. Patch signal-best-bets/{date}.json with actuals from signal_best_bets_picks (Session 377)
     try:
