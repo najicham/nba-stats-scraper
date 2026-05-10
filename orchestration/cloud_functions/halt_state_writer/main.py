@@ -561,6 +561,22 @@ def halt_state_writer(request: Request):
             logger.error(f"halt_state_writer failed for {sport}: {e}", exc_info=True)
             summary['results'][sport] = {'error': str(e)}
 
+    # Emit halt_state_age_hours metric (always 0 just after a successful
+    # write — that's the point; the alert fires when this grows >36h).
+    # Per-sport metric so the alert can distinguish NBA writer death from MLB.
+    try:
+        from shared.observability.metrics import emit_metric, MetricKind
+        for sport in sports:
+            if 'error' not in summary['results'].get(sport, {}):
+                emit_metric(
+                    metric_name='halt_state_age_hours',
+                    value=0.0,
+                    labels={'sport': sport},
+                    kind=MetricKind.GAUGE,
+                )
+    except Exception as e:
+        logger.warning(f"emit halt_state_age_hours failed (non-fatal): {e}")
+
     summary['written_at'] = datetime.now(timezone.utc).isoformat()
     return summary, 200
 
