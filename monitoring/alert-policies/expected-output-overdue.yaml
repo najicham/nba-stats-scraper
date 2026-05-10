@@ -1,0 +1,79 @@
+# Cloud Monitoring Alert Policy — Expected Output Overdue
+#
+# Fires when too many EXPECTED rows in nba_orchestration.expected_outputs are
+# past their expected_by timestamp. The single canonical "data is missing"
+# alert; replaces 7-14 day phase-siloed completeness checks.
+#
+# Source metric: log-based metric or scheduled-query metric over the
+# nba_orchestration.expected_outputs_gaps view (see expected_outputs.sql).
+#
+# Deploy with:
+#   gcloud alpha monitoring policies create \
+#     --policy-from-file=expected-output-overdue.yaml \
+#     --project=nba-props-platform
+#
+# Pipeline-state-redesign Phase G.
+
+displayName: "[NBA Pipeline] Expected outputs overdue (Critical)"
+documentation:
+  content: |
+    ## Expected Output Overdue
+
+    **Severity:** Critical
+    **Impact:** One or more pipeline outputs are missing past their SLA.
+
+    ### What this means
+    `nba_orchestration.expected_outputs` has rows with status='EXPECTED' or
+    'DEGRADED' whose `expected_by` is in the past. The reconciler couldn't
+    find the actual data, and gap_detector either hasn't picked it up yet
+    or the backfill has already exhausted MAX_BACKFILL_ATTEMPTS (3).
+
+    ### Immediate actions
+    1. Find what's missing:
+       ```sql
+       SELECT * FROM `nba-props-platform.nba_orchestration.expected_outputs_gaps`
+       ORDER BY hours_overdue DESC LIMIT 50
+       ```
+    2. If it's NBA halt-era data, expected behavior — should be EMPTY_OK.
+       Investigate why reconciler isn't detecting halt:
+       ```sql
+       SELECT * FROM `nba-props-platform.nba_orchestration.halt_state`
+       WHERE effective_date >= CURRENT_DATE() - 7
+       ```
+    3. If gap_detector is stuck, check Pub/Sub backlog on
+       projects/nba-props-platform/topics/nba-backfill-trigger.
+    4. If a scraper consistently fails (paid-source unavailable, e.g.
+       odds_api historical), the FAILED status documents the loss.
+
+    ### Reference
+    - Architecture: docs/01-architecture/pipeline-state-redesign.md
+    - Runbook: docs/02-operations/runbooks/expected-outputs.md
+  mimeType: text/markdown
+
+conditions:
+  - displayName: "Overdue EXPECTED + DEGRADED rows > 5"
+    conditionThreshold:
+      # Source: log-based metric or scheduled-query export of:
+      #   SELECT COUNT(*) FROM nba_orchestration.expected_outputs_gaps
+      filter: |
+        metric.type="custom.googleapis.com/nba_pipeline/overdue_count"
+        resource.type="global"
+      aggregations:
+        - alignmentPeriod: 600s   # 10 min
+          perSeriesAligner: ALIGN_MAX
+      comparison: COMPARISON_GT
+      thresholdValue: 5
+      duration: 1800s   # Must persist 30 min — protects against transient
+
+combiner: OR
+
+enabled: true
+
+alertStrategy:
+  autoClose: 604800s  # 7 days
+  notificationRateLimit:
+    period: 3600s     # Max 1 notification per hour
+
+# Notification channels populated by deploy script. See:
+#   monitoring/alert-policies/deploy-alert-policies.sh
+notificationChannels: []

@@ -1,0 +1,61 @@
+# Cloud Monitoring Alert Policy — Pipeline phase error rate elevated
+#
+# Fires when emit_phase_completion is reporting more FAILED/DEGRADED than
+# COMPLETE/EMPTY_OK across the pipeline within an hour.
+#
+# Pipeline-state-redesign Phase G.
+
+displayName: "[NBA Pipeline] Phase error rate elevated (Warning)"
+documentation:
+  content: |
+    ## Pipeline phase error rate
+
+    **Severity:** Warning
+    **Impact:** Multiple phase outputs are degrading concurrently —
+    likely a systemic issue (BQ outage, GCS issue, broken upstream).
+
+    ### What this means
+    The custom metric custom.googleapis.com/nba_pipeline/phase_completion
+    encodes status as 0–1 (1 = COMPLETE, 0.5 = EXPECTED, 0.25 = DEGRADED,
+    0 = FAILED). When the rolling-hour mean drops below 0.7, multiple
+    outputs are unhealthy simultaneously.
+
+    ### Immediate actions
+    1. Find the unhealthy phases:
+       ```sql
+       SELECT phase, status, COUNT(*) AS n
+       FROM `nba-props-platform.nba_orchestration.expected_outputs`
+       WHERE updated_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 2 HOUR)
+       GROUP BY phase, status ORDER BY phase
+       ```
+    2. Identify clustering — same phase, same sport, same date?
+    3. Check shared infra: BQ slot quota, GCS quotas, Cloud Run service
+       errors.
+
+    ### Reference
+    - Architecture: docs/01-architecture/pipeline-state-redesign.md
+  mimeType: text/markdown
+
+conditions:
+  - displayName: "phase_completion mean < 0.7 over 1h"
+    conditionThreshold:
+      filter: |
+        metric.type="custom.googleapis.com/nba_pipeline/phase_completion"
+        resource.type="global"
+      aggregations:
+        - alignmentPeriod: 3600s
+          perSeriesAligner: ALIGN_MEAN
+      comparison: COMPARISON_LT
+      thresholdValue: 0.7
+      duration: 1800s
+
+combiner: OR
+
+enabled: true
+
+alertStrategy:
+  autoClose: 604800s
+  notificationRateLimit:
+    period: 3600s
+
+notificationChannels: []

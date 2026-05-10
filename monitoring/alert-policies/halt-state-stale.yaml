@@ -1,0 +1,72 @@
+# Cloud Monitoring Alert Policy — halt_state_writer is broken
+#
+# Fires when nba_orchestration.halt_state has no row written in the last 36h.
+# Since every Phase 6 exporter reads halt_state via BaseExporter.halt_envelope,
+# a stale halt_state silently returns 'unknown_state' to the frontend.
+#
+# Pipeline-state-redesign Phase G.
+
+displayName: "[NBA Pipeline] halt_state_writer stale > 36h (Warning)"
+documentation:
+  content: |
+    ## halt_state Writer Stale
+
+    **Severity:** Warning
+    **Impact:** Frontend may receive `halt_reason: 'unknown_state'` JSONs
+    until writer recovers. Picks would still publish; halt branding may
+    show "unknown" instead of "off-season"/"edge collapse".
+
+    ### What this means
+    The halt_state_writer Cloud Function hasn't written today's row.
+    Either the daily 5 AM ET scheduler is broken, or the function itself
+    is failing.
+
+    ### Immediate actions
+    1. Check the row directly:
+       ```sql
+       SELECT * FROM `nba-props-platform.nba_orchestration.halt_state`
+       WHERE effective_date >= CURRENT_DATE() - 3 ORDER BY written_at DESC
+       ```
+    2. Check the scheduler:
+       ```bash
+       gcloud scheduler jobs describe halt-state-writer-daily \
+         --location=us-west2 --project=nba-props-platform
+       ```
+    3. Check the CF logs:
+       ```bash
+       gcloud functions logs read halt-state-writer \
+         --region=us-west2 --gen2 --project=nba-props-platform --limit=50
+       ```
+    4. Manually trigger:
+       ```bash
+       curl -X GET "$(gcloud functions describe halt-state-writer --gen2 \
+         --region=us-west2 --format='value(serviceConfig.uri)')/?sport=all"
+       ```
+
+    ### Reference
+    - Runbook: docs/02-operations/runbooks/halt-mode-operations.md
+  mimeType: text/markdown
+
+conditions:
+  - displayName: "Latest halt_state.written_at > 36h ago"
+    conditionThreshold:
+      filter: |
+        metric.type="custom.googleapis.com/nba_pipeline/halt_state_age_hours"
+        resource.type="global"
+      aggregations:
+        - alignmentPeriod: 3600s   # 1 hour
+          perSeriesAligner: ALIGN_MAX
+      comparison: COMPARISON_GT
+      thresholdValue: 36
+      duration: 3600s
+
+combiner: OR
+
+enabled: true
+
+alertStrategy:
+  autoClose: 604800s
+  notificationRateLimit:
+    period: 7200s   # 2h between notifications
+
+notificationChannels: []

@@ -133,7 +133,23 @@ See `03-BACKFILL-MANIFEST.md` for per-date status.
 
 ---
 
-## Phase G — Alerts + retire monitors (pending)
+## Phase G — Cloud Monitoring alerts (in_progress, 2026-05-09)
+
+### G.1 Three unified alert policies
+- `monitoring/alert-policies/expected-output-overdue.yaml` — fires when nba_orchestration.expected_outputs_gaps has > 5 overdue rows for 30 min. The single canonical "data is missing" alert that replaces phase-siloed completeness checks.
+- `monitoring/alert-policies/halt-state-stale.yaml` — fires when halt_state_age_hours > 36 (writer is broken; frontend would silently get unknown_state).
+- `monitoring/alert-policies/phase-error-rate.yaml` — fires when phase_completion 1h mean < 0.7 (multiple phases unhealthy concurrently).
+
+### G.2 Deploy script
+- `monitoring/alert-policies/deploy-alert-policies.sh` — creates the 3 policies. Notification channel attachment is a one-time UI step (gcloud doesn't support during create).
+
+### G.3 Monitor retirement (deferred to a follow-up sub-task)
+- 8 of 10 existing monitoring CFs become redundant once the unified observability is fully wired (daily-health-check, transition-monitor, pipeline-health-summary, live-freshness-monitor, gcs-freshness-monitor, pipeline-reconciliation, realtime-completeness-checker, historical_completeness_monitor.py).
+- Retirement requires 7 days of clean parallel runs of the new alerts before disabling old CFs. Captured as a follow-up sub-task; do NOT retire today.
+
+### G.4 Seeded historical context
+- Full 2025-26 NBA + MLB seed completed: **6,345 rows across 235 dates** (Oct 1 2025 → May 23 2026). NBA: 4,935 EXPECTED. MLB: 780 EXPECTED + 630 EMPTY_OK (out-of-window correctly tagged).
+- This means every one of the 109 previously-silent missing NBA dates now has 21 EXPECTED rows ready for gap_detector / reconciler to surface in Phase F.
 
 ---
 
