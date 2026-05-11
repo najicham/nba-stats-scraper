@@ -1,0 +1,90 @@
+# Cloud Monitoring Alert Policy — Public uptime check failed
+#
+# Fires when any of the 3 playerprops.io public uptime checks fails
+# (root, /mlb, /nba/best-bets). These are the user-facing entry points;
+# a failure here means visitors hit broken pages.
+#
+# Closes the gap from Phase G — the 3 pipeline alert policies cover
+# backend pipeline state, but the public uptime checks had no alert
+# policy attached. The existing "[CRITICAL] NBA Scrapers - Wrong Code
+# Deployed" policy covers the internal nba-scrapers service-identity
+# check separately.
+#
+# Deploy with:
+#   gcloud alpha monitoring policies create \
+#     --policy-from-file=uptime-check-failed.yaml \
+#     --project=nba-props-platform
+
+displayName: "[NBA Pipeline] Public uptime check failed (Critical)"
+documentation:
+  content: |
+    ## Public Uptime Check Failed
+
+    **Severity:** Critical
+    **Impact:** A user-facing playerprops.io page is returning an error
+    or failing its content matcher. Visitors will see a broken site.
+
+    ### What this means
+    One of the 3 public uptime checks (`playerprops-root`,
+    `playerprops-mlb`, `playerprops-nba-best-bets`) has reported 2+
+    failed regional probes within a 5-minute alignment window. Each
+    check probes from 3 US regions every 300s with SSL validation
+    plus a content matcher (`<title>`, `MLB`, `Best Bets` respectively).
+
+    ### Immediate actions
+    1. Identify which check failed — alert payload includes
+       `metric.labels.check_id`.
+    2. Try the URL in a browser:
+       - https://playerprops.io/
+       - https://playerprops.io/mlb
+       - https://playerprops.io/nba/best-bets
+    3. Check the frontend service (props-web) — Vercel deployment status
+       and Sentry for recent errors.
+    4. Check the GCS API bucket for staleness:
+       `gsutil ls -l gs://nba-props-platform-api/v1/`
+    5. Check the most recent Phase 6 export — a bad export can publish
+       empty JSONs and break the content matcher.
+
+    ### Reference
+    - Runbook: docs/02-operations/runbooks/observability-alerts.md
+    - Architecture: docs/01-architecture/pipeline-state-redesign.md
+    - Frontend domain: playerprops.io
+  mimeType: text/markdown
+
+conditions:
+  - displayName: "Public uptime check failing (root, /mlb, or /nba/best-bets)"
+    conditionThreshold:
+      # REDUCE_COUNT_FALSE counts the `false` (failed) probe results
+      # across regions over the alignment window; thresholdValue: 1
+      # with COMPARISON_GT means strictly greater than 1, i.e. at
+      # least 2 regional probes failed within 5 min. This avoids
+      # single-region transient blips while firing within ~5 min.
+      filter: |
+        resource.type="uptime_url"
+        metric.type="monitoring.googleapis.com/uptime_check/check_passed"
+        (metric.labels.check_id="playerprops-root-PouB7pmhlPg" OR
+         metric.labels.check_id="playerprops-mlb-t9XeXir8-8E" OR
+         metric.labels.check_id="playerprops-nba-best-bets-QQqlrZdT6wk")
+      aggregations:
+        - alignmentPeriod: 300s
+          perSeriesAligner: ALIGN_NEXT_OLDER
+          crossSeriesReducer: REDUCE_COUNT_FALSE
+          groupByFields:
+            - "resource.label.host"
+            - "metric.label.check_id"
+      comparison: COMPARISON_GT
+      thresholdValue: 1
+      duration: 60s
+      trigger:
+        count: 1
+
+combiner: OR
+
+enabled: true
+
+alertStrategy:
+  autoClose: 604800s   # 7 days
+
+# NBA Platform Alerts (Slack #alerts).
+notificationChannels:
+  - projects/nba-props-platform/notificationChannels/13444328261517403081

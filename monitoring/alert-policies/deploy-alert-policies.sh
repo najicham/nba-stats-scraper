@@ -45,7 +45,7 @@ create_log_metrics() {
 
 deploy_policies() {
   echo "==> Deploying alert policies..."
-  for yaml in "${SCRIPT_DIR}"/{expected-output-overdue,halt-state-stale,phase-error-rate}.yaml; do
+  for yaml in "${SCRIPT_DIR}"/{expected-output-overdue,halt-state-stale,phase-error-rate,uptime-check-failed}.yaml; do
     name=$(basename "${yaml}" .yaml)
     echo "    Deploying ${name}..."
     # gcloud alpha monitoring policies create is idempotent on (displayName)
