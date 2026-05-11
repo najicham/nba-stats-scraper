@@ -68,6 +68,39 @@ GAP_ALERT_THRESHOLD = 3  # Alert when any scraper has >= 3 days of gaps
 # Health checks with today's date will fail because games haven't happened yet
 POST_GAME_SCRAPERS = {'nbac_gamebook_pdf', 'nbac_player_boxscore'}
 
+# Phase 2-6 dispatch endpoints (Fix #2). Service URLs default to the live
+# us-west2 hostnames; env-overridable for staging/testing.
+PHASE3_SERVICE_URL = os.getenv(
+    "PHASE3_SERVICE_URL",
+    "https://nba-phase3-analytics-processors-f7p3g7f6ya-wl.a.run.app",
+)
+PHASE4_SERVICE_URL = os.getenv(
+    "PHASE4_SERVICE_URL",
+    "https://nba-phase4-precompute-processors-f7p3g7f6ya-wl.a.run.app",
+)
+PHASE5_SERVICE_URL = os.getenv(
+    "PHASE5_SERVICE_URL",
+    "https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app",
+)
+PHASE6_TOPIC = os.getenv("PHASE6_TOPIC", "nba-phase6-export-trigger")
+PROCESSOR_TIMEOUT = int(os.getenv("PROCESSOR_TIMEOUT", "600"))  # 10 min for processors
+
+# Secret IDs for processor API keys (Phase 4 is unauthenticated at the app layer).
+PHASE3_API_KEY_SECRET = "analytics-api-keys"  # CSV; first key is used
+PHASE5_API_KEY_SECRET = "coordinator-api-key"
+
+# Phase 6 output_type → export_types message contract.
+# Only non-destructive exports are auto-backfilled. signal_best_bets_json
+# and picks_json are blacklisted — re-exporting for historical dates
+# overwrites live JSON with empty picks (MEMORY.md Session 481 + 488).
+PHASE6_OUTPUT_TO_EXPORT_TYPES = {
+    'results_json': ['results', 'performance'],
+    'live_grading_json': ['live-grading'],
+    'tonight_json': ['tonight', 'tonight-players'],
+    'signals_json': ['signals'],
+}
+PHASE6_DESTRUCTIVE_OUTPUT_TYPES = {'signal_best_bets_json', 'picks_json'}
+
 
 # ============================================================================
 # Gap Alerting Functions
@@ -471,6 +504,148 @@ PHASE1_OUTPUT_TO_SCRAPER = {
 EXPECTED_OUTPUTS_TABLE = 'nba-props-platform.nba_orchestration.expected_outputs'
 
 
+# ===========================================================================
+# Phase 2-6 dispatch helpers (Fix #2)
+# ===========================================================================
+#
+# pubsub_subscriber routes each Pub/Sub message to a phase-specific
+# dispatcher. Each dispatcher returns (success, error) so _update_expected_
+# output_attempt can record the right BQ state. Endpoints + payload shapes
+# verified against the live service code as of 2026-05-11; see handoff
+# 2026-05-11-PIPELINE-STATE-FOLLOWUP-HANDOFF.md lines 121-152.
+# ===========================================================================
+
+_api_key_cache: Dict[str, Optional[str]] = {}
+_pubsub_publisher = None
+
+
+def _get_processor_api_key(secret_name: str) -> Optional[str]:
+    """Fetch and cache an API key from Secret Manager.
+
+    Phase 3 stores keys as comma-separated VALID_API_KEYS; we pick the first.
+    Returns None if the secret is unreadable (grant missing, SM down, etc.)
+    so the caller can record a clean error rather than crashing.
+    """
+    if secret_name in _api_key_cache:
+        return _api_key_cache[secret_name]
+    raw = get_secret(secret_name)
+    if not raw:
+        _api_key_cache[secret_name] = None
+        return None
+    key = raw.split(',', 1)[0].strip()
+    _api_key_cache[secret_name] = key or None
+    return _api_key_cache[secret_name]
+
+
+def _get_pubsub_publisher():
+    """Lazy import + singleton for the Pub/Sub publisher (Phase 6)."""
+    global _pubsub_publisher
+    if _pubsub_publisher is None:
+        from google.cloud import pubsub_v1
+        _pubsub_publisher = pubsub_v1.PublisherClient()
+    return _pubsub_publisher
+
+
+def _dispatch_phase3(game_date: str) -> tuple:
+    """POST /process-date-range with X-API-Key. Idempotent — single-day window."""
+    api_key = _get_processor_api_key(PHASE3_API_KEY_SECRET)
+    if not api_key:
+        return False, f"Missing or unreadable secret: {PHASE3_API_KEY_SECRET}"
+    url = f"{PHASE3_SERVICE_URL}/process-date-range"
+    payload = {
+        "start_date": game_date,
+        "end_date": game_date,
+        "backfill_mode": True,
+    }
+    try:
+        r = requests.post(
+            url, json=payload,
+            headers={"X-API-Key": api_key, "Content-Type": "application/json"},
+            timeout=PROCESSOR_TIMEOUT,
+        )
+        if r.status_code in (200, 202):
+            return True, None
+        return False, f"Phase 3 HTTP {r.status_code}: {r.text[:200]}"
+    except Exception as e:
+        return False, f"Phase 3 request failed: {e}"
+
+
+def _dispatch_phase4(game_date: str) -> tuple:
+    """POST /process-date. No app-layer auth — relies on Cloud Run IAM."""
+    url = f"{PHASE4_SERVICE_URL}/process-date"
+    payload = {
+        "analysis_date": game_date,
+        "backfill_mode": True,
+    }
+    try:
+        r = requests.post(
+            url, json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=PROCESSOR_TIMEOUT,
+        )
+        if r.status_code in (200, 202):
+            return True, None
+        return False, f"Phase 4 HTTP {r.status_code}: {r.text[:200]}"
+    except Exception as e:
+        return False, f"Phase 4 request failed: {e}"
+
+
+def _dispatch_phase5(game_date: str) -> tuple:
+    """POST /start with X-API-Key. Coordinator returns 202 on accept, 503 if
+    upstream data is incomplete — record either as a non-success so
+    gap_detector can escalate or wait for the upstream phase."""
+    api_key = _get_processor_api_key(PHASE5_API_KEY_SECRET)
+    if not api_key:
+        return False, f"Missing or unreadable secret: {PHASE5_API_KEY_SECRET}"
+    url = f"{PHASE5_SERVICE_URL}/start"
+    payload = {
+        "game_date": game_date,
+        "correlation_id": f"backfill-{game_date}-{int(datetime.now(timezone.utc).timestamp())}",
+        "parent_processor": "backfill-pubsub-subscriber",
+    }
+    try:
+        r = requests.post(
+            url, json=payload,
+            headers={"X-API-Key": api_key, "Content-Type": "application/json"},
+            timeout=PROCESSOR_TIMEOUT,
+        )
+        if r.status_code in (200, 202):
+            return True, None
+        return False, f"Phase 5 HTTP {r.status_code}: {r.text[:200]}"
+    except Exception as e:
+        return False, f"Phase 5 request failed: {e}"
+
+
+def _dispatch_phase6(game_date: str, output_type: str) -> tuple:
+    """Publish to nba-phase6-export-trigger.
+
+    Refuses destructive output_types (signal_best_bets_json, picks_json) —
+    these overwrite live JSON with empty picks for historical dates
+    (MEMORY.md Session 481 + 488). Ops must trigger those manually.
+    """
+    if output_type in PHASE6_DESTRUCTIVE_OUTPUT_TYPES:
+        return False, (
+            f"Phase 6 output_type {output_type!r} is destructive for "
+            f"historical dates; manual re-export only."
+        )
+    export_types = PHASE6_OUTPUT_TO_EXPORT_TYPES.get(output_type)
+    if not export_types:
+        return False, f"No export_types mapping for output_type={output_type!r}"
+    try:
+        publisher = _get_pubsub_publisher()
+        topic_path = publisher.topic_path('nba-props-platform', PHASE6_TOPIC)
+        message = {
+            "export_types": export_types,
+            "target_date": game_date,
+            "sport": "nba",
+        }
+        future = publisher.publish(topic_path, json.dumps(message).encode('utf-8'))
+        future.result(timeout=30)
+        return True, None
+    except Exception as e:
+        return False, f"Phase 6 publish failed: {e}"
+
+
 def _update_expected_output_attempt(
     bq_client,
     sport: str,
@@ -575,13 +750,79 @@ def pubsub_subscriber(cloud_event):
 
     bq_client = bigquery.Client()
 
-    if phase != 'phase1_scrape':
-        # Phases 2-6 require running the upstream processor. Out of scope for
-        # this subscriber today; gap_detector will FAIL the row at attempt cap.
-        logger.info(f"Skipping non-Phase-1 backfill: {phase} ({output_type})")
+    # ── Phase 2-6 dispatch (Fix #2) ─────────────────────────────────────
+    # Phase 2 is intentionally skipped — Phase 1's GCS write cascades into
+    # Phase 2 via the existing Eventarc → nba-phase2-raw-processors path.
+    # Re-triggering Phase 2 directly requires a Pub/Sub-shaped envelope and
+    # has no clean date-range API. Reconciler picks it up once Phase 1 lands.
+    if phase == 'phase2_raw':
+        logger.info(
+            f"Skipping phase2_raw (cascades from phase1): {output_type}/{game_date}"
+        )
         _update_expected_output_attempt(
             bq_client, sport, game_date, phase, output_type,
-            success=False, error=f'Phase {phase} not auto-backfillable yet',
+            success=False,
+            error='phase2_raw cascades from phase1 — no direct dispatch',
+        )
+        return
+
+    if phase == 'phase3_analytics':
+        success, error = _dispatch_phase3(game_date)
+        _update_expected_output_attempt(
+            bq_client, sport, game_date, phase, output_type,
+            success=success, error=error,
+        )
+        logger.info(
+            f"Phase 3 dispatch {'succeeded' if success else 'failed'}: "
+            f"{output_type}/{game_date}"
+            + (f" — {error}" if error else "")
+        )
+        return
+
+    if phase == 'phase4_precompute':
+        success, error = _dispatch_phase4(game_date)
+        _update_expected_output_attempt(
+            bq_client, sport, game_date, phase, output_type,
+            success=success, error=error,
+        )
+        logger.info(
+            f"Phase 4 dispatch {'succeeded' if success else 'failed'}: "
+            f"{output_type}/{game_date}"
+            + (f" — {error}" if error else "")
+        )
+        return
+
+    if phase == 'phase5_predictions':
+        success, error = _dispatch_phase5(game_date)
+        _update_expected_output_attempt(
+            bq_client, sport, game_date, phase, output_type,
+            success=success, error=error,
+        )
+        logger.info(
+            f"Phase 5 dispatch {'succeeded' if success else 'failed'}: "
+            f"{output_type}/{game_date}"
+            + (f" — {error}" if error else "")
+        )
+        return
+
+    if phase == 'phase6_publish':
+        success, error = _dispatch_phase6(game_date, output_type)
+        _update_expected_output_attempt(
+            bq_client, sport, game_date, phase, output_type,
+            success=success, error=error,
+        )
+        logger.info(
+            f"Phase 6 dispatch {'succeeded' if success else 'failed'}: "
+            f"{output_type}/{game_date}"
+            + (f" — {error}" if error else "")
+        )
+        return
+
+    if phase != 'phase1_scrape':
+        logger.warning(f"Unknown phase: {phase} ({output_type}/{game_date})")
+        _update_expected_output_attempt(
+            bq_client, sport, game_date, phase, output_type,
+            success=False, error=f'Unknown phase: {phase}',
         )
         return
 
