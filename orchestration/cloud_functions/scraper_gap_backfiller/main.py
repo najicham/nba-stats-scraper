@@ -441,18 +441,30 @@ def mark_as_backfilled(client: bigquery.Client, scraper_name: str, game_date: st
 # the reconciler picks up the new actuals on its next pass.
 # ===========================================================================
 
-# output_type → scraper_name mapping. Only Phase 1 outputs are directly
-# scraper-backfillable. Phase 2-6 outputs require running the upstream
-# processor; not handled here yet (gap_detector will mark FAILED at cap).
+# output_type (contract) → scraper_name (registry implementation).
+#
+# output_type is the stable identifier in expected_outputs; scraper_name
+# must match scrapers/registry.py. Initial names were copy-pasted from
+# output_type and didn't exist in the registry — all calls returned
+# HTTP 400 with "available_scrapers": [...] (live evidence in
+# backfill-pubsub-subscriber logs, 2026-05-10).
+#
+# Historical scrapers (suffix _his) are preferred for backfill of past
+# dates. NBA BettingPros has no historical variant — only the live
+# bp_player_props scraper, which will only succeed for very recent
+# dates. Those rows for older dates will FAIL and document the loss.
+#
+# Only Phase 1 outputs are directly scraper-backfillable. Phase 2-6
+# outputs require running the upstream processor (see TODO Fix #2).
 PHASE1_OUTPUT_TO_SCRAPER = {
-    'nbac_gamebook_player_stats': 'nbac_gamebook_player_stats',
+    'nbac_gamebook_player_stats': 'nbac_gamebook_pdf',
     'nbac_injury_report': 'nbac_injury_report',
     'nbac_play_by_play': 'nbac_play_by_play',
-    'odds_api_player_points_props': 'odds_api_player_points_props',
-    'bettingpros_player_points_props': 'bettingpros_player_points_props',
+    'odds_api_player_points_props': 'oddsa_player_props_his',
+    'bettingpros_player_points_props': 'bp_player_props',
     # MLB
     'mlb_schedule': 'mlb_schedule',
-    'mlb_box_scores': 'mlb_box_scores',
+    'mlb_box_scores': 'mlb_box_scores_mlbapi',
     'bp_mlb_player_props': 'bp_mlb_player_props',
 }
 
