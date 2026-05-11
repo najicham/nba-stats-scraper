@@ -123,6 +123,38 @@ OUTPUT_TYPE_REGISTRY: Dict[Tuple[str, str], List[Tuple[str, str, int]]] = {
 
 
 # ---------------------------------------------------------------------------
+# Historical-path overrides
+#
+# Some scrapers have a _his variant (e.g. oddsa_player_props_his) that writes
+# to a DIFFERENT GCS prefix than the live scraper. For past dates the only
+# recoverable source is the historical scraper, so the planner must register
+# the historical prefix as expected_partition — otherwise the reconciler will
+# never find actuals at the live path and rows stay EXPECTED forever, burning
+# Odds API credits on every gap_detector cycle.
+#
+# Switch happens when game_date is older than HISTORICAL_PATH_AGE_THRESHOLD_DAYS.
+# 7 days is the rule of thumb: the live odds-api/player-props/ prefix is
+# overwritten by daily live scrapers for ~3 days, so anything older than that
+# can only be recovered via the historical endpoint.
+# ---------------------------------------------------------------------------
+
+HISTORICAL_PATH_AGE_THRESHOLD_DAYS = 7
+
+HISTORICAL_PATH_OVERRIDES: Dict[str, str] = {
+    # Phase 1 GCS paths
+    'odds_api_player_points_props': 'gs://nba-scraped-data/odds-api/player-props-history/{date}/',
+    # `odds_api_game_lines` would belong here too if registered in Phase 1.
+}
+
+
+def _resolve_partition(output_type: str, partition_template: str, d: date, today: date) -> str:
+    """Pick live vs. historical partition template based on game_date age."""
+    if output_type in HISTORICAL_PATH_OVERRIDES and (today - d).days >= HISTORICAL_PATH_AGE_THRESHOLD_DAYS:
+        return HISTORICAL_PATH_OVERRIDES[output_type].format(date=d.isoformat())
+    return partition_template.format(date=d.isoformat())
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -177,21 +209,28 @@ def _date_range(start: date, end: date):
 # ---------------------------------------------------------------------------
 
 
-def plan_date(bq: bigquery.Client, d: date, sport: str) -> int:
+def plan_date(bq: bigquery.Client, d: date, sport: str, today: Optional[date] = None) -> int:
     """MERGE expected_outputs rows for one (sport, date). Returns rows written.
 
-    Idempotent: existing rows are NOT overwritten beyond updated_at + source.
-    A planner re-run never reverts a row's COMPLETE/EMPTY_OK status.
+    Idempotent: existing rows are NOT overwritten beyond expected_partition +
+    expected_by + updated_at + source. A planner re-run never reverts a row's
+    COMPLETE/EMPTY_OK status.
+
+    `today` is used by `_resolve_partition` to decide live vs. historical
+    prefix for output_types in HISTORICAL_PATH_OVERRIDES. Defaults to
+    date.today() when called outside the HTTP handler.
     """
     in_window = _is_in_season_window(d, sport)
     season = _compute_season_label(d, sport)
+    if today is None:
+        today = date.today()
 
     rows = []
     for (rsport, phase), outputs in OUTPUT_TYPE_REGISTRY.items():
         if rsport != sport:
             continue
         for output_type, partition_template, sla_hours in outputs:
-            partition = partition_template.format(date=d.isoformat())
+            partition = _resolve_partition(output_type, partition_template, d, today)
             expected_by = _compute_expected_by(d, sla_hours)
             # Out-of-window dates (e.g. NBA July) are EMPTY_OK from the start —
             # planner doesn't expect data, gap_detector won't fire.
@@ -301,7 +340,7 @@ def expected_outputs_planner(request: Request):
     for d in _date_range(start, end):
         for sport in sports:
             try:
-                n = plan_date(bq, d, sport)
+                n = plan_date(bq, d, sport, today=today)
                 summary['rows_written'] += n
                 summary['dates_planned'] += 1
             except Exception as e:

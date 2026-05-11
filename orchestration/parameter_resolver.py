@@ -99,6 +99,7 @@ class ParameterResolver:
             'oddsa_events': self._resolve_odds_events,             # Date-based (returns dict) - added Jan 23, 2026
             'oddsa_player_props': self._resolve_odds_props,
             'oddsa_game_lines': self._resolve_odds_game_lines,
+            'oddsa_player_props_his': self._resolve_oddsa_player_props_his,  # Per-event_id (returns list) - added 2026-05-11 for gap backfill
         }
 
         # Validate workflow config on startup (non-blocking warning)
@@ -755,6 +756,118 @@ class ParameterResolver:
             })
 
         logger.info(f"Resolved oddsa_game_lines for {len(params_list)} events")
+        return params_list
+
+    def _resolve_oddsa_player_props_his(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Resolver for HISTORICAL Odds API player props scraper.
+
+        Used by gap_backfill for past dates. Discovers event_ids by querying
+        the existing nba_raw.odds_api_player_points_props table (rows captured
+        on the original game day) and replays the historical odds endpoint
+        once per (event_id, snapshot_timestamp) pair.
+
+        Returns empty list when BQ has no event_ids for the target date —
+        we cannot recover such dates without a separate oddsa_events_his
+        invocation, which is out of scope for this resolver today.
+
+        Required scraper params: event_id, game_date, snapshot_timestamp.
+        Optional: sport (defaults to basketball_nba in the scraper).
+        """
+        target_date = context.get('target_date') or context.get('execution_date')
+        if not target_date:
+            logger.warning("oddsa_player_props_his: no target_date in context")
+            return []
+
+        try:
+            from google.cloud import bigquery
+            from shared.clients import get_bigquery_client
+            bq = get_bigquery_client()
+        except Exception as e:
+            # Broad catch: ImportError, auth/credentials errors, BQ client init
+            # failures — any of these mean we cannot resolve params. Falling
+            # through returns [], which the subscriber treats as "nothing to
+            # backfill, success". That's WRONG for infra failure but matches
+            # the current subscriber contract; revisit when we add metric
+            # emission.
+            logger.error(
+                f"oddsa_player_props_his: BQ client unavailable ({e}); "
+                f"cannot resolve event_ids for {target_date}",
+                exc_info=True,
+            )
+            return []
+
+        # MIN(snapshot_timestamp) per event is the safest replay window —
+        # historical odds API events APPEAR before tipoff and DISAPPEAR after
+        # tipoff, so the earliest capture is reliably inside the available
+        # window. The HAVING floor (< 20:00 UTC on game_date) drops events
+        # whose only capture was inside the risky late-evening window where
+        # 404s are near-certain — better to skip than burn quota.
+        # CTE wraps the aggregation so FORMAT_TIMESTAMP doesn't trip BQ's
+        # "aggregations of aggregations" rule.
+        sql = """
+            WITH per_event AS (
+              SELECT
+                odds_api_event_id AS event_id,
+                MIN(snapshot_timestamp) AS earliest_snap
+              FROM `nba-props-platform.nba_raw.odds_api_player_points_props`
+              WHERE game_date = @game_date
+                AND snapshot_timestamp IS NOT NULL
+              GROUP BY odds_api_event_id
+              HAVING MIN(snapshot_timestamp) < TIMESTAMP(
+                CONCAT(CAST(@game_date AS STRING), 'T20:00:00Z')
+              )
+            )
+            SELECT
+              event_id,
+              FORMAT_TIMESTAMP('%Y-%m-%dT%H:%M:%SZ', earliest_snap) AS snapshot_timestamp
+            FROM per_event
+            ORDER BY earliest_snap
+        """
+        try:
+            job = bq.query(
+                sql,
+                job_config=bigquery.QueryJobConfig(
+                    query_parameters=[
+                        bigquery.ScalarQueryParameter('game_date', 'DATE', target_date)
+                    ]
+                ),
+            )
+            rows = job.result(timeout=30)
+            events = [(r.event_id, r.snapshot_timestamp) for r in rows]
+            bq_job_id = job.job_id
+        except Exception as e:
+            # Broad: GoogleAPICallError, BadRequest, DeadlineExceeded, etc.
+            # don't subclass RuntimeError/ValueError. Same contract caveat
+            # as above — silent success on infra error.
+            logger.error(
+                f"oddsa_player_props_his: BQ lookup failed for {target_date}: {e}",
+                exc_info=True,
+            )
+            return []
+
+        if not events:
+            logger.warning(
+                f"oddsa_player_props_his: no event_ids in BQ for {target_date} "
+                f"(or all events were captured only after 20:00 UTC — too risky "
+                f"to replay). bq_job_id={bq_job_id}"
+            )
+            return []
+
+        params_list = [
+            {
+                'event_id': event_id,
+                'game_date': target_date,
+                'snapshot_timestamp': snapshot,
+                'sport': 'basketball_nba',
+            }
+            for event_id, snapshot in events
+        ]
+        logger.info(
+            f"Resolved oddsa_player_props_his for {len(params_list)} events on "
+            f"{target_date} (first_snap={params_list[0]['snapshot_timestamp']}, "
+            f"last_snap={params_list[-1]['snapshot_timestamp']}, bq_job_id={bq_job_id})"
+        )
         return params_list
 
     # ========================================================================
