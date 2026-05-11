@@ -7,7 +7,6 @@ cold start time and prevent import errors in cloud functions.
 """
 
 # Lightweight imports only - no external dependencies beyond Google Cloud SDK
-from .bigquery_client import BigQueryClient
 from .storage_client import StorageClient
 from .auth_utils import get_service_account_credentials
 
@@ -37,7 +36,6 @@ from .env_validation import (
 
 __all__ = [
     # Lightweight imports (loaded immediately)
-    "BigQueryClient",
     "StorageClient",
     "PubSubClient",
     "get_service_account_credentials",

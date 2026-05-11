@@ -2,7 +2,7 @@
 """
 Standalone BigQuery utility functions for orchestration and simple operations.
 
-For more complex operations, use BigQueryClient from bigquery_client.py.
+For pooled connections, use `shared.clients.get_bigquery_client`.
 These are simple, stateless functions for quick queries and inserts.
 
 Week 1 Update: Added query result caching to reduce costs by 30-45%

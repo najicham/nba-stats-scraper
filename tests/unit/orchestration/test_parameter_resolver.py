@@ -305,6 +305,60 @@ class TestComplexParameterResolution:
             assert params[0]['season'] == '2023-24'
             assert params[1]['game_id'] == '0022400124'
 
+    @patch('orchestration.parameter_resolver.NBAScheduleService')
+    def test_resolve_oddsa_player_props_his_happy_path(self, mock_schedule):
+        """Historical odds resolver returns one params dict per (event, snapshot)
+        with the contract expected by oddsa_player_props_his scraper:
+        event_id, game_date, snapshot_timestamp, sport.
+        """
+        with patch.object(ParameterResolver, '_load_config', return_value={}):
+            resolver = ParameterResolver()
+
+            # Mock BQ rows — earliest_snap per event, sorted ascending
+            row1 = Mock()
+            row1.event_id = 'evt_abc123'
+            row1.snapshot_timestamp = '2026-04-19T17:55:00Z'
+            row2 = Mock()
+            row2.event_id = 'evt_def456'
+            row2.snapshot_timestamp = '2026-04-19T18:10:00Z'
+
+            mock_job = Mock()
+            mock_job.job_id = 'job_test_xyz'
+            mock_job.result.return_value = iter([row1, row2])
+
+            mock_bq = Mock()
+            mock_bq.query.return_value = mock_job
+
+            # Patch the lazy import inside the resolver
+            with patch('shared.clients.get_bigquery_client', return_value=mock_bq):
+                params = resolver._resolve_oddsa_player_props_his(
+                    context={'target_date': '2026-04-19'}
+                )
+
+            assert isinstance(params, list)
+            assert len(params) == 2
+            # First entry shape — locks the scraper contract
+            assert params[0] == {
+                'event_id': 'evt_abc123',
+                'game_date': '2026-04-19',
+                'snapshot_timestamp': '2026-04-19T17:55:00Z',
+                'sport': 'basketball_nba',
+            }
+            assert params[1]['event_id'] == 'evt_def456'
+            # game_date passes through as string from context
+            assert all(p['game_date'] == '2026-04-19' for p in params)
+            # Sport is hardcoded to basketball_nba for the NBA historical path
+            assert all(p['sport'] == 'basketball_nba' for p in params)
+            # BQ was queried with the right game_date parameter
+            mock_bq.query.assert_called_once()
+            sql_arg, kwargs = mock_bq.query.call_args
+            assert '@game_date' in sql_arg[0]
+            # Parameter is bound to the target_date from context
+            # (BQ coerces the string into a date.date for DATE-typed params)
+            qparams = kwargs['job_config'].query_parameters
+            assert qparams[0].name == 'game_date'
+            assert str(qparams[0].value) == '2026-04-19'
+
 
 class TestSeasonCalculation:
     """Test suite for season calculation"""

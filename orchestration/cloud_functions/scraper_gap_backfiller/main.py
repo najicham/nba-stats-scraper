@@ -23,6 +23,7 @@ from google.cloud import secretmanager
 from datetime import datetime, timezone
 import base64
 import json
+import re
 import requests
 import logging
 import os
@@ -100,6 +101,20 @@ PHASE6_OUTPUT_TO_EXPORT_TYPES = {
     'signals_json': ['signals'],
 }
 PHASE6_DESTRUCTIVE_OUTPUT_TYPES = {'signal_best_bets_json', 'picks_json'}
+
+# Defense-in-depth payload validation for pubsub_subscriber. BQ DATE typing
+# already rejects bad dates server-side; this catches malformed payloads
+# before we burn an attempt.
+_GAME_DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
+_VALID_PHASES = frozenset({
+    'phase1_scrape',
+    'phase2_raw',
+    'phase3_analytics',
+    'phase4_precompute',
+    'phase5_predictions',
+    'phase6_publish',
+})
+_VALID_SPORTS = frozenset({'nba', 'mlb'})
 
 
 # ============================================================================
@@ -744,6 +759,20 @@ def pubsub_subscriber(cloud_event):
 
     if not (game_date and phase and output_type):
         logger.error(f"Pub/Sub message missing required fields: {payload}")
+        return
+
+    # Defense-in-depth: validate types before they reach BQ / dispatch.
+    # BQ DATE parameter typing would reject bad dates, and dispatch helpers
+    # would 4xx on bad phase/sport, but we'd still burn an attempt and emit
+    # noisy logs. Reject malformed payloads early with a hard ack.
+    if not isinstance(game_date, str) or not _GAME_DATE_RE.match(game_date):
+        logger.error(f"Pub/Sub payload rejected — invalid game_date: {payload}")
+        return
+    if phase not in _VALID_PHASES:
+        logger.error(f"Pub/Sub payload rejected — unknown phase {phase!r}: {payload}")
+        return
+    if sport not in _VALID_SPORTS:
+        logger.error(f"Pub/Sub payload rejected — unknown sport {sport!r}: {payload}")
         return
 
     logger.info(f"Backfill request: {sport}/{phase}/{output_type} for {game_date}")

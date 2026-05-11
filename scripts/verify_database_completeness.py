@@ -14,8 +14,6 @@ from google.cloud import bigquery
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from shared.utils.bigquery_client import BigQueryClient
-
 
 def print_section(title: str):
     """Print formatted section header"""
