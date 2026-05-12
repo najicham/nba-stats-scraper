@@ -56,6 +56,10 @@ MONITORED_EXPORTS = {
     'v1/best-bets/record.json': {'max_age_hours': 36, 'severity': 'warn'},
     'v1/best-bets/history.json': {'max_age_hours': 36, 'severity': 'warn'},
     'v1/signal-best-bets/latest.json': {'max_age_hours': 24, 'severity': 'critical'},
+    # MLB exports — leaderboard refreshes ~3:45 AM / 10:45 AM ET morning + pregame;
+    # best-bets/all.json after best-bets-generate runs ~5:55 AM ET.
+    'v1/mlb/pitchers/leaderboard.json': {'max_age_hours': 24, 'severity': 'critical'},
+    'v1/mlb/best-bets/all.json': {'max_age_hours': 36, 'severity': 'warn'},
 }
 
 # Services to check
