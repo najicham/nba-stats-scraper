@@ -98,7 +98,7 @@ class MlbPitcherExporter(BaseExporter):
             + (" (history-only)" if history_only else "")
         )
 
-        bundle = self._build_bundle(game_date)
+        bundle = self._build_bundle(game_date, history_only=history_only)
 
         if dry_run:
             return {
@@ -109,12 +109,24 @@ class MlbPitcherExporter(BaseExporter):
             }
 
         leaderboard_path: Optional[str] = None
+        starters_count = bundle['leaderboard'].get('tonight', {}).get('count', 0)
         if not history_only:
-            leaderboard_path = self.upload_to_gcs(
-                bundle['leaderboard'],
-                'mlb/pitchers/leaderboard.json',
-                cache_control=CACHE_MEDIUM,
-            )
+            # Don't overwrite a populated leaderboard.json with an empty one. The
+            # morning exporter run (3:45 AM PDT) fires before mlb-predictions-generate
+            # (10 AM PDT) — without this guard, the page goes empty for ~7 hours
+            # daily while yesterday's data is destroyed. Frontend keeps last good
+            # leaderboard until fresh predictions land.
+            if starters_count == 0:
+                logger.info(
+                    f"Skipping live leaderboard.json upload for {game_date} — "
+                    "0 tonight starters (preserving prior payload)"
+                )
+            else:
+                leaderboard_path = self.upload_to_gcs(
+                    bundle['leaderboard'],
+                    'mlb/pitchers/leaderboard.json',
+                    cache_control=CACHE_MEDIUM,
+                )
 
         # Date-keyed history copy so the date selector can show past days.
         # Frozen once written — past dates never change.
@@ -150,8 +162,15 @@ class MlbPitcherExporter(BaseExporter):
     # Bundle assembly
     # ------------------------------------------------------------------
 
-    def _build_bundle(self, game_date: str) -> Dict[str, Any]:
-        """Fetch all data once and assemble both outputs."""
+    def _build_bundle(self, game_date: str, history_only: bool = False) -> Dict[str, Any]:
+        """Fetch all data once and assemble both outputs.
+
+        When `history_only=True`, skip the four `_latest` arsenal queries and
+        the per-pitcher profile assembly — only the leaderboard is needed for
+        the history sidecar. This avoids a multi-minute scan against
+        `mlb_game_feed_pitches` (`_fetch_strikeout_zones`) which has no
+        partition pruning on the 45-day rolling window filter.
+        """
         tonight = self._fetch_tonight_predictions(game_date)
         opponent_k_defense = self._fetch_opponent_k_defense(game_date)
         best_bet_keys = self._fetch_best_bet_keys(game_date)
@@ -166,10 +185,16 @@ class MlbPitcherExporter(BaseExporter):
         all_pitcher_keys.update(season_aggs.keys())
         all_pitcher_keys.update(p['pitcher_lookup'] for p in tonight)
 
-        pitch_arsenals = self._fetch_pitch_arsenal(list(all_pitcher_keys))
-        advanced_arsenals = self._fetch_advanced_arsenal(list(all_pitcher_keys))
-        expected_arsenals = self._fetch_expected_arsenal(list(all_pitcher_keys))
-        strikeout_zones = self._fetch_strikeout_zones(list(all_pitcher_keys))
+        if history_only:
+            pitch_arsenals: Dict[str, List[Dict[str, Any]]] = {}
+            advanced_arsenals: Dict[str, Dict[str, Any]] = {}
+            expected_arsenals: Dict[str, Dict[str, Any]] = {}
+            strikeout_zones: Dict[str, Dict[str, Any]] = {}
+        else:
+            pitch_arsenals = self._fetch_pitch_arsenal(list(all_pitcher_keys))
+            advanced_arsenals = self._fetch_advanced_arsenal(list(all_pitcher_keys))
+            expected_arsenals = self._fetch_expected_arsenal(list(all_pitcher_keys))
+            strikeout_zones = self._fetch_strikeout_zones(list(all_pitcher_keys))
 
         # Build display-name map (prefer tonight name, then track record, then season_agg)
         names = self._build_name_map(tonight, ranked_track_records, season_aggs)
@@ -188,24 +213,25 @@ class MlbPitcherExporter(BaseExporter):
         )
 
         profiles: Dict[str, Dict] = {}
-        for pitcher_lookup in all_pitcher_keys:
-            if not pitcher_lookup:
-                continue
-            profile = self._build_profile(
-                pitcher_lookup=pitcher_lookup,
-                name=names.get(pitcher_lookup, pitcher_lookup.replace('_', ' ').title()),
-                tonight=next((p for p in tonight if p['pitcher_lookup'] == pitcher_lookup), None),
-                is_best_bet=(pitcher_lookup, game_date) in best_bet_keys,
-                track_record=ranked_track_records.get(pitcher_lookup),
-                season_agg=season_aggs.get(pitcher_lookup),
-                game_log=game_logs.get(pitcher_lookup, []),
-                pitch_arsenal=pitch_arsenals.get(pitcher_lookup, []),
-                advanced_arsenal=advanced_arsenals.get(pitcher_lookup),
-                expected_arsenal=expected_arsenals.get(pitcher_lookup),
-                opponent_k_defense=opponent_k_defense.get(pitcher_lookup),
-                strikeout_zones=strikeout_zones.get(pitcher_lookup),
-            )
-            profiles[pitcher_lookup] = profile
+        if not history_only:
+            for pitcher_lookup in all_pitcher_keys:
+                if not pitcher_lookup:
+                    continue
+                profile = self._build_profile(
+                    pitcher_lookup=pitcher_lookup,
+                    name=names.get(pitcher_lookup, pitcher_lookup.replace('_', ' ').title()),
+                    tonight=next((p for p in tonight if p['pitcher_lookup'] == pitcher_lookup), None),
+                    is_best_bet=(pitcher_lookup, game_date) in best_bet_keys,
+                    track_record=ranked_track_records.get(pitcher_lookup),
+                    season_agg=season_aggs.get(pitcher_lookup),
+                    game_log=game_logs.get(pitcher_lookup, []),
+                    pitch_arsenal=pitch_arsenals.get(pitcher_lookup, []),
+                    advanced_arsenal=advanced_arsenals.get(pitcher_lookup),
+                    expected_arsenal=expected_arsenals.get(pitcher_lookup),
+                    opponent_k_defense=opponent_k_defense.get(pitcher_lookup),
+                    strikeout_zones=strikeout_zones.get(pitcher_lookup),
+                )
+                profiles[pitcher_lookup] = profile
 
         return {'leaderboard': leaderboard, 'profiles': profiles}
 

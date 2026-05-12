@@ -207,3 +207,4 @@ failed_games_*.json
 # Experiment artifacts
 experiments/results/
 ml/experiments/results/
+.benchmarks/
