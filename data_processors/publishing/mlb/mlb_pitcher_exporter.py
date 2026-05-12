@@ -72,18 +72,31 @@ class MlbPitcherExporter(BaseExporter):
         bundle = self._build_bundle(game_date)
         return bundle['leaderboard']
 
-    def export(self, game_date: Optional[str] = None, dry_run: bool = False) -> Dict[str, Any]:
+    def export(
+        self,
+        game_date: Optional[str] = None,
+        dry_run: bool = False,
+        history_only: bool = False,
+    ) -> Dict[str, Any]:
         """Generate + upload leaderboard and all pitcher profiles.
 
         Args:
             game_date: Target date (YYYY-MM-DD). Defaults to today.
             dry_run: If True, return payloads without uploading.
+            history_only: If True, only write the frozen history/{game_date}.json
+                sidecar. Skip the live leaderboard.json and per-pitcher profile
+                uploads. Used by the history backfill job to fill past dates
+                without clobbering live content.
 
         Returns:
-            Dict with 'leaderboard_path' and 'profile_paths' (list of GCS paths).
+            Dict with 'leaderboard_path' (or None when history_only),
+            'history_path', and 'profile_paths' (empty list when history_only).
         """
         game_date = game_date or date.today().isoformat()
-        logger.info(f"Generating MLB pitcher exports for {game_date}")
+        logger.info(
+            f"Generating MLB pitcher exports for {game_date}"
+            + (" (history-only)" if history_only else "")
+        )
 
         bundle = self._build_bundle(game_date)
 
@@ -95,11 +108,13 @@ class MlbPitcherExporter(BaseExporter):
                 'sample_profile': next(iter(bundle['profiles'].values()), None),
             }
 
-        leaderboard_path = self.upload_to_gcs(
-            bundle['leaderboard'],
-            'mlb/pitchers/leaderboard.json',
-            cache_control=CACHE_MEDIUM,
-        )
+        leaderboard_path: Optional[str] = None
+        if not history_only:
+            leaderboard_path = self.upload_to_gcs(
+                bundle['leaderboard'],
+                'mlb/pitchers/leaderboard.json',
+                cache_control=CACHE_MEDIUM,
+            )
 
         # Date-keyed history copy so the date selector can show past days.
         # Frozen once written — past dates never change.
@@ -110,17 +125,21 @@ class MlbPitcherExporter(BaseExporter):
         )
 
         profile_paths: List[str] = []
-        for pitcher_lookup, profile in bundle['profiles'].items():
-            path = self.upload_to_gcs(
-                profile,
-                f'mlb/pitchers/{pitcher_lookup}.json',
-                cache_control=CACHE_MEDIUM,
-            )
-            profile_paths.append(path)
+        if not history_only:
+            for pitcher_lookup, profile in bundle['profiles'].items():
+                path = self.upload_to_gcs(
+                    profile,
+                    f'mlb/pitchers/{pitcher_lookup}.json',
+                    cache_control=CACHE_MEDIUM,
+                )
+                profile_paths.append(path)
 
-        logger.info(
-            f"Exported leaderboard + {len(profile_paths)} pitcher profiles"
-        )
+        if history_only:
+            logger.info(f"Exported history sidecar for {game_date}")
+        else:
+            logger.info(
+                f"Exported leaderboard + {len(profile_paths)} pitcher profiles"
+            )
         return {
             'leaderboard_path': leaderboard_path,
             'history_path': history_path,
@@ -1092,6 +1111,8 @@ def main():
                         help='Target date (YYYY-MM-DD)')
     parser.add_argument('--dry-run', action='store_true',
                         help='Build payloads but do not upload to GCS')
+    parser.add_argument('--history-only', action='store_true',
+                        help='Only write history/{date}.json; skip live leaderboard + profiles')
     parser.add_argument('--sample-slug', type=str, default=None,
                         help='With --dry-run, print profile JSON for this pitcher_lookup')
 
@@ -1114,9 +1135,13 @@ def main():
             print(json_mod.dumps(bundle['profiles'][args.sample_slug], indent=2, default=str))
         return
 
-    result = exporter.export(args.date)
-    print(f"Leaderboard → {result['leaderboard_path']}")
-    print(f"Profiles:     {len(result['profile_paths'])} files uploaded")
+    result = exporter.export(args.date, history_only=args.history_only)
+    if args.history_only:
+        print(f"History    → {result['history_path']}")
+    else:
+        print(f"Leaderboard → {result['leaderboard_path']}")
+        print(f"History     → {result['history_path']}")
+        print(f"Profiles:     {len(result['profile_paths'])} files uploaded")
 
 
 if __name__ == '__main__':
