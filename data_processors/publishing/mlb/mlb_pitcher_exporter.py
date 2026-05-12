@@ -261,27 +261,50 @@ class MlbPitcherExporter(BaseExporter):
     # ------------------------------------------------------------------
 
     def _fetch_tonight_predictions(self, game_date: str) -> List[Dict[str, Any]]:
-        """Predictions for the target date, deduped to one row per pitcher."""
+        """Predictions for the target date, deduped to one row per pitcher.
+
+        JOINs `mlb_schedule` for `game_time_utc` so the leaderboard can be
+        sorted chronologically (Tonight page is intentionally prediction-free —
+        sort order is by game time, not edge).
+        """
         query = f"""
+        WITH preds AS (
+            SELECT
+                pitcher_lookup,
+                pitcher_name,
+                team_abbr AS team,
+                opponent_team_abbr AS opponent,
+                is_home,
+                strikeouts_line,
+                predicted_strikeouts,
+                edge,
+                recommendation,
+                confidence,
+                system_id,
+                CAST(game_date AS STRING) AS game_date,
+                game_date AS _gd
+            FROM `{self.project_id}.mlb_predictions.pitcher_strikeouts`
+            WHERE game_date = '{game_date}'
+              AND recommendation IN ('OVER', 'UNDER', 'PASS')
+            QUALIFY ROW_NUMBER() OVER (
+                PARTITION BY pitcher_lookup
+                ORDER BY ABS(IFNULL(edge, 0)) DESC, processed_at DESC
+            ) = 1
+        )
         SELECT
-            pitcher_lookup,
-            pitcher_name,
-            team_abbr AS team,
-            opponent_team_abbr AS opponent,
-            is_home,
-            strikeouts_line,
-            predicted_strikeouts,
-            edge,
-            recommendation,
-            confidence,
-            system_id,
-            CAST(game_date AS STRING) AS game_date
-        FROM `{self.project_id}.mlb_predictions.pitcher_strikeouts`
-        WHERE game_date = '{game_date}'
-          AND recommendation IN ('OVER', 'UNDER', 'PASS')
+            p.pitcher_lookup, p.pitcher_name, p.team, p.opponent, p.is_home,
+            p.strikeouts_line, p.predicted_strikeouts, p.edge, p.recommendation,
+            p.confidence, p.system_id, p.game_date,
+            CAST(s.game_time_utc AS STRING) AS game_time_utc
+        FROM preds p
+        LEFT JOIN `{self.project_id}.mlb_raw.mlb_schedule` s
+          ON s.game_date = p._gd
+         AND (
+              s.home_probable_pitcher_name = p.pitcher_name
+           OR s.away_probable_pitcher_name = p.pitcher_name
+         )
         QUALIFY ROW_NUMBER() OVER (
-            PARTITION BY pitcher_lookup
-            ORDER BY ABS(IFNULL(edge, 0)) DESC, processed_at DESC
+            PARTITION BY p.pitcher_lookup ORDER BY s.game_time_utc
         ) = 1
         """
         return self.query_to_list(query)
@@ -869,7 +892,8 @@ class MlbPitcherExporter(BaseExporter):
         game_logs: Dict[str, List[Dict]],
         names: Dict[str, str],
     ) -> Dict[str, Any]:
-        # Tonight's slate: sorted by abs(edge) DESC, best bets float up on ties
+        # Tonight's slate: sorted by game time ASC. Tonight page is intentionally
+        # prediction-free — no edge or best-bet floating in the ordering.
         slate = []
         for p in tonight:
             pl = p['pitcher_lookup']
@@ -897,6 +921,7 @@ class MlbPitcherExporter(BaseExporter):
                 'team': p.get('team'),
                 'opponent': p.get('opponent'),
                 'is_home': bool(p.get('is_home')),
+                'game_time_utc': p.get('game_time_utc'),
                 'strikeouts_line': safe_float(p.get('strikeouts_line'), precision=1),
                 'predicted_strikeouts': safe_float(p.get('predicted_strikeouts'), precision=1),
                 'edge': safe_float(p.get('edge'), precision=2),
@@ -908,12 +933,13 @@ class MlbPitcherExporter(BaseExporter):
                 'last_5_k': last_5_k,
                 'last_5_lines': last_5_lines,
             })
-        slate.sort(
-            key=lambda x: (
-                -1 if x['is_best_bet'] else 0,
-                -abs(x['edge'] or 0),
-            )
-        )
+        # Chronological sort (earliest first). NULL game_time_utc sorts last
+        # via the '~' high-ASCII fallback in the tuple key, then by pitcher_name
+        # to give stable ordering for same-time games.
+        slate.sort(key=lambda x: (
+            x.get('game_time_utc') or '~',
+            x.get('pitcher_name') or '',
+        ))
 
         # Hot Hands — pitchers with longest current OVER streak from game log
         hot_hands = self._leaderboard_hot_hands(game_logs, names, season_aggs)
