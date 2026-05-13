@@ -2,7 +2,7 @@
 
 Pipeline (V3 FINAL — Session 456, vig-adjusted cross-season validated):
   1. Load predictions for game_date
-  1b. Overconfidence cap: edge > MAX_EDGE (2.0) blocked
+  1b. Overconfidence cap: edge > MAX_EDGE (1.25) blocked
   1c. Probability cap: p_over > MAX_PROB_OVER (0.85) blocked (relaxed for regressor)
   2. Apply direction filter (OVER + optional UNDER via env var)
   3. Apply negative filters (bullpen, il_return, pitch_count, insufficient_data,
@@ -66,9 +66,11 @@ UNDER_MIN_SIGNALS = 3  # Higher bar than OVER (which uses 2)
 
 # Overconfidence cap — OVER picks with edge > MAX_EDGE are blocked
 # Walk-forward (Session 438b): edge 2.0-2.5 = 58.7%, edge 3.0+ = 48.2% (losing).
-# 2026 live: edge 1.25-1.5 = 42.9% HR (N=7), edge 1.5-2.0 = N=3 (no volume).
-# Tightened from 2.0 → 1.5 to cut the losing tail; 0.5-1.0 sweet spot intact.
-MAX_EDGE = float(os.environ.get('MLB_MAX_EDGE', '1.5'))
+# 2026 live (Lane 14, comprehensive-review-2026-05-12): OVER edge 1.0-1.49 = 43.75% HR
+# (N=48) — losing tail extends down to ~1.0. Edge 0.5-0.99 = 59.0% remains the sweet spot.
+# Tightened 1.5 → 1.25 to block the 1.25-1.49 zone (8/78 OVER BB picks = 10.3% volume,
+# 42.9% HR observed). Bucket re-rank deferred (CI overlap concern, Session 2 roadmap).
+MAX_EDGE = float(os.environ.get('MLB_MAX_EDGE', '1.25'))
 
 # Probability cap — OVER picks with p_over > MAX_PROB are blocked.
 # Session 438b walk-forward: p_over 0.60-0.70 = 64.4% HR, 0.70+ = 58.7%,
@@ -626,7 +628,7 @@ class MLBBestBetsExporter:
             logger.info(f"[MLB BB] Ultra tier: {n_ultra} picks ({n_overlay} via overlay)")
 
         # 8. Build pick angles + stamp algorithm version
-        algo_version = 'mlb_v8_s456_v3final_away_5picks'
+        algo_version = 'mlb_v9_max_edge_125'
         for pick in ranked_picks:
             pick['pick_angles'] = self._build_pick_angles(pick)
             pick['algorithm_version'] = algo_version
