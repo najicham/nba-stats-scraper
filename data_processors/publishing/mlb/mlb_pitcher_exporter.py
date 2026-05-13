@@ -38,6 +38,7 @@ from data_processors.publishing.exporter_utils import (
     CACHE_LONG,
     safe_float,
     safe_int,
+    resolve_player_name as _resolve_pitcher_name,
 )
 
 logger = logging.getLogger(__name__)
@@ -917,7 +918,7 @@ class MlbPitcherExporter(BaseExporter):
 
             slate.append({
                 'pitcher_id': pl,
-                'pitcher_name': p.get('pitcher_name') or names.get(pl),
+                'pitcher_name': _resolve_pitcher_name({'pitcher_name': p.get('pitcher_name') or names.get(pl), 'pitcher_lookup': pl}),
                 'team': p.get('team'),
                 'opponent': p.get('opponent'),
                 'is_home': bool(p.get('is_home')),

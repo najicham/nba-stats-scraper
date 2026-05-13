@@ -18,7 +18,11 @@ from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional
 
 from data_processors.publishing.base_exporter import BaseExporter
-from data_processors.publishing.exporter_utils import safe_float, safe_int
+from data_processors.publishing.exporter_utils import (
+    safe_float,
+    safe_int,
+    resolve_player_name as _resolve_pitcher_name,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +103,7 @@ class MlbResultsExporter(BaseExporter):
         for row in rows:
             result = {
                 'pitcher_id': row.get('pitcher_lookup'),
-                'pitcher_name': row.get('pitcher_name'),
+                'pitcher_name': _resolve_pitcher_name(row),
                 'team': row.get('team_abbr'),
                 'opponent': row.get('opponent_team_abbr'),
                 'is_home': bool(row.get('is_home')),

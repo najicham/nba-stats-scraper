@@ -191,6 +191,88 @@ def create_empty_response(
     return response
 
 
+def resolve_player_name(
+    row: Dict[str, Any],
+    name_keys: tuple = ('pitcher_name', 'player_name', 'player_full_name'),
+    lookup_keys: tuple = ('pitcher_lookup', 'player_lookup'),
+) -> Optional[str]:
+    """Return the first non-empty name field; fall back to title-cased lookup.
+
+    Roster gaps occasionally leave NULL name fields in BigQuery rows while the
+    lookup key remains populated. Emitting raw NULL into the published JSON
+    produces blank rows in the UI ("· OVER 4.5 K · BAL @ BOS" with no name).
+    Title-casing the lookup ("trevor_rogers" → "Trevor Rogers") is a graceful
+    fallback that keeps the pick legible while the upstream roster is repaired.
+    """
+    for key in name_keys:
+        value = row.get(key)
+        if value:
+            return value
+    for key in lookup_keys:
+        lookup = row.get(key)
+        if lookup:
+            return lookup.replace('_', ' ').title()
+    return None
+
+
+def find_missing_names(
+    rows: List[Dict[str, Any]],
+    name_keys: tuple = ('pitcher_name', 'player_name', 'player_full_name'),
+    lookup_keys: tuple = ('pitcher_lookup', 'player_lookup'),
+) -> List[str]:
+    """Return lookups for rows where every name field is empty but a lookup exists.
+
+    Used to surface upstream roster gaps that the title-case fallback hides
+    from end users — callers should emit a warning so the source data gets
+    repaired even though the published JSON renders legibly.
+    """
+    missing: List[str] = []
+    for row in rows:
+        if any(row.get(k) for k in name_keys):
+            continue
+        for lk in lookup_keys:
+            lookup = row.get(lk)
+            if lookup:
+                missing.append(lookup)
+                break
+    return missing
+
+
+def alert_on_missing_names(
+    rows: List[Dict[str, Any]],
+    context: str,
+    extra_details: Optional[Dict[str, Any]] = None,
+) -> List[str]:
+    """Detect rows with NULL names and emit a notify_warning. Returns the lookups
+    found (so callers can include them in their own logs). Safe to call from
+    any exporter — failure to dispatch the notification is swallowed.
+    """
+    missing = find_missing_names(rows)
+    if not missing:
+        return missing
+    try:
+        from shared.utils.notification_system import notify_warning
+        details = {'affected_lookups': missing, 'count': len(missing)}
+        if extra_details:
+            details.update(extra_details)
+        notify_warning(
+            title=f'{context}: {len(missing)} row(s) missing player name',
+            message=(
+                f'{len(missing)} published row(s) had NULL player_name/pitcher_name in BigQuery. '
+                f'Title-cased lookup fallback is in effect; fix the upstream roster. '
+                f'Affected: {", ".join(missing[:10])}'
+                + ('' if len(missing) <= 10 else f' (+{len(missing) - 10} more)')
+            ),
+            details=details,
+            processor_name=context,
+        )
+    except Exception as e:
+        # notify_warning failures must not break the export pipeline
+        import logging
+        logging.getLogger(__name__).warning(f'alert_on_missing_names dispatch failed: {e}')
+    return missing
+
+
 def truncate_string(s: str, max_length: int = 50, suffix: str = '...') -> str:
     """
     Truncate string at word boundary.

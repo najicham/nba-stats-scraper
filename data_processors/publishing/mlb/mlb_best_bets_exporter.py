@@ -24,7 +24,12 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Any, Optional, Tuple
 
 from data_processors.publishing.base_exporter import BaseExporter
-from data_processors.publishing.exporter_utils import safe_float, safe_int
+from data_processors.publishing.exporter_utils import (
+    safe_float,
+    safe_int,
+    resolve_player_name as _resolve_pitcher_name,
+    alert_on_missing_names,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -119,11 +124,17 @@ class MlbBestBetsExporter(BaseExporter):
 
         rows = self.query_to_list(query)
 
+        alert_on_missing_names(
+            rows,
+            context='mlb-best-bets-exporter',
+            extra_details={'game_date': game_date, 'source_table': 'mlb_predictions.signal_best_bets_picks'},
+        )
+
         best_bets = []
         for row in rows:
             bet = {
                 'pitcher_id': row.get('pitcher_lookup'),
-                'pitcher_name': row.get('pitcher_name'),
+                'pitcher_name': _resolve_pitcher_name(row),
                 'team': row.get('team_abbr'),
                 'opponent': row.get('opponent_team_abbr'),
                 'strikeouts_line': safe_float(row.get('line_value'), default=0.0),
@@ -220,7 +231,7 @@ class MlbBestBetsExporter(BaseExporter):
 
         return {
             'rank': rank,
-            'player': row.get('pitcher_name'),
+            'player': _resolve_pitcher_name(row),
             'player_lookup': row.get('pitcher_lookup'),
             'team': row.get('team_abbr'),
             'opponent': row.get('opponent_team_abbr'),

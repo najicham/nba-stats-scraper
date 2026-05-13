@@ -273,50 +273,83 @@ class StatusExporter(BaseExporter):
             }
 
     def _check_predictions_status(self, target_date: str = None, active_break=None) -> Dict[str, Any]:
-        """Check if predictions exist for today/tomorrow."""
+        """Check if predictions exist for today across NBA and MLB.
+
+        Aggregated across both sports — system is healthy if EITHER sport
+        produced predictions today. Off-season NBA + active MLB (or vice versa)
+        should not register as degraded.
+        """
         try:
             if not target_date:
                 from zoneinfo import ZoneInfo
                 et = ZoneInfo('America/New_York')
                 target_date = datetime.now(et).strftime('%Y-%m-%d')
 
-            query = """
-            SELECT COUNT(*) as count
-            FROM `nba_predictions.player_prop_predictions`
-            WHERE game_date = @target_date
-              AND is_active = TRUE
-            """
             params = [bigquery.ScalarQueryParameter("target_date", "DATE", target_date)]
+            client = self._get_bq_client()
 
-            result = list(self._get_bq_client().query(query, job_config=bigquery.QueryJobConfig(
-                query_parameters=params
-            )))
+            nba_count = 0
+            mlb_count = 0
 
-            count = result[0].count if result else 0
+            try:
+                nba_result = list(client.query(
+                    """
+                    SELECT COUNT(*) as count
+                    FROM `nba_predictions.player_prop_predictions`
+                    WHERE game_date = @target_date AND is_active = TRUE
+                    """,
+                    job_config=bigquery.QueryJobConfig(query_parameters=params),
+                ))
+                nba_count = nba_result[0].count if nba_result else 0
+            except Exception as e:
+                logger.warning(f"NBA predictions check failed: {e}")
 
-            if count > 0:
+            try:
+                mlb_result = list(client.query(
+                    """
+                    SELECT COUNT(*) as count
+                    FROM `mlb_predictions.pitcher_strikeouts`
+                    WHERE game_date = @target_date
+                    """,
+                    job_config=bigquery.QueryJobConfig(query_parameters=params),
+                ))
+                mlb_count = mlb_result[0].count if mlb_result else 0
+            except Exception as e:
+                logger.warning(f"MLB predictions check failed: {e}")
+
+            total = nba_count + mlb_count
+            base = {
+                'predictions_count': total,
+                'nba_count': nba_count,
+                'mlb_count': mlb_count,
+                'target_date': target_date,
+            }
+
+            if total > 0:
+                parts = []
+                if nba_count > 0:
+                    parts.append(f'{nba_count} NBA')
+                if mlb_count > 0:
+                    parts.append(f'{mlb_count} MLB')
                 return {
+                    **base,
                     'status': 'healthy',
-                    'message': f'{count} predictions available for {target_date}',
-                    'predictions_count': count,
-                    'target_date': target_date
+                    'message': f"{' + '.join(parts)} predictions available for {target_date}",
                 }
-            elif active_break:
-                # Zero predictions expected during a schedule break
+
+            if active_break:
                 headline = active_break.get('headline', 'Schedule Break')
                 return {
+                    **base,
                     'status': 'healthy',
                     'message': f'No predictions expected — {headline}',
-                    'predictions_count': 0,
-                    'target_date': target_date
                 }
-            else:
-                return {
-                    'status': 'degraded',
-                    'message': f'No predictions found for {target_date}',
-                    'predictions_count': 0,
-                    'target_date': target_date
-                }
+
+            return {
+                **base,
+                'status': 'degraded',
+                'message': f'No predictions found for {target_date}',
+            }
 
         except Exception as e:
             logger.error(f"Error checking predictions status: {e}", exc_info=True)
@@ -326,12 +359,10 @@ class StatusExporter(BaseExporter):
             }
 
     def _check_best_bets_status(self, active_break=None) -> Dict[str, Any]:
-        """Check best bets export freshness and pick count.
+        """Check best bets export freshness across NBA and MLB.
 
-        Reads the latest.json from GCS to determine:
-        - Whether the file exists and is fresh (updated today)
-        - How many picks were selected
-        - 0 picks is reported honestly (healthy with message), not as degraded
+        System is healthy if EITHER sport produced a fresh best-bets file today.
+        NBA off-season + active MLB (or vice versa) should register as healthy.
         """
         try:
             if active_break:
@@ -343,58 +374,50 @@ class StatusExporter(BaseExporter):
                     'last_update': None,
                 }
 
-            bucket = self._get_storage_client().bucket('nba-props-platform-api')
-            blob = bucket.blob('v1/signal-best-bets/latest.json')
-
-            if not blob.exists():
-                return {
-                    'status': 'degraded',
-                    'message': 'Best bets file not found',
-                    'total_picks': 0,
-                    'last_update': None,
-                }
-
-            blob.reload()
-            last_update = blob.updated
-
-            # Check freshness: was it updated today (ET)?
             from zoneinfo import ZoneInfo
             et = ZoneInfo('America/New_York')
             today_et = datetime.now(et).date()
-            last_update_et = last_update.astimezone(et).date()
-            is_fresh = last_update_et >= today_et
 
-            # Read the JSON to extract pick count
-            total_picks = 0
-            try:
-                content = blob.download_as_text()
-                import json
-                data = json.loads(content)
-                total_picks = data.get('total_picks', 0)
-            except Exception as e:
-                logger.warning(f"Failed to read best bets JSON content: {e}")
+            nba_info = self._check_sport_best_bets(
+                blob_path='v1/signal-best-bets/latest.json',
+                today_et=today_et,
+            )
+            mlb_info = self._check_sport_best_bets(
+                blob_path=f'v1/mlb/best-bets/{today_et.isoformat()}.json',
+                today_et=today_et,
+            )
 
-            if not is_fresh:
-                return {
-                    'status': 'degraded',
-                    'message': f'Best bets file stale (last updated {last_update_et})',
-                    'total_picks': total_picks,
-                    'last_update': last_update.isoformat(),
-                }
+            nba_fresh = nba_info['is_fresh']
+            mlb_fresh = mlb_info['is_fresh']
+            total_picks = (nba_info['total_picks'] or 0) + (mlb_info['total_picks'] or 0)
 
-            if total_picks == 0:
-                return {
-                    'status': 'healthy',
-                    'message': '0 picks today — all candidates filtered out',
-                    'total_picks': 0,
-                    'last_update': last_update.isoformat(),
-                }
-
-            return {
-                'status': 'healthy',
-                'message': f'{total_picks} best bets available',
+            base = {
                 'total_picks': total_picks,
-                'last_update': last_update.isoformat(),
+                'nba': nba_info,
+                'mlb': mlb_info,
+                'last_update': nba_info['last_update'] or mlb_info['last_update'],
+            }
+
+            if nba_fresh or mlb_fresh:
+                parts = []
+                if nba_fresh:
+                    parts.append(f"{nba_info['total_picks']} NBA")
+                if mlb_fresh:
+                    parts.append(f"{mlb_info['total_picks']} MLB")
+                joined = ' + '.join(parts) if parts else '0'
+                return {
+                    **base,
+                    'status': 'healthy',
+                    'message': f'{joined} best bets available',
+                }
+
+            # Neither sport fresh — degraded only if neither file even exists today.
+            # If files exist but are stale, this is an off-day across both sports;
+            # surface as degraded so something gets investigated.
+            return {
+                **base,
+                'status': 'degraded',
+                'message': 'No fresh best bets file for today (NBA or MLB)',
             }
 
         except Exception as e:
@@ -405,6 +428,40 @@ class StatusExporter(BaseExporter):
                 'total_picks': 0,
                 'last_update': None,
             }
+
+    def _check_sport_best_bets(self, blob_path: str, today_et) -> Dict[str, Any]:
+        """Inspect one sport's best-bets file: existence, freshness, pick count."""
+        bucket = self._get_storage_client().bucket('nba-props-platform-api')
+        blob = bucket.blob(blob_path)
+
+        if not blob.exists():
+            return {'exists': False, 'is_fresh': False, 'total_picks': 0, 'last_update': None}
+
+        blob.reload()
+        last_update = blob.updated
+        from zoneinfo import ZoneInfo
+        et = ZoneInfo('America/New_York')
+        last_update_et = last_update.astimezone(et).date()
+        is_fresh = last_update_et >= today_et
+
+        total_picks = 0
+        try:
+            import json
+            data = json.loads(blob.download_as_text())
+            total_picks = data.get('total_picks', 0)
+            if not total_picks:
+                picks_list = data.get('picks') or data.get('best_bets')
+                if isinstance(picks_list, list):
+                    total_picks = len(picks_list)
+        except Exception as e:
+            logger.warning(f"Failed to read {blob_path}: {e}")
+
+        return {
+            'exists': True,
+            'is_fresh': is_fresh,
+            'total_picks': total_picks,
+            'last_update': last_update.isoformat(),
+        }
 
     def _are_games_likely_active(self) -> bool:
         """
@@ -603,4 +660,144 @@ class StatusExporter(BaseExporter):
         issues = len(json_data.get('known_issues', []))
         logger.info(f"Exported status: {overall}, {issues} issues")
 
+        try:
+            self._maybe_send_status_alert(json_data)
+        except Exception as e:
+            logger.warning(f"Status alert dispatch failed (non-critical): {e}")
+
         return gcs_path
+
+    # Alert state marker stored alongside the API artifacts so any CF instance
+    # (live-export, daily-health-check) sees the same transition history.
+    _ALERT_STATE_BLOB = 'v1/admin/status-alert-state.json'
+    _ALERT_REMINDER_INTERVAL_HOURS = 24
+
+    def _maybe_send_status_alert(self, status_json: Dict[str, Any]) -> None:
+        """Send an admin email when overall status worsens, recovers, or persists.
+
+        Rate-limit:
+        - Edge-trigger on any status change.
+        - While degraded/unhealthy, send at most one reminder per 24h.
+        - On recovery (→ healthy), send a single recovery notice.
+
+        Reads/writes state at gs://nba-props-platform-api/v1/admin/status-alert-state.json.
+        """
+        overall = status_json.get('overall_status', 'unknown')
+        prev_state = self._read_alert_state()
+        prev_status = prev_state.get('last_status', 'healthy')
+        last_alerted_at = prev_state.get('last_alerted_at')
+
+        now = datetime.now(timezone.utc)
+        should_send = False
+        reason = None
+
+        if overall == 'healthy' and prev_status != 'healthy':
+            should_send = True
+            reason = 'recovered'
+        elif overall != 'healthy' and prev_status == 'healthy':
+            should_send = True
+            reason = 'newly_degraded'
+        elif overall != 'healthy' and overall != prev_status:
+            should_send = True
+            reason = 'escalated_or_changed'
+        elif overall != 'healthy' and last_alerted_at:
+            try:
+                last_dt = datetime.fromisoformat(last_alerted_at.replace('Z', '+00:00'))
+                if (now - last_dt).total_seconds() >= self._ALERT_REMINDER_INTERVAL_HOURS * 3600:
+                    should_send = True
+                    reason = 'reminder'
+            except Exception:
+                should_send = True
+                reason = 'reminder_state_unparseable'
+
+        # Always remember the observed status so we don't repeatedly edge-trigger
+        # on the same transition if dispatch keeps failing. Only advance
+        # last_alerted_at when a notification was actually delivered — that way
+        # a failed dispatch still gets a retry on the next tick (reminder branch)
+        # instead of being suppressed for 24h.
+        new_state = {
+            'last_status': overall,
+            'last_alerted_at': last_alerted_at,
+            'last_reason': prev_state.get('last_reason'),
+        }
+
+        if should_send:
+            delivered = self._dispatch_notification(overall, status_json, reason)
+            if delivered:
+                new_state['last_alerted_at'] = now.isoformat()
+                new_state['last_reason'] = reason
+
+        self._write_alert_state(new_state)
+
+    def _read_alert_state(self) -> Dict[str, Any]:
+        try:
+            bucket = self._get_storage_client().bucket('nba-props-platform-api')
+            blob = bucket.blob(self._ALERT_STATE_BLOB)
+            if not blob.exists():
+                return {}
+            import json
+            return json.loads(blob.download_as_text())
+        except Exception as e:
+            logger.warning(f"Failed to read alert state: {e}")
+            return {}
+
+    def _write_alert_state(self, state: Dict[str, Any]) -> None:
+        try:
+            import json
+            bucket = self._get_storage_client().bucket('nba-props-platform-api')
+            blob = bucket.blob(self._ALERT_STATE_BLOB)
+            blob.upload_from_string(json.dumps(state), content_type='application/json')
+        except Exception as e:
+            logger.warning(f"Failed to persist alert state: {e}")
+
+    def _dispatch_notification(self, overall: str, status_json: Dict[str, Any], reason: str) -> bool:
+        """Send a status notification. Returns True if delivered, False if any
+        step failed — caller uses this to decide whether to persist
+        last_alerted_at.
+        """
+        try:
+            from shared.utils.notification_system import notify_warning, notify_error, notify_info
+        except Exception as e:
+            logger.warning(f"notification_system unavailable: {e}")
+            return False
+
+        services = status_json.get('services', {}) or {}
+        known_issues = status_json.get('known_issues', []) or []
+        details = {
+            'overall_status': overall,
+            'transition_reason': reason,
+            'predictions': services.get('predictions', {}).get('message'),
+            'best_bets': services.get('best_bets', {}).get('message'),
+            'tonight_data': services.get('tonight_data', {}).get('message'),
+            'live_data': services.get('live_data', {}).get('message'),
+            'issue_count': len(known_issues),
+            'known_issues': known_issues,
+            'status_url': 'https://storage.googleapis.com/nba-props-platform-api/v1/status.json',
+        }
+
+        try:
+            if overall == 'healthy':
+                notify_info(
+                    title='Player Props status recovered',
+                    message=f'System back to healthy (was {reason}).',
+                    details=details,
+                    processor_name='status-exporter',
+                )
+            elif overall == 'unhealthy':
+                notify_error(
+                    title='Player Props status UNHEALTHY',
+                    message=f"Pipeline reports unhealthy ({reason}). {len(known_issues)} known issue(s).",
+                    details=details,
+                    processor_name='status-exporter',
+                )
+            else:
+                notify_warning(
+                    title='Player Props status degraded',
+                    message=f"Pipeline degraded ({reason}). {len(known_issues)} known issue(s).",
+                    details=details,
+                    processor_name='status-exporter',
+                )
+            return True
+        except Exception as e:
+            logger.warning(f"Status notification dispatch failed: {e}")
+            return False
