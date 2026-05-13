@@ -15,7 +15,7 @@ Usage:
 """
 
 from typing import Any, Optional, Dict, List, Union
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 
 def safe_float(value: Any, default: Optional[float] = None, precision: int = 2) -> Optional[float]:
@@ -242,14 +242,28 @@ def alert_on_missing_names(
     rows: List[Dict[str, Any]],
     context: str,
     extra_details: Optional[Dict[str, Any]] = None,
+    dedup_hours: int = 24,
+    bucket_name: str = 'nba-props-platform-api',
 ) -> List[str]:
     """Detect rows with NULL names and emit a notify_warning. Returns the lookups
     found (so callers can include them in their own logs). Safe to call from
     any exporter — failure to dispatch the notification is swallowed.
+
+    Rate-limited: the same set of affected lookups suppresses for ``dedup_hours``.
+    A *changed* set (new lookup appears or an old one is fixed and disappears)
+    fires a fresh alert immediately. State is kept per-``context`` at
+    ``gs://{bucket_name}/v1/admin/alerts/missing-names-{context}.json`` so the
+    four MLB exporters that each call this don't quadruple-notify on the same
+    roster gap, and so a single stable problem (e.g. ``trevor_rogers``) doesn't
+    spam the channel every time the CF runs.
     """
     missing = find_missing_names(rows)
     if not missing:
         return missing
+
+    if _missing_names_recently_alerted(context, missing, dedup_hours, bucket_name):
+        return missing
+
     try:
         from shared.utils.notification_system import notify_warning
         details = {'affected_lookups': missing, 'count': len(missing)}
@@ -266,11 +280,68 @@ def alert_on_missing_names(
             details=details,
             processor_name=context,
         )
+        _mark_missing_names_alerted(context, missing, bucket_name)
     except Exception as e:
         # notify_warning failures must not break the export pipeline
         import logging
         logging.getLogger(__name__).warning(f'alert_on_missing_names dispatch failed: {e}')
     return missing
+
+
+def _missing_names_state_path(context: str) -> str:
+    # Sanitize context for use in a GCS path
+    safe = ''.join(c if c.isalnum() or c in '-_' else '_' for c in context)
+    return f'v1/admin/alerts/missing-names-{safe}.json'
+
+
+def _hash_lookups(lookups: List[str]) -> str:
+    import hashlib
+    payload = '|'.join(sorted(lookups))
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
+def _missing_names_recently_alerted(
+    context: str, lookups: List[str], dedup_hours: int, bucket_name: str
+) -> bool:
+    """Return True iff the same lookup set was alerted within dedup_hours."""
+    try:
+        from google.cloud import storage as gcs
+        import json
+        client = gcs.Client()
+        blob = client.bucket(bucket_name).blob(_missing_names_state_path(context))
+        if not blob.exists():
+            return False
+        state = json.loads(blob.download_as_text())
+        last_at = state.get('last_alerted_at')
+        last_hash = state.get('lookups_hash')
+        if not last_at or not last_hash:
+            return False
+        if _hash_lookups(lookups) != last_hash:
+            return False  # different set of names — alert fresh
+        last_dt = datetime.fromisoformat(last_at.replace('Z', '+00:00'))
+        return datetime.now(timezone.utc) - last_dt < timedelta(hours=dedup_hours)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f'missing-names dedup read failed: {e}')
+        return False  # fail-open: better to risk a duplicate alert than to silently drop
+
+
+def _mark_missing_names_alerted(context: str, lookups: List[str], bucket_name: str) -> None:
+    """Persist the current alert fingerprint for dedup."""
+    try:
+        from google.cloud import storage as gcs
+        import json
+        client = gcs.Client()
+        blob = client.bucket(bucket_name).blob(_missing_names_state_path(context))
+        payload = {
+            'last_alerted_at': datetime.now(timezone.utc).isoformat(),
+            'lookups_hash': _hash_lookups(lookups),
+            'lookups': sorted(lookups),
+        }
+        blob.upload_from_string(json.dumps(payload), content_type='application/json')
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f'missing-names dedup write failed: {e}')
 
 
 def truncate_string(s: str, max_length: int = 50, suffix: str = '...') -> str:
