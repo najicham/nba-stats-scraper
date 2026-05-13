@@ -83,16 +83,18 @@ HYPERPARAMS = {
     'loss_function': 'RMSE',
 }
 
-# Governance gate thresholds
-# max_over_rate relaxed to 95% — regressor naturally skews OVER (91%+),
-# and production has UNDER_ENABLED=false. A 91% OVER rate is expected, not bias.
+# Governance gate thresholds.
+# max_over_rate tightened 95→80: Session 524's broken model had a 91% OVER
+# rate (May-Sep training, no April data) and the gate let it through. 80%
+# still accommodates the regressor's natural OVER skew + UNDER_ENABLED=false
+# in prod, but blocks the no-April-bias signature.
 GOVERNANCE = {
     'max_mae': 2.0,
     'min_over_hr_at_edge': 55.0,     # % OVER HR at edge >= 0.75
     'edge_threshold': 0.75,           # K edge for HR gate
     'min_validation_n': 30,           # minimum graded predictions
     'min_over_rate': 30.0,            # % — reject extreme UNDER bias
-    'max_over_rate': 95.0,            # % — relaxed for regressor (UNDER disabled in prod)
+    'max_over_rate': 80.0,            # % — block no-April-bias regressors (S524)
 }
 
 HOLDOUT_DAYS = 14  # Last N days of training window used as validation
@@ -126,6 +128,30 @@ def parse_args():
     return parser.parse_args()
 
 
+def _ensure_april_coverage(
+    training_start: pd.Timestamp, training_end: pd.Timestamp
+) -> pd.Timestamp:
+    """Guarantee the training window includes ≥30 days of April data.
+
+    Session 524: a 120-day window in Sep–Oct contains zero April days. The
+    resulting model had +1.15 K OVER bias because April K rates differ
+    structurally (cold weather, rotation shakeout, looser command).
+    Operator memory ("always pass --training-start 2024-04-01") is fragile,
+    so the guard is permanent here. Caller's explicit --training-start is
+    respected; this only extends backward when the requested window would
+    miss April. Mirrors NBA's cap_to_pre_late_season pattern.
+    """
+    span = pd.date_range(training_start, training_end, freq='D')
+    april_days = int(sum(1 for d in span if d.month == 4))
+    if april_days >= 30:
+        return training_start
+
+    # Snap to the most recent April 1 that falls at or before training_end.
+    year = training_end.year if training_end.month >= 4 else training_end.year - 1
+    extended = pd.Timestamp(year, 4, 1)
+    return min(training_start, extended)
+
+
 def resolve_dates(args) -> tuple:
     """Resolve training start/end dates from args."""
     if args.training_end:
@@ -139,6 +165,8 @@ def resolve_dates(args) -> tuple:
         training_start = pd.Timestamp(args.training_start)
     else:
         training_start = training_end - pd.Timedelta(days=120)
+
+    training_start = _ensure_april_coverage(training_start, training_end)
 
     return training_start, training_end
 

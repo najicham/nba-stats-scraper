@@ -111,7 +111,9 @@ class MlbBestBetsExporter(BaseExporter):
             bb.pick_angles,
             bb.system_id,
             pa.prediction_correct,
-            pa.actual_strikeouts
+            pa.actual_strikeouts,
+            pa.is_voided,
+            pa.void_reason
         FROM `{self.project_id}.mlb_predictions.signal_best_bets_picks` bb
         LEFT JOIN `{self.project_id}.mlb_predictions.prediction_accuracy` pa
             ON bb.pitcher_lookup = pa.pitcher_lookup
@@ -212,7 +214,13 @@ class MlbBestBetsExporter(BaseExporter):
         is_correct = row.get('prediction_correct')
         actual = row.get('actual_strikeouts')
 
-        if is_correct is True:
+        # Voided picks (rain-shortened starts, postponements, scratches) flow
+        # through grading with prediction_correct=NULL and is_voided=TRUE. Without
+        # surfacing this, the UI treats them as "pending" forever — voids since
+        # Apr 25 (Senga x2, Rocker, Gallen, Springs, ...) were stuck on-screen.
+        if row.get('is_voided'):
+            result = 'VOID'
+        elif is_correct is True:
             result = 'WIN'
         elif is_correct is False:
             result = 'LOSS'
@@ -245,6 +253,7 @@ class MlbBestBetsExporter(BaseExporter):
             'is_ultra': bool(row.get('ultra_tier')),
             'actual': safe_int(actual) if actual is not None else None,
             'result': result,
+            'void_reason': row.get('void_reason') if row.get('is_voided') else None,
             'sport': 'mlb',
         }
 
@@ -410,7 +419,9 @@ class MlbBestBetsExporter(BaseExporter):
             bb.pick_angles,
             bb.system_id,
             pa.prediction_correct,
-            pa.actual_strikeouts
+            pa.actual_strikeouts,
+            pa.is_voided,
+            pa.void_reason
         FROM `{self.project_id}.mlb_predictions.signal_best_bets_picks` bb
         LEFT JOIN `{self.project_id}.mlb_predictions.prediction_accuracy` pa
             ON bb.pitcher_lookup = pa.pitcher_lookup

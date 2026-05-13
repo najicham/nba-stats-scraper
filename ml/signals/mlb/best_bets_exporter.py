@@ -65,13 +65,17 @@ UNDER_ENABLED = os.environ.get('MLB_UNDER_ENABLED', 'false').lower() == 'true'
 UNDER_MIN_SIGNALS = 3  # Higher bar than OVER (which uses 2)
 
 # Overconfidence cap — OVER picks with edge > MAX_EDGE are blocked
-# Walk-forward (Session 438b): edge 2.0-2.5 = 58.7%, edge 3.0+ = 48.2% (losing)
-MAX_EDGE = float(os.environ.get('MLB_MAX_EDGE', '2.0'))
+# Walk-forward (Session 438b): edge 2.0-2.5 = 58.7%, edge 3.0+ = 48.2% (losing).
+# 2026 live: edge 1.25-1.5 = 42.9% HR (N=7), edge 1.5-2.0 = N=3 (no volume).
+# Tightened from 2.0 → 1.5 to cut the losing tail; 0.5-1.0 sweet spot intact.
+MAX_EDGE = float(os.environ.get('MLB_MAX_EDGE', '1.5'))
 
-# Probability cap — OVER picks with p_over > MAX_PROB are blocked
-# Relaxed for regressor: p_over is derived (not native classifier output)
-# Regressor p_over has different calibration — 0.85 keeps outliers only
-MAX_PROB_OVER = float(os.environ.get('MLB_MAX_PROB_OVER', '0.85'))
+# Probability cap — OVER picks with p_over > MAX_PROB are blocked.
+# Session 438b walk-forward: p_over 0.60-0.70 = 64.4% HR, 0.70+ = 58.7%,
+# 0.80+ = 48.2% (losing). Cap was 0.70 originally, relaxed to 0.85 in S455
+# without revalidation. Restoring to 0.70 — the regressor's p_over derives
+# from edge, so the same overconfidence dynamics apply.
+MAX_PROB_OVER = float(os.environ.get('MLB_MAX_PROB_OVER', '0.70'))
 
 # Daily pick limit — truncate ranked picks to this count
 # V3 FINAL: Rank 5 still profitable (58.4%/+32u cross-season)

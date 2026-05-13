@@ -382,6 +382,7 @@ def load_batch_features(
             pgs.opponent_team_abbr,
             pgs.is_home,
             pgs.is_postseason,
+            pgs.is_day_game,
             pgs.days_rest,
             pgs.k_avg_last_3,
             pgs.k_avg_last_5,
@@ -637,6 +638,7 @@ def load_schedule_context(
                 'is_home': False,
                 'pitcher_name': row.away_probable_pitcher_name,
                 'team_abbr': row.away_team_abbr,
+                'opponent_team_abbr': row.home_team_abbr,
             }
             by_team[row.away_team_abbr] = away_info
             if row.away_probable_pitcher_name:
@@ -647,6 +649,7 @@ def load_schedule_context(
                 'is_home': True,
                 'pitcher_name': row.home_probable_pitcher_name,
                 'team_abbr': row.home_team_abbr,
+                'opponent_team_abbr': row.away_team_abbr,
             }
             by_team[row.home_team_abbr] = home_info
             if row.home_probable_pitcher_name:

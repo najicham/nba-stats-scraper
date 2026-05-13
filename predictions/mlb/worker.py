@@ -446,7 +446,6 @@ def run_multi_system_batch_predictions(game_date: date, pitcher_lookups: Optiona
                 prediction['system_id'] = system_id
                 prediction['game_date'] = game_date.isoformat()
                 prediction['team_abbr'] = team_abbr
-                prediction['opponent_team_abbr'] = opponent_team_abbr
 
                 # Session 519: Populate game_id, is_home, pitcher_name from schedule.
                 # These were always NULL, causing game_pk insert failures and wrong
@@ -455,15 +454,26 @@ def run_multi_system_batch_predictions(game_date: date, pitcher_lookups: Optiona
                 norm_name = _normalize_pitcher_name(pitcher_lookup)
                 sched_pitcher = sched_by_pitcher.get(norm_name)
                 sched_team = sched_by_team.get(team_abbr)
-                # Team-level fields (game_id, is_home) are OK from team fallback —
-                # same game regardless of which pitcher throws.
+                # Team-level fields (game_id, is_home, opponent_team_abbr) are OK from
+                # team fallback — same game regardless of which pitcher throws.
                 sched_ctx = sched_pitcher or sched_team or {}
                 prediction['game_id'] = str(sched_ctx['game_pk']) if sched_ctx.get('game_pk') else None
                 prediction['is_home'] = sched_ctx.get('is_home')
+                # WRONG-OPPONENT FIX: features come from the pitcher's *previous* start,
+                # so features['opponent_team_abbr'] is yesterday's opponent. Always prefer
+                # the schedule-derived opponent for tonight's game. Fall through to the
+                # stale features only if the schedule lookup failed entirely.
+                prediction['opponent_team_abbr'] = (
+                    sched_ctx.get('opponent_team_abbr') or opponent_team_abbr
+                )
                 # pitcher_name MUST come from direct pitcher match — team fallback
                 # would assign the starting pitcher's name to every non-starter on
                 # that team (Apr 10 bug: all LAD pitchers got 'Tyler Glasnow').
-                prediction['pitcher_name'] = sched_pitcher.get('pitcher_name') if sched_pitcher else None
+                # Final fallback: title-case the lookup so picks never render nameless.
+                pname = sched_pitcher.get('pitcher_name') if sched_pitcher else None
+                if not pname and pitcher_lookup:
+                    pname = pitcher_lookup.replace('_', ' ').title()
+                prediction['pitcher_name'] = pname
 
                 all_predictions.append(prediction)
 

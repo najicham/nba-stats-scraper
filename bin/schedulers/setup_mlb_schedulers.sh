@@ -183,10 +183,13 @@ create_job \
     '{"scraper": "mlb_reddit_discussion", "date": "TODAY"}' \
     "Reddit MLB discussion and sentiment"
 
-# Umpire assignments (11:30 AM ET - after lineup announcements)
+# Umpire assignments — 4:30 PM ET. HP umpires are announced ~1-2h pre-game;
+# the 11:30 AM ET cron was too early, leaving umpire_game_assignment EMPTY
+# (0 rows) since launch even though the scraper ran. Result: the
+# umpire_k_friendly signal was starving.
 create_job \
     "mlb-umpire-assignments" \
-    "30 11 * * *" \
+    "30 16 * * *" \
     "$SCRAPERS_URL/scrape" \
     '{"scraper": "mlb_umpire_assignments", "date": "TODAY"}' \
     "Home plate umpire assignments for K predictions"

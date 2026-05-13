@@ -20,17 +20,20 @@ from google.cloud import bigquery
 
 PROJECT_ID = "nba-props-platform"
 
-# Current blacklist — keep in sync with ml/signals/mlb/signals.py PitcherBlacklistFilter.BLACKLIST
+# Current blacklist — keep in sync with ml/signals/mlb/signals.py
+# PitcherBlacklistFilter.BLACKLIST. Session 469 removed 5 pitchers
+# (mackenzie_gore, luis_severino, ranger_suárez, cade_horton, paul_skenes)
+# from the production set but this tool's list wasn't synced, causing
+# false "blacklisted" diagnostics for ~6 weeks.
 CURRENT_BLACKLIST = frozenset([
     'tanner_bibee', 'mitchell_parker', 'casey_mize', 'mitch_keller',
     'logan_webb', 'jose_berrios', 'logan_gilbert', 'logan_allen',
-    'jake_irvin', 'george_kirby', 'mackenzie_gore', 'bailey_ober',
+    'jake_irvin', 'george_kirby', 'bailey_ober',
     'zach_eflin', 'ryne_nelson', 'jameson_taillon', 'ryan_feltner',
-    'luis_severino', 'randy_vasquez',
+    'randy_vasquez',
     'adrian_houser', 'stephen_kolek', 'dean_kremer', 'michael_mcgreevy',
     'tyler_mahle',
-    'ranger_suárez', 'cade_horton', 'blake_snell', 'luis_castillo',
-    'paul_skenes',
+    'blake_snell', 'luis_castillo',
 ])
 
 # Thresholds
