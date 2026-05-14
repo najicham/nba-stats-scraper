@@ -242,7 +242,7 @@ class MlbPredictionGradingProcessor:
             #   (b) game still in flight OR scraper lagging → retry later
             if is_terminal and actuals_fresh:
                 self.stats["voided"] += 1
-                actual_starter = starters_by_game.get(game_pk)
+                actual_starter = starters_by_game.get(str(game_pk)) if game_pk is not None else None
                 logger.info(
                     f"Voiding {pitcher_lookup} ({game_pk}) as scratched — "
                     f"absent from box score; actual starter: {actual_starter}"
@@ -261,7 +261,7 @@ class MlbPredictionGradingProcessor:
         # incorrectly be tagged short_start.
         if actual.get('is_starter') is False:
             self.stats["voided"] += 1
-            actual_starter = starters_by_game.get(game_pk)
+            actual_starter = starters_by_game.get(str(game_pk)) if game_pk is not None else None
             logger.info(
                 f"Voiding {pitcher_lookup} ({game_pk}) as did_not_start — "
                 f"pitched in relief; actual starter: {actual_starter}"
@@ -450,30 +450,34 @@ class MlbPredictionGradingProcessor:
                 continue
         return {}
 
-    def _get_starters_by_game(self, actuals: Dict[str, Dict]) -> Dict[Any, str]:
-        """Build a {game_pk: starter_lookup} index from actuals.
+    def _get_starters_by_game(self, actuals: Dict[str, Dict]) -> Dict[str, str]:
+        """Build a {game_pk_str: starter_lookup} index from actuals.
 
         Used when voiding `did_not_start` picks to record WHO actually started
         instead of the lined pitcher (e.g., the opener in opener+bulk games).
-        Falls back to empty dict; consumers must handle missing keys gracefully.
+        Keys are coerced to STRING to match `pitcher_strikeouts.game_id` which
+        is STRING — `mlb_raw.mlbapi_pitcher_stats.game_pk` is INT64. Without
+        this normalization, `dict.get(game_pk)` silently misses on every
+        lookup and `actual_starter_lookup` stays NULL.
         """
-        starters: Dict[Any, str] = {}
+        starters: Dict[str, str] = {}
         for lookup, row in actuals.items():
             if row.get('is_starter'):
                 gpk = row.get('game_pk')
                 if gpk is None:
                     continue
+                gpk_key = str(gpk)
                 # Keep the row with the highest IP if multiple is_starter=TRUE
                 # rows exist for the same game_pk (opener+bulk both flagged).
-                existing = starters.get(gpk)
+                existing = starters.get(gpk_key)
                 if existing is None:
-                    starters[gpk] = lookup
+                    starters[gpk_key] = lookup
                 else:
                     existing_ip = (actuals.get(existing) or {}).get('innings_pitched') or 0
                     this_ip = row.get('innings_pitched') or 0
                     try:
                         if float(this_ip) > float(existing_ip):
-                            starters[gpk] = lookup
+                            starters[gpk_key] = lookup
                     except (TypeError, ValueError):
                         pass
         return starters
@@ -634,20 +638,29 @@ class MlbPredictionGradingProcessor:
         if not updates:
             return
 
-        # Build a MERGE using an UNNEST of struct array
+        # Build a MERGE using an UNNEST of struct array. NULL literals MUST be
+        # cast explicitly: BigQuery infers the type from the FIRST element of
+        # the array, so a bare `NULL AS is_correct` becomes INT64 NULL, which
+        # then conflicts with `TRUE`/`FALSE` from later rows (mixed-type array
+        # error). Cast all nullable fields to their declared type.
         struct_rows = []
         for u in updates:
-            is_correct_str = 'NULL'
             if u['is_correct'] is True:
                 is_correct_str = 'TRUE'
             elif u['is_correct'] is False:
                 is_correct_str = 'FALSE'
+            else:
+                is_correct_str = 'CAST(NULL AS BOOL)'
 
-            actual_k = u.get('actual_strikeouts', 0) or 0
+            actual_k_raw = u.get('actual_strikeouts')
+            if actual_k_raw is None:
+                actual_k_str = 'CAST(NULL AS INT64)'
+            else:
+                actual_k_str = str(int(actual_k_raw))
 
             struct_rows.append(
                 f"STRUCT('{u['prediction_id']}' AS prediction_id, "
-                f"{actual_k} AS actual_strikeouts, "
+                f"{actual_k_str} AS actual_strikeouts, "
                 f"{is_correct_str} AS is_correct)"
             )
 
@@ -687,10 +700,13 @@ class MlbPredictionGradingProcessor:
             return
 
         # Escape single quotes in system_ids (e.g., 'catboost_v2_...') defensively.
-        def _q(value: Optional[str]) -> str:
-            """Render a string value for inline STRUCT literal."""
+        # NULL literals must be cast explicitly (`CAST(NULL AS TYPE)`) because
+        # BigQuery infers the STRUCT type from the first array element — a bare
+        # `NULL` becomes INT64 and conflicts with later rows that have STRING/BOOL
+        # values for the same field.
+        def _q_string(value: Optional[str]) -> str:
             if value is None:
-                return 'NULL'
+                return 'CAST(NULL AS STRING)'
             return "'" + value.replace("'", "\\'") + "'"
 
         struct_rows = []
@@ -704,7 +720,7 @@ class MlbPredictionGradingProcessor:
             actual_starter = g.get('actual_starter_lookup')
 
             if actual_k is None:
-                actual_k_str = 'NULL'
+                actual_k_str = 'CAST(NULL AS INT64)'
             else:
                 actual_k_str = str(int(actual_k))
 
@@ -713,7 +729,7 @@ class MlbPredictionGradingProcessor:
             elif correct is False:
                 correct_str = 'FALSE'
             else:
-                correct_str = 'NULL'
+                correct_str = 'CAST(NULL AS BOOL)'
 
             struct_rows.append(
                 f"STRUCT('{pitcher_lookup}' AS pitcher_lookup, "
@@ -722,8 +738,8 @@ class MlbPredictionGradingProcessor:
                 f"{actual_k_str} AS actual_strikeouts, "
                 f"{correct_str} AS prediction_correct, "
                 f"{'TRUE' if is_voided else 'FALSE'} AS is_voided, "
-                f"{_q(void_reason)} AS void_reason, "
-                f"{_q(actual_starter)} AS actual_starter_lookup)"
+                f"{_q_string(void_reason)} AS void_reason, "
+                f"{_q_string(actual_starter)} AS actual_starter_lookup)"
             )
 
         batch_size = 500
