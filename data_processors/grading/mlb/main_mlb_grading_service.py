@@ -310,6 +310,13 @@ def _re_export_all_json(game_date: str) -> dict:
 
     Session 520: After grading, all.json needs refreshing so the frontend
     shows updated win/loss records and pick results.
+
+    NOTE: This service bundles `data_processors.publishing.mlb.mlb_best_bets_exporter`
+    via Docker COPY at build time — changes to that file ONLY redeploy this
+    service if its Cloud Build trigger watches that path. The
+    `deploy-mlb-phase6-grading` trigger's `includedFiles` was updated 2026-05-14
+    to add `data_processors/publishing/mlb/**` so future exporter changes
+    propagate here without a separate touch-commit.
     """
     try:
         from data_processors.publishing.mlb.mlb_best_bets_exporter import MlbBestBetsExporter
