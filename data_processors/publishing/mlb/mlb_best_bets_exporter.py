@@ -95,35 +95,42 @@ class MlbBestBetsExporter(BaseExporter):
         }
 
     def _get_best_bets(self, game_date: str) -> List[Dict]:
-        """Get best bets picks for a date from signal_best_bets_picks.
+        """Get best bets picks for a date from signal_best_bets_picks, JOINed
+        with prediction_accuracy for grading/void state.
 
-        Grading + void fields (`prediction_correct`, `is_voided`, `void_reason`,
-        `actual_starter_lookup`, `actual_strikeouts`) are read directly from
-        `signal_best_bets_picks` — `_batch_update_best_bets` propagates them
-        from `prediction_accuracy` at grading time. No JOIN needed.
+        IMPORTANT — keep the LEFT JOIN. `_batch_update_best_bets` (the MERGE
+        that propagates grading into signal_best_bets_picks) silently fails
+        because the BB table has `require_partition_filter=TRUE` and the
+        MERGE can't be partition-eliminated. Until that's fixed,
+        `prediction_accuracy` is the only reliable source for graded state.
         """
         query = f"""
         SELECT
-            pitcher_lookup,
-            pitcher_name,
-            team_abbr,
-            opponent_team_abbr,
-            line_value,
-            predicted_strikeouts,
-            recommendation,
-            confidence_score,
-            edge,
-            ultra_tier,
-            pick_angles,
-            system_id,
-            prediction_correct,
-            actual_strikeouts,
-            is_voided,
-            void_reason,
-            actual_starter_lookup
-        FROM `{self.project_id}.mlb_predictions.signal_best_bets_picks`
-        WHERE game_date = '{game_date}'
-        ORDER BY edge DESC
+            bb.pitcher_lookup,
+            bb.pitcher_name,
+            bb.team_abbr,
+            bb.opponent_team_abbr,
+            bb.line_value,
+            bb.predicted_strikeouts,
+            bb.recommendation,
+            bb.confidence_score,
+            bb.edge,
+            bb.ultra_tier,
+            bb.pick_angles,
+            bb.system_id,
+            pa.prediction_correct,
+            pa.actual_strikeouts,
+            pa.is_voided,
+            pa.void_reason,
+            pa.actual_starter_lookup
+        FROM `{self.project_id}.mlb_predictions.signal_best_bets_picks` bb
+        LEFT JOIN `{self.project_id}.mlb_predictions.prediction_accuracy` pa
+            ON bb.pitcher_lookup = pa.pitcher_lookup
+            AND bb.game_date = pa.game_date
+            AND bb.recommendation = pa.recommendation
+            AND bb.line_value = pa.line_value
+        WHERE bb.game_date = '{game_date}'
+        ORDER BY bb.edge DESC
         """
 
         rows = self.query_to_list(query)
@@ -431,32 +438,41 @@ class MlbBestBetsExporter(BaseExporter):
 
         SEASON_START = '2026-03-27'  # MLB Opening Day 2026
 
-        # Query signal_best_bets_picks. Grading + void fields are now propagated
-        # directly into the BB table by `_batch_update_best_bets` — no JOIN with
-        # prediction_accuracy needed.
+        # IMPORTANT — keep the LEFT JOIN. `_batch_update_best_bets` MERGE
+        # has been silently failing all season because signal_best_bets_picks
+        # has `require_partition_filter=TRUE` (errors swallowed by non-fatal
+        # try/except). prediction_accuracy is the only reliable grading
+        # source until that path is repaired. Removing this JOIN in 553c9c59
+        # caused all.json to show 0 graded picks → 3-0 season record on
+        # 2026-05-14 morning. Do not remove again without fixing the MERGE.
         query = f"""
         SELECT
-            CAST(game_date AS STRING) AS game_date,
-            pitcher_lookup,
-            pitcher_name,
-            team_abbr,
-            opponent_team_abbr,
-            line_value,
-            predicted_strikeouts,
-            recommendation,
-            edge,
-            ultra_tier,
-            pick_angles,
-            system_id,
-            prediction_correct,
-            actual_strikeouts,
-            is_voided,
-            void_reason,
-            actual_starter_lookup
-        FROM `{self.project_id}.mlb_predictions.signal_best_bets_picks`
-        WHERE game_date >= '{SEASON_START}'
-          AND game_date <= '{today}'
-        ORDER BY game_date ASC, edge DESC
+            CAST(bb.game_date AS STRING) AS game_date,
+            bb.pitcher_lookup,
+            bb.pitcher_name,
+            bb.team_abbr,
+            bb.opponent_team_abbr,
+            bb.line_value,
+            bb.predicted_strikeouts,
+            bb.recommendation,
+            bb.edge,
+            bb.ultra_tier,
+            bb.pick_angles,
+            bb.system_id,
+            pa.prediction_correct,
+            pa.actual_strikeouts,
+            pa.is_voided,
+            pa.void_reason,
+            pa.actual_starter_lookup
+        FROM `{self.project_id}.mlb_predictions.signal_best_bets_picks` bb
+        LEFT JOIN `{self.project_id}.mlb_predictions.prediction_accuracy` pa
+            ON bb.pitcher_lookup = pa.pitcher_lookup
+            AND bb.game_date = pa.game_date
+            AND bb.recommendation = pa.recommendation
+            AND bb.line_value = pa.line_value
+        WHERE bb.game_date >= '{SEASON_START}'
+          AND bb.game_date <= '{today}'
+        ORDER BY bb.game_date ASC, bb.edge DESC
         """
 
         all_rows = self.query_to_list(query)
