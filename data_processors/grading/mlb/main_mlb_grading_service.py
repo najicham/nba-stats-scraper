@@ -16,6 +16,7 @@ import json
 import logging
 from flask import Flask, request, jsonify
 from datetime import datetime, timezone, date, timedelta
+from zoneinfo import ZoneInfo
 import base64
 
 from data_processors.grading.mlb.mlb_prediction_grading_processor import MlbPredictionGradingProcessor
@@ -313,7 +314,12 @@ def _re_export_all_json(game_date: str) -> dict:
     try:
         from data_processors.publishing.mlb.mlb_best_bets_exporter import MlbBestBetsExporter
         exporter = MlbBestBetsExporter()
-        today_str = datetime.now(timezone.utc).date().isoformat()
+        # MLB operates in ET — games are scheduled in ET and the public site
+        # rolls over at midnight ET, not midnight UTC. Using UTC here would
+        # cause `all.json.date` to advance 4-5 hours early (e.g., 9 PM ET
+        # already shows tomorrow in UTC), making the "today's picks" section
+        # empty until tomorrow's picks are generated.
+        today_str = datetime.now(ZoneInfo("America/New_York")).date().isoformat()
 
         all_path = exporter.export_all(today=today_str)
         logger.info(

@@ -21,7 +21,7 @@ Target Tables:
 
 import logging
 from datetime import date, datetime, timezone
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 from google.cloud import bigquery
 from shared.clients.bigquery_pool import get_bigquery_client
 
@@ -242,7 +242,11 @@ class MlbPredictionGradingProcessor:
             #   (b) game still in flight OR scraper lagging → retry later
             if is_terminal and actuals_fresh:
                 self.stats["voided"] += 1
-                actual_starter = starters_by_game.get(str(game_pk)) if game_pk is not None else None
+                actual_starter = (
+                    starters_by_game.get((str(game_pk), pred.get('team_abbr')))
+                    if game_pk is not None and pred.get('team_abbr')
+                    else None
+                )
                 logger.info(
                     f"Voiding {pitcher_lookup} ({game_pk}) as scratched — "
                     f"absent from box score; actual starter: {actual_starter}"
@@ -423,6 +427,7 @@ class MlbPredictionGradingProcessor:
                 strikeouts,
                 innings_pitched,
                 game_pk,
+                team_abbr,
                 is_starter
             FROM `{self.project_id}.mlb_raw.{table}`
             WHERE game_date = '{game_date}'
@@ -440,6 +445,7 @@ class MlbPredictionGradingProcessor:
                         "strikeouts": row.strikeouts,
                         "innings_pitched": row.innings_pitched,
                         "game_pk": getattr(row, 'game_pk', None),
+                        "team_abbr": getattr(row, 'team_abbr', None),
                         "is_starter": bool(row.is_starter),
                     }
                 if results:
@@ -450,36 +456,43 @@ class MlbPredictionGradingProcessor:
                 continue
         return {}
 
-    def _get_starters_by_game(self, actuals: Dict[str, Dict]) -> Dict[str, str]:
-        """Build a {game_pk_str: starter_lookup} index from actuals.
+    def _get_starters_by_game(self, actuals: Dict[str, Dict]) -> Dict[Tuple[str, str], str]:
+        """Build a {(game_pk_str, team_abbr): starter_lookup} index.
 
         Used when voiding `did_not_start` picks to record WHO actually started
         instead of the lined pitcher (e.g., the opener in opener+bulk games).
-        Keys are coerced to STRING to match `pitcher_strikeouts.game_id` which
-        is STRING — `mlb_raw.mlbapi_pitcher_stats.game_pk` is INT64. Without
-        this normalization, `dict.get(game_pk)` silently misses on every
-        lookup and `actual_starter_lookup` stays NULL.
+        Keyed by (game_pk, team_abbr) because every game has TWO starters
+        (one per team). Without team disambiguation, the SD lined pitcher
+        (Waldron) would be matched against the MIL starter (Sproat) instead
+        of the SD opener (Rodriguez).
+
+        game_pk is coerced to STRING to match `pitcher_strikeouts.game_id`
+        which is STRING — `mlb_raw.mlbapi_pitcher_stats.game_pk` is INT64.
         """
-        starters: Dict[str, str] = {}
+        starters: Dict[Tuple[str, str], str] = {}
         for lookup, row in actuals.items():
-            if row.get('is_starter'):
-                gpk = row.get('game_pk')
-                if gpk is None:
-                    continue
-                gpk_key = str(gpk)
-                # Keep the row with the highest IP if multiple is_starter=TRUE
-                # rows exist for the same game_pk (opener+bulk both flagged).
-                existing = starters.get(gpk_key)
-                if existing is None:
-                    starters[gpk_key] = lookup
-                else:
-                    existing_ip = (actuals.get(existing) or {}).get('innings_pitched') or 0
-                    this_ip = row.get('innings_pitched') or 0
-                    try:
-                        if float(this_ip) > float(existing_ip):
-                            starters[gpk_key] = lookup
-                    except (TypeError, ValueError):
-                        pass
+            if not row.get('is_starter'):
+                continue
+            gpk = row.get('game_pk')
+            team = row.get('team_abbr')
+            if gpk is None or not team:
+                continue
+            key = (str(gpk), team)
+            existing = starters.get(key)
+            if existing is None:
+                starters[key] = lookup
+            else:
+                # Multiple is_starter=TRUE rows for the same (game_pk, team)
+                # — e.g. opener flag retained alongside bulk pitcher flag.
+                # Keep the one with the lowest IP, since the opener is the
+                # one MLB officially recorded as the starter.
+                existing_ip = (actuals.get(existing) or {}).get('innings_pitched') or 0
+                this_ip = row.get('innings_pitched') or 0
+                try:
+                    if float(this_ip) < float(existing_ip):
+                        starters[key] = lookup
+                except (TypeError, ValueError):
+                    pass
         return starters
 
     def _is_actuals_fresh(self, actuals: Dict[str, Dict], game_date: str) -> bool:
@@ -747,6 +760,11 @@ class MlbPredictionGradingProcessor:
             batch = struct_rows[i:i + batch_size]
             values_str = ",\n        ".join(batch)
 
+            # The target table is partitioned by game_date with
+            # require_partition_filter=TRUE. BigQuery does not deduce a static
+            # partition filter from `T.game_date = S.game_date`; we have to
+            # pin T.game_date to the literal date in the ON clause so the
+            # query planner can do partition elimination.
             query = f"""
             MERGE `{self.project_id}.mlb_predictions.signal_best_bets_picks` T
             USING (
@@ -754,8 +772,9 @@ class MlbPredictionGradingProcessor:
                     {values_str}
                 ])
             ) S
-            ON T.pitcher_lookup = S.pitcher_lookup
+            ON T.game_date = DATE('{game_date}')
                AND T.game_date = S.game_date
+               AND T.pitcher_lookup = S.pitcher_lookup
                AND T.system_id = S.system_id
             WHEN MATCHED THEN UPDATE SET
                 T.actual_strikeouts = S.actual_strikeouts,
