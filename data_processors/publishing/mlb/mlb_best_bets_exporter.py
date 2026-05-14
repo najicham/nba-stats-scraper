@@ -18,6 +18,7 @@ Usage:
     result = exporter.export(game_date='2025-08-15')
 """
 
+import json
 import logging
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
@@ -36,6 +37,15 @@ logger = logging.getLogger(__name__)
 # Best bets thresholds
 MIN_CONFIDENCE = 70
 MIN_EDGE = 1.0
+
+# Content-guard thresholds for all.json. Tuned to catch silent data losses
+# (e.g., dropped JOIN, mass DELETE) while tolerating mid-season variance.
+# At the season's lowest historical point (Apr 9 — Opening Day) we had 1-3
+# graded picks total, so floors of 5/10 catch obvious corruption without
+# false-firing in legitimate pre-season state.
+ALL_JSON_MIN_TOTAL_PICKS = 10  # Below this in-season → almost certainly corrupted
+ALL_JSON_MIN_GRADED_PICKS = 5  # Below this in-season → grading state lost
+ALL_JSON_DROP_PCT_THRESHOLD = 0.5  # Refuse if new < 50% of prior good
 
 
 class MlbBestBetsExporter(BaseExporter):
@@ -523,11 +533,99 @@ class MlbBestBetsExporter(BaseExporter):
             'voided': len(voided_rows),
         }
 
-        return self.upload_to_gcs(
+        # safe_export consults validate_content() below and (a) writes a
+        # `degraded` sentinel instead of overwriting a healthy file when the
+        # new data fails the content guard, (b) honors the kill-switch
+        # MLB_ALL_JSON_GUARD_ENABLED=false for emergency unguarded writes.
+        # compare_and_upload's existing _backups/ logic doesn't fire here
+        # because it's keyed on a different schema (`picks` array, NBA shape).
+        gcs_path, _reason = self.safe_export(
             json_data,
             'mlb/best-bets/all.json',
-            cache_control='public, max-age=60'
+            cache_control='public, max-age=60',
+            guard_env_var='MLB_ALL_JSON_GUARD_ENABLED',
         )
+        return gcs_path
+
+    # -----------------------------------------------------------------------
+    # Content guard (refuse-to-publish when data looks corrupt)
+    # -----------------------------------------------------------------------
+
+    def validate_content(self, json_data: Dict[str, Any]) -> Optional[str]:
+        """Refuse to publish all.json if the new payload looks corrupted.
+
+        Triggered on 2026-05-14 when removal of the LEFT JOIN to
+        prediction_accuracy (commit 553c9c59) silently dropped all.json from
+        72 picks to 3 because signal_best_bets_picks.prediction_correct was
+        NULL across all 79 historical rows (the MERGE that populates it has
+        been silently failing all season).
+
+        Returns a short reason string if degraded, or None if content is OK.
+        Honoring caller (`safe_export`) writes a `degraded` sentinel and
+        logs CRITICAL instead of overwriting the existing healthy file.
+        """
+        # Pre-season stub (no SEASON_START date or no picks generated yet).
+        # Don't gate — there's nothing to compare against.
+        date_str = json_data.get('date')
+        season_start = json_data.get('season_start')
+        if not date_str or not season_start:
+            return None
+        if date_str < season_start:
+            return None
+
+        total_picks = json_data.get('total_picks') or 0
+        graded = json_data.get('graded') or 0
+        today = json_data.get('today') or []
+        weeks = json_data.get('weeks') or []
+
+        # Floor 1: in-season but total_picks below the lowest plausible value
+        # (Opening Day had 1 pick; by mid-April we always had 10+).
+        try:
+            days_into_season = (
+                date.fromisoformat(date_str) - date.fromisoformat(season_start)
+            ).days
+        except ValueError:
+            days_into_season = 0
+        if days_into_season >= 14 and total_picks < ALL_JSON_MIN_TOTAL_PICKS:
+            return (
+                f"total_picks={total_picks} below floor "
+                f"{ALL_JSON_MIN_TOTAL_PICKS} on day {days_into_season} of season"
+            )
+        if days_into_season >= 14 and graded < ALL_JSON_MIN_GRADED_PICKS:
+            return (
+                f"graded={graded} below floor {ALL_JSON_MIN_GRADED_PICKS} "
+                f"on day {days_into_season} of season"
+            )
+
+        # Floor 2: compare against last-good GCS file (drop > 50% indicates
+        # data loss). Read from the live blob — versioning gives us recovery
+        # but we don't want to silently overwrite the live with junk.
+        try:
+            from google.cloud import storage as _storage  # local import to avoid module-load cost
+            client = _storage.Client(project=self.project_id)
+            blob = client.bucket(self.bucket_name).blob('v1/mlb/best-bets/all.json')
+            if blob.exists():
+                old = json.loads(blob.download_as_text())
+                # Skip comparison if the old file was itself a degraded sentinel.
+                if old.get('status') != 'degraded':
+                    old_total = old.get('total_picks') or 0
+                    if old_total > 0 and total_picks < old_total * ALL_JSON_DROP_PCT_THRESHOLD:
+                        return (
+                            f"total_picks dropped {old_total} → {total_picks} "
+                            f"(< {int(ALL_JSON_DROP_PCT_THRESHOLD * 100)}% of prior)"
+                        )
+                    # Also catch full week-history loss (today's regression
+                    # collapsed `weeks` from 6 to 1 entries).
+                    old_weeks = len(old.get('weeks') or [])
+                    if old_weeks >= 4 and len(weeks) < max(1, old_weeks // 2):
+                        return (
+                            f"weeks dropped {old_weeks} → {len(weeks)} "
+                            f"(< 50% of prior weekly history)"
+                        )
+        except Exception as e:
+            logger.warning(f"Content-guard compare-to-last-good failed (non-fatal): {e}")
+
+        return None
 
 
 def main():
