@@ -265,10 +265,14 @@ class MlbPredictionGradingProcessor:
         # incorrectly be tagged short_start.
         if actual.get('is_starter') is False:
             self.stats["voided"] += 1
-            actual_starter = starters_by_game.get(str(game_pk)) if game_pk is not None else None
+            actual_starter = (
+                starters_by_game.get((str(game_pk), pred.get('team_abbr')))
+                if game_pk is not None and pred.get('team_abbr')
+                else None
+            )
             logger.info(
-                f"Voiding {pitcher_lookup} ({game_pk}) as did_not_start — "
-                f"pitched in relief; actual starter: {actual_starter}"
+                f"Voiding {pitcher_lookup} ({game_pk}/{pred.get('team_abbr')}) as "
+                f"did_not_start — pitched in relief; actual starter: {actual_starter}"
             )
             return self._build_voided_record(
                 pred, 'did_not_start',

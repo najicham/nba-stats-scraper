@@ -365,18 +365,22 @@ class MlbBestBetsExporter(BaseExporter):
             {'type': best_type, 'count': best_count},
         )
 
-    def _build_weekly_history(self, graded_rows: List[Dict]) -> List[Dict]:
+    def _build_weekly_history(self, history_rows: List[Dict]) -> List[Dict]:
         """
-        Build weekly history (last 8 weeks) from graded picks.
+        Build weekly history (last 8 weeks) from graded + voided picks.
+
+        Voided picks are included so the user can see scratches/short-starts
+        on the date they were lined; record/streak math uses graded-only
+        filtering inside this method (`day_rows` → `graded`).
 
         Returns list of BestBetsWeek dicts, most recent week first.
         """
-        if not graded_rows:
+        if not history_rows:
             return []
 
         # Group by date string
         picks_by_date: Dict[str, List[Dict]] = defaultdict(list)
-        for row in graded_rows:
+        for row in history_rows:
             game_date_str = str(row.get('game_date', ''))
             picks_by_date[game_date_str].append(row)
 
@@ -487,9 +491,17 @@ class MlbBestBetsExporter(BaseExporter):
 
         all_rows = self.query_to_list(query)
 
-        # Split today's picks from history
+        # Split today's picks from history.
         today_rows = [r for r in all_rows if r.get('game_date') == today]
         graded_rows = [r for r in all_rows if r.get('prediction_correct') is not None]
+        # Voids have prediction_correct=NULL but still belong in the user-facing
+        # weekly history so scratches/short-starts show up (user feedback
+        # 2026-05-13: "Don't we show scratches there?"). They must NOT appear in
+        # W/L records or streak math — those stay graded-only.
+        history_rows = [
+            r for r in all_rows
+            if r.get('prediction_correct') is not None or r.get('is_voided')
+        ]
 
         # Today's picks ranked by edge
         today_sorted = sorted(today_rows, key=lambda r: abs(r.get('edge') or 0), reverse=True)
@@ -510,7 +522,7 @@ class MlbBestBetsExporter(BaseExporter):
         }
 
         streak, best_streak = self._compute_streak(graded_rows)
-        weeks = self._build_weekly_history(graded_rows)
+        weeks = self._build_weekly_history(history_rows)
 
         # `total_picks` excludes voided picks (book rule violations are not
         # real wagers). `voided` is broken out so the frontend can show counts
