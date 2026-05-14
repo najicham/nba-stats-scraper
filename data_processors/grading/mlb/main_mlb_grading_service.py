@@ -299,15 +299,38 @@ def _run_post_grading_analytics(game_date: str) -> dict:
 def _re_export_all_json(game_date: str) -> dict:
     """Re-export mlb/best-bets/all.json with updated grading data.
 
+    `game_date` is the date being GRADED (typically yesterday). all.json's
+    `today` field should reflect the actual calendar day so the frontend's
+    "today's picks" section shows today's picks, not the date being graded.
+
+    Also re-exports the per-date file `mlb/best-bets/{game_date}.json` so
+    yesterday's results (including any voids written this run) are reflected
+    on the historical-day view.
+
     Session 520: After grading, all.json needs refreshing so the frontend
     shows updated win/loss records and pick results.
     """
     try:
         from data_processors.publishing.mlb.mlb_best_bets_exporter import MlbBestBetsExporter
         exporter = MlbBestBetsExporter()
-        path = exporter.export_all(today=game_date)
-        logger.info(f"Post-grading: re-exported all.json to {path}")
-        return {'status': 'ok', 'path': path}
+        today_str = datetime.now(timezone.utc).date().isoformat()
+
+        all_path = exporter.export_all(today=today_str)
+        logger.info(
+            f"Post-grading: re-exported all.json (graded={game_date}, "
+            f"today={today_str}) to {all_path}"
+        )
+
+        # Also refresh the per-date file for the date that was just graded so
+        # the historical day view picks up the new void/grade rows.
+        date_path = None
+        try:
+            date_path = exporter.export(game_date=game_date)
+            logger.info(f"Post-grading: re-exported per-date file to {date_path}")
+        except Exception as date_err:
+            logger.warning(f"Per-date re-export failed (non-fatal): {date_err}")
+
+        return {'status': 'ok', 'all_path': all_path, 'date_path': date_path}
     except Exception as e:
         logger.error(f"Post-grading all.json export failed: {e}", exc_info=True)
         return {'status': f'error: {e}'}
@@ -321,11 +344,17 @@ def _backfill_shadow_picks(game_date: str):
     """
     try:
         client = bigquery.Client(project="nba-props-platform")
+        # NOTE: `is_voided` is checked FIRST so we don't compute prediction_correct
+        # from the placeholder actual_strikeouts=0 that voided rows carry. Without
+        # this guard, blacklist_shadow_picks would have rows where is_voided=TRUE
+        # AND prediction_correct=TRUE/FALSE simultaneously — every downstream
+        # consumer that doesn't filter is_voided would get wrong stats.
         query = f"""
         UPDATE `mlb_predictions.blacklist_shadow_picks` sp
         SET
             sp.actual_strikeouts = pa.actual_strikeouts,
             sp.prediction_correct = CASE
+                WHEN pa.is_voided = TRUE THEN NULL
                 WHEN pa.actual_strikeouts IS NULL THEN NULL
                 WHEN sp.recommendation = 'OVER' AND pa.actual_strikeouts > sp.line_value THEN TRUE
                 WHEN sp.recommendation = 'UNDER' AND pa.actual_strikeouts < sp.line_value THEN TRUE

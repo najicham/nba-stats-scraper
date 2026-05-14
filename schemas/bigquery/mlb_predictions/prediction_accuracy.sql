@@ -56,9 +56,10 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.mlb_predictions.prediction_accura
   line_bookmaker STRING,                    -- Sportsbook: DRAFTKINGS, FANDUEL, etc.
   line_source_api STRING,                   -- API source: ODDS_API, BETTINGPROS
 
-  -- Voiding (DNP equivalent: pitcher scratched, rain delay, etc.)
+  -- Voiding (book-rule equivalent: pitcher didn't start, rain-shortened, etc.)
   is_voided BOOLEAN,                        -- TRUE = exclude from accuracy metrics
-  void_reason STRING,                       -- 'scratched', 'rain_delay', 'injury', 'short_start'
+  void_reason STRING,                       -- 'did_not_start' | 'short_start' | 'scratched' | 'postponed' | 'suspended'
+  actual_starter_lookup STRING,             -- Pitcher who actually started; populated when void_reason='did_not_start'
 
   -- Data Quality Tracking
   feature_quality_score FLOAT64,            -- Feature quality score from prediction (0-100)

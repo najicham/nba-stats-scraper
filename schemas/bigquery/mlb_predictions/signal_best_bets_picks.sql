@@ -85,7 +85,10 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.mlb_predictions.signal_best_bets_
 
   -- Outcome (populated after grading)
   actual_strikeouts INT64,                      -- Actual strikeouts
-  prediction_correct BOOLEAN,                   -- Was the pick correct?
+  prediction_correct BOOLEAN,                   -- Was the pick correct (NULL if voided or ungraded)?
+  is_voided BOOLEAN,                            -- TRUE if pick voided (book rule), mirrors prediction_accuracy.is_voided
+  void_reason STRING,                           -- 'did_not_start' | 'short_start' | 'scratched' | 'postponed' | 'suspended'
+  actual_starter_lookup STRING,                 -- Pitcher who actually started; populated when void_reason='did_not_start'
 
   -- Metadata
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()

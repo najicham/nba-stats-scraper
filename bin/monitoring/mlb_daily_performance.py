@@ -17,8 +17,9 @@ import argparse
 import logging
 import os
 import sys
+from collections import defaultdict
 from datetime import date, datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 # Add repo root to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -140,6 +141,80 @@ def query_bb_graded_performance(bq_client: bigquery.Client, since_date: date) ->
     except Exception as e:
         logger.warning(f"BB graded query failed: {e}")
         return []
+
+
+def query_void_breakdown(bq_client: bigquery.Client, since_date: date) -> List[dict]:
+    """Daily void counts broken out by reason. Surfaces did_not_start spikes
+    (opener+bulk picks, scratch-detection misses) that the regular hit-rate
+    queries hide because they filter `prediction_correct IS NOT NULL`.
+
+    Returns one row per (game_date, void_reason). The caller is responsible
+    for thresholding (e.g. `did_not_start >= 2` on any single date).
+    """
+    query = """
+    SELECT
+      game_date,
+      void_reason,
+      COUNT(*) AS n
+    FROM `nba-props-platform.mlb_predictions.prediction_accuracy`
+    WHERE game_date >= @since_date
+      AND is_voided = TRUE
+    GROUP BY game_date, void_reason
+    ORDER BY game_date DESC, n DESC
+    """
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter('since_date', 'DATE', since_date),
+        ]
+    )
+    try:
+        rows = list(bq_client.query(query, job_config=job_config).result())
+        return [dict(row) for row in rows]
+    except Exception as e:
+        logger.warning(f"void breakdown query failed: {e}")
+        return []
+
+
+# Alert thresholds for did_not_start voids — exceeding either triggers
+# notification. Tuned to historical baseline of ~1 case per season; even
+# a small uptick signals upstream lineup-data staleness.
+DID_NOT_START_DAILY_ALERT = 2
+DID_NOT_START_14D_ALERT = 5
+
+
+def evaluate_void_alerts(void_rows: List[dict]) -> List[str]:
+    """Return a list of human-readable alert messages for unusual void rates.
+
+    Caller (the monitoring runner) is responsible for surfacing these to
+    Slack / logs / etc. — this function only computes the strings.
+    """
+    alerts = []
+    by_date_reason: Dict[Any, int] = defaultdict(int)
+    rolling_by_reason: Dict[str, int] = defaultdict(int)
+    today = date.today()
+    fourteen_days_ago = today - timedelta(days=14)
+    for row in void_rows:
+        reason = row.get('void_reason') or 'unknown'
+        gd = row.get('game_date')
+        n = int(row.get('n') or 0)
+        by_date_reason[(gd, reason)] = n
+        if gd and gd >= fourteen_days_ago:
+            rolling_by_reason[reason] += n
+
+    for (gd, reason), n in by_date_reason.items():
+        if reason == 'did_not_start' and n >= DID_NOT_START_DAILY_ALERT:
+            alerts.append(
+                f"did_not_start voids on {gd}: {n} (threshold {DID_NOT_START_DAILY_ALERT}). "
+                f"Likely indicates probable-pitcher staleness or opener+bulk pattern; "
+                f"check `ml/signals/mlb/best_bets_exporter.py` filtering."
+            )
+    dns_14d = rolling_by_reason.get('did_not_start', 0)
+    if dns_14d >= DID_NOT_START_14D_ALERT:
+        alerts.append(
+            f"did_not_start voids in last 14 days: {dns_14d} (threshold {DID_NOT_START_14D_ALERT}). "
+            f"Investigate `mlb_schedule.{{away,home}}_probable_pitcher_name` freshness."
+        )
+    return alerts
 
 
 def query_edge_distribution(bq_client: bigquery.Client, since_date: date) -> List[dict]:
@@ -385,12 +460,30 @@ def main():
     bb_graded = query_bb_graded_performance(bq_client, since_date)
     edge_dist = query_edge_distribution(bq_client, since_date)
     cumulative = query_cumulative_totals(bq_client, since_date)
+    void_breakdown = query_void_breakdown(bq_client, since_date)
 
     # Format and print report
     report = format_report(
         daily_picks, graded, bb_graded, edge_dist, cumulative, since_date
     )
     print(report)
+
+    # Void breakdown + alerts (separate section so the main report stays stable)
+    if void_breakdown:
+        print()
+        print("Voids by date and reason")
+        print("-" * 60)
+        print(f"{'date':<12} {'reason':<18} {'n':>4}")
+        for row in void_breakdown:
+            print(f"{str(row['game_date']):<12} {str(row.get('void_reason') or ''):<18} {row['n']:>4}")
+
+    alerts = evaluate_void_alerts(void_breakdown)
+    if alerts:
+        print()
+        print("ALERTS")
+        print("=" * 60)
+        for alert in alerts:
+            print(f"  ! {alert}")
 
 
 if __name__ == '__main__':

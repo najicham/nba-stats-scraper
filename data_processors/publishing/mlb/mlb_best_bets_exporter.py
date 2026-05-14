@@ -95,33 +95,35 @@ class MlbBestBetsExporter(BaseExporter):
         }
 
     def _get_best_bets(self, game_date: str) -> List[Dict]:
-        """Get best bets picks for a date from signal_best_bets_picks."""
+        """Get best bets picks for a date from signal_best_bets_picks.
+
+        Grading + void fields (`prediction_correct`, `is_voided`, `void_reason`,
+        `actual_starter_lookup`, `actual_strikeouts`) are read directly from
+        `signal_best_bets_picks` — `_batch_update_best_bets` propagates them
+        from `prediction_accuracy` at grading time. No JOIN needed.
+        """
         query = f"""
         SELECT
-            bb.pitcher_lookup,
-            bb.pitcher_name,
-            bb.team_abbr,
-            bb.opponent_team_abbr,
-            bb.line_value,
-            bb.predicted_strikeouts,
-            bb.recommendation,
-            bb.confidence_score,
-            bb.edge,
-            bb.ultra_tier,
-            bb.pick_angles,
-            bb.system_id,
-            pa.prediction_correct,
-            pa.actual_strikeouts,
-            pa.is_voided,
-            pa.void_reason
-        FROM `{self.project_id}.mlb_predictions.signal_best_bets_picks` bb
-        LEFT JOIN `{self.project_id}.mlb_predictions.prediction_accuracy` pa
-            ON bb.pitcher_lookup = pa.pitcher_lookup
-            AND bb.game_date = pa.game_date
-            AND bb.recommendation = pa.recommendation
-            AND bb.line_value = pa.line_value
-        WHERE bb.game_date = '{game_date}'
-        ORDER BY bb.edge DESC
+            pitcher_lookup,
+            pitcher_name,
+            team_abbr,
+            opponent_team_abbr,
+            line_value,
+            predicted_strikeouts,
+            recommendation,
+            confidence_score,
+            edge,
+            ultra_tier,
+            pick_angles,
+            system_id,
+            prediction_correct,
+            actual_strikeouts,
+            is_voided,
+            void_reason,
+            actual_starter_lookup
+        FROM `{self.project_id}.mlb_predictions.signal_best_bets_picks`
+        WHERE game_date = '{game_date}'
+        ORDER BY edge DESC
         """
 
         rows = self.query_to_list(query)
@@ -152,22 +154,38 @@ class MlbBestBetsExporter(BaseExporter):
                 bet['is_correct'] = row.get('prediction_correct')
                 bet['actual_strikeouts'] = row.get('actual_strikeouts')
 
+            # Surface void context so the per-date JSON matches the all.json
+            # shape (frontend can render WIN/LOSS/VOID/pending consistently).
+            if row.get('is_voided'):
+                bet['is_voided'] = True
+                bet['void_reason'] = row.get('void_reason')
+                if row.get('actual_starter_lookup'):
+                    bet['actual_starter_lookup'] = row.get('actual_starter_lookup')
+
             best_bets.append(bet)
 
         return best_bets
 
     def _build_summary(self, best_bets: List[Dict]) -> Dict[str, Any]:
-        """Build summary statistics."""
-        total = len(best_bets)
-        over_picks = sum(1 for b in best_bets if b.get('recommendation') == 'OVER')
-        under_picks = sum(1 for b in best_bets if b.get('recommendation') == 'UNDER')
+        """Build summary statistics.
 
-        # Average metrics
-        avg_confidence = sum(b.get('confidence', 0) for b in best_bets) / total if total else 0
-        avg_edge = sum(abs(b.get('edge', 0)) for b in best_bets) / total if total else 0
+        Voided picks (book-rule violations: did_not_start, short_start, etc.)
+        are EXCLUDED from `total_best_bets`/`over_picks`/`under_picks` counts
+        and broken out in `voided` so season totals don't double-count refunded
+        wagers. Avg confidence/edge are computed over non-voided picks only.
+        """
+        active = [b for b in best_bets if not b.get('is_voided')]
+        voided = [b for b in best_bets if b.get('is_voided')]
+        total = len(active)
+        over_picks = sum(1 for b in active if b.get('recommendation') == 'OVER')
+        under_picks = sum(1 for b in active if b.get('recommendation') == 'UNDER')
+
+        # Average metrics (over non-voided picks)
+        avg_confidence = sum(b.get('confidence', 0) for b in active) / total if total else 0
+        avg_edge = sum(abs(b.get('edge', 0)) for b in active) / total if total else 0
 
         # Grading if available
-        graded = [b for b in best_bets if b.get('is_correct') is not None]
+        graded = [b for b in active if b.get('is_correct') is not None]
         grading_summary = None
         if graded:
             correct = sum(1 for b in graded if b.get('is_correct') == True)
@@ -177,13 +195,24 @@ class MlbBestBetsExporter(BaseExporter):
                 'accuracy': round(100 * correct / len(graded), 1) if graded else 0
             }
 
+        voided_summary: Optional[Dict[str, Any]] = None
+        if voided:
+            by_reason: Dict[str, int] = defaultdict(int)
+            for b in voided:
+                by_reason[b.get('void_reason') or 'unknown'] += 1
+            voided_summary = {
+                'count': len(voided),
+                'by_reason': dict(by_reason),
+            }
+
         return {
             'total_best_bets': total,
             'over_picks': over_picks,
             'under_picks': under_picks,
             'avg_confidence': round(avg_confidence, 1),
             'avg_edge': round(avg_edge, 2),
-            'grading': grading_summary
+            'grading': grading_summary,
+            'voided': voided_summary,
         }
 
     def export(self, game_date: str, **kwargs) -> str:
@@ -254,6 +283,7 @@ class MlbBestBetsExporter(BaseExporter):
             'actual': safe_int(actual) if actual is not None else None,
             'result': result,
             'void_reason': row.get('void_reason') if row.get('is_voided') else None,
+            'actual_starter_lookup': row.get('actual_starter_lookup') if row.get('is_voided') else None,
             'sport': 'mlb',
         }
 
@@ -304,7 +334,7 @@ class MlbBestBetsExporter(BaseExporter):
                 best_type = t
 
         # Current streak (walk backward from most recent)
-        last_type = 'W' if sorted_rows[-1].get('is_correct') is True else 'L'
+        last_type = 'W' if sorted_rows[-1].get('prediction_correct') is True else 'L'
         current_count = 0
         for row in reversed(sorted_rows):
             t = 'W' if row.get('prediction_correct') is True else 'L'
@@ -401,36 +431,32 @@ class MlbBestBetsExporter(BaseExporter):
 
         SEASON_START = '2026-03-27'  # MLB Opening Day 2026
 
-        # Query signal_best_bets_picks (actual best bets) with grading from
-        # prediction_accuracy. The old query targeted pitcher_strikeouts with
-        # confidence >= 70 which always returned 0 rows.
+        # Query signal_best_bets_picks. Grading + void fields are now propagated
+        # directly into the BB table by `_batch_update_best_bets` — no JOIN with
+        # prediction_accuracy needed.
         query = f"""
         SELECT
-            CAST(bb.game_date AS STRING) AS game_date,
-            bb.pitcher_lookup,
-            bb.pitcher_name,
-            bb.team_abbr,
-            bb.opponent_team_abbr,
-            bb.line_value,
-            bb.predicted_strikeouts,
-            bb.recommendation,
-            bb.edge,
-            bb.ultra_tier,
-            bb.pick_angles,
-            bb.system_id,
-            pa.prediction_correct,
-            pa.actual_strikeouts,
-            pa.is_voided,
-            pa.void_reason
-        FROM `{self.project_id}.mlb_predictions.signal_best_bets_picks` bb
-        LEFT JOIN `{self.project_id}.mlb_predictions.prediction_accuracy` pa
-            ON bb.pitcher_lookup = pa.pitcher_lookup
-            AND bb.game_date = pa.game_date
-            AND bb.recommendation = pa.recommendation
-            AND bb.line_value = pa.line_value
-        WHERE bb.game_date >= '{SEASON_START}'
-          AND bb.game_date <= '{today}'
-        ORDER BY bb.game_date ASC, bb.edge DESC
+            CAST(game_date AS STRING) AS game_date,
+            pitcher_lookup,
+            pitcher_name,
+            team_abbr,
+            opponent_team_abbr,
+            line_value,
+            predicted_strikeouts,
+            recommendation,
+            edge,
+            ultra_tier,
+            pick_angles,
+            system_id,
+            prediction_correct,
+            actual_strikeouts,
+            is_voided,
+            void_reason,
+            actual_starter_lookup
+        FROM `{self.project_id}.mlb_predictions.signal_best_bets_picks`
+        WHERE game_date >= '{SEASON_START}'
+          AND game_date <= '{today}'
+        ORDER BY game_date ASC, edge DESC
         """
 
         all_rows = self.query_to_list(query)
@@ -460,6 +486,12 @@ class MlbBestBetsExporter(BaseExporter):
         streak, best_streak = self._compute_streak(graded_rows)
         weeks = self._build_weekly_history(graded_rows)
 
+        # `total_picks` excludes voided picks (book rule violations are not
+        # real wagers). `voided` is broken out so the frontend can show counts
+        # like "63 picks, 2 voided" without inflating the wager count.
+        non_voided_today = [r for r in today_rows if not r.get('is_voided')]
+        voided_rows = [r for r in all_rows if r.get('is_voided')]
+
         json_data = {
             'date': today,
             'season': today[:4],
@@ -470,8 +502,9 @@ class MlbBestBetsExporter(BaseExporter):
             'best_streak': best_streak,
             'today': today_picks,
             'weeks': weeks,
-            'total_picks': len(graded_rows) + len(today_rows),
+            'total_picks': len(graded_rows) + len(non_voided_today),
             'graded': len(graded_rows),
+            'voided': len(voided_rows),
         }
 
         return self.upload_to_gcs(

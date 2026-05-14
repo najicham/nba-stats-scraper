@@ -31,9 +31,20 @@ logger = logging.getLogger(__name__)
 POSTPONED_STATUSES = frozenset(['Postponed', 'Cancelled', 'postponed', 'cancelled'])
 SUSPENDED_STATUSES = frozenset(['Suspended', 'suspended'])
 
+# Game statuses we consider TERMINAL (game is done; safe to void absent pitchers).
+# Positive allow-list — anything not in this set is treated as still-in-flight,
+# preventing morning grading runs from mass-voiding scheduled-but-not-yet-played games.
+TERMINAL_STATUSES = frozenset(['Final', 'Completed Early', 'Game Over'])
+
 # Minimum innings pitched for a valid prop (sportsbooks void if pitcher
 # doesn't complete enough innings — typically ~4 IP for K props)
 MIN_IP_FOR_VALID_PROP = 4.0
+
+# Freshness guard: refuse to void absent pitchers if the box-score table looks
+# incomplete (e.g., scraper hasn't finished writing). Threshold = fraction of
+# expected starters (n_games × 2) that must be present before we trust the
+# "this pitcher is absent" signal.
+ACTUALS_COVERAGE_THRESHOLD = 0.8
 
 
 def parse_mlb_innings_pitched(ip_str) -> Optional[float]:
@@ -107,18 +118,28 @@ class MlbPredictionGradingProcessor:
                 logger.info(f"No predictions found for {game_date}")
                 return True
 
-            # 2. Get actual results (includes game status for void detection)
+            # 2. Get actual results (all pitchers, including non-starters)
             actuals = self._get_actuals(game_date)
 
             # 3. Get game statuses for void detection
             game_statuses = self._get_game_statuses(game_date)
 
-            # 4. Grade each prediction
+            # 4. Pre-compute starter-by-game index + freshness check (used when
+            # voiding `did_not_start` picks to record actual_starter_lookup,
+            # and to suppress voids when the box-score table is incomplete).
+            starters_by_game = self._get_starters_by_game(actuals)
+            actuals_fresh = self._is_actuals_fresh(actuals, game_date)
+
+            # 5. Grade each prediction
             graded_records = []
             source_updates = []
 
             for pred in predictions:
-                grade = self._grade_prediction(pred, actuals, game_statuses)
+                grade = self._grade_prediction(
+                    pred, actuals, game_statuses,
+                    starters_by_game=starters_by_game,
+                    actuals_fresh=actuals_fresh,
+                )
                 if grade is None:
                     continue
 
@@ -165,8 +186,19 @@ class MlbPredictionGradingProcessor:
         pred: Dict,
         actuals: Dict[str, Dict],
         game_statuses: Dict[str, str],
+        starters_by_game: Optional[Dict[Any, str]] = None,
+        actuals_fresh: bool = True,
     ) -> Optional[Dict]:
-        """Grade a single prediction with void logic."""
+        """Grade a single prediction with void logic.
+
+        Void taxonomy (sportsbook-aligned):
+        - `postponed` / `suspended`: game didn't finish.
+        - `did_not_start`: lined pitcher pitched, but did NOT start the game
+          (e.g., bulk pitcher behind an opener). Records `actual_starter_lookup`.
+        - `scratched`: lined pitcher never took the mound and game is terminal.
+        - `short_start`: lined pitcher started but was pulled before MIN_IP_FOR_VALID_PROP.
+        """
+        starters_by_game = starters_by_game or {}
         pitcher_lookup = pred.get('pitcher_lookup')
         predicted_k = pred.get('predicted_strikeouts')
         line = pred.get('strikeouts_line')
@@ -201,16 +233,50 @@ class MlbPredictionGradingProcessor:
                 logger.debug(
                     f"Fuzzy match: {pitcher_lookup!r} matched via stripped lookup"
                 )
+
+        is_terminal = game_status in TERMINAL_STATUSES
+
         if actual is None:
+            # Lined pitcher has no box-score row. Two possibilities:
+            #   (a) game truly is final → pitcher scratched (book voids)
+            #   (b) game still in flight OR scraper lagging → retry later
+            if is_terminal and actuals_fresh:
+                self.stats["voided"] += 1
+                actual_starter = starters_by_game.get(game_pk)
+                logger.info(
+                    f"Voiding {pitcher_lookup} ({game_pk}) as scratched — "
+                    f"absent from box score; actual starter: {actual_starter}"
+                )
+                return self._build_voided_record(
+                    pred, 'scratched',
+                    actual_starter_lookup=actual_starter,
+                )
             self.stats["no_result"] += 1
             return None
+
+        # Found the lined pitcher in the box score. Did he START the game?
+        # Per sportsbook rules, K props void if the lined pitcher didn't start
+        # — even if he pitched in relief / bulk. Detect this BEFORE the
+        # short_start IP check; otherwise a bulk pitcher with low IP would
+        # incorrectly be tagged short_start.
+        if actual.get('is_starter') is False:
+            self.stats["voided"] += 1
+            actual_starter = starters_by_game.get(game_pk)
+            logger.info(
+                f"Voiding {pitcher_lookup} ({game_pk}) as did_not_start — "
+                f"pitched in relief; actual starter: {actual_starter}"
+            )
+            return self._build_voided_record(
+                pred, 'did_not_start',
+                actual_starter_lookup=actual_starter,
+            )
 
         actual_k = actual.get('strikeouts', 0)
         ip_raw = actual.get('innings_pitched')
         ip_decimal = parse_mlb_innings_pitched(ip_raw)
 
-        # Void check: pitcher didn't pitch enough innings
-        # (rain-shortened, early pull, injury exit)
+        # Void check: pitcher started but was pulled before enough innings
+        # (rain-shortened, early pull, injury exit).
         if ip_decimal is not None and ip_decimal < MIN_IP_FOR_VALID_PROP:
             self.stats["voided"] += 1
             void_reason = 'short_start'
@@ -257,6 +323,7 @@ class MlbPredictionGradingProcessor:
         prediction_correct: Optional[bool] = None,
         is_voided: bool = False,
         void_reason: Optional[str] = None,
+        actual_starter_lookup: Optional[str] = None,
     ) -> Dict:
         """Build a graded record for prediction_accuracy table."""
         predicted_k = pred.get('predicted_strikeouts')
@@ -290,16 +357,23 @@ class MlbPredictionGradingProcessor:
             "has_prop_line": line is not None,
             "is_voided": is_voided,
             "void_reason": void_reason,
+            "actual_starter_lookup": actual_starter_lookup,
             "feature_quality_score": pred.get('feature_coverage_pct'),
             "model_version": pred.get('model_version'),
             "graded_at": datetime.now(timezone.utc).isoformat(),
         }
 
-    def _build_voided_record(self, pred: Dict, void_reason: str) -> Dict:
-        """Build a voided record (no actual data)."""
+    def _build_voided_record(
+        self,
+        pred: Dict,
+        void_reason: str,
+        actual_starter_lookup: Optional[str] = None,
+    ) -> Dict:
+        """Build a voided record (no actual K count)."""
         return self._build_graded_record(
             pred, actual_k=0, ip_decimal=None,
             is_voided=True, void_reason=void_reason,
+            actual_starter_lookup=actual_starter_lookup,
         )
 
     def _get_predictions(self, game_date: str) -> List[Dict]:
@@ -332,38 +406,113 @@ class MlbPredictionGradingProcessor:
             return []
 
     def _get_actuals(self, game_date: str) -> Dict[str, Dict]:
-        """Get actual pitcher strikeouts for a game date.
+        """Get actual pitcher box-score rows for a game date.
+
+        Returns ALL pitchers who appeared (regardless of starter flag), keyed by
+        player_lookup. Each row includes the is_starter flag so the caller can
+        distinguish "lined pitcher started" (grade normally) from "lined pitcher
+        pitched in relief / bulk" (book voids — `did_not_start`).
 
         Tries mlbapi_pitcher_stats first (new source), falls back to
         mlb_pitcher_stats (legacy BDL).
         """
-        # Try new MLBAPI source first
         for table in ['mlbapi_pitcher_stats', 'mlb_pitcher_stats']:
             query = f"""
             SELECT
                 player_lookup,
                 strikeouts,
                 innings_pitched,
-                game_pk
+                game_pk,
+                is_starter
             FROM `{self.project_id}.mlb_raw.{table}`
             WHERE game_date = '{game_date}'
-              AND is_starter = TRUE
             """
             try:
                 results = {}
                 for row in self.bq_client.query(query).result():
+                    # Multiple games per pitcher per day are vanishingly rare
+                    # (doubleheaders), but if it happens we keep the starter row
+                    # so the lined-pitcher lookup is meaningful.
+                    existing = results.get(row.player_lookup)
+                    if existing and existing.get('is_starter') and not row.is_starter:
+                        continue
                     results[row.player_lookup] = {
                         "strikeouts": row.strikeouts,
                         "innings_pitched": row.innings_pitched,
                         "game_pk": getattr(row, 'game_pk', None),
+                        "is_starter": bool(row.is_starter),
                     }
                 if results:
-                    logger.info(f"Got {len(results)} actuals from {table}")
+                    logger.info(f"Got {len(results)} pitcher box-score rows from {table}")
                     return results
             except Exception as e:
                 logger.debug(f"Table {table} not available: {e}")
                 continue
         return {}
+
+    def _get_starters_by_game(self, actuals: Dict[str, Dict]) -> Dict[Any, str]:
+        """Build a {game_pk: starter_lookup} index from actuals.
+
+        Used when voiding `did_not_start` picks to record WHO actually started
+        instead of the lined pitcher (e.g., the opener in opener+bulk games).
+        Falls back to empty dict; consumers must handle missing keys gracefully.
+        """
+        starters: Dict[Any, str] = {}
+        for lookup, row in actuals.items():
+            if row.get('is_starter'):
+                gpk = row.get('game_pk')
+                if gpk is None:
+                    continue
+                # Keep the row with the highest IP if multiple is_starter=TRUE
+                # rows exist for the same game_pk (opener+bulk both flagged).
+                existing = starters.get(gpk)
+                if existing is None:
+                    starters[gpk] = lookup
+                else:
+                    existing_ip = (actuals.get(existing) or {}).get('innings_pitched') or 0
+                    this_ip = row.get('innings_pitched') or 0
+                    try:
+                        if float(this_ip) > float(existing_ip):
+                            starters[gpk] = lookup
+                    except (TypeError, ValueError):
+                        pass
+        return starters
+
+    def _is_actuals_fresh(self, actuals: Dict[str, Dict], game_date: str) -> bool:
+        """Check whether the box-score table has enough rows to trust an
+        'absent pitcher' signal. Returns False if the scraper appears to have
+        lagged behind the schedule status flips, in which case we should NOT
+        void absent pitchers (they may still be coming).
+        """
+        try:
+            query = f"""
+            SELECT COUNT(DISTINCT game_pk) AS n_games
+            FROM `{self.project_id}.mlb_raw.mlb_schedule`
+            WHERE game_date = '{game_date}'
+              AND status_detailed IN UNNEST({list(TERMINAL_STATUSES)})
+            """
+            result = list(self.bq_client.query(query).result())
+            n_games_final = int(result[0].n_games) if result else 0
+        except Exception as e:
+            logger.debug(f"Freshness check schedule query failed: {e}")
+            # Be conservative — assume not fresh if we can't tell.
+            return False
+
+        if n_games_final == 0:
+            # No terminal games yet; the "did_not_start" branch shouldn't run.
+            return False
+
+        expected_starters = n_games_final * 2
+        actual_starters = sum(1 for r in actuals.values() if r.get('is_starter'))
+        coverage = actual_starters / expected_starters if expected_starters else 0
+        fresh = coverage >= ACTUALS_COVERAGE_THRESHOLD
+        if not fresh:
+            logger.warning(
+                f"Box-score coverage {coverage:.0%} ({actual_starters}/"
+                f"{expected_starters}) below threshold {ACTUALS_COVERAGE_THRESHOLD:.0%} "
+                f"for {game_date}; suppressing did_not_start/scratched voids."
+            )
+        return fresh
 
     def _get_game_statuses(self, game_date: str) -> Dict[str, str]:
         """Get game statuses for void detection (postponed/suspended).
@@ -448,6 +597,7 @@ class MlbPredictionGradingProcessor:
                 "has_prop_line": r.get("has_prop_line"),
                 "is_voided": r.get("is_voided", False),
                 "void_reason": r.get("void_reason"),
+                "actual_starter_lookup": r.get("actual_starter_lookup"),
                 "feature_quality_score": r.get("feature_quality_score"),
                 "model_version": r.get("model_version"),
                 "graded_at": r.get("graded_at"),
@@ -537,12 +687,21 @@ class MlbPredictionGradingProcessor:
             return
 
         # Escape single quotes in system_ids (e.g., 'catboost_v2_...') defensively.
+        def _q(value: Optional[str]) -> str:
+            """Render a string value for inline STRUCT literal."""
+            if value is None:
+                return 'NULL'
+            return "'" + value.replace("'", "\\'") + "'"
+
         struct_rows = []
         for g in graded_records:
             pitcher_lookup = g.get('pitcher_lookup', '').replace("'", "\\'")
             system_id = g.get('system_id', '').replace("'", "\\'")
             actual_k = g.get('actual_strikeouts')
             correct = g.get('prediction_correct')
+            is_voided = bool(g.get('is_voided'))
+            void_reason = g.get('void_reason')
+            actual_starter = g.get('actual_starter_lookup')
 
             if actual_k is None:
                 actual_k_str = 'NULL'
@@ -561,7 +720,10 @@ class MlbPredictionGradingProcessor:
                 f"DATE('{game_date}') AS game_date, "
                 f"'{system_id}' AS system_id, "
                 f"{actual_k_str} AS actual_strikeouts, "
-                f"{correct_str} AS prediction_correct)"
+                f"{correct_str} AS prediction_correct, "
+                f"{'TRUE' if is_voided else 'FALSE'} AS is_voided, "
+                f"{_q(void_reason)} AS void_reason, "
+                f"{_q(actual_starter)} AS actual_starter_lookup)"
             )
 
         batch_size = 500
@@ -581,7 +743,10 @@ class MlbPredictionGradingProcessor:
                AND T.system_id = S.system_id
             WHEN MATCHED THEN UPDATE SET
                 T.actual_strikeouts = S.actual_strikeouts,
-                T.prediction_correct = S.prediction_correct
+                T.prediction_correct = S.prediction_correct,
+                T.is_voided = S.is_voided,
+                T.void_reason = S.void_reason,
+                T.actual_starter_lookup = S.actual_starter_lookup
             """
             try:
                 result = self.bq_client.query(query).result()
