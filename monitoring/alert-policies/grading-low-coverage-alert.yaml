@@ -78,8 +78,6 @@ enabled: true
 
 alertStrategy:
   autoClose: 604800s  # 7 days
-  notificationRateLimit:
-    period: 3600s     # Max 1 notification per hour
 
 # NBA Platform Alerts (Slack) — shared channel with expected-output-overdue.
 notificationChannels:

@@ -60,6 +60,27 @@ logger = logging.getLogger(__name__)
 
 # MLB Alert utilities (consolidated in shared module)
 from shared.observability.metrics import emit_phase_completion
+
+_PROC_OUTPUT_TYPE: dict[str, str] = {
+    'MlbPitcherGameSummaryProcessor': 'pitcher_game_summary',
+    'MlbBatterGameSummaryProcessor': 'batter_game_summary',
+}
+
+def _emit_mlb_p3_results(results: list) -> None:
+    """Emit one phase_completion per processor result (output table, not source table)."""
+    _status_map = {'success': 'COMPLETE', 'error': 'FAILED', 'exception': 'FAILED', 'timeout': 'FAILED'}
+    for r in results:
+        try:
+            proc = r.get('processor', '')
+            otype = _PROC_OUTPUT_TYPE.get(proc, proc or 'unknown')
+            emit_phase_completion(
+                phase='phase3_analytics', output_type=otype,
+                status=_status_map.get(r.get('status', ''), 'DEGRADED'),
+                sport='mlb', row_count=0,
+            )
+        except Exception:
+            pass
+
 from shared.utils.mlb_alert_utils import (
     get_mlb_alert_manager,
     send_mlb_analytics_alert as send_mlb_alert,
@@ -328,19 +349,7 @@ def process_analytics():
                         correlation_id=correlation_id,
                     )
 
-        if success_count == len(results):
-            _mlb_status = 'COMPLETE'
-        elif success_count == 0:
-            _mlb_status = 'FAILED'
-        else:
-            _mlb_status = 'DEGRADED'
-        try:
-            emit_phase_completion(
-                phase='phase3_analytics', output_type=source_table or 'unknown',
-                status=_mlb_status, sport='mlb', row_count=success_count,
-            )
-        except Exception:
-            pass
+        _emit_mlb_p3_results(results)
         return jsonify({
             "status": "success" if success_count == len(results) else "partial",
             "source_table": source_table,
@@ -438,6 +447,7 @@ def process_date():
                         status='success',
                     )
 
+        _emit_mlb_p3_results(results)
         return jsonify({
             "status": "success" if success_count == len(results) else "partial",
             "game_date": game_date,
@@ -490,7 +500,7 @@ def process_date_range():
             results.append(result)
 
         success_count = sum(1 for r in results if r['status'] == 'success')
-
+        _emit_mlb_p3_results(results)
         return jsonify({
             "status": "success" if success_count == len(results) else "partial",
             "start_date": start_date,

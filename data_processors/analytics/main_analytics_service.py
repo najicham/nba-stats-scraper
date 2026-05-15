@@ -35,6 +35,29 @@ from shared.utils.validation import validate_game_date, validate_project_id, Val
 from shared.config.gcp_config import get_project_id
 from shared.observability.metrics import emit_phase_completion
 from datetime import datetime, timezone, date, timedelta
+
+_PROC_OUTPUT_TYPE: dict[str, str] = {
+    'PlayerGameSummaryProcessor': 'player_game_summary',
+    'TeamOffenseGameSummaryProcessor': 'team_offense_game_summary',
+    'TeamDefenseGameSummaryProcessor': 'team_defense_game_summary',
+    'UpcomingPlayerGameContextProcessor': 'upcoming_player_game_context',
+    'UpcomingTeamGameContextProcessor': 'upcoming_team_game_context',
+}
+
+def _emit_p3_results(results: list, sport: str = 'nba') -> None:
+    """Emit one phase_completion per processor result (output table, not source table)."""
+    _status_map = {'success': 'COMPLETE', 'error': 'FAILED', 'exception': 'FAILED', 'timeout': 'FAILED'}
+    for r in results:
+        try:
+            proc = r.get('processor', '')
+            otype = _PROC_OUTPUT_TYPE.get(proc, proc or 'unknown')
+            emit_phase_completion(
+                phase='phase3_analytics', output_type=otype,
+                status=_status_map.get(r.get('status', ''), 'DEGRADED'),
+                sport=sport, row_count=0,
+            )
+        except Exception:
+            pass
 import base64
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -1073,16 +1096,13 @@ def process_analytics():
         successes = [r for r in results if r.get('status') == 'success']
 
         total_processors = len(results)
+        _emit_p3_results(results)
 
         if not successes and failures:
             # All processors failed - return 500 to trigger Pub/Sub retry
             logger.error(
                 f"❌ ALL {len(failures)} analytics processors failed for {game_date} "
                 f"(source={source_table}) - returning 500 to trigger retry"
-            )
-            emit_phase_completion(
-                phase='phase3_analytics', output_type=source_table or 'unknown',
-                status='FAILED', sport='nba', row_count=0,
             )
             return jsonify({
                 "status": "failed",
@@ -1102,10 +1122,6 @@ def process_analytics():
                 f"⚠️ PARTIAL FAILURE: {len(failures)}/{total_processors} analytics processors failed "
                 f"for {game_date} (source={source_table})"
             )
-            emit_phase_completion(
-                phase='phase3_analytics', output_type=source_table or 'unknown',
-                status='DEGRADED', sport='nba', row_count=len(successes),
-            )
             return jsonify({
                 "status": "partial_failure",
                 "message": f"Partially processed analytics for {game_date} ({len(successes)}/{total_processors} processors completed, {len(failures)} failed)",
@@ -1119,10 +1135,6 @@ def process_analytics():
             }), 200  # ACK to prevent infinite retries, but status indicates partial
 
         # All succeeded
-        emit_phase_completion(
-            phase='phase3_analytics', output_type=source_table or 'unknown',
-            status='COMPLETE', sport='nba', row_count=total_processors,
-        )
         return jsonify({
             "status": "completed",
             "message": f"Successfully processed analytics for {game_date} ({total_processors}/{total_processors} processors completed)",
@@ -1287,6 +1299,7 @@ def process_date_range():
         # Level 2: Dependent processors (after team stats are committed)
         run_batch(level2, "level2-dependent")
 
+        _emit_p3_results(results)
         return jsonify({
             "status": "completed",
             "date_range": f"{start_date} to {end_date}",
