@@ -1,9 +1,15 @@
 # Disaster Recovery Runbook
 
 **Created:** 2026-01-03 (Session 6)
-**Version:** 1.0
+**Last Updated:** 2026-05-15
+**Version:** 1.1
 **Owner:** Operations Team
 **Criticality:** HIGH - Required for Production
+
+> **2026-05-15 — DR drill verified the snapshot-based restore path.**
+> See [Scenario 1 / Step 4A](#step-4a-restore-from-bigquery-snapshots-primary-path).
+> `ml_feature_store_v2` (1GB / 147K rows) cloned in 3 seconds — CLONE is
+> metadata-only so restore time is independent of table size.
 
 ---
 
@@ -164,38 +170,86 @@ bq mk --dataset \
   nba-props-platform:nba_orchestration
 ```
 
-#### Step 4A: Restore from BigQuery Backups (if available)
+#### Step 4A: Restore from BigQuery Snapshots (PRIMARY PATH)
 
-**Option 1: Restore from table snapshots**
+**Snapshot architecture (Path C / 2026-05-14):** Daily 11 AM ET, the
+`nba-snapshot-daily` and `mlb-snapshot-daily` Cloud Functions write
+`CREATE SNAPSHOT TABLE` clones of the critical prediction tables into
+`nba_predictions_backups` / `mlb_predictions_backups`. Retention is 30
+days; snapshot suffix format is `_YYYYMMDD_HHMMSS` (UTC).
+
+**Tables covered (NBA):**
+- `prediction_accuracy`
+- `signal_best_bets_picks`
+- `best_bets_published_picks`
+- `player_prop_predictions`
+- `ml_feature_store_v2`
+
+**DR drill 2026-05-15:** `ml_feature_store_v2` restore (1 GB / 147,340
+rows) — completed in **3 seconds**. CLONE is metadata-only, so restore
+latency does not scale with table size. Row count, schema, distinct
+players, and date range all matched the live source exactly.
+
+**Helper script:** `bin/operations/dr_restore_snapshot.sh` wraps the
+common case. It auto-discovers the latest snapshot, prompts before
+executing, clones to `*_dr_test_<date>` (24-hour expiration), and
+prints a validation query.
 
 ```bash
-# List available snapshots
-bq ls --project_id=nba-props-platform --snapshots nba_analytics
+# Discover latest snapshot + restore to *_dr_test_<date>
+bin/operations/dr_restore_snapshot.sh ml_feature_store_v2
 
-# Restore specific table from snapshot
-bq cp \
-  nba-props-platform:nba_analytics.player_game_summary@1234567890000 \
-  nba-props-platform:nba_analytics.player_game_summary
+# Pin to a specific snapshot timestamp
+bin/operations/dr_restore_snapshot.sh prediction_accuracy 20260515_150003
 
-# Restore all Phase 3 tables
-for table in player_game_summary team_offense_game_summary team_defense_game_summary \
-             upcoming_player_game_context upcoming_team_game_context; do
-  echo "Restoring $table..."
-  # Find latest snapshot (replace TIMESTAMP)
-  bq cp \
-    nba-props-platform:nba_analytics.${table}@TIMESTAMP \
-    nba-props-platform:nba_analytics.${table}
-done
+# MLB
+DATASET=mlb_predictions_backups LIVE_DATASET=mlb_predictions \
+  bin/operations/dr_restore_snapshot.sh mlb_predictions
 ```
 
-**Option 2: Restore from exports**
+**Manual one-liner equivalent** (use during real incident if the helper
+is unavailable):
 
 ```bash
-# If tables were exported to GCS (recommended setup)
-# Check for exports
+# 1. List available snapshots for a table
+bq ls --max_results=200 --format=json \
+  nba-props-platform:nba_predictions_backups \
+  | jq -r '.[] | .tableReference.tableId' \
+  | grep '^ml_feature_store_v2_' | sort | tail -5
+
+# 2. Clone snapshot back into live dataset (REPLACE the live table)
+#    Picks `_150003` (the daily 11 AM ET snapshot — daily snapshot UTC
+#    hours are 03:46/04:46 from a one-off backfill and 15:00 from the
+#    scheduled CF; the 15:00 ones are authoritative).
+bq cp -f \
+  nba-props-platform:nba_predictions_backups.ml_feature_store_v2_20260515_150003 \
+  nba-props-platform:nba_predictions.ml_feature_store_v2
+
+# 3. Validate
+bq query --use_legacy_sql=false \
+  "SELECT COUNT(*) FROM \`nba-props-platform.nba_predictions.ml_feature_store_v2\`"
+```
+
+**Time-travel fallback (last 7 days only):** If the incident is fresh
+and snapshot doesn't have the exact point you need, BQ time-travel can
+also recover deleted/overwritten rows:
+
+```bash
+# Restore from a specific timestamp (within 7-day window)
+bq cp \
+  "nba-props-platform:nba_predictions.ml_feature_store_v2@$(date -d '2 hours ago' +%s)000" \
+  nba-props-platform:nba_predictions.ml_feature_store_v2_recovered
+```
+
+#### Step 4A (legacy): Restore from GCS exports
+
+> **Status:** Superseded by snapshots since 2026-05-14. Kept for
+> reference if snapshot dataset is also lost.
+
+```bash
+# If tables were exported to GCS (legacy v1.0 approach)
 gsutil ls gs://nba-bigquery-backups/exports/
 
-# Restore from exports
 bq load \
   --source_format=AVRO \
   --replace \
@@ -1100,6 +1154,7 @@ After recovery, document the incident:
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 1.0 | 2026-01-03 | Operations Team | Initial DR runbook created (Session 6) |
+| 1.1 | 2026-05-15 | Operations Team | Snapshot-based restore documented and drilled. New `bin/operations/dr_restore_snapshot.sh` helper. `nba_predictions_backups` / `mlb_predictions_backups` datasets become the primary restore source; GCS-export path demoted to legacy. |
 
 ---
 
