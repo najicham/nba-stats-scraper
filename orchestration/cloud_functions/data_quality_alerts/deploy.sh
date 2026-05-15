@@ -25,16 +25,21 @@ echo "Function: $FUNCTION_NAME"
 echo "Region: $REGION"
 echo ""
 
-# Check if we have required env vars
-if [ -z "$SLACK_WEBHOOK_URL_ERROR" ]; then
-    echo "⚠️  WARNING: SLACK_WEBHOOK_URL_ERROR not set"
-    echo "   Alerts will not be sent for CRITICAL issues"
-fi
+# Path C Week 2: SLACK_WEBHOOK_URL_* are now sourced from Secret Manager
+# (slack-webhook-monitoring-error / slack-webhook-monitoring-warning) rather
+# than from deployer shell env vars. The CF SA needs roles/secretmanager.secretAccessor
+# on those secrets — granted once at function creation time below.
+SECRET_ERROR="slack-webhook-monitoring-error"
+SECRET_WARNING="slack-webhook-monitoring-warning"
 
-if [ -z "$SLACK_WEBHOOK_URL_WARNING" ]; then
-    echo "⚠️  WARNING: SLACK_WEBHOOK_URL_WARNING not set"
-    echo "   Alerts will not be sent for WARNING issues"
-fi
+for s in "$SECRET_ERROR" "$SECRET_WARNING"; do
+    if ! gcloud secrets describe "$s" --project="$PROJECT_ID" &>/dev/null; then
+        echo "❌ Secret '$s' not found in Secret Manager"
+        echo "   Create with: echo -n 'https://hooks.slack.com/...' | \\"
+        echo "       gcloud secrets create $s --project=$PROJECT_ID --data-file=-"
+        exit 1
+    fi
+done
 
 echo ""
 read -p "Continue with deployment? (y/N) " -n 1 -r
@@ -71,11 +76,24 @@ gcloud functions deploy $FUNCTION_NAME \
     --source . \
     --entry-point check_data_quality \
     --trigger-http \
-    --allow-unauthenticated \
+    --no-allow-unauthenticated \
     --timeout=540 \
     --memory=512MB \
-    --set-env-vars GCP_PROJECT_ID=$PROJECT_ID,SLACK_WEBHOOK_URL_ERROR=${SLACK_WEBHOOK_URL_ERROR},SLACK_WEBHOOK_URL_WARNING=${SLACK_WEBHOOK_URL_WARNING} \
+    --set-env-vars="GCP_PROJECT_ID=$PROJECT_ID" \
+    --set-secrets="SLACK_WEBHOOK_URL_ERROR=${SECRET_ERROR}:latest,SLACK_WEBHOOK_URL_WARNING=${SECRET_WARNING}:latest" \
     --project $PROJECT_ID
+
+# Path C Week 2: grant the scheduler's runtime SA permission to invoke.
+# The scheduler 'data-quality-alerts-job' is already configured with this SA's
+# OIDC token; this just makes the function accept it after we drop public auth.
+SCHED_SA="756957797294-compute@developer.gserviceaccount.com"
+gcloud functions add-invoker-policy-binding "$FUNCTION_NAME" \
+    --region="$REGION" --project="$PROJECT_ID" \
+    --member="serviceAccount:${SCHED_SA}" 2>/dev/null || \
+gcloud run services add-iam-policy-binding "$FUNCTION_NAME" \
+    --region="$REGION" --project="$PROJECT_ID" \
+    --role="roles/run.invoker" \
+    --member="serviceAccount:${SCHED_SA}" >/dev/null
 
 # Get function URL
 echo ""
@@ -98,7 +116,9 @@ if [ "$ENVIRONMENT" = "prod" ]; then
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         SCHEDULER_JOB="${FUNCTION_NAME}-job"
 
-        # Check if job exists
+        # Path C Week 2: OIDC required now that the CF is not public.
+        # Without --oidc-service-account-email, `update` will strip existing OIDC.
+        SCHED_SA="756957797294-compute@developer.gserviceaccount.com"
         if gcloud scheduler jobs describe $SCHEDULER_JOB --location=$REGION --project=$PROJECT_ID &>/dev/null; then
             echo "Updating existing scheduler job..."
             gcloud scheduler jobs update http $SCHEDULER_JOB \
@@ -107,6 +127,8 @@ if [ "$ENVIRONMENT" = "prod" ]; then
                 --time-zone="America/New_York" \
                 --uri="$FUNCTION_URL" \
                 --http-method=GET \
+                --oidc-service-account-email="$SCHED_SA" \
+                --oidc-token-audience="$FUNCTION_URL" \
                 --project=$PROJECT_ID
         else
             echo "Creating new scheduler job..."
@@ -116,6 +138,8 @@ if [ "$ENVIRONMENT" = "prod" ]; then
                 --time-zone="America/New_York" \
                 --uri="$FUNCTION_URL" \
                 --http-method=GET \
+                --oidc-service-account-email="$SCHED_SA" \
+                --oidc-token-audience="$FUNCTION_URL" \
                 --description="Daily data quality checks for NBA predictions pipeline" \
                 --project=$PROJECT_ID
         fi
