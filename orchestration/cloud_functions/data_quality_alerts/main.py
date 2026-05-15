@@ -730,30 +730,32 @@ def send_slack_alert(level: str, check_name: str, message: str, details: Dict, g
                 "text": f"*{key.replace('_', ' ').title()}:*\n{value}"
             })
 
+        blocks = [
+            {
+                "type": "header",
+                "text": {
+                    "type": "plain_text",
+                    "text": f"{emoji_map.get(level, ':bell:')} Data Quality Alert: {check_name}",
+                    "emoji": True
+                }
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*Date:* {game_date}\n*Level:* {level}\n\n{message}"
+                }
+            },
+        ]
+        # Slack rejects `section` blocks with empty `fields` arrays as
+        # invalid_attachments / 400 — only include when we have details.
+        if fields:
+            blocks.append({"type": "section", "fields": fields[:10]})
+
         payload = {
             "attachments": [{
                 "color": color_map.get(level, '#808080'),
-                "blocks": [
-                    {
-                        "type": "header",
-                        "text": {
-                            "type": "plain_text",
-                            "text": f"{emoji_map.get(level, ':bell:')} Data Quality Alert: {check_name}",
-                            "emoji": True
-                        }
-                    },
-                    {
-                        "type": "section",
-                        "text": {
-                            "type": "mrkdwn",
-                            "text": f"*Date:* {game_date}\n*Level:* {level}\n\n{message}"
-                        }
-                    },
-                    {
-                        "type": "section",
-                        "fields": fields[:10]  # Limit to 10 fields
-                    }
-                ]
+                "blocks": blocks,
             }]
         }
 
