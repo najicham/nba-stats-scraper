@@ -241,55 +241,43 @@ TIER_EDGE_CAPS = {
 }
 
 # =============================================================================
-# OBSERVATION FILTER AUDIT — 2026-04-05
+# OBSERVATION FILTER AUDIT — 2026-05-15
 # =============================================================================
-# ~19 observation-mode filter instances currently in this file.
-# (Was 30. Removed 5: familiar_matchup_obs, b2b_under_block_obs, ft_variance_under_obs,
-#  neg_pm_streak_obs, line_dropped_over_obs. Promoted 1 to active block: monday_over_obs.
-#  Promoted 1 from obs to active block: hot_shooting_reversion_obs.
-#  REVERTED to observation: home_over_obs (2026-03-27, BB-level CF HR = 70%, N=10 — blocking winners).
-#  Session 514: Demoted high_spread_over_would_block to observation (CF HR 63.6%, N=33).
-#  Session 514: Promoted blowout_risk_under_block to active (CF HR 37.5%, N=72).
-#  Session 514: Re-added flat_trend_under as active block (CF HR 37.0%, N=46).)
-# Promotion requires: N >= 30 BB-level picks at CF HR >= 55% for 7 consecutive days.
-# Demotion/removal threshold: CF HR >= 55% (blocking too many winners).
+# Promotion criteria: N >= 30 BB-level picks at CF HR <= 45% (filter correctly
+# blocks losers). Demotion/removal: CF HR >= 55% (blocking winners).
+# CF HR = % of BLOCKED picks that would have won — LOW is good, HIGH is bad.
 #
-# Categorized by readiness:
+# 2026-05-15 actions (post-NBA-season audit, data window 2026-03-04 → 2026-04-07):
+#   PROMOTED 3 (CF HR <= 45%, N >= 30):
+#     - under_star_away → active (CF HR 38.8%, N=49)
+#     - line_jumped_under_obs → active (CF HR 41.4%, N=58); BQ name preserved
+#     - tanking_risk_obs → active (CF HR 40.0%, N=30)
+#   REMOVED 1 (CF HR >= 55%, blocking winners):
+#     - high_spread_over_would_block (CF HR 80.6%, N=31). Was already demoted
+#       Session 514 at CF HR 63.6%; additional data made it strictly worse.
+#   DEFERRED (low N or borderline, keep observing):
+#     - signal_stack_2plus_obs (N=117, CF HR 48.7%) — coin flip, not actionable
+#     - opponent_under_block (N=19, CF HR 57.9%) — below N=20 auto-demote floor
+#     - opponent_depleted_under (N=18, CF HR 55.6%) — below N=20 floor
+#     - high_skew_over_block (N=15, CF HR 73.3%) — high HR but low N
+#     - bench_under_obs (N=12, CF HR 66.7%) — high HR but low N
+#     - mid_line_over_obs (N=11, CF HR 54.5%) — right at threshold
+#     - thin_slate_obs (N=22, CF HR 50%) — coin flip
+#     - home_over_obs (N=6) — recently reverted, monitor BB-level
+#     - hot_streak_under_obs, over_low_rsc_obs, bias_regime_over_obs (N<10 each)
+#     - mae_gap_obs (UNDER side) — superset counter; OVER subset already active
+#     - depleted_stars_over_obs, model_profile_would_block, solo_game_pick_obs,
+#       player_under_suppression_obs, toxic_*_would_block (no CF data yet)
 #
-# (A) CLEARLY TOO-NEW / LOW-N — keep observing:
-#   - signal_stack_2plus_obs: 50% HR at N=6 — needs data
-#   - bias_regime_over_obs: accumulating data
-#   - blowout_risk_under_block: PROMOTED to active 2026-04-05 (CF HR 37.5%, N=72)
-#   - tanking_risk_obs: new, accumulating data (season end)
-#   - over_low_rsc_obs: 45.5% at N=11 — promote when N>=30
-#   - hot_streak_under_obs: 44.4% at N=18 — below threshold, needs more data
-#   - unreliable_over_low_mins_obs: REMOVED 2026-05-14 — fired N=1 in 2 months
-#   - unreliable_under_flat_trend_obs: REMOVED 2026-05-14 — fired N=3 in 2 months
-#   - model_profile_would_block: Phase 1 validation ongoing
-#   - solo_game_pick_obs: 52.2% HR (N=69) — below 55% CF HR threshold for blocking
-#   - thin_slate_obs: 51.2% HR — accumulating data
-#   - depleted_stars_over_obs: BB 0% (N=4) — too low N for reliable signal
-#   - mae_gap_obs: partially promoted for OVER (mae_gap>0.5), UNDER still obs
-#
-# (B) HAS ENOUGH DATA — FLAG FOR PROMOTION REVIEW (CF HR suggests can block):
-#   - monday_over_obs: PROMOTED to active block 2026-03-26 (49.0% HR, N=251)
-#   - home_over_obs: REVERTED to observation 2026-03-27 (BB CF HR 70%, N=10 — blocking winners)
-#   - hot_shooting_reversion_obs: PROMOTED to active block 2026-03-26 (OVER CF HR ~40.8%, N=250 pred-level)
-#   - player_under_suppression_obs: check date (Mar 24) passed — review BQ data
-#   - under_star_away: 73.0% post-ASB HR — demoted during toxic Feb, review
-#
-# (C) CLEARLY HARMFUL DIRECTION — DATA SHOWS BLOCKING WINNERS, CONSIDER REMOVAL:
-#   - familiar_matchup_obs: REMOVED 2026-03-26 (CF HR 54.4%, 5-season confirmed)
-#   - b2b_under_block_obs: REMOVED 2026-03-26 (CF HR 54.0%, 5-season confirmed)
-#   - ft_variance_under_obs: REMOVED 2026-03-26 (CF HR 56.0%, 5-season confirmed)
-#   - line_dropped_over_obs: REMOVED 2026-03-26 (CF HR 60.0%, N=477)
-#   - neg_pm_streak_obs: REMOVED 2026-03-26 (CF HR 64.5%, N=758 — highest of any filter)
-#   - line_jumped_under_obs: CF HR 100% (5/5 winners blocked) — strong anti-signal
-#   - flat_trend_under: RESTORED + PROMOTED to active 2026-04-05 (CF HR 37.0%, N=46)
-#   - high_skew_over_block_obs: CF HR 75% (N=4) — blocking winners, low N
-#   - bench_under_obs: CF HR 100% (N=2) — blocking winners, very low N
-#   - opponent_under_block: CF HR 52.4% (N=21) — coin flip, demoted Session 488
-#   - opponent_depleted_under: CF HR 83.3% (N=6) — blocking winners, low N
+# Historical actions (kept for context):
+#   - Removed 2026-03-26: familiar_matchup_obs, b2b_under_block_obs,
+#     ft_variance_under_obs, neg_pm_streak_obs, line_dropped_over_obs
+#   - Promoted 2026-03-26: monday_over_obs, hot_shooting_reversion_obs
+#   - Reverted to obs 2026-03-27: home_over_obs (BB CF HR 70%, N=10)
+#   - Session 514: blowout_risk_under_block PROMOTED (CF HR 37.5%, N=72),
+#     flat_trend_under PROMOTED (CF HR 37.0%, N=46)
+#   - Removed 2026-05-14: unreliable_over_low_mins_obs (N=1 in 2mo),
+#     unreliable_under_flat_trend_obs (N=3 in 2mo)
 #
 # NOTE: Do NOT promote/demote based on this code analysis alone.
 # Run BQ CF HR queries against filter_counterfactual_daily for current N and HR.
@@ -771,15 +759,17 @@ class BestBetsAggregator:
             # Filter counter retained for schema continuity.
             season_avg = pred.get('points_avg_season') or 0
 
-            # UNDER Star AWAY observation (Session 369→415): Was 38.5% HR at creation
-            # (toxic Feb) but recovered to 73.0% post-ASB. Demoted to observation
-            # Session 415 — collect 2 weeks fresh data before re-evaluation.
+            # UNDER Star AWAY block (Session 369→415→2026-05-15): Was 38.5% HR at creation
+            # (toxic Feb), demoted to observation Session 415. PROMOTED 2026-05-15 —
+            # late-season CF HR = 38.8% (N=49, 2026-03-04 → 2026-04-07) confirms filter
+            # correctly blocks losers (only 38.8% of blocked picks would have won).
             if (pred.get('recommendation') == 'UNDER'
                     and line_val >= 23
                     and not pred.get('is_home', False)):
                 filter_counts['under_star_away'] += 1
                 _record_filtered(pred, 'under_star_away', pred_edge)
-                # Observation mode — do NOT continue/filter
+                if 'under_star_away' not in self._runtime_demoted:
+                    continue
 
             # Medium teammate usage UNDER — ACTIVE filter (Session 488 demote REVERTED).
             # CF HR = 45.9% (N=37) — blocking losers (54% of blocked picks lose).
@@ -801,16 +791,18 @@ class BestBetsAggregator:
             # across entire season. startswith('v12') missed lgbm/xgb models,
             # and season_avg vs line_value mismatch meant no picks matched.
 
-            # Line jumped UNDER — DEMOTED to observation (Session 417)
-            # Was 38.2% HR (N=272, Session 294), but recent: 5/5 winners blocked.
-            # Now logs to filtered_picks for tracking but does NOT block.
+            # Line jumped UNDER block (Session 294→417→2026-05-15): Was 38.2% HR (N=272,
+            # Session 294), demoted Session 417 on tiny N=5 reversal. PROMOTED 2026-05-15 —
+            # CF HR = 41.4% (N=58, 2026-03-04 → 2026-04-07) confirms filter blocks losers.
+            # Keep `_obs` suffix in BQ name to preserve CF HR history continuity.
             prop_line_delta = pred.get('prop_line_delta')
             if (prop_line_delta is not None
                     and prop_line_delta >= 2.0
                     and pred.get('recommendation') == 'UNDER'):
-                filter_counts['line_jumped_under'] += 1
+                filter_counts['line_jumped_under_obs'] += 1
                 _record_filtered(pred, 'line_jumped_under_obs', pred_edge)
-                # continue  # Session 417: observation only — do not block
+                if 'line_jumped_under_obs' not in self._runtime_demoted:
+                    continue
 
             # Line dropped UNDER — ACTIVE filter (Session 488 demote REVERTED).
             # CF HR = 37.5% (N=8) — blocking losers (62.5% of blocked picks lose).
@@ -998,29 +990,24 @@ class BestBetsAggregator:
                 if 'blowout_risk_under_block' not in self._runtime_demoted:
                     continue
 
-            # High spread OVER — DEMOTED to observation (Session 514).
-            # Session 436: Promoted back to active blocking.
-            # Session 514: Demoted back to observation — CF HR 63.6% (N=33),
-            # leaking +7.1u. Meets N>=30, CF HR>=55% demotion threshold.
-            # Also written to filter_overrides BQ table for runtime demotion.
+            # high_spread_over_would_block REMOVED 2026-05-15: CF HR = 80.6% (N=31,
+            # 2026-03-04 → 2026-04-07) — blocking 81% winners. Session 514 demoted to
+            # observation at CF HR 63.6% (N=33); the additional data made it worse.
+            # spread_mag still needed by tanking_risk_obs below.
             spread_mag = pred.get('spread_magnitude') or 0
-            if (pred.get('recommendation') == 'OVER'
-                    and spread_mag >= 7.0):
-                filter_counts['high_spread_over_would_block'] += 1
-                _record_filtered(pred, 'high_spread_over_would_block', pred_edge)
-                # continue  # Session 514: demoted to observation — CF HR 63.6% (N=33)
 
-            # Tanking risk observation (Session 474): season-end games where a team tanks
+            # Tanking risk block (Session 474→2026-05-15): season-end games where a team tanks
             # for draft position. Heavy spreads (>= 10) create blowout conditions where the
             # losing team's stars play full minutes (coach plays them regardless) while
-            # winners may sit starters early → UNDER picks in lopsided UNDER contexts fail.
+            # winners may sit starters early → UNDER picks in lopsided contexts fail.
             # Using spread_magnitude >= 10 as proxy (top ~15% most lopsided games).
-            # Observation only — accumulating data through season end to validate direction.
+            # PROMOTED 2026-05-15 — CF HR = 40.0% (N=30, 2026-03-24 → 2026-04-07).
             if (spread_mag >= 10.0
                     and pred.get('recommendation') == 'UNDER'):
                 filter_counts['tanking_risk_obs'] += 1
                 _record_filtered(pred, 'tanking_risk_obs', pred_edge)
-                # continue  # Session 474: observation only — no blocking until validated
+                if 'tanking_risk_obs' not in self._runtime_demoted:
+                    continue
 
             # Mid-line OVER — DEMOTED to observation (Session 428).
             # Original 47.9% BB HR (N=213) was toxic-window-biased. Full-season
@@ -1535,7 +1522,9 @@ class BestBetsAggregator:
             logger.info(f"Model-direction affinity: skipped {filter_counts['model_direction_affinity']} predictions")
         # away_noveg filter REMOVED Session 401 — was model staleness, not structural
         if filter_counts['under_star_away'] > 0:
-            logger.info(f"UNDER Star AWAY (observation): tagged {filter_counts['under_star_away']} picks (line≥23, away)")
+            logger.info(f"UNDER Star AWAY block: skipped {filter_counts['under_star_away']} UNDER picks (line≥23, away) (CF HR 38.8%, N=49)")
+        if filter_counts['line_jumped_under_obs'] > 0:
+            logger.info(f"Line jumped UNDER block: skipped {filter_counts['line_jumped_under_obs']} UNDER picks with line jump >= 2.0 (CF HR 41.4%, N=58)")
         if filter_counts['med_usage_under'] > 0:
             logger.info(f"Medium teammate usage UNDER block: skipped {filter_counts['med_usage_under']} predictions")
         # starter_v12_under removed Session 422b (dead filter, zero fires)
@@ -1560,11 +1549,7 @@ class BestBetsAggregator:
             logger.info(f"UNDER after streak: skipped {filter_counts['under_after_streak']} UNDER picks on players with 3+ consecutive unders (44.7% HR anti-signal)")
         if filter_counts['under_after_bad_miss'] > 0:
             logger.info(f"UNDER after bad miss: skipped {filter_counts['under_after_bad_miss']} UNDER picks on AWAY players after bad miss + bad shooting (33-45% HR)")
-        if filter_counts['high_spread_over_would_block'] > 0:
-            logger.info(
-                f"High spread OVER (observation): tagged "
-                f"{filter_counts['high_spread_over_would_block']} OVER picks with spread >= 7 (CF HR 63.6%, N=33)"
-            )
+        # high_spread_over_would_block REMOVED 2026-05-15 (CF HR 80.6%, N=31 — blocking winners).
         if filter_counts['mid_line_over_obs'] > 0:
             logger.info(
                 f"Mid-line OVER (observation): tagged "
@@ -1730,9 +1715,9 @@ class BestBetsAggregator:
             )
         if filter_counts['tanking_risk_obs'] > 0:
             logger.info(
-                f"Tanking risk (observation): tagged "
+                f"Tanking risk UNDER block: skipped "
                 f"{filter_counts['tanking_risk_obs']} UNDER picks with spread >= 10 "
-                f"(season-end lopsided games, accumulating data)"
+                f"(CF HR 40.0%, N=30)"
             )
 
         if filter_counts['team_cap'] > 0:

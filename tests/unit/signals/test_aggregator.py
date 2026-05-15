@@ -111,43 +111,30 @@ class TestAggregatorReturnType:
         assert picks == []
         assert summary['total_candidates'] == 0
         assert summary['passed_filters'] == 0
-        # Verify all expected filter keys exist
+        # Verify all expected filter keys exist.
+        # filter_counts is a defaultdict; only keys READ via the logger
+        # section auto-populate when input is empty (write-only keys like
+        # `prediction_sanity`, `quality_floor`, etc. don't appear here).
+        # Last refreshed 2026-05-15 after obs-filter audit.
         expected_keys = {
-            'blacklist', 'edge_floor', 'over_edge_floor', 'under_edge_7plus',
-            'familiar_matchup', 'quality_floor', 'bench_under',
-            'line_jumped_under', 'line_dropped_under', 'line_dropped_over',
-            'neg_pm_streak', 'signal_count', 'sc3_edge_floor', 'sc3_over_block',
-            'starter_over_sc_floor', 'opponent_depleted_under',
-            'high_book_std_under_block', 'confidence', 'anti_pattern',
-            'model_direction_affinity', 'away_noveg', 'star_under',
-            'under_star_away', 'med_usage_under', 'starter_v12_under',
-            'opponent_under_block', 'q4_scorer_under_block',
-            'friday_over_block', 'high_skew_over_block',
-            'signal_density', 'legacy_block',
-            'model_profile_would_block',
-            'toxic_starter_over_would_block', 'toxic_star_over_would_block',
-            'regime_over_floor', 'regime_rescue_blocked',
-            'high_spread_over_would_block', 'flat_trend_under',
-            'under_after_streak', 'under_after_bad_miss',
-            'mid_line_over_obs', 'monday_over_obs', 'home_over_obs',
-            'signal_stack_2plus_obs', 'rescue_cap', 'rescue_health_gate',
-            'bias_regime_over_obs', 'prediction_sanity',
-            'depleted_stars_over_obs', 'hot_shooting_reversion_obs',
-            'over_low_rsc_obs', 'mae_gap_obs', 'thin_slate_obs',
-            'hot_streak_under_obs',
-            'solo_game_pick_obs',
-            'line_anomaly_extreme_drop',
-            'player_under_suppression_obs',
-            'under_low_rsc',
-            'ft_variance_under',
-            'team_cap',
-            'unreliable_over_low_mins_obs', 'unreliable_under_flat_trend_obs',
-            'b2b_under_block', 'blowout_risk_under_block_obs',
-            # Session 462→463: Cold shooting filters (promoted to active)
-            'cold_fg_under', 'cold_3pt_under', 'over_line_rose_heavy',
-            # Session 463: FTA anomaly OVER block + counter-market UNDER
-            'ft_anomaly_over_block',
-            'counter_market_under',
+            'blacklist', 'blowout_risk_under_block', 'counter_market_under',
+            'depleted_stars_over_obs', 'edge_floor', 'flat_trend_under',
+            'friday_over_block', 'ft_anomaly_over_block', 'high_skew_over_block',
+            'home_over_obs', 'hot_shooting_reversion_obs', 'hot_streak_under_obs',
+            'legacy_block', 'line_anomaly_extreme_drop', 'line_dropped_under',
+            'line_jumped_under_obs', 'mae_gap_obs', 'med_usage_under',
+            'mid_line_over_obs', 'model_direction_affinity',
+            'model_profile_would_block', 'monday_over_obs',
+            'opponent_depleted_under', 'over_edge_floor', 'over_line_rose_heavy',
+            'over_low_rsc_obs', 'player_under_suppression_obs',
+            'q4_scorer_under_block', 'regime_over_floor', 'regime_rescue_blocked',
+            'rescue_cap', 'rescue_health_gate', 'sc3_over_block',
+            'signal_density', 'signal_stack_2plus_obs', 'solo_game_pick_obs',
+            'starter_over_sc_floor', 'tanking_risk_obs', 'team_cap',
+            'thin_slate_obs', 'toxic_star_over_would_block',
+            'toxic_starter_over_would_block', 'under_after_bad_miss',
+            'under_after_streak', 'under_edge_7plus', 'under_low_rsc',
+            'under_star_away', 'zero_signal_extreme_underprediction',
         }
         assert set(summary['rejected'].keys()) == expected_keys
         # All counts should be 0 for empty input
@@ -219,12 +206,14 @@ class TestFilterTracking:
         assert summary['rejected']['bench_under'] == 1
 
     def test_line_jumped_under_tracked(self):
+        # 2026-05-15: promoted to active block (CF HR 41.4%, N=58).
+        # BQ filter name preserved as `line_jumped_under_obs` to keep CF history.
         pred = _make_prediction(
             recommendation='UNDER', prop_line_delta=3.0, feature_quality_score=90
         )
         agg = BestBetsAggregator()
         _, summary = agg.aggregate([pred], {})
-        assert summary['rejected']['line_jumped_under'] == 1
+        assert summary['rejected']['line_jumped_under_obs'] == 1
 
     def test_line_dropped_under_tracked(self):
         pred = _make_prediction(
@@ -1025,10 +1014,11 @@ class TestRescueCap:
 # ============================================================================
 
 class TestUnderStarAwayObservation:
-    """Test that under_star_away is now observation-only (Session 415).
+    """Test that under_star_away is now an active block (promoted 2026-05-15).
 
-    Was 38.5% HR at creation (toxic Feb) but recovered to 73.0% post-ASB.
-    Should count but not block.
+    History: created as block (Session 369), demoted Session 415 on toxic-Feb
+    drift, PROMOTED back to active 2026-05-15 — late-season CF HR = 38.8%
+    (N=49) confirms filter correctly blocks losers.
     """
 
     def _make_signal_results_for(self, pred, n_qualifying=5):
@@ -1036,8 +1026,8 @@ class TestUnderStarAwayObservation:
         signals = [_make_signal_result(f'signal_{i}') for i in range(n_qualifying)]
         return {key: signals}
 
-    def test_under_star_away_no_longer_blocks(self):
-        """UNDER + star line + away should pass through (observation only)."""
+    def test_under_star_away_blocks(self):
+        """UNDER + line>=23 + away should be blocked (active filter)."""
         pred = _make_prediction(
             recommendation='UNDER',
             line_value=25.0,
@@ -1046,9 +1036,8 @@ class TestUnderStarAwayObservation:
         signals = self._make_signal_results_for(pred)
         agg = BestBetsAggregator()
         picks, summary = agg.aggregate([pred], signals)
-        # Should pass — observation mode, no longer blocking
-        assert len(picks) == 1
-        # Counter still incremented for tracking
+        # Pick is filtered out; counter records the block
+        assert len(picks) == 0
         assert summary['rejected']['under_star_away'] == 1
 
 
