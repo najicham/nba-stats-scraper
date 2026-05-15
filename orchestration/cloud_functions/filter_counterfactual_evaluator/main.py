@@ -43,6 +43,19 @@ ELIGIBLE_FOR_AUTO_DEMOTE = {
     'familiar_matchup',
     'model_direction_affinity',
     'book_disagreement',    # 47.4% HR 7d as of 2026-03-29 — below breakeven; CF evaluator will auto-demote if trend continues
+    # Path B Week 2 — under_low_rsc is the high-volume structural filter
+    # that caused the 12-day UNDER drought (MEMORY.md). Was excluded from
+    # auto-demote before; now eligible with a per-filter higher MIN_PICKS
+    # floor since it fires far more often than other filters.
+    'under_low_rsc',
+}
+
+# Per-filter overrides for MIN_PICKS_7D when the default (20) is too low.
+# `under_low_rsc` is structural (every UNDER pick with real_sc < 2), so it
+# fires on near-every UNDER candidate — N=20 is a single day. Use N=30
+# to require multi-day persistence before demoting a structural gate.
+PER_FILTER_MIN_PICKS_7D = {
+    'under_low_rsc': 30,
 }
 
 # Core safety filters — NEVER auto-demote
@@ -449,6 +462,23 @@ def main(request: Request):
 
     # Step 4: Check 7-day auto-demote criteria
     candidates = check_auto_demote(bq, target_date)
+
+    # Path B Week 2 — per-filter MIN_PICKS_7D override. Structural high-volume
+    # filters (e.g. `under_low_rsc`) need a higher N floor before we demote
+    # to avoid acting on a single noisy day.
+    if candidates and PER_FILTER_MIN_PICKS_7D:
+        filtered: List[Dict] = []
+        for c in candidates:
+            req = PER_FILTER_MIN_PICKS_7D.get(c['filter_name'])
+            if req is not None and c['total_graded'] < req:
+                logger.info(
+                    f"Skipping {c['filter_name']}: total_graded={c['total_graded']} "
+                    f"< per-filter floor {req}"
+                )
+                continue
+            filtered.append(c)
+        candidates = filtered
+
     if not candidates:
         logger.info("No filters meet auto-demote criteria")
         return json.dumps({'status': 'ok', 'date': target_date, 'demoted': []}), 200

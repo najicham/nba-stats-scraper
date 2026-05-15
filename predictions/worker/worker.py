@@ -121,8 +121,15 @@ def validate_ml_model_availability():
             logger.info(f"✓ Found {len(model_files)} local CatBoost v8 model(s): {[f.name for f in model_files]}")
 
 
-# Validate ML model availability at startup
-validate_ml_model_availability()
+# Validate ML model availability at startup.
+# Path B — V8 was decommissioned (CLAUDE.md). Gate the legacy fail-fast
+# check behind ENABLE_LEGACY_V8=true so the worker doesn't crash at startup
+# when fleet config drops the legacy env var. Modern fleet members
+# (v9 / v12 / monthly / fleet) handle their own model loading.
+if os.environ.get('ENABLE_LEGACY_V8', 'false').lower() in ('true', '1', 'yes'):
+    validate_ml_model_availability()
+else:
+    logger.info("ENABLE_LEGACY_V8 not set; skipping V8 startup validation.")
 
 # Defer google.cloud imports to lazy loading functions to avoid cold start hang
 if TYPE_CHECKING:
@@ -1033,6 +1040,21 @@ def handle_prediction_request():
                     return ('', 204)
             except (ValueError, TypeError):
                 pass
+
+        # Path A — silent failures. Emit on the FAILED path only (success is
+        # already observable via the Pub/Sub `predictions-ready` topic the
+        # reconciler consumes). Hot-path-safe: rare event, low cardinality.
+        try:
+            from shared.observability.metrics import emit_phase_completion
+            emit_phase_completion(
+                phase='phase5_predictions',
+                output_type='player_prop_predictions',
+                status='FAILED',
+                sport='nba',
+                row_count=0,
+            )
+        except Exception:
+            pass
 
         return ('Internal Server Error', 500)
 

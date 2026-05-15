@@ -452,13 +452,30 @@ REVISION=$(gcloud run services describe "$SERVICE" \
     --project="$PROJECT" \
     --format="value(status.latestReadyRevisionName)" 2>/dev/null)
 
+# Path C — silent infra debt. Post-deploy commit-SHA assertion catches
+# Sessions 516/520 traffic-routing class drift where the deploy succeeded
+# but the active revision wasn't the one we just built.
+DEPLOYED_SHA=$(gcloud run services describe "$SERVICE" \
+    --region="$REGION" \
+    --project="$PROJECT" \
+    --format="value(spec.template.metadata.labels.commit-sha)" 2>/dev/null)
+
+if [ -n "$DEPLOYED_SHA" ] && [ "$DEPLOYED_SHA" != "$BUILD_COMMIT" ]; then
+    echo ""
+    echo "FAIL: deployed commit-sha ($DEPLOYED_SHA) does not match BUILD_COMMIT ($BUILD_COMMIT)."
+    echo "The new revision exists but traffic isn't routed to it. Inspect:"
+    echo "  gcloud run services describe $SERVICE --region=$REGION --project=$PROJECT"
+    exit 1
+fi
+
 echo ""
 echo "=============================================="
 echo "DEPLOYMENT COMPLETE"
 echo "=============================================="
-echo "Service:  $SERVICE"
-echo "Revision: $REVISION"
-echo "Commit:   $BUILD_COMMIT"
+echo "Service:        $SERVICE"
+echo "Revision:       $REVISION"
+echo "Commit (built): $BUILD_COMMIT"
+echo "Commit (live):  ${DEPLOYED_SHA:-(unknown — label not set)}"
 echo "=============================================="
 
 # Show recent logs

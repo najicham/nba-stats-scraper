@@ -304,12 +304,31 @@ class CoordinatorRunHistory:
 
             if errors:
                 logger.warning(f"BigQuery streaming insert had errors: {errors[:3]}")
+                # Path A — silent failures. Streaming insert errors were
+                # previously logged-and-discarded; emit a metric so the
+                # loss surfaces in Cloud Monitoring instead of disappearing.
+                try:
+                    from shared.observability.metrics import emit_metric
+                    emit_metric(
+                        'bq_streaming_insert_failed', 1.0,
+                        labels={'table': 'run_history', 'project': self.project_id},
+                    )
+                except Exception:
+                    pass
             else:
                 logger.debug(f"Inserted run history: {record.get('run_id')} - {record.get('status')}")
 
         except Exception as e:
             # Don't fail the batch if logging fails
             logger.error(f"Failed to insert run history (non-fatal): {e}", exc_info=True)
+            try:
+                from shared.observability.metrics import emit_metric
+                emit_metric(
+                    'bq_streaming_insert_failed', 1.0,
+                    labels={'table': 'run_history', 'project': self.project_id},
+                )
+            except Exception:
+                pass
 
     def check_already_running(self, game_date: date, stale_threshold_hours: int = 2) -> bool:
         """

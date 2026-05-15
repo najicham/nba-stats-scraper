@@ -145,11 +145,26 @@ class MlbWeatherScraper(ScraperBase, ScraperFlaskMixin):
         }
 
     def download(self) -> None:
-        """Override download to fetch weather for multiple stadiums."""
+        """Override download to fetch weather for multiple stadiums.
+
+        Path A — silent failures: if `OPENWEATHERMAP_API_KEY` is missing in
+        prod, refuse to write mock 75°F neutral data. The mock fallback was
+        silently keeping `WeatherColdUnderSignal` / `ColdWeatherKOverSignal`
+        dead all season. Set `MLB_WEATHER_ALLOW_MOCK=true` for local dev /
+        unit tests when the real key isn't available.
+        """
         api_key = self.opts.get("api_key")
 
         if not api_key:
-            logger.warning("No OpenWeatherMap API key provided. Using mock data.")
+            allow_mock = os.getenv("MLB_WEATHER_ALLOW_MOCK", "false").lower() in ("true", "1", "yes")
+            if not allow_mock:
+                raise RuntimeError(
+                    "OPENWEATHERMAP_API_KEY missing. Set it via Secret Manager "
+                    "on mlb-phase1-scrapers (or set MLB_WEATHER_ALLOW_MOCK=true "
+                    "for local dev). Mock data silently disables weather signals "
+                    "and is no longer the default."
+                )
+            logger.warning("No OpenWeatherMap API key provided. Using mock data (MLB_WEATHER_ALLOW_MOCK=true).")
             self.download_data = self._get_mock_weather_data()
             return
 

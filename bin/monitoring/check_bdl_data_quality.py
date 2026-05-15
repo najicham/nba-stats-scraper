@@ -2,6 +2,11 @@
 """
 BDL Data Quality Monitor
 
+DEPRECATED (Path A — Stop silent failures, 2026-05-14):
+BDL is intentionally disabled and `nba_raw.bdl_player_boxscores` is empty
+for the 2026 season. This monitor's job was to track if BDL accuracy ever
+recovered; without scraper data, the answer is always "no". Do NOT schedule.
+
 Compares BDL (Ball Don't Lie) API data against NBA.com gamebook data
 to track data quality over time.
 

@@ -152,14 +152,20 @@ def check_scraper_completeness(days_lookback: int = 14) -> dict:
         GROUP BY game_date
     ),
     bdl_data AS (
-        SELECT game_date, COUNT(DISTINCT game_id) as games
-        FROM nba_raw.bdl_player_boxscores
+        -- BDL is disabled; this CTE intentionally returns 0 rows so the
+        -- BDL-vs-nbac comparison is preserved but never flags missing data.
+        -- Kept as a stub so report columns line up with historical outputs.
+        SELECT game_date, 0 as games
+        FROM nba_raw.nbac_gamebook_player_stats
         WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {days_lookback} DAY)
+          AND FALSE
         GROUP BY game_date
     ),
     nbac_data AS (
+        -- Live source. Previous code referenced `nbac_gamebook_player_boxscores`
+        -- which does not exist; the live table is `nbac_gamebook_player_stats`.
         SELECT game_date, COUNT(DISTINCT game_id) as games
-        FROM nba_raw.nbac_gamebook_player_boxscores
+        FROM nba_raw.nbac_gamebook_player_stats
         WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {days_lookback} DAY)
         GROUP BY game_date
     )

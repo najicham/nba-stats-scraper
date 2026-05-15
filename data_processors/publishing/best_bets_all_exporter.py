@@ -236,8 +236,25 @@ class BestBetsAllExporter(BaseExporter):
             result['voided'] = voided
         return result
 
+    # Drop threshold for compare-to-last-good. < 30% of prior total_picks counts
+    # as catastrophic data loss (likely a stale-write or upstream null-cascade).
+    ALL_JSON_DROP_PCT_THRESHOLD = 0.30
+    # Absolute floor: 14+ days into the season we should always have >= this many
+    # total picks. NBA Opening Day had 4-5 picks; by mid-Nov we cross 20.
+    ALL_JSON_MIN_TOTAL_PICKS = 10
+    ALL_JSON_MIN_GRADED_PICKS = 5
+
     def export(self, target_date: str, trigger_source: str = 'scheduled') -> str:
         """Generate and upload all.json.
+
+        Content guard (Path A — silent-failure plumbing): refuses to overwrite
+        a healthy file with a near-zero payload. Triggers `validate_content`
+        below, which writes a status="degraded" sentinel instead of an empty
+        file when in-season floors fail or the new payload is < 30% of the
+        prior version on disk.
+
+        Kill-switch: BB_ALL_GUARD_ENABLED=false bypasses validation entirely
+        (emergency unguarded write without redeploy).
 
         Args:
             target_date: Date string in YYYY-MM-DD format.
@@ -249,10 +266,11 @@ class BestBetsAllExporter(BaseExporter):
         """
         json_data = self.generate_json(target_date, trigger_source=trigger_source)
 
-        gcs_path = self.upload_to_gcs(
-            json_data=json_data,
-            path='best-bets/all.json',
+        gcs_path, _reason = self.safe_export(
+            json_data,
+            'best-bets/all.json',
             cache_control='public, max-age=300',
+            guard_env_var='BB_ALL_GUARD_ENABLED',
         )
 
         logger.info(
@@ -260,6 +278,90 @@ class BestBetsAllExporter(BaseExporter):
             f"{json_data['total_picks']} total, {json_data['graded']} graded"
         )
         return gcs_path
+
+    # -----------------------------------------------------------------------
+    # Content guard (Path A — refuse-to-publish when the new payload looks corrupt)
+    # -----------------------------------------------------------------------
+
+    def validate_content(self, json_data: Dict[str, Any]) -> Optional[str]:
+        """Refuse to publish all.json if the new payload looks corrupted.
+
+        This is the NBA analog of the MLB content guard added 2026-05-13
+        after the Apr 28+ tonight outage and the same-day all.json regression.
+        Frontend reads all.json as the history fallback (Session 468) — a
+        silent zero-pick write here destroys visible history without backup.
+
+        Returns a short reason string if degraded, or None if content is OK.
+        """
+        target_str = json_data.get('date')
+
+        total_picks = int(json_data.get('total_picks') or 0)
+        graded = int(json_data.get('graded') or 0)
+        weeks = json_data.get('weeks') or []
+        halt_active = bool(json_data.get('halt_active'))
+
+        # Halt mode: legitimate zero ONLY for the canonical "no picks today"
+        # reasons. `manual` and `unknown_state` are operator/system events that
+        # don't excuse a payload regression, so they still go through the floors.
+        halt_reason = json_data.get('halt_reason')
+        if halt_active and halt_reason in {'off_season', 'edge_collapse', 'fleet_blocked'}:
+            return None
+
+        # Floor 1: in-season absolute thresholds. NBA season starts ~Nov 1; the
+        # 14-day window means floors only apply from mid-November onward.
+        days_into_season = None
+        try:
+            if target_str:
+                target = date.fromisoformat(target_str)
+                season_start_year = (
+                    target.year if target.month >= 11 else target.year - 1
+                )
+                season_start = date(season_start_year, 11, 1)
+                days_into_season = (target - season_start).days
+        except (TypeError, ValueError):
+            days_into_season = None
+
+        if days_into_season is not None and days_into_season >= 14:
+            if total_picks < self.ALL_JSON_MIN_TOTAL_PICKS:
+                return (
+                    f"total_picks={total_picks} below floor "
+                    f"{self.ALL_JSON_MIN_TOTAL_PICKS} on day {days_into_season} of season"
+                )
+            if graded < self.ALL_JSON_MIN_GRADED_PICKS:
+                return (
+                    f"graded={graded} below floor {self.ALL_JSON_MIN_GRADED_PICKS} "
+                    f"on day {days_into_season} of season"
+                )
+
+        # Floor 2: compare against last-good GCS file (catastrophic drop
+        # indicates data loss). Read live blob; versioning is the recovery
+        # layer but we don't want to silently overwrite the live file with junk.
+        try:
+            from google.cloud import storage as _storage  # local import
+            client = _storage.Client(project=self.project_id)
+            blob = client.bucket(self.bucket_name).blob('v1/best-bets/all.json')
+            if blob.exists():
+                old = json.loads(blob.download_as_text())
+                if old.get('status') != 'degraded':
+                    old_total = int(old.get('total_picks') or 0)
+                    if (
+                        old_total > 0
+                        and total_picks < old_total * self.ALL_JSON_DROP_PCT_THRESHOLD
+                    ):
+                        return (
+                            f"total_picks dropped {old_total} → {total_picks} "
+                            f"(< {int(self.ALL_JSON_DROP_PCT_THRESHOLD * 100)}% of prior)"
+                        )
+                    old_weeks = len(old.get('weeks') or [])
+                    if old_weeks >= 4 and len(weeks) < max(1, old_weeks // 2):
+                        return (
+                            f"weeks dropped {old_weeks} → {len(weeks)} "
+                            f"(< 50% of prior weekly history)"
+                        )
+        except Exception as e:
+            logger.warning(f"Content-guard compare-to-last-good failed (non-fatal): {e}")
+
+        return None
 
     # ── Private helpers ──────────────────────────────────────────────────
 

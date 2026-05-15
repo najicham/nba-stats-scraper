@@ -103,8 +103,9 @@ team_games AS (
   GROUP BY team
 ),
 boxscore_games AS (
+  -- BDL was the historic source; nbac_gamebook_player_stats is live.
   SELECT team_abbr, COUNT(DISTINCT game_date) as boxscore_games
-  FROM nba_raw.bdl_player_boxscores
+  FROM nba_raw.nbac_gamebook_player_stats
   WHERE game_date >= '${START_DATE}' AND game_date <= '${END_DATE}'
   GROUP BY team_abbr
 )
@@ -163,7 +164,8 @@ WITH schedule AS (
   WHERE game_date >= '${START_DATE}' AND game_date <= '${END_DATE}'
 ),
 boxscores AS (
-  SELECT DISTINCT game_date, team_abbr FROM nba_raw.bdl_player_boxscores
+  -- BDL was the historic source; nbac_gamebook_player_stats is live.
+  SELECT DISTINCT game_date, team_abbr FROM nba_raw.nbac_gamebook_player_stats
   WHERE game_date >= '${START_DATE}' AND game_date <= '${END_DATE}'
 )
 SELECT s.game_date, s.team

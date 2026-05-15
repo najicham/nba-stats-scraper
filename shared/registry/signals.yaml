@@ -203,3 +203,247 @@ signals:
     weight: 0.0
     direction: both
     description: Defense-vs-position favorable — accumulating data
+
+  - tag: 3pt_bounce
+    status: shadow
+    direction: both
+    description: 3Pt Bounce signal (auto-generated stub — verify)
+
+  - tag: b2b_boost_over
+    status: active
+    direction: over
+    description: B2B Boost Over signal (auto-generated stub — verify)
+
+  - tag: b2b_fatigue_under
+    status: shadow
+    direction: under
+    description: B2B Fatigue Under signal (auto-generated stub — verify)
+
+  - tag: bench_under
+    status: active
+    direction: under
+    description: Bench Under signal (auto-generated stub — verify)
+
+  - tag: book_disagree_under
+    status: shadow
+    direction: under
+    description: Book Disagree Under signal (auto-generated stub — verify)
+
+  - tag: bounce_back_over
+    status: removed
+    deprecated_session: 514
+    direction: over
+    description: "bounce_back_over — removed Session 514: 0% BB HR, 36.4% raw N=11"
+
+  - tag: career_matchup_over
+    status: shadow
+    direction: over
+    description: Career Matchup Over signal (auto-generated stub — verify)
+
+  - tag: cold_3pt_over
+    status: active
+    direction: over
+    description: Cold 3Pt Over signal (auto-generated stub — verify)
+
+  - tag: consistent_scorer_over
+    status: shadow
+    direction: over
+    description: Consistent Scorer Over signal (auto-generated stub — verify)
+
+  - tag: day_of_week_over
+    status: active
+    weight: 0.0
+    direction: over
+    description: Day-of-week OVER base flag (in BASE_SIGNALS — does not count toward real_sc)
+
+  - tag: day_of_week_under
+    status: shadow
+    direction: under
+    description: Day Of Week Under signal (auto-generated stub — verify)
+
+  - tag: denver_visitor_over
+    status: shadow
+    direction: over
+    description: Denver Visitor Over signal (auto-generated stub — verify)
+
+  - tag: downtrend_under
+    status: shadow
+    direction: under
+    description: Downtrend Under signal (auto-generated stub — verify)
+
+  - tag: dvp_favorable_over
+    status: shadow
+    direction: over
+    description: Dvp Favorable Over signal (auto-generated stub — verify)
+
+  - tag: ft_anomaly_under
+    status: shadow
+    direction: under
+    description: Ft Anomaly Under signal (auto-generated stub — verify)
+
+  - tag: ft_rate_bench_over
+    status: shadow
+    direction: over
+    description: Ft Rate Bench Over signal (auto-generated stub — verify)
+
+  - tag: hot_form_over
+    status: removed
+    deprecated_session: 514
+    direction: over
+    description: "hot_form_over — removed Session 514: 28.6% BB HR (2-5)"
+
+  - tag: low_line_over
+    status: active
+    weight: 0.0
+    direction: over
+    description: Low-line OVER base flag (in BASE_SIGNALS — does not count toward real_sc)
+
+  - tag: mean_reversion_under
+    status: shadow
+    direction: under
+    description: Mean Reversion Under signal (auto-generated stub — verify)
+
+  - tag: minutes_load_over
+    status: shadow
+    direction: over
+    description: Minutes Load Over signal (auto-generated stub — verify)
+
+  - tag: minutes_surge_over
+    status: removed
+    deprecated_session: 514
+    direction: over
+    description: "minutes_surge_over — removed Session 514: structurally dead — no RotoWire minutes data"
+
+  - tag: negative_clv_filter
+    status: shadow
+    direction: both
+    description: Negative Clv Filter signal (auto-generated stub — verify)
+
+  - tag: over_trend_over
+    status: shadow
+    direction: over
+    description: Over Trend Over signal (auto-generated stub — verify)
+
+  - tag: positive_clv_over
+    status: removed
+    deprecated_session: 514
+    direction: over
+    description: "positive_clv_over — removed Session 514: 50% raw HR N=24, COLD"
+
+  - tag: positive_clv_under
+    status: removed
+    deprecated_session: 514
+    direction: under
+    description: "positive_clv_under — removed Session 514: 41.4% raw HR N=29"
+
+  - tag: predicted_pace_over
+    status: active
+    weight: 0.0
+    direction: over
+    description: Predicted-pace OVER base flag (in BASE_SIGNALS — does not count toward real_sc)
+
+  - tag: projection_consensus_over
+    status: removed
+    deprecated_session: 514
+    direction: over
+    description: "projection_consensus_over — removed Session 514: 10% BB HR (1-9), catastrophic"
+
+  - tag: projection_consensus_under
+    status: shadow
+    direction: under
+    description: Projection Consensus Under signal (auto-generated stub — verify)
+
+  - tag: projection_disagreement
+    status: shadow
+    direction: both
+    description: Projection Disagreement signal (auto-generated stub — verify)
+
+  - tag: prop_line_drop_over
+    status: active
+    weight: 0.0
+    direction: over
+    description: Prop-line-drop OVER base flag (in BASE_SIGNALS — does not count toward real_sc)
+
+  - tag: public_fade_filter
+    status: shadow
+    direction: both
+    description: Public Fade Filter signal (auto-generated stub — verify)
+
+  - tag: q4_scorer_over
+    status: active
+    direction: over
+    description: Q4 Scorer Over signal (auto-generated stub — verify)
+
+  - tag: quantile_ceiling_under
+    status: active
+    direction: under
+    description: Quantile Ceiling Under signal (auto-generated stub — verify)
+
+  - tag: quantile_floor_over
+    status: shadow
+    direction: over
+    description: Quantile Floor Over signal (auto-generated stub — verify)
+
+  - tag: rest_advantage_2d
+    status: active
+    direction: over
+    description: Rest Advantage 2D signal (auto-generated stub — verify)
+
+  - tag: scoring_cold_streak_over
+    status: active
+    direction: over
+    description: Scoring Cold Streak Over signal (auto-generated stub — verify)
+
+  - tag: scoring_momentum_over
+    status: removed
+    deprecated_session: 514
+    direction: over
+    description: "scoring_momentum_over — removed Session 514: 25.0% BB HR (1-3)"
+
+  - tag: self_creation_over
+    status: active
+    direction: over
+    description: Self Creation Over signal (auto-generated stub — verify)
+
+  - tag: sharp_book_lean_under
+    status: removed
+    deprecated_session: 431
+    direction: under
+    description: "sharp_book_lean_under — removed Session 431: ZERO production fires in 2026; negative-lean regime nonexistent"
+
+  - tag: sharp_line_move_over
+    status: active
+    direction: over
+    description: Sharp Line Move Over signal (auto-generated stub — verify)
+
+  - tag: sharp_money_over
+    status: removed
+    deprecated_session: 514
+    direction: over
+    description: "sharp_money_over — removed Session 514: 15.4% raw HR N=13"
+
+  - tag: sharp_money_under
+    status: shadow
+    direction: under
+    description: Sharp Money Under signal (auto-generated stub — verify)
+
+  - tag: slow_pace_under
+    status: shadow
+    direction: under
+    description: Slow Pace Under signal (auto-generated stub — verify)
+
+  - tag: star_favorite_under
+    status: shadow
+    direction: under
+    description: Star Favorite Under signal (auto-generated stub — verify)
+
+  - tag: star_line_under
+    status: shadow
+    direction: under
+    description: Star Line Under signal (auto-generated stub — verify)
+
+  - tag: volatile_scoring_over
+    status: removed
+    deprecated_session: 514
+    direction: over
+    description: "volatile_scoring_over — removed Session 514: 14.3% BB HR (1-6)"

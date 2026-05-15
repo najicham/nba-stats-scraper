@@ -99,6 +99,16 @@ class EnvVarMonitor:
                 # Re-add entries to buffer on failure (best effort)
                 with _audit_buffer_lock:
                     _audit_buffer = entries_to_flush + _audit_buffer
+                # Path A — silent failures: surface flush losses in Cloud
+                # Monitoring rather than logging-and-discarding.
+                try:
+                    from shared.observability.metrics import emit_metric
+                    emit_metric(
+                        'bq_streaming_insert_failed', float(len(entries_to_flush)),
+                        labels={'table': 'env_var_audit', 'project': self.project_id},
+                    )
+                except Exception:
+                    pass
                 return 0
             else:
                 logger.info(f"Flushed {len(entries_to_flush)} audit entries to BigQuery")
@@ -109,6 +119,14 @@ class EnvVarMonitor:
             # Re-add entries to buffer on failure (best effort)
             with _audit_buffer_lock:
                 _audit_buffer = entries_to_flush + _audit_buffer
+            try:
+                from shared.observability.metrics import emit_metric
+                emit_metric(
+                    'bq_streaming_insert_failed', float(len(entries_to_flush)),
+                    labels={'table': 'env_var_audit', 'project': self.project_id},
+                )
+            except Exception:
+                pass
             return 0
 
     def _add_to_buffer(self, row: Dict) -> None:

@@ -598,7 +598,15 @@ def _detect_best_eval_system_id(client, start, end):
     if rows:
         detected = rows[0].system_id
         return detected
-    return 'catboost_v9'  # Final fallback
+    # Path B — refusing the dead-model fallback. The previous behavior
+    # ('catboost_v9' literal) silently masked retrain failures during
+    # months when v9 was INSUFFICIENT_DATA. Surface the empty window
+    # instead so the caller can extend lookback or skip the run.
+    raise RuntimeError(
+        "_detect_best_eval_system_id: no graded predictions found in eval window. "
+        "Either extend the lookback or pass --eval-system-id explicitly. "
+        "Refusing to fall back to a hardcoded model id."
+    )
 
 
 def load_eval_data_from_production(client, start, end, system_id=None):

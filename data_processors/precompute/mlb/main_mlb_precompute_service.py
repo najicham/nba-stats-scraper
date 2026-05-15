@@ -49,6 +49,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # MLB Alert utilities (consolidated in shared module)
+from shared.observability.metrics import emit_phase_completion
 from shared.utils.mlb_alert_utils import (
     get_mlb_alert_manager,
     send_mlb_precompute_alert as send_mlb_alert,
@@ -235,6 +236,19 @@ def process_precompute():
                 results.append(future.result())
 
         success_count = sum(1 for r in results if r['status'] == 'success')
+        if success_count == len(results):
+            _mlb_status = 'COMPLETE'
+        elif success_count == 0:
+            _mlb_status = 'FAILED'
+        else:
+            _mlb_status = 'DEGRADED'
+        try:
+            emit_phase_completion(
+                phase='phase4_precompute', output_type=source_table or 'unknown',
+                status=_mlb_status, sport='mlb', row_count=success_count,
+            )
+        except Exception:
+            pass
 
         return jsonify({
             "status": "success" if success_count == len(results) else "partial",
@@ -247,6 +261,13 @@ def process_precompute():
 
     except Exception as e:
         logger.error(f"Error processing MLB precompute: {e}", exc_info=True)
+        try:
+            emit_phase_completion(
+                phase='phase4_precompute', output_type='unknown',
+                status='FAILED', sport='mlb', row_count=0,
+            )
+        except Exception:
+            pass
         # Send alert for service-level failure
         send_mlb_alert(
             severity='critical',

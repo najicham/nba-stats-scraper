@@ -1294,6 +1294,30 @@ def main(cloud_event):
                 f"[{correlation_id}] Grading failed for {target_date}: {grading_result}"
             )
 
+        # Path A — silent failures: emit real-time phase_completion so the
+        # grading alert YAML (monitoring/alert-policies/grading-low-coverage-alert.yaml)
+        # has signal to filter on. Fail-open per emit_metric docstring.
+        try:
+            import sys as _sys
+            _sys.path.insert(0, '/workspace')
+            from shared.observability.metrics import emit_phase_completion
+            _emit_status = {
+                'success': 'COMPLETE',
+                'skipped': 'EMPTY_OK',
+                'auto_heal_pending': 'RUNNING',
+                'auto_heal_failed': 'FAILED',
+                'failed': 'FAILED',
+            }.get(overall_status, 'DEGRADED')
+            emit_phase_completion(
+                phase='phase5b_grading',
+                output_type='prediction_accuracy',
+                status=_emit_status,
+                sport=message_data.get('sport', 'nba'),
+                row_count=int(grading_result.get('graded', 0) or 0),
+            )
+        except Exception:
+            pass
+
         # Publish completion event (include validation results in message_data)
         message_data['validation_result'] = validation_result or {}
         publish_completion(
@@ -1320,6 +1344,19 @@ def main(cloud_event):
             f"[{correlation_id}] Error in grading after {duration_seconds:.1f}s: {e}",
             exc_info=True
         )
+        try:
+            import sys as _sys
+            _sys.path.insert(0, '/workspace')
+            from shared.observability.metrics import emit_phase_completion
+            emit_phase_completion(
+                phase='phase5b_grading',
+                output_type='prediction_accuracy',
+                status='FAILED',
+                sport=message_data.get('sport', 'nba') if isinstance(message_data, dict) else 'nba',
+                row_count=0,
+            )
+        except Exception:
+            pass
         # Re-raise to trigger Pub/Sub retry
         raise
 

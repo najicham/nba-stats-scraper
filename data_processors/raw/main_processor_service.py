@@ -597,6 +597,7 @@ def process_pubsub():
 
             # Return batch result
             status_code = 200 if result['status'] in ('success', 'skipped') else 500
+            _emit_phase2_completion(normalized_message, result)
             return jsonify(result), status_code
 
         # Standard file processing
@@ -608,11 +609,13 @@ def process_pubsub():
         )
 
         status_code = 200 if result['status'] in ('success', 'skipped') else 500
+        _emit_phase2_completion(normalized_message, result)
         return jsonify(result), status_code
 
     except ValueError as e:
         # Message format or validation error
         logger.error(f"Message error: {e}", exc_info=True)
+        _emit_phase2_completion(locals().get('normalized_message') or {}, {'status': 'failed'})
         try:
             notify_error(
                 title="Processor Service: Message Error",
@@ -627,6 +630,7 @@ def process_pubsub():
     except (GoogleAPIError, AttributeError, TypeError, KeyError, json.JSONDecodeError) as e:
         # Unexpected orchestration error
         logger.error(f"Processing error: {e}", exc_info=True)
+        _emit_phase2_completion(locals().get('normalized_message') or {}, {'status': 'failed'})
         try:
             message_data = message if 'message' in locals() else {}
             error_context = extract_error_context_from_exception(
@@ -638,6 +642,37 @@ def process_pubsub():
         except (requests.exceptions.RequestException, GoogleAPIError, ValueError, TypeError) as notify_ex:
             logger.warning(f"Failed to send enhanced notification: {notify_ex}")
         return jsonify({"error": str(e)}), 500
+
+
+def _emit_phase2_completion(normalized_message: dict, result: dict) -> None:
+    """Path A — emit phase_completion for Phase 2 raw processing.
+
+    output_type derives from the GCS object name (the processor handler
+    routed off it via PROCESSOR_REGISTRY). Fail-open per emit_metric docstring.
+    """
+    try:
+        from shared.observability.metrics import emit_phase_completion
+        gcs_name = (normalized_message or {}).get('name', '') or ''
+        # Trim the timestamp segment so the label stays useful — e.g.
+        # 'nba/gamebook/2026-05-14/123456.json' → 'nba/gamebook'.
+        parts = [p for p in gcs_name.split('/') if p][:2]
+        output_type = '/'.join(parts) if parts else 'unknown'
+        sport = 'mlb' if gcs_name.startswith('mlb') or 'mlb' in parts else 'nba'
+        status_map = {
+            'success': 'COMPLETE',
+            'skipped': 'EMPTY_OK',
+            'failed': 'FAILED',
+            'error': 'FAILED',
+        }
+        emit_phase_completion(
+            phase='phase2_raw',
+            output_type=output_type,
+            status=status_map.get((result or {}).get('status'), 'DEGRADED'),
+            sport=sport,
+            row_count=int((result or {}).get('records_written', 0) or 0),
+        )
+    except Exception:
+        pass
 
 
 # Create global registry instance

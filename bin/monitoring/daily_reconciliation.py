@@ -157,7 +157,7 @@ class DailyReconciliation:
         ),
         boxscores AS (
             SELECT DISTINCT game_id
-            FROM `{self.project_id}.nba_raw.bdl_player_boxscores`
+            FROM `{self.project_id}.nba_raw.nbac_gamebook_player_stats`
             WHERE game_date = '{game_date}'
         )
         SELECT
@@ -220,9 +220,9 @@ class DailyReconciliation:
                 game_id,
                 player_lookup,
                 player_name
-            FROM `{self.project_id}.nba_raw.bdl_player_boxscores`
+            FROM `{self.project_id}.nba_raw.nbac_gamebook_player_stats`
             WHERE game_date = '{game_date}'
-              AND min > 0  -- Only players who played
+              AND player_status = 'active' AND minutes_decimal > 0  -- Only players who played
         ),
         analytics AS (
             SELECT DISTINCT

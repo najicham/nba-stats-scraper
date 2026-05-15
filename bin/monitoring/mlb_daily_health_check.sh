@@ -45,7 +45,7 @@ SELECT
   game_date,
   COUNT(*) as pitcher_stats,
   COUNT(DISTINCT game_id) as games
-FROM mlb_raw.mlb_pitcher_stats
+FROM mlb_raw.mlbapi_pitcher_stats
 WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
 GROUP BY game_date
 ORDER BY game_date DESC

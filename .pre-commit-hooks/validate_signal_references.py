@@ -97,6 +97,9 @@ NOT_TAGS = frozenset({
     # is canonically tracked in shared/registry/.
     'mean_reversion_under', 'cold_3pt_over', 'high_book_std_under_block',
     'prop_line_drop_over', 'b2b_fatigue_under',
+    # MLB-side proposed signals (not yet in code) — referenced from MLB
+    # runbooks and handoffs as future work. Skip rather than add to NBA YAML.
+    'velocity_drift_under',
     'low_line_over', 'volatile_scoring_over', 'signal_stack_2plus',
     'high_spread_over', 'mid_line_over', 'high_edge_over',
     # Older architecture doc tag-style identifiers (column names, classifications)
@@ -144,6 +147,31 @@ def is_interesting_tag(tag: str) -> bool:
     return any(p.match(tag) for p in INTERESTING_TAG_PATTERNS)
 
 
+def check_code_vs_registry_parity(signals: Set[str]) -> List[str]:
+    """Walk ml/signals/*.py for `tag = "..."` declarations and flag any
+    that don't appear in the loaded YAML registry.
+
+    Catches the drift pattern documented in Path A: the signal registry
+    YAML is the documented "single source of truth," but new signal
+    classes can land in code without a corresponding YAML entry, which
+    breaks the invariant for downstream readers (docs, observability,
+    automation that reads the registry).
+    """
+    signals_dir = REPO_ROOT / 'ml' / 'signals'
+    if not signals_dir.exists():
+        return []
+
+    tag_re = re.compile(r"^\s+tag\s*=\s*['\"]([a-z0-9_]+)['\"]", re.M)
+    missing: List[str] = []
+    for f in sorted(signals_dir.glob('*.py')):
+        text = f.read_text(encoding='utf-8', errors='replace')
+        for m in tag_re.finditer(text):
+            tag = m.group(1)
+            if tag not in signals:
+                missing.append(f"{f.relative_to(REPO_ROOT)}: tag=`{tag}`")
+    return missing
+
+
 def main(argv: List[str]) -> int:
     files: List[Path] = []
     if len(argv) > 1:
@@ -177,13 +205,26 @@ def main(argv: List[str]) -> int:
             if tag not in known:
                 drift.append((f, tag))
 
-    if drift:
-        print("Signal/filter references in docs that don't match the registry:")
-        print("(if these are intentional, add to shared/registry/{signals,filters}.yaml")
-        print(" or, if a one-time historical mention, add the file to ALLOWLIST_FILES)")
-        print()
-        for f, tag in drift:
-            print(f"  {f.relative_to(REPO_ROOT)}: `{tag}`")
+    # Path A — code-vs-YAML parity check.
+    code_drift = check_code_vs_registry_parity(signals)
+
+    if drift or code_drift:
+        if drift:
+            print("Signal/filter references in docs that don't match the registry:")
+            print("(if these are intentional, add to shared/registry/{signals,filters}.yaml")
+            print(" or, if a one-time historical mention, add the file to ALLOWLIST_FILES)")
+            print()
+            for f, tag in drift:
+                print(f"  {f.relative_to(REPO_ROOT)}: `{tag}`")
+        if code_drift:
+            if drift:
+                print()
+            print("Signal classes in ml/signals/ whose `tag = ...` is missing from")
+            print("shared/registry/signals.yaml. Add an entry to the YAML in the")
+            print("same commit so the registry stays the single source of truth.")
+            print()
+            for entry in code_drift:
+                print(f"  {entry}")
         return 1
     return 0
 

@@ -17,12 +17,18 @@ from google.cloud import bigquery
 
 logger = logging.getLogger(__name__)
 
+import os
+
 # Project configuration
 PROJECT_ID = 'nba-props-platform'
 SIGNALS_TABLE = f'{PROJECT_ID}.nba_predictions.daily_prediction_signals'
 
-# Primary model to send alerts for (avoid spamming with all 7+ models)
-PRIMARY_ALERT_MODEL = 'catboost_v9'
+# Primary model to send alerts for (avoid spamming with all 7+ models).
+# Path B — un-hardcoded from 'catboost_v9' (which spent most of 2026
+# INSUFFICIENT_DATA per CLAUDE.md). Override via env var when the fleet
+# rotates; the default is a placeholder that signals "set this explicitly"
+# rather than failing loudly on a dead model id.
+PRIMARY_ALERT_MODEL = os.environ.get('PRIMARY_ALERT_MODEL', 'catboost_v12')
 
 
 def calculate_daily_signals(game_date: str, project_id: str = PROJECT_ID) -> dict:

@@ -1,5 +1,17 @@
 # Cloud Scheduler Jobs for MLB Monitoring
-# These schedules trigger monitoring jobs throughout the day
+# These schedules trigger monitoring jobs throughout the day.
+#
+# Path C — silent-failure plumbing. Schedules use `timeZone: "UTC"` so the
+# `month=2-11` field is the UTC month (Feb-Nov). This widens the active
+# window vs. the league season (late-March through October ET) to cover
+# the timezone-edge cases the previous `3-10` lost:
+#   - Mar 31 11 PM ET = Apr 1 04:00 UTC — was outside `3-10` for ET-evening
+#     fires near Opening Day
+#   - Oct 31 11 PM ET = Nov 1 04:00 UTC — similar at season end
+# Off-season fires short-circuit (no MLB games → monitoring no-ops), so the
+# cost of widening is just a handful of wasted invocations. The alternative
+# (flipping timeZone + translating every cron hour from UTC to ET) is a
+# higher-risk multi-line rewrite for a small payoff.
 
 ---
 # Gap Detection - Daily at 8 AM ET (detect overnight processing gaps)
@@ -28,7 +40,7 @@ kind: Job
 metadata:
   name: mlb-freshness-checker-hourly
 spec:
-  schedule: "0 11-5/2 * 3-10 *"  # Every 2 hours, 11 AM - 5 AM UTC (6 AM - midnight ET), March-October (Opening Day is late March)
+  schedule: "0 11-5/2 * 2-11 *"  # Every 2 hours, 11 AM - 5 AM UTC (6 AM - midnight ET), March-October (Opening Day is late March)
   timeZone: "UTC"
   httpTarget:
     uri: "https://us-west2-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/nba-props-platform/jobs/mlb-freshness-checker:run"
@@ -46,7 +58,7 @@ kind: Job
 metadata:
   name: mlb-prediction-coverage-pregame
 spec:
-  schedule: "0 22 * 3-10 *"  # 5 PM ET = 10 PM UTC, March-October (Opening Day is late March)
+  schedule: "0 22 * 2-11 *"  # 5 PM ET = 10 PM UTC, March-October (Opening Day is late March)
   timeZone: "UTC"
   httpTarget:
     uri: "https://us-west2-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/nba-props-platform/jobs/mlb-prediction-coverage:run"
@@ -64,7 +76,7 @@ kind: Job
 metadata:
   name: mlb-prediction-coverage-postgame
 spec:
-  schedule: "0 7 * 3-10 *"  # 2 AM ET = 7 AM UTC, March-October (Opening Day is late March)
+  schedule: "0 7 * 2-11 *"  # 2 AM ET = 7 AM UTC, March-October (Opening Day is late March)
   timeZone: "UTC"
   httpTarget:
     uri: "https://us-west2-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/nba-props-platform/jobs/mlb-prediction-coverage:run"
@@ -82,7 +94,7 @@ kind: Job
 metadata:
   name: mlb-stall-detector-hourly
 spec:
-  schedule: "0 11-5 * 3-10 *"  # Every hour, 11 AM - 5 AM UTC (6 AM - midnight ET), March-October (Opening Day is late March)
+  schedule: "0 11-5 * 2-11 *"  # Every hour, 11 AM - 5 AM UTC (6 AM - midnight ET), March-October (Opening Day is late March)
   timeZone: "UTC"
   httpTarget:
     uri: "https://us-west2-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/nba-props-platform/jobs/mlb-stall-detector:run"

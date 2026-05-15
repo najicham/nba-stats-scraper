@@ -182,19 +182,14 @@ def check_data_freshness() -> dict:
 
     query = """
     WITH freshness AS (
+        -- bdl_player_boxscores and nbac_gamebook_player_boxscores arms removed:
+        -- the BDL scraper is intentionally disabled (CLAUDE.md) and
+        -- nbac_gamebook_player_boxscores does not exist as a table.
         SELECT
-            'bdl_player_boxscores' as source,
+            'nbac_gamebook_player_stats' as source,
             MAX(game_date) as latest_date,
             DATE_DIFF(CURRENT_DATE(), MAX(game_date), DAY) as days_stale
-        FROM nba_raw.bdl_player_boxscores
-
-        UNION ALL
-
-        SELECT
-            'nbac_gamebook_player_boxscores',
-            MAX(game_date),
-            DATE_DIFF(CURRENT_DATE(), MAX(game_date), DAY)
-        FROM nba_raw.nbac_gamebook_player_boxscores
+        FROM nba_raw.nbac_gamebook_player_stats
 
         UNION ALL
 

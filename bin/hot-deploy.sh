@@ -170,6 +170,20 @@ else
     echo "  Health: HTTP $HEALTH_STATUS (may need auth)"
 fi
 
+# Path C — silent infra debt. Post-deploy commit-SHA assertion catches
+# traffic-routing drift (Sessions 516/520 class).
+DEPLOYED_SHA=$(gcloud run services describe "$SERVICE" \
+    --region="$REGION" \
+    --project="$PROJECT" \
+    --format="value(spec.template.metadata.labels.commit-sha)" 2>/dev/null)
+
+if [ -n "$DEPLOYED_SHA" ] && [ "$DEPLOYED_SHA" != "$BUILD_COMMIT" ]; then
+    echo ""
+    echo "FAIL: deployed commit-sha ($DEPLOYED_SHA) does not match BUILD_COMMIT ($BUILD_COMMIT)."
+    echo "Inspect: gcloud run services describe $SERVICE --region=$REGION --project=$PROJECT"
+    exit 1
+fi
+
 END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))
 
@@ -177,7 +191,8 @@ echo ""
 echo "=============================================="
 echo "DEPLOYED in ${DURATION}s"
 echo "=============================================="
-echo "Service: $SERVICE"
-echo "Commit:  $BUILD_COMMIT"
-echo "URL:     $SERVICE_URL"
+echo "Service:        $SERVICE"
+echo "Commit (built): $BUILD_COMMIT"
+echo "Commit (live):  ${DEPLOYED_SHA:-(unknown)}"
+echo "URL:            $SERVICE_URL"
 echo "=============================================="

@@ -2443,12 +2443,30 @@ def _log_prediction_regeneration(
 
         if errors:
             logger.error(f"Failed to insert regeneration audit record: {errors}")
+            # Path A — silent failures: emit a metric so insert failures
+            # surface in Cloud Monitoring instead of disappearing into the log.
+            try:
+                from shared.observability.metrics import emit_metric
+                emit_metric(
+                    'bq_streaming_insert_failed', 1.0,
+                    labels={'table': 'prediction_regeneration_audit', 'project': project_id},
+                )
+            except Exception:
+                pass
         else:
             logger.info(f"Logged regeneration event to audit table for {game_date}")
 
     except Exception as e:
         logger.warning(f"Failed to log audit record: {e}")
         # Don't fail overall process if audit logging fails
+        try:
+            from shared.observability.metrics import emit_metric
+            emit_metric(
+                'bq_streaming_insert_failed', 1.0,
+                labels={'table': 'prediction_regeneration_audit', 'project': project_id},
+            )
+        except Exception:
+            pass
 
 
 def _generate_predictions_for_date(

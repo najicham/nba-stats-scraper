@@ -502,6 +502,65 @@ class SignalBestBetsExporter(BaseExporter):
             ),
         }
 
+    # Path A — silent-failure content guard. Drop threshold for the
+    # compare-to-last-good check; < 30% of prior counts as catastrophic.
+    SBB_DROP_PCT_THRESHOLD = 0.30
+
+    def validate_content(self, json_data: Dict[str, Any]) -> Optional[str]:
+        """Refuse to publish signal-best-bets/{date}.json on regression patterns.
+
+        Mirrors `best_bets_all_exporter.validate_content`. Returns a short
+        reason string if degraded, or None. Caller writes a status="degraded"
+        sentinel instead of an empty-shaped file (preserves the schema for
+        readers but emits an explicit signal).
+        """
+        # Halt mode: only canonical halt reasons legitimately produce zero picks.
+        # `manual` / `unknown_state` still go through floors.
+        halt_active = bool(json_data.get('halt_active'))
+        halt_reason = json_data.get('halt_reason')
+        if halt_active and halt_reason in {'off_season', 'edge_collapse', 'fleet_blocked'}:
+            return None
+
+        total_picks = int(json_data.get('total_picks') or 0)
+        picks = json_data.get('picks') or []
+
+        # Floor 1: schema integrity — every payload must carry model_health,
+        # otherwise downstream readers can't tell HEALTHY from missing.
+        model_health = json_data.get('model_health')
+        if not isinstance(model_health, dict) or 'status' not in model_health:
+            return f"model_health missing or malformed (got {type(model_health).__name__})"
+
+        # Floor 2: compare-to-last-good. Read live blob to catch zero-pick
+        # regressions when the prior file had picks (Session 481 class).
+        try:
+            from google.cloud import storage as _storage
+            client = _storage.Client(project=self.project_id)
+            target_date_str = json_data.get('date') or ''
+            blob = client.bucket(self.bucket_name).blob(
+                f'v1/signal-best-bets/{target_date_str}.json'
+            )
+            if blob.exists():
+                old = json.loads(blob.download_as_text())
+                if old.get('status') != 'degraded':
+                    old_total = int(old.get('total_picks') or 0)
+                    if old_total > 0 and total_picks == 0:
+                        return (
+                            f"total_picks collapsed {old_total} → 0 with "
+                            f"halt_active={halt_active} reason={halt_reason}"
+                        )
+                    if (
+                        old_total >= 5
+                        and total_picks < old_total * self.SBB_DROP_PCT_THRESHOLD
+                    ):
+                        return (
+                            f"total_picks dropped {old_total} → {total_picks} "
+                            f"(< {int(self.SBB_DROP_PCT_THRESHOLD * 100)}% of prior)"
+                        )
+        except Exception as e:  # pragma: no cover — observability path
+            logger.warning(f"SBB content-guard compare-to-last-good failed (non-fatal): {e}")
+
+        return None
+
     def export(self, target_date: str, version_id: str = None) -> str:
         """
         Generate signal best bets, write to BigQuery, and upload to GCS.
@@ -590,7 +649,25 @@ class SignalBestBetsExporter(BaseExporter):
             pick.pop('_show_ultra_public', None)
             pick.pop('ultra_criteria', None)
 
-        # Upload to GCS (date-specific) with degradation backup (Session 378c)
+        # Path A — silent failures: validate content before publishing.
+        # validate_content() (below) flags regression patterns (zero picks
+        # when prior run had picks AND halt_active=False, model_health
+        # missing, etc.). Honor kill-switch SBB_GUARD_ENABLED=false.
+        import os as _os
+        guard_disabled = _os.environ.get('SBB_GUARD_ENABLED', 'true').lower() in ('false', '0', 'no')
+        reason = None if guard_disabled else self.validate_content(json_data)
+        if reason:
+            logger.critical(
+                f"CONTENT_GUARD_TRIGGERED path=signal-best-bets/{target_date}.json "
+                f"reason={reason} — writing degraded sentinel instead of overwriting"
+            )
+            json_data = dict(json_data)
+            json_data['status'] = 'degraded'
+            json_data['degraded_reason'] = reason
+
+        # Upload to GCS (date-specific) with degradation backup (Session 378c).
+        # compare_and_upload preserves the backup-on-degrade behavior;
+        # the guard above adds the validation layer on top.
         gcs_path = self.compare_and_upload(
             json_data=json_data,
             path=f'signal-best-bets/{target_date}.json',
@@ -674,6 +751,52 @@ class SignalBestBetsExporter(BaseExporter):
         # Session 371: Also preserves picks for started/finished games.
         new_player_lookups = list({p['player_lookup'] for p in picks})
         if not new_player_lookups:
+            # Path A — silent failures: a zero-pick re-export should NOT
+            # silently leave shadow rows. If halt_active=True the date
+            # legitimately has no picks; nuke the slot so grading doesn't
+            # join against stale rows. If halt_active=False the new run
+            # regressed — preserve existing rows and emit a metric so the
+            # regression is loud.
+            try:
+                halt = self.halt_envelope(sport='nba', target_date=target_date)
+                halt_active = bool(halt.get('halt_active'))
+            except Exception as exc:  # pragma: no cover — observability path
+                logger.warning(f"halt_envelope lookup failed in zero-pick path: {exc}")
+                halt_active = False
+
+            if halt_active:
+                logger.warning(
+                    f"Zero-pick re-export under halt for {target_date}; "
+                    "deleting all rows for date to avoid shadow grading."
+                )
+                try:
+                    self.bq_client.query(
+                        f"DELETE FROM `{table_ref}` WHERE game_date = @target_date",
+                        job_config=bigquery.QueryJobConfig(
+                            query_parameters=[
+                                bigquery.ScalarQueryParameter(
+                                    'target_date', 'DATE', target_date
+                                ),
+                            ]
+                        ),
+                    ).result(timeout=30)
+                except Exception as exc:
+                    logger.error(f"Halt-mode shadow cleanup DELETE failed: {exc}")
+            else:
+                logger.warning(
+                    f"Zero-pick re-export for {target_date} with halt_active=False — "
+                    "preserving prior rows. This is a regression signal; check "
+                    "upstream filter/edge regime + bb_auto_halt state."
+                )
+                try:
+                    from shared.observability.metrics import emit_metric
+                    emit_metric(
+                        'zero_pick_reexport',
+                        1.0,
+                        labels={'sport': 'nba', 'target_date': target_date},
+                    )
+                except Exception:
+                    pass
             return
 
         delete_succeeded = False

@@ -350,8 +350,9 @@ class PhaseTransitionMonitor:
             WHERE game_date = '{today}'
         ),
         boxscores AS (
+            -- BDL was the historic source; nbac_gamebook_player_stats is live.
             SELECT COUNT(DISTINCT game_id) as actual_games
-            FROM `{self.project_id}.nba_raw.bdl_player_boxscores`
+            FROM `{self.project_id}.nba_raw.nbac_gamebook_player_stats`
             WHERE game_date = '{today}'
         ),
         predictions AS (

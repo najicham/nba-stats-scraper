@@ -95,12 +95,6 @@ echo "=== Phase 2 (Raw) Tables ==="
 echo ""
 
 check_table_freshness \
-    "nba_raw.bdl_player_boxscores" \
-    "game_date" \
-    "BDL Player Boxscores" \
-    1
-
-check_table_freshness \
     "nba_raw.nbac_gamebook_player_stats" \
     "game_date" \
     "NBA.com Gamebook Player Stats" \

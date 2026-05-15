@@ -33,6 +33,7 @@ except ImportError:
 from shared.endpoints.health import create_health_blueprint, HealthChecker
 from shared.utils.validation import validate_game_date, validate_project_id, ValidationError
 from shared.config.gcp_config import get_project_id
+from shared.observability.metrics import emit_phase_completion
 from datetime import datetime, timezone, date, timedelta
 import base64
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -1079,6 +1080,10 @@ def process_analytics():
                 f"❌ ALL {len(failures)} analytics processors failed for {game_date} "
                 f"(source={source_table}) - returning 500 to trigger retry"
             )
+            emit_phase_completion(
+                phase='phase3_analytics', output_type=source_table or 'unknown',
+                status='FAILED', sport='nba', row_count=0,
+            )
             return jsonify({
                 "status": "failed",
                 "message": f"Failed to process analytics for {game_date} (0/{total_processors} processors completed)",
@@ -1097,6 +1102,10 @@ def process_analytics():
                 f"⚠️ PARTIAL FAILURE: {len(failures)}/{total_processors} analytics processors failed "
                 f"for {game_date} (source={source_table})"
             )
+            emit_phase_completion(
+                phase='phase3_analytics', output_type=source_table or 'unknown',
+                status='DEGRADED', sport='nba', row_count=len(successes),
+            )
             return jsonify({
                 "status": "partial_failure",
                 "message": f"Partially processed analytics for {game_date} ({len(successes)}/{total_processors} processors completed, {len(failures)} failed)",
@@ -1110,6 +1119,10 @@ def process_analytics():
             }), 200  # ACK to prevent infinite retries, but status indicates partial
 
         # All succeeded
+        emit_phase_completion(
+            phase='phase3_analytics', output_type=source_table or 'unknown',
+            status='COMPLETE', sport='nba', row_count=total_processors,
+        )
         return jsonify({
             "status": "completed",
             "message": f"Successfully processed analytics for {game_date} ({total_processors}/{total_processors} processors completed)",
@@ -1122,6 +1135,13 @@ def process_analytics():
 
     except Exception as e:
         logger.error(f"Error processing analytics message: {e}", exc_info=True)
+        try:
+            emit_phase_completion(
+                phase='phase3_analytics', output_type='unknown',
+                status='FAILED', sport='nba', row_count=0,
+            )
+        except Exception:
+            pass
         return jsonify({"error": str(e)}), 500
 
 @app.route('/process-date-range', methods=['POST'])

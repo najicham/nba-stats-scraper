@@ -101,6 +101,12 @@ GOVERNANCE = {
     'max_tier_bias': 5.0,      # No tier bias > 5 points
     'min_n_graded': 15,        # Session 466: lowered 25→15. MAE families get N=18-20 at edge 3+ with 14d eval — 25 blocks them. 15 matches decay_detection threshold.
     'min_directional_hr': 52.4, # Both OVER and UNDER HR >= 52.4% at edge 3+
+    # Path B — edge-5 is the money zone (CLAUDE.md). Session 487 LGBM-clone
+    # fleet collapse passed edge-3 gates but had edge-5 HR < 55%, dragging
+    # the entire fleet into BLOCKED. Require edge-5 HR >= 55% when we have
+    # enough sample to evaluate; tiny-N cases skip the check.
+    'min_hr_edge5': 55.0,
+    'min_n_edge5': 8,         # Below this, skip the edge-5 gate (signal too noisy)
 }
 
 # Session 522: Loosened governance for season-restart mode.
@@ -113,6 +119,8 @@ GOVERNANCE_SEASON_RESTART = {
     **GOVERNANCE,
     'min_n_graded': 10,        # Reduced from 15 — tiny eval windows in tight markets
     'min_directional_hr': 51.0, # Reduced from 52.4% — late-season UNDER HR degrades
+    # Edge-5 stays at 55%: a season-restart fleet still needs to win the
+    # money zone or it can't earn back the picks it just halted.
 }
 
 
@@ -527,6 +535,17 @@ def run_governance_gates(
         hr, n = dir_hr[direction]
         if hr is not None and n >= 20 and hr < gov['min_directional_hr']:
             failures.append(f"{direction} HR={hr}% < {gov['min_directional_hr']}% (N={n})")
+
+    # Gate 4 (Path B): Edge 5+ HR. The money zone — Session 487 LGBM-clone
+    # fleet collapse passed edge-3 but had edge-5 HR < 55% and dragged the
+    # whole fleet into BLOCKED. Skip the check when N is too low to be
+    # meaningful (signal_noise > signal at tiny N).
+    hr_e5, n_e5 = compute_hit_rate(preds, actuals, lines, min_edge=5.0)
+    if n_e5 >= gov['min_n_edge5']:
+        if hr_e5 is None or hr_e5 < gov['min_hr_edge5']:
+            failures.append(
+                f"Edge 5+ HR={hr_e5}% < {gov['min_hr_edge5']}% (N={n_e5})"
+            )
 
     passed = len(failures) == 0
     return passed, failures

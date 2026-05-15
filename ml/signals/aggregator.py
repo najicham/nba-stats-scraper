@@ -260,8 +260,8 @@ TIER_EDGE_CAPS = {
 #   - tanking_risk_obs: new, accumulating data (season end)
 #   - over_low_rsc_obs: 45.5% at N=11 — promote when N>=30
 #   - hot_streak_under_obs: 44.4% at N=18 — below threshold, needs more data
-#   - unreliable_over_low_mins_obs: no HR data in comments
-#   - unreliable_under_flat_trend_obs: no HR data in comments
+#   - unreliable_over_low_mins_obs: REMOVED 2026-05-14 — fired N=1 in 2 months
+#   - unreliable_under_flat_trend_obs: REMOVED 2026-05-14 — fired N=3 in 2 months
 #   - model_profile_would_block: Phase 1 validation ongoing
 #   - solo_game_pick_obs: 52.2% HR (N=69) — below 55% CF HR threshold for blocking
 #   - thin_slate_obs: 51.2% HR — accumulating data
@@ -891,10 +891,23 @@ class BestBetsAggregator:
                     else:
                         _gd = None
                     if _gd and _gd.weekday() == 4:  # 4 = Friday
-                        filter_counts['friday_over_block'] += 1
-                        _record_filtered(pred, 'friday_over_block', pred_edge)
-                        if 'friday_over_block' not in self._runtime_demoted:
-                            continue
+                        # Path B Week 2 — HSE rescue carve-out. High-scoring-
+                        # environment OVER is 100% BB HR (N=3, MEMORY.md);
+                        # friday_over_block was blocking every Friday HSE OVER
+                        # candidate. Carve out: edge >= 7.0 + HSE tag bypasses.
+                        # Edge floor prevents marginal-edge bypass abuse.
+                        pred_tags = set(pred.get('signal_tags', []) or [])
+                        if (
+                            'high_scoring_environment_over' in pred_tags
+                            and pred_edge >= 7.0
+                        ):
+                            filter_counts['friday_over_block_hse_exempt'] += 1
+                            # Fall through to downstream gates.
+                        else:
+                            filter_counts['friday_over_block'] += 1
+                            _record_filtered(pred, 'friday_over_block', pred_edge)
+                            if 'friday_over_block' not in self._runtime_demoted:
+                                continue
                 except (ValueError, TypeError):
                     pass
 
@@ -1092,25 +1105,13 @@ class BestBetsAggregator:
                 if 'hot_shooting_reversion_obs' not in self._runtime_demoted:
                     continue
 
-            # Session 421: Feature-based unreliable high-edge observation.
-            # Wrong OVER fingerprint: edge 5+ + low minutes_load (<45).
-            # Wrong UNDER fingerprint: edge 5+ + high minutes_load (>58) + flat trend.
-            if pred_edge >= 5.0:
-                mins_load = pred.get('minutes_load_7d') or 0
-                t_slope = pred.get('trend_slope') or 0
-
-                if (pred.get('recommendation') == 'OVER'
-                        and mins_load > 0 and mins_load < 45):
-                    filter_counts['unreliable_over_low_mins_obs'] += 1
-                    _record_filtered(pred, 'unreliable_over_low_mins_obs', pred_edge)
-                    # Observation only — do NOT block
-
-                elif (pred.get('recommendation') == 'UNDER'
-                        and mins_load > 58
-                        and -0.3 <= t_slope <= 0.3):
-                    filter_counts['unreliable_under_flat_trend_obs'] += 1
-                    _record_filtered(pred, 'unreliable_under_flat_trend_obs', pred_edge)
-                    # Observation only — do NOT block
+            # Session 421 obs filters REMOVED 2026-05-14 (Path A — observation
+            # debt cleanup). `unreliable_over_low_mins_obs` fired N=1 in 2 months
+            # (100% HR — single sample); `unreliable_under_flat_trend_obs` fired
+            # N=3 (33.3% HR). Neither has the volume to graduate or the cost to
+            # justify keeping. Thresholds (mins_load < 45 for OVER, mins_load > 58
+            # + flat trend for UNDER) can be re-added if these regions become
+            # interesting; git history preserves the original heuristic.
 
             # --- Model profile observation (Session 384) ---
             # Log what the per-model profile store WOULD block, without
@@ -1617,16 +1618,8 @@ class BestBetsAggregator:
                 f"Rescue health gate: {filter_counts['rescue_health_gate']} signal(s) "
                 f"lost rescue eligibility (7d HR < {RESCUE_MIN_HR_7D}%)"
             )
-        if filter_counts['unreliable_over_low_mins_obs'] > 0:
-            logger.info(
-                f"Unreliable OVER low mins (observation): tagged "
-                f"{filter_counts['unreliable_over_low_mins_obs']} edge 5+ OVER picks with minutes_load < 45"
-            )
-        if filter_counts['unreliable_under_flat_trend_obs'] > 0:
-            logger.info(
-                f"Unreliable UNDER flat trend (observation): tagged "
-                f"{filter_counts['unreliable_under_flat_trend_obs']} edge 5+ UNDER picks with high mins + flat trend"
-            )
+        # `unreliable_over_low_mins_obs` + `unreliable_under_flat_trend_obs`
+        # removed 2026-05-14 (Path A obs-debt cleanup) — see filter block above.
 
         if filter_counts['blowout_risk_under_block'] > 0:
             logger.info(

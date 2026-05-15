@@ -36,6 +36,14 @@ from typing import Dict, List, Optional
 import functions_framework
 from google.cloud import pubsub_v1
 
+# Fail-open import: telemetry must never block the CF.
+try:
+    sys.path.insert(0, '/workspace')
+    from shared.observability.metrics import emit_phase_completion
+except Exception:  # pragma: no cover
+    def emit_phase_completion(**kwargs):  # type: ignore
+        return None
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -503,16 +511,38 @@ def main(cloud_event):
             logger.info(
                 f"[{correlation_id}] Export completed successfully in {duration_seconds:.1f}s"
             )
+            _phase6_status = 'COMPLETE'
         elif result.get('status') == 'partial':
             logger.warning(
                 f"[{correlation_id}] Export completed with errors in {duration_seconds:.1f}s: "
                 f"{result.get('errors')}"
             )
+            _phase6_status = 'DEGRADED'
         else:
             logger.error(
                 f"[{correlation_id}] Export failed in {duration_seconds:.1f}s: "
                 f"{result.get('errors')}"
             )
+            _phase6_status = 'FAILED'
+
+        # Telemetry: real-time emit so alerts don't wait on reconciler inference.
+        # row_count: no exporter sets a literal `row_count`, but `paths` dict is
+        # populated on success — count it as a proxy for "files written this run".
+        try:
+            paths = result.get('paths') or {}
+            row_count_proxy = (
+                int(result.get('row_count', 0) or 0)
+                or (len(paths) if isinstance(paths, dict) else 0)
+            )
+            emit_phase_completion(
+                phase='phase6_publish',
+                output_type=export_type or 'unknown',
+                status=_phase6_status,
+                sport=result.get('sport', message_data.get('sport', 'nba')),
+                row_count=row_count_proxy,
+            )
+        except Exception:
+            pass
 
         # Publish completion event
         publish_completion(
@@ -531,6 +561,16 @@ def main(cloud_event):
             f"[{correlation_id}] Error in Phase 6 export after {duration_seconds:.1f}s: {e}",
             exc_info=True
         )
+        try:
+            emit_phase_completion(
+                phase='phase6_publish',
+                output_type=export_type or 'unknown',
+                status='FAILED',
+                sport=message_data.get('sport', 'nba'),
+                row_count=0,
+            )
+        except Exception:
+            pass
         # Re-raise to trigger Pub/Sub retry
         raise
 

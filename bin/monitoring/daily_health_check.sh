@@ -176,8 +176,9 @@ echo ""
 echo "DATA COMPLETENESS (Raw → Analytics):"
 bq query --use_legacy_sql=false --format=pretty "
 WITH raw_counts AS (
+  -- BDL was the historic source; live source is nbac_gamebook_player_stats.
   SELECT game_date, COUNT(*) as raw_records, COUNT(DISTINCT game_id) as raw_games
-  FROM nba_raw.bdl_player_boxscores
+  FROM nba_raw.nbac_gamebook_player_stats
   WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
   GROUP BY 1
 ),

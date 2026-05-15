@@ -16,11 +16,8 @@ echo "   Error count: $ERROR_COUNT"
 echo ""
 echo "📊 Today's Data:"
 bq query --use_legacy_sql=false --format=pretty "
-SELECT
-  'BDL Boxscores' as source, COUNT(DISTINCT game_id) as games, COUNT(*) as row_count
-FROM nba_raw.bdl_player_boxscores WHERE game_date = CURRENT_DATE()
-UNION ALL
-SELECT 'BettingPros Props', 0, COUNT(*) FROM nba_raw.bettingpros_player_points_props WHERE game_date = CURRENT_DATE()
+SELECT 'BettingPros Props' as source, 0 as games, COUNT(*) as row_count
+  FROM nba_raw.bettingpros_player_points_props WHERE game_date = CURRENT_DATE()
 UNION ALL
 SELECT 'Gamebooks', COUNT(DISTINCT game_id), COUNT(*) FROM nba_raw.nbac_gamebook_player_stats WHERE game_date = CURRENT_DATE()
 " 2>/dev/null

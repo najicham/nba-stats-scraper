@@ -2,13 +2,21 @@
 """
 Cross-Source Data Validator
 
+DEPRECATED (Path A — Stop silent failures, 2026-05-14):
+The BDL scraper has been intentionally disabled per CLAUDE.md and the
+`nba_raw.bdl_player_boxscores` table is empty for the 2026 season.
+This validator was built to flag BDL vs NBA-API discrepancies; with BDL
+returning zero rows, every "missing" row was a false positive.
+Do NOT schedule this script. If we re-enable BDL or add a new alternate
+source, rewrite the queries to point at the live table first.
+
 Compares player box score data across multiple sources to ensure data quality.
 Stores discrepancies in BigQuery and sends Slack alerts for significant issues.
 
 Sources compared:
 - NBA.com Gamebook (primary/authoritative)
 - Basketball Reference (backup)
-- BDL API (disabled but monitored)
+- BDL API (DEAD — see deprecation notice above)
 
 Usage:
     python bin/monitoring/cross_source_validator.py [--date YYYY-MM-DD] [--dry-run]

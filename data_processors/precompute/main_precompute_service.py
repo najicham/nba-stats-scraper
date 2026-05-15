@@ -31,6 +31,7 @@ except ImportError:
 
 from shared.endpoints.health import create_health_blueprint, HealthChecker
 from shared.config.gcp_config import get_project_id
+from shared.observability.metrics import emit_phase_completion
 
 # Import precompute processors
 from data_processors.precompute.team_defense_zone_analysis.team_defense_zone_analysis_processor import TeamDefenseZoneAnalysisProcessor
@@ -191,6 +192,10 @@ def process():
                 f"❌ ALL {len(failures)} precompute processors failed for {analysis_date} "
                 f"(source={source_table}) - returning 500 to trigger retry"
             )
+            emit_phase_completion(
+                phase='phase4_precompute', output_type=source_table or 'unknown',
+                status='FAILED', sport='nba', row_count=0,
+            )
             return jsonify({
                 "status": "failed",
                 "source_table": source_table,
@@ -206,6 +211,10 @@ def process():
                 f"⚠️ PARTIAL FAILURE: {len(failures)}/{len(results)} precompute processors failed "
                 f"for {analysis_date} (source={source_table})"
             )
+            emit_phase_completion(
+                phase='phase4_precompute', output_type=source_table or 'unknown',
+                status='DEGRADED', sport='nba', row_count=len(successes),
+            )
             return jsonify({
                 "status": "partial_failure",
                 "source_table": source_table,
@@ -216,6 +225,10 @@ def process():
             }), 200  # ACK to prevent infinite retries, but status indicates partial
 
         # All succeeded
+        emit_phase_completion(
+            phase='phase4_precompute', output_type=source_table or 'unknown',
+            status='COMPLETE', sport='nba', row_count=len(results),
+        )
         return jsonify({
             "status": "completed",
             "source_table": source_table,
@@ -225,6 +238,13 @@ def process():
 
     except Exception as e:
         logger.error(f"Error processing precompute message: {e}", exc_info=True)
+        try:
+            emit_phase_completion(
+                phase='phase4_precompute', output_type='unknown',
+                status='FAILED', sport='nba', row_count=0,
+            )
+        except Exception:
+            pass
         return jsonify({"error": str(e)}), 500
 
 @app.route('/process-date', methods=['POST'])

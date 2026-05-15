@@ -2,6 +2,12 @@
 """
 BDL Data Quality Alerting
 
+DEPRECATED (Path A — Stop silent failures, 2026-05-14):
+BDL is intentionally disabled and `nba_raw.bdl_player_boxscores` is empty.
+This script's purpose ("alert when BDL quality drops/recovers") is moot —
+it only ever fires "no data" warnings. Do NOT schedule. If BDL is ever
+re-enabled, refresh the thresholds against current state first.
+
 Runs daily to monitor BDL data quality and sends Slack alerts when:
 - BDL coverage drops below threshold
 - Data accuracy is poor (high mismatch rate)

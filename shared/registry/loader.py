@@ -63,7 +63,10 @@ def load_signal_registry() -> Dict[str, SignalSpec]:
         spec = SignalSpec(
             tag=entry['tag'],
             status=entry.get('status', 'active'),
-            weight=float(entry.get('weight', 1.0)),
+            # Default 0.0 (not 1.0): a missing `weight:` field implies the
+            # signal doesn't contribute to ranking, not that it does at full
+            # strength. Active-weighted signals must declare `weight:` explicitly.
+            weight=float(entry.get('weight', 0.0)),
             direction=entry.get('direction', 'both'),
             rescue_priority=entry.get('rescue_priority'),
             description=entry.get('description', ''),
