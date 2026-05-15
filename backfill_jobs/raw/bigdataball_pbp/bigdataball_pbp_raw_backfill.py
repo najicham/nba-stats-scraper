@@ -38,44 +38,44 @@ class BigDataBallPbpBackfill:
             format='%(asctime)s - %(levelname)s - %(message)s'
         )
         self.logger = logging.getLogger(__name__)
-    
-    def get_game_dates_from_schedule(self, seasons: List[int], 
-                                     start_date: date = None, 
+
+    def get_game_dates_from_schedule(self, seasons: List[int],
+                                     start_date: date = None,
                                      end_date: date = None) -> List[date]:
         """
         Get list of actual NBA game dates from schedule service.
         Much more efficient than iterating through every calendar day.
         """
         self.logger.info(f"Getting game dates from schedule for seasons: {seasons}")
-        
+
         # Get all game dates for seasons
         all_dates = self.schedule.get_all_game_dates(
             seasons=seasons,
             game_type=GameType.REGULAR_PLAYOFF
         )
-        
+
         # Convert to date objects and filter by range if specified
         game_dates = []
         for date_info in all_dates:
             game_date = datetime.strptime(date_info['date'], '%Y-%m-%d').date()
-            
+
             # Apply date range filter if specified
             if start_date and game_date < start_date:
                 continue
             if end_date and game_date > end_date:
                 continue
-            
+
             game_dates.append(game_date)
-        
+
         self.logger.info(f"Found {len(game_dates)} game dates")
         return sorted(game_dates)
-    
-    def list_files(self, start_date: date, end_date: date, 
+
+    def list_files(self, start_date: date, end_date: date,
                    seasons: List[int] = None, limit: int = None) -> List[str]:
         """List BigDataBall CSV files in GCS for date range."""
         bucket = self.storage_client.bucket(self.bucket_name)
         all_files = []
-        
+
         # Use schedule service if enabled (much faster!)
         if self.use_schedule and seasons:
             self.logger.info(f"Using schedule service for efficient date filtering")
@@ -89,9 +89,9 @@ class BigDataBallPbpBackfill:
             while current_date <= end_date:
                 dates_to_check.append(current_date)
                 current_date += timedelta(days=1)
-        
+
         self.logger.info(f"Searching {len(dates_to_check)} dates for BigDataBall files")
-        
+
         # Search each date
         for current_date in dates_to_check:
             # Determine NBA season for this date
@@ -99,23 +99,23 @@ class BigDataBallPbpBackfill:
                 season_year = current_date.year
             else:
                 season_year = current_date.year - 1
-            
+
             nba_season = f"{season_year}-{str(season_year + 1)[2:]}"  # "2024-25"
-            
+
             # Path pattern: big-data-ball/{season}/{date}/
             prefix = f"big-data-ball/{nba_season}/{current_date.strftime('%Y-%m-%d')}/"
-            
+
             try:
                 self.logger.debug(f"Searching prefix: {prefix}")
                 blobs = bucket.list_blobs(prefix=prefix)
-                
+
                 for blob in blobs:
                     # Look for .csv files in game_* subdirectories
-                    if (blob.name.endswith('.csv') and 
+                    if (blob.name.endswith('.csv') and
                         '/game_' in blob.name and
                         'combined-stats' not in blob.name.lower() and
                         blob.name not in [f['path'] for f in all_files]):
-                        
+
                         file_info = {
                             'path': f"gs://{self.bucket_name}/{blob.name}",
                             'date': current_date,
@@ -123,23 +123,23 @@ class BigDataBallPbpBackfill:
                             'updated': blob.updated
                         }
                         all_files.append(file_info)
-                        
+
                         self.logger.debug(f"Found file: {blob.name}")
-                        
+
                         if limit and len(all_files) >= limit:
                             self.logger.info(f"Reached limit of {limit} files")
                             return [f['path'] for f in all_files]
-                            
+
             except Exception as e:
                 self.logger.debug(f"No files found with prefix {prefix}: {e}")
                 continue
-        
+
         self.logger.info(f"Found {len(all_files)} BigDataBall files")
-        
+
         # Sort by date and return just the paths
         all_files.sort(key=lambda x: x['date'])
         return [f['path'] for f in all_files]
-    
+
     def resolve_data_gaps(self, dates: Set[date]) -> int:
         """
         Mark data_gaps entries as resolved for successfully backfilled dates.
@@ -194,33 +194,33 @@ class BigDataBallPbpBackfill:
     def process_file(self, file_path: str) -> dict:
         """Process a single BigDataBall CSV file."""
         self.logger.info(f"Processing file: {file_path}")
-        
+
         try:
             # Read file from GCS
             bucket_name = file_path.split('/')[2]
             blob_path = '/'.join(file_path.split('/')[3:])
-            
+
             bucket = self.storage_client.bucket(bucket_name)
             blob = bucket.blob(blob_path)
-            
+
             if not blob.exists():
                 return {'success': False, 'error': 'File not found', 'file': file_path}
-            
+
             # Download content
             content = blob.download_as_text()
-            
+
             # Step 1: Parse data (processor handles both CSV and JSON)
             raw_data = self.processor.parse_json(content, file_path)
-            
+
             # Step 2: Validate data structure
             validation_errors = self.processor.validate_data(raw_data)
             if validation_errors:
                 return {
-                    'success': False, 
-                    'error': f"Validation errors: {', '.join(validation_errors)}", 
+                    'success': False,
+                    'error': f"Validation errors: {', '.join(validation_errors)}",
                     'file': file_path
                 }
-            
+
             # Step 3: Transform data to BigQuery rows
             # Set raw_data on processor (transform_data expects it to be set)
             self.processor.raw_data = raw_data
@@ -229,19 +229,19 @@ class BigDataBallPbpBackfill:
             rows = self.processor.transformed_data
             if not rows:
                 return {'success': False, 'error': 'No rows generated', 'file': file_path}
-            
+
             # Step 4: Save to BigQuery (uses self.transformed_data internally)
             result = self.processor.save_data()
-            
+
             # Check for errors
             if result.get('errors'):
                 return {
-                    'success': False, 
-                    'error': f"Load errors: {', '.join(result['errors'])}", 
+                    'success': False,
+                    'error': f"Load errors: {', '.join(result['errors'])}",
                     'file': file_path,
                     'rows_attempted': len(rows)
                 }
-            
+
             # Check if skipped (duplicate)
             if result.get('message') and 'Skipped' in result.get('message', ''):
                 return {
@@ -252,7 +252,7 @@ class BigDataBallPbpBackfill:
                     'game_id': result.get('game_id'),
                     'message': result.get('message')
                 }
-            
+
             return {
                 'success': True,
                 'file': file_path,
@@ -260,17 +260,17 @@ class BigDataBallPbpBackfill:
                 'game_id': result.get('game_id'),
                 'events': len(rows)
             }
-            
+
         except Exception as e:
             self.logger.error(f"Error processing {file_path}: {e}")
             import traceback
             traceback.print_exc()
             return {'success': False, 'error': str(e), 'file': file_path}
-    
-    def run_backfill(self, start_date: date = None, end_date: date = None, 
+
+    def run_backfill(self, start_date: date = None, end_date: date = None,
                      seasons: List[int] = None, dry_run: bool = False, limit: int = None):
         """Run the backfill process."""
-        
+
         # Determine date range from seasons if not specified
         if seasons and not (start_date and end_date):
             # Map seasons to date ranges
@@ -280,29 +280,29 @@ class BigDataBallPbpBackfill:
                 2023: (date(2023, 10, 24), date(2024, 6, 17)),  # 2023-24
                 2024: (date(2024, 10, 22), date(2025, 6, 22)),  # 2024-25
             }
-            
+
             # Get earliest start and latest end
             ranges = [season_ranges[s] for s in seasons if s in season_ranges]
             if ranges:
                 start_date = min(r[0] for r in ranges)
                 end_date = max(r[1] for r in ranges)
-        
+
         self.logger.info(f"Starting BigDataBall backfill: {start_date} to {end_date}")
         if seasons:
             self.logger.info(f"Seasons: {seasons}")
-        
+
         if dry_run:
             self.logger.info("DRY RUN MODE - No data will be processed")
-        
+
         # Find files to process
         files = self.list_files(start_date, end_date, seasons=seasons, limit=limit)
-        
+
         if not files:
             self.logger.warning("No BigDataBall files found in date range")
             return
-        
+
         self.logger.info(f"Found {len(files)} files to process")
-        
+
         if dry_run:
             self.logger.info("DRY RUN - Would process these files:")
             for i, file_path in enumerate(files[:20]):  # Show first 20
@@ -310,18 +310,18 @@ class BigDataBallPbpBackfill:
             if len(files) > 20:
                 self.logger.info(f"  ... and {len(files) - 20} more files")
             return
-        
+
         # Process files
         success_count = 0
         skipped_count = 0
         error_count = 0
         total_rows = 0
-        
+
         for i, file_path in enumerate(files):
             self.logger.info(f"Processing {i+1}/{len(files)}: {file_path}")
-            
+
             result = self.process_file(file_path)
-            
+
             if result['success']:
                 if result.get('skipped'):
                     skipped_count += 1
@@ -342,7 +342,7 @@ class BigDataBallPbpBackfill:
             else:
                 error_count += 1
                 self.logger.error(f"❌ Error: {result['error']}")
-        
+
         # Mark data_gaps as resolved for processed dates (added 2026-01-29)
         if self.processed_dates:
             gaps_resolved = self.resolve_data_gaps(self.processed_dates)
@@ -367,31 +367,31 @@ def main():
     parser.add_argument('--seasons', type=str, help='Comma-separated seasons (e.g., 2021,2022,2023,2024)')
     parser.add_argument('--dry-run', action='store_true', help='List files without processing')
     parser.add_argument('--limit', type=int, help='Limit number of files processed')
-    parser.add_argument('--no-schedule', action='store_true', 
+    parser.add_argument('--no-schedule', action='store_true',
                        help='Disable schedule service (check every date)')
-    
+
     args = parser.parse_args()
-    
+
     # Parse seasons
     seasons = None
     if args.seasons:
         seasons = [int(s.strip()) for s in args.seasons.split(',')]
-    
+
     # Parse dates
     start_date = datetime.strptime(args.start_date, '%Y-%m-%d').date() if args.start_date else None
     end_date = datetime.strptime(args.end_date, '%Y-%m-%d').date() if args.end_date else None
-    
+
     # Default to 2024-25 season if nothing specified
     if not seasons and not (start_date and end_date):
         seasons = [2024]
         print("No seasons or dates specified, defaulting to 2024-25 season")
-    
+
     backfiller = BigDataBallPbpBackfill(use_schedule=not args.no_schedule)
     backfiller.run_backfill(
-        start_date=start_date, 
-        end_date=end_date, 
+        start_date=start_date,
+        end_date=end_date,
         seasons=seasons,
-        dry_run=args.dry_run, 
+        dry_run=args.dry_run,
         limit=args.limit
     )
 

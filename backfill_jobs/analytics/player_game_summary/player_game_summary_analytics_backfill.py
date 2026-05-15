@@ -128,43 +128,43 @@ class ThreadSafeCheckpoint:
 class PlayerGameSummaryBackfill:
     """
     Backfill processor for player game summary analytics.
-    
+
     Features:
     - Day-by-day processing (avoids BigQuery size limits)
     - Universal player ID integration via RegistryReader
     - Bookmaker deduplication (DraftKings → FanDuel priority)
     - Batch insert (no streaming buffer issues)
-    
+
     Each day is processed independently with its own registry flush,
     ensuring unresolved players are tracked per day.
     """
-    
+
     def __init__(self):
         self.processor = PlayerGameSummaryProcessor()
         self.processor_name = "PlayerGameSummaryProcessor"
         self._processor_lock = threading.Lock()  # Lock for processor instantiation in threads
-        
+
     def validate_date_range(self, start_date: date, end_date: date) -> bool:
         """Validate date range for analytics processing."""
         if start_date > end_date:
             logger.error("Start date must be before end date")
             return False
-            
+
         if end_date > date.today():
-            logger.error("End date cannot be in the future") 
+            logger.error("End date cannot be in the future")
             return False
-            
+
         # Day-by-day processing handles any range size
         total_days = (end_date - start_date).days + 1
         logger.info(f"Will process {total_days} days from {start_date} to {end_date}")
-            
+
         return True
-    
+
     def check_data_availability(self, start_date: date, end_date: date) -> Dict:
         """Check raw data availability for the date range."""
         try:
             query = f"""
-            SELECT 
+            SELECT
                 'nbac_gamebook' as source,
                 COUNT(*) as records,
                 COUNT(DISTINCT game_id) as games,
@@ -173,32 +173,32 @@ class PlayerGameSummaryBackfill:
             FROM `nba-props-platform.nba_raw.nbac_gamebook_player_stats`
             WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
                 AND player_status = 'active'
-            
+
             UNION ALL
-            
-            SELECT 
+
+            SELECT
                 'bdl_boxscores' as source,
                 COUNT(*) as records,
-                COUNT(DISTINCT game_id) as games, 
+                COUNT(DISTINCT game_id) as games,
                 MIN(game_date) as min_date,
                 MAX(game_date) as max_date
             FROM `nba-props-platform.nba_raw.bdl_player_boxscores`
             WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
-            
+
             UNION ALL
-            
-            SELECT 
+
+            SELECT
                 'odds_api_props' as source,
                 COUNT(*) as records,
                 COUNT(DISTINCT game_id) as games,
-                MIN(game_date) as min_date, 
+                MIN(game_date) as min_date,
                 MAX(game_date) as max_date
             FROM `nba-props-platform.nba_raw.odds_api_player_points_props`
             WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
             """
-            
+
             result = self.processor.bq_client.query(query).to_dataframe()
-            
+
             availability = {}
             for _, row in result.iterrows():
                 availability[row['source']] = {
@@ -206,33 +206,33 @@ class PlayerGameSummaryBackfill:
                     'games': int(row['games']),
                     'date_range': f"{row['min_date']} to {row['max_date']}"
                 }
-            
+
             logger.info("Data availability:")
             for source, info in availability.items():
                 logger.info(f"  {source}: {info['records']} records, {info['games']} games, {info['date_range']}")
-                
+
             return availability
-            
+
         except Exception as e:
             logger.error(f"Error checking data availability: {e}")
             return {}
-    
+
     def run_analytics_processing(self, single_date: date, dry_run: bool = False) -> Dict:
         """Run analytics processing for a single date."""
         logger.debug(f"Processing analytics for {single_date}")
-        
+
         if dry_run:
             logger.info(f"DRY RUN MODE - checking data for {single_date}")
             availability = self.check_data_availability(single_date, single_date)
-            
+
             total_games = sum(info['games'] for info in availability.values())
             return {
-                'status': 'dry_run_complete', 
-                'games_available': total_games, 
+                'status': 'dry_run_complete',
+                'games_available': total_games,
                 'date': single_date.isoformat(),
                 'availability': availability
             }
-        
+
         # Run actual processing for single day
         opts = {
             'start_date': single_date.isoformat(),
@@ -241,11 +241,11 @@ class PlayerGameSummaryBackfill:
             'backfill_mode': True,  # Disables historical date check and suppresses alerts
             'skip_downstream_trigger': True  # Prevent Phase 4 auto-trigger during backfill
         }
-        
+
         try:
             success = self.processor.run(opts)
             stats = self.processor.get_analytics_stats() if success else {}
-            
+
             result = {
                 'status': 'success' if success else 'failed',
                 'date': single_date.isoformat(),
@@ -255,9 +255,9 @@ class PlayerGameSummaryBackfill:
                 'registry_not_found': stats.get('registry_players_not_found', 0),
                 'games_processed': stats.get('games_processed', 0)
             }
-            
+
             return result
-            
+
         except Exception as e:
             logger.error(f"Exception during processing: {e}", exc_info=True)
             return {
@@ -266,7 +266,7 @@ class PlayerGameSummaryBackfill:
                 'error': str(e),
                 'records_processed': 0
             }
-    
+
     def run_backfill(self, start_date: date, end_date: date, dry_run: bool = False, no_resume: bool = False):
         """
         Run backfill processing day-by-day with checkpointing for resume capability.
@@ -671,17 +671,17 @@ class PlayerGameSummaryBackfill:
     def process_specific_dates(self, dates: List[date], dry_run: bool = False):
         """Process a specific list of dates (useful for retrying failures)."""
         logger.info(f"Processing {len(dates)} specific dates")
-        
+
         successful = 0
         failed = []
         total_records = 0
-        
+
         for i, single_date in enumerate(dates, 1):
             logger.info(f"Processing date {i}/{len(dates)}: {single_date}")
-            
+
             try:
                 result = self.run_analytics_processing(single_date, dry_run)
-                
+
                 if result['status'] == 'success':
                     successful += 1
                     total_records += result.get('records_processed', 0)
@@ -691,7 +691,7 @@ class PlayerGameSummaryBackfill:
                 else:
                     failed.append(single_date)
                     logger.error(f"  ✗ Failed: {result.get('error', 'Unknown error')}")
-                    
+
             except Exception as e:
                 logger.error(f"Exception processing {single_date}: {e}", exc_info=True)
                 failed.append(single_date)
@@ -728,14 +728,14 @@ class PlayerGameSummaryBackfill:
         logger.info(f"  Total dates: {len(dates)}")
         logger.info(f"  Successful: {successful}")
         logger.info(f"  Failed: {len(failed)}")
-        
+
         if not dry_run and successful > 0:
             logger.info(f"  Total records: {total_records}")
             logger.info(f"  Average per date: {total_records/successful:.1f}")
-        
+
         if failed:
             logger.info(f"  Failed dates: {', '.join(str(d) for d in failed)}")
-        
+
         logger.info("=" * 80)
 
 

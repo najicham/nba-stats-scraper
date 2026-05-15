@@ -129,18 +129,18 @@ def _extract_games_from_discovery_response(self, discovery_data: Dict, date_str:
     """Extract games from discovery scraper response."""
     try:
         data_summary = discovery_data.get('data_summary', {})
-        
+
         if isinstance(data_summary, dict):
             # Get the actual games list from the summary
             games = data_summary.get('games', [])
-            
+
             if games:
                 logger.debug("Found %d games for %s", len(games), date_str)
                 return games
-            
+
         logger.debug("No games found in discovery response for %s", date_str)
         return []
-        
+
     except Exception as e:
         logger.warning("Error extracting games from discovery response for %s: %s", date_str, e)
         return []
@@ -269,7 +269,7 @@ gcloud run jobs execute bdb-play-by-play-backfill \
 ### Complete 4-Season Dataset
 Once backfill completes, you'll have:
 - **2021-22**: ✅ Complete (existing)
-- **2022-23**: ✅ Complete (existing)  
+- **2022-23**: ✅ Complete (existing)
 - **2023-24**: ✅ Complete (existing)
 - **2024-25**: ✅ Complete (new)
 
@@ -306,7 +306,7 @@ Once backfill completes, you'll have:
 
 ---
 
-**Deployment**: `./backfill/bdb_play_by_play/deploy_bdb_play_by_play_backfill.sh`  
-**Monitoring**: `./bin/backfill/bdb_play_by_play_monitor.sh`  
-**Pattern**: Follows established backfill conventions (matches `bp_props`, `nbac_gamebook`)  
+**Deployment**: `./backfill/bdb_play_by_play/deploy_bdb_play_by_play_backfill.sh`
+**Monitoring**: `./bin/backfill/bdb_play_by_play_monitor.sh`
+**Pattern**: Follows established backfill conventions (matches `bp_props`, `nbac_gamebook`)
 **Completion Target**: Complete 2024-25 enhanced play-by-play dataset

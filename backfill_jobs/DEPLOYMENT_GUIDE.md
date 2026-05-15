@@ -1,6 +1,6 @@
 # Deploying Backfill Jobs to Cloud Run
 
-**Last Updated:** January 2025  
+**Last Updated:** January 2025
 **Maintained By:** NBA Props Platform Team
 
 ---
@@ -449,8 +449,8 @@ gcloud run jobs execute bdl-injuries-processor-backfill \
 
 # Validate results in BigQuery
 bq query --use_legacy_sql=false \
-  'SELECT COUNT(*) as total_records, 
-          MIN(report_date) as earliest, 
+  'SELECT COUNT(*) as total_records,
+          MIN(report_date) as earliest,
           MAX(report_date) as latest
    FROM `nba-props-platform.nba_raw.bdl_injuries`'
 ```
@@ -772,5 +772,5 @@ gcloud run jobs delete <job-name> --region=us-west2
 
 ---
 
-**Last Updated:** January 2025  
+**Last Updated:** January 2025
 **Next Review:** Quarterly or when deployment process changes

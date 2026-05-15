@@ -67,7 +67,7 @@ logger = logging.getLogger(__name__)
 class BdlBoxscoresBackfill:
     """
     BDL Box Scores Backfill with Smart Resume Logic.
-    
+
     Features:
     - Checks BigQuery for already-processed files
     - Batches BigQuery checks for performance
@@ -75,16 +75,16 @@ class BdlBoxscoresBackfill:
     - Comprehensive error tracking
     - Notification integration
     """
-    
+
     def __init__(self, bucket_name: str = 'nba-scraped-data'):
         self.bucket_name = bucket_name
         self.storage_client = storage.Client()
         self.bq_client = bigquery.Client()
         self.processor = BdlBoxscoresProcessor()
-        
+
         # GCS path pattern: ball-dont-lie/boxscores/{date}/{timestamp}.json
         self.base_path = "ball-dont-lie/boxscores"
-        
+
         # Tracking
         self.total_files = 0
         self.successful = 0
@@ -92,85 +92,85 @@ class BdlBoxscoresBackfill:
         self.errors = 0
         self.error_details = []
         self.streaming_conflicts = 0
-        
+
     @retry.Retry()
     def list_files(self, start_date: date, end_date: date) -> List[str]:
         """List all box score files in the specified date range."""
         bucket = self.storage_client.bucket(self.bucket_name)
         all_files = []
-        
+
         current_date = start_date
         while current_date <= end_date:
             date_str = current_date.strftime('%Y-%m-%d')
             prefix = f"{self.base_path}/{date_str}/"
-            
+
             logger.info(f"Scanning {prefix}")
-            
+
             try:
                 blobs = bucket.list_blobs(prefix=prefix)
                 date_files = []
-                
+
                 for blob in blobs:
                     if blob.name.endswith('.json'):
                         file_path = f"gs://{self.bucket_name}/{blob.name}"
                         date_files.append(file_path)
-                
+
                 if date_files:
                     logger.info(f"Found {len(date_files)} files for {date_str}")
                     all_files.extend(date_files)
                 else:
                     logger.info(f"No files found for {date_str}")
-                    
+
             except Exception as e:
                 logger.warning(f"Error scanning {prefix}: {e}")
-            
+
             current_date += timedelta(days=1)
-        
+
         logger.info(f"Total files found: {len(all_files)}")
         return sorted(all_files)
-    
+
     def list_files_for_dates(self, dates: List[str]) -> List[str]:
         """🆕 List files for specific dates only."""
         bucket = self.storage_client.bucket(self.bucket_name)
         all_files = []
-        
+
         for date_str in dates:
             prefix = f"{self.base_path}/{date_str}/"
-            
+
             logger.info(f"Scanning {prefix}")
-            
+
             try:
                 blobs = bucket.list_blobs(prefix=prefix)
                 date_files = []
-                
+
                 for blob in blobs:
                     if blob.name.endswith('.json'):
                         file_path = f"gs://{self.bucket_name}/{blob.name}"
                         date_files.append(file_path)
-                
+
                 if date_files:
                     logger.info(f"Found {len(date_files)} files for {date_str}")
                     all_files.extend(date_files)
                 else:
                     logger.warning(f"No files found for {date_str}")
-                    
+
             except Exception as e:
                 logger.error(f"Error scanning {prefix}: {e}")
-        
+
         logger.info(f"Total files found for {len(dates)} dates: {len(all_files)}")
         return sorted(all_files)
-    
+
     def batch_check_processed_files(self, file_paths: List[str]) -> Set[str]:
         """
         🆕 Check which files were already processed (batch query for performance).
-        
+
         Returns set of file paths that exist in source_file_path column.
         """
         if not file_paths:
             return set()
-        
+
         logger.info(f"Checking BigQuery for {len(file_paths)} files (batch query)...")
-        
+
         try:
             # Extract unique game dates from file paths for partition filter
             # File path format: gs://bucket/ball-dont-lie/boxscores/2023-11-03/timestamp.json
@@ -179,19 +179,19 @@ class BdlBoxscoresBackfill:
                 parts = path.split('/')
                 if len(parts) >= 6:
                     game_dates.add(parts[-2])  # Extract date from path
-            
+
             if not game_dates:
                 logger.warning("Could not extract game dates from file paths")
                 return set()
-            
+
             # Create partition filter for game_date
             dates_string = ", ".join(f"'{d}'" for d in game_dates)
-            
+
             # Create comma-separated list of file paths for IN clause
             # Escape single quotes and format for SQL
             formatted_paths = ["'" + path.replace("'", "\\'") + "'" for path in file_paths]
             paths_string = ", ".join(formatted_paths)
-            
+
             # ✅ FIXED: Added game_date partition filter
             query = f"""
             SELECT DISTINCT source_file_path
@@ -199,17 +199,17 @@ class BdlBoxscoresBackfill:
             WHERE game_date IN ({dates_string})
               AND source_file_path IN ({paths_string})
             """
-            
+
             results = self.bq_client.query(query).result(timeout=300)
             processed_files = {row.source_file_path for row in results}
-            
+
             logger.info(f"Found {len(processed_files)} files already processed in BigQuery")
             return processed_files
-            
+
         except Exception as e:
             logger.warning(f"Error checking processed files (will reprocess all): {e}")
             return set()
-    
+
     def get_file_info(self, file_path: str) -> Dict:
         """Extract information from file path for logging."""
         # Extract date and timestamp from path
@@ -224,25 +224,25 @@ class BdlBoxscoresBackfill:
                 'full_path': file_path
             }
         return {'date': 'unknown', 'filename': 'unknown', 'full_path': file_path}
-    
+
     @retry.Retry()
     def download_and_process_file(self, file_path: str) -> Dict:
         """Download and process a single file."""
         file_info = self.get_file_info(file_path)
         logger.info(f"Processing {file_info['date']}: {file_info['filename']}")
-        
+
         try:
             # Download file content
             bucket_name = file_path.split('/')[2]
             blob_path = '/'.join(file_path.split('/')[3:])
-            
+
             bucket = self.storage_client.bucket(bucket_name)
             blob = bucket.blob(blob_path)
-            
+
             if not blob.exists():
                 logger.warning(f"File does not exist: {file_path}")
                 return {'status': 'skipped', 'reason': 'file_not_found', 'file': file_path}
-            
+
             # Download and parse JSON
             content = blob.download_as_text()
             data = json.loads(content)
@@ -270,7 +270,7 @@ class BdlBoxscoresBackfill:
             # Load to BigQuery (uses batch loading, reads from self.transformed_data)
             self.processor.save_data()
             result = {'rows_processed': len(rows), 'errors': [], 'streaming_conflicts': []}
-            
+
             # Check for streaming buffer conflicts (from database lessons doc)
             if result.get('streaming_conflicts'):
                 logger.warning(f"Streaming buffer conflicts for {file_path}: {result['streaming_conflicts']}")
@@ -281,7 +281,7 @@ class BdlBoxscoresBackfill:
                     'file': file_path,
                     'conflicts': result['streaming_conflicts']
                 }
-            
+
             if result['errors']:
                 logger.error(f"Load errors for {file_path}: {result['errors']}")
                 return {
@@ -298,20 +298,20 @@ class BdlBoxscoresBackfill:
                     'file': file_path,
                     'rows_processed': result['rows_processed']
                 }
-                
+
         except json.JSONDecodeError as e:
             logger.error(f"JSON parse error in {file_path}: {e}")
             return {'status': 'error', 'reason': 'json_error', 'error': str(e), 'file': file_path}
         except Exception as e:
             logger.error(f"Unexpected error processing {file_path}: {e}")
             return {'status': 'error', 'reason': 'unexpected_error', 'error': str(e), 'file': file_path}
-    
-    def run_backfill(self, start_date: date = None, end_date: date = None, 
-                     dry_run: bool = False, limit: int = None, 
+
+    def run_backfill(self, start_date: date = None, end_date: date = None,
+                     dry_run: bool = False, limit: int = None,
                      specific_dates: List[str] = None):
         """
         Run the backfill process.
-        
+
         🆕 Enhanced with:
         - Smart resume logic (checks BigQuery)
         - Specific dates support
@@ -319,25 +319,25 @@ class BdlBoxscoresBackfill:
         - Comprehensive error tracking
         """
         start_time = datetime.now()
-        
+
         if specific_dates:
             logger.info(f"Starting BDL Box Scores backfill for {len(specific_dates)} specific dates")
             logger.info(f"Dates: {specific_dates}")
         else:
             logger.info(f"Starting BDL Box Scores backfill: {start_date} to {end_date}")
-        
+
         logger.info(f"Dry run: {dry_run}, Limit: {limit}")
-        
+
         try:
             # List all files
             if specific_dates:
                 files = self.list_files_for_dates(specific_dates)
             else:
                 files = self.list_files(start_date, end_date)
-            
+
             if not files:
                 logger.warning("No files found in the specified date range/dates")
-                
+
                 # Notify about no files
                 try:
                     notify_warning(
@@ -353,23 +353,23 @@ class BdlBoxscoresBackfill:
                     )
                 except Exception as e:
                     logger.warning(f"Failed to send notification: {e}")
-                
+
                 return
-            
+
             self.total_files = len(files)
-            
+
             # Apply limit if specified
             if limit:
                 files = files[:limit]
                 logger.info(f"Limited to first {limit} files")
-            
+
             # 🆕 NEW: Smart resume logic - batch check which files already processed
             already_processed = set()
             if not dry_run:
                 already_processed = self.batch_check_processed_files(files)
                 if already_processed:
                     logger.info(f"Resume: {len(already_processed)} files already in BigQuery (will skip)")
-            
+
             if dry_run:
                 logger.info(f"DRY RUN - Would process {len(files)} files:")
                 for file_path in files[:10]:  # Show first 10 files
@@ -378,26 +378,26 @@ class BdlBoxscoresBackfill:
                     logger.info(f"  [{status}] {file_info['date']}: {file_info['filename']}")
                 if len(files) > 10:
                     logger.info(f"  ... and {len(files) - 10} more files")
-                
+
                 skip_count = len([f for f in files if f in already_processed])
                 process_count = len(files) - skip_count
                 logger.info(f"Summary: {process_count} to process, {skip_count} to skip")
                 return
-            
+
             # Process files
             total_rows_processed = 0
-            
+
             for i, file_path in enumerate(files, 1):
                 logger.info(f"Processing file {i}/{len(files)}")
-                
+
                 # 🆕 NEW: Skip if already processed
                 if file_path in already_processed:
                     self.skipped += 1
                     logger.info(f"⏭️  Skipping {file_path} (already in BigQuery)")
                     continue
-                
+
                 result = self.download_and_process_file(file_path)
-                
+
                 if result['status'] == 'success':
                     self.successful += 1
                     total_rows_processed += result['rows_processed']
@@ -408,19 +408,19 @@ class BdlBoxscoresBackfill:
                 elif result['status'] == 'error':
                     self.errors += 1
                     self.error_details.append(result)
-                
+
                 # Log progress every 10 files
                 if i % 10 == 0:
                     logger.info(f"Progress: {i}/{len(files)} files processed")
                     logger.info(f"  Success: {self.successful}, Skipped: {self.skipped}, Errors: {self.errors}")
-            
+
             # Final summary and notifications
             self._print_final_summary(start_time, total_rows_processed)
             self._send_completion_notification(start_time, total_rows_processed)
-            
+
         except Exception as e:
             logger.error(f"Backfill failed: {e}", exc_info=True)
-            
+
             # Send critical error notification
             try:
                 notify_error(
@@ -436,13 +436,13 @@ class BdlBoxscoresBackfill:
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise
-    
+
     def _print_final_summary(self, start_time: datetime, total_rows: int):
         """Print final job summary."""
         duration = datetime.now() - start_time
-        
+
         logger.info("=== BACKFILL COMPLETE ===")
         logger.info(f"Total files: {self.total_files}")
         logger.info(f"Successful: {self.successful}")
@@ -451,31 +451,31 @@ class BdlBoxscoresBackfill:
         logger.info(f"Streaming conflicts: {self.streaming_conflicts}")
         logger.info(f"Total rows processed: {total_rows}")
         logger.info(f"Duration: {duration}")
-        
+
         if self.total_files > 0:
             success_rate = (self.successful / self.total_files) * 100
             logger.info(f"Success rate: {success_rate:.1f}%")
-        
+
         if self.error_details:
             logger.error("Error details:")
             for error in self.error_details[:5]:  # Show first 5 errors
                 logger.error(f"  {error['file']}: {error.get('reason', 'unknown error')}")
-        
+
         if self.streaming_conflicts > 0:
             logger.warning(f"Note: {self.streaming_conflicts} streaming buffer conflicts detected")
             logger.warning("These records will be processed on next run (90 min buffer clear)")
-        
+
         logger.info("🎯 Next steps:")
         logger.info("   - Run validation: ./scripts/validate-bdl-boxscores completeness")
         logger.info("   - Check for missing: ./scripts/validate-bdl-boxscores missing")
-    
+
     def _send_completion_notification(self, start_time: datetime, total_rows: int):
         """Send completion notification with appropriate severity."""
         duration = datetime.now() - start_time
-        
+
         skip_rate = (self.skipped / self.total_files * 100) if self.total_files > 0 else 0
         error_rate = (self.errors / self.total_files * 100) if self.total_files > 0 else 0
-        
+
         details = {
             'total_files': self.total_files,
             'successful': self.successful,
@@ -486,7 +486,7 @@ class BdlBoxscoresBackfill:
             'error_rate': f"{error_rate:.1f}%",
             'duration_seconds': int(duration.total_seconds())
         }
-        
+
         if self.error_details:
             details['error_samples'] = [
                 {
@@ -495,7 +495,7 @@ class BdlBoxscoresBackfill:
                 }
                 for e in self.error_details[:3]
             ]
-        
+
         try:
             # Determine severity and send appropriate notification
             if error_rate > 10:
@@ -542,9 +542,9 @@ def main():
     parser.add_argument('--dry-run', action='store_true', help='List files without processing')
     parser.add_argument('--limit', type=int, help='Limit number of files processed')
     parser.add_argument('--bucket-name', type=str, help='GCS bucket name', default='nba-scraped-data')
-    
+
     args = parser.parse_args()
-    
+
     # Handle specific dates mode
     specific_dates = None
     if args.dates:
@@ -558,13 +558,13 @@ def main():
         except ValueError as e:
             logger.error(f"Invalid date format: {e}")
             return
-        
+
         if start_date > end_date:
             logger.error("Start date must be before or equal to end date")
             return
-    
+
     backfiller = BdlBoxscoresBackfill(bucket_name=args.bucket_name)
-    
+
     if specific_dates:
         backfiller.run_backfill(
             specific_dates=specific_dates,

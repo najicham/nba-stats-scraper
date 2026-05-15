@@ -93,7 +93,7 @@ gcloud beta run jobs executions logs read [execution-id] --region=us-west2
 ### Monitor Processing Runs
 ```sql
 -- Check recent analytics processor runs
-SELECT 
+SELECT
   processor_name,
   run_date,
   success,
@@ -109,7 +109,7 @@ ORDER BY run_date DESC;
 ### Check Data Quality Issues
 ```sql
 -- View unresolved data quality issues
-SELECT 
+SELECT
   processor_name,
   issue_type,
   severity,
@@ -171,7 +171,7 @@ All quality issues are logged to `nba_processing.analytics_data_issues` for anal
 
 Expected processing times:
 - **Single day**: 30-60 seconds
-- **One week**: 2-5 minutes  
+- **One week**: 2-5 minutes
 - **Full season**: 30-60 minutes
 - **Multi-season backfill**: 2-4 hours
 

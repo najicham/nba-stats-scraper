@@ -10,7 +10,7 @@ BASE_DIR="/Users/naji/Documents/BigDataBall"
 ORGANIZED_DIR="${BASE_DIR}/organized"
 ZIP_FILES=(
     "${BASE_DIR}/2021-2022_NBA_PbP_Logs.zip"
-    "${BASE_DIR}/2022-2023_NBA_PbP_Logs.zip" 
+    "${BASE_DIR}/2022-2023_NBA_PbP_Logs.zip"
     "${BASE_DIR}/2023-2024_NBA_PbP_Logs.zip"
 )
 
@@ -37,13 +37,13 @@ mkdir -p "${ORGANIZED_DIR}"
 # Function to extract game info from filename
 extract_game_info() {
     local filename="$1"
-    
+
     # Extract date: [2021-10-19]-0022100001-BKN@MIL.csv
     local date=$(echo "$filename" | grep -o '\[.*\]' | tr -d '[]')
-    
+
     # Extract game_id: 0022100001
     local game_id=$(echo "$filename" | grep -o '00[0-9]\{8\}')
-    
+
     echo "${date}|${game_id}"
 }
 
@@ -52,52 +52,52 @@ organize_zip() {
     local zip_file="$1"
     local season_name="$2"
     local season_dir="$3"
-    
+
     echo ""
     echo "📦 Processing: $(basename "$zip_file")"
     echo "   Season: $season_name → $season_dir"
-    
+
     # Create temporary extraction directory
     temp_dir="${BASE_DIR}/temp_${season_name}"
     mkdir -p "$temp_dir"
-    
+
     # Extract zip file
     echo "   Extracting zip file..."
     unzip -q "$zip_file" -d "$temp_dir"
-    
+
     # Find CSV files (they might be in subdirectories)
     csv_files=$(find "$temp_dir" -name "*.csv" -type f)
     file_count=0
     processed_count=0
-    
+
     echo "   Found CSV files, organizing..."
-    
+
     while IFS= read -r csv_file; do
         if [[ -n "$csv_file" ]]; then
             file_count=$((file_count + 1))
-            
+
             filename=$(basename "$csv_file")
-            
+
             # Skip combined stats files
             if [[ "$filename" == *"combined-stats"* ]]; then
                 echo "   Skipping season summary: $filename"
                 continue
             fi
-            
+
             # Extract game info
             game_info=$(extract_game_info "$filename")
             date=$(echo "$game_info" | cut -d'|' -f1)
             game_id=$(echo "$game_info" | cut -d'|' -f2)
-            
+
             if [[ -n "$date" && -n "$game_id" ]]; then
                 # Create target directory structure
                 target_dir="${ORGANIZED_DIR}/${season_dir}/${date}/game_${game_id}"
                 mkdir -p "$target_dir"
-                
+
                 # Copy file to target location
                 cp "$csv_file" "$target_dir/"
                 processed_count=$((processed_count + 1))
-                
+
                 if [[ $((processed_count % 50)) -eq 0 ]]; then
                     echo "   Processed $processed_count files..."
                 fi
@@ -106,9 +106,9 @@ organize_zip() {
             fi
         fi
     done <<< "$csv_files"
-    
+
     echo "   ✅ Organized $processed_count of $file_count files"
-    
+
     # Clean up temporary directory
     rm -rf "$temp_dir"
 }
@@ -121,7 +121,7 @@ for zip_file in "${ZIP_FILES[@]}"; do
         zip_basename=$(basename "$zip_file" .zip)
         season_name=$(echo "$zip_basename" | sed 's/_NBA_PbP_Logs//')
         season_dir=$(map_season_name "$season_name")
-        
+
         if [[ -n "$season_dir" ]]; then
             organize_zip "$zip_file" "$season_name" "$season_dir"
         else

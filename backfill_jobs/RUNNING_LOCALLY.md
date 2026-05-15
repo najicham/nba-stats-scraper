@@ -330,7 +330,7 @@ After running locally, verify the results:
 ```bash
 # Check BigQuery for new rows
 bq query --use_legacy_sql=false \
-  'SELECT COUNT(*) FROM `nba-props-platform.nba_raw.bdl_injuries` 
+  'SELECT COUNT(*) FROM `nba-props-platform.nba_raw.bdl_injuries`
    WHERE DATE(created_at) = CURRENT_DATE()'
 
 # Check GCS for output files
@@ -493,6 +493,5 @@ find backfill_jobs/analytics -name "*_backfill.py" -type f
 
 ---
 
-**Last Updated:** October 2025  
+**Last Updated:** October 2025
 **Maintained By:** NBA Props Platform Team
-

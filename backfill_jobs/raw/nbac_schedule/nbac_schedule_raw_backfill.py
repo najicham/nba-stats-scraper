@@ -4,7 +4,7 @@
 #
 # Usage Examples:
 # =============
-# 
+#
 # 1. Deploy Job:
 #    ./bin/deployment/deploy_processor_backfill_job.sh nbac_schedule
 #
@@ -43,36 +43,36 @@ class NbacScheduleBackfill:
         self.storage_client = storage.Client()
         self.processor = NbacScheduleProcessor()
         self.base_path = 'nba-com/schedule'
-        
+
         # Known season formats with enhanced data (September 18, 2025+)
         self.known_seasons = [
             '2021-22',
-            '2022-23', 
+            '2022-23',
             '2023-24',
             '2024-25',
             '2025-26'  # Future season data available
         ]
-        
+
     def list_files_by_season(self, target_season: str = None, limit: int = None) -> List[str]:
         """List enhanced schedule files by season with latest file selection."""
         bucket = self.storage_client.bucket(self.bucket_name)
         all_files = []
-        
+
         seasons_to_process = [target_season] if target_season else self.known_seasons
-        
+
         for season in seasons_to_process:
             logging.info(f"Looking for enhanced schedule data for season: {season}")
             prefix = f"{self.base_path}/{season}/"
-            
+
             try:
                 blobs = bucket.list_blobs(prefix=prefix)
-                
+
                 season_files = []
                 for blob in blobs:
                     if blob.name.endswith('.json'):
                         file_path = f"gs://{self.bucket_name}/{blob.name}"
                         season_files.append((blob.time_created, file_path))
-                
+
                 # Sort by creation time and take latest file for season
                 # Latest files (Sept 18, 2025+) contain 15 enhanced analytical fields
                 if season_files:
@@ -82,25 +82,25 @@ class NbacScheduleBackfill:
                     logging.info(f"Found {len(season_files)} files for {season}, using latest: {latest_file}")
                 else:
                     logging.warning(f"No files found for season {season}")
-                    
+
             except Exception as e:
                 logging.warning(f"Error listing files for season {season}: {e}")
                 continue
-            
+
             # Apply limit if specified
             if limit and len(all_files) >= limit:
                 all_files = all_files[:limit]
                 logging.info(f"Limiting to {limit} files")
                 break
-        
+
         logging.info(f"Total enhanced schedule files to process: {len(all_files)}")
         return all_files
-    
+
     def process_file(self, file_path: str) -> Dict:
         """Process a single file using the processor."""
         try:
             result = self.processor.process_file(file_path)
-            
+
             status = result.get('status', 'unknown')
             if status == 'success':
                 rows = result.get('rows_processed', 0)
@@ -119,34 +119,34 @@ class NbacScheduleBackfill:
                 error_msg = result.get('error', 'Unknown error')
                 logging.error(f"✗ Failed: {error_msg}")
                 return {'file_path': file_path, 'status': 'error', 'error': error_msg}
-            
+
         except Exception as e:
             error_msg = str(e)
             logging.error(f"✗ Exception: {error_msg}")
             return {'file_path': file_path, 'status': 'exception', 'error': error_msg}
-    
+
     def run_backfill(self, season: str = None, dry_run: bool = False, limit: int = None):
         """Run the backfill process."""
         if season:
             logging.info(f"Starting backfill for season: {season}")
         else:
             logging.info(f"Starting backfill for all seasons: {', '.join(self.known_seasons)}")
-        
+
         if dry_run:
             logging.info("DRY RUN MODE - no data will be processed")
-        
+
         files = self.list_files_by_season(season, limit)
-        
+
         if not files:
             logging.warning("No files found to process")
             return
-        
+
         if dry_run:
             logging.info(f"DRY RUN: Would process {len(files)} files:")
             for i, file_path in enumerate(files, 1):
                 logging.info(f"  {i:3d}. {file_path}")
             return
-        
+
         # Process files
         results = {
             'success': 0,
@@ -156,17 +156,17 @@ class NbacScheduleBackfill:
             'exception': 0,
             'total_rows': 0
         }
-        
+
         for i, file_path in enumerate(files, 1):
             logging.info(f"Processing {i}/{len(files)}: {file_path}")
-            
+
             result = self.process_file(file_path)
             status = result['status']
             results[status] += 1
-            
+
             if status in ['success', 'partial_success']:
                 results['total_rows'] += result.get('rows', 0)
-        
+
         # Summary
         logging.info("=" * 60)
         logging.info(f"BACKFILL SUMMARY:")
@@ -183,18 +183,18 @@ def main():
     parser.add_argument('--season', type=str, help='Specific season to process (e.g., 2023-24)')
     parser.add_argument('--dry-run', action='store_true', help='List files without processing')
     parser.add_argument('--limit', type=int, help='Limit number of files processed')
-    
+
     args = parser.parse_args()
-    
+
     if args.season and args.season not in ['2021-22', '2022-23', '2023-24', '2024-25']:
         logging.error(f"Invalid season format. Use: 2021-22, 2022-23, 2023-24, or 2024-25")
         return
-    
+
     if args.season:
         logging.info(f"Target season: {args.season}")
     if args.limit:
         logging.info(f"File limit: {args.limit}")
-    
+
     backfiller = NbacScheduleBackfill()
     backfiller.run_backfill(season=args.season, dry_run=args.dry_run, limit=args.limit)
 

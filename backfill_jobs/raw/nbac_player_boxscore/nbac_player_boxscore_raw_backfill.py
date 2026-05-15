@@ -4,7 +4,7 @@
 #
 # Usage Examples:
 # =============
-# 
+#
 # 1. Deploy Job:
 #    ./bin/deployment/deploy_processor_backfill_job.sh nbac_player_boxscore
 #
@@ -56,37 +56,37 @@ class NbacPlayerBoxscoreBackfill:
         self.bucket_name = bucket_name
         self.storage_client = storage.Client()
         self.processor = NbacPlayerBoxscoreProcessor()
-        
+
         # Set up logging
         logging.basicConfig(
             level=logging.INFO,
             format='%(asctime)s - %(levelname)s - %(message)s'
         )
         self.logger = logging.getLogger(__name__)
-    
+
     def get_season_date_range(self, season_year: int) -> tuple:
         """Get date range for NBA season."""
         # NBA seasons run from October to June of following year
         start_date = date(season_year, 10, 1)
         end_date = date(season_year + 1, 6, 30)
         return start_date, end_date
-    
+
     def list_files(self, start_date: date, end_date: date, limit: int = None) -> List[str]:
         """List NBA.com player boxscore files in date range."""
         bucket = self.storage_client.bucket(self.bucket_name)
         all_files = []
-        
+
         self.logger.info(f"Searching for files from {start_date} to {end_date}")
-        
+
         current_date = start_date
         while current_date <= end_date:
             # NBA.com player boxscore path: /nba-com/player-boxscores/{date}/{timestamp}.json
             prefix = f"nba-com/player-boxscores/{current_date.strftime('%Y-%m-%d')}/"
-            
+
             try:
                 blobs = bucket.list_blobs(prefix=prefix)
                 daily_files = []
-                
+
                 for blob in blobs:
                     if blob.name.endswith('.json'):
                         file_path = f"gs://{self.bucket_name}/{blob.name}"
@@ -95,72 +95,72 @@ class NbacPlayerBoxscoreBackfill:
                             'date': current_date,
                             'timestamp': blob.time_created
                         })
-                
+
                 # Sort by timestamp and take latest file for each date
                 if daily_files:
                     daily_files.sort(key=lambda x: x['timestamp'], reverse=True)
                     latest_file = daily_files[0]
                     all_files.append(latest_file['path'])
                     self.logger.debug(f"Found {len(daily_files)} files for {current_date}, using latest: {latest_file['path']}")
-                
+
             except Exception as e:
                 self.logger.warning(f"Error listing files for {current_date}: {str(e)}")
-            
+
             current_date += timedelta(days=1)
-            
+
             # Apply limit if specified
             if limit and len(all_files) >= limit:
                 all_files = all_files[:limit]
                 break
-        
+
         self.logger.info(f"Found {len(all_files)} files to process")
         return all_files
-    
+
     def process_file(self, file_path: str) -> Dict:
         """Process a single file."""
         try:
             self.logger.info(f"Processing: {file_path}")
-            
+
             # Download and read the file
             bucket_name = file_path.split('/')[2]
             blob_path = '/'.join(file_path.split('/')[3:])
-            
+
             bucket = self.storage_client.bucket(bucket_name)
             blob = bucket.blob(blob_path)
-            
+
             if not blob.exists():
                 return {'status': 'error', 'message': f'File not found: {file_path}'}
-            
+
             # Read JSON content
             json_content = blob.download_as_text()
             raw_data = json.loads(json_content)
-            
+
             # Transform the data
             rows = self.processor.transform_data(raw_data, file_path)
-            
+
             if not rows:
                 return {'status': 'skipped', 'message': 'No data to process'}
-            
+
             # Load to BigQuery
             result = self.processor.load_data(rows)
-            
+
             return {
                 'status': 'success',
                 'rows_processed': result.get('rows_processed', 0),
                 'game_id': result.get('game_id'),
                 'errors': result.get('errors', [])
             }
-            
+
         except Exception as e:
             error_msg = f"Error processing {file_path}: {str(e)}"
             self.logger.error(error_msg)
             return {'status': 'error', 'message': error_msg}
-    
+
     def run_backfill(
-        self, 
-        start_date: date, 
-        end_date: date, 
-        dry_run: bool = False, 
+        self,
+        start_date: date,
+        end_date: date,
+        dry_run: bool = False,
         limit: int = None,
         seasons: List[int] = None
     ):
@@ -176,7 +176,7 @@ class NbacPlayerBoxscoreBackfill:
         else:
             # Process date range
             all_files = self.list_files(start_date, end_date, limit)
-        
+
         if dry_run:
             self.logger.info(f"DRY RUN: Would process {len(all_files)} files")
             for i, file_path in enumerate(all_files[:10]):  # Show first 10
@@ -184,19 +184,19 @@ class NbacPlayerBoxscoreBackfill:
             if len(all_files) > 10:
                 self.logger.info(f"  ... and {len(all_files) - 10} more files")
             return
-        
+
         # Process files
         total_files = len(all_files)
         processed = 0
         errors = 0
         total_rows = 0
-        
+
         self.logger.info(f"Starting to process {total_files} files")
-        
+
         for i, file_path in enumerate(all_files, 1):
             try:
                 result = self.process_file(file_path)
-                
+
                 if result['status'] == 'success':
                     processed += 1
                     total_rows += result.get('rows_processed', 0)
@@ -206,15 +206,15 @@ class NbacPlayerBoxscoreBackfill:
                 else:
                     errors += 1
                     self.logger.error(f"[{i}/{total_files}] ERROR: {result['message']}")
-                
+
                 # Log progress every 10 files
                 if i % 10 == 0:
                     self.logger.info(f"Progress: {i}/{total_files} files processed ({processed} success, {errors} errors)")
-                    
+
             except Exception as e:
                 errors += 1
                 self.logger.error(f"[{i}/{total_files}] EXCEPTION: {str(e)}")
-        
+
         # Final summary
         self.logger.info("="*50)
         self.logger.info("BACKFILL COMPLETE")
@@ -236,9 +236,9 @@ def main():
     parser.add_argument('--seasons', type=str, help='Multiple seasons comma-separated (e.g., 2021,2022,2023)')
     parser.add_argument('--dry-run', action='store_true', help='List files without processing')
     parser.add_argument('--limit', type=int, help='Limit number of files processed')
-    
+
     args = parser.parse_args()
-    
+
     # Determine date range
     if args.seasons:
         # Multiple seasons
@@ -255,7 +255,7 @@ def main():
         start_date = datetime.strptime(args.start_date, '%Y-%m-%d').date() if args.start_date else date(2021, 10, 1)
         end_date = datetime.strptime(args.end_date, '%Y-%m-%d').date() if args.end_date else date.today()
         seasons = None
-    
+
     # Run backfill
     backfiller = NbacPlayerBoxscoreBackfill()
     backfiller.run_backfill(

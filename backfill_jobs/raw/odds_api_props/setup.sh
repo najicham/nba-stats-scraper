@@ -77,16 +77,16 @@ else
     gcloud iam service-accounts create odds-api-props-backfill \
         --display-name="Odds API Props Backfill Service Account" \
         --project=$PROJECT_ID
-    
+
     # Grant necessary permissions
     gcloud projects add-iam-policy-binding $PROJECT_ID \
         --member="serviceAccount:$SERVICE_ACCOUNT" \
         --role="roles/bigquery.dataEditor"
-    
+
     gcloud projects add-iam-policy-binding $PROJECT_ID \
         --member="serviceAccount:$SERVICE_ACCOUNT" \
         --role="roles/storage.objectViewer"
-    
+
     echo "✓ Service account created and configured"
 fi
 

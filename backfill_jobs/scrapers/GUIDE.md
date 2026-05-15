@@ -1,6 +1,6 @@
 # Creating Scraper Backfill Jobs
 
-**Last Updated:** January 2025  
+**Last Updated:** January 2025
 **Maintained By:** NBA Props Platform Team
 
 ---
@@ -28,10 +28,10 @@ Scraper backfill jobs fetch raw data from external APIs and websites, saving it 
 
 Create a scraper backfill when:
 
-✅ **Historical data collection needed** - A scraper exists but historical data needs to be collected  
-✅ **New data source backfill** - A new scraper was created and needs to collect past data  
-✅ **Data gaps need filling** - Missing dates need to be scraped  
-✅ **Reprocessing required** - Original scrapes were incomplete or had issues  
+✅ **Historical data collection needed** - A scraper exists but historical data needs to be collected
+✅ **New data source backfill** - A new scraper was created and needs to collect past data
+✅ **Data gaps need filling** - Missing dates need to be scraped
+✅ **Reprocessing required** - Original scrapes were incomplete or had issues
 
 ---
 
@@ -142,51 +142,51 @@ logger = logging.getLogger(__name__)
 
 class MyScraperBackfill:
     """Backfill job for [data source]."""
-    
+
     def __init__(self, scraper_service_url: str, seasons: List[int] = None,
                  bucket_name: str = "nba-scraped-data"):
         self.scraper_service_url = scraper_service_url.rstrip('/')
         self.seasons = seasons or [2021, 2022, 2023, 2024]
         self.bucket_name = bucket_name
-        
+
         # Initialize GCS client for resume logic
         self.storage_client = storage.Client()
         self.bucket = self.storage_client.bucket(bucket_name)
-        
+
         # Job tracking
         self.total_items = 0
         self.processed_items = 0
         self.failed_items = []
         self.skipped_items = []
-        
+
         # Rate limiting - adjust based on API limits
         self.RATE_LIMIT_DELAY = 1.0  # seconds between requests
-        
+
         logger.info("🏀 My Scraper Backfill initialized")
         logger.info("Scraper service: %s", self.scraper_service_url)
         logger.info("Seasons: %s", self.seasons)
-    
+
     def run(self, dry_run: bool = False):
         """Execute the backfill job."""
         start_time = datetime.now()
-        
+
         logger.info("🏀 Starting backfill...")
         if dry_run:
             logger.info("🔍 DRY RUN MODE - No scraping will be performed")
-        
+
         try:
             # 1. Collect items to scrape (dates, games, etc.)
             items = self._collect_items()
             self.total_items = len(items)
-            
+
             if not items:
                 logger.warning("No items found to process")
                 return
-            
+
             estimated_minutes = (self.total_items * self.RATE_LIMIT_DELAY) / 60
             logger.info("Total items to process: %d", self.total_items)
             logger.info("Estimated duration: %.1f minutes", estimated_minutes)
-            
+
             if dry_run:
                 logger.info("🔍 DRY RUN - Would process %d items", self.total_items)
                 for i, item in enumerate(items[:10], 1):
@@ -194,7 +194,7 @@ class MyScraperBackfill:
                 if len(items) > 10:
                     logger.info("  ... and %d more", len(items) - 10)
                 return
-            
+
             # 2. Process each item
             for i, item in enumerate(items, 1):
                 try:
@@ -204,22 +204,22 @@ class MyScraperBackfill:
                         logger.info("[%d/%d] ⏭️  Skipping %s (already exists)",
                                   i, self.total_items, item)
                         continue
-                    
+
                     # Scrape via service
                     success = self._scrape_item(item)
-                    
+
                     if success:
                         self.processed_items += 1
                     else:
                         self.failed_items.append(item)
-                    
+
                     # Rate limiting
                     time.sleep(self.RATE_LIMIT_DELAY)
-                    
+
                     # Progress logging
                     if i % 50 == 0:
                         self._log_progress(i, start_time)
-                        
+
                 except KeyboardInterrupt:
                     logger.warning("Job interrupted by user")
                     break
@@ -227,14 +227,14 @@ class MyScraperBackfill:
                     logger.error("Error processing %s: %s", item, e)
                     self.failed_items.append(item)
                     continue
-            
+
             # Final summary
             self._print_summary(start_time)
-            
+
         except Exception as e:
             logger.error("Backfill failed: %s", e, exc_info=True)
             raise
-    
+
     def _collect_items(self) -> List[str]:
         """Collect items to scrape (dates, game IDs, etc.)."""
         # IMPLEMENT: Logic to determine what to scrape
@@ -243,32 +243,32 @@ class MyScraperBackfill:
         # - Game IDs from schedule
         # - Discovery scraper results
         items = []
-        
+
         # Example: Generate date range
         start_date = date(2021, 10, 1)
         end_date = date.today()
         current = start_date
-        
+
         while current <= end_date:
             items.append(current.strftime('%Y-%m-%d'))
             current += timedelta(days=1)
-        
+
         return items
-    
+
     def _item_already_scraped(self, item: str) -> bool:
         """Check if item already exists in GCS."""
         try:
             # IMPLEMENT: Check GCS for existing files
             # Example for date-based:
             prefix = f"my-source/data/{item}/"
-            
+
             blobs = list(self.bucket.list_blobs(prefix=prefix, max_results=1))
             return len(blobs) > 0
-            
+
         except Exception as e:
             logger.debug("Error checking if %s exists: %s", item, e)
             return False
-    
+
     def _scrape_item(self, item: str) -> bool:
         """Scrape a single item via scraper service."""
         try:
@@ -281,33 +281,33 @@ class MyScraperBackfill:
                 },
                 timeout=120
             )
-            
+
             if response.status_code == 200:
                 logger.info("✅ Scraped %s", item)
                 return True
             else:
                 logger.warning("❌ Failed %s: HTTP %d", item, response.status_code)
                 return False
-                
+
         except Exception as e:
             logger.error("❌ Error scraping %s: %s", item, e)
             return False
-    
+
     def _log_progress(self, current: int, start_time: datetime):
         """Log progress with ETA."""
         elapsed = (datetime.now() - start_time).total_seconds()
         rate = current / elapsed if elapsed > 0 else 0
         remaining = self.total_items - current
         eta_minutes = (remaining / rate / 60) if rate > 0 else 0
-        
+
         progress_pct = (current / self.total_items) * 100
         logger.info("📊 Progress: %.1f%% (%d/%d), ETA: %.1f min",
                    progress_pct, current, self.total_items, eta_minutes)
-    
+
     def _print_summary(self, start_time: datetime):
         """Print final summary."""
         duration = datetime.now() - start_time
-        
+
         logger.info("=" * 60)
         logger.info("🏀 BACKFILL COMPLETE")
         logger.info("=" * 60)
@@ -316,7 +316,7 @@ class MyScraperBackfill:
         logger.info("Skipped: %d", len(self.skipped_items))
         logger.info("Failed: %d", len(self.failed_items))
         logger.info("Duration: %s", duration)
-        
+
         if self.failed_items:
             logger.warning("Failed items: %s", self.failed_items[:10])
 
@@ -329,21 +329,21 @@ def main():
                        help="Comma-separated seasons")
     parser.add_argument("--dry-run", action="store_true",
                        help="Show what would be scraped without scraping")
-    
+
     args = parser.parse_args()
-    
+
     service_url = args.service_url or os.environ.get('SCRAPER_SERVICE_URL')
     if not service_url:
         logger.error("ERROR: --service-url required")
         sys.exit(1)
-    
+
     seasons = [int(s.strip()) for s in args.seasons.split(",")]
-    
+
     job = MyScraperBackfill(
         scraper_service_url=service_url,
         seasons=seasons
     )
-    
+
     job.run(dry_run=args.dry_run)
 
 
@@ -425,17 +425,17 @@ chmod +x backfill_jobs/scrapers/my_scraper/deploy.sh
 def _collect_items(self) -> List[str]:
     """Collect all dates from schedule."""
     all_dates = set()
-    
+
     for season in self.seasons:
         # Read schedule from GCS
         schedule = self._read_schedule_from_gcs(season)
-        
+
         # Extract unique game dates
         for game_date_entry in schedule.get('gameDates', []):
             game_date = self._parse_date(game_date_entry)
             if game_date:
                 all_dates.add(game_date.strftime('%Y-%m-%d'))
-    
+
     return sorted(all_dates)
 
 def _scrape_item(self, date_str: str) -> bool:
@@ -449,7 +449,7 @@ def _scrape_item(self, date_str: str) -> bool:
         },
         timeout=120
     )
-    
+
     return response.status_code == 200
 ```
 
@@ -468,14 +468,14 @@ def _scrape_item(self, date_str: str) -> bool:
 ```python
 def _process_date(self, game_date: str, games: List[Dict]) -> bool:
     """Two-step process: events then props."""
-    
+
     # Step 1: Collect events for this date (once)
     events_success = self._collect_events_for_date(game_date)
     if not events_success:
         return False
-    
+
     time.sleep(self.RATE_LIMIT_DELAY)
-    
+
     # Step 2: Collect props for each game (multiple calls)
     props_collected = 0
     for game in games:
@@ -483,7 +483,7 @@ def _process_date(self, game_date: str, games: List[Dict]) -> bool:
         if props_success:
             props_collected += 1
         time.sleep(self.RATE_LIMIT_DELAY)
-    
+
     return props_collected > 0
 
 def _collect_events_for_date(self, game_date: str) -> bool:
@@ -504,7 +504,7 @@ def _collect_events_for_date(self, game_date: str) -> bool:
 def _collect_props_for_game(self, game: Dict, game_date: str) -> bool:
     """Second step: get props for specific game."""
     event_id = self._extract_event_id(game)
-    
+
     response = requests.post(
         f"{self.scraper_service_url}/scrape",
         json={
@@ -536,10 +536,10 @@ def _discover_season_games(self) -> List[Dict]:
     """Use discovery scraper to find available games."""
     all_games = []
     current_date = self.start_date
-    
+
     while current_date <= self.end_date:
         date_str = current_date.strftime('%Y-%m-%d')
-        
+
         # Call discovery scraper
         discovery_response = requests.post(
             f"{self.scraper_service_url}/scrape",
@@ -549,15 +549,15 @@ def _discover_season_games(self) -> List[Dict]:
             },
             timeout=30
         )
-        
+
         if discovery_response.status_code == 200:
             data = discovery_response.json()
             date_games = self._extract_games_from_response(data, date_str)
             all_games.extend(date_games)
-        
+
         current_date += timedelta(days=1)
         time.sleep(0.5)  # Light rate limiting for discovery
-    
+
     return all_games
 
 def _download_single_game(self, game: Dict) -> bool:
@@ -590,26 +590,26 @@ def _download_single_game(self, game: Dict) -> bool:
 def _collect_all_games(self) -> List[str]:
     """Collect games with extensive filtering."""
     all_game_codes = []
-    
+
     for season in self.seasons:
         schedule = self._read_schedule_from_gcs(season)
         games = self._extract_games_with_filtering(schedule)
-        
+
         # Apply complex filters
         valid_games = []
         for game in games:
             if not self._is_valid_game(game):
                 continue
-            
+
             game_type = self._classify_game_type(game)
             if game_type == "all_star_special":
                 continue  # Skip All-Star events
-            
+
             if game.get('completed'):
                 valid_games.append(game)
-        
+
         all_game_codes.extend([g['game_code'] for g in valid_games])
-    
+
     return all_game_codes
 
 def _is_valid_game(self, game: Dict) -> bool:
@@ -621,11 +621,11 @@ def _is_valid_game(self, game: Dict) -> bool:
         is_playoff = any(ind in game.get('gameLabel', '') for ind in playoff_indicators)
         if not is_playoff:
             return False
-    
+
     # Filter All-Star week
     if game.get('weekName') == "All-Star":
         return False
-    
+
     # Validate teams
     away = game.get('awayTeam', {}).get('teamTricode')
     home = game.get('homeTeam', {}).get('teamTricode')
@@ -654,15 +654,15 @@ def _item_already_scraped(self, item: str) -> bool:
     try:
         # For date-based scraping
         prefix = f"my-source/data/{item}/"
-        
+
         blobs = list(self.bucket.list_blobs(prefix=prefix, max_results=1))
         exists = len(blobs) > 0
-        
+
         if exists:
             logger.debug(f"Skipping {item} - already scraped")
-        
+
         return exists
-        
+
     except Exception as e:
         logger.debug(f"Error checking {item}: {e}")
         return False  # If we can't check, assume not scraped
@@ -679,11 +679,11 @@ def _game_already_scraped(self, game_code: str) -> bool:
     date_part = game_code[:8]  # YYYYMMDD
     year, month, day = date_part[:4], date_part[4:6], date_part[6:8]
     date_formatted = f"{year}-{month}-{day}"
-    
+
     # Check for file
     file_path = f"nba-com/gamebooks/{date_formatted}/{game_code}.pdf"
     blob = self.bucket.blob(file_path)
-    
+
     return blob.exists()
 ```
 
@@ -706,7 +706,7 @@ Respect API rate limits to avoid getting blocked.
 class MyScraperBackfill:
     # Conservative: Slower but safer
     RATE_LIMIT_DELAY = 2.0  # 2 seconds between requests
-    
+
     def run(self):
         for item in items:
             self._scrape_item(item)
@@ -722,7 +722,7 @@ def _scrape_with_adaptive_rate_limit(self, item: str) -> bool:
         start = time.time()
         response = self._scrape_item(item)
         elapsed = time.time() - start
-        
+
         # If response was slow, wait less
         # If response was fast, might be hitting limits
         if elapsed < 0.5:
@@ -731,9 +731,9 @@ def _scrape_with_adaptive_rate_limit(self, item: str) -> bool:
             time.sleep(0.5)  # Slow response, can speed up
         else:
             time.sleep(self.RATE_LIMIT_DELAY)
-        
+
         return response
-        
+
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 429:  # Rate limited
             logger.warning("Rate limited! Backing off...")
@@ -754,7 +754,7 @@ def _scrape_batch_parallel(self, items: List[str], max_workers: int = 4):
             executor.submit(self._scrape_item, item): item
             for item in items
         }
-        
+
         for future in as_completed(futures):
             item = futures[future]
             try:
@@ -765,7 +765,7 @@ def _scrape_batch_parallel(self, items: List[str], max_workers: int = 4):
                     logger.warning(f"❌ {item}")
             except Exception as e:
                 logger.error(f"❌ {item}: {e}")
-            
+
             time.sleep(self.RATE_LIMIT_DELAY / max_workers)  # Shared rate limit
 ```
 
@@ -782,9 +782,9 @@ def _log_progress(self, current: int, start_time: datetime):
     rate = current / elapsed if elapsed > 0 else 0
     remaining = self.total_items - current
     eta_seconds = remaining / rate if rate > 0 else 0
-    
+
     progress_pct = (current / self.total_items) * 100
-    
+
     logger.info(
         f"📊 Progress: {progress_pct:.1f}% ({current}/{self.total_items}), "
         f"ETA: {eta_seconds/60:.1f} min, "
@@ -794,7 +794,7 @@ def _log_progress(self, current: int, start_time: datetime):
 # Use in main loop
 for i, item in enumerate(items, 1):
     self._scrape_item(item)
-    
+
     if i % 50 == 0:  # Log every 50 items
         self._log_progress(i, start_time)
 ```
@@ -805,7 +805,7 @@ for i, item in enumerate(items, 1):
 def _print_summary(self, start_time: datetime):
     """Print comprehensive final summary."""
     duration = datetime.now() - start_time
-    
+
     logger.info("=" * 60)
     logger.info("🏀 BACKFILL COMPLETE")
     logger.info("=" * 60)
@@ -814,17 +814,17 @@ def _print_summary(self, start_time: datetime):
     logger.info(f"Processed: {self.processed_items}")
     logger.info(f"Skipped (resume): {len(self.skipped_items)}")
     logger.info(f"Failed: {len(self.failed_items)}")
-    
+
     if self.total_items > 0:
         success_rate = (self.processed_items / self.total_items) * 100
         logger.info(f"Success rate: {success_rate:.1f}%")
-        
+
         avg_time = duration.total_seconds() / self.total_items
         logger.info(f"Average: {avg_time:.2f}s per item")
-    
+
     if self.failed_items:
         logger.warning(f"Failed items (first 10): {self.failed_items[:10]}")
-    
+
     logger.info("\n🎯 Next steps:")
     logger.info("   - Check GCS: gs://nba-scraped-data/my-source/")
     logger.info("   - Run raw processor backfill")
@@ -1050,13 +1050,13 @@ class SimpleDateBasedBackfill:
     def _collect_items(self):
         """Generate date range from schedule."""
         return self._get_dates_from_schedule()
-    
+
     def _item_already_scraped(self, date_str):
         """Check if date folder exists in GCS."""
         prefix = f"my-source/data/{date_str}/"
         blobs = list(self.bucket.list_blobs(prefix=prefix, max_results=1))
         return len(blobs) > 0
-    
+
     def _scrape_item(self, date_str):
         """Single API call per date."""
         response = requests.post(
@@ -1082,18 +1082,18 @@ class TwoStepBackfill:
         # Step 1: Discovery
         if not self._discover_events(date_str):
             return False
-        
+
         time.sleep(self.RATE_LIMIT_DELAY)
-        
+
         # Step 2: Download each item
         success_count = 0
         for game in games:
             if self._download_game_details(game, date_str):
                 success_count += 1
             time.sleep(self.RATE_LIMIT_DELAY)
-        
+
         return success_count > 0
-    
+
     def _discover_events(self, date_str):
         """First API call: discover what's available."""
         response = requests.post(
@@ -1105,7 +1105,7 @@ class TwoStepBackfill:
             }
         )
         return response.status_code == 200
-    
+
     def _download_game_details(self, game, date_str):
         """Second API call: get detailed data."""
         response = requests.post(
@@ -1166,5 +1166,5 @@ class MyScraperBackfill:
 
 ---
 
-**Last Updated:** January 2025  
+**Last Updated:** January 2025
 **Next Review:** When new scraper patterns emerge

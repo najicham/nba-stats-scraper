@@ -1,6 +1,6 @@
 # Backfill Jobs
 
-**Last Updated:** January 2025  
+**Last Updated:** January 2025
 **Maintained By:** NBA Props Platform Team
 
 ---
@@ -105,8 +105,8 @@ backfill_jobs/
 
 **Purpose:** Fetch raw data from external APIs and websites, save to GCS
 
-**Input:** External APIs (Odds API, Ball Don't Lie, NBA.com, etc.)  
-**Output:** Raw JSON/HTML/PDF files in Google Cloud Storage  
+**Input:** External APIs (Odds API, Ball Don't Lie, NBA.com, etc.)
+**Output:** Raw JSON/HTML/PDF files in Google Cloud Storage
 **Example:** `scrapers/odds_api_props` - Scrape player prop odds from sportsbooks
 
 **Jobs:** 12+ scraper backfill jobs available
@@ -117,8 +117,8 @@ backfill_jobs/
 
 **Purpose:** Read GCS files, parse and normalize, load to BigQuery `nba_raw` tables
 
-**Input:** Raw files from GCS (Phase 1 output)  
-**Output:** Structured data in BigQuery `nba_raw` tables  
+**Input:** Raw files from GCS (Phase 1 output)
+**Output:** Structured data in BigQuery `nba_raw` tables
 **Example:** `raw/bdl_injuries` - Process injury reports into structured format
 
 **Jobs:** 20+ raw processor backfill jobs available
@@ -129,8 +129,8 @@ backfill_jobs/
 
 **Purpose:** Compute derived metrics, contextual data, feature engineering
 
-**Input:** BigQuery `nba_raw` tables (Phase 2 output)  
-**Output:** Enriched analytics in BigQuery `nba_analytics` tables  
+**Input:** BigQuery `nba_raw` tables (Phase 2 output)
+**Output:** Enriched analytics in BigQuery `nba_analytics` tables
 **Example:** `analytics/player_game_summary` - Combine player stats with game context
 
 **Jobs:** 4+ analytics backfill jobs available
@@ -294,23 +294,23 @@ Most backfill jobs support these standard arguments:
 
 ### Before Running Any Backfill
 
-✅ **Test locally first** - Use `./bin/run_backfill.sh` with `--dry-run`  
-✅ **Start small** - Test with `--limit=5` before processing everything  
-✅ **Verify data** - Check that input data exists and output looks correct  
+✅ **Test locally first** - Use `./bin/run_backfill.sh` with `--dry-run`
+✅ **Start small** - Test with `--limit=5` before processing everything
+✅ **Verify data** - Check that input data exists and output looks correct
 ✅ **Check resources** - Ensure job has adequate memory/CPU/timeout configured
 
 ### When Deploying
 
-✅ **Review job-config.env** - Verify resource allocation is appropriate  
-✅ **Test on Cloud Run** - Run with `--dry-run` after deployment  
-✅ **Monitor first runs** - Watch logs during initial executions  
+✅ **Review job-config.env** - Verify resource allocation is appropriate
+✅ **Test on Cloud Run** - Run with `--dry-run` after deployment
+✅ **Monitor first runs** - Watch logs during initial executions
 ✅ **Validate output** - Check BigQuery/GCS after test runs
 
 ### For Production Backfills
 
-✅ **Schedule appropriately** - Run during off-peak hours if processing large volumes  
-✅ **Monitor progress** - Set up alerts or check logs periodically  
-✅ **Document results** - Record what was backfilled and when  
+✅ **Schedule appropriately** - Run during off-peak hours if processing large volumes
+✅ **Monitor progress** - Set up alerts or check logs periodically
+✅ **Document results** - Record what was backfilled and when
 ✅ **Validate completeness** - Check that all expected data was processed
 
 ---
@@ -382,5 +382,5 @@ gcloud run jobs executions list --job=<job-name> --region=us-west2
 
 ---
 
-**Last Updated:** January 2025  
+**Last Updated:** January 2025
 **Next Review:** When new phases are implemented or significant changes made

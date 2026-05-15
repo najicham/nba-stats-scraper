@@ -78,7 +78,7 @@ gcloud run jobs executions logs <execution-name> --region=us-central1 --tail
 
 # Check BigQuery table
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   DATE(game_date) as date,
   COUNT(DISTINCT game_id) as games,
   COUNT(DISTINCT player_name) as players,
@@ -90,7 +90,7 @@ LIMIT 10"
 
 # Check processing status
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   DATE(processing_timestamp) as process_date,
   COUNT(*) as records_loaded,
   COUNT(DISTINCT game_date) as days_processed,
@@ -159,7 +159,7 @@ export SAVE_RESULTS=1        # Save detailed results to file
 ### Verify Line Movement Tracking
 ```sql
 -- Check line movements for a specific game
-SELECT 
+SELECT
   player_name,
   bookmaker,
   points_line,
@@ -176,7 +176,7 @@ ORDER BY snapshot_timestamp;
 ### Check Data Completeness
 ```sql
 -- Games with prop data by month
-SELECT 
+SELECT
   FORMAT_DATE('%Y-%m', game_date) as month,
   COUNT(DISTINCT game_id) as games_with_props,
   COUNT(DISTINCT player_name) as unique_players,

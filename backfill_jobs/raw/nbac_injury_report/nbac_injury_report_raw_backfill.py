@@ -26,26 +26,26 @@ def get_injury_report_files(bucket_name: str, start_date: str, end_date: str) ->
     """Get all injury report files in date range."""
     storage_client = storage.Client()
     bucket = storage_client.bucket(bucket_name)
-    
+
     all_files = []
     start = datetime.strptime(start_date, '%Y-%m-%d')
     end = datetime.strptime(end_date, '%Y-%m-%d')
-    
+
     current = start
     while current <= end:
         date_str = current.strftime('%Y-%m-%d')
         prefix = f'nba-com/injury-report-data/{date_str}/'
-        
+
         # List all hour folders for this date
         blobs = bucket.list_blobs(prefix=prefix)
         json_files = [b for b in blobs if b.name.endswith('.json')]
         all_files.extend(json_files)
-        
+
         if json_files:
             logger.info(f"Found {len(json_files)} reports for {date_str}")
-        
+
         current += timedelta(days=1)
-    
+
     return all_files
 
 def main():
@@ -54,24 +54,24 @@ def main():
     parser.add_argument('--end-date', required=True, help='End date (YYYY-MM-DD)')
     parser.add_argument('--dry-run', action='store_true', help='List files without processing')
     parser.add_argument('--batch-size', type=int, default=100, help='Files to process before logging')
-    
+
     args = parser.parse_args()
-    
+
     processor = NbacInjuryReportProcessor()
     bucket_name = 'nba-scraped-data'
-    
+
     # Get all files in date range
     logger.info(f"Scanning for injury reports from {args.start_date} to {args.end_date}")
     files = get_injury_report_files(bucket_name, args.start_date, args.end_date)
-    
+
     logger.info(f"Found {len(files)} total injury report files")
-    
+
     if args.dry_run:
         # Show sample of files
         logger.info("Sample files (first 10):")
         for blob in files[:10]:
             logger.info(f"  - {blob.name}")
-        
+
         # Show hourly distribution
         hour_counts = {}
         for blob in files:
@@ -80,25 +80,25 @@ def main():
             if len(parts) >= 4:
                 hour = parts[3]
                 hour_counts[hour] = hour_counts.get(hour, 0) + 1
-        
+
         logger.info("\nHourly distribution:")
         for hour in sorted(hour_counts.keys()):
             logger.info(f"  Hour {hour}: {hour_counts[hour]} reports")
-        
+
         return
-    
+
     # Process files
     logger.info(f"Processing {len(files)} files...")
-    
+
     successful = 0
     failed = 0
     total_records = 0
-    
+
     for i, blob in enumerate(files, 1):
         try:
             # Download and parse
             data = json.loads(blob.download_as_text())
-            
+
             # Validate
             errors = processor.validate_data(data)
             if errors:
@@ -128,18 +128,18 @@ def main():
             else:
                 successful += 1
                 total_records += result.get('rows_processed', 0)
-            
+
             # Progress logging
             if i % args.batch_size == 0:
                 logger.info(f"Progress: {i}/{len(files)} files, "
                           f"{successful} successful, {failed} failed, "
                           f"{total_records} total records")
-                
+
         except Exception as e:
             logger.error(f"Failed to process {blob.name}: {e}")
             failed += 1
             continue
-    
+
     # Final summary
     logger.info(f"\nBackfill complete:")
     logger.info(f"  Files processed: {successful + failed}")

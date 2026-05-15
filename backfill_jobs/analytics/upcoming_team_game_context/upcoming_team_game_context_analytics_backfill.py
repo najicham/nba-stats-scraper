@@ -111,10 +111,10 @@ class ThreadSafeCheckpoint:
 
 class UpcomingTeamGameContextBackfill:
     """Backfill job for upcoming team game context analytics."""
-    
+
     def __init__(self):
         self.processor = UpcomingTeamGameContextProcessor()
-        
+
     def run_backfill(self, start_date: date, end_date: date, dry_run: bool = False, no_resume: bool = False) -> Dict:
         """
         Run backfill for date range by iterating through each date.
@@ -423,20 +423,20 @@ def main():
     parser = argparse.ArgumentParser(
         description='Backfill upcoming team game context analytics'
     )
-    
+
     parser.add_argument(
         '--start-date',
         type=str,
         required=True,
         help='Start date (YYYY-MM-DD)'
     )
-    
+
     parser.add_argument(
         '--end-date',
         type=str,
         help='End date (YYYY-MM-DD), defaults to start-date'
     )
-    
+
     parser.add_argument(
         '--dry-run',
         action='store_true',
@@ -463,14 +463,14 @@ def main():
     )
 
     args = parser.parse_args()
-    
+
     # Parse dates
     try:
         start_date = datetime.strptime(args.start_date, '%Y-%m-%d').date()
     except ValueError:
         logger.error(f"Invalid start date format: {args.start_date}. Use YYYY-MM-DD")
         sys.exit(1)
-    
+
     if args.end_date:
         try:
             end_date = datetime.strptime(args.end_date, '%Y-%m-%d').date()
@@ -479,12 +479,12 @@ def main():
             sys.exit(1)
     else:
         end_date = start_date
-    
+
     # Validate date range
     if end_date < start_date:
         logger.error("End date must be >= start date")
         sys.exit(1)
-    
+
     # Run backfill
     backfiller = UpcomingTeamGameContextBackfill()
 
