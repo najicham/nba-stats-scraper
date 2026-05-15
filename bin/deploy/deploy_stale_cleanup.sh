@@ -9,7 +9,7 @@
 #   ./bin/deploy/deploy_stale_cleanup.sh --skip-scheduler
 #
 # Environment Variables:
-#   SLACK_WEBHOOK_URL - Optional, for Slack notifications when records are cleaned
+#   (Slack webhook now sourced from Secret Manager: slack-webhook-url)
 
 set -e  # Exit on error
 
@@ -40,8 +40,9 @@ SCHEDULER_TIMEZONE="America/New_York"
 
 SOURCE_DIR="orchestration/cloud_functions/stale_running_cleanup"
 
-# Slack webhook URL for alerts
-SLACK_WEBHOOK_URL="${SLACK_WEBHOOK_URL:-}"
+# Slack webhook now sourced from Secret Manager (Path A 2026-05-15).
+# The CF SA needs roles/secretmanager.secretAccessor on slack-webhook-url.
+SLACK_SECRET="slack-webhook-url"
 
 # Parse arguments
 SKIP_SCHEDULER=false
@@ -79,7 +80,7 @@ echo "  Function Name:        $FUNCTION_NAME"
 echo "  Region:               $REGION"
 echo "  Scheduler:            $SCHEDULER_SCHEDULE ($SCHEDULER_TIMEZONE)"
 echo "  Stale Threshold:      4 hours"
-echo "  Slack Alerts:         $([ -n "$SLACK_WEBHOOK_URL" ] && echo "Enabled" || echo "Disabled")"
+echo "  Slack Secret:         $SLACK_SECRET"
 echo ""
 
 # Check authentication
@@ -107,14 +108,8 @@ echo -e "${BLUE}Deploying Cloud Function...${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo ""
 
-# Build env vars string
+# Build env vars string (Slack webhook moved to --set-secrets, not env vars).
 ENV_VARS="GCP_PROJECT=$PROJECT_ID"
-if [ -n "$SLACK_WEBHOOK_URL" ]; then
-    ENV_VARS="$ENV_VARS,SLACK_WEBHOOK_URL=$SLACK_WEBHOOK_URL"
-    echo -e "${GREEN}✓ SLACK_WEBHOOK_URL configured${NC}"
-else
-    echo -e "${YELLOW}Note: SLACK_WEBHOOK_URL not set (Slack notifications disabled)${NC}"
-fi
 
 gcloud functions deploy $FUNCTION_NAME \
     --gen2 \
@@ -126,6 +121,8 @@ gcloud functions deploy $FUNCTION_NAME \
     --allow-unauthenticated \
     --service-account=$SERVICE_ACCOUNT \
     --update-env-vars "$ENV_VARS" \
+    --remove-env-vars=SLACK_WEBHOOK_URL \
+    --set-secrets="SLACK_WEBHOOK_URL=${SLACK_SECRET}:latest" \
     --memory $MEMORY \
     --timeout $TIMEOUT \
     --max-instances $MAX_INSTANCES \

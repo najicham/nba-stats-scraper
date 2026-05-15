@@ -47,7 +47,9 @@ gcloud functions deploy $FUNCTION_NAME \
     --timeout=1800 \
     --memory=4Gi \
     --cpu=2 \
-    --update-env-vars GCP_PROJECT_ID=$PROJECT_ID,GCS_BUCKET=$GCS_BUCKET,SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-""} \
+    --update-env-vars GCP_PROJECT_ID=$PROJECT_ID,GCS_BUCKET=$GCS_BUCKET \
+    --remove-env-vars=SLACK_WEBHOOK_URL \
+    --set-secrets="SLACK_WEBHOOK_URL=slack-webhook-url:latest" \
     --project $PROJECT_ID
 
 # Get function URL

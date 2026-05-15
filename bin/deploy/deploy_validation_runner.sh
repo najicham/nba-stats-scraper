@@ -11,8 +11,9 @@
 #   ./bin/deploy/deploy_validation_runner.sh --skip-scheduler
 #
 # Environment Variables:
-#   SLACK_WEBHOOK_URL_ORCHESTRATION_HEALTH - For daily digest summaries
-#   SLACK_WEBHOOK_URL_ERROR - For critical alerts
+#   SLACK_WEBHOOK_URL_ORCHESTRATION_HEALTH - For daily digest summaries (still env var; pending Tier 2 secret creation)
+#   (SLACK_WEBHOOK_URL now sourced from Secret Manager: slack-webhook-url)
+#   (SLACK_WEBHOOK_URL_ERROR for critical alerts — also still env-var; can migrate when standardised)
 
 set -e  # Exit on error
 
@@ -124,10 +125,8 @@ if [ -n "$SLACK_WEBHOOK_URL_ERROR" ]; then
     echo -e "${GREEN}✓ SLACK_WEBHOOK_URL_ERROR configured${NC}"
 fi
 
-if [ -n "$SLACK_WEBHOOK_URL" ]; then
-    ENV_VARS="$ENV_VARS,SLACK_WEBHOOK_URL=$SLACK_WEBHOOK_URL"
-    echo -e "${GREEN}✓ SLACK_WEBHOOK_URL configured (fallback)${NC}"
-fi
+# SLACK_WEBHOOK_URL moved to Secret Manager (Path A 2026-05-15): slack-webhook-url
+# Added below via --set-secrets / --remove-env-vars on the gcloud command.
 
 # Create temp directory for deployment (to resolve symlinks)
 TEMP_DIR=$(mktemp -d)
@@ -166,6 +165,8 @@ gcloud functions deploy $FUNCTION_NAME \
     --allow-unauthenticated \
     --service-account=$SERVICE_ACCOUNT \
     --update-env-vars "$ENV_VARS" \
+    --remove-env-vars=SLACK_WEBHOOK_URL \
+    --set-secrets="SLACK_WEBHOOK_URL=slack-webhook-url:latest" \
     --memory $MEMORY \
     --timeout $TIMEOUT \
     --max-instances $MAX_INSTANCES \

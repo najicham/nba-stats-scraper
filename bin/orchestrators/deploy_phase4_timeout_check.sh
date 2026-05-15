@@ -12,7 +12,7 @@
 #   ./bin/orchestrators/deploy_phase4_timeout_check.sh --skip-scheduler
 #
 # Environment Variables:
-#   SLACK_WEBHOOK_URL - Required for timeout alerts
+#   (Slack webhook now sourced from Secret Manager: slack-webhook-url)
 
 set -e  # Exit on error
 
@@ -45,12 +45,9 @@ SOURCE_DIR="orchestration/cloud_functions/phase4_timeout_check"
 # Prediction coordinator URL
 PREDICTION_COORDINATOR_URL="https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app"
 
-# Slack webhook URL for alerts
-SLACK_WEBHOOK_URL="${SLACK_WEBHOOK_URL:-}"
-if [ -z "$SLACK_WEBHOOK_URL" ]; then
-    echo -e "${YELLOW}Warning: SLACK_WEBHOOK_URL not set. Staleness alerts will be disabled.${NC}"
-    echo -e "${YELLOW}To enable alerts, run: export SLACK_WEBHOOK_URL=<your-webhook-url>${NC}"
-fi
+# Slack webhook now sourced from Secret Manager (Path A 2026-05-15).
+# The CF SA needs roles/secretmanager.secretAccessor on slack-webhook-url.
+SLACK_SECRET="slack-webhook-url"
 
 # Parse arguments
 SKIP_SCHEDULER=false
@@ -88,7 +85,7 @@ echo "  Function Name:        $FUNCTION_NAME"
 echo "  Region:               $REGION"
 echo "  Scheduler:            $SCHEDULER_SCHEDULE ($SCHEDULER_TIMEZONE)"
 echo "  Coordinator URL:      $PREDICTION_COORDINATOR_URL"
-echo "  Slack Alerts:         $([ -n "$SLACK_WEBHOOK_URL" ] && echo "Enabled" || echo "Disabled")"
+echo "  Slack Secret:         $SLACK_SECRET"
 echo ""
 
 # Check authentication
@@ -116,12 +113,8 @@ echo -e "${BLUE}Deploying Cloud Function...${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo ""
 
-# Build env vars string
+# Build env vars string (Slack webhook moved to --set-secrets, not env vars).
 ENV_VARS="GCP_PROJECT=$PROJECT_ID,PREDICTION_COORDINATOR_URL=$PREDICTION_COORDINATOR_URL"
-if [ -n "$SLACK_WEBHOOK_URL" ]; then
-    ENV_VARS="$ENV_VARS,SLACK_WEBHOOK_URL=$SLACK_WEBHOOK_URL"
-    echo -e "${GREEN}✓ SLACK_WEBHOOK_URL configured for staleness alerts${NC}"
-fi
 
 gcloud functions deploy $FUNCTION_NAME \
     --gen2 \
@@ -132,6 +125,8 @@ gcloud functions deploy $FUNCTION_NAME \
     --trigger-http \
     --allow-unauthenticated \
     --update-env-vars "$ENV_VARS" \
+    --remove-env-vars=SLACK_WEBHOOK_URL \
+    --set-secrets="SLACK_WEBHOOK_URL=${SLACK_SECRET}:latest" \
     --memory $MEMORY \
     --timeout $TIMEOUT \
     --max-instances $MAX_INSTANCES \
