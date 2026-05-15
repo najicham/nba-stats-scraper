@@ -877,6 +877,9 @@ class SignalBestBetsExporter(BaseExporter):
                 'rank': pick.get('rank'),
                 'model_agreement_count': pick.get('model_agreement', 0),
                 'agreeing_model_ids': pick.get('agreeing_models', []),
+                # Path B Week 3: contending_models = all per-model pipelines
+                # that nominated this player (any direction). Sourced from merger.
+                'contending_models': pick.get('pipeline_agreement_models', []),
                 'feature_set_diversity': pick.get('feature_diversity', 0),
                 'consensus_bonus': pick.get('consensus_bonus', 0),
                 'quantile_consensus_under': pick.get('quantile_under_consensus', False),

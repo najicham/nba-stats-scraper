@@ -46,6 +46,11 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.signal_best_bets_
   quantile_consensus_under BOOLEAN,      -- All 4 quantile models agree UNDER
   agreeing_model_ids ARRAY<STRING>,      -- System IDs of models that agree on direction
 
+  -- Per-model pipeline contention (Path B Week 3, Session 443+)
+  contending_models ARRAY<STRING>,       -- All models that nominated this player (any direction).
+                                          -- Maps from merger's pipeline_agreement_models. Closes the
+                                          -- observability gap when two models compete for one slot.
+
   -- Pick angles (Session 278)
   pick_angles ARRAY<STRING>,             -- Human-readable pick reasoning
 

@@ -210,6 +210,9 @@ OVER_SIGNAL_WEIGHTS: Dict[str, float] = {
 }
 # OVER quality tiebreaker weight: how much signal quality affects ranking
 # relative to edge. Edge is still dominant (1.0x), quality is secondary.
+# Path B Week 3: this constant is now the NORMAL-regime baseline. The
+# effective weight is computed per-call in _score_candidate() based on
+# vegas_mae_7d from regime_context (TIGHT → 0.1, NORMAL → 0.3, LOOSE → 0.4).
 OVER_QUALITY_WEIGHT = 0.3
 
 # Session 372: Teams with catastrophic UNDER HR (edge 3+, Dec 1+, N>=190).
@@ -1277,8 +1280,20 @@ class BestBetsAggregator:
                     OVER_SIGNAL_WEIGHTS.get(t, 0.5) * self._health_multiplier(t)
                     for t in over_real_tags
                 )
+                # Regime-adaptive quality weight (Path B Week 3).
+                # TIGHT market (vegas_mae < 4.5): books are accurate, edge is
+                # mostly noise — let edge dominate, quality barely tips ties.
+                # LOOSE market (MAE ≥ 6.5): many high-edge candidates; quality
+                # signal differentiates. NORMAL: baseline 0.3.
+                _mae = self._regime_context.get('vegas_mae_7d')
+                if _mae is not None and _mae < 4.5:
+                    _eff_oqw = 0.1
+                elif _mae is not None and _mae >= 6.5:
+                    _eff_oqw = 0.4
+                else:
+                    _eff_oqw = OVER_QUALITY_WEIGHT
                 composite_score = round(
-                    pred_edge + over_signal_quality * OVER_QUALITY_WEIGHT, 4
+                    pred_edge + over_signal_quality * _eff_oqw, 4
                 )
 
             # Session 421: Player-tier edge cap observation.
