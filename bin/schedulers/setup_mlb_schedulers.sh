@@ -141,6 +141,17 @@ create_job \
     '{"scraper": "mlb_pitcher_props", "game_date": "TODAY"}' \
     "Refresh pitcher strikeout lines (pregame, auto-discovers events)"
 
+# Weather pregame - 11:30 AM ET, fetches forecasts for the day's parks.
+# Requires OPENWEATHERMAP_API_KEY mounted on mlb-phase1-scrapers (secret added
+# 2026-05-16). Without it the scraper silently writes mock data and
+# WeatherColdUnderSignal/ColdWeatherKOverSignal never fire.
+create_job \
+    "mlb-weather-pregame" \
+    "30 11 * * *" \
+    "$SCRAPERS_URL/scrape" \
+    '{"scraper": "mlb_weather", "date": "TODAY"}' \
+    "Fetch pregame weather forecasts (activates cold-weather UNDER signals)"
+
 # Live box scores during games (1 PM - 11 PM ET, every 5 minutes)
 create_job \
     "mlb-live-boxscores" \
