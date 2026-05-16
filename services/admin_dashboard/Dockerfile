@@ -30,8 +30,12 @@ COPY shared/ /app/shared/
 # Copy dashboard service
 COPY services/admin_dashboard/ /app/services/admin_dashboard/
 
-# Set working directory to dashboard
-WORKDIR /app/services/admin_dashboard
+# Run from repo root so `services` resolves to the top-level namespace package.
+# Setting WORKDIR to /app/services/admin_dashboard previously caused Python to
+# import the sibling /app/services/admin_dashboard/services/ subdir as the
+# `services` package, shadowing the namespace package and breaking
+# `from services.admin_dashboard...` imports in main.py.
+WORKDIR /app
 
 # Set Python path
 ENV PYTHONPATH=/app:$PYTHONPATH
@@ -42,5 +46,5 @@ ENV PORT=8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8080/health || exit 1
 
-# Run with gunicorn
-CMD exec gunicorn --bind :$PORT --workers 1 --threads 4 --timeout 120 main:app
+# Run with gunicorn — qualify the module path now that WORKDIR is /app.
+CMD exec gunicorn --bind :$PORT --workers 1 --threads 4 --timeout 120 services.admin_dashboard.main:app
