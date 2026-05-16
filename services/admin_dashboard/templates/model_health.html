@@ -1,0 +1,385 @@
+{% extends "base.html" %}
+
+{% block title %}Model Health - {{ sport|upper }} Pipeline Admin{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6" x-data="modelHealth()" x-init="init()">
+  <div class="flex justify-between items-center mb-6">
+    <div>
+      <h1 class="text-3xl font-bold">Model Health</h1>
+      <p class="text-sm text-gray-500 mt-1">
+        Per-model bias, MAE vs Vegas, and edge drift. Data from
+        <code class="text-xs">model_performance_daily</code>. Alert thresholds from
+        <code class="text-xs">bin/monitoring/bias_decay_monitor.py</code>.
+      </p>
+    </div>
+    <div class="flex items-center gap-3">
+      <label class="text-sm text-gray-700">
+        <input type="checkbox" x-model="includeDisabled" @change="refresh()"
+               class="mr-1">
+        Include disabled models
+      </label>
+      <button @click="refresh()"
+              class="px-3 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 text-sm">
+        Refresh
+      </button>
+    </div>
+  </div>
+
+  <!-- Alert banner -->
+  <template x-if="alerts.length > 0">
+    <div class="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
+      <div class="flex items-start">
+        <div class="text-red-600 font-bold mr-3">⚠</div>
+        <div class="flex-1">
+          <div class="font-semibold text-red-900 mb-1">
+            <span x-text="alerts.length"></span>
+            model<span x-show="alerts.length !== 1">s</span> tripping alerts
+          </div>
+          <ul class="text-sm text-red-800 space-y-1">
+            <template x-for="a in alerts" :key="a.model_id">
+              <li>
+                <span class="font-mono text-xs px-2 py-0.5 rounded mr-2"
+                      :class="a.verdict === 'LOSING_BAD'
+                              ? 'bg-red-200 text-red-900'
+                              : 'bg-orange-200 text-orange-900'"
+                      x-text="a.verdict"></span>
+                <span class="font-mono" x-text="a.model_id"></span>:
+                mae_gap_7d=<span x-text="(a.mae_gap_7d ?? 0).toFixed(2)"></span> K
+                (pred_bias_7d=<span x-text="(a.pred_bias_7d ?? 0).toFixed(2)"></span>,
+                N=<span x-text="a.rolling_n_7d"></span>)
+              </li>
+            </template>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <template x-if="alerts.length === 0 && !loading">
+    <div class="bg-green-50 border border-green-200 rounded-lg p-3 mb-6 text-sm text-green-800">
+      ✓ No models currently tripping LOST_EDGE or LOSING_BAD.
+    </div>
+  </template>
+
+  <!-- Fleet aggregate chart -->
+  <div class="bg-white rounded-lg shadow p-6 mb-6">
+    <div class="flex justify-between items-center mb-4">
+      <h2 class="text-xl font-semibold">Fleet aggregate (sample-weighted)</h2>
+      <select x-model.number="trendDays" @change="loadFleetTrend()"
+              class="text-sm border rounded px-2 py-1">
+        <option value="30">Last 30 days</option>
+        <option value="60">Last 60 days</option>
+        <option value="180">Last 180 days</option>
+      </select>
+    </div>
+    <p class="text-xs text-gray-500 mb-3">
+      Weighted average across enabled models, each model weighted by its
+      <code>rolling_n_7d</code>. Healthy ranges: pred_bias near 0, mae_gap below
+      0.5, model_mae ≈ vegas_mae.
+    </p>
+    <div class="relative" style="height: 320px;">
+      <canvas id="fleetChart"></canvas>
+    </div>
+    <div class="text-xs text-gray-500 mt-2 flex gap-4">
+      <span>Models active (latest): <strong x-text="latestActiveModels"></strong></span>
+      <span>Sample (latest 7d): <strong x-text="latestFleetN.toLocaleString()"></strong></span>
+      <span>Days plotted: <strong x-text="fleetTrend.length"></strong></span>
+    </div>
+  </div>
+
+  <!-- Per-model table -->
+  <div class="bg-white rounded-lg shadow p-6 mb-6">
+    <h2 class="text-xl font-semibold mb-4">Per-model snapshot (latest row)</h2>
+    <div x-show="loading" class="text-sm text-gray-500 italic">Loading…</div>
+    <div x-show="!loading && perModel.length === 0" class="text-sm text-gray-500 italic">
+      No rows in last 14 days. Check that
+      <code class="text-xs">model_performance.py</code> is running and
+      <code class="text-xs">model_registry.enabled</code> is true for the fleet.
+    </div>
+    <div x-show="perModel.length > 0" class="overflow-x-auto">
+      <table class="min-w-full text-sm">
+        <thead class="bg-gray-50 text-gray-700">
+          <tr>
+            <th class="px-3 py-2 text-left font-medium">Model</th>
+            <th class="px-3 py-2 text-right font-medium">Verdict</th>
+            <th class="px-3 py-2 text-right font-medium">HR 7d</th>
+            <th class="px-3 py-2 text-right font-medium">pred_bias_7d</th>
+            <th class="px-3 py-2 text-right font-medium">mae_gap_7d</th>
+            <th class="px-3 py-2 text-right font-medium">model_mae / vegas_mae (7d)</th>
+            <th class="px-3 py-2 text-right font-medium">N 7d</th>
+            <th class="px-3 py-2 text-right font-medium">Days since training</th>
+            <th class="px-3 py-2 text-right font-medium">As of</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100">
+          <template x-for="m in perModel" :key="m.model_id">
+            <tr class="hover:bg-blue-50 cursor-pointer" @click="selectModel(m.model_id)">
+              <td class="px-3 py-2 font-mono text-xs" x-text="m.model_id"></td>
+              <td class="px-3 py-2 text-right">
+                <span class="px-2 py-0.5 rounded text-xs font-semibold"
+                      :class="verdictClass(m.verdict)"
+                      x-text="m.verdict"></span>
+              </td>
+              <td class="px-3 py-2 text-right tabular-nums"
+                  x-text="fmt(m.rolling_hr_7d, 1, '%')"></td>
+              <td class="px-3 py-2 text-right tabular-nums"
+                  :class="absClass(m.pred_bias_7d, 1.5, 2.5)"
+                  x-text="fmtSigned(m.pred_bias_7d, 2)"></td>
+              <td class="px-3 py-2 text-right tabular-nums font-semibold"
+                  :class="gapClass(m.mae_gap_7d)"
+                  x-text="fmtSigned(m.mae_gap_7d, 2)"></td>
+              <td class="px-3 py-2 text-right tabular-nums text-xs">
+                <span x-text="fmt(m.model_mae_7d, 2)"></span>
+                <span class="text-gray-400 mx-1">/</span>
+                <span x-text="fmt(m.vegas_mae_7d, 2)"></span>
+              </td>
+              <td class="px-3 py-2 text-right tabular-nums" x-text="m.rolling_n_7d ?? '—'"></td>
+              <td class="px-3 py-2 text-right tabular-nums"
+                  :class="m.days_since_training > 21 ? 'text-orange-600 font-semibold' : ''"
+                  x-text="m.days_since_training ?? '—'"></td>
+              <td class="px-3 py-2 text-right text-xs text-gray-500"
+                  x-text="m.game_date"></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+    <p class="text-xs text-gray-500 mt-3">
+      Click any row for the 60-day trajectory.
+    </p>
+  </div>
+
+  <!-- Per-model drill-down -->
+  <div x-show="selectedModel" class="bg-white rounded-lg shadow p-6 mb-6" x-cloak>
+    <div class="flex justify-between items-start mb-4">
+      <div>
+        <h2 class="text-xl font-semibold">
+          Model trajectory — <code class="text-base" x-text="selectedModel"></code>
+        </h2>
+        <p class="text-xs text-gray-500 mt-1">
+          60-day rolling pred_bias_7d, model_mae_7d vs vegas_mae_7d, and mae_gap_7d.
+        </p>
+      </div>
+      <button @click="selectedModel = null"
+              class="text-sm text-gray-500 hover:text-gray-700">
+        ✕ Close
+      </button>
+    </div>
+    <div class="relative" style="height: 320px;">
+      <canvas id="modelChart"></canvas>
+    </div>
+  </div>
+
+  <!-- Methodology footnote -->
+  <details class="bg-gray-50 rounded-lg p-4 text-sm text-gray-700">
+    <summary class="cursor-pointer font-medium">How these metrics are computed</summary>
+    <div class="mt-3 space-y-2">
+      <p><strong>pred_bias_7d</strong> = AVG(predicted_points − actual_points) over the last 7 days
+        of graded predictions with edge ≥ 3. Negative = under-prediction.</p>
+      <p><strong>model_mae_7d</strong> = AVG(|predicted_points − actual_points|).
+        <strong>vegas_mae_7d</strong> = AVG(|line_value − actual_points|) over the same rows.</p>
+      <p><strong>mae_gap_7d</strong> = model_mae_7d − vegas_mae_7d. Positive = model worse than
+        Vegas; this is the primary alert signal (validated against 5 seasons —
+        median 0.39 K in healthy 2024-25 vs 1.44 K in Nov 2025 anomaly).</p>
+      <p><strong>Verdict thresholds:</strong>
+        LOSING_BAD = mae_gap_7d &gt; 2.0 K on ≥3 of last 5 days;
+        LOST_EDGE = mae_gap_7d &gt; 1.0 K on ≥5 of last 7 days;
+        WATCH = mae_gap_7d &gt; 0.5 K (single day);
+        else HEALTHY. INSUFFICIENT_DATA when rolling_n_7d &lt; 20.</p>
+      <p class="text-xs text-gray-500">
+        See
+        <code>docs/08-projects/current/2026-05-15-2025-26-anomaly-rootcause/</code>
+        for the diagnosis and monitoring-plan rationale.
+      </p>
+    </div>
+  </details>
+</div>
+
+<script>
+function modelHealth() {
+  return {
+    perModel: [],
+    fleetTrend: [],
+    alerts: [],
+    selectedModel: null,
+    includeDisabled: false,
+    trendDays: 60,
+    loading: true,
+    fleetChartObj: null,
+    modelChartObj: null,
+    latestActiveModels: 0,
+    latestFleetN: 0,
+
+    init() {
+      this.refresh();
+      this.loadFleetTrend();
+    },
+
+    async refresh() {
+      this.loading = true;
+      const url = '/api/model-health/per-model?include_disabled=' + this.includeDisabled;
+      try {
+        const r = await fetch(url, { headers: this.authHeader() });
+        const j = await r.json();
+        this.perModel = j.data || [];
+        this.alerts = this.perModel.filter(
+          m => m.verdict === 'LOST_EDGE' || m.verdict === 'LOSING_BAD'
+        );
+      } catch (e) {
+        console.error(e);
+      } finally {
+        this.loading = false;
+      }
+    },
+
+    async loadFleetTrend() {
+      const url = '/api/model-health/fleet-trend?days=' + this.trendDays;
+      try {
+        const r = await fetch(url, { headers: this.authHeader() });
+        const j = await r.json();
+        this.fleetTrend = j.data || [];
+        if (this.fleetTrend.length > 0) {
+          const last = this.fleetTrend[this.fleetTrend.length - 1];
+          this.latestActiveModels = last.active_models || 0;
+          this.latestFleetN = last.fleet_n_7d || 0;
+        }
+        this.renderFleetChart();
+      } catch (e) {
+        console.error(e);
+      }
+    },
+
+    async selectModel(modelId) {
+      this.selectedModel = modelId;
+      const url = `/api/model-health/model/${encodeURIComponent(modelId)}/trend?days=60`;
+      try {
+        const r = await fetch(url, { headers: this.authHeader() });
+        const j = await r.json();
+        this.renderModelChart(j.data || []);
+      } catch (e) {
+        console.error(e);
+      }
+    },
+
+    authHeader() {
+      // The page itself was loaded with an API key in the URL; reuse it for fetches.
+      const key = new URLSearchParams(window.location.search).get('key');
+      return key ? { 'X-API-Key': key } : {};
+    },
+
+    renderFleetChart() {
+      const ctx = document.getElementById('fleetChart');
+      if (!ctx) return;
+      const labels = this.fleetTrend.map(d => d.game_date);
+      const series = (k) => this.fleetTrend.map(d => d[k]);
+
+      if (this.fleetChartObj) this.fleetChartObj.destroy();
+      this.fleetChartObj = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [
+            { label: 'fleet_pred_bias_7d', data: series('fleet_pred_bias_7d'),
+              borderColor: '#dc2626', backgroundColor: '#dc262622', tension: 0.1 },
+            { label: 'fleet_mae_gap_7d', data: series('fleet_mae_gap_7d'),
+              borderColor: '#f59e0b', backgroundColor: '#f59e0b22', tension: 0.1 },
+            { label: 'fleet_model_mae_7d', data: series('fleet_model_mae_7d'),
+              borderColor: '#2563eb', backgroundColor: '#2563eb22', tension: 0.1,
+              borderDash: [4, 4] },
+            { label: 'fleet_vegas_mae_7d', data: series('fleet_vegas_mae_7d'),
+              borderColor: '#16a34a', backgroundColor: '#16a34a22', tension: 0.1,
+              borderDash: [4, 4] },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            x: { type: 'time', time: { unit: 'day' }, ticks: { maxTicksLimit: 12 } },
+            y: { title: { display: true, text: 'K (points-of-prediction)' } },
+          },
+          plugins: {
+            legend: { position: 'bottom' },
+            tooltip: { mode: 'index', intersect: false },
+          },
+        },
+      });
+    },
+
+    renderModelChart(rows) {
+      const ctx = document.getElementById('modelChart');
+      if (!ctx) return;
+      const labels = rows.map(d => d.game_date);
+      const series = (k) => rows.map(d => d[k]);
+
+      if (this.modelChartObj) this.modelChartObj.destroy();
+      this.modelChartObj = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [
+            { label: 'pred_bias_7d', data: series('pred_bias_7d'),
+              borderColor: '#dc2626', backgroundColor: '#dc262622', tension: 0.1 },
+            { label: 'mae_gap_7d', data: series('mae_gap_7d'),
+              borderColor: '#f59e0b', backgroundColor: '#f59e0b22', tension: 0.1 },
+            { label: 'model_mae_7d', data: series('model_mae_7d'),
+              borderColor: '#2563eb', backgroundColor: '#2563eb22', tension: 0.1,
+              borderDash: [4, 4] },
+            { label: 'vegas_mae_7d', data: series('vegas_mae_7d'),
+              borderColor: '#16a34a', backgroundColor: '#16a34a22', tension: 0.1,
+              borderDash: [4, 4] },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            x: { type: 'time', time: { unit: 'day' }, ticks: { maxTicksLimit: 12 } },
+            y: { title: { display: true, text: 'K' } },
+          },
+          plugins: { legend: { position: 'bottom' }, tooltip: { mode: 'index', intersect: false } },
+        },
+      });
+    },
+
+    verdictClass(v) {
+      switch (v) {
+        case 'LOSING_BAD': return 'bg-red-200 text-red-900';
+        case 'LOST_EDGE':  return 'bg-orange-200 text-orange-900';
+        case 'WATCH':      return 'bg-yellow-100 text-yellow-800';
+        case 'HEALTHY':    return 'bg-green-100 text-green-800';
+        default:           return 'bg-gray-100 text-gray-600';
+      }
+    },
+
+    absClass(v, watch, alert) {
+      if (v === null || v === undefined) return 'text-gray-400';
+      const a = Math.abs(v);
+      if (a >= alert) return 'text-red-700 font-semibold';
+      if (a >= watch) return 'text-orange-600';
+      return '';
+    },
+
+    gapClass(v) {
+      if (v === null || v === undefined) return 'text-gray-400';
+      if (v > 2.0) return 'text-red-700';
+      if (v > 1.0) return 'text-orange-600';
+      if (v > 0.5) return 'text-yellow-700';
+      return 'text-green-700';
+    },
+
+    fmt(v, dec, suffix) {
+      if (v === null || v === undefined) return '—';
+      return Number(v).toFixed(dec) + (suffix || '');
+    },
+
+    fmtSigned(v, dec) {
+      if (v === null || v === undefined) return '—';
+      const n = Number(v);
+      return (n >= 0 ? '+' : '') + n.toFixed(dec);
+    },
+  };
+}
+</script>
+{% endblock %}

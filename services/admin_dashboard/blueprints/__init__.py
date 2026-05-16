@@ -1,65 +1,53 @@
 # Admin Dashboard Blueprints
 #
-# Blueprint Structure:
-# - status: Main dashboard, status API, games
-# - grading: Grading metrics and history
-# - analytics: Coverage metrics, calibration
-# - trends: Trend charts and analysis
-# - latency: Latency metrics and bottlenecks
-# - costs: Scraper costs and leaderboard
-# - reliability: Reconciliation and reliability summary
-# - actions: Admin actions (POST endpoints)
-# - audit: Audit logs and summary
-# - partials: HTMX partial views
-# - source_blocks: Source-blocked resources monitoring
-# - data_quality: Data quality monitoring and prevention system effectiveness
-# - league_trends: League-wide trend monitoring for model drift detection
+# Each blueprint is imported lazily inside `register_blueprints()` so that a
+# broken import for one blueprint does not prevent the rest from loading. This
+# is a defensive pattern — at one point `source_blocks` had a stale
+# `log_action` import that crashed app startup entirely.
 
-from .status import status_bp
-from .league_trends import league_trends_bp
-from .grading import grading_bp
-from .analytics import analytics_bp
-from .trends import trends_bp
-from .latency import latency_bp
-from .costs import costs_bp
-from .reliability import reliability_bp
-from .actions import actions_bp
-from .audit import audit_bp
-from .partials import partials_bp
-from .source_blocks import source_blocks_bp
-from .data_quality import data_quality_bp
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+# Order matters only for the dashboard nav; functionally each is independent.
+# Tuple format: (import_path, attribute_name, register_kwargs)
+_BLUEPRINT_SPECS = [
+    ('.status',         'status_bp',         {}),
+    ('.grading',        'grading_bp',        {'url_prefix': '/api/grading'}),
+    ('.analytics',      'analytics_bp',      {'url_prefix': '/api'}),
+    ('.trends',         'trends_bp',         {'url_prefix': '/api/trends'}),
+    ('.latency',        'latency_bp',        {'url_prefix': '/api/latency'}),
+    ('.costs',          'costs_bp',          {'url_prefix': '/api/scraper-costs'}),
+    ('.reliability',    'reliability_bp',    {'url_prefix': '/api/reliability'}),
+    ('.actions',        'actions_bp',        {'url_prefix': '/api/actions'}),
+    ('.audit',          'audit_bp',          {'url_prefix': '/api/audit-logs'}),
+    ('.partials',       'partials_bp',       {'url_prefix': '/partials'}),
+    ('.source_blocks',  'source_blocks_bp',  {}),
+    ('.data_quality',   'data_quality_bp',   {}),
+    ('.league_trends',  'league_trends_bp',  {}),
+    ('.model_health',   'model_health_bp',   {}),
+]
 
 
 def register_blueprints(app):
-    """Register all blueprints with the Flask app."""
-    app.register_blueprint(status_bp)
-    app.register_blueprint(grading_bp, url_prefix='/api/grading')
-    app.register_blueprint(analytics_bp, url_prefix='/api')
-    app.register_blueprint(trends_bp, url_prefix='/api/trends')
-    app.register_blueprint(latency_bp, url_prefix='/api/latency')
-    app.register_blueprint(costs_bp, url_prefix='/api/scraper-costs')
-    app.register_blueprint(reliability_bp, url_prefix='/api/reliability')
-    app.register_blueprint(actions_bp, url_prefix='/api/actions')
-    app.register_blueprint(audit_bp, url_prefix='/api/audit-logs')
-    app.register_blueprint(partials_bp, url_prefix='/partials')
-    app.register_blueprint(source_blocks_bp)  # Source blocks (includes /api/source-blocks and /source-blocks)
-    app.register_blueprint(data_quality_bp)  # Data quality (includes /api/data-quality/*)
-    app.register_blueprint(league_trends_bp)  # League trends (includes /api/league-trends/*)
+    """Register every blueprint, isolating failures per blueprint."""
+    import importlib
+    registered = []
+    failed = []
+    for module_path, attr, kwargs in _BLUEPRINT_SPECS:
+        try:
+            module = importlib.import_module(module_path, package=__name__)
+            bp = getattr(module, attr)
+            app.register_blueprint(bp, **kwargs)
+            registered.append(attr)
+        except Exception as e:
+            logger.warning(f"Skipping blueprint {attr}: {type(e).__name__}: {e}")
+            failed.append((attr, str(e)))
+    logger.info(f"Blueprints registered ({len(registered)}): {registered}")
+    if failed:
+        logger.warning(f"Blueprints skipped ({len(failed)}): "
+                       f"{[name for name, _ in failed]}")
 
 
-__all__ = [
-    'status_bp',
-    'grading_bp',
-    'analytics_bp',
-    'trends_bp',
-    'latency_bp',
-    'costs_bp',
-    'reliability_bp',
-    'actions_bp',
-    'audit_bp',
-    'partials_bp',
-    'source_blocks_bp',
-    'data_quality_bp',
-    'league_trends_bp',
-    'register_blueprints',
-]
+__all__ = ['register_blueprints']

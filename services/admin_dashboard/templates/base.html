@@ -82,6 +82,10 @@
                        class="text-sm text-gray-700 hover:text-gray-900 {{ 'font-semibold text-blue-600' if request.path == '/data-quality' else '' }}">
                         Data Quality
                     </a>
+                    <a href="/model-health?sport={{ sport or 'nba' }}"
+                       class="text-sm text-gray-700 hover:text-gray-900 {{ 'font-semibold text-blue-600' if request.path == '/model-health' else '' }}">
+                        Model Health
+                    </a>
                     <a href="/source-blocks?sport={{ sport or 'nba' }}"
                        class="text-sm text-gray-700 hover:text-gray-900 {{ 'font-semibold text-blue-600' if request.path == '/source-blocks' else '' }}">
                         Source Blocks

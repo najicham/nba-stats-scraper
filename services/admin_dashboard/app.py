@@ -68,11 +68,11 @@ def create_app(config=None):
     # Register health check blueprint
     try:
         from shared.endpoints.health import create_health_blueprint, HealthChecker
-        health_bp = create_health_blueprint(HealthChecker())
+        health_bp = create_health_blueprint(HealthChecker(service_name='admin_dashboard'))
         app.register_blueprint(health_bp)
         logger.info("Health check blueprint registered")
-    except ImportError as e:
-        logger.warning(f"Could not import health blueprint: {e}")
+    except (ImportError, TypeError) as e:
+        logger.warning(f"Could not register health blueprint: {e}")
 
     # Register all blueprints
     from .blueprints import register_blueprints

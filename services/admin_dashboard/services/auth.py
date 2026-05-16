@@ -20,6 +20,7 @@ def check_auth():
     Checks for API key in:
     1. X-API-Key header
     2. api_key query parameter
+    3. key query parameter (alias — some templates use this)
 
     Returns:
         Tuple of (is_valid, error_response_or_None)
@@ -29,10 +30,10 @@ def check_auth():
         logger.error("ADMIN_DASHBOARD_API_KEY not configured")
         return False, jsonify({'error': 'Server configuration error'}), 500
 
-    # Check header first, then query param
+    # Check header first, then either query param
     provided_key = request.headers.get('X-API-Key')
     if not provided_key:
-        provided_key = request.args.get('api_key')
+        provided_key = request.args.get('api_key') or request.args.get('key')
 
     if not provided_key:
         return False, jsonify({'error': 'Missing API key'}), 401
@@ -62,3 +63,7 @@ def require_auth(f):
             return error_response
         return f(*args, **kwargs)
     return decorated_function
+
+
+# Alias — source_blocks.py and possibly other blueprints import this name.
+require_api_key = require_auth
