@@ -46,7 +46,7 @@ steps:
 
         # Copy monitor impl files alongside main.py for CF wrappers
         # (bin/ is not a Python package in Cloud Functions runtime)
-        MONITOR_MAP="data_source_health_canary signal_decay_monitor signal_weight_report"
+        MONITOR_MAP="data_source_health_canary signal_decay_monitor signal_weight_report bias_decay_monitor"
         for monitor in $$MONITOR_MAP; do
           if [ -f "bin/monitoring/$${monitor}.py" ] && grep -q "$${monitor}_impl" /workspace/deploy_pkg/main.py 2>/dev/null; then
             cp "bin/monitoring/$${monitor}.py" "/workspace/deploy_pkg/$${monitor}_impl.py"
