@@ -267,6 +267,41 @@ def compute_for_date(bq_client: bigquery.Client, target_date: date,
         AND bb.source_model_id IS NOT NULL
       GROUP BY bb.source_model_id
     ),
+    -- Session 545: Bias + MAE tracking (added after 2025-26 anomaly diagnosis).
+    -- Detects regime drift: pred_bias measures systematic over/under-prediction;
+    -- model_mae vs vegas_mae shows whether the model has lost its edge. The 2025-26
+    -- collapse showed pred_bias_7d hitting -2.23 K in Nov 2025 — undetected at the
+    -- time because we only tracked HR.
+    bias_stats AS (
+      SELECT
+        system_id AS model_id,
+        -- 7d
+        AVG(CASE WHEN game_date > DATE_SUB(@target_date, INTERVAL 7 DAY)
+                 THEN predicted_points - actual_points END) AS pred_bias_7d,
+        AVG(CASE WHEN game_date > DATE_SUB(@target_date, INTERVAL 7 DAY)
+                 THEN ABS(predicted_points - actual_points) END) AS model_mae_7d,
+        AVG(CASE WHEN game_date > DATE_SUB(@target_date, INTERVAL 7 DAY)
+                 THEN ABS(line_value - actual_points) END) AS vegas_mae_7d,
+        -- 14d
+        AVG(CASE WHEN game_date > DATE_SUB(@target_date, INTERVAL 14 DAY)
+                 THEN predicted_points - actual_points END) AS pred_bias_14d,
+        AVG(CASE WHEN game_date > DATE_SUB(@target_date, INTERVAL 14 DAY)
+                 THEN ABS(predicted_points - actual_points) END) AS model_mae_14d,
+        AVG(CASE WHEN game_date > DATE_SUB(@target_date, INTERVAL 14 DAY)
+                 THEN ABS(line_value - actual_points) END) AS vegas_mae_14d,
+        -- 30d
+        AVG(predicted_points - actual_points) AS pred_bias_30d,
+        AVG(ABS(predicted_points - actual_points)) AS model_mae_30d,
+        AVG(ABS(line_value - actual_points)) AS vegas_mae_30d
+      FROM `nba-props-platform.nba_predictions.prediction_accuracy`
+      WHERE game_date BETWEEN @window_start AND @target_date
+        AND ABS(predicted_points - line_value) >= 3
+        AND system_id IN UNNEST(@model_ids)
+        AND prediction_correct IS NOT NULL
+        AND actual_points IS NOT NULL
+        AND line_value IS NOT NULL
+      GROUP BY system_id
+    ),
     -- Session 399: Brier score calibration tracking.
     -- Measures calibration quality: how well the model's implied edge maps to
     -- actual win probability. Lower = better calibrated. Formula:
@@ -310,10 +345,14 @@ def compute_for_date(bq_client: bigquery.Client, target_date: date,
     )
     SELECT mds.*, bbs.bb_n_14d, bbs.bb_hr_14d, bbs.bb_n_21d, bbs.bb_hr_21d,
            bbs.bb_over_hr_21d, bbs.bb_under_hr_21d, bbs.bb_filter_pass_rate,
-           bs.brier_score_7d, bs.brier_score_14d, bs.brier_score_30d
+           bs.brier_score_7d, bs.brier_score_14d, bs.brier_score_30d,
+           bias.pred_bias_7d, bias.pred_bias_14d, bias.pred_bias_30d,
+           bias.model_mae_7d, bias.model_mae_14d, bias.model_mae_30d,
+           bias.vegas_mae_7d, bias.vegas_mae_14d, bias.vegas_mae_30d
     FROM model_date_stats mds
     LEFT JOIN best_bets_stats bbs ON bbs.model_id = mds.model_id
     LEFT JOIN brier_stats bs ON bs.model_id = mds.model_id
+    LEFT JOIN bias_stats bias ON bias.model_id = mds.model_id
     """
 
     window_start = target_date - timedelta(days=30)
@@ -433,6 +472,35 @@ def compute_for_date(bq_client: bigquery.Client, target_date: date,
             'brier_score_7d': round(row.brier_score_7d, 4) if getattr(row, 'brier_score_7d', None) is not None else None,
             'brier_score_14d': round(row.brier_score_14d, 4) if getattr(row, 'brier_score_14d', None) is not None else None,
             'brier_score_30d': round(row.brier_score_30d, 4) if getattr(row, 'brier_score_30d', None) is not None else None,
+            # Session 545: Bias + MAE tracking (2025-26 anomaly follow-up)
+            # BigQuery returns NUMERIC (Decimal) from AVG on NUMERIC columns; cast to float for JSON.
+            'pred_bias_7d': round(float(row.pred_bias_7d), 3) if getattr(row, 'pred_bias_7d', None) is not None else None,
+            'pred_bias_14d': round(float(row.pred_bias_14d), 3) if getattr(row, 'pred_bias_14d', None) is not None else None,
+            'pred_bias_30d': round(float(row.pred_bias_30d), 3) if getattr(row, 'pred_bias_30d', None) is not None else None,
+            'model_mae_7d': round(float(row.model_mae_7d), 3) if getattr(row, 'model_mae_7d', None) is not None else None,
+            'model_mae_14d': round(float(row.model_mae_14d), 3) if getattr(row, 'model_mae_14d', None) is not None else None,
+            'model_mae_30d': round(float(row.model_mae_30d), 3) if getattr(row, 'model_mae_30d', None) is not None else None,
+            'vegas_mae_7d': round(float(row.vegas_mae_7d), 3) if getattr(row, 'vegas_mae_7d', None) is not None else None,
+            'vegas_mae_14d': round(float(row.vegas_mae_14d), 3) if getattr(row, 'vegas_mae_14d', None) is not None else None,
+            'vegas_mae_30d': round(float(row.vegas_mae_30d), 3) if getattr(row, 'vegas_mae_30d', None) is not None else None,
+            'mae_gap_7d': (
+                round(float(row.model_mae_7d) - float(row.vegas_mae_7d), 3)
+                if getattr(row, 'model_mae_7d', None) is not None
+                and getattr(row, 'vegas_mae_7d', None) is not None
+                else None
+            ),
+            'mae_gap_14d': (
+                round(float(row.model_mae_14d) - float(row.vegas_mae_14d), 3)
+                if getattr(row, 'model_mae_14d', None) is not None
+                and getattr(row, 'vegas_mae_14d', None) is not None
+                else None
+            ),
+            'mae_gap_30d': (
+                round(float(row.model_mae_30d) - float(row.vegas_mae_30d), 3)
+                if getattr(row, 'model_mae_30d', None) is not None
+                and getattr(row, 'vegas_mae_30d', None) is not None
+                else None
+            ),
             # Session 443: Pipeline candidate metrics from model_bb_candidates
             'pipeline_candidates': ps.get('pipeline_candidates'),
             'pipeline_selected': ps.get('pipeline_selected'),
