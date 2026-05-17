@@ -58,6 +58,15 @@ AWAY_EDGE_FLOOR = float(os.environ.get('MLB_AWAY_EDGE_FLOOR', '1.25'))
 # Block rescued picks for away pitchers (51% HR cross-season — coin flip)
 BLOCK_AWAY_RESCUE = os.environ.get('MLB_BLOCK_AWAY_RESCUE', 'true').lower() == 'true'
 
+# Block ALL away pitcher OVER picks by default. Empirical 2024-26 distribution:
+# away 1.00-1.24 = 37.9% HR (N=29, losing), 1.25-1.49 = 50% (N=8, coin flip),
+# 1.50+ = ~70% (N=7, small). With MAX_EDGE=1.25 cap, the away pipeline was
+# already structurally closed via AWAY_EDGE_FLOOR=1.25 colliding with the cap
+# — this flag makes the closure explicit and emits clean audit rows instead
+# of nonsense "edge X < 1.25" messages. Set false to re-enable (will require
+# widening MAX_EDGE or lowering AWAY_EDGE_FLOOR per invariant validator).
+BLOCK_ALL_AWAY_OVER = os.environ.get('MLB_BLOCK_ALL_AWAY_OVER', 'true').lower() == 'true'
+
 # UNDER direction control (env var override: MLB_UNDER_ENABLED)
 # UNDER is unprofitable without signal filtering (47-49% HR walk-forward)
 # Only surface UNDER with strong signal backing
@@ -82,6 +91,56 @@ MAX_PROB_OVER = float(os.environ.get('MLB_MAX_PROB_OVER', '0.70'))
 # Daily pick limit — truncate ranked picks to this count
 # V3 FINAL: Rank 5 still profitable (58.4%/+32u cross-season)
 MAX_PICKS_PER_DAY = int(os.environ.get('MLB_MAX_PICKS_PER_DAY', '5'))
+
+
+# =============================================================================
+# EDGE WINDOW INVARIANT — fail loud at module load if floor >= cap
+# =============================================================================
+# Discovered 2026-05-17 (7-agent review): two safeguards (AWAY_EDGE_FLOOR = 1.25,
+# MAX_EDGE = 1.25) were independently set to the same value, structurally
+# closing the away OVER pipeline for the life of the config. The TIGHT regime
+# +0.5 K delta also collapsed the home window. Both went undetected because
+# zero picks looked the same as "no qualifying candidates."
+#
+# This validator raises ImportError on module load if any path can produce
+# an empty passable window under worst-case regime. Cloud Build / Cloud Run
+# health checks fail fast, surfacing the misconfig before another drought.
+# Operators must either widen the gap or set MLB_BLOCK_ALL_AWAY_OVER=true
+# (or equivalent) to make the closure explicit.
+
+MIN_EDGE_WINDOW_K = float(os.environ.get('MLB_MIN_EDGE_WINDOW', '0.25'))
+
+
+def _validate_edge_windows() -> None:
+    failures = []
+    home_window = MAX_EDGE - DEFAULT_EDGE_FLOOR
+    if home_window < MIN_EDGE_WINDOW_K:
+        failures.append(
+            f"HOME baseline path: DEFAULT_EDGE_FLOOR {DEFAULT_EDGE_FLOOR} vs "
+            f"MAX_EDGE {MAX_EDGE} -> window {home_window:.2f}K "
+            f"(min {MIN_EDGE_WINDOW_K}K). Even outside TIGHT regime there is "
+            f"no passable edge band."
+        )
+    if not BLOCK_ALL_AWAY_OVER:
+        away_window = MAX_EDGE - AWAY_EDGE_FLOOR
+        if away_window < MIN_EDGE_WINDOW_K:
+            failures.append(
+                f"AWAY path: AWAY_EDGE_FLOOR {AWAY_EDGE_FLOOR} vs MAX_EDGE "
+                f"{MAX_EDGE} -> window {away_window:.2f}K "
+                f"(min {MIN_EDGE_WINDOW_K}K). Either set "
+                f"MLB_BLOCK_ALL_AWAY_OVER=true (close path explicitly), or "
+                f"adjust AWAY_EDGE_FLOOR / MAX_EDGE."
+            )
+    if failures:
+        raise ImportError(
+            "MLB best_bets_exporter edge-window invariant violated:\n  - "
+            + "\n  - ".join(failures)
+            + "\nFix MLB_EDGE_FLOOR / MLB_AWAY_EDGE_FLOOR / MLB_MAX_EDGE, "
+            "or lower MLB_MIN_EDGE_WINDOW with explicit justification."
+        )
+
+
+_validate_edge_windows()
 
 # Minimum real signal count for best bets (OVER)
 MIN_SIGNAL_COUNT = 2
@@ -449,6 +508,31 @@ class MLBBestBetsExporter:
             if is_home is None:
                 is_home = features.get('is_home')
             is_away = (is_home is not None and not bool(is_home))
+
+            # Explicit away OVER policy block (default true). Codifies the
+            # previously-implicit AWAY_EDGE_FLOOR == MAX_EDGE collision so
+            # the audit trail shows intent instead of a misleading floor
+            # message. Empirical: away 1.0-1.49 = 37.9-50% HR (losing).
+            if (BLOCK_ALL_AWAY_OVER
+                    and pred.get('recommendation') == 'OVER'
+                    and is_away):
+                away_blocked += 1
+                self.filter_audit.append({
+                    'game_date': game_date,
+                    'pitcher_lookup': pitcher,
+                    'system_id': pred.get('system_id', 'unknown'),
+                    'filter_name': 'away_over_blocked_policy',
+                    'filter_result': 'BLOCKED',
+                    'filter_reason': (
+                        f'Away OVER blocked by policy (MLB_BLOCK_ALL_AWAY_OVER). '
+                        f'Cross-season HR 54.1% vs home 64.2%; 1.0-1.49 bucket '
+                        f'37.9-50% HR.'
+                    ),
+                    'recommendation': pred.get('recommendation'),
+                    'edge': pred.get('edge'),
+                    'line_value': pred.get('strikeouts_line'),
+                })
+                continue
 
             # Away OVER: higher edge floor (1.25 vs 0.75)
             if pred.get('recommendation') == 'OVER' and is_away:
