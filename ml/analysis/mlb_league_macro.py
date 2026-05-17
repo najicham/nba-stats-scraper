@@ -31,7 +31,8 @@ TABLE_ID = f'{PROJECT_ID}.mlb_predictions.league_macro_daily'
 
 # Market regime thresholds (based on Vegas MAE 7d for K props)
 # K lines are typically 4.5-6.5 range, so MAE thresholds are tighter than NBA points
-TIGHT_THRESHOLD = 1.7    # Vegas very accurate = hard to beat
+# TIGHT threshold is the single source of truth — see ml/signals/mlb/config.py
+from ml.signals.mlb.config import TIGHT_VEGAS_MAE_THRESHOLD as TIGHT_THRESHOLD  # noqa: E402
 LOOSE_THRESHOLD = 2.0    # Vegas less accurate = more opportunity
 
 # DDL for auto-creating the table
