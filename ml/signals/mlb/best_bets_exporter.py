@@ -140,7 +140,36 @@ def _validate_edge_windows() -> None:
         )
 
 
+def _validate_module_config() -> None:
+    """Sanity-check all env-var-driven thresholds at module load.
+
+    Catches typos (e.g. MLB_MAX_PROB_OVER=70 instead of 0.70) and
+    config drift before the worker starts serving traffic. Cloud Run
+    health checks fail fast on ImportError.
+    """
+    failures = []
+    if not (0 < DEFAULT_EDGE_FLOOR < 5.0):
+        failures.append(f"MLB_EDGE_FLOOR={DEFAULT_EDGE_FLOOR} not in (0, 5.0)")
+    if not (0 < AWAY_EDGE_FLOOR < 5.0):
+        failures.append(f"MLB_AWAY_EDGE_FLOOR={AWAY_EDGE_FLOOR} not in (0, 5.0)")
+    if not (0 < MAX_EDGE < 10.0):
+        failures.append(f"MLB_MAX_EDGE={MAX_EDGE} not in (0, 10.0)")
+    if not (0.5 < MAX_PROB_OVER <= 1.0):
+        failures.append(
+            f"MLB_MAX_PROB_OVER={MAX_PROB_OVER} not in (0.5, 1.0]. "
+            f"(Common typo: did you set 70 instead of 0.70?)"
+        )
+    if not (1 <= MAX_PICKS_PER_DAY <= 50):
+        failures.append(f"MLB_MAX_PICKS_PER_DAY={MAX_PICKS_PER_DAY} not in [1, 50]")
+    if failures:
+        raise ImportError(
+            "MLB best_bets_exporter module-config invariant violated:\n  - "
+            + "\n  - ".join(failures)
+        )
+
+
 _validate_edge_windows()
+_validate_module_config()
 
 # Minimum real signal count for best bets (OVER)
 MIN_SIGNAL_COUNT = 2
