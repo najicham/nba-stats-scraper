@@ -103,9 +103,15 @@ class MLBOddsAPIPropsExtractor(PathExtractor):
 
 
 class MLBOddsAPIGameLinesExtractor(PathExtractor):
-    """Extract options from MLB OddsAPI game lines paths."""
+    """Extract options from MLB OddsAPI game lines paths.
 
-    PATTERN = re.compile(r'mlb-odds-api/game-lines/(\d{4}-\d{2}-\d{2})/')
+    Accepts TODAY/YESTERDAY literals (resolved to actual date) as a
+    backstop for unresolved scraper opts. The deeper scraper-side fix
+    is to ensure date resolution happens before path interpolation, but
+    this extractor needs to handle whatever lands in GCS.
+    """
+
+    PATTERN = re.compile(r'mlb-odds-api/game-lines/(\d{4}-\d{2}-\d{2}|TODAY|YESTERDAY)/')
 
     def matches(self, path: str) -> bool:
         return bool(self.PATTERN.search(path))
@@ -113,17 +119,37 @@ class MLBOddsAPIGameLinesExtractor(PathExtractor):
     def extract(self, path: str) -> dict:
         """
         Extract from path: mlb-odds-api/game-lines/{date}/{timestamp}.json
+        Falls back to extracting date from the timestamp (YYYYMMDD_HHMMSS)
+        when the path segment is TODAY/YESTERDAY.
         """
         match = self.PATTERN.search(path)
-        if match:
-            date_str = match.group(1)
-            try:
-                game_date = datetime.strptime(date_str, '%Y-%m-%d').date()
-                return {'game_date': game_date}
-            except ValueError as e:
-                logger.warning(f"Could not parse date from MLB game-lines path: {path}: {e}")
-
-        return {}
+        if not match:
+            return {}
+        date_str = match.group(1)
+        if date_str in ('TODAY', 'YESTERDAY'):
+            ts_match = re.search(r'/(\d{8})_\d{6}\.json', path)
+            if ts_match:
+                try:
+                    game_date = datetime.strptime(ts_match.group(1), '%Y%m%d').date()
+                    if date_str == 'YESTERDAY':
+                        from datetime import timedelta as _td
+                        game_date = game_date - _td(days=1)
+                    return {'game_date': game_date}
+                except ValueError as e:
+                    logger.warning(f"Could not parse timestamp date from MLB game-lines path: {path}: {e}")
+            from datetime import timezone as _tz
+            today = datetime.now(_tz.utc).date()
+            if date_str == 'YESTERDAY':
+                from datetime import timedelta as _td
+                today = today - _td(days=1)
+            logger.warning(f"MLB game-lines path used {date_str} literal with no timestamp; falling back to {today}: {path}")
+            return {'game_date': today}
+        try:
+            game_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+            return {'game_date': game_date}
+        except ValueError as e:
+            logger.warning(f"Could not parse date from MLB game-lines path: {path}: {e}")
+            return {}
 
 
 class MLBOddsAPIEventsExtractor(PathExtractor):
