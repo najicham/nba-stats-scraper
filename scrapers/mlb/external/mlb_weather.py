@@ -45,6 +45,17 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+class _OkResponse:
+    """Synthetic 200 response so the framework's check_download_status passes
+    when start_download has already populated self.decoded_data directly.
+    """
+    status_code = 200
+    content = b"{}"
+    text = "{}"
+    headers: Dict[str, str] = {}
+    url = "https://api.openweathermap.org/data/2.5/weather"
+
+
 # Stadium coordinates for weather lookups
 STADIUM_COORDINATES = {
     # American League
@@ -135,7 +146,7 @@ class MlbWeatherScraper(ScraperBase, ScraperFlaskMixin):
     _API_ROOT = "https://api.openweathermap.org/data/2.5/weather"
 
     def set_url(self) -> None:
-        # URL will be set dynamically per stadium
+        # Framework requires self.url for logging. Actual fetches in start_download.
         self.url = self._API_ROOT
 
     def set_headers(self) -> None:
@@ -144,14 +155,20 @@ class MlbWeatherScraper(ScraperBase, ScraperFlaskMixin):
             "Accept": "application/json",
         }
 
-    def download(self) -> None:
-        """Override download to fetch weather for multiple stadiums.
+    def start_download(self) -> None:
+        """Fetch weather for each stadium directly with its own (lat,lon).
 
-        Path A — silent failures: if `OPENWEATHERMAP_API_KEY` is missing in
+        Overrides the framework's single-URL download path because OWM needs
+        one call per stadium. Populates self.decoded_data with the weather
+        list and synthesizes a 200 raw_response so check_download_status
+        accepts the result. decode_download_content is a no-op (below) since
+        the data is already structured.
+
+        Path A — silent failures: if OPENWEATHERMAP_API_KEY is missing in
         prod, refuse to write mock 75°F neutral data. The mock fallback was
-        silently keeping `WeatherColdUnderSignal` / `ColdWeatherKOverSignal`
-        dead all season. Set `MLB_WEATHER_ALLOW_MOCK=true` for local dev /
-        unit tests when the real key isn't available.
+        silently keeping WeatherColdUnderSignal / ColdWeatherKOverSignal
+        dead. Set MLB_WEATHER_ALLOW_MOCK=true for local dev when the real
+        key isn't available.
         """
         api_key = self.opts.get("api_key")
 
@@ -165,28 +182,25 @@ class MlbWeatherScraper(ScraperBase, ScraperFlaskMixin):
                     "and is no longer the default."
                 )
             logger.warning("No OpenWeatherMap API key provided. Using mock data (MLB_WEATHER_ALLOW_MOCK=true).")
-            self.download_data = self._get_mock_weather_data()
+            self.decoded_data = self._get_mock_weather_data()
+            self.raw_response = _OkResponse()
             return
 
-        stadiums_to_fetch = []
-
+        stadiums_to_fetch: List[str]
         if self.opts.get("all_stadiums") == "true":
             stadiums_to_fetch = list(STADIUM_COORDINATES.keys())
         elif self.opts.get("team_abbr"):
             team = self.opts["team_abbr"].upper()
-            if team in STADIUM_COORDINATES:
-                stadiums_to_fetch = [team]
-            else:
+            if team not in STADIUM_COORDINATES:
                 raise ValueError(f"Unknown team abbreviation: {team}")
+            stadiums_to_fetch = [team]
         else:
-            # Default to all stadiums
             stadiums_to_fetch = list(STADIUM_COORDINATES.keys())
 
-        weather_data = []
+        weather_data: List[Dict[str, Any]] = []
         for team_abbr in stadiums_to_fetch:
             stadium = STADIUM_COORDINATES[team_abbr]
 
-            # Skip dome stadiums - they have controlled environments
             if stadium.get("dome"):
                 weather_data.append(self._get_dome_weather(team_abbr, stadium))
                 continue
@@ -201,7 +215,14 @@ class MlbWeatherScraper(ScraperBase, ScraperFlaskMixin):
                 logger.error("Error fetching weather for %s: %s", team_abbr, e)
                 weather_data.append(self._get_error_weather(team_abbr, stadium, str(e)))
 
-        self.download_data = weather_data
+        self.decoded_data = weather_data
+        self.raw_response = _OkResponse()
+
+    def decode_download_content(self) -> None:
+        # start_download already populated self.decoded_data with structured
+        # weather dicts. Override the framework's JSON decode (which would
+        # try to parse our synthetic raw_response.content) to a no-op.
+        return
 
     def _fetch_weather(self, lat: float, lon: float, api_key: str) -> Dict[str, Any]:
         """Fetch weather from OpenWeatherMap API."""
@@ -287,12 +308,12 @@ class MlbWeatherScraper(ScraperBase, ScraperFlaskMixin):
         return mock_data
 
     def validate_download_data(self) -> None:
-        if not self.download_data:
+        if not self.decoded_data:
             raise ValueError("No weather data retrieved")
 
     def transform_data(self) -> None:
         """Transform weather data and calculate K factors."""
-        weather_list = self.download_data
+        weather_list = self.decoded_data
 
         # Calculate K weather factors
         for w in weather_list:
