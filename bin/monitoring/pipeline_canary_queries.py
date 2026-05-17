@@ -939,6 +939,87 @@ def check_pick_drought(bq_client: bigquery.Client, lookback_days: int = 3) -> Tu
         return False, {}, f"Pick drought check error: {e}"
 
 
+def check_mlb_pick_drought(bq_client: bigquery.Client, lookback_days: int = 3) -> Tuple[bool, Dict, Optional[str]]:
+    """Alert when MLB best-bets picks are zero for 2+ consecutive game days
+    despite predictions being generated. Mirrors `check_pick_drought` for MLB.
+
+    Added 2026-05-17 after a 4-day drought (5/14-5/17) went unnoticed: the
+    existing `mlb_phase6_best_bets` canary only checks yesterday and missed
+    the multi-day pattern. Suppresses on days with zero predictions
+    (upstream issue) or zero scheduled games (off-day).
+
+    Returns:
+        Tuple of (passed, metrics, error_message)
+    """
+    try:
+        query = f"""
+        WITH game_days AS (
+            SELECT DISTINCT game_date
+            FROM `{PROJECT_ID}.mlb_raw.mlb_schedule`
+            WHERE game_date >= DATE_SUB(CURRENT_DATE('America/New_York'),
+                                        INTERVAL {lookback_days} DAY)
+              AND game_date < CURRENT_DATE('America/New_York')
+        ),
+        pred_counts AS (
+            SELECT game_date, COUNT(*) AS pred_count
+            FROM `{PROJECT_ID}.mlb_predictions.pitcher_strikeouts`
+            WHERE game_date >= DATE_SUB(CURRENT_DATE('America/New_York'),
+                                        INTERVAL {lookback_days} DAY)
+              AND game_date < CURRENT_DATE('America/New_York')
+            GROUP BY game_date
+        ),
+        pick_counts AS (
+            SELECT game_date, COUNT(*) AS pick_count
+            FROM `{PROJECT_ID}.mlb_predictions.signal_best_bets_picks`
+            WHERE game_date >= DATE_SUB(CURRENT_DATE('America/New_York'),
+                                        INTERVAL {lookback_days} DAY)
+              AND game_date < CURRENT_DATE('America/New_York')
+            GROUP BY game_date
+        )
+        SELECT
+            g.game_date,
+            COALESCE(pr.pred_count, 0) AS pred_count,
+            COALESCE(pi.pick_count, 0) AS pick_count
+        FROM game_days g
+        LEFT JOIN pred_counts pr USING (game_date)
+        LEFT JOIN pick_counts pi USING (game_date)
+        ORDER BY g.game_date DESC
+        """
+        rows = list(bq_client.query(query).result(timeout=30))
+
+        if not rows:
+            return True, {'skipped': True, 'reason': 'no_game_days_in_window'}, None
+
+        # Drought = zero picks despite ≥5 predictions (suppresses upstream issues)
+        drought_days = [
+            str(r.game_date) for r in rows
+            if r.pick_count == 0 and r.pred_count >= 5
+        ]
+        per_day = {
+            str(r.game_date): {'preds': r.pred_count, 'picks': r.pick_count}
+            for r in rows
+        }
+        metrics = {
+            'game_days_checked': len(rows),
+            'drought_days': drought_days,
+            'per_day': per_day,
+        }
+
+        if len(drought_days) >= 2:
+            return False, metrics, (
+                f"MLB PICK DROUGHT: {len(drought_days)} consecutive game day(s) "
+                f"with 0 best-bet picks despite ≥5 predictions "
+                f"({', '.join(drought_days)}). Likely filter squeeze or edge "
+                f"collapse. Check: `best_bets_filter_audit`, model_registry, "
+                f"`league_macro_daily.market_regime`."
+            )
+        return True, metrics, None
+
+    except Exception as e:
+        logger.error(f"Error in MLB pick drought check: {e}")
+        return False, {}, f"MLB pick drought check error: {e}"
+
+
 def check_filter_audit_jammed(bq_client: bigquery.Client, lookback_days: int = 3) -> Tuple[bool, Dict, Optional[str]]:
     """Session 474: Alert when BB pipeline has candidates but 0 pass filters for 2+ game days.
 
@@ -1617,6 +1698,7 @@ CRITICAL_CHECKS = frozenset({
     # MLB predictions (revenue-impacting)
     "mlb_phase5_predictions",
     "mlb_phase6_best_bets",
+    "mlb_bb_pick_drought",  # Added 2026-05-17 after the 5/14-5/17 4-day drought
 })
 
 
@@ -1740,6 +1822,24 @@ def main():
             if not filter_passed:
                 logger.warning(f"  Error: {filter_error}")
             results.append((filter_check, filter_passed, filter_metrics, filter_error))
+
+        # MLB multi-day pick drought (added 2026-05-17). MLB has no off-season
+        # gate analogous to is_nba_offseason — the schedule lookup below
+        # returns 0 rows on true off-days, which the check handles gracefully.
+        if _should_run("mlb_bb_pick_drought"):
+            mlb_drought_check = CanaryCheck(
+                name="MLB Best Bets Pick Drought",
+                phase="mlb_bb_pick_drought",
+                query="",
+                thresholds={},
+                description="Alerts when 0 MLB best-bet picks published for 2+ consecutive game days despite ≥5 predictions"
+            )
+            mlb_drought_passed, mlb_drought_metrics, mlb_drought_error = check_mlb_pick_drought(client)
+            mlb_drought_status = "✅ PASS" if mlb_drought_passed else "❌ FAIL"
+            logger.info(f"MLB Best Bets Pick Drought: {mlb_drought_status}")
+            if not mlb_drought_passed:
+                logger.warning(f"  Error: {mlb_drought_error}")
+            results.append((mlb_drought_check, mlb_drought_passed, mlb_drought_metrics, mlb_drought_error))
 
     # Session 302: Check live-grading content quality (hybrid GCS+BQ)
     if not is_nba_offseason and _should_run("live_grading_content"):
