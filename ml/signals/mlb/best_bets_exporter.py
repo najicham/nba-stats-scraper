@@ -231,11 +231,17 @@ class MLBBestBetsExporter:
                 vegas_mae = result['vegas_mae_7d']
                 mae_gap = result['mae_gap_7d']
 
-                if vegas_mae is not None and vegas_mae < 1.7:
+                # TIGHT regime threshold lowered 1.7 → 1.5 on 2026-05-17 after
+                # 4-day pick drought (5/14-5/17). 1.7 caught the bottom 20% of
+                # MLB days (p25=1.71, p50=1.80) — too aggressive. Combined with
+                # MAX_EDGE=1.25 cap, the +0.5 floor delta collapsed the passable
+                # window to [1.25, 1.25] and zeroed picks for 4 consecutive days.
+                # 1.5 catches ~0.5% of days historically — true anomalies only.
+                if vegas_mae is not None and vegas_mae < 1.5:
                     result['over_edge_floor_delta'] = 0.5
                     result['disable_rescue'] = True
                     logger.warning(
-                        f"[MLB BB] TIGHT market: vegas_mae={vegas_mae:.2f} < 1.7 K. "
+                        f"[MLB BB] TIGHT market: vegas_mae={vegas_mae:.2f} < 1.5 K. "
                         f"Raising OVER floor +0.5 K and disabling rescue."
                     )
                 if mae_gap is not None and mae_gap > 0.3:
