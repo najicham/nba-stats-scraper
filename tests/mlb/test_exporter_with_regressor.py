@@ -590,7 +590,12 @@ class TestUltraTier:
             assert '2u stake' in ultra_angles[0]
 
     def test_algorithm_version_updated(self):
-        """Algorithm version should be mlb_v8_s456_v3final_away_5picks."""
+        """Algorithm version is stamped on every pick.
+
+        Current: mlb_v9_max_edge_125 (Session 2 of 2026-05-17 — MAX_EDGE
+        tightened from 1.5 to 1.25). The string is asserted exactly so
+        any future bump intentionally surfaces here.
+        """
         exporter = MLBBestBetsExporter(bq_client=MagicMock())
         pred = self._make_ultra_eligible_prediction()
         features = self._make_ultra_features()
@@ -603,16 +608,29 @@ class TestUltraTier:
         )
 
         assert len(result) >= 1
-        assert result[0]['algorithm_version'] == 'mlb_v8_s456_v3final_away_5picks'
+        assert result[0]['algorithm_version'] == 'mlb_v9_max_edge_125'
 
     def test_bq_row_includes_ultra_fields(self):
-        """BQ row should include ultra_tier, ultra_criteria, staking_multiplier."""
+        """BQ row should include ultra_tier, ultra_criteria, staking_multiplier.
+
+        Non-dry-run path requires game_pk on the prediction and uses
+        load_table_from_json (not insert_rows_json) with a schema from
+        client.get_table(). Mocks return an empty schema so the load
+        path doesn't choke on MagicMock.schema.
+        """
         mock_bq = MagicMock()
         mock_bq.query.return_value.result.return_value = None
-        mock_bq.insert_rows_json.return_value = []
+
+        # get_table().schema must be iterable for LoadJobConfig.
+        mock_table = MagicMock()
+        mock_table.schema = []
+        mock_bq.get_table.return_value = mock_table
+        mock_bq.load_table_from_json.return_value.result.return_value = None
 
         exporter = MLBBestBetsExporter(bq_client=mock_bq)
-        pred = self._make_ultra_eligible_prediction()
+        pred = self._make_ultra_eligible_prediction(
+            game_pk=12345, game_id=12345, team_abbr='LAD',
+        )
         features = self._make_ultra_features()
 
         exporter.export(
@@ -622,22 +640,30 @@ class TestUltraTier:
             dry_run=False,
         )
 
-        # Check insert_rows_json was called
-        calls = mock_bq.insert_rows_json.call_args_list
+        # Check load_table_from_json was called for signal_best_bets_picks
+        calls = mock_bq.load_table_from_json.call_args_list
         bb_call = [c for c in calls if 'signal_best_bets_picks' in str(c)]
         assert len(bb_call) >= 1
 
-        rows = bb_call[0][0][1]  # Second arg is rows list
+        rows = bb_call[0][0][0]  # First arg is rows list
         assert 'ultra_tier' in rows[0]
         assert 'ultra_criteria' in rows[0]
         assert 'staking_multiplier' in rows[0]
 
 
 class TestV3FinalAwayFilters:
-    """Test V3 FINAL away edge floor and rescue blocking."""
+    """AWAY OVER policy block (Session 2 of 2026-05-17).
 
-    def test_away_pitcher_blocked_below_away_edge_floor(self):
-        """Away OVER pitcher with edge 1.0 should be blocked (away floor is 1.25)."""
+    With BLOCK_ALL_AWAY_OVER=true (default), the away_edge_floor logic
+    is dead — `away_over_blocked_policy` fires first in pipeline order
+    and blocks regardless of edge. These tests verify the policy block
+    is total. The edge-floor mechanic itself (which only matters when
+    BLOCK_ALL_AWAY_OVER=false) is exercised by the parametrized
+    TestEdgeWindowCrossProduct.
+    """
+
+    def test_away_over_blocked_below_cap(self):
+        """Away OVER below MAX_EDGE: blocked by away_over_blocked_policy."""
         exporter = MLBBestBetsExporter(bq_client=MagicMock())
         pred = _make_prediction(
             pitcher_lookup='away_pitcher',
@@ -654,19 +680,22 @@ class TestV3FinalAwayFilters:
         )
 
         assert len(result) == 0
-        away_audits = [
+        policy_blocks = [
             a for a in exporter.filter_audit
-            if a.get('filter_name') == 'away_edge_floor'
+            if a.get('filter_name') == 'away_over_blocked_policy'
         ]
-        assert len(away_audits) == 1
+        assert len(policy_blocks) == 1
 
-    def test_away_pitcher_passes_above_away_edge_floor(self):
-        """Away OVER pitcher with edge 1.3 should pass (above 1.25 floor)."""
+    def test_away_over_blocked_above_old_floor(self):
+        """Away OVER at edge 1.20 (would-have-passed-old-floor of 1.25):
+        still blocked by policy. Regression guard against accidentally
+        removing BLOCK_ALL_AWAY_OVER.
+        """
         exporter = MLBBestBetsExporter(bq_client=MagicMock())
         pred = _make_prediction(
             pitcher_lookup='strong_away_pitcher',
-            edge=1.3,
-            predicted_strikeouts=6.8,
+            edge=1.20,
+            predicted_strikeouts=6.7,
             strikeouts_line=5.5,
             is_home=False,
         )
@@ -679,9 +708,13 @@ class TestV3FinalAwayFilters:
             dry_run=True,
         )
 
-        # Should pass if it also passes signal gate
-        # (it will have enough signals from _make_features_for_signals)
-        assert len(result) >= 1
+        # BLOCK_ALL_AWAY_OVER closes the path; high edge does not rescue.
+        assert len(result) == 0
+        policy_blocks = [
+            a for a in exporter.filter_audit
+            if a.get('filter_name') == 'away_over_blocked_policy'
+        ]
+        assert len(policy_blocks) == 1
 
     def test_away_rescue_blocked(self):
         """Away OVER pitcher below edge floor should NOT be rescued."""
