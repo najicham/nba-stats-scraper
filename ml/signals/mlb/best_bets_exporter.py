@@ -346,16 +346,25 @@ class MLBBestBetsExporter:
     def _read_halt_envelope(self, game_date: str) -> Dict[str, Any]:
         """Read today's halt envelope from nba_orchestration.halt_state.
 
-        Returns the canonical envelope shape: {halt_active, halt_reason, halt_since}.
-        Mirrors `BaseExporter.halt_envelope` semantics — fail-CLOSED when a
-        recent date is missing a row (writer may be broken), fail-OPEN for
-        older/future dates and transient query errors.
+        Returns the canonical envelope shape with halt_source_date for parity
+        with `BaseExporter.halt_envelope` (data_processors/publishing/base_exporter.py:334).
+
+        Semantics mirror NBA:
+        - Transient BQ error → fail-OPEN (halt_active=False, reason='unknown_state').
+          Telemetry failure shouldn't block pick generation.
+        - No row for a recent date (≤7 days old) → fail-CLOSED. A missing
+          recent row strongly suggests halt_state_writer is broken; safer to
+          treat as halted than to ship picks during a real halt the writer
+          would have flagged.
+        - No row for older/future dates → fail-OPEN. Historical re-exports
+          shouldn't be blocked.
         """
         from datetime import date as _date
         envelope: Dict[str, Any] = {
             'halt_active': False,
             'halt_reason': None,
             'halt_since': None,
+            'halt_source_date': game_date,
         }
         try:
             target_date = _date.fromisoformat(game_date)
@@ -436,6 +445,22 @@ class MLBBestBetsExporter:
         # The 5/14-5/16 MLB drought was diagnosed retroactively; with this
         # gate live, future drought events become a single auditable row
         # instead of silent zero-pick failure.
+        #
+        # canonical_halts policy (differs from NBA's allow-zero list at
+        # data_processors/publishing/signal_best_bets_exporter.py:521):
+        #
+        #   off_season / between_rounds — calendar gates, also in NBA
+        #   fleet_blocked              — all production models BLOCKED, also in NBA
+        #   predictions_inactive       — worker silent N days, also in NBA
+        #   pick_drought               — MLB-only multi-day signature of
+        #                                filter squeeze / floor-cap collision
+        #                                that the 5/14-5/16 drought belonged to
+        #   tight_market               — MLB-specific (vegas_mae<1.5 K regime)
+        #   manual                     — operator-set via halt_overrides flow
+        #
+        # `unknown_state` is intentionally NOT in this set — fail-OPEN at pick
+        # generation when halt_state read fails, fail-CLOSED at JSON publish.
+        # `edge_collapse` is NBA-only; MLB thresholds aren't calibrated yet.
         halt = self._read_halt_envelope(game_date)
         canonical_halts = {
             'off_season', 'between_rounds', 'fleet_blocked',

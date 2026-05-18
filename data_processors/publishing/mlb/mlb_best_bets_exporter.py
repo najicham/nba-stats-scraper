@@ -538,11 +538,20 @@ class MlbBestBetsExporter(BaseExporter):
         non_voided_today = [r for r in today_rows if not r.get('is_voided')]
         voided_rows = [r for r in all_rows if r.get('is_voided')]
 
+        # Halt envelope — mirror NBA all.json (best_bets_all_exporter.py:214).
+        # The per-date export() picked this up in commit 9a7c2cf4 but export_all
+        # was missed; without these fields the frontend has no way to surface
+        # MLB halt state on the all-picks view.
+        halt = self.halt_envelope(sport='mlb', target_date=today)
+
         json_data = {
             'date': today,
             'season': today[:4],
             'season_start': SEASON_START,
             'generated_at': self.get_generated_at(),
+            'halt_active': halt['halt_active'],
+            'halt_reason': halt['halt_reason'],
+            'halt_since': halt['halt_since'],
             'record': record,
             'streak': streak,
             'best_streak': best_streak,
