@@ -20,6 +20,7 @@ Target Tables:
 """
 
 import logging
+import os
 from datetime import date, datetime, timezone
 from typing import Dict, List, Any, Optional, Tuple
 from google.cloud import bigquery
@@ -36,9 +37,14 @@ SUSPENDED_STATUSES = frozenset(['Suspended', 'suspended'])
 # preventing morning grading runs from mass-voiding scheduled-but-not-yet-played games.
 TERMINAL_STATUSES = frozenset(['Final', 'Completed Early', 'Game Over'])
 
-# Minimum innings pitched for a valid prop (sportsbooks void if pitcher
-# doesn't complete enough innings — typically ~4 IP for K props)
-MIN_IP_FOR_VALID_PROP = 4.0
+# Minimum innings pitched for a valid prop. US sportsbook rules: FanDuel
+# settles on ≥1 pitch (0.0 IP); DraftKings/BetMGM/Caesars settle on ≥1 out
+# (0.33 IP, ~⅓ inning); Pinnacle uses 1.0 IP. The earlier 4.0 IP threshold
+# was a quality gate, not a book rule, and silently inflated reported HR vs
+# what an actual bettor saw (audit 2026-05-18: BB HR 58.33% → 53.85% at
+# 0.33). Defaults to 0.33 (DK rule); override via env var for FanDuel (0.0)
+# or Pinnacle (1.0).
+MIN_IP_FOR_VALID_PROP = float(os.getenv("GRADING_MIN_IP_FOR_VALID_PROP", "0.33"))
 
 # Freshness guard: refuse to void absent pitchers if the box-score table looks
 # incomplete (e.g., scraper hasn't finished writing). Threshold = fraction of
@@ -196,7 +202,8 @@ class MlbPredictionGradingProcessor:
         - `did_not_start`: lined pitcher pitched, but did NOT start the game
           (e.g., bulk pitcher behind an opener). Records `actual_starter_lookup`.
         - `scratched`: lined pitcher never took the mound and game is terminal.
-        - `short_start`: lined pitcher started but was pulled before MIN_IP_FOR_VALID_PROP.
+        - `short_start`: lined pitcher started but was pulled before MIN_IP_FOR_VALID_PROP
+          (default 0.33 IP = DK rule; override via GRADING_MIN_IP_FOR_VALID_PROP env var).
         """
         starters_by_game = starters_by_game or {}
         pitcher_lookup = pred.get('pitcher_lookup')
