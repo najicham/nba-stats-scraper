@@ -101,6 +101,18 @@ MODEL_PERF_LOOKUP = {
     },
 }
 
+# Per-sport model_registry — used by _fleet_blocked transition grace check.
+MODEL_REGISTRY_LOOKUP = {
+    'nba': f'{PROJECT_ID}.nba_predictions.model_registry',
+    'mlb': f'{PROJECT_ID}.mlb_predictions.model_registry',
+}
+
+# Days after model registration during which fleet_blocked is suspended if the
+# model lacks model_performance_daily rows. Tuned to grading lag: a model
+# registered Monday gets its first MPD row Tuesday morning at earliest; 5 days
+# gives a week of slack before fleet_blocked re-engages if MPD is still empty.
+FLEET_TRANSITION_GRACE_DAYS = 5
+
 # Per-sport best-bets picks table — used by MLB _pick_drought.
 PICKS_LOOKUP = {
     'mlb': {
@@ -291,6 +303,94 @@ def _predictions_inactive(bq: bigquery.Client, sport: str, today: date) -> Optio
     return None
 
 
+def _fleet_in_transition(
+    bq: bigquery.Client, sport: str, today: date
+) -> Optional[Dict[str, Any]]:
+    """Is the production fleet mid-swap?
+
+    Returns context dict (non-None) when EVERY production-enabled model in the
+    registry is "fresh" (registered within FLEET_TRANSITION_GRACE_DAYS) AND has
+    no model_performance_daily rows yet. In that state, `_fleet_blocked` has
+    only stale data from older models to read from, so its BLOCKED result is a
+    false positive — we suspend it.
+
+    Why ALL must be fresh (not ANY): for a multi-model fleet (NBA), one
+    week's retrain producing one fresh model doesn't invalidate the BLOCKED
+    state inferred from the other 6. Suspending only fires when the entire
+    fleet is in transition (single-model retrain or a coordinated NBA swap).
+
+    Returns None on any query failure (fail-open — don't suppress halts when
+    the transition check itself is broken).
+    """
+    registry_table = MODEL_REGISTRY_LOOKUP.get(sport)
+    mpd_cfg = MODEL_PERF_LOOKUP.get(sport)
+    if registry_table is None or mpd_cfg is None:
+        return None
+
+    query = f"""
+        WITH prod_models AS (
+          SELECT
+            model_id,
+            DATE(created_at) AS registered_date,
+            DATE_DIFF(@today, DATE(created_at), DAY) AS age_days
+          FROM `{registry_table}`
+          WHERE is_production = TRUE AND enabled = TRUE
+        ),
+        mpd_recent AS (
+          -- Has each model produced any decay row in the last 14 days?
+          -- 14d window is generous; MPD is written daily after grading.
+          SELECT model_id, COUNT(*) AS mpd_rows
+          FROM `{mpd_cfg['table']}`
+          WHERE game_date BETWEEN DATE_SUB(@today, INTERVAL 14 DAY) AND @today
+          GROUP BY model_id
+        ),
+        joined AS (
+          SELECT
+            p.model_id, p.registered_date, p.age_days,
+            COALESCE(m.mpd_rows, 0) AS mpd_rows
+          FROM prod_models p
+          LEFT JOIN mpd_recent m USING (model_id)
+        )
+        SELECT
+          COUNT(*) AS n_prod,
+          COUNTIF(age_days < @grace_days AND mpd_rows = 0) AS n_in_transition,
+          ARRAY_AGG(model_id ORDER BY model_id) AS model_ids,
+          ARRAY_AGG(age_days ORDER BY model_id) AS ages,
+          ARRAY_AGG(mpd_rows ORDER BY model_id) AS mpd_rows_per_model
+        FROM joined
+    """
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter('today', 'DATE', today),
+            bigquery.ScalarQueryParameter('grace_days', 'INT64', FLEET_TRANSITION_GRACE_DAYS),
+        ]
+    )
+    try:
+        rows = list(bq.query(query, job_config=job_config).result(timeout=60))
+    except Exception as e:
+        logger.warning(f"Fleet-in-transition query failed for {sport}: {e}")
+        return None
+
+    if not rows or rows[0].n_prod == 0:
+        return None
+
+    row = rows[0]
+    n_prod = int(row.n_prod)
+    n_in_transition = int(row.n_in_transition)
+
+    # Only suspend fleet_blocked when the ENTIRE production fleet is in transition.
+    # Partial fleet swaps still allow fleet_blocked to consult the established models.
+    if n_in_transition == n_prod and n_prod > 0:
+        return {
+            'fleet_in_transition': True,
+            'fleet_in_transition_models': list(row.model_ids),
+            'fleet_in_transition_ages': [int(a) for a in row.ages],
+            'fleet_in_transition_mpd_rows': [int(m) for m in row.mpd_rows_per_model],
+            'fleet_transition_grace_days': FLEET_TRANSITION_GRACE_DAYS,
+        }
+    return None
+
+
 def _fleet_blocked(bq: bigquery.Client, sport: str, today: date) -> Optional[Dict[str, Any]]:
     """Are all enabled models in BLOCKED state?
 
@@ -301,6 +401,13 @@ def _fleet_blocked(bq: bigquery.Client, sport: str, today: date) -> Optional[Dic
     MLB has historically been a single-model fleet (`catboost_v2_regressor`), so the
     "all blocked" check fires whenever that one model is BLOCKED — which is the
     correct gating signal for MLB given there's no fallback to fail over to.
+
+    NOTE: callers must check `_fleet_in_transition` first. When the fleet is
+    mid-swap (fresh production model with no MPD rows yet), the BLOCKED signal
+    is a false positive from the prior model's stale decay state. The caller
+    is responsible for that gate — this function will happily return BLOCKED
+    in transition because the underlying MPD query knows nothing about model
+    registration recency.
     """
     cfg = MODEL_PERF_LOOKUP.get(sport)
     if cfg is None:
@@ -410,18 +517,28 @@ def _mlb_pick_drought(bq: bigquery.Client, today: date) -> Optional[Dict[str, An
     if not rows:
         return None
 
+    # Rows are ORDER BY game_date DESC — most recent first.
     drought_days: List[str] = []
     per_day: Dict[str, Dict[str, int]] = {}
-    for r in rows:
+    most_recent_is_drought = False
+    for idx, r in enumerate(rows):
         n_preds = int(r.n_preds or 0)
         n_picks = int(r.n_picks or 0)
+        is_drought = n_preds >= 5 and n_picks == 0
         per_day[r.game_date.isoformat()] = {'preds': n_preds, 'picks': n_picks}
-        if n_preds >= 5 and n_picks == 0:
+        if is_drought:
             drought_days.append(r.game_date.isoformat())
+        if idx == 0:
+            most_recent_is_drought = is_drought
 
-    # Require 2+ consecutive drought days to differentiate from a single-day
-    # blip (late-published lines, scheduler hiccup) that self-heals.
-    if len(drought_days) < 2:
+    # Two gates:
+    #   - drought must be ONGOING: the most recent game day in the lookback
+    #     must itself be a drought day. Otherwise the halt would persist
+    #     after the system started producing picks again — exactly the
+    #     opposite of what we want.
+    #   - 2+ drought days total: differentiates from a single-day blip
+    #     (late lines, scheduler hiccup) that self-heals.
+    if not most_recent_is_drought or len(drought_days) < 2:
         return None
 
     return {
@@ -478,13 +595,27 @@ def evaluate_halt_state(
             halt_reason = 'edge_collapse'
             halt_metrics.update(edge_metrics)
 
-    # 3. Fleet blocked — now sport-aware.
+    # 3. Fleet blocked — now sport-aware. Skip when the entire production fleet
+    #    is mid-swap (fresh model with no MPD rows yet); otherwise the stale
+    #    decay_state from the prior model produces a false positive halt.
+    #    See _fleet_in_transition docstring for rationale.
     if not halt_active:
-        fleet_metrics = _fleet_blocked(bq, sport, today)
-        if fleet_metrics is not None:
-            halt_active = True
-            halt_reason = 'fleet_blocked'
-            halt_metrics.update(fleet_metrics)
+        transition = _fleet_in_transition(bq, sport, today)
+        if transition is not None:
+            # Record the suspension in halt_metrics for audit; do NOT halt.
+            halt_metrics.update(transition)
+            logger.info(
+                f"[halt_state_writer] {sport}: fleet_blocked suspended — fleet in transition "
+                f"(models={transition['fleet_in_transition_models']}, "
+                f"ages={transition['fleet_in_transition_ages']} days, "
+                f"mpd_rows={transition['fleet_in_transition_mpd_rows']})"
+            )
+        else:
+            fleet_metrics = _fleet_blocked(bq, sport, today)
+            if fleet_metrics is not None:
+                halt_active = True
+                halt_reason = 'fleet_blocked'
+                halt_metrics.update(fleet_metrics)
 
     # 4. Predictions inactive — sport-aware. Catches operator-paused / dormant
     #    pipelines where edge_collapse and fleet_blocked checks need recent data
