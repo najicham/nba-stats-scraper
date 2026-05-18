@@ -15,11 +15,15 @@ Replaces the ad-hoc halt detection that previously lived in:
 
 Halt reasons (canonical strings stored in halt_state.halt_reason):
 
-    'off_season'    — outside the sport's regular-season + playoffs window
-    'edge_collapse' — Session 515 edge-based auto-halt
-    'fleet_blocked' — all enabled models in BLOCKED state per decay_detection
-    'tight_market'  — vegas_mae_7d < 4.5 and operator-elevated
-    'manual'        — operator-set via halt_overrides table
+    'off_season'           — outside the sport's regular-season + playoffs window
+    'between_rounds'       — in-window but no future games in next 14d
+    'edge_collapse'        — Session 515 edge-based auto-halt (NBA only)
+    'fleet_blocked'        — all enabled models in BLOCKED state per decay_detection
+    'predictions_inactive' — predictions silent 3+ days while games scheduled
+    'pick_drought'         — MLB: predictions flowing but 2+ days of zero picks
+                             (filter squeeze / floor-cap collision class)
+    'tight_market'         — vegas_mae_7d < 4.5 and operator-elevated
+    'manual'               — operator-set via halt_overrides table
 
 Published metrics (halt_metrics JSON column) are diagnostic only — readers
 should treat unknown keys gracefully.
@@ -64,6 +68,43 @@ SCHEDULE_LOOKUP = {
     },
     'mlb': {
         'table': f'{PROJECT_ID}.mlb_raw.mlb_schedule',
+        'date_col': 'game_date',
+    },
+}
+
+# Per-sport predictions tables — used by _predictions_inactive and (MLB) _pick_drought.
+PREDICTIONS_LOOKUP = {
+    'nba': {
+        'table': f'{PROJECT_ID}.nba_predictions.player_prop_predictions',
+        'date_col': 'game_date',
+    },
+    'mlb': {
+        'table': f'{PROJECT_ID}.mlb_predictions.pitcher_strikeouts',
+        'date_col': 'game_date',
+    },
+}
+
+# Per-sport model_performance_daily — schemas drift between sports.
+# NBA writes `state`/`rolling_hr_7d`/`rolling_n_7d`; MLB writes `decay_state`/`hr_7d`/`n_7d`.
+MODEL_PERF_LOOKUP = {
+    'nba': {
+        'table': f'{PROJECT_ID}.nba_predictions.model_performance_daily',
+        'state_col': 'state',
+        'hr_col': 'rolling_hr_7d',
+        'n_col': 'rolling_n_7d',
+    },
+    'mlb': {
+        'table': f'{PROJECT_ID}.mlb_predictions.model_performance_daily',
+        'state_col': 'decay_state',
+        'hr_col': 'hr_7d',
+        'n_col': 'n_7d',
+    },
+}
+
+# Per-sport best-bets picks table — used by MLB _pick_drought.
+PICKS_LOOKUP = {
+    'mlb': {
+        'table': f'{PROJECT_ID}.mlb_predictions.signal_best_bets_picks',
         'date_col': 'game_date',
     },
 }
@@ -198,7 +239,7 @@ def _nba_edge_collapse(bq: bigquery.Client, today: date) -> Optional[Dict[str, A
 
 
 def _predictions_inactive(bq: bigquery.Client, sport: str, today: date) -> Optional[Dict[str, Any]]:
-    """Have NBA predictions been silent for 3+ days while games are scheduled?
+    """Have predictions been silent for 3+ days while games are scheduled?
 
     Catches halts that don't fall into the off_season / edge_collapse /
     fleet_blocked buckets — e.g. operator-paused schedulers, prediction
@@ -207,19 +248,21 @@ def _predictions_inactive(bq: bigquery.Client, sport: str, today: date) -> Optio
 
     Returns a dict if predictions are inactive while games are scheduled.
     """
-    if sport != 'nba':
-        return None  # MLB has its own prediction pipeline; not modeled here.
+    pred_cfg = PREDICTIONS_LOOKUP.get(sport)
+    sched_cfg = SCHEDULE_LOOKUP.get(sport)
+    if pred_cfg is None or sched_cfg is None:
+        return None
 
     query = f"""
         WITH recent_preds AS (
           SELECT COUNT(*) AS n_preds
-          FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
-          WHERE game_date BETWEEN DATE_SUB(@today, INTERVAL 3 DAY) AND @today
+          FROM `{pred_cfg['table']}`
+          WHERE {pred_cfg['date_col']} BETWEEN DATE_SUB(@today, INTERVAL 3 DAY) AND @today
         ),
         upcoming_games AS (
           SELECT COUNT(*) AS n_games
-          FROM `{PROJECT_ID}.nba_reference.nba_schedule`
-          WHERE game_date BETWEEN @today AND DATE_ADD(@today, INTERVAL 7 DAY)
+          FROM `{sched_cfg['table']}`
+          WHERE {sched_cfg['date_col']} BETWEEN @today AND DATE_ADD(@today, INTERVAL 7 DAY)
         )
         SELECT
           (SELECT n_preds FROM recent_preds) AS recent_preds,
@@ -231,7 +274,7 @@ def _predictions_inactive(bq: bigquery.Client, sport: str, today: date) -> Optio
     try:
         rows = list(bq.query(query, job_config=job_config).result(timeout=30))
     except Exception as e:
-        logger.warning(f"Predictions-inactive query failed: {e}")
+        logger.warning(f"Predictions-inactive query failed for {sport}: {e}")
         return None
 
     if not rows:
@@ -249,22 +292,33 @@ def _predictions_inactive(bq: bigquery.Client, sport: str, today: date) -> Optio
 
 
 def _fleet_blocked(bq: bigquery.Client, sport: str, today: date) -> Optional[Dict[str, Any]]:
-    """Are all enabled NBA models in BLOCKED state?
+    """Are all enabled models in BLOCKED state?
 
     Uses model_performance_daily as written by decay_detection. Returns dict
     with halt context if all-blocked, else None.
-    """
-    if sport != 'nba':
-        return None  # MLB fleet blocking semantics differ; not modeled yet.
 
+    Schema note: NBA writes `state`/`rolling_hr_7d`; MLB writes `decay_state`/`hr_7d`.
+    MLB has historically been a single-model fleet (`catboost_v2_regressor`), so the
+    "all blocked" check fires whenever that one model is BLOCKED — which is the
+    correct gating signal for MLB given there's no fallback to fail over to.
+    """
+    cfg = MODEL_PERF_LOOKUP.get(sport)
+    if cfg is None:
+        return None
+
+    # Both subquery and outer query need explicit partition predicates —
+    # MLB's model_performance_daily is partitioned by game_date with
+    # require_partition_filter=TRUE. The 7-day lookback is generous; we just
+    # need a finite window to pick the most recent state row per model.
     query = f"""
         WITH latest AS (
-          SELECT model_id, state, rolling_hr_7d, rolling_n_7d
-          FROM `{PROJECT_ID}.nba_predictions.model_performance_daily` p
-          WHERE game_date = (
-            SELECT MAX(game_date) FROM `{PROJECT_ID}.nba_predictions.model_performance_daily`
-            WHERE game_date <= @today
-          )
+          SELECT model_id, {cfg['state_col']} AS state, {cfg['hr_col']} AS hr_7d, {cfg['n_col']} AS n_7d
+          FROM `{cfg['table']}` p
+          WHERE game_date BETWEEN DATE_SUB(@today, INTERVAL 7 DAY) AND @today
+            AND game_date = (
+              SELECT MAX(game_date) FROM `{cfg['table']}`
+              WHERE game_date BETWEEN DATE_SUB(@today, INTERVAL 7 DAY) AND @today
+            )
         )
         SELECT
           COUNT(*) AS n_total,
@@ -279,7 +333,7 @@ def _fleet_blocked(bq: bigquery.Client, sport: str, today: date) -> Optional[Dic
     try:
         rows = list(bq.query(query, job_config=job_config).result(timeout=60))
     except Exception as e:
-        logger.warning(f"Fleet block query failed: {e}")
+        logger.warning(f"Fleet block query failed for {sport}: {e}")
         return None
 
     if not rows or rows[0].n_total == 0:
@@ -294,6 +348,87 @@ def _fleet_blocked(bq: bigquery.Client, sport: str, today: date) -> Optional[Dic
             'states': list(row.states),
         }
     return None
+
+
+def _mlb_pick_drought(bq: bigquery.Client, today: date) -> Optional[Dict[str, Any]]:
+    """MLB-only: have 2+ recent game days shipped zero picks despite predictions?
+
+    Mirrors `check_mlb_pick_drought` in pipeline_canary_queries.py — the same
+    multi-day signal that flagged the 5/14-5/16 drought caused by the
+    `MAX_EDGE == effective_edge_floor` collision in the regressor pipeline.
+
+    Fires when both: (a) predictions are flowing (>= 5/day) so the issue is
+    downstream of the model, and (b) zero best-bet picks landed for 2+
+    consecutive game days. Excludes off-days (0 scheduled games) and
+    upstream-issue days (preds < 5).
+
+    Why this complements `_predictions_inactive`: that check catches the
+    "worker is dead" failure mode (zero preds). `_pick_drought` catches the
+    "worker is live but the funnel collapsed" mode (preds normal, picks zero) —
+    which is what actually happened 5/14-5/16.
+    """
+    pred_cfg = PREDICTIONS_LOOKUP['mlb']
+    sched_cfg = SCHEDULE_LOOKUP['mlb']
+    picks_cfg = PICKS_LOOKUP['mlb']
+
+    query = f"""
+        WITH game_days AS (
+          SELECT DISTINCT {sched_cfg['date_col']} AS game_date
+          FROM `{sched_cfg['table']}`
+          WHERE {sched_cfg['date_col']} BETWEEN DATE_SUB(@today, INTERVAL 3 DAY) AND DATE_SUB(@today, INTERVAL 1 DAY)
+        ),
+        preds AS (
+          SELECT {pred_cfg['date_col']} AS game_date, COUNT(*) AS n_preds
+          FROM `{pred_cfg['table']}`
+          WHERE {pred_cfg['date_col']} BETWEEN DATE_SUB(@today, INTERVAL 3 DAY) AND DATE_SUB(@today, INTERVAL 1 DAY)
+          GROUP BY 1
+        ),
+        picks AS (
+          SELECT {picks_cfg['date_col']} AS game_date, COUNT(*) AS n_picks
+          FROM `{picks_cfg['table']}`
+          WHERE {picks_cfg['date_col']} BETWEEN DATE_SUB(@today, INTERVAL 3 DAY) AND DATE_SUB(@today, INTERVAL 1 DAY)
+          GROUP BY 1
+        )
+        SELECT
+          g.game_date,
+          COALESCE(p.n_preds, 0) AS n_preds,
+          COALESCE(b.n_picks, 0) AS n_picks
+        FROM game_days g
+        LEFT JOIN preds p USING (game_date)
+        LEFT JOIN picks b USING (game_date)
+        ORDER BY g.game_date DESC
+    """
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[bigquery.ScalarQueryParameter('today', 'DATE', today)]
+    )
+    try:
+        rows = list(bq.query(query, job_config=job_config).result(timeout=60))
+    except Exception as e:
+        logger.warning(f"MLB pick-drought query failed: {e}")
+        return None
+
+    if not rows:
+        return None
+
+    drought_days: List[str] = []
+    per_day: Dict[str, Dict[str, int]] = {}
+    for r in rows:
+        n_preds = int(r.n_preds or 0)
+        n_picks = int(r.n_picks or 0)
+        per_day[r.game_date.isoformat()] = {'preds': n_preds, 'picks': n_picks}
+        if n_preds >= 5 and n_picks == 0:
+            drought_days.append(r.game_date.isoformat())
+
+    # Require 2+ consecutive drought days to differentiate from a single-day
+    # blip (late-published lines, scheduler hiccup) that self-heals.
+    if len(drought_days) < 2:
+        return None
+
+    return {
+        'drought_days': drought_days,
+        'drought_days_count': len(drought_days),
+        'per_day': per_day,
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -331,7 +466,11 @@ def evaluate_halt_state(
         halt_active = True
         halt_reason = 'between_rounds'
 
-    # 2. Edge collapse (NBA only) — only consult when not already off_season.
+    # 2. Edge collapse (NBA only — MLB thresholds not yet calibrated).
+    #    The 5/14-5/16 MLB drought had avg edge 0.4-0.5 (not collapsed); the
+    #    real driver was a floor/cap collision that `_mlb_pick_drought` catches
+    #    directly. Adding an MLB edge-collapse check requires N>=30 calibration
+    #    data we don't have yet.
     if not halt_active and sport == 'nba':
         edge_metrics = _nba_edge_collapse(bq, today)
         if edge_metrics is not None:
@@ -339,23 +478,33 @@ def evaluate_halt_state(
             halt_reason = 'edge_collapse'
             halt_metrics.update(edge_metrics)
 
-    # 3. Fleet blocked (NBA only).
-    if not halt_active and sport == 'nba':
+    # 3. Fleet blocked — now sport-aware.
+    if not halt_active:
         fleet_metrics = _fleet_blocked(bq, sport, today)
         if fleet_metrics is not None:
             halt_active = True
             halt_reason = 'fleet_blocked'
             halt_metrics.update(fleet_metrics)
 
-    # 4. Predictions inactive (NBA only) — catches operator-paused / late-season
-    #    dormancy where edge_collapse and fleet_blocked checks need recent data
+    # 4. Predictions inactive — sport-aware. Catches operator-paused / dormant
+    #    pipelines where edge_collapse and fleet_blocked checks need recent data
     #    they don't have. Last-resort signal: games scheduled but no predictions.
-    if not halt_active and sport == 'nba':
+    if not halt_active:
         pred_metrics = _predictions_inactive(bq, sport, today)
         if pred_metrics is not None:
             halt_active = True
             halt_reason = 'predictions_inactive'
             halt_metrics.update(pred_metrics)
+
+    # 5. MLB-only pick drought. Catches the failure mode where predictions
+    #    flow normally but zero picks ship for 2+ consecutive days — exactly
+    #    the 5/14-5/16 drought signature (filter squeeze / floor-cap collision).
+    if not halt_active and sport == 'mlb':
+        drought_metrics = _mlb_pick_drought(bq, today)
+        if drought_metrics is not None:
+            halt_active = True
+            halt_reason = 'pick_drought'
+            halt_metrics.update(drought_metrics)
 
     return {
         'halt_active': halt_active,

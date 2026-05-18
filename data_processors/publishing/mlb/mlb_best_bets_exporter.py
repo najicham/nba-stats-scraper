@@ -86,6 +86,11 @@ class MlbBestBetsExporter(BaseExporter):
         """
         logger.info(f"Generating MLB best bets export for {game_date}")
 
+        # Halt envelope — same stable schema NBA emits. Readers can rely on
+        # halt_active/halt_reason/halt_since being present on every payload.
+        # Written daily by halt_state_writer CF in nba_orchestration.halt_state.
+        halt = self.halt_envelope(sport='mlb', target_date=game_date)
+
         # Query best bets
         best_bets = self._get_best_bets(game_date)
 
@@ -95,6 +100,9 @@ class MlbBestBetsExporter(BaseExporter):
         return {
             'generated_at': self.get_generated_at(),
             'game_date': game_date,
+            'halt_active': halt['halt_active'],
+            'halt_reason': halt['halt_reason'],
+            'halt_since': halt['halt_since'],
             'criteria': {
                 'min_confidence': self.min_confidence,
                 'min_edge': self.min_edge,

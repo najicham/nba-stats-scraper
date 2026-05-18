@@ -35,7 +35,7 @@ Session 455 changes (vig-adjusted P&L, away filters):
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from google.cloud import bigquery
 from ml.signals.mlb.registry import build_mlb_registry, MLBSignalRegistry
@@ -343,6 +343,63 @@ class MLBBestBetsExporter:
             logger.warning(f"[MLB BB] Regime context query failed (non-fatal): {e}")
         return result
 
+    def _read_halt_envelope(self, game_date: str) -> Dict[str, Any]:
+        """Read today's halt envelope from nba_orchestration.halt_state.
+
+        Returns the canonical envelope shape: {halt_active, halt_reason, halt_since}.
+        Mirrors `BaseExporter.halt_envelope` semantics — fail-CLOSED when a
+        recent date is missing a row (writer may be broken), fail-OPEN for
+        older/future dates and transient query errors.
+        """
+        from datetime import date as _date
+        envelope: Dict[str, Any] = {
+            'halt_active': False,
+            'halt_reason': None,
+            'halt_since': None,
+        }
+        try:
+            target_date = _date.fromisoformat(game_date)
+        except Exception:
+            return envelope
+
+        query = f"""
+            SELECT halt_active, halt_reason, halt_since
+            FROM `{self.project_id}.nba_orchestration.halt_state`
+            WHERE effective_date = @target_date AND sport = 'mlb'
+            LIMIT 1
+        """
+        try:
+            from google.cloud import bigquery as _bq
+            bq = self._get_bq_client()
+            job_config = _bq.QueryJobConfig(
+                query_parameters=[_bq.ScalarQueryParameter('target_date', 'DATE', target_date)]
+            )
+            rows = list(bq.query(query, job_config=job_config).result(timeout=30))
+        except Exception as e:
+            logger.warning(f"[MLB BB] halt_envelope query failed ({e}); returning fail-open envelope")
+            envelope['halt_reason'] = 'unknown_state'
+            return envelope
+
+        if not rows:
+            # No row: fail-CLOSED for recent dates (writer likely broken),
+            # fail-OPEN for older/future dates (historical re-exports).
+            from datetime import timedelta as _td
+            today = _date.today()
+            days_old = (today - target_date).days
+            if 0 <= days_old <= 7:
+                envelope['halt_active'] = True
+            envelope['halt_reason'] = 'unknown_state'
+            return envelope
+
+        r = rows[0]
+        envelope['halt_active'] = bool(getattr(r, 'halt_active', False) or False)
+        envelope['halt_reason'] = getattr(r, 'halt_reason', None)
+        halt_since = getattr(r, 'halt_since', None)
+        envelope['halt_since'] = (
+            halt_since.isoformat() if hasattr(halt_since, 'isoformat') else halt_since
+        )
+        return envelope
+
     def export(
         self,
         predictions: List[Dict],
@@ -371,6 +428,41 @@ class MLBBestBetsExporter:
         supplemental_by_pitcher = supplemental_by_pitcher or {}
         self.filter_audit = []
         self._blacklist_blocked = []  # Shadow tracking for blacklisted pitchers
+
+        # Halt envelope gate — halt_state_writer CF writes one row per
+        # (effective_date, sport) into nba_orchestration.halt_state. When
+        # halt_active=TRUE for a canonical reason, skip pick generation
+        # entirely so we don't persist picks during a halt window.
+        # The 5/14-5/16 MLB drought was diagnosed retroactively; with this
+        # gate live, future drought events become a single auditable row
+        # instead of silent zero-pick failure.
+        halt = self._read_halt_envelope(game_date)
+        canonical_halts = {
+            'off_season', 'between_rounds', 'fleet_blocked',
+            'predictions_inactive', 'pick_drought', 'tight_market', 'manual',
+        }
+        if halt['halt_active'] and halt['halt_reason'] in canonical_halts:
+            logger.warning(
+                f"[MLB BB] HALT ACTIVE: reason={halt['halt_reason']} "
+                f"since={halt.get('halt_since')}. Skipping pick generation for {game_date}."
+            )
+            self.filter_audit.append({
+                'game_date': game_date,
+                'pitcher_lookup': '__halt__',
+                'system_id': 'all',
+                'filter_name': 'halt_state',
+                'filter_result': 'BLOCKED',
+                'filter_reason': (
+                    f"halt_active reason={halt['halt_reason']} "
+                    f"since={halt.get('halt_since')}"
+                ),
+                'recommendation': None,
+                'edge': None,
+                'line_value': None,
+            })
+            if not dry_run:
+                self._write_filter_audit(game_date)
+            return []
 
         # Session 483: Query market regime before pipeline starts.
         # Same pattern as NBA regime_context.py — reads mlb_predictions.league_macro_daily.
