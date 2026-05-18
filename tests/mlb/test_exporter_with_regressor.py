@@ -10,6 +10,7 @@ Uses dry_run=True + mocked BQ client to avoid real writes.
 """
 
 import os
+from typing import Optional
 import pytest
 from unittest.mock import MagicMock, patch
 from ml.signals.mlb.best_bets_exporter import (
@@ -793,6 +794,378 @@ class TestV3FinalUltraRescuedExcluded:
 
         assert is_ultra is False
         assert criteria == []
+
+
+# =============================================================================
+# Edge-window × regime cross-product (Session 2 — codifies the 5/14-5/16
+# floor/cap collision class as CI guarantee).
+#
+# The 5/14-5/16 MLB drought was caused by two independent safeguards
+# (AWAY_EDGE_FLOOR=1.25, MAX_EDGE=1.25) colliding to structurally close the
+# AWAY OVER pipeline, plus the TIGHT regime +0.5K delta collapsing the HOME
+# window down to [1.25, 1.25]. Both went undetected because zero picks
+# looked the same as "no qualifying candidates."
+#
+# This block tests the full (edge × regime × home/away) cross-product so a
+# future config change that re-opens or re-closes a path is caught in CI.
+# =============================================================================
+
+
+def _make_regime(
+    regime: str = 'NORMAL',
+    vegas_mae_7d: Optional[float] = None,
+    mae_gap_7d: Optional[float] = None,
+) -> dict:
+    """Build a regime dict matching _get_regime_context() return shape."""
+    if regime == 'TIGHT':
+        return {
+            'vegas_mae_7d': vegas_mae_7d if vegas_mae_7d is not None else 1.3,
+            'mae_gap_7d': mae_gap_7d,
+            'market_regime': 'TIGHT',
+            'over_edge_floor_delta': 0.5,  # TIGHT_OVER_FLOOR_DELTA
+            'disable_rescue': True,
+            'block_all_over': False,
+        }
+    if regime == 'BLOCK_ALL_OVER':
+        return {
+            'vegas_mae_7d': vegas_mae_7d,
+            'mae_gap_7d': mae_gap_7d if mae_gap_7d is not None else 0.5,
+            'market_regime': 'NORMAL',
+            'over_edge_floor_delta': 0.0,
+            'disable_rescue': False,
+            'block_all_over': True,
+        }
+    return {
+        'vegas_mae_7d': vegas_mae_7d if vegas_mae_7d is not None else 2.0,
+        'mae_gap_7d': mae_gap_7d if mae_gap_7d is not None else 0.0,
+        'market_regime': 'NORMAL',
+        'over_edge_floor_delta': 0.0,
+        'disable_rescue': False,
+        'block_all_over': False,
+    }
+
+
+def _no_halt_envelope(_game_date: str) -> dict:
+    return {
+        'halt_active': False,
+        'halt_reason': None,
+        'halt_since': None,
+        'halt_source_date': _game_date,
+    }
+
+
+def _make_features_no_rescue(**overrides):
+    """Features that fire 2+ real signals but NO rescue signals.
+
+    Suppresses opponent_k_prone, recent_k_above_line, projection_agrees_over
+    so the cross-product tests measure the edge window itself rather than
+    rescue behavior. Real signals still firing: ballpark_k_boost,
+    swstr_surge — enough for the MIN_SIGNAL_COUNT=2 gate.
+    """
+    return _make_features_for_signals(
+        opponent_team_k_rate=0.15,  # below opponent_k_prone threshold
+        k_avg_vs_line=0.0,          # disables recent_k_above_line
+        bp_projection=5.0,          # projection <= line
+        projection_diff=-0.5,       # disables projection_agrees_over
+        **overrides,
+    )
+
+
+# (regime, side, edge, expected_outcome, expected_blocker_or_none, comment)
+# - "pass" = pick survives to result list
+# - "block:<filter_name>" = pick blocked, blocker recorded in filter_audit
+_CROSS_PRODUCT_CASES = [
+    # NORMAL regime — HOME OVER, full edge sweep
+    ('NORMAL', 'HOME', 0.60, 'block', 'edge_floor',
+     'below floor 0.75'),
+    ('NORMAL', 'HOME', 0.85, 'pass', None,
+     'in window [0.75, 1.25]'),
+    ('NORMAL', 'HOME', 1.20, 'pass', None,
+     'in window near top'),
+    ('NORMAL', 'HOME', 1.30, 'block', 'overconfidence_cap',
+     'above MAX_EDGE 1.25'),
+
+    # NORMAL regime — AWAY OVER (BLOCK_ALL_AWAY_OVER closes path)
+    ('NORMAL', 'AWAY', 0.85, 'block', 'away_over_blocked_policy',
+     'AWAY OVER closed by policy regardless of edge'),
+    ('NORMAL', 'AWAY', 1.20, 'block', 'away_over_blocked_policy',
+     'AWAY OVER closed by policy regardless of edge'),
+    # NORMAL+AWAY at edge 1.30: overconfidence_cap fires before AWAY policy
+    # (step 1b vs step 3 in pipeline order). This is the intentional
+    # ordering — keep cap as the first-line defense.
+    ('NORMAL', 'AWAY', 1.30, 'block', 'overconfidence_cap',
+     'overconfidence_cap fires before away policy in pipeline order'),
+
+    # TIGHT regime — HOME OVER (5/14-5/16 collision: floor=0.75+0.5=1.25 == MAX_EDGE)
+    # Effective window is empty; every edge band blocks. Documents the
+    # latent closure under TIGHT (rare since threshold lowered 1.7→1.5).
+    ('TIGHT', 'HOME', 0.85, 'block', 'edge_floor',
+     'TIGHT raises floor to 1.25 — 0.85 below'),
+    ('TIGHT', 'HOME', 1.20, 'block', 'edge_floor',
+     'TIGHT raises floor to 1.25 — 1.20 below'),
+    ('TIGHT', 'HOME', 1.30, 'block', 'overconfidence_cap',
+     'overconfidence_cap fires before TIGHT floor in pipeline order'),
+
+    # TIGHT regime — AWAY OVER (closed by policy, regime delta moot)
+    ('TIGHT', 'AWAY', 0.85, 'block', 'away_over_blocked_policy',
+     'AWAY policy closes path under any regime'),
+    ('TIGHT', 'AWAY', 1.20, 'block', 'away_over_blocked_policy',
+     'AWAY policy closes path under any regime'),
+
+    # BLOCK_ALL_OVER regime (mae_gap > 0.3 — model losing to Vegas)
+    ('BLOCK_ALL_OVER', 'HOME', 0.85, 'block', None,
+     'block_all_over short-circuits before filter_audit entries'),
+    ('BLOCK_ALL_OVER', 'HOME', 1.20, 'block', None,
+     'block_all_over short-circuits before filter_audit entries'),
+    ('BLOCK_ALL_OVER', 'AWAY', 1.20, 'block', None,
+     'block_all_over short-circuits before AWAY policy'),
+]
+
+
+class TestEdgeWindowCrossProduct:
+    """End-to-end cross-product of (edge, regime, home/away) outcomes.
+
+    Each case mocks regime context and halt envelope, then asserts the
+    pick either survives or is blocked by the expected filter. Catches
+    pipeline-order changes, regime-delta drift, and floor/cap drift in
+    a single suite.
+    """
+
+    @pytest.mark.parametrize(
+        'regime,side,edge,outcome,blocker,comment',
+        _CROSS_PRODUCT_CASES,
+        ids=[
+            f"{r}_{s}_edge{int(e * 100):03d}_{o}"
+            for (r, s, e, o, _b, _c) in _CROSS_PRODUCT_CASES
+        ],
+    )
+    def test_pipeline_behavior(self, regime, side, edge, outcome, blocker, comment):
+        from unittest.mock import patch as _patch
+
+        exporter = MLBBestBetsExporter(bq_client=MagicMock())
+        is_home = (side == 'HOME')
+
+        pred = _make_prediction(
+            pitcher_lookup=f'test_pitcher_{regime}_{side}_{int(edge * 100)}',
+            edge=edge,
+            predicted_strikeouts=5.5 + edge,
+            strikeouts_line=5.5,
+            is_home=is_home,
+        )
+        # No-rescue features so the test measures the edge window itself.
+        # Rescue behavior is tested separately in test_rescue_overrides_below_floor.
+        features = _make_features_no_rescue(is_home=is_home)
+        features_by_pitcher = {pred['pitcher_lookup']: features}
+
+        regime_dict = _make_regime(regime)
+
+        with _patch.object(
+            MLBBestBetsExporter, '_get_regime_context',
+            return_value=regime_dict,
+        ), _patch.object(
+            MLBBestBetsExporter, '_read_halt_envelope',
+            side_effect=_no_halt_envelope,
+        ):
+            result = exporter.export(
+                predictions=[pred],
+                game_date='2026-06-15',
+                features_by_pitcher=features_by_pitcher,
+                dry_run=True,
+            )
+
+        if outcome == 'pass':
+            assert len(result) == 1, (
+                f"{regime} {side} edge={edge}: expected pass but got "
+                f"{len(result)} picks. Comment: {comment}"
+            )
+            return
+
+        # Outcome is 'block' — assert the result is empty and (if specified)
+        # the expected filter recorded the block.
+        assert len(result) == 0, (
+            f"{regime} {side} edge={edge}: expected block but pick survived. "
+            f"Comment: {comment}"
+        )
+        if blocker is not None:
+            matching = [
+                a for a in exporter.filter_audit
+                if a.get('filter_name') == blocker
+                   and a.get('filter_result') == 'BLOCKED'
+            ]
+            assert len(matching) >= 1, (
+                f"{regime} {side} edge={edge}: expected blocker '{blocker}' "
+                f"but filter_audit had: "
+                f"{[a.get('filter_name') for a in exporter.filter_audit]}. "
+                f"Comment: {comment}"
+            )
+
+
+class TestRescueOverridesEdgeFloor:
+    """Verify rescue path: HOME picks below floor pass when rescue signals fire,
+    but TIGHT regime disables rescue (so the same setup blocks).
+
+    Companion to TestEdgeWindowCrossProduct — keeps rescue behavior testable
+    without polluting the edge-window matrix.
+    """
+
+    def test_normal_home_below_floor_rescued(self):
+        from unittest.mock import patch as _patch
+
+        exporter = MLBBestBetsExporter(bq_client=MagicMock())
+        pred = _make_prediction(
+            pitcher_lookup='rescued_pitcher',
+            edge=0.60,
+            predicted_strikeouts=6.1,
+            strikeouts_line=5.5,
+            is_home=True,
+        )
+        features = _make_features_for_signals(is_home=True)  # rescue signals on
+
+        with _patch.object(
+            MLBBestBetsExporter, '_get_regime_context',
+            return_value=_make_regime('NORMAL'),
+        ), _patch.object(
+            MLBBestBetsExporter, '_read_halt_envelope',
+            side_effect=_no_halt_envelope,
+        ):
+            result = exporter.export(
+                predictions=[pred],
+                game_date='2026-06-15',
+                features_by_pitcher={'rescued_pitcher': features},
+                dry_run=True,
+            )
+
+        assert len(result) == 1
+        assert result[0]['signal_rescued'] is True
+
+    def test_tight_disables_rescue(self):
+        """Same setup as above but TIGHT regime — rescue is disabled, so the
+        pick blocks by edge_floor instead of being rescued."""
+        from unittest.mock import patch as _patch
+
+        exporter = MLBBestBetsExporter(bq_client=MagicMock())
+        pred = _make_prediction(
+            pitcher_lookup='rescue_blocked_pitcher',
+            edge=0.60,
+            predicted_strikeouts=6.1,
+            strikeouts_line=5.5,
+            is_home=True,
+        )
+        features = _make_features_for_signals(is_home=True)
+
+        with _patch.object(
+            MLBBestBetsExporter, '_get_regime_context',
+            return_value=_make_regime('TIGHT'),
+        ), _patch.object(
+            MLBBestBetsExporter, '_read_halt_envelope',
+            side_effect=_no_halt_envelope,
+        ):
+            result = exporter.export(
+                predictions=[pred],
+                game_date='2026-06-15',
+                features_by_pitcher={'rescue_blocked_pitcher': features},
+                dry_run=True,
+            )
+
+        assert len(result) == 0
+        blocks = [
+            a for a in exporter.filter_audit
+            if a.get('filter_name') == 'edge_floor'
+               and a.get('filter_result') == 'BLOCKED'
+        ]
+        assert len(blocks) == 1
+
+
+class TestEdgeWindowStaticInvariants:
+    """Static window-width invariants computed from module constants.
+
+    These guard the module-load `_validate_edge_windows()` check by
+    extending it across regimes. They run against the actual configured
+    values so a change to EDGE_FLOOR / AWAY_FLOOR / MAX_EDGE / TIGHT
+    delta that introduces a hidden closure is caught in CI.
+    """
+
+    def test_normal_home_window_open(self):
+        """NORMAL regime HOME OVER must have a passable edge window.
+
+        This is THE critical invariant — NORMAL fires ~99.5% of days. If
+        it ever closes, picks stop generating and the system silently
+        droughts (5/14-5/16 incident pattern but worse: every day, not
+        just TIGHT days).
+        """
+        from ml.signals.mlb.best_bets_exporter import (
+            DEFAULT_EDGE_FLOOR, MAX_EDGE, MIN_EDGE_WINDOW_K,
+        )
+        window = MAX_EDGE - DEFAULT_EDGE_FLOOR
+        assert window >= MIN_EDGE_WINDOW_K, (
+            f"NORMAL HOME window collapsed: floor {DEFAULT_EDGE_FLOOR} vs "
+            f"max {MAX_EDGE} = {window:.2f}K (min {MIN_EDGE_WINDOW_K}K). "
+            f"This will produce a permanent pick drought. Fix MLB_EDGE_FLOOR "
+            f"or MLB_MAX_EDGE before deploying."
+        )
+
+    def test_away_path_explicitly_closed_or_open(self):
+        """AWAY OVER must be either explicitly closed OR have a passable window.
+
+        Implicit closure via floor==cap is the 5/14-5/16 failure mode and
+        is forbidden — operators must either widen the gap or set
+        BLOCK_ALL_AWAY_OVER=true.
+        """
+        from ml.signals.mlb.best_bets_exporter import (
+            AWAY_EDGE_FLOOR, MAX_EDGE, MIN_EDGE_WINDOW_K, BLOCK_ALL_AWAY_OVER,
+        )
+        if BLOCK_ALL_AWAY_OVER:
+            # Explicit closure — pass.
+            return
+        away_window = MAX_EDGE - AWAY_EDGE_FLOOR
+        assert away_window >= MIN_EDGE_WINDOW_K, (
+            f"AWAY path implicit-closure: floor {AWAY_EDGE_FLOOR} vs max "
+            f"{MAX_EDGE} = {away_window:.2f}K (min {MIN_EDGE_WINDOW_K}K). "
+            f"Set MLB_BLOCK_ALL_AWAY_OVER=true to close explicitly, or "
+            f"widen the floor/cap gap."
+        )
+
+    def test_tight_regime_home_window_known_closure(self):
+        """TIGHT regime HOME OVER is currently a known structural closure.
+
+        Floor (0.75) + TIGHT delta (0.5) = 1.25 == MAX_EDGE (1.25). Empty
+        window. This is documented and accepted because TIGHT fires <0.5%
+        of days (threshold 1.5 K — see ml/signals/mlb/config.py).
+
+        If a future change opens the TIGHT window (e.g. widening MAX_EDGE
+        or reducing TIGHT_OVER_FLOOR_DELTA), this test will fail and the
+        operator should update the assertion to reflect the new state.
+        """
+        from ml.signals.mlb.best_bets_exporter import (
+            DEFAULT_EDGE_FLOOR, MAX_EDGE,
+        )
+        from ml.signals.mlb.config import TIGHT_OVER_FLOOR_DELTA
+        tight_floor = DEFAULT_EDGE_FLOOR + TIGHT_OVER_FLOOR_DELTA
+        tight_window = MAX_EDGE - tight_floor
+        assert tight_window <= 0, (
+            f"TIGHT HOME window is OPEN (floor {tight_floor:.2f} vs max "
+            f"{MAX_EDGE} = {tight_window:.2f}K). This is a behavioral "
+            f"change — TIGHT regime previously closed the home pipeline "
+            f"and the cross-product tests above assume that closure. "
+            f"Update TestEdgeWindowCrossProduct TIGHT cases and remove "
+            f"this assertion."
+        )
+
+    def test_tight_regime_threshold_rare(self):
+        """TIGHT regime threshold must remain low enough that the closure
+        is rare. The 5/14-5/16 drought was caused by threshold 1.7 firing
+        TIGHT on 20% of days; lowered to 1.5 catches ~0.5%.
+
+        Raising back above 1.5 reintroduces the drought class. The
+        comment in config.py explains the historical context.
+        """
+        from ml.signals.mlb.config import TIGHT_VEGAS_MAE_THRESHOLD
+        assert TIGHT_VEGAS_MAE_THRESHOLD <= 1.5, (
+            f"TIGHT_VEGAS_MAE_THRESHOLD={TIGHT_VEGAS_MAE_THRESHOLD} risks "
+            f"the 5/14-5/16 drought pattern (threshold 1.7 caught ~20% of "
+            f"days). Either lower to 1.5 or fix the TIGHT HOME window "
+            f"collision (see test_tight_regime_home_window_known_closure)."
+        )
 
 
 if __name__ == '__main__':
