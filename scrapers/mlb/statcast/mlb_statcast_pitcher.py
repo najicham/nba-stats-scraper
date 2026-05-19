@@ -120,15 +120,18 @@ class MlbStatcastPitcherScraper(ScraperBase, ScraperFlaskMixin):
     def set_headers(self) -> None:
         self.headers = {}
 
-    def download(self) -> None:
-        """Override download to use pybaseball instead of HTTP."""
-        if not PYBASEBALL_AVAILABLE:
-            raise ImportError(
-                "pybaseball is required for Statcast data. "
-                "Install with: pip install pybaseball"
-            )
-
-        self.download_data = self._fetch_statcast_data()
+    # NOTE 2026-05-18: this scraper is orphaned. There's no Cloud Scheduler
+    # invoking it and no Phase 2 processor consuming its target table
+    # `mlb_raw.statcast_pitcher_stats` (which has 0 rows ever). A prior
+    # `download()` override here was dead code — the base lifecycle never
+    # calls `download()`, only `start_download()` → `download_data()` — so
+    # `transform_data()` (which reads `self.download_data.get(...)`) would
+    # crash at runtime if anything actually invoked this scraper. Removed
+    # the dead override; the helper `_fetch_statcast_data()` below is kept
+    # for reference if/when this scraper is wired into the pipeline. To
+    # activate, rename `_fetch_statcast_data` semantics into a
+    # `start_download()` override that populates `self.decoded_data` and
+    # synthesizes a 200 response (see mlb_weather.py for the pattern).
 
     def _fetch_statcast_data(self) -> Dict[str, Any]:
         """Fetch Statcast data using pybaseball."""

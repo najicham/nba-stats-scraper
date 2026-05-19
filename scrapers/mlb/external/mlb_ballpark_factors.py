@@ -444,13 +444,12 @@ class MlbBallparkFactorsScraper(ScraperBase, ScraperFlaskMixin):
     def set_headers(self) -> None:
         self.headers = {}
 
-    def download(self) -> None:
-        """Override download to use static data."""
-        self.download_data = BALLPARK_FACTORS
-
-    def validate_download_data(self) -> None:
-        if not self.download_data:
-            raise ValueError("Ballpark factors data not loaded")
+    # Note: this scraper has no active HTTP fetch. `transform_data()` reads
+    # the BALLPARK_FACTORS module constant directly, so the lifecycle's
+    # download phase is effectively a no-op. (A prior `download()` override
+    # here was dead code — the base lifecycle never calls `download()`,
+    # only `start_download()` → `download_data()`. Removed 2026-05-18 to
+    # avoid the dead-method confusion that also bit mlb_weather earlier.)
 
     def transform_data(self) -> None:
         """Transform ballpark factors into standardized format."""
