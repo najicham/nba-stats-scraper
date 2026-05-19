@@ -7,9 +7,16 @@ Writes one row per (game_date, filter_name) to filter_counterfactual_daily.
 PHASE 1 (initial deploy 2026-05-18): data collection + Slack warnings only.
 ELIGIBLE_FOR_AUTO_DEMOTE is intentionally empty — no filter will be
 auto-demoted. The CF rolls forward daily so we accumulate the evidence base
-needed to populate the eligibility list later. When a filter trends bad
-(CF HR >= CF_HR_THRESHOLD for CONSECUTIVE_DAYS), Slack gets an advisory
-warning so a human can review.
+needed to populate the eligibility list later. When a filter trends bad,
+Slack gets an advisory warning so a human can review.
+
+Eligibility (MLB-volume tuned, 2026-05-19):
+At ~4-6 BB picks/day, the NBA evaluator's bar (7 consecutive days with CF
+HR >= 55% AND N >= 20 over 7d) is unreachable. We use two parallel paths
+instead and fire on EITHER:
+  Path A (short window):  CF HR >= 55% with N >= 10 graded over 5 days
+  Path B (cumulative):    CF HR >= 55% with N >= 30 graded over 30 days
+No consecutive-day streak gate. The NBA evaluator keeps its stricter bar.
 
 Triggered by Cloud Scheduler at 11:30 AM ET daily (after MLB grading
 backfills actuals into prediction_accuracy).
@@ -22,6 +29,7 @@ Ported from orchestration/cloud_functions/filter_counterfactual_evaluator
   - ELIGIBLE list empty until MLB pick/block volume justifies it
   - filter_name is recorded WITHOUT a filter_reason field in MLB audit;
     we use filter_name directly as the key
+  - Eligibility uses two-path OR (above) instead of 7d streak
 """
 
 import functions_framework
@@ -52,9 +60,6 @@ SLACK_WEBHOOK_URL = os.environ.get('SLACK_WEBHOOK_URL_ALERTS') or os.environ.get
 #   overconfidence_cap (5)        - MAX_EDGE cap
 ELIGIBLE_FOR_AUTO_DEMOTE: Set[str] = set()
 
-# Per-filter overrides for MIN_PICKS_7D when the default (20) is too low.
-PER_FILTER_MIN_PICKS_7D: Dict[str, int] = {}
-
 # Core safety filters — NEVER auto-demote even if added to ELIGIBLE accidentally.
 NEVER_DEMOTE = {
     'pitcher_blacklist',
@@ -68,11 +73,13 @@ NEVER_DEMOTE = {
     'whole_line_over',
 }
 
-# Thresholds (mirror NBA defaults; tune later once MLB CF baseline exists)
-CF_HR_THRESHOLD = 55.0       # Blocked picks would win >= 55% = filter hurts
-MIN_PICKS_PER_DAY = 0
-MIN_PICKS_7D = 20            # Need 20+ graded blocked picks over 7 days
-CONSECUTIVE_DAYS = 7
+# Eligibility thresholds (MLB-volume tuned; see module docstring).
+# A filter is flagged as trending-bad if EITHER path's gates are crossed.
+CF_HR_THRESHOLD = 55.0          # Blocked picks would win >= 55% = filter hurts
+LOOKBACK_SHORT_DAYS = 5         # Path A: short rolling window
+MIN_PICKS_SHORT = 10            # Path A: graded blocks required in short window
+LOOKBACK_CUMULATIVE_DAYS = 30   # Path B: cumulative window
+MIN_PICKS_CUMULATIVE = 30       # Path B: graded blocks required cumulatively
 MAX_DEMOTIONS_PER_RUN = 2
 
 _bq_client = None
@@ -201,72 +208,67 @@ def write_daily_cf_hr(bq: bigquery.Client, target_date: str, daily_rows: List[Di
 
 
 def find_trending_bad_filters(bq: bigquery.Client, target_date: str) -> List[Dict]:
-    """Identify filters trending bad (CF HR >= threshold over 7d, N >= MIN_PICKS_7D).
+    """Identify filters trending bad via two parallel eligibility paths.
 
-    In Phase 1 this just produces advisory Slack warnings — nothing is
-    auto-demoted. The query is the same as the NBA auto-demote query so
-    we'll have direct parity when Phase 2 enables eligibility.
+    A filter is flagged if EITHER:
+      - Path A (short_5d): N >= MIN_PICKS_SHORT graded over the last
+        LOOKBACK_SHORT_DAYS days, with hr_pct >= CF_HR_THRESHOLD
+      - Path B (cumulative_30d): N >= MIN_PICKS_CUMULATIVE graded over the
+        last LOOKBACK_CUMULATIVE_DAYS days, with hr_pct >= CF_HR_THRESHOLD
+
+    No consecutive-day streak gate (unreachable at MLB volume). In Phase 1
+    this still only produces advisory Slack warnings — nothing is
+    auto-demoted. If a filter qualifies under both paths, the cumulative
+    row is preferred (larger N = stronger evidence).
     """
     query = f"""
-    WITH daily AS (
+    WITH short_window AS (
       SELECT
         filter_name,
-        game_date,
-        blocked_count,
-        wins,
-        losses,
-        counterfactual_hr,
-        ROW_NUMBER() OVER (PARTITION BY filter_name ORDER BY game_date) AS rn
-      FROM `{PROJECT_ID}.mlb_predictions.filter_counterfactual_daily`
-      WHERE game_date BETWEEN DATE_SUB(@target_date, INTERVAL 9 DAY) AND @target_date
-    ),
-    streak_groups AS (
-      SELECT
-        filter_name,
-        game_date,
-        wins,
-        losses,
-        counterfactual_hr,
-        DATE_SUB(game_date, INTERVAL CAST(rn AS INT64) DAY) AS grp
-      FROM daily
-      WHERE counterfactual_hr >= {CF_HR_THRESHOLD}
-    ),
-    streak_sizes AS (
-      SELECT
-        filter_name,
-        grp,
-        COUNT(*) AS streak_len
-      FROM streak_groups
-      GROUP BY filter_name, grp
-    ),
-    rolling AS (
-      SELECT
-        filter_name,
+        'short_{LOOKBACK_SHORT_DAYS}d' AS eligibility_path,
         COUNT(DISTINCT game_date) AS days_with_data,
         SUM(wins + losses) AS total_graded,
         SUM(wins) AS total_wins,
-        ROUND(100.0 * SUM(wins) / NULLIF(SUM(wins + losses), 0), 1) AS hr_7d,
-        MIN(counterfactual_hr) AS min_daily_hr
-      FROM daily
+        ROUND(100.0 * SUM(wins) / NULLIF(SUM(wins + losses), 0), 1) AS hr_pct
+      FROM `{PROJECT_ID}.mlb_predictions.filter_counterfactual_daily`
+      WHERE game_date BETWEEN DATE_SUB(@target_date, INTERVAL {LOOKBACK_SHORT_DAYS - 1} DAY) AND @target_date
       GROUP BY filter_name
+      HAVING total_graded >= {MIN_PICKS_SHORT} AND hr_pct >= {CF_HR_THRESHOLD}
+    ),
+    cumulative_window AS (
+      SELECT
+        filter_name,
+        'cumulative_{LOOKBACK_CUMULATIVE_DAYS}d' AS eligibility_path,
+        COUNT(DISTINCT game_date) AS days_with_data,
+        SUM(wins + losses) AS total_graded,
+        SUM(wins) AS total_wins,
+        ROUND(100.0 * SUM(wins) / NULLIF(SUM(wins + losses), 0), 1) AS hr_pct
+      FROM `{PROJECT_ID}.mlb_predictions.filter_counterfactual_daily`
+      WHERE game_date BETWEEN DATE_SUB(@target_date, INTERVAL {LOOKBACK_CUMULATIVE_DAYS - 1} DAY) AND @target_date
+      GROUP BY filter_name
+      HAVING total_graded >= {MIN_PICKS_CUMULATIVE} AND hr_pct >= {CF_HR_THRESHOLD}
+    ),
+    combined AS (
+      SELECT * FROM short_window
+      UNION ALL
+      SELECT * FROM cumulative_window
     )
     SELECT
       filter_name,
+      eligibility_path,
       days_with_data,
       total_graded,
       total_wins,
-      hr_7d,
-      min_daily_hr
-    FROM rolling
-    WHERE days_with_data >= {CONSECUTIVE_DAYS}
-      AND total_graded >= {MIN_PICKS_7D}
-      AND (
-        SELECT MAX(streak_len)
-        FROM streak_sizes
-        WHERE filter_name = rolling.filter_name
-      ) >= {CONSECUTIVE_DAYS}
-      AND hr_7d >= {CF_HR_THRESHOLD}
-    ORDER BY hr_7d DESC
+      hr_pct
+    FROM combined
+    -- If a filter qualifies under both paths, keep the cumulative row
+    -- (larger N = stronger evidence). Order: cumulative first per filter,
+    -- then global sort by HR desc.
+    QUALIFY ROW_NUMBER() OVER (
+      PARTITION BY filter_name
+      ORDER BY CASE WHEN eligibility_path = 'cumulative_{LOOKBACK_CUMULATIVE_DAYS}d' THEN 0 ELSE 1 END
+    ) = 1
+    ORDER BY hr_pct DESC, total_graded DESC
     """
     job_config = bigquery.QueryJobConfig(
         query_parameters=[
@@ -451,9 +453,11 @@ def main(request: Request):
         "",
     ]
     for c in trending_bad:
+        never_tag = " _(NEVER_DEMOTE — informational only)_" if c['filter_name'] in NEVER_DEMOTE else ""
         slack_lines.append(
-            f"  `{c['filter_name']}` — 7d CF HR {c['hr_7d']}% "
-            f"({c['total_wins']}/{c['total_graded']}); {c['days_with_data']} days of data"
+            f"  `{c['filter_name']}` — CF HR {c['hr_pct']}% "
+            f"({c['total_wins']}/{c['total_graded']}) via {c['eligibility_path']}; "
+            f"{c['days_with_data']} days of data{never_tag}"
         )
     slack_lines.append("")
     slack_lines.append(
