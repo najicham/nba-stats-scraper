@@ -12,9 +12,16 @@ Key Feature: TIMEOUT HANDLING
 - If all processors don't complete within MAX_WAIT_HOURS, trigger anyway with partial data
 - This prevents the pipeline from stalling
 
-MLB Phase 4 Processors:
-- pitcher_features
-- lineup_k_analysis
+MLB Phase 4 Processors: NONE (both decommissioned 2026-05-18).
+
+Note 2026-05-18: `pitcher_features` and `lineup_k_analysis` both
+decommissioned (orphan pipelines — output tables dropped; see commit
+d154c69c). This orchestrator is now effectively dormant because no Phase 4
+processors emit completion events. Phase 5 fires via the direct Cloud
+Scheduler `mlb-predictions-generate` at 8 AM ET (13:00 UTC), which is
+unrelated to this orchestrator. We keep the function deployed in case
+Phase 4 producers are revived; remove or repurpose if the new architecture
+permanently bypasses Phase 4 precompute.
 
 Created: 2026-01-08
 """
@@ -43,11 +50,12 @@ PREDICTION_URL = "https://mlb-prediction-worker-f7p3g7f6ya-wl.a.run.app"
 MAX_WAIT_HOURS = float(os.environ.get('MAX_WAIT_HOURS', '4'))
 MAX_WAIT_SECONDS = MAX_WAIT_HOURS * 3600
 
-# MLB Phase 4 expected processors
-EXPECTED_PROCESSORS: List[str] = [
-    'pitcher_features',
-    'lineup_k_analysis',
-]
+# MLB Phase 4 expected processors. Both processors decommissioned
+# 2026-05-18 (commit d154c69c — orphan pipelines, output tables dropped).
+# Effectively the orchestrator is dormant — no events fire it. Kept here
+# as an empty list rather than removing the constant so anyone reviving
+# Phase 4 precompute will see the seam and update this list explicitly.
+EXPECTED_PROCESSORS: List[str] = []
 EXPECTED_PROCESSOR_COUNT: int = len(EXPECTED_PROCESSORS)
 EXPECTED_PROCESSOR_SET: Set[str] = set(EXPECTED_PROCESSORS)
 

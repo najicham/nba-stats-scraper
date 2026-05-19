@@ -54,15 +54,10 @@ PIPELINE_STAGES = {
         'stall_threshold_minutes': 120,
         'depends_on': 'raw_data',
     },
-    'precompute': {
-        'name': 'Feature Precomputation',
-        'check_table': 'mlb_precompute.pitcher_ml_features',
-        'timestamp_field': 'created_at',
-        'date_field': 'game_date',
-        'expected_lag_minutes': 30,
-        'stall_threshold_minutes': 120,
-        'depends_on': 'analytics',
-    },
+    # 'precompute' stage REMOVED 2026-05-18 — orphan pipeline decommissioned
+    # (commit d154c69c). The production prediction worker reads
+    # mlb_analytics.pitcher_game_summary directly via pitcher_loader.py; no
+    # Phase 4 precompute table is on the critical path.
     'predictions': {
         'name': 'Prediction Generation',
         'check_table': 'mlb_predictions.pitcher_strikeouts',
@@ -70,7 +65,7 @@ PIPELINE_STAGES = {
         'date_field': 'game_date',
         'expected_lag_minutes': 30,
         'stall_threshold_minutes': 180,
-        'depends_on': 'precompute',
+        'depends_on': 'analytics',
     },
     'grading': {
         'name': 'Prediction Grading',

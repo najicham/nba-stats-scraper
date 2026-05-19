@@ -16,7 +16,13 @@ Use --update-secrets instead — preserves all existing secret mounts and only
 adds/changes the ones you specify.
 
 This hook scans deploy-related files for the dangerous pattern.
+
+Glob handling note (2026-05-18 fix): the file_pattern matching previously
+treated `cloudbuild*.yaml` as a literal filename, silently skipping all
+root cloudbuild files. Switched to fnmatch for any pattern containing a
+glob character; legacy `*ext` and exact-match are still handled.
 """
+import fnmatch
 import os
 import re
 import sys
@@ -67,11 +73,11 @@ def main() -> int:
     for search_dir, file_pattern in PATTERNS:
         if not os.path.exists(search_dir):
             continue
+        has_glob = any(c in file_pattern for c in '*?[')
         for root, _, files in os.walk(search_dir):
             for f in files:
-                if file_pattern.startswith('*'):
-                    ext = file_pattern[1:]
-                    if not f.endswith(ext):
+                if has_glob:
+                    if not fnmatch.fnmatch(f, file_pattern):
                         continue
                 elif f != file_pattern:
                     continue

@@ -79,25 +79,25 @@ from shared.utils.mlb_alert_utils import (
 
 # MLB Precompute processor registry.
 #
-# DECOMMISSION 2026-05-18: pitcher_features was removed from active runtime.
-# Audit found that MlbPitcherFeaturesProcessor wrote mlb_precompute.pitcher_ml_features
-# but nothing in the active inference or training pipeline consumed it. The
-# production worker reads features at predict-time via pitcher_loader.py from
-# mlb_analytics.pitcher_game_summary + mlb_raw.oddsa_pitcher_props +
-# mlb_raw.fangraphs_pitcher_season_stats. The 36-feature regressor's f30/f32
-# are different fields (k_avg_vs_line, line_level), not the velocity_trend /
-# put_away_rate written by this processor. Class kept in place so revival is
-# easy if the V1/V2 architecture is ever wired up; just re-add the entries
-# below.
+# DECOMMISSION 2026-05-18: pitcher_features removed from active runtime —
+# orphan pipeline (audit at d154c69c).
+#
+# DECOMMISSION 2026-05-18 (round 2): lineup_k_analysis ALSO removed. Output
+# table mlb_precompute.lineup_k_analysis was dropped with the
+# pitcher_ml_features cleanup; the processor would now fail every BQ write.
+# Input data (mlb_raw.mlb_lineup_batters) was always spotty (8/14 days,
+# 2-6 teams/day) and the lineup-derived features in pitcher_ml_features
+# (f25-f44) were 0/1086 nonzero. Classes kept in place — revive by
+# re-adding the entries below and recreating the BQ table.
 MLB_PRECOMPUTE_PROCESSORS = {
     # 'pitcher_features': MlbPitcherFeaturesProcessor,  # DECOMMISSIONED 2026-05-18
-    'lineup_k_analysis': MlbLineupKAnalysisProcessor,
+    # 'lineup_k_analysis': MlbLineupKAnalysisProcessor,  # DECOMMISSIONED 2026-05-18
 }
 
 # Trigger mapping: which analytics tables trigger which precompute processors
 MLB_PRECOMPUTE_TRIGGERS = {
     # 'pitcher_game_summary': [MlbPitcherFeaturesProcessor],  # DECOMMISSIONED 2026-05-18
-    'batter_game_summary': [MlbLineupKAnalysisProcessor],
+    # 'batter_game_summary': [MlbLineupKAnalysisProcessor],  # DECOMMISSIONED 2026-05-18
 }
 
 

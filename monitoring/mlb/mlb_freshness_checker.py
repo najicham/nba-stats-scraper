@@ -73,15 +73,9 @@ FRESHNESS_THRESHOLDS = {
         'critical_hours': 6,
         'check_during': 'game_day',
     },
-    'pitcher_ml_features': {
-        'name': 'Pitcher ML Features (Precompute)',
-        'table': 'mlb_precompute.pitcher_ml_features',
-        'timestamp_field': 'created_at',
-        'date_field': 'game_date',
-        'warning_hours': 3,
-        'critical_hours': 6,
-        'check_during': 'game_day',
-    },
+    # pitcher_ml_features entry REMOVED 2026-05-18 — orphan pipeline
+    # decommissioned (commit d154c69c). Production worker doesn't read this
+    # table; mlb_analytics.pitcher_game_summary is the real readiness signal.
     'predictions': {
         'name': 'Pitcher Strikeout Predictions',
         'table': 'mlb_predictions.pitcher_strikeouts',

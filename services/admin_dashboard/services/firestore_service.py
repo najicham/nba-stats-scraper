@@ -239,31 +239,26 @@ class FirestoreService:
         """
         Get MLB Phase 4 completion status.
 
-        MLB Phase 4 has 2 key processors:
-        - pitcher_features
-        - lineup_k_analysis
+        Note 2026-05-18: both pitcher_features and lineup_k_analysis
+        processors were decommissioned (commit d154c69c — orphan pipelines,
+        output tables dropped). Phase 4 no longer has any required producers.
+        The production worker reads mlb_analytics.pitcher_game_summary
+        directly; predictions trigger via the `mlb-predictions-generate`
+        Cloud Scheduler at 8 AM ET, not via this completion gate.
+
+        Returns an empty `required_processors` set so the dashboard reports
+        `is_complete = True` immediately rather than perpetually waiting on
+        processors that no longer exist.
         """
-        required_processors = [
-            'pitcher_features',
-            'lineup_k_analysis',
-        ]
+        required_processors: list = []
 
         state = self.get_phase_completion('mlb_phase4_completion', date_key)
 
-        completed = []
-        pending = []
-
-        for proc in required_processors:
-            if proc in state.get('processors', {}):
-                completed.append(proc)
-            else:
-                pending.append(proc)
-
         state['required_processors'] = required_processors
-        state['completed_processors'] = completed
-        state['pending_processors'] = pending
-        state['completion_ratio'] = f"{len(completed)}/{len(required_processors)}"
-        state['is_complete'] = len(pending) == 0
+        state['completed_processors'] = []
+        state['pending_processors'] = []
+        state['completion_ratio'] = "0/0"
+        state['is_complete'] = True
 
         return state
 
