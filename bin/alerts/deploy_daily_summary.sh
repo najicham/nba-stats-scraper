@@ -159,7 +159,7 @@ gcloud functions deploy "$FUNCTION_NAME" \
   --memory="$MEMORY" \
   --timeout="$TIMEOUT" \
   --update-env-vars="GCP_PROJECT_ID=${PROJECT_ID}" \
-  --set-secrets="SLACK_WEBHOOK_URL=${SECRET_NAME}:latest" \
+  --update-secrets="SLACK_WEBHOOK_URL=${SECRET_NAME}:latest" \
   --project="$PROJECT_ID"
 
 echo -e "${GREEN}✓ Cloud Function deployed${NC}"

@@ -176,6 +176,33 @@ repos:
         files: ^(bin/deploy/|cloudbuild).*\.(sh|yaml)$
         verbose: true
 
+      - id: validate-set-secrets
+        name: Check for dangerous --set-secrets
+        description: Prevents secret unmounting from --set-secrets — same bug class as --set-env-vars. Caught by the 2026-05-17 mlb_weather incident.
+        entry: python .pre-commit-hooks/validate_set_secrets.py
+        language: python
+        pass_filenames: false
+        always_run: true
+        verbose: true
+
+      - id: validate-scraper-download-override
+        name: Detect dead download() overrides on scrapers
+        description: scraper base lifecycle never calls download(); overrides are dead code. mlb_weather went 6+ months silently 401-ing because of this pattern.
+        entry: python .pre-commit-hooks/validate_scraper_download_override.py
+        language: python
+        pass_filenames: false
+        always_run: true
+        verbose: true
+
+      - id: validate-threshold-drift
+        name: Detect duplicated/drifted threshold constants across files
+        description: Catches the 2026-05-14 TIGHT_VEGAS_MAE_THRESHOLD drift class. Same constant in 2+ files must have the same value; warn on duplicates even when matching.
+        entry: python .pre-commit-hooks/validate_threshold_drift.py
+        language: python
+        pass_filenames: false
+        always_run: true
+        verbose: true
+
       - id: validate-signal-references
         name: Check signal/filter references in docs match registry
         description: Prevents drift between shared/registry/{signals,filters}.yaml and docs that mention signal/filter tags. Pipeline-state-redesign Phase H.

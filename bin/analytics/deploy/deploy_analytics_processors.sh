@@ -152,7 +152,7 @@ gcloud run deploy $SERVICE_NAME \
     --min-instances=0 \
     --max-instances=5 \
     --update-env-vars="$ENV_VARS" \
-    --set-secrets="AWS_SES_ACCESS_KEY_ID=aws-ses-access-key-id:latest,AWS_SES_SECRET_ACCESS_KEY=aws-ses-secret-access-key:latest,SLACK_WEBHOOK_URL=slack-webhook-url:latest,BREVO_SMTP_PASSWORD=brevo-smtp-password:latest" \
+    --update-secrets="AWS_SES_ACCESS_KEY_ID=aws-ses-access-key-id:latest,AWS_SES_SECRET_ACCESS_KEY=aws-ses-secret-access-key:latest,SLACK_WEBHOOK_URL=slack-webhook-url:latest,BREVO_SMTP_PASSWORD=brevo-smtp-password:latest" \
     --labels="commit-sha=$GIT_COMMIT_SHA,git-branch=${GIT_BRANCH//\//-}" \
     --clear-base-image
 
@@ -254,14 +254,14 @@ if [ $DEPLOY_STATUS -eq 0 ]; then
     echo ""
     echo "📋 Phase 6: Testing health endpoint..."
     SERVICE_URL=$(gcloud run services describe $SERVICE_NAME --region=$REGION --format="value(status.url)" 2>/dev/null)
-    
+
     if [ ! -z "$SERVICE_URL" ]; then
         echo "🔗 Service URL: $SERVICE_URL"
-        
+
         # Test health endpoint first (consistent with regular processors)
         HEALTH_RESPONSE=$(curl -s -X GET "$SERVICE_URL/health" \
             -H "Authorization: Bearer $(gcloud auth print-identity-token)" 2>/dev/null)
-        
+
         if echo "$HEALTH_RESPONSE" | grep -q "healthy"; then
             echo "✅ Health check passed!"
             echo "$HEALTH_RESPONSE" | jq '.' 2>/dev/null || echo "$HEALTH_RESPONSE"
@@ -287,9 +287,9 @@ if [ $DEPLOY_STATUS -eq 0 ]; then
             SECONDS=$((FINAL_TOTAL % 60))
             FINAL_DURATION_DISPLAY="${HOURS}h ${MINUTES}m ${SECONDS}s"
         fi
-        
+
         echo "🎯 TOTAL TIME (including test): $FINAL_DURATION_DISPLAY"
-        
+
         # Instructions for analytics processing (instead of Pub/Sub)
         echo ""
         echo "📝 Next Steps - Analytics Processing Commands:"

@@ -108,7 +108,7 @@ echo -e "${BLUE}Deploying Cloud Function...${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo ""
 
-# Build env vars string (Slack webhook moved to --set-secrets, not env vars).
+# Build env vars string (Slack webhook moved to --update-secrets, not env vars).
 ENV_VARS="GCP_PROJECT=$PROJECT_ID"
 
 gcloud functions deploy $FUNCTION_NAME \
@@ -122,7 +122,7 @@ gcloud functions deploy $FUNCTION_NAME \
     --service-account=$SERVICE_ACCOUNT \
     --update-env-vars "$ENV_VARS" \
     --remove-env-vars=SLACK_WEBHOOK_URL \
-    --set-secrets="SLACK_WEBHOOK_URL=${SLACK_SECRET}:latest" \
+    --update-secrets="SLACK_WEBHOOK_URL=${SLACK_SECRET}:latest" \
     --memory $MEMORY \
     --timeout $TIMEOUT \
     --max-instances $MAX_INSTANCES \

@@ -120,7 +120,7 @@ gcloud run deploy $SERVICE_NAME \
     --memory=1Gi \
     --cpu=1 \
     --clear-base-image \
-    --set-secrets="ODDS_API_KEY=ODDS_API_KEY:latest,AWS_SES_ACCESS_KEY_ID=aws-ses-access-key-id:latest,AWS_SES_SECRET_ACCESS_KEY=aws-ses-secret-access-key:latest,SLACK_WEBHOOK_URL=slack-webhook-url:latest,BREVO_SMTP_PASSWORD=brevo-smtp-password:latest,DECODO_PROXY_CREDENTIALS=DECODO_PROXY_CREDENTIALS:latest" \
+    --update-secrets="ODDS_API_KEY=ODDS_API_KEY:latest,AWS_SES_ACCESS_KEY_ID=aws-ses-access-key-id:latest,AWS_SES_SECRET_ACCESS_KEY=aws-ses-secret-access-key:latest,SLACK_WEBHOOK_URL=slack-webhook-url:latest,BREVO_SMTP_PASSWORD=brevo-smtp-password:latest,DECODO_PROXY_CREDENTIALS=DECODO_PROXY_CREDENTIALS:latest" \
     --update-env-vars="$ENV_VARS" \
     --labels="commit-sha=$GIT_COMMIT_SHA,git-branch=${GIT_BRANCH//\//-}"
 
@@ -254,7 +254,7 @@ if [ $DEPLOY_STATUS -eq 0 ]; then
         echo "⏱️  Orchestration configuration completed in ${ORCHESTRATION_DURATION}s"
         echo "✅ Phase 1 orchestration ready!"
         echo "   Workflow executor can now call scrapers via HTTP"
-        
+
         # Update total with test + orchestration time
         FINAL_TOTAL=$((ORCHESTRATION_END - DEPLOY_START_TIME))
         if [ $FINAL_TOTAL -lt 60 ]; then
@@ -269,7 +269,7 @@ if [ $DEPLOY_STATUS -eq 0 ]; then
             SECONDS=$((FINAL_TOTAL % 60))
             FINAL_DURATION_DISPLAY="${HOURS}h ${MINUTES}m ${SECONDS}s"
         fi
-        
+
         echo ""
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo "🎯 TOTAL TIME (all phases): $FINAL_DURATION_DISPLAY"
@@ -286,7 +286,7 @@ if [ $DEPLOY_STATUS -eq 0 ]; then
         echo ""
         echo "🎉 Service ready for production!"
         echo "   • Scrapers: ✅ Deployed"
-        echo "   • Health: ✅ Verified"  
+        echo "   • Health: ✅ Verified"
         echo "   • Orchestration: ✅ Configured"
         echo ""
         echo "Next steps:"

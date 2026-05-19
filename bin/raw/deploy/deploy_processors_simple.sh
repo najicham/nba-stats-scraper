@@ -73,12 +73,12 @@ ENV_VARS="$ENV_VARS,DEPLOY_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 if [ "$EMAIL_VARS_MISSING" = false ]; then
     echo "✅ Adding email alerting configuration..."
 
-    # AWS SES configuration (credentials mounted via --set-secrets below)
+    # AWS SES configuration (credentials mounted via --update-secrets below)
     ENV_VARS="$ENV_VARS,AWS_SES_REGION=${AWS_SES_REGION:-us-west-2}"
     ENV_VARS="$ENV_VARS,AWS_SES_FROM_EMAIL=${AWS_SES_FROM_EMAIL:-alert@989.ninja}"
     ENV_VARS="$ENV_VARS,AWS_SES_FROM_NAME=${AWS_SES_FROM_NAME:-NBA Raw Processors}"
 
-    # Brevo configuration (fallback, password mounted via --set-secrets below)
+    # Brevo configuration (fallback, password mounted via --update-secrets below)
     ENV_VARS="$ENV_VARS,BREVO_SMTP_HOST=${BREVO_SMTP_HOST:-smtp-relay.brevo.com}"
     ENV_VARS="$ENV_VARS,BREVO_SMTP_PORT=${BREVO_SMTP_PORT:-587}"
     ENV_VARS="$ENV_VARS,BREVO_SMTP_USERNAME=${BREVO_SMTP_USERNAME}"
@@ -117,7 +117,7 @@ gcloud run deploy $SERVICE_NAME \
     --min-instances=0 \
     --max-instances=5 \
     --update-env-vars="$ENV_VARS" \
-    --set-secrets="$SECRETS" \
+    --update-secrets="$SECRETS" \
     --labels="commit-sha=$GIT_COMMIT_SHA,git-branch=${GIT_BRANCH//\//-}" \
     --clear-base-image
 
@@ -204,25 +204,25 @@ if [ $DEPLOY_STATUS -eq 0 ]; then
     echo ""
     echo "📋 Phase 5: Testing health endpoint..."
     SERVICE_URL=$(gcloud run services describe $SERVICE_NAME --region=$REGION --format="value(status.url)" 2>/dev/null)
-    
+
     if [ ! -z "$SERVICE_URL" ]; then
         echo "🔗 Service URL: $SERVICE_URL"
-        
+
         # Test health endpoint
         HEALTH_RESPONSE=$(curl -s -X GET "$SERVICE_URL/health" \
             -H "Authorization: Bearer $(gcloud auth print-identity-token)" 2>/dev/null)
-        
+
         if echo "$HEALTH_RESPONSE" | grep -q "healthy"; then
             echo "✅ Health check passed!"
             echo "$HEALTH_RESPONSE" | jq '.' 2>/dev/null || echo "$HEALTH_RESPONSE"
         else
             echo "⚠️  Health check response unexpected"
         fi
-        
+
         TEST_END=$(date +%s)
         TEST_DURATION=$((TEST_END - TEST_START))
         echo "⏱️  Health test completed in ${TEST_DURATION}s"
-        
+
         # Display email alerting status
         echo ""
         if [ "$EMAIL_VARS_MISSING" = false ]; then

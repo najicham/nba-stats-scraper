@@ -100,7 +100,7 @@ EOF
         --service-account="$SERVICE_ACCOUNT" \
         --source="$FUNC_SRC" \
         --update-env-vars="GCP_PROJECT=$PROJECT_ID" \
-        --set-secrets="ANTHROPIC_API_KEY=anthropic-api-key:latest" \
+        --update-secrets="ANTHROPIC_API_KEY=anthropic-api-key:latest" \
         --no-gen2
 
     # Clean up copied files

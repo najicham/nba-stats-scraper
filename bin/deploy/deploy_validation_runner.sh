@@ -126,7 +126,7 @@ if [ -n "$SLACK_WEBHOOK_URL_ERROR" ]; then
 fi
 
 # SLACK_WEBHOOK_URL moved to Secret Manager (Path A 2026-05-15): slack-webhook-url
-# Added below via --set-secrets / --remove-env-vars on the gcloud command.
+# Added below via --update-secrets / --remove-env-vars on the gcloud command.
 
 # Create temp directory for deployment (to resolve symlinks)
 TEMP_DIR=$(mktemp -d)
@@ -166,7 +166,7 @@ gcloud functions deploy $FUNCTION_NAME \
     --service-account=$SERVICE_ACCOUNT \
     --update-env-vars "$ENV_VARS" \
     --remove-env-vars=SLACK_WEBHOOK_URL \
-    --set-secrets="SLACK_WEBHOOK_URL=slack-webhook-url:latest" \
+    --update-secrets="SLACK_WEBHOOK_URL=slack-webhook-url:latest" \
     --memory $MEMORY \
     --timeout $TIMEOUT \
     --max-instances $MAX_INSTANCES \
