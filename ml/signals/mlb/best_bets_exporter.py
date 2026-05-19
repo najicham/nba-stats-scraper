@@ -243,12 +243,41 @@ class MLBBestBetsExporter:
         self.bq_client = bq_client
         self.registry = build_mlb_registry()
         self.filter_audit: List[Dict] = []
+        self._demoted_filters: set = set()
 
     def _get_bq_client(self):
         if self.bq_client is None:
             from shared.clients.bigquery_pool import get_bigquery_client
             self.bq_client = get_bigquery_client(project_id=self.project_id)
         return self.bq_client
+
+    def _load_filter_overrides(self) -> set:
+        """Load active filter demotions from mlb_predictions.filter_overrides.
+
+        Populated by `mlb-filter-counterfactual-evaluator` Cloud Function when
+        a filter's 7-day CF HR >= 55% at N >= 20. Demoted filters are still
+        EVALUATED at export time but recorded as OBSERVATION (no block), so
+        their picks flow through to best bets and continue accumulating CF
+        evidence.
+
+        Fail-open: on any BQ error, returns empty set so the filter system
+        keeps blocking normally. Never gates the export.
+
+        Phase 1 (2026-05-18): ELIGIBLE_FOR_AUTO_DEMOTE in the evaluator is
+        empty, so this table stays empty in normal operation. The plumbing
+        is in place for Phase 2.
+        """
+        try:
+            bq = self._get_bq_client()
+            query = (
+                f"SELECT filter_name FROM "
+                f"`{self.project_id}.mlb_predictions.filter_overrides` "
+                f"WHERE active = TRUE"
+            )
+            return {row.filter_name for row in bq.query(query).result(timeout=10)}
+        except Exception as e:
+            logger.warning(f"[MLB BB] filter_overrides load failed (fail-open): {e}")
+            return set()
 
     @staticmethod
     def _safe_evaluate(signal, pred, features, supplemental):
@@ -438,6 +467,15 @@ class MLBBestBetsExporter:
         self.filter_audit = []
         self._blacklist_blocked = []  # Shadow tracking for blacklisted pitchers
 
+        # Load filter demotions once per export. CF evaluator may have moved
+        # a poorly-performing filter to observation-only since the last run.
+        self._demoted_filters = self._load_filter_overrides()
+        if self._demoted_filters:
+            logger.info(
+                f"[MLB BB] Filter overrides active: {sorted(self._demoted_filters)} "
+                "(demoted to OBSERVATION)"
+            )
+
         # Halt envelope gate — halt_state_writer CF writes one row per
         # (effective_date, sport) into nba_orchestration.halt_state. When
         # halt_active=TRUE for a canonical reason, skip pick generation
@@ -546,6 +584,7 @@ class MLBBestBetsExporter:
                     f"(directions: {allowed_directions})")
 
         # 1b. Overconfidence cap — block OVER picks with edge > MAX_EDGE
+        oc_demoted = 'overconfidence_cap' in self._demoted_filters
         capped = []
         for p in actionable:
             edge = abs(p.get('edge', 0))
@@ -555,14 +594,17 @@ class MLBBestBetsExporter:
                     'pitcher_lookup': p.get('pitcher_lookup', ''),
                     'system_id': p.get('system_id', 'unknown'),
                     'filter_name': 'overconfidence_cap',
-                    'filter_result': 'BLOCKED',
+                    'filter_result': 'OBSERVATION' if oc_demoted else 'BLOCKED',
                     'filter_reason': f'OVER edge {edge:.1f} > {MAX_EDGE} cap (overconfident)',
                     'recommendation': p.get('recommendation'),
                     'edge': p.get('edge'),
                     'line_value': p.get('strikeouts_line'),
                 })
-                logger.debug(f"[MLB BB] {p.get('pitcher_lookup', '')} BLOCKED by overconfidence_cap "
-                             f"(edge={edge:.1f} > {MAX_EDGE})")
+                if oc_demoted:
+                    capped.append(p)  # demoted to observation — keep the pick
+                else:
+                    logger.debug(f"[MLB BB] {p.get('pitcher_lookup', '')} BLOCKED by overconfidence_cap "
+                                 f"(edge={edge:.1f} > {MAX_EDGE})")
             else:
                 capped.append(p)
 
@@ -573,6 +615,7 @@ class MLBBestBetsExporter:
 
         # 1c. Probability cap — block OVER picks with p_over > MAX_PROB_OVER
         # Walk-forward: prob 0.60-0.70 = 64.4% HR, prob 0.70+ drops to 58.7%, 0.80+ = 48.2%
+        pc_demoted = 'probability_cap' in self._demoted_filters
         prob_capped = []
         for p in actionable:
             p_over = p.get('p_over')
@@ -584,15 +627,18 @@ class MLBBestBetsExporter:
                     'pitcher_lookup': p.get('pitcher_lookup', ''),
                     'system_id': p.get('system_id', 'unknown'),
                     'filter_name': 'probability_cap',
-                    'filter_result': 'BLOCKED',
+                    'filter_result': 'OBSERVATION' if pc_demoted else 'BLOCKED',
                     'filter_reason': f'OVER p_over {p_over:.3f} > {MAX_PROB_OVER} cap '
                                      f'(walk-forward: prob>{MAX_PROB_OVER} = 56-48% HR)',
                     'recommendation': p.get('recommendation'),
                     'edge': p.get('edge'),
                     'line_value': p.get('strikeouts_line'),
                 })
-                logger.debug(f"[MLB BB] {p.get('pitcher_lookup', '')} BLOCKED by probability_cap "
-                             f"(p_over={p_over:.3f} > {MAX_PROB_OVER})")
+                if pc_demoted:
+                    prob_capped.append(p)
+                else:
+                    logger.debug(f"[MLB BB] {p.get('pitcher_lookup', '')} BLOCKED by probability_cap "
+                                 f"(p_over={p_over:.3f} > {MAX_PROB_OVER})")
             else:
                 prob_capped.append(p)
 
@@ -612,12 +658,17 @@ class MLBBestBetsExporter:
             blocked_by_blacklist = False
             for filt in self.registry.negative_filters():
                 result = self._safe_evaluate(filt, pred, features, supplemental)
+                filt_demoted = filt.tag in self._demoted_filters
+                if result.qualifies:
+                    result_str = 'OBSERVATION' if filt_demoted else 'BLOCKED'
+                else:
+                    result_str = 'PASSED'
                 audit_entry = {
                     'game_date': game_date,
                     'pitcher_lookup': pitcher,
                     'system_id': pred.get('system_id', 'unknown'),
                     'filter_name': filt.tag,
-                    'filter_result': 'BLOCKED' if result.qualifies else 'PASSED',
+                    'filter_result': result_str,
                     'filter_reason': result.metadata.get('reason') if result.qualifies else None,
                     'recommendation': pred.get('recommendation'),
                     'edge': pred.get('edge'),
@@ -625,7 +676,7 @@ class MLBBestBetsExporter:
                 }
                 self.filter_audit.append(audit_entry)
 
-                if result.qualifies:
+                if result.qualifies and not filt_demoted:
                     blocked = True
                     if filt.tag == 'pitcher_blacklist':
                         blocked_by_blacklist = True
@@ -663,13 +714,13 @@ class MLBBestBetsExporter:
             if (BLOCK_ALL_AWAY_OVER
                     and pred.get('recommendation') == 'OVER'
                     and is_away):
-                away_blocked += 1
+                aob_demoted = 'away_over_blocked_policy' in self._demoted_filters
                 self.filter_audit.append({
                     'game_date': game_date,
                     'pitcher_lookup': pitcher,
                     'system_id': pred.get('system_id', 'unknown'),
                     'filter_name': 'away_over_blocked_policy',
-                    'filter_result': 'BLOCKED',
+                    'filter_result': 'OBSERVATION' if aob_demoted else 'BLOCKED',
                     'filter_reason': (
                         f'Away OVER blocked by policy (MLB_BLOCK_ALL_AWAY_OVER). '
                         f'Cross-season HR 54.1% vs home 64.2%; 1.0-1.49 bucket '
@@ -679,7 +730,12 @@ class MLBBestBetsExporter:
                     'edge': pred.get('edge'),
                     'line_value': pred.get('strikeouts_line'),
                 })
-                continue
+                if aob_demoted:
+                    # Demoted: fall through to the normal edge floor path below
+                    pass
+                else:
+                    away_blocked += 1
+                    continue
 
             # Away OVER: higher edge floor (1.25 vs 0.75)
             if pred.get('recommendation') == 'OVER' and is_away:
