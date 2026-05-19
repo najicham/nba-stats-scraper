@@ -108,10 +108,17 @@ def check_analytics_data(bq_client, target_date):
 
 
 def check_precompute_data(bq_client, target_date):
-    """Check if precompute features exist."""
+    """Check if precompute upstream data exists (pitcher_game_summary).
+
+    Historically queried mlb_precompute.pitcher_ml_features, but that table
+    was orphaned — written by MlbPitcherFeaturesProcessor, never read by the
+    production worker or training pipeline (audit 2026-05-18). The actual
+    "is the data ready for predictions?" signal is pitcher_game_summary in
+    mlb_analytics, which is what pitcher_loader.py queries.
+    """
     query = f"""
     SELECT COUNT(*) as records
-    FROM `{PROJECT_ID}.mlb_precompute.pitcher_ml_features`
+    FROM `{PROJECT_ID}.mlb_analytics.pitcher_game_summary`
     WHERE game_date = '{target_date}'
     """
     try:

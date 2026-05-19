@@ -77,15 +77,26 @@ from shared.utils.mlb_alert_utils import (
 )
 
 
-# MLB Precompute processor registry
+# MLB Precompute processor registry.
+#
+# DECOMMISSION 2026-05-18: pitcher_features was removed from active runtime.
+# Audit found that MlbPitcherFeaturesProcessor wrote mlb_precompute.pitcher_ml_features
+# but nothing in the active inference or training pipeline consumed it. The
+# production worker reads features at predict-time via pitcher_loader.py from
+# mlb_analytics.pitcher_game_summary + mlb_raw.oddsa_pitcher_props +
+# mlb_raw.fangraphs_pitcher_season_stats. The 36-feature regressor's f30/f32
+# are different fields (k_avg_vs_line, line_level), not the velocity_trend /
+# put_away_rate written by this processor. Class kept in place so revival is
+# easy if the V1/V2 architecture is ever wired up; just re-add the entries
+# below.
 MLB_PRECOMPUTE_PROCESSORS = {
-    'pitcher_features': MlbPitcherFeaturesProcessor,
+    # 'pitcher_features': MlbPitcherFeaturesProcessor,  # DECOMMISSIONED 2026-05-18
     'lineup_k_analysis': MlbLineupKAnalysisProcessor,
 }
 
 # Trigger mapping: which analytics tables trigger which precompute processors
 MLB_PRECOMPUTE_TRIGGERS = {
-    'pitcher_game_summary': [MlbPitcherFeaturesProcessor],
+    # 'pitcher_game_summary': [MlbPitcherFeaturesProcessor],  # DECOMMISSIONED 2026-05-18
     'batter_game_summary': [MlbLineupKAnalysisProcessor],
 }
 

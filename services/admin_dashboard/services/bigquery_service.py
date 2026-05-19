@@ -995,8 +995,7 @@ class BigQueryService:
 
         Returns dict with:
         - games_scheduled: Number of games
-        - analytics_pitchers: Pitcher summary records
-        - precompute_features: ML feature records
+        - analytics_pitchers: Pitcher summary records (the live precompute signal)
         - predictions: Prediction count
         - pipeline_status: Overall status
         """
@@ -1014,12 +1013,12 @@ class BigQueryService:
         WHERE game_date = '{target_date.isoformat()}'
         """
 
-        # Get precompute count
-        precompute_query = f"""
-        SELECT COUNT(*) as cnt
-        FROM `{PROJECT_ID}.mlb_precompute.pitcher_ml_features`
-        WHERE game_date = '{target_date.isoformat()}'
-        """
+        # Note 2026-05-18: removed the precompute_count query against
+        # mlb_precompute.pitcher_ml_features. That table was orphaned —
+        # written by MlbPitcherFeaturesProcessor but consumed by nothing
+        # in the active inference/training pipeline (audit 2026-05-18).
+        # `analytics_count` (pitcher_game_summary) is the real readiness
+        # signal — that's what pitcher_loader.py reads.
 
         # Get predictions count
         predictions_query = f"""
@@ -1031,22 +1030,19 @@ class BigQueryService:
         try:
             games = list(self.client.query(games_query).result(timeout=30))
             analytics = list(self.client.query(analytics_query).result(timeout=30))
-            precompute = list(self.client.query(precompute_query).result(timeout=30))
             predictions = list(self.client.query(predictions_query).result(timeout=30))
 
             games_count = games[0].games if games else 0
             analytics_count = analytics[0].cnt if analytics else 0
-            precompute_count = precompute[0].cnt if precompute else 0
             predictions_count = predictions[0].predictions if predictions else 0
             pitchers_count = predictions[0].pitchers if predictions else 0
 
-            # Determine status
+            # Determine status. Phase 4 (precompute) no longer gates Phase 5
+            # for MLB — predictions read directly from pitcher_game_summary.
             if predictions_count > 0:
                 status = 'COMPLETE'
-            elif precompute_count > 0:
-                status = 'PHASE_5_PENDING'
             elif analytics_count > 0:
-                status = 'PHASE_4_PENDING'
+                status = 'PHASE_5_PENDING'
             elif games_count > 0:
                 status = 'PHASE_3_PENDING'
             else:
@@ -1056,7 +1052,6 @@ class BigQueryService:
                 'game_date': target_date.isoformat(),
                 'games_scheduled': games_count,
                 'analytics_pitchers': analytics_count,
-                'precompute_features': precompute_count,
                 'predictions': predictions_count,
                 'pitchers_with_predictions': pitchers_count,
                 'pipeline_status': status
@@ -1068,7 +1063,6 @@ class BigQueryService:
                 'game_date': target_date.isoformat(),
                 'games_scheduled': 0,
                 'analytics_pitchers': 0,
-                'precompute_features': 0,
                 'predictions': 0,
                 'pitchers_with_predictions': 0,
                 'pipeline_status': 'ERROR'

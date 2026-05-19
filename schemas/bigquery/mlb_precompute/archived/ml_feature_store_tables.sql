@@ -1,3 +1,9 @@
+-- ARCHIVED 2026-05-18 — decommissioned orphan pipeline.
+-- All tables and views defined below were DROPPED. The
+-- pipeline that wrote them (MlbPitcherFeaturesProcessor +
+-- 4 empty source tables) was disconnected from the active
+-- inference and training paths. See audit 2026-05-18.
+--
 -- ============================================================================
 -- MLB Props Platform - ML Feature Store Tables
 -- Pre-computed features for strikeout prediction models
