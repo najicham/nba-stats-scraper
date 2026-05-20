@@ -250,3 +250,123 @@ SELECT
 FROM combined
 WHERE usage_pct >= 5.0
 ORDER BY player_lookup, usage_pct DESC;
+
+
+-- ============================================================================
+-- MLB Props Platform - Pitcher Pitch Arsenal (SEASON window)
+-- ============================================================================
+--
+-- Same per-(pitcher, pitch_type) shape as pitcher_pitch_arsenal_latest, but
+-- aggregated over a FULL SEASON instead of the last 5 starts. Adds a
+-- season_year column so a pitcher carries separate rows for 2025 and 2026.
+--
+-- FEED PATH ONLY — no statcast fallback. Pitchers with no per-pitch feed data
+-- for a season simply have no rows; the exporter emits pitch_arsenal_season:[]
+-- for them and the frontend falls back to the L5 pitch_arsenal view.
+--
+-- mlb_game_feed_pitches has require_partition_filter = TRUE, so the explicit
+-- game_date range below is mandatory. Per-pitch feed coverage began late
+-- March 2025 — the 2025-03-01 lower bound captures every season's March games.
+--
+-- Columns (stable contract used by mlb_pitcher_exporter._fetch_pitch_arsenal_season):
+--   player_lookup, pitch_type_code, pitch_type_desc, season_year,
+--   last_seen_date, total_pitch_count, usage_pct, whiff_rate, avg_velocity,
+--   starts_sampled, source, computed_at
+--
+-- NOTE: starts_sampled = COUNT(DISTINCT game_date). The feed table has every
+--   pitcher, so for relievers this counts appearances, not starts — harmless,
+--   the exporter only ever queries the day's projected starting pitchers.
+-- ============================================================================
+
+CREATE OR REPLACE VIEW `nba-props-platform.mlb_analytics.pitcher_pitch_arsenal_season` AS
+
+WITH
+
+-- Pitch type descriptions (fallback if feed data lacks a description)
+pitch_type_desc AS (
+  SELECT code, description FROM UNNEST([
+    STRUCT('FF' AS code, 'Four-Seam Fastball' AS description),
+    STRUCT('SI', 'Sinker'),
+    STRUCT('FA', 'Fastball'),
+    STRUCT('SL', 'Slider'),
+    STRUCT('CU', 'Curveball'),
+    STRUCT('CH', 'Changeup'),
+    STRUCT('KC', 'Knuckle-Curve'),
+    STRUCT('ST', 'Sweeper'),
+    STRUCT('FC', 'Cutter'),
+    STRUCT('FS', 'Splitter'),
+    STRUCT('CS', 'Slow Curve'),
+    STRUCT('KN', 'Knuckleball'),
+    STRUCT('EP', 'Eephus'),
+    STRUCT('SC', 'Screwball'),
+    STRUCT('FO', 'Forkball'),
+    STRUCT('SV', 'Slurve'),
+    STRUCT('GY', 'Gyroball')
+  ])
+),
+
+-- Aggregate per (pitcher, pitch_type, season) over ALL of the season's starts.
+-- This is the feed_arsenal CTE from pitcher_pitch_arsenal_latest with the
+-- feed_last5 / start_rank <= 5 window removed and season_year added.
+feed_arsenal AS (
+  SELECT
+    p.pitcher_lookup AS player_lookup,
+    p.pitch_type_code,
+    EXTRACT(YEAR FROM p.game_date) AS season_year,
+    ANY_VALUE(p.pitch_type_desc) AS feed_pitch_type_desc,
+    MAX(p.game_date) AS last_seen_date,
+    COUNT(*) AS total_pitch_count,
+    ROUND(AVG(p.velocity), 1) AS avg_velocity,
+    ROUND(
+      100.0 * COUNTIF(p.is_whiff) / NULLIF(COUNTIF(p.is_swing), 0),
+      1
+    ) AS whiff_rate,
+    COUNT(DISTINCT p.game_date) AS starts_sampled
+  FROM `nba-props-platform.mlb_raw.mlb_game_feed_pitches` p
+  WHERE p.game_date >= DATE('2025-03-01')
+    AND p.game_date <= CURRENT_DATE()
+    AND p.pitch_type_code IS NOT NULL
+  GROUP BY p.pitcher_lookup, p.pitch_type_code, season_year
+),
+
+feed_totals AS (
+  SELECT player_lookup, season_year, SUM(total_pitch_count) AS arsenal_total
+  FROM feed_arsenal
+  GROUP BY player_lookup, season_year
+),
+
+feed_arsenal_with_usage AS (
+  SELECT
+    a.player_lookup,
+    a.pitch_type_code,
+    a.season_year,
+    COALESCE(d.description, a.feed_pitch_type_desc, a.pitch_type_code) AS pitch_type_desc,
+    a.last_seen_date,
+    a.total_pitch_count,
+    ROUND(100.0 * a.total_pitch_count / NULLIF(t.arsenal_total, 0), 1) AS usage_pct,
+    a.whiff_rate,
+    a.avg_velocity,
+    a.starts_sampled,
+    'game_feed_pitches' AS source
+  FROM feed_arsenal a
+  JOIN feed_totals t
+    ON a.player_lookup = t.player_lookup AND a.season_year = t.season_year
+  LEFT JOIN pitch_type_desc d ON a.pitch_type_code = d.code
+)
+
+SELECT
+  player_lookup,
+  pitch_type_code,
+  pitch_type_desc,
+  season_year,
+  last_seen_date,
+  total_pitch_count,
+  usage_pct,
+  whiff_rate,
+  avg_velocity,
+  starts_sampled,
+  source,
+  CURRENT_TIMESTAMP() AS computed_at
+FROM feed_arsenal_with_usage
+WHERE usage_pct >= 5.0
+ORDER BY player_lookup, season_year DESC, usage_pct DESC;

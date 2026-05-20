@@ -18,7 +18,8 @@ Data sources:
   - mlb_predictions.pitcher_strikeouts  (predictions + graded results)
   - mlb_predictions.signal_best_bets_picks  (curated best bets with signal tags)
   - mlb_analytics.pitcher_game_summary  (per-start pitcher stats)
-  - mlb_analytics.pitcher_pitch_arsenal_latest  (pitch mix from Statcast)
+  - mlb_analytics.pitcher_pitch_arsenal_latest  (pitch mix, last 5 starts)
+  - mlb_analytics.pitcher_pitch_arsenal_season  (pitch mix, full season)
   - mlb_analytics.pitcher_advanced_arsenal_latest  (putaway / velo fade / concentration)
   - mlb_analytics.pitcher_expected_arsenal_latest  (expected vs actual whiff by arsenal)
 
@@ -188,11 +189,15 @@ class MlbPitcherExporter(BaseExporter):
 
         if history_only:
             pitch_arsenals: Dict[str, List[Dict[str, Any]]] = {}
+            pitch_arsenals_season: Dict[str, List[Dict[str, Any]]] = {}
             advanced_arsenals: Dict[str, Dict[str, Any]] = {}
             expected_arsenals: Dict[str, Dict[str, Any]] = {}
             strikeout_zones: Dict[str, Dict[str, Any]] = {}
         else:
             pitch_arsenals = self._fetch_pitch_arsenal(list(all_pitcher_keys))
+            pitch_arsenals_season = self._fetch_pitch_arsenal_season(
+                list(all_pitcher_keys), self._infer_season_year(game_date)
+            )
             advanced_arsenals = self._fetch_advanced_arsenal(list(all_pitcher_keys))
             expected_arsenals = self._fetch_expected_arsenal(list(all_pitcher_keys))
             strikeout_zones = self._fetch_strikeout_zones(list(all_pitcher_keys))
@@ -227,6 +232,7 @@ class MlbPitcherExporter(BaseExporter):
                     season_agg=season_aggs.get(pitcher_lookup),
                     game_log=game_logs.get(pitcher_lookup, []),
                     pitch_arsenal=pitch_arsenals.get(pitcher_lookup, []),
+                    pitch_arsenal_season=pitch_arsenals_season.get(pitcher_lookup, []),
                     advanced_arsenal=advanced_arsenals.get(pitcher_lookup),
                     expected_arsenal=expected_arsenals.get(pitcher_lookup),
                     opponent_k_defense=opponent_k_defense.get(pitcher_lookup),
@@ -428,18 +434,23 @@ class MlbPitcherExporter(BaseExporter):
 
         Rank is computed across all MLB teams for the current season. Higher
         K rate = higher rank (rank 1 = strikes out the most).
+
+        The pitcher -> opponent mapping for the target date is sourced from
+        `pitcher_strikeouts` (the predictions table), NOT `pitcher_game_summary`:
+        the summary table only holds COMPLETED games, so for a same-day export
+        it has no rows for tonight and the join would yield nothing.
         """
         season_year = self._infer_season_year(game_date)
         query = f"""
         WITH tonight_pitchers AS (
-          SELECT
-            player_lookup AS pitcher_lookup,
-            opponent_team_abbr,
-            opponent_team_k_rate
-          FROM `{self.project_id}.mlb_analytics.pitcher_game_summary`
+          -- pitcher_strikeouts carries one row per (pitcher, model) for the
+          -- date; DISTINCT collapses to one opponent per pitcher.
+          SELECT DISTINCT
+            pitcher_lookup,
+            opponent_team_abbr
+          FROM `{self.project_id}.mlb_predictions.pitcher_strikeouts`
           WHERE game_date = '{game_date}'
-          -- pitcher_game_summary is one row per starting-pitcher start,
-          -- so no role filter is needed (and `is_starting_pitcher` doesn't exist).
+            AND opponent_team_abbr IS NOT NULL
         ),
         season_team_k AS (
           -- Aggregate season-level K rate per team from batter game summaries
@@ -463,8 +474,7 @@ class MlbPitcherExporter(BaseExporter):
         SELECT
           t.pitcher_lookup,
           t.opponent_team_abbr,
-          -- Prefer the season-aggregated rate; fall back to the per-start rolling value
-          COALESCE(r.season_k_rate, t.opponent_team_k_rate) AS k_rate,
+          r.season_k_rate AS k_rate,
           r.k_rank,
           r.k_rank_of
         FROM tonight_pitchers t
@@ -748,6 +758,66 @@ class MlbPitcherExporter(BaseExporter):
             # Translate statcast lookup back to the original key format
             statcast_key = r['pitcher_lookup_statcast']
             original_key = lookup_map.get(statcast_key, statcast_key)
+            out[original_key].append({
+                'pitch_type': r['pitch_type_code'],
+                'pitch_type_desc': r.get('pitch_type_desc') or r['pitch_type_code'],
+                'usage_pct': safe_float(r.get('usage_pct'), precision=1),
+                'whiff_rate': safe_float(r.get('whiff_rate'), precision=1),
+                'avg_velocity': safe_float(r.get('avg_velocity'), precision=1),
+                'starts_sampled': safe_int(r.get('starts_sampled'), default=0),
+                'last_seen_date': r.get('last_seen_date'),
+            })
+        return dict(out)
+
+    def _fetch_pitch_arsenal_season(
+        self, pitcher_lookups: List[str], season_year: int
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Full-season pitch type breakdown per pitcher from per-pitch feed data.
+
+        Identical row shape to `_fetch_pitch_arsenal()`, but aggregated over the
+        entire `season_year` instead of the last 5 starts. Backed by the
+        `pitcher_pitch_arsenal_season` view (feed-path only).
+
+        Returns Dict[pitcher_lookup -> list of pitch type rows, sorted by
+        usage_pct DESC]. Pitchers with no per-pitch feed data for the season are
+        absent from the dict (caller defaults them to []).
+
+        Same underscore vs no-underscore lookup mismatch as `_fetch_pitch_arsenal`:
+        the feed view uses no-underscore lookups while the caller's keys use
+        underscore lookups — normalize both sides to match.
+        """
+        if not pitcher_lookups:
+            return {}
+
+        # Build a map from no-underscore → original-with-underscores so we can
+        # translate query results back to the caller's key format.
+        lookup_map = {pl.replace('_', ''): pl for pl in pitcher_lookups if pl}
+        cleaned = list(lookup_map.keys())
+        if not cleaned:
+            return {}
+
+        quoted = ', '.join(f"'{pl}'" for pl in cleaned)
+        query = f"""
+        SELECT
+            player_lookup AS pitcher_lookup_feed,
+            pitch_type_code,
+            pitch_type_desc,
+            usage_pct,
+            whiff_rate,
+            avg_velocity,
+            starts_sampled,
+            CAST(last_seen_date AS STRING) AS last_seen_date
+        FROM `{self.project_id}.mlb_analytics.pitcher_pitch_arsenal_season`
+        WHERE player_lookup IN ({quoted})
+          AND season_year = {season_year}
+        ORDER BY player_lookup, usage_pct DESC
+        """
+        rows = self.query_to_list(query)
+        out: Dict[str, List[Dict]] = defaultdict(list)
+        for r in rows:
+            # Translate feed lookup back to the original key format
+            feed_key = r['pitcher_lookup_feed']
+            original_key = lookup_map.get(feed_key, feed_key)
             out[original_key].append({
                 'pitch_type': r['pitch_type_code'],
                 'pitch_type_desc': r.get('pitch_type_desc') or r['pitch_type_code'],
@@ -1066,6 +1136,7 @@ class MlbPitcherExporter(BaseExporter):
         season_agg: Optional[Dict],
         game_log: List[Dict],
         pitch_arsenal: Optional[List[Dict]] = None,
+        pitch_arsenal_season: Optional[List[Dict]] = None,
         advanced_arsenal: Optional[Dict[str, Any]] = None,
         expected_arsenal: Optional[Dict[str, Any]] = None,
         opponent_k_defense: Optional[Dict[str, Any]] = None,
@@ -1139,6 +1210,12 @@ class MlbPitcherExporter(BaseExporter):
         # isn't available yet (early season, off-season, pre-2025 pitchers).
         profile['pitch_arsenal'] = pitch_arsenal or []
 
+        # Full-season pitch arsenal (feed-path only). Empty list when the
+        # pitcher has no per-pitch feed data this season; the frontend falls
+        # back to the L5 pitch_arsenal above. Kept alongside pitch_arsenal —
+        # pitch_arsenal is still used for a pitch code→name lookup.
+        profile['pitch_arsenal_season'] = pitch_arsenal_season or []
+
         # Advanced per-pitch metrics (putaway, velo fade, concentration).
         # None when no per-pitch data for this pitcher yet.
         profile['advanced_arsenal'] = advanced_arsenal
@@ -1151,7 +1228,362 @@ class MlbPitcherExporter(BaseExporter):
         # None when no per-pitch K data in mlb_game_feed_pitches.
         profile['strikeout_zones'] = strikeout_zones
 
+        # Server-computed Key Angles for tonight's start — magnitude-ranked
+        # reasoning factors. [] when the pitcher has no start tonight or no
+        # factor has enough data. Mirrors NBA `tonights_factors`.
+        profile['tonights_factors'] = self._build_pitcher_factors(
+            tonight=profile['tonight'] if profile['tonight'].get('has_start') else None,
+            expected_arsenal=expected_arsenal,
+            advanced_arsenal=advanced_arsenal,
+            game_log=game_log,
+            pitcher_lookup=pitcher_lookup,
+        )
+
         return profile
+
+    # ------------------------------------------------------------------
+    # Tonight's factors (Key Angles)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _ordinal(n: Optional[int]) -> str:
+        """Format an integer as an English ordinal (1 -> '1st', 22 -> '22nd')."""
+        if n is None:
+            return ''
+        if 10 <= (n % 100) <= 20:
+            suffix = 'th'
+        else:
+            suffix = {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')
+        return f"{n}{suffix}"
+
+    def _build_pitcher_factors(
+        self,
+        tonight: Optional[Dict[str, Any]],
+        expected_arsenal: Optional[Dict[str, Any]],
+        advanced_arsenal: Optional[Dict[str, Any]],
+        game_log: List[Dict[str, Any]],
+        pitcher_lookup: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Build magnitude-ranked Key Angles for tonight's start.
+
+        Mirrors the NBA `tonight_player_exporter._build_candidate_angles`
+        pattern: scores each candidate factor by a 0-1 magnitude, sorts, and
+        returns the top ~5.
+
+        `direction` semantics for a strikeout prop:
+          positive = leans the pitcher OVER his K line
+          negative = leans UNDER
+          neutral  = informational
+
+        Runs entirely off data the exporter already fetched. Returns [] when
+        the pitcher has no start tonight, or when no factor has enough data.
+        Never raises — Key Angles must never block a profile export.
+        """
+        if not tonight:
+            return []
+
+        try:
+            return self._compute_pitcher_factors(
+                tonight, expected_arsenal, advanced_arsenal, game_log
+            )
+        except Exception:  # pragma: no cover - defensive: Key Angles never block
+            logger.warning(
+                "Failed to build pitcher factors for %s; emitting []",
+                pitcher_lookup or '?',
+                exc_info=True,
+            )
+            return []
+
+    def _compute_pitcher_factors(
+        self,
+        tonight: Dict[str, Any],
+        expected_arsenal: Optional[Dict[str, Any]],
+        advanced_arsenal: Optional[Dict[str, Any]],
+        game_log: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Inner factor computation. See `_build_pitcher_factors` for contract."""
+        factors: List[Dict[str, Any]] = []
+        opponent = tonight.get('opponent') or 'the opposing'
+        line = tonight.get('strikeouts_line')
+
+        # game_log is newest-first, completed starts only.
+        recent_ks = [
+            g.get('strikeouts') for g in game_log[:10]
+            if g.get('strikeouts') is not None
+        ]
+        ou_results = [
+            g.get('over_under_result') for g in game_log[:10]
+            if g.get('over_under_result') in ('OVER', 'UNDER')
+        ]
+
+        # 1. Opponent strikeout-proneness. Driven by the opponent's season
+        #    K-rate RANK (1 = strikes out most), not a deviation from a fixed
+        #    baseline: opponent_k_rate is K/AB (see _fetch_opponent_k_defense),
+        #    whose league mean (~0.243) differs from the familiar K/PA ~0.22 —
+        #    rank is distribution-free and sidesteps that ambiguity. Skipped
+        #    when the opponent has no season rank yet (early season, <100 AB).
+        opp_k_rate = tonight.get('opponent_k_rate')
+        opp_k_rank = tonight.get('opponent_k_rank')
+        opp_k_rank_of = tonight.get('opponent_k_rank_of')
+        if (
+            opp_k_rate is not None
+            and opp_k_rank and opp_k_rank_of and opp_k_rank_of > 1
+        ):
+            # pct 0.0 = most strikeout-prone lineup, 1.0 = most contact-oriented.
+            pct = (opp_k_rank - 1) / (opp_k_rank_of - 1)
+            mag = min(abs(0.5 - pct) * 2, 1.0)
+            rate_pct = opp_k_rate * 100
+            if pct <= 0.40:
+                direction = 'positive'
+                desc = (
+                    f"Faces a strikeout-prone {opponent} lineup "
+                    f"({rate_pct:.1f}% K rate, {self._ordinal(opp_k_rank)}-highest "
+                    f"of {opp_k_rank_of})."
+                )
+            elif pct >= 0.60:
+                direction = 'negative'
+                fewest = opp_k_rank_of - opp_k_rank + 1
+                desc = (
+                    f"Faces a contact-oriented {opponent} lineup "
+                    f"({rate_pct:.1f}% K rate, {self._ordinal(fewest)}-lowest "
+                    f"of {opp_k_rank_of})."
+                )
+            else:
+                direction = 'neutral'
+                desc = (
+                    f"Faces a middle-of-the-pack {opponent} lineup for strikeouts "
+                    f"({rate_pct:.1f}% K rate, ranked {opp_k_rank} of {opp_k_rank_of})."
+                )
+            factors.append({
+                'id': 'opp_k_prone',
+                'factor': 'opp_k_prone',
+                'direction': direction,
+                'magnitude': round(mag, 2),
+                'description': desc,
+            })
+
+        # 2. Deception — whiff rate vs arsenal-weighted league expectation.
+        if expected_arsenal:
+            wae = expected_arsenal.get('whiff_vs_expected_pp')
+            if wae is not None and abs(wae) >= 1.0:
+                # Divisor 7.0 ~ the production p90 of |whiff_vs_expected_pp|.
+                mag = min(abs(wae) / 7.0, 1.0)
+                if wae > 0:
+                    direction = 'positive'
+                    desc = (
+                        f"Misses more bats than his pitch mix predicts "
+                        f"({wae:+.1f} pp whiff vs league baseline)."
+                    )
+                else:
+                    direction = 'negative'
+                    desc = (
+                        f"Misses fewer bats than his pitch mix predicts "
+                        f"({wae:+.1f} pp whiff vs league baseline)."
+                    )
+                factors.append({
+                    'id': 'deception',
+                    'factor': 'deception',
+                    'direction': direction,
+                    'magnitude': round(mag, 2),
+                    'description': desc,
+                })
+
+        # 3. Recent form — OVER/UNDER results across the last starts.
+        if len(ou_results) >= 4:
+            over_n = sum(1 for r in ou_results if r == 'OVER')
+            total = len(ou_results)
+            over_rate = over_n / total
+            mag = min(abs(over_rate - 0.5) / 0.4, 1.0)
+            if over_rate > 0.5:
+                direction = 'positive'
+                desc = (
+                    f"Has gone OVER his strikeout line in {over_n} of his "
+                    f"last {total} starts."
+                )
+            elif over_rate < 0.5:
+                direction = 'negative'
+                desc = (
+                    f"Has gone UNDER his strikeout line in {total - over_n} of "
+                    f"his last {total} starts."
+                )
+            else:
+                direction = 'neutral'
+                desc = (
+                    f"Split his strikeout line {over_n}-{total - over_n} O/U "
+                    f"over his last {total} starts."
+                )
+            factors.append({
+                'id': 'recent_form',
+                'factor': 'recent_form',
+                'direction': direction,
+                'magnitude': round(mag, 2),
+                'description': desc,
+            })
+
+        # 4. K floor — a ROBUST floor: the 2nd-lowest strikeout total over the
+        #    last 8 starts, so a single disaster start (early hook, rain delay)
+        #    does not poison the signal the way a raw min() would. Floor at or
+        #    above tonight's line means he reliably clears it.
+        if line is not None and len(recent_ks) >= 6:
+            window = recent_ks[:8]
+            n = len(window)
+            robust_floor = sorted(window)[1]  # 2nd-lowest — drop the worst start
+            diff = robust_floor - line
+            mag = min(abs(diff) / 3.0, 1.0)
+            if robust_floor >= line:
+                direction = 'positive'
+                desc = (
+                    f"Struck out {robust_floor}+ in {n - 1} of his last {n} "
+                    f"starts — reliable floor at or above tonight's "
+                    f"{self._fmt_line(line)} line."
+                )
+            else:
+                direction = 'negative'
+                desc = (
+                    f"Reliable floor of {robust_floor} K over his last {n} "
+                    f"starts sits below tonight's {self._fmt_line(line)} line."
+                )
+            factors.append({
+                'id': 'k_floor',
+                'factor': 'k_floor',
+                'direction': direction,
+                'magnitude': round(mag, 2),
+                'description': desc,
+            })
+
+        # 5. Velocity fade — drop in fastball velocity from the 1st inning to
+        #    the 5th+. A large late fade signals tiring → fewer late strikeouts.
+        if advanced_arsenal:
+            velo_fade = advanced_arsenal.get('velo_fade') or {}
+            fade = velo_fade.get('fade_mph')
+            if fade is not None and fade >= 0.8:
+                mag = min(fade / 3.0, 1.0)
+                desc = (
+                    f"Velocity fades {fade:.1f} mph from the 1st inning to the "
+                    f"5th+ — late-game strikeout risk."
+                )
+                factors.append({
+                    'id': 'velo_fade',
+                    'factor': 'velo_fade',
+                    'direction': 'negative',
+                    'magnitude': round(mag, 2),
+                    'description': desc,
+                })
+
+        # 6. Velocity premium — average velocity vs league for this arsenal.
+        if expected_arsenal:
+            svp = expected_arsenal.get('stuff_velocity_premium')
+            if svp is not None and abs(svp) >= 0.5:
+                mag = min(abs(svp) / 3.0, 1.0)
+                if svp > 0:
+                    direction = 'positive'
+                    desc = (
+                        f"Throws {svp:.1f} mph harder than the league average "
+                        f"for his pitch mix."
+                    )
+                else:
+                    direction = 'negative'
+                    desc = (
+                        f"Throws {abs(svp):.1f} mph softer than the league "
+                        f"average for his pitch mix."
+                    )
+                factors.append({
+                    'id': 'velo_premium',
+                    'factor': 'velo_premium',
+                    'direction': direction,
+                    'magnitude': round(mag, 2),
+                    'description': desc,
+                })
+
+        # 7. Putaway — whiff rate on his go-to 2-strike pitch (league ~14%).
+        if advanced_arsenal:
+            putaway = advanced_arsenal.get('putaway') or {}
+            pa_whiff = putaway.get('whiff_rate')
+            pa_n = putaway.get('sample_size') or 0
+            if pa_whiff is not None and pa_n >= 15:
+                deviation = pa_whiff - 14.0
+                mag = min(abs(deviation) / 18.0, 1.0)
+                pitch = putaway.get('pitch_desc') or putaway.get('pitch_code') or 'putaway pitch'
+                if deviation > 0:
+                    direction = 'positive'
+                    desc = (
+                        f"Puts hitters away with the {pitch} — {pa_whiff:.0f}% "
+                        f"whiff rate on 2-strike counts."
+                    )
+                elif deviation < 0:
+                    direction = 'negative'
+                    desc = (
+                        f"Soft 2-strike putaway — only {pa_whiff:.0f}% whiff "
+                        f"rate on the {pitch}."
+                    )
+                else:
+                    direction = 'neutral'
+                    desc = (
+                        f"League-average 2-strike putaway ({pa_whiff:.0f}% "
+                        f"whiff on the {pitch})."
+                    )
+                factors.append({
+                    'id': 'putaway',
+                    'factor': 'putaway',
+                    'direction': direction,
+                    'magnitude': round(mag, 2),
+                    'description': desc,
+                })
+
+        # 8. Line vs recent average — tonight's line against his recent K avg.
+        if line is not None and len(recent_ks) >= 4:
+            avg_k = sum(recent_ks) / len(recent_ks)
+            diff = round(avg_k - line, 1)
+            if abs(diff) >= 0.5:
+                mag = min(abs(diff) / 2.5, 1.0)
+                if diff > 0:
+                    direction = 'positive'
+                    desc = (
+                        f"Tonight's {self._fmt_line(line)} K line sits "
+                        f"{abs(diff)} below his {avg_k:.1f} average over the "
+                        f"last {len(recent_ks)} starts."
+                    )
+                else:
+                    direction = 'negative'
+                    desc = (
+                        f"Tonight's {self._fmt_line(line)} K line sits "
+                        f"{abs(diff)} above his {avg_k:.1f} average over the "
+                        f"last {len(recent_ks)} starts."
+                    )
+                factors.append({
+                    'id': 'line_vs_recent',
+                    'factor': 'line_vs_recent',
+                    'direction': direction,
+                    'magnitude': round(mag, 2),
+                    'description': desc,
+                })
+
+        # Rank by magnitude and drop pure-noise (zero-magnitude) factors.
+        factors = [f for f in factors if f['magnitude'] > 0.0]
+        factors.sort(key=lambda f: f['magnitude'], reverse=True)
+
+        # Select the top 5, but cap the recent-game-log family at 2 so a single
+        # data source (recent_form / k_floor / line_vs_recent) cannot crowd out
+        # the more independent angles (opponent, arsenal, velocity).
+        recent_log_family = {'recent_form', 'k_floor', 'line_vs_recent'}
+        selected: List[Dict[str, Any]] = []
+        family_count = 0
+        for f in factors:
+            if f['id'] in recent_log_family:
+                if family_count >= 2:
+                    continue
+                family_count += 1
+            selected.append(f)
+            if len(selected) >= 5:
+                break
+        return selected
+
+    @staticmethod
+    def _fmt_line(line: Optional[float]) -> str:
+        """Render a strikeout line without a trailing '.0' for whole numbers."""
+        if line is None:
+            return '?'
+        return f"{line:g}"
 
 
 def main():
