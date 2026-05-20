@@ -5,6 +5,83 @@ has near-zero binary predictive power (45.2% HR at edge 1.0-1.5 OVER, sigmoid cl
 67%). Calibrators can't add signal — a separate side-model with the actual feature
 vector might. This document is the spec; nothing here trains a model yet.
 
+## SLICE 2 EXECUTION RESULT — DEAD END (2026-05-19)
+
+**Slice 2 trained the artifact and it did NOT pass governance. No side-model was
+deployed. `MLB_SIDEMODEL_PATH` stays unset; `pitcher_strikeouts.p_sidemodel`
+stays NULL.** The two training scripts are committed; no artifact was produced.
+
+### What ran
+- `scripts/mlb/training/build_sidemodel_training_set.py` → `/tmp/mlb_sidemodel_training.csv`
+  - 753 graded `catboost_v2_regressor` picks queried (Apr 2 → May 18, 2026)
+  - 0 skipped (pitcher_lookup formats matched cleanly), 22 dropped (a predictor
+    core feature was null on reconstruction) → **731 training rows**
+  - Win rate 51.0% (OVER 461 @ 49.9%, UNDER 270 @ 53.0%) — clean class balance
+- `scripts/mlb/training/train_sidemodel_v1.py`
+  - Chronological 75/25 split: train 505 rows (Apr 2 → May 7), test 226 rows
+    (May 8 → May 18)
+  - 17 features: 15 raw `load_batch_features` columns + `recommendation_OVER/_UNDER`
+
+### Feature-set deviation from the Step 2 spec (and why)
+The Step 2 shortlist named `edge`, `fip`, `gb_pct`. None are in the model:
+- **`edge` / `predicted_strikeouts` excluded** — the slice-1 worker calls
+  `sidemodel.score(features, recommendation)` where `features` is *only* the
+  `load_batch_features` dict; it never passes regressor outputs. A model needing
+  `edge` would return `None` for every pick. `edge` is still loaded into the CSV
+  and used to compute the sigmoid baseline.
+- **`fip` / `gb_pct` excluded** — 95.9% coverage. `binary_v1.score()` returns
+  `None` on *any* missing feature, so a sub-100% feature silently drops shadow
+  rows. The deployed set is restricted to the regressor's zero-tolerance CORE
+  features (all 100% coverage on the 731 rows).
+
+### Results (test set, N=226)
+
+| Model | Brier | LogLoss | AUC | OVER Brier | UNDER Brier |
+|---|---|---|---|---|---|
+| Sigmoid baseline | 0.2610 | 0.7158 | 0.517 | 0.250 | 0.283 |
+| Logistic | 0.2742 | 0.7452 | 0.419 | 0.258 | 0.306 |
+| LightGBM | 0.2531 | 0.6994 | 0.511 | 0.248 | 0.263 |
+
+### Governance verdict — DEAD END
+- **Brier-improvement gate (≥0.01 vs sigmoid): FAILED by both.** LightGBM came
+  closest (+0.0079); logistic was *worse* than sigmoid (−0.0132).
+- **AUC gate (≥0.55): FAILED by both.** LightGBM 0.511, logistic 0.419. Both
+  have essentially zero ranking power. Logistic's sub-0.5 AUC means it overfit
+  the 505-row train set into anti-signal.
+- LightGBM passed direction-stability and calibration; logistic failed all four
+  non-trivial gates.
+
+**Interpretation.** The feature vector carries no extractable binary signal
+about "will this pick win" beyond what the (already weak) edge captures.
+LightGBM's marginal Brier edge is pure calibration — it predicts near the 51%
+base rate instead of the sigmoid's overconfident ~67% — not discrimination.
+~500 training rows against a sharp market line is too thin for a side-model to
+find residual signal.
+
+### Open questions from the spec — resolved
+1. `load_batch_features` is called **once per game_date** (one BQ query
+   returning all pitchers), exactly as the worker calls it. The training-set
+   builder loops dates with one call each — no extra caching needed.
+2. LightGBM hyperparameters used: `n_estimators=100, num_leaves=15,
+   learning_rate=0.05`, early stopping (20 rounds) on the last 15% of train
+   dates. Not worth tuning further given the AUC ≈ 0.50 floor.
+3. `sidemodel_version` — moot; no artifact shipped.
+
+### Revisit trigger
+Re-run `build_sidemodel_training_set.py` + `train_sidemodel_v1.py` (idempotent,
+no code changes needed) when **either**:
+- graded `catboost_v2_regressor` volume reaches **N ≥ 1500** (roughly end of the
+  2026 season — ~2× the current 731), giving the models a real chance at weak
+  signal; **or**
+- `pitcher_loader.load_batch_features` starts serving genuinely new feature
+  families (weather, batter-level K-rate) the regressor does not already
+  consume — those, not re-slicing the existing vector, are the only plausible
+  source of new binary signal.
+
+Until then: no artifact, `MLB_SIDEMODEL_PATH` unset, and the slice-3 CF analysis
+script is NOT built (it needs ≥100 graded shadow rows, which cannot accrue
+without an artifact).
+
 ## Verified data ground truth (as of 2026-05-19)
 
 Source: `nba-props-platform.mlb_predictions.prediction_accuracy`
