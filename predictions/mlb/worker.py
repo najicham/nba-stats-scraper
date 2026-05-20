@@ -98,8 +98,37 @@ def send_mlb_alert(severity: str, title: str, message: str, context: dict = None
 
 # Lazy-loaded components
 _prediction_systems = None
+_sidemodel = None
+_sidemodel_initialized = False
 _bq_client = None
 _pubsub_publisher = None
+
+
+def get_sidemodel():
+    """
+    Lazy-load the MLB binary side-model (shadow). Returns the loaded instance
+    when MLB_SIDEMODEL_PATH is set and the pickle loads cleanly; returns None
+    otherwise. Slice 1 plumbing: per-pick probability is written through to
+    `pitcher_strikeouts.p_sidemodel` only — no filter/exporter coupling.
+    """
+    global _sidemodel, _sidemodel_initialized
+    if not _sidemodel_initialized:
+        from predictions.mlb.sidemodel.binary_v1 import BinaryV1SideModel
+
+        sidemodel_path = os.environ.get('MLB_SIDEMODEL_PATH')
+        if sidemodel_path:
+            instance = BinaryV1SideModel(model_path=sidemodel_path)
+            if instance.version is not None:
+                _sidemodel = instance
+                logger.info(f"MLB side-model loaded: version={instance.version}")
+            else:
+                _sidemodel = None
+                logger.warning("MLB side-model failed to load — running without it")
+        else:
+            _sidemodel = None
+            logger.info("MLB_SIDEMODEL_PATH unset — side-model disabled")
+        _sidemodel_initialized = True
+    return _sidemodel
 
 
 def get_prediction_systems() -> Dict:
@@ -384,6 +413,7 @@ def run_multi_system_batch_predictions(game_date: date, pitcher_lookups: Optiona
     """
     all_predictions = []
     systems = get_prediction_systems()
+    sidemodel = get_sidemodel()
 
     if not systems:
         logger.error("No prediction systems available", exc_info=True)
@@ -474,6 +504,18 @@ def run_multi_system_batch_predictions(game_date: date, pitcher_lookups: Optiona
                 if not pname and pitcher_lookup:
                     pname = pitcher_lookup.replace('_', ' ').title()
                 prediction['pitcher_name'] = pname
+
+                # Side-model shadow scoring (Path B slice 1). Both fields are
+                # None when MLB_SIDEMODEL_PATH is unset, the artifact fails to
+                # load, or a required feature is missing.
+                if sidemodel is not None:
+                    prediction['p_sidemodel'] = sidemodel.score(
+                        features, prediction.get('recommendation')
+                    )
+                    prediction['sidemodel_version'] = sidemodel.version
+                else:
+                    prediction['p_sidemodel'] = None
+                    prediction['sidemodel_version'] = None
 
                 all_predictions.append(prediction)
 
@@ -928,6 +970,11 @@ def write_predictions_to_bigquery(predictions: List[Dict], game_date: date) -> i
             # Recommendation
             'recommendation': pred['recommendation'],
             'edge': pred.get('edge'),
+
+            # Side-model shadow probability (Path B slice 1). NULL until an
+            # artifact is uploaded and MLB_SIDEMODEL_PATH is set on the worker.
+            'p_sidemodel': pred.get('p_sidemodel'),
+            'sidemodel_version': pred.get('sidemodel_version'),
 
             # Metadata
             'created_at': datetime.utcnow().isoformat(),
