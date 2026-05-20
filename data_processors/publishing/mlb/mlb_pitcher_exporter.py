@@ -338,9 +338,16 @@ class MlbPitcherExporter(BaseExporter):
         if not pitcher_lookups:
             return {}
 
-        quoted = ', '.join(f"'{pl}'" for pl in pitcher_lookups if pl)
-        if not quoted:
+        # mlb_game_feed_pitches uses no-underscore lookups (e.g. 'landenroupp')
+        # while callers pass underscore lookups (e.g. 'landen_roupp'). Normalize
+        # the query side and translate results back — same pattern as
+        # _fetch_pitch_arsenal / _fetch_advanced_arsenal.
+        lookup_map = {pl.replace('_', ''): pl for pl in pitcher_lookups if pl}
+        cleaned = list(lookup_map.keys())
+        if not cleaned:
             return {}
+
+        quoted = ', '.join(f"'{pl}'" for pl in cleaned)
 
         query = f"""
         WITH recent_starts AS (
@@ -408,7 +415,8 @@ class MlbPitcherExporter(BaseExporter):
         rows = self.query_to_list(query)
         out: Dict[str, Dict] = {}
         for r in rows:
-            pl = r['pitcher_lookup']
+            # Translate the no-underscore feed lookup back to the caller's key.
+            pl = lookup_map.get(r['pitcher_lookup'], r['pitcher_lookup'])
             if pl not in out:
                 out[pl] = {
                     'starts_sampled': safe_int(r.get('starts_sampled'), default=0),
