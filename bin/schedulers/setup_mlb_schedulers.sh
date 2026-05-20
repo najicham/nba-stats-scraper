@@ -126,6 +126,20 @@ create_job \
     '{"scraper": "mlb_lineups", "date": "TODAY"}' \
     "Refresh starting lineups (pregame)"
 
+create_job \
+    "mlb-lineups-afternoon" \
+    "0 16 * * *" \
+    "$SCRAPERS_URL/scrape" \
+    '{"scraper": "mlb_lineups", "date": "TODAY"}' \
+    "Afternoon MLB lineup scrape (4pm ET) - catches night-game confirmed lineups for the 4:30pm late best-bets export"
+
+create_job \
+    "mlb-lineups-overnight" \
+    "0 3 * * *" \
+    "$SCRAPERS_URL/scrape" \
+    '{"scraper": "mlb_lineups", "date": "YESTERDAY"}' \
+    "Overnight MLB lineup catch-up (3am ET) - re-scrapes prior days completed games for 100% confirmed-lineup coverage"
+
 # Pitcher props - auto-discovers events if event_id not provided
 create_job \
     "mlb-props-morning" \
@@ -273,7 +287,7 @@ echo "=============================================="
 echo "  Scheduler Setup Complete"
 echo "=============================================="
 echo ""
-echo "Jobs created (17 total):"
+echo "Jobs created (20 total):"
 echo "  mlb-schedule-daily        10:00 AM - Fetch schedule"
 echo "  mlb-events-morning        10:15 AM - Discover event IDs (before props)"
 echo "  mlb-props-morning         10:30 AM - Get K lines (auto-discovers events)"
@@ -283,8 +297,10 @@ echo "  mlb-events-pregame        12:15 PM - Refresh event IDs (pregame)"
 echo "  mlb-props-pregame         12:30 PM - Refresh K lines (auto-discovers events)"
 echo "  mlb-bp-props-pregame      12:45 PM - BettingPros pitcher props (pregame)"
 echo "  mlb-lineups-pregame        1:00 PM - Refresh lineups"
+echo "  mlb-lineups-afternoon      4:00 PM - Night-game lineups (for late export)"
 echo "  mlb-live-boxscores        Every 5 min (1-11 PM)"
 echo "  mlb-overnight-results      2:00 AM - Final scores (MLB Stats API)"
+echo "  mlb-lineups-overnight      3:00 AM - Lineup catch-up (prior day, 100%)"
 echo "  mlb-statcast-daily         3:00 AM - Statcast pitcher metrics"
 echo "  mlb-game-feed-daily        3:15 AM - Per-pitch MLB Stats API feed"
 echo "  mlb-reddit-discussion     11:00 AM - Reddit discussion"
