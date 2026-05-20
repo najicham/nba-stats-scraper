@@ -60,9 +60,13 @@ SLACK_WEBHOOK = os.environ.get('SLACK_WEBHOOK_URL')
 
 # Walk-forward validated configuration (Sessions 454-457)
 ROLLING_WINDOW_DAYS = 56
-# Session 463: Extended from 7→14 days. 7-day window yielded N=18-20 at edge 3+,
-# consistently below min_n_graded=25. 14 days doubles the candidate pool.
-EVAL_DAYS = 14
+# Session 463: extended 7→14 days (7d yielded N=18-20 at edge 3+).
+# P0-3 (2026-05-19): extended 14→28. Governance gates are now CI-aware and
+# require min_n_graded=40 at edge 3+; a wider holdout keeps the bootstrap 95%
+# CI tight enough that one unlucky eval window can't fail a good model.
+# Tradeoff: train_end moves ~2 weeks earlier (the holdout is everything after
+# train_end). If MAE families land below N=40, widen this further.
+EVAL_DAYS = 28
 MAX_FAMILIES_PER_RUN = 10  # Session 466: raised from 5 — 9+ families need retraining in crisis
 MIN_ENABLED_MODELS = 3  # Safety floor: don't disable old if too few would remain
 
@@ -99,7 +103,7 @@ GOVERNANCE = {
     'min_hr_edge3': 53.0,     # Edge 3+ HR must be >= 53% (raw model ceiling ~53.4%, Session 458)
     'max_vegas_bias': 1.5,     # |avg(pred - line)| must be <= 1.5
     'max_tier_bias': 5.0,      # No tier bias > 5 points
-    'min_n_graded': 15,        # Session 466: lowered 25→15. MAE families get N=18-20 at edge 3+ with 14d eval — 25 blocks them. 15 matches decay_detection threshold.
+    'min_n_graded': 40,        # P0-3 (2026-05-19): raised 15→40. CI-aware gates need N large enough for a tight 95% CI; the 28-day EVAL_DAYS holdout is sized to clear this at edge 3+.
     'min_directional_hr': 52.4, # Both OVER and UNDER HR >= 52.4% at edge 3+
     # Path B — edge-5 is the money zone (CLAUDE.md). Session 487 LGBM-clone
     # fleet collapse passed edge-3 gates but had edge-5 HR < 55%, dragging
@@ -113,11 +117,14 @@ GOVERNANCE = {
 # Applied when auto-halt is detected (avg_edge < 5.0 OR all models BLOCKED).
 # Late-season eval data has compressed edge from TIGHT markets → UNDER HR degrades
 # to ~51% on tiny eval samples, causing false governance failures.
-# Only directional balance and sample size are loosened — overall HR, vegas bias,
+# Only directional balance is loosened — overall HR, sample size, vegas bias,
 # and tier bias remain fully enforced.
 GOVERNANCE_SEASON_RESTART = {
     **GOVERNANCE,
-    'min_n_graded': 10,        # Reduced from 15 — tiny eval windows in tight markets
+    # P0-3 (2026-05-19): the old min_n_graded=10 override was a band-aid for the
+    # 14-day eval window. With EVAL_DAYS=28 the season-restart holdout also
+    # clears 40, so it inherits GOVERNANCE['min_n_graded'] — a CI-aware gate is
+    # meaningless on N=10.
     'min_directional_hr': 51.0, # Reduced from 52.4% — late-season UNDER HR degrades
     # Edge-5 stays at 55%: a season-restart fleet still needs to win the
     # money zone or it can't earn back the picks it just halted.
@@ -339,6 +346,7 @@ def load_training_data(
       AND pgs.points IS NOT NULL
       AND pgs.minutes_played > 0
       AND NOT (mf.feature_0_value = 10.0 AND mf.feature_1_value > 15)
+    ORDER BY mf.game_date
     """
     df = client.query(query).to_dataframe()
     if df.empty:
@@ -469,29 +477,53 @@ def compute_hit_rate(
     return round(float(wins.sum()) / graded * 100, 2), int(graded)
 
 
-def compute_directional_hr(
+def bootstrap_hr_ci(
     preds: np.ndarray,
     actuals: np.ndarray,
     lines: np.ndarray,
     min_edge: float = 3.0,
-) -> Dict[str, Tuple[Optional[float], int]]:
-    """Compute OVER and UNDER hit rates separately."""
-    edges = np.abs(preds - lines)
-    result = {}
-    for direction, cond in [('OVER', preds > lines), ('UNDER', preds < lines)]:
-        d_mask = (edges >= min_edge) & cond
-        if d_mask.sum() == 0:
-            result[direction] = (None, 0)
-            continue
-        a_d, l_d = actuals[d_mask], lines[d_mask]
-        wins = (a_d > l_d) if direction == 'OVER' else (a_d < l_d)
-        pushes = a_d == l_d
-        graded = d_mask.sum() - pushes.sum()
-        if graded == 0:
-            result[direction] = (None, 0)
-        else:
-            result[direction] = (round(float(wins.sum()) / graded * 100, 2), int(graded))
-    return result
+    direction: Optional[str] = None,
+    n_boot: int = 2000,
+    seed: int = 42,
+) -> Tuple[Optional[float], Optional[float], Optional[float], int]:
+    """Bootstrap 95% CI for directional hit rate at an edge threshold (P0-3).
+
+    Resamples per-pick win/loss outcomes with replacement. Returns
+    (point_hr, ci_low, ci_high, n_graded) as percentages, or
+    (None, None, None, 0) when there are no gradable picks. Seeded so the
+    same model evaluated twice yields the same governance verdict.
+    """
+    preds = np.asarray(preds, dtype=float)
+    actuals = np.asarray(actuals, dtype=float)
+    lines = np.asarray(lines, dtype=float)
+    edges = preds - lines
+    mask = np.abs(edges) >= min_edge
+    if direction == 'OVER':
+        mask = mask & (edges > 0)
+    elif direction == 'UNDER':
+        mask = mask & (edges < 0)
+    if mask.sum() == 0:
+        return None, None, None, 0
+
+    a, l, e = actuals[mask], lines[mask], edges[mask]
+    over = e > 0
+    wins = (over & (a > l)) | (~over & (a < l))
+    not_push = a != l
+    outcomes = wins[not_push].astype(float)
+    n = int(outcomes.size)
+    if n == 0:
+        return None, None, None, 0
+
+    point = float(outcomes.mean()) * 100.0
+    rng = np.random.RandomState(seed)
+    idx = rng.randint(0, n, size=(n_boot, n))
+    boot_hr = outcomes[idx].mean(axis=1) * 100.0
+    return (
+        round(point, 2),
+        round(float(np.percentile(boot_hr, 2.5)), 2),
+        round(float(np.percentile(boot_hr, 97.5)), 2),
+        n,
+    )
 
 
 def run_governance_gates(
@@ -503,48 +535,81 @@ def run_governance_gates(
 ) -> Tuple[bool, List[str]]:
     """Run all governance gates. Returns (passed, list_of_failures).
 
+    P0-3 (2026-05-19): HR-based gates are CI-aware. Each fails only when the
+    bootstrap 95% CI *upper* bound is below the floor — i.e. we are
+    statistically confident the model is bad. A point estimate that dips below
+    the floor but whose CI still spans it is "inconclusive" and does NOT block.
+    This stops one unlucky eval window from rejecting a good model (the fleet
+    ping-ponging diagnosed in April audit T2-2).
+
     season_restart=True applies loosened thresholds (GOVERNANCE_SEASON_RESTART)
     for the first retrain cycle after an auto-halt. See Session 522.
     """
     gov = GOVERNANCE_SEASON_RESTART if season_restart else GOVERNANCE
     if season_restart:
         logger.info(
-            f"  [SEASON-RESTART] Loosened gates: min_n={gov['min_n_graded']}, "
-            f"min_dir_hr={gov['min_directional_hr']}%"
+            f"  [SEASON-RESTART] Loosened gates: min_dir_hr={gov['min_directional_hr']}%"
         )
 
     failures = []
 
-    # Gate 1: Edge 3+ HR >= 53% (lowered from 60% — raw model ceiling is ~53.4%)
-    hr_e3, n_e3 = compute_hit_rate(preds, actuals, lines, min_edge=3.0)
-    if n_e3 < gov['min_n_graded']:
-        failures.append(f"N={n_e3} < {gov['min_n_graded']} graded at edge 3+")
-    elif hr_e3 is None or hr_e3 < gov['min_hr_edge3']:
-        failures.append(f"Edge 3+ HR={hr_e3}% < {gov['min_hr_edge3']}%")
+    # Gate 1: Edge 3+ HR. Hard-fail on too-few samples (a CI is meaningless
+    # below min_n); otherwise fail only when the CI upper bound clears nothing.
+    hr3, lo3, hi3, n3 = bootstrap_hr_ci(preds, actuals, lines, min_edge=3.0)
+    floor3 = gov['min_hr_edge3']
+    logger.info(
+        f"  [{family_name}] edge-3 HR={hr3}% 95%CI=[{lo3},{hi3}] N={n3} floor={floor3}%"
+    )
+    if n3 < gov['min_n_graded']:
+        failures.append(
+            f"N={n3} < {gov['min_n_graded']} graded at edge 3+ (too few for a reliable CI)"
+        )
+    elif hr3 is None:
+        failures.append("Edge 3+ HR unavailable (no gradable picks)")
+    elif hi3 < floor3:
+        failures.append(
+            f"Edge 3+ HR={hr3}% (95% CI {lo3}-{hi3}%) — CI upper {hi3}% < floor {floor3}%"
+        )
 
-    # Gate 2: Vegas bias within ±1.5
+    # Gate 2: Vegas bias within ±1.5 (a mean, not a hit rate — naturally tight,
+    # no CI needed).
     valid_lines = ~np.isnan(lines) & (lines > 0)
     if valid_lines.sum() > 0:
         vegas_bias = float(np.mean(preds[valid_lines] - lines[valid_lines]))
         if abs(vegas_bias) > gov['max_vegas_bias']:
             failures.append(f"Vegas bias={vegas_bias:+.2f} outside ±{gov['max_vegas_bias']}")
 
-    # Gate 3: Directional balance
-    dir_hr = compute_directional_hr(preds, actuals, lines, min_edge=3.0)
+    # Gate 3: Directional balance — CI-aware per direction. Skip a direction
+    # with too few picks to judge (N<20).
     for direction in ['OVER', 'UNDER']:
-        hr, n = dir_hr[direction]
-        if hr is not None and n >= 20 and hr < gov['min_directional_hr']:
-            failures.append(f"{direction} HR={hr}% < {gov['min_directional_hr']}% (N={n})")
+        d_hr, d_lo, d_hi, d_n = bootstrap_hr_ci(
+            preds, actuals, lines, min_edge=3.0, direction=direction
+        )
+        if d_hr is None or d_n < 20:
+            continue
+        logger.info(
+            f"  [{family_name}] {direction} HR={d_hr}% 95%CI=[{d_lo},{d_hi}] N={d_n}"
+        )
+        if d_hi < gov['min_directional_hr']:
+            failures.append(
+                f"{direction} HR={d_hr}% (95% CI {d_lo}-{d_hi}%) — "
+                f"CI upper < {gov['min_directional_hr']}% (N={d_n})"
+            )
 
     # Gate 4 (Path B): Edge 5+ HR. The money zone — Session 487 LGBM-clone
     # fleet collapse passed edge-3 but had edge-5 HR < 55% and dragged the
     # whole fleet into BLOCKED. Skip the check when N is too low to be
     # meaningful (signal_noise > signal at tiny N).
-    hr_e5, n_e5 = compute_hit_rate(preds, actuals, lines, min_edge=5.0)
-    if n_e5 >= gov['min_n_edge5']:
-        if hr_e5 is None or hr_e5 < gov['min_hr_edge5']:
+    hr5, lo5, hi5, n5 = bootstrap_hr_ci(preds, actuals, lines, min_edge=5.0)
+    if n5 >= gov['min_n_edge5']:
+        logger.info(
+            f"  [{family_name}] edge-5 HR={hr5}% 95%CI=[{lo5},{hi5}] N={n5} "
+            f"floor={gov['min_hr_edge5']}%"
+        )
+        if hr5 is None or hi5 < gov['min_hr_edge5']:
             failures.append(
-                f"Edge 5+ HR={hr_e5}% < {gov['min_hr_edge5']}% (N={n_e5})"
+                f"Edge 5+ HR={hr5}% (95% CI {lo5}-{hi5}%) — "
+                f"CI upper < {gov['min_hr_edge5']}% (N={n5})"
             )
 
     passed = len(failures) == 0
@@ -717,7 +782,8 @@ def retrain_family(
 
     logger.info(f"  Training data: {len(X_train_full):,} rows")
 
-    # 85/15 date-based split
+    # 85/15 temporal split — load_training_data returns rows ORDER BY game_date,
+    # so the last 15% is the most recent slice (no future leakage into early stop)
     X_train_full['_idx'] = range(len(X_train_full))
     split_idx = int(len(X_train_full) * 0.85)
     X_train = X_train_full.iloc[:split_idx].drop(columns=['_idx'])

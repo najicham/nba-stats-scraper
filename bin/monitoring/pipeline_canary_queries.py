@@ -1556,6 +1556,75 @@ def check_all_json_duplicate_picks() -> Tuple[bool, Dict, Optional[str]]:
         return False, {}, f"all.json duplicate picks check error: {e}"
 
 
+def check_published_vs_store_consistency(bq_client: bigquery.Client) -> Tuple[bool, Dict, Optional[str]]:
+    """Verify the published best-bets JSON matches the BQ pick store.
+
+    Downloads gs://nba-props-platform-api/v1/signal-best-bets/{today}.json from
+    GCS, counts the picks in it, and compares against the count of active picks
+    in nba_predictions.signal_best_bets_picks for today. Zero tolerance — any
+    divergence is a FAIL.
+
+    A mismatch means the published site is showing a different set of picks than
+    the BQ source of truth (e.g. a scoped-DELETE re-export gap, a stale export,
+    or a publish that ran against an incomplete pipeline).
+
+    Returns:
+        Tuple of (passed, metrics, error_message)
+    """
+    try:
+        from google.cloud import storage
+
+        today = date.today().isoformat()
+
+        # Step 1: Read today's published signal-best-bets JSON from GCS
+        gcs_client = storage.Client()
+        bucket = gcs_client.bucket("nba-props-platform-api")
+        blob = bucket.blob(f"v1/signal-best-bets/{today}.json")
+
+        if not blob.exists():
+            # No published file yet (e.g. before the morning export runs) — skip.
+            return True, {'skipped': True, 'reason': 'signal_best_bets_json_not_found'}, None
+
+        content = blob.download_as_text()
+        data = json.loads(content)
+        json_pick_count = len(data.get('picks', []))
+
+        # Step 2: Count active picks in the BQ store for today
+        store_query = f"""
+        SELECT COUNT(*) AS active_picks
+        FROM `{PROJECT_ID}.nba_predictions.signal_best_bets_picks`
+        WHERE game_date = CURRENT_DATE()
+          AND signal_status = 'active'
+        """
+        store_result = list(bq_client.query(store_query).result(timeout=30))[0]
+        store_pick_count = store_result.active_picks or 0
+
+        metrics = {
+            'file_date': data.get('date', today),
+            'json_pick_count': json_pick_count,
+            'store_pick_count': store_pick_count,
+            'divergence': abs(json_pick_count - store_pick_count),
+        }
+
+        if json_pick_count != store_pick_count:
+            return False, metrics, (
+                f"PUBLISHED JSON vs BQ STORE MISMATCH for {today}: "
+                f"signal-best-bets/{today}.json has {json_pick_count} pick(s) but "
+                f"signal_best_bets_picks has {store_pick_count} active pick(s) "
+                f"(divergence={metrics['divergence']}). "
+                f"Root cause: stale or partial Phase 6 export, scoped-DELETE re-export gap, "
+                f"or a publish that ran against an incomplete pipeline. "
+                f"Check signal_best_bets_exporter and the scoped-DELETE logic in "
+                f"_write_to_bigquery."
+            )
+
+        return True, metrics, None
+
+    except Exception as e:
+        logger.error(f"Error in published vs store consistency check: {e}")
+        return False, {}, f"published vs store consistency check error: {e}"
+
+
 def check_fleet_diversity(bq_client: bigquery.Client) -> Tuple[bool, Dict, Optional[str]]:
     """Session 487: Alert when all enabled models are the same ML family.
 
@@ -2038,6 +2107,32 @@ def main():
             if not all_json_passed:
                 logger.warning(f"  Error: {all_json_error}")
         results.append((all_json_dup_check, all_json_passed, all_json_metrics, all_json_error))
+
+    # T1-6: Published-JSON vs BQ store reconciliation — catches when the published
+    # signal-best-bets JSON diverges from the signal_best_bets_picks BQ source of truth
+    if not is_nba_offseason and _should_run("published_vs_store_consistency"):
+        published_vs_store_check = CanaryCheck(
+            name="Published vs Store Consistency",
+            phase="published_vs_store_consistency",
+            query="",  # Not a BQ query — hybrid GCS + BQ
+            thresholds={},
+            description="Alerts when v1/signal-best-bets/{today}.json pick count diverges from active picks in signal_best_bets_picks — zero tolerance (T1-6)"
+        )
+        pvs_passed, pvs_metrics, pvs_error = check_published_vs_store_consistency(client)
+        pvs_status = "✅ PASS" if pvs_passed else "❌ FAIL"
+        if pvs_metrics.get('skipped'):
+            logger.info(f"Published vs Store Consistency: ⏭️  SKIPPED ({pvs_metrics.get('reason')})")
+        else:
+            logger.info(
+                f"Published vs Store Consistency: {pvs_status} "
+                f"(json={pvs_metrics.get('json_pick_count', '?')}, "
+                f"store={pvs_metrics.get('store_pick_count', '?')})"
+            )
+            if not pvs_passed:
+                logger.warning(f"  Error: {pvs_error}")
+        results.append((published_vs_store_check, pvs_passed, pvs_metrics, pvs_error))
+    elif is_nba_offseason:
+        logger.info("NBA offseason/playoffs — skipping published vs store consistency check")
 
     # Session 487: Fleet diversity check — all enabled models same family kills combo signals
     if _should_run("fleet_diversity"):

@@ -68,8 +68,8 @@ NEVER_DEMOTE = {
     'direction_filter',
     'insufficient_data_skip',
     'bullpen_game_skip',
-    'il_return_skip',
-    'pitch_count_cap_skip',
+    # il_return_skip / pitch_count_cap_skip removed (engine review P2-3:
+    # dead filters with no upstream data — deleted from signals.py registry).
     'whole_line_over',
 }
 

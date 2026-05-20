@@ -44,10 +44,8 @@ Shadow Signals (21):
   rest_workload_stress_under — Short rest + high workload (Session 464)
   low_era_high_k_combo_over — ERA < 3.0 + K/9 >= 8.5 (Session 464)
 
-Negative Filters (6):
+Negative Filters (4):
   bullpen_game_skip     — Opener/bullpen game detected
-  il_return_skip        — First start from IL
-  pitch_count_cap_skip  — Under-only: documented pitch count cap
   insufficient_data_skip — < 3 career starts
   pitcher_blacklist     — Block pitchers with <45% HR (Session 447, expanded to 28)
   whole_line_over       — Block OVER on whole-number lines (Session 443, +9.6pp structural)
@@ -552,42 +550,21 @@ class BullpenGameFilter(BaseMLBSignal):
         return self._no_qualify()
 
 
-class ILReturnFilter(BaseMLBSignal):
-    """Block picks for first start back from IL — unpredictable pitch count."""
-    tag = "il_return_skip"
-    description = "First start returning from injured list"
-    is_negative_filter = True
-
-    def evaluate(self, prediction: Dict,
-                 features: Optional[Dict] = None,
-                 supplemental: Optional[Dict] = None) -> MLBSignalResult:
-        sup = supplemental or {}
-        if sup.get('is_il_return') or sup.get('first_start_from_il'):
-            return self._qualify(confidence=1.0, reason="First start from IL")
-        return self._no_qualify()
-
-
-class PitchCountCapFilter(BaseMLBSignal):
-    """Block OVER picks for pitchers with documented pitch count cap."""
-    tag = "pitch_count_cap_skip"
-    description = "Block OVER when pitcher has documented pitch count cap"
-    is_negative_filter = True
-
-    def evaluate(self, prediction: Dict,
-                 features: Optional[Dict] = None,
-                 supplemental: Optional[Dict] = None) -> MLBSignalResult:
-        if prediction.get('recommendation') != 'OVER':
-            return self._no_qualify()
-
-        sup = supplemental or {}
-        pitch_limit = sup.get('pitch_count_limit')
-        if pitch_limit is not None and pitch_limit <= 85:
-            return self._qualify(
-                confidence=1.0,
-                pitch_count_limit=pitch_limit,
-                reason=f"Pitch count cap at {pitch_limit} — blocks OVER",
-            )
-        return self._no_qualify()
+# REMOVED (engine review P2-3): ILReturnFilter (`il_return_skip`) and
+# PitchCountCapFilter (`pitch_count_cap_skip`) were dead filters. They read
+# `supplemental.get('is_il_return')` / `('first_start_from_il')` /
+# ('pitch_count_limit')`, but the supplemental loader never sets those keys
+# and no loaded MLB source carries the data:
+#   - "first start back from IL" requires comparing IL-removal vs next-start
+#     dates — no processor computes this. bdl_injuries (BDL) is not queried.
+#   - "documented pitch-count cap" is editorial news data — no table stores it.
+#     pitch_count_avg is a historical average, not an a-priori cap.
+# A filter that silently passes every pitcher creates false confidence, so both
+# were removed rather than left dead. If reliable IL-return / pitch-cap data is
+# ever wired into supplemental_loader.py, re-add purpose-built filters then.
+# NOTE: shadow signal PitchCountLimitUnderSignal (`pitch_count_limit_under`)
+# reads the same absent `pitch_count_limit` key and is likewise inert; left in
+# place as a harmless shadow signal pending a real data source.
 
 
 class InsufficientDataFilter(BaseMLBSignal):
@@ -1583,7 +1560,9 @@ class LowEraHighKComboOverSignal(BaseMLBSignal):
         if not features:
             return self._no_qualify()
 
-        era = features.get('season_era')
+        # load_batch_features exposes ERA as 'era_rolling_10' (not 'season_era').
+        # Fall back to 'season_era' for any caller that still uses the old key.
+        era = features.get('era_rolling_10', features.get('season_era'))
         k_per_9 = features.get('season_k_per_9')
         if era is None or k_per_9 is None:
             return self._no_qualify()
@@ -1917,7 +1896,9 @@ class HighCSWLowEraHighKComboOverSignal(BaseMLBSignal):
             return self._no_qualify()
 
         csw = features.get('season_csw_pct')
-        era = features.get('season_era')
+        # load_batch_features exposes ERA as 'era_rolling_10' (not 'season_era').
+        # Fall back to 'season_era' for any caller that still uses the old key.
+        era = features.get('era_rolling_10', features.get('season_era'))
         k_per_9 = features.get('season_k_per_9')
         if csw is None or era is None or k_per_9 is None:
             return self._no_qualify()

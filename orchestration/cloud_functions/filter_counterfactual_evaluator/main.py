@@ -28,6 +28,9 @@ PROJECT_ID = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
 SLACK_WEBHOOK_URL = os.environ.get('SLACK_WEBHOOK_URL_ALERTS') or os.environ.get('SLACK_WEBHOOK_URL_WARNING')
 
 # Filters eligible for auto-demotion. Core safety filters are excluded.
+# NOTE: names here must match the `filter_reason` written to
+# best_bets_filtered_picks (the BQ name), which for some filters keeps a
+# legacy `_obs` suffix even after promotion to an active block.
 ELIGIBLE_FOR_AUTO_DEMOTE = {
     'med_usage_under',
     'b2b_under_block',
@@ -48,6 +51,29 @@ ELIGIBLE_FOR_AUTO_DEMOTE = {
     # auto-demote before; now eligible with a per-filter higher MIN_PICKS
     # floor since it fires far more often than other filters.
     'under_low_rsc',
+    # 2026-05-19 registry-drift reconciliation — behavioral/data-driven
+    # filters added in code Sessions 415-522 but never made auto-demote
+    # eligible. All are heuristic blocks (player-form / line-movement /
+    # day-of-week patterns) that can decay and should be demotable on CF HR.
+    'bench_over_block',
+    'role_over_block',
+    'flat_trend_under',
+    'blowout_risk_under_block',
+    'tanking_risk_obs',             # BQ name retains _obs suffix
+    'hot_shooting_reversion_obs',   # BQ name retains _obs suffix
+    'mae_gap_over_block',
+    'cold_fg_under',
+    'cold_3pt_under',
+    'over_line_rose_heavy',
+    'ft_anomaly_over_block',
+    'hot_shooting_over_block',
+    'counter_market_under',
+    'monday_over_obs',              # BQ name retains _obs suffix
+    'high_skew_over_block_obs',     # BQ name (filter_counts key high_skew_over_block also kept above)
+    'line_jumped_under_obs',        # BQ name retains _obs suffix
+    'star_under',
+    'under_star_away',
+    'neg_pm_streak',
 }
 
 # Per-filter overrides for MIN_PICKS_7D when the default (20) is too low.
@@ -58,11 +84,23 @@ PER_FILTER_MIN_PICKS_7D = {
     'under_low_rsc': 30,
 }
 
-# Core safety filters — NEVER auto-demote
+# Core safety filters — NEVER auto-demote. These are structural gates
+# (edge floors, signal-count gates, model-artifact guards, correlation
+# caps) whose removal would expose the pipeline to known catastrophic
+# failure modes, not heuristic blocks that can decay.
 NEVER_DEMOTE = {
     'blacklist', 'edge_floor', 'over_edge_floor', 'under_edge_7plus',
     'quality_floor', 'signal_count', 'sc3_over_block', 'signal_density',
     'starter_over_sc_floor', 'confidence', 'rescue_cap',
+    # 2026-05-19 registry-drift reconciliation — additional structural gates.
+    'regime_over_floor',                  # regime-raised edge floor variant
+    'legacy_block',                       # hardcoded LEGACY_MODEL_BLOCKLIST
+    'team_cap',                           # correlated-exposure cap (merge-level)
+    'anti_pattern',                       # structural anti-pattern combo gate
+    'regime_rescue_blocked',              # regime gate on OVER rescue
+    'prediction_sanity',                  # model-artifact guard (pred > 2x avg)
+    'zero_signal_extreme_underprediction',# model-artifact guard (line-anchor)
+    'line_anomaly_extreme_drop',          # info-asymmetry safety net
 }
 
 # Auto-demote thresholds

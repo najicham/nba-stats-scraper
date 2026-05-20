@@ -204,7 +204,11 @@ def parse_args():
 
     # Relative dates (defaults)
     parser.add_argument('--train-days', type=int, default=56, help='Days of training (default: 56, walk-forward validated Session 455)')
-    parser.add_argument('--eval-days', type=int, default=7, help='Days of eval (default: 7)')
+    parser.add_argument('--eval-days', type=int, default=28,
+                        help='Days of holdout eval (default: 28 — P0-3: wide enough that '
+                             'the CI-aware governance gates have a tight 95 pct CI). '
+                             'Override with a smaller value for quick experiments where '
+                             'governance is not the point.')
 
     # Feature set selection
     parser.add_argument('--feature-set', choices=[
@@ -1079,66 +1083,9 @@ def augment_v12_features(client, df):
     # We need a wider date window to compute rolling stats
     lookback_date = (pd.to_datetime(str(min_date)) - pd.Timedelta(days=60)).strftime('%Y-%m-%d')
 
-    stats_query = f"""
-    WITH player_games AS (
-        SELECT
-            player_lookup,
-            game_date,
-            points,
-            usage_rate,
-            team_abbr,
-            ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY game_date DESC) as rn_all,
-            LAG(game_date) OVER (PARTITION BY player_lookup ORDER BY game_date) as prev_game_date,
-            LAG(team_abbr) OVER (PARTITION BY player_lookup ORDER BY game_date) as prev_team_abbr
-        FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
-        WHERE game_date BETWEEN '{lookback_date}' AND '{max_date}'
-          AND points IS NOT NULL
-          AND minutes_played > 0
-    ),
-    season_stats AS (
-        SELECT
-            player_lookup,
-            AVG(points) as season_avg,
-            STDDEV(points) as season_std
-        FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
-        WHERE game_date BETWEEN '2025-10-22' AND '{max_date}'
-          AND points IS NOT NULL
-          AND minutes_played > 0
-        GROUP BY player_lookup
-    ),
-    rolling AS (
-        SELECT
-            pg.player_lookup,
-            pg.game_date,
-            pg.points,
-            pg.usage_rate,
-            pg.team_abbr,
-            pg.prev_game_date,
-            pg.prev_team_abbr,
-            ss.season_avg,
-            ss.season_std,
-            -- Last 3 average
-            AVG(pg2.points) as avg_last_3,
-            COUNT(pg2.points) as cnt_last_3
-        FROM player_games pg
-        JOIN season_stats ss ON pg.player_lookup = ss.player_lookup
-        LEFT JOIN (
-            SELECT player_lookup, game_date, points,
-                   ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY game_date DESC) as rn
-            FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
-            WHERE game_date BETWEEN '{lookback_date}' AND '{max_date}'
-              AND points IS NOT NULL AND minutes_played > 0
-        ) pg2 ON pg.player_lookup = pg2.player_lookup
-             AND pg2.game_date < pg.game_date
-             AND pg2.rn <= pg.rn_all + 3
-        WHERE pg.game_date BETWEEN '{min_date}' AND '{max_date}'
-        GROUP BY pg.player_lookup, pg.game_date, pg.points, pg.usage_rate,
-                 pg.team_abbr, pg.prev_game_date, pg.prev_team_abbr,
-                 ss.season_avg, ss.season_std
-    )
-    SELECT * FROM rolling
-    """
-    # The rolling join above is complex; let's use a simpler approach with arrays
+    # Rolling stats via array windows. (An earlier self-join variant was
+    # removed P0-2 — it was dead code and carried the same leaky season_stats
+    # GROUP BY pattern fixed below.)
     stats_query_v2 = f"""
     WITH target_players AS (
         SELECT DISTINCT player_lookup
@@ -1160,12 +1107,21 @@ def augment_v12_features(client, df):
         ORDER BY pgs.player_lookup, pgs.game_date
     ),
     season_stats AS (
+        -- P0-2 (2026-05-19): per-row season stats. Each game sees only that
+        -- player's strictly-earlier games (UNBOUNDED PRECEDING ... 1 PRECEDING).
+        -- The old `GROUP BY player_lookup` computed ONE average over the entire
+        -- window and assigned it to every row — leaking future games into past
+        -- rows' feature values (deviation_from_avg_last3, consecutive_below).
         SELECT
             player_lookup,
-            AVG(points) as season_avg,
-            STDDEV(points) as season_std
+            game_date,
+            AVG(points) OVER w AS season_avg,
+            STDDEV(points) OVER w AS season_std
         FROM all_games
-        GROUP BY player_lookup
+        WINDOW w AS (
+            PARTITION BY player_lookup ORDER BY game_date
+            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+        )
     ),
     per_game_with_context AS (
         SELECT
@@ -1188,7 +1144,9 @@ def augment_v12_features(client, df):
                 ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING
             ) as prev_usage_rates
         FROM all_games ag
-        JOIN season_stats ss ON ag.player_lookup = ss.player_lookup
+        JOIN season_stats ss
+          ON ag.player_lookup = ss.player_lookup
+         AND ag.game_date = ss.game_date
     )
     SELECT *
     FROM per_game_with_context
@@ -2183,6 +2141,46 @@ def compute_hit_rate(preds, actuals, lines, min_edge=1.0):
     graded = len(b_actual) - pushes.sum()
 
     return round(wins.sum() / graded * 100, 2) if graded > 0 else None, int(graded)
+
+
+def bootstrap_hr_ci(preds, actuals, lines, min_edge=3.0, direction=None,
+                    n_boot=2000, seed=42):
+    """Bootstrap 95% CI for directional hit rate at an edge threshold (P0-3).
+
+    Resamples per-pick win/loss outcomes with replacement. Returns
+    (point_hr, ci_low, ci_high, n_graded) as percentages, or
+    (None, None, None, 0) when there are no gradable picks. Seeded so the
+    same model evaluated twice yields the same governance verdict.
+    """
+    preds = np.asarray(preds, dtype=float)
+    actuals = np.asarray(actuals, dtype=float)
+    lines = np.asarray(lines, dtype=float)
+    edges = preds - lines
+    mask = np.abs(edges) >= min_edge
+    if direction == 'OVER':
+        mask = mask & (edges > 0)
+    elif direction == 'UNDER':
+        mask = mask & (edges < 0)
+    if mask.sum() == 0:
+        return None, None, None, 0
+
+    a, l, e = actuals[mask], lines[mask], edges[mask]
+    over = e > 0
+    wins = (over & (a > l)) | (~over & (a < l))
+    not_push = a != l
+    outcomes = wins[not_push].astype(float)
+    n = int(outcomes.size)
+    if n == 0:
+        return None, None, None, 0
+
+    point = float(outcomes.mean()) * 100.0
+    rng = np.random.RandomState(seed)
+    idx = rng.randint(0, n, size=(n_boot, n))
+    boot_hr = outcomes[idx].mean(axis=1) * 100.0
+    return (round(point, 2),
+            round(float(np.percentile(boot_hr, 2.5)), 2),
+            round(float(np.percentile(boot_hr, 97.5)), 2),
+            n)
 
 
 def compute_tier_bias(preds, actuals, season_avgs=None):
@@ -3841,14 +3839,25 @@ def main():
         print(f"  Added {added_count} percentile features ({len(X_train_full.columns)} total features)")
         active_feature_names = list(X_train_full.columns)
 
-    # Train/val split (carry weights through)
+    # Train/val split — temporal cutoff (P0-1, roadmap 2026-05-19).
+    # A random train_test_split interleaves future games into the early-stopping
+    # val set, leaking temporal information into model selection. Sort by
+    # game_date and hold out the most recent 15% as validation instead.
+    sort_pos = np.argsort(
+        pd.to_datetime(df_train['game_date']).values, kind='stable')
+    n_val = max(1, int(len(sort_pos) * 0.15))
+    train_pos = sort_pos[:-n_val]
+    val_pos = sort_pos[-n_val:]
+    X_train = X_train_full.iloc[train_pos].reset_index(drop=True)
+    X_val = X_train_full.iloc[val_pos].reset_index(drop=True)
+    y_train = y_train_full.iloc[train_pos].reset_index(drop=True)
+    y_val = y_train_full.iloc[val_pos].reset_index(drop=True)
     if w_train_full is not None:
-        X_train, X_val, y_train, y_val, w_train, w_val = train_test_split(
-            X_train_full, y_train_full, w_train_full, test_size=0.15, random_state=args.random_seed)
+        w_train = w_train_full[train_pos]
+        w_val = w_train_full[val_pos]
     else:
-        X_train, X_val, y_train, y_val = train_test_split(
-            X_train_full, y_train_full, test_size=0.15, random_state=args.random_seed)
         w_train = None
+        w_val = None
 
     # Hyperparameter search (if --tune)
     tuned_params = None
@@ -4336,7 +4345,7 @@ def main():
     print(" RESULTS vs V9 BASELINE")
     print("=" * 70)
 
-    MIN_BETS_RELIABLE = 25  # Session 382c: lowered from 50 — 25 achievable in 7-14 day eval windows
+    MIN_BETS_RELIABLE = 40  # P0-3 (2026-05-19): raised 25→40. CI-aware gates need N large enough for a tight 95% CI; the 28-day --eval-days default is sized to clear this at edge 3+.
 
     def compare(name, new_val, baseline, n_bets, higher_better=True):
         if new_val is None:
@@ -4606,10 +4615,12 @@ def main():
     # Use ONLY when restarting after off-season halt. Flag is logged prominently.
     if getattr(args, 'season_restart', False):
         DIRECTIONAL_BREAKEVEN = 51.0
-        _restart_min_bets = 10
+        # P0-3: sample requirement no longer loosened — the 28-day holdout
+        # clears 40, and a CI-aware gate is meaningless on a tiny N.
+        _restart_min_bets = MIN_BETS_RELIABLE
         print("  [SEASON-RESTART MODE] Loosened gates active:")
         print(f"    Directional balance: >= {DIRECTIONAL_BREAKEVEN}% (normal: 52.4%)")
-        print(f"    Sample requirement:  >= {_restart_min_bets} (normal: 25)")
+        print(f"    Sample requirement:  >= {_restart_min_bets} (unchanged — wide holdout)")
         print()
     else:
         DIRECTIONAL_BREAKEVEN = 52.4
@@ -4619,13 +4630,35 @@ def main():
     edge3_reliable = bets_edge3 >= _restart_min_bets
     edge5_reliable = bets_edge5 >= _restart_min_bets
 
-    # Recompute directional balance with appropriate threshold
-    if getattr(args, 'season_restart', False):
-        dir_over_ok = directional['over_hit_rate'] is None or directional['over_hit_rate'] >= DIRECTIONAL_BREAKEVEN
-        dir_under_ok = directional['under_hit_rate'] is None or directional['under_hit_rate'] >= DIRECTIONAL_BREAKEVEN
-        restart_directional_ok = dir_over_ok and dir_under_ok
-    else:
-        restart_directional_ok = directional['directional_balance_ok']
+    # P0-3 (2026-05-19): CI-aware governance gates. HR-based gates fail only
+    # when the bootstrap 95% CI *upper* bound is below the floor — i.e. we are
+    # statistically confident the model is bad. A point estimate that dips
+    # below the floor but whose CI still spans it is "inconclusive" and does
+    # NOT block. This stops one unlucky eval window from rejecting a good
+    # model (the fleet ping-ponging diagnosed in April audit T2-2).
+    eval_actuals = y_eval.values
+    hr3_pt, hr3_lo, hr3_hi, hr3_n = bootstrap_hr_ci(preds, eval_actuals, lines, min_edge=3.0)
+    ov_pt, ov_lo, ov_hi, ov_n = bootstrap_hr_ci(preds, eval_actuals, lines, min_edge=3.0, direction='OVER')
+    un_pt, un_lo, un_hi, un_n = bootstrap_hr_ci(preds, eval_actuals, lines, min_edge=3.0, direction='UNDER')
+
+    def _ci_verdict(point, ci_hi, floor):
+        """CI-aware gate verdict — fail only when confident the metric is below floor."""
+        if point is None or ci_hi is None:
+            return False, "no gradable picks"
+        if point >= floor:
+            return True, "clears floor"
+        if ci_hi < floor:
+            return False, f"CI-upper {ci_hi}% < {floor}%"
+        return True, f"INCONCLUSIVE (point {point}% < {floor}% but 95% CI spans it — not blocking)"
+
+    hr3_ok, hr3_note = _ci_verdict(hr3_pt, hr3_hi, 53.0)
+
+    # Directional: a direction is bad only with enough N AND a CI upper bound
+    # below breakeven. None / too-few-N directions are treated as OK.
+    MIN_DIR_N = 20
+    over_bad = ov_hi is not None and ov_n >= MIN_DIR_N and ov_hi < DIRECTIONAL_BREAKEVEN
+    under_bad = un_hi is not None and un_n >= MIN_DIR_N and un_hi < DIRECTIONAL_BREAKEVEN
+    directional_ci_ok = not (over_bad or under_bad)
 
     gates = []
     soft_gates = []  # Session 382c: soft gates are reported but don't block registration
@@ -4638,13 +4671,14 @@ def main():
         # MAE 5.14 baseline was from obsolete V9 era; current models produce 5.2-5.6.
         # Lower MAE does NOT mean better betting (4.12 MAE crashed HR to 51.2%).
         soft_gates.append(("MAE improvement", mae_better, f"{mae:.4f} vs {V9_BASELINE['mae']:.4f}"))
-    gates.append(("Hit rate (3+) >= 53%", (hr_edge3 or 0) >= 53, f"{hr_edge3}% (n={bets_edge3})"))
+    gates.append(("Hit rate (3+) >= 53% (CI-aware)", hr3_ok,
+                  f"{hr3_pt}% [95% CI {hr3_lo}-{hr3_hi}%] n={hr3_n} — {hr3_note}"))
     gates.append((f"Hit rate (3+) sample >= {_restart_min_bets}", edge3_reliable, f"n={bets_edge3}"))
     gates.append((f"Vegas bias within +/-{VEGAS_BIAS_LIMIT}", abs(pred_vs_vegas) <= VEGAS_BIAS_LIMIT, f"{pred_vs_vegas:+.2f}"))
     gates.append(("No critical tier bias", not tier_bias['has_critical_bias'], ""))
-    gates.append((f"Directional balance (OVER+UNDER >= {DIRECTIONAL_BREAKEVEN}%)",
-                  restart_directional_ok,
-                  f"OVER={over_str}, UNDER={under_str}"))
+    gates.append((f"Directional balance (OVER/UNDER CI-upper >= {DIRECTIONAL_BREAKEVEN}%)",
+                  directional_ci_ok,
+                  f"OVER={ov_pt}% [CI {ov_lo}-{ov_hi}] n={ov_n}, UNDER={un_pt}% [CI {un_lo}-{un_hi}] n={un_n}"))
     # Session 516: Edge compression soft gate — models with avg edge < 3.0 produce 0 best bets
     # picks since OVER requires edge 5+ and UNDER requires edge 3+. Soft gate because edge
     # depends partly on market conditions (tight markets compress edge for all models).

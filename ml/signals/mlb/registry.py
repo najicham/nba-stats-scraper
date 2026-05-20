@@ -101,10 +101,9 @@ def build_mlb_registry() -> MLBSignalRegistry:
         HighCSWLowEraHighKComboOverSignal,
         # Session 465 — xFIP regression signal
         XfipEliteOverSignal,
-        # Negative filters (6)
+        # Negative filters (4) — ILReturnFilter / PitchCountCapFilter removed
+        # (engine review P2-3: dead filters, no upstream data — see signals.py)
         BullpenGameFilter,
-        ILReturnFilter,
-        PitchCountCapFilter,
         InsufficientDataFilter,
         PitcherBlacklistFilter,
         WholeLineOverFilter,
@@ -180,10 +179,10 @@ def build_mlb_registry() -> MLBSignalRegistry:
     # Session 465 — xFIP regression
     registry.register(XfipEliteOverSignal())
 
-    # Negative filters (6) — block picks
+    # Negative filters (4) — block picks
+    # ILReturnFilter / PitchCountCapFilter removed (engine review P2-3:
+    # dead filters that silently passed every pitcher — no upstream data).
     registry.register(BullpenGameFilter())
-    registry.register(ILReturnFilter())
-    registry.register(PitchCountCapFilter())
     registry.register(InsufficientDataFilter())
     registry.register(PitcherBlacklistFilter())
     # Session 443: Whole-number line filter (p<0.001, +9.6pp structural edge)

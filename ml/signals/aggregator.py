@@ -195,7 +195,9 @@ OVER_SIGNAL_WEIGHTS: Dict[str, float] = {
     'fast_pace_over': 2.5,                  # 81.5% signal HR
     'high_scoring_environment_over': 2.0,   # 100% BB HR (3-0)
     'book_disagreement': 2.0,               # 93.0% signal HR (direction-neutral, kept for backward compat)
-    'rest_advantage_2d': 2.0,               # Session 442: 74.0% BB HR (N=50), strongest unweighted signal
+    # rest_advantage_2d weight removed P2-1 (2026-05-19): the signal is
+    # unregistered (registry.py — register() commented out, disabled Session 396)
+    # so it never fires; the weight was dead, misleading code.
     'scoring_cold_streak_over': 1.5,        # Post-cold bounce signal
     'cold_3pt_over': 2.0,                   # Session 466: 60.2% HR (N=123) 5-season — cold from 3 bounces back
     # sharp_book_lean_over removed Session 462: 41.7% HR 5-season cross-validated — harmful

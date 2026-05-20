@@ -184,6 +184,232 @@ filters:
     introduced_session: 469
 
   # =========================================================================
+  # ACTIVE BLOCKING FILTERS — registry drift reconciliation 2026-05-19.
+  # Added in code Sessions 415-522 but never registered in this file.
+  # =========================================================================
+
+  - tag: regime_over_floor
+    status: active
+    blocks_direction: over
+    description: OVER + edge below regime-raised floor (>6.0 in cautious/TIGHT)
+    introduced_session: 483
+
+  - tag: bench_over_block
+    status: active
+    blocks_direction: over
+    description: OVER + line < 12 (bench archetype, 34.1% HR at edge 7+)
+    introduced_session: 522
+
+  - tag: role_over_block
+    status: active
+    blocks_direction: over
+    description: OVER + line 12-17.5 + edge < 7.5 (role archetype, 43.1% HR)
+    introduced_session: 522
+
+  - tag: line_anomaly_extreme_drop
+    status: active
+    blocks_direction: over
+    description: OVER + line dropped >= 40% or >= 6 pts (manufactured edge)
+    introduced_session: 451
+
+  - tag: flat_trend_under
+    status: active
+    blocks_direction: under
+    description: UNDER + trend slope -0.5 to 0.5 (promoted Session 514, CF HR 37.0%)
+    introduced_session: 514
+
+  - tag: under_after_streak
+    status: active
+    blocks_direction: under
+    description: UNDER + 3+ prop under streak + edge < 5.0
+    introduced_session: 418
+
+  - tag: under_after_bad_miss
+    status: active
+    blocks_direction: under
+    description: UNDER + bad miss + bad shooting + AWAY (bounce-back coming)
+    introduced_session: 427
+
+  - tag: blowout_risk_under_block
+    status: active
+    blocks_direction: under
+    description: UNDER + blowout_risk >= 0.40 + line >= 15 (promoted Session 514)
+    introduced_session: 514
+
+  - tag: tanking_risk_obs
+    status: active
+    blocks_direction: under
+    description: UNDER + spread_magnitude >= 10 (promoted 2026-05-15, CF HR 40.0%). BQ name retains _obs suffix for CF HR history continuity
+    introduced_session: 474
+
+  - tag: prediction_sanity
+    status: active
+    blocks_direction: both
+    description: predicted_points > 2x season avg on bench/role players (line < 18)
+    introduced_session: 440
+
+  - tag: hot_shooting_reversion_obs
+    status: active
+    blocks_direction: over
+    description: OVER + prev game FG >= 70% + prev minutes >= 20 (promoted Session 494). BQ name retains _obs suffix for CF HR history continuity
+    introduced_session: 441
+
+  - tag: zero_signal_extreme_underprediction
+    status: active
+    blocks_direction: under
+    description: UNDER + edge >= 7 + real_sc=0 + predicted < 55% of line (model artifact)
+    introduced_session: 475
+
+  - tag: mae_gap_over_block
+    status: active
+    blocks_direction: over
+    description: OVER + model MAE gap > 0.5 (model badly losing to books)
+    introduced_session: 483
+
+  - tag: under_low_rsc
+    status: active
+    blocks_direction: under
+    description: UNDER + real_sc < 2 + edge < 7 (promoted Session 452, structural)
+    introduced_session: 452
+
+  - tag: ft_anomaly_over_block
+    status: active
+    blocks_direction: over
+    description: OVER + FTA avg >= 5 + FTA CV >= 0.6 (unsustainable FT volume)
+    introduced_session: 463
+
+  - tag: hot_shooting_over_block
+    status: active
+    blocks_direction: over
+    description: OVER + FG% hot (diff >= 10%) or 3PT% hot (diff >= 15%)
+    introduced_session: 468
+
+  - tag: counter_market_under
+    status: active
+    blocks_direction: under
+    description: UNDER + line rose >= 0.5 + cross-book std >= 1.0 (fighting market)
+    introduced_session: 463
+
+  - tag: monday_over_obs
+    status: active
+    blocks_direction: over
+    description: OVER + Monday (49.0% HR, promoted 2026-03-26). BQ name retains _obs suffix for CF HR history continuity
+    introduced_session: 394
+
+  - tag: regime_rescue_blocked
+    status: active
+    blocks_direction: over
+    description: Rescued OVER + cautious/TIGHT regime (disable_over_rescue, promoted Session 483)
+    introduced_session: 412
+
+  - tag: team_cap
+    status: active
+    blocks_direction: both
+    description: More than 2 picks per team (correlated-exposure cap, merge-level)
+    introduced_session: 441
+
+  - tag: rescue_cap
+    status: active
+    blocks_direction: both
+    description: Rescued picks > 40% of slate, lowest-priority dropped (merge-level)
+    introduced_session: 415
+
+  # =========================================================================
+  # OBSERVATION FILTERS — record CF data but do not block.
+  # Registry drift reconciliation 2026-05-19.
+  # =========================================================================
+
+  - tag: player_under_suppression_obs
+    status: observation
+    blocks_direction: under
+    description: UNDER + player with UNDER HR < 35% at N >= 20 (observation mode)
+    introduced_session: 451
+
+  - tag: bias_regime_over_obs
+    status: observation
+    blocks_direction: over
+    description: OVER + UNDER-heavy bias regime + rescued or edge < 5.0
+    introduced_session: 437
+
+  - tag: bench_under_obs
+    status: observation
+    blocks_direction: under
+    description: UNDER + line < 12 (BQ name for bench_under, observation since Session 419)
+    introduced_session: 419
+
+  - tag: high_skew_over_block
+    status: observation
+    blocks_direction: over
+    description: OVER + mean_median_gap > 2.0 (demoted to observation Session 470). BQ name high_skew_over_block_obs
+    introduced_session: 399
+
+  - tag: mid_line_over_obs
+    status: observation
+    blocks_direction: over
+    description: OVER + line 15-25 (demoted to observation Session 428)
+    introduced_session: 428
+
+  - tag: home_over_obs
+    status: observation
+    blocks_direction: over
+    description: OVER + home (reverted to observation 2026-03-27, BB-level CF HR 70%)
+    introduced_session: 469
+
+  - tag: depleted_stars_over_obs
+    status: observation
+    blocks_direction: over
+    description: OVER + 3+ star teammates out (observation mode)
+    introduced_session: 439
+
+  - tag: over_low_rsc_obs
+    status: observation
+    blocks_direction: over
+    description: OVER + real_sc 1-3 (observation mode)
+    introduced_session: 442
+
+  - tag: mae_gap_obs
+    status: observation
+    blocks_direction: both
+    description: model MAE gap > 0.15 (superset observation; OVER subset is mae_gap_over_block)
+    introduced_session: 442
+
+  - tag: thin_slate_obs
+    status: observation
+    blocks_direction: both
+    description: 4-6 game slate (observation mode)
+    introduced_session: 442
+
+  - tag: hot_streak_under_obs
+    status: observation
+    blocks_direction: under
+    description: UNDER + over_rate_last_10 >= 0.7 (observation mode)
+    introduced_session: 442
+
+  - tag: solo_game_pick_obs
+    status: observation
+    blocks_direction: both
+    description: Pick from game with only 1 BB pick (observation mode)
+    introduced_session: 442
+
+  - tag: signal_stack_2plus_obs
+    status: observation
+    blocks_direction: both
+    description: 2+ qualifying non-base signals (observation mode)
+    introduced_session: 412
+
+  - tag: toxic_starter_over_would_block
+    status: observation
+    blocks_direction: over
+    description: Starter OVER (line 15-25) during toxic calendar regime (observation)
+    introduced_session: 396
+
+  - tag: toxic_star_over_would_block
+    status: observation
+    blocks_direction: over
+    description: Star OVER (line >= 25) during toxic calendar regime (observation)
+    introduced_session: 396
+
+  # =========================================================================
   # REMOVED — kept for doc-validation symmetry
   # =========================================================================
 

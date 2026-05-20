@@ -541,6 +541,17 @@ REQUIRED_PHASE4_TABLES = [
     ('nba_precompute', 'team_defense_zone_analysis', 'analysis_date'),
 ]
 
+# Feature-store coverage gate: blocks Phase 5 if the ML feature store has too few
+# clean players relative to the expected (scheduled) roster. This catches "partial
+# data" scenarios where the ML feature-store processor silently produces an
+# incomplete set even though it reported completion.
+FEATURE_STORE_COVERAGE_THRESHOLD_PCT = float(
+    os.environ.get('FEATURE_STORE_COVERAGE_THRESHOLD_PCT', '60.0')
+)
+FEATURE_STORE_COVERAGE_GATING_ENABLED = os.environ.get(
+    'FEATURE_STORE_COVERAGE_GATING_ENABLED', 'true'
+).lower() == 'true'
+
 
 def verify_phase4_data_ready(game_date: str) -> tuple:
     """
@@ -627,6 +638,173 @@ def verify_phase4_data_ready(game_date: str) -> tuple:
         logger.error(f"R-006: Data freshness verification failed: {e}", exc_info=True)
         # On error, return False with empty details
         return (False, ['verification_error'], {'error': str(e)})
+
+
+def verify_feature_store_ready(game_date: str) -> tuple:
+    """
+    Verify the ML feature store has sufficient clean-player coverage before
+    triggering Phase 5 predictions.
+
+    Even when the ML feature-store processor reports completion, it can silently
+    produce a partial set (e.g. a subset of players). This compares the number
+    of CLEAN players in ml_feature_store_v2 against the number of expected
+    players from upcoming_player_game_context for the same date.
+
+    Args:
+        game_date: The date to check (YYYY-MM-DD)
+
+    Returns:
+        tuple: (is_sufficient: bool, coverage_pct: float, details: dict)
+            - is_sufficient: True if clean_players >= threshold * expected_players
+            - coverage_pct: Percentage of expected players with clean feature rows
+            - details: Dict with clean_players, expected_players, threshold_pct
+    """
+    if not FEATURE_STORE_COVERAGE_GATING_ENABLED:
+        logger.info("Feature-store coverage gating disabled, skipping check")
+        return (True, 100.0, {'gating_disabled': True})
+
+    try:
+        bq_client = get_bigquery_client(project_id=PROJECT_ID)
+
+        # Compare clean feature-store players against expected players from the
+        # upcoming player game context (the planned roster for the date).
+        query = f"""
+        SELECT
+            (
+                SELECT COUNT(DISTINCT player_lookup)
+                FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2`
+                WHERE game_date = '{game_date}'
+                  AND COALESCE(required_default_count, default_feature_count, 0) = 0
+            ) as clean_players,
+            (
+                SELECT COUNT(DISTINCT player_lookup)
+                FROM `{PROJECT_ID}.nba_analytics.upcoming_player_game_context`
+                WHERE game_date = '{game_date}'
+            ) as expected_players
+        """
+
+        result = list(bq_client.query(query).result())
+
+        if not result:
+            logger.warning(f"Feature-store coverage check returned no results for {game_date}")
+            return (False, 0.0, {'error': 'No results from query'})
+
+        row = result[0]
+        clean_players = row.clean_players or 0
+        expected_players = row.expected_players or 0
+
+        # Calculate coverage percentage
+        if expected_players == 0:
+            # No players expected - consider this as 100% coverage
+            coverage_pct = 100.0
+            logger.info(f"No expected players for {game_date}, feature-store coverage = 100%")
+        else:
+            coverage_pct = (clean_players / expected_players) * 100
+
+        is_sufficient = coverage_pct >= FEATURE_STORE_COVERAGE_THRESHOLD_PCT
+
+        details = {
+            'clean_players': clean_players,
+            'expected_players': expected_players,
+            'coverage_pct': round(coverage_pct, 1),
+            'threshold_pct': FEATURE_STORE_COVERAGE_THRESHOLD_PCT,
+            'shortfall_players': max(
+                0,
+                int(round(expected_players * FEATURE_STORE_COVERAGE_THRESHOLD_PCT / 100.0)) - clean_players
+            ),
+        }
+
+        if is_sufficient:
+            logger.info(
+                f"Feature-store coverage check PASSED for {game_date}: {coverage_pct:.1f}% "
+                f"({clean_players}/{expected_players} clean players) "
+                f">= {FEATURE_STORE_COVERAGE_THRESHOLD_PCT}%"
+            )
+        else:
+            logger.warning(
+                f"Feature-store coverage check FAILED for {game_date}: {coverage_pct:.1f}% "
+                f"({clean_players}/{expected_players} clean players) "
+                f"< {FEATURE_STORE_COVERAGE_THRESHOLD_PCT}%"
+            )
+
+        return (is_sufficient, coverage_pct, details)
+
+    except Exception as e:
+        logger.error(f"Feature-store coverage check failed: {e}", exc_info=True)
+        # On error, allow transition (fail-open) but log warning
+        return (True, 0.0, {'error': str(e), 'fail_open': True})
+
+
+def send_feature_store_coverage_alert(game_date: str, coverage_pct: float, details: dict) -> bool:
+    """
+    Send Slack alert when ML feature-store coverage is below threshold and
+    Phase 5 has been blocked.
+
+    Args:
+        game_date: The date being processed
+        coverage_pct: Actual clean-player coverage percentage
+        details: Coverage check details
+
+    Returns:
+        True if alert sent successfully, False otherwise
+    """
+    if not SLACK_WEBHOOK_URL:
+        logger.warning("SLACK_WEBHOOK_URL not configured, skipping feature-store coverage alert")
+        return False
+
+    try:
+        payload = {
+            "attachments": [{
+                "color": "#FF0000",  # Red for blocking
+                "blocks": [
+                    {
+                        "type": "header",
+                        "text": {
+                            "type": "plain_text",
+                            "text": ":no_entry: Phase 5 BLOCKED - Low Feature-Store Coverage",
+                            "emoji": True
+                        }
+                    },
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": f"*Phase 5 trigger blocked due to insufficient ML feature-store coverage!*\n"
+                                   f"Clean-player coverage {coverage_pct:.1f}% is below threshold "
+                                   f"{FEATURE_STORE_COVERAGE_THRESHOLD_PCT}%."
+                        }
+                    },
+                    {
+                        "type": "section",
+                        "fields": [
+                            {"type": "mrkdwn", "text": f"*Date:*\n{game_date}"},
+                            {"type": "mrkdwn", "text": f"*Coverage:*\n{coverage_pct:.1f}%"},
+                            {"type": "mrkdwn", "text": f"*Clean Players:*\n{details.get('clean_players', 0)}"},
+                            {"type": "mrkdwn", "text": f"*Expected Players:*\n{details.get('expected_players', 0)}"},
+                            {"type": "mrkdwn", "text": f"*Shortfall:*\n{details.get('shortfall_players', 0)} players"},
+                        ]
+                    },
+                    {
+                        "type": "context",
+                        "elements": [{
+                            "type": "mrkdwn",
+                            "text": ":warning: Phase 5 will NOT run. The ML feature-store processor likely "
+                                   "produced a partial set. Check Phase 4 ml_feature_store processor logs and "
+                                   "backfill if needed."
+                        }]
+                    }
+                ]
+            }]
+        }
+
+        success = send_slack_webhook_with_retry(SLACK_WEBHOOK_URL, payload, timeout=10)
+        if success:
+            logger.info(f"Feature-store coverage alert sent successfully for {game_date}")
+        return success
+
+    except Exception as e:
+        logger.error(f"Failed to send feature-store coverage alert: {e}", exc_info=True)
+        return False
 
 
 def send_data_freshness_alert(game_date: str, missing_tables: List[str], table_counts: Dict) -> bool:
@@ -1371,6 +1549,30 @@ def trigger_phase5(game_date: str, correlation_id: str, upstream_message: Dict) 
             )
             # Send warning alert but continue (quality threshold met even if not all tables present)
             send_data_freshness_alert(game_date, missing_tables, table_counts)
+
+        # FEATURE-STORE COVERAGE CHECK: Verify the ML feature store has enough
+        # clean players relative to the expected roster. This catches "partial
+        # data" scenarios where the feature-store processor reports completion
+        # but silently produces an incomplete set.
+        fs_sufficient, fs_coverage_pct, fs_details = verify_feature_store_ready(game_date)
+
+        if not fs_sufficient:
+            logger.error(
+                f"Feature-store coverage check FAILED for {game_date}: "
+                f"{fs_coverage_pct:.1f}% < {FEATURE_STORE_COVERAGE_THRESHOLD_PCT}%. "
+                f"BLOCKING Phase 5 predictions to prevent predicting on incomplete data."
+            )
+            send_feature_store_coverage_alert(game_date, fs_coverage_pct, fs_details)
+
+            # CRITICAL: Raise exception to BLOCK Phase 5 with partial feature-store data
+            raise ValueError(
+                f"ML feature-store coverage insufficient for {game_date}: "
+                f"{fs_coverage_pct:.1f}% "
+                f"(threshold: {FEATURE_STORE_COVERAGE_THRESHOLD_PCT}%). "
+                f"Only {fs_details.get('clean_players', 0)}/"
+                f"{fs_details.get('expected_players', 0)} expected players have clean "
+                f"feature rows. Cannot generate predictions on a partial feature store."
+            )
 
         topic_path = publisher.topic_path(PROJECT_ID, PHASE5_TRIGGER_TOPIC)
 

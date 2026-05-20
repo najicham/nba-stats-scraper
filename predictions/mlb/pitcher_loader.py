@@ -529,7 +529,10 @@ def load_batch_features(
         fg.o_swing_pct,
         fg.z_contact_pct,
         fg.fip,
-        fg.gb_pct
+        fg.gb_pct,
+        -- xFIP (expected FIP) — consumed by xfip_elite_over signal.
+        -- Was missing from the SELECT, so the promoted signal never fired.
+        fg.xfip
     FROM latest_features lf
     LEFT JOIN statcast_latest s ON lf.player_lookup = s.player_lookup AND s.rn = 1
     -- Session 518: bp_pitcher_props uses 'anthonykay' format (no underscore),

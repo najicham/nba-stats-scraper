@@ -125,6 +125,14 @@ ACTIVE_SIGNALS = frozenset({
     'book_disagree_over',
     'book_disagree_under',
     # usage_surge_over: reverted to shadow (was graduated Session 495, reverted — re-evaluate with more data)
+    # 2026-05-19 registry-drift reconciliation — registered signals that were
+    # missing from ACTIVE_SIGNALS so signal health could not track them.
+    'denver_visitor_over',      # Session 398: registered but untracked
+    'quantile_ceiling_under',   # Session 522: MultiQuantile p75 < line — active signal
+    'quantile_floor_over',      # Session 522: MultiQuantile p25 > line — shadow signal
+    'projection_disagreement',  # Session 401: registered filter-type signal
+    'negative_clv_filter',      # Session 401: registered filter-type signal
+    'public_fade_filter',       # Session 404: registered filter-type signal
 })
 
 # Regime thresholds (Session 257 analysis)
