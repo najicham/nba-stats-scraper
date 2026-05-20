@@ -68,6 +68,13 @@ class MlbLineupsProcessor(ProcessorBase):
     - Allows lineup updates as they're announced
     """
 
+    # Lineups are scraped repeatedly through the day (morning, pregame, afternoon,
+    # overnight) as they firm up. The run-history dedup guard would otherwise let the
+    # first scrape "win" the date and skip every later, more-complete re-scrape — the
+    # morning scrape logs records_processed > 0 (game envelopes) even when zero batters
+    # are posted yet. MERGE_UPDATE per game_pk makes re-processing idempotent.
+    SKIP_DEDUPLICATION = True
+
     def __init__(self):
         self.dataset_id = get_raw_dataset()  # mlb_raw
         super().__init__()
