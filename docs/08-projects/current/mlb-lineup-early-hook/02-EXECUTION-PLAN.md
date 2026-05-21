@@ -60,17 +60,21 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` todo. Critical path: **A → B 
 | `[x]` | Leak fix + leak-free validation harness | — | `a490ddc2`,`8b074f63`,`13d0185f`,`e1c7a667` |
 | `[ ]` | Push the 10 commits, then immediately retrain leak-free + shadow + promote | Med | The live model trains on leaked data — a real bug. Pushing the leak-fix code alone leaves a leak-trained model serving de-leaked features, so the retrain is **mandatory and paired**. It produces a no-edge model — a correctness fix, not a profit fix. Skip only if the project is being wound down. |
 
-### Phase B — Build the instrument: CLV (gates everything after)
+### Phase B — Build the CLV instrument (gates everything after)
 
-The project has never measured closing-line value. Every ROI number to date — including
-the +3–7% — is against aggregated/opening odds and means little. **Beating the closing
-line is the only reliable evidence of edge.** Until CLV exists, no strategy can be judged.
+The project has never measured closing-line value — every ROI number to date is against
+opening/aggregated odds and means little. **Beating the closing line is the only reliable
+evidence of edge.** Status (verified 2026-05-21 via `scripts/mlb/clv_report.py`): no new
+*subscription* is needed, but the **closing-line capture is broken** — `oddsa_pitcher_props`
+snapshots intraday lines well, but only ~2.6% of game-pitchers get a true ≤30-min-pre-pitch
+snapshot and 66% have nothing within 4 h. So CLV is **not measurable from stored data**;
+the capture must be fixed first, and CLV then accrues going forward only.
 
-| | Item | Cost/Effort | Notes |
-|--|------|------|-------|
-| `[ ]` | **Buy a real odds feed** — SportsGameOdds / The Odds API (true open + close, finer snapshots) | ~$99–200/mo | Now the critical path, not a parked item. Owner purchase decision. |
-| `[ ]` | Wire `clv_*` capture into the pick pipeline; CLV report per pick / per strategy | Med | CLV = (closing line − line bet). Make it the north-star metric, above backtest ROI. |
-| `[ ]` | Backfill CLV on existing 2025 picks where closing data is obtainable | Low–Med | First honest read on whether the current system has *any* edge. |
+| | Item | Effort | Notes |
+|--|------|--------|-------|
+| `[ ]` | **Fix the closing-line capture** — schedule the `oddsa_pitcher_props` pitcher-props scrape to run reliably ~5–15 min before each game's first pitch (per-game-staggered, or a tight cadence over the game-time cluster). The scraper exists; the scheduling does not capture close. $0 — a scheduling/orchestration fix. | Med | The actual blocker. CLV accrues from when this lands. |
+| `[ ]` | Rebuild `pitcher_props_closing` from the genuine near-pitch snapshot (kills the 98%-synthetic path); CLV per pick via `scripts/mlb/clv_report.py` | Med | The report tool is already built — it works once real closing snapshots exist. |
+| `[ ]` | (Optional) backfill 2025 CLV via the historical scraper `mlb_pitcher_props_his.py` | Low–Med | The only way to get past closing lines — metered Odds API historical credits on the existing plan, **no new subscription**. |
 
 ### Phase C — Pursue a real edge (validated leak-free **and** by CLV)
 
