@@ -94,9 +94,47 @@ RAW_TO_MODEL_MAPPING = {
     'gb_pct': 'f73_gb_pct',
 }
 
-# Sigmoid scaling factor for converting edge to p_over
-# Calibrated so edge=1.0K maps to ~p_over=0.668, edge=2.0K maps to ~0.802
+# Sigmoid scale — retained ONLY because the shadow lightgbm_v1 / xgboost_v1
+# regressor predictors import it from this module. catboost_v2 itself no longer
+# uses it: as of Stage 1.1 its p_over comes from the Poisson tail below.
 SIGMOID_SCALE = 0.7
+
+# Model-market blend weight bounds. The blend is `blended = w*model + (1-w)*line`.
+# w=1.0 is pure model (the pre-Stage-1.1 behavior, and what a model artifact
+# trained before Stage 1.1 gets since it carries no blend_weight). The 0.3 floor
+# keeps the model a majority voice per the project spec.
+BLEND_WEIGHT_DEFAULT = 1.0
+BLEND_WEIGHT_FLOOR = 0.3
+
+
+def _poisson_cdf(k: int, lam: float) -> float:
+    """P(X <= k) for X ~ Poisson(lam), summed iteratively (stdlib only).
+
+    Stable across the strikeout range (k 0-9, lam 0-20): each term is derived
+    from the previous via `term *= lam / i`, so there is no factorial or pow
+    overflow. Returns 1.0 for a non-positive lambda (degenerate point mass at 0).
+    """
+    if lam <= 0:
+        return 1.0
+    term = math.exp(-lam)  # i = 0 term
+    cdf = term
+    for i in range(1, k + 1):
+        term *= lam / i
+        cdf += term
+    return min(1.0, cdf)
+
+
+def poisson_p_over(line: float, lam: float) -> float:
+    """P(strikeouts > line) for K ~ Poisson(lam = predicted strikeouts).
+
+    K is integer-valued, so `K > line` is `K >= floor(line) + 1` for both
+    half-point lines (a 5.5 line) and integer lines (a 6.0 line correctly
+    treats K == 6 as a push, not an over). Both reduce to
+    `1 - PoissonCDF(floor(line))`. This is the honest, per-pitcher probability
+    that replaces the hand-tuned constant `sigmoid(0.7*edge)` — the sigmoid was
+    never fit to outcomes and produced a non-monotonic edge->hit-rate curve.
+    """
+    return max(0.0, min(1.0, 1.0 - _poisson_cdf(math.floor(line), lam)))
 
 
 class CatBoostV2RegressorPredictor(BaseMLBPredictor):
@@ -104,10 +142,11 @@ class CatBoostV2RegressorPredictor(BaseMLBPredictor):
     CatBoost V2 regressor for pitcher strikeout predictions.
 
     Unlike V1 (classifier predicting P(OVER)), V2 directly predicts the
-    strikeout count. Edge is in real K units: edge = predicted_K - line.
+    strikeout count. Edge is in real K units: edge = blended_K - line.
 
-    p_over is derived via sigmoid for backward compatibility with the
-    exporter and best-bets pipeline.
+    Stage 1.1: the raw model output is blended with the market line
+    (`blended = w*model + (1-w)*line`, w from model metadata) and p_over is
+    the honest Poisson tail `P(K > line)` rather than a hand-tuned sigmoid.
 
     Zero-tolerance for core features (BLOCKED if missing). Statcast features
     (f50-f53) and advanced features (f65-f73) are NaN-tolerant — CatBoost
@@ -239,14 +278,40 @@ class CatBoostV2RegressorPredictor(BaseMLBPredictor):
             logger.error(f"[{self.system_id}] Error preparing features: {e}", exc_info=True)
             return None, 0, []
 
+    def _get_blend_weight(self) -> float:
+        """Resolve the model-market blend weight `w` for `w*model + (1-w)*line`.
+
+        Priority: MLB_BLEND_WEIGHT env override > model metadata `blend_weight`
+        (fit walk-forward at training time by train_regressor_v2.fit_blend_weight)
+        > 1.0 (no blend). Clamped to [BLEND_WEIGHT_FLOOR, 1.0]. The env var is
+        the only lever to activate or disable the blend without a retrain, so it
+        doubles as an incident rollback (set 1.0 to revert to the pure model).
+        """
+        raw = os.environ.get('MLB_BLEND_WEIGHT')
+        if raw is None:
+            raw = (self.model_metadata or {}).get('blend_weight')
+        if raw is None:
+            return BLEND_WEIGHT_DEFAULT
+        try:
+            w = float(raw)
+        except (TypeError, ValueError):
+            logger.warning(
+                f"[{self.system_id}] Invalid blend_weight {raw!r}; "
+                f"falling back to {BLEND_WEIGHT_DEFAULT} (no blend)"
+            )
+            return BLEND_WEIGHT_DEFAULT
+        return max(BLEND_WEIGHT_FLOOR, min(1.0, w))
+
     def predict(self, pitcher_lookup: str, features: Dict,
                 strikeouts_line: Optional[float] = None) -> Dict:
         """
         Generate strikeout prediction using CatBoost V2 regressor.
 
-        The regressor predicts raw strikeout count (e.g., 6.8). Edge is the
-        signed difference: predicted_K - line (positive = OVER, negative = UNDER).
-        p_over is derived via sigmoid for backward compatibility.
+        The regressor predicts a raw strikeout count (e.g. 6.8). That output is
+        blended with the market line (`blended = w*model + (1-w)*line`) and the
+        reported prediction, edge, and p_over are all derived from the blend:
+        edge = blended_K - line (positive = OVER) and p_over = P(K > line) under
+        K ~ Poisson(blended_K).
         """
         if not self.load_model():
             return {
@@ -305,20 +370,31 @@ class CatBoostV2RegressorPredictor(BaseMLBPredictor):
                 )
                 predicted_K = 20.0
 
-            # Edge: signed difference in K units (positive = OVER, negative = UNDER)
+            # Model-market blend (Stage 1.1). Bates-Granger: the model and the
+            # market line make decorrelated errors of near-equal size, so a
+            # convex blend lowers MAE. `w` is fit walk-forward at training time
+            # (train_regressor_v2.fit_blend_weight) and stored in metadata;
+            # w=1.0 (no blend) for a model artifact that predates Stage 1.1.
+            # The blend shrinks edge by factor w (blended_K - line = w*(model -
+            # line)), which mechanically suppresses small-divergence picks.
+            blend_weight = self._get_blend_weight()
+
             if strikeouts_line is not None:
-                edge = predicted_K - strikeouts_line
+                blended_K = (
+                    blend_weight * predicted_K
+                    + (1.0 - blend_weight) * strikeouts_line
+                )
+                # Edge: signed difference in K units (positive = OVER, negative = UNDER)
+                edge = blended_K - strikeouts_line
                 recommendation = 'OVER' if edge > 0 else 'UNDER'
+                # Honest P(over): K ~ Poisson(lambda = blended_K), so
+                # P(K > line) = 1 - PoissonCDF(floor(line), lambda). Replaces the
+                # constant sigmoid whose edge->hit-rate curve was non-monotonic.
+                p_over = poisson_p_over(strikeouts_line, blended_K)
             else:
+                blended_K = predicted_K
                 edge = None
                 recommendation = 'NO_LINE'
-
-            # p_over: sigmoid transformation for backward compatibility
-            # Maps edge (in K units) to probability-like value [0, 1]
-            # edge=0 -> p_over=0.5, edge=+1K -> ~0.668, edge=-1K -> ~0.332
-            if edge is not None:
-                p_over = 1.0 / (1.0 + math.exp(-edge * SIGMOID_SCALE))
-            else:
                 p_over = 0.5
 
             # Confidence from edge magnitude (scaled to 0-100)
@@ -331,7 +407,7 @@ class CatBoostV2RegressorPredictor(BaseMLBPredictor):
             if red_flag_result.skip_bet:
                 return {
                     'pitcher_lookup': pitcher_lookup,
-                    'predicted_strikeouts': round(predicted_K, 2),
+                    'predicted_strikeouts': round(blended_K, 2),
                     'confidence': 0.0,
                     'recommendation': 'SKIP',
                     'edge': None,
@@ -341,13 +417,14 @@ class CatBoostV2RegressorPredictor(BaseMLBPredictor):
                     'skip_reason': red_flag_result.skip_reason,
                     'default_feature_count': 0,
                     'p_over': round(p_over, 4),
+                    'blend_weight': round(blend_weight, 4),
                 }
 
             adjusted_confidence = confidence * red_flag_result.confidence_multiplier
 
             return {
                 'pitcher_lookup': pitcher_lookup,
-                'predicted_strikeouts': round(predicted_K, 2),
+                'predicted_strikeouts': round(blended_K, 2),
                 'confidence': round(adjusted_confidence, 2),
                 'recommendation': recommendation,
                 'edge': round(edge, 2) if edge is not None else None,
@@ -355,6 +432,7 @@ class CatBoostV2RegressorPredictor(BaseMLBPredictor):
                 'system_id': self.system_id,
                 'model_version': 'catboost_v2_regressor',
                 'p_over': round(p_over, 4),
+                'blend_weight': round(blend_weight, 4),
                 'red_flags': red_flag_result.flags if red_flag_result.flags else None,
                 'default_feature_count': 0,
             }

@@ -99,6 +99,13 @@ GOVERNANCE = {
 
 HOLDOUT_DAYS = 14  # Last N days of training window used as validation
 
+# Model-market blend weight floor — MUST match BLEND_WEIGHT_FLOOR in
+# predictions/mlb/prediction_systems/catboost_v2_regressor_predictor.py.
+# w is fit per training window by fit_blend_weight() and stored in metadata;
+# the predictor reads it back and applies `blended = w*model + (1-w)*line`.
+BLEND_WEIGHT_FLOOR = 0.3
+MIN_BLEND_FIT_N = 30  # Below this holdout N, skip the fit and default w=1.0
+
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -124,6 +131,12 @@ def parse_args():
     parser.add_argument(
         "--dry-run", action="store_true",
         help="Run training and evaluation but skip saving model to disk"
+    )
+    parser.add_argument(
+        "--loss-function", type=str, default=None,
+        choices=["RMSE", "Poisson", "Quantile:alpha=0.5"],
+        help="CatBoost loss function (default: HYPERPARAMS['loss_function']). "
+             "Use Poisson for integer-valued K count modelling — A4 walk-forward dev."
     )
     return parser.parse_args()
 
@@ -367,9 +380,18 @@ def prepare_features(df: pd.DataFrame, feature_cols: list) -> pd.DataFrame:
     return X
 
 
-def train_model(X_train: pd.DataFrame, y_train: pd.Series) -> CatBoostRegressor:
-    """Train CatBoostRegressor with production hyperparameters."""
-    model = CatBoostRegressor(**HYPERPARAMS)
+def train_model(X_train: pd.DataFrame, y_train: pd.Series,
+                loss_function: str = None) -> CatBoostRegressor:
+    """Train CatBoostRegressor with production hyperparameters.
+
+    `loss_function` overrides HYPERPARAMS['loss_function'] when set — used by
+    A4 walk-forward dev to A/B Poisson vs RMSE without mutating the production
+    HYPERPARAMS default.
+    """
+    params = dict(HYPERPARAMS)
+    if loss_function:
+        params['loss_function'] = loss_function
+    model = CatBoostRegressor(**params)
     model.fit(X_train, y_train)
     return model
 
@@ -450,6 +472,51 @@ def evaluate_model(model: CatBoostRegressor, val_df: pd.DataFrame,
     return metrics
 
 
+def fit_blend_weight(model: CatBoostRegressor, val_df: pd.DataFrame,
+                     feature_cols: list) -> dict:
+    """Fit the model-market blend weight w: blended = w*model + (1-w)*line.
+
+    Bates-Granger combination: the model MAE (~1.83) is near-equal to the market
+    line MAE (~1.85) and they make decorrelated errors, so a convex blend
+    provably lowers error. w is chosen to minimise holdout MAE over a
+    [BLEND_WEIGHT_FLOOR, 1.0] grid — a grid search, not the closed-form MSE
+    solution, because the project's validation gate is MAE (L1).
+
+    Fitted on the holdout, which is genuinely out-of-sample: the model trained
+    only on train_df, so its val_df predictions are not memorised. One scalar
+    over ~150-300 starts cannot meaningfully overfit. The predictor reads the
+    resulting `blend_weight` from model metadata.
+    """
+    n = len(val_df)
+    if n < MIN_BLEND_FIT_N:
+        print(f"\n  Blend weight: holdout N={n} < {MIN_BLEND_FIT_N} — too small "
+              f"to fit; defaulting w=1.0 (no blend)")
+        return {'blend_weight': 1.0, 'fit_n': n, 'fit_skipped': 'holdout_too_small'}
+
+    X_val = prepare_features(val_df, feature_cols)
+    pred = np.asarray(model.predict(X_val), dtype=float)
+    line = val_df['over_line'].astype(float).values
+    actual = val_df['actual_value'].astype(float).values
+
+    best_w, best_mae = 1.0, float('inf')
+    for step in range(int(BLEND_WEIGHT_FLOOR * 100), 101):
+        w = step / 100.0
+        mae = float(np.mean(np.abs((w * pred + (1.0 - w) * line) - actual)))
+        if mae < best_mae:
+            best_mae, best_w = mae, w
+
+    model_mae = float(np.mean(np.abs(pred - actual)))
+    line_mae = float(np.mean(np.abs(line - actual)))
+    return {
+        'blend_weight': round(best_w, 2),
+        'blended_holdout_mae': round(best_mae, 4),
+        'model_only_holdout_mae': round(model_mae, 4),
+        'line_only_holdout_mae': round(line_mae, 4),
+        'mae_improvement_vs_model': round(model_mae - best_mae, 4),
+        'fit_n': n,
+    }
+
+
 def check_governance_gates(metrics: dict) -> dict:
     """Check all governance gates. Returns gate results dict."""
     gates = {}
@@ -518,7 +585,8 @@ def print_feature_importance(model: CatBoostRegressor, feature_cols: list,
     return feature_importance
 
 
-def print_summary(metrics: dict, gates: dict, training_start: pd.Timestamp,
+def print_summary(metrics: dict, gates: dict, blend_info: dict,
+                  training_start: pd.Timestamp,
                   training_end: pd.Timestamp, n_train: int):
     """Print training summary."""
     print("\n" + "=" * 70)
@@ -548,6 +616,18 @@ def print_summary(metrics: dict, gates: dict, training_start: pd.Timestamp,
     print(f"  HR:            {metrics['hr_at_edge']:.1f}% (N={metrics['n_at_edge']})")
     print(f"  OVER HR:       {metrics['over_hr_at_edge']:.1f}% (N={metrics['n_over_at_edge']})")
     print(f"  UNDER HR:      {metrics['under_hr_at_edge']:.1f}% (N={metrics['n_under_at_edge']})")
+
+    print(f"\n  --- Model-Market Blend (Stage 1.1) ---")
+    print(f"  Blend weight w: {blend_info['blend_weight']:.2f} "
+          f"(blended = w*model + (1-w)*line; fit N={blend_info['fit_n']})")
+    if 'fit_skipped' in blend_info:
+        print(f"  Fit skipped:    {blend_info['fit_skipped']} — w defaulted to 1.0")
+    else:
+        print(f"  Holdout MAE:    model {blend_info['model_only_holdout_mae']:.4f} K | "
+              f"line {blend_info['line_only_holdout_mae']:.4f} K | "
+              f"blended {blend_info['blended_holdout_mae']:.4f} K")
+        print(f"  MAE gain:       {blend_info['mae_improvement_vs_model']:+.4f} K "
+              f"vs model-only")
 
     print(f"\n  --- Governance Gates ---")
     all_passed = gates.get('all_passed', False)
@@ -650,9 +730,13 @@ def main():
     # ------------------------------------------------------------------
     # 5. Train model
     # ------------------------------------------------------------------
+    loss_fn_override = getattr(args, 'loss_function', None)
+    if loss_fn_override:
+        print(f"\nLoss function override: {loss_fn_override} "
+              f"(default {HYPERPARAMS['loss_function']})")
     print(f"\nTraining CatBoostRegressor ({len(X_train):,} samples, "
           f"{len(feature_cols)} features)...")
-    model = train_model(X_train, y_train)
+    model = train_model(X_train, y_train, loss_function=loss_fn_override)
 
     # Training MAE (sanity check)
     train_preds = model.predict(X_train)
@@ -671,6 +755,11 @@ def main():
     gates = check_governance_gates(metrics)
 
     # ------------------------------------------------------------------
+    # 7b. Fit model-market blend weight (Stage 1.1)
+    # ------------------------------------------------------------------
+    blend_info = fit_blend_weight(model, val_df, feature_cols)
+
+    # ------------------------------------------------------------------
     # 8. Feature importance
     # ------------------------------------------------------------------
     feature_importance = print_feature_importance(model, feature_cols)
@@ -678,7 +767,8 @@ def main():
     # ------------------------------------------------------------------
     # 9. Print summary
     # ------------------------------------------------------------------
-    print_summary(metrics, gates, training_start, training_end, len(train_df))
+    print_summary(metrics, gates, blend_info, training_start, training_end,
+                  len(train_df))
 
     # ------------------------------------------------------------------
     # 10. Save model (if gates pass and not dry-run)
@@ -694,9 +784,17 @@ def main():
         'holdout_days': HOLDOUT_DAYS,
         'features': feature_cols,
         'feature_count': len(feature_cols),
-        'hyperparameters': {k: v for k, v in HYPERPARAMS.items() if k != 'verbose'},
+        'hyperparameters': {
+            **{k: v for k, v in HYPERPARAMS.items() if k != 'verbose'},
+            **({'loss_function': loss_fn_override} if loss_fn_override else {}),
+        },
         'target': 'actual_value',
         'validation_metrics': metrics,
+        # Stage 1.1 model-market blend. Top-level `blend_weight` is the key the
+        # predictor (catboost_v2_regressor_predictor._get_blend_weight) reads;
+        # `blend` keeps the full fit detail for audit.
+        'blend_weight': blend_info['blend_weight'],
+        'blend': blend_info,
         'governance_gates': {
             k: {kk: vv for kk, vv in v.items()}
             for k, v in gates.items()
