@@ -7,7 +7,7 @@
 
 ---
 
-## Where we are (2026-05-20)
+## Where we are (2026-05-21)
 
 - **Phase 0 — DONE + VERIFIED.** MLB lineup capture was broken all of 2026 (night-game
   coverage ~0%, vs 100% in 2024/25). Fixed: two new scraper schedulers
@@ -17,8 +17,15 @@
   conclusion: the model already matches the market (MAE 1.83 vs 1.85); the **betting
   machinery** leaks the value (fake constant-sigmoid probability, selection layer buys
   losers at ranks 4–5, CLV unmeasurable). Fix the machinery first, add features second.
-- **Build — STARTED.** `mlb_lineups` registered in `expected_outputs_planner`
-  (`b03b228d`); `mlb_reference.pitcher_handedness` table built (1,113 pitchers).
+- **Build — IN PROGRESS.** `mlb_lineups` registered in `expected_outputs_planner`
+  (`b03b228d`); `mlb_reference.pitcher_handedness` table built. **Stage 1.1 built +
+  committed.** **Stage 1.4 framework built + RUN 1 done (2026-05-21)** — a 15-agent
+  review caught a critical FanGraphs look-ahead leak (fixed: prior-season join across
+  9 files + a `pitcher_game_summary` backfill) and that the replay harness still
+  measured the pre-Stage-1.1 system; harness rewired leak-free. First 2025 backtest:
+  the Poisson `p_over` is a *wash* vs the old sigmoid, and the model-market blend is
+  not worth activating. Multi-seed × multi-season confirmation sweep running. 6
+  commits, **none pushed**.
 
 ---
 
@@ -47,8 +54,8 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` todo.
 
 | | Item | Effort | Gating |
 |--|------|--------|--------|
-| `[ ]` | **1.1 — Poisson loss + real `P(over)` + model-market blend** ← FIRST SHIP | Med | Poisson flag exists in `train_regressor_v2.py`; predictor change ~15 lines; blend ~30 lines |
-| `[ ]` | 1.4 — validation framework (paired-bootstrap MAE on ~5K starts; multi-seed per round-4 fix) | Low–Med | gates everything after |
+| `[~]` | **1.1 — Poisson `P(over)` + model-market blend** | Med | **Built + committed; Stage-1.4-evaluated 2026-05-21.** Predictor emits `p_over = 1 − PoissonCDF(floor(line), λ)` and blends `λ` with the market line (`w` fit by `fit_blend_weight()`). **RUN-1 verdict:** the Poisson `p_over` is a *wash* vs the old sigmoid — keep it (principled), but it is **not** the "pure improvement" first claimed; re-examine the exporter `probability_cap` (tuned to the sigmoid). The **blend is not worth activating as fit-to-MAE** (0.6% MAE gain, hurts calibration, no betting win) — keep `w=1.0`, or refit `w` to ROI and require a betting win. The earlier "Poisson-loss retrain that activates the blend" plan is **superseded**. Awaiting the multi-seed × multi-season confirmation sweep. |
+| `[~]` | 1.4 — validation framework — calibration harness + leak-free replay built; RUN 1 done; multi-seed × multi-season confirmation sweep running | Low–Med | gates everything after |
 | `[ ]` | 1.3 — selection/staking fix (replace fixed top-5 with a quality gate; ranks 4–5 lose money today) | Low–Med | after 1.4 |
 | `[ ]` | 1.2 — CLV measurement (populate `clv_*` from the bought feed) | Med | after the feed lands; **not on the critical path** |
 | `[ ]` | 1.5 — monitoring (feature-coverage alerts; MLB Brier emitter) | Low–Med | with the above |
