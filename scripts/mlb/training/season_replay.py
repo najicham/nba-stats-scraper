@@ -39,7 +39,10 @@ from google.cloud import bigquery
 from predictions.mlb.prediction_systems.catboost_v2_regressor_predictor import (
     poisson_p_over,
 )
-from scripts.mlb.training.train_regressor_v2 import fit_w_nested_holdout
+from scripts.mlb.training.train_regressor_v2 import (
+    _ensure_april_coverage,
+    fit_w_nested_holdout,
+)
 
 PROJECT_ID = "nba-props-platform"
 
@@ -362,6 +365,8 @@ def load_data(client: bigquery.Client, earliest_date: str = "2024-01-01") -> pd.
     ) ump_stats ON ump_stats.umpire_name = ua.umpire_name
     WHERE bp.market_id = 285
       AND bp.actual_value IS NOT NULL
+      AND bp.actual_value > 0            -- exclude pre-game scrape rows (actual=0 until graded)
+      AND bp.game_date < CURRENT_DATE()  -- exclude today's ungraded rows
       AND bp.projection_value IS NOT NULL
       AND bp.over_line IS NOT NULL
       AND pgs.innings_pitched >= 3.0
@@ -388,8 +393,8 @@ def load_data(client: bigquery.Client, earliest_date: str = "2024-01-01") -> pd.
 # =============================================================================
 
 def train_regressor(X_train: pd.DataFrame, y_train: pd.Series, seed: int = 42,
-                    depth: int = 5, learning_rate: float = 0.015,
-                    iterations: int = 500, l2_leaf_reg: float = 3,
+                    depth: int = 4, learning_rate: float = 0.015,
+                    iterations: int = 500, l2_leaf_reg: float = 10,
                     loss_function: str = 'RMSE'):
     """Train CatBoost Regressor with production config.
 
@@ -1061,6 +1066,9 @@ def run_replay(df: pd.DataFrame, feature_cols: List[str],
 
         if needs_retrain:
             train_start = game_date - pd.Timedelta(days=args.training_window)
+            # Production parity: extend window back to cover April for late-season retrains (Session 524).
+            train_start = _ensure_april_coverage(
+                train_start, game_date - pd.Timedelta(days=1))
             train_mask = (df['game_date'] >= train_start) & (df['game_date'] < game_date)
             train_df = df[train_mask]
 
