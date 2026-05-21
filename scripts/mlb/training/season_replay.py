@@ -36,6 +36,11 @@ import numpy as np
 import pandas as pd
 from google.cloud import bigquery
 
+from predictions.mlb.prediction_systems.catboost_v2_regressor_predictor import (
+    poisson_p_over,
+)
+from scripts.mlb.training.train_regressor_v2 import fit_w_nested_holdout
+
 PROJECT_ID = "nba-props-platform"
 
 # =============================================================================
@@ -53,9 +58,6 @@ MAX_PICKS_PER_DAY = 5
 MIN_SIGNAL_COUNT = 2
 UNDER_MIN_SIGNALS = 3
 UNDER_ENABLED = False
-
-# Sigmoid scale for edge -> p_over
-SIGMOID_SCALE = 0.7
 
 # Pitcher blacklist (Session 443 base + Session 444 + Session 447 replay additions)
 PITCHER_BLACKLIST = frozenset([
@@ -193,6 +195,13 @@ def parse_args():
                        help="CatBoost iterations (default: 500)")
     parser.add_argument("--l2-reg", type=float, default=10.0,
                        help="CatBoost l2_leaf_reg (default: 10.0, Session 459 winner)")
+    # A4 walk-forward: Poisson vs RMSE A/B (Session 3 of MLB roadmap)
+    parser.add_argument("--loss-function", type=str, default="RMSE",
+                       choices=["RMSE", "Poisson", "Quantile:alpha=0.5"],
+                       help="CatBoost loss function (default: RMSE). Poisson "
+                            "models K as integer-valued — A4 walk-forward dev.")
+    parser.add_argument("--output-tag", type=str, default="",
+                       help="Suffix appended to results dir name (e.g. 'poisson')")
     return parser.parse_args()
 
 
@@ -380,8 +389,13 @@ def load_data(client: bigquery.Client, earliest_date: str = "2024-01-01") -> pd.
 
 def train_regressor(X_train: pd.DataFrame, y_train: pd.Series, seed: int = 42,
                     depth: int = 5, learning_rate: float = 0.015,
-                    iterations: int = 500, l2_leaf_reg: float = 3):
-    """Train CatBoost Regressor with production config."""
+                    iterations: int = 500, l2_leaf_reg: float = 3,
+                    loss_function: str = 'RMSE'):
+    """Train CatBoost Regressor with production config.
+
+    `loss_function` defaults to 'RMSE' (production behavior). Set to 'Poisson'
+    to model K count as integer-valued — used by A4 walk-forward A/B.
+    """
     from catboost import CatBoostRegressor
 
     model = CatBoostRegressor(
@@ -391,7 +405,7 @@ def train_regressor(X_train: pd.DataFrame, y_train: pd.Series, seed: int = 42,
         l2_leaf_reg=l2_leaf_reg,
         subsample=0.8,
         random_seed=seed,
-        loss_function='RMSE',
+        loss_function=loss_function,
         verbose=0,
     )
     model.fit(X_train, y_train)
@@ -1014,6 +1028,7 @@ def run_replay(df: pd.DataFrame, feature_cols: List[str],
     model_inventory = []
 
     current_model = None
+    current_blend_weight = 1.0  # Stage 1.1 model-market blend; refit each retrain
     last_train_date = None
     model_version = 0
 
@@ -1063,11 +1078,22 @@ def run_replay(df: pd.DataFrame, feature_cols: List[str],
                     X_train, y_train, seed=args.seed,
                     depth=args.depth, learning_rate=args.lr,
                     iterations=args.iters, l2_leaf_reg=args.l2_reg,
+                    loss_function=args.loss_function,
                 )
                 last_train_date = game_date
                 model_version += 1
 
-                # Validation: holdout last 14 days of training window
+                # Stage 1.1 blend: fit w on a nested holdout (leak-free temp model).
+                current_blend_weight, _blend_info = fit_w_nested_holdout(
+                    train_df, feature_cols,
+                    lambda X, y: train_regressor(
+                        X, y, seed=args.seed, depth=args.depth,
+                        learning_rate=args.lr, iterations=args.iters,
+                        l2_leaf_reg=args.l2_reg,
+                        loss_function=args.loss_function),
+                )
+
+                # In-sample MAE on the training-window tail (display only — model trained on it).
                 val_start = game_date - pd.Timedelta(days=14)
                 val_mask = (train_df['game_date'] >= val_start)
                 if val_mask.sum() >= 10:
@@ -1085,6 +1111,7 @@ def run_replay(df: pd.DataFrame, feature_cols: List[str],
                 retrain_entry = {
                     'game_date': str(game_date.date()),
                     'model_version': model_version,
+                    'blend_weight': current_blend_weight,
                     'train_samples': len(X_train),
                     'train_start': str(train_start.date()),
                     'train_end': str((game_date - pd.Timedelta(days=1)).date()),
@@ -1131,12 +1158,16 @@ def run_replay(df: pd.DataFrame, feature_cols: List[str],
 
         for idx in range(len(test_df)):
             row = test_df.iloc[idx]
-            pred_k = float(predicted_k[idx])
+            raw_pred_k = float(predicted_k[idx])
             line = float(row['over_line'])
             actual = float(row['actual_value'])
+            # Stage 1.1 blend: downstream edge/p_over/signals all use the blended K
+            # (matches catboost_v2_regressor_predictor). w=1.0 -> unchanged.
+            pred_k = (current_blend_weight * raw_pred_k
+                      + (1.0 - current_blend_weight) * line)
             edge = pred_k - line
             recommendation = 'OVER' if edge > 0 else 'UNDER'
-            p_over = 1.0 / (1.0 + math.exp(-edge * SIGMOID_SCALE))
+            p_over = poisson_p_over(line, pred_k)
             pitcher_lookup = str(row.get('player_lookup', ''))
 
             # Track all predictions
@@ -1153,6 +1184,7 @@ def run_replay(df: pd.DataFrame, feature_cols: List[str],
                 'edge': round(edge, 2),
                 'recommendation': recommendation,
                 'p_over': round(p_over, 4),
+                'blend_weight': round(current_blend_weight, 4),
                 'correct': int((recommendation == 'OVER' and actual > line) or
                               (recommendation == 'UNDER' and actual <= line)),
                 'model_version': model_version,
@@ -1791,6 +1823,9 @@ def main():
 
     # Save results
     output_dir = Path(args.output_dir)
+    if args.output_tag:
+        # Append tag as suffix to enable A/B comparison without overwriting
+        output_dir = output_dir.with_name(f"{output_dir.name}_{args.output_tag}")
     save_results(results, output_dir)
 
 

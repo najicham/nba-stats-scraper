@@ -104,7 +104,8 @@ HOLDOUT_DAYS = 14  # Last N days of training window used as validation
 # w is fit per training window by fit_blend_weight() and stored in metadata;
 # the predictor reads it back and applies `blended = w*model + (1-w)*line`.
 BLEND_WEIGHT_FLOOR = 0.3
-MIN_BLEND_FIT_N = 30  # Below this holdout N, skip the fit and default w=1.0
+MIN_BLEND_FIT_N = 30  # Below this inner-slice N, skip the fit and default w=1.0
+BLEND_FIT_DAYS = 14   # Inner holdout (carved from train_df tail) used to fit w
 
 
 def parse_args():
@@ -472,48 +473,101 @@ def evaluate_model(model: CatBoostRegressor, val_df: pd.DataFrame,
     return metrics
 
 
-def fit_blend_weight(model: CatBoostRegressor, val_df: pd.DataFrame,
-                     feature_cols: list) -> dict:
-    """Fit the model-market blend weight w: blended = w*model + (1-w)*line.
+def _grid_search_blend_weight(pred: np.ndarray, line: np.ndarray,
+                              actual: np.ndarray) -> tuple:
+    """Grid-search w in [BLEND_WEIGHT_FLOOR, 1.0] minimising blended MAE.
 
-    Bates-Granger combination: the model MAE (~1.83) is near-equal to the market
-    line MAE (~1.85) and they make decorrelated errors, so a convex blend
-    provably lowers error. w is chosen to minimise holdout MAE over a
-    [BLEND_WEIGHT_FLOOR, 1.0] grid — a grid search, not the closed-form MSE
-    solution, because the project's validation gate is MAE (L1).
-
-    Fitted on the holdout, which is genuinely out-of-sample: the model trained
-    only on train_df, so its val_df predictions are not memorised. One scalar
-    over ~150-300 starts cannot meaningfully overfit. The predictor reads the
-    resulting `blend_weight` from model metadata.
+    Iterates w high->low so ties resolve toward w=1.0 (less edge shrink) — the
+    conservative choice when the MAE surface is flat near the optimum.
     """
-    n = len(val_df)
-    if n < MIN_BLEND_FIT_N:
-        print(f"\n  Blend weight: holdout N={n} < {MIN_BLEND_FIT_N} — too small "
-              f"to fit; defaulting w=1.0 (no blend)")
-        return {'blend_weight': 1.0, 'fit_n': n, 'fit_skipped': 'holdout_too_small'}
-
-    X_val = prepare_features(val_df, feature_cols)
-    pred = np.asarray(model.predict(X_val), dtype=float)
-    line = val_df['over_line'].astype(float).values
-    actual = val_df['actual_value'].astype(float).values
-
     best_w, best_mae = 1.0, float('inf')
-    for step in range(int(BLEND_WEIGHT_FLOOR * 100), 101):
+    for step in range(100, int(BLEND_WEIGHT_FLOOR * 100) - 1, -1):
         w = step / 100.0
         mae = float(np.mean(np.abs((w * pred + (1.0 - w) * line) - actual)))
         if mae < best_mae:
             best_mae, best_w = mae, w
+    return best_w, best_mae
 
-    model_mae = float(np.mean(np.abs(pred - actual)))
-    line_mae = float(np.mean(np.abs(line - actual)))
+
+def fit_w_nested_holdout(train_df: pd.DataFrame, feature_cols: list,
+                         train_fn) -> tuple:
+    """Grid-search the model-market blend weight w on a nested holdout.
+
+    Carves the last BLEND_FIT_DAYS of train_df as an inner holdout, trains a
+    temp model on the remainder via `train_fn(X, y) -> model`, and grid-searches
+    w to minimise blended MAE on the inner holdout — out-of-sample for the temp
+    model, so w is never fit to memorised predictions. `train_fn` is supplied by
+    the caller so the temp model's hyperparameters match the model w will be
+    applied to. Returns (w rounded to 0.01, detail). Single source of truth for
+    w-fitting, shared by the production trainer and the walk-forward replay.
+    """
+    max_train_date = train_df['game_date'].max()
+    blend_cutoff = max_train_date - pd.Timedelta(days=BLEND_FIT_DAYS)
+    inner_train_df = train_df[train_df['game_date'] <= blend_cutoff]
+    blend_fit_df = train_df[train_df['game_date'] > blend_cutoff]
+
+    if len(blend_fit_df) < MIN_BLEND_FIT_N or len(inner_train_df) < 50:
+        return 1.0, {'blend_fit_n': len(blend_fit_df),
+                     'fit_skipped': 'holdout_too_small'}
+
+    temp_model = train_fn(
+        prepare_features(inner_train_df, feature_cols),
+        inner_train_df['actual_value'].astype(float),
+    )
+    inner_pred = np.asarray(
+        temp_model.predict(prepare_features(blend_fit_df, feature_cols)),
+        dtype=float)
+    best_w, best_inner_mae = _grid_search_blend_weight(
+        inner_pred,
+        blend_fit_df['over_line'].astype(float).values,
+        blend_fit_df['actual_value'].astype(float).values,
+    )
+    return round(best_w, 2), {
+        'fit_method': 'nested_holdout',
+        'blend_fit_n': len(blend_fit_df),
+        'blend_fit_mae': round(best_inner_mae, 4),
+    }
+
+
+def fit_blend_weight(model: CatBoostRegressor, train_df: pd.DataFrame,
+                     val_df: pd.DataFrame, feature_cols: list,
+                     loss_function: str = None) -> dict:
+    """Fit w (nested holdout) and report its honest out-of-sample gain on val_df.
+
+    blended = w*model + (1-w)*line. w is grid-searched by fit_w_nested_holdout
+    on a temp model that never saw the inner slice; the gain is then measured on
+    val_df — which neither that temp model nor w-fitting touched — so
+    `mae_improvement_oos` is honest. The caller applies w to the production
+    `model` (trained on full train_df); w transfers because it depends on the
+    model/market error-variance ratio, stable across the extra BLEND_FIT_DAYS
+    of training data.
+    """
+    best_w, fit_detail = fit_w_nested_holdout(
+        train_df, feature_cols,
+        lambda X, y: train_model(X, y, loss_function=loss_function),
+    )
+    if 'fit_skipped' in fit_detail:
+        print(f"\n  Blend weight: inner holdout too small "
+              f"({fit_detail['fit_skipped']}) — defaulting w=1.0 (no blend)")
+        return {'blend_weight': 1.0, **fit_detail}
+
+    val_pred = np.asarray(
+        model.predict(prepare_features(val_df, feature_cols)), dtype=float)
+    val_line = val_df['over_line'].astype(float).values
+    val_actual = val_df['actual_value'].astype(float).values
+    model_val_mae = float(np.mean(np.abs(val_pred - val_actual)))
+    line_val_mae = float(np.mean(np.abs(val_line - val_actual)))
+    blended_val_mae = float(np.mean(np.abs(
+        (best_w * val_pred + (1.0 - best_w) * val_line) - val_actual)))
+
     return {
-        'blend_weight': round(best_w, 2),
-        'blended_holdout_mae': round(best_mae, 4),
-        'model_only_holdout_mae': round(model_mae, 4),
-        'line_only_holdout_mae': round(line_mae, 4),
-        'mae_improvement_vs_model': round(model_mae - best_mae, 4),
-        'fit_n': n,
+        'blend_weight': best_w,
+        **fit_detail,
+        'val_n': len(val_df),
+        'model_only_val_mae': round(model_val_mae, 4),
+        'line_only_val_mae': round(line_val_mae, 4),
+        'blended_val_mae': round(blended_val_mae, 4),
+        'mae_improvement_oos': round(model_val_mae - blended_val_mae, 4),
     }
 
 
@@ -619,15 +673,18 @@ def print_summary(metrics: dict, gates: dict, blend_info: dict,
 
     print(f"\n  --- Model-Market Blend (Stage 1.1) ---")
     print(f"  Blend weight w: {blend_info['blend_weight']:.2f} "
-          f"(blended = w*model + (1-w)*line; fit N={blend_info['fit_n']})")
+          f"(blended = w*model + (1-w)*line)")
     if 'fit_skipped' in blend_info:
         print(f"  Fit skipped:    {blend_info['fit_skipped']} — w defaulted to 1.0")
     else:
-        print(f"  Holdout MAE:    model {blend_info['model_only_holdout_mae']:.4f} K | "
-              f"line {blend_info['line_only_holdout_mae']:.4f} K | "
-              f"blended {blend_info['blended_holdout_mae']:.4f} K")
-        print(f"  MAE gain:       {blend_info['mae_improvement_vs_model']:+.4f} K "
-              f"vs model-only")
+        print(f"  Fit:            w grid-searched on a {blend_info['blend_fit_n']}-start "
+              f"inner holdout (nested — separate from the governance set)")
+        print(f"  Honest gain (val N={blend_info['val_n']}, w NOT fit here):")
+        print(f"    MAE:          model {blend_info['model_only_val_mae']:.4f} K | "
+              f"line {blend_info['line_only_val_mae']:.4f} K | "
+              f"blended {blend_info['blended_val_mae']:.4f} K")
+        print(f"    Improvement:  {blend_info['mae_improvement_oos']:+.4f} K "
+              f"out-of-sample vs model-only")
 
     print(f"\n  --- Governance Gates ---")
     all_passed = gates.get('all_passed', False)
@@ -757,7 +814,8 @@ def main():
     # ------------------------------------------------------------------
     # 7b. Fit model-market blend weight (Stage 1.1)
     # ------------------------------------------------------------------
-    blend_info = fit_blend_weight(model, val_df, feature_cols)
+    blend_info = fit_blend_weight(model, train_df, val_df, feature_cols,
+                                  loss_function=loss_fn_override)
 
     # ------------------------------------------------------------------
     # 8. Feature importance
