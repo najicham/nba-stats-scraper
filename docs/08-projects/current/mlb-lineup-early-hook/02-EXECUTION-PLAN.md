@@ -1,116 +1,118 @@
-# MLB Strikeout Project — Execution Plan
+# MLB Pitcher-Props Project — Execution Plan
 
-**Created:** 2026-05-20
-**Status:** Approved — build in progress.
-**The single ordered checklist.** Detail lives in `00-PROJECT-SPEC.md` (model) and
-`01-DISCOVERY-HARNESS-SPEC.md` (discovery harness). This doc is "what to do next."
+**Created:** 2026-05-20 · **Rewritten:** 2026-05-21 (post-validation strategic pivot).
+**Status:** Strategic pivot — the founding thesis was refuted by a leak-free validation.
+
+This doc is "what to do next." The old machinery/features plan and the specs
+`00-PROJECT-SPEC.md` / `01-DISCOVERY-HARNESS-SPEC.md` are **superseded** — see "Retired".
 
 ---
 
 ## Where we are (2026-05-21)
 
-- **Phase 0 — DONE + VERIFIED.** MLB lineup capture was broken all of 2026 (night-game
-  coverage ~0%, vs 100% in 2024/25). Fixed: two new scraper schedulers
-  (`mlb-lineups-afternoon` 4pm ET, `mlb-lineups-overnight` 3am ET) + a dedup-guard fix
-  (`SKIP_DEDUPLICATION` on `MlbLineupsProcessor`, commit `eb056db4`). Verified end-to-end.
-- **Plan — DONE.** Two specs, four review rounds (8 + 15 + 25 + 25 agents). Core
-  conclusion: the model already matches the market (MAE 1.83 vs 1.85); the **betting
-  machinery** leaks the value (fake constant-sigmoid probability, selection layer buys
-  losers at ranks 4–5, CLV unmeasurable). Fix the machinery first, add features second.
-- **Build — IN PROGRESS.** `mlb_lineups` registered in `expected_outputs_planner`
-  (`b03b228d`); `mlb_reference.pitcher_handedness` table built. **Stage 1.1 built +
-  committed.** **Stage 1.4 framework built + RUN 1 done (2026-05-21)** — a 15-agent
-  review caught a critical FanGraphs look-ahead leak (fixed: prior-season join across
-  9 files + a `pitcher_game_summary` backfill) and that the replay harness still
-  measured the pre-Stage-1.1 system; harness rewired leak-free. First 2025 backtest:
-  the Poisson `p_over` is a *wash* vs the old sigmoid, and the model-market blend is
-  not worth activating — a 20-run confirmation sweep (2 seasons × 5 seeds)
-  verified both, seed variance near-zero. 7 commits, **none pushed**.
+A full leak-free validation of the pitcher-strikeout system is complete. It overturned
+the project's founding thesis.
+
+- **Phase 0 — DONE.** MLB lineup capture (broken all of 2026, ~0% night-game coverage)
+  fixed and verified — `mlb-lineups-afternoon`/`-overnight` schedulers + a dedup-guard
+  fix (`eb056db4`).
+- **A critical look-ahead leak was found and fixed.** `fangraphs_pitcher_season_stats`
+  held only post-season snapshots; a same-season join leaked completed-season FIP/swstr/
+  csw into mid-season games — ~23% of model feature importance. Fixed: prior-season join
+  across 9 files + a `pitcher_game_summary` backfill (`a490ddc2`, `e1c7a667`).
+- **A leak-free validation harness was built** — `season_replay.py` (rewired) +
+  `calibration_report.py`. This is the project's durable asset.
+- **The validation verdict (2 seasons × 5 seeds, 20-agent reviewed):**
+  - The de-leaked model has **no real edge over the market** — 2024 model MAE 1.787 is
+    *worse* than the line (1.763); 2025 barely wins. The handoff's "model matches market
+    1.83 vs 1.85" was the *leaked* model.
+  - The betting machinery has **no profit leak** — Poisson `p_over` ≈ the old sigmoid,
+    the model-market blend hurts, signal-rescue is marginal, per-signal pruning yields
+    nothing, UNDER needs a build with no evidence it pays.
+  - The backtest's +3–7% ROI is **optimistic** — it used different-book aggregated odds
+    and a look-ahead `innings_pitched≥3` filter. Realistic ≈ breakeven.
+- **10 commits, none pushed.**
+
+## What changed — the strategic pivot
+
+The founding thesis ("the model matches the market; the betting machinery leaks the
+value; fix the machinery, add features second") was **built on the leaked model** and is
+**refuted**. The real finding:
+
+> **You cannot out-predict an efficient market with public data.** The model ≈ the
+> market because both use the same public stats (FanGraphs, Statcast, box scores).
+> Starter-strikeout props are a heavily-modeled, efficient market. Better features,
+> probability, or machinery can only *harvest* an edge — they cannot *create* one.
+
+The project pivots from **out-modeling the market** to **finding an edge that can
+structurally exist**, judged by the only honest scoreboard: **closing-line value (CLV)**.
 
 ---
 
-## The build sequence
+## The new sequence
 
-Legend: `[x]` done · `[~]` in progress · `[ ]` todo.
+Legend: `[x]` done · `[~]` in progress · `[ ]` todo. Critical path: **A → B → C**.
 
-### Wave 0 — no-regret prerequisites (no decision needed; build now)
+### Phase A — Correctness (gate before the system places further bets)
 
 | | Item | Effort | Notes |
 |--|------|--------|-------|
-| `[x]` | Register `mlb_lineups` in `expected_outputs_planner` | — | `b03b228d` (pushed) |
-| `[x]` | Build `mlb_reference.pitcher_handedness` | — | 1,113 pitchers, L/R/S |
-| `[ ]` | Deploy `mlb_freshness_checker` (daily scheduler; extend thresholds to `mlb_game_feed_pitches`, `statcast_pitcher_daily`) | Low | exists, never scheduled |
-| `[ ]` | D1 — repoint code refs `mlb_game_feed` → `mlb_game_feed_pitches` | Low | `mlb_game_feed` is empty |
-| `[ ]` | Rename project folder → `mlb-strikeout-model` | Trivial | cosmetic; leave a stub |
+| `[x]` | Leak fix + leak-free validation harness | — | `a490ddc2`,`8b074f63`,`13d0185f`,`e1c7a667` |
+| `[ ]` | Push the 10 commits, then immediately retrain leak-free + shadow + promote | Med | The live model trains on leaked data — a real bug. Pushing the leak-fix code alone leaves a leak-trained model serving de-leaked features, so the retrain is **mandatory and paired**. It produces a no-edge model — a correctness fix, not a profit fix. Skip only if the project is being wound down. |
 
-### Procurement — decide early (unblocks Stage 1.2 + harness book features)
+### Phase B — Build the instrument: CLV (gates everything after)
 
-| | Item | Cost | Notes |
+The project has never measured closing-line value. Every ROI number to date — including
+the +3–7% — is against aggregated/opening odds and means little. **Beating the closing
+line is the only reliable evidence of edge.** Until CLV exists, no strategy can be judged.
+
+| | Item | Cost/Effort | Notes |
 |--|------|------|-------|
-| `[ ]` | **Buy an odds feed** — SportsGameOdds or The Odds API (real closing lines, finer snapshots) | ~$99–200/mo | Replaces the closing-line-capture build; unblocks CLV. Needs an owner purchase decision. |
-| `[ ]` | Confirm free sources: FanGraphs Stuff+ via `pybaseball`; Open-Meteo historical weather | $0 | Kills the Stuff+-proxy build (Stage 2-I) |
+| `[ ]` | **Buy a real odds feed** — SportsGameOdds / The Odds API (true open + close, finer snapshots) | ~$99–200/mo | Now the critical path, not a parked item. Owner purchase decision. |
+| `[ ]` | Wire `clv_*` capture into the pick pipeline; CLV report per pick / per strategy | Med | CLV = (closing line − line bet). Make it the north-star metric, above backtest ROI. |
+| `[ ]` | Backfill CLV on existing 2025 picks where closing data is obtainable | Low–Med | First honest read on whether the current system has *any* edge. |
 
-### Stage 1 — fix the betting machinery (THE CORE WORK)
+### Phase C — Pursue a real edge (validated leak-free **and** by CLV)
 
-| | Item | Effort | Gating |
-|--|------|--------|--------|
-| `[~]` | **1.1 — Poisson `P(over)` + model-market blend** | Med | **Built + committed; Stage-1.4-evaluated 2026-05-21.** Predictor emits `p_over = 1 − PoissonCDF(floor(line), λ)` and blends `λ` with the market line (`w` fit by `fit_blend_weight()`). **RUN-1 verdict:** the Poisson `p_over` is a *wash* vs the old sigmoid — keep it (principled), but it is **not** the "pure improvement" first claimed; re-examine the exporter `probability_cap` (tuned to the sigmoid). The **blend is not worth activating as fit-to-MAE** (0.6% MAE gain, hurts calibration, no betting win) — keep `w=1.0`, or refit `w` to ROI and require a betting win. The earlier "Poisson-loss retrain that activates the blend" plan is **superseded** — confirmed by a 20-run sweep (seed variance near-zero). Note: de-leaked, the model has **no real edge over the market** (2024 model MAE 1.787 > line 1.763) — betting value is the selection layer, not the model. |
-| `[~]` | 1.4 — validation framework — calibration harness + leak-free replay built; RUN 1 + 20-run confirmation sweep done | Low–Med | gates everything after |
-| `[ ]` | 1.3 — selection/staking fix (replace fixed top-5 with a quality gate; ranks 4–5 lose money today) | Low–Med | after 1.4 |
-| `[ ]` | 1.2 — CLV measurement (populate `clv_*` from the bought feed) | Med | after the feed lands; **not on the critical path** |
-| `[ ]` | 1.5 — monitoring (feature-coverage alerts; MLB Brier emitter) | Low–Med | with the above |
+Two structural sources of edge. Pursue C1 first — the infrastructure already exists.
 
-**First shippable result ≈ 1 week** (Wave 0 + Stage 1.1). Stage 1 complete ≈ 3–3.5 weeks.
+| | Item | Effort | Rationale |
+|--|------|--------|-----------|
+| `[ ]` | **C1 — Information-speed edge (the lineup early-hook).** The project is named for this. Quantify: when confirmed lineups / scratches / weather land *before* the book moves the line, is there CLV in that window? If so, bet it. | Med | A genuine, repeatable, structural edge — and Phase 0 already built the lineup-capture infra. This is the most promising thread. |
+| `[ ]` | **C2 — Softer markets.** Backtest `outs`/innings pitcher props and batter props on the leak-free harness — less-modeled than starter Ks. Batter-prop scrapers were stopped 2025-09-28 and need re-enabling. | Med–High | Edge lives in market *inefficiency*; starter Ks are efficient, these may not be. |
 
-### Stage 2 — strikeout features (only after Stage 1; each wave validated independently)
+**The leak-free harness gates everything** — no strategy is believed until it validates
+leak-free *and* shows positive CLV.
 
-| | Wave | Features | Effort |
-|--|------|----------|--------|
-| `[ ]` | Wave 1 | A (opponent K% vs handedness — dispersion variant), C (velocity drop ×2), D (line movement) | Med |
-| `[ ]` | Wave 2 | B (2-strike putaway), E (times-through-order), H (CSW%) — shared PA pipeline (`pitch_pa_facts`) | Med–High |
-| `[ ]` | Wave 3 | F (umpire zone — needs D5 morning scrape), I (Stuff+ — *sourced free*, not built) | Med |
-| `[ ]` | Any | G (opener flag + OVER suppression), J (park/weather), K (game script — needs D7) | Low–Med |
+### The stop criterion
 
-Each feature must beat the prior MLB dead-ends baseline (`mlb-2026-season-strategy/05-DEAD-ENDS.md`).
-
-### Discovery harness — MVH (after Stage 1 produces a calibrated model)
-
-| | Item | Effort |
-|--|------|--------|
-| `[ ]` | MVH = one script `bin/mlb/discover.py` — candidate registry + leak-safe backfill + multi-seed replay scorer + self-test | ~1–1.5 wk |
-| `[ ]` | `pitch_pa_facts` cached SQL view (also feeds Stage 2 Wave 2) | Low–Med |
-
-Deferred until the MVH yields one validated winner: `/mlb-discover` skill, book-pattern
-mining, LLM-auto-hypothesis, combo discovery. **Similarity engine — cut entirely**
-(K-rate is ~99.5% multiplicatively separable).
-
-### Stage 3 — per-batter lineup model — effectively RETIRED
-
-The similarity-engine cut removed its mechanistic rationale. Revisit only on contrary
-evidence from Stage 2's dispersion feature.
+If, after the odds feed lands and CLV is measured honestly, there is **no CLV on any
+strategy or subset**, that is decisive evidence this is not a beatable game and
+**stopping is the correct decision.** Measuring CLV exists precisely to make that call on
+data rather than grinding indefinitely.
 
 ---
 
-## Critical path & risks
+## Retired / superseded
 
-- **Critical path:** Wave 0 → Stage 1.1 → Stage 1.4 → Stage 1.3 → (Stage 2 / MVH).
-- **First ship is small and stops bleeding:** Stage 1.1 fixes the non-monotonic
-  edge→hit-rate bug; Stage 1.3 stops the system buying sub-coin-flip picks.
-- **Biggest risk:** treating planning as progress. The plan is well-vetted across 4
-  rounds — further review has hit diminishing returns. Build.
-- **Deploy discipline:** Stage 2 retrains are a feature-contract change — upload +
-  register + shadow the new model artifact in GCS *first*, then merge the worker
-  `FEATURE_COLS` change (the MLB worker auto-deploys).
+- **"Fix the betting machinery" (old Stage 1.1–1.5)** — done and validated; no profit
+  leak. Poisson `p_over` / the blend ship inert; **do not activate the blend.** The
+  machinery is roughly fine — it is not the opportunity.
+- **"Strikeout features" (old Stage 2) + the discovery-harness MVH** — demoted. Adding
+  *public* features to a model on an efficient market cannot create edge. (An
+  information-*speed* "feature" is different — that is C1.) Revisit only if a CLV-positive
+  strategy emerges that a feature could amplify.
+- **Stage 3 per-batter model** — retired (unchanged).
+- A point-in-time in-season FanGraphs feed was considered and rejected: point-in-time
+  *public* stats are already priced into the line.
 
----
+## Risks & notes
 
-## Adjacent opportunities (parked — revisit after Stage 1 ships)
-
-- **Pitcher props beyond strikeouts** — the `outs`/innings market is nearly free (deepest
-  books, gradable today) and ~triples bettable edges/day. Reframe to "pitcher props."
-- **Batter props** — 5–8× more events/day, likely softer; needs the batter-prop scrapers
-  re-enabled for 2026 (stopped 2025-09-28).
-- **Live / in-game betting** — softer markets; major new build. Cheap step now: schedule
-  the dormant `mlb_live_box_scores` scraper to start the data clock.
-- **Pre-2025 pitch-level backfill** (`pybaseball`) — unblocks cross-season validation of
-  the entire pitch-level feature catalog. High leverage for the harness.
+- **The biggest risk is no longer "planning as progress" — it is grinding the machinery.**
+  Every machinery/signal lever has been tested and is empty. Do not keep poking it.
+- **C1/C2 may also come up breakeven.** That is an acceptable, informative outcome — CLV
+  turns it into a clean decision instead of an endless one.
+- **Deploy discipline:** the Phase A retrain is a real model swap — upload + register +
+  shadow in GCS first; the MLB worker auto-deploys.
+- **Housekeeping (no-regret, low priority):** deploy `mlb_freshness_checker`; repoint code
+  refs `mlb_game_feed` → `mlb_game_feed_pitches` (the former is empty).
