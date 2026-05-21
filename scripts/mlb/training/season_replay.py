@@ -323,7 +323,8 @@ def load_data(client: bigquery.Client, earliest_date: str = "2024-01-01") -> pd.
     ) fg
         ON LOWER(REGEXP_REPLACE(NORMALIZE(fg.player_lookup, NFD), r'[\\W_]+', ''))
             = LOWER(REGEXP_REPLACE(NORMALIZE(pgs.player_lookup, NFD), r'[\\W_]+', ''))
-        AND fg.season_year = EXTRACT(YEAR FROM pgs.game_date)
+        -- Prior season (year-1): FanGraphs only has post-season snapshots; same-season join leaks future stats.
+        AND fg.season_year = EXTRACT(YEAR FROM pgs.game_date) - 1
     -- Session 460: Weather data for cold_weather_k_over signal
     LEFT JOIN (
         SELECT team_abbr, scrape_date, temperature_f, is_dome,

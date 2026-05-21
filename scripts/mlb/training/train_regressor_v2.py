@@ -284,7 +284,8 @@ def load_data(client: bigquery.Client, training_start: pd.Timestamp,
     ) fg
         ON LOWER(REGEXP_REPLACE(NORMALIZE(fg.player_lookup, NFD), r'[\\W_]+', ''))
             = LOWER(REGEXP_REPLACE(NORMALIZE(pgs.player_lookup, NFD), r'[\\W_]+', ''))
-        AND fg.season_year = EXTRACT(YEAR FROM pgs.game_date)
+        -- Prior season (year-1): FanGraphs only has post-season snapshots; same-season join leaks future stats.
+        AND fg.season_year = EXTRACT(YEAR FROM pgs.game_date) - 1
     WHERE bp.market_id = 285
       AND bp.actual_value IS NOT NULL
       AND bp.actual_value > 0            -- exclude pre-game scrape rows (actual=0 until grading backfill runs)

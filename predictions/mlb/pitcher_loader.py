@@ -546,7 +546,8 @@ def load_batch_features(
     ) fg
         ON LOWER(REGEXP_REPLACE(NORMALIZE(fg.player_lookup, NFD), r'[\\W_]+', ''))
             = LOWER(REGEXP_REPLACE(NORMALIZE(lf.player_lookup, NFD), r'[\\W_]+', ''))
-        AND fg.season_year = EXTRACT(YEAR FROM @game_date)
+        -- Prior season (year-1): FanGraphs only has post-season snapshots; same-season join leaks future stats.
+        AND fg.season_year = EXTRACT(YEAR FROM @game_date) - 1
     WHERE lf.rn = 1
       -- Session 519: Only return pitchers with betting lines. Without this,
       -- ~292 pitchers per day get BLOCKED predictions written to pitcher_strikeouts

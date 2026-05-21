@@ -190,7 +190,8 @@ def load_pitchers_for_date(client: bigquery.Client, game_date: date) -> List[Dic
             csw_pct as season_csw_pct,
             o_swing_pct as season_chase_pct  -- chase = swing at pitches outside zone
         FROM `{project}.mlb_raw.fangraphs_pitcher_season_stats`
-        WHERE season_year = EXTRACT(YEAR FROM @game_date)
+        -- Prior season (year-1): FanGraphs only has post-season snapshots; same-season filter leaks future stats.
+        WHERE season_year = EXTRACT(YEAR FROM @game_date) - 1
     )
 
     SELECT

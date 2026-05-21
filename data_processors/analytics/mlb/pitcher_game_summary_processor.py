@@ -234,7 +234,8 @@ class MlbPitcherGameSummaryProcessor(CircuitBreakerMixin, AnalyticsProcessorBase
 
         -- FanGraphs season stats for SwStr% (leading indicator)
         fangraphs_stats AS (
-            SELECT DISTINCT
+            -- Prior-season FanGraphs: final snapshot per (player, season), joined to next season's games below (leak-free).
+            SELECT
                 player_lookup,
                 season_year,
                 swstr_pct,
@@ -243,10 +244,10 @@ class MlbPitcherGameSummaryProcessor(CircuitBreakerMixin, AnalyticsProcessorBase
                 k_pct as fg_k_pct,
                 contact_pct
             FROM `{self.project_id}.mlb_raw.fangraphs_pitcher_season_stats`
-            WHERE snapshot_date = (
-                SELECT MAX(snapshot_date)
-                FROM `{self.project_id}.mlb_raw.fangraphs_pitcher_season_stats`
-            )
+            QUALIFY ROW_NUMBER() OVER (
+                PARTITION BY player_lookup, season_year
+                ORDER BY snapshot_date DESC
+            ) = 1
         ),
 
         rolling_stats AS (
@@ -411,7 +412,7 @@ class MlbPitcherGameSummaryProcessor(CircuitBreakerMixin, AnalyticsProcessorBase
             FROM pitcher_history h
             LEFT JOIN fangraphs_stats fg
                 ON REPLACE(h.player_lookup, '_', '') = fg.player_lookup
-                AND h.season_year = fg.season_year
+                AND fg.season_year = h.season_year - 1  -- prior season (leak-free)
             LEFT JOIN team_rolling_k_rates tkr
                 ON tkr.tkr_game_date = h.game_date
                 AND tkr.tkr_team_abbr = h.opponent_team_abbr

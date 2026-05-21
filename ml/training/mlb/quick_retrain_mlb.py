@@ -202,7 +202,8 @@ def load_training_data(client: bigquery.Client) -> pd.DataFrame:
     LEFT JOIN `mlb_raw.fangraphs_pitcher_season_stats` fg
         ON LOWER(REGEXP_REPLACE(NORMALIZE(fg.player_lookup, NFD), r'[\\W_]+', ''))
             = LOWER(REGEXP_REPLACE(NORMALIZE(pgs.player_lookup, NFD), r'[\\W_]+', ''))
-        AND fg.season_year = EXTRACT(YEAR FROM pgs.game_date)
+        -- Prior season (year-1): FanGraphs only has post-season snapshots; same-season join leaks future stats.
+        AND fg.season_year = EXTRACT(YEAR FROM pgs.game_date) - 1
     WHERE bp.market_id = 285
       AND bp.actual_value IS NOT NULL
       AND bp.projection_value IS NOT NULL
