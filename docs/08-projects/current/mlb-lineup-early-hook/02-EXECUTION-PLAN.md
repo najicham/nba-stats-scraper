@@ -24,8 +24,8 @@
   9 files + a `pitcher_game_summary` backfill) and that the replay harness still
   measured the pre-Stage-1.1 system; harness rewired leak-free. First 2025 backtest:
   the Poisson `p_over` is a *wash* vs the old sigmoid, and the model-market blend is
-  not worth activating. Multi-seed × multi-season confirmation sweep running. 6
-  commits, **none pushed**.
+  not worth activating — a 20-run confirmation sweep (2 seasons × 5 seeds)
+  verified both, seed variance near-zero. 7 commits, **none pushed**.
 
 ---
 
@@ -54,8 +54,8 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` todo.
 
 | | Item | Effort | Gating |
 |--|------|--------|--------|
-| `[~]` | **1.1 — Poisson `P(over)` + model-market blend** | Med | **Built + committed; Stage-1.4-evaluated 2026-05-21.** Predictor emits `p_over = 1 − PoissonCDF(floor(line), λ)` and blends `λ` with the market line (`w` fit by `fit_blend_weight()`). **RUN-1 verdict:** the Poisson `p_over` is a *wash* vs the old sigmoid — keep it (principled), but it is **not** the "pure improvement" first claimed; re-examine the exporter `probability_cap` (tuned to the sigmoid). The **blend is not worth activating as fit-to-MAE** (0.6% MAE gain, hurts calibration, no betting win) — keep `w=1.0`, or refit `w` to ROI and require a betting win. The earlier "Poisson-loss retrain that activates the blend" plan is **superseded**. Awaiting the multi-seed × multi-season confirmation sweep. |
-| `[~]` | 1.4 — validation framework — calibration harness + leak-free replay built; RUN 1 done; multi-seed × multi-season confirmation sweep running | Low–Med | gates everything after |
+| `[~]` | **1.1 — Poisson `P(over)` + model-market blend** | Med | **Built + committed; Stage-1.4-evaluated 2026-05-21.** Predictor emits `p_over = 1 − PoissonCDF(floor(line), λ)` and blends `λ` with the market line (`w` fit by `fit_blend_weight()`). **RUN-1 verdict:** the Poisson `p_over` is a *wash* vs the old sigmoid — keep it (principled), but it is **not** the "pure improvement" first claimed; re-examine the exporter `probability_cap` (tuned to the sigmoid). The **blend is not worth activating as fit-to-MAE** (0.6% MAE gain, hurts calibration, no betting win) — keep `w=1.0`, or refit `w` to ROI and require a betting win. The earlier "Poisson-loss retrain that activates the blend" plan is **superseded** — confirmed by a 20-run sweep (seed variance near-zero). Note: de-leaked, the model has **no real edge over the market** (2024 model MAE 1.787 > line 1.763) — betting value is the selection layer, not the model. |
+| `[~]` | 1.4 — validation framework — calibration harness + leak-free replay built; RUN 1 + 20-run confirmation sweep done | Low–Med | gates everything after |
 | `[ ]` | 1.3 — selection/staking fix (replace fixed top-5 with a quality gate; ranks 4–5 lose money today) | Low–Med | after 1.4 |
 | `[ ]` | 1.2 — CLV measurement (populate `clv_*` from the bought feed) | Med | after the feed lands; **not on the critical path** |
 | `[ ]` | 1.5 — monitoring (feature-coverage alerts; MLB Brier emitter) | Low–Med | with the above |
