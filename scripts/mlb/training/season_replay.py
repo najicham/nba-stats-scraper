@@ -187,6 +187,9 @@ def parse_args():
                        help="Cap real signal count (e.g. 5 = block rsc>=6). 0=disabled")
     parser.add_argument("--no-rescue", action="store_true",
                        help="Disable all rescue signals (picks must meet edge floor)")
+    parser.add_argument("--rescue-min-edge", type=float, default=0.0,
+                       help="Minimum abs(edge) for a pick to be rescue-eligible; "
+                            "picks below this can never be rescued (default 0.0 = off).")
     parser.add_argument("--max-edge-cap", type=float, default=0.0,
                        help="Override MAX_EDGE cap (e.g. 1.5). 0=use default 2.0")
     # P2 experiments — CatBoost hyperparameters
@@ -1261,6 +1264,10 @@ def run_replay(df: pd.DataFrame, feature_cols: List[str],
                 # No rescue mode?
                 if args.no_rescue:
                     filter_audit['edge_floor'] += 1
+                    continue
+                # Rescue floor — picks below this edge cannot be rescued.
+                if abs(edge) < args.rescue_min_edge:
+                    filter_audit['rescue_min_edge'] += 1
                     continue
                 # Check rescue signals
                 sig_result = evaluate_signals(row, pred_k, edge, recommendation)
