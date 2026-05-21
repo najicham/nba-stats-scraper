@@ -9,8 +9,10 @@ bug), and a pitcher-clustered paired bootstrap on the Brier delta. Prints a
 PASS/FAIL verdict against the Stage 1.4 thresholds.
 
 `p_new` is the `p_over` column the replay recorded (the Poisson tail). `p_old`
-is recomputed as `sigmoid(0.7*edge)` from the same `edge` — so both are scored
-on the identical point estimate and the comparison isolates the p_over function.
+reproduces the pre-Stage-1.1 sigmoid `sigmoid(0.7*raw_edge)` from `raw_pred_k`
+(the pre-blend model output). If `raw_pred_k` is absent the harness falls back
+to the blended `edge` and warns — that flatters the sigmoid, so re-run the
+replay to record `raw_pred_k`.
 
 Usage:
     python scripts/mlb/training/calibration_report.py run_dir/all_predictions.csv [more.csv ...]
@@ -72,7 +74,16 @@ def prepare(df: pd.DataFrame) -> pd.DataFrame:
 
     df['y'] = (df['actual_k'] > df['line']).astype(int)
     df['p_new'] = df['p_over'].clip(0.0, 1.0)
-    df['p_old'] = _sigmoid(SIGMOID_SCALE * df['edge'])
+    # p_old uses the RAW pre-blend edge (the true pre-Stage-1.1 system); the
+    # blended edge is shrunk toward 0, which would flatter the old sigmoid.
+    if 'raw_pred_k' in df.columns:
+        raw_edge = pd.to_numeric(df['raw_pred_k'], errors='coerce') - df['line']
+        df['p_old'] = _sigmoid(SIGMOID_SCALE * raw_edge)
+    else:
+        print("  WARNING: no raw_pred_k column — scoring the old sigmoid on the "
+              "BLENDED edge, which flatters it. Re-run season_replay.py to record "
+              "raw_pred_k for a valid old-vs-new comparison.")
+        df['p_old'] = _sigmoid(SIGMOID_SCALE * df['edge'])
     df.attrs['n_push'] = n_push
     return df
 
@@ -246,6 +257,7 @@ def _build_self_test_frame(n: int = 6000, seed: int = 1) -> pd.DataFrame:
     edge = np.log(p_old / (1.0 - p_old)) / SIGMOID_SCALE  # harness re-derives p_old
     return pd.DataFrame({
         'edge': edge,
+        'raw_pred_k': 5.5 + edge,               # raw_edge == edge (no blend here)
         'p_over': q,
         'line': 5.5,                            # half-point line -> no pushes
         'actual_k': np.where(y == 1, 6.0, 5.0),

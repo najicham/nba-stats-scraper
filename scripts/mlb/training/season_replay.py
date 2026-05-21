@@ -205,6 +205,12 @@ def parse_args():
                             "models K as integer-valued — A4 walk-forward dev.")
     parser.add_argument("--output-tag", type=str, default="",
                        help="Suffix appended to results dir name (e.g. 'poisson')")
+    parser.add_argument("--blend-weight", type=float, default=None,
+                       help="Force a fixed model-market blend w; default None = "
+                            "fit w per retrain via the nested holdout.")
+    parser.add_argument("--no-blend", action="store_true",
+                       help="Disable the blend (w=1.0, pure model); shorthand "
+                            "for --blend-weight 1.0.")
     return parser.parse_args()
 
 
@@ -1034,6 +1040,7 @@ def run_replay(df: pd.DataFrame, feature_cols: List[str],
 
     current_model = None
     current_blend_weight = 1.0  # Stage 1.1 model-market blend; refit each retrain
+    forced_blend_weight = 1.0 if args.no_blend else args.blend_weight
     last_train_date = None
     model_version = 0
 
@@ -1091,15 +1098,18 @@ def run_replay(df: pd.DataFrame, feature_cols: List[str],
                 last_train_date = game_date
                 model_version += 1
 
-                # Stage 1.1 blend: fit w on a nested holdout (leak-free temp model).
-                current_blend_weight, _blend_info = fit_w_nested_holdout(
-                    train_df, feature_cols,
-                    lambda X, y: train_regressor(
-                        X, y, seed=args.seed, depth=args.depth,
-                        learning_rate=args.lr, iterations=args.iters,
-                        l2_leaf_reg=args.l2_reg,
-                        loss_function=args.loss_function),
-                )
+                # Stage 1.1 blend: fixed w if forced on the CLI, else fit per retrain (nested holdout).
+                if forced_blend_weight is not None:
+                    current_blend_weight = forced_blend_weight
+                else:
+                    current_blend_weight, _blend_info = fit_w_nested_holdout(
+                        train_df, feature_cols,
+                        lambda X, y: train_regressor(
+                            X, y, seed=args.seed, depth=args.depth,
+                            learning_rate=args.lr, iterations=args.iters,
+                            l2_leaf_reg=args.l2_reg,
+                            loss_function=args.loss_function),
+                    )
 
                 # In-sample MAE on the training-window tail (display only — model trained on it).
                 val_start = game_date - pd.Timedelta(days=14)
@@ -1187,6 +1197,7 @@ def run_replay(df: pd.DataFrame, feature_cols: List[str],
                 'opponent_team_abbr': str(row.get('opponent_team_abbr', '')),
                 'venue': str(row.get('venue', '')),
                 'predicted_k': round(pred_k, 2),
+                'raw_pred_k': round(raw_pred_k, 4),
                 'actual_k': actual,
                 'line': line,
                 'edge': round(edge, 2),
@@ -1301,6 +1312,7 @@ def run_replay(df: pd.DataFrame, feature_cols: List[str],
                 'opponent_team_abbr': str(row.get('opponent_team_abbr', '')),
                 'venue': str(row.get('venue', '')),
                 'predicted_k': round(pred_k, 2),
+                'raw_pred_k': round(raw_pred_k, 4),
                 'actual_k': actual,
                 'line': line,
                 'edge': round(edge, 2),
