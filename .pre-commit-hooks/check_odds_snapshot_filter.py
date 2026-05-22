@@ -86,8 +86,12 @@ def check_file(path: Path) -> List[Tuple[int, str]]:
     """Return (line_number, message) for each leaky odds-snapshot query."""
     try:
         lines = path.read_text().split("\n")
-    except Exception as e:  # noqa: BLE001
-        return [(0, f"Could not read file: {e}")]
+    except (FileNotFoundError, IsADirectoryError, PermissionError):
+        # Broken symlinks (e.g. dangling shared/ copies) and unreadable
+        # paths are not leaks — just skip them.
+        return []
+    except UnicodeDecodeError:
+        return []
 
     issues: List[Tuple[int, str]] = []
     for idx, line in enumerate(lines):

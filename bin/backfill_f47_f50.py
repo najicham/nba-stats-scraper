@@ -82,6 +82,7 @@ def backfill_f50(client: bigquery.Client, start_date: date, end_date: date, dry_
                 WHERE game_date BETWEEN '{current}' AND '{batch_end}'
                     AND points_line IS NOT NULL
                     AND points_line > 0
+                    AND minutes_before_tipoff >= 0  -- pre-tipoff only; < 0 = in-game snapshot (leak)
             ),
             computed AS (
                 SELECT
@@ -124,6 +125,7 @@ def backfill_f50(client: bigquery.Client, start_date: date, end_date: date, dry_
                     WHERE game_date BETWEEN '{current}' AND '{batch_end}'
                         AND points_line IS NOT NULL
                         AND points_line > 0
+                        AND minutes_before_tipoff >= 0  -- pre-tipoff only; < 0 = in-game snapshot (leak)
                 )
                 SELECT
                     player_lookup,

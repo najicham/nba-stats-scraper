@@ -564,6 +564,7 @@ class AsyncUpcomingPlayerGameContextProcessor(
             FROM `{self.project_id}.nba_raw.odds_api_player_points_props`
             WHERE player_lookup IN UNNEST(@player_lookups)
               AND game_date = @game_date
+              AND minutes_before_tipoff >= 0  -- pre-tipoff only; < 0 = in-game snapshot (leak)
         )
         SELECT
             COALESCE(o.player_lookup, c.player_lookup) as player_lookup,

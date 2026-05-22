@@ -467,6 +467,7 @@ def query_predictions_with_supplements(
           WHERE game_date = @target_date
             AND LOWER(bookmaker) = 'draftkings'
             AND player_lookup IS NOT NULL
+            AND minutes_before_tipoff >= 0  -- pre-tipoff only; < 0 = in-game snapshot (leak)
         )
         WHERE rn_asc = 1 OR rn_desc = 1
         GROUP BY player_lookup
@@ -950,6 +951,7 @@ def query_predictions_with_supplements(
       WHERE game_date = @target_date
         AND player_lookup IS NOT NULL
         AND points_line IS NOT NULL
+        AND minutes_before_tipoff >= 0  -- pre-tipoff only; < 0 = in-game snapshot (leak)
     )
     SELECT
       player_lookup,

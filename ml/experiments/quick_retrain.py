@@ -3425,6 +3425,7 @@ def main():
                 WHERE game_date BETWEEN '{dates['train_start']}' AND '{dates['eval_end']}'
                   AND LOWER(bookmaker) = 'draftkings'
                   AND points_line IS NOT NULL
+                  AND minutes_before_tipoff >= 0  -- pre-tipoff only; < 0 = in-game snapshot (leak)
             )
             WHERE rn_asc = 1 OR rn_desc = 1
             GROUP BY player_lookup, game_date
@@ -3453,6 +3454,7 @@ def main():
               AND LOWER(bookmaker) != 'bovada'
               AND over_price IS NOT NULL
               AND under_price IS NOT NULL
+              AND minutes_before_tipoff >= 0  -- pre-tipoff only; < 0 = in-game snapshot (leak)
         )
         SELECT player_lookup, game_date,
                AVG(over_price - under_price) AS vig_skew,

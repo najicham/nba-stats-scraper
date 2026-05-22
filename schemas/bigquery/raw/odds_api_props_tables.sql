@@ -8,30 +8,30 @@ CREATE TABLE IF NOT EXISTS `nba_raw.odds_api_player_points_props` (
   game_id STRING NOT NULL,           -- "20231024_LAL_DEN"
   odds_api_event_id STRING NOT NULL,
   game_date DATE NOT NULL,
-  game_start_time TIMESTAMP,         
-  
+  game_start_time TIMESTAMP,
+
   -- Teams (abbreviated only)
   home_team_abbr STRING NOT NULL,
   away_team_abbr STRING NOT NULL,
-  
+
   -- Snapshot tracking
   snapshot_timestamp TIMESTAMP NOT NULL,  -- From filename
   snapshot_tag STRING,                    -- "snap-2130"
   capture_timestamp TIMESTAMP,            -- When scraper ran
   minutes_before_tipoff INT64,            -- Calculated: (game_start_time - snapshot_timestamp) in minutes
-  
+
   -- Prop details
   bookmaker STRING NOT NULL,
   player_name STRING NOT NULL,            -- "LeBron James"
   player_lookup STRING,                   -- "lebronjames"
-  
+
   -- Points line
   points_line FLOAT64 NOT NULL,
   over_price FLOAT64,
   over_price_american INT64,
   under_price FLOAT64,
   under_price_american INT64,
-  
+
   -- Metadata
   bookmaker_last_update TIMESTAMP,        -- From API response
   source_file_path STRING,                -- Full GCS path
@@ -51,6 +51,8 @@ OPTIONS(
 );
 
 -- Helpful views for player props
+-- pre-tipoff-exempt: _recent returns all snapshots (no latest-pick) — consumers
+-- that pick latest must add `minutes_before_tipoff >= 0` themselves.
 CREATE OR REPLACE VIEW `nba_raw.odds_api_player_points_props_recent` AS
 SELECT *
 FROM `nba_raw.odds_api_player_points_props`
@@ -65,14 +67,15 @@ WITH ranked_snapshots AS (
     ) as rn
   FROM `nba_raw.odds_api_player_points_props`
   WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+    AND minutes_before_tipoff >= 0  -- pre-tipoff only; < 0 = in-game snapshot (leak)
 )
 SELECT * EXCEPT(rn)
-FROM ranked_snapshots 
+FROM ranked_snapshots
 WHERE rn = 1;
 
 -- View for data source analysis
 CREATE OR REPLACE VIEW `nba_raw.odds_api_player_points_props_source_stats` AS
-SELECT 
+SELECT
   game_date,
   data_source,
   COUNT(*) as row_count,
@@ -95,7 +98,7 @@ WHERE data_source = 'current' OR data_source IS NULL;
 -- Create view for latest props per game
 CREATE OR REPLACE VIEW `nba_raw.odds_api_latest_props` AS
 WITH latest_snapshots AS (
-  SELECT 
+  SELECT
     game_id,
     player_name,
     bookmaker,
@@ -103,23 +106,23 @@ WITH latest_snapshots AS (
   FROM `nba_raw.odds_api_player_points_props`
   GROUP BY game_id, player_name, bookmaker
 )
-SELECT 
+SELECT
   p.*,
   RANK() OVER (
-    PARTITION BY p.game_id, p.player_name 
+    PARTITION BY p.game_id, p.player_name
     ORDER BY p.snapshot_timestamp DESC
   ) as snapshot_rank
 FROM `nba_raw.odds_api_player_points_props` p
 INNER JOIN latest_snapshots l
-  ON p.game_id = l.game_id 
-  AND p.player_name = l.player_name 
+  ON p.game_id = l.game_id
+  AND p.player_name = l.player_name
   AND p.bookmaker = l.bookmaker
   AND p.snapshot_timestamp = l.latest_snapshot;
 
 -- Create view for line movement analysis
 CREATE OR REPLACE VIEW `nba_raw.odds_api_line_movements` AS
 WITH prop_changes AS (
-  SELECT 
+  SELECT
     game_id,
     player_name,
     bookmaker,
@@ -129,25 +132,25 @@ WITH prop_changes AS (
     minutes_before_tipoff,
     snapshot_timestamp,
     LAG(points_line) OVER (
-      PARTITION BY game_id, player_name, bookmaker 
+      PARTITION BY game_id, player_name, bookmaker
       ORDER BY snapshot_timestamp
     ) as prev_line,
     LAG(over_price) OVER (
-      PARTITION BY game_id, player_name, bookmaker 
+      PARTITION BY game_id, player_name, bookmaker
       ORDER BY snapshot_timestamp
     ) as prev_over_price,
     LAG(under_price) OVER (
-      PARTITION BY game_id, player_name, bookmaker 
+      PARTITION BY game_id, player_name, bookmaker
       ORDER BY snapshot_timestamp
     ) as prev_under_price
   FROM `nba_raw.odds_api_player_points_props`
 )
-SELECT 
+SELECT
   *,
   points_line - prev_line as line_change,
   over_price - prev_over_price as over_price_change,
   under_price - prev_under_price as under_price_change,
-  CASE 
+  CASE
     WHEN points_line != prev_line THEN 'LINE_MOVED'
     WHEN over_price != prev_over_price OR under_price != prev_under_price THEN 'ODDS_CHANGED'
     ELSE 'NO_CHANGE'
@@ -158,13 +161,13 @@ WHERE prev_line IS NOT NULL;
 -- Sample queries for analysis
 /*
 -- Get all props for a specific game
-SELECT * 
+SELECT *
 FROM `nba_raw.odds_api_player_points_props`
 WHERE game_id = '20231024_LAL_DEN'
 ORDER BY player_name, bookmaker, snapshot_timestamp;
 
 -- Track line movements for a player
-SELECT 
+SELECT
   player_name,
   bookmaker,
   points_line,
@@ -178,7 +181,7 @@ WHERE game_id = '20231024_LAL_DEN'
 ORDER BY snapshot_timestamp;
 
 -- Find biggest line moves
-SELECT 
+SELECT
   game_id,
   player_name,
   bookmaker,
@@ -191,7 +194,7 @@ ORDER BY ABS(line_change) DESC
 LIMIT 100;
 
 -- Player props summary by game
-SELECT 
+SELECT
   game_date,
   COUNT(DISTINCT game_id) as games,
   COUNT(DISTINCT player_name) as players,
