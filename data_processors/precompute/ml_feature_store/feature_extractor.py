@@ -1021,6 +1021,7 @@ class FeatureExtractor:
             WHERE game_date = '{game_date}'
               AND points_line IS NOT NULL
               AND points_line > 0
+              AND minutes_before_tipoff >= 0  -- pre-tipoff only; < 0 = in-game snapshot (leak)
         ),
         bettingpros_lines AS (
             -- Fallback source: BettingPros (only if Odds API doesn't have player)
@@ -1516,6 +1517,7 @@ class FeatureExtractor:
               AND points_line IS NOT NULL
               AND points_line > 0
               AND bookmaker != 'bovada'
+              AND minutes_before_tipoff >= 0  -- pre-tipoff only; < 0 = in-game snapshot (leak)
         )
         SELECT
             player_lookup,
@@ -1632,6 +1634,7 @@ class FeatureExtractor:
                   AND game_date <= '{game_date}'  -- <= is correct: pre-game odds data, not game results
                   AND points_line IS NOT NULL
                   AND points_line > 0
+                  AND minutes_before_tipoff >= 0  -- pre-tipoff only; < 0 = in-game snapshot (leak)
             )
             WHERE rn = 1
             GROUP BY player_lookup, game_date
@@ -2368,7 +2371,8 @@ class FeatureExtractor:
         - late_line_movement_count: count of LINE_MOVED events in last 4h before tipoff
 
         Source: odds_api_player_points_props (snapshots + movements)
-        No leakage: uses same-day pre-game data only (all snapshots are before tipoff).
+        No leakage: odds queries filter `minutes_before_tipoff >= 0` to exclude
+        in-game snapshots. The raw table DOES contain post-tipoff rows.
         """
         query = f"""
         WITH
@@ -2398,6 +2402,7 @@ class FeatureExtractor:
             WHERE game_date = '{game_date}'
               AND LOWER(bookmaker) = 'draftkings'
               AND points_line IS NOT NULL
+              AND minutes_before_tipoff >= 0  -- pre-tipoff only; < 0 = in-game snapshot (leak)
         ),
         line_movement AS (
             SELECT
@@ -2425,6 +2430,7 @@ class FeatureExtractor:
               AND LOWER(bookmaker) != 'bovada'
               AND over_price IS NOT NULL
               AND under_price IS NOT NULL
+              AND minutes_before_tipoff >= 0  -- pre-tipoff only; < 0 = in-game snapshot (leak)
         ),
         vig_skew_calc AS (
             SELECT

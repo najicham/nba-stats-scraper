@@ -77,6 +77,14 @@ repos:
         types: [python, sql]
         verbose: true
 
+      - id: check-odds-snapshot-filter
+        name: Check odds-snapshot queries for look-ahead leak
+        description: Flags latest-snapshot odds queries missing a minutes_before_tipoff bound (vegas-line leak prevention)
+        entry: python .pre-commit-hooks/check_odds_snapshot_filter.py
+        language: python
+        types: [python, sql]
+        verbose: true
+
       - id: validate-sql-fstrings
         name: Validate SQL f-strings have f prefix
         description: Detects SQL strings with {variable} patterns missing the f-prefix
