@@ -90,25 +90,52 @@ real snapshots land. CLV accrues going forward from 2026-05-22.
 | `[ ]` | (Optional) backfill 2025 CLV via the historical scraper `mlb_pitcher_props_his.py` | Low–Med | The only way to get past closing lines — metered Odds API historical credits on the existing plan, **no new subscription**. |
 | `[ ]` | (Housekeeping) the burst schedulers exist only in gcloud — no config file. Capture them in `deployment/scheduler/mlb/clv-capture-schedulers.yaml` so a scheduler-setup re-run can't drop them. | Low | Config drift. |
 
-### Phase C — Pursue a real edge (validated leak-free **and** by CLV)
+### Phase C — the last question, and how it gets answered
 
-| | Item | Effort | Rationale |
-|--|------|--------|-----------|
-| `[ ]` | **C1 — Information-speed edge (the lineup early-hook).** The project is named for this. Quantify: when confirmed lineups / scratches / weather land *before* the book moves the line, is there CLV in that window? If so, bet it. | Med | A genuine, repeatable, structural edge — and Phase 0 already built the lineup-capture infra. **The sole remaining thread.** Unblocked by the Phase B capture fix; first honest CLV read ~2026-05-23. |
-| `[x]` | **C2 — Softer markets — TESTED 2026-05-21, DEAD.** `scripts/mlb/market_efficiency_scan.py` scanned all 13 MLB prop markets (5 pitcher + 8 batter, ~519K rows) for a stable cross-season directional edge over the vig. **Every market is efficient** — no naive OVER/UNDER bet clears breakeven in *both* 2024 and 2025; every edge is negative. Batter edges used optimistic best-line odds, so the true edges are worse. There is no soft MLB prop market. | — | The "less-modeled markets are softer" hypothesis is refuted. Books price the long tail (triples, HR) to within a brutal vig; the modeled markets (Ks, hits, TB) are tight. |
+| | Item | Status |
+|--|------|--------|
+| `[x]` | **C2 — Softer markets — TESTED 2026-05-21, DEAD.** `scripts/mlb/market_efficiency_scan.py` scanned all 13 MLB prop markets (5 pitcher + 8 batter, ~519K rows). Every market is efficient — no naive OVER/UNDER bet clears the vig in *both* 2024 and 2025. (Scope: this rules out market-wide naive bias, not a conditional-subset edge — but conditional-subset hunting is the same "find a feature/slice that beats the market" that has already failed twice. Not pursued.) | Dead |
+| `[~]` | **C1 — Information-speed edge — DOWNGRADED to a measurement, not a build.** An 8-agent review (2026-05-21) found C1 is **not operationally capturable** with this system: pitcher-K lines are driven by the pitcher and opponent *team* K-rate (known days ahead — the market already prices the projected lineup, per the failed opponent-lineup test); the genuine line-movers (elite-hitter scratches, weather) are watched by the books on the same feeds and move lines in seconds; and the repo has **zero bet-placement code** and only cron-scraped (not event-driven) data. Capturing C1 live would be a multi-month new system class, not a feature. So C1 is **not a build** — it reduces to one honest measurement: does the system's edge anticipate closing-line movement at all? | Measure only |
 
-**The leak-free harness gates everything** — no strategy is believed until it validates
-leak-free *and* shows positive CLV. With C2 dead and the model-feature path dead (the
-niche and the opponent-lineup feature both failed pre-registered bars), **C1 is the only
-live thread.** That is the disciplined narrowing the project has been doing — not a
-failure of effort.
+**What's left is not a strategy to build — it is one question to answer:** measure CLV
+honestly, and let the number decide. Every other thread (model features, machinery, C2)
+is exhausted.
 
-### The stop criterion
+### Decision framework — the pre-registered kill-criterion
 
-If, after the odds feed lands and CLV is measured honestly, there is **no CLV on any
-strategy or subset**, that is decisive evidence this is not a beatable game and
-**stopping is the correct decision.** Measuring CLV exists precisely to make that call on
-data rather than grinding indefinitely.
+Written **before** the data lands so the call is arithmetic, not a judgment made under
+sunk-cost pressure. (8-agent review, 2026-05-21 — both the strategy and meta reviewers
+flagged that the live risk to a good outcome is the *owner*, not the data: a breakeven
+read getting reinterpreted as "promising, needs more data.")
+
+- **The single decisive test:** mean CLV on the system's best-bets picks vs. the genuine
+  closing line — `scripts/mlb/clv_report.py` (now reports N, SE, bootstrap 95% CI, and a
+  gated verdict).
+- **Sample-size floor:** N ≥ 120 graded picks with a genuine (`is_synthetic=FALSE`)
+  closing line. One game day (~5–15 picks) is a plumbing smoke-test, not a verdict —
+  ~3–4 weeks of capture from 2026-05-22.
+- **Confound:** the live model is leak-trained — the leak can manufacture spurious
+  positive CLV (it biases *which* pitchers get picked). A positive read on shadow picks
+  is **PROVISIONAL** until re-measured on leak-free retrained picks (Phase A row 5).
+- **PASS:** mean CLV bootstrap 95% CI lower bound **strictly > 0**, confirmed on
+  leak-free picks. → C1 is real; *then and only then* evaluate the (large, separate,
+  explicitly-gated) operational build.
+- **FAIL:** CI lower bound ≤ 0 (breakeven or negative). → **Conclude the project.**
+  No re-slicing by handedness / park / book, no "one more subset," no window extension.
+- **Deadline:** **2026-06-20.** If N ≥ 120 has not accrued by then, that is itself a
+  FAIL signal (the system is not even producing enough picks to bet) → conclude.
+
+### What "a good place" means
+
+This is a **research project**, and a good place is a *finished* one — not "still
+betting." It has already produced durable value regardless of the C1 verdict: a
+leak-free walk-forward harness, a working CLV instrument, the fixed MLB lineup capture,
+and a reusable market-efficiency scanner. If C1 FAILS, the correct, honest outcome is to
+**write "MLB starter strikeouts are not a beatable market with these tools" as the
+project's finding**, leave MLB output halted, and close the project. That is a completed
+research project that answered its own question — not a failure. (Follow-on, separate:
+the same leak class — post-season snapshot joins — likely exists NBA-side; worth an
+audit there.)
 
 ---
 
