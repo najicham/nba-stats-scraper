@@ -22,6 +22,41 @@ changed (the leak fix is correctness-only code; the Poisson `p_over`/blend ship 
 
 ---
 
+## Update — operator decisions executed (2026-05-21, same session)
+
+The owner chose: **(1) pause MLB output** and **(2) fix the closing-line capture for CLV**.
+Both done:
+
+### MLB public output paused (durable)
+- New table `nba_orchestration.halt_overrides` — an operator can force a sustained halt
+  that survives the daily `halt_state_writer` run. An override can only *add* a halt,
+  never resume, so a stale override is harmless.
+- `halt_state_writer` CF extended to read it (deployed) — the manual-override TODO the
+  writer docstring already referenced.
+- `mlb_best_bets_exporter` now **actually suppresses picks** when `halt_active=TRUE` (per-
+  date + all-picks views). It was advisory-only before — it stamped the flag but still
+  shipped picks. Deployed via `deploy-phase6-export` + `deploy-mlb-phase6-grading`.
+- MLB `halt_state` rows set to `halt_active=true` for 2026-05-21/22. NBA untouched.
+- **To resume:** `UPDATE nba_orchestration.halt_overrides SET active=FALSE WHERE sport='mlb'`
+  — the next `halt_state_writer` run (5 AM ET) reverts to the natural decision.
+- The worker still generates BQ shadow picks (`signal_best_bets_picks`) — only the public
+  GCS JSON is suppressed. Shadow picks remain usable for CLV measurement.
+- Commit `869fe4b8`.
+
+### Closing-line capture fixed
+- Root cause: the capture infra already existed. The Session 2 A5 design built two
+  pre-game *burst* schedulers (`mlb-oddsa-pitcher-props-burst-afternoon`/`-evening`) and
+  left them **PAUSED** pending a cost check — so `oddsa_pitcher_props` only got the
+  10:30/12:30 daily snapshots and `pitcher_props_closing` materialized 98% synthetic.
+- **Fix:** both burst schedulers re-enabled. Combined they fire every 30 min, 1:00 PM–
+  11:30 PM ET — every game's last pre-pitch snapshot is now ≤30 min old.
+- The materializer (`mlb-pitcher-props-closing-materialize`) already runs daily and heals
+  automatically. CLV is measurable from 2026-05-22 onward via `scripts/mlb/clv_report.py`.
+- Watch Odds API credit usage on the dashboard for the first few days (24 extra
+  fires/day; expected to be negligible on any real plan).
+
+---
+
 ## What was done
 
 ### 1. FanGraphs look-ahead leak — found and fixed

@@ -31,7 +31,9 @@ the project's founding thesis.
     nothing, UNDER needs a build with no evidence it pays.
   - The backtest's +3–7% ROI is **optimistic** — it used different-book aggregated odds
     and a look-ahead `innings_pitched≥3` filter. Realistic ≈ breakeven.
-- **10 commits, none pushed.**
+- **All commits pushed + auto-deployed.** As of 2026-05-21: MLB public output is paused
+  (Phase A), the closing-line capture is fixed (Phase B), and the handoff is at
+  `docs/09-handoff/2026-05-21-1-mlb-strikeout-clv-pivot.md`.
 
 ## What changed — the strategic pivot
 
@@ -58,23 +60,35 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` todo. Critical path: **A → B 
 | | Item | Effort | Notes |
 |--|------|--------|-------|
 | `[x]` | Leak fix + leak-free validation harness | — | `a490ddc2`,`8b074f63`,`13d0185f`,`e1c7a667` |
-| `[ ]` | Push the 10 commits, then immediately retrain leak-free + shadow + promote | Med | The live model trains on leaked data — a real bug. Pushing the leak-fix code alone leaves a leak-trained model serving de-leaked features, so the retrain is **mandatory and paired**. It produces a no-edge model — a correctness fix, not a profit fix. Skip only if the project is being wound down. |
+| `[x]` | Push all commits | — | All on `main`, auto-deployed. |
+| `[x]` | **Pause MLB public output** instead of an immediate forced retrain (operator decision 2026-05-21). The live worker serves a leak-trained model on de-leaked features (train/serve skew); rather than rush a no-edge retrain, public best-bets output is halted until a clean model is ready. Mechanism: `nba_orchestration.halt_overrides` row (sport=mlb, reason=manual, open-ended) → durable halt across daily `halt_state_writer` runs. The MLB exporter now actually suppresses picks on `halt_active` (was advisory-only). **To resume:** `UPDATE nba_orchestration.halt_overrides SET active=FALSE WHERE sport='mlb'`. | — | Done. Commit `869fe4b8`. The worker still generates BQ shadow picks (useful for CLV) — only the public JSON is suppressed. |
+| `[ ]` | Retrain leak-free → shadow → promote, then lift the halt | Med | Produces a no-edge model — a correctness fix, not a profit fix. Do this when ready; until then the halt holds. Use `scripts/mlb/training/train_regressor_v2.py --training-start 2024-04-01` (include 2 Aprils — see memory). |
 
 ### Phase B — Build the CLV instrument (gates everything after)
 
 The project has never measured closing-line value — every ROI number to date is against
 opening/aggregated odds and means little. **Beating the closing line is the only reliable
-evidence of edge.** Status (verified 2026-05-21 via `scripts/mlb/clv_report.py`): no new
-*subscription* is needed, but the **closing-line capture is broken** — `oddsa_pitcher_props`
-snapshots intraday lines well, but only ~2.6% of game-pitchers get a true ≤30-min-pre-pitch
-snapshot and 66% have nothing within 4 h. So CLV is **not measurable from stored data**;
-the capture must be fixed first, and CLV then accrues going forward only.
+evidence of edge.**
+
+**Status update 2026-05-21 — the closing-line capture is FIXED.** Root cause: the
+capture infrastructure already existed but was dormant. The Session 2 A5 design
+(`docs/08-projects/current/mlb-comprehensive-review-2026-05-12/08-A5-CLV-DESIGN.md`)
+built two pre-game *burst* schedulers (`mlb-oddsa-pitcher-props-burst-afternoon`,
+`-burst-evening`) and left them **PAUSED** pending a cost check — so `oddsa_pitcher_props`
+only got the 10:30/12:30 daily snapshots, hours before first pitch, and
+`pitcher_props_closing` materialized 98% synthetic. **Fix: both burst schedulers
+re-enabled 2026-05-21.** Together they fire every 30 min, 1:00 PM–11:30 PM ET — every
+game's last pre-pitch snapshot is now ≤30 min old. The materializer
+(`mlb-pitcher-props-closing-materialize`, already running daily) heals automatically as
+real snapshots land. CLV accrues going forward from 2026-05-22.
 
 | | Item | Effort | Notes |
 |--|------|--------|-------|
-| `[ ]` | **Fix the closing-line capture** — schedule the `oddsa_pitcher_props` pitcher-props scrape to run reliably ~5–15 min before each game's first pitch (per-game-staggered, or a tight cadence over the game-time cluster). The scraper exists; the scheduling does not capture close. $0 — a scheduling/orchestration fix. | Med | The actual blocker. CLV accrues from when this lands. |
-| `[ ]` | Rebuild `pitcher_props_closing` from the genuine near-pitch snapshot (kills the 98%-synthetic path); CLV per pick via `scripts/mlb/clv_report.py` | Med | The report tool is already built — it works once real closing snapshots exist. |
+| `[x]` | **Fix the closing-line capture** — re-enabled the two burst schedulers (2026-05-21). $0 — Odds API credits on the existing plan; watch usage on the Odds API dashboard for the first few days. | — | The actual blocker — done. |
+| `[~]` | `pitcher_props_closing` heals automatically — the materializer runs daily; `is_synthetic=FALSE` rows accrue from 2026-05-22. CLV per pick via `scripts/mlb/clv_report.py` (derives closing from `oddsa_pitcher_props` directly — works now). | — | Verify after ~2 game days: `is_synthetic=FALSE` should be the majority. |
+| `[ ]` | (Optional, productionization) Wire CLV into grading — populate the `prediction_accuracy.clv_*` columns (they exist, all NULL) from `pitcher_props_closing` via an idempotent trailing-window UPDATE. Not a blocker — `clv_report.py` already measures CLV ad-hoc. Enables CLV-based auto-demote later. | Low–Med | A5 Layer B, never built. |
 | `[ ]` | (Optional) backfill 2025 CLV via the historical scraper `mlb_pitcher_props_his.py` | Low–Med | The only way to get past closing lines — metered Odds API historical credits on the existing plan, **no new subscription**. |
+| `[ ]` | (Housekeeping) the burst schedulers exist only in gcloud — no config file. Capture them in `deployment/scheduler/mlb/clv-capture-schedulers.yaml` so a scheduler-setup re-run can't drop them. | Low | Config drift. |
 
 ### Phase C — Pursue a real edge (validated leak-free **and** by CLV)
 
