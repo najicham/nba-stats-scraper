@@ -1,170 +1,210 @@
-# Handoff — MLB Pitcher-Strikeout: Leak Fix + Validation + Strategic Pivot
+# Handoff — MLB Pitcher-Strikeout Project: aspirations, state, and the plan forward
 
-**Date:** 2026-05-21 · **Session:** continues `2026-05-20-3-mlb-strikeout-stage-1.1.md`
-**Project:** `docs/08-projects/current/mlb-lineup-early-hook/`
-
----
-
-## TL;DR
-
-A full **leak-free validation** of the pitcher-strikeout betting system is complete. It
-found and fixed a critical look-ahead leak, built a durable leak-free harness, and ran
-extensive backtests reviewed across ~65 agents. The verdict overturned the project's
-founding thesis:
-
-> The de-leaked model has **no robust edge over the market**. The betting machinery has
-> **no profit leak**. The "28.6% hit rate" scare was a 14-day-window artifact (real
-> cross-season OVER HR ≈ 55-59%, thin but not zero). Two structural-edge hypotheses were
-> tested and **both failed pre-registered bars**.
-
-**12 commits this session — all pushed to `main` and auto-deployed.** No service behavior
-changed (the leak fix is correctness-only code; the Poisson `p_over`/blend ship inert).
+**Date:** 2026-05-21 · **Supersedes:** `2026-05-20-3-mlb-strikeout-stage-1.1.md`
+**Project folder:** `docs/08-projects/current/mlb-lineup-early-hook/`
+**This doc is the single forward-looking handoff — read it top to bottom.**
 
 ---
 
-## Update — operator decisions executed (2026-05-21, same session)
+## 0. Read this first (orientation for a new session)
 
-The owner chose: **(1) pause MLB output** and **(2) fix the closing-line capture for CLV**.
-Both done:
+You are picking up the **MLB pitcher-strikeout prop-betting project**, a sub-project of
+the `nba-stats-scraper` repo (the repo's main mission is NBA props). To get oriented:
 
-### MLB public output paused (durable)
-- New table `nba_orchestration.halt_overrides` — an operator can force a sustained halt
-  that survives the daily `halt_state_writer` run. An override can only *add* a halt,
-  never resume, so a stale override is harmless.
-- `halt_state_writer` CF extended to read it (deployed) — the manual-override TODO the
-  writer docstring already referenced.
-- `mlb_best_bets_exporter` now **actually suppresses picks** when `halt_active=TRUE` (per-
-  date + all-picks views). It was advisory-only before — it stamped the flag but still
-  shipped picks. Deployed via `deploy-phase6-export` + `deploy-mlb-phase6-grading`.
-- MLB `halt_state` rows set to `halt_active=true` for 2026-05-21/22. NBA untouched.
-- **To resume:** `UPDATE nba_orchestration.halt_overrides SET active=FALSE WHERE sport='mlb'`
-  — the next `halt_state_writer` run (5 AM ET) reverts to the natural decision.
-- The worker still generates BQ shadow picks (`signal_best_bets_picks`) — only the public
-  GCS JSON is suppressed. Shadow picks remain usable for CLV measurement.
-- Commit `869fe4b8`.
+1. Read this whole doc.
+2. Read `docs/08-projects/current/mlb-lineup-early-hook/02-EXECUTION-PLAN.md` — the live
+   plan, including the **pre-registered kill-criterion** (Phase C → "Decision framework").
+3. The auto-memory file `mlb-strikeout-project.md` has the running detail.
 
-### Closing-line capture fixed
-- Root cause: the capture infra already existed. The Session 2 A5 design built two
-  pre-game *burst* schedulers (`mlb-oddsa-pitcher-props-burst-afternoon`/`-evening`) and
-  left them **PAUSED** pending a cost check — so `oddsa_pitcher_props` only got the
-  10:30/12:30 daily snapshots and `pitcher_props_closing` materialized 98% synthetic.
-- **Fix:** both burst schedulers re-enabled. Combined they fire every 30 min, 1:00 PM–
-  11:30 PM ET — every game's last pre-pitch snapshot is now ≤30 min old.
-- The materializer (`mlb-pitcher-props-closing-materialize`) already runs daily and heals
-  automatically. CLV is measurable from 2026-05-22 onward via `scripts/mlb/clv_report.py`.
-- Watch Odds API credit usage on the dashboard for the first few days (24 extra
-  fires/day; expected to be negligible on any real plan).
-
-### >>> CHECKPOINT — run locally on 2026-05-23 (after MLB grading, ~10 AM ET) <<<
-The May 22 slate is the first with genuine pre-pitch line capture. The 23rd is a
-**plumbing SMOKE-TEST, not a verdict** — N will be ~5–15 picks, far below the N≥120 the
-decision framework requires (see `02-EXECUTION-PLAN.md` → "Decision framework"). On the 23rd:
-1. Verify the capture worked — `mlb_raw.pitcher_props_closing` for `game_date='2026-05-22'`
-   should now have `is_synthetic=FALSE` rows (it was 98% synthetic before the fix):
-   `bq query --use_legacy_sql=false "SELECT COUNTIF(is_synthetic=FALSE) real, COUNTIF(is_synthetic=TRUE) synth FROM \`nba-props-platform.mlb_raw.pitcher_props_closing\` WHERE game_date='2026-05-22'"`
-2. Run the CLV report: `PYTHONPATH=. .venv/bin/python scripts/mlb/clv_report.py --start 2026-05-22`
-   — it prints N, SE, a bootstrap 95% CI, and a gated verdict (it will say SMOKE-TEST while N<120).
-3. The 23rd just confirms the pipe is flowing. The real C1 verdict comes at N≥120 graded
-   picks (~2026-06-20 deadline) — and is PROVISIONAL until re-measured on leak-free
-   retrained picks (the live model is leak-trained). FAIL ⇒ conclude the project. See the
-   pre-registered kill-criterion in `02-EXECUTION-PLAN.md`.
-Must run locally — `clv_report.py` queries private BigQuery and needs GCP credentials.
+**Current operational state, in one breath:** the MLB pitcher-strikeout betting system's
+public output is **paused**; the closing-line capture was just **fixed**; the project is
+in a ~4-week **measurement window** that ends with a **dated go/no-go decision on
+2026-06-20**. There is nothing to actively build until then — by design.
 
 ---
 
-## What was done
+## 1. The aspiration
 
-### 1. FanGraphs look-ahead leak — found and fixed
-`mlb_raw.fangraphs_pitcher_season_stats` holds only **post-season** snapshots (all dated
-2026-01-15 / 2026-03-09). Nine files joined it `season_year = EXTRACT(YEAR FROM game_date)`,
-leaking completed-season FIP/swstr/csw into mid-season games — ~23% of model feature
-importance (`f72_fip` was the #2 feature). Fixed: all 9 files switched to a **prior-season
-join** (`season_year = year - 1`); `mlb_analytics.pitcher_game_summary` surgically
-backfilled (`scripts/mlb/backfill_pitcher_game_summary_leakfix.sql`, idempotent).
-Commits `a490ddc2`, `e1c7a667`.
+Build a **profitable MLB pitcher-strikeout prop-betting system** — predict each starting
+pitcher's strikeout count, compare to the sportsbook line, and bet the over/under edges
+that clear the vig. The dream version: a disciplined daily pipeline that ships a small set
+of high-confidence picks with a real, measured edge.
 
-### 2. Leak-free validation harness — the durable asset
-- `scripts/mlb/training/season_replay.py` — rewired walk-forward backtest; imports
-  `poisson_p_over` + `fit_w_nested_holdout`, removed the duplicated `SIGMOID_SCALE`, added
-  `--blend-weight`/`--no-blend`/`--rescue-min-edge`, `raw_pred_k` output, April-coverage
-  parity.
-- `scripts/mlb/training/calibration_report.py` (NEW) — scores old sigmoid vs Poisson
-  `p_over` (Brier/ECE/monotonicity/pitcher-clustered bootstrap); has `--self-test`.
-- `scripts/mlb/clv_report.py` (NEW) — closing-line-value report per pick.
-- `train_regressor_v2.py` — `fit_w_nested_holdout` (nested holdout fixes the double-use of
-  the 14-day window for both governance and `w`-fitting).
-
-### 3. Validation verdict (2 seasons × 5 seeds, 20-agent reviewed)
-- **The de-leaked model has no real edge over the market** — 2024 model MAE 1.787 is
-  *worse* than the line (1.763); 2025 barely wins (1.710 vs 1.722). The handoff's "model
-  matches market 1.83 vs 1.85" was the *leaked* model.
-- **No machinery profit leak** — Poisson `p_over` ≈ the old sigmoid (Brier tied within
-  noise); the model-market blend *hurts* (do not activate it — keep `w=1.0`); signal
-  rescue is marginal/EV-negative; per-signal pruning yields nothing; UNDER is a build with
-  no evidence it pays.
-- **Backtest +3-7% ROI is optimistic** — `bp_pitcher_props` aggregates odds across books
-  and the `innings_pitched≥3` filter is look-ahead. Realistic ≈ breakeven.
-- **The "28.6% HR" scare was noise** — a ~6-15 record on one 14-day window. Real
-  cross-season OVER HR at edge≥0.75 ≈ 55-59% (N>1,200/side), thin but above breakeven.
-
-### 4. Two structural-edge hypotheses tested — both FAILED pre-registered bars
-- **Agent 13's mid/high-K OVER niche** — re-tested leak-free (tier = pitcher's prior-starts
-  K-avg, not full-sample career). The claimed 62-65% niche collapsed to 53.7% (2024 47%).
-  "Stable both seasons" was a look-ahead artifact.
-- **Clean opponent-lineup feature** — per-start avg season K-rate of the actual 9 opposing
-  batters. Pre-reg bar: T2 |r|≥0.06 AND T1≠0. Result: T0=+0.155, T1=+0.078, **T2=+0.040
-  (FAIL)**. The feature would marginally improve model *accuracy* but the market already
-  prices opponent strength → no betting edge. (`/tmp/opp_lineup_test.py`, not committed.)
+That aspiration is still on the table — but it is now subject to a hard, honest test (see
+§4). The project has been run with genuine rigor: pre-registered pass/fail bars, leak-free
+validation, and killing dead threads cleanly. The aspiration is **"a profitable system OR
+a documented, honest proof that this market isn't beatable with these tools"** — both are
+acceptable, successful outcomes. What is *not* acceptable is grinding indefinitely without
+a verdict.
 
 ---
 
-## The strategic pivot
+## 2. Where we are now (2026-05-21)
 
-The founding thesis ("model matches the market; the machinery leaks the value; fix the
-machinery, add features second") was built on the *leaked* model and is refuted. You
-cannot out-predict an efficient, heavily-modeled market with public data. The project
-pivots from **out-modeling the market** to **finding an edge that can structurally exist**,
-judged by the only honest scoreboard: **closing-line value (CLV)**.
+A full leak-free validation (≈65 agents over many sessions) overturned the project's
+founding thesis. The honest picture today:
 
-Full revised plan: `docs/08-projects/current/mlb-lineup-early-hook/02-EXECUTION-PLAN.md`.
+- **The model has no edge over the market.** A critical FanGraphs look-ahead leak was
+  found and fixed; the de-leaked model's MAE is at or slightly worse than the betting
+  line. The market is efficient.
+- **The betting machinery has no profit leak.** Poisson p_over, the model-market blend,
+  signal rescue — all tested, all empty.
+- **Model features don't help.** Two feature hypotheses (a mid/high-K niche; an
+  opponent-lineup feature) each failed pre-registered bars. Adding *public* features to a
+  model on an efficient market cannot create edge.
+- **C2 — "softer markets" — tested and dead.** `scripts/mlb/market_efficiency_scan.py`
+  scanned all 13 MLB prop markets (5 pitcher + 8 batter, ~519K rows): every one is
+  efficient, no naive directional bet clears the vig.
+- **C1 — the "lineup early-hook" information-speed edge — is the last thread**, but an
+  8-agent review (2026-05-21) found it is **not operationally capturable** with this
+  system (no bet-placement code, cron- not event-driven data; a live capture would be a
+  multi-month new system class). C1 is therefore downgraded from "a build" to **one
+  honest measurement**: does the system's edge anticipate closing-line movement (CLV)?
+
+### What was done this session (all committed + pushed, builds green)
+
+- **Leak fix + leak-free validation harness** — `season_replay.py`, `calibration_report.py`
+  (prior-season FanGraphs join across 9 files; `pitcher_game_summary` backfilled).
+- **MLB public output PAUSED (durable).** New table `nba_orchestration.halt_overrides`;
+  `halt_state_writer` CF extended to honor it; `mlb_best_bets_exporter` now actually
+  suppresses picks on `halt_active` (was advisory-only). Reason: the live worker serves a
+  leak-trained model on de-leaked features (train/serve skew).
+- **Closing-line capture FIXED.** The two pre-game burst schedulers
+  (`mlb-oddsa-pitcher-props-burst-afternoon`/`-evening`) — built but left PAUSED — were
+  re-enabled. They fire every 30 min, 1:00–11:30 PM ET; the materializer
+  (`mlb-pitcher-props-closing-materialize`) heals `pitcher_props_closing` automatically.
+- **C2 tested and closed** — `scripts/mlb/market_efficiency_scan.py` committed.
+- **CLV instrument fixed** — `scripts/mlb/clv_report.py` had a real bug (closing line
+  computed over 1–2 books, not a consensus); rewritten to source the materialized
+  `pitcher_props_closing` and report N / SE / bootstrap 95% CI with a gated verdict.
+- **Pre-registered kill-criterion written into the execution plan** (see §4).
 
 ---
 
-## Commits (all on `main`, auto-deployed)
+## 3. The story — how we got here (concise)
 
-`a490ddc2` leak fix · `22443c91` Stage 1.1 Poisson/blend · `8b074f63` leak-free blend
-fitting · `9d1494ed` replay/production parity · `13d0185f` calibration report ·
-`7bead276` harness pre-run fixes · `86e92d61`/`d4eca515` Stage 1.4 findings ·
-`d5f71537` `--rescue-min-edge` · `e1c7a667` backfill SQL · `f010da96` execution-plan
-rewrite · `22d5cf0a` CLV report tool + Phase B correction.
+The project began as "fix the betting machinery, then add features." A 15-agent review of
+Stage 1.1 found a **FanGraphs look-ahead leak** — `fangraphs_pitcher_season_stats` holds
+only post-season snapshots, and a same-season join leaked completed-season FIP/swstr/csw
+(~23% of feature importance) into mid-season games. Fixing it (prior-season join) and
+re-validating leak-free overturned the founding thesis: the model never matched the market
+on clean data — the old "1.83 vs 1.85" was the leaked model.
 
----
-
-## Open decisions for the owner
-
-1. **Pause MLB best-bets output?** The live MLB worker serves a *leak-trained* `.cbm` on
-   *de-leaked* features (train/serve skew). Recommended op action: set
-   `nba_orchestration.halt_state` reason=`manual` until a clean model exists. **Do NOT
-   roll back the worker** — the leak fix is code on `main`, in every revision; rollback is
-   the wrong lever. This needs explicit owner sign-off (it stops production output).
-2. **Continue vs wind down.** Every machinery/signal/feature lever tested this session
-   came up empty or breakeven. The two remaining honest threads are below.
-3. **If continuing — the two threads (from the execution plan):**
-   - **Fix the closing-line capture** so CLV becomes measurable. `oddsa_pitcher_props`
-     snapshots intraday but only ~2.6% of game-pitchers get a true ≤30-min-pre-pitch
-     snapshot. This is a scheduling fix ($0), not a new subscription. CLV is the real
-     arbiter — without it, every ROI number is unreliable.
-   - **C1 — the information-speed edge (lineup early-hook).** The project's namesake:
-     when confirmed lineups/scratches/weather land before the book moves, is there CLV in
-     that window? Phase 0 already built the lineup-capture infra.
+From there the project narrowed, thread by thread, each killed with a pre-registered bar:
+machinery → no leak; features → don't help; C2 softer markets → all efficient. C1
+(information-speed) is the last corner — and the 8-agent review concluded it is not
+realistically capturable. That narrowing is disciplined work, not failure — but it has
+also been flagged (by the meta reviewer) as carrying **sunk-cost risk**: the project keeps
+finding "one more thread." Hence the kill-criterion below.
 
 ---
 
-## Discipline note for the next session
+## 4. The plan forward — the decision framework
 
-Every test this session got a **pre-registered pass/fail bar set before it ran**. Two
-structural hypotheses (the niche, the opponent-lineup feature) failed those bars cleanly.
-Do not re-litigate failed tests or start a new model-feature test — adding *public*
-features to a model on an efficient market cannot create edge. The next move is the
-owner's strategic decision (above), then — if continuing — fix the closing-line capture
-so CLV can finally be measured.
+**The whole project now rests on one measurement and one date.** This is pre-registered
+in `02-EXECUTION-PLAN.md` → "Decision framework" — reproduced here so it cannot drift:
+
+### The decisive test
+Mean **closing-line value (CLV)** of the system's best-bets picks vs. the genuine closing
+line — measured by `scripts/mlb/clv_report.py` (reports N, SE, bootstrap 95% CI, gated
+verdict). Beating the closing line is the only reliable evidence of betting edge.
+
+### Pre-registered PASS / FAIL
+- **PASS:** mean CLV bootstrap 95% CI lower bound **strictly > 0** at **N ≥ 120** graded
+  picks with a genuine (`is_synthetic=FALSE`) closing line — **confirmed on leak-free
+  retrained picks**.
+- **FAIL:** CI lower bound ≤ 0, **or** N < 120 by the deadline. → **Conclude the project.**
+  No re-slicing by handedness/park/book, no "one more subset," no window extension.
+- **Confound:** the live model is leak-trained; the leak can manufacture spurious positive
+  CLV (it biases *which* pitchers get picked). Any positive read on current shadow picks
+  is **PROVISIONAL** until re-measured on leak-free retrained picks.
+
+### Milestones
+- **2026-05-23** — local **smoke-test** (not a verdict). Confirm the burst capture is
+  producing genuine closing lines and the pipe flows. N will be ~5–15 — far below 120.
+- **~2026-06-20** — the **go/no-go verdict** against the criterion above.
+
+### If PASS
+C1 is real — *then and only then* evaluate the operational build to actually capture it.
+That build is **large, separate, and explicitly gated** (real-time event detection +
+automated bet placement — a different system class). PASS unlocks that decision; it does
+not assume it.
+
+### If FAIL
+Conclude the project. Write *"MLB starter strikeouts are not a beatable market with these
+tools"* as the documented finding, leave MLB output halted, and close it. This is a
+**completed research project that answered its own question** — a successful outcome.
+
+---
+
+## 5. The aspirations beyond the verdict
+
+Honest forward-looking notes for a future session, so nothing is lost:
+
+- **If the system ever does go live:** it would need the operational build above
+  (bet-placement integration, staking, limits) — none of which exists today. Treat that
+  as a fresh project, not a continuation.
+- **NBA-side leak audit (separate, worthwhile regardless of the C1 verdict).** The same
+  leak class — joining post-season snapshot tables on the same season — very likely
+  exists in the NBA pipeline. Auditing NBA feature joins for look-ahead leakage is a
+  high-value follow-on that stands on its own.
+- **The durable assets are the real deliverable** and should be maintained whatever
+  happens to C1: the leak-free walk-forward harness (`season_replay.py`),
+  `calibration_report.py`, the CLV instrument (`clv_report.py`), the fixed MLB lineup
+  capture, and the market-efficiency scanner (`market_efficiency_scan.py`).
+
+---
+
+## 6. Operational reference
+
+| Need | How |
+|------|-----|
+| **Resume MLB public output** (after a clean model exists) | `UPDATE nba_orchestration.halt_overrides SET active=FALSE WHERE sport='mlb'` — next `halt_state_writer` run (5 AM ET) reverts to the natural decision. |
+| Check halt state | `SELECT * FROM nba_orchestration.halt_state WHERE sport='mlb' AND effective_date >= CURRENT_DATE()-2` |
+| Run the CLV checkpoint (LOCAL only — needs GCP creds) | `PYTHONPATH=. .venv/bin/python scripts/mlb/clv_report.py --start 2026-05-22` |
+| Verify closing capture healed | `bq query "SELECT COUNTIF(is_synthetic=FALSE) real, COUNTIF(is_synthetic=TRUE) synth FROM \`nba-props-platform.mlb_raw.pitcher_props_closing\` WHERE game_date >= '2026-05-22'"` |
+| Re-run the C2 market scan | `PYTHONPATH=. python scripts/mlb/market_efficiency_scan.py` |
+| Leak-free retrain (Phase A, when ready) | `scripts/mlb/training/train_regressor_v2.py --training-start 2024-04-01` (2 Aprils — see memory) |
+
+**Key tables:** `mlb_raw.pitcher_props_closing` (materialized closing lines),
+`mlb_raw.oddsa_pitcher_props` (raw odds time-series, 5 markets), `mlb_predictions.
+signal_best_bets_picks` (best-bets / shadow picks), `nba_orchestration.halt_overrides`
+(the durable manual halt).
+
+---
+
+## 7. Deferred / open items
+
+None of these are needed before the 2026-06-20 verdict; do them only if the project
+continues past it. Listed so they are not forgotten.
+
+| Item | Why it matters | Severity |
+|------|----------------|----------|
+| Burst schedulers exist only in gcloud, not a config file | A scheduler-setup re-run could silently drop them → CLV capture reverts to synthetic mid-measurement. Watch the `is_synthetic` split in `clv_report.py`. Fix: add `deployment/scheduler/mlb/clv-capture-schedulers.yaml`. | HIGH (during the measurement window) |
+| `snapshot_time` = Phase-2 processing time, not scrape time (`mlb_pitcher_props_processor.py`) | Can mis-flag the `is_synthetic` 30-min boundary if Phase-2 lags. Fix: scraper should emit a real `snapshot_timestamp`. | MEDIUM |
+| Early-afternoon games (~12–1 PM ET first pitch) start before the first 1 PM burst | Those stay `is_synthetic=TRUE`. Fix: add an ~11:30 AM ET burst fire. | MEDIUM |
+| The un-pause will be forgotten — no reminder/alert on a stale `halt_overrides` row | MLB output could stay dark indefinitely after a clean model is ready. Add a reminder to the Phase A retrain task. | MEDIUM |
+| `prediction_accuracy.clv_*` columns exist but are unpopulated (A5 Layer B never built) | No persistent per-pick CLV / no CLV auto-demote. `clv_report.py` works without it. Optional productionization. | MEDIUM |
+| Odds API credit cost from +24 burst fires/day | Not monitored anywhere. Eyeball the Odds API dashboard. | LOW |
+| Materializer hardcoded to `market_key='pitcher_strikeouts'` | Correct for this project; blocks reuse for other markets. | LOW |
+
+---
+
+## 8. Discipline notes for the future session
+
+- **Every test gets a pre-registered pass/fail bar set before it runs.** This is how the
+  niche, the opponent-lineup feature, and C2 were each cleanly killed. Honor it.
+- **Do not re-litigate dead threads** (machinery, model features, C2). They are dead.
+- **The biggest risk to a good outcome is sunk-cost reasoning** — reinterpreting a
+  breakeven CLV read as "promising, needs more data." The kill-criterion exists precisely
+  so the 2026-06-20 call is arithmetic, not a judgment made under pressure. Trust it.
+- **"A good place" for this project is a *finished* one** — a profitable system, or a
+  documented honest "no edge" verdict. Both are wins. "Still betting with no measured
+  edge" is not.
+- The owner values **honesty over optimism** and has (rightly) resisted premature
+  wind-down before — but has also agreed that discipline and the kill-criterion matter.
+
+---
+
+*All session commits are on `main` and auto-deployed. Nothing is in-flight. The next
+action is the 2026-05-23 smoke-test, then the 2026-06-20 verdict.*
