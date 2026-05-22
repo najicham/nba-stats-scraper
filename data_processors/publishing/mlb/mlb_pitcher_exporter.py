@@ -4,19 +4,19 @@ File: data_processors/publishing/mlb/mlb_pitcher_exporter.py
 
 MLB Pitcher Exporter
 
-Exports two JSON products powering the pitcher UI:
+Exports two JSON products powering the pitcher UI. Both surfaces are
+intentionally prediction-free — they show only factual information (matchups,
+betting lines, season stats, recent results). No model predictions are emitted.
 
   1. gs://nba-props-platform-api/v1/mlb/pitchers/leaderboard.json
-     - Tonight's starters ranked by model edge
-     - Curated leaderboards (Hot Hands, Strikeout Kings, Model Trusts Him, Line Beaters)
+     - Tonight's starters sorted chronologically by game time
+     - Curated leaderboards (Hot Hands, Strikeout Kings, Line Beaters)
 
   2. gs://nba-props-platform-api/v1/mlb/pitchers/{pitcher_lookup}.json
-     - Per-pitcher profile: tonight card, season stats, last-20 game log,
-       our historical prediction track record with population rank
+     - Per-pitcher profile: tonight card, season stats, last-20 game log
 
 Data sources:
-  - mlb_predictions.pitcher_strikeouts  (predictions + graded results)
-  - mlb_predictions.signal_best_bets_picks  (curated best bets with signal tags)
+  - mlb_predictions.pitcher_strikeouts  (factual K line + matchup info only)
   - mlb_analytics.pitcher_game_summary  (per-start pitcher stats)
   - mlb_analytics.pitcher_pitch_arsenal_latest  (pitch mix, last 5 starts)
   - mlb_analytics.pitcher_pitch_arsenal_season  (pitch mix, full season)
@@ -31,7 +31,7 @@ Usage:
 import logging
 from collections import defaultdict
 from datetime import date, datetime, timezone
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set
 
 from data_processors.publishing.base_exporter import BaseExporter
 from data_processors.publishing.exporter_utils import (
@@ -44,11 +44,9 @@ from data_processors.publishing.exporter_utils import (
 
 logger = logging.getLogger(__name__)
 
-# Active season for track record aggregation. Covers 2025 (full) and 2026 (current).
+# Active-window start for game-log / season aggregation. Covers 2025 (full)
+# and 2026 (current).
 TRACK_RECORD_START = '2025-01-01'
-
-# Minimum graded picks for a pitcher to be ranked in the population
-MIN_RANK_SAMPLE = 5
 
 # How many rows to include in each curated leaderboard
 LEADERBOARD_SIZE = 20
@@ -175,16 +173,13 @@ class MlbPitcherExporter(BaseExporter):
         """
         tonight = self._fetch_tonight_predictions(game_date)
         opponent_k_defense = self._fetch_opponent_k_defense(game_date)
-        best_bet_keys = self._fetch_best_bet_keys(game_date)
-        track_records = self._fetch_track_records()
-        ranked_track_records = self._rank_track_records(track_records)
         season_aggs = self._fetch_season_aggregates(season_year=self._infer_season_year(game_date))
         game_logs = self._fetch_game_logs()
 
         # Union of pitchers we care about: anyone pitching tonight, or who has
-        # any prediction/game history in the current active window.
-        all_pitcher_keys: Set[str] = set(ranked_track_records.keys())
-        all_pitcher_keys.update(season_aggs.keys())
+        # any game history in the current active window.
+        all_pitcher_keys: Set[str] = set(season_aggs.keys())
+        all_pitcher_keys.update(game_logs.keys())
         all_pitcher_keys.update(p['pitcher_lookup'] for p in tonight)
 
         if history_only:
@@ -202,17 +197,12 @@ class MlbPitcherExporter(BaseExporter):
             expected_arsenals = self._fetch_expected_arsenal(list(all_pitcher_keys))
             strikeout_zones = self._fetch_strikeout_zones(list(all_pitcher_keys))
 
-        # Build display-name map (prefer tonight name, then track record, then season_agg)
-        names = self._build_name_map(tonight, ranked_track_records, season_aggs)
-
-        # Mark best bet flag on tonight entries
-        for p in tonight:
-            p['is_best_bet'] = (p['pitcher_lookup'], p['game_date']) in best_bet_keys
+        # Build display-name map (prefer tonight name, then season_agg)
+        names = self._build_name_map(tonight, season_aggs)
 
         leaderboard = self._build_leaderboard(
             game_date=game_date,
             tonight=tonight,
-            track_records=ranked_track_records,
             season_aggs=season_aggs,
             game_logs=game_logs,
             names=names,
@@ -227,8 +217,6 @@ class MlbPitcherExporter(BaseExporter):
                     pitcher_lookup=pitcher_lookup,
                     name=names.get(pitcher_lookup, pitcher_lookup.replace('_', ' ').title()),
                     tonight=next((p for p in tonight if p['pitcher_lookup'] == pitcher_lookup), None),
-                    is_best_bet=(pitcher_lookup, game_date) in best_bet_keys,
-                    track_record=ranked_track_records.get(pitcher_lookup),
                     season_agg=season_aggs.get(pitcher_lookup),
                     game_log=game_logs.get(pitcher_lookup, []),
                     pitch_arsenal=pitch_arsenals.get(pitcher_lookup, []),
@@ -248,16 +236,12 @@ class MlbPitcherExporter(BaseExporter):
     def _build_name_map(
         self,
         tonight: List[Dict],
-        track_records: Dict[str, Dict],
         season_aggs: Dict[str, Dict],
     ) -> Dict[str, str]:
         out: Dict[str, str] = {}
         for row in tonight:
             if row.get('pitcher_name'):
                 out[row['pitcher_lookup']] = row['pitcher_name']
-        for pl, rec in track_records.items():
-            if pl not in out and rec.get('pitcher_name'):
-                out[pl] = rec['pitcher_name']
         for pl, rec in season_aggs.items():
             if pl not in out and rec.get('pitcher_name'):
                 out[pl] = rec['pitcher_name']
@@ -268,11 +252,11 @@ class MlbPitcherExporter(BaseExporter):
     # ------------------------------------------------------------------
 
     def _fetch_tonight_predictions(self, game_date: str) -> List[Dict[str, Any]]:
-        """Predictions for the target date, deduped to one row per pitcher.
+        """Factual slate info for the target date, deduped to one row per pitcher.
 
-        JOINs `mlb_schedule` for `game_time_utc` so the leaderboard can be
-        sorted chronologically (Tonight page is intentionally prediction-free —
-        sort order is by game time, not edge).
+        The Tonight page is intentionally prediction-free: this returns only
+        factual fields (matchup, line, game time). JOINs `mlb_schedule` for
+        `game_time_utc` so the leaderboard can be sorted chronologically.
         """
         query = f"""
         WITH preds AS (
@@ -283,11 +267,6 @@ class MlbPitcherExporter(BaseExporter):
                 opponent_team_abbr AS opponent,
                 is_home,
                 strikeouts_line,
-                predicted_strikeouts,
-                edge,
-                recommendation,
-                confidence,
-                system_id,
                 CAST(game_date AS STRING) AS game_date,
                 game_date AS _gd
             FROM `{self.project_id}.mlb_predictions.pitcher_strikeouts`
@@ -300,8 +279,7 @@ class MlbPitcherExporter(BaseExporter):
         )
         SELECT
             p.pitcher_lookup, p.pitcher_name, p.team, p.opponent, p.is_home,
-            p.strikeouts_line, p.predicted_strikeouts, p.edge, p.recommendation,
-            p.confidence, p.system_id, p.game_date,
+            p.strikeouts_line, p.game_date,
             CAST(s.game_time_utc AS STRING) AS game_time_utc
         FROM preds p
         LEFT JOIN `{self.project_id}.mlb_raw.mlb_schedule` s
@@ -501,91 +479,6 @@ class MlbPitcherExporter(BaseExporter):
             }
         return out
 
-    def _fetch_best_bet_keys(self, game_date: str) -> Set[Tuple[str, str]]:
-        """Set of (pitcher_lookup, game_date) flagged as best bets."""
-        query = f"""
-        SELECT DISTINCT
-            pitcher_lookup,
-            CAST(game_date AS STRING) AS game_date
-        FROM `{self.project_id}.mlb_predictions.signal_best_bets_picks`
-        WHERE game_date = '{game_date}'
-        """
-        rows = self.query_to_list(query)
-        return {(r['pitcher_lookup'], r['game_date']) for r in rows}
-
-    def _fetch_track_records(self) -> Dict[str, Dict[str, Any]]:
-        """Per-pitcher prediction track record over the active window."""
-        query = f"""
-        WITH graded AS (
-          SELECT
-            pitcher_lookup,
-            pitcher_name,
-            game_date,
-            recommendation,
-            edge,
-            is_correct,
-            actual_strikeouts,
-            strikeouts_line
-          FROM `{self.project_id}.mlb_predictions.pitcher_strikeouts`
-          WHERE game_date >= '{TRACK_RECORD_START}'
-            AND game_date < CURRENT_DATE()
-            AND recommendation IN ('OVER', 'UNDER')
-            AND is_correct IS NOT NULL
-          QUALIFY ROW_NUMBER() OVER (
-            PARTITION BY pitcher_lookup, game_date
-            ORDER BY ABS(IFNULL(edge, 0)) DESC, processed_at DESC
-          ) = 1
-        ),
-        aggregated AS (
-          SELECT
-            pitcher_lookup,
-            ANY_VALUE(pitcher_name) AS pitcher_name,
-            COUNT(*) AS total_picks,
-            COUNTIF(is_correct) AS correct,
-            COUNTIF(recommendation = 'OVER') AS over_picks,
-            COUNTIF(recommendation = 'OVER' AND is_correct) AS over_correct,
-            COUNTIF(recommendation = 'UNDER') AS under_picks,
-            COUNTIF(recommendation = 'UNDER' AND is_correct) AS under_correct,
-            AVG(ABS(edge)) AS avg_edge,
-            MAX(game_date) AS last_pick_date
-          FROM graded
-          GROUP BY pitcher_lookup
-        )
-        SELECT * FROM aggregated
-        """
-        rows = self.query_to_list(query)
-        out: Dict[str, Dict] = {}
-        for r in rows:
-            total = int(r['total_picks'])
-            correct = int(r['correct'])
-            out[r['pitcher_lookup']] = {
-                'pitcher_name': r.get('pitcher_name'),
-                'total_picks': total,
-                'correct': correct,
-                'hit_rate_pct': round(100 * correct / total, 1) if total else 0.0,
-                'over_picks': int(r['over_picks']),
-                'over_correct': int(r['over_correct']),
-                'under_picks': int(r['under_picks']),
-                'under_correct': int(r['under_correct']),
-                'avg_edge': safe_float(r.get('avg_edge'), default=0.0, precision=2),
-                'last_pick_date': str(r['last_pick_date']) if r.get('last_pick_date') else None,
-            }
-        return out
-
-    def _rank_track_records(self, records: Dict[str, Dict]) -> Dict[str, Dict]:
-        """Add population rank by hit_rate_pct (min sample gated)."""
-        eligible = [
-            (pl, rec) for pl, rec in records.items()
-            if rec['total_picks'] >= MIN_RANK_SAMPLE
-        ]
-        eligible.sort(key=lambda kv: (-kv[1]['hit_rate_pct'], -kv[1]['total_picks']))
-        population = len(eligible)
-        for idx, (pl, rec) in enumerate(eligible, start=1):
-            rec['rank'] = idx
-            rec['rank_of'] = population
-        # Copy the ranked dicts back (they mutated in place) and also include sub-min entries without rank
-        return records
-
     def _fetch_season_aggregates(self, season_year: int) -> Dict[str, Dict[str, Any]]:
         """Current-season pitcher aggregates from pitcher_game_summary."""
         query = f"""
@@ -627,10 +520,11 @@ class MlbPitcherExporter(BaseExporter):
         return out
 
     def _fetch_game_logs(self) -> Dict[str, List[Dict[str, Any]]]:
-        """Last N starts per pitcher joined with prediction + best-bet flags.
+        """Last N starts per pitcher with factual stats and the K line.
 
         over_under_result is computed inline from strikeouts vs line since the
-        source column in pitcher_game_summary is unpopulated.
+        source column in pitcher_game_summary is unpopulated. The Tonight and
+        Trends surfaces are prediction-free — no model fields are emitted.
         """
         query = f"""
         WITH recent AS (
@@ -656,22 +550,13 @@ class MlbPitcherExporter(BaseExporter):
           SELECT
             pitcher_lookup,
             game_date,
-            strikeouts_line,
-            predicted_strikeouts,
-            recommendation,
-            edge,
-            is_correct
+            strikeouts_line
           FROM `{self.project_id}.mlb_predictions.pitcher_strikeouts`
           WHERE game_date >= '{TRACK_RECORD_START}'
           QUALIFY ROW_NUMBER() OVER (
             PARTITION BY pitcher_lookup, game_date
             ORDER BY ABS(IFNULL(edge, 0)) DESC, processed_at DESC
           ) = 1
-        ),
-        bb_flags AS (
-          SELECT DISTINCT pitcher_lookup, game_date
-          FROM `{self.project_id}.mlb_predictions.signal_best_bets_picks`
-          WHERE game_date >= '{TRACK_RECORD_START}'
         )
         SELECT
           r.pitcher_lookup,
@@ -684,11 +569,6 @@ class MlbPitcherExporter(BaseExporter):
           r.earned_runs,
           r.pitch_count,
           p.strikeouts_line,
-          p.predicted_strikeouts,
-          p.recommendation,
-          p.edge,
-          p.is_correct AS prediction_correct,
-          (bb.pitcher_lookup IS NOT NULL) AS was_best_bet,
           CASE
             WHEN p.strikeouts_line IS NULL OR r.strikeouts IS NULL THEN NULL
             WHEN r.strikeouts > p.strikeouts_line THEN 'OVER'
@@ -699,9 +579,6 @@ class MlbPitcherExporter(BaseExporter):
         LEFT JOIN preds p
           ON r.pitcher_lookup = p.pitcher_lookup
           AND r.game_date = p.game_date
-        LEFT JOIN bb_flags bb
-          ON r.pitcher_lookup = bb.pitcher_lookup
-          AND r.game_date = bb.game_date
         WHERE r.rn <= {GAME_LOG_DEPTH}
         ORDER BY r.pitcher_lookup, r.game_date DESC
         """
@@ -719,11 +596,6 @@ class MlbPitcherExporter(BaseExporter):
                 'pitch_count': safe_int(r.get('pitch_count')),
                 'strikeouts_line': safe_float(r.get('strikeouts_line'), precision=1),
                 'over_under_result': r.get('over_under_result'),
-                'predicted_strikeouts': safe_float(r.get('predicted_strikeouts'), precision=1),
-                'recommendation': r.get('recommendation'),
-                'edge': safe_float(r.get('edge'), precision=2),
-                'prediction_correct': r.get('prediction_correct'),
-                'was_best_bet': bool(r.get('was_best_bet')),
             }
             out[r['pitcher_lookup']].append(entry)
         return dict(out)
@@ -966,17 +838,15 @@ class MlbPitcherExporter(BaseExporter):
         self,
         game_date: str,
         tonight: List[Dict],
-        track_records: Dict[str, Dict],
         season_aggs: Dict[str, Dict],
         game_logs: Dict[str, List[Dict]],
         names: Dict[str, str],
     ) -> Dict[str, Any]:
         # Tonight's slate: sorted by game time ASC. Tonight page is intentionally
-        # prediction-free — no edge or best-bet floating in the ordering.
+        # prediction-free — no model fields are emitted.
         slate = []
         for p in tonight:
             pl = p['pitcher_lookup']
-            tr = track_records.get(pl, {})
             # Last 5 starts — mirrors the NBA Last10Grid shape: per-game
             # O/U/NL results + K totals + lines. game_logs is pre-sorted DESC.
             log = game_logs.get(pl, [])[:5]
@@ -1002,12 +872,6 @@ class MlbPitcherExporter(BaseExporter):
                 'is_home': bool(p.get('is_home')),
                 'game_time_utc': p.get('game_time_utc'),
                 'strikeouts_line': safe_float(p.get('strikeouts_line'), precision=1),
-                'predicted_strikeouts': safe_float(p.get('predicted_strikeouts'), precision=1),
-                'edge': safe_float(p.get('edge'), precision=2),
-                'recommendation': p.get('recommendation'),
-                'is_best_bet': p.get('is_best_bet', False),
-                'track_record_picks': tr.get('total_picks', 0),
-                'track_record_hr_pct': tr.get('hit_rate_pct'),
                 'last_5_results': last_5_results,
                 'last_5_k': last_5_k,
                 'last_5_lines': last_5_lines,
@@ -1039,25 +903,6 @@ class MlbPitcherExporter(BaseExporter):
             key=lambda x: -(x['season_k'] or 0),
         )[:LEADERBOARD_SIZE]
 
-        # Model Trusts Him — highest graded hit rate with meaningful sample
-        model_trusts_him = sorted(
-            (
-                {
-                    'pitcher_id': pl,
-                    'pitcher_name': names.get(pl, rec.get('pitcher_name', pl)),
-                    'total_picks': rec['total_picks'],
-                    'correct': rec['correct'],
-                    'hit_rate_pct': rec['hit_rate_pct'],
-                    'avg_edge': rec['avg_edge'],
-                    'rank': rec.get('rank'),
-                    'rank_of': rec.get('rank_of'),
-                }
-                for pl, rec in track_records.items()
-                if rec.get('rank') is not None
-            ),
-            key=lambda x: (-x['hit_rate_pct'], -x['total_picks']),
-        )[:LEADERBOARD_SIZE]
-
         # Line Beaters — biggest avg (strikeouts - strikeouts_line) over last 10 starts
         line_beaters = self._leaderboard_line_beaters(game_logs, names, season_aggs)
 
@@ -1071,7 +916,6 @@ class MlbPitcherExporter(BaseExporter):
             'leaderboards': {
                 'hot_hands': hot_hands,
                 'strikeout_kings': strikeout_kings,
-                'model_trusts_him': model_trusts_him,
                 'line_beaters': line_beaters,
             },
         }
@@ -1139,8 +983,6 @@ class MlbPitcherExporter(BaseExporter):
         pitcher_lookup: str,
         name: str,
         tonight: Optional[Dict],
-        is_best_bet: bool,
-        track_record: Optional[Dict],
         season_agg: Optional[Dict],
         game_log: List[Dict],
         pitch_arsenal: Optional[List[Dict]] = None,
@@ -1164,11 +1006,6 @@ class MlbPitcherExporter(BaseExporter):
                 'opponent': tonight.get('opponent'),
                 'is_home': bool(tonight.get('is_home')),
                 'strikeouts_line': safe_float(tonight.get('strikeouts_line'), precision=1),
-                'predicted_strikeouts': safe_float(tonight.get('predicted_strikeouts'), precision=1),
-                'edge': safe_float(tonight.get('edge'), precision=2),
-                'recommendation': tonight.get('recommendation'),
-                'is_best_bet': is_best_bet,
-                'confidence': safe_float(tonight.get('confidence'), precision=3),
             }
             if opponent_k_defense and opponent_k_defense.get('k_rate') is not None:
                 tonight_block['opponent_k_rate'] = opponent_k_defense.get('k_rate')
@@ -1187,29 +1024,6 @@ class MlbPitcherExporter(BaseExporter):
                 'era': season_agg.get('era'),
                 'whip': season_agg.get('whip'),
                 'quality_starts': season_agg.get('quality_starts'),
-            }
-
-        if track_record:
-            profile['track_record'] = {
-                'total_picks': track_record.get('total_picks', 0),
-                'correct': track_record.get('correct', 0),
-                'hit_rate_pct': track_record.get('hit_rate_pct'),
-                'over_picks': track_record.get('over_picks', 0),
-                'over_correct': track_record.get('over_correct', 0),
-                'over_hr_pct': (
-                    round(100 * track_record['over_correct'] / track_record['over_picks'], 1)
-                    if track_record.get('over_picks') else None
-                ),
-                'under_picks': track_record.get('under_picks', 0),
-                'under_correct': track_record.get('under_correct', 0),
-                'under_hr_pct': (
-                    round(100 * track_record['under_correct'] / track_record['under_picks'], 1)
-                    if track_record.get('under_picks') else None
-                ),
-                'avg_edge': track_record.get('avg_edge'),
-                'rank': track_record.get('rank'),
-                'rank_of': track_record.get('rank_of'),
-                'last_pick_date': track_record.get('last_pick_date'),
             }
 
         profile['game_log'] = game_log
@@ -1278,10 +1092,9 @@ class MlbPitcherExporter(BaseExporter):
         pattern: scores each candidate factor by a 0-1 magnitude, sorts, and
         returns the top ~5.
 
-        `direction` semantics for a strikeout prop:
-          positive = leans the pitcher OVER his K line
-          negative = leans UNDER
-          neutral  = informational
+        Each factor is a purely factual observation (opponent K-rate, whiff
+        trends, recent form, K floor, velocity). No OVER/UNDER lean is emitted
+        — the Tonight and Trends surfaces are prediction-free.
 
         Runs entirely off data the exporter already fetched. Returns [] when
         the pitcher has no start tonight, or when no factor has enough data.
@@ -1342,14 +1155,12 @@ class MlbPitcherExporter(BaseExporter):
             mag = min(abs(0.5 - pct) * 2, 1.0)
             rate_pct = opp_k_rate * 100
             if pct <= 0.40:
-                direction = 'positive'
                 desc = (
                     f"Faces a strikeout-prone {opponent} lineup "
                     f"({rate_pct:.1f}% K rate, {self._ordinal(opp_k_rank)}-highest "
                     f"of {opp_k_rank_of})."
                 )
             elif pct >= 0.60:
-                direction = 'negative'
                 fewest = opp_k_rank_of - opp_k_rank + 1
                 desc = (
                     f"Faces a contact-oriented {opponent} lineup "
@@ -1357,7 +1168,6 @@ class MlbPitcherExporter(BaseExporter):
                     f"of {opp_k_rank_of})."
                 )
             else:
-                direction = 'neutral'
                 desc = (
                     f"Faces a middle-of-the-pack {opponent} lineup for strikeouts "
                     f"({rate_pct:.1f}% K rate, ranked {opp_k_rank} of {opp_k_rank_of})."
@@ -1365,7 +1175,6 @@ class MlbPitcherExporter(BaseExporter):
             factors.append({
                 'id': 'opp_k_prone',
                 'factor': 'opp_k_prone',
-                'direction': direction,
                 'magnitude': round(mag, 2),
                 'description': desc,
             })
@@ -1377,13 +1186,11 @@ class MlbPitcherExporter(BaseExporter):
                 # Divisor 7.0 ~ the production p90 of |whiff_vs_expected_pp|.
                 mag = min(abs(wae) / 7.0, 1.0)
                 if wae > 0:
-                    direction = 'positive'
                     desc = (
                         f"Misses more bats than his pitch mix predicts "
                         f"({wae:+.1f} pp whiff vs league baseline)."
                     )
                 else:
-                    direction = 'negative'
                     desc = (
                         f"Misses fewer bats than his pitch mix predicts "
                         f"({wae:+.1f} pp whiff vs league baseline)."
@@ -1391,7 +1198,6 @@ class MlbPitcherExporter(BaseExporter):
                 factors.append({
                     'id': 'deception',
                     'factor': 'deception',
-                    'direction': direction,
                     'magnitude': round(mag, 2),
                     'description': desc,
                 })
@@ -1403,19 +1209,16 @@ class MlbPitcherExporter(BaseExporter):
             over_rate = over_n / total
             mag = min(abs(over_rate - 0.5) / 0.4, 1.0)
             if over_rate > 0.5:
-                direction = 'positive'
                 desc = (
                     f"Has gone OVER his strikeout line in {over_n} of his "
                     f"last {total} starts."
                 )
             elif over_rate < 0.5:
-                direction = 'negative'
                 desc = (
                     f"Has gone UNDER his strikeout line in {total - over_n} of "
                     f"his last {total} starts."
                 )
             else:
-                direction = 'neutral'
                 desc = (
                     f"Split his strikeout line {over_n}-{total - over_n} O/U "
                     f"over his last {total} starts."
@@ -1423,7 +1226,6 @@ class MlbPitcherExporter(BaseExporter):
             factors.append({
                 'id': 'recent_form',
                 'factor': 'recent_form',
-                'direction': direction,
                 'magnitude': round(mag, 2),
                 'description': desc,
             })
@@ -1439,14 +1241,12 @@ class MlbPitcherExporter(BaseExporter):
             diff = robust_floor - line
             mag = min(abs(diff) / 3.0, 1.0)
             if robust_floor >= line:
-                direction = 'positive'
                 desc = (
                     f"Struck out {robust_floor}+ in {n - 1} of his last {n} "
                     f"starts — reliable floor at or above tonight's "
                     f"{self._fmt_line(line)} line."
                 )
             else:
-                direction = 'negative'
                 desc = (
                     f"Reliable floor of {robust_floor} K over his last {n} "
                     f"starts sits below tonight's {self._fmt_line(line)} line."
@@ -1454,7 +1254,6 @@ class MlbPitcherExporter(BaseExporter):
             factors.append({
                 'id': 'k_floor',
                 'factor': 'k_floor',
-                'direction': direction,
                 'magnitude': round(mag, 2),
                 'description': desc,
             })
@@ -1473,7 +1272,6 @@ class MlbPitcherExporter(BaseExporter):
                 factors.append({
                     'id': 'velo_fade',
                     'factor': 'velo_fade',
-                    'direction': 'negative',
                     'magnitude': round(mag, 2),
                     'description': desc,
                 })
@@ -1484,13 +1282,11 @@ class MlbPitcherExporter(BaseExporter):
             if svp is not None and abs(svp) >= 0.5:
                 mag = min(abs(svp) / 3.0, 1.0)
                 if svp > 0:
-                    direction = 'positive'
                     desc = (
                         f"Throws {svp:.1f} mph harder than the league average "
                         f"for his pitch mix."
                     )
                 else:
-                    direction = 'negative'
                     desc = (
                         f"Throws {abs(svp):.1f} mph softer than the league "
                         f"average for his pitch mix."
@@ -1498,7 +1294,6 @@ class MlbPitcherExporter(BaseExporter):
                 factors.append({
                     'id': 'velo_premium',
                     'factor': 'velo_premium',
-                    'direction': direction,
                     'magnitude': round(mag, 2),
                     'description': desc,
                 })
@@ -1513,19 +1308,16 @@ class MlbPitcherExporter(BaseExporter):
                 mag = min(abs(deviation) / 18.0, 1.0)
                 pitch = putaway.get('pitch_desc') or putaway.get('pitch_code') or 'putaway pitch'
                 if deviation > 0:
-                    direction = 'positive'
                     desc = (
                         f"Puts hitters away with the {pitch} — {pa_whiff:.0f}% "
                         f"whiff rate on 2-strike counts."
                     )
                 elif deviation < 0:
-                    direction = 'negative'
                     desc = (
                         f"Soft 2-strike putaway — only {pa_whiff:.0f}% whiff "
                         f"rate on the {pitch}."
                     )
                 else:
-                    direction = 'neutral'
                     desc = (
                         f"League-average 2-strike putaway ({pa_whiff:.0f}% "
                         f"whiff on the {pitch})."
@@ -1533,7 +1325,6 @@ class MlbPitcherExporter(BaseExporter):
                 factors.append({
                     'id': 'putaway',
                     'factor': 'putaway',
-                    'direction': direction,
                     'magnitude': round(mag, 2),
                     'description': desc,
                 })
@@ -1545,14 +1336,12 @@ class MlbPitcherExporter(BaseExporter):
             if abs(diff) >= 0.5:
                 mag = min(abs(diff) / 2.5, 1.0)
                 if diff > 0:
-                    direction = 'positive'
                     desc = (
                         f"Tonight's {self._fmt_line(line)} K line sits "
                         f"{abs(diff)} below his {avg_k:.1f} average over the "
                         f"last {len(recent_ks)} starts."
                     )
                 else:
-                    direction = 'negative'
                     desc = (
                         f"Tonight's {self._fmt_line(line)} K line sits "
                         f"{abs(diff)} above his {avg_k:.1f} average over the "
@@ -1561,7 +1350,6 @@ class MlbPitcherExporter(BaseExporter):
                 factors.append({
                     'id': 'line_vs_recent',
                     'factor': 'line_vs_recent',
-                    'direction': direction,
                     'magnitude': round(mag, 2),
                     'description': desc,
                 })
