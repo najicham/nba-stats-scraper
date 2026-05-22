@@ -55,6 +55,17 @@ Both done:
 - Watch Odds API credit usage on the dashboard for the first few days (24 extra
   fires/day; expected to be negligible on any real plan).
 
+### >>> CHECKPOINT — run locally on 2026-05-23 (after MLB grading, ~10 AM ET) <<<
+The May 22 slate is the first with genuine pre-pitch line capture. On the 23rd:
+1. Verify the capture worked — `mlb_raw.pitcher_props_closing` for `game_date='2026-05-22'`
+   should be a *majority* `is_synthetic=FALSE` (it was 98% synthetic before the fix):
+   `bq query --use_legacy_sql=false "SELECT COUNTIF(is_synthetic=FALSE) real, COUNTIF(is_synthetic=TRUE) synth FROM \`nba-props-platform.mlb_raw.pitcher_props_closing\` WHERE game_date='2026-05-22'"`
+2. Run the CLV report: `PYTHONPATH=. .venv/bin/python scripts/mlb/clv_report.py --start 2026-05-22`
+3. Read the result: **positive mean CLV** = first real evidence C1 (the lineup early-hook
+   information-speed edge) is worth pursuing. Negative/zero CLV after a few more days =
+   decisive evidence to stop. CLV is C1's only honest scoreboard.
+Must run locally — `clv_report.py` queries private BigQuery and needs GCP credentials.
+
 ---
 
 ## What was done
