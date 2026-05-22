@@ -18,9 +18,15 @@ Pre-registered bar for "worth a real leak-free backtest":
   A one-season-only edge is treated as noise.
 
 VERDICT (run 2026-05-21, ~519K rows): every one of the 13 markets is
-efficient — no market clears the bar; every naive edge is negative. C2 is a
-dead end. Batter breakevens use best-line (optimistic) odds, so the true
-batter edges are even worse than reported.
+efficient under this test — no market shows a stable NAIVE directional bias
+that clears the vig. Batter breakevens use best-line (optimistic) odds, so the
+true batter edges are even worse than reported.
+
+SCOPE NOTE: this rules out the crudest form of "soft" — a market-wide
+always-OVER / always-UNDER bias. It does NOT rule out a CONDITIONAL edge on a
+subset (specific pitchers, parks, day/night, books). Read the verdict as
+"no free always-one-side money exists," not "no exploitable structure exists
+anywhere." A conditional-subset C2 remains untested by design.
 
 This is a market-EFFICIENCY scan (is the line biased), not a CLV test — a
 several-hours-pre-game line is a valid "market number" for measuring bias.
@@ -79,11 +85,12 @@ SELECT c.market_key AS market,
          WHEN 'pitcher_hits_allowed' THEN a.hits_allowed
          WHEN 'pitcher_earned_runs'  THEN a.earned_runs
          WHEN 'pitcher_outs'         THEN a.outs_recorded
-       END AS actual,
-       FALSE AS is_push
+       END AS actual
 FROM consensus c
 JOIN actuals a USING (game_date, plk)
 """
+# Pitcher markets post integer lines (e.g. K line = 6.0) -> real pushes when
+# actual == line. is_push is computed in Python after load (see main()).
 
 BATTER_Q = """
 SELECT market_name AS market,
@@ -161,7 +168,11 @@ def main():
 
     client = bigquery.Client(project=PROJECT)
     if do_pitcher:
-        scan(client.query(PITCHER_Q).to_dataframe(),
+        pdf = client.query(PITCHER_Q).to_dataframe()
+        # Real pushes: integer pitcher lines where actual == line.
+        pdf["is_push"] = (pd.to_numeric(pdf["actual"], errors="coerce")
+                          == pd.to_numeric(pdf["line"], errors="coerce"))
+        scan(pdf,
              "PITCHER markets — oddsa_pitcher_props consensus vs pitcher_game_summary")
     if do_batter:
         scan(client.query(BATTER_Q).to_dataframe(),
