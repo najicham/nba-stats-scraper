@@ -82,7 +82,7 @@ repos:
         description: Flags latest-snapshot odds queries missing a minutes_before_tipoff bound (vegas-line leak prevention)
         entry: python .pre-commit-hooks/check_odds_snapshot_filter.py
         language: python
-        types: [python, sql]
+        types_or: [python, sql]
         verbose: true
 
       - id: validate-sql-fstrings
