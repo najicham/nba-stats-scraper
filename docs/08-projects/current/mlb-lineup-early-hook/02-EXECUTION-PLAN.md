@@ -1,7 +1,14 @@
 # MLB Pitcher-Props Project — Execution Plan
 
 **Created:** 2026-05-20 · **Rewritten:** 2026-05-21 (post-validation strategic pivot).
-**Status:** Strategic pivot — the founding thesis was refuted by a leak-free validation.
+**Status:** SUPERSEDED — PROJECT CONCLUDED 2026-05-22.
+
+> **⚠️ This plan is superseded.** The Phase C / CLV decision path below was not executed —
+> the CLV instrument was found broken and underpowered. The project concluded on direct
+> well-powered evidence (model has no edge; 0/33 signals pass a pre-registered backtest;
+> signal confluence adds nothing). Final finding:
+> `03-FINDING-market-is-efficient.md` — *MLB starter strikeouts are not a beatable market
+> with these tools.* The text below is retained for history only.
 
 This doc is "what to do next." The old machinery/features plan and the specs
 `00-PROJECT-SPEC.md` / `01-DISCOVERY-HARNESS-SPEC.md` are **superseded** — see "Retired".

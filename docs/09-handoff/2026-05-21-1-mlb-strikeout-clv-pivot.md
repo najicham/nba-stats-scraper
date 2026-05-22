@@ -2,7 +2,14 @@
 
 **Date:** 2026-05-21 · **Supersedes:** `2026-05-20-3-mlb-strikeout-stage-1.1.md`
 **Project folder:** `docs/08-projects/current/mlb-lineup-early-hook/`
-**This doc is the single forward-looking handoff — read it top to bottom.**
+
+> **⚠️ SUPERSEDED — PROJECT CONCLUDED 2026-05-22.** This handoff described a measurement
+> window ending 2026-06-20. That plan was **not** executed: a 21-agent review found the CLV
+> instrument broken and underpowered, and direct well-powered evidence (model MAE + a
+> 0/33 signal backtest + a signal-confluence backtest) concluded the project. The finding:
+> **MLB starter strikeouts are not a beatable market with these tools.** See
+> `docs/08-projects/current/mlb-lineup-early-hook/03-FINDING-market-is-efficient.md`.
+> The text below is retained for history only.
 
 ---
 
