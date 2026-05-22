@@ -92,15 +92,16 @@ real snapshots land. CLV accrues going forward from 2026-05-22.
 
 ### Phase C — Pursue a real edge (validated leak-free **and** by CLV)
 
-Two structural sources of edge. Pursue C1 first — the infrastructure already exists.
-
 | | Item | Effort | Rationale |
 |--|------|--------|-----------|
-| `[ ]` | **C1 — Information-speed edge (the lineup early-hook).** The project is named for this. Quantify: when confirmed lineups / scratches / weather land *before* the book moves the line, is there CLV in that window? If so, bet it. | Med | A genuine, repeatable, structural edge — and Phase 0 already built the lineup-capture infra. This is the most promising thread. |
-| `[ ]` | **C2 — Softer markets.** Backtest `outs`/innings pitcher props and batter props on the leak-free harness — less-modeled than starter Ks. Batter-prop scrapers were stopped 2025-09-28 and need re-enabling. | Med–High | Edge lives in market *inefficiency*; starter Ks are efficient, these may not be. |
+| `[ ]` | **C1 — Information-speed edge (the lineup early-hook).** The project is named for this. Quantify: when confirmed lineups / scratches / weather land *before* the book moves the line, is there CLV in that window? If so, bet it. | Med | A genuine, repeatable, structural edge — and Phase 0 already built the lineup-capture infra. **The sole remaining thread.** Unblocked by the Phase B capture fix; first honest CLV read ~2026-05-23. |
+| `[x]` | **C2 — Softer markets — TESTED 2026-05-21, DEAD.** `scripts/mlb/market_efficiency_scan.py` scanned all 13 MLB prop markets (5 pitcher + 8 batter, ~519K rows) for a stable cross-season directional edge over the vig. **Every market is efficient** — no naive OVER/UNDER bet clears breakeven in *both* 2024 and 2025; every edge is negative. Batter edges used optimistic best-line odds, so the true edges are worse. There is no soft MLB prop market. | — | The "less-modeled markets are softer" hypothesis is refuted. Books price the long tail (triples, HR) to within a brutal vig; the modeled markets (Ks, hits, TB) are tight. |
 
 **The leak-free harness gates everything** — no strategy is believed until it validates
-leak-free *and* shows positive CLV.
+leak-free *and* shows positive CLV. With C2 dead and the model-feature path dead (the
+niche and the opponent-lineup feature both failed pre-registered bars), **C1 is the only
+live thread.** That is the disciplined narrowing the project has been doing — not a
+failure of effort.
 
 ### The stop criterion
 
