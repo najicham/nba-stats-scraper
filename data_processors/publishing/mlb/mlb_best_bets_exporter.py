@@ -91,8 +91,18 @@ class MlbBestBetsExporter(BaseExporter):
         # Written daily by halt_state_writer CF in nba_orchestration.halt_state.
         halt = self.halt_envelope(sport='mlb', target_date=game_date)
 
-        # Query best bets
-        best_bets = self._get_best_bets(game_date)
+        # When the system is halted, suppress all picks from the public payload.
+        # The exporter still emits the stable schema (empty best_bets + the halt
+        # envelope) so the frontend can render the halt state cleanly. Without
+        # this, halt_state was advisory only — picks shipped with a halt flag.
+        if halt['halt_active']:
+            logger.warning(
+                f"MLB best bets HALTED for {game_date} "
+                f"(reason={halt['halt_reason']}) — emitting zero picks."
+            )
+            best_bets = []
+        else:
+            best_bets = self._get_best_bets(game_date)
 
         # Build summary
         summary = self._build_summary(best_bets)
@@ -543,6 +553,17 @@ class MlbBestBetsExporter(BaseExporter):
         # was missed; without these fields the frontend has no way to surface
         # MLB halt state on the all-picks view.
         halt = self.halt_envelope(sport='mlb', target_date=today)
+
+        # When halted, suppress today's picks from the public all-picks view.
+        # History (record/streak/weeks) is past graded data and legitimately
+        # stays. total_picks below counts graded history + today's non-voided.
+        if halt['halt_active']:
+            logger.warning(
+                f"MLB all-picks view HALTED for {today} "
+                f"(reason={halt['halt_reason']}) — suppressing today's picks."
+            )
+            today_picks = []
+            non_voided_today = []
 
         json_data = {
             'date': today,

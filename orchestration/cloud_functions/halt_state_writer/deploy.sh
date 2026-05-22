@@ -15,6 +15,7 @@ FUNCTION_NAME="halt-state-writer"
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SOURCE_DIR}/../../.." && pwd)"
 SCHEMA_FILE="${REPO_ROOT}/schemas/bigquery/nba_orchestration/halt_state.sql"
+OVERRIDES_SCHEMA_FILE="${REPO_ROOT}/schemas/bigquery/nba_orchestration/halt_overrides.sql"
 SCHEDULER_NAME="halt-state-writer-daily"
 SLACK_WEBHOOK_SECRET="slack-webhook-url"
 
@@ -23,7 +24,9 @@ MODE="${1:-all}"
 create_table() {
   echo "==> Ensuring BQ table nba_orchestration.halt_state exists..."
   bq query --project_id="${PROJECT_ID}" --use_legacy_sql=false < "${SCHEMA_FILE}"
-  echo "    Table ready."
+  echo "==> Ensuring BQ table nba_orchestration.halt_overrides exists..."
+  bq query --project_id="${PROJECT_ID}" --use_legacy_sql=false < "${OVERRIDES_SCHEMA_FILE}"
+  echo "    Tables ready."
 }
 
 deploy_function() {

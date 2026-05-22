@@ -122,6 +122,7 @@ PICKS_LOOKUP = {
 }
 
 HALT_STATE_TABLE = f'{PROJECT_ID}.nba_orchestration.halt_state'
+HALT_OVERRIDES_TABLE = f'{PROJECT_ID}.nba_orchestration.halt_overrides'
 
 # Lazy BQ client
 _bq_client = None
@@ -548,6 +549,56 @@ def _mlb_pick_drought(bq: bigquery.Client, today: date) -> Optional[Dict[str, An
     }
 
 
+def _get_active_override(
+    bq: bigquery.Client, sport: str, today: date
+) -> Optional[Dict[str, Any]]:
+    """Operator-set manual halt override from `nba_orchestration.halt_overrides`.
+
+    Returns context dict if an active override covers `today`, else None.
+
+    An override can ONLY force a halt — never resume the system. Applied last
+    in the decision tree (see evaluate_halt_state step 6). A forgotten/stale
+    override is therefore harmless: it can only keep the system more
+    conservative, never publish picks during a real off-season.
+
+    Fail-open: any query error returns None, so a broken/missing overrides
+    table never suppresses the natural halt decision.
+    """
+    query = f"""
+        SELECT halt_reason, start_date, end_date, note, created_by
+        FROM `{HALT_OVERRIDES_TABLE}`
+        WHERE sport = @sport
+          AND active = TRUE
+          AND start_date <= @today
+          AND (end_date IS NULL OR end_date >= @today)
+        ORDER BY created_at DESC
+        LIMIT 1
+    """
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter('sport', 'STRING', sport),
+            bigquery.ScalarQueryParameter('today', 'DATE', today),
+        ]
+    )
+    try:
+        rows = list(bq.query(query, job_config=job_config).result(timeout=30))
+    except Exception as e:
+        logger.warning(
+            f"halt_overrides lookup failed for {sport}: {e}; ignoring override."
+        )
+        return None
+    if not rows:
+        return None
+    r = rows[0]
+    return {
+        'halt_reason': r.halt_reason or 'manual',
+        'override_start_date': r.start_date.isoformat() if r.start_date else None,
+        'override_end_date': r.end_date.isoformat() if r.end_date else None,
+        'override_note': r.note,
+        'override_created_by': r.created_by,
+    }
+
+
 # --------------------------------------------------------------------------- #
 # Compose the halt decision
 # --------------------------------------------------------------------------- #
@@ -636,6 +687,24 @@ def evaluate_halt_state(
             halt_active = True
             halt_reason = 'pick_drought'
             halt_metrics.update(drought_metrics)
+
+    # 6. Manual operator override (halt_overrides table). Applied LAST: an
+    #    operator halt always wins. It can only ADD a halt (force halt_active=
+    #    True) — never resume the system — so a forgotten override can never
+    #    publish picks during a real off-season. When the system is already
+    #    halted naturally, the natural reason is kept; the override is still
+    #    recorded in halt_metrics for the audit trail.
+    override = _get_active_override(bq, sport, today)
+    if override is not None:
+        if not halt_active:
+            halt_active = True
+            halt_reason = override['halt_reason']
+        halt_metrics['manual_override'] = override
+        logger.info(
+            f"[halt_state_writer] {sport}: manual override active "
+            f"(reason={override['halt_reason']}, "
+            f"created_by={override['override_created_by']})"
+        )
 
     return {
         'halt_active': halt_active,
