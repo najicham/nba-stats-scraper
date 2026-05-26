@@ -20,18 +20,23 @@ import json
 import logging
 import os
 from datetime import datetime, date, timedelta, timezone
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 import functions_framework
+import requests
+import google.auth.transport.requests
+import google.oauth2.id_token
 from google.cloud import bigquery
-from google.cloud import pubsub_v1
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Configuration
 PROJECT_ID = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
-PHASE3_TOPIC = 'nba-phase3-trigger'
+PHASE3_SERVICE_URL = os.environ.get(
+    'PHASE3_SERVICE_URL',
+    'https://nba-phase3-analytics-processors-f7p3g7f6ya-wl.a.run.app'
+)
 MIN_SHOTS_PER_GAME = 50  # Minimum shots for "complete" BDB data
 MAX_CHECK_COUNT = 72  # 72 checks × 6 hours = 18 days max wait
 
@@ -41,12 +46,9 @@ class BDBRetryProcessor:
 
     def __init__(self):
         self.bq_client = bigquery.Client()
-        try:
-            self.publisher = pubsub_v1.PublisherClient()
-            self.topic_path = self.publisher.topic_path(PROJECT_ID, PHASE3_TOPIC)
-        except Exception as e:
-            logger.warning(f"Could not initialize Pub/Sub: {e}")
-            self.publisher = None
+        # Dedupe Phase 3 triggers by game_date within a single CF run — Phase 3
+        # reprocesses the full day, so we only need one HTTP call per affected date.
+        self._triggered_dates: Set[str] = set()
 
     def get_pending_games(self, max_age_days: int = 14) -> List[Dict]:
         """Get games from pending_bdb_games that need retry."""
@@ -129,32 +131,74 @@ class BDBRetryProcessor:
             return {'available': False, 'shot_count': 0, 'shots_with_distance': 0, 'error': str(e)}
 
     def trigger_phase3_rerun(self, game: Dict) -> bool:
-        """Trigger Phase 3 re-processing for a game."""
-        if not self.publisher:
-            logger.warning("Pub/Sub not available, cannot trigger re-run")
-            return False
+        """Trigger Phase 3 re-processing for a game's date via direct HTTP.
 
+        Phase 3's /process endpoint consumes Pub/Sub envelopes routed from
+        nba-phase2-raw-complete. The previous design published to
+        nba-phase3-trigger, which has no subscribers (orphaned after the
+        Phase 2→3 migration) — publishes appeared successful but no re-run
+        actually ran, causing 1,751+ rows to be marked completed_bdb
+        without their pgs rows being refreshed.
+        """
         try:
-            game_id = game.get('nba_game_id') or game.get('game_id')
             game_date = game['game_date']
             if hasattr(game_date, 'isoformat'):
                 game_date = game_date.isoformat()
+            game_date_str = str(game_date)
 
-            message = json.dumps({
-                'game_date': str(game_date),
-                'game_id': game_id,
+            # Phase 3 reprocesses the whole day; one HTTP call per date is enough.
+            if game_date_str in self._triggered_dates:
+                logger.info(f"  Already triggered Phase 3 for {game_date_str} this run — skip")
+                return True
+
+            # Envelope mimics Phase 2 completion. source_table routes to
+            # PlayerGameSummaryProcessor via ANALYTICS_TRIGGER_GROUPS.
+            # backfill_mode=True bypasses completeness/freshness checks since this is a re-run.
+            inner_message = {
+                'source_table': 'nbac_gamebook_player_stats',
+                'output_table': 'nba_raw.nbac_gamebook_player_stats',
+                'game_date': game_date_str,
+                'status': 'success',
+                'backfill_mode': True,
                 'trigger_reason': 'bdb_data_available',
                 'source': 'bdb_retry_processor',
-                'original_quality': game.get('quality_before_rerun', 'unknown'),
-                'priority': 'normal'
-            }).encode('utf-8')
+            }
+            envelope = {
+                'message': {
+                    'data': base64.b64encode(
+                        json.dumps(inner_message).encode('utf-8')
+                    ).decode('utf-8')
+                }
+            }
 
-            future = self.publisher.publish(self.topic_path, message)
-            future.result(timeout=30)
-            logger.info(f"Triggered Phase 3 re-run for {game_id}")
-            return True
+            auth_req = google.auth.transport.requests.Request()
+            id_token = google.oauth2.id_token.fetch_id_token(auth_req, PHASE3_SERVICE_URL)
+            headers = {
+                'Authorization': f'Bearer {id_token}',
+                'Content-Type': 'application/json',
+            }
+
+            response = requests.post(
+                f"{PHASE3_SERVICE_URL}/process",
+                json=envelope,
+                headers=headers,
+                timeout=300,
+            )
+
+            if response.status_code == 200:
+                self._triggered_dates.add(game_date_str)
+                logger.info(
+                    f"  Triggered Phase 3 re-run for {game_date_str}: {response.text[:120]}"
+                )
+                return True
+
+            logger.error(
+                f"  Phase 3 returned {response.status_code} for {game_date_str}: "
+                f"{response.text[:200]}"
+            )
+            return False
         except Exception as e:
-            logger.error(f"Failed to trigger Phase 3 re-run: {e}")
+            logger.error(f"Failed to trigger Phase 3 re-run: {e}", exc_info=True)
             return False
 
     def update_game_status(self, game: Dict, new_status: str, bdb_info: Optional[Dict] = None) -> None:
