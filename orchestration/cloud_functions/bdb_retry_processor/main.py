@@ -44,11 +44,18 @@ MAX_CHECK_COUNT = 72  # 72 checks × 6 hours = 18 days max wait
 class BDBRetryProcessor:
     """Process pending BDB games and trigger re-runs when data available."""
 
+    # Minimum fraction of pgs rows with has_complete_shot_zones=TRUE for a date
+    # to count as a real enrichment. Tolerates a few legitimately-DNP rows
+    # while catching the failure mode where PlayerGameSummaryProcessor blocked
+    # entirely and pgs wasn't touched.
+    PGS_ENRICHMENT_THRESHOLD = 0.30
+
     def __init__(self):
         self.bq_client = bigquery.Client()
-        # Dedupe Phase 3 triggers by game_date within a single CF run — Phase 3
-        # reprocesses the full day, so we only need one HTTP call per affected date.
-        self._triggered_dates: Set[str] = set()
+        # Per-date cache: game_date_str → enrichment_succeeded. Phase 3
+        # reprocesses the full day, so we only HTTP-trigger and verify once
+        # per date per CF run; subsequent games on the same date reuse the result.
+        self._date_results: Dict[str, bool] = {}
 
     def get_pending_games(self, max_age_days: int = 14) -> List[Dict]:
         """Get games from pending_bdb_games that need retry."""
@@ -131,29 +138,49 @@ class BDBRetryProcessor:
             return {'available': False, 'shot_count': 0, 'shots_with_distance': 0, 'error': str(e)}
 
     def trigger_phase3_rerun(self, game: Dict) -> bool:
-        """Trigger Phase 3 re-processing for a game's date via direct HTTP.
+        """Trigger Phase 3 re-processing AND verify pgs was actually enriched.
 
         Phase 3's /process endpoint consumes Pub/Sub envelopes routed from
         nba-phase2-raw-complete. The previous design published to
         nba-phase3-trigger, which has no subscribers (orphaned after the
         Phase 2→3 migration) — publishes appeared successful but no re-run
-        actually ran, causing 1,751+ rows to be marked completed_bdb
-        without their pgs rows being refreshed.
+        actually ran.
+
+        Returns True only when HTTP 200 AND post-trigger pgs verification
+        shows has_complete_shot_zones is populated for the date. Phase 3
+        returns 200 even on PARTIAL FAILURE (e.g., PlayerGameSummaryProcessor
+        blocked by team-stats threshold), so HTTP status alone is not enough.
         """
+        game_date = game['game_date']
+        if hasattr(game_date, 'isoformat'):
+            game_date = game_date.isoformat()
+        game_date_str = str(game_date)
+
+        # Per-date cache — Phase 3 reprocesses the whole day, so one trigger
+        # + verify per date is enough; reuse the result for sibling games.
+        if game_date_str in self._date_results:
+            cached = self._date_results[game_date_str]
+            logger.info(f"  Reusing cached Phase 3 result for {game_date_str}: enriched={cached}")
+            return cached
+
+        if not self._http_trigger_phase3(game_date_str):
+            self._date_results[game_date_str] = False
+            return False
+
+        enriched = self._verify_pgs_enriched(game_date_str)
+        if not enriched:
+            logger.warning(
+                f"  Phase 3 returned 200 for {game_date_str} but pgs not enriched "
+                f"— likely partial failure (e.g., PlayerGameSummaryProcessor blocked)"
+            )
+        self._date_results[game_date_str] = enriched
+        return enriched
+
+    def _http_trigger_phase3(self, game_date_str: str) -> bool:
+        """POST a Phase-2-completion envelope to Phase 3's /process endpoint."""
         try:
-            game_date = game['game_date']
-            if hasattr(game_date, 'isoformat'):
-                game_date = game_date.isoformat()
-            game_date_str = str(game_date)
-
-            # Phase 3 reprocesses the whole day; one HTTP call per date is enough.
-            if game_date_str in self._triggered_dates:
-                logger.info(f"  Already triggered Phase 3 for {game_date_str} this run — skip")
-                return True
-
-            # Envelope mimics Phase 2 completion. source_table routes to
-            # PlayerGameSummaryProcessor via ANALYTICS_TRIGGER_GROUPS.
-            # backfill_mode=True bypasses completeness/freshness checks since this is a re-run.
+            # source_table routes to PlayerGameSummaryProcessor via ANALYTICS_TRIGGER_GROUPS.
+            # backfill_mode=True asks Phase 3 to bypass completeness/freshness checks.
             inner_message = {
                 'source_table': 'nbac_gamebook_player_stats',
                 'output_table': 'nba_raw.nbac_gamebook_player_stats',
@@ -186,9 +213,8 @@ class BDBRetryProcessor:
             )
 
             if response.status_code == 200:
-                self._triggered_dates.add(game_date_str)
                 logger.info(
-                    f"  Triggered Phase 3 re-run for {game_date_str}: {response.text[:120]}"
+                    f"  Phase 3 /process returned 200 for {game_date_str}: {response.text[:120]}"
                 )
                 return True
 
@@ -198,8 +224,43 @@ class BDBRetryProcessor:
             )
             return False
         except Exception as e:
-            logger.error(f"Failed to trigger Phase 3 re-run: {e}", exc_info=True)
+            logger.error(f"Failed to HTTP-trigger Phase 3: {e}", exc_info=True)
             return False
+
+    def _verify_pgs_enriched(self, game_date_str: str) -> bool:
+        """Confirm player_game_summary has BDB-quality shot zones for the date.
+
+        Catches Phase 3 partial-failure: HTTP 200 but PlayerGameSummaryProcessor
+        was blocked (e.g., team-stats threshold). pgs would be unchanged.
+        """
+        query = f"""
+        SELECT
+          COUNTIF(has_complete_shot_zones = TRUE) AS enriched,
+          COUNT(*) AS total_rows
+        FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
+        WHERE game_date = '{game_date_str}'
+        """
+        try:
+            rows = list(self.bq_client.query(query).result())
+            if not rows:
+                logger.warning(f"  No pgs rows found for {game_date_str}")
+                return False
+            row = rows[0]
+            total = int(row['total_rows'] or 0)
+            enriched = int(row['enriched'] or 0)
+            if total == 0:
+                return False
+            ratio = enriched / total
+            ok = ratio >= self.PGS_ENRICHMENT_THRESHOLD
+            logger.info(
+                f"  pgs verify for {game_date_str}: {enriched}/{total} enriched "
+                f"({ratio:.0%}, threshold={self.PGS_ENRICHMENT_THRESHOLD:.0%}) → {'OK' if ok else 'BELOW THRESHOLD'}"
+            )
+            return ok
+        except Exception as e:
+            logger.error(f"  Failed to verify pgs enrichment for {game_date_str}: {e}")
+            # On verify failure, fall back to optimistic mark — preserves pre-fix behavior.
+            return True
 
     def update_game_status(self, game: Dict, new_status: str, bdb_info: Optional[Dict] = None) -> None:
         """Update the status of a game in pending_bdb_games table."""
