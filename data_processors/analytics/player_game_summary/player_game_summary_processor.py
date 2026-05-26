@@ -2112,10 +2112,18 @@ class PlayerGameSummaryProcessor(
                 # Shooting
                 'fg_attempts': int(row['field_goals_attempted']) if pd.notna(row['field_goals_attempted']) else None,
                 'fg_makes': int(row['field_goals_made']) if pd.notna(row['field_goals_made']) else None,
-                # CRITICAL: Use PBP three_pt (not box score) for source consistency with paint/mid
-                # If PBP not available, set to None to avoid mixed-source corruption
-                'three_pt_attempts': shot_zone_data.get('three_attempts_pbp'),
-                'three_pt_makes': shot_zone_data.get('three_makes_pbp'),
+                # Prefer PBP three_pt for source consistency with paint/mid zones; fall back to
+                # box score when PBP is unavailable. has_complete_shot_zones=FALSE flags the mixed source.
+                'three_pt_attempts': (
+                    shot_zone_data['three_attempts_pbp']
+                    if shot_zone_data.get('three_attempts_pbp') is not None
+                    else (int(row['three_pointers_attempted']) if pd.notna(row['three_pointers_attempted']) else None)
+                ),
+                'three_pt_makes': (
+                    shot_zone_data['three_makes_pbp']
+                    if shot_zone_data.get('three_makes_pbp') is not None
+                    else (int(row['three_pointers_made']) if pd.notna(row['three_pointers_made']) else None)
+                ),
                 'ft_attempts': int(row['free_throws_attempted']) if pd.notna(row['free_throws_attempted']) else None,
                 'ft_makes': int(row['free_throws_made']) if pd.notna(row['free_throws_made']) else None,
 
@@ -2748,10 +2756,18 @@ class PlayerGameSummaryProcessor(
                     # Shooting
                     'fg_attempts': int(row['field_goals_attempted']) if pd.notna(row['field_goals_attempted']) else None,
                     'fg_makes': int(row['field_goals_made']) if pd.notna(row['field_goals_made']) else None,
-                    # CRITICAL: Use PBP three_pt (not box score) for source consistency with paint/mid
-                    # If PBP not available, set to None to avoid mixed-source corruption
-                    'three_pt_attempts': shot_zone_data.get('three_attempts_pbp'),
-                    'three_pt_makes': shot_zone_data.get('three_makes_pbp'),
+                    # Prefer PBP three_pt for source consistency with paint/mid zones; fall back to
+                    # box score when PBP is unavailable. has_complete_shot_zones=FALSE flags the mixed source.
+                    'three_pt_attempts': (
+                        shot_zone_data['three_attempts_pbp']
+                        if shot_zone_data.get('three_attempts_pbp') is not None
+                        else (int(row['three_pointers_attempted']) if pd.notna(row['three_pointers_attempted']) else None)
+                    ),
+                    'three_pt_makes': (
+                        shot_zone_data['three_makes_pbp']
+                        if shot_zone_data.get('three_makes_pbp') is not None
+                        else (int(row['three_pointers_made']) if pd.notna(row['three_pointers_made']) else None)
+                    ),
                     'ft_attempts': int(row['free_throws_attempted']) if pd.notna(row['free_throws_attempted']) else None,
                     'ft_makes': int(row['free_throws_made']) if pd.notna(row['free_throws_made']) else None,
 

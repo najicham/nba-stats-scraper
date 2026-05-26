@@ -74,7 +74,7 @@ repos:
         description: Flags <= date patterns that might cause data leakage (L5/L10 bug prevention)
         entry: python .pre-commit-hooks/check_date_comparisons.py
         language: python
-        types: [python, sql]
+        types_or: [python, sql]
         verbose: true
 
       - id: check-odds-snapshot-filter
