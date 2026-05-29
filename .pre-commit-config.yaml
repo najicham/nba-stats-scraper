@@ -119,7 +119,7 @@ repos:
           A multi-column IN subquery caused a 6-day grading outage (invisible to mocked BQ tests).
         entry: python .pre-commit-hooks/validate_bq_sql_patterns.py
         language: python
-        types: [python, sql]
+        types_or: [python, sql]
         verbose: true
 
       - id: validate-sql-queries
@@ -127,7 +127,7 @@ repos:
         description: Checks for Session 123 anti-patterns (cache_date = game_date, missing partition filters, etc.)
         entry: python .pre-commit-hooks/validate_sql_queries.py
         language: python
-        types: [python, sql]
+        types_or: [python, sql]
         verbose: true
 
       - id: validate-model-references
