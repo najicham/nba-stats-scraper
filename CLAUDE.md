@@ -127,7 +127,7 @@ nba-stats-scraper/
 - **Top combos: 74-83% HR** — edge 5+ with combo_3way, rest_advantage, or book_disagreement.
 - **`weekly-retrain` CF fires every Monday 5 AM ET** — auto-retrains all enabled families, 56-day rolling window, governance gates enforced
 - **`./bin/retrain.sh --all --enable`** — manual equivalent for ad-hoc retraining
-- `retrain-reminder` CF alerts every Monday at 9 AM ET — backup alert if auto-retrain fails
+- ~~`retrain-reminder` CF~~ — NOT DEPLOYED (orphan source dir; cleanup pending in Task #35)
 - Stale models (10+ days) become confidently wrong: high edge but low HR
 - Walk-forward details: `docs/08-projects/current/model-management/MONTHLY-RETRAINING.md`
 
@@ -165,7 +165,9 @@ nba-stats-scraper/
 
 **Cloud Run Services:** prediction-coordinator, prediction-worker, nba-phase3-analytics-processors, nba-phase4-precompute-processors, nba-phase2-raw-processors, nba-scrapers, nba-grading-service
 
-**Cloud Functions (auto-deploy via `cloudbuild-functions.yaml`):** phase5b-grading, phase6-export, grading-gap-detector, phase3/4/5-to-next orchestrators, enrichment-trigger, daily-health-check, transition-monitor, pipeline-health-summary, nba-grading-alerts, live-freshness-monitor, self-heal-predictions, grading-readiness-monitor, post-grading-export, decay-detection (11 AM ET), retrain-reminder (Mon 9 AM ET), weekly-retrain (Mon 5 AM ET, 4GiB/1800s), validation-runner, filter-counterfactual-evaluator (11:30 AM ET), morning-deployment-check (6 AM ET), monthly-retrain (1st of month, DEPRECATED)
+**Cloud Functions (auto-deploy via `cloudbuild-functions.yaml`):** phase5b-grading, phase6-export, grading-gap-detector, phase3/4/5-to-next orchestrators, enrichment-trigger, daily-health-check, transition-monitor, pipeline-health-summary, nba-grading-alerts, live-freshness-monitor, self-heal-predictions, grading-readiness-monitor, post-grading-export, decay-detection (11 AM ET), weekly-retrain (Mon 5 AM ET, 4GiB/1800s), validation-runner, filter-counterfactual-evaluator (11:30 AM ET), morning-deployment-check (6 AM ET)
+
+**Orphan source dirs (NOT deployed, cleanup pending Task #35):** `retrain_reminder/`, `monthly_retrain/`, `phase4_failure_alert/`, `box_score_completeness_alert/`, `prediction_monitoring/`, `zero_workflow_monitor/`, `system_performance_alert/`, `upcoming_tables_cleanup/`, `firestore_cleanup/`, `mlb_pitcher_watchlist/`, `mlb_phase3_to_phase4/`, `mlb_phase4_to_phase5/`, `mlb_phase5_to_phase6/`
 
 **NOT auto-deployed (manual only):** auto-retry-processor, mlb-phase1-scrapers (use `./bin/scrapers/deploy/mlb/deploy_mlb_scrapers.sh`)
 
@@ -201,7 +203,7 @@ nba-stats-scraper/
 | `nba_raw.nba_tracking_stats` | NBA.com player tracking/usage data |
 | `nba_raw.vsin_betting_splits` | VSiN public betting percentages |
 | `league_macro_daily` | Daily league macro trends — Vegas MAE, scoring env, edge availability, BB HR |
-| `model_bb_candidates` | Per-model pipeline candidates with full provenance (45 cols). Partitioned by game_date |
+| `model_bb_candidates` | Per-model pipeline candidates. Schema has 45 cols but writer emits only 30 (15 silently NULL — see Task #39). Partitioned by game_date |
 
 **Game Status:** 1=Scheduled, 2=In Progress, 3=Final
 
@@ -211,7 +213,7 @@ nba-stats-scraper/
 
 **Impact:** Coverage drops from ~180 to ~75 predictions per game day. Intentional — never relax the tolerance.
 
-**37 base features** across 5 categories: matchup, player_history, team_context, vegas, game_context. Each has `feature_N_quality` and `feature_N_source` columns. **V16 adds 2 features** (55: `over_rate_last_10`, 56: `margin_vs_line_avg_last_5`) — feature store schema is `v2_57features` (57 columns total).
+**60 features (0-59)** across 5 categories: matchup, player_history, team_context, vegas, game_context. Each has `feature_N_value`, `feature_N_quality` (FLOAT64), `feature_N_source` (STRING) columns. V12 (39-53), V14 (54), V16 (55-56), V17 (57-58), V18 (59). Features 54-59 are OPTIONAL (rolling-history-dependent) so unavailable doesn't block predictions. `quality_scorer.FEATURE_COUNT = 60` as of 2026-05-30 (was 54; expanded after BQ schema fix for feature_54-56 quality columns).
 
 **CRITICAL:** When querying `ml_feature_store_v2`, use `feature_N_value` columns, NOT `features[OFFSET(N)]`. Array column is deprecated. Use `build_feature_array_from_columns(row)` from `shared/ml/feature_contract.py` for training code.
 
