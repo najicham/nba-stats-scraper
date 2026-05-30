@@ -49,8 +49,9 @@ CACHE_TABLE = "nba_precompute.player_daily_cache"
 PREDICTIONS_TABLE = "nba_predictions.player_prop_predictions"
 
 # Expected feature array length
-# Note: Changed from 33→34→37→54 as features were added
-EXPECTED_FEATURE_COUNT = 54
+# Note: Changed from 33→34→37→54→60 as features were added
+# (V16/V17/V18 = features 54-59 enabled 2026-05-30 after BQ schema fix)
+EXPECTED_FEATURE_COUNT = 60
 
 # Thresholds
 L5_L10_MATCH_THRESHOLD = 95.0  # Minimum % of records that should match cache

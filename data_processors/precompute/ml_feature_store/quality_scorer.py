@@ -69,13 +69,15 @@ SOURCE_TYPE_CANONICAL = {
 }
 
 # Feature categories for quality grouping
-# Total: 6 + 20 + 3 + 4 + 21 = 54
+# Total: 6 + 24 + 4 + 4 + 22 = 60
 FEATURE_CATEGORIES = {
     'matchup': [5, 6, 7, 8, 13, 14],
-    'player_history': [0, 1, 2, 3, 4, 29, 30, 31, 32, 33, 34, 35, 36, 37, 43, 44, 45, 46, 48, 49],
-    'team_context': [22, 23, 24],
+    'player_history': [0, 1, 2, 3, 4, 29, 30, 31, 32, 33, 34, 35, 36, 37, 43, 44, 45, 46, 48, 49,
+                       54, 55, 56, 58],
+    'team_context': [22, 23, 24, 57],
     'vegas': [25, 26, 27, 28],
-    'game_context': [9, 10, 11, 12, 15, 16, 17, 18, 19, 20, 21, 38, 39, 40, 41, 42, 47, 50, 51, 52, 53],
+    'game_context': [9, 10, 11, 12, 15, 16, 17, 18, 19, 20, 21, 38, 39, 40, 41, 42, 47, 50, 51, 52, 53,
+                     59],
 }
 
 # Critical features - Session 132 issue area
@@ -114,6 +116,9 @@ FEATURE_UPSTREAM_TABLES = {
     47: 'default', 48: 'calculated', 49: 'calculated',
     50: 'default', 51: 'upcoming_player_game_context', 52: 'upcoming_player_game_context',
     53: 'calculated',
+    # V16/V17/V18 features (54-59)
+    54: 'calculated', 55: 'calculated', 56: 'calculated',
+    57: 'calculated', 58: 'calculated', 59: 'calculated',
 }
 
 # Default fallback reasons per feature (when source is default/fallback/missing)
@@ -137,12 +142,20 @@ DEFAULT_FALLBACK_REASONS = {
     49: 'rolling_stats_unavailable', 50: 'dead_feature',
     51: 'prop_streaks_unavailable', 52: 'prop_streaks_unavailable',
     53: 'line_vs_season_unavailable',
+    # V16/V17/V18 features (54-59) — all OPTIONAL, can legitimately be unavailable
+    54: 'no_prior_line', 55: 'insufficient_prop_history',
+    56: 'insufficient_prop_history', 57: 'team_history_unavailable',
+    58: 'insufficient_minutes_history', 59: 'pace_unavailable',
 }
 
 # Session 145: Optional features - not counted in zero-tolerance gating
 # Vegas lines unavailable for ~60% of players (bench players without published lines)
 # Still tracked as defaults for visibility, but don't block predictions
-OPTIONAL_FEATURES = {25, 26, 27, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53}  # Vegas, star_teammates_out, game_total, all V12 features (38-53)
+# V16/V17/V18 (54-59) added 2026-05-30: all depend on rolling history (lines, minutes,
+# team performance, pace) that may legitimately be unavailable for new players,
+# early-season records, or missing upstream data — same OPTIONAL semantics as V12.
+OPTIONAL_FEATURES = {25, 26, 27, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53,
+                     54, 55, 56, 57, 58, 59}  # Vegas, star_teammates_out, game_total, V12 (38-53), V16/V17/V18 (54-59)
 
 # Training quality threshold per feature
 TRAINING_QUALITY_THRESHOLD = 85.0
@@ -150,26 +163,15 @@ TRAINING_QUALITY_THRESHOLD = 85.0
 # Quality schema version
 QUALITY_SCHEMA_VERSION = 'v1_hybrid_20260205'
 
-# Total feature count scored by the quality scorer.
+# Total feature count scored by the quality scorer. Matches the processor's
+# FEATURE_COUNT=60 (features 0-59 = the full vector written to BigQuery).
 #
-# WHY 54, not 60:
-# ml_feature_store_processor.py has FEATURE_COUNT=60, which represents the full
-# feature vector written to BigQuery (features 0-59). However, features 54-59
-# (V16/V17/V18 additions) do not yet have corresponding per-feature BQ schema
-# columns (feature_N_quality, feature_N_source for N=54-59). The processor
-# explicitly truncates before calling the scorer:
-#
-#   scored_sources = {k: v for k, v in feature_sources.items() if k < FEATURE_COUNT}
-#
-# ...where FEATURE_COUNT there is 60. The scorer then further caps at its own
-# FEATURE_COUNT=54 inside calculate_quality_score() and build_quality_visibility_fields().
-# This two-level truncation ensures features 54-59 (always 'default'/'missing' for
-# many players) don't penalize the quality score or generate spurious BQ column writes.
-#
-# If the BQ schema is extended to add feature_54_quality ... feature_59_quality columns,
-# update this constant to 60 and add entries to FEATURE_CATEGORIES, OPTIONAL_FEATURES,
-# FEATURE_UPSTREAM_TABLES, and DEFAULT_FALLBACK_REASONS accordingly.
-FEATURE_COUNT = 54
+# Was 54 until 2026-05-30 because BQ was missing feature_54_quality/_source and
+# had wrong-type (STRING) feature_55_quality/_56_quality. After that schema fix,
+# the scorer covers all 60 features. Features 54-59 are all in OPTIONAL_FEATURES
+# (rolling-history-dependent), so they don't penalize the score average or
+# trigger the required-defaults cap when unavailable.
+FEATURE_COUNT = 60
 
 
 # ============================================================================

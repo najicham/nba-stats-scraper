@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.ml_feature_store_
   universal_player_id STRING,
   game_date DATE NOT NULL,                          -- Partition key
   game_id STRING NOT NULL,
-  
+
   -- ========================================================================
   -- FLEXIBLE FEATURES (Array-Based Design)
   -- ========================================================================
@@ -25,54 +25,54 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.ml_feature_store_
   feature_names ARRAY<STRING>,                      -- Array of feature names for interpretability
   feature_count INT64 NOT NULL,                     -- Explicit count (25 initially)
   feature_version STRING NOT NULL,                  -- Version identifier: "v1_baseline_25", "v2_enhanced_47"
-  
+
   -- ========================================================================
   -- FEATURE METADATA (2 fields)
   -- ========================================================================
   feature_generation_time_ms INT64,                 -- How long to generate features
   feature_quality_score NUMERIC(5,2),               -- 0-100 quality score
-  
+
   -- ========================================================================
   -- PLAYER CONTEXT (3 fields)
   -- ========================================================================
   opponent_team_abbr STRING,
   is_home BOOLEAN,
   days_rest INT64,
-  
+
   -- ========================================================================
   -- DATA SOURCE (1 field)
   -- ========================================================================
   data_source STRING NOT NULL,                      -- 'phase4', 'phase3', 'mixed', 'early_season'
-  
+
   -- ========================================================================
   -- SOURCE TRACKING: Phase 4 Dependencies (16 fields)
   -- v4.0 Dependency Tracking - 4 fields per source (last_updated, rows_found, completeness_pct, hash)
   -- ========================================================================
-  
+
   -- Source 1: player_daily_cache (Features 0-4, 18-20, 22-23)
   source_daily_cache_last_updated TIMESTAMP,        -- When daily cache was last updated
   source_daily_cache_rows_found INT64,              -- Number of rows found in cache
   source_daily_cache_completeness_pct NUMERIC(5,2), -- Percentage of expected data found
   source_daily_cache_hash STRING,                   -- Hash from player_daily_cache.data_hash for smart reprocessing
-  
+
   -- Source 2: player_composite_factors (Features 5-8)
   source_composite_last_updated TIMESTAMP,          -- When composite factors were last updated
   source_composite_rows_found INT64,                -- Number of rows found
   source_composite_completeness_pct NUMERIC(5,2),   -- Percentage of expected data found
   source_composite_hash STRING,                     -- Hash from player_composite_factors.data_hash for smart reprocessing
-  
+
   -- Source 3: player_shot_zone_analysis (Features 18-20)
   source_shot_zones_last_updated TIMESTAMP,         -- When shot zone analysis was last updated
   source_shot_zones_rows_found INT64,               -- Number of rows found
   source_shot_zones_completeness_pct NUMERIC(5,2),  -- Percentage of expected data found
   source_shot_zones_hash STRING,                    -- Hash from player_shot_zone_analysis.data_hash for smart reprocessing
-  
+
   -- Source 4: team_defense_zone_analysis (Features 13-14)
   source_team_defense_last_updated TIMESTAMP,       -- When team defense was last updated
   source_team_defense_rows_found INT64,             -- Number of rows found
   source_team_defense_completeness_pct NUMERIC(5,2),-- Percentage of expected data found
   source_team_defense_hash STRING,                  -- Hash from team_defense_zone_analysis.data_hash for smart reprocessing
-  
+
   -- ========================================================================
   -- EARLY SEASON HANDLING (2 fields)
   -- ========================================================================
@@ -511,7 +511,7 @@ WHERE feature_quality_score >= 85.0
 -- ============================================================================
 
 -- Check source freshness
--- SELECT 
+-- SELECT
 --   game_date,
 --   COUNT(*) as total_players,
 --   AVG(feature_quality_score) as avg_quality,
@@ -523,7 +523,7 @@ WHERE feature_quality_score >= 85.0
 -- ORDER BY game_date DESC;
 
 -- Check data completeness by source
--- SELECT 
+-- SELECT
 --   game_date,
 --   AVG(source_daily_cache_completeness_pct) as cache_completeness,
 --   AVG(source_composite_completeness_pct) as composite_completeness,
@@ -547,7 +547,7 @@ WHERE feature_quality_score >= 85.0
 -- ORDER BY game_date DESC;
 
 -- Check early season records
--- SELECT 
+-- SELECT
 --   game_date,
 --   COUNT(*) as total_players,
 --   SUM(CASE WHEN early_season_flag = TRUE THEN 1 ELSE 0 END) as early_season_players,
@@ -986,7 +986,20 @@ ADD COLUMN IF NOT EXISTS feature_52_value FLOAT64 OPTIONS (description='Value fo
 ADD COLUMN IF NOT EXISTS feature_53_value FLOAT64 OPTIONS (description='Value for feature 53 (line_vs_season_avg). NULL if default.'),
 ADD COLUMN IF NOT EXISTS feature_54_value FLOAT64 OPTIONS (description='Value for feature 54 (prop_line_delta). Line change from previous game. NULL if no prev line.');
 
+-- 2026-05-30: Fix omitted feature_54 quality/source columns (V14 migration missed them).
+-- Applied live via `bq query "ALTER TABLE ... ADD COLUMN ..."`. Code (quality_scorer.py:FEATURE_COUNT)
+-- updated to 60 in the same change set so future writes populate these.
+ALTER TABLE `nba-props-platform.nba_predictions.ml_feature_store_v2`
+ADD COLUMN IF NOT EXISTS feature_54_quality FLOAT64 OPTIONS (description='Quality 0-100 for feature 54 (prop_line_delta)'),
+ADD COLUMN IF NOT EXISTS feature_54_source STRING OPTIONS (description='Source for feature 54 (prop_line_delta): calculated, missing, default');
+
 -- Session 356: V16 feature value columns (prop line history)
+-- 2026-05-30 correction: feature_55_quality + feature_56_quality were live as STRING
+-- (legacy "good" tier write, source code unknown — orphaned). `ADD COLUMN IF NOT EXISTS`
+-- with FLOAT64 was a no-op since columns already existed under wrong type. Live fix:
+--   ALTER TABLE ... DROP COLUMN feature_55_quality, DROP COLUMN feature_56_quality;
+--   ALTER TABLE ... ADD COLUMN feature_55_quality FLOAT64, ADD COLUMN feature_56_quality FLOAT64;
+-- For fresh environments, this file's ADD COLUMN below will create them as FLOAT64 directly.
 ALTER TABLE `nba-props-platform.nba_predictions.ml_feature_store_v2`
 ADD COLUMN IF NOT EXISTS feature_55_value FLOAT64 OPTIONS (description='Value for feature 55 (over_rate_last_10). Fraction of L10 where actual > prop_line. NULL if insufficient history.'),
 ADD COLUMN IF NOT EXISTS feature_55_quality FLOAT64 OPTIONS (description='Quality 0-100 for feature 55 (over_rate_last_10)'),
