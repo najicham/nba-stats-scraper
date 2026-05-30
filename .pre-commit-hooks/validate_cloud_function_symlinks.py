@@ -17,11 +17,12 @@ import os
 import sys
 from pathlib import Path
 
-# Cloud Functions that use shared/ symlinks
+# Cloud Functions that use per-FILE shared/validation/ symlinks
+# (CFs like `grading` and `grading-gap-detector` use a dir-level `shared/`
+# symlink instead — they don't need entries here.)
 CLOUD_FUNCTIONS = [
     'auto_backfill_orchestrator',
     'daily_health_summary',
-    'phase2_to_phase3',
     'phase3_to_phase4',
     'phase4_to_phase5',
     'phase5_to_phase6',

@@ -104,6 +104,16 @@ steps:
           TRIGGER_ARGS="--trigger-topic ${_TRIGGER_TOPIC}"
         fi
 
+        # Per-function secret bindings — codifies historical out-of-band
+        # `gcloud run services update --update-secrets` actions so they
+        # survive future redeploys. Add new entries here, NOT via gcloud.
+        SECRETS_ARGS=""
+        case "${_FUNCTION_NAME}" in
+          post-grading-export)
+            SECRETS_ARGS="--update-secrets=SLACK_WEBHOOK_URL_ALERTS=slack-webhook-monitoring-warning:latest"
+            ;;
+        esac
+
         gcloud functions deploy ${_FUNCTION_NAME} \
           --gen2 \
           --runtime python311 \
@@ -111,6 +121,7 @@ steps:
           --source /workspace/deploy_pkg \
           --entry-point ${_ENTRY_POINT} \
           $$TRIGGER_ARGS \
+          $$SECRETS_ARGS \
           --service-account=${_SERVICE_ACCOUNT} \
           --update-env-vars "GCP_PROJECT=nba-props-platform,BUILD_COMMIT=${SHORT_SHA},BUILD_TIMESTAMP=${_BUILD_TIMESTAMP}" \
           --update-labels "commit-sha=${SHORT_SHA}" \
