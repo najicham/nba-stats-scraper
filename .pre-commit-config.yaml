@@ -148,6 +148,18 @@ repos:
         files: ^(bin/check-deployment-drift\.sh|\.github/workflows/auto-deploy\.yml)$
         verbose: true
 
+      - id: validate-cloud-function-symlinks
+        name: Check Cloud Function shared/ symlinks
+        description: >
+          Prevents CF deploy failures from missing shared/ symlinks (Feb 1, 2026 incident
+          with phase3_data_quality_check.py). Each CF needs a complete set of shared/
+          symlinks to import properly at runtime.
+        entry: python .pre-commit-hooks/validate_cloud_function_symlinks.py
+        language: python
+        pass_filenames: false
+        always_run: true
+        verbose: true
+
       - id: validate-pipeline-patterns
         name: Validate pipeline patterns (Session 185)
         description: Catches invalid enum usage, processor name mapping gaps, unsafe get_json() calls
