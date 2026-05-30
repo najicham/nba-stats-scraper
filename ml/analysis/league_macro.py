@@ -33,24 +33,45 @@ LOOSE_THRESHOLD = 5.5    # Vegas less accurate = more opportunity
 def compute_for_date(bq_client: bigquery.Client, target_date: date) -> Optional[dict]:
     """Compute league macro metrics for a single date.
 
-    Returns a single dict row, or None if no data for this date.
+    Returns a single dict row, or None if the date has no observable activity
+    (no graded predictions, no games played, and no BB picks in the rolling
+    windows). Otherwise writes a row even if MAE is empty — keeps the table
+    fresh during off-season and partial-data periods so consumers (e.g.
+    regime_context.py reading vegas_mae_7d) can distinguish "yesterday was
+    idle" from "this table has gone stale".
     """
     row = {}
     row['game_date'] = target_date.isoformat()
 
     # --- 1. Vegas/Model MAE + Edge metrics (from prediction_accuracy) ---
     mae_data = _compute_mae_metrics(bq_client, target_date)
-    if mae_data is None:
-        logger.info(f"No graded predictions for {target_date}, skipping")
-        return None
-    row.update(mae_data)
 
     # --- 2. League scoring environment (from player_game_summary) ---
     scoring_data = _compute_scoring_metrics(bq_client, target_date)
-    row.update(scoring_data)
 
     # --- 3. Best bets rolling performance ---
     bb_data = _compute_bb_metrics(bq_client, target_date)
+
+    # If all three components are empty/zero, skip — nothing to record.
+    has_mae = mae_data is not None
+    has_scoring = (scoring_data.get('games_played') or 0) > 0
+    has_bb = (bb_data.get('bb_n_14d') or 0) > 0
+    if not (has_mae or has_scoring or has_bb):
+        logger.info(f"No graded predictions, games, or BB picks for {target_date}, skipping")
+        return None
+
+    # MAE block: write NULLs when no graded data so the row still appears.
+    if mae_data is None:
+        row.update({
+            'vegas_mae_daily': None, 'vegas_mae_7d': None, 'vegas_mae_14d': None,
+            'model_mae_daily': None, 'model_mae_7d': None, 'model_mae_14d': None,
+            'mae_gap_daily': None, 'mae_gap_7d': None, 'mae_gap_14d': None,
+            'avg_edge_daily': None, 'avg_edge_7d': None, 'avg_line_daily': None,
+            'pct_edge_3plus': None, 'total_predictions': 0, 'pct_over': None,
+        })
+    else:
+        row.update(mae_data)
+    row.update(scoring_data)
     row.update(bb_data)
 
     # --- 4. Market regime classification ---
