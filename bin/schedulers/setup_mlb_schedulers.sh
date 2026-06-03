@@ -89,7 +89,7 @@ echo "=== Phase 1: Scrapers ==="
 # Morning schedule fetch (10 AM ET - before games)
 create_job \
     "mlb-schedule-daily" \
-    "0 10 * * *" \
+    "0 10 * 3-10 *" \
     "$SCRAPERS_URL/scrape" \
     '{"scraper": "mlb_schedule"}' \
     "Fetch MLB schedule and probable pitchers"
@@ -99,14 +99,14 @@ create_job \
 # schedulers ensure data is in GCS for Phase 2 even if props scheduler fails.
 create_job \
     "mlb-events-morning" \
-    "15 10 * * *" \
+    "15 10 * 3-10 *" \
     "$SCRAPERS_URL/scrape" \
     '{"scraper": "mlb_events", "game_date": "TODAY"}' \
     "Fetch MLB event IDs from Odds API (must run before pitcher props)"
 
 create_job \
     "mlb-events-pregame" \
-    "15 12 * * *" \
+    "15 12 * 3-10 *" \
     "$SCRAPERS_URL/scrape" \
     '{"scraper": "mlb_events", "game_date": "TODAY"}' \
     "Refresh MLB event IDs (pregame, before pitcher props refresh)"
@@ -114,28 +114,28 @@ create_job \
 # Lineups - multiple times as they're announced
 create_job \
     "mlb-lineups-morning" \
-    "0 11 * * *" \
+    "0 11 * 3-10 *" \
     "$SCRAPERS_URL/scrape" \
     '{"scraper": "mlb_lineups", "date": "TODAY"}' \
     "Fetch starting lineups (morning)"
 
 create_job \
     "mlb-lineups-pregame" \
-    "0 13 * * *" \
+    "0 13 * 3-10 *" \
     "$SCRAPERS_URL/scrape" \
     '{"scraper": "mlb_lineups", "date": "TODAY"}' \
     "Refresh starting lineups (pregame)"
 
 create_job \
     "mlb-lineups-afternoon" \
-    "0 16 * * *" \
+    "0 16 * 3-10 *" \
     "$SCRAPERS_URL/scrape" \
     '{"scraper": "mlb_lineups", "date": "TODAY"}' \
     "Afternoon MLB lineup scrape (4pm ET) - catches night-game confirmed lineups for the 4:30pm late best-bets export"
 
 create_job \
     "mlb-lineups-overnight" \
-    "0 3 * * *" \
+    "0 3 * 3-10 *" \
     "$SCRAPERS_URL/scrape" \
     '{"scraper": "mlb_lineups", "date": "YESTERDAY"}' \
     "Overnight MLB lineup catch-up (3am ET) - re-scrapes prior days completed games for 100% confirmed-lineup coverage"
@@ -143,14 +143,14 @@ create_job \
 # Pitcher props - auto-discovers events if event_id not provided
 create_job \
     "mlb-props-morning" \
-    "30 10 * * *" \
+    "30 10 * 3-10 *" \
     "$SCRAPERS_URL/scrape" \
     '{"scraper": "mlb_pitcher_props", "game_date": "TODAY"}' \
     "Fetch pitcher strikeout lines (morning, auto-discovers events)"
 
 create_job \
     "mlb-props-pregame" \
-    "30 12 * * *" \
+    "30 12 * 3-10 *" \
     "$SCRAPERS_URL/scrape" \
     '{"scraper": "mlb_pitcher_props", "game_date": "TODAY"}' \
     "Refresh pitcher strikeout lines (pregame, auto-discovers events)"
@@ -161,7 +161,7 @@ create_job \
 # WeatherColdUnderSignal/ColdWeatherKOverSignal never fire.
 create_job \
     "mlb-weather-pregame" \
-    "30 11 * * *" \
+    "30 11 * 3-10 *" \
     "$SCRAPERS_URL/scrape" \
     '{"scraper": "mlb_weather", "date": "TODAY"}' \
     "Fetch pregame weather forecasts (activates cold-weather UNDER signals)"
@@ -169,7 +169,7 @@ create_job \
 # Live box scores during games (1 PM - 11 PM ET, every 5 minutes)
 create_job \
     "mlb-live-boxscores" \
-    "*/5 13-23 * * *" \
+    "*/5 13-23 * 3-10 *" \
     "$SCRAPERS_URL/scrape" \
     '{"scraper": "mlb_live_box_scores", "date": "TODAY"}' \
     "Live game data every 5 minutes"
@@ -178,7 +178,7 @@ create_job \
 # Uses MLB Stats API box scores (replaced BDL mlb_box_scores)
 create_job \
     "mlb-overnight-results" \
-    "0 2 * * *" \
+    "0 2 * 3-10 *" \
     "$SCRAPERS_URL/scrape" \
     '{"scraper": "mlb_box_scores_mlbapi", "date": "YESTERDAY"}' \
     "Final box scores for yesterday (MLB Stats API)"
@@ -186,7 +186,7 @@ create_job \
 # Statcast daily pitcher metrics (3 AM ET - after overnight results)
 create_job \
     "mlb-statcast-daily" \
-    "0 3 * * *" \
+    "0 3 * 3-10 *" \
     "$SCRAPERS_URL/scrape" \
     '{"scraper": "mlb_statcast_daily", "date": "YESTERDAY"}' \
     "Statcast pitcher metrics (SwStr%, velocity, spin)"
@@ -195,7 +195,7 @@ create_job \
 # no Baseball Savant lag). Feeds per-pitch-type velocity + whiff for arsenal panel.
 create_job \
     "mlb-game-feed-daily" \
-    "15 3 * * *" \
+    "15 3 * 3-10 *" \
     "$SCRAPERS_URL/scrape" \
     '{"scraper": "mlb_game_feed_daily", "date": "YESTERDAY"}' \
     "Per-pitch data from MLB Stats API game feeds (for arsenal analytics)"
@@ -203,7 +203,7 @@ create_job \
 # Reddit community discussion (11 AM ET - morning discussion threads)
 create_job \
     "mlb-reddit-discussion" \
-    "0 11 * * *" \
+    "0 11 * 3-10 *" \
     "$SCRAPERS_URL/scrape" \
     '{"scraper": "mlb_reddit_discussion", "date": "TODAY"}' \
     "Reddit MLB discussion and sentiment"
@@ -214,7 +214,7 @@ create_job \
 # umpire_k_friendly signal was starving.
 create_job \
     "mlb-umpire-assignments" \
-    "30 16 * * *" \
+    "30 16 * 3-10 *" \
     "$SCRAPERS_URL/scrape" \
     '{"scraper": "mlb_umpire_assignments", "date": "TODAY"}' \
     "Home plate umpire assignments for K predictions"
@@ -224,14 +224,14 @@ create_job \
 # The scraper auto-fetches event IDs from BettingPros events if needed.
 create_job \
     "mlb-bp-props-morning" \
-    "45 10 * * *" \
+    "45 10 * 3-10 *" \
     "$SCRAPERS_URL/scrape" \
     '{"scraper": "bp_mlb_player_props", "date": "TODAY", "market_type": "pitcher_strikeouts"}' \
     "BettingPros MLB pitcher strikeout props (morning)"
 
 create_job \
     "mlb-bp-props-pregame" \
-    "45 12 * * *" \
+    "45 12 * 3-10 *" \
     "$SCRAPERS_URL/scrape" \
     '{"scraper": "bp_mlb_player_props", "date": "TODAY", "market_type": "pitcher_strikeouts"}' \
     "BettingPros MLB pitcher strikeout props (pregame refresh)"
@@ -239,7 +239,7 @@ create_job \
 # Game lines - run totals (11 AM ET - morning odds)
 create_job \
     "mlb-game-lines-morning" \
-    "0 11 * * *" \
+    "0 11 * 3-10 *" \
     "$SCRAPERS_URL/scrape" \
     '{"scraper": "mlb_game_lines", "game_date": "TODAY"}' \
     "Game lines (moneyline, spread, run totals)"
@@ -250,7 +250,7 @@ echo "=== Phase 5: Predictions ==="
 # Generate predictions after lineups are finalized
 create_job \
     "mlb-predictions-generate" \
-    "0 13 * * *" \
+    "0 13 * 3-10 *" \
     "$PREDICTIONS_URL/predict-batch" \
     '{"game_date": "TODAY"}' \
     "Generate pitcher strikeout predictions"
@@ -258,7 +258,7 @@ create_job \
 # Shadow mode A/B testing (V1.4 vs V1.6) - runs 30 min after predictions
 create_job \
     "mlb-shadow-mode-daily" \
-    "30 13 * * *" \
+    "30 13 * 3-10 *" \
     "$PREDICTIONS_URL/execute-shadow-mode" \
     '{"game_date": "TODAY"}' \
     "Run shadow mode comparison (V1.4 vs V1.6)"
@@ -269,7 +269,7 @@ echo "=== Phase 6: Grading ==="
 # Grade yesterday's predictions (morning after games complete)
 create_job \
     "mlb-grading-daily" \
-    "0 10 * * *" \
+    "0 10 * 3-10 *" \
     "$GRADING_URL/grade-date" \
     '{"game_date": "YESTERDAY"}' \
     "Grade yesterday predictions"
@@ -277,7 +277,7 @@ create_job \
 # Grade shadow mode predictions (V1.4 vs V1.6) - runs after regular grading
 create_job \
     "mlb-shadow-grading-daily" \
-    "30 10 * * *" \
+    "30 10 * 3-10 *" \
     "$GRADING_URL/grade-shadow" \
     '{}' \
     "Grade shadow mode predictions"

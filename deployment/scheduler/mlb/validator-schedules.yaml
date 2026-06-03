@@ -8,7 +8,7 @@ kind: Job
 metadata:
   name: mlb-schedule-validator-daily
 spec:
-  schedule: "0 11 * * *"  # 6 AM ET = 11 AM UTC
+  schedule: "0 11 * 3-10 *"  # 6 AM ET = 11 AM UTC, March-October
   timeZone: "America/New_York"
   httpTarget:
     uri: "https://us-west2-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/nba-props-platform/jobs/mlb-schedule-validator:run"

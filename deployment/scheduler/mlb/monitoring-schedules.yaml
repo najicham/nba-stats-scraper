@@ -20,7 +20,7 @@ kind: Job
 metadata:
   name: mlb-gap-detection-daily
 spec:
-  schedule: "0 13 * * *"  # 8 AM ET = 1 PM UTC
+  schedule: "0 13 * 3-10 *"  # 8 AM ET = 1 PM UTC, March-October
   timeZone: "America/New_York"
   httpTarget:
     uri: "https://us-west2-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/nba-props-platform/jobs/mlb-gap-detection:run"
