@@ -175,7 +175,10 @@ class BdlPlayerBoxScoresProcessor(SmartIdempotencyMixin, ProcessorBase):
     def transform_data(self) -> None:
         """Transform raw data into transformed data for BigQuery."""
         raw_data = self.raw_data
-        file_path = raw_data.get('metadata', {}).get('source_file', 'unknown')
+        file_path = (
+            self.opts.get('file_path')
+            or raw_data.get('metadata', {}).get('source_file', 'unknown')
+        )
         rows = []
         skipped_count = 0
 

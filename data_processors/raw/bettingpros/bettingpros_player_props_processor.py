@@ -49,12 +49,12 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
         self.project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
         self.bq_client = bigquery.Client(project=self.project_id)
         self.unknown_bookmakers = set()
-        
+
         # Bookmaker mappings (unchanged)
         self.bookmaker_mapping = {
             'bettingpros consensus': 'BettingPros Consensus',
             'betmgm': 'BetMGM',
-            'betrivers': 'BetRivers', 
+            'betrivers': 'BetRivers',
             'sugarhouse': 'SugarHouse',
             'partycasino': 'PartyCasino',
             'draftkings': 'DraftKings',
@@ -73,7 +73,7 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
             'betway': 'Betway',
             'fubo': 'Fubo',
         }
-        
+
         self.book_id_mapping = {
             0: 'BettingPros Consensus',
             2: 'SuperBook',
@@ -112,12 +112,12 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
     def file_already_processed(self, file_path: str) -> bool:
         """
         Check if this specific GCS file has already been processed.
-        
+
         This prevents duplicate processing of the same scrape snapshot
         while allowing multiple scrapes per day to track line movements.
         """
         table_id = f"{self.project_id}.{self.table_name}"
-        
+
         # Query to check if this file path exists
         query = f"""
         SELECT COUNT(*) as count
@@ -125,28 +125,28 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
         WHERE source_file_path = @file_path
         LIMIT 1
         """
-        
+
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
                 bigquery.ScalarQueryParameter("file_path", "STRING", file_path)
             ]
         )
-        
+
         try:
             query_job = self.bq_client.query(query, job_config=job_config)
             results = list(query_job.result(timeout=60))
-            
+
             if results and results[0]['count'] > 0:
                 logger.info(f"File already processed, skipping: {file_path}")
                 return True
-            
+
             return False
-            
+
         except Exception as e:
             logger.error(f"Error checking if file processed: {e}")
             # If check fails, assume not processed to avoid data loss
             return False
-    
+
     def normalize_player_name(self, player_name: str) -> str:
         """
         DEPRECATED: This method removed suffixes which caused mismatches with Odds API props.
@@ -166,7 +166,7 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
         normalized = re.sub(r'[^a-z0-9]', '', normalized)
 
         return normalized
-    
+
     def extract_scrape_timestamp_from_path(self, file_path: str) -> Optional[datetime]:
         """Extract when the scraper actually ran from filename timestamp."""
         try:
@@ -176,7 +176,7 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
         except Exception as e:
             logger.warning(f"Could not parse scrape timestamp from {file_path}: {e}")
             return None
-    
+
     def extract_game_date_from_path(self, file_path: str) -> Optional[datetime]:
         """Extract game date from BettingPros file path."""
         try:
@@ -188,14 +188,14 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
         except Exception as e:
             logger.warning(f"Could not parse game date from {file_path}: {e}")
             return None
-    
+
     def calculate_validation_confidence(self, scrape_time: datetime, game_date: datetime) -> float:
         """Calculate data freshness confidence using processing time vs game date."""
         if not scrape_time or not game_date:
             return 0.1
-            
+
         days_diff = abs((scrape_time.date() - game_date.date()).days)
-        
+
         if days_diff == 0:
             return 0.95
         elif days_diff <= 7:
@@ -206,7 +206,7 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
             return 0.3
         else:
             return 0.1
-    
+
     def determine_validation_notes(self, player_team: str, confidence: float, days_diff: int = None, forced_historical: bool = False) -> str:
         """Determine validation notes based on team and confidence."""
         if player_team == "FA":
@@ -223,59 +223,62 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
             return "low_confidence_historical_old"
         else:
             return "low_confidence_historical"
-    
+
     def normalize_bookmaker_name(self, book_name: str, book_id: int = None) -> str:
         """Enhanced bookmaker normalization with ID fallback."""
         if not book_name:
             if book_id is not None:
                 return self.book_id_mapping.get(book_id, f"Unknown Book {book_id}")
             return ""
-        
+
         normalized_key = book_name.lower().strip()
         mapped_name = self.bookmaker_mapping.get(normalized_key, book_name)
-        
+
         if book_id is not None and (mapped_name == book_name or mapped_name.startswith('Unknown Book')):
             mapped_name = self.book_id_mapping.get(book_id, f"Unknown Book {book_id}")
-            
+
             if mapped_name.startswith('Unknown Book'):
                 self.unknown_bookmakers.add(f"{book_name} (ID: {book_id})")
-        
+
         elif mapped_name.startswith('Unknown Book'):
             try:
                 extracted_id = int(mapped_name.split()[-1])
                 mapped_name = self.book_id_mapping.get(extracted_id, mapped_name)
-                
+
                 if mapped_name.startswith('Unknown Book'):
                     self.unknown_bookmakers.add(f"{book_name} (ID: {extracted_id})")
             except (ValueError, IndexError):
                 self.unknown_bookmakers.add(book_name)
-        
+
         return mapped_name
-    
+
     def validate_data(self, data: Dict) -> List[str]:
         """Validate BettingPros JSON structure."""
         errors = []
-        
+
         if 'props' not in data:
             errors.append("Missing 'props' array")
         elif not isinstance(data['props'], list):
             errors.append("'props' is not an array")
-        
+
         if 'date' not in data:
             errors.append("Missing 'date' field")
-        
+
         if 'market_type' not in data:
             errors.append("Missing 'market_type' field")
-        
+
         return errors
-    
+
     def transform_data(self) -> None:
         """Transform raw data into transformed data."""
         raw_data = self.raw_data
-        file_path = self.raw_data.get('metadata', {}).get('source_file', 'unknown')
+        file_path = (
+            self.opts.get('file_path')
+            or self.raw_data.get('metadata', {}).get('source_file', 'unknown')
+        )
         """Transform BettingPros nested JSON into flattened records."""
         rows = []
-        
+
         try:
             actual_scrape_time = self.extract_scrape_timestamp_from_path(file_path)
             game_date = None
@@ -284,14 +287,14 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
                     game_date = datetime.strptime(raw_data['date'], '%Y-%m-%d')
                 except ValueError:
                     logger.warning(f"Could not parse game date: {raw_data.get('date')}")
-            
+
             if not game_date:
                 game_date = self.extract_game_date_from_path(file_path)
-            
+
             market_type = raw_data.get('market_type', 'points')
             market_id = raw_data.get('market_id')
             current_time = datetime.utcnow()
-            
+
             for prop in raw_data.get('props', []):
                 offer_id = prop.get('offer_id')
                 bp_event_id = prop.get('event_id')
@@ -299,7 +302,7 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
                 player_name = prop.get('player_name', '')
                 player_team = prop.get('player_team', '')
                 player_position = prop.get('player_position', '')
-                
+
                 # NOTE: Using shared normalize_name() which KEEPS suffixes (Jr., Sr., II, III)
                 # This ensures consistency with Odds API props for correct JOIN matching
                 # See: docs/08-projects/.../data-quality/2026-01-12-PLAYER-LOOKUP-NORMALIZATION-MISMATCH.md
@@ -318,12 +321,12 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
 
                 has_team_issues = True
                 team_source = "bettingpros"
-                
+
                 for bet_side in ['over', 'under']:
                     side_data = prop.get(bet_side)
                     if not side_data:
                         continue
-                    
+
                     opening_line_data = side_data.get('opening_line', {})
                     opening_line = opening_line_data.get('line')
                     opening_odds = opening_line_data.get('cost')
@@ -334,7 +337,7 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
                             opening_timestamp = datetime.strptime(opening_line_data['created'], '%Y-%m-%d %H:%M:%S')
                         except ValueError:
                             pass
-                    
+
                     for sportsbook in side_data.get('sportsbooks', []):
                         book_id = sportsbook.get('book_id')
                         book_name = sportsbook.get('book_name', '')
@@ -343,14 +346,14 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
                         odds_american = sportsbook.get('odds')
                         is_active = sportsbook.get('active', True)
                         is_best_line = sportsbook.get('best', False)
-                        
+
                         bookmaker_last_update = current_time
                         if sportsbook.get('updated'):
                             try:
                                 bookmaker_last_update = datetime.strptime(sportsbook['updated'], '%Y-%m-%d %H:%M:%S')
                             except ValueError:
                                 pass
-                        
+
                         row = {
                             'game_date': game_date.date().isoformat() if game_date else None,
                             'market_type': market_type,
@@ -386,12 +389,12 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
                             'created_at': current_time.isoformat(),
                             'processed_at': current_time.isoformat()
                         }
-                        
+
                         rows.append(row)
-        
+
         except Exception as e:
             logger.error(f"Transform failed for {file_path}: {e}", exc_info=True)
-            
+
             try:
                 notify_error(
                     title="BettingPros Props Transform Failed",
@@ -406,9 +409,9 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise
-        
+
         self.transformed_data = rows
 
         # Smart Idempotency: Add data_hash to all records
@@ -419,7 +422,7 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
         rows = self.transformed_data
         """
         Load flattened records to BigQuery using BATCH LOADING.
-        
+
         Preserves time-series data (multiple scrapes per day) while avoiding
         streaming buffer issues that would block future operations.
         """
@@ -429,7 +432,7 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
 
         table_id = f"{self.project_id}.{self.table_name}"
         errors = []
-        
+
         try:
             # Get table reference for schema
             table_ref = self.bq_client.get_table(table_id)
@@ -447,12 +450,12 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
 
             load_job = self.bq_client.load_table_from_json(rows, table_id, job_config=job_config)
             load_job.result(timeout=60)  # Wait for completion
-            
+
             # Check for errors
             if load_job.errors:
                 errors.extend([str(e) for e in load_job.errors])
                 logger.error(f"BigQuery batch load errors: {errors}")
-                
+
                 try:
                     notify_error(
                         title="BettingPros Props BigQuery Batch Load Failed",
@@ -474,7 +477,7 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
                 unique_bookmakers = len(set(row['bookmaker'] for row in rows))
                 props_processed = len(set(row['offer_id'] for row in rows))
                 game_dates = set(row['game_date'] for row in rows)
-                
+
                 logger.info(f"✅ Batch loaded {len(rows)} rows successfully")
 
                 # Update stats for processor_base tracking (fixes Layer 5 validation false positive)
@@ -500,7 +503,7 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-                
+
                 if self.unknown_bookmakers:
                     try:
                         notify_warning(
@@ -514,7 +517,7 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
                         )
                     except Exception as notify_ex:
                         logger.warning(f"Failed to send notification: {notify_ex}")
-                
+
         except Exception as e:
             error_msg = str(e)
             errors.append(error_msg)
@@ -540,7 +543,7 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-        
+
         return {
             'rows_processed': len(rows) if not errors else 0,
             'errors': errors,
@@ -552,7 +555,7 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
     def process_file_content(self, json_content: str, file_path: str) -> Dict:
         """
         Main processing method called by backfill jobs.
-        
+
         Checks if file already processed to prevent duplicates while
         allowing multiple scrapes per day for line movement tracking.
         """
@@ -568,15 +571,15 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
                     'skipped': True,
                     'reason': 'file_already_processed'
                 }
-            
+
             # Parse JSON
             raw_data = json.loads(json_content)
-            
+
             # Validate
             validation_errors = self.validate_data(raw_data)
             if validation_errors:
                 logger.error(f"Validation errors for {file_path}: {validation_errors}")
-                
+
                 try:
                     notify_warning(
                         title="BettingPros Props Data Validation Errors",
@@ -591,7 +594,7 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-                
+
                 return {
                     'rows_processed': 0,
                     'errors': validation_errors,
@@ -599,19 +602,19 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
                     'unique_bookmakers': 0,
                     'props_processed': 0
                 }
-            
+
             # Transform
             rows = self.transform_data(raw_data, file_path)
-            
+
             # Load (batch loading, preserves time-series)
             result = self.load_data(rows)
-            
+
             return result
-            
+
         except json.JSONDecodeError as e:
             error_msg = f"Invalid JSON: {str(e)}"
             logger.error(f"{error_msg} in {file_path}")
-            
+
             try:
                 notify_error(
                     title="BettingPros Props JSON Parse Failed",
@@ -625,7 +628,7 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             return {
                 'rows_processed': 0,
                 'errors': [error_msg],
@@ -636,7 +639,7 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
         except Exception as e:
             error_msg = f"Processing error: {str(e)}"
             logger.error(f"{error_msg} in {file_path}", exc_info=True)
-            
+
             try:
                 notify_error(
                     title="BettingPros Props Processing Failed",
@@ -651,7 +654,7 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             return {
                 'rows_processed': 0,
                 'errors': [error_msg],

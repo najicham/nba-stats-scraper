@@ -68,14 +68,15 @@ class NBAPlayerBoxscoresExtractor(PathExtractor):
 class NBAPlayByPlayExtractor(PathExtractor):
     """Extract options from NBA.com play-by-play paths."""
 
-    PATTERN = re.compile(r'nba-com/play-by-play/(\d{4}-\d{2}-\d{2})/game_([^/]+)/')
+    PATTERN = re.compile(r'nba-com/play-by-play/(\d{4}-\d{2}-\d{2})/game[_-]([^/]+)/')
 
     def matches(self, path: str) -> bool:
         return bool(self.PATTERN.search(path))
 
     def extract(self, path: str) -> dict:
         """
-        Extract from path: /nba-com/play-by-play/{date}/game_{gameId}/{timestamp}.json
+        Extract from path: /nba-com/play-by-play/{date}/game-{gameId}/{timestamp}.json
+        Accepts both `game-` (current convention) and `game_` for safety.
         """
         match = self.PATTERN.search(path)
         if match:

@@ -59,17 +59,17 @@ class NbacInjuryReportProcessor(SmartIdempotencyMixin, ProcessorBase):
     def validate_data(self, data: Dict) -> List[str]:
         """Validate the JSON data structure."""
         errors = []
-        
+
         if 'metadata' not in data:
             errors.append("Missing 'metadata' section")
-            
+
         if 'records' not in data:
             errors.append("Missing 'records' section")
             return errors
-            
+
         if not isinstance(data['records'], list):
             errors.append("'records' should be a list")
-            
+
         # Check first record structure if exists
         if data['records']:
             required_fields = ['date', 'gametime', 'matchup', 'team', 'player', 'status']
@@ -77,7 +77,7 @@ class NbacInjuryReportProcessor(SmartIdempotencyMixin, ProcessorBase):
             for field in required_fields:
                 if field not in first_record:
                     errors.append(f"Missing required field in record: {field}")
-        
+
         # Notify about validation failures
         if errors:
             try:
@@ -94,9 +94,9 @@ class NbacInjuryReportProcessor(SmartIdempotencyMixin, ProcessorBase):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-                    
+
         return errors
-    
+
     def _normalize_player_name(self, player_name: str) -> tuple[str, str]:
         """
         Parse "Last, First" format and create normalized lookup.
@@ -104,7 +104,7 @@ class NbacInjuryReportProcessor(SmartIdempotencyMixin, ProcessorBase):
         """
         if not player_name:
             return ("", "")
-            
+
         # Parse "Hayes, Killian" format
         parts = player_name.split(',')
         if len(parts) == 2:
@@ -114,14 +114,14 @@ class NbacInjuryReportProcessor(SmartIdempotencyMixin, ProcessorBase):
         else:
             # Handle cases without comma
             full_name = player_name.strip()
-            
+
         # Create normalized lookup
         player_lookup = full_name.lower()
         for char in [' ', "'", '.', '-', ',', 'jr', 'sr', 'ii', 'iii', 'iv']:
             player_lookup = player_lookup.replace(char, '')
-            
+
         return (full_name, player_lookup)
-    
+
     def _parse_matchup(self, matchup: str, game_date: str) -> Dict:
         """
         Parse matchup string like "MIA@DET" to extract teams and create game_id.
@@ -132,10 +132,10 @@ class NbacInjuryReportProcessor(SmartIdempotencyMixin, ProcessorBase):
             if len(parts) != 2:
                 logger.warning(f"Invalid matchup format: {matchup}")
                 return {'away_team': '', 'home_team': '', 'game_id': ''}
-                
+
             away_team = parts[0].strip()
             home_team = parts[1].strip()
-            
+
             # Parse date to create game_id
             try:
                 date_obj = datetime.strptime(game_date, '%m/%d/%Y')
@@ -144,7 +144,7 @@ class NbacInjuryReportProcessor(SmartIdempotencyMixin, ProcessorBase):
             except ValueError as e:
                 logger.warning(f"Could not parse game date '{game_date}': {e}. Using raw format.")
                 game_id = f"{game_date}_{away_team}_{home_team}"
-                
+
             return {
                 'away_team': away_team,
                 'home_team': home_team,
@@ -153,7 +153,7 @@ class NbacInjuryReportProcessor(SmartIdempotencyMixin, ProcessorBase):
         except Exception as e:
             logger.error(f"Error parsing matchup '{matchup}': {e}")
             return {'away_team': '', 'home_team': '', 'game_id': ''}
-    
+
     def _parse_game_time(self, gametime: str) -> Optional[str]:
         """Parse gametime like '07:00 (ET)' to standard format."""
         if not gametime:
@@ -161,14 +161,14 @@ class NbacInjuryReportProcessor(SmartIdempotencyMixin, ProcessorBase):
         # Remove timezone indicator
         time_str = gametime.replace('(ET)', '').replace('(EST)', '').strip()
         return time_str
-    
+
     def _categorize_reason(self, reason: str) -> str:
         """Categorize the reason for absence."""
         if not reason:
             return 'unknown'
-            
+
         reason_lower = reason.lower()
-        
+
         if 'injury/illness' in reason_lower:
             return 'injury'
         elif 'g league' in reason_lower:
@@ -183,18 +183,21 @@ class NbacInjuryReportProcessor(SmartIdempotencyMixin, ProcessorBase):
             return 'personal'
         else:
             return 'other'
-    
+
     def transform_data(self) -> None:
         """Transform raw data into transformed data."""
         raw_data = self.raw_data
-        file_path = self.raw_data.get('metadata', {}).get('source_file', 'unknown')
+        file_path = (
+            self.opts.get('file_path')
+            or self.raw_data.get('metadata', {}).get('source_file', 'unknown')
+        )
         """Transform injury report data to BigQuery rows."""
         rows = []
-        
+
         try:
             # Extract metadata
             metadata = raw_data.get('metadata', {})
-            
+
             if not metadata:
                 try:
                     notify_warning(
@@ -209,12 +212,12 @@ class NbacInjuryReportProcessor(SmartIdempotencyMixin, ProcessorBase):
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             report_date = metadata.get('gamedate', '')
             report_hour = metadata.get('hour24', metadata.get('hour', ''))
             scrape_time = metadata.get('scrape_time', '')
             run_id = metadata.get('run_id', '')
-            
+
             # Parse report date (handle both %Y%m%d and %Y-%m-%d formats)
             report_date_obj = None
             for date_format in ('%Y%m%d', '%Y-%m-%d'):
@@ -227,7 +230,7 @@ class NbacInjuryReportProcessor(SmartIdempotencyMixin, ProcessorBase):
             if report_date_obj is None:
                 logger.error(f"Error parsing report date '{report_date}': no matching format")
                 report_date_obj = date.today()
-                
+
                 try:
                     notify_warning(
                         title="Invalid Report Date Format",
@@ -241,13 +244,13 @@ class NbacInjuryReportProcessor(SmartIdempotencyMixin, ProcessorBase):
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             season = self._get_nba_season(report_date_obj)
-            
+
             # Get parsing stats
             parsing_stats = raw_data.get('parsing_stats', {})
             overall_confidence = parsing_stats.get('overall_confidence', 1.0)
-            
+
             # Check for low confidence scores
             if overall_confidence < 0.85:
                 try:
@@ -264,25 +267,25 @@ class NbacInjuryReportProcessor(SmartIdempotencyMixin, ProcessorBase):
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             # Process each injury record
             self.records_processed = 0
             self.records_failed = 0
-            
+
             for record in raw_data.get('records', []):
                 try:
                     # Parse player name
                     player_full_name, player_lookup = self._normalize_player_name(record['player'])
-                    
+
                     # Parse matchup
                     matchup_info = self._parse_matchup(record['matchup'], record['date'])
-                    
+
                     # Parse game time
                     game_time = self._parse_game_time(record.get('gametime', ''))
-                    
+
                     # Categorize reason
                     reason_category = self._categorize_reason(record.get('reason', ''))
-                    
+
                     row = {
                         'report_date': report_date_obj.isoformat(),
                         'report_hour': int(report_hour) if report_hour else None,
@@ -307,15 +310,15 @@ class NbacInjuryReportProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'source_file_path': file_path,
                         'processed_at': datetime.utcnow().isoformat()
                     }
-                    
+
                     rows.append(row)
                     self.records_processed += 1
-                    
+
                 except Exception as e:
                     self.records_failed += 1
                     logger.error(f"Error processing injury record: {e}")
                     logger.error(f"Record data: {record}")
-                    
+
                     # Notify about individual record failure if it seems significant
                     if self.records_failed == 1:  # First failure
                         try:
@@ -333,7 +336,7 @@ class NbacInjuryReportProcessor(SmartIdempotencyMixin, ProcessorBase):
                         except Exception as notify_ex:
                             logger.warning(f"Failed to send notification: {notify_ex}")
                     continue
-            
+
             # Check for high failure rate
             total_records = len(raw_data.get('records', []))
             if total_records > 0:
@@ -354,7 +357,7 @@ class NbacInjuryReportProcessor(SmartIdempotencyMixin, ProcessorBase):
                         )
                     except Exception as notify_ex:
                         logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             logger.info(f"Transformed {len(rows)} injury records (failed: {self.records_failed})")
             self.transformed_data = rows
 
@@ -363,7 +366,7 @@ class NbacInjuryReportProcessor(SmartIdempotencyMixin, ProcessorBase):
 
         except Exception as e:
             logger.error(f"Critical error in transform_data: {e}")
-            
+
             # Notify about critical transformation failure
             try:
                 notify_error(
@@ -379,15 +382,15 @@ class NbacInjuryReportProcessor(SmartIdempotencyMixin, ProcessorBase):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise e
-    
+
     def _get_nba_season(self, report_date_obj: date) -> str:
         """Determine NBA season from date. Season runs Oct-June."""
         try:
             year = report_date_obj.year
             month = report_date_obj.month
-            
+
             # October-December is start of season
             if month >= 10:
                 return f"{year}-{str(year+1)[2:]}"  # e.g., "2021-22"
@@ -399,7 +402,7 @@ class NbacInjuryReportProcessor(SmartIdempotencyMixin, ProcessorBase):
             # Return current year as fallback
             current_year = datetime.now().year
             return f"{current_year-1}-{str(current_year)[2:]}"
-    
+
     def save_data(self) -> None:
         """Save transformed data to BigQuery (overrides ProcessorBase.save_data())."""
         rows = self.transformed_data
@@ -407,9 +410,9 @@ class NbacInjuryReportProcessor(SmartIdempotencyMixin, ProcessorBase):
         if not rows:
             logger.warning("No rows to load")
             return {'rows_processed': 0, 'errors': []}
-        
+
         errors = []
-        
+
         try:
             from google.cloud import bigquery
             client = bigquery.Client()
@@ -471,11 +474,11 @@ class NbacInjuryReportProcessor(SmartIdempotencyMixin, ProcessorBase):
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-                
+
         except Exception as e:
             errors.append(str(e))
             logger.error(f"Error loading data: {e}")
-            
+
             # Notify about critical load failure
             try:
                 notify_error(
@@ -491,7 +494,7 @@ class NbacInjuryReportProcessor(SmartIdempotencyMixin, ProcessorBase):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-        
+
         return {'rows_processed': len(rows), 'errors': errors}
 
     def get_processor_stats(self) -> Dict:

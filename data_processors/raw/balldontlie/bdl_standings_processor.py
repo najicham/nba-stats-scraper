@@ -51,7 +51,7 @@ class BdlStandingsProcessor(SmartIdempotencyMixin, ProcessorBase):
         """Parse '41-11' format into (wins, losses) tuple."""
         if not record_str or '-' not in record_str:
             return (0, 0)
-        
+
         try:
             parts = record_str.split('-')
             wins = int(parts[0])
@@ -60,23 +60,23 @@ class BdlStandingsProcessor(SmartIdempotencyMixin, ProcessorBase):
         except (ValueError, IndexError):
             logging.warning(f"Could not parse record string: {record_str}")
             return (0, 0)
-    
+
     def calculate_season_display(self, season_year: int) -> str:
         """Convert 2024 to '2024-25'."""
         next_year = str(season_year + 1)[-2:]  # Get last 2 digits
         return f"{season_year}-{next_year}"
-    
+
     def validate_data(self, data: Dict) -> List[str]:
         """Validate required fields in BDL standings data."""
         errors = []
-        
+
         if 'season' not in data:
             errors.append("Missing season field")
         if 'standings' not in data:
             errors.append("Missing standings array")
         if 'timestamp' not in data:
             errors.append("Missing timestamp field")
-            
+
         # Validate standings structure
         if 'standings' in data:
             for i, standing in enumerate(data['standings']):
@@ -84,24 +84,27 @@ class BdlStandingsProcessor(SmartIdempotencyMixin, ProcessorBase):
                     errors.append(f"Standing {i}: Missing team object")
                 elif 'abbreviation' not in standing['team']:
                     errors.append(f"Standing {i}: Missing team abbreviation")
-                    
+
                 required_fields = ['wins', 'losses', 'conference_rank', 'division_rank']
                 for field in required_fields:
                     if field not in standing:
                         errors.append(f"Standing {i}: Missing {field}")
-        
+
         return errors
-    
+
     def transform_data(self) -> None:
         """Transform raw data into transformed data."""
         raw_data = self.raw_data
-        file_path = self.raw_data.get('metadata', {}).get('source_file', 'unknown')
+        file_path = (
+            self.opts.get('file_path')
+            or self.raw_data.get('metadata', {}).get('source_file', 'unknown')
+        )
         """Transform BDL standings JSON into BigQuery rows."""
         # Validate data structure first
         validation_errors = self.validate_data(raw_data)
         if validation_errors:
             logging.error(f"Invalid data structure in {file_path}: {validation_errors}")
-            
+
             # Notify about invalid data structure
             try:
                 notify_error(
@@ -116,16 +119,16 @@ class BdlStandingsProcessor(SmartIdempotencyMixin, ProcessorBase):
                 )
             except Exception as e:
                 logging.warning(f"Failed to send notification: {e}")
-            
+
             return []
-        
+
         rows = []
         parse_failures = []
-        
+
         # Extract metadata
         season_year = raw_data.get('season')
         scrape_timestamp = raw_data.get('timestamp')
-        
+
         # Parse file path to get date_recorded
         # Path format: /ball-dont-lie/standings/{season_formatted}/{date}/{timestamp}.json
         path_parts = file_path.split('/')
@@ -134,7 +137,7 @@ class BdlStandingsProcessor(SmartIdempotencyMixin, ProcessorBase):
             if re.match(r'\d{4}-\d{2}-\d{2}', part):
                 date_str = part
                 break
-        
+
         if not date_str:
             logging.error(f"Could not extract date from file path: {file_path}")
 
@@ -162,7 +165,7 @@ class BdlStandingsProcessor(SmartIdempotencyMixin, ProcessorBase):
             date_recorded = datetime.strptime(date_str, '%Y-%m-%d').date()
         except ValueError:
             logging.error(f"Invalid date format in path: {date_str}")
-            
+
             # Notify about invalid date format
             try:
                 notify_error(
@@ -178,18 +181,18 @@ class BdlStandingsProcessor(SmartIdempotencyMixin, ProcessorBase):
                 )
             except Exception as e:
                 logging.warning(f"Failed to send notification: {e}")
-            
+
             self.transformed_data = rows
         # Process each team's standing
         for standing in raw_data.get('standings', []):
             team_data = standing.get('team', {})
-            
+
             # Parse record strings
             conf_wins, conf_losses = self.parse_record_string(standing.get('conference_record'))
             div_wins, div_losses = self.parse_record_string(standing.get('division_record'))
             home_wins, home_losses = self.parse_record_string(standing.get('home_record'))
             road_wins, road_losses = self.parse_record_string(standing.get('road_record'))
-            
+
             # Track parse failures
             if standing.get('conference_record') and (conf_wins == 0 and conf_losses == 0):
                 parse_failures.append({
@@ -197,13 +200,13 @@ class BdlStandingsProcessor(SmartIdempotencyMixin, ProcessorBase):
                     'field': 'conference_record',
                     'value': standing.get('conference_record')
                 })
-            
+
             # Calculate derived fields
             wins = standing.get('wins', 0)
             losses = standing.get('losses', 0)
             games_played = wins + losses
             win_percentage = round(wins / games_played, 3) if games_played > 0 else 0.0
-            
+
             row = {
                 # Core identifiers
                 'season_year': season_year,
@@ -214,29 +217,29 @@ class BdlStandingsProcessor(SmartIdempotencyMixin, ProcessorBase):
                 'team_city': team_data.get('city'),
                 'team_name': team_data.get('name'),
                 'team_full_name': team_data.get('full_name'),
-                
+
                 # Conference/Division
                 'conference': team_data.get('conference'),
                 'division': team_data.get('division'),
                 'conference_rank': standing.get('conference_rank'),
                 'division_rank': standing.get('division_rank'),
-                
+
                 # Overall record
                 'wins': wins,
                 'losses': losses,
                 'win_percentage': win_percentage,
                 'games_played': games_played,
-                
+
                 # Conference record
                 'conference_record': standing.get('conference_record'),
                 'conference_wins': conf_wins,
                 'conference_losses': conf_losses,
-                
+
                 # Division record
                 'division_record': standing.get('division_record'),
                 'division_wins': div_wins,
                 'division_losses': div_losses,
-                
+
                 # Home/Road splits
                 'home_record': standing.get('home_record'),
                 'home_wins': home_wins,
@@ -244,18 +247,18 @@ class BdlStandingsProcessor(SmartIdempotencyMixin, ProcessorBase):
                 'road_record': standing.get('road_record'),
                 'road_wins': road_wins,
                 'road_losses': road_losses,
-                
+
                 # Processing metadata
                 'scrape_timestamp': datetime.fromisoformat(scrape_timestamp.replace('Z', '+00:00')).isoformat() if scrape_timestamp else None,
                 'source_file_path': file_path,
                 'created_at': datetime.utcnow().isoformat(),
                 'processed_at': datetime.utcnow().isoformat()
             }
-            
+
             rows.append(row)
-        
+
         logging.info(f"Transformed {len(rows)} team standings for {date_recorded}")
-        
+
         # Warn if unexpected number of teams (NBA has 30 teams)
         if len(rows) != 30:
             try:
@@ -273,7 +276,7 @@ class BdlStandingsProcessor(SmartIdempotencyMixin, ProcessorBase):
                 )
             except Exception as e:
                 logging.warning(f"Failed to send notification: {e}")
-        
+
         # Warn about record parsing failures
         if parse_failures:
             try:
@@ -289,7 +292,7 @@ class BdlStandingsProcessor(SmartIdempotencyMixin, ProcessorBase):
                 )
             except Exception as e:
                 logging.warning(f"Failed to send notification: {e}")
-        
+
         self.transformed_data = rows
 
     def save_data(self) -> None:
@@ -313,28 +316,28 @@ class BdlStandingsProcessor(SmartIdempotencyMixin, ProcessorBase):
 
             self.stats["rows_inserted"] = 0
             return {'rows_processed': 0, 'errors': []}
-        
+
         table_id = f"{self.project_id}.{self.table_name}"
         errors = []
-        
+
         try:
             # For MERGE_UPDATE: Delete existing data for this date
             date_recorded = rows[0]['date_recorded']
             season_year = rows[0]['season_year']
-            
+
             delete_query = f"""
-                DELETE FROM `{table_id}` 
-                WHERE date_recorded = '{date_recorded}' 
+                DELETE FROM `{table_id}`
+                WHERE date_recorded = '{date_recorded}'
                 AND season_year = {season_year}
             """
-            
+
             logging.info(f"Deleting existing data for {date_recorded}, season {season_year}")
-            
+
             try:
                 self.bq_client.query(delete_query).result(timeout=60)
             except Exception as delete_error:
                 logging.error(f"Failed to delete existing standings: {delete_error}")
-                
+
                 # Notify about deletion failure
                 try:
                     notify_error(
@@ -352,13 +355,13 @@ class BdlStandingsProcessor(SmartIdempotencyMixin, ProcessorBase):
                     )
                 except Exception as e:
                     logging.warning(f"Failed to send notification: {e}")
-                
+
                 raise delete_error
-            
+
             # Update created_at for existing records (set to current time for new records)
             for row in rows:
                 row['processed_at'] = datetime.utcnow().isoformat()
-            
+
             # Insert new data using batch loading (not streaming insert)
             # This avoids the 20 DML limit and streaming buffer issues
             logging.info(f"Loading {len(rows)} standings for {date_recorded} using batch load")
@@ -427,7 +430,7 @@ class BdlStandingsProcessor(SmartIdempotencyMixin, ProcessorBase):
             errors.append(error_msg)
 
             self.stats["rows_inserted"] = 0
-            
+
             # Notify about general processing error
             try:
                 notify_error(
@@ -443,7 +446,7 @@ class BdlStandingsProcessor(SmartIdempotencyMixin, ProcessorBase):
                 )
             except Exception as notify_ex:
                 logging.warning(f"Failed to send notification: {notify_ex}")
-        
+
         return {
             'rows_processed': len(rows) if not errors else 0,
             'errors': errors

@@ -250,10 +250,12 @@ class OddsGameLinesProcessor(SmartIdempotencyMixin, ProcessorBase):
         # OddsAPI payloads can land as either {"metadata": {...}, ...} dicts
         # OR bare list of game objects (historical-format / legacy snapshots).
         # MLB phase2 was raising AttributeError 28x/min on the list shape.
-        if isinstance(raw_data, dict):
-            file_path = raw_data.get('metadata', {}).get('source_file', 'unknown')
-        else:
-            file_path = 'unknown'
+        file_path = self.opts.get('file_path')
+        if not file_path:
+            if isinstance(raw_data, dict):
+                file_path = raw_data.get('metadata', {}).get('source_file', 'unknown')
+            else:
+                file_path = 'unknown'
         """Transform nested odds data into flat rows for BigQuery."""
         rows = []
 

@@ -66,13 +66,13 @@ class EspnBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
         handling and consistent suffix normalization.
         """
         return normalize_name_for_lookup(name)
-    
+
     def parse_minutes(self, minutes_str: str) -> str:
         """Parse and validate minutes string."""
         if not minutes_str or minutes_str == "00:00":
             return "0:00"
         return minutes_str
-    
+
     def safe_int_conversion(self, value, default: int = 0) -> int:
         """Safely convert value to integer."""
         if value is None or value == "":
@@ -84,7 +84,7 @@ class EspnBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
             return int(float(value))
         except (ValueError, TypeError):
             return default
-    
+
     def safe_float_conversion(self, value, default: float = 0.0) -> float:
         """Safely convert value to float."""
         if value is None or value == "":
@@ -95,56 +95,56 @@ class EspnBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
             return float(value)
         except (ValueError, TypeError):
             return default
-    
+
     def extract_game_info_from_path(self, file_path: str) -> Dict:
         """Extract game date and ESPN game ID from file path."""
         # Path format: /espn/boxscores/{date}/game_{id}/{timestamp}.json
         parts = file_path.split('/')
-        
+
         game_info = {}
         for i, part in enumerate(parts):
             if part == 'boxscores' and i + 1 < len(parts):
                 game_info['date'] = parts[i + 1]
             elif part.startswith('game_') and i + 1 < len(parts):
                 game_info['espn_game_id'] = part.replace('game_', '')
-                
+
         return game_info
-    
+
     def construct_game_id(self, game_date: str, home_team: str, away_team: str) -> str:
         """Construct standardized game ID."""
         # Format: YYYYMMDD_AWAY_HOME
         date_formatted = game_date.replace('-', '')
         return f"{date_formatted}_{away_team}_{home_team}"
-    
+
     def validate_data(self, data: Dict) -> List[str]:
         """Validate ESPN boxscore data structure."""
         errors = []
-        
+
         if not isinstance(data, dict):
             errors.append("Data is not a dictionary")
             return errors
-            
+
         # Check for required ESPN boxscore structure
         required_fields = ['game_id', 'gamedate', 'teams', 'players']
         for field in required_fields:
             if field not in data:
                 errors.append(f"Missing {field}")
-        
+
         # Validate teams structure
         if 'teams' in data:
             teams = data['teams']
             if not isinstance(teams, dict) or 'home' not in teams or 'away' not in teams:
                 errors.append("Invalid teams structure - need home/away")
-                
+
         # Validate players array
         if 'players' in data:
             if not isinstance(data['players'], list):
                 errors.append("Players field is not a list")
             elif len(data['players']) == 0:
                 errors.append("No players found")
-                
+
         return errors
-    
+
     def parse_stats_array(self, stats_array: List[str]) -> Dict:
         """Parse ESPN stats array into structured data."""
         # Default values
@@ -170,29 +170,29 @@ class EspnBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
             'fouls': 0,
             'plus_minus': 0
         }
-        
+
         if not stats_array or len(stats_array) < 14:
             return parsed_stats
-        
+
         try:
             # Parse each stat position based on observed format
             parsed_stats['minutes'] = stats_array[0] or '0:00'
-            
+
             # Field Goals (format: "5-9")
             fg_parts = stats_array[1].split('-') if stats_array[1] else ['0', '0']
             parsed_stats['field_goals_made'] = self.safe_int_conversion(fg_parts[0])
             parsed_stats['field_goals_attempted'] = self.safe_int_conversion(fg_parts[1] if len(fg_parts) > 1 else '0')
-            
+
             # Three Pointers (format: "0-1")
             tp_parts = stats_array[2].split('-') if stats_array[2] else ['0', '0']
             parsed_stats['three_pointers_made'] = self.safe_int_conversion(tp_parts[0])
             parsed_stats['three_pointers_attempted'] = self.safe_int_conversion(tp_parts[1] if len(tp_parts) > 1 else '0')
-            
+
             # Free Throws (format: "3-5")
             ft_parts = stats_array[3].split('-') if stats_array[3] else ['0', '0']
             parsed_stats['free_throws_made'] = self.safe_int_conversion(ft_parts[0])
             parsed_stats['free_throws_attempted'] = self.safe_int_conversion(ft_parts[1] if len(ft_parts) > 1 else '0')
-            
+
             # Individual stats
             parsed_stats['offensive_rebounds'] = self.safe_int_conversion(stats_array[4])
             parsed_stats['defensive_rebounds'] = self.safe_int_conversion(stats_array[5])
@@ -202,51 +202,54 @@ class EspnBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
             parsed_stats['blocks'] = self.safe_int_conversion(stats_array[9])
             parsed_stats['turnovers'] = self.safe_int_conversion(stats_array[10])
             parsed_stats['fouls'] = self.safe_int_conversion(stats_array[11])
-            
+
             # Plus/minus (can be negative, format: "-8" or "+15")
             plus_minus_str = stats_array[12].replace('+', '') if stats_array[12] else '0'
             parsed_stats['plus_minus'] = self.safe_int_conversion(plus_minus_str)
-            
+
             # Points (last element)
             parsed_stats['points'] = self.safe_int_conversion(stats_array[13])
-            
+
             # Calculate percentages
             if parsed_stats['field_goals_attempted'] > 0:
                 parsed_stats['field_goal_percentage'] = round(
                     parsed_stats['field_goals_made'] / parsed_stats['field_goals_attempted'] * 100, 1
                 )
-            
+
             if parsed_stats['three_pointers_attempted'] > 0:
                 parsed_stats['three_point_percentage'] = round(
                     parsed_stats['three_pointers_made'] / parsed_stats['three_pointers_attempted'] * 100, 1
                 )
-            
+
             if parsed_stats['free_throws_attempted'] > 0:
                 parsed_stats['free_throw_percentage'] = round(
                     parsed_stats['free_throws_made'] / parsed_stats['free_throws_attempted'] * 100, 1
                 )
-                
+
         except (IndexError, ValueError, AttributeError) as e:
             logging.warning(f"Error parsing stats array {stats_array}: {str(e)}")
-        
+
         return parsed_stats
-    
+
     def detect_postseason(self, game_date: str) -> bool:
         """Detect if game is in postseason based on date."""
         # Simple heuristic: games after April 15 are likely playoffs
         month = int(game_date[5:7])
         day = int(game_date[8:10])
         return month > 4 or (month == 4 and day > 15)
-    
+
     def transform_data(self) -> None:
         """Transform raw data into transformed data."""
         raw_data = self.raw_data
-        file_path = self.raw_data.get('metadata', {}).get('source_file', 'unknown')
+        file_path = (
+            self.opts.get('file_path')
+            or self.raw_data.get('metadata', {}).get('source_file', 'unknown')
+        )
         """Transform ESPN boxscore data into BigQuery format."""
         validation_errors = self.validate_data(raw_data)
         if validation_errors:
             logging.error(f"Validation failed for {file_path}: {validation_errors}")
-            
+
             # Send warning for validation failures
             try:
                 notify_warning(
@@ -261,9 +264,9 @@ class EspnBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
                 )
             except Exception as e:
                 logging.warning(f"Failed to send notification: {e}")
-            
+
             return []
-        
+
         try:
             # Extract basic game info
             espn_game_id = raw_data['game_id']
@@ -291,18 +294,18 @@ class EspnBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
 
             # Construct standardized game ID
             game_id = self.construct_game_id(game_date, home_team_abbr, away_team_abbr)
-            
+
             # Extract season year (assume games in Oct+ are new season)
             year = int(game_date[:4])
             month = int(game_date[5:7])
             season_year = year if month < 10 else year + 1
-            
+
             # Process players
             rows = []
             players = raw_data.get('players', [])
             total_players = len(players)
             failed_players = 0
-            
+
             # Check for no players
             if total_players == 0:
                 try:
@@ -319,7 +322,7 @@ class EspnBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
                     )
                 except Exception as e:
                     logging.warning(f"Failed to send notification: {e}")
-            
+
             for player_data in players:
                 try:
                     # Basic player info
@@ -328,14 +331,14 @@ class EspnBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
                     player_type = player_data.get('type', '')  # "starters" or "bench"
                     stats_array = player_data.get('stats', [])
                     dnp_reason = player_data.get('dnpReason', '')
-                    
+
                     # Parse stats (empty for DNP players)
                     parsed_stats = self.parse_stats_array(stats_array)
-                    
+
                     # Determine if player was active
                     is_active = len(stats_array) > 0
                     starter = player_type == 'starters' if is_active else False
-                    
+
                     # Build player record
                     player_record = {
                         # Core identifiers
@@ -346,7 +349,7 @@ class EspnBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'game_status': 'Final',  # ESPN data is post-game
                         'period': 4,  # Assume regulation game
                         'is_postseason': self.detect_postseason(game_date),
-                        
+
                         # Team information
                         'home_team_abbr': home_team_abbr,
                         'away_team_abbr': away_team_abbr,
@@ -354,7 +357,7 @@ class EspnBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'away_team_score': 0,  # Not provided in this format
                         'home_team_espn_id': '',
                         'away_team_espn_id': '',
-                        
+
                         # Player information
                         'team_abbr': team_abbr,
                         'player_full_name': player_name,
@@ -363,7 +366,7 @@ class EspnBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'jersey_number': str(player_data.get('jersey', '')),
                         'position': '',  # Not provided in this format
                         'starter': starter,
-                        
+
                         # Core statistics
                         'minutes': parsed_stats['minutes'],
                         'points': parsed_stats['points'],
@@ -376,7 +379,7 @@ class EspnBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'free_throws_made': parsed_stats['free_throws_made'],
                         'free_throws_attempted': parsed_stats['free_throws_attempted'],
                         'free_throw_percentage': parsed_stats['free_throw_percentage'],
-                        
+
                         # Additional statistics
                         'rebounds': parsed_stats['rebounds'],
                         'offensive_rebounds': parsed_stats['offensive_rebounds'],
@@ -387,20 +390,20 @@ class EspnBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'turnovers': parsed_stats['turnovers'],
                         'fouls': parsed_stats['fouls'],
                         'plus_minus': parsed_stats['plus_minus'],
-                        
+
                         # Processing metadata
                         'source_file_path': file_path,
                         'created_at': datetime.now(timezone.utc).isoformat(),
                         'processed_at': datetime.now(timezone.utc).isoformat()
                     }
-                    
+
                     rows.append(player_record)
-                    
+
                 except Exception as e:
                     logging.warning(f"Error processing player {player_data.get('playerName', 'Unknown')}: {str(e)}")
                     failed_players += 1
                     continue
-            
+
             # Send warning if high player failure rate
             if total_players > 0 and failed_players >= total_players * 0.3:  # 30% threshold
                 try:
@@ -420,7 +423,7 @@ class EspnBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
                     )
                 except Exception as e:
                     logging.warning(f"Failed to send notification: {e}")
-            
+
             logging.info(f"Transformed {len(rows)} player records from {file_path}")
             self.transformed_data = rows
 
@@ -428,7 +431,7 @@ class EspnBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
             self.add_data_hash()
         except Exception as e:
             logging.error(f"Error transforming data from {file_path}: {str(e)}")
-            
+
             # Send error notification for transformation failures
             try:
                 notify_error(
@@ -443,9 +446,9 @@ class EspnBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
                 )
             except Exception as notify_ex:
                 logging.warning(f"Failed to send notification: {notify_ex}")
-            
+
             return []
-    
+
     def save_data(self) -> None:
         """Save transformed data to BigQuery (overrides ProcessorBase.save_data())."""
         rows = self.transformed_data
@@ -453,10 +456,10 @@ class EspnBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
         if not rows:
             self.stats['rows_inserted'] = 0
             return {'rows_processed': 0, 'errors': []}
-        
+
         table_id = f"{self.project_id}.{self.table_name}"
         errors = []
-        
+
         try:
             if self.processing_strategy == 'MERGE_UPDATE':
                 # Delete existing data for this game first
@@ -475,7 +478,7 @@ class EspnBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
 
                 logging.info(f"Deleting existing data for game_id: {game_id}, game_date: {game_date}")
                 self.bq_client.query(delete_query, job_config=job_config).result(timeout=60)
-            
+
             # Insert new data using batch loading (not streaming insert)
             # This avoids the 20 DML limit and streaming buffer issues
             logging.info(f"Loading {len(rows)} rows to {table_id} using batch load")
@@ -530,7 +533,7 @@ class EspnBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
                 )
             except Exception as notify_ex:
                 logging.warning(f"Failed to send notification: {notify_ex}")
-        
+
         return {
             'rows_processed': len(rows) if not errors else 0,
             'errors': errors

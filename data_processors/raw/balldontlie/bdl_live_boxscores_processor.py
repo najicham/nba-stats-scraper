@@ -173,7 +173,10 @@ class BdlLiveBoxscoresProcessor(ProcessorBase):
     def transform_data(self) -> None:
         """Transform raw live boxscores data to BigQuery rows."""
         raw_data = self.raw_data
-        file_path = raw_data.get('metadata', {}).get('source_file', 'unknown')
+        file_path = (
+            self.opts.get('file_path')
+            or raw_data.get('metadata', {}).get('source_file', 'unknown')
+        )
 
         rows = []
 

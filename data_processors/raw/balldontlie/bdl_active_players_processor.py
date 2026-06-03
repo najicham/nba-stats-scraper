@@ -37,15 +37,15 @@ class BdlActivePlayersProcessor(SmartIdempotencyMixin, ProcessorBase):
         self.processing_strategy = 'MERGE_UPDATE'  # Current-state data
         self.project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
         self.bq_client = bigquery.Client(project=self.project_id)
-        
+
         # Load NBA.com player data for validation
         self.nba_com_players = self._load_nba_com_players()
-    
+
     def parse_json(self, json_content: str, file_path: str) -> Dict:
         """Parse Ball Don't Lie Active Players JSON."""
         try:
             data = json.loads(json_content)
-            
+
             # Convert Ball Don't Lie format to expected format
             if 'activePlayers' in data:
                 return {
@@ -59,7 +59,7 @@ class BdlActivePlayersProcessor(SmartIdempotencyMixin, ProcessorBase):
                 }
             else:
                 logging.error(f"No 'activePlayers' field found in {file_path}")
-                
+
                 # Notify about missing activePlayers field
                 try:
                     notify_error(
@@ -74,12 +74,12 @@ class BdlActivePlayersProcessor(SmartIdempotencyMixin, ProcessorBase):
                     )
                 except Exception as e:
                     logging.warning(f"Failed to send notification: {e}")
-                
+
                 return None
-                
+
         except json.JSONDecodeError as e:
             logging.error(f"JSON decode error in {file_path}: {e}")
-            
+
             # Notify about JSON parsing failure
             try:
                 notify_error(
@@ -95,11 +95,11 @@ class BdlActivePlayersProcessor(SmartIdempotencyMixin, ProcessorBase):
                 )
             except Exception as notify_ex:
                 logging.warning(f"Failed to send notification: {notify_ex}")
-            
+
             return None
         except Exception as e:
             logging.error(f"Error parsing JSON from {file_path}: {e}")
-            
+
             # Notify about unexpected parsing error
             try:
                 notify_error(
@@ -115,15 +115,15 @@ class BdlActivePlayersProcessor(SmartIdempotencyMixin, ProcessorBase):
                 )
             except Exception as notify_ex:
                 logging.warning(f"Failed to send notification: {notify_ex}")
-            
+
             return None
-    
+
     def _load_nba_com_players(self) -> Dict[str, Dict]:
         """Load current NBA.com player data for validation."""
         try:
             if not self.bq_client:
                 logging.error("BigQuery client not initialized")
-                
+
                 # Notify about missing BigQuery client
                 try:
                     notify_error(
@@ -137,16 +137,16 @@ class BdlActivePlayersProcessor(SmartIdempotencyMixin, ProcessorBase):
                     )
                 except Exception as e:
                     logging.warning(f"Failed to send notification: {e}")
-                
+
                 return {}
-                
+
             query = """
             SELECT player_lookup, player_full_name, team_abbr, player_id
             FROM `nba-props-platform.nba_raw.nbac_player_list_current`
             WHERE is_active = TRUE
             """
             results = self.bq_client.query(query).result(timeout=60)
-            
+
             players = {}
             for row in results:
                 players[row.player_lookup] = {
@@ -155,7 +155,7 @@ class BdlActivePlayersProcessor(SmartIdempotencyMixin, ProcessorBase):
                     'player_id': row.player_id
                 }
             logging.info(f"Loaded {len(players)} NBA.com players for validation")
-            
+
             # Warn if very few players loaded
             if len(players) < 400:  # NBA typically has 450+ active players
                 try:
@@ -172,11 +172,11 @@ class BdlActivePlayersProcessor(SmartIdempotencyMixin, ProcessorBase):
                     )
                 except Exception as e:
                     logging.warning(f"Failed to send notification: {e}")
-            
+
             return players
         except Exception as e:
             logging.warning(f"Could not load NBA.com players for validation: {e}")
-            
+
             # Notify about validation data loading failure
             try:
                 notify_warning(
@@ -192,9 +192,9 @@ class BdlActivePlayersProcessor(SmartIdempotencyMixin, ProcessorBase):
                 )
             except Exception as notify_ex:
                 logging.warning(f"Failed to send notification: {notify_ex}")
-            
+
             return {}
-    
+
     def normalize_text(self, text: str) -> str:
         """Aggressive normalization for data consistency."""
         if not text:
@@ -202,18 +202,18 @@ class BdlActivePlayersProcessor(SmartIdempotencyMixin, ProcessorBase):
         normalized = text.lower().strip()
         # Remove all non-alphanumeric characters
         return re.sub(r'[^a-z0-9]', '', normalized)
-    
+
     def validate_data(self, data: Dict) -> List[str]:
         errors = []
-        
+
         if 'data' not in data:
             errors.append("Missing 'data' field in JSON")
             return errors
-            
+
         if not isinstance(data['data'], list):
             errors.append("'data' field is not a list")
             return errors
-        
+
         for i, player in enumerate(data['data']):
             if 'id' not in player:
                 errors.append(f"Player {i}: Missing 'id' field")
@@ -225,14 +225,14 @@ class BdlActivePlayersProcessor(SmartIdempotencyMixin, ProcessorBase):
                 errors.append(f"Player {i}: Missing or invalid 'team' field")
             elif 'abbreviation' not in player['team']:
                 errors.append(f"Player {i}: Missing team abbreviation")
-        
+
         return errors
-    
+
     def _validate_against_nba_com(self, player_lookup: str, bdl_team_abbr: str, player_full_name: str) -> Dict[str, str]:
         """Validate BDL data against NBA.com data."""
         validation_issues = []
         nba_com_data = self.nba_com_players.get(player_lookup)
-        
+
         if not nba_com_data:
             return {
                 'has_issues': True,
@@ -242,7 +242,7 @@ class BdlActivePlayersProcessor(SmartIdempotencyMixin, ProcessorBase):
                 }),
                 'nba_com_team': None
             }
-        
+
         # Check team mismatch
         nba_team = nba_com_data['team_abbr']
         if bdl_team_abbr != nba_team:
@@ -252,7 +252,7 @@ class BdlActivePlayersProcessor(SmartIdempotencyMixin, ProcessorBase):
                 'nba_com_team': nba_team,
                 'severity': 'medium'
             })
-        
+
         if validation_issues:
             return {
                 'has_issues': True,
@@ -267,11 +267,14 @@ class BdlActivePlayersProcessor(SmartIdempotencyMixin, ProcessorBase):
                 'details': json.dumps({'issues': []}),
                 'nba_com_team': nba_team
             }
-    
+
     def transform_data(self) -> None:
         """Transform raw data into transformed data."""
         raw_data = self.raw_data
-        file_path = self.raw_data.get('metadata', {}).get('source_file', 'unknown')
+        file_path = (
+            self.opts.get('file_path')
+            or self.raw_data.get('metadata', {}).get('source_file', 'unknown')
+        )
         rows = []
 
         for player_data in raw_data['data']:
@@ -280,16 +283,16 @@ class BdlActivePlayersProcessor(SmartIdempotencyMixin, ProcessorBase):
             last_name = player_data.get('last_name', '').strip()
             player_full_name = f"{first_name} {last_name}".strip()
             player_lookup = normalize_name(player_full_name)
-            
+
             # Team info
             team_info = player_data.get('team', {})
             team_abbr = team_info.get('abbreviation', '')
-            
+
             # Perform validation against NBA.com data
             validation_result = self._validate_against_nba_com(
                 player_lookup, team_abbr, player_full_name
             )
-            
+
             row = {
                 # Primary identifiers
                 'player_lookup': player_lookup,
@@ -297,7 +300,7 @@ class BdlActivePlayersProcessor(SmartIdempotencyMixin, ProcessorBase):
                 'first_name': first_name,
                 'last_name': last_name,
                 'player_full_name': player_full_name,
-                
+
                 # Team assignment
                 'bdl_team_id': team_info.get('id'),
                 'team_abbr': team_abbr,
@@ -306,33 +309,33 @@ class BdlActivePlayersProcessor(SmartIdempotencyMixin, ProcessorBase):
                 'team_full_name': team_info.get('full_name', ''),
                 'team_conference': team_info.get('conference', ''),
                 'team_division': team_info.get('division', ''),
-                
-                # Player attributes  
+
+                # Player attributes
                 'position': player_data.get('position', ''),
                 'height': player_data.get('height', ''),
                 'weight': player_data.get('weight', ''),
                 'jersey_number': player_data.get('jersey_number', ''),
-                
+
                 # Career information
                 'college': player_data.get('college', ''),
                 'country': player_data.get('country', ''),
                 'draft_year': player_data.get('draft_year'),
                 'draft_round': player_data.get('draft_round'),
                 'draft_number': player_data.get('draft_number'),
-                
+
                 # Validation tracking
                 'has_validation_issues': validation_result['has_issues'],
                 'validation_status': validation_result['status'],
                 'validation_details': validation_result['details'],
                 'nba_com_team_abbr': validation_result['nba_com_team'],
                 'validation_last_check': datetime.utcnow().isoformat(),
-                
+
                 # Processing metadata
                 'last_seen_date': datetime.utcnow().date().isoformat(),
                 'source_file_path': file_path,
                 'processed_at': datetime.utcnow().isoformat()
             }
-            
+
             rows.append(row)
 
         self.transformed_data = rows
@@ -370,10 +373,10 @@ class BdlActivePlayersProcessor(SmartIdempotencyMixin, ProcessorBase):
 
             self.stats["rows_inserted"] = 0
             return
-        
+
         table_id = f"{self.project_id}.{self.table_name}"
         errors = []
-        
+
         try:
             if self.processing_strategy == 'MERGE_UPDATE':
                 # For current-state data, clear existing data before inserting
@@ -383,7 +386,7 @@ class BdlActivePlayersProcessor(SmartIdempotencyMixin, ProcessorBase):
                     logging.info(f"Cleared existing data from {table_id}")
                 except Exception as delete_error:
                     logging.error(f"Failed to clear existing data: {delete_error}")
-                    
+
                     # Notify about deletion failure
                     try:
                         notify_error(
@@ -400,9 +403,9 @@ class BdlActivePlayersProcessor(SmartIdempotencyMixin, ProcessorBase):
                         )
                     except Exception as e:
                         logging.warning(f"Failed to send notification: {e}")
-                    
+
                     raise delete_error
-            
+
             # Insert using batch loading (not streaming insert)
             # This avoids the 20 DML limit and streaming buffer issues
             logging.info(f"Loading {len(rows)} rows to {table_id} using batch load")
@@ -498,7 +501,7 @@ class BdlActivePlayersProcessor(SmartIdempotencyMixin, ProcessorBase):
                 )
             except Exception as notify_ex:
                 logging.warning(f"Failed to send notification: {notify_ex}")
-        
+
         return {'rows_processed': len(rows) if not errors else 0, 'errors': errors}
 
     def get_processor_stats(self) -> Dict:
