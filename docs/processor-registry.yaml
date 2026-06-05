@@ -689,21 +689,9 @@ cloud_functions:
       criticality: P1
       description: Exports predictions to GCS
 
-  mlb_orchestrators:
-    - name: mlb_phase3_to_phase4
-      trigger: "Pub/Sub: mlb-phase3-analytics-complete"
-      criticality: P1
-      description: MLB Phase 3 → 4 orchestration
-
-    - name: mlb_phase4_to_phase5
-      trigger: "Pub/Sub: mlb-phase4-precompute-complete"
-      criticality: P1
-      description: MLB Phase 4 → 5 orchestration
-
-    - name: mlb_phase5_to_phase6
-      trigger: "Pub/Sub: mlb-phase5-predictions-complete"
-      criticality: P1
-      description: MLB Phase 5 → 6 orchestration
+  # mlb_orchestrators removed 2026-06-05 (task #35) — mlb_phase3_to_phase4,
+  # mlb_phase4_to_phase5, mlb_phase5_to_phase6 were orphan source dirs (never
+  # deployed; MLB phase transitions are handled differently).
 
   self_healing:
     - name: self_heal
@@ -753,10 +741,7 @@ cloud_functions:
       criticality: P1
       description: Monitors live data freshness
 
-    - name: upcoming_tables_cleanup
-      trigger: "Cloud Scheduler: 4 AM ET daily"
-      criticality: P2
-      description: Removes stale upcoming_* records
+    # upcoming_tables_cleanup removed 2026-06-05 (task #35) — orphan, never deployed.
 
     - name: stale_running_cleanup
       trigger: "Cloud Scheduler: every 30 min"

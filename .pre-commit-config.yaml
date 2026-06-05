@@ -232,6 +232,39 @@ repos:
         files: ^(CLAUDE\.md|\.claude/skills/.*\.md|docs/01-architecture/.*\.md|docs/02-operations/.*\.md|shared/registry/.*\.yaml)$
         verbose: true
 
+      - id: validate-all-schemas
+        name: Validate BigQuery schema alignment for ALL tables
+        description: Extends validate-schema-fields to player_prop_predictions, prediction_worker_runs, ml_feature_store_v2.
+        entry: python .pre-commit-hooks/validate_all_schemas.py
+        language: python
+        pass_filenames: false
+        always_run: true
+        verbose: true
+
+      # Manual-stage hooks — available via `pre-commit run --hook-stage manual <id>`
+      # but NOT auto-run on commit. The hooks currently find pre-existing violations
+      # (9 missing partition filters, 88 code-quality findings) that need cleanup
+      # before promotion to commit stage.
+      - id: validate-partition-filters
+        name: Validate BigQuery partition filter requirements (manual)
+        description: Scans for queries on partitioned tables missing required filters. 9 violations need fixes before this becomes auto.
+        entry: .venv/bin/python .pre-commit-hooks/validate_partition_filters.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [manual]
+        verbose: true
+
+      - id: validate-code-quality
+        name: Pre-deployment code quality checks (manual)
+        description: Missing f-strings, missing method calls, invalid BQ refs, uninitialized vars in error handlers. 88 findings need triage before this becomes auto.
+        entry: .venv/bin/python .pre-commit-hooks/validate_code_quality.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [manual]
+        verbose: true
+
   # Standard pre-commit hooks
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.5.0

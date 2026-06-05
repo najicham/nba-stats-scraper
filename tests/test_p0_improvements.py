@@ -247,23 +247,9 @@ class TestDataCleanup:
         assert 'skip-backup' in content or 'skip_backup' in content, \
             "Script should have option to skip backup"
 
-    def test_cloud_function_exists(self):
-        """Test that Cloud Function for TTL cleanup exists"""
-        cf_path = 'orchestration/cloud_functions/upcoming_tables_cleanup/main.py'
-        assert os.path.exists(cf_path), \
-            "Cloud Function should exist at orchestration/cloud_functions/upcoming_tables_cleanup/main.py"
-
-    def test_cloud_function_has_ttl_config(self):
-        """Test that Cloud Function has TTL configuration"""
-        cf_path = 'orchestration/cloud_functions/upcoming_tables_cleanup/main.py'
-
-        with open(cf_path, 'r') as f:
-            content = f.read()
-
-        assert 'TTL_DAYS' in content, "Cloud Function should have TTL_DAYS configuration"
-        # Check for either SQL INTERVAL or Python timedelta
-        assert 'timedelta' in content or 'INTERVAL' in content, \
-            "Cloud Function should use date calculation (timedelta or INTERVAL)"
+    # NOTE: test_cloud_function_exists and test_cloud_function_has_ttl_config
+    # removed 2026-06-05 — upcoming_tables_cleanup CF is orphan (never deployed)
+    # and source dir deleted in task #35 cleanup.
 
 
 class TestIntegration:
@@ -275,7 +261,7 @@ class TestIntegration:
             'backfill_jobs/precompute/player_composite_factors/player_composite_factors_precompute_backfill.py',
             'data_processors/precompute/player_composite_factors/player_composite_factors_processor.py',
             'scripts/cleanup_stale_upcoming_tables.py',
-            'orchestration/cloud_functions/upcoming_tables_cleanup/main.py'
+            # upcoming_tables_cleanup CF removed in task #35 cleanup (orphan)
         ]
 
         for file_path in files_to_check:
@@ -295,7 +281,7 @@ class TestIntegration:
         docs = [
             'docs/08-projects/current/historical-backfill-audit/2026-01-13-P0-IMPLEMENTATION-SUMMARY.md',
             'docs/09-handoff/2026-01-13-SESSION-30-HANDOFF.md',
-            'orchestration/cloud_functions/upcoming_tables_cleanup/README.md'
+            # upcoming_tables_cleanup README removed in task #35 cleanup (orphan CF)
         ]
 
         for doc in docs:

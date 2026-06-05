@@ -4,12 +4,17 @@
 -- Dataset: nba_predictions
 -- Table: prediction_accuracy
 -- Purpose: Grade predictions against actual results for ML training
--- Updated: 2026-01-31 - v5: Added bookmaker tracking fields
+-- Updated: 2026-06-05 - v6: Regenerated from live BQ; added 13 columns
 -- History:
 --   v2: Added system_id, signed_error, margin fields, thresholds
 --   v3: Added team_abbr, opponent_team_abbr, minutes_played, confidence_decile
 --   v4: Added is_voided, void_reason, pre_game_injury_flag, injury tracking
 --   v5: Added line_bookmaker, line_source_api for per-bookmaker hit rate analysis
+--   v6: Synced with live BQ — added feature_version, feature_count,
+--       feature_data_source, early_season_flag, raw_confidence_score,
+--       calibration_method, shot_zones_source, feature_completeness_pct,
+--       bdb_available_at_prediction, is_superseded_prediction,
+--       original_prediction_id, build_commit_sha, critical_features
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.prediction_accuracy` (
@@ -73,6 +78,25 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.prediction_accura
   -- Data Quality Tracking (Session 125/319 - enables hit rate by quality analysis)
   feature_quality_score FLOAT64,          -- Feature quality score from prediction (0-100)
   data_quality_tier STRING,               -- HIGH/MEDIUM/LOW computed from quality score
+
+  -- Feature Provenance (v6 — added 2026-06-05 from live BQ regen)
+  feature_version STRING,
+  feature_count INT64,
+  feature_data_source STRING,
+  feature_completeness_pct FLOAT64,
+  critical_features JSON,
+  shot_zones_source STRING,
+  bdb_available_at_prediction BOOL,
+
+  -- Calibration + Raw Scoring (v6)
+  raw_confidence_score NUMERIC,
+  calibration_method STRING,
+  early_season_flag BOOL,
+
+  -- Re-prediction Provenance (v6)
+  is_superseded_prediction BOOL,
+  original_prediction_id STRING,
+  build_commit_sha STRING,
 
   -- Metadata
   model_version STRING,
