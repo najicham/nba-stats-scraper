@@ -37,7 +37,7 @@ from google.cloud import bigquery
 from data_processors.raw.processor_base import ProcessorBase
 from shared.utils.notification_system import notify_error, notify_warning, notify_info
 from shared.utils.player_name_normalizer import normalize_name_for_lookup
-from shared.config.sport_config import get_raw_dataset
+from shared.config.sport_config import get_raw_dataset, SportConfig
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +71,13 @@ class MlbBpHistoricalPropsProcessor(ProcessorBase):
             prop_type: 'pitcher' or 'batter' - determines target table
         """
         self.prop_type = prop_type
-        self.dataset_id = get_raw_dataset()
+        # MLB-only processor. It is routed to BOTH the NBA and MLB phase2 services
+        # via shared GCS notifications, so it must NOT inherit the host service's
+        # SPORT env. In nba-phase2-raw-processors (SPORT unset -> 'nba'),
+        # get_raw_dataset() returned 'nba_raw' -> get_table() 404 on every file ->
+        # Pub/Sub NACK/redelivery storm that exhausted the pipeline_event_log
+        # partition-modification quota. Always target the MLB raw dataset. (2026-06-16)
+        self.dataset_id = SportConfig.for_sport('mlb').raw_dataset
         super().__init__()
 
         # Set table based on prop type
