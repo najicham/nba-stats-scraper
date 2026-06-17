@@ -52,3 +52,13 @@ Fresh window **May22–Jun15, OVER edge≥0.75: 29-18, 61.7% HR, +8.36u, 17.8% R
 **Local-env gotcha:** the machine's default gcloud/bq project is **`jett-prod`** — always pass `--project[_id]=nba-props-platform`.
 
 **Explicitly NOT issues (expected off-season idleness):** NBA Phase2/5/6 FAILED `expected_outputs` (predictions halted off-season), NBA fleet INSUFFICIENT_DATA, frozen NBA raw tables/signal-health, MLB betting halt, empty `pitcher_strikeout_predictions`/`shadow_mode_predictions` (predictions write to `pitcher_strikeouts`).
+
+---
+
+## Follow-up actions taken (same session)
+
+- **P2 — FIXED (commit `3621af42`).** Verified the real bug: `expected_outputs_planner/main.py` lines 111-112 used `gs://nba-scraped-data/mlbstatsapi/schedule/` and `.../mlbstatsapi/boxscores/`, but GCS dirs are `mlb-stats-api/schedule/` and `mlb-stats-api/box-scores/` (the sibling `mlb_lineups` entry was already correct). The reconciler verifies the planner's GCS path → found 0 files at the non-existent prefix → marked `mlb_schedule` FAILED daily (×15) despite data being present. Corrected both prefixes. New planner rows verify correctly; historical FAILED rows are cosmetic (past MLB dates, betting halted).
+- **P3 — CONFIRMED upstream gap, deferred.** Oct 2025 had 80 scheduled games but **zero** gamebook/PBP rows, and **GCS has no Oct-2025 source files** → never scraped, NOT loader-fixable. Needs a re-scrape from NBA.com (if still served), same class as the deferred Feb windows in `pbp-upstream-outage-2026`. Deferred to pre-season; the "backfill while idle" idea is void (no source data).
+- **P4 — DONE.** `prediction-worker` + `prediction-coordinator` set to `--min-instances=0`, both serving 100% on latest revision. NBA-only (MLB has its own worker; no push subs target them). Reverse before ~Oct preseason.
+- **P5 — mostly phantom / deferred.** `bin/model-registry.sh` has no `jett-prod` default — that's the *local* gcloud config (pass `--project=nba-props-platform`). `signals.yaml` weights ARE runtime-loaded (`shared/registry/loader.py`), so the "drift" needs a reviewed comparison against the scoring path, not a blind edit — deferred to a pre-season cleanup. Model-registry `is_production` pointer left untouched (model-selection blast radius; needs explicit sign-off).
+- **P0 storm — verified resolved.** After deploy: 0 partition-quota 403s in 15 min (was ~1,900/2h), no MLB-BP 404s in logs.
