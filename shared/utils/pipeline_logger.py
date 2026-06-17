@@ -192,7 +192,9 @@ class PipelineEventBuffer:
 
         # Perform I/O outside lock
         try:
-            success = insert_bigquery_rows(table_id, rows_to_flush, project_id=project_id)
+            # streaming=True: pipeline_event_log is append-only/high-volume; load
+            # jobs exhaust the per-partition modification quota and drop events.
+            success = insert_bigquery_rows(table_id, rows_to_flush, project_id=project_id, streaming=True)
             flush_latency_ms = (time.time() - flush_start_time) * 1000
 
             if success:

@@ -210,7 +210,8 @@ def execute_bigquery(
 def _insert_bigquery_rows_internal(
     table_id: str,
     rows: List[Dict[str, Any]],
-    project_id: str
+    project_id: str,
+    streaming: bool = False
 ) -> bool:
     """Internal function with retry logic for BigQuery inserts."""
     from shared.clients import get_bigquery_client
@@ -219,6 +220,22 @@ def _insert_bigquery_rows_internal(
     # Ensure table_id has project prefix
     if not table_id.startswith(f"{project_id}."):
         table_id = f"{project_id}.{table_id}"
+
+    if streaming:
+        # Streaming inserts (insert_rows_json) bypass the per-partition
+        # "partition modifications per day" quota that load jobs consume — one
+        # load job = one partition modification, so high-volume append-only
+        # logging (e.g. pipeline_event_log) exhausts the quota and silently
+        # drops events. Use ONLY for append-only tables with no DML: streaming
+        # creates a ~90-min buffer that blocks MERGE/UPDATE/DELETE.
+        errors = client.insert_rows_json(table_id, rows)
+        if errors:
+            logger.error(f"Failed to stream {len(rows)} rows into {table_id}: {errors[:3]}")
+            raise BigQueryInsertError(
+                f"Failed to stream {len(rows)} rows into {table_id}: {errors[:3]}"
+            )
+        logger.debug(f"Successfully streamed {len(rows)} rows into {table_id}")
+        return True
 
     # Get table reference for schema
     # Use batch loading instead of streaming inserts to avoid the 90-minute
@@ -264,7 +281,8 @@ def _insert_bigquery_rows_internal(
 def insert_bigquery_rows(
     table_id: str,
     rows: List[Dict[str, Any]],
-    project_id: str = DEFAULT_PROJECT_ID
+    project_id: str = DEFAULT_PROJECT_ID,
+    streaming: bool = False
 ) -> bool:
     """
     Insert rows into a BigQuery table.
@@ -294,7 +312,7 @@ def insert_bigquery_rows(
         return True
 
     try:
-        return _insert_bigquery_rows_internal(table_id, rows, project_id)
+        return _insert_bigquery_rows_internal(table_id, rows, project_id, streaming=streaming)
     except GoogleAPIError as e:
         logger.error(f"Failed to insert rows into {table_id}: {e}", exc_info=True)
         return False
