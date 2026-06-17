@@ -12,7 +12,7 @@ google-auth==2.48.0
 google-cloud-bigquery==3.40.0
 google-cloud-core==2.5.0
 google-cloud-firestore==2.23.0
-google-cloud-monitoring==2.17.0
+google-cloud-monitoring>=2.27.0  # protobuf-6 compatible (==2.17.0 caps protobuf<5, conflicts with pinned protobuf==6.x)
 google-cloud-pubsub==2.35.0
 google-cloud-secret-manager==2.26.0
 google-cloud-storage==3.9.0
