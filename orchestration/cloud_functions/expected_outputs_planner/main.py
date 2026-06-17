@@ -108,8 +108,8 @@ OUTPUT_TYPE_REGISTRY: Dict[Tuple[str, str], List[Tuple[str, str, int]]] = {
 
     # --- MLB: phase1 (scraper output) ------------------------------------
     ('mlb', 'phase1_scrape'): [
-        ('mlb_schedule',         'gs://nba-scraped-data/mlbstatsapi/schedule/{date}/', 6),
-        ('mlb_box_scores',       'gs://nba-scraped-data/mlbstatsapi/boxscores/{date}/', 12),
+        ('mlb_schedule',         'gs://nba-scraped-data/mlb-stats-api/schedule/{date}/', 6),
+        ('mlb_box_scores',       'gs://nba-scraped-data/mlb-stats-api/box-scores/{date}/', 12),
         ('bp_mlb_player_props',  'gs://nba-scraped-data/bettingpros/mlb/player-props/{date}/', 4),
         ('mlb_lineups',          'gs://nba-scraped-data/mlb-stats-api/lineups/{date}/', 12),
     ],
