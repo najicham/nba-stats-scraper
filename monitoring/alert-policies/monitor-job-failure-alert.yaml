@@ -1,0 +1,72 @@
+# Cloud Monitoring Alert Policy for Monitor/Validator Scheduler Job Failures
+#
+# Catches the class of monitoring/validator/canary/coverage Cloud Scheduler jobs
+# failing to INVOKE their target (httpRequest.status >= 400) — the gap that let
+# 17 watchdog jobs silently 401 on every run (2026-06-16). The existing scraper
+# policy is scoped to scrape/boxscore/bdl job_ids and could not see these.
+#
+# Scoped to httpRequest.status>=400 on resource.type="cloud_scheduler_job" so it
+# fires ONLY on scheduler invocation failures (401/403/5xx) — NOT on a monitor's
+# own internal severity=ERROR findings (those live under cloud_run_revision).
+#
+# Deploy with:
+#   gcloud alpha monitoring policies create \
+#     --policy-from-file=monitoring/alert-policies/monitor-job-failure-alert.yaml \
+#     --project=nba-props-platform
+#
+# Background (2026-06-16):
+#   17 monitor/validator Cloud Run Jobs were configured to call the Run Admin API
+#   (.../jobs/X:run) with an OIDC identity token. Google APIs require an OAuth
+#   access token, so every fire returned 401. Fix: --oauth-service-account-email.
+
+displayName: "[CRITICAL] Monitor/Validator Scheduler Job Failures"
+documentation:
+  content: |
+    ## Monitor / Validator Scheduler Job Failure
+
+    **Severity:** Critical
+    **Impact:** A pipeline watchdog (stall detector, freshness checker, gap
+    detection, coverage/schedule validator, canary, drift/staleness monitor)
+    failed to invoke its target. The pipeline may be degrading unobserved.
+
+    ### Likely Causes
+    1. **OIDC vs OAuth (401):** jobs that execute a Cloud Run *Job* via the Run
+       Admin API (`.../jobs/X:run`) must use an OAuth token, not OIDC. Fix:
+       ```bash
+       gcloud scheduler jobs update http <JOB> --location=us-west2 \
+         --oauth-service-account-email=756957797294-compute@developer.gserviceaccount.com
+       ```
+    2. **Missing run.invoker (403):** grant the invoker SA `roles/run.invoker` on the job.
+    3. **5xx:** the target Cloud Run Job/Service is erroring on startup.
+
+    ### Triage
+    ```bash
+    gcloud logging read 'resource.type="cloud_scheduler_job" AND
+      resource.labels.job_id="<JOB>"' --limit=5 \
+      --format="value(timestamp,httpRequest.status)"
+    ```
+  mimeType: text/markdown
+
+conditions:
+  - displayName: "Monitor/validator scheduler invocation failed (HTTP >= 400)"
+    conditionMatchedLog:
+      filter: |
+        resource.type="cloud_scheduler_job"
+        resource.labels.job_id=~"monitor|canary|validator|stall-detector|freshness-checker|gap-detection|coverage|q43-performance|health-check|staleness|confidence-drift"
+        httpRequest.status>=400
+      labelExtractors:
+        job_id: 'EXTRACT(resource.labels.job_id)'
+        http_status: 'EXTRACT(httpRequest.status)'
+
+combiner: OR
+
+enabled: true
+
+# NBA Platform Alerts channel (same as scraper + phase3 scheduler policies)
+notificationChannels:
+  - projects/nba-props-platform/notificationChannels/13444328261517403081
+
+alertStrategy:
+  autoClose: 86400s
+  notificationRateLimit:
+    period: 3600s
