@@ -20,7 +20,7 @@ From a 10-agent improvement sweep (31 agents incl. adversarial verification). NB
 
 | Theme | Item | Effort | Impact |
 |---|---|---|---|
-| ML | Rebuild a *diverse* fleet (currently 3× v12_noveg clones) via multi-cycle walk-forward; settle 7d-vs-14d cadence on clean data | M | medium (~Oct) |
+| ML | Fleet diversity — **diagnosis done 2026-06-18, premise corrected** (see below) | — | — |
 | ML | Fix bogus `brier_score` (it's `edge/15`, not a probability — anti-correlated with HR) | M | medium |
 | ML | Implement low-line + low-variance UNDER signal (62% HR, N=819, 4/4 seasons; strictly pre-game) | S | medium |
 | Signals | Demote `high_skew_over_block_obs` (73.3% CF HR, eligible, auto-demote never caught it) | S | medium |
@@ -44,6 +44,17 @@ From a 10-agent improvement sweep (31 agents incl. adversarial verification). NB
 - **Overstated — "Phase3/4 `emit_phase_completion` is a dark metric":** the series is alive (97K points) because `phase_completion_reconciler` co-emits with the lib. Lib gap is a consistency nit, not lost alerting.
 - **Overstated — "`required_default_count` drift signal missing":** already computed + emitted (`quality_scorer.py:393`). Residual is repointing 4 dashboard queries.
 - **Corrected — `pipeline_event_log` "half of events dropped right now":** that magnitude was storm-contaminated; post-fix failure rate is 0%. The fix above is durable prevention, not an active emergency.
+
+## Fleet-diversity diagnosis (2026-06-18) — premise corrected
+
+The backlog item "rebuild a diverse fleet via feature-set/cadence walk-forward" would **not work**. Pairwise correlation of all models that generated NBA predictions (Feb-Mar 2026):
+
+- **Feature-set variation is a dead lever:** `catboost_v12` vs `catboost_v16_noveg` = r **0.99**.
+- **GBDT algo-swap is near-dead:** CatBoost↔LGBM = **0.958**, CatBoost↔XGB = **0.929** — i.e. as correlated as CatBoost is to itself (0.938). All gradient-boosted trees converge on the same features/targets.
+- **Only structurally-different models de-correlate:** `moving_average`/`zone_matchup_v1`/`similarity_balanced_v1`/`ensemble_v1` = r **0.795** to the GBDT mass.
+- **But those de-correlated models are individually weak:** every one is *below* the 52.4% break-even at edge 5+ (45.8 / 47.7 / 48.9 / 47.9 / 27.0%).
+
+**Conclusion:** the fleet is effectively 64 CatBoost clones (r≈0.94) + a few equally-correlated LGBM/XGB. Cross-model signals (`combo_3way`, `book_disagreement`) need models that genuinely *disagree*, which only the structurally-different family provides — but those aren't accurate enough to enable as standalone members. **Do NOT** train GBDT feature-set/algo grids (clones) or blindly enable the weak diverse models. The real off-season ML work is one of: (a) build a structurally-different model that is *both* de-correlated *and* accurate (distributional/quantile direction — cf. the MultiQuantile `CEIL_UNDER` thread); or (b) validate on historical data whether the cross-model signals actually extract value from the existing weak-but-diverse models before next season (read-only), then shadow-test. Cadence (7d vs 14d) is still worth settling but is independent of diversity.
 
 ## The strategic bet — RESOLVED: NO-GO
 
