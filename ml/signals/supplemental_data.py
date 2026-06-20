@@ -69,6 +69,7 @@ def query_predictions_with_supplements(
     system_id: Optional[str] = None,
     multi_model: bool = False,
     skip_disabled_filter: bool = False,
+    predictions_table: Optional[str] = None,
 ) -> Tuple[List[Dict], Dict[str, Dict]]:
     """Query active predictions with supplemental signal data.
 
@@ -82,11 +83,17 @@ def query_predictions_with_supplements(
         skip_disabled_filter: If True, include predictions from disabled/blocked
             models. Used by simulation tools to evaluate historical periods
             where models were active but are now disabled.
+        predictions_table: Optional fully-qualified table to read the prediction
+            SOURCE from instead of nba_predictions.player_prop_predictions. Used
+            by the walk-forward BB-injection harness (INC-4) to run the real
+            pipeline on counterfactual predictions in a scratch table. Supplement
+            tables (feature store, injuries, etc.) are unaffected. Default = prod.
 
     Returns:
         Tuple of (predictions list, supplemental_map keyed by player_lookup).
     """
     model_id = system_id or get_best_bets_model_id()
+    preds_table = predictions_table or f"{PROJECT_ID}.nba_predictions.player_prop_predictions"
 
     if multi_model:
         system_filter = build_system_id_sql_filter('p')
@@ -156,7 +163,7 @@ def query_predictions_with_supplements(
           CASE WHEN mh.n_14d >= 10 THEN mh.hr_14d ELSE NULL END,
           50.0
         ) / 55.0) AS model_hr_weight
-      FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions` p
+      FROM `{preds_table}` p
       LEFT JOIN model_hr mh ON mh.model_id = p.system_id
       LEFT JOIN disabled_models dm ON p.system_id = dm.model_id
       WHERE p.game_date = @target_date
@@ -232,7 +239,7 @@ def query_predictions_with_supplements(
         CAST(p.predicted_points - p.current_points_line AS FLOAT64) AS edge,
         CAST(p.confidence_score AS FLOAT64) AS confidence_score,
         COALESCE(p.feature_quality_score, 0) AS feature_quality_score
-      FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions` p
+      FROM `{preds_table}` p
       LEFT JOIN disabled_models dm ON p.system_id = dm.model_id
       WHERE p.game_date = @target_date
         AND p.system_id = '{model_id}'
