@@ -50,7 +50,12 @@ out = pd.DataFrame({
     'current_points_line': df['line'].astype(float),
     'recommendation': df['direction'].astype(str),
     'confidence_score': 0.8,
-    'feature_quality_score': 1.0,
+    # feature_quality_score is on a 0-100 scale (aggregator quality_floor blocks < 85).
+    # The walk-forward cache is built ONLY on quality-ready feature rows
+    # (build_walkforward_predictions.py uses get_quality_where_clause), so these are
+    # genuinely clean -> 100.0. (Was 1.0: a 0-1 vs 0-100 units bug that made the
+    # aggregator's quality_floor reject 100% of edge-passing candidates -> picks=0.)
+    'feature_quality_score': 100.0,
     'is_active': True,
     'is_actionable': True,
     'line_source': 'ODDS_API',

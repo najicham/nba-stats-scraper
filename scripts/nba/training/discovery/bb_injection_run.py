@@ -17,6 +17,7 @@ Usage:
 """
 import argparse
 import logging
+import signal as _signal
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
@@ -24,6 +25,17 @@ logging.getLogger().setLevel(logging.ERROR)
 import numpy as np
 import pandas as pd
 from google.cloud import bigquery
+
+
+class _DateTimeout(Exception):
+    pass
+
+
+def _alarm(signum, frame):
+    raise _DateTimeout()
+
+
+_signal.signal(_signal.SIGALRM, _alarm)  # main-thread SIGALRM: interrupt hung BQ reads per date
 
 PROJECT_ID = "nba-props-platform"
 SCRATCH = f"{PROJECT_ID}.nba_predictions.walkforward_sim_predictions"
@@ -47,6 +59,8 @@ def main():
     ap.add_argument('--start', required=True)
     ap.add_argument('--end', required=True)
     ap.add_argument('--max-dates', type=int, default=0, help='0 = all')
+    ap.add_argument('--out', default='', help='optional CSV path to dump graded BB picks (written incrementally)')
+    ap.add_argument('--date-timeout', type=int, default=120, help='per-date wall-clock timeout (s) to skip hung BQ reads')
     args = ap.parse_args()
 
     c = bigquery.Client(project=PROJECT_ID)
@@ -68,26 +82,47 @@ def main():
     registry = sbb.build_default_registry()
     combo_registry = sbb.load_combo_registry(bq_client=c)
 
+    # incremental CSV: write header once, append per date so a hang/kill never loses progress
+    if args.out:
+        Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(columns=['game_date', 'player_lookup', 'rec', 'abs_edge', 'correct']).to_csv(
+            args.out, index=False)
+
     rows = []
+    timed_out = 0
     for i, d in enumerate(dates, 1):
+        _signal.alarm(args.date_timeout)
         try:
             res = sbb.simulate_date(c, d, model_id=SYSTEM_ID, multi_model=False,
                                     registry=registry, combo_registry=combo_registry,
                                     historical=True)
+        except _DateTimeout:
+            timed_out += 1
+            print(f"  {d}: TIMEOUT after {args.date_timeout}s (hung BQ read) — skipped", flush=True)
+            continue
         except Exception as e:
             print(f"  {d}: ERROR {type(e).__name__}: {e}", flush=True)
             continue
+        finally:
+            _signal.alarm(0)
+        date_rows = []
         for p in res.get('picks', []):
             pl = p.get('player_lookup', '')
             rec = p.get('recommendation', '')
             edge = p.get('edge', p.get('abs_edge', np.nan))
             corr = truth.get((d, pl))
-            rows.append({'game_date': d, 'player_lookup': pl, 'rec': rec,
-                         'abs_edge': abs(edge) if edge == edge else np.nan, 'correct': corr})
+            date_rows.append({'game_date': d, 'player_lookup': pl, 'rec': rec,
+                              'abs_edge': abs(edge) if edge == edge else np.nan, 'correct': corr})
+        rows.extend(date_rows)
+        if args.out and date_rows:
+            pd.DataFrame(date_rows).to_csv(args.out, mode='a', header=False, index=False)
         if i % 5 == 0 or i == len(dates):
-            print(f"  [{i}/{len(dates)}] {d}: cand={res.get('candidates')} picks={len(res.get('picks',[]))}", flush=True)
+            print(f"  [{i}/{len(dates)}] {d}: cand={res.get('candidates')} picks={len(res.get('picks',[]))}"
+                  f" (cum picks={len(rows)}, timeouts={timed_out})", flush=True)
 
     bb = pd.DataFrame(rows, columns=['game_date', 'player_lookup', 'rec', 'abs_edge', 'correct'])
+    if args.out:
+        print(f"wrote {len(bb)} BB picks (incrementally) -> {args.out} (timeouts={timed_out})", flush=True)
     if bb.empty:
         print("\n=== BB-pipeline picks: 0 ===")
         print("  Pipeline RAN but produced no picks. Expected for this config: a single V12_NOVEG model")
