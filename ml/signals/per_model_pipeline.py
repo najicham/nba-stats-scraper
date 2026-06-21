@@ -755,7 +755,7 @@ def _query_all_model_predictions(
           FROM `{PROJECT_ID}.nba_analytics.player_game_summary` g
           WHERE g.game_date >= DATE_SUB(@target_date, INTERVAL 30 DAY)
             AND g.game_date < @target_date
-            AND g.minutes > 0
+            AND g.minutes_played > 0
             AND g.points IS NOT NULL
             AND (g.is_dnp IS NULL OR g.is_dnp = FALSE)
         ),

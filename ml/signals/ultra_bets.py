@@ -75,7 +75,9 @@ def parse_ultra_criteria(raw) -> list:
 
 def _check_criterion(criterion_id: str, pick: Dict[str, Any]) -> bool:
     """Check if a pick matches a specific ultra criterion."""
-    source_family = pick.get('source_model_family', '')
+    # `or ''`: source_model_family can be present-but-None (unclassified system_id);
+    # dict.get's default does not apply when the key exists with a None value.
+    source_family = pick.get('source_model_family') or ''
     edge = abs(pick.get('edge') or 0)
     direction = pick.get('recommendation', '')
     model_agreement = pick.get('model_agreement_count', 0)
