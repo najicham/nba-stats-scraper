@@ -186,10 +186,22 @@ RESCUE_SIGNAL_PRIORITY: Dict[str, int] = {
 # and it is dominated by low-line (5.5-13.5) edge<2 OVERs — exactly the
 # bench/role spots the archetype block exists to kill. Floor: HSE may bypass
 # ONLY for genuine starter+ scoring spots (line >= 18) with real edge (>= 4.0).
-# DEFAULT OFF (config flag) — needs user sign-off; shadow via filter_counterfactual
-# and promote only at CF HR <= 45%, N >= 30. MIN_EDGE (3.0) and the 6.0 OVER
-# floor are unchanged. See docs/09-handoff/2026-06-20-INC4-bb-injection-RESULT.md.
-HSE_RESCUE_FLOOR_ENABLED = os.getenv('HSE_RESCUE_FLOOR_ENABLED', 'false').lower() == 'true'
+# Three-state mode (HSE_RESCUE_FLOOR_MODE), DEFAULT 'off' → zero behavior change:
+#   'off'     — no-op (production today).
+#   'observe' — record the would-block under 'hse_rescue_floor' (feeds
+#               best_bets_filtered_picks → filter_counterfactual CF HR) but do
+#               NOT block. SHADOW state: accrue CF HR with no output change, like
+#               bias_regime_over_obs / home_over_obs.
+#   'active'  — record AND block (revoke the HSE exemption → pick falls through
+#               to the 6.0 floor + bench/role blocks).
+# Promotion path (needs sign-off): off → observe (collect) → active only once the
+# 'hse_rescue_floor' CF HR ≤ 45% at N ≥ 30 (blocked picks confirmed losers).
+# Back-compat: HSE_RESCUE_FLOOR_ENABLED=true forces 'active'. MIN_EDGE (3.0) and
+# the 6.0 OVER floor are unchanged. See docs/09-handoff/2026-06-21-STEP4-gated-rerun-RESULT.md.
+HSE_RESCUE_FLOOR_MODE = os.getenv('HSE_RESCUE_FLOOR_MODE', 'off').lower()
+if os.getenv('HSE_RESCUE_FLOOR_ENABLED', 'false').lower() == 'true':
+    HSE_RESCUE_FLOOR_MODE = 'active'
+HSE_RESCUE_FLOOR_ENABLED = HSE_RESCUE_FLOOR_MODE == 'active'  # back-compat readers
 HSE_RESCUE_MIN_LINE = float(os.getenv('HSE_RESCUE_MIN_LINE', '18.0'))  # starters+ (bench<12, role<17.5 excluded)
 HSE_RESCUE_MIN_EDGE = float(os.getenv('HSE_RESCUE_MIN_EDGE', '4.0'))   # kills edge<2 lane; still bypasses 6.0 floor at 4-6
 
@@ -675,15 +687,20 @@ class BestBetsAggregator:
             over_floor = 6.0 + self._regime_context.get('over_edge_floor_delta', 0)
             hse_rescued = signal_rescued and rescue_signal == 'high_scoring_environment_over'
             # STEP 3: gate the HSE bypass to genuine starter+ scoring spots only.
-            # When the floor is enabled and an HSE pick is a low-line or low-edge
-            # spot, revoke the exemption so it falls through to the normal 6.0 OVER
-            # floor + bench/role blocks below (the lane INC-4 measured at ~55%).
-            if (HSE_RESCUE_FLOOR_ENABLED and hse_rescued
+            # An HSE pick at a low-line or low-edge spot is the ~55% lane INC-4
+            # measured. 'observe' records it under 'hse_rescue_floor' (CF data)
+            # without blocking; 'active' revokes the exemption so it falls through
+            # to the 6.0 OVER floor + bench/role blocks below.
+            if (HSE_RESCUE_FLOOR_MODE in ('observe', 'active') and hse_rescued
                     and ((pred.get('line_value') or 0) < HSE_RESCUE_MIN_LINE
                          or pred_edge < HSE_RESCUE_MIN_EDGE)):
-                hse_rescued = False
                 filter_counts.setdefault('hse_rescue_floor', 0)
                 filter_counts['hse_rescue_floor'] += 1
+                _record_filtered(pred, 'hse_rescue_floor', pred_edge,
+                                 sig_count=pred.get('signal_count', 0) or 0,
+                                 sig_tags=pred.get('signal_tags'))
+                if HSE_RESCUE_FLOOR_MODE == 'active':
+                    hse_rescued = False  # block: fall through to 6.0 floor + bench/role
             if (pred.get('recommendation') == 'OVER'
                     and pred_edge < over_floor
                     and not hse_rescued):
