@@ -98,13 +98,20 @@ barely above the ~53.5% real breakeven. Verified by dumping picks: every low-edg
 ### 🔍 Genuine finding: HSE OVER rescue at scale ≈ 55%, NOT the "100% (N=3)" belief
 CLAUDE.md/MEMORY hold `high_scoring_environment_over` = "100% BB HR (3-0) — only validated OVER rescue".
 The walk-forward foundation shows that at **N=133** the HSE rescue lane is **~55%** — the 100% was a textbook
-N=3 small-sample artifact (exactly what this foundation exists to catch). **Two-sided caveat:** the sim does
-NOT pass `signal_health`/`regime_context`, so production's **rescue-health gate** (`RESCUE_MIN_HR_7D=60` →
-would demote HSE when its 7d HR < 60%) and TIGHT-market `disable_over_rescue` are OFF here. So production
-already suppresses many of these — the sim shows what the HSE lane does *ungated*. Net: (a) the sim overstates
-HSE-rescue volume vs production, AND (b) the HSE-rescue belief rests on tiny N and should be re-validated with
-the rescue-health gate ON. Action: re-run with `signal_health`+`regime_context` passed (see faithfulness §)
-to measure the *gated* HSE lane; consider an explicit edge/line floor on HSE rescue.
+N=3 small-sample artifact (exactly what this foundation exists to catch). **THREE confounds make ~55% a soft
+number — do not act on it before the gated re-run:**
+1. **No `signal_health`** passed → production's **rescue-health gate** (`RESCUE_MIN_HR_7D=60`, demotes HSE when
+   its 7d HR < 60%) is OFF in the sim.
+2. **No `regime_context`** passed → TIGHT-market `disable_over_rescue` + the 6.0→7.0 OVER-floor raise are OFF.
+   2025-26 had sustained TIGHT windows (late-Feb→March) where production would have killed this lane outright.
+3. **`quality_floor` bypassed** (scratch `feature_quality_score`=100): the 133 HSE picks are LOW-LINE players
+   (5.5–13.5) — exactly the fringe/role players most likely to carry default features and be blocked by
+   production's zero-tolerance/`quality_floor (≥85)`. So a chunk of this lane wouldn't exist in production at all.
+**Net:** the sim shows the HSE lane *ungated + on a fuller candidate pool*; production suppresses much of it via
+(1)+(2)+(3). So this is BOTH a fidelity gap AND a real flag that the "100%" belief rests on N=3. **The ~55% is
+not a production estimate — it's the ceiling of how bad an ungated HSE lane gets.** Action: the gated re-run
+(below) resolves (1)+(2); a real-quality scratch join resolves (3). Consider an explicit edge/line floor on HSE
+rescue regardless.
 
 **Monthly BB HR:** Dec 66.7% (N=30), Jan 50.9% (N=55), Feb 48.5% (N=33), Mar 56.9% (N=65), Apr 80.0% (N=25) —
 the Jan-Feb sag is the ungated rescue lane in the weak/tight window (production would have gated/halted it).
@@ -186,9 +193,26 @@ line: strengthen the cross-book rescue LANE with these standalones; there is no 
 
 1. Push the prod crash/DvP fixes (#2–#5) as a standalone `fix:` commit — needs user sign-off.
 2. **Gated re-run** (highest-value follow-up): pass `signal_health` + `regime_context` into the aggregator in
-   `simulate_date`, so the rescue-health gate + regime gating apply. This tests whether the HSE-rescue lane
-   (~55% ungated, N=133) is actually suppressed in production — and whether the high-edge lift survives.
-   Also consider an explicit edge/line floor on HSE OVER rescue regardless.
+   `simulate_date`, so the rescue-health gate + regime gating apply. Tests whether the HSE-rescue lane
+   (~55% ungated, N=133) is suppressed in production and whether the high-edge lift survives.
+   **Exact recipe** (all loaders verified to exist):
+   - In `bin/simulate_best_bets.py::simulate_date`, before `aggregator = BestBetsAggregator(...)`:
+     ```python
+     from ml.signals.signal_health import get_signal_health_summary   # ml/signals/signal_health.py:689
+     from ml.signals.regime_context import get_regime_context         # ml/signals/regime_context.py:28 (str|date ok)
+     try:    signal_health = get_signal_health_summary(bq_client, target_date)
+     except Exception: signal_health = {}
+     try:    regime_context = get_regime_context(bq_client, target_date)
+     except Exception: regime_context = {}
+     ```
+   - Pass `signal_health=signal_health, regime_context=regime_context` to the `BestBetsAggregator(...)` call
+     (both are accepted constructor kwargs — aggregator.py:332/358; see the production wiring in
+     `per_model_pipeline.py:1481,1519,1612-1622`). Keep `mode` default (production).
+   - Point-in-time safe: `signal_health_daily`/`league_macro_daily` for date D are computed from games
+     BEFORE D, and are populated for 2025-26 production dates. No look-ahead.
+   - Then re-run `bb_injection_run.py` + `bb_vs_raw_compare.py`. Expect the HSE low-line OVER lane to shrink
+     hard in TIGHT windows; watch whether edge5+ lift survives. Also consider an explicit edge/line floor on
+     HSE OVER rescue regardless.
 3. (Optional) production-faithful candidate pool: join real `ml_feature_store_v2.feature_quality_score` in the
    builder instead of 100.0, so `quality_floor` behaves as in production.
 4. (Optional) Tier 1+2 multi-season extension for a non-anomalous-season BB-vs-raw read (raw ≈53%, where the
