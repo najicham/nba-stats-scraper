@@ -39,7 +39,7 @@ GITHUB_API = f"https://api.github.com/repos/{GITHUB_REPO}"
 SERVICES_TO_MONITOR = [
     "prediction-worker",
     "prediction-coordinator",
-    "nba-phase1-scrapers",
+    "nba-scrapers",
     "nba-phase2-raw-processors",
     "nba-phase3-analytics-processors",
     "nba-phase4-precompute-processors",
@@ -48,6 +48,23 @@ SERVICES_TO_MONITOR = [
     "phase4-to-phase5-orchestrator",
     "nba-admin-dashboard",
 ]
+
+# Expected minScale annotation per service. Drift here is a config regression,
+# not a code regression — caught Apr 27 when a Cloud Build trigger substitution
+# silently re-set prediction-worker to min=1, costing ~$10/day.
+# Orchestrators stay at min=1 to prevent cold-start gaps (Feb 23 incident).
+EXPECTED_MIN_INSTANCES = {
+    "prediction-worker": 0,
+    "prediction-coordinator": 1,
+    "nba-scrapers": 0,
+    "nba-phase2-raw-processors": 0,
+    "nba-phase3-analytics-processors": 0,
+    "nba-phase4-precompute-processors": 0,
+    "nba-grading-service": 0,
+    "phase3-to-phase4-orchestrator": 1,
+    "phase4-to-phase5-orchestrator": 1,
+    "nba-admin-dashboard": 0,
+}
 
 
 def get_latest_github_commit() -> Tuple[Optional[str], Optional[int]]:
@@ -131,6 +148,81 @@ def get_deployment_timestamp(service: str) -> Optional[int]:
         return None
 
 
+def fetch_all_min_instances() -> Optional[Dict[str, int]]:
+    """
+    Fetch the minScale annotation for every Cloud Run service in the region in one call.
+
+    One `services list` returns everything in ~2s; running 10 sequential
+    `services describe` calls is flake-prone under subprocess timeouts.
+
+    Returns:
+        Dict mapping service name to minScale int (0 when annotation is unset),
+        or None if the call fails.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "gcloud", "run", "services", "list",
+                f"--region={REGION}",
+                f"--project={PROJECT_ID}",
+                "--format=csv[no-heading](metadata.name,"
+                "spec.template.metadata.annotations['autoscaling.knative.dev/minScale'])"
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+
+        if result.returncode != 0:
+            logger.warning(f"Failed to list services for minScale check: {result.stderr.strip()}")
+            return None
+
+        scales: Dict[str, int] = {}
+        for line in result.stdout.strip().splitlines():
+            if "," not in line:
+                continue
+            name, raw = line.split(",", 1)
+            name = name.strip()
+            raw = raw.strip()
+            if not name:
+                continue
+            scales[name] = int(raw) if raw else 0
+
+        return scales
+
+    except Exception as e:
+        logger.error(f"Error listing services for minScale check: {e}")
+        return None
+
+
+def check_min_instances(service: str, all_scales: Dict[str, int]) -> Optional[Dict]:
+    """
+    Check whether a service's live minScale annotation matches expectations.
+
+    Returns a config-drift dict if the live value differs from EXPECTED_MIN_INSTANCES,
+    None if it matches or no expectation is set.
+    """
+    expected = EXPECTED_MIN_INSTANCES.get(service)
+    if expected is None:
+        return None
+
+    if service not in all_scales:
+        logger.warning(f"Service {service} not present in services list — cannot check minScale")
+        return None
+
+    actual = all_scales[service]
+    if actual == expected:
+        return None
+
+    return {
+        'service': service,
+        'kind': 'config_drift',
+        'attribute': 'min_instances',
+        'expected': expected,
+        'actual': actual,
+    }
+
+
 def check_deployment_drift() -> List[Dict]:
     """
     Check all services for deployment drift.
@@ -146,24 +238,30 @@ def check_deployment_drift() -> List[Dict]:
         return []
 
     drifted_services = []
+    all_scales = fetch_all_min_instances() or {}
 
     for service in SERVICES_TO_MONITOR:
         deploy_timestamp = get_deployment_timestamp(service)
 
-        if not deploy_timestamp:
-            continue
+        if deploy_timestamp:
+            age_hours = (github_timestamp - deploy_timestamp) / 3600
 
-        # Check if deployment is older than latest commit
-        age_hours = (github_timestamp - deploy_timestamp) / 3600
+            if age_hours > 2:
+                drifted_services.append({
+                    'service': service,
+                    'deploy_timestamp': deploy_timestamp,
+                    'github_timestamp': github_timestamp,
+                    'drift_hours': age_hours
+                })
+                logger.warning(f"Service {service} is {age_hours:.1f} hours behind")
 
-        if age_hours > 2:  # More than 2 hours old
-            drifted_services.append({
-                'service': service,
-                'deploy_timestamp': deploy_timestamp,
-                'github_timestamp': github_timestamp,
-                'drift_hours': age_hours
-            })
-            logger.warning(f"Service {service} is {age_hours:.1f} hours behind")
+        config_drift = check_min_instances(service, all_scales)
+        if config_drift:
+            logger.warning(
+                f"Config drift in {service}: {config_drift['attribute']} "
+                f"expected={config_drift['expected']} actual={config_drift['actual']}"
+            )
+            drifted_services.append(config_drift)
 
     return drifted_services
 
@@ -174,29 +272,52 @@ def send_drift_alert(drifted_services: List[Dict]):
         logger.info("No deployment drift detected")
         return
 
-    # Build alert message
+    code_drifts = [d for d in drifted_services if d.get('kind') != 'config_drift']
+    config_drifts = [d for d in drifted_services if d.get('kind') == 'config_drift']
+
     message_lines = [
-        f"🚨 *Deployment Drift Detected* ({len(drifted_services)} services)",
+        f"🚨 *Deployment Drift Detected* ({len(drifted_services)} issue(s))",
         "",
-        "The following services have stale deployments:",
-        ""
     ]
 
-    for service in drifted_services:
-        hours = service['drift_hours']
-        message_lines.append(
-            f"• `{service['service']}` - {hours:.1f}h behind main branch"
-        )
+    if code_drifts:
+        message_lines.append(f"*Code drift — {len(code_drifts)} service(s) behind main:*")
+        for service in code_drifts:
+            hours = service['drift_hours']
+            message_lines.append(
+                f"• `{service['service']}` - {hours:.1f}h behind main branch"
+            )
+        message_lines.extend([
+            "",
+            "*To deploy:*",
+            "```",
+            "./bin/deploy-service.sh <service-name>",
+            "```",
+            "",
+        ])
 
-    message_lines.extend([
-        "",
-        "*To deploy:*",
-        "```",
-        "./bin/deploy-service.sh <service-name>",
-        "```",
-        "",
+    if config_drifts:
+        message_lines.append(f"*Config drift — {len(config_drifts)} service(s) with unexpected settings:*")
+        for drift in config_drifts:
+            svc = drift['service']
+            message_lines.append(
+                f"• `{svc}` — `{drift['attribute']}` expected `{drift['expected']}`, "
+                f"got `{drift['actual']}`"
+            )
+            if drift['attribute'] == 'min_instances':
+                message_lines.append(
+                    f"  Fix: `gcloud run services update {svc} --region={REGION} "
+                    f"--project={PROJECT_ID} --min-instances={drift['expected']}`"
+                )
+                message_lines.append(
+                    "  Also check Cloud Build trigger substitution `_MIN_INSTANCES` — "
+                    "auto-deploy can re-introduce the regression."
+                )
+        message_lines.append("")
+
+    message_lines.append(
         f"_Automated check at {datetime.now().strftime('%Y-%m-%d %H:%M:%S ET')}_"
-    ])
+    )
 
     message = "\n".join(message_lines)
 

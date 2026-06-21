@@ -40,7 +40,7 @@ SERVICE_SOURCES = {
     "prediction-coordinator": ["predictions/coordinator", "shared"],
 
     # NBA Processing
-    "nba-phase1-scrapers": ["scrapers"],
+    "nba-scrapers": ["scrapers"],
     "nba-phase2-raw-processors": ["data_processors/phase2"],
     "nba-phase3-analytics-processors": ["data_processors/phase3", "shared"],
     "nba-phase4-precompute-processors": ["data_processors/phase4", "shared"],
@@ -54,6 +54,23 @@ SERVICE_SOURCES = {
 
     # Admin
     "nba-admin-dashboard": ["admin_dashboard"],
+}
+
+# Expected minScale annotation per service. Drift here is a config regression,
+# not a code regression — caught Apr 27 when a Cloud Build trigger substitution
+# silently re-set prediction-worker to min=1, costing ~$10/day.
+# Orchestrators stay at min=1 to prevent cold-start gaps (Feb 23 incident).
+EXPECTED_MIN_INSTANCES = {
+    "prediction-worker": 0,
+    "prediction-coordinator": 1,
+    "nba-scrapers": 0,
+    "nba-phase2-raw-processors": 0,
+    "nba-phase3-analytics-processors": 0,
+    "nba-phase4-precompute-processors": 0,
+    "nba-grading-service": 0,
+    "phase3-to-phase4-orchestrator": 1,
+    "phase4-to-phase5-orchestrator": 1,
+    "nba-admin-dashboard": 0,
 }
 
 
@@ -230,6 +247,84 @@ def check_service_drift(service: str, source_dirs: List[str]) -> Optional[Dict]:
     }
 
 
+def fetch_all_min_instances() -> Optional[Dict[str, int]]:
+    """
+    Fetch the minScale annotation for every Cloud Run service in the region in one call.
+
+    Sequential `services describe` calls hit subprocess timeout flakes when run 10x
+    in a tight loop. One `services list` call returns everything in ~2s.
+
+    Returns:
+        Dict mapping service name to minScale int (0 when annotation is unset),
+        or None if the call fails.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "gcloud", "run", "services", "list",
+                f"--region={REGION}",
+                f"--project={PROJECT_ID}",
+                "--format=csv[no-heading](metadata.name,"
+                "spec.template.metadata.annotations['autoscaling.knative.dev/minScale'])"
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+
+        if result.returncode != 0:
+            logger.warning(f"Failed to list services for minScale check: {result.stderr.strip()}")
+            return None
+
+        scales: Dict[str, int] = {}
+        for line in result.stdout.strip().splitlines():
+            if "," not in line:
+                continue
+            name, raw = line.split(",", 1)
+            name = name.strip()
+            raw = raw.strip()
+            if not name:
+                continue
+            scales[name] = int(raw) if raw else 0
+
+        return scales
+
+    except subprocess.TimeoutExpired:
+        logger.error("Timeout listing services for minScale check")
+        return None
+    except Exception as e:
+        logger.error(f"Error listing services for minScale check: {e}")
+        return None
+
+
+def check_min_instances(service: str, all_scales: Dict[str, int]) -> Optional[Dict]:
+    """
+    Check whether a service's live minScale annotation matches expectations.
+
+    Returns a config-drift dict if the live value differs from EXPECTED_MIN_INSTANCES,
+    None if it matches or no expectation is set.
+    """
+    expected = EXPECTED_MIN_INSTANCES.get(service)
+    if expected is None:
+        return None
+
+    if service not in all_scales:
+        logger.warning(f"Service {service} not present in services list — cannot check minScale")
+        return None
+
+    actual = all_scales[service]
+    if actual == expected:
+        return None
+
+    return {
+        'service': service,
+        'kind': 'config_drift',
+        'attribute': 'min_instances',
+        'expected': expected,
+        'actual': actual,
+    }
+
+
 def format_slack_alert(drifted_services: List[Dict]) -> str:
     """
     Format Slack alert message for drifted services.
@@ -243,31 +338,56 @@ def format_slack_alert(drifted_services: List[Dict]) -> str:
     if not drifted_services:
         return None
 
-    lines = [
-        "⚠️ *Deployment Drift Detected*",
-        "",
-        f"Found {len(drifted_services)} service(s) with stale deployments:",
-        ""
-    ]
+    code_drifts = [d for d in drifted_services if d.get('kind') != 'config_drift']
+    config_drifts = [d for d in drifted_services if d.get('kind') == 'config_drift']
 
-    for drift in drifted_services:
-        service = drift['service']
-        drift_hours = drift['drift_hours']
-        deploy_date = datetime.fromtimestamp(drift['deploy_epoch']).strftime('%Y-%m-%d %H:%M')
-        commit_date = datetime.fromtimestamp(drift['commit_epoch']).strftime('%Y-%m-%d %H:%M')
+    lines = ["⚠️ *Deployment Drift Detected*", ""]
 
-        lines.append(f"*{service}*")
-        lines.append(f"• Deployed: {deploy_date}")
-        lines.append(f"• Code changed: {commit_date}")
-        lines.append(f"• Drift: {drift_hours:.1f} hours behind")
-
-        if drift['recent_commits']:
-            lines.append("• Recent commits:")
-            for commit in drift['recent_commits'][:3]:
-                lines.append(f"  - {commit}")
-
-        lines.append(f"• Deploy: `./bin/deploy-service.sh {service}`")
+    if code_drifts:
+        lines.append(f"*Code drift — {len(code_drifts)} service(s) with stale deployments:*")
         lines.append("")
+
+        for drift in code_drifts:
+            service = drift['service']
+            drift_hours = drift['drift_hours']
+            deploy_date = datetime.fromtimestamp(drift['deploy_epoch']).strftime('%Y-%m-%d %H:%M')
+            commit_date = datetime.fromtimestamp(drift['commit_epoch']).strftime('%Y-%m-%d %H:%M')
+
+            lines.append(f"*{service}*")
+            lines.append(f"• Deployed: {deploy_date}")
+            lines.append(f"• Code changed: {commit_date}")
+            lines.append(f"• Drift: {drift_hours:.1f} hours behind")
+
+            if drift['recent_commits']:
+                lines.append("• Recent commits:")
+                for commit in drift['recent_commits'][:3]:
+                    lines.append(f"  - {commit}")
+
+            lines.append(f"• Deploy: `./bin/deploy-service.sh {service}`")
+            lines.append("")
+
+    if config_drifts:
+        lines.append(f"*Config drift — {len(config_drifts)} service(s) with unexpected settings:*")
+        lines.append("")
+
+        for drift in config_drifts:
+            service = drift['service']
+            attribute = drift['attribute']
+            expected = drift['expected']
+            actual = drift['actual']
+
+            lines.append(f"*{service}*")
+            lines.append(f"• `{attribute}` expected `{expected}`, got `{actual}`")
+            if attribute == 'min_instances':
+                lines.append(
+                    f"• Fix: `gcloud run services update {service} --region={REGION} "
+                    f"--project={PROJECT_ID} --min-instances={expected}`"
+                )
+                lines.append(
+                    "• Also check Cloud Build trigger substitution `_MIN_INSTANCES` — "
+                    "auto-deploy can re-introduce the regression."
+                )
+            lines.append("")
 
     lines.append("_Run `./bin/check-deployment-drift.sh --verbose` for full details_")
 
@@ -279,6 +399,7 @@ def main():
     logger.info("Starting deployment drift check")
 
     drifted_services = []
+    all_scales = fetch_all_min_instances() or {}
 
     for service, source_dirs in SERVICE_SOURCES.items():
         logger.info(f"Checking {service}...")
@@ -289,6 +410,14 @@ def main():
             drifted_services.append(drift)
         else:
             logger.info(f"{service} is up to date")
+
+        config_drift = check_min_instances(service, all_scales)
+        if config_drift:
+            logger.warning(
+                f"Config drift in {service}: {config_drift['attribute']} "
+                f"expected={config_drift['expected']} actual={config_drift['actual']}"
+            )
+            drifted_services.append(config_drift)
 
     # Send alert if drift found
     if drifted_services:
