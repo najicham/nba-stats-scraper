@@ -703,7 +703,10 @@ class BestBetsAggregator:
             # V16/V13/V15/LightGBM: no graded data yet but not V9's structural issue.
             # v9_low_vegas: separate affinity group (62.5% UNDER), exempt.
             # Session 318: Removed star-level exception (N=7 too small, 37.5% HR).
-            source_family = pred.get('source_model_family', '')
+            # `or ''`: source_model_family can be present-but-None (classify_system_id
+            # returns None for an unclassified system_id), and dict.get's default does
+            # NOT apply when the key exists with a None value -> None.startswith() crash.
+            source_family = pred.get('source_model_family') or ''
             if (pred.get('recommendation') == 'UNDER'
                     and pred_edge >= 7.0
                     and source_family.startswith('v9')
