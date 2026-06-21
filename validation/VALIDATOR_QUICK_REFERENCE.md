@@ -11,7 +11,7 @@ cd validation/requirements
 ### Step 2: Fill Critical Sections (30 min)
 Must have:
 - ✅ BigQuery table name (Section 1)
-- ✅ GCS bucket path (Section 2)  
+- ✅ GCS bucket path (Section 2)
 - ✅ Sample data - 10 rows (Section 7)
 
 Run these queries and paste results:
@@ -20,7 +20,7 @@ Run these queries and paste results:
 SELECT * FROM `project.dataset.table` LIMIT 10;
 
 -- Get schema
-SELECT column_name, data_type 
+SELECT column_name, data_type
 FROM `project.dataset.INFORMATION_SCHEMA.COLUMNS`
 WHERE table_name = 'your_table';
 ```
@@ -55,16 +55,16 @@ python -m validation.validators.raw.[processor]_validator \
 
 ## Common Questions
 
-**Q: What if I don't know some information?**  
+**Q: What if I don't know some information?**
 Mark as `[NEED CLARIFICATION]` and submit anyway.
 
-**Q: Can I submit partial template?**  
+**Q: Can I submit partial template?**
 Yes! Fill Critical sections and submit. Rest can be iterative.
 
-**Q: How do I test the validator?**  
+**Q: How do I test the validator?**
 We provide test command when delivering validator.
 
-**Q: What if validation fails?**  
+**Q: What if validation fails?**
 That's the point! It catches real data quality issues.
 
 ## Success Rate

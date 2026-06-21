@@ -1,8 +1,8 @@
 # BDL Injuries - Daily Operations Guide
 
-**Start Date:** When NBA season begins (October 22, 2025)  
-**Frequency:** Every day during season (Oct-Jun)  
-**Time:** 9:00 AM PT (after scraper completes at 8 AM PT)  
+**Start Date:** When NBA season begins (October 22, 2025)
+**Frequency:** Every day during season (Oct-Jun)
+**Time:** 9:00 AM PT (after scraper completes at 8 AM PT)
 **Duration:** 2-5 minutes per day
 
 ---
@@ -74,15 +74,15 @@ WHERE scrape_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY);
 
 # 2. Compare with NBA.com injuries
 bq query --use_legacy_sql=false "
-SELECT 
-  'BDL' as source, 
+SELECT
+  'BDL' as source,
   COUNT(DISTINCT player_lookup) as injured_players
 FROM \`nba-props-platform.nba_raw.bdl_injuries\`
 WHERE scrape_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
 
 UNION ALL
 
-SELECT 
+SELECT
   'NBA.com' as source,
   COUNT(DISTINCT player_lookup) as injured_players
 FROM \`nba-props-platform.nba_raw.nbac_injury_report\`
@@ -106,7 +106,7 @@ WHERE report_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY);
 ```bash
 # 1. Check which records have low confidence
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   player_full_name,
   team_abbr,
   parsing_confidence,
@@ -121,7 +121,7 @@ LIMIT 20;
 
 # 2. Review data quality flags
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   data_quality_flags,
   COUNT(*) as count
 FROM \`nba-props-platform.nba_raw.bdl_injuries\`
@@ -249,7 +249,7 @@ avg_confidence: 1.0
 ```bash
 # Check for duplicates
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   scrape_date,
   COUNT(*) as total,
   COUNT(DISTINCT bdl_player_id) as unique_players
@@ -281,7 +281,7 @@ ORDER BY team_abbr;
 
 # Compare with previous days
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   scrape_date,
   COUNT(DISTINCT team_abbr) as teams
 FROM \`nba-props-platform.nba_raw.bdl_injuries\`
@@ -507,8 +507,8 @@ Before season starts (October):
 
 ---
 
-**Last Updated:** October 13, 2025  
-**Status:** Ready for Season Start  
+**Last Updated:** October 13, 2025
+**Status:** Ready for Season Start
 **Next Review:** After First Week of Season
 
 ---

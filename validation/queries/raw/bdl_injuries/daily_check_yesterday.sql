@@ -36,7 +36,7 @@ yesterday_injuries AS (
 season_context AS (
   SELECT
     EXTRACT(MONTH FROM DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)) as check_month,
-    CASE 
+    CASE
       WHEN EXTRACT(MONTH FROM DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)) IN (7, 8, 9) THEN FALSE
       ELSE TRUE
     END as is_season_active

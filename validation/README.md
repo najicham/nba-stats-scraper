@@ -27,6 +27,6 @@ python -m validation.validators.[layer].[processor_name]_validator \
 
 ---
 
-**Template Location:** `VALIDATOR_REQUIREMENTS_TEMPLATE.md`  
-**Usage Guide:** `HOW_TO_USE_VALIDATOR_TEMPLATE.md`  
+**Template Location:** `VALIDATOR_REQUIREMENTS_TEMPLATE.md`
+**Usage Guide:** `HOW_TO_USE_VALIDATOR_TEMPLATE.md`
 **Examples:** `requirements/completed/`

@@ -59,9 +59,9 @@ SELECT
     WHEN l.most_recent_scrape = CURRENT_DATE() THEN '✅ Scraper ran today'
     WHEN DATE_DIFF(CURRENT_DATE(), l.most_recent_scrape, DAY) = 1 THEN '✅ Scraper healthy (yesterday)'
     WHEN DATE_DIFF(CURRENT_DATE(), l.most_recent_scrape, DAY) BETWEEN 2 AND 7 THEN '⚠️ Scraper stale (check logs)'
-    WHEN DATE_DIFF(CURRENT_DATE(), l.most_recent_scrape, DAY) > 7 
+    WHEN DATE_DIFF(CURRENT_DATE(), l.most_recent_scrape, DAY) > 7
       AND EXTRACT(MONTH FROM CURRENT_DATE()) BETWEEN 10 AND 6 THEN '❌ CRITICAL: Scraper down during season'
-    WHEN DATE_DIFF(CURRENT_DATE(), l.most_recent_scrape, DAY) > 7 
+    WHEN DATE_DIFF(CURRENT_DATE(), l.most_recent_scrape, DAY) > 7
       AND EXTRACT(MONTH FROM CURRENT_DATE()) BETWEEN 7 AND 9 THEN '⚪ Offseason - scraper idle (expected)'
     ELSE '⚪ No recent scrapes'
   END as status

@@ -6,7 +6,7 @@
 -- Update: Nightly at 11:15 PM (after team defense completes)
 -- Entities: ~450 active NBA players
 -- Duration: ~5-8 minutes
--- 
+--
 -- Version: 3.0 (Added completeness checking)
 -- Changes from V2:
 --   - Added completeness checking fields (14 fields - Week 2)
@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_precompute.player_shot_zone_a
   player_lookup STRING NOT NULL,                    -- Normalized player identifier
   universal_player_id STRING,                       -- Universal player ID from registry
   analysis_date DATE NOT NULL,                      -- Date this analysis represents (partition key)
-  
+
   -- ============================================================================
   -- SHOT DISTRIBUTION - Last 10 Games (6 fields)
   -- ============================================================================
@@ -39,21 +39,21 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_precompute.player_shot_zone_a
   total_shots_last_10 INT64,                        -- Total shots in sample
   games_in_sample_10 INT64,                         -- Number of games (max 10)
   sample_quality_10 STRING,                         -- 'excellent' (10 games), 'good' (7-9), 'limited' (<7)
-  
+
   -- ============================================================================
   -- EFFICIENCY BY ZONE - Last 10 Games (3 fields)
   -- ============================================================================
   paint_pct_last_10 NUMERIC(5,3),                   -- FG% in paint
   mid_range_pct_last_10 NUMERIC(5,3),               -- FG% mid-range
   three_pt_pct_last_10 NUMERIC(5,3),                -- 3PT%
-  
+
   -- ============================================================================
   -- VOLUME BY ZONE - Last 10 Games (3 fields)
   -- ============================================================================
   paint_attempts_per_game NUMERIC(4,1),             -- Paint attempts per game
   mid_range_attempts_per_game NUMERIC(4,1),         -- Mid-range attempts per game
   three_pt_attempts_per_game NUMERIC(4,1),          -- Three-point attempts per game
-  
+
   -- ============================================================================
   -- SHOT DISTRIBUTION - Last 20 Games (4 fields)
   -- Broader trend for stability comparison
@@ -62,25 +62,25 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_precompute.player_shot_zone_a
   paint_pct_last_20 NUMERIC(5,3),                   -- FG% in paint (20-game window)
   games_in_sample_20 INT64,                         -- Number of games in 20-game sample
   sample_quality_20 STRING,                         -- 'excellent' (20), 'good' (15-19), 'limited' (<15)
-  
+
   -- ============================================================================
   -- SHOT CREATION (2 fields)
   -- ============================================================================
   assisted_rate_last_10 NUMERIC(5,2),               -- % of made FGs that were assisted
   unassisted_rate_last_10 NUMERIC(5,2),             -- % of made FGs unassisted (shot creation)
-  
+
   -- ============================================================================
   -- PLAYER CHARACTERISTICS (2 fields)
   -- ============================================================================
   player_position STRING,                           -- G, F, C (from registry or inferred)
   primary_scoring_zone STRING,                      -- 'paint', 'mid_range', 'perimeter', 'balanced'
-  
+
   -- ============================================================================
   -- DATA QUALITY (2 fields)
   -- ============================================================================
   data_quality_tier STRING,                         -- 'high' (10+ games), 'medium' (5-9), 'low' (<5)
   calculation_notes STRING,                         -- Any issues or warnings
-  
+
   -- ============================================================================
   -- v4.0 SOURCE TRACKING - player_game_summary (3 fields)
   -- ============================================================================
@@ -244,7 +244,7 @@ OPTIONS(
 --   -- Scale volume by game pace
 --
 -- Efficiency Baseline:
---   SELECT 
+--   SELECT
 --     paint_pct_last_10,
 --     opponent_paint_defense_rating
 --   FROM player_shot_zone_analysis p
@@ -257,28 +257,28 @@ OPTIONS(
 -- ============================================================================
 
 -- Check data freshness for today's predictions
-SELECT 
+SELECT
   COUNT(*) as players_processed,
   AVG(source_player_game_completeness_pct) as avg_completeness,
   MIN(source_player_game_completeness_pct) as min_completeness,
   MAX(TIMESTAMP_DIFF(
-    CURRENT_TIMESTAMP(), 
-    source_player_game_last_updated, 
+    CURRENT_TIMESTAMP(),
+    source_player_game_last_updated,
     HOUR
   )) as max_source_age_hours
 FROM `nba-props-platform.nba_precompute.player_shot_zone_analysis`
 WHERE analysis_date = CURRENT_DATE();
 
 -- Find players with low completeness (data quality issues)
-SELECT 
+SELECT
   player_lookup,
   games_in_sample_10,
   source_player_game_rows_found,
   source_player_game_completeness_pct,
   data_quality_tier,
   TIMESTAMP_DIFF(
-    CURRENT_TIMESTAMP(), 
-    source_player_game_last_updated, 
+    CURRENT_TIMESTAMP(),
+    source_player_game_last_updated,
     HOUR
   ) as source_age_hours
 FROM `nba-props-platform.nba_precompute.player_shot_zone_analysis`
@@ -287,7 +287,7 @@ WHERE analysis_date = CURRENT_DATE()
 ORDER BY source_player_game_completeness_pct ASC;
 
 -- Check for early season players (insufficient data)
-SELECT 
+SELECT
   player_lookup,
   games_in_sample_10,
   early_season_flag,
@@ -298,7 +298,7 @@ WHERE analysis_date = CURRENT_DATE()
   AND early_season_flag = TRUE;
 
 -- Validate shot distribution sums (should be ~100%)
-SELECT 
+SELECT
   player_lookup,
   paint_rate_last_10,
   mid_range_rate_last_10,

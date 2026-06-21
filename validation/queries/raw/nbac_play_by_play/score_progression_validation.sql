@@ -6,7 +6,7 @@
 -- ============================================================================
 
 WITH score_progression AS (
-  SELECT 
+  SELECT
     game_date,
     game_id,
     event_sequence,
@@ -20,7 +20,7 @@ WITH score_progression AS (
 ),
 
 score_issues AS (
-  SELECT 
+  SELECT
     game_date,
     game_id,
     event_sequence,
@@ -29,7 +29,7 @@ score_issues AS (
     score_away,
     prev_home_score,
     prev_away_score,
-    CASE 
+    CASE
       WHEN score_home < prev_home_score THEN '🔴 Home score decreased'
       WHEN score_away < prev_away_score THEN '🔴 Away score decreased'
       WHEN (score_home - prev_home_score) > 3 THEN '⚠️ Home score jumped >3'
@@ -41,7 +41,7 @@ score_issues AS (
 ),
 
 final_scores AS (
-  SELECT 
+  SELECT
     p.game_date,
     p.game_id,
     p.home_team_abbr,
@@ -55,12 +55,12 @@ final_scores AS (
     ON p.game_id = b.game_id
     AND p.game_date = b.game_date
   WHERE p.game_date >= '2024-01-01'
-  GROUP BY p.game_date, p.game_id, p.home_team_abbr, p.away_team_abbr, 
+  GROUP BY p.game_date, p.game_id, p.home_team_abbr, p.away_team_abbr,
            b.home_team_score, b.away_team_score
 )
 
 -- Report score progression issues
-SELECT 
+SELECT
   'SCORE ANOMALIES' as report_type,
   game_date,
   game_id,
@@ -75,7 +75,7 @@ WHERE issue IS NOT NULL
 UNION ALL
 
 -- Report final score mismatches
-SELECT 
+SELECT
   'FINAL SCORE VALIDATION' as report_type,
   game_date,
   game_id,
@@ -83,9 +83,9 @@ SELECT
   NULL as period,
   pbp_final_home as score_home,
   pbp_final_away as score_away,
-  CASE 
+  CASE
     WHEN box_final_home IS NULL THEN '⚪ No box score to compare'
-    WHEN pbp_final_home != box_final_home OR pbp_final_away != box_final_away 
+    WHEN pbp_final_home != box_final_home OR pbp_final_away != box_final_away
     THEN '🔴 CRITICAL: Final scores do not match box scores'
     ELSE '✅ Final scores match'
   END as issue

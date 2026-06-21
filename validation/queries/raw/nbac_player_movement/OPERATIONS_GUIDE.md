@@ -1,8 +1,8 @@
 # NBA.com Player Movement - Daily Operations & Monitoring Guide
 
-**Document Version:** 1.0  
-**Last Updated:** October 13, 2025  
-**For:** Production Operations During NBA Season  
+**Document Version:** 1.0
+**Last Updated:** October 13, 2025
+**For:** Production Operations During NBA Season
 **Table:** `nba-props-platform.nba_raw.nbac_player_movement`
 
 ---
@@ -55,8 +55,8 @@ Transaction volumes vary dramatically by NBA calendar period. Your monitoring mu
 
 ### Morning Health Check (Every Day at 9am)
 
-**Purpose:** Verify scraper ran and data is fresh  
-**Duration:** ~2 minutes  
+**Purpose:** Verify scraper ran and data is fresh
+**Duration:** ~2 minutes
 **Required During:** All NBA calendar periods
 
 ```bash
@@ -91,8 +91,8 @@ echo "✅ Morning health check complete!"
 
 ### Weekly Data Quality Check (Every Monday)
 
-**Purpose:** Ensure data integrity and completeness  
-**Duration:** ~5 minutes  
+**Purpose:** Ensure data integrity and completeness
+**Duration:** ~5 minutes
 **Required During:** NBA season (Oct-Jun)
 
 ```bash
@@ -137,8 +137,8 @@ echo "✅ Weekly quality check complete!"
 
 ### Monthly Completeness Audit (First Monday of Month)
 
-**Purpose:** Comprehensive historical data validation  
-**Duration:** ~10 minutes  
+**Purpose:** Comprehensive historical data validation
+**Duration:** ~10 minutes
 **Required During:** Year-round
 
 ```bash
@@ -175,8 +175,8 @@ echo "✅ Monthly audit complete! Reports saved to reports/monthly_audits/"
 
 ### Post-Backfill Validation
 
-**Purpose:** Verify backfill completed successfully  
-**Duration:** ~3 minutes  
+**Purpose:** Verify backfill completed successfully
+**Duration:** ~3 minutes
 **Required:** After any historical data backfill
 
 ```bash
@@ -201,7 +201,7 @@ echo "✓ Checking for duplicates..."
 # 3. Verify date range coverage
 echo "✓ Verifying date range coverage..."
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   MIN(transaction_date) as earliest,
   MAX(transaction_date) as latest,
   COUNT(*) as total_records,
@@ -249,7 +249,7 @@ This is implemented in `scraper_freshness_check.sql` - it considers seasonal con
 
 #### Tier 1: Data Timestamp Monitoring ⭐ **Already Implemented**
 
-**What:** Track timestamps in the data itself  
+**What:** Track timestamps in the data itself
 **Tables:** `nba_raw.nbac_player_movement` has 3 timestamps:
 - `transaction_date` - When the transaction occurred (from NBA.com)
 - `scrape_timestamp` - When scraper retrieved the data
@@ -270,7 +270,7 @@ This is implemented in `scraper_freshness_check.sql` - it considers seasonal con
 
 #### Tier 2: Processor Run Tracking ⭐ **RECOMMENDED - Implement Next**
 
-**What:** Track every processor execution in dedicated table  
+**What:** Track every processor execution in dedicated table
 **Status:** Not yet implemented - **This solves the "silent success" problem!**
 
 **Benefits:**
@@ -285,7 +285,7 @@ This is implemented in `scraper_freshness_check.sql` - it considers seasonal con
 
 #### Tier 3: GCS File Monitoring
 
-**What:** Cloud Function monitors GCS bucket for unprocessed scraper outputs  
+**What:** Cloud Function monitors GCS bucket for unprocessed scraper outputs
 **Status:** Not yet implemented - future enhancement
 
 **Benefits:**
@@ -298,10 +298,10 @@ This is implemented in `scraper_freshness_check.sql` - it considers seasonal con
 # Cloud Function triggered on GCS file creation
 def on_new_scraper_file(event, context):
     file_path = event['name']  # gs://nba-scraped-data/nba-com/player-movement/...
-    
+
     # Wait 10 minutes for processor to handle file
     time.sleep(600)
-    
+
     # Check if file was processed
     if not was_processed(file_path):
         alert(f"Unprocessed scraper file: {file_path}")
@@ -315,8 +315,8 @@ def on_new_scraper_file(event, context):
 
 ### Overview
 
-**Purpose:** Track every processor execution to distinguish failures from "no new data"  
-**Cost:** <$0.10/month (minimal BigQuery storage + query costs)  
+**Purpose:** Track every processor execution to distinguish failures from "no new data"
+**Cost:** <$0.10/month (minimal BigQuery storage + query costs)
 **Complexity:** Low - single table + 10 lines of code per processor
 
 ### Schema Design
@@ -328,11 +328,11 @@ CREATE TABLE `nba-props-platform.nba_monitoring.processor_runs` (
   run_id STRING NOT NULL,                    -- UUID for this run
   processor_name STRING NOT NULL,            -- 'nbac_player_movement_processor'
   run_timestamp TIMESTAMP NOT NULL,          -- When processor started
-  
+
   -- Execution details
   trigger_type STRING,                       -- 'scheduled', 'manual', 'backfill', 'retry'
   trigger_source STRING,                     -- 'cloud_scheduler', 'pubsub', 'manual_cli'
-  
+
   -- Processing metrics
   status STRING NOT NULL,                    -- 'started', 'success', 'failed', 'partial'
   duration_seconds FLOAT64,                  -- How long it ran
@@ -340,21 +340,21 @@ CREATE TABLE `nba-props-platform.nba_monitoring.processor_runs` (
   records_inserted INT64,                    -- New records inserted
   records_updated INT64,                     -- Existing records updated
   records_skipped INT64,                     -- Duplicates/unchanged records
-  
+
   -- Data range processed
   data_date_start DATE,                      -- Earliest transaction_date processed
   data_date_end DATE,                        -- Latest transaction_date processed
   source_file_path STRING,                   -- GCS path of source data
-  
+
   -- Error tracking
   error_message STRING,                      -- If status='failed', why?
   error_type STRING,                         -- 'network', 'auth', 'data_quality', 'timeout'
-  
+
   -- Validation results
   validation_passed BOOL,                    -- Did post-insert validation pass?
   validation_warnings INT64,                 -- Count of warnings
   duplicates_detected INT64,                 -- Duplicates found post-insert
-  
+
   -- Metadata
   git_commit_hash STRING,                    -- Version of processor code
   host_environment STRING,                   -- 'cloud_run', 'local', 'cloud_function'
@@ -364,7 +364,7 @@ PARTITION BY DATE(run_timestamp)
 CLUSTER BY processor_name, status;
 
 -- Indexes for common queries
-CREATE INDEX idx_processor_status 
+CREATE INDEX idx_processor_status
   ON `nba-props-platform.nba_monitoring.processor_runs` (processor_name, status, run_timestamp);
 ```
 
@@ -378,7 +378,7 @@ from datetime import datetime
 
 class ProcessorRunTracker:
     """Tracks processor execution metadata to nba_monitoring.processor_runs"""
-    
+
     def __init__(self, processor_name):
         self.processor_name = processor_name
         self.run_id = str(uuid.uuid4())
@@ -391,12 +391,12 @@ class ProcessorRunTracker:
             'duplicates_detected': 0,
             'validation_warnings': 0
         }
-    
+
     def start_run(self, trigger_type='scheduled', trigger_source='cloud_scheduler'):
         """Log processor start"""
         self.bq_client.query(f"""
             INSERT INTO `nba-props-platform.nba_monitoring.processor_runs` (
-                run_id, processor_name, run_timestamp, 
+                run_id, processor_name, run_timestamp,
                 trigger_type, trigger_source, status
             )
             VALUES (
@@ -408,23 +408,23 @@ class ProcessorRunTracker:
                 'started'
             )
         """)
-    
+
     def update_metrics(self, **kwargs):
         """Update processing metrics"""
         self.metrics.update(kwargs)
-    
+
     def complete_run(self, status='success', error_message=None):
         """Log processor completion"""
         duration = (datetime.now() - self.start_time).total_seconds()
-        
+
         validation_passed = (
             self.metrics['duplicates_detected'] == 0 and
             self.metrics['validation_warnings'] == 0
         )
-        
+
         self.bq_client.query(f"""
             UPDATE `nba-props-platform.nba_monitoring.processor_runs`
-            SET 
+            SET
                 status = '{status}',
                 duration_seconds = {duration},
                 records_checked = {self.metrics['records_checked']},
@@ -441,25 +441,25 @@ class ProcessorRunTracker:
 # Usage in processor:
 def main():
     tracker = ProcessorRunTracker('nbac_player_movement_processor')
-    
+
     try:
         tracker.start_run(trigger_type='scheduled', trigger_source='cloud_scheduler')
-        
+
         # Process data
         source_data = fetch_player_movement_data()
         tracker.update_metrics(records_checked=len(source_data))
-        
+
         # Insert to BigQuery
         new_records = insert_new_records(source_data)
         tracker.update_metrics(records_inserted=len(new_records))
-        
+
         # Validate
         duplicates = check_for_duplicates()
         tracker.update_metrics(duplicates_detected=duplicates)
-        
+
         # Success!
         tracker.complete_run(status='success')
-        
+
     except Exception as e:
         tracker.complete_run(status='failed', error_message=str(e))
         raise
@@ -470,7 +470,7 @@ def main():
 #### Check Last Processor Run
 ```sql
 -- When did processor last run? Did it succeed?
-SELECT 
+SELECT
   run_timestamp,
   status,
   duration_seconds,
@@ -487,7 +487,7 @@ LIMIT 1;
 ```sql
 -- Alert if processor hasn't run in 24 hours OR last run failed
 WITH latest_run AS (
-  SELECT 
+  SELECT
     run_timestamp,
     status,
     TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), run_timestamp, HOUR) as hours_ago
@@ -514,7 +514,7 @@ FROM latest_run;
 #### Processor Performance Trends
 ```sql
 -- Track processor performance over time
-SELECT 
+SELECT
   DATE(run_timestamp) as run_date,
   COUNT(*) as runs_per_day,
   ROUND(AVG(duration_seconds), 1) as avg_duration_sec,
@@ -543,7 +543,7 @@ echo ""
 # Check last run
 echo "📊 Last Run:"
 bq query --use_legacy_sql=false --format=pretty "
-SELECT 
+SELECT
   run_timestamp,
   status,
   ROUND(duration_seconds, 1) as duration_sec,
@@ -559,7 +559,7 @@ LIMIT 1
 echo ""
 echo "📈 Last 7 Days:"
 bq query --use_legacy_sql=false --format=pretty "
-SELECT 
+SELECT
   DATE(run_timestamp) as date,
   COUNT(*) as runs,
   SUM(records_inserted) as inserted,
@@ -644,7 +644,7 @@ WITH freshness AS (
     MAX(transaction_date) as last_transaction,
     DATE_DIFF(CURRENT_DATE(), MAX(transaction_date), DAY) as days_old,
     TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), MAX(created_at), HOUR) as hours_since_insert,
-    
+
     -- Determine season period
     CASE
       WHEN EXTRACT(MONTH FROM CURRENT_DATE()) IN (7, 8) THEN 'Free Agency'
@@ -652,14 +652,14 @@ WITH freshness AS (
       WHEN EXTRACT(MONTH FROM CURRENT_DATE()) IN (5, 6) THEN 'Playoffs'
       ELSE 'Regular Season'
     END as season_period,
-    
+
     -- Alert thresholds vary by season
     CASE
       WHEN EXTRACT(MONTH FROM CURRENT_DATE()) IN (7, 8) THEN 3
       WHEN EXTRACT(MONTH FROM CURRENT_DATE()) = 2 THEN 7
       ELSE 14
     END as alert_threshold_days
-    
+
   FROM `nba-props-platform.nba_raw.nbac_player_movement`
   WHERE season_year >= 2021
 )
@@ -671,7 +671,7 @@ SELECT
   days_old,
   hours_since_insert,
   alert_threshold_days,
-  
+
   CASE
     WHEN days_old > alert_threshold_days AND season_period IN ('Free Agency', 'Trade Deadline')
     THEN 'CRITICAL'
@@ -681,7 +681,7 @@ SELECT
     THEN 'INFO'
     ELSE 'OK'
   END as severity,
-  
+
   CASE
     WHEN days_old > alert_threshold_days AND season_period IN ('Free Agency', 'Trade Deadline')
     THEN CONCAT('🔴 CRITICAL: No player movement data in ', CAST(days_old AS STRING), ' days during ', season_period)
@@ -713,18 +713,18 @@ SLACK_WEBHOOK = os.environ.get('SLACK_WEBHOOK_URL')
 @functions_framework.cloud_event
 def process_bigquery_alert(cloud_event):
     """Process BigQuery scheduled query results and send to Slack"""
-    
+
     # Parse Pub/Sub message
     import base64
     import json
-    
+
     pubsub_message = base64.b64decode(cloud_event.data["message"]["data"]).decode()
     alert_data = json.loads(pubsub_message)
-    
+
     severity = alert_data.get('severity', 'INFO')
     message = alert_data.get('message', 'Unknown alert')
     alert_type = alert_data.get('alert_type', 'general')
-    
+
     # Color code by severity
     color_map = {
         'CRITICAL': '#FF0000',  # Red
@@ -732,7 +732,7 @@ def process_bigquery_alert(cloud_event):
         'INFO': '#00BFFF',      # Blue
         'OK': '#00FF00'         # Green
     }
-    
+
     # Send to Slack
     slack_message = {
         "text": f"NBA Props Platform - Data Alert",
@@ -759,12 +759,12 @@ def process_bigquery_alert(cloud_event):
             "ts": int(time.time())
         }]
     }
-    
+
     response = requests.post(SLACK_WEBHOOK, json=slack_message)
-    
+
     if response.status_code != 200:
         raise Exception(f"Slack notification failed: {response.text}")
-    
+
     return "Alert sent successfully"
 ```
 
@@ -803,7 +803,7 @@ from datetime import datetime
 def get_season_period():
     """Determine current NBA season period"""
     month = datetime.now().month
-    
+
     if month in [7, 8]:
         return 'free_agency'
     elif month == 2:
@@ -852,7 +852,7 @@ def get_alert_severity(metric_name, value):
     """Determine alert severity based on season and metric value"""
     period = get_season_period()
     thresholds = THRESHOLDS[period][metric_name]
-    
+
     if value >= thresholds['critical']:
         return 'CRITICAL'
     elif value >= thresholds['warning']:
@@ -876,7 +876,7 @@ severity = get_alert_severity('days_since_transaction', days_old)  # 'WARNING'
 
 #### Issue: "No new transactions in X days during Free Agency"
 
-**Severity:** 🔴 CRITICAL  
+**Severity:** 🔴 CRITICAL
 **Season:** July-August
 
 **Investigation Steps:**
@@ -911,7 +911,7 @@ severity = get_alert_severity('days_since_transaction', days_old)  # 'WARNING'
 
 #### Issue: "Processor hasn't run in 24+ hours"
 
-**Severity:** 🔴 CRITICAL  
+**Severity:** 🔴 CRITICAL
 **Season:** Any
 
 **Investigation:**
@@ -940,14 +940,14 @@ gcloud scheduler jobs logs player-movement-processor \
 
 #### Issue: "New duplicates detected"
 
-**Severity:** 🟡 WARNING → 🔴 CRITICAL (if >16)  
+**Severity:** 🟡 WARNING → 🔴 CRITICAL (if >16)
 **Season:** Any
 
 **Investigation:**
 ```bash
 # Check which records are duplicated
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   player_id, transaction_date, transaction_type, COUNT(*) as count,
   STRING_AGG(CAST(created_at AS STRING) ORDER BY created_at) as timestamps
 FROM \`nba-props-platform.nba_raw.nbac_player_movement\`
@@ -971,7 +971,7 @@ HAVING COUNT(*) > 1
 
 #### Issue: "Orphaned trades increasing"
 
-**Severity:** 🟡 WARNING  
+**Severity:** 🟡 WARNING
 **Season:** Any (especially Trade Deadline, Free Agency)
 
 **Investigation:**
@@ -994,7 +994,7 @@ HAVING COUNT(*) > 1
 
 #### Issue: "Validation query failing/timing out"
 
-**Severity:** 🟡 WARNING  
+**Severity:** 🟡 WARNING
 **Season:** Any
 
 **Common Causes:**
@@ -1075,9 +1075,9 @@ curl -X POST https://[endpoint]/processors/nbac_player_movement/run
 
 ---
 
-**Document Owner:** Data Engineering Team  
-**Last Updated:** October 13, 2025  
-**Next Review:** Monthly or after processor changes  
+**Document Owner:** Data Engineering Team
+**Last Updated:** October 13, 2025
+**Next Review:** Monthly or after processor changes
 **Related Docs:**
 - `validation/queries/raw/nbac_player_movement/README.md`
 - Player Movement Data Quality Issues & Resolutions (Document 1)

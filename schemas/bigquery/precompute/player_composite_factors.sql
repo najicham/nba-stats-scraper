@@ -6,7 +6,7 @@
 -- Update: Nightly at 11:30 PM (after zone analysis completes)
 -- Entities: ~450 active NBA players with upcoming games
 -- Duration: 10-15 minutes
--- 
+--
 -- Version: 1.0 (Week 1-4 Implementation: 4 Active Factors, 4 Deferred)
 -- Date: November 1, 2025
 -- Status: Production-Ready
@@ -34,136 +34,136 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_precompute.player_composite_f
   game_date DATE NOT NULL,                          -- Game date (partition key)
   game_id STRING NOT NULL,                          -- Unique game identifier
   analysis_date DATE,                               -- Date of analysis run
-  
+
   -- ============================================================================
   -- ACTIVE COMPOSITE SCORES (Week 1-4 Implementation) - 4 fields
   -- ============================================================================
-  
+
   -- Factor 1: Fatigue Score
   fatigue_score INT64,                              -- 0-100 (100 = fresh, 0 = exhausted)
                                                      -- Based on: days_rest, minutes, back_to_backs
                                                      -- Range: 0-100
                                                      -- Example: 85 (well-rested)
-  
-  -- Factor 2: Shot Zone Mismatch Score  
+
+  -- Factor 2: Shot Zone Mismatch Score
   shot_zone_mismatch_score NUMERIC(4,1),            -- -10.0 to +10.0
                                                      -- Positive = favorable matchup
                                                      -- Player's primary zone vs opponent's defense
                                                      -- Range: -10.0 to +10.0
                                                      -- Example: +4.3 (favorable paint matchup)
-  
+
   -- Factor 3: Pace Score
   pace_score NUMERIC(3,1),                          -- -3.0 to +3.0
                                                      -- Expected game pace vs league average
                                                      -- High pace = more possessions
                                                      -- Range: -3.0 to +3.0
                                                      -- Example: +2.5 (fast game)
-  
+
   -- Factor 4: Usage Spike Score
   usage_spike_score NUMERIC(3,1),                   -- -3.0 to +3.0
                                                      -- Recent usage change vs season average
                                                      -- Spike = more shots = more points
                                                      -- Range: -3.0 to +3.0
                                                      -- Example: +1.8 (teammate out, usage up)
-  
+
   -- ============================================================================
   -- DEFERRED COMPOSITE SCORES (Set to 0 in Week 1-4) - 4 fields
   -- ============================================================================
   -- These fields exist in schema for future implementation
   -- Initial processors will set these to 0 (neutral)
   -- XGBoost will determine if they matter via feature importance
-  
+
   referee_favorability_score NUMERIC(3,1),          -- -5.0 to +5.0 (PLACEHOLDER: returns 0.0)
                                                      -- TODO: Implement after 3 months if XGBoost shows >5% importance
                                                      -- Would track: foul calling tendencies
-  
+
   look_ahead_pressure_score NUMERIC(3,1),           -- -5.0 to +5.0 (PLACEHOLDER: returns 0.0)
                                                      -- TODO: Implement after 3 months if XGBoost shows >5% importance
                                                      -- Would track: upcoming schedule pressure
-  
+
   travel_impact_score NUMERIC(3,1),                 -- -3.0 to +3.0 (PLACEHOLDER: returns 0.0)
                                                      -- TODO: Implement after 3 months if XGBoost shows >5% importance
                                                      -- Would track: travel fatigue, time zone changes
-  
+
   opponent_strength_score NUMERIC(3,1),             -- -3.0 to +3.0 (PLACEHOLDER: returns 0.0)
                                                      -- TODO: Implement after 3 months if XGBoost shows >5% importance
                                                      -- Would track: opponent's defensive rating
-  
+
   -- ============================================================================
   -- TOTAL COMPOSITE ADJUSTMENT - 1 field
   -- ============================================================================
-  
+
   total_composite_adjustment NUMERIC(5,2),          -- Sum of all factor adjustments
                                                      -- Week 1-4: Only 4 active factors
                                                      -- Range: typically -15.0 to +15.0
                                                      -- Example: +7.6 (favorable game setup)
-  
+
   -- ============================================================================
   -- SUPPORTING CONTEXT (for debugging/transparency) - 4 fields
   -- ============================================================================
-  
+
   fatigue_context_json STRING,                      -- JSON string with fatigue details
                                                      -- {days_rest, minutes_last_7, back_to_backs, age}
                                                      -- Example: {"days_rest": 2, "minutes_last_7": 175.2, ...}
-  
+
   shot_zone_context_json STRING,                    -- JSON string with zone matchup details
                                                      -- {player_primary_zone, opponent_weak_zone, mismatch_type}
                                                      -- Example: {"player_primary_zone": "paint", ...}
-  
+
   pace_context_json STRING,                         -- JSON string with pace details
                                                      -- {pace_differential, team_pace, opponent_pace}
                                                      -- Example: {"pace_differential": 5.2, ...}
-  
+
   usage_context_json STRING,                        -- JSON string with usage details
                                                      -- {projected_usage, recent_usage, usage_diff}
                                                      -- Example: {"projected_usage": 28.5, ...}
-  
+
   -- ============================================================================
   -- METADATA - 1 field
   -- ============================================================================
-  
+
   calculation_version STRING,                       -- "v1_4factors", "v2_8factors", etc.
                                                      -- Example: "v1_4factors"
-  
+
   -- ============================================================================
   -- DATA QUALITY - 4 fields
   -- ============================================================================
-  
+
   data_completeness_pct NUMERIC(5,2),               -- % of required data available
                                                      -- 100 = all data present
                                                      -- Range: 0.00-100.00
                                                      -- Example: 100.00
-  
+
   missing_data_fields STRING,                       -- Comma-separated list of missing fields
                                                      -- NULL if no missing data
                                                      -- Example: "projected_usage_rate"
-  
+
   has_warnings BOOLEAN,                             -- TRUE if any calculation had warnings
                                                      -- Example: FALSE
-  
+
   warning_details STRING,                           -- Description of warnings
                                                      -- NULL if no warnings
                                                      -- Example: "EXTREME_FATIGUE"
-  
+
   -- ============================================================================
   -- v4.0 SOURCE TRACKING (12 fields: 3 per source × 4 sources)
   -- ============================================================================
-  
+
   -- Source 1: nba_analytics.upcoming_player_game_context
   source_player_context_last_updated TIMESTAMP,     -- When source was last processed
   source_player_context_rows_found INT64,           -- Rows returned from query
   source_player_context_completeness_pct NUMERIC(5,2), -- % of expected data found
-  
+
   -- Source 2: nba_analytics.upcoming_team_game_context
   source_team_context_last_updated TIMESTAMP,       -- When source was last processed
   source_team_context_rows_found INT64,             -- Rows returned from query
   source_team_context_completeness_pct NUMERIC(5,2), -- % of expected data found
-  
+
   -- Source 3: nba_precompute.player_shot_zone_analysis
   source_player_shot_last_updated TIMESTAMP,        -- When source was last processed
   source_player_shot_rows_found INT64,              -- Rows returned from query
   source_player_shot_completeness_pct NUMERIC(5,2), -- % of expected data found
-  
+
   -- Source 4: nba_precompute.team_defense_zone_analysis
   source_team_defense_last_updated TIMESTAMP,       -- When source was last processed
   source_team_defense_rows_found INT64,             -- Rows returned from query
@@ -283,61 +283,61 @@ OPTIONS(
   "game_date": "2025-11-01",
   "game_id": "20251101LAL_GSW",
   "analysis_date": "2025-11-01",
-  
+
   -- Active Scores
   "fatigue_score": 100,
   "shot_zone_mismatch_score": 5.2,
   "pace_score": 1.8,
   "usage_spike_score": 0.0,
-  
+
   -- Deferred Scores (all 0)
   "referee_favorability_score": 0.0,
   "look_ahead_pressure_score": 0.0,
   "travel_impact_score": 0.0,
   "opponent_strength_score": 0.0,
-  
+
   -- Total
   "total_composite_adjustment": 7.00,
-  
+
   -- Supporting Context (JSON strings)
   "fatigue_context_json": "{\"days_rest\": 2, \"back_to_back\": false, \"games_last_7\": 3, \"minutes_last_7\": 175.2, \"avg_minutes_pg_last_7\": 29.2, \"back_to_backs_last_14\": 0, \"player_age\": 28, \"penalties_applied\": [], \"bonuses_applied\": [], \"final_score\": 100}",
-  
+
   "shot_zone_context_json": "{\"player_primary_zone\": \"paint\", \"primary_zone_frequency\": 65.0, \"opponent_weak_zone\": \"paint\", \"opponent_defense_vs_league\": 4.3, \"mismatch_type\": \"favorable\", \"final_score\": 5.2}",
-  
+
   "pace_context_json": "{\"pace_differential\": 3.5, \"opponent_pace_last_10\": 101.5, \"league_avg_pace\": 100.0, \"pace_environment\": \"fast\", \"final_score\": 1.8}",
-  
+
   "usage_context_json": "{\"projected_usage_rate\": 26.0, \"avg_usage_last_7\": 25.0, \"usage_differential\": 1.0, \"star_teammates_out\": 0, \"usage_trend\": \"stable\", \"final_score\": 0.0}",
-  
+
   -- Metadata
   "calculation_version": "v1_4factors",
-  
+
   -- Data Quality
   "data_completeness_pct": 100.00,
   "missing_data_fields": null,
   "has_warnings": false,
   "warning_details": null,
-  
+
   -- Source Tracking (v4.0)
   "source_player_context_last_updated": "2025-11-01T22:00:00Z",
   "source_player_context_rows_found": 1,
   "source_player_context_completeness_pct": 100.00,
-  
+
   "source_team_context_last_updated": "2025-11-01T22:05:00Z",
   "source_team_context_rows_found": 1,
   "source_team_context_completeness_pct": 100.00,
-  
+
   "source_player_shot_last_updated": "2025-11-01T23:15:00Z",
   "source_player_shot_rows_found": 1,
   "source_player_shot_completeness_pct": 100.00,
-  
+
   "source_team_defense_last_updated": "2025-11-01T23:10:00Z",
   "source_team_defense_rows_found": 1,
   "source_team_defense_completeness_pct": 100.00,
-  
+
   -- Early Season (not applicable)
   "early_season_flag": null,
   "insufficient_data_reason": null,
-  
+
   -- Processing Metadata
   "created_at": "2025-11-01T23:45:00Z",
   "processed_at": "2025-11-01T23:45:00Z"
@@ -355,33 +355,33 @@ OPTIONS(
   "game_date": "2025-11-01",
   "game_id": "20251101PHX_BOS",
   "analysis_date": "2025-11-01",
-  
+
   -- Active Scores (challenging game)
   "fatigue_score": 45,                              -- Back-to-back, exhausted
   "shot_zone_mismatch_score": 1.5,                  -- Slight favorable mid-range matchup
   "pace_score": -1.0,                               -- Slow game
   "usage_spike_score": 2.0,                         -- Big usage boost (2 stars out)
-  
+
   -- Deferred Scores (all 0)
   "referee_favorability_score": 0.0,
   "look_ahead_pressure_score": 0.0,
   "travel_impact_score": 0.0,
   "opponent_strength_score": 0.0,
-  
+
   -- Total (mixed signals)
   "total_composite_adjustment": -0.25,
-  
+
   -- Metadata
   "calculation_version": "v1_4factors",
-  
+
   -- Data Quality
   "data_completeness_pct": 100.00,
   "missing_data_fields": null,
   "has_warnings": true,
   "warning_details": "EXTREME_FATIGUE: Player showing severe fatigue",
-  
+
   -- [Source tracking fields same as above...]
-  
+
   -- Processing Metadata
   "processed_at": "2025-11-01T23:45:00Z"
 }
@@ -398,58 +398,58 @@ OPTIONS(
   "game_date": "2024-10-28",
   "game_id": "20241028SAS_MEM",
   "analysis_date": "2024-10-28",
-  
+
   -- Active Scores (all NULL - insufficient data)
   "fatigue_score": null,
   "shot_zone_mismatch_score": null,
   "pace_score": null,
   "usage_spike_score": null,
-  
+
   -- Deferred Scores
   "referee_favorability_score": 0.0,
   "look_ahead_pressure_score": 0.0,
   "travel_impact_score": 0.0,
   "opponent_strength_score": 0.0,
-  
+
   -- Total (NULL)
   "total_composite_adjustment": null,
-  
+
   -- Context (empty or minimal)
   "fatigue_context_json": null,
   "shot_zone_context_json": null,
   "pace_context_json": null,
   "usage_context_json": null,
-  
+
   -- Metadata
   "calculation_version": "v1_4factors",
-  
+
   -- Data Quality
   "data_completeness_pct": 0.0,
   "missing_data_fields": "All: Early season",
   "has_warnings": true,
   "warning_details": "EARLY_SEASON: Insufficient historical data",
-  
+
   -- Source Tracking (still populated!)
   "source_player_context_last_updated": "2024-10-27T22:00:00Z",
   "source_player_context_rows_found": 1,
   "source_player_context_completeness_pct": 100.00,
-  
+
   "source_team_context_last_updated": "2024-10-27T22:05:00Z",
   "source_team_context_rows_found": 1,
   "source_team_context_completeness_pct": 100.00,
-  
+
   "source_player_shot_last_updated": "2024-10-27T23:15:00Z",
   "source_player_shot_rows_found": 0,
   "source_player_shot_completeness_pct": 0.0,
-  
+
   "source_team_defense_last_updated": "2024-10-27T23:10:00Z",
   "source_team_defense_rows_found": 0,
   "source_team_defense_completeness_pct": 0.0,
-  
+
   -- Early Season (SET)
   "early_season_flag": true,
   "insufficient_data_reason": "Early season: 150/150 players lack historical data",
-  
+
   -- Processing Metadata
   "created_at": "2024-10-27T23:45:00Z",
   "processed_at": "2024-10-27T23:45:00Z"
@@ -462,7 +462,7 @@ OPTIONS(
 
 -- Query 1: Check all players processed today
 -- Expected: ~100-150 players (those with games today)
-SELECT 
+SELECT
   game_date,
   COUNT(*) as players_processed,
   COUNT(CASE WHEN early_season_flag = TRUE THEN 1 END) as placeholders,
@@ -476,16 +476,16 @@ GROUP BY game_date;
 
 -- Query 2: Check source data quality
 -- Expected: All completeness near 100%, all ages <24 hours
-SELECT 
+SELECT
   game_date,
   COUNT(*) as players,
-  
+
   -- Average completeness across all sources
   AVG(source_player_context_completeness_pct) as avg_player_context_completeness,
   AVG(source_team_context_completeness_pct) as avg_team_context_completeness,
   AVG(source_player_shot_completeness_pct) as avg_player_shot_completeness,
   AVG(source_team_defense_completeness_pct) as avg_team_defense_completeness,
-  
+
   -- Minimum completeness (bottleneck)
   MIN(LEAST(
     source_player_context_completeness_pct,
@@ -493,7 +493,7 @@ SELECT
     source_player_shot_completeness_pct,
     source_team_defense_completeness_pct
   )) as worst_source_completeness,
-  
+
   -- Max source age
   MAX(GREATEST(
     TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), source_player_context_last_updated, HOUR),
@@ -501,7 +501,7 @@ SELECT
     TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), source_player_shot_last_updated, HOUR),
     TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), source_team_defense_last_updated, HOUR)
   )) as max_source_age_hours
-  
+
 FROM `nba-props-platform.nba_precompute.player_composite_factors`
 WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
 GROUP BY game_date
@@ -509,14 +509,14 @@ ORDER BY game_date DESC;
 
 -- Query 3: Identify data quality issues
 -- Expected: 0 rows (no problems)
-SELECT 
+SELECT
   player_lookup,
   game_date,
   data_completeness_pct,
   missing_data_fields,
   has_warnings,
   warning_details,
-  
+
   -- Identify which source is the problem
   CASE
     WHEN source_player_context_completeness_pct < 85 THEN 'player_context'
@@ -525,7 +525,7 @@ SELECT
     WHEN source_team_defense_completeness_pct < 85 THEN 'team_defense'
     ELSE 'all_good'
   END as problem_source
-  
+
 FROM `nba-props-platform.nba_precompute.player_composite_factors`
 WHERE game_date = CURRENT_DATE()
   AND data_completeness_pct < 85
@@ -533,7 +533,7 @@ ORDER BY data_completeness_pct ASC;
 
 -- Query 4: Check for extreme adjustments (potential data issues)
 -- Expected: 0 rows (all adjustments in reasonable range)
-SELECT 
+SELECT
   player_lookup,
   game_date,
   total_composite_adjustment,
@@ -555,24 +555,24 @@ ORDER BY ABS(total_composite_adjustment) DESC;
 
 -- Query 5: Distribution of adjustments
 -- Shows how many players have favorable vs unfavorable setups
-SELECT 
+SELECT
   game_date,
-  
+
   -- Categorize game setups
   COUNT(CASE WHEN total_composite_adjustment >= 5.0 THEN 1 END) as very_favorable,
   COUNT(CASE WHEN total_composite_adjustment BETWEEN 2.0 AND 4.9 THEN 1 END) as favorable,
   COUNT(CASE WHEN total_composite_adjustment BETWEEN -1.9 AND 1.9 THEN 1 END) as neutral,
   COUNT(CASE WHEN total_composite_adjustment BETWEEN -4.9 AND -2.0 THEN 1 END) as unfavorable,
   COUNT(CASE WHEN total_composite_adjustment <= -5.0 THEN 1 END) as very_unfavorable,
-  
+
   -- Average by factor
   AVG(fatigue_score) as avg_fatigue_score,
   AVG(shot_zone_mismatch_score) as avg_zone_score,
   AVG(pace_score) as avg_pace_score,
   AVG(usage_spike_score) as avg_usage_score,
-  
+
   COUNT(*) as total_players
-  
+
 FROM `nba-props-platform.nba_precompute.player_composite_factors`
 WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
   AND early_season_flag IS NULL
@@ -581,7 +581,7 @@ ORDER BY game_date DESC;
 
 -- Query 6: Parse JSON context for analysis
 -- Example: Extract fatigue details
-SELECT 
+SELECT
   player_lookup,
   game_date,
   fatigue_score,
@@ -600,7 +600,7 @@ LIMIT 10;
 -- ============================================================================
 
 -- Alert: Stale source data (>24 hours old)
-SELECT 
+SELECT
   'player_composite_factors' as processor,
   game_date,
   MAX(GREATEST(
@@ -620,7 +620,7 @@ HAVING MAX(GREATEST(
 )) > 24;
 
 -- Alert: Low completeness (<85%)
-SELECT 
+SELECT
   'player_composite_factors' as processor,
   game_date,
   AVG(data_completeness_pct) as avg_completeness,
@@ -632,7 +632,7 @@ GROUP BY game_date
 HAVING MIN(data_completeness_pct) < 85;
 
 -- Alert: Too few players processed (<50)
-SELECT 
+SELECT
   'player_composite_factors' as processor,
   game_date,
   COUNT(*) as players_processed
@@ -642,7 +642,7 @@ GROUP BY game_date
 HAVING COUNT(*) < 50;
 
 -- Alert: Many warnings (>10% of players)
-SELECT 
+SELECT
   'player_composite_factors' as processor,
   game_date,
   COUNT(*) as total_players,
@@ -659,29 +659,29 @@ HAVING ROUND(COUNT(CASE WHEN has_warnings = TRUE THEN 1 END) * 100.0 / COUNT(*),
 
 -- View: Latest composite factors for today's games
 CREATE OR REPLACE VIEW `nba-props-platform.nba_precompute.v_latest_composite_factors` AS
-SELECT 
+SELECT
   player_lookup,
   universal_player_id,
   game_date,
   game_id,
-  
+
   -- Scores
   fatigue_score,
   shot_zone_mismatch_score,
   pace_score,
   usage_spike_score,
-  
+
   -- Total
   total_composite_adjustment,
-  
+
   -- Quality
   data_completeness_pct,
   has_warnings,
   warning_details,
   early_season_flag,
-  
+
   processed_at
-  
+
 FROM `nba-props-platform.nba_precompute.player_composite_factors`
 WHERE game_date = CURRENT_DATE()
   AND early_season_flag IS NULL
@@ -689,33 +689,33 @@ ORDER BY total_composite_adjustment DESC;
 
 -- View: Players with extreme favorable/unfavorable setups
 CREATE OR REPLACE VIEW `nba-props-platform.nba_precompute.v_extreme_game_setups` AS
-SELECT 
+SELECT
   player_lookup,
   game_date,
-  
+
   -- Classification
-  CASE 
+  CASE
     WHEN total_composite_adjustment >= 8.0 THEN 'VERY_FAVORABLE'
     WHEN total_composite_adjustment >= 5.0 THEN 'FAVORABLE'
     WHEN total_composite_adjustment <= -8.0 THEN 'VERY_UNFAVORABLE'
     WHEN total_composite_adjustment <= -5.0 THEN 'UNFAVORABLE'
     ELSE 'NEUTRAL'
   END as game_setup,
-  
+
   total_composite_adjustment,
-  
+
   -- Contributing factors
   fatigue_score,
   shot_zone_mismatch_score,
   pace_score,
   usage_spike_score,
-  
+
   -- Context (JSON strings)
   fatigue_context_json,
   shot_zone_context_json,
   pace_context_json,
   usage_context_json
-  
+
 FROM `nba-props-platform.nba_precompute.player_composite_factors`
 WHERE game_date = CURRENT_DATE()
   AND ABS(total_composite_adjustment) >= 5.0
@@ -724,26 +724,26 @@ ORDER BY total_composite_adjustment DESC;
 
 -- View: Source tracking summary
 CREATE OR REPLACE VIEW `nba-props-platform.nba_precompute.v_composite_factors_source_health` AS
-SELECT 
+SELECT
   game_date,
   COUNT(*) as total_records,
-  
+
   -- Source 1: Player Context
   AVG(source_player_context_completeness_pct) as avg_player_context_completeness,
   MAX(TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), source_player_context_last_updated, HOUR)) as player_context_max_age_hours,
-  
+
   -- Source 2: Team Context
   AVG(source_team_context_completeness_pct) as avg_team_context_completeness,
   MAX(TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), source_team_context_last_updated, HOUR)) as team_context_max_age_hours,
-  
+
   -- Source 3: Player Shot Zone
   AVG(source_player_shot_completeness_pct) as avg_player_shot_completeness,
   MAX(TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), source_player_shot_last_updated, HOUR)) as player_shot_max_age_hours,
-  
+
   -- Source 4: Team Defense Zone
   AVG(source_team_defense_completeness_pct) as avg_team_defense_completeness,
   MAX(TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), source_team_defense_last_updated, HOUR)) as team_defense_max_age_hours,
-  
+
   -- Overall health
   MIN(LEAST(
     source_player_context_completeness_pct,
@@ -751,7 +751,7 @@ SELECT
     source_player_shot_completeness_pct,
     source_team_defense_completeness_pct
   )) as worst_source_completeness
-  
+
 FROM `nba-props-platform.nba_precompute.player_composite_factors`
 WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
 GROUP BY game_date
@@ -760,7 +760,7 @@ ORDER BY game_date DESC;
 -- ============================================================================
 -- USAGE IN PHASE 5 PREDICTIONS
 -- ============================================================================
--- 
+--
 -- Basic Adjustment:
 --   base_prediction = 25.0 points (player's recent average)
 --   adjusted_prediction = base_prediction + total_composite_adjustment

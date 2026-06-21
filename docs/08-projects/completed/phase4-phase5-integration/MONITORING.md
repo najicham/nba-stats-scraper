@@ -31,7 +31,7 @@ predictions_count AS (
     WHERE game_date = CURRENT_DATE()
     GROUP BY game_date
 )
-SELECT 
+SELECT
     FORMAT_TIMESTAMP('%H:%M', p4.phase4_completed) as phase4_done,
     FORMAT_TIMESTAMP('%H:%M', p5.phase5_started) as phase5_started,
     TIMESTAMP_DIFF(p5.phase5_started, p4.phase4_completed, MINUTE) as latency_min,
@@ -52,7 +52,7 @@ LEFT JOIN predictions_count pred ON p4.data_date = pred.game_date;
 
 ### 1. Phase 4→5 Latency
 ```sql
-SELECT 
+SELECT
     data_date,
     TIMESTAMP_DIFF(phase5_started, phase4_completed, MINUTE) as latency_minutes
 FROM (
@@ -89,7 +89,7 @@ actual AS (
     WHERE game_date = CURRENT_DATE()
     GROUP BY game_date
 )
-SELECT 
+SELECT
     e.ready as expected,
     a.predictions as actual,
     ROUND(a.predictions / e.ready * 100, 1) as completion_pct
@@ -103,7 +103,7 @@ LEFT JOIN actual a USING (game_date);
 
 ### 3. Phase 4 Data Quality
 ```sql
-SELECT 
+SELECT
     COUNT(*) as total_players,
     COUNTIF(is_production_ready) as ready_players,
     ROUND(AVG(feature_quality_score), 1) as avg_quality,

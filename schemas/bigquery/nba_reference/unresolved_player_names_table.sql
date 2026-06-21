@@ -47,16 +47,16 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_reference.unresolved_player_n
                                          --   'ignored' - too minor to track
                                          --   'under_review' - needs more research
                                          --   'snoozed' - delayed for later review
-    
+
     resolution_type STRING,              -- Type of resolution:
                                          --   'create_alias' - alias mapping created
                                          --   'add_to_registry' - new player added
                                          --   'typo' - marked as invalid
                                          --   NULL for pending/ignored/snoozed
-    
+
     resolved_to_name STRING,             -- NBA canonical name if resolved (for reference)
     notes STRING,                        -- Manual research notes, reasons, context
-    
+
     -- =============================================================================
     -- SNOOZE FUNCTIONALITY (Added 2025-10-07)
     -- =============================================================================
@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_reference.unresolved_player_n
     -- =============================================================================
     reviewed_by STRING,                  -- Username of person who reviewed
     reviewed_at TIMESTAMP,               -- When review occurred
-    
+
     -- =============================================================================
     -- METADATA
     -- =============================================================================
@@ -98,7 +98,7 @@ OPTIONS (
 -- Get all pending names (excluding snoozed until their date)
 -- SELECT *
 -- FROM `nba-props-platform.nba_reference.unresolved_player_names`
--- WHERE status = 'pending' 
+-- WHERE status = 'pending'
 --    OR (status = 'snoozed' AND (snooze_until IS NULL OR snooze_until <= CURRENT_DATE()))
 -- ORDER BY occurrences DESC, last_seen_date DESC;
 
@@ -110,7 +110,7 @@ OPTIONS (
 -- ORDER BY pending_count DESC;
 
 -- Find high-occurrence unresolved names
--- SELECT 
+-- SELECT
 --   original_name,
 --   normalized_lookup,
 --   source,
@@ -124,7 +124,7 @@ OPTIONS (
 -- ORDER BY occurrences DESC;
 
 -- Check snoozed names due for review
--- SELECT 
+-- SELECT
 --   original_name,
 --   team_abbr,
 --   season,
@@ -136,7 +136,7 @@ OPTIONS (
 -- ORDER BY snooze_until;
 
 -- Resolution statistics
--- SELECT 
+-- SELECT
 --   status,
 --   COUNT(*) as count,
 --   COUNT(DISTINCT source) as sources,
@@ -146,7 +146,7 @@ OPTIONS (
 -- ORDER BY count DESC;
 
 -- Recent resolutions by reviewer
--- SELECT 
+-- SELECT
 --   reviewed_by,
 --   resolution_type,
 --   COUNT(*) as resolutions

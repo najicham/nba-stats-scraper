@@ -181,7 +181,7 @@ tail -50 /tmp/upcoming_player_parallel_optimized_20260105_131051.log | grep "PRO
 ```bash
 # Quick coverage check
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   'upcoming_player' as table,
   COUNT(DISTINCT game_date) as dates
 FROM \`nba-props-platform.nba_analytics.upcoming_player_game_context\`

@@ -32,7 +32,7 @@ BigDataBall Shared Drive/
 
 ### Folder Details
 
-#### `24-25-nba-pbp/` 
+#### `24-25-nba-pbp/`
 - **Purpose**: Primary folder for 2024-25 NBA season
 - **Last Modified**: 2025-06-24 (end of Finals)
 - **Contents**: 20 files total
@@ -102,11 +102,11 @@ BigDataBall Shared Drive/
     "game_id",           # NBA game identifier
     "data_set",          # e.g., "NBA 2025 Playoffs"
     "date",              # Game date YYYY-MM-DD
-    
+
     # Player Lineups (10 players on court)
     "a1", "a2", "a3", "a4", "a5",  # Away team positions 1-5
     "h1", "h2", "h3", "h4", "h5",  # Home team positions 1-5
-    
+
     # Game State
     "period",            # Quarter/OT number
     "away_score",        # Away team score
@@ -115,14 +115,14 @@ BigDataBall Shared Drive/
     "elapsed",           # Time elapsed in period
     "play_length",       # Duration of play
     "play_id",           # Sequential play number
-    
+
     # Event Details
     "team",              # Team executing play
     "event_type",        # Type of event
     "player",            # Primary player involved
     "type",              # Detailed event type
     "description",       # Human readable description
-    
+
     # Action Specifics
     "assist",            # Assisting player
     "block",             # Blocking player
@@ -130,18 +130,18 @@ BigDataBall Shared Drive/
     "points",            # Points scored on play
     "result",            # Made/missed for shots
     "reason",            # Reason for certain events
-    
+
     # Shot Analytics
     "shot_distance",     # Distance of shot attempt
     "original_x",        # Court X coordinate
-    "original_y",        # Court Y coordinate  
+    "original_y",        # Court Y coordinate
     "converted_x",       # Converted X coordinate
     "converted_y",       # Converted Y coordinate
-    
+
     # Substitutions
     "entered",           # Player entering game
     "left",              # Player leaving game
-    
+
     # Statistical Context
     "possession",        # Possession indicator
     "num",               # Number (free throw attempts, etc.)
@@ -162,13 +162,13 @@ BigDataBall Shared Drive/
   "data_set": "NBA 2025 Playoffs",
   "date": "2025-06-22",
   "a1": "Myles Turner",
-  "a2": "Tyrese Haliburton", 
+  "a2": "Tyrese Haliburton",
   "a3": "Andrew Nembhard",
   "a4": "Aaron Nesmith",
   "a5": "Pascal Siakam",
   "h1": "Chet Holmgren",
   "h2": "Jalen Williams",
-  "h3": "Luguentz Dort", 
+  "h3": "Luguentz Dort",
   "h4": "Shai Gilgeous-Alexander",
   "h5": "Isaiah Hartenstein",
   "period": 1,
@@ -277,7 +277,7 @@ BigDataBall integration consists of **two focused scrapers** following clean sep
 
 #### **2. 📥 Download Scraper** (`scrapers/bigdataball/bigdataball_pbp.py`)
 - **Purpose**: Targeted downloading of specific games/files
-- **Class**: `BigDataBallPbpScraper` 
+- **Class**: `BigDataBallPbpScraper`
 - **Inheritance**: `ScraperBase` + `ScraperFlaskMixin`
 - **Performance**: 3-60 seconds depending on file size
 
@@ -370,7 +370,7 @@ None (all parameters have defaults)
   "timestamp": "2025-07-23T01:51:51.830484+00:00",
   "source": "bigdataball",
   "mode": "discovery",
-  "scope": "date_specific", 
+  "scope": "date_specific",
   "results": {
     "format": "simple",
     "discovery_date": "2025-06-22",
@@ -385,7 +385,7 @@ None (all parameters have defaults)
         "game_id": "0042400407",
         "date": "2025-06-22",
         "teams": "IND@OKC",
-        "away_team": "IND", 
+        "away_team": "IND",
         "home_team": "OKC"
       }
     ]
@@ -505,7 +505,7 @@ gs://your-nba-props-bucket/
 # Discovery scraper
 "big-data-ball/discovery/%(date)s/%(timestamp)s.json"
 
-# Download scraper  
+# Download scraper
 "big-data-ball/enhanced-pbp/%(date)s/%(timestamp)s.json"
 ```
 
@@ -536,7 +536,7 @@ gs://nba-props-bucket/big-data-ball/enhanced-pbp/2025-07-22/20250722_143022.json
 
 # Download scraper
 {
-    "type": "file", 
+    "type": "file",
     "filename": "/tmp/bigdataball_pbp_%(date)s.json",
     "pretty_print": True,
     "export_mode": ExportMode.DATA
@@ -554,7 +554,7 @@ gs://nba-props-bucket/big-data-ball/enhanced-pbp/2025-07-22/20250722_143022.json
 
 # Download scraper
 {
-    "type": "gcs", 
+    "type": "gcs",
     "key": "big-data-ball/enhanced-pbp/%(date)s/%(timestamp)s.json",
     "export_mode": ExportMode.DATA
 }
@@ -624,7 +624,7 @@ python tools/fixtures/capture.py bigdataball_pbp --data_type=daily_individual --
 
 #### Discovery Scraper Performance
 - **Individual game discovery**: 2-3 seconds
-- **Recent files (7 days)**: 3-5 seconds  
+- **Recent files (7 days)**: 3-5 seconds
 - **Team-focused discovery**: 2-4 seconds
 - **Memory usage**: 20-50MB
 - **Network**: Minimal (metadata only)
@@ -654,7 +654,7 @@ google.api_core.exceptions.Forbidden: 403 Forbidden
 ```python
 {
     "mode": "discovery",
-    "format": "simple", 
+    "format": "simple",
     "scope": "date_specific",
     "totalGames": 1,
     "date": "2025-06-22",
@@ -662,11 +662,11 @@ google.api_core.exceptions.Forbidden: 403 Forbidden
 }
 ```
 
-#### Download Stats Output  
+#### Download Stats Output
 ```python
 {
     "playCount": 510,
-    "dataType": "individual_game", 
+    "dataType": "individual_game",
     "requestedDataType": "specific_game",
     "gameId": "0042400407",
     "teams": "IND@OKC",
@@ -689,7 +689,7 @@ google.api_core.exceptions.Forbidden: 403 Forbidden
         "date": "2025-06-22",
         "teams": "IND@OKC",
         "away_team": "IND",
-        "home_team": "OKC", 
+        "home_team": "OKC",
         "size": "170.0 KB",
         "size_bytes": 174127,
         "modified": "2025-06-23T06:58:05.000Z"
@@ -707,7 +707,7 @@ google.api_core.exceptions.Forbidden: 403 Forbidden
     "source": "bigdataball",
     "file_info": {
         "name": "bigdataball_8bb6f4b9_[2025-06-22]-0042400407-IND@OKC.csv",
-        "processed_at": "2025-07-23T01:03:39.716312+00:00", 
+        "processed_at": "2025-07-23T01:03:39.716312+00:00",
         "total_plays": 510,
         "columns": ["game_id", "data_set", "date", ...]
     },
@@ -792,18 +792,18 @@ def process_daily_bigdataball_data(date_str):
     # 1. Fast discovery
     discovery_cmd = f"python tools/fixtures/capture.py bigdataball_discovery --date={date_str} --format=simple --group=prod"
     subprocess.run(discovery_cmd.split())
-    
+
     # 2. Parse discovery results from GCS
     discovery_data = load_from_gcs(f"big-data-ball/discovery/{date_str}/")
-    
+
     # 3. Download each game
     for game in discovery_data['results']['games']:
         game_id = game['game_id']
         teams = game['teams']
-        
+
         download_cmd = f"python tools/fixtures/capture.py bigdataball_pbp --data_type=specific_game --game_id={game_id} --group=prod"
         subprocess.run(download_cmd.split())
-        
+
         # 4. Trigger downstream prop analysis
         trigger_prop_analysis(game_id, teams)
 ```
@@ -817,7 +817,7 @@ def process_daily_bigdataball_data(date_str):
 
 ### For Historical Analysis
 **Recommended**: Daily combined files
-- **Data Type**: `daily_combined` 
+- **Data Type**: `daily_combined`
 - **Files**: `[MM-DD-YYYY]-[MM-DD-YYYY]-combined-stats.csv`
 - **Location**: `daily-archive/` folder
 - **Use Case**: Multi-game analysis, specific date research
@@ -891,6 +891,6 @@ query = "name contains '2024]-[' and name contains '2025]-combined-stats.csv'"
 
 ---
 
-*Last Updated: July 22, 2025*  
-*Data Source: BigDataBall Enhanced Play-by-Play via Google Drive*  
+*Last Updated: July 22, 2025*
+*Data Source: BigDataBall Enhanced Play-by-Play via Google Drive*
 *Season Coverage: 2024-25 NBA Season (Complete)*

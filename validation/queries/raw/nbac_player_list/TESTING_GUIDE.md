@@ -125,7 +125,7 @@ bq query --use_legacy_sql=false < validation/queries/raw/nbac_player_list/discov
 ```
 === LEAGUE SUMMARY ===
 Teams Found          30        Expected: 30    ✅ Complete
-Active Players       456       Avg: 15.2       
+Active Players       456       Avg: 15.2
 
 === TEAM DETAILS ===
 ATL    15 active    1 inactive    5 positions    ✅ Normal
@@ -308,7 +308,7 @@ cat teams_check.csv
 ./scripts/validate-player-list quality --table nba_processing.player_list_quality_test
 ```
 
-**Expected:** 
+**Expected:**
 - Results saved to BigQuery table
 - Message: "✓ Results written to nba_processing.player_list_quality_test"
 

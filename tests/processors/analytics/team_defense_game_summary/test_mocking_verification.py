@@ -20,7 +20,7 @@ def test_google_modules_are_mocked():
         'google.cloud.bigquery',
         'google.cloud.exceptions',
     ]
-    
+
     for module_name in google_modules:
         assert module_name in sys.modules, f"{module_name} should be mocked but is not in sys.modules"
 
@@ -30,7 +30,7 @@ def test_can_import_google_cloud():
     from google.cloud import bigquery
     from google.auth import default
     from google.cloud.exceptions import NotFound
-    
+
     # Should not raise - all modules are mocked
     assert bigquery is not None
     assert default is not None
@@ -42,7 +42,7 @@ def test_can_import_processor():
     from data_processors.analytics.team_defense_game_summary.team_defense_game_summary_processor import (
         TeamDefenseGameSummaryProcessor
     )
-    
+
     assert TeamDefenseGameSummaryProcessor is not None
 
 
@@ -51,7 +51,7 @@ def test_can_instantiate_processor():
     from data_processors.analytics.team_defense_game_summary.team_defense_game_summary_processor import (
         TeamDefenseGameSummaryProcessor
     )
-    
+
     processor = TeamDefenseGameSummaryProcessor()
     assert processor is not None
     assert hasattr(processor, 'table_name')
@@ -63,9 +63,9 @@ def test_processor_has_required_methods():
     from data_processors.analytics.team_defense_game_summary.team_defense_game_summary_processor import (
         TeamDefenseGameSummaryProcessor
     )
-    
+
     processor = TeamDefenseGameSummaryProcessor()
-    
+
     required_methods = [
         'get_dependencies',
         'extract_raw_data',
@@ -74,7 +74,7 @@ def test_processor_has_required_methods():
         '_extract_defensive_actions',
         '_merge_defense_data',
     ]
-    
+
     for method_name in required_methods:
         assert hasattr(processor, method_name), f"Processor missing method: {method_name}"
 

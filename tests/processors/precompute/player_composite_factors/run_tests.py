@@ -18,7 +18,7 @@ import subprocess
 def run_tests(test_type='unit', verbose=False):
     """Run tests with specified options."""
     cmd = ['pytest']
-    
+
     # Test selection
     if test_type == 'unit':
         cmd.append('test_unit.py')
@@ -37,51 +37,51 @@ def run_tests(test_type='unit', verbose=False):
         print("   Unit: 25 tests")
         print("   Integration: 8 tests")
         print("   Total: 33 tests")
-    
+
     # Verbosity options
     if verbose:
         cmd.append('-vv')
     else:
         cmd.append('-v')
-    
+
     # Additional pytest options
     cmd.extend([
         '--tb=short',        # Short traceback format
         '--color=yes',       # Colorized output
         '-ra',               # Show summary of all test outcomes
     ])
-    
+
     print("\n" + "="*70)
     print(f"Command: {' '.join(cmd)}")
     print("="*70 + "\n")
-    
+
     # Run tests
     result = subprocess.run(cmd)
-    
+
     print("\n" + "="*70)
     if result.returncode == 0:
         print("✅ All tests passed!")
     else:
         print(f"❌ Tests failed with exit code {result.returncode}")
     print("="*70 + "\n")
-    
+
     return result.returncode
 
 
 def main():
     """Main entry point."""
     args = sys.argv[1:]
-    
+
     # Parse arguments
     test_type = 'unit'
     verbose = False
-    
+
     for arg in args:
         if arg in ['unit', 'integration', 'quick', 'all']:
             test_type = arg
         elif arg in ['--verbose', '-v', '-vv']:
             verbose = True
-    
+
     return run_tests(test_type, verbose)
 
 

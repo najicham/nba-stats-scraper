@@ -23,7 +23,7 @@ Each data type gets its own dedicated processor for clean separation and easier 
 
 ```
 games-processor          → Handles NBA games data
-boxscores-processor      → Handles team boxscore data  
+boxscores-processor      → Handles team boxscore data
 player-boxscores-processor → Handles individual player stats
 rosters-processor        → Handles team roster data
 injuries-processor       → Handles player injury data
@@ -48,7 +48,7 @@ Single topic with message filtering for processor routing:
 ```json
 {
   "file_path": "/raw-data/ball-dont-lie/games/2025-07-15/20250715_143000.json",
-  "data_source": "ball-dont-lie", 
+  "data_source": "ball-dont-lie",
   "data_type": "games",
   "scraper_class": "BdlGamesScraper",
   "status": "success",
@@ -101,10 +101,10 @@ def process_file(file_path, processor_name):
     status = get_processing_status(file_path)
     if status == 'completed':
         return  # Skip, already processed
-    
+
     # Mark as processing
     update_status(file_path, 'processing', processor_name)
-    
+
     try:
         # Process file
         records = process_data_file(file_path)
@@ -141,7 +141,7 @@ def process_file(file_path, processor_name):
 ```
 Priority 1 (Reference Data):
 - rosters-processor
-- events-processor  
+- events-processor
 - schedule-processor
 
 Priority 2 (Game Data):
@@ -150,7 +150,7 @@ Priority 2 (Game Data):
 
 Priority 3 (Dependent Data):
 - boxscores-processor
-- player-boxscores-processor 
+- player-boxscores-processor
 - player-props-processor
 - play-by-play-processor
 ```
@@ -186,7 +186,7 @@ Failed validation files moved to error directory:
 
 ### Alert Categories
 - **High Priority**: Required dependency failures, data corruption
-- **Medium Priority**: Optional dependency missing, format anomalies  
+- **Medium Priority**: Optional dependency missing, format anomalies
 - **Low Priority**: Performance degradation, retry exhaustion
 
 ### Error Recovery

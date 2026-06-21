@@ -2,8 +2,8 @@
 
 **FILE:** `validation/queries/raw/bigdataball_pbp/DAILY_MONITORING_GUIDE.md`
 
-**Purpose:** Guide for daily validation when 2025-26 NBA season starts  
-**Audience:** Data team, DevOps, Analysts  
+**Purpose:** Guide for daily validation when 2025-26 NBA season starts
+**Audience:** Data team, DevOps, Analysts
 **Frequency:** Daily during NBA season (October - June)
 
 ---
@@ -34,8 +34,8 @@ cd ~/code/nba-stats-scraper
 
 ### Step 1: Yesterday's Games Check
 
-**Query:** `daily_check_yesterday.sql`  
-**Command:** `./scripts/validate-bigdataball daily`  
+**Query:** `daily_check_yesterday.sql`
+**Command:** `./scripts/validate-bigdataball daily`
 **When:** Every morning at 9 AM (after overnight processing)
 
 #### What It Checks:
@@ -135,11 +135,11 @@ ORDER BY events
 ```bash
 # Check coordinate coverage by game
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   game_id,
   COUNT(CASE WHEN event_type = 'shot' THEN 1 END) as shots,
   COUNT(CASE WHEN original_x IS NOT NULL THEN 1 END) as coords,
-  ROUND(100.0 * COUNT(CASE WHEN original_x IS NOT NULL THEN 1 END) / 
+  ROUND(100.0 * COUNT(CASE WHEN original_x IS NOT NULL THEN 1 END) /
         NULLIF(COUNT(CASE WHEN event_type = 'shot' THEN 1 END), 0), 1) as pct
 FROM \`nba-props-platform.nba_raw.bigdataball_play_by_play\`
 WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
@@ -204,7 +204,7 @@ WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
 # 2. Check scraper logs
 tail -100 ~/logs/bigdataball_scraper.log
 
-# 3. Check processor logs  
+# 3. Check processor logs
 tail -100 ~/logs/bigdataball_processor.log
 
 # 4. Check GCS for files
@@ -231,8 +231,8 @@ gsutil ls gs://nba-scraped-data/big-data-ball/2024-25/$(date -d yesterday +%Y-%m
 
 ### Step 4: Weekly Trend Analysis
 
-**Query:** `weekly_check_last_7_days.sql`  
-**Command:** `./scripts/validate-bigdataball weekly`  
+**Query:** `weekly_check_last_7_days.sql`
+**Command:** `./scripts/validate-bigdataball weekly`
 **When:** Monday mornings (review past week)
 
 #### What It Shows:
@@ -294,9 +294,9 @@ gsutil ls gs://nba-scraped-data/big-data-ball/2024-25/$(date -d yesterday +%Y-%m
 
 ### Escalation Path
 
-**Level 1 (0-2 hours):** Data engineer investigates  
-**Level 2 (2-4 hours):** Senior engineer notified  
-**Level 3 (4+ hours):** Engineering manager involved  
+**Level 1 (0-2 hours):** Data engineer investigates
+**Level 2 (2-4 hours):** Senior engineer notified
+**Level 3 (4+ hours):** Engineering manager involved
 
 ---
 
@@ -304,8 +304,8 @@ gsutil ls gs://nba-scraped-data/big-data-ball/2024-25/$(date -d yesterday +%Y-%m
 
 ### Step 5: Season Completeness Check
 
-**Query:** `season_completeness_check.sql`  
-**Command:** `./scripts/validate-bigdataball season`  
+**Query:** `season_completeness_check.sql`
+**Command:** `./scripts/validate-bigdataball season`
 **When:** Monthly (first Monday)
 
 #### What to Check:
@@ -563,7 +563,7 @@ gsutil ls gs://nba-scraped-data/big-data-ball/2024-25/$(date -d yesterday +%Y-%m
 
 ---
 
-**Last Updated:** October 13, 2025  
-**Version:** 1.0  
-**Season:** 2025-26 (Ready for Use)  
+**Last Updated:** October 13, 2025
+**Version:** 1.0
+**Season:** 2025-26 (Ready for Use)
 **Status:** Production Ready

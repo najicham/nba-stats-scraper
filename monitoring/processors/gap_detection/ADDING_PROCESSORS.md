@@ -1,6 +1,6 @@
 # Adding Processors to Gap Detection System
 
-**Version:** 1.0  
+**Version:** 1.0
 **Last Updated:** October 4, 2025
 
 This guide walks through adding a new data processor to the gap detection monitoring system.
@@ -94,25 +94,25 @@ Open `monitoring/processing_gap_detection/config/processor_config.py` and add yo
     'bigquery_table': 'your_table_name',
     'source_file_field': 'source_file_path',
     'processor_class': 'your_module.YourProcessor',
-    
+
     # Scheduling and frequency
     'frequency': 'daily',
     'expected_runs_per_day': 1,
     'tolerance_hours': 6,
-    
+
     # Pub/Sub configuration for retries (Phase 2)
     'pubsub_topic': 'nba-data-processing',
     'pubsub_attributes': {
         'processor': 'your_processor_name',
         'source': 'your_source'
     },
-    
+
     # Validation expectations (optional but recommended)
     'expected_record_count': {
         'min': 100,
         'max': 1000
     },
-    
+
     # Monitoring settings
     'enabled': True,  # Set to False initially for testing
     'priority': 'high',
@@ -178,7 +178,7 @@ Verify BigQuery path matching works:
 ```bash
 # Check what's in BigQuery
 bq query --use_legacy_sql=false "
-SELECT DISTINCT source_file_path 
+SELECT DISTINCT source_file_path
 FROM \`nba-props-platform.nba_raw.your_table_name\`
 WHERE source_file_path LIKE '%2025-10-01%'
 LIMIT 5
@@ -353,7 +353,7 @@ Set realistic ranges based on data characteristics:
 ```python
 'expected_record_count': {
     'min': 200,   # Minimum: 10 games * 20 players
-    'max': 1000   # Maximum: 15 games * 65 players  
+    'max': 1000   # Maximum: 15 games * 65 players
 }
 ```
 
@@ -540,22 +540,22 @@ Here's a complete example adding a new processor:
     # Basic identification
     'display_name': 'ESPN Team Rosters',
     'processor_class': 'espn_team_roster_processor.EspnTeamRosterProcessor',
-    
+
     # GCS configuration
     'gcs_bucket': 'nba-scraped-data',
     'gcs_pattern': 'espn/rosters/{date}/team_{team_abbr}/',
     'gcs_pattern_type': 'simple_date',
-    
+
     # BigQuery configuration
     'bigquery_dataset': 'nba_raw',
     'bigquery_table': 'espn_team_rosters',
     'source_file_field': 'source_file_path',
-    
+
     # Scheduling
     'frequency': 'daily',
     'expected_runs_per_day': 1,
     'tolerance_hours': 8,  # Backup data, not urgent
-    
+
     # Pub/Sub for retries
     'pubsub_topic': 'nba-data-processing',
     'pubsub_attributes': {
@@ -563,13 +563,13 @@ Here's a complete example adding a new processor:
         'source': 'espn',
         'data_type': 'rosters'
     },
-    
+
     # Validation
     'expected_record_count': {
         'min': 15,   # One team minimum
         'max': 500   # All 30 teams maximum
     },
-    
+
     # Monitoring settings
     'enabled': True,
     'priority': 'medium',

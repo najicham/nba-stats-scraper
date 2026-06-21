@@ -141,7 +141,7 @@ class BdlGameAdvStatsScraper(ScraperBase, ScraperFlaskMixin):
                     detail = self.raw_response.json().get("message", "")
                 except (ValueError, json.JSONDecodeError):
                     detail = self.raw_response.text[:200].strip()
-            
+
             # Send error notification for API errors
             try:
                 notify_error(
@@ -158,7 +158,7 @@ class BdlGameAdvStatsScraper(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send API error notification: {notify_ex}")
-            
+
             raise InvalidHttpStatusCodeException(
                 f"{code} {self.raw_response.reason} - {detail or 'see docs'}"
             )
@@ -466,8 +466,8 @@ class BdlGameAdvStatsScraper(ScraperBase, ScraperFlaskMixin):
                 "rowCount": len(rows),
                 "advancedStats": rows,
             }
-            
-            logger.info("Fetched %d advanced-stat rows (%s) across %d pages", 
+
+            logger.info("Fetched %d advanced-stat rows (%s) across %d pages",
                        len(rows), self.opts["ident"], pages_fetched)
 
             # Success notification

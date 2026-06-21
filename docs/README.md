@@ -1,16 +1,16 @@
 # NBA Stats Scraper - Documentation Index
 
-**Last Updated**: 2026-02-02  
+**Last Updated**: 2026-02-02
 **Status**: Production - 76% Complete
 
 See full comprehensive documentation index at: [DOCUMENTATION-INDEX.md](./DOCUMENTATION-INDEX.md)
 
 ## Quick Links
 
-🚨 **[Troubleshooting](./02-operations/TROUBLESHOOTING-DECISION-TREE.md)**  
-🚀 **[Deployment Runbooks](./02-operations/runbooks/nba/)**  
-📊 **[Architecture](./01-architecture/prevention-monitoring-architecture.md)**  
-🧪 **[Integration Tests](../tests/integration/)**  
+🚨 **[Troubleshooting](./02-operations/TROUBLESHOOTING-DECISION-TREE.md)**
+🚀 **[Deployment Runbooks](./02-operations/runbooks/nba/)**
+📊 **[Architecture](./01-architecture/prevention-monitoring-architecture.md)**
+🧪 **[Integration Tests](../tests/integration/)**
 📖 **[Session Handoffs](./09-handoff/)**
 
 ## Documentation Structure

@@ -33,11 +33,11 @@ def is_old_format_doc_id(doc_id: str) -> bool:
     # Pattern 1: Contains "_None_" (from backfill jobs)
     if '_None_' in doc_id:
         return True
-    
+
     # Pattern 2: Contains "_202" (year prefix or timestamp)
     if '_202' in doc_id:
         return True
-    
+
     # Pattern 3: Contains date pattern (YYYY-MM-DD)
     # ... existing date check ...
 ```
@@ -255,7 +255,7 @@ gcloud run jobs update <job-name> \
 def cleanup_heartbeats(event, context):
     docs = firestore.collection('processor_heartbeats').stream()
     total = len(list(docs))
-    
+
     if total > 100:
         # Run cleanup
         # Send alert

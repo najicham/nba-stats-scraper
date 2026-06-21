@@ -1,7 +1,7 @@
 # Week 1 Backlog - NBA Stats Pipeline
 
-**Created:** January 20, 2026  
-**Status:** Ready for Week 1  
+**Created:** January 20, 2026
+**Status:** Ready for Week 1
 **Priority:** Items ordered by impact/effort ratio
 
 ---
@@ -127,10 +127,10 @@ After validation: Update PR, mark ready, merge
 
 ## 📋 Week 1 Schedule
 
-**Mon:** Validate Quick Win #1 (P0), Update PR (P0), Add timeouts (P0)  
-**Tue:** Parallel execution (P0), Better health checks (P1)  
-**Wed:** Retry logic (P1), Failure alerting (P1)  
-**Thu:** Integration tests (P1)  
+**Mon:** Validate Quick Win #1 (P0), Update PR (P0), Add timeouts (P0)
+**Tue:** Parallel execution (P0), Better health checks (P1)
+**Wed:** Retry logic (P1), Failure alerting (P1)
+**Thu:** Integration tests (P1)
 **Fri:** Dependency audit (P2), Buffer
 
 ---
@@ -150,7 +150,7 @@ After validation: Update PR, mark ready, merge
 ## ✅ Week 1 Done When:
 
 - [ ] All P0 items complete
-- [ ] All P1 items complete  
+- [ ] All P1 items complete
 - [ ] Quick Win #1 validated and merged
 - [ ] No orphaned decisions in 48h
 - [ ] Alerting functional

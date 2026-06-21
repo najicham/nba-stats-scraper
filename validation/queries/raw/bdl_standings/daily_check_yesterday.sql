@@ -24,7 +24,7 @@ WITH yesterday_data AS (
 season_check AS (
   SELECT
     -- NBA season runs October through June
-    CASE 
+    CASE
       WHEN EXTRACT(MONTH FROM CURRENT_DATE()) BETWEEN 10 AND 12 THEN TRUE  -- Oct-Dec
       WHEN EXTRACT(MONTH FROM CURRENT_DATE()) BETWEEN 1 AND 6 THEN TRUE    -- Jan-Jun
       ELSE FALSE  -- Jul-Sep (offseason)
@@ -57,48 +57,48 @@ SELECT
   is_nba_season,
   CASE
     -- Perfect snapshot
-    WHEN team_count = 30 AND east_teams = 15 AND west_teams = 15 
+    WHEN team_count = 30 AND east_teams = 15 AND west_teams = 15
       THEN '✅ Complete'
-    
+
     -- Offseason with no data (normal)
-    WHEN team_count = 0 AND NOT is_nba_season 
+    WHEN team_count = 0 AND NOT is_nba_season
       THEN '⚪ No data (offseason - normal)'
-    
+
     -- During season with no data (CRITICAL)
-    WHEN team_count = 0 AND is_nba_season 
+    WHEN team_count = 0 AND is_nba_season
       THEN '🔴 CRITICAL: No data during NBA season'
-    
+
     -- Wrong team count
-    WHEN team_count != 30 
+    WHEN team_count != 30
       THEN CONCAT('⚠️ WARNING: Expected 30 teams, got ', CAST(team_count AS STRING))
-    
+
     -- Conference imbalance
     WHEN east_teams != 15 OR west_teams != 15
-      THEN CONCAT('⚠️ WARNING: Conference imbalance (East: ', 
-                  CAST(east_teams AS STRING), ', West: ', 
+      THEN CONCAT('⚠️ WARNING: Conference imbalance (East: ',
+                  CAST(east_teams AS STRING), ', West: ',
                   CAST(west_teams AS STRING), ')')
-    
+
     -- Multiple seasons mixed (shouldn't happen)
     WHEN distinct_seasons > 1
       THEN '⚠️ WARNING: Multiple seasons in same date'
-    
+
     ELSE '✅ Complete'
   END as status,
-  
+
   -- Actionable recommendations
   CASE
-    WHEN team_count = 0 AND is_nba_season 
+    WHEN team_count = 0 AND is_nba_season
       THEN '🚨 ACTION: Run scraper immediately! Check scraper logs and GCS bucket.'
-    
+
     WHEN team_count != 30 AND team_count > 0
       THEN 'ACTION: Check scraper logs for partial data. Re-run scraper and processor.'
-    
+
     WHEN east_teams != 15 OR west_teams != 15
       THEN 'ACTION: Check team abbreviation mapping and conference assignments.'
-    
+
     WHEN team_count = 0 AND NOT is_nba_season
       THEN 'No action needed - offseason.'
-    
+
     ELSE 'No action needed - data looks good!'
   END as recommendation
 

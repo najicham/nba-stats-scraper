@@ -14,17 +14,17 @@ Includes cross-validation with NBA Schedule Service to detect API scraper failur
 Usage:
     # Last 7 days (default summary output)
     python -m validation.validators.raw.odds_game_lines_validator --last-days 7
-    
+
     # Specific team validation (Clippers)
     python -m validation.validators.raw.odds_game_lines_validator \
         --start-date 2024-04-01 --end-date 2024-06-30 \
         --team "LA Clippers"
-    
+
     # Check GCS files (includes playoffs)
     python -m validation.validators.raw.odds_game_lines_validator \
         --start-date 2024-04-01 --end-date 2024-06-30 \
         --check-gcs
-    
+
     # Full validation with all features
     python -m validation.validators.raw.odds_game_lines_validator \
         --start-date 2024-04-01 --end-date 2024-06-30 \
@@ -74,12 +74,12 @@ logger = logging.getLogger(__name__)
 class OddsGameLinesValidator(BaseValidator):
     """
     Validator for Odds API game lines data
-    
+
     NEW v2 Features:
     - Team-specific filtering
     - GCS file validation
     - Playoff game detection
-    
+
     Validates:
     - Game completeness (8 rows per game)
     - Bookmaker coverage (DraftKings + FanDuel)
@@ -89,11 +89,11 @@ class OddsGameLinesValidator(BaseValidator):
     - Cross-validation with NBA Schedule Service
     - GCS file presence (including playoffs)
     """
-    
+
     def __init__(self, config_path: str = None, team_filter: Optional[str] = None, check_gcs: bool = False):
         """
         Initialize validator
-        
+
         Args:
             config_path: Path to config file (default: auto-detect)
             team_filter: Filter validations to specific team (e.g., "LA Clippers", "LAC", "Clippers")
@@ -101,9 +101,9 @@ class OddsGameLinesValidator(BaseValidator):
         """
         if config_path is None:
             config_path = project_root / "validation" / "configs" / "raw" / "odds_game_lines.yaml"
-        
+
         super().__init__(config_path)
-        
+
         # NEW: Team filter with NBATeamMapper normalization
         self.team_filter = None
         self.team_filter_normalized = None
@@ -123,16 +123,16 @@ class OddsGameLinesValidator(BaseValidator):
                 self.team_filter = team_filter
                 self.team_filter_normalized = team_filter
                 logger.info(f"🎯 Team filter enabled: {team_filter} (basic mode)")
-        
+
         # NEW: GCS validation flag
         self.check_gcs = check_gcs
         if check_gcs:
             logger.info(f"📦 GCS file validation enabled")
-        
+
         # Initialize schedule service if available
         self.schedule_service = None
         self.schedule_service_enabled = False
-        
+
         if SCHEDULE_SERVICE_AVAILABLE and self.config.get('schedule_service', {}).get('enabled', False):
             try:
                 self.schedule_service = NBAScheduleService()
@@ -142,62 +142,62 @@ class OddsGameLinesValidator(BaseValidator):
                 logger.warning(f"⚠️  NBA Schedule Service: DISABLED ({str(e)})")
         else:
             logger.info("⚠️  NBA Schedule Service: DISABLED (using basic checks only)")
-    
+
     # ========================================================================
     # CRITICAL FIX: Method signature must match base class
     # ========================================================================
     def _run_custom_validations(self, start_date: str, end_date: str, season_year: Optional[int]):
         """
         Run odds-specific custom validations (overrides base class method)
-        
+
         Args:
             start_date: Start date for validation
             end_date: End date for validation
             season_year: Season year (optional)
         """
         logger.info("Running Odds API custom validations...")
-        
+
         # NEW: GCS file validation (if enabled)
         if self.check_gcs:
             self.results.append(self._validate_gcs_files())
-        
+
         # 1. Game completeness check
         self.results.append(self._validate_game_completeness())
-        
+
         # 2. Bookmaker coverage
         self.results.append(self._validate_bookmaker_coverage())
-        
+
         # 3. Market coverage
         self.results.append(self._validate_market_coverage())
-        
+
         # 4. Spread reasonableness
         self.results.append(self._validate_spread_ranges())
-        
+
         # 5. Totals reasonableness
         self.results.append(self._validate_totals_ranges())
-        
+
         # 6. Team name consistency
         self.results.append(self._validate_team_names())
-        
+
         # 7. Odds timing
         self.results.append(self._validate_odds_timing())
-        
+
         # 8. Schedule service cross-validation (if enabled)
         if self.schedule_service_enabled:
             self.results.append(self._validate_against_schedule())
-        
+
         logger.info("Completed Odds API custom validations")
-    
+
     # ========================================================================
     # NEW: GCS File Validation with Schedule Service
     # ========================================================================
     def _validate_gcs_files(self) -> ValidationResult:
         """
         Validate GCS files exist for all games in schedule (INCLUDING PLAYOFFS!)
-        
+
         Uses Schedule Service to get expected games, then checks GCS.
         This is the ROOT CAUSE detector - if GCS file missing, scraper didn't run!
-        
+
         Returns:
             ValidationResult with missing GCS files
         """
@@ -210,50 +210,50 @@ class OddsGameLinesValidator(BaseValidator):
                 severity=ValidationSeverity.INFO.value,
                 message="Schedule service not available - skipping GCS validation"
             )
-        
+
         logger.info("Validating GCS files using Schedule Service...")
-        
+
         # Get GCS config
         gcs_config = self.config.get('gcs', {})
         bucket_name = gcs_config.get('bucket', 'nba-scraped-data')
         prefix = gcs_config.get('prefix', 'odds-api/game-lines-history')
-        
+
         try:
             from shared.utils.schedule import GameType
-            
+
             # Get all game dates in range using Schedule Service
             current_date = datetime.strptime(self.start_date, '%Y-%m-%d').date()
             end_date_obj = datetime.strptime(self.end_date, '%Y-%m-%d').date()
-            
+
             storage_client = storage.Client()
             bucket = storage_client.bucket(bucket_name)
-            
+
             missing_files = []
             missing_playoff_games = []
             total_games_checked = 0
-            
+
             while current_date <= end_date_obj:
                 date_str = current_date.isoformat()
-                
+
                 # Use Schedule Service to get games for this date
                 games = self.schedule_service.get_games_for_date(
                     game_date=date_str,
                     game_type=GameType.REGULAR_PLAYOFF  # Regular season + playoffs
                 )
-                
+
                 # Apply team filter if specified
                 if self.team_filter_normalized:
-                    games = [g for g in games if 
-                            self.team_filter_normalized == g.home_team_full or 
+                    games = [g for g in games if
+                            self.team_filter_normalized == g.home_team_full or
                             self.team_filter_normalized == g.away_team_full]
-                
+
                 if games:
                     total_games_checked += len(games)
-                    
+
                     # Check if GCS files exist for this date
                     date_prefix = f"{prefix}/{date_str}/"
                     blobs = list(bucket.list_blobs(prefix=date_prefix, max_results=5))
-                    
+
                     if not blobs:
                         # No files for this date - all games missing!
                         for game in games:
@@ -266,12 +266,12 @@ class OddsGameLinesValidator(BaseValidator):
                                 'game_label': game.game_label
                             }
                             missing_files.append(game_info)
-                            
+
                             if game.is_playoff:
                                 missing_playoff_games.append(game_info)
-                
+
                 current_date += timedelta(days=1)
-            
+
             # Build result message
             if not missing_files:
                 team_msg = f" for {self.team_filter_normalized}" if self.team_filter_normalized else ""
@@ -284,13 +284,13 @@ class OddsGameLinesValidator(BaseValidator):
                     message=f"All {total_games_checked} games have GCS files{team_msg} ✅",
                     affected_count=0
                 )
-            
+
             details = []
             team_msg = f" for {self.team_filter_normalized}" if self.team_filter_normalized else ""
             details.append(f"🔴 CRITICAL: {len(missing_files)} games missing GCS files{team_msg}")
             details.append(f"   (Scraper didn't run for these dates!)")
             details.append("")
-            
+
             if missing_playoff_games:
                 details.append(f"🏀 PLAYOFF GAMES MISSING: {len(missing_playoff_games)}")
                 for game in missing_playoff_games[:10]:
@@ -298,7 +298,7 @@ class OddsGameLinesValidator(BaseValidator):
                 if len(missing_playoff_games) > 10:
                     details.append(f"  ... and {len(missing_playoff_games) - 10} more playoff games")
                 details.append("")
-            
+
             # Regular season missing
             regular_season_missing = [g for g in missing_files if not g['is_playoff']]
             if regular_season_missing:
@@ -307,9 +307,9 @@ class OddsGameLinesValidator(BaseValidator):
                     details.append(f"  {game['date']}: {game['full_matchup']}")
                 if len(regular_season_missing) > 10:
                     details.append(f"  ... and {len(regular_season_missing) - 10} more regular season games")
-            
+
             message = "\n".join(details)
-            
+
             return ValidationResult(
                 check_name="gcs_file_validation",
                 check_type="custom",
@@ -320,7 +320,7 @@ class OddsGameLinesValidator(BaseValidator):
                 affected_count=len(missing_files),
                 affected_items=[f"{g['date']}: {g['matchup']}" for g in missing_files[:20]]
             )
-            
+
         except Exception as e:
             logger.error(f"GCS file validation failed: {str(e)}")
             import traceback
@@ -333,34 +333,34 @@ class OddsGameLinesValidator(BaseValidator):
                 severity=ValidationSeverity.ERROR.value,
                 message=f"GCS validation error: {str(e)}"
             )
-    
+
     # ========================================================================
     # Helper: Build team filter SQL
     # ========================================================================
     def _build_team_filter_sql(self) -> str:
         """
         Build SQL WHERE clause for team filtering using normalized team name.
-        
+
         Returns:
             SQL string for team filter (empty if no filter)
         """
         if not self.team_filter_normalized:
             return ""
-        
+
         # Use normalized team name from NBATeamMapper
         # This handles all variations: "LAC" → "LA Clippers", "Clippers" → "LA Clippers"
         return f"""
         AND (home_team = '{self.team_filter_normalized}' OR away_team = '{self.team_filter_normalized}')
         """
-    
+
     # ========================================================================
     # Existing Validation Methods (with team filter support)
     # ========================================================================
-    
+
     def _validate_game_completeness(self) -> ValidationResult:
         """
         Validate each game has 8 rows (2 bookmakers × 2 markets × 2 outcomes)
-        
+
         Returns:
             ValidationResult with details of incomplete games
         """
@@ -369,13 +369,13 @@ class OddsGameLinesValidator(BaseValidator):
         project = bigquery_config.get('project', self.project_id)
         dataset = bigquery_config.get('dataset', 'nba_raw')
         table = bigquery_config.get('table', 'odds_api_game_lines')
-        
+
         # NEW: Apply team filter
         team_filter_sql = self._build_team_filter_sql()
-        
+
         query = f"""
         WITH game_row_counts AS (
-          SELECT 
+          SELECT
             game_date,
             game_id,
             home_team,
@@ -386,7 +386,7 @@ class OddsGameLinesValidator(BaseValidator):
             {team_filter_sql}
           GROUP BY game_date, game_id, home_team, away_team
         )
-        SELECT 
+        SELECT
           game_date,
           game_id,
           home_team,
@@ -401,11 +401,11 @@ class OddsGameLinesValidator(BaseValidator):
         WHERE row_count != 8
         ORDER BY game_date, game_id
         """
-        
+
         try:
             results = self._execute_query(query, self.start_date, self.end_date)
             results = list(results)  # Convert to list
-            
+
             if not results:
                 team_msg = f" for {self.team_filter_normalized}" if self.team_filter_normalized else ""
                 return ValidationResult(
@@ -417,21 +417,21 @@ class OddsGameLinesValidator(BaseValidator):
                     message=f"All games have complete data (8 rows each){team_msg}",
                     affected_count=0
                 )
-            
+
             # Categorize issues
             incomplete = [r for r in results if r['row_count'] < 8]
             extra = [r for r in results if r['row_count'] > 8]
-            
+
             # Group by row count to show patterns
             from collections import Counter
             row_count_dist = Counter([r['row_count'] for r in results])
-            
+
             details = []
             team_msg = f" for {self.team_filter_normalized}" if self.team_filter_normalized else ""
             details.append(f"Found {len(results)} incomplete games{team_msg}:")
             for count, freq in sorted(row_count_dist.items()):
                 details.append(f"  {freq} games with {count} rows (expected 8)")
-            
+
             # Show a few examples
             if incomplete:
                 details.append(f"\nExample incomplete games:")
@@ -440,7 +440,7 @@ class OddsGameLinesValidator(BaseValidator):
                         f"  {game['game_date']}: {game['away_team']} @ {game['home_team']} "
                         f"({game['row_count']} rows)"
                     )
-            
+
             if extra:
                 details.append(f"\nGames with extra rows:")
                 for game in extra:
@@ -448,9 +448,9 @@ class OddsGameLinesValidator(BaseValidator):
                         f"  {game['game_date']}: {game['away_team']} @ {game['home_team']} "
                         f"({game['row_count']} rows)"
                     )
-            
+
             message = "\n".join(details)
-            
+
             return ValidationResult(
                 check_name="game_completeness",
                 check_type="custom",
@@ -461,7 +461,7 @@ class OddsGameLinesValidator(BaseValidator):
                 affected_count=len(results),
                 affected_items=[f"{r['game_id']}" for r in results]
             )
-            
+
         except Exception as e:
             logger.error(f"Game completeness validation failed: {str(e)}")
             return ValidationResult(
@@ -472,11 +472,11 @@ class OddsGameLinesValidator(BaseValidator):
                 severity=ValidationSeverity.ERROR.value,
                 message=f"Failed to check game completeness: {str(e)}"
             )
-    
+
     def _validate_bookmaker_coverage(self) -> ValidationResult:
         """
         Validate both DraftKings and FanDuel are present for each game
-        
+
         Returns:
             ValidationResult with games missing either bookmaker
         """
@@ -485,13 +485,13 @@ class OddsGameLinesValidator(BaseValidator):
         project = bigquery_config.get('project', self.project_id)
         dataset = bigquery_config.get('dataset', 'nba_raw')
         table = bigquery_config.get('table', 'odds_api_game_lines')
-        
+
         # NEW: Apply team filter
         team_filter_sql = self._build_team_filter_sql()
-        
+
         query = f"""
         WITH game_bookmakers AS (
-          SELECT 
+          SELECT
             game_date,
             game_id,
             home_team,
@@ -503,7 +503,7 @@ class OddsGameLinesValidator(BaseValidator):
             {team_filter_sql}
           GROUP BY game_date, game_id, home_team, away_team
         )
-        SELECT 
+        SELECT
           game_date,
           game_id,
           home_team,
@@ -519,11 +519,11 @@ class OddsGameLinesValidator(BaseValidator):
         WHERE dk_count = 0 OR fd_count = 0
         ORDER BY game_date, game_id
         """
-        
+
         try:
             results = self._execute_query(query, self.start_date, self.end_date)
             results = list(results)
-            
+
             if not results:
                 team_msg = f" for {self.team_filter_normalized}" if self.team_filter_normalized else ""
                 return ValidationResult(
@@ -535,12 +535,12 @@ class OddsGameLinesValidator(BaseValidator):
                     message=f"All games have both DraftKings and FanDuel data{team_msg}",
                     affected_count=0
                 )
-            
+
             # Categorize by issue type
             both_missing = [r for r in results if r['issue'] == 'both_missing']
             dk_missing = [r for r in results if r['issue'] == 'dk_missing']
             fd_missing = [r for r in results if r['issue'] == 'fd_missing']
-            
+
             details = []
             if both_missing:
                 details.append(f"{len(both_missing)} games missing both bookmakers")
@@ -548,7 +548,7 @@ class OddsGameLinesValidator(BaseValidator):
                 details.append(f"{len(dk_missing)} games missing DraftKings")
             if fd_missing:
                 details.append(f"{len(fd_missing)} games missing FanDuel")
-            
+
             # Show examples
             details.append("\nExamples:")
             for game in results[:5]:
@@ -556,9 +556,9 @@ class OddsGameLinesValidator(BaseValidator):
                     f"  {game['game_date']}: {game['away_team']} @ {game['home_team']} "
                     f"(DK: {game['dk_count']}, FD: {game['fd_count']})"
                 )
-            
+
             message = "\n".join(details)
-            
+
             return ValidationResult(
                 check_name="bookmaker_coverage",
                 check_type="custom",
@@ -569,7 +569,7 @@ class OddsGameLinesValidator(BaseValidator):
                 affected_count=len(results),
                 affected_items=[f"{r['game_id']}" for r in results]
             )
-            
+
         except Exception as e:
             logger.error(f"Bookmaker coverage validation failed: {str(e)}")
             return ValidationResult(
@@ -580,11 +580,11 @@ class OddsGameLinesValidator(BaseValidator):
                 severity=ValidationSeverity.ERROR.value,
                 message=f"Failed to check bookmaker coverage: {str(e)}"
             )
-    
+
     def _validate_market_coverage(self) -> ValidationResult:
         """
         Validate both spreads and totals are present for each game
-        
+
         Returns:
             ValidationResult with games missing either market
         """
@@ -593,13 +593,13 @@ class OddsGameLinesValidator(BaseValidator):
         project = bigquery_config.get('project', self.project_id)
         dataset = bigquery_config.get('dataset', 'nba_raw')
         table = bigquery_config.get('table', 'odds_api_game_lines')
-        
+
         # NEW: Apply team filter
         team_filter_sql = self._build_team_filter_sql()
-        
+
         query = f"""
         WITH game_markets AS (
-          SELECT 
+          SELECT
             game_date,
             game_id,
             home_team,
@@ -611,7 +611,7 @@ class OddsGameLinesValidator(BaseValidator):
             {team_filter_sql}
           GROUP BY game_date, game_id, home_team, away_team
         )
-        SELECT 
+        SELECT
           game_date,
           game_id,
           home_team,
@@ -622,11 +622,11 @@ class OddsGameLinesValidator(BaseValidator):
         WHERE spread_count = 0 OR total_count = 0
         ORDER BY game_date, game_id
         """
-        
+
         try:
             results = self._execute_query(query, self.start_date, self.end_date)
             results = list(results)
-            
+
             if not results:
                 team_msg = f" for {self.team_filter_normalized}" if self.team_filter_normalized else ""
                 return ValidationResult(
@@ -638,18 +638,18 @@ class OddsGameLinesValidator(BaseValidator):
                     message=f"All games have both spreads and totals{team_msg}",
                     affected_count=0
                 )
-            
+
             spread_missing = [r for r in results if r['spread_count'] == 0]
             total_missing = [r for r in results if r['total_count'] == 0]
-            
+
             details = []
             if spread_missing:
                 details.append(f"{len(spread_missing)} games missing spreads")
             if total_missing:
                 details.append(f"{len(total_missing)} games missing totals")
-            
+
             message = "\n".join(details)
-            
+
             return ValidationResult(
                 check_name="market_coverage",
                 check_type="custom",
@@ -660,7 +660,7 @@ class OddsGameLinesValidator(BaseValidator):
                 affected_count=len(results),
                 affected_items=[f"{r['game_id']}" for r in results]
             )
-            
+
         except Exception as e:
             logger.error(f"Market coverage validation failed: {str(e)}")
             return ValidationResult(
@@ -671,11 +671,11 @@ class OddsGameLinesValidator(BaseValidator):
                 severity=ValidationSeverity.ERROR.value,
                 message=f"Failed to check market coverage: {str(e)}"
             )
-    
+
     def _validate_spread_ranges(self) -> ValidationResult:
         """
         Check for spreads outside reasonable range (-20 to +20)
-        
+
         Returns:
             ValidationResult with unreasonable spreads
         """
@@ -684,12 +684,12 @@ class OddsGameLinesValidator(BaseValidator):
         project = bigquery_config.get('project', self.project_id)
         dataset = bigquery_config.get('dataset', 'nba_raw')
         table = bigquery_config.get('table', 'odds_api_game_lines')
-        
+
         # NEW: Apply team filter
         team_filter_sql = self._build_team_filter_sql()
-        
+
         query = f"""
-        SELECT 
+        SELECT
           game_date,
           game_id,
           home_team,
@@ -705,11 +705,11 @@ class OddsGameLinesValidator(BaseValidator):
         ORDER BY ABS(outcome_point) DESC
         LIMIT 50
         """
-        
+
         try:
             results = self._execute_query(query, self.start_date, self.end_date)
             results = list(results)
-            
+
             if not results:
                 team_msg = f" for {self.team_filter_normalized}" if self.team_filter_normalized else ""
                 return ValidationResult(
@@ -721,16 +721,16 @@ class OddsGameLinesValidator(BaseValidator):
                     message=f"All spreads within reasonable range (-20 to +20){team_msg}",
                     affected_count=0
                 )
-            
+
             details = [f"Found {len(results)} spreads outside -20 to +20:"]
             for r in results[:10]:
                 details.append(
                     f"  {r['game_date']}: {r['away_team']} @ {r['home_team']} "
                     f"{r['bookmaker_key']}: {r['outcome_name']} {r['spread']:+.1f}"
                 )
-            
+
             message = "\n".join(details)
-            
+
             return ValidationResult(
                 check_name="spread_reasonableness",
                 check_type="custom",
@@ -740,7 +740,7 @@ class OddsGameLinesValidator(BaseValidator):
                 message=message,
                 affected_count=len(results)
             )
-            
+
         except Exception as e:
             logger.error(f"Spread range validation failed: {str(e)}")
             return ValidationResult(
@@ -751,11 +751,11 @@ class OddsGameLinesValidator(BaseValidator):
                 severity=ValidationSeverity.WARNING.value,
                 message=f"Failed to check spread ranges: {str(e)}"
             )
-    
+
     def _validate_totals_ranges(self) -> ValidationResult:
         """
         Check for totals outside reasonable range (200 to 245)
-        
+
         Returns:
             ValidationResult with unreasonable totals
         """
@@ -764,12 +764,12 @@ class OddsGameLinesValidator(BaseValidator):
         project = bigquery_config.get('project', self.project_id)
         dataset = bigquery_config.get('dataset', 'nba_raw')
         table = bigquery_config.get('table', 'odds_api_game_lines')
-        
+
         # NEW: Apply team filter
         team_filter_sql = self._build_team_filter_sql()
-        
+
         query = f"""
-        SELECT 
+        SELECT
           game_date,
           game_id,
           home_team,
@@ -785,11 +785,11 @@ class OddsGameLinesValidator(BaseValidator):
         ORDER BY outcome_point
         LIMIT 50
         """
-        
+
         try:
             results = self._execute_query(query, self.start_date, self.end_date)
             results = list(results)
-            
+
             if not results:
                 team_msg = f" for {self.team_filter_normalized}" if self.team_filter_normalized else ""
                 return ValidationResult(
@@ -801,16 +801,16 @@ class OddsGameLinesValidator(BaseValidator):
                     message=f"All totals within reasonable range (200 to 245){team_msg}",
                     affected_count=0
                 )
-            
+
             details = [f"Found {len(results)} totals outside 200-245:"]
             for r in results[:10]:
                 details.append(
                     f"  {r['game_date']}: {r['away_team']} @ {r['home_team']} "
                     f"{r['bookmaker_key']}: {r['outcome_name']} {r['total']:.1f}"
                 )
-            
+
             message = "\n".join(details)
-            
+
             return ValidationResult(
                 check_name="totals_reasonableness",
                 check_type="custom",
@@ -820,7 +820,7 @@ class OddsGameLinesValidator(BaseValidator):
                 message=message,
                 affected_count=len(results)
             )
-            
+
         except Exception as e:
             logger.error(f"Totals range validation failed: {str(e)}")
             return ValidationResult(
@@ -831,11 +831,11 @@ class OddsGameLinesValidator(BaseValidator):
                 severity=ValidationSeverity.WARNING.value,
                 message=f"Failed to check totals ranges: {str(e)}"
             )
-    
+
     def _validate_team_names(self) -> ValidationResult:
         """
         Validate team names match valid NBA teams
-        
+
         Returns:
             ValidationResult with invalid team names
         """
@@ -844,7 +844,7 @@ class OddsGameLinesValidator(BaseValidator):
         project = bigquery_config.get('project', self.project_id)
         dataset = bigquery_config.get('dataset', 'nba_raw')
         table = bigquery_config.get('table', 'odds_api_game_lines')
-        
+
         valid_teams = [
             'Atlanta Hawks', 'Boston Celtics', 'Brooklyn Nets', 'Charlotte Hornets', 'Chicago Bulls',
             'Cleveland Cavaliers', 'Dallas Mavericks', 'Denver Nuggets', 'Detroit Pistons',
@@ -855,13 +855,13 @@ class OddsGameLinesValidator(BaseValidator):
             'Portland Trail Blazers', 'Sacramento Kings', 'San Antonio Spurs', 'Toronto Raptors',
             'Utah Jazz', 'Washington Wizards'
         ]
-        
+
         # Create string list for SQL
         teams_list = ", ".join([f"'{team}'" for team in valid_teams])
-        
+
         # NEW: Apply team filter
         team_filter_sql = self._build_team_filter_sql()
-        
+
         query = f"""
         WITH valid_teams AS (
           SELECT team FROM UNNEST([{teams_list}]) AS team
@@ -884,11 +884,11 @@ class OddsGameLinesValidator(BaseValidator):
         UNION ALL
         SELECT * FROM invalid_away
         """
-        
+
         try:
             results = self._execute_query(query, self.start_date, self.end_date)
             results = list(results)
-            
+
             if not results:
                 team_msg = f" for {self.team_filter_normalized}" if self.team_filter_normalized else ""
                 return ValidationResult(
@@ -900,13 +900,13 @@ class OddsGameLinesValidator(BaseValidator):
                     message=f"All team names are valid NBA teams{team_msg}",
                     affected_count=0
                 )
-            
+
             details = [f"Found {len(results)} invalid team names:"]
             for r in results:
                 details.append(f"  {r['team_type']}: {r['team_name']}")
-            
+
             message = "\n".join(details)
-            
+
             return ValidationResult(
                 check_name="team_name_consistency",
                 check_type="custom",
@@ -917,7 +917,7 @@ class OddsGameLinesValidator(BaseValidator):
                 affected_count=len(results),
                 affected_items=[r['team_name'] for r in results]
             )
-            
+
         except Exception as e:
             logger.error(f"Team name validation failed: {str(e)}")
             return ValidationResult(
@@ -928,11 +928,11 @@ class OddsGameLinesValidator(BaseValidator):
                 severity=ValidationSeverity.ERROR.value,
                 message=f"Failed to validate team names: {str(e)}"
             )
-    
+
     def _validate_odds_timing(self) -> ValidationResult:
         """
         Check for snapshots taken after game started
-        
+
         Returns:
             ValidationResult with late snapshots
         """
@@ -941,12 +941,12 @@ class OddsGameLinesValidator(BaseValidator):
         project = bigquery_config.get('project', self.project_id)
         dataset = bigquery_config.get('dataset', 'nba_raw')
         table = bigquery_config.get('table', 'odds_api_game_lines')
-        
+
         # NEW: Apply team filter
         team_filter_sql = self._build_team_filter_sql()
-        
+
         query = f"""
-        SELECT 
+        SELECT
           game_date,
           game_id,
           home_team,
@@ -962,11 +962,11 @@ class OddsGameLinesValidator(BaseValidator):
         ORDER BY minutes_after DESC
         LIMIT 50
         """
-        
+
         try:
             results = self._execute_query(query, self.start_date, self.end_date)
             results = list(results)
-            
+
             if not results:
                 team_msg = f" for {self.team_filter_normalized}" if self.team_filter_normalized else ""
                 return ValidationResult(
@@ -978,16 +978,16 @@ class OddsGameLinesValidator(BaseValidator):
                     message=f"All odds snapshots taken before game start{team_msg}",
                     affected_count=0
                 )
-            
+
             details = [f"Found {len(results)} games with late snapshots:"]
             for r in results[:10]:
                 details.append(
                     f"  {r['game_date']}: {r['away_team']} @ {r['home_team']} "
                     f"(snapshot {r['minutes_after']} min after start)"
                 )
-            
+
             message = "\n".join(details)
-            
+
             return ValidationResult(
                 check_name="odds_timing",
                 check_type="custom",
@@ -997,7 +997,7 @@ class OddsGameLinesValidator(BaseValidator):
                 message=message,
                 affected_count=len(results)
             )
-            
+
         except Exception as e:
             logger.error(f"Odds timing validation failed: {str(e)}")
             return ValidationResult(
@@ -1008,16 +1008,16 @@ class OddsGameLinesValidator(BaseValidator):
                 severity=ValidationSeverity.INFO.value,
                 message=f"Failed to check odds timing: {str(e)}"
             )
-        
+
     def _extract_dates_from_results(self) -> set:
       """
       Extract all unique dates from validation results.
-      
+
       Returns:
           Set of date strings in YYYY-MM-DD format
       """
       missing_dates = set()
-      
+
       for result in self.results:
           if not result.passed and result.affected_items:
               for item in result.affected_items:
@@ -1025,32 +1025,32 @@ class OddsGameLinesValidator(BaseValidator):
                   # - "2024-04-23: DAL@LAC" (from GCS validation)
                   # - "2024-04-23" (from schedule validation)
                   # - Game IDs or other non-date strings (ignore these)
-                  
+
                   item_str = str(item).strip()
-                  
+
                   # Extract date from "YYYY-MM-DD: ..." format
                   if ':' in item_str:
                       potential_date = item_str.split(':')[0].strip()
                   else:
                       potential_date = item_str
-                  
+
                   # Validate it's a proper date format (YYYY-MM-DD)
-                  if (len(potential_date) == 10 and 
-                      potential_date[4] == '-' and 
+                  if (len(potential_date) == 10 and
+                      potential_date[4] == '-' and
                       potential_date[7] == '-' and
                       potential_date[:4].isdigit() and
                       potential_date[5:7].isdigit() and
                       potential_date[8:10].isdigit()):
                       missing_dates.add(potential_date)
-      
+
       return missing_dates
 
     def _validate_against_schedule(self) -> ValidationResult:
         """
         Cross-validate with NBA Schedule Service to detect missing games/dates
-        
+
         This detects API scraper failures!
-        
+
         Returns:
             ValidationResult with missing dates/games
         """
@@ -1063,42 +1063,42 @@ class OddsGameLinesValidator(BaseValidator):
                 severity=ValidationSeverity.INFO.value,
                 message="Schedule service not available - skipping cross-validation"
             )
-        
+
         # Get table info from config
         bigquery_config = self.config.get('bigquery', {})
         project = bigquery_config.get('project', self.project_id)
         dataset = bigquery_config.get('dataset', 'nba_raw')
         table = bigquery_config.get('table', 'odds_api_game_lines')
-        
+
         try:
             # Get all dates in our range that should have games
             current_date = datetime.strptime(self.start_date, '%Y-%m-%d').date()
             end_date_obj = datetime.strptime(self.end_date, '%Y-%m-%d').date()
-            
+
             missing_dates = []
             count_mismatches = []
-            
+
             while current_date <= end_date_obj:
                 # Check if this date should have games
                 expected_count = self.schedule_service.get_game_count(current_date.isoformat())
-                
+
                 if expected_count > 0:
                     # NEW: Apply team filter if specified
                     team_filter_sql = self._build_team_filter_sql()
-                    
+
                     # Query our odds data for this date
                     query = f"""
-                    SELECT 
+                    SELECT
                       COUNT(DISTINCT game_id) as game_count
                     FROM `{project}.{dataset}.{table}`
                     WHERE game_date = '{current_date.isoformat()}'
                       {team_filter_sql}
                     """
-                    
+
                     results = self._execute_query(query, self.start_date, self.end_date)
                     results = list(results)
                     actual_count = results[0]['game_count'] if results else 0
-                    
+
                     if actual_count == 0:
                         # Complete date failure - API scraper likely failed
                         missing_dates.append({
@@ -1114,9 +1114,9 @@ class OddsGameLinesValidator(BaseValidator):
                             'actual': actual_count,
                             'missing': expected_count - actual_count
                         })
-                
+
                 current_date += timedelta(days=1)
-            
+
             # Build result message
             if not missing_dates and not count_mismatches:
                 team_msg = f" for {self.team_filter_normalized}" if self.team_filter_normalized else ""
@@ -1129,16 +1129,16 @@ class OddsGameLinesValidator(BaseValidator):
                     message=f"All scheduled games have odds data{team_msg} ✅",
                     affected_count=0
                 )
-            
+
             details = []
-            
+
             if missing_dates:
                 details.append(f"🔴 CRITICAL: {len(missing_dates)} dates with NO odds data (API scraper failure!):")
                 for item in missing_dates[:10]:
                     details.append(f"  {item['date']}: expected {item['expected']} games, found 0")
                 if len(missing_dates) > 10:
                     details.append(f"  ... and {len(missing_dates) - 10} more dates")
-            
+
             if count_mismatches:
                 details.append(f"\n🟡 ERROR: {len(count_mismatches)} dates with incomplete data:")
                 for item in count_mismatches[:10]:
@@ -1148,9 +1148,9 @@ class OddsGameLinesValidator(BaseValidator):
                     )
                 if len(count_mismatches) > 10:
                     details.append(f"  ... and {len(count_mismatches) - 10} more dates")
-            
+
             message = "\n".join(details)
-            
+
             # Determine severity based on what we found
             if missing_dates:
                 passed = False
@@ -1158,7 +1158,7 @@ class OddsGameLinesValidator(BaseValidator):
             else:
                 passed = False
                 severity = ValidationSeverity.ERROR.value
-            
+
             return ValidationResult(
                 check_name="schedule_service_validation",
                 check_type="custom",
@@ -1169,7 +1169,7 @@ class OddsGameLinesValidator(BaseValidator):
                 affected_count=len(missing_dates) + len(count_mismatches),
                 affected_items=[d['date'] for d in missing_dates + count_mismatches]
             )
-            
+
         except Exception as e:
             logger.error(f"Schedule service validation failed: {str(e)}")
             return ValidationResult(
@@ -1191,58 +1191,58 @@ def main():
 Examples:
   # Last 7 days (default summary output)
   %(prog)s --last-days 7
-  
+
   # Specific team validation (accepts multiple variations)
   %(prog)s --start-date 2024-04-01 --end-date 2024-06-30 --team "LA Clippers"
   %(prog)s --start-date 2024-04-01 --end-date 2024-06-30 --team "LAC"
   %(prog)s --start-date 2024-04-01 --end-date 2024-06-30 --team "Clippers"
-  
+
   # Check GCS files (includes playoffs)
   %(prog)s --start-date 2024-04-01 --end-date 2024-06-30 --check-gcs
-  
+
   # Full Clippers validation with GCS check
   %(prog)s --start-date 2024-04-01 --end-date 2024-06-30 \\
     --team "Clippers" --check-gcs --output detailed
-  
+
   # Quiet mode for scripts
   %(prog)s --last-days 7 --output quiet
         """
     )
-    
+
     # Date range options
     date_group = parser.add_mutually_exclusive_group(required=True)
     date_group.add_argument('--last-days', type=int, help='Validate last N days')
     date_group.add_argument('--start-date', help='Start date (YYYY-MM-DD)')
-    
+
     parser.add_argument('--end-date', help='End date (YYYY-MM-DD, required with --start-date)')
-    
+
     # NEW: Team filter
-    parser.add_argument('--team', 
+    parser.add_argument('--team',
                        help='Filter validation to specific team (accepts variations: "LA Clippers", "LAC", "Clippers")')
-    
+
     # NEW: GCS validation
-    parser.add_argument('--check-gcs', action='store_true', 
+    parser.add_argument('--check-gcs', action='store_true',
                        help='Validate GCS files exist for all scheduled games (includes playoffs)')
-    
-    parser.add_argument('--output', 
-                       choices=['summary', 'detailed', 'dates', 'quiet'], 
-                       default='summary', 
+
+    parser.add_argument('--output',
+                       choices=['summary', 'detailed', 'dates', 'quiet'],
+                       default='summary',
                        help='Output format: summary (human-readable), detailed (full report), dates (date list only for scripting), quiet (no output)')
-    
+
     parser.add_argument('--output-file',
                    help='Write output to file (useful with --output dates)')
-    
-    parser.add_argument('--no-notify', action='store_true', 
+
+    parser.add_argument('--no-notify', action='store_true',
                        help='Disable email/Slack notifications')
-    parser.add_argument('--verbose', action='store_true', 
+    parser.add_argument('--verbose', action='store_true',
                        help='Enable verbose logging')
-    
+
     args = parser.parse_args()
-    
+
     # Configure logging
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
-    
+
     # Calculate date range
     if args.last_days:
         end_date = date.today()
@@ -1252,7 +1252,7 @@ Examples:
             parser.error("--end-date is required when using --start-date")
         start_date = datetime.strptime(args.start_date, '%Y-%m-%d').date()
         end_date = datetime.strptime(args.end_date, '%Y-%m-%d').date()
-    
+
     # Initialize and run validator
     try:
         # NEW: Pass team_filter and check_gcs to validator
@@ -1260,7 +1260,7 @@ Examples:
             team_filter=args.team,
             check_gcs=args.check_gcs
         )
-        
+
         # Run validation
         report = validator.validate(
             start_date=start_date.isoformat(),
@@ -1269,11 +1269,11 @@ Examples:
             output_mode=args.output,
             output_file=args.output_file  # NEW: Pass output file
         )
-        
+
         # Exit with appropriate code
         success = report.overall_status == "pass"
         sys.exit(0 if success else 1)
-        
+
     except Exception as e:
         logger.error(f"Validation failed: {str(e)}")
         if args.verbose:

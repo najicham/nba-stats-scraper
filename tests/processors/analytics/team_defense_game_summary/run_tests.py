@@ -31,18 +31,18 @@ from pathlib import Path
 def run_tests(test_type='all', coverage=False, verbose=False, failed_only=False):
     """
     Run tests with specified options.
-    
+
     Args:
         test_type: 'all', 'unit', 'integration', 'validation', or 'quick'
         coverage: Whether to generate coverage report
         verbose: Whether to run with verbose output
         failed_only: Whether to run only previously failed tests
-    
+
     Returns:
         int: Exit code (0 = success, non-zero = failure)
     """
     cmd = ['pytest']
-    
+
     # Test selection
     if test_type == 'unit':
         cmd.append('test_unit.py')
@@ -62,13 +62,13 @@ def run_tests(test_type='all', coverage=False, verbose=False, failed_only=False)
         print("⚡ Running Quick Tests (Unit + Integration)...")
     else:
         print("🚀 Running All Tests...")
-    
+
     # Verbosity
     if verbose:
         cmd.append('-vv')
     else:
         cmd.append('-v')
-    
+
     # Coverage
     if coverage:
         cmd.extend([
@@ -78,12 +78,12 @@ def run_tests(test_type='all', coverage=False, verbose=False, failed_only=False)
             '--cov-report=term:skip-covered'
         ])
         print("📊 Coverage reports will be generated in htmlcov/")
-    
+
     # Failed only
     if failed_only:
         cmd.append('--lf')  # Last failed
         print("🔄 Running only previously failed tests...")
-    
+
     # Additional options
     cmd.extend([
         '--tb=short',           # Short traceback format
@@ -91,11 +91,11 @@ def run_tests(test_type='all', coverage=False, verbose=False, failed_only=False)
         '--strict-markers',     # Fail on unknown markers
         '-ra',                  # Show summary of all test outcomes
     ])
-    
+
     # Run tests
     print(f"\n💻 Command: {' '.join(cmd)}\n")
     result = subprocess.run(cmd)
-    
+
     # Summary
     print("\n" + "="*70)
     if result.returncode == 0:
@@ -107,7 +107,7 @@ def run_tests(test_type='all', coverage=False, verbose=False, failed_only=False)
         print("💡 Run with --verbose for more details")
         print("💡 Run with --failed to re-run only failed tests")
     print("="*70 + "\n")
-    
+
     return result.returncode
 
 
@@ -131,17 +131,17 @@ def show_help():
 def main():
     """Main entry point."""
     args = sys.argv[1:]
-    
+
     # Parse arguments
     test_type = 'all'
     coverage = False
     verbose = False
     failed_only = False
-    
+
     if '-h' in args or '--help' in args:
         show_help()
         return 0
-    
+
     for arg in args:
         if arg in ['unit', 'integration', 'validation', 'quick']:
             test_type = arg
@@ -151,7 +151,7 @@ def main():
             verbose = True
         elif arg in ['--failed', '-f', '--lf']:
             failed_only = True
-    
+
     return run_tests(test_type, coverage, verbose, failed_only)
 
 

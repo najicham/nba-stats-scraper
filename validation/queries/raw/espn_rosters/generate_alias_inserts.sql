@@ -59,14 +59,14 @@ matches AS (
     END as suffix_type
   FROM espn_players e
   CROSS JOIN nbac_players n
-  WHERE REGEXP_REPLACE(LOWER(e.espn_lookup), r'(jr|ii|iii|iv|sr)$', '') = 
+  WHERE REGEXP_REPLACE(LOWER(e.espn_lookup), r'(jr|ii|iii|iv|sr)$', '') =
         REGEXP_REPLACE(LOWER(n.nbac_lookup), r'(jr|ii|iii|iv|sr)$', '')
     AND e.espn_lookup != n.nbac_lookup  -- Different lookups
 ),
 
 -- Exclude existing aliases
 new_aliases AS (
-  SELECT 
+  SELECT
     m.*,
     ROW_NUMBER() OVER (PARTITION BY m.espn_lookup ORDER BY m.nbac_lookup) as rn
   FROM matches m

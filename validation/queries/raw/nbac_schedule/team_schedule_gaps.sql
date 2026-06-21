@@ -31,9 +31,9 @@ team_games AS (
     game_id,
     CONCAT(away_team_tricode, ' vs ', home_team_tricode, ' (home)') as game_description
   FROM regular_season_games
-  
+
   UNION ALL
-  
+
   SELECT
     game_date,
     away_team_tricode as team,
@@ -52,8 +52,8 @@ team_gaps AS (
     game_description,
     LAG(game_date) OVER (PARTITION BY team ORDER BY game_date) as previous_game_date,
     DATE_DIFF(
-      game_date, 
-      LAG(game_date) OVER (PARTITION BY team ORDER BY game_date), 
+      game_date,
+      LAG(game_date) OVER (PARTITION BY team ORDER BY game_date),
       DAY
     ) as days_since_last_game
   FROM team_games
@@ -235,5 +235,5 @@ SELECT
 FROM gap_analysis ga
 WHERE game_date IN (SELECT date FROM known_breaks)
    OR previous_game_date IN (SELECT date FROM known_breaks)
-   
+
 ORDER BY sort_order, sub_sort DESC;

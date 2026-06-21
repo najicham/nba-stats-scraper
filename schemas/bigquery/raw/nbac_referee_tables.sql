@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS `nba_raw.nbac_referee_game_assignments` (
   game_date DATE NOT NULL,
   season STRING NOT NULL,
   game_code STRING NOT NULL,
-  
+
   -- Team information
   home_team_id INT64 NOT NULL,
   home_team STRING NOT NULL,
@@ -17,13 +17,13 @@ CREATE TABLE IF NOT EXISTS `nba_raw.nbac_referee_game_assignments` (
   away_team_id INT64 NOT NULL,
   away_team STRING NOT NULL,
   away_team_abbr STRING NOT NULL,
-  
+
   -- Official information
   official_position INT64 NOT NULL,  -- 1, 2, 3, or 4
   official_name STRING NOT NULL,
   official_code INT64 NOT NULL,
   official_jersey_number STRING,
-  
+
   -- Processing metadata
   source_file_path STRING NOT NULL,
   scrape_timestamp TIMESTAMP,
@@ -45,11 +45,11 @@ OPTIONS (
 CREATE TABLE IF NOT EXISTS `nba_raw.nbac_referee_replay_center` (
   -- Date identifier
   game_date DATE NOT NULL,
-  
-  -- Replay center official information  
+
+  -- Replay center official information
   official_code INT64 NOT NULL,
   official_name STRING NOT NULL,
-  
+
   -- Processing metadata
   source_file_path STRING NOT NULL,
   scrape_timestamp TIMESTAMP,
@@ -70,7 +70,7 @@ FROM `nba_raw.nbac_referee_game_assignments`
 WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY);
 
 CREATE OR REPLACE VIEW `nba_raw.nbac_referee_assignments_summary` AS
-SELECT 
+SELECT
   game_date,
   game_id,
   home_team_abbr,

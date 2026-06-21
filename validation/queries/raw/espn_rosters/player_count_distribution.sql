@@ -16,7 +16,7 @@ latest_rosters AS (
     COUNT(DISTINCT player_lookup) as player_count
   FROM `nba-props-platform.nba_raw.espn_team_rosters`
   WHERE roster_date = (
-      SELECT MAX(roster_date) 
+      SELECT MAX(roster_date)
       FROM `nba-props-platform.nba_raw.espn_team_rosters`
       WHERE roster_date >= '2025-01-01'  -- Partition filter
     )

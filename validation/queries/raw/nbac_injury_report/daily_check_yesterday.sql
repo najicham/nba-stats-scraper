@@ -14,7 +14,7 @@
 --   - status = "🔴 CRITICAL" requires immediate investigation
 -- ============================================================================
 
-WITH 
+WITH
 -- Check if yesterday had games
 yesterday_schedule AS (
   SELECT
@@ -52,29 +52,29 @@ SELECT
   ROUND(r.avg_confidence, 3) as avg_confidence,
   CASE
     -- FIXED: Off day scenarios - check for 0 instead of IS NULL after COALESCE
-    WHEN s.scheduled_games = 0 AND COALESCE(r.hourly_snapshots, 0) = 0 
+    WHEN s.scheduled_games = 0 AND COALESCE(r.hourly_snapshots, 0) = 0
       THEN '⚪ Expected: Off day - no reports'
-    WHEN s.scheduled_games = 0 AND COALESCE(r.hourly_snapshots, 0) > 0 
+    WHEN s.scheduled_games = 0 AND COALESCE(r.hourly_snapshots, 0) > 0
       THEN '✅ Complete: Off day with reports'
-    
+
     -- Game day scenarios - CRITICAL issues
-    WHEN s.scheduled_games > 0 AND COALESCE(r.hourly_snapshots, 0) = 0 
+    WHEN s.scheduled_games > 0 AND COALESCE(r.hourly_snapshots, 0) = 0
       THEN '🔴 CRITICAL: Game day - NO injury reports'
-    WHEN s.scheduled_games > 0 AND r.hourly_snapshots <= 2 
+    WHEN s.scheduled_games > 0 AND r.hourly_snapshots <= 2
       THEN '🔴 CRITICAL: Game day - very few snapshots'
-    
+
     -- Game day scenarios - ERROR issues
-    WHEN s.scheduled_games > 0 AND r.has_5pm_report = 0 AND r.has_8pm_report = 0 
+    WHEN s.scheduled_games > 0 AND r.has_5pm_report = 0 AND r.has_8pm_report = 0
       THEN '🟡 ERROR: Game day - missing both peak hours'
-    WHEN s.scheduled_games > 0 AND r.has_5pm_report = 0 
+    WHEN s.scheduled_games > 0 AND r.has_5pm_report = 0
       THEN '⚠️  WARNING: Game day - missing 5 PM report'
-    WHEN s.scheduled_games > 0 AND r.has_8pm_report = 0 
+    WHEN s.scheduled_games > 0 AND r.has_8pm_report = 0
       THEN '⚠️  WARNING: Game day - missing 8 PM report'
-    
+
     -- Game day scenarios - SUCCESS
-    WHEN s.scheduled_games > 0 AND r.hourly_snapshots >= 5 
+    WHEN s.scheduled_games > 0 AND r.hourly_snapshots >= 5
       THEN '✅ Complete: Game day with good coverage'
-    
+
     ELSE '📊 Review: Unusual pattern'
   END as status
 FROM yesterday_schedule s

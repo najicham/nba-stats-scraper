@@ -19,71 +19,71 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_reference.nba_players_registr
     -- =============================================================================
     -- PLAYER IDENTIFICATION
     -- =============================================================================
-    
+
     universal_player_id STRING,            -- Universal player ID (e.g., "kjmartin_001")
     player_name STRING NOT NULL,           -- Official NBA.com name
     player_lookup STRING NOT NULL,         -- Normalized lookup key
     team_abbr STRING NOT NULL,             -- Team affiliation
     season STRING NOT NULL,                -- "2023-24" format
-    
+
     -- =============================================================================
     -- GAME PARTICIPATION (Gamebook Processor Authority)
     -- =============================================================================
-    
+
     first_game_date DATE,                  -- First game played this season/team
     last_game_date DATE,                   -- Most recent game
     games_played INT64,                    -- Total games this season/team
     total_appearances INT64,               -- All appearances including inactive/dnp
     inactive_appearances INT64,            -- Count of inactive appearances
     dnp_appearances INT64,                 -- Count of DNP appearances
-    
+
     -- =============================================================================
     -- ROSTER INFORMATION (Roster Processor Preferred)
     -- =============================================================================
-    
+
     jersey_number INT64,                   -- Current jersey number
     position STRING,                       -- Listed position
-    
+
     -- =============================================================================
     -- DATA SOURCE TRACKING
     -- =============================================================================
-    
+
     source_priority STRING,                -- 'nba_gamebook', 'roster_nba_com', 'roster_espn', 'roster_br'
     confidence_score FLOAT64,              -- Data quality confidence (0.0-1.0)
-    
+
     -- =============================================================================
     -- PROCESSOR TRACKING (Multi-Processor Conflict Prevention)
     -- =============================================================================
-    
+
     last_processor STRING,                 -- Which processor last updated ('gamebook' or 'roster')
-    
+
     -- Processor update timestamps
     last_gamebook_update TIMESTAMP,        -- When gamebook processor last updated this record
     last_roster_update TIMESTAMP,          -- When roster processor last updated this record
-    
+
     -- Processor update counters
     gamebook_update_count INT64 DEFAULT 0, -- Number of times gamebook processor updated
     roster_update_count INT64 DEFAULT 0,   -- Number of times roster processor updated
     update_sequence_number INT64,          -- Monotonic sequence for update ordering
-    
+
     -- =============================================================================
     -- ACTIVITY DATE TRACKING (Data Freshness Protection)
     -- =============================================================================
     -- These fields track WHEN the data in this record is valid as of, not when
     -- the processor ran. Used to prevent overwriting fresh data with stale data.
-    
+
     last_gamebook_activity_date DATE,      -- Date of most recent game processed for this record
                                            -- Set by gamebook processor to last_game_date
                                            -- Used to check if gamebook data is fresher than incoming roster data
-    
+
     last_roster_activity_date DATE,        -- Date of roster snapshot that created/updated this record
                                            -- Set by roster processor to the data_date being processed
                                            -- Used to check if roster data is fresher than what's stored
-    
+
     -- =============================================================================
     -- METADATA
     -- =============================================================================
-    
+
     created_by STRING NOT NULL,            -- Run ID that created this record
     created_at TIMESTAMP NOT NULL,         -- When record first created
     processed_at TIMESTAMP NOT NULL        -- When record last updated (by any processor)
@@ -123,7 +123,7 @@ OPTIONS (
 -- =============================================================================
 
 -- Get existing record with protection fields
--- SELECT 
+-- SELECT
 --   player_lookup, team_abbr, season,
 --   games_played,
 --   last_processor,
@@ -134,7 +134,7 @@ OPTIONS (
 --   AND season = '2024-25';
 
 -- Find current team for a player (most recent activity)
--- SELECT 
+-- SELECT
 --   player_lookup, team_abbr,
 --   GREATEST(
 --     COALESCE(last_gamebook_activity_date, DATE '1900-01-01'),
@@ -147,7 +147,7 @@ OPTIONS (
 -- LIMIT 1;
 
 -- Check processor activity summary
--- SELECT 
+-- SELECT
 --   COUNT(*) as total_records,
 --   COUNT(DISTINCT universal_player_id) as unique_players,
 --   COUNTIF(last_processor = 'gamebook') as gamebook_records,
@@ -159,18 +159,18 @@ OPTIONS (
 -- FROM `nba-props-platform.nba_reference.nba_players_registry`;
 
 -- Identify stale records (no recent activity)
--- SELECT 
+-- SELECT
 --   player_lookup, team_abbr, season,
 --   last_gamebook_activity_date,
 --   last_roster_activity_date,
---   DATE_DIFF(CURRENT_DATE(), 
+--   DATE_DIFF(CURRENT_DATE(),
 --     GREATEST(
 --       COALESCE(last_gamebook_activity_date, DATE '1900-01-01'),
 --       COALESCE(last_roster_activity_date, DATE '1900-01-01')
 --     ), DAY) as days_stale
 -- FROM `nba-props-platform.nba_reference.nba_players_registry`
 -- WHERE season = '2024-25'
---   AND DATE_DIFF(CURRENT_DATE(), 
+--   AND DATE_DIFF(CURRENT_DATE(),
 --     GREATEST(
 --       COALESCE(last_gamebook_activity_date, DATE '1900-01-01'),
 --       COALESCE(last_roster_activity_date, DATE '1900-01-01')

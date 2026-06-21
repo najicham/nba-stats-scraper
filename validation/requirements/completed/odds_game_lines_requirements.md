@@ -1,7 +1,7 @@
 # Odds API Game Lines - Validator Requirements (EXAMPLE)
 
-**Processor Name:** odds_api_game_lines  
-**Data Source:** The Odds API  
+**Processor Name:** odds_api_game_lines
+**Data Source:** The Odds API
 **Status:** ✅ Completed - Validator Built
 
 This is an example of a completed requirements document.

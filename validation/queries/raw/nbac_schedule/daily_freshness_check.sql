@@ -14,7 +14,7 @@
 --   - status = "❌ CRITICAL" requires immediate investigation
 -- ============================================================================
 
-WITH 
+WITH
 -- Check if yesterday had games (look at historical pattern + schedule table)
 yesterday_games AS (
   SELECT
@@ -59,7 +59,7 @@ day_of_week_average AS (
   SELECT
     AVG(daily_games) as avg_games_for_dow
   FROM (
-    SELECT 
+    SELECT
       game_date,
       COUNT(DISTINCT game_id) as daily_games
     FROM `nba-props-platform.nba_raw.nbac_schedule`
@@ -91,7 +91,7 @@ status_check AS (
     END as status,
     -- Data quality status
     CASE
-      WHEN y.null_primetime > 0 OR y.null_network > y.games_found * 0.5 
+      WHEN y.null_primetime > 0 OR y.null_network > y.games_found * 0.5
       THEN '🔴 Enhanced fields incomplete'
       ELSE '✅ Enhanced fields OK'
     END as field_quality_status,
@@ -178,7 +178,7 @@ SELECT
   'Today' as section,
   CAST(CURRENT_DATE() AS STRING) as metric,
   CONCAT(CAST(games_today AS STRING), ' games scheduled') as value,
-  CASE 
+  CASE
     WHEN games_today = 0 THEN '⚪ Off day'
     ELSE '✅'
   END as status
@@ -190,7 +190,7 @@ SELECT
   'Tomorrow' as section,
   CAST(DATE_ADD(CURRENT_DATE(), INTERVAL 1 DAY) AS STRING) as metric,
   CONCAT(CAST(games_tomorrow AS STRING), ' games scheduled') as value,
-  CASE 
+  CASE
     WHEN games_tomorrow = 0 THEN '⚪ Off day'
     ELSE '✅'
   END as status

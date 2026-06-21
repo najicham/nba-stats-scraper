@@ -39,16 +39,16 @@ from data_processors.precompute.ml_feature_store.ml_feature_store_processor impo
 def mock_bq_client_with_players():
     """
     Mock BigQuery client that returns realistic player data.
-    
+
     Returns 450 players for a typical game day.
     Prevents "No players found" warnings.
     """
     client = Mock()
-    
+
     # Create 450 players (realistic game day volume)
     players_data = []
     teams = ['LAL', 'GSW', 'BOS', 'MIA', 'PHX', 'DAL', 'MIL', 'DEN', 'PHI', 'BRK']
-    
+
     for i in range(450):
         players_data.append({
             'player_lookup': f'player-{i}',
@@ -59,15 +59,15 @@ def mock_bq_client_with_players():
             'is_home': i % 2 == 0,
             'days_rest': (i % 4)
         })
-    
+
     players_df = pd.DataFrame(players_data)
-    
+
     # Configure mock
     mock_result = Mock()
     mock_result.to_dataframe.return_value = players_df
     mock_result.empty = False
     client.query.return_value = mock_result
-    
+
     return client
 
 
@@ -75,12 +75,12 @@ def mock_bq_client_with_players():
 def mock_bq_client_with_games():
     """
     Mock BigQuery client that returns historical game data.
-    
+
     Returns 10 historical games for a player.
     Prevents "No games found" warnings.
     """
     client = Mock()
-    
+
     # Create 10 historical games
     games_data = []
     for i in range(10):
@@ -94,15 +94,15 @@ def mock_bq_client_with_games():
             'mid_range_attempts': 3 + (i % 4),
             'three_pt_attempts': 4 + (i % 6)
         })
-    
+
     games_df = pd.DataFrame(games_data)
-    
+
     # Configure mock
     mock_result = Mock()
     mock_result.to_dataframe.return_value = games_df
     mock_result.empty = False
     client.query.return_value = mock_result
-    
+
     return client
 
 
@@ -110,28 +110,28 @@ def mock_bq_client_with_games():
 def mock_bq_client_smart():
     """
     Smart mock that returns different data based on query type.
-    
+
     Examines SQL query and returns appropriate mock data.
     Most realistic approach for complex tests.
     """
     client = Mock()
-    
+
     def smart_query_response(sql_query):
         """Return different mock data based on query."""
         mock_result = Mock()
-        
+
         if 'upcoming_player_game_context' in sql_query:
             # Return player list
             players_data = [{'player_lookup': f'player-{i}', 'game_id': f'g{i}'} for i in range(450)]
             mock_result.to_dataframe.return_value = pd.DataFrame(players_data)
             mock_result.empty = False
-            
+
         elif 'player_game_summary' in sql_query and 'LIMIT' in sql_query:
             # Return last N games
             games_data = [{'game_date': f'2025-01-{15-i:02d}', 'points': 20 + i} for i in range(10)]
             mock_result.to_dataframe.return_value = pd.DataFrame(games_data)
             mock_result.empty = False
-            
+
         elif 'player_daily_cache' in sql_query:
             # Return Phase 4 cache data
             cache_data = pd.DataFrame([{
@@ -150,7 +150,7 @@ def mock_bq_client_smart():
             }])
             mock_result.to_dataframe.return_value = cache_data
             mock_result.empty = False
-            
+
         elif 'player_composite_factors' in sql_query:
             # Return composite factors
             composite_data = pd.DataFrame([{
@@ -162,14 +162,14 @@ def mock_bq_client_smart():
             }])
             mock_result.to_dataframe.return_value = composite_data
             mock_result.empty = False
-            
+
         else:
             # Unknown query - return empty
             mock_result.to_dataframe.return_value = pd.DataFrame()
             mock_result.empty = True
-        
+
         return mock_result
-    
+
     client.query = Mock(side_effect=smart_query_response)
     return client
 
@@ -214,52 +214,52 @@ def sample_phase4_data():
 
 class TestFeatureExtractionPerformance:
     """Test performance of data extraction operations."""
-    
+
     def test_benchmark_phase4_extraction(self, benchmark, mock_bq_client_smart):
         """Benchmark Phase 4 data extraction."""
         extractor = FeatureExtractor(mock_bq_client_smart, 'test-project')
-        
+
         result = benchmark(extractor.extract_phase4_data, 'lebron-james', date(2025, 1, 15))
-        
+
         # Verify we got some data back
         assert isinstance(result, dict)
-        
+
         # Print performance
         print(f"\n⏱️  Phase 4 Extraction: {benchmark.stats.mean * 1000:.2f}ms (±{benchmark.stats.stddev * 1000:.2f}ms)")
-    
+
     def test_benchmark_phase3_extraction(self, benchmark, mock_bq_client_smart):
         """Benchmark Phase 3 data extraction."""
         extractor = FeatureExtractor(mock_bq_client_smart, 'test-project')
-        
+
         result = benchmark(extractor.extract_phase3_data, 'lebron-james', date(2025, 1, 15))
-        
+
         # Verify we got some data back
         assert isinstance(result, dict)
-        
+
         # Print performance
         print(f"\n⏱️  Phase 3 Extraction: {benchmark.stats.mean * 1000:.2f}ms (±{benchmark.stats.stddev * 1000:.2f}ms)")
-    
+
     def test_benchmark_player_list_query(self, benchmark, mock_bq_client_with_players):
         """Benchmark getting list of players with games."""
         extractor = FeatureExtractor(mock_bq_client_with_players, 'test-project')
-        
+
         result = benchmark(extractor.get_players_with_games, date(2025, 1, 15))
-        
+
         # Verify we got 450 players
         assert len(result) == 450
-        
+
         # Print performance
         print(f"\n⏱️  Player List Query: {benchmark.stats.mean * 1000:.2f}ms")
-    
+
     def test_benchmark_last_n_games_query(self, benchmark, mock_bq_client_with_games):
         """Benchmark querying last N games for a player."""
         extractor = FeatureExtractor(mock_bq_client_with_games, 'test-project')
-        
+
         result = benchmark(extractor._query_last_n_games, 'lebron-james', date(2025, 1, 15), 10)
-        
+
         # Verify we got 10 games
         assert len(result) == 10
-        
+
         # Print performance
         print(f"\n⏱️  Last N Games Query: {benchmark.stats.mean * 1000:.2f}ms")
 
@@ -270,82 +270,82 @@ class TestFeatureExtractionPerformance:
 
 class TestFeatureCalculationPerformance:
     """Test performance of feature calculation operations."""
-    
+
     def test_benchmark_rest_advantage(self, benchmark, sample_phase3_data):
         """Benchmark rest advantage calculation."""
         calculator = FeatureCalculator()
-        
+
         result = benchmark(calculator.calculate_rest_advantage, sample_phase3_data)
-        
+
         # Verify result
         assert isinstance(result, float)
         assert -2.0 <= result <= 2.0
-        
+
         # Print performance
         print(f"\n⏱️  Rest Advantage: {benchmark.stats.mean * 1000:.3f}ms")
-    
+
     def test_benchmark_injury_risk(self, benchmark, sample_phase3_data):
         """Benchmark injury risk calculation."""
         calculator = FeatureCalculator()
-        
+
         result = benchmark(calculator.calculate_injury_risk, sample_phase3_data)
-        
+
         # Verify result
         assert isinstance(result, float)
         assert 0.0 <= result <= 3.0
-        
+
         # Print performance
         print(f"\n⏱️  Injury Risk: {benchmark.stats.mean * 1000:.3f}ms")
-    
+
     def test_benchmark_recent_trend(self, benchmark, sample_phase3_data):
         """Benchmark recent trend calculation."""
         calculator = FeatureCalculator()
-        
+
         result = benchmark(calculator.calculate_recent_trend, sample_phase3_data)
-        
+
         # Verify result
         assert isinstance(result, float)
         assert -2.0 <= result <= 2.0
-        
+
         # Print performance
         print(f"\n⏱️  Recent Trend: {benchmark.stats.mean * 1000:.3f}ms")
-    
+
     def test_benchmark_minutes_change(self, benchmark, sample_phase4_data, sample_phase3_data):
         """Benchmark minutes change calculation."""
         calculator = FeatureCalculator()
-        
+
         result = benchmark(calculator.calculate_minutes_change, sample_phase4_data, sample_phase3_data)
-        
+
         # Verify result
         assert isinstance(result, float)
         assert -2.0 <= result <= 2.0
-        
+
         # Print performance
         print(f"\n⏱️  Minutes Change: {benchmark.stats.mean * 1000:.3f}ms")
-    
+
     def test_benchmark_pct_free_throw(self, benchmark, sample_phase3_data):
         """Benchmark free throw percentage calculation."""
         calculator = FeatureCalculator()
-        
+
         result = benchmark(calculator.calculate_pct_free_throw, sample_phase3_data)
-        
+
         # Verify result
         assert isinstance(result, float)
         assert 0.0 <= result <= 1.0
-        
+
         # Print performance
         print(f"\n⏱️  PCT Free Throw: {benchmark.stats.mean * 1000:.3f}ms")
-    
+
     def test_benchmark_team_win_pct(self, benchmark, sample_phase3_data):
         """Benchmark team win percentage calculation."""
         calculator = FeatureCalculator()
-        
+
         result = benchmark(calculator.calculate_team_win_pct, sample_phase3_data)
-        
+
         # Verify result
         assert isinstance(result, float)
         assert 0.0 <= result <= 1.0
-        
+
         # Print performance
         print(f"\n⏱️  Team Win PCT: {benchmark.stats.mean * 1000:.3f}ms")
 
@@ -356,41 +356,41 @@ class TestFeatureCalculationPerformance:
 
 class TestQualityScoringPerformance:
     """Test performance of quality scoring operations."""
-    
+
     def test_benchmark_quality_score_calculation(self, benchmark):
         """Benchmark quality score calculation."""
         scorer = QualityScorer()
-        
+
         # Create feature sources (19 Phase 4 + 6 calculated)
         feature_sources = {
             **{i: 'phase4' for i in range(19)},
             **{i: 'calculated' for i in range(19, 25)}
         }
-        
+
         result = benchmark(scorer.calculate_quality_score, feature_sources)
-        
+
         # Verify result
         assert isinstance(result, float)
         assert 0.0 <= result <= 100.0
-        
+
         # Print performance
         print(f"\n⏱️  Quality Score Calculation: {benchmark.stats.mean * 1000:.3f}ms")
-    
+
     def test_benchmark_primary_source_determination(self, benchmark):
         """Benchmark primary source determination."""
         scorer = QualityScorer()
-        
+
         # Create feature sources
         feature_sources = {
             **{i: 'phase4' for i in range(19)},
             **{i: 'calculated' for i in range(19, 25)}
         }
-        
+
         result = benchmark(scorer.determine_primary_source, feature_sources)
-        
+
         # Verify result
         assert result in ['phase4', 'phase3', 'calculated', 'mixed', 'default']
-        
+
         # Print performance
         print(f"\n⏱️  Primary Source Determination: {benchmark.stats.mean * 1000:.3f}ms")
 
@@ -401,7 +401,7 @@ class TestQualityScoringPerformance:
 
 class TestEndToEndPerformance:
     """Test end-to-end performance scenarios."""
-    
+
     def test_benchmark_single_player_feature_generation(self, benchmark):
         """Benchmark generating features for a single player."""
         # Create processor with mocked dependencies
@@ -411,12 +411,12 @@ class TestEndToEndPerformance:
         processor.project_id = 'test-project'
         processor.feature_version = 'v1_baseline_25'
         processor.feature_count = 25
-        
+
         # Mock helper classes
         processor.feature_extractor = Mock()
         processor.feature_calculator = Mock()
         processor.quality_scorer = Mock()
-        
+
         # Mock data returns
         processor.feature_extractor.extract_phase4_data.return_value = {
             'points_avg_last_5': 22.5,
@@ -426,16 +426,16 @@ class TestEndToEndPerformance:
             'days_rest': 2,
             'opponent_days_rest': 1
         }
-        
+
         # Mock feature extraction
         processor._extract_all_features = Mock(return_value=(
             [0.0] * 25,
             {i: 'phase4' for i in range(25)}
         ))
-        
+
         processor.quality_scorer.calculate_quality_score.return_value = 95.0
         processor.quality_scorer.determine_primary_source.return_value = 'phase4'
-        
+
         # Mock calculated features
         processor.feature_calculator.calculate_rest_advantage.return_value = 1.0
         processor.feature_calculator.calculate_injury_risk.return_value = 0.0
@@ -443,7 +443,7 @@ class TestEndToEndPerformance:
         processor.feature_calculator.calculate_minutes_change.return_value = 0.0
         processor.feature_calculator.calculate_pct_free_throw.return_value = 0.15
         processor.feature_calculator.calculate_team_win_pct.return_value = 0.55
-        
+
         # Mock source tracking
         processor.build_source_tracking_fields = Mock(return_value={
             'source_daily_cache_last_updated': datetime.now().isoformat(),
@@ -459,7 +459,7 @@ class TestEndToEndPerformance:
             'source_team_defense_rows_found': 1,
             'source_team_defense_completeness_pct': 100.0
         })
-        
+
         # Sample player row
         player_row = {
             'player_lookup': 'lebron-james',
@@ -469,27 +469,27 @@ class TestEndToEndPerformance:
             'is_home': True,
             'days_rest': 2
         }
-        
+
         # Benchmark
         result = benchmark(processor._generate_player_features, player_row)
-        
+
         # Verify result
         assert 'player_lookup' in result
         assert 'features' in result
-        
+
         # Print performance
         print(f"\n⏱️  Single Player Feature Generation: {benchmark.stats.mean * 1000:.2f}ms")
-    
+
     def test_benchmark_batch_processing(self, benchmark, mock_bq_client_with_players):
         """Benchmark processing a batch of 50 players."""
         # This is a simplified batch processing test
         extractor = FeatureExtractor(mock_bq_client_with_players, 'test-project')
         calculator = FeatureCalculator()
-        
+
         def process_batch():
             # Get players
             players = extractor.get_players_with_games(date(2025, 1, 15))[:50]
-            
+
             # Process each player (simplified)
             results = []
             for player in players:
@@ -497,14 +497,14 @@ class TestEndToEndPerformance:
                 rest_adv = calculator.calculate_rest_advantage({'days_rest': 2, 'opponent_days_rest': 1})
                 injury = calculator.calculate_injury_risk({'player_status': 'available'})
                 results.append({'player': player, 'rest': rest_adv, 'injury': injury})
-            
+
             return results
-        
+
         result = benchmark(process_batch)
-        
+
         # Verify we processed 50 players
         assert len(result) == 50
-        
+
         # Print performance
         print(f"\n⏱️  Batch Processing (50 players): {benchmark.stats.mean:.2f}s")
 
@@ -515,21 +515,21 @@ class TestEndToEndPerformance:
 
 class TestBatchWriterPerformance:
     """Test performance of batch writing operations."""
-    
+
     def test_benchmark_batch_splitting(self, benchmark):
         """Benchmark splitting rows into batches."""
         writer = BatchWriter(Mock(), 'test-project')
-        
+
         # Create 450 rows
         rows = [{'player': f'player-{i}', 'data': i} for i in range(450)]
-        
+
         result = benchmark(writer._split_into_batches, rows, batch_size=100)
-        
+
         # Verify we got 5 batches (100 + 100 + 100 + 100 + 50)
         assert len(result) == 5
         assert len(result[0]) == 100
         assert len(result[4]) == 50
-        
+
         # Print performance
         print(f"\n⏱️  Batch Splitting (450 rows): {benchmark.stats.mean * 1000:.3f}ms")
 

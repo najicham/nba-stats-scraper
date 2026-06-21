@@ -80,7 +80,7 @@ class TeamDefenseZoneAnalysisProcessor(
     Processes all 30 NBA teams in ~2 minutes.
     Must complete before player processors start (11:15 PM).
     """
-    
+
     # Configuration
     required_opts = ['analysis_date']
     additional_opts = ['season_year']
@@ -209,7 +209,7 @@ class TeamDefenseZoneAnalysisProcessor(
     def get_dependencies(self) -> dict:
         """
         Define Phase 3 dependency: team_defense_game_summary table.
-        
+
         Returns:
             Dependency configuration with v4.0 tracking fields
         """
@@ -218,62 +218,62 @@ class TeamDefenseZoneAnalysisProcessor(
                 'field_prefix': 'source_team_defense',
                 'description': 'Team defensive stats (last 15 games per team)',
                 'check_type': 'per_team_game_count',  # Custom check type
-                
+
                 # Requirements
                 'min_games_required': self.min_games_required,
                 'min_teams_with_data': 25,  # At least 25 teams must have 15 games
                 'entity_field': 'defending_team_abbr',
-                
+
                 # Freshness thresholds
                 'max_age_hours_warn': 72,   # Warn if > 3 days old
                 'max_age_hours_fail': 168,  # Fail if > 1 week old
-                
+
                 # Early season behavior
                 'early_season_days': self.early_season_threshold_days,
                 'early_season_behavior': 'WRITE_PLACEHOLDER',
-                
+
                 'critical': True
             }
         }
-    
+
     def set_additional_opts(self) -> None:
         """Set season_year if not provided."""
         super().set_additional_opts()
-        
+
         if 'season_year' not in self.opts:
             analysis_date = self.opts['analysis_date']
             self.opts['season_year'] = get_season_year_from_date(analysis_date)
-        
+
         # Get season start date for completeness checking
         # Use hardcoded October 1 as approximate season boundary (actual skip logic uses schedule service)
         season_year = self.opts['season_year']
         self.season_start_date = date(season_year, 10, 1)
 
         logger.info(f"Processing season {season_year}, season boundary: {self.season_start_date}")
-    
-    def _check_table_data(self, table_name: str, analysis_date: date, 
+
+    def _check_table_data(self, table_name: str, analysis_date: date,
                           config: dict) -> tuple:
         """
         Override base class to support 'per_team_game_count' check type.
-        
+
         For team defense, we need to verify each team has minimum games.
         """
         check_type = config.get('check_type')
-        
+
         if check_type != 'per_team_game_count':
             # Use base class implementation for other check types
             return super()._check_table_data(table_name, analysis_date, config)
-        
+
         # Custom logic for per_team_game_count
         min_games = config.get('min_games_required', 15)
         min_teams = config.get('min_teams_with_data', 25)
         entity_field = config.get('entity_field', 'defending_team_abbr')
-        
+
         try:
             # Count games per team
             query = f"""
             WITH team_game_counts AS (
-                SELECT 
+                SELECT
                     {entity_field} as team,
                     COUNT(*) as game_count,
                     MAX(processed_at) as last_updated
@@ -290,9 +290,9 @@ class TeamDefenseZoneAnalysisProcessor(
             FROM team_game_counts
             WHERE game_count >= {min_games}
             """
-            
+
             result = list(self.bq_client.query(query).result(timeout=60))
-            
+
             if not result:
                 return False, {
                     'exists': False,
@@ -302,22 +302,22 @@ class TeamDefenseZoneAnalysisProcessor(
                     'last_updated': None,
                     'error': 'No query results'
                 }
-            
+
             row = result[0]
             teams_with_min = row.teams_with_min_games
             total_games = row.total_games
             last_updated = row.last_updated
             total_teams = row.total_teams
-            
+
             # Calculate age
             if last_updated:
                 age_hours = (datetime.now(UTC) - last_updated).total_seconds() / 3600
             else:
                 age_hours = None
-            
+
             # Check if sufficient teams have data
             exists = teams_with_min >= min_teams
-            
+
             details = {
                 'exists': exists,
                 'row_count': total_games,
@@ -328,14 +328,14 @@ class TeamDefenseZoneAnalysisProcessor(
                 'age_hours': round(age_hours, 2) if age_hours else None,
                 'last_updated': last_updated.isoformat() if last_updated else None
             }
-            
+
             if exists:
                 logger.info(f"✅ {teams_with_min}/{total_teams} teams have {min_games}+ games")
             else:
                 logger.warning(f"⚠️ Only {teams_with_min}/{min_teams} teams have {min_games}+ games")
-            
+
             return exists, details
-            
+
         except Exception as e:
             error_msg = f"Error checking {table_name}: {str(e)}"
             logger.error(error_msg)
@@ -343,7 +343,7 @@ class TeamDefenseZoneAnalysisProcessor(
                 'exists': False,
                 'error': error_msg
             }
-    
+
     def check_dependencies(self, analysis_date: date) -> dict:
         """
         Override to add early season detection.
@@ -354,21 +354,21 @@ class TeamDefenseZoneAnalysisProcessor(
             self.opts['season_year'],
             self.early_season_threshold_days
         )
-        
+
         # Run base dependency check
         dep_check = super().check_dependencies(analysis_date)
-        
+
         # Add early season flag
         dep_check['is_early_season'] = is_early
-        
+
         if is_early:
             logger.warning(
                 f"Early season detected: {(analysis_date - self.season_start_date).days} "
                 f"days since season start"
             )
-        
+
         return dep_check
-    
+
     def extract_raw_data(self) -> None:
         """
         Extract last 15 games per team from Phase 3 table.
@@ -416,13 +416,13 @@ class TeamDefenseZoneAnalysisProcessor(
             return
 
         # Note: critical dependency, stale checks, and notifications already done in precompute_base.run()
-        
+
         # Extract last 15 games per team
         query = f"""
         WITH ranked_games AS (
             SELECT *,
               ROW_NUMBER() OVER (
-                PARTITION BY defending_team_abbr 
+                PARTITION BY defending_team_abbr
                 ORDER BY game_date DESC
               ) as game_rank
             FROM `{self.project_id}.nba_analytics.team_defense_game_summary`
@@ -434,35 +434,35 @@ class TeamDefenseZoneAnalysisProcessor(
         WHERE game_rank <= {self.min_games_required}
         ORDER BY defending_team_abbr, game_date DESC
         """
-        
+
         self.raw_data = self.bq_client.query(query).to_dataframe()
-        
+
         logger.info(
             f"Extracted {len(self.raw_data)} game records for "
             f"{self.raw_data['defending_team_abbr'].nunique()} teams"
         )
-        
+
         # Calculate league averages for this analysis date
         self._calculate_league_averages()
 
         # Extract source hash from upstream table (Smart Reprocessing - Pattern #3)
         self._extract_source_hash()
-    
+
     def _calculate_league_averages(self) -> None:
         """
         Calculate league-wide defensive averages.
-        
+
         Uses last N days (configurable via league_avg_lookback_days) to get
         a representative sample of league defensive performance.
-        
+
         Note: 30-day window is configurable via class attribute.
         For early season with <10 teams, uses historical defaults.
         """
         logger.info(f"Calculating league defensive averages ({self.league_avg_lookback_days} day window)")
-        
+
         # Calculate lookback date
         lookback_date = self.opts['analysis_date'] - timedelta(days=self.league_avg_lookback_days)
-        
+
         query = f"""
         WITH team_aggregates AS (
             SELECT
@@ -497,9 +497,9 @@ class TeamDefenseZoneAnalysisProcessor(
           AND mid_range_pct IS NOT NULL
           AND three_pt_pct IS NOT NULL
         """
-        
+
         result = self.bq_client.query(query).to_dataframe()
-        
+
         if result.empty or result['teams_in_sample'].iloc[0] < 10:
             logger.warning(
                 "Insufficient teams for league averages - using defaults "
@@ -520,7 +520,7 @@ class TeamDefenseZoneAnalysisProcessor(
                 'three_pt_pct': float(row['league_avg_three_pt_pct']),
                 'teams_in_sample': int(row['teams_in_sample'])
             }
-        
+
         logger.info(
             f"League averages: "
             f"Paint {self.league_averages['paint_pct']:.3f}, "
@@ -1097,19 +1097,19 @@ class TeamDefenseZoneAnalysisProcessor(
                 })
 
         return successful, failed
-    
+
     def _calculate_zone_defense(
-        self, 
-        team_data: pd.DataFrame, 
+        self,
+        team_data: pd.DataFrame,
         games_count: int
     ) -> Dict:
         """
         Calculate all zone defense metrics for a team.
-        
+
         Args:
             team_data: DataFrame with team's game data
             games_count: Number of games in sample
-            
+
         Returns:
             Dictionary with all calculated metrics
         """
@@ -1120,64 +1120,64 @@ class TeamDefenseZoneAnalysisProcessor(
         total_mid_range_attempts = team_data['opp_mid_range_attempts'].sum()
         total_three_pt_makes = team_data['opp_three_pt_makes'].sum()
         total_three_pt_attempts = team_data['opp_three_pt_attempts'].sum()
-        
+
         total_paint_points = team_data['points_in_paint_allowed'].sum()
         total_mid_range_points = team_data['mid_range_points_allowed'].sum()
         total_three_pt_points = team_data['three_pt_points_allowed'].sum()
-        
+
         total_paint_blocks = team_data['blocks_paint'].sum()
         total_mid_range_blocks = team_data['blocks_mid_range'].sum()
         total_three_pt_blocks = team_data['blocks_three_pt'].sum()
-        
+
         total_points_allowed = team_data['points_allowed'].sum()
-        
+
         # Calculate FG% allowed
         paint_pct = (
-            total_paint_makes / total_paint_attempts 
+            total_paint_makes / total_paint_attempts
             if total_paint_attempts > 0 else None
         )
         mid_range_pct = (
-            total_mid_range_makes / total_mid_range_attempts 
+            total_mid_range_makes / total_mid_range_attempts
             if total_mid_range_attempts > 0 else None
         )
         three_pt_pct = (
-            total_three_pt_makes / total_three_pt_attempts 
+            total_three_pt_makes / total_three_pt_attempts
             if total_three_pt_attempts > 0 else None
         )
-        
+
         # Calculate per-game metrics
         paint_attempts_pg = total_paint_attempts / games_count
         mid_range_attempts_pg = total_mid_range_attempts / games_count
         three_pt_attempts_pg = total_three_pt_attempts / games_count
-        
+
         paint_points_pg = total_paint_points / games_count
-        
+
         paint_blocks_pg = total_paint_blocks / games_count
         mid_range_blocks_pg = total_mid_range_blocks / games_count
         three_pt_blocks_pg = total_three_pt_blocks / games_count
-        
+
         opp_points_pg = total_points_allowed / games_count
-        
+
         # Calculate vs league average (percentage points difference)
         # Positive = Worse defense (allowing higher FG%)
         # Negative = Better defense (allowing lower FG%)
         paint_vs_league = None
         mid_range_vs_league = None
         three_pt_vs_league = None
-        
+
         if paint_pct is not None and self.league_averages:
             paint_vs_league = (paint_pct - self.league_averages['paint_pct']) * 100
-        
+
         if mid_range_pct is not None and self.league_averages:
             mid_range_vs_league = (mid_range_pct - self.league_averages['mid_range_pct']) * 100
-        
+
         if three_pt_pct is not None and self.league_averages:
             three_pt_vs_league = (three_pt_pct - self.league_averages['three_pt_pct']) * 100
-        
+
         # Calculate advanced metrics
         defensive_rating = team_data['defensive_rating'].mean()
         opponent_pace = team_data['opponent_pace'].mean()
-        
+
         # Build calculation notes
         notes = []
         if total_paint_attempts == 0:
@@ -1186,63 +1186,63 @@ class TeamDefenseZoneAnalysisProcessor(
             notes.append("No mid-range attempts")
         if total_three_pt_attempts == 0:
             notes.append("No three-point attempts")
-        
+
         return {
             'paint_pct': float(paint_pct) if paint_pct is not None else None,
             'paint_attempts_pg': float(paint_attempts_pg),
             'paint_points_pg': float(paint_points_pg),
             'paint_blocks_pg': float(paint_blocks_pg),
             'paint_vs_league': float(paint_vs_league) if paint_vs_league is not None else None,
-            
+
             'mid_range_pct': float(mid_range_pct) if mid_range_pct is not None else None,
             'mid_range_attempts_pg': float(mid_range_attempts_pg),
             'mid_range_blocks_pg': float(mid_range_blocks_pg),
             'mid_range_vs_league': float(mid_range_vs_league) if mid_range_vs_league is not None else None,
-            
+
             'three_pt_pct': float(three_pt_pct) if three_pt_pct is not None else None,
             'three_pt_attempts_pg': float(three_pt_attempts_pg),
             'three_pt_blocks_pg': float(three_pt_blocks_pg),
             'three_pt_vs_league': float(three_pt_vs_league) if three_pt_vs_league is not None else None,
-            
+
             'defensive_rating': float(defensive_rating),
             'opp_points_pg': float(opp_points_pg),
             'opponent_pace': float(opponent_pace),
-            
+
             'notes': '; '.join(notes) if notes else None
         }
-    
+
     def _identify_strengths_weaknesses(self, zone_metrics: Dict) -> Dict:
         """
         Identify strongest and weakest defensive zones.
-        
+
         Args:
             zone_metrics: Dictionary with zone defense metrics
-            
+
         Returns:
             Dictionary with 'strongest' and 'weakest' zone identifiers
         """
         zones = {}
-        
+
         if zone_metrics['paint_vs_league'] is not None:
             zones['paint'] = zone_metrics['paint_vs_league']
-        
+
         if zone_metrics['mid_range_vs_league'] is not None:
             zones['mid_range'] = zone_metrics['mid_range_vs_league']
-        
+
         if zone_metrics['three_pt_vs_league'] is not None:
             zones['perimeter'] = zone_metrics['three_pt_vs_league']
-        
+
         if not zones:
             return {'strongest': None, 'weakest': None}
-        
+
         # Most negative = best defense (lowest FG% relative to league)
         strongest = min(zones, key=zones.get)
-        
+
         # Most positive = worst defense (highest FG% relative to league)
         weakest = max(zones, key=zones.get)
-        
+
         return {'strongest': strongest, 'weakest': weakest}
-    
+
     def _determine_quality_tier(self, games_count: int) -> str:
         """Determine data quality tier based on sample size."""
         if games_count >= 15:
@@ -1296,16 +1296,16 @@ class TeamDefenseZoneAnalysisProcessor(
     def _write_placeholder_rows(self, dep_check: dict) -> None:
         """
         Write placeholder rows for early season.
-        
+
         All business metrics are NULL, but source tracking is still populated.
         """
         logger.info("Writing placeholder rows for early season")
-        
+
         placeholders = []
-        
+
         # Get all 30 NBA teams
         all_teams = self.team_mapper.get_all_nba_tricodes()
-        
+
         for team_abbr in all_teams:
             # Count games available for this team
             games_query = f"""
@@ -1315,19 +1315,19 @@ class TeamDefenseZoneAnalysisProcessor(
               AND game_date < '{self.opts['analysis_date']}'  -- FIX: Changed <= to < (must not include analysis_date games)
               AND game_date >= '{self.season_start_date}'
             """
-            
+
             try:
                 games_result = self.bq_client.query(games_query).to_dataframe()
                 games_count = int(games_result['game_count'].iloc[0]) if not games_result.empty else 0
             except Exception as e:
                 logger.warning(f"Could not count games for {team_abbr}: {e}")
                 games_count = 0
-            
+
             placeholder = {
                 # Identifiers
                 'team_abbr': team_abbr,
                 'analysis_date': self.opts['analysis_date'].isoformat(),
-                
+
                 # All business metrics = NULL
                 'paint_pct_allowed_last_15': None,
                 'paint_attempts_allowed_per_game': None,
@@ -1347,12 +1347,12 @@ class TeamDefenseZoneAnalysisProcessor(
                 'opponent_pace': None,
                 'strongest_zone': None,
                 'weakest_zone': None,
-                
+
                 # Context
                 'games_in_sample': games_count,
                 'data_quality_tier': 'low',
                 'calculation_notes': None,
-                
+
                 # Source tracking (v4.0 - still populated!)
                 **self.build_source_tracking_fields(),
 
@@ -1371,10 +1371,10 @@ class TeamDefenseZoneAnalysisProcessor(
             placeholder['data_hash'] = self.compute_data_hash(placeholder)
 
             placeholders.append(placeholder)
-        
+
         self.transformed_data = placeholders
         logger.info(f"Wrote {len(placeholders)} placeholder rows")
-        
+
         try:
             notify_info(
                 title="Team Defense Zone Analysis: Early Season Placeholders",
@@ -1390,7 +1390,7 @@ class TeamDefenseZoneAnalysisProcessor(
             )
         except Exception as notify_ex:
             logger.warning(f"Failed to send notification: {notify_ex}")
-    
+
     def get_precompute_stats(self) -> Dict:
         """Return processor-specific stats."""
         return {

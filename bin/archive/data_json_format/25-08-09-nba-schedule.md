@@ -1,7 +1,7 @@
 # NBA Schedule JSON Format Documentation
 
-**Version:** 1.0  
-**Date:** August 2025  
+**Version:** 1.0
+**Date:** August 2025
 **Source:** NBA.com Stats API (`scheduleleaguev2int`)
 
 ## Overview
@@ -13,7 +13,7 @@ The NBA schedule JSON contains comprehensive game data for an entire NBA season,
 ```json
 {
   "season": "2023",
-  "season_nba_format": "2023-24", 
+  "season_nba_format": "2023-24",
   "seasonYear": "2024",
   "leagueId": "00",
   "timestamp": "2025-08-04T00:09:45.275610+00:00",
@@ -65,7 +65,7 @@ Each game in the `games` array contains the following fields:
 ```json
 {
   "gameDateEst": "2023-10-18T00:00:00Z",
-  "gameTimeEst": "1900-01-01T22:30:00Z", 
+  "gameTimeEst": "1900-01-01T22:30:00Z",
   "gameDateTimeEst": "2023-10-18T22:30:00Z",
   "gameDateUTC": "2023-10-18T04:00:00Z",
   "gameTimeUTC": "1900-01-01T02:30:00Z",
@@ -89,7 +89,7 @@ Each game in the `games` array contains the following fields:
 ❌ WRONG (using gameDate):
 "01/01/2023" → "06/12/2023" → "09/30/2022" (Sept 2022 sorts AFTER June 2023!)
 
-✅ CORRECT (using gameDateEst): 
+✅ CORRECT (using gameDateEst):
 "2022-09-30T00:00:00Z" → "2023-01-01T00:00:00Z" → "2023-06-12T00:00:00Z"
 ```
 
@@ -180,40 +180,40 @@ Each game in the `games` array contains the following fields:
 ```python
 def should_process_game(game):
     """Determine if game should be processed for gamebook collection."""
-    
+
     # Check game ID type
     game_id = game.get('gameId', '')
     if game_id.startswith('001'):  # Preseason
         return False
     if game_id.startswith('003'):  # All-Star
-        return False  
+        return False
     if game_id.startswith('004'):  # Playoffs (optional - you might want these)
         return False
-    
+
     # Check for All-Star indicators
     week_name = game.get('weekName', '')
     if week_name == "All-Star":
         return False
-    
+
     # Check for special events
     game_label = game.get('gameLabel', '')
     game_sub_label = game.get('gameSubLabel', '')
     if game_label or game_sub_label:
         return False
-    
+
     # Validate team codes
     away_team = game.get('awayTeam', {}).get('teamTricode', '')
     home_team = game.get('homeTeam', {}).get('teamTricode', '')
-    
+
     valid_nba_teams = {
         'ATL', 'BOS', 'BKN', 'CHA', 'CHI', 'CLE', 'DAL', 'DEN', 'DET', 'GSW',
         'HOU', 'IND', 'LAC', 'LAL', 'MEM', 'MIA', 'MIL', 'MIN', 'NOP', 'NYK',
         'OKC', 'ORL', 'PHI', 'PHX', 'POR', 'SAC', 'SAS', 'TOR', 'UTA', 'WAS'
     }
-    
+
     if away_team not in valid_nba_teams or home_team not in valid_nba_teams:
         return False
-    
+
     # Only process completed games
     return game.get('gameStatus') == 3
 ```
@@ -223,7 +223,7 @@ def should_process_game(game):
 ```json
 {
   "arenaName": "Chase Center",
-  "arenaState": "CA", 
+  "arenaState": "CA",
   "arenaCity": "San Francisco",
   "isNeutral": false
 }
@@ -243,7 +243,7 @@ Each game contains `homeTeam` and `awayTeam` objects:
   "homeTeam": {
     "teamId": 1610612744,
     "teamName": "Warriors",
-    "teamCity": "Golden State", 
+    "teamCity": "Golden State",
     "teamTricode": "GSW",
     "teamSlug": "warriors",
     "wins": 42,
@@ -260,7 +260,7 @@ Each game contains `homeTeam` and `awayTeam` objects:
 - **`teamTricode`**: 3-letter team code (e.g., "GSW") - **CRITICAL FOR GAME CODES**
 - **`teamSlug`**: URL-friendly team name
 - **`wins`**: Team wins at time of game
-- **`losses`**: Team losses at time of game  
+- **`losses`**: Team losses at time of game
 - **`score`**: Final score (if game completed)
 - **`seed`**: Playoff seeding (0 for regular season)
 
@@ -294,7 +294,7 @@ Each game contains `homeTeam` and `awayTeam` objects:
 
 To keep schedule files lean, the following fields are removed during processing:
 - `broadcasters`: TV/radio broadcast information
-- `tickets`: Ticket sales links  
+- `tickets`: Ticket sales links
 - `links`: Various external links
 - `promotions`: Marketing promotions
 - `seriesText`: Series description text
@@ -343,12 +343,12 @@ def extract_game_code(game):
     game_code = game.get('gameCode', '')
     if not game_code or '/' not in game_code:
         return None
-    
+
     # Validate format: YYYYMMDD/TEAMTEAM
     date_part, teams_part = game_code.split('/', 1)
     if len(date_part) != 8 or len(teams_part) != 6:
         return None
-        
+
     return game_code
 ```
 

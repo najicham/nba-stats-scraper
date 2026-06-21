@@ -8,7 +8,7 @@ echo ""
 
 echo "=== 1. Overall Date Range ==="
 bq query --use_legacy_sql=false '
-SELECT 
+SELECT
   MIN(game_date) as earliest_date,
   MAX(game_date) as latest_date,
   DATE_DIFF(MAX(game_date), MIN(game_date), DAY) as days_span,
@@ -27,8 +27,8 @@ WHERE game_date >= "2021-10-01"
 echo ""
 echo "=== 2. Coverage by Season (Oct-Sep) ==="
 bq query --use_legacy_sql=false '
-SELECT 
-  CASE 
+SELECT
+  CASE
     WHEN EXTRACT(MONTH FROM game_date) >= 10 THEN EXTRACT(YEAR FROM game_date)
     ELSE EXTRACT(YEAR FROM game_date) - 1
   END as season_start_year,
@@ -39,8 +39,8 @@ SELECT
   ROUND(AVG(records_per_date), 0) as avg_records_per_date
 FROM `nba-props-platform.nba_raw.bettingpros_player_points_props`
 CROSS JOIN (
-  SELECT 
-    CASE 
+  SELECT
+    CASE
       WHEN EXTRACT(MONTH FROM game_date) >= 10 THEN EXTRACT(YEAR FROM game_date)
       ELSE EXTRACT(YEAR FROM game_date) - 1
     END as season,
@@ -50,7 +50,7 @@ CROSS JOIN (
   WHERE game_date >= "2021-10-01"
   GROUP BY season, game_date
 ) sub
-WHERE CASE 
+WHERE CASE
     WHEN EXTRACT(MONTH FROM game_date) >= 10 THEN EXTRACT(YEAR FROM game_date)
     ELSE EXTRACT(YEAR FROM game_date) - 1
   END = sub.season
@@ -63,7 +63,7 @@ ORDER BY season_start_year
 echo ""
 echo "=== 3. Monthly Summary (Last 18 Months) ==="
 bq query --use_legacy_sql=false '
-SELECT 
+SELECT
   FORMAT_DATE("%Y-%m", game_date) as year_month,
   COUNT(DISTINCT game_date) as dates,
   COUNT(*) as records,
@@ -95,13 +95,13 @@ WITH dated_data AS (
   ORDER BY game_date
 ),
 gaps AS (
-  SELECT 
+  SELECT
     game_date,
     LAG(game_date) OVER (ORDER BY game_date) as prev_date,
     DATE_DIFF(game_date, LAG(game_date) OVER (ORDER BY game_date), DAY) as days_since_prev
   FROM dated_data
 )
-SELECT 
+SELECT
   prev_date as last_date_before_gap,
   game_date as first_date_after_gap,
   days_since_prev as gap_days
@@ -113,7 +113,7 @@ ORDER BY prev_date
 echo ""
 echo "=== 5. Data Quality by Date (Last 30 Days) ==="
 bq query --use_legacy_sql=false '
-SELECT 
+SELECT
   game_date,
   COUNT(*) as records,
   COUNT(DISTINCT player_lookup) as players,
@@ -129,7 +129,7 @@ ORDER BY game_date DESC
 echo ""
 echo "=== 6. Low Data Quality Dates (< 500 records) ==="
 bq query --use_legacy_sql=false '
-SELECT 
+SELECT
   game_date,
   COUNT(*) as records,
   COUNT(DISTINCT player_lookup) as players,
@@ -144,7 +144,7 @@ ORDER BY game_date
 echo ""
 echo "=== 7. Bookmaker Coverage Over Time ==="
 bq query --use_legacy_sql=false '
-SELECT 
+SELECT
   FORMAT_DATE("%Y-%m", game_date) as year_month,
   COUNT(DISTINCT bookmaker) as unique_bookmakers,
   STRING_AGG(DISTINCT bookmaker ORDER BY bookmaker LIMIT 10) as sample_bookmakers

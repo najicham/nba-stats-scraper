@@ -51,14 +51,14 @@ run_query() {
     local query_file=$1
     local output_format=${2:-""}
     local output_file=${3:-""}
-    
+
     if [ ! -f "$query_file" ]; then
         print_error "Query file not found: $query_file"
         return 1
     fi
-    
+
     print_info "Running: $(basename "$query_file")"
-    
+
     if [ "$output_format" = "csv" ]; then
         bq query --use_legacy_sql=false --format=csv < "$query_file" > "$output_file"
         print_success "Results saved to: $output_file"
@@ -139,29 +139,29 @@ cmd_official_count() {
 cmd_all() {
     print_header "Running All Validation Queries"
     echo ""
-    
+
     cmd_season_completeness
     echo ""
-    
+
     cmd_daily
     echo ""
-    
+
     cmd_official_count
     echo ""
-    
+
     print_success "All validation queries completed!"
 }
 
 cmd_quick() {
     print_header "Quick Validation (Daily + Official Count)"
     echo ""
-    
+
     cmd_daily
     echo ""
-    
+
     cmd_official_count
     echo ""
-    
+
     print_success "Quick validation completed!"
 }
 

@@ -1,7 +1,7 @@
 # NBA.com Referee Assignments - Missing Data Backfill
 
-**Status:** 🔴 MISSING 3,890 games (~71% of target coverage)  
-**Current Coverage:** 2024-01-01 to 2025-06-19 (1,613 games)  
+**Status:** 🔴 MISSING 3,890 games (~71% of target coverage)
+**Current Coverage:** 2024-01-01 to 2025-06-19 (1,613 games)
 **Target Coverage:** 2021-10-19 to 2025-06-20 (5,503 games)
 
 ---
@@ -20,7 +20,7 @@
 
 ## Priority 1: 2024-25 Missing Dates (CRITICAL)
 
-**Date Range:** ~70 dates scattered throughout season  
+**Date Range:** ~70 dates scattered throughout season
 **Games:** ~300 total
 
 ### Missing Dates List
@@ -112,7 +112,7 @@ bq query --use_legacy_sql=false < season_completeness_check.sql
 
 ## Priority 2: 2023-24 First Half (CRITICAL)
 
-**Date Range:** 2023-10-24 to 2024-03-31  
+**Date Range:** 2023-10-24 to 2024-03-31
 **Games:** ~950 (first half of season)
 
 ### Backfill Command
@@ -139,7 +139,7 @@ bq query --use_legacy_sql=false < season_completeness_check.sql
 
 ## Priority 3: 2022-23 Complete Season (HIGH)
 
-**Date Range:** 2022-10-18 to 2023-06-12  
+**Date Range:** 2022-10-18 to 2023-06-12
 **Games:** ~1,320 (entire season)
 
 ### Backfill Command
@@ -166,7 +166,7 @@ bq query --use_legacy_sql=false < season_completeness_check.sql
 
 ## Priority 4: 2021-22 Complete Season (MEDIUM)
 
-**Date Range:** 2021-10-19 to 2022-06-16  
+**Date Range:** 2021-10-19 to 2022-06-16
 **Games:** ~1,320 (entire season)
 
 ### Backfill Command
@@ -208,14 +208,14 @@ bq query --use_legacy_sql=false < verify_playoff_completeness.sql
 # 4. Check official counts
 bq query --use_legacy_sql=false '
 WITH game_counts AS (
-  SELECT 
+  SELECT
     game_id,
     COUNT(DISTINCT official_code) as official_count
   FROM `nba-props-platform.nba_raw.nbac_referee_game_assignments`
   WHERE game_date >= "2021-10-19"
   GROUP BY game_id
 )
-SELECT 
+SELECT
   official_count,
   COUNT(*) as games
 FROM game_counts

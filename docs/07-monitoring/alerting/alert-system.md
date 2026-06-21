@@ -207,19 +207,19 @@ from datetime import datetime, timedelta
 
 def backfill_box_scores(start_date, end_date):
     """Backfill box scores without email flood"""
-    
+
     alert_mgr = SmartAlertManager()
-    
+
     # Enable batch mode
     alert_mgr.enable_backfill_mode()
-    
+
     # Generate date range
     dates = []
     current = start_date
     while current <= end_date:
         dates.append(current)
         current += timedelta(days=1)
-    
+
     try:
         for date in dates:
             try:
@@ -234,7 +234,7 @@ def backfill_box_scores(start_date, end_date):
                     "error": str(e)
                 })
                 print(f"✗ {date}: {e}")
-    
+
     finally:
         # Send ONE summary email with all errors
         alert_mgr.disable_backfill_mode(send_summary=True)
@@ -266,18 +266,18 @@ alerts = AlertAggregator()
 @app.route('/process', methods=['POST'])
 def process_box_scores():
     """Process box scores with intelligent alerting"""
-    
+
     data = request.get_json()
     date = data.get('date')
-    
+
     try:
         # Your processing logic
         raw_data = load_from_gcs(f"raw/bdl_box_scores/{date}/data.json")
         processed = process_data(raw_data)
         save_to_bigquery(processed)
-        
+
         return {"status": "success", "records": len(processed)}, 200
-        
+
     except FileNotFoundError as e:
         # WARNING: Missing data (might be expected)
         alerts.send_alert(
@@ -287,7 +287,7 @@ def process_box_scores():
             metadata={"date": date, "expected": is_game_day(date)}
         )
         return {"status": "warning", "message": str(e)}, 200
-        
+
     except Exception as e:
         # ERROR: Unexpected failure
         alerts.send_alert(
@@ -467,9 +467,9 @@ from shared.utils.smart_alerting import SmartAlertManager
 def backfill_season(season):
     alert_mgr = SmartAlertManager()
     alert_mgr.enable_backfill_mode()
-    
+
     errors = []
-    
+
     try:
         for game in get_season_games(season):
             try:
@@ -483,7 +483,7 @@ def backfill_season(season):
                 errors.append(game.id)
     finally:
         alert_mgr.disable_backfill_mode(send_summary=True)
-    
+
     return {
         "total_games": len(get_season_games(season)),
         "errors": len(errors),

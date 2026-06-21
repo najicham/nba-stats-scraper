@@ -106,28 +106,28 @@ scrapers:
   my_new_scraper:
     enabled: true
     description: "Description of what this scraper does"
-    
+
     gcs:
       bucket: "nba-raw-data"
       path_pattern: "my-source/data/{date}/*.json"
-    
+
     schedule:
       cron: "0 */6 * * *"  # Every 6 hours
       timezone: "America/New_York"
-    
+
     freshness:
       max_age_hours:
         regular_season: 8
         playoffs: 4
-    
+
     validation:
       min_file_size_mb: 0.01
       max_file_size_mb: 100.0
-    
+
     seasonality:
       active_during: ["regular_season", "playoffs"]
       requires_games_today: true  # Only check on game days
-    
+
     alerting:
       severity_missing: "critical"
       severity_stale: "warning"

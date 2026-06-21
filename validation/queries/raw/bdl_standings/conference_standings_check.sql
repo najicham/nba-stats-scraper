@@ -74,7 +74,7 @@ division_stats AS (
     MIN(division_rank) as min_division_rank,
     MAX(division_rank) as max_division_rank,
     CASE
-      WHEN COUNT(*) = 5 AND COUNT(DISTINCT division_rank) = 5 
+      WHEN COUNT(*) = 5 AND COUNT(DISTINCT division_rank) = 5
            AND MIN(division_rank) = 1 AND MAX(division_rank) = 5
         THEN '✅ Valid'
       WHEN COUNT(*) != 5
@@ -100,7 +100,7 @@ top_teams AS (
 
 -- Combine all results into one output
 (
-SELECT 
+SELECT
   '🔍 CONFERENCE VALIDATION' as section,
   v.conference,
   CAST(v.team_count AS STRING) as team_count,
@@ -109,8 +109,8 @@ SELECT
   CAST(v.max_rank AS STRING) as max_rank,
   CAST(v.duplicate_ranks AS STRING) as duplicate_ranks,
   CASE
-    WHEN v.team_count = 15 AND v.unique_ranks = 15 
-         AND v.min_rank = 1 AND v.max_rank = 15 
+    WHEN v.team_count = 15 AND v.unique_ranks = 15
+         AND v.min_rank = 1 AND v.max_rank = 15
          AND v.duplicate_ranks = 0
       THEN '✅ Valid'
     WHEN v.team_count != 15
@@ -207,7 +207,7 @@ SELECT
   NULL as detail5
 FROM top_teams
 
-ORDER BY 
+ORDER BY
   CASE section
     WHEN '🔍 CONFERENCE VALIDATION' THEN 1
     WHEN '⚠️ DUPLICATE RANKINGS' THEN 2

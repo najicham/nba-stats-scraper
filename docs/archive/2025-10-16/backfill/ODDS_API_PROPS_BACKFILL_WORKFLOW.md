@@ -24,7 +24,7 @@ bq query --use_legacy_sql=false < identify_missing_playoff_games.sql
 
 **Key Teams to Check:**
 - ✅ **PHX** - Should show 4 missing games (2024 playoffs)
-- ✅ **LAC** - Should show 5 missing games (2024 playoffs)  
+- ✅ **LAC** - Should show 5 missing games (2024 playoffs)
 - ✅ **DEN** - Should show 7 missing games (2025 playoffs)
 
 ---
@@ -83,14 +83,14 @@ chmod +x backfill_missing_props.sh
 
 ```bash
 bq query --use_legacy_sql=false '
-SELECT 
+SELECT
   game_date,
   home_team_abbr,
   away_team_abbr,
   COUNT(DISTINCT player_name) as players,
   COUNT(DISTINCT bookmaker) as bookmakers
 FROM `nba-props-platform.nba_raw.odds_api_player_points_props`
-WHERE (home_team_abbr IN ("PHX","LAC","DEN","DAL") 
+WHERE (home_team_abbr IN ("PHX","LAC","DEN","DAL")
    OR away_team_abbr IN ("PHX","LAC","DEN","DAL"))
   AND game_date >= "2024-04-20"
 GROUP BY game_date, home_team_abbr, away_team_abbr
@@ -290,5 +290,5 @@ gsutil ls gs://nba-scraped-data/odds-api/player-props-history/2024-04-21/
 
 ---
 
-**Last Updated:** October 2025  
+**Last Updated:** October 2025
 **Status:** Ready for execution after team name fix

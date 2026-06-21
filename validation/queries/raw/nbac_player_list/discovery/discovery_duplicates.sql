@@ -5,7 +5,7 @@
 -- ============================================================================
 
 WITH player_counts AS (
-  SELECT 
+  SELECT
     player_lookup,
     COUNT(*) as occurrence_count,
     STRING_AGG(DISTINCT team_abbr ORDER BY team_abbr) as teams,
@@ -16,7 +16,7 @@ WITH player_counts AS (
   HAVING COUNT(*) > 1  -- Only show duplicates
 )
 
-SELECT 
+SELECT
   player_lookup,
   occurrence_count,
   teams as appears_on_teams,

@@ -96,7 +96,7 @@ class GetNbaComRefereeAssignments(ScraperBase, ScraperFlaskMixin):
             "export_mode": ExportMode.DATA,
             "pretty_print": True,
             "groups": ["dev", "test", "prod"],
-        },        
+        },
         # ADD CAPTURE EXPORTERS for testing with capture.py
         {
             "type": "file",
@@ -105,7 +105,7 @@ class GetNbaComRefereeAssignments(ScraperBase, ScraperFlaskMixin):
             "groups": ["capture"],
         },
         {
-            "type": "file", 
+            "type": "file",
             "filename": "/tmp/exp_%(run_id)s.json",
             "export_mode": ExportMode.DATA,
             "pretty_print": True,
@@ -118,11 +118,11 @@ class GetNbaComRefereeAssignments(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     def set_additional_opts(self) -> None:
         super().set_additional_opts()
-        
+
         # Add timestamp for exports
         now = datetime.now(timezone.utc)
         self.opts["time"] = now.strftime("%H-%M-%S")
-        
+
         # Derive season from date (assumes current season format)
         try:
             date_obj = datetime.strptime(self.opts["date"], "%Y-%m-%d")
@@ -131,12 +131,12 @@ class GetNbaComRefereeAssignments(ScraperBase, ScraperFlaskMixin):
                 season_start = date_obj.year
             else:
                 season_start = date_obj.year - 1
-            
+
             self.opts["season"] = f"{season_start}-{(season_start + 1) % 100:02d}"
-            
+
             # Format date for URL (YYYY-MM-DD format expected by API)
             self.opts["formatted_date"] = self.opts["date"]
-            
+
         except ValueError:
             try:
                 notify_error(
@@ -185,7 +185,7 @@ class GetNbaComRefereeAssignments(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException("Referee response is not a valid JSON object")
-                
+
             # Check for main league data (NBA)
             nba_data = self.decoded_data.get("nba")
             if nba_data is None:
@@ -204,7 +204,7 @@ class GetNbaComRefereeAssignments(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException("Response missing 'nba' key")
-                
+
             # Check for table structure
             table_data = nba_data.get("Table")
             if table_data is None:
@@ -223,7 +223,7 @@ class GetNbaComRefereeAssignments(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException("NBA data missing 'Table' key")
-                
+
             rows = table_data.get("rows", [])
             if not isinstance(rows, list):
                 try:
@@ -241,7 +241,7 @@ class GetNbaComRefereeAssignments(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException("Table.rows is not a list")
-                
+
         except DownloadDataException:
             # Re-raise validation exceptions (already notified above)
             raise
@@ -274,7 +274,7 @@ class GetNbaComRefereeAssignments(ScraperBase, ScraperFlaskMixin):
         try:
             nba_data = self.data["refereeAssignments"]["nba"]
             rows = nba_data["Table"]["rows"]
-            
+
             # 1. GAME COUNT CHECK
             game_count = len(rows)
             if game_count == 0:
@@ -310,8 +310,8 @@ class GetNbaComRefereeAssignments(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException(f"Suspiciously high game count: {game_count} (expected 1-15)")
-            
-            # 2. BASIC DATA STRUCTURE VALIDATION  
+
+            # 2. BASIC DATA STRUCTURE VALIDATION
             required_table_keys = ['rows', 'columns']
             for key in required_table_keys:
                 if key not in nba_data["Table"]:
@@ -330,7 +330,7 @@ class GetNbaComRefereeAssignments(ScraperBase, ScraperFlaskMixin):
                     except Exception as notify_ex:
                         logger.warning(f"Failed to send notification: {notify_ex}")
                     raise DownloadDataException(f"Missing required table key: {key}")
-            
+
             # 3. SAMPLE GAME VALIDATION (check referee assignments)
             sample_size = min(5, len(rows))
             for i, game in enumerate(rows[:sample_size]):
@@ -350,7 +350,7 @@ class GetNbaComRefereeAssignments(ScraperBase, ScraperFlaskMixin):
                     except Exception as notify_ex:
                         logger.warning(f"Failed to send notification: {notify_ex}")
                     raise DownloadDataException(f"Game {i} is not a dict: {type(game)}")
-                    
+
                 # Check for essential game fields
                 required_fields = ['game_id', 'home_team', 'away_team', 'official1']
                 for field in required_fields:
@@ -371,7 +371,7 @@ class GetNbaComRefereeAssignments(ScraperBase, ScraperFlaskMixin):
                         except Exception as notify_ex:
                             logger.warning(f"Failed to send notification: {notify_ex}")
                         raise DownloadDataException(f"Game {i} missing required field: {field}")
-                
+
                 # Validate referee assignments (should have at least official1)
                 if not game.get('official1'):
                     try:
@@ -390,7 +390,7 @@ class GetNbaComRefereeAssignments(ScraperBase, ScraperFlaskMixin):
                     except Exception as notify_ex:
                         logger.warning(f"Failed to send notification: {notify_ex}")
                     raise DownloadDataException(f"Game {i} missing primary official assignment")
-            
+
             # 4. DATE CONSISTENCY
             expected_date = self.opts['formatted_date']
             date_mismatches = 0
@@ -406,7 +406,7 @@ class GetNbaComRefereeAssignments(ScraperBase, ScraperFlaskMixin):
                             logger.warning(f"Game {i} date mismatch: expected {expected_date}, got {formatted_game_date}")
                     except ValueError:
                         logger.warning(f"Game {i} has invalid date format: {game_date}")
-            
+
             if date_mismatches > 0:
                 try:
                     notify_warning(
@@ -422,9 +422,9 @@ class GetNbaComRefereeAssignments(ScraperBase, ScraperFlaskMixin):
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             logger.info(f"✅ Referee validation passed: {game_count} games")
-            
+
             # Send success notification
             try:
                 notify_info(
@@ -441,7 +441,7 @@ class GetNbaComRefereeAssignments(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-                
+
         except DownloadDataException:
             # Re-raise validation exceptions (already notified above)
             raise
@@ -468,14 +468,14 @@ class GetNbaComRefereeAssignments(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     def transform_data(self) -> None:
         ts = datetime.now(timezone.utc).isoformat()
-        
+
         # Count games across all leagues
         total_games = 0
         nba_games = len(self.decoded_data.get("nba", {}).get("Table", {}).get("rows", []))
         gl_games = len(self.decoded_data.get("gl", {}).get("Table", {}).get("rows", []))
         wnba_games = len(self.decoded_data.get("wnba", {}).get("Table", {}).get("rows", []))
         total_games = nba_games + gl_games + wnba_games
-        
+
         # Extract replay center officials
         replay_officials = self.decoded_data.get("nba", {}).get("Table1", {}).get("rows", [])
 
@@ -494,7 +494,7 @@ class GetNbaComRefereeAssignments(ScraperBase, ScraperFlaskMixin):
             },
             "refereeAssignments": self.decoded_data,
         }
-        
+
         # Add production validation
         if nba_games > 0:  # Only validate if NBA games exist
             self.validate_referee_data()
@@ -505,7 +505,7 @@ class GetNbaComRefereeAssignments(ScraperBase, ScraperFlaskMixin):
     def should_save_data(self) -> bool:
         if not isinstance(self.data, dict):
             return False
-        
+
         # Save even if no games (could be off-season) but ensure we got valid response
         metadata = self.data.get("metadata", {})
         return "fetchedUtc" in metadata
@@ -516,7 +516,7 @@ class GetNbaComRefereeAssignments(ScraperBase, ScraperFlaskMixin):
     def get_scraper_stats(self) -> dict:
         metadata = self.data.get("metadata", {})
         game_counts = metadata.get("gameCount", {})
-        
+
         return {
             "date": self.opts["formatted_date"],
             "season": self.opts["season"],

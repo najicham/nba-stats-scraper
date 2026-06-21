@@ -50,7 +50,7 @@ SELECT
   officials,
   positions
 FROM game_official_counts
-WHERE 
+WHERE
   -- Show only games with wrong counts
   (is_playoffs = FALSE AND official_count != 3)
   OR (is_playoffs = TRUE AND official_count != 4)

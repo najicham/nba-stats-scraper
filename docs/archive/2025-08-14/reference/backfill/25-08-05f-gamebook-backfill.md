@@ -87,13 +87,13 @@ class NbaGamebookPdfScraper(ScraperBase):
     def transform_data(self):
         # Parse PDF for box scores + DNP reasons
         parsed_data = self.parse_pdf_content()
-        
+
         # Enhance with Basketball Reference name mapping
         for player in parsed_data['inactive_players']:
             if player['name_incomplete']:  # e.g., "Morant"
                 full_name = resolve_player_name(
-                    player['last_name'], 
-                    self.game_info['team'], 
+                    player['last_name'],
+                    self.game_info['team'],
                     self.game_info['season']
                 )
                 player['name'] = full_name  # "Ja Morant"
@@ -153,7 +153,7 @@ gs://nba-scraped-data/
 ├── basketball_reference/
 │   └── season_rosters/          # ✅ COMPLETE - Name mapping data
 │       ├── 2021-22/*.json       # 30 roster files
-│       ├── 2022-23/*.json       # 30 roster files  
+│       ├── 2022-23/*.json       # 30 roster files
 │       ├── 2023-24/*.json       # 30 roster files
 │       └── 2024-25/*.json       # 30 roster files
 └── nba-com/
@@ -194,7 +194,7 @@ gs://nba-scraped-data/
 * **⭐ Name Resolution**: >90% of incomplete names resolved to full names
 * **Cross-validation**: Basketball Reference roster data validates against game rosters
 
-### **Performance**  
+### **Performance**
 * **Execution Speed**: Similar to Phase 1 (~117 seconds per season)
 * **Name Mapping Speed**: <1ms per player name lookup
 * **Memory Usage**: Efficient roster data caching
@@ -202,7 +202,7 @@ gs://nba-scraped-data/
 
 ### **Data Quality**
 * **Player Identification**: Complete names for both active and inactive players
-* **Historical Accuracy**: Accurate team assignments using season-specific rosters  
+* **Historical Accuracy**: Accurate team assignments using season-specific rosters
 * **Context Preservation**: DNP reasons linked to correctly identified players
 * **Validation**: Spot checks confirm "Morant" → "Ja Morant" mapping accuracy
 
@@ -242,7 +242,7 @@ gs://nba-scraped-data/
 
 ### **Immediate (This Week)**
 1. ✅ **Basketball Reference integration complete** - Data ready for use
-2. **Choose primary gamebook data source** - NBA.com PDFs vs alternatives  
+2. **Choose primary gamebook data source** - NBA.com PDFs vs alternatives
 3. **Create gamebook scraper skeleton** - With Basketball Reference name mapping integration
 4. **Test name mapping logic** - Validate "Morant" → "Ja Morant" resolution
 
@@ -288,7 +288,7 @@ gs://nba-scraped-data/
 class EnhancedGamebookProcessor:
     def __init__(self):
         self.roster_cache = {}  # Cache for Basketball Reference data
-        
+
     def load_season_rosters(self, season):
         """Pre-load all Basketball Reference rosters for a season."""
         if season not in self.roster_cache:
@@ -296,7 +296,7 @@ class EnhancedGamebookProcessor:
             for team in NBA_TEAMS:
                 roster_path = f"raw/basketball_reference/season_rosters/{season}/{team}.json"
                 self.roster_cache[season][team] = self.load_from_gcs(roster_path)
-    
+
     def resolve_player_name(self, last_name, team, season):
         """Resolve incomplete name using Basketball Reference roster."""
         roster = self.roster_cache.get(season, {}).get(team, {})
@@ -308,26 +308,26 @@ class EnhancedGamebookProcessor:
                     'jersey_number': player.get('jersey_number')
                 }
         return {'name': last_name}  # Fallback
-    
+
     def process_gamebook(self, game_data):
         """Process gamebook with enhanced name resolution."""
         season = game_data['season']
         teams = [game_data['home_team'], game_data['away_team']]
-        
+
         # Pre-load rosters for this game
         for team in teams:
             self.load_season_rosters(season)
-        
+
         # Process players with name enhancement
         for player in game_data['players']:
             if player.get('name_incomplete'):
                 enhanced = self.resolve_player_name(
-                    player['last_name'], 
-                    player['team'], 
+                    player['last_name'],
+                    player['team'],
                     season
                 )
                 player.update(enhanced)
-        
+
         return game_data
 ```
 
@@ -337,7 +337,7 @@ class EnhancedGamebookProcessor:
 
 **All prerequisites complete:**
 * ✅ **Basketball Reference data**: 120 roster files collected and validated
-* ✅ **Name mapping strategy**: Proven approach with test validation  
+* ✅ **Name mapping strategy**: Proven approach with test validation
 * ✅ **Infrastructure**: GCS paths, scraper architecture, operational procedures
 * ✅ **Integration pattern**: Clear code examples and data flow
 

@@ -4,7 +4,7 @@
 # ============================================================================
 # File: schemas/bigquery/nba_orchestration/deploy_tables.sh
 # Purpose: Deploy all nba_orchestration tables for Phase 1 orchestration
-# 
+#
 # Usage:
 #   ./schemas/bigquery/nba_orchestration/deploy_tables.sh
 #   ./schemas/bigquery/nba_orchestration/deploy_tables.sh --force  # Recreate existing tables
@@ -150,9 +150,9 @@ declare -a tables=(
 # Create each table
 for table in "${tables[@]}"; do
     log_header "Processing: $table"
-    
+
     full_table_id="$PROJECT_ID:$DATASET.$table"
-    
+
     # Check if table exists
     if bq show --project_id="$PROJECT_ID" "$DATASET.$table" &> /dev/null; then
         if [[ "$FORCE_RECREATE" == true ]]; then
@@ -165,21 +165,21 @@ for table in "${tables[@]}"; do
             continue
         fi
     fi
-    
+
     # Table-specific SQL file
     sql_file="$SCRIPT_DIR/${table}.sql"
-    
+
     if [[ ! -f "$sql_file" ]]; then
         log_error "SQL file not found: $sql_file"
         exit 1
     fi
-    
+
     log_info "Creating table from: ${table}.sql"
-    
+
     # Execute SQL file
     # Note: bq query doesn't support CREATE TABLE from file directly,
     # so we need to construct bq mk command with parameters
-    
+
     case "$table" in
         "scraper_execution_log")
             log_info "Creating scraper_execution_log with partitioning and clustering..."
@@ -191,7 +191,7 @@ for table in "${tables[@]}"; do
                     exit 1
                 }
             ;;
-            
+
         "workflow_decisions")
             log_info "Creating workflow_decisions with partitioning and clustering..."
             bq query \
@@ -202,7 +202,7 @@ for table in "${tables[@]}"; do
                     exit 1
                 }
             ;;
-            
+
         "daily_expected_schedule")
             log_info "Creating daily_expected_schedule with partitioning and clustering..."
             bq query \
@@ -213,7 +213,7 @@ for table in "${tables[@]}"; do
                     exit 1
                 }
             ;;
-            
+
         "cleanup_operations")
             log_info "Creating cleanup_operations with partitioning and clustering..."
             bq query \
@@ -225,11 +225,11 @@ for table in "${tables[@]}"; do
                 }
             ;;
     esac
-    
+
     # Verify table was created
     if bq show --project_id="$PROJECT_ID" "$DATASET.$table" &> /dev/null; then
         log_success "Table created successfully: $table"
-        
+
         # Show table info
         log_info "Verifying table structure..."
         bq show "$full_table_id" | head -n 20
@@ -237,7 +237,7 @@ for table in "${tables[@]}"; do
         log_error "Table verification failed: $table"
         exit 1
     fi
-    
+
     echo ""
 done
 
@@ -278,7 +278,7 @@ echo ""
 echo "🧪 Test query:"
 cat << 'EOF'
    bq query --project_id=nba-props-platform --use_legacy_sql=false "
-   SELECT 
+   SELECT
      table_name,
      table_type,
      TIMESTAMP_MILLIS(creation_time) as created_at

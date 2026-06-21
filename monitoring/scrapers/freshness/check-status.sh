@@ -43,23 +43,23 @@ echo -e "${YELLOW}1. Cloud Run Job Status${NC}"
 # Check if job exists
 if gcloud run jobs describe "${SERVICE_NAME}" --region="${REGION}" --project="${GCP_PROJECT_ID}" &>/dev/null; then
     echo -e "  ${GREEN}✓${NC} Job exists: ${SERVICE_NAME}"
-    
+
     # Get last execution
     LAST_EXECUTION=$(gcloud run jobs executions list "${SERVICE_NAME}" \
         --region="${REGION}" \
         --project="${GCP_PROJECT_ID}" \
         --limit=1 \
         --format='value(metadata.name)' 2>/dev/null)
-    
+
     if [ -n "${LAST_EXECUTION}" ]; then
         echo -e "  ${GREEN}✓${NC} Last execution: ${LAST_EXECUTION}"
-        
+
         # Get execution status
         STATUS=$(gcloud run jobs executions describe "${LAST_EXECUTION}" \
             --region="${REGION}" \
             --project="${GCP_PROJECT_ID}" \
             --format='value(status.conditions[0].status)' 2>/dev/null)
-        
+
         if [ "${STATUS}" = "True" ]; then
             echo -e "  ${GREEN}✓${NC} Status: Success"
         else
@@ -78,21 +78,21 @@ echo -e "${YELLOW}2. Cloud Scheduler Status${NC}"
 # Check scheduler
 if gcloud scheduler jobs describe "${SCHEDULER_NAME}" --location="${REGION}" --project="${GCP_PROJECT_ID}" &>/dev/null; then
     echo -e "  ${GREEN}✓${NC} Scheduler exists: ${SCHEDULER_NAME}"
-    
+
     # Get schedule
     SCHEDULE=$(gcloud scheduler jobs describe "${SCHEDULER_NAME}" \
         --location="${REGION}" \
         --project="${GCP_PROJECT_ID}" \
         --format='value(schedule)' 2>/dev/null)
-    
+
     echo -e "  ${GREEN}✓${NC} Schedule: ${SCHEDULE}"
-    
+
     # Get state
     STATE=$(gcloud scheduler jobs describe "${SCHEDULER_NAME}" \
         --location="${REGION}" \
         --project="${GCP_PROJECT_ID}" \
         --format='value(state)' 2>/dev/null)
-    
+
     if [ "${STATE}" = "ENABLED" ]; then
         echo -e "  ${GREEN}✓${NC} State: Enabled"
     else
@@ -133,20 +133,20 @@ echo -e "${YELLOW}5. Environment Variables${NC}"
 
 if [ -f "${PROJECT_ROOT}/.env" ]; then
     echo -e "  ${GREEN}✓${NC} .env file found"
-    
+
     # Check key variables
     if [ -n "${SLACK_WEBHOOK_URL}" ]; then
         echo -e "  ${GREEN}✓${NC} Slack webhook configured"
     else
         echo -e "  ${YELLOW}!${NC} Slack webhook not configured"
     fi
-    
+
     if [ -n "${EMAIL_ALERTS_TO}" ]; then
         echo -e "  ${GREEN}✓${NC} Email alerts configured"
     else
         echo -e "  ${YELLOW}!${NC} Email alerts not configured"
     fi
-    
+
     if [ -n "${BALL_DONT_LIE_API_KEY}" ]; then
         echo -e "  ${GREEN}✓${NC} Ball Don't Lie API key configured"
     else

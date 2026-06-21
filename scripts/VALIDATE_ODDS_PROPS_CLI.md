@@ -446,7 +446,7 @@ validate-odds-props gaps                  # See everything at once
 # Daily
 validate-odds-props yesterday             # Check yesterday
 
-# Weekly  
+# Weekly
 validate-odds-props week                  # Last 7 days
 
 # Quality Checks
@@ -491,6 +491,6 @@ validate-odds-props list                  # List queries
 
 ---
 
-**Last Updated:** October 12, 2025  
-**Version:** 1.0  
+**Last Updated:** October 12, 2025
+**Version:** 1.0
 **Data Coverage:** May 2023 - Present

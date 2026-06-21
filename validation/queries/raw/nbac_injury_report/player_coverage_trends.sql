@@ -9,10 +9,10 @@
 --   - Sudden drops = potential scraper issue
 -- ============================================================================
 
-WITH 
+WITH
 -- Daily player counts
 daily_player_counts AS (
-  SELECT 
+  SELECT
     report_date,
     COUNT(DISTINCT player_lookup) as unique_players,
     COUNT(DISTINCT report_hour) as hourly_snapshots,
@@ -30,14 +30,14 @@ daily_player_counts AS (
 
 -- Calculate rolling averages
 with_trends AS (
-  SELECT 
+  SELECT
     *,
     AVG(unique_players) OVER (
-      ORDER BY report_date 
+      ORDER BY report_date
       ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
     ) as rolling_7day_avg,
     AVG(unique_players) OVER (
-      ORDER BY report_date 
+      ORDER BY report_date
       ROWS BETWEEN 29 PRECEDING AND CURRENT ROW
     ) as rolling_30day_avg
   FROM daily_player_counts
@@ -45,13 +45,13 @@ with_trends AS (
 
 -- Join with schedule for context
 with_schedule_context AS (
-  SELECT 
+  SELECT
     t.*,
     CASE WHEN s.game_date IS NOT NULL THEN TRUE ELSE FALSE END as is_game_day,
     COALESCE(s.games_count, 0) as games_count
   FROM with_trends t
   LEFT JOIN (
-    SELECT 
+    SELECT
       game_date,
       COUNT(*) as games_count
     FROM `nba-props-platform.nba_raw.nbac_schedule`
@@ -62,7 +62,7 @@ with_schedule_context AS (
   ) s ON t.report_date = s.game_date
 )
 
-SELECT 
+SELECT
   report_date,
   FORMAT_DATE('%A', report_date) as day_of_week,
   is_game_day,
@@ -77,21 +77,21 @@ SELECT
   ROUND(avg_confidence, 3) as avg_confidence,
   CASE
     -- Sudden drop on game day = CRITICAL
-    WHEN is_game_day = TRUE AND unique_players < rolling_7day_avg * 0.5 
+    WHEN is_game_day = TRUE AND unique_players < rolling_7day_avg * 0.5
       THEN '🔴 CRITICAL: 50%+ drop on game day'
-    
+
     -- Moderate drop on game day = WARNING
-    WHEN is_game_day = TRUE AND unique_players < rolling_7day_avg * 0.7 
+    WHEN is_game_day = TRUE AND unique_players < rolling_7day_avg * 0.7
       THEN '⚠️  WARNING: 30%+ drop on game day'
-    
+
     -- Off-day with zero players = EXPECTED
-    WHEN is_game_day = FALSE AND unique_players = 0 
+    WHEN is_game_day = FALSE AND unique_players = 0
       THEN '⚪ Expected: Off day'
-    
+
     -- Normal variation
-    WHEN ABS(unique_players - rolling_7day_avg) < rolling_7day_avg * 0.2 
+    WHEN ABS(unique_players - rolling_7day_avg) < rolling_7day_avg * 0.2
       THEN '✅ Normal'
-    
+
     ELSE '📊 Review: Outside normal range'
   END as status
 FROM with_schedule_context

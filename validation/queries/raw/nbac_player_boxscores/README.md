@@ -2,7 +2,7 @@
 
 Complete pipeline for scraping and processing NBA.com player boxscore data (via `leaguegamelog` API).
 
-**Status:** ✅ Operational (Tested on 2024-10-29)  
+**Status:** ✅ Operational (Tested on 2024-10-29)
 **Last Updated:** October 19, 2025
 
 ---
@@ -501,8 +501,8 @@ done
 
 ## Support & Maintenance
 
-**Last tested:** October 19, 2025  
-**Test date:** 2024-10-29 (4 games, 88 players)  
+**Last tested:** October 19, 2025
+**Test date:** 2024-10-29 (4 games, 88 players)
 **Status:** ✅ All tests passing
 
 **For issues:**

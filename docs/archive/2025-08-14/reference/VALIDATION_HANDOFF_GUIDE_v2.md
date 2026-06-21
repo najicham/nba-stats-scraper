@@ -1,7 +1,7 @@
 # NBA Data Validation - Complete Handoff Guide
 
-**Version:** 2.0  
-**Last Updated:** October 12, 2025  
+**Version:** 2.0
+**Last Updated:** October 12, 2025
 **Status:** Production-Ready Pattern
 
 ---
@@ -23,11 +23,11 @@ This guide helps you create validation queries for new NBA data sources (boxscor
 
 We have **TWO proven validation patterns** based on data structure:
 
-### Pattern 1: Game-Based Data 
-**Source:** Odds API Game Lines Validation  
+### Pattern 1: Game-Based Data
+**Source:** Odds API Game Lines Validation
 **Chat ID:** `a1f3eedd-f4e3-4f29-956e-3ff0232daee9`
 
-**Use for:** Boxscores, player stats, team stats, play-by-play  
+**Use for:** Boxscores, player stats, team stats, play-by-play
 **Characteristics:**
 - One snapshot per game (or per player-game, per team-game)
 - Binary completeness: data exists or it doesn't
@@ -47,10 +47,10 @@ We have **TWO proven validation patterns** based on data structure:
 ---
 
 ### Pattern 2: Time-Series Data
-**Source:** NBA.com Injury Report Validation  
+**Source:** NBA.com Injury Report Validation
 **Chat ID:** `7550cbf9-8ac3-47f4-8529-5f56d76d4a59`
 
-**Use for:** Hourly/daily snapshots, real-time feeds, status tracking  
+**Use for:** Hourly/daily snapshots, real-time feeds, status tracking
 **Characteristics:**
 - Multiple snapshots per day (e.g., 24 hourly snapshots)
 - Empty periods are often NORMAL (60-70% empty is typical)
@@ -121,7 +121,7 @@ We have **TWO proven validation patterns** based on data structure:
 
 ```sql
 -- What dates do we ACTUALLY have?
-SELECT 
+SELECT
   MIN(date_field) as earliest_date,
   MAX(date_field) as latest_date,
   COUNT(DISTINCT date_field) as total_dates_with_data,
@@ -152,7 +152,7 @@ actual_data_dates AS (
   SELECT DISTINCT date_field as game_date
   FROM `nba-props-platform.[dataset].[table]`
 )
-SELECT 
+SELECT
   g.game_date,
   FORMAT_DATE('%A', g.game_date) as day_of_week
 FROM all_scheduled_games g
@@ -180,13 +180,13 @@ WITH date_series AS (
   ORDER BY date_field
 ),
 with_next_date AS (
-  SELECT 
+  SELECT
     date_field,
     LEAD(date_field) OVER (ORDER BY date_field) as next_date,
     DATE_DIFF(LEAD(date_field) OVER (ORDER BY date_field), date_field, DAY) as days_gap
   FROM date_series
 )
-SELECT 
+SELECT
   date_field,
   next_date,
   days_gap,
@@ -215,7 +215,7 @@ ORDER BY date_field;
 ```sql
 -- Check record counts by date (game-based data)
 WITH daily_counts AS (
-  SELECT 
+  SELECT
     date_field,
     COUNT(*) as record_count,
     COUNT(DISTINCT team_field) as unique_teams,
@@ -224,7 +224,7 @@ WITH daily_counts AS (
   WHERE date_field BETWEEN '2024-10-01' AND '2025-04-30'
   GROUP BY date_field
 )
-SELECT 
+SELECT
   date_field,
   record_count,
   unique_teams,
@@ -434,24 +434,24 @@ Completeness Definition: Both teams present for scheduled game
 -- Purpose: Verify complete data coverage across all seasons and teams
 -- ============================================================================
 
-WITH 
+WITH
 -- Join data with schedule using team abbreviations
 data_with_season AS (
-  SELECT 
+  SELECT
     d.[date_field],
     d.[unique_id],
     d.[team_abbr_field],
     s.is_playoffs,
     -- Assign season based on date ranges
-    CASE 
+    CASE
       WHEN d.[date_field] BETWEEN '2021-10-19' AND '2022-06-20' THEN '2021-22'
       WHEN d.[date_field] BETWEEN '2022-10-18' AND '2023-06-20' THEN '2022-23'
       WHEN d.[date_field] BETWEEN '2023-10-24' AND '2024-06-20' THEN '2023-24'
       WHEN d.[date_field] BETWEEN '2024-10-22' AND '2025-06-20' THEN '2024-25'
     END as season
   FROM `nba-props-platform.[dataset].[table]` d
-  LEFT JOIN `nba-props-platform.nba_raw.nbac_schedule` s 
-    ON d.[date_field] = s.game_date 
+  LEFT JOIN `nba-props-platform.nba_raw.nbac_schedule` s
+    ON d.[date_field] = s.game_date
     AND d.[team_abbr_field] = s.home_team_tricode  -- USE ABBREVIATIONS!
   WHERE d.[date_field] BETWEEN '2021-10-19' AND '2025-06-20'
     AND s.game_date BETWEEN '2021-10-19' AND '2025-06-20'  -- Partition filter
@@ -459,7 +459,7 @@ data_with_season AS (
 
 -- Diagnostic checks for data quality
 diagnostics AS (
-  SELECT 
+  SELECT
     'DIAGNOSTICS' as row_type,
     COUNT(DISTINCT [unique_id]) as total_records,
     COUNT(DISTINCT CASE WHEN is_playoffs IS NULL THEN [unique_id] END) as null_playoff_flag,
@@ -475,7 +475,7 @@ diagnostics AS (
 
 -- Count by team/season
 team_stats AS (
-  SELECT 
+  SELECT
     'DATA' as row_type,
     season,
     [team_abbr_field] as team,
@@ -487,7 +487,7 @@ team_stats AS (
 )
 
 -- Combine diagnostics and data
-SELECT 
+SELECT
   row_type,
   season,
   team,
@@ -522,7 +522,7 @@ Adapt to check hourly/daily snapshot counts instead of game counts.
 -- Purpose: Identify specific games/dates with missing data
 -- ============================================================================
 
-WITH 
+WITH
 -- Get all expected records from schedule
 expected_from_schedule AS (
   SELECT DISTINCT
@@ -548,14 +548,14 @@ actual_records AS (
 )
 
 -- Find gaps (games that should have data but don't)
-SELECT 
+SELECT
   e.game_date,
   FORMAT_DATE('%A', e.game_date) as day_of_week,
   e.matchup,
   '❌ MISSING' as status
 FROM expected_from_schedule e
 WHERE NOT EXISTS (
-  SELECT 1 
+  SELECT 1
   FROM actual_records a
   WHERE a.game_date = e.game_date
     AND (a.team_abbr = e.home_team_tricode OR a.team_abbr = e.away_team_tricode)
@@ -582,7 +582,7 @@ Check for missing hourly snapshots or peak hours instead of games.
 **For Game-Based (Boxscores):**
 ```sql
 -- Check for incomplete boxscores (missing home or away)
-SELECT 
+SELECT
   game_date,
   game_id,
   COUNT(DISTINCT team_tricode) as teams_present,
@@ -597,7 +597,7 @@ ORDER BY game_date DESC;
 **For Time-Series (Injury Reports):**
 ```sql
 -- Check confidence scores
-SELECT 
+SELECT
   report_date,
   AVG(confidence_score) as avg_confidence,
   MIN(confidence_score) as min_confidence,
@@ -621,7 +621,7 @@ ORDER BY report_date DESC;
 
 ```sql
 -- Daily check: Did we get yesterday's data?
-WITH 
+WITH
 yesterday_schedule AS (
   SELECT COUNT(*) as expected_games
   FROM `nba-props-platform.nba_raw.nbac_schedule`
@@ -634,7 +634,7 @@ yesterday_data AS (
   FROM `nba-props-platform.[dataset].[table]`
   WHERE [date_field] = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
 )
-SELECT 
+SELECT
   DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY) as check_date,
   s.expected_games,
   d.actual_records,
@@ -654,7 +654,7 @@ CROSS JOIN yesterday_data d;
 
 ```sql
 -- Check last 7 days for trends
-SELECT 
+SELECT
   [date_field],
   COUNT(DISTINCT [unique_id]) as record_count,
   COUNT(DISTINCT [team_abbr]) as unique_teams
@@ -670,7 +670,7 @@ ORDER BY [date_field] DESC;
 
 ```sql
 -- Check if data is being captured today (for real-time feeds)
-SELECT 
+SELECT
   MAX([timestamp_field]) as last_update,
   TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), MAX([timestamp_field]), MINUTE) as minutes_since_last
 FROM `nba-props-platform.[dataset].[table]`
@@ -696,7 +696,7 @@ WHERE [date_field] = CURRENT_DATE();
    ```bash
    # Change from:
    validate-odds completeness
-   
+
    # To:
    validate-boxscores completeness
    ```
@@ -798,7 +798,7 @@ WHERE [date_field] = CURRENT_DATE();
 ```sql
 -- GOOD: Dynamic from schedule
 SELECT team, COUNT(*) as expected_games
-FROM schedule 
+FROM schedule
 WHERE is_playoffs = FALSE
 GROUP BY team
 
@@ -863,14 +863,14 @@ WHERE t1.date_field BETWEEN '2024-10-01' AND '2025-04-30'
 **Add diagnostics to catch common issues:**
 
 - **NULL playoff flags** → Schedule join failed
-- **NULL team abbreviations** → Data quality issue  
+- **NULL team abbreviations** → Data quality issue
 - **Unexpected record counts** → Scraper issue
 - **Failed joins** → Team name mismatch
 
 **Example:**
 ```sql
 diagnostics AS (
-  SELECT 
+  SELECT
     COUNT(*) as total_records,
     COUNT(CASE WHEN is_playoffs IS NULL THEN 1 END) as null_playoff_flag,
     COUNT(CASE WHEN season IS NULL THEN 1 END) as null_season,
@@ -936,7 +936,7 @@ Impact: Almost created backfill plan for 1.9M "missing" records
 **Problem:**
 ```sql
 -- BAD: Hardcoded expectations
-SELECT 
+SELECT
   team,
   CASE WHEN games = 82 THEN '✅' ELSE '❌' END
 FROM team_stats
@@ -984,7 +984,7 @@ ON data.team_abbr = schedule.home_team_tricode
 **Problem:**
 ```sql
 -- BAD: Missing partition filter on second table
-FROM table1 
+FROM table1
 JOIN table2 ON ...
 WHERE table1.date BETWEEN '2024-10-01' AND '2025-04-30'
 -- ERROR if table2 requires partition filter!
@@ -993,7 +993,7 @@ WHERE table1.date BETWEEN '2024-10-01' AND '2025-04-30'
 **Solution:**
 ```sql
 -- GOOD: Filter both tables
-FROM table1 
+FROM table1
 JOIN table2 ON ...
 WHERE table1.date BETWEEN '2024-10-01' AND '2025-04-30'
   AND table2.date BETWEEN '2024-10-01' AND '2025-04-30'
@@ -1052,7 +1052,7 @@ END
 
 ### Discovery Phase ✅
 - [ ] Ran Query 1: Actual date range
-- [ ] Ran Query 2: Missing game days  
+- [ ] Ran Query 2: Missing game days
 - [ ] Ran Query 3: Date continuity gaps
 - [ ] Ran Query 4: Record volume check
 - [ ] Documented findings
@@ -1098,9 +1098,9 @@ END
 ## 📊 Common Data Patterns & Validations
 
 ### Pattern: Game-Level Data
-**Examples:** Boxscores, team stats, game logs  
-**Grain:** One record per game (or per team per game)  
-**Validation:** Every scheduled game has exactly X records  
+**Examples:** Boxscores, team stats, game logs
+**Grain:** One record per game (or per team per game)
+**Validation:** Every scheduled game has exactly X records
 **Reference:** `odds_game_lines`
 
 **Key Queries:**
@@ -1111,9 +1111,9 @@ END
 ---
 
 ### Pattern: Player-Game Data
-**Examples:** Player stats, minutes played, shots taken  
-**Grain:** One record per player per game  
-**Validation:** Every active player has 1 record per game  
+**Examples:** Player stats, minutes played, shots taken
+**Grain:** One record per player per game
+**Validation:** Every active player has 1 record per game
 **Reference:** `odds_game_lines` (adapted)
 
 **Key Queries:**
@@ -1124,9 +1124,9 @@ END
 ---
 
 ### Pattern: Time-Series Data
-**Examples:** Injury reports, live odds, real-time feeds  
-**Grain:** Multiple snapshots per day  
-**Validation:** Peak times exist, understand empty is normal  
+**Examples:** Injury reports, live odds, real-time feeds
+**Grain:** Multiple snapshots per day
+**Validation:** Peak times exist, understand empty is normal
 **Reference:** `injury_report`
 
 **Key Queries:**
@@ -1138,9 +1138,9 @@ END
 ---
 
 ### Pattern: Play-by-Play Data
-**Examples:** Shot charts, possession data, play descriptions  
-**Grain:** Many events per game  
-**Validation:** Every game has N events, continuous sequence  
+**Examples:** Shot charts, possession data, play descriptions
+**Grain:** Many events per game
+**Validation:** Every game has N events, continuous sequence
 **Reference:** `odds_game_lines` (adapted)
 
 **Key Queries:**
@@ -1151,9 +1151,9 @@ END
 ---
 
 ### Pattern: Aggregate/Daily Data
-**Examples:** Daily standings, season averages, cumulative stats  
-**Grain:** One record per team per day  
-**Validation:** Daily records present, monotonic increases  
+**Examples:** Daily standings, season averages, cumulative stats
+**Grain:** One record per team per day
+**Validation:** Daily records present, monotonic increases
 **Reference:** `injury_report` (time-series)
 
 **Key Queries:**
@@ -1282,8 +1282,8 @@ nba_raw.nbac_schedule
 
 ---
 
-**Last Updated:** October 12, 2025  
-**Version:** 2.0  
-**Status:** Production-Ready  
-**Patterns:** 2 (Game-Based + Time-Series)  
+**Last Updated:** October 12, 2025
+**Version:** 2.0
+**Status:** Production-Ready
+**Patterns:** 2 (Game-Based + Time-Series)
 **Proven Coverage:** 8 NBA seasons validated (4 seasons × 2 implementations)

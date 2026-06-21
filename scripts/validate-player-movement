@@ -43,14 +43,14 @@ run_query() {
     local query_file=$1
     local output_format=$2
     local output_dest=$3
-    
+
     if [ ! -f "$QUERIES_DIR/$query_file" ]; then
         print_error "Query file not found: $query_file"
         return 1
     fi
-    
+
     print_info "Running query: $query_file"
-    
+
     if [ "$output_format" = "csv" ]; then
         bq query --use_legacy_sql=false --format=csv < "$QUERIES_DIR/$query_file"
     elif [ "$output_format" = "table" ] && [ -n "$output_dest" ]; then
@@ -104,35 +104,35 @@ cmd_distribution() {
 cmd_all() {
     print_header "Player Movement - Running All Validation Checks"
     echo ""
-    
+
     print_info "1/7 - Season Completeness"
     cmd_completeness "$1" "$2"
     echo ""
-    
+
     print_info "2/7 - Trade Validation"
     cmd_trades "$1" "$2"
     echo ""
-    
+
     print_info "3/7 - Team Activity"
     cmd_teams "$1" "$2"
     echo ""
-    
+
     print_info "4/7 - Data Quality"
     cmd_quality "$1" "$2"
     echo ""
-    
+
     print_info "5/7 - Recent Activity"
     cmd_recent "$1" "$2"
     echo ""
-    
+
     print_info "6/7 - Scraper Freshness"
     cmd_freshness "$1" "$2"
     echo ""
-    
+
     print_info "7/7 - Transaction Distribution"
     cmd_distribution "$1" "$2"
     echo ""
-    
+
     print_success "All validation checks complete!"
 }
 
@@ -186,7 +186,7 @@ ${GREEN}COMMON WORKFLOWS:${NC}
 
 ${GREEN}QUERY FILES:${NC}
     Location: ${QUERIES_DIR}/
-    
+
     - season_completeness_check.sql
     - trade_validation.sql
     - team_activity_check.sql

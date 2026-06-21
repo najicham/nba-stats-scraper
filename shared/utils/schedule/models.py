@@ -39,22 +39,22 @@ class NBAGame:
     game_type: str  # 'regular_season', 'playoff', 'play_in', 'all_star_special', 'preseason'
     commence_time: str  # ISO format
     season_year: int
-    
+
     @property
     def matchup(self) -> str:
         """Return matchup string (e.g., 'LAL@GSW')."""
         return f"{self.away_team}@{self.home_team}"
-    
+
     @property
     def is_playoff(self) -> bool:
         """Check if game is playoff or play-in."""
         return self.game_type in ['playoff', 'play_in']
-    
+
     @property
     def is_regular_season(self) -> bool:
         """Check if game is regular season."""
         return self.game_type == 'regular_season'
-    
+
     def to_dict(self) -> dict:
         """Convert to dictionary for BigQuery loading."""
         return {

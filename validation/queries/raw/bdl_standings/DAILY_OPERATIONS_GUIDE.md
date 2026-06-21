@@ -1,7 +1,7 @@
 # BDL Standings - Daily Validation Operations Guide
 
-**Version:** 1.0  
-**Last Updated:** 2025-10-14  
+**Version:** 1.0
+**Last Updated:** 2025-10-14
 **Season:** 2025-26 NBA Season
 
 ---
@@ -29,11 +29,11 @@ Recommendation: No action needed - data looks good!
 ```
 
 #### **Alert Conditions:**
-- 🔴 **CRITICAL:** Status shows "No data during NBA season" 
+- 🔴 **CRITICAL:** Status shows "No data during NBA season"
   - **ACTION:** Check scraper logs immediately
   - Verify GCS bucket for missing files
   - Re-run scraper for yesterday's date
-  
+
 - ⚠️ **WARNING:** Team count ≠ 30 or conference imbalance
   - **ACTION:** Check processor logs
   - Verify team abbreviation mapping
@@ -145,7 +145,7 @@ Run comprehensive season coverage check:
    gcloud run jobs execute bdl-standings-scraper \
      --args="--date=2025-10-13" \
      --wait
-   
+
    # Re-run processor
    gcloud run jobs execute bdl-standings-processor \
      --args="--date=2025-10-13" \

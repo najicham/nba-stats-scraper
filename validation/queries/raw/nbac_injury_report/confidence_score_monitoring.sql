@@ -9,10 +9,10 @@
 --   - Low confidence records may need manual review
 -- ============================================================================
 
-WITH 
+WITH
 -- Daily confidence trends (OPTIMIZED: Added date filter in base query)
 daily_confidence AS (
-  SELECT 
+  SELECT
     report_date,
     COUNT(*) as total_records,
     AVG(confidence_score) as avg_confidence,
@@ -32,16 +32,16 @@ daily_confidence AS (
 
 -- Add rolling averages
 with_trends AS (
-  SELECT 
+  SELECT
     *,
     AVG(avg_confidence) OVER (
-      ORDER BY report_date 
+      ORDER BY report_date
       ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
     ) as rolling_7day_avg
   FROM daily_confidence
 )
 
-SELECT 
+SELECT
   report_date,
   FORMAT_DATE('%A', report_date) as day_of_week,
   total_records,

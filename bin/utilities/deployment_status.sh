@@ -34,18 +34,18 @@ if ! gcloud run jobs list --project="$PROJECT_ID" --region="$REGION" --format="v
     echo ""
     echo "Available job configurations:"
     echo ""
-    
+
     echo "Reference Jobs:"
     find backfill_jobs/reference/ -name "job-config.env" 2>/dev/null | sed 's|backfill_jobs/reference/||' | sed 's|/job-config.env||' | sed 's/^/  /' || echo "  None found"
-    
+
     echo ""
     echo "Analytics Jobs:"
     find backfill_jobs/analytics/ -name "job-config.env" 2>/dev/null | sed 's|backfill_jobs/analytics/||' | sed 's|/job-config.env||' | sed 's/^/  /' || echo "  None found"
-    
+
     echo ""
     echo "Raw Jobs:"
     find backfill_jobs/raw/ -name "job-config.env" 2>/dev/null | sed 's|backfill_jobs/raw/||' | sed 's|/job-config.env||' | sed 's/^/  /' || echo "  None found"
-    
+
     echo ""
     echo "To deploy jobs, use:"
     echo "  ./bin/reference/deploy/deploy_reference_processor_backfill.sh <job-name>"
@@ -57,7 +57,7 @@ fi
 # List jobs with type and status
 while read -r job_name; do
     job_type=$(get_job_type "$job_name")
-    
+
     # Get last execution info
     last_execution=$(gcloud run jobs executions list \
         --job="$job_name" \
@@ -65,7 +65,7 @@ while read -r job_name; do
         --region="$REGION" \
         --limit=1 \
         --format="value(metadata.name,metadata.creationTimestamp,status.succeeded)" 2>/dev/null | head -1)
-    
+
     if [[ -n "$last_execution" ]]; then
         IFS=$'\t' read -r exec_name exec_time exec_success <<< "$last_execution"
         if [[ "$exec_success" == "True" ]]; then
@@ -78,9 +78,9 @@ while read -r job_name; do
     else
         status="⚪ Never executed"
     fi
-    
+
     printf "%-12s %-40s %s\n" "[$job_type]" "$job_name" "$status"
-    
+
 done < <(gcloud run jobs list --project="$PROJECT_ID" --region="$REGION" --format="value(metadata.name)" | sort)
 
 echo ""

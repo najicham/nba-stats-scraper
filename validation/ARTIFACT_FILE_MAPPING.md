@@ -8,15 +8,15 @@ This document maps all the artifacts created in this conversation to their desti
 ## Core Framework Files
 
 ### 1. base_validator.py
-**Artifact ID:** `base_validator`  
-**Destination:** `validation/base_validator.py`  
-**Description:** Core validation framework with config-driven logic  
+**Artifact ID:** `base_validator`
+**Destination:** `validation/base_validator.py`
+**Description:** Core validation framework with config-driven logic
 **Status:** ✅ Ready to copy
 
 ### 2. partition_filter.py
-**Artifact ID:** `partition_filter_handler`  
-**Destination:** `validation/utils/partition_filter.py`  
-**Description:** Automatic partition filter injection for BigQuery queries  
+**Artifact ID:** `partition_filter_handler`
+**Destination:** `validation/utils/partition_filter.py`
+**Description:** Automatic partition filter injection for BigQuery queries
 **Status:** ✅ Ready to copy
 
 ---
@@ -24,31 +24,31 @@ This document maps all the artifacts created in this conversation to their desti
 ## Configuration Files
 
 ### 3. ESPN Scoreboard Config (Example)
-**Artifact ID:** `config_schema`  
-**Destination:** `validation/configs/raw/espn_scoreboard.yaml`  
-**Description:** Example validation config for ESPN Scoreboard processor  
+**Artifact ID:** `config_schema`
+**Destination:** `validation/configs/raw/espn_scoreboard.yaml`
+**Description:** Example validation config for ESPN Scoreboard processor
 **Status:** ✅ Ready to copy
 
 ### 4. Multiple Config Templates
-**Artifact ID:** `config_templates`  
+**Artifact ID:** `config_templates`
 **Contains:**
 - `validation/configs/raw/bdl_boxscores.yaml`
 - `validation/configs/raw/odds_api_props.yaml`
 - `validation/configs/raw/nbac_schedule.yaml`
 - `validation/configs/raw/nbac_gamebook.yaml`
 
-**Description:** Template configs for various processor types  
+**Description:** Template configs for various processor types
 **Status:** ✅ Copy each section to respective file (separated by `---`)
 
 ### 5. Real Processor Configs (Based on Actual Schemas)
-**Artifact ID:** `real_configs`  
+**Artifact ID:** `real_configs`
 **Contains:**
 - `validation/configs/raw/espn_scoreboard.yaml` (detailed)
 - `validation/configs/raw/bdl_boxscores.yaml` (detailed)
 - `validation/configs/raw/odds_api_props.yaml` (detailed)
 - `validation/configs/raw/nbac_schedule.yaml` (detailed)
 
-**Description:** Production-ready configs based on your actual BigQuery schemas  
+**Description:** Production-ready configs based on your actual BigQuery schemas
 **Status:** ✅ Copy each section to respective file (separated by `---`)
 
 ---
@@ -56,9 +56,9 @@ This document maps all the artifacts created in this conversation to their desti
 ## Validator Files
 
 ### 6. BDL Boxscores Validator (Custom Example)
-**Artifact ID:** `custom_validator_example`  
-**Destination:** `validation/validators/raw/bdl_boxscores_validator.py`  
-**Description:** Example of custom validator extending BaseValidator  
+**Artifact ID:** `custom_validator_example`
+**Destination:** `validation/validators/raw/bdl_boxscores_validator.py`
+**Description:** Example of custom validator extending BaseValidator
 **Status:** ✅ Ready to copy
 
 ---
@@ -66,15 +66,15 @@ This document maps all the artifacts created in this conversation to their desti
 ## Documentation Files
 
 ### 7. Partition Filter Guide
-**Artifact ID:** `partition_filter_readme`  
-**Destination:** `validation/PARTITION_FILTER_GUIDE.md`  
-**Description:** Explains BigQuery partition filtering and how framework handles it  
+**Artifact ID:** `partition_filter_readme`
+**Destination:** `validation/PARTITION_FILTER_GUIDE.md`
+**Description:** Explains BigQuery partition filtering and how framework handles it
 **Status:** ✅ Ready to copy
 
 ### 8. Implementation Guide
-**Artifact ID:** `implementation_guide`  
-**Destination:** `validation/IMPLEMENTATION_GUIDE.md`  
-**Description:** Comprehensive guide for implementing the validation system  
+**Artifact ID:** `implementation_guide`
+**Destination:** `validation/IMPLEMENTATION_GUIDE.md`
+**Description:** Comprehensive guide for implementing the validation system
 **Status:** ✅ Ready to copy
 
 ---
@@ -199,7 +199,7 @@ python -m validation.validators.raw.PROCESSOR_NAME_validator \
 
 ## Context Window Usage
 
-**Current Status:** ~126K / 190K tokens (~66% used)  
+**Current Status:** ~126K / 190K tokens (~66% used)
 **Remaining:** ~64K tokens (34%)
 
 **What We Can Still Fit:**
@@ -208,5 +208,5 @@ python -m validation.validators.raw.PROCESSOR_NAME_validator \
 - ✅ Schedule configs
 - ⚠️ Won't fit: All remaining validators (too many)
 
-**Recommendation:**  
+**Recommendation:**
 Get one validator working end-to-end, then start fresh chat with learnings for remaining validators.

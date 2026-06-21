@@ -181,15 +181,15 @@ class GetNbaComPlayerList(ScraperBase, ScraperFlaskMixin):
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-                
+
                 raise DownloadDataException("'resultSets' missing or empty.")
-            
+
             logger.info("resultSets found with length %d", len(rs))
-            
+
             # Get player count for success notification
             rows: List = rs[0].get("rowSet", [])
             player_count = len(rows)
-            
+
             # Send success notification
             try:
                 notify_info(
@@ -205,7 +205,7 @@ class GetNbaComPlayerList(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-                
+
         except DownloadDataException:
             # Re-raise validation exceptions (already notified above)
             raise

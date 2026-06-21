@@ -62,11 +62,11 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
         self.project_id = get_project_id()
         self.bq_client = get_bigquery_client(self.project_id)
         self.storage_client = storage.Client()
-        
+
         # Tracking counters
         self.games_processed = 0
         self.games_failed = 0
-        
+
         # NEW: Source tracking
         self.data_source = None  # Will be set from file path
 
@@ -77,11 +77,11 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
     def detect_data_source(self, file_path: str) -> str:
         """
         Detect data source from GCS file path.
-        
+
         Paths:
         - nba-com/schedule/... = "api_stats" (API scraper)
         - nba-com/schedule-cdn/... = "cdn_static" (CDN scraper)
-        
+
         Returns:
             "api_stats" or "cdn_static"
         """
@@ -93,25 +93,25 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
             # Default to api_stats for backwards compatibility
             logger.warning(f"Could not detect source from path: {file_path}, defaulting to api_stats")
             return "api_stats"
-    
+
     def get_file_content(self, file_path: str) -> Dict:
         """Read and parse JSON file from GCS."""
         try:
             # Parse GCS path: gs://bucket-name/path/to/file.json
             if not file_path.startswith('gs://'):
                 raise ValueError(f"Invalid GCS path: {file_path}")
-            
+
             path_parts = file_path[5:].split('/', 1)  # Remove 'gs://' and split
             bucket_name = path_parts[0]
             blob_name = path_parts[1]
-            
+
             # Get the file content
             bucket = self.storage_client.bucket(bucket_name)
             blob = bucket.blob(blob_name)
-            
+
             if not blob.exists():
                 error_msg = f"File not found: {file_path}"
-                
+
                 # Notify about missing file
                 try:
                     notify_error(
@@ -127,16 +127,16 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-                
+
                 raise FileNotFoundError(error_msg)
-            
+
             # Download and parse JSON
             content = blob.download_as_text()
             return json.loads(content)
-            
+
         except json.JSONDecodeError as e:
             logger.error(f"JSON parse error for {file_path}: {e}")
-            
+
             # Notify about JSON parsing failure
             try:
                 notify_error(
@@ -151,12 +151,12 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise
-            
+
         except Exception as e:
             logger.error(f"Error reading file {file_path}: {e}")
-            
+
             # Notify about file reading failure
             try:
                 notify_error(
@@ -171,9 +171,9 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise
-    
+
     def normalize_text(self, text: str) -> str:
         """Normalize text for data consistency."""
         if not text:
@@ -182,13 +182,13 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
         # Remove extra spaces
         normalized = re.sub(r'\s+', ' ', normalized)
         return normalized
-    
+
     def extract_scrape_timestamp(self, raw_data: Dict) -> Optional[datetime]:
         """Extract scrape timestamp from raw data if available."""
         timestamp_str = raw_data.get('timestamp') or raw_data.get('fetchedUtc')
         if not timestamp_str:
             return None
-            
+
         try:
             # Handle different timestamp formats
             if timestamp_str.endswith('Z'):
@@ -200,7 +200,7 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
         except (ValueError, AttributeError):
             logger.warning(f"Could not parse timestamp: {timestamp_str}")
             return None
-    
+
     def calculate_season_year(self, game_date_str: str) -> int:
         """Calculate NBA season year from game date."""
         try:
@@ -208,22 +208,22 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                 game_date = datetime.fromisoformat(game_date_str.replace('Z', '+00:00')).date()
             else:
                 game_date = datetime.fromisoformat(game_date_str.split('T')[0]).date()
-            
+
             # NBA season runs Oct-June, so games in Oct+ are start of new season
             return game_date.year if game_date.month >= 10 else game_date.year - 1
         except (ValueError, AttributeError):
             logger.warning(f"Could not parse game date: {game_date_str}")
             return None
-    
+
     def determine_game_status_text(self, status_id: int) -> str:
         """Convert numeric game status to text."""
         status_map = {
             1: "Scheduled",
-            2: "In Progress", 
+            2: "In Progress",
             3: "Final"
         }
         return status_map.get(status_id, "Unknown")
-    
+
     def is_business_relevant_game(self, game: Dict) -> bool:
         """
         Determine if game should be included in database based on business rules.
@@ -241,23 +241,23 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
             game.get('isPlayoffs', False)
         )
         # Note: All-Star and Pre-Season excluded to match raw data processor filtering
-    
+
     def extract_enhanced_fields(self, game_data: Dict) -> Dict:
         """Extract the 18 enhanced fields provided by the scraper."""
         enhanced_fields = {}
-        
+
         # Core Broadcaster Context (5 fields)
         enhanced_fields['is_primetime'] = game_data.get('isPrimetime', False)
         enhanced_fields['has_national_tv'] = game_data.get('hasNationalTV', False)
         enhanced_fields['primary_network'] = game_data.get('primaryNetwork')
-        
+
         # Convert arrays to JSON strings for BigQuery storage
         traditional_networks = game_data.get('traditionalNetworks', [])
         enhanced_fields['traditional_networks'] = json.dumps(traditional_networks) if traditional_networks else None
-        
+
         streaming_platforms = game_data.get('streamingPlatforms', [])
         enhanced_fields['streaming_platforms'] = json.dumps(streaming_platforms) if streaming_platforms else None
-        
+
         # Core Game Type Classification (7 fields)
         enhanced_fields['is_regular_season'] = game_data.get('isRegularSeason', False)
         enhanced_fields['is_playoffs'] = game_data.get('isPlayoffs', False)
@@ -266,36 +266,36 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
         enhanced_fields['playoff_round'] = game_data.get('playoffRound')
         enhanced_fields['is_christmas'] = game_data.get('isChristmas', False)
         enhanced_fields['is_mlk_day'] = game_data.get('isMLKDay', False)
-        
+
         # Core Scheduling Context (3 fields)
         enhanced_fields['day_of_week'] = game_data.get('dayOfWeek')
         enhanced_fields['is_weekend'] = game_data.get('isWeekend', False)
         enhanced_fields['time_slot'] = game_data.get('timeSlot')
-        
+
         # Special Venue Context (3 additional fields)
         enhanced_fields['neutral_site_flag'] = game_data.get('neutralSite', False)
         enhanced_fields['international_game'] = game_data.get('internationalGame', False)
         enhanced_fields['arena_timezone'] = game_data.get('arenaTimezone')
-        
+
         return enhanced_fields
-    
+
     def validate_data(self, data: Dict) -> List[str]:
         """Validate the schedule data structure."""
         errors = []
-        
+
         # Check required top-level fields
         required_fields = ['season', 'season_nba_format', 'game_count', 'games']
         for field in required_fields:
             if field not in data:
                 errors.append(f"Missing required field: {field}")
-        
+
         # Validate games array
         if 'games' in data:
             if not isinstance(data['games'], list):
                 errors.append("'games' field must be a list")
             elif len(data['games']) == 0:
                 errors.append("'games' list is empty")
-                
+
                 # Notify about empty games list
                 try:
                     notify_warning(
@@ -317,14 +317,14 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                 for i, game in enumerate(data['games'][:3]):
                     game_errors = self.validate_game_structure(game, i)
                     errors.extend(game_errors)
-        
+
         # Validate game count consistency
         if 'games' in data and 'game_count' in data:
             expected_count = data['game_count']
             actual_count = len(data['games'])
             if actual_count != expected_count:
                 errors.append(f"Game count mismatch: expected {expected_count}, got {actual_count}")
-                
+
                 # Notify about count mismatch
                 try:
                     notify_warning(
@@ -341,7 +341,7 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-        
+
         # Notify about validation failures
         if errors:
             try:
@@ -358,18 +358,18 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-                
+
         return errors
-    
+
     def validate_game_structure(self, game: Dict, index: int) -> List[str]:
         """Validate individual game structure including enhanced fields."""
         errors = []
-        
+
         required_game_fields = ['gameId', 'gameCode', 'gameDateEst', 'homeTeam', 'awayTeam']
         for field in required_game_fields:
             if field not in game:
                 errors.append(f"Game {index}: Missing required field '{field}'")
-        
+
         # Validate team structures
         for team_type in ['homeTeam', 'awayTeam']:
             if team_type in game:
@@ -378,30 +378,30 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                 for field in required_team_fields:
                     if field not in team:
                         errors.append(f"Game {index}: {team_type} missing field '{field}'")
-        
+
         # Validate enhanced fields (optional but if present, check types)
         enhanced_boolean_fields = [
-            'isPrimetime', 'hasNationalTV', 'isRegularSeason', 'isPlayoffs', 
+            'isPrimetime', 'hasNationalTV', 'isRegularSeason', 'isPlayoffs',
             'isAllStar', 'isEmiratesCup', 'isChristmas', 'isMLKDay', 'isWeekend',
             'neutralSite', 'internationalGame'
         ]
-        
+
         for field in enhanced_boolean_fields:
             if field in game and not isinstance(game[field], bool):
                 errors.append(f"Game {index}: Enhanced field '{field}' should be boolean")
-        
+
         enhanced_array_fields = ['traditionalNetworks', 'streamingPlatforms']
         for field in enhanced_array_fields:
             if field in game and not isinstance(game[field], list):
                 errors.append(f"Game {index}: Enhanced field '{field}' should be array")
-        
+
         enhanced_string_fields = ['primaryNetwork', 'playoffRound', 'dayOfWeek', 'timeSlot', 'arenaTimezone']
         for field in enhanced_string_fields:
             if field in game and game[field] is not None and not isinstance(game[field], str):
                 errors.append(f"Game {index}: Enhanced field '{field}' should be string or null")
-        
+
         return errors
-    
+
     def transform_data(self) -> None:
         """Transform raw schedule data into BigQuery format.
 
@@ -423,24 +423,24 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
             scrape_timestamp = self.extract_scrape_timestamp(raw_data)
             season = raw_data.get('season', '')
             season_nba_format = raw_data.get('season_nba_format', '')
-            
+
             # NEW: Current timestamp for source tracking
             current_timestamp = datetime.utcnow()
-            
+
             total_games = len(raw_data.get('games', []))
             business_relevant_games = 0
             self.games_processed = 0
             self.games_failed = 0
-            
+
             # Process each game
             for game in raw_data.get('games', []):
                 try:
                     # Apply business filter - exclude preseason games
                     if not self.is_business_relevant_game(game):
                         continue
-                    
+
                     business_relevant_games += 1
-                    
+
                     # Parse game date and time
                     # Use gameDateTimeEst (has actual game time) instead of gameDateEst (date only at midnight)
                     # NOTE: NBA API uses 'Z' suffix but gameDateTimeEst is actually Eastern time (not UTC)
@@ -453,28 +453,28 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                         game_datetime = eastern.localize(naive_dt)
                     else:
                         game_datetime = datetime.fromisoformat(game_datetime_str)
-                    
+
                     game_date = game_datetime.date()
                     season_year = self.calculate_season_year(game_datetime_str)
-                    
+
                     # Extract team data
                     home_team = game.get('homeTeam', {})
                     away_team = game.get('awayTeam', {})
-                    
+
                     # Extract enhanced fields from scraper
                     enhanced_fields = self.extract_enhanced_fields(game)
-                    
+
                     # Game results (for completed games)
                     home_score = None
                     away_score = None
                     winning_team = None
-                    
+
                     if game.get('gameStatus') == 3:  # Final
                         home_score = home_team.get('score')
                         away_score = away_team.get('score')
                         if home_score is not None and away_score is not None:
                             winning_team = home_team.get('teamTricode') if home_score > away_score else away_team.get('teamTricode')
-                    
+
                     row = {
                         # Core identifiers
                         'game_id': game.get('gameId'),
@@ -482,13 +482,13 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'season': season,
                         'season_nba_format': season_nba_format,
                         'season_year': season_year,
-                        
+
                         # Game details
                         'game_date': game_date.isoformat(),
                         'game_date_est': game_datetime.isoformat(),
                         'game_status': game.get('gameStatus'),
                         'game_status_text': self.determine_game_status_text(game.get('gameStatus', 0)),
-                        
+
                         # Teams
                         'home_team_id': home_team.get('teamId'),
                         'home_team_tricode': home_team.get('teamTricode'),
@@ -496,24 +496,24 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'away_team_id': away_team.get('teamId'),
                         'away_team_tricode': away_team.get('teamTricode'),
                         'away_team_name': self.normalize_text(away_team.get('teamName', '')),
-                        
+
                         # Venue
                         'arena_name': self.normalize_text(game.get('arenaName', '')),
                         'arena_city': self.normalize_text(game.get('arenaCity', '')),
                         'arena_state': self.normalize_text(game.get('arenaState', '')),
-                        
+
                         # Enhanced fields from scraper (18 fields)
                         **enhanced_fields,
-                        
+
                         # Game results
                         'home_team_score': home_score,
                         'away_team_score': away_score,
                         'winning_team_tricode': winning_team,
-                        
+
                         # NEW: Source tracking fields
                         'data_source': self.data_source,
                         'source_updated_at': current_timestamp.isoformat(),
-                        
+
                         # Standard metadata
                         'source_file_path': file_path,
                         'scrape_timestamp': scrape_timestamp.isoformat() if scrape_timestamp else None,
@@ -522,11 +522,11 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                     }
                     rows.append(row)
                     self.games_processed += 1
-                    
+
                 except Exception as e:
                     self.games_failed += 1
                     logger.warning(f"Error processing game {game.get('gameId', 'unknown')}: {e}")
-                    
+
                     # Notify on first game failure
                     if self.games_failed == 1:
                         try:
@@ -544,7 +544,7 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                         except Exception as notify_ex:
                             logger.warning(f"Failed to send notification: {notify_ex}")
                     continue
-            
+
             # Check for high failure rate
             if business_relevant_games > 0:
                 failure_rate = self.games_failed / business_relevant_games
@@ -565,7 +565,7 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                         )
                     except Exception as notify_ex:
                         logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             # Log filtering summary
             excluded_games = total_games - business_relevant_games
             if excluded_games > 0:
@@ -581,7 +581,7 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
 
         except Exception as e:
             logger.error(f"Critical error in transform_data: {e}")
-            
+
             # Notify about critical transformation failure
             try:
                 notify_error(
@@ -598,9 +598,9 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise e
-    
+
     def save_data(self) -> None:
         """
         Save transformed data to BigQuery using proper SQL MERGE.
@@ -763,18 +763,18 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
             else:
                 sanitized[key] = value
         return sanitized
-    
+
     def process_file(self, file_path: str, **kwargs) -> Dict:
         """Process a single file - CRITICAL method for backfill integration."""
         try:
             # NEW: Detect data source from file path
             self.data_source = self.detect_data_source(file_path)
             logger.info(f"Processing file: {file_path} (source: {self.data_source})")
-            
+
             # Get and validate data
             raw_data = self.get_file_content(file_path)
             validation_errors = self.validate_data(raw_data)
-            
+
             if validation_errors:
                 logger.warning(f"Validation errors for {file_path}: {validation_errors}")
                 return {
@@ -784,7 +784,7 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                     'rows_processed': 0,
                     'data_source': self.data_source
                 }
-            
+
             # Transform and load - set raw_data and file_path for transform_data()
             self.raw_data = raw_data
             if not hasattr(self, 'opts') or self.opts is None:
@@ -817,7 +817,7 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             return {
                 'file_path': file_path,
                 'status': status,
@@ -825,11 +825,11 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                 'errors': result.get('errors', []),
                 'data_source': self.data_source
             }
-            
+
         except Exception as e:
             error_msg = str(e)
             logger.error(f"Error processing file {file_path}: {error_msg}")
-            
+
             # Notify about general processing failure
             try:
                 notify_error(
@@ -844,7 +844,7 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             return {
                 'file_path': file_path,
                 'status': 'error',

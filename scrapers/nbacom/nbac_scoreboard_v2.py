@@ -108,7 +108,7 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
             logger.warning("Failed to detect season type from schedule for %s: %s. "
                           "Falling back to Regular Season.", game_date, e)
             return "Regular Season"
-    
+
     # ------------------------------------------------------------------ #
     # Exporters - Updated to include capture group
     # ------------------------------------------------------------------ #
@@ -187,24 +187,24 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
         try:
             # Use base class download methods which handle proxy logic
             super().download_and_decode()
-            
+
             # Check if we got valid V3 format (unlikely but possible)
             if self._is_valid_v3_response():
                 logger.info("Received V3 format response")
                 return
-                
+
         except Exception as exc_v3:
             logger.warning("V3/Direct download failed (%s). Trying V2 endpoint.", exc_v3)
-        
+
         # Fallback to V2 endpoint
         mmddyyyy = self._mm_dd_yyyy()
         self.url = f"{self.BASE_V2}?GameDate={mmddyyyy}&LeagueID=00&DayOffset=0"
         logger.info("Falling back to V2 URL: %s", self.url)
-        
+
         # Use base class download which handles proxy properly
         try:
             super().download_and_decode()
-            
+
             # Validate and convert V2 response
             if self._is_valid_v2_response(self.decoded_data):
                 # Store original for rich data extraction
@@ -230,7 +230,7 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException(error_msg)
-                
+
         except DownloadDataException:
             # Already handled above
             raise
@@ -263,13 +263,13 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
     # Add helper methods:
     def _is_valid_v3_response(self) -> bool:
         """Check if response is valid V3 format"""
-        return (isinstance(self.decoded_data, dict) and 
+        return (isinstance(self.decoded_data, dict) and
                 "scoreboard" in self.decoded_data and
                 isinstance(self.decoded_data["scoreboard"], dict))
 
     def _is_valid_v2_response(self, data: dict) -> bool:
         """Check if response is valid V2 format"""
-        return (isinstance(data, dict) and 
+        return (isinstance(data, dict) and
                 "resultSets" in data and
                 isinstance(data["resultSets"], list))
 
@@ -290,7 +290,7 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
             if ls is None:
                 raise ValueError("Missing LineScore resultSet in V2 response")
             idx_ls = {h: i for i, h in enumerate(ls["headers"])}
-            
+
             # Map (gameId, teamId) -> team data including scores
             team_data = {}
             for row in ls["rowSet"]:
@@ -304,7 +304,7 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
                     "points": row[idx_ls["PTS"]],
                     "quarters": {
                         "q1": row[idx_ls["PTS_QTR1"]],
-                        "q2": row[idx_ls["PTS_QTR2"]], 
+                        "q2": row[idx_ls["PTS_QTR2"]],
                         "q3": row[idx_ls["PTS_QTR3"]],
                         "q4": row[idx_ls["PTS_QTR4"]],
                         "ot1": row[idx_ls.get("PTS_OT1")],
@@ -325,11 +325,11 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
                 game_id = row[idx_gh["GAME_ID"]]
                 home_id = row[idx_gh["HOME_TEAM_ID"]]
                 away_id = row[idx_gh["VISITOR_TEAM_ID"]]
-                
+
                 # Get team data with scores
                 home_team_data = team_data.get((game_id, home_id), {})
                 away_team_data = team_data.get((game_id, away_id), {})
-                
+
                 games.append({
                     "gameId": game_id,
                     "homeTeam": {
@@ -343,7 +343,7 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
                     },
                     "awayTeam": {
                         "teamTricode": away_team_data.get("teamTricode"),
-                        "teamName": away_team_data.get("teamName"), 
+                        "teamName": away_team_data.get("teamName"),
                         "teamCity": away_team_data.get("teamCity"),
                         "winsLosses": away_team_data.get("winsLosses"),
                         "points": away_team_data.get("points"),
@@ -370,7 +370,7 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
                 })
 
             return {"scoreboard": {"games": games}}
-            
+
         except KeyError as e:
             logger.error("V2 to V3 conversion failed - missing key %s for gamedate %s", e, self.opts["gamedate"])
             try:
@@ -420,7 +420,7 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
             if ls is None:
                 raise ValueError("Missing LineScore resultSet in V2 minimal response")
             idx_ls = {h: i for i, h in enumerate(ls["headers"])}
-            
+
             # Simple abbreviation lookup
             abbr = {
                 (row[idx_ls["GAME_ID"]], row[idx_ls["TEAM_ID"]]): row[idx_ls["TEAM_ABBREVIATION"]]
@@ -461,7 +461,7 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
             raise DownloadDataException(error_msg)
-        
+
     # ------------------------------------------------------------------ #
     # Validation - Updated to use base class patterns
     # ------------------------------------------------------------------ #
@@ -485,7 +485,7 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException(error_msg)
-                
+
             if "scoreboard" not in self.decoded_data:
                 error_msg = "Missing 'scoreboard' in response"
                 logger.error("%s for gamedate %s", error_msg, self.opts["gamedate"])
@@ -503,7 +503,7 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException(error_msg)
-                
+
             scoreboard = self.decoded_data["scoreboard"]
             if not isinstance(scoreboard, dict):
                 error_msg = "Scoreboard is not an object"
@@ -522,7 +522,7 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException(error_msg)
-                
+
             if "games" not in scoreboard:
                 error_msg = "Missing 'games' in scoreboard"
                 logger.error("%s for gamedate %s", error_msg, self.opts["gamedate"])
@@ -540,7 +540,7 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException(error_msg)
-                
+
             games = scoreboard["games"]
             if not isinstance(games, list):
                 error_msg = "Games is not a list"
@@ -559,7 +559,7 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException(error_msg)
-                
+
             if not games:
                 logger.warning("No games on %s (possible off-day).", self.opts["gamedate"])
                 # Session 299: Use schedule check instead of day-of-week heuristic
@@ -591,7 +591,7 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
                     logger.debug("Could not perform schedule check: %s", e)
             else:
                 logger.info("Validation passed: %d games found", len(games))
-                
+
         except DownloadDataException:
             # Already handled and notified above
             raise
@@ -625,19 +625,19 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
         """Transform scoreboard data with rich NBA.com details"""
         try:
             games_raw: List[Dict[str, Any]] = self.decoded_data["scoreboard"]["games"]
-            
+
             # Also extract rich data from the original V2 response if available
             rich_games = []
-            
+
             # Check if we have access to the original V2 data for enrichment
             if hasattr(self, '_original_v2_data') and self._original_v2_data:
                 rich_games = self._extract_rich_game_data(self._original_v2_data)
-            
+
             # Process the converted V3-format games
             parsed_games = []
             for i, g in enumerate(games_raw):
                 status = g.get("gameStatus")
-                
+
                 # Base game data
                 game_data = {
                     "gameId": g.get("gameId"),
@@ -648,11 +648,11 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
                     "startTimeET": g.get("gameEt"),
                     "gameCode": g.get("gameCode"),
                 }
-                
+
                 # Enrich with detailed data if available
                 if i < len(rich_games):
                     game_data.update(rich_games[i])
-                
+
                 parsed_games.append(game_data)
 
             self.data = {
@@ -662,9 +662,9 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
                 "games": parsed_games,
                 "source": "nba_scoreboard_v2_enriched"
             }
-            
+
             logger.info("Processed %d enriched games for %s", len(parsed_games), self.opts["gamedate"])
-            
+
         except KeyError as e:
             logger.error("Transformation failed - missing key %s for gamedate %s", e, self.opts["gamedate"])
             try:
@@ -700,8 +700,8 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
 
     def _extract_rich_game_data(self, v2_data: dict) -> List[Dict[str, Any]]:
         """Extract rich game data from original V2 response
-        
-        FIX APPLIED: Properly match teams to home/away using HOME_TEAM_ID 
+
+        FIX APPLIED: Properly match teams to home/away using HOME_TEAM_ID
         instead of just taking teams in order they appear.
         """
         try:
@@ -718,7 +718,7 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
                 raise ValueError("Missing LineScore resultSet in V2 data")
             ls_headers = line_score["headers"]
             ls_idx = {h: i for i, h in enumerate(ls_headers)}
-            
+
             # First pass: Build game metadata from GameHeader
             game_metadata = {}
             for row in game_header["rowSet"]:
@@ -739,16 +739,16 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
                     "live_pc_time": row[gh_idx.get("LIVE_PC_TIME")],
                     "live_period_time_bcast": row[gh_idx.get("LIVE_PERIOD_TIME_BCAST")],
                 }
-            
+
             # Second pass: Process LineScore and properly assign home/away
             game_teams = {}
             for row in line_score["rowSet"]:
                 game_id = row[ls_idx["GAME_ID"]]
                 team_id = row[ls_idx["TEAM_ID"]]
-                
+
                 if game_id not in game_teams:
                     game_teams[game_id] = {"home": None, "away": None}
-                
+
                 team_data = {
                     "teamId": team_id,
                     "abbreviation": row[ls_idx["TEAM_ABBREVIATION"]],
@@ -773,7 +773,7 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
                         "turnovers": row[ls_idx["TOV"]],
                     }
                 }
-                
+
                 # =====================================================================
                 # FIX: Match teams to home/away using actual HOME_TEAM_ID from metadata
                 # instead of just assigning them in order they appear
@@ -787,7 +787,7 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
                         logger.warning(f"Game {game_id}: Team {team_id} doesn't match home or away team ID")
                 else:
                     logger.warning(f"Game {game_id}: Missing metadata, cannot determine home/away")
-            
+
             # Build enriched game data
             enriched_games = []
             for game_id, metadata in game_metadata.items():
@@ -796,31 +796,31 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
                     "gameSequence": metadata["game_sequence"],
                     "gameStatusText": metadata["game_status_text"],
                     "season": metadata["season"],
-                    
+
                     # Venue info
                     "arenaName": metadata["arena_name"],
-                    
+
                     # Broadcast info
                     "broadcasts": metadata["broadcasts"],
-                    
+
                     # Live game state
                     "livePeriod": metadata["live_period"],
                     "livePcTime": metadata["live_pc_time"],
                     "livePeriodTimeBcast": metadata["live_period_time_bcast"],
-                    
+
                     # Team details and stats (now correctly assigned!)
                     "teams": game_teams.get(game_id, {"home": None, "away": None}),
-                    
+
                     # NBA.com specific IDs
                     "homeTeamId": metadata["home_team_id"],
                     "awayTeamId": metadata["away_team_id"],
                 }
-                
+
                 enriched_games.append(enriched_data)
-            
+
             logger.info(f"Extracted rich data for {len(enriched_games)} games with correct home/away assignment")
             return enriched_games
-            
+
         except Exception as e:
             logger.warning("Failed to extract rich game data: %s", e)
             return []
@@ -831,7 +831,7 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
     def get_scraper_stats(self) -> dict:
         """Return scraper statistics"""
         return {
-            "gamedate": self.opts["gamedate"], 
+            "gamedate": self.opts["gamedate"],
             "gameCount": self.data.get("gameCount", 0),
             "source": "nba_scoreboard_v2_only"
         }

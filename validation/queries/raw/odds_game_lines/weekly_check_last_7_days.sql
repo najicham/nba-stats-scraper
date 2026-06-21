@@ -22,7 +22,7 @@ WITH date_range AS (
 ),
 
 daily_schedule AS (
-  SELECT 
+  SELECT
     game_date,
     COUNT(*) as scheduled_games
   FROM `nba-props-platform.nba_raw.nbac_schedule`
@@ -32,7 +32,7 @@ daily_schedule AS (
 ),
 
 daily_odds AS (
-  SELECT 
+  SELECT
     game_date,
     COUNT(DISTINCT game_id) as odds_games
   FROM `nba-props-platform.nba_raw.odds_api_game_lines`
@@ -41,12 +41,12 @@ daily_odds AS (
   GROUP BY game_date
 )
 
-SELECT 
+SELECT
   d.date as game_date,
   FORMAT_DATE('%A', d.date) as day_of_week,
   COALESCE(s.scheduled_games, 0) as scheduled_games,
   COALESCE(o.odds_games, 0) as odds_games,
-  CASE 
+  CASE
     WHEN COALESCE(s.scheduled_games, 0) = 0 THEN '⚪ No games'
     WHEN COALESCE(o.odds_games, 0) = COALESCE(s.scheduled_games, 0) THEN '✅ Complete'
     WHEN COALESCE(o.odds_games, 0) = 0 THEN '❌ Missing all'

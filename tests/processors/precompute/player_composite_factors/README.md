@@ -1,8 +1,8 @@
 # Player Composite Factors Processor - Test Suite
 
-**Path:** `tests/processors/precompute/player_composite_factors/`  
-**Version:** 1.0  
-**Coverage:** 95%+  
+**Path:** `tests/processors/precompute/player_composite_factors/`
+**Version:** 1.0
+**Coverage:** 95%+
 **Total Tests:** 39 unit tests (+ 8 integration, + 15 validation)
 
 ## Quick Start
@@ -529,20 +529,20 @@ pytest test_unit.py -k "warning" -v
 def processor():
     """Create processor instance with mocked dependencies."""
     proc = PlayerCompositeFactorsProcessor()
-    
+
     # Mock BigQuery (no real calls)
     proc.bq_client = Mock()
     proc.project_id = 'test-project'
-    
+
     # Set league baseline
     proc.league_avg_pace = 100.0
-    
+
     # Mock source tracking (normally set by track_source_usage)
     proc.source_player_context_last_updated = datetime(2025, 10, 30, 22, 0)
     proc.source_player_context_rows_found = 1
     proc.source_player_context_completeness_pct = 100.0
     # ... etc for all 4 sources
-    
+
     return proc
 ```
 
@@ -752,14 +752,14 @@ def test_new_factor_calculation(self, processor):
         'field1': value1,
         'field2': value2
     })
-    
+
     # Act - Execute the code
     score = processor._calculate_something(player_row)
-    
+
     # Assert - Verify results
     expected_score = calculate_expected()  # Show your work
     assert score == pytest.approx(expected_score, abs=0.01)
-    
+
     # Additional assertions
     assert 0 <= score <= 100, "Score out of range"
 ```
@@ -783,13 +783,13 @@ def test_new_factor_calculation(self, processor):
 ```python
 def test_back_to_back_penalty(self, processor, tired_player_row):
     """Test back-to-back game applies -15 penalty."""
-    
+
     # Arrange - tired_player_row fixture has:
     # days_rest = 0, back_to_back = True
-    
+
     # Act
     score = processor._calculate_fatigue_score(tired_player_row)
-    
+
     # Assert
     # Expected penalties:
     # - Back-to-back: -15
@@ -827,28 +827,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
-      
+
       - name: Set up Python
         uses: actions/setup-python@v2
         with:
           python-version: '3.11'
-      
+
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
           pip install pytest pytest-cov
-      
+
       - name: Run unit tests
         run: |
           cd tests/processors/precompute/player_composite_factors
           python run_tests.py unit --coverage
-      
+
       - name: Check coverage threshold
         run: |
           pytest test_unit.py \
             --cov=data_processors.precompute.player_composite_factors \
             --cov-fail-under=95
-      
+
       - name: Upload coverage
         uses: codecov/codecov-action@v2
 ```
@@ -896,7 +896,7 @@ sys.modules['google.cloud.logging'] = MagicMock()
 pytest: no tests ran
 ```
 
-**Solution**: 
+**Solution**:
 - Ensure test files start with `test_`
 - Ensure test methods start with `test_`
 - Check that you're in the correct directory

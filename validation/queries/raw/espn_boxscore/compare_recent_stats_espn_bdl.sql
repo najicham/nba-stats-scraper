@@ -21,7 +21,7 @@ WITH overlap_check AS (
 
 SELECT
   '=== OVERLAP CHECK ===' as section,
-  CASE 
+  CASE
     WHEN overlapping_games = 0 THEN '⚪ NO OVERLAPPING GAMES (Normal for sparse backup)'
     ELSE CONCAT('✅ ', CAST(overlapping_games AS STRING), ' games with both sources')
   END as status,
@@ -38,24 +38,24 @@ WITH recent_comparisons AS (
     e.player_lookup,
     e.player_full_name as espn_name,
     b.player_full_name as bdl_name,
-    
+
     -- Core stats comparison
     e.points as espn_pts,
     b.points as bdl_pts,
     ABS(e.points - b.points) as pts_diff,
-    
+
     e.rebounds as espn_reb,
     b.rebounds as bdl_reb,
     ABS(COALESCE(e.rebounds, 0) - COALESCE(b.rebounds, 0)) as reb_diff,
-    
+
     e.assists as espn_ast,
     b.assists as bdl_ast,
     ABS(COALESCE(e.assists, 0) - COALESCE(b.assists, 0)) as ast_diff,
-    
+
     -- Minutes for context
     e.minutes as espn_min,
     b.minutes as bdl_min,
-    
+
     -- Assessment
     CASE
       WHEN ABS(e.points - b.points) > 5 THEN '🔴 CRITICAL: >5 point diff'
@@ -64,7 +64,7 @@ WITH recent_comparisons AS (
       WHEN e.points = b.points THEN '✅ Perfect match'
       ELSE 'Review'
     END as assessment
-    
+
   FROM `nba-props-platform.nba_raw.espn_boxscores` e
   JOIN `nba-props-platform.nba_raw.bdl_player_boxscores` b
     ON e.game_date = b.game_date
@@ -94,7 +94,7 @@ SELECT
   assessment
 FROM recent_comparisons
 WHERE pts_diff > 0 OR reb_diff > 0 OR ast_diff > 0
-ORDER BY 
+ORDER BY
   CASE
     WHEN assessment LIKE '🔴%' THEN 1
     WHEN assessment LIKE '⚠️%' THEN 2

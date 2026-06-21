@@ -300,6 +300,6 @@ If new analytical fields added to table:
 
 ---
 
-**Last Updated**: October 12, 2025  
-**Queries Version**: 1.0  
+**Last Updated**: October 12, 2025
+**Queries Version**: 1.0
 **Table**: `nba-props-platform.nba_raw.nbac_schedule`

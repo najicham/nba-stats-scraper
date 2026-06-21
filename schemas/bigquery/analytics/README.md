@@ -1,12 +1,12 @@
 # Phase 3: Analytics Enrichment
 
-**Dataset:** `nba_analytics`  
+**Dataset:** `nba_analytics`
 **Purpose:** Historical player and team performance with calculated metrics
 
 ## Tables
 
 - `player_game_summary` - Individual player performance per game
-- `team_offense_game_summary` - Team offensive metrics per game  
+- `team_offense_game_summary` - Team offensive metrics per game
 - `team_defense_game_summary` - Team defensive metrics per game
 - `upcoming_team_game_context` - Pre-game team context
 - `upcoming_player_game_context` - Pre-game player context

@@ -29,14 +29,14 @@ boxscore_players AS (
   WHERE b.game_date >= '2024-01-01'
 )
 
-SELECT 
+SELECT
   b.game_date,
   b.game_id,
   b.team_abbr,
   b.player_lookup,
   b.actual_points,
   p.pbp_events,
-  CASE 
+  CASE
     WHEN p.player_1_lookup IS NULL THEN '🔴 MISSING: No play-by-play events'
     WHEN p.pbp_events < 5 THEN '⚠️ WARNING: Very few events (<5)'
     WHEN p.pbp_events < 10 THEN '⚪ Low events (bench player likely)'

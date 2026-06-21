@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 def test_scraper(scraper_name, config_dir, verbose=False):
     """
     Test a specific scraper's freshness check.
-    
+
     Args:
         scraper_name: Name of scraper to test
         config_dir: Path to config directory
@@ -44,14 +44,14 @@ def test_scraper(scraper_name, config_dir, verbose=False):
     print(f"Testing Scraper: {scraper_name}")
     print("=" * 80)
     print()
-    
+
     # Load config
     config_path = config_dir / 'monitoring_config.yaml'
     with open(config_path, 'r') as f:
         monitoring_config = yaml.safe_load(f)
-    
+
     scrapers = monitoring_config.get('scrapers', {})
-    
+
     if scraper_name not in scrapers:
         print(f"Error: Scraper '{scraper_name}' not found in config")
         print()
@@ -59,9 +59,9 @@ def test_scraper(scraper_name, config_dir, verbose=False):
         for name in sorted(scrapers.keys()):
             print(f"  - {name}")
         sys.exit(1)
-    
+
     scraper_config = scrapers[scraper_name]
-    
+
     # Display configuration
     print("Configuration:")
     print(f"  Enabled: {scraper_config.get('enabled', True)}")
@@ -69,36 +69,36 @@ def test_scraper(scraper_name, config_dir, verbose=False):
     print(f"  Path Pattern: {scraper_config.get('gcs', {}).get('path_pattern')}")
     print(f"  Schedule: {scraper_config.get('schedule', {}).get('cron')}")
     print()
-    
+
     # Get season info
     season_manager = SeasonManager(str(config_dir / 'nba_schedule_config.yaml'))
     season_summary = season_manager.get_summary()
-    
+
     print("Season Context:")
     print(f"  Season: {season_summary['season_label']}")
     print(f"  Phase: {season_summary['current_phase']}")
     print(f"  Date: {season_summary['check_date']}")
     print()
-    
+
     # Check games today
     has_games = has_games_today_cached()
     print(f"  Games Today: {has_games}")
     print()
-    
+
     # Get freshness thresholds
     freshness_config = scraper_config.get('freshness', {}).get('max_age_hours', {})
     current_threshold = freshness_config.get(season_summary['current_phase'], 24)
-    
+
     print("Freshness Thresholds:")
     for phase, hours in freshness_config.items():
         marker = " <- CURRENT" if phase == season_summary['current_phase'] else ""
         print(f"  {phase}: {hours}h{marker}")
     print()
-    
+
     # Run freshness check
     print("Running Freshness Check...")
     print("-" * 80)
-    
+
     checker = FreshnessChecker()
     result = checker.check_scraper(
         scraper_name=scraper_name,
@@ -106,13 +106,13 @@ def test_scraper(scraper_name, config_dir, verbose=False):
         current_season=season_summary['current_phase'],
         has_games_today=has_games
     )
-    
+
     print()
     print("=" * 80)
     print("Results")
     print("=" * 80)
     print()
-    
+
     # Status with color
     status_colors = {
         'ok': '\033[92m',      # Green
@@ -122,18 +122,18 @@ def test_scraper(scraper_name, config_dir, verbose=False):
         'error': '\033[91m'     # Red
     }
     reset = '\033[0m'
-    
+
     status_color = status_colors.get(result.status.value, '')
     print(f"Status: {status_color}{result.status.value.upper()}{reset}")
     print(f"Message: {result.message}")
     print()
-    
+
     if result.details:
         print("Details:")
         for key, value in result.details.items():
             print(f"  {key}: {value}")
         print()
-    
+
     # Recommendations
     if result.status.value == 'critical':
         print("⚠️  CRITICAL: Immediate action required")
@@ -143,7 +143,7 @@ def test_scraper(scraper_name, config_dir, verbose=False):
         print("  2. Verify GCS bucket and path")
         print("  3. Check scraper logs for errors")
         print("  4. Manually trigger scraper if needed")
-    
+
     elif result.status.value == 'warning':
         print("⚠️  WARNING: Should be investigated")
         print()
@@ -151,45 +151,45 @@ def test_scraper(scraper_name, config_dir, verbose=False):
         print("  1. Check scraper schedule")
         print("  2. Verify data is being generated")
         print("  3. Consider adjusting thresholds if appropriate")
-    
+
     elif result.status.value == 'skipped':
         print("ℹ️  Skipped (expected based on configuration)")
-    
+
     elif result.status.value == 'ok':
         print("✅ All good!")
-    
+
     print()
-    
+
     # GCS inspection details
     if verbose and result.details.get('file_path'):
         print("=" * 80)
         print("Detailed File Information")
         print("=" * 80)
         print()
-        
+
         file_path = result.details['file_path']
         print(f"File Path: {file_path}")
         print(f"File Age: {result.details.get('file_age_hours', 0):.2f} hours")
         print(f"File Size: {result.details.get('file_size_mb', 0):.3f} MB")
         print(f"Updated At: {result.details.get('updated_at', 'N/A')}")
         print()
-        
+
         # Show threshold comparison
         max_age = result.details.get('max_age_hours', current_threshold)
         file_age = result.details.get('file_age_hours', 0)
-        
+
         print("Age Threshold Comparison:")
         print(f"  File Age: {file_age:.1f}h")
         print(f"  Warning Threshold: {max_age:.1f}h")
         print(f"  Critical Threshold: {max_age * 2:.1f}h")
-        
+
         if file_age < max_age:
             print(f"  ✅ Within threshold ({file_age/max_age*100:.1f}% of limit)")
         elif file_age < max_age * 2:
             print(f"  ⚠️  Exceeds warning threshold")
         else:
             print(f"  🔴 Exceeds critical threshold")
-        
+
         print()
 
 
@@ -198,14 +198,14 @@ def list_scrapers(config_dir):
     config_path = config_dir / 'monitoring_config.yaml'
     with open(config_path, 'r') as f:
         monitoring_config = yaml.safe_load(f)
-    
+
     scrapers = monitoring_config.get('scrapers', {})
-    
+
     print("=" * 80)
     print(f"Available Scrapers ({len(scrapers)} total)")
     print("=" * 80)
     print()
-    
+
     for name, config in sorted(scrapers.items()):
         enabled = config.get('enabled', True)
         status = "✅" if enabled else "⏸️ "
@@ -243,19 +243,19 @@ def main():
         action='store_true',
         help='List all available scrapers'
     )
-    
+
     args = parser.parse_args()
-    
+
     # Determine config directory
     if args.config_dir:
         config_dir = Path(args.config_dir)
     else:
         config_dir = Path(__file__).parent / 'config'
-    
+
     if not config_dir.exists():
         print(f"Error: Config directory not found: {config_dir}")
         sys.exit(1)
-    
+
     # List or test
     if args.list or not args.scraper:
         list_scrapers(config_dir)

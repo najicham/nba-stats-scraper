@@ -2,8 +2,8 @@
 
 **File:** `validation/queries/raw/nbac_player_list/DAILY_MONITORING_GUIDE.md`
 
-**Purpose:** Production monitoring for NBA.com Player List during the NBA season  
-**Season Start:** October 22, 2025  
+**Purpose:** Production monitoring for NBA.com Player List during the NBA season
+**Season Start:** October 22, 2025
 **Monitoring Hours:** Daily at 9:00 AM Pacific (after scraper/processor complete)
 
 ---
@@ -362,15 +362,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
-      
+
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v1
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
-      
+
       - name: Run validation
         run: ./scripts/validate-player-list daily
-      
+
       - name: Alert on failure
         if: failure()
         uses: actions/github-script@v6
@@ -389,28 +389,28 @@ jobs:
 ## Special Monitoring Periods
 
 ### Preseason (October 1-21)
-**Frequency:** Weekly  
-**Expected:** Larger rosters (18-21 per team)  
+**Frequency:** Weekly
+**Expected:** Larger rosters (18-21 per team)
 **Monitor:** Roster cuts before season opener
 
 ### Regular Season (October 22 - April 13)
-**Frequency:** Daily at 9 AM  
-**Expected:** 13-17 players per team  
+**Frequency:** Daily at 9 AM
+**Expected:** 13-17 players per team
 **Monitor:** Trades, injuries, signings
 
 ### Trade Deadline Week (February 3-8, 2026)
-**Frequency:** 3x daily (9 AM, 3 PM, 9 PM)  
-**Expected:** Rapid roster changes  
+**Frequency:** 3x daily (9 AM, 3 PM, 9 PM)
+**Expected:** Rapid roster changes
 **Monitor:** Team mismatches with BDL, player movements
 
 ### Playoffs (April 14 - June 18)
-**Frequency:** Daily at 9 AM  
-**Expected:** Stable rosters (16 teams)  
+**Frequency:** Daily at 9 AM
+**Expected:** Stable rosters (16 teams)
 **Monitor:** Hardship exceptions, injuries
 
 ### Offseason (June 19 - September 30)
-**Frequency:** Weekly  
-**Expected:** Major roster turnover  
+**Frequency:** Weekly
+**Expected:** Major roster turnover
 **Monitor:** Free agency, draft picks, trades
 
 ---
@@ -527,9 +527,9 @@ Ticket: #12345
 
 ## Contact Information
 
-**Primary:** Data Engineering Team  
-**On-Call:** [Rotation Schedule]  
-**Escalation:** Engineering Lead  
+**Primary:** Data Engineering Team
+**On-Call:** [Rotation Schedule]
+**Escalation:** Engineering Lead
 **Documentation:** This guide + README.md
 
 ---
@@ -565,6 +565,6 @@ gcloud run jobs execute nbac-player-list-processor --region=us-west2
 
 ---
 
-**Last Updated:** October 13, 2025  
-**Next Review:** October 22, 2025 (season opener)  
+**Last Updated:** October 13, 2025
+**Next Review:** October 22, 2025 (season opener)
 **Version:** 1.0

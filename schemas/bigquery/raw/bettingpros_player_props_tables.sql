@@ -24,14 +24,14 @@ CREATE TABLE IF NOT EXISTS `nba_raw.bettingpros_player_points_props` (
   bp_event_id INT64 NOT NULL,   -- BettingPros event ID
   offer_id STRING NOT NULL,     -- Unique offer ID per player prop
   bet_side STRING NOT NULL,     -- "over" or "under" (clearer than selection_type)
-  
+
   -- Player identification (aligned with Odds API)
   bp_player_id INT64 NOT NULL,  -- BettingPros player ID
   player_name STRING NOT NULL,  -- "Mitchell Robinson"
   player_lookup STRING NOT NULL, -- Normalized: "mitchellrobinson"
   player_team STRING NOT NULL,  -- Team from BettingPros (including "FA")
   player_position STRING,       -- Position code
-  
+
   -- Team validation (comprehensive data quality framework)
   team_source STRING NOT NULL,           -- Always "bettingpros"
   has_team_issues BOOLEAN NOT NULL,      -- TRUE for ALL records initially
@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS `nba_raw.bettingpros_player_points_props` (
   validation_method STRING NOT NULL,     -- How confidence was determined
   validation_notes STRING,               -- Validation details
   player_complications STRING,           -- "traded_gameday", "g_league_callup", "injury_after_lines", etc.
-  
+
   -- Sportsbook details (aligned with Odds API)
   book_id INT64 NOT NULL,       -- Sportsbook ID
   bookmaker STRING NOT NULL,    -- "BetMGM", "BettingPros Consensus"
@@ -50,13 +50,13 @@ CREATE TABLE IF NOT EXISTS `nba_raw.bettingpros_player_points_props` (
   is_active BOOLEAN NOT NULL,   -- Line currently active
   is_best_line BOOLEAN NOT NULL, -- Flagged as best available
   bookmaker_last_update TIMESTAMP NOT NULL, -- When sportsbook updated line
-  
+
   -- Opening line tracking (BettingPros-specific intelligence)
   opening_line FLOAT64,         -- Original opening line
   opening_odds INT64,           -- Original opening odds
   opening_book_id INT64,        -- Book that set opening
   opening_timestamp TIMESTAMP,  -- Opening line timestamp
-  
+
   -- Processing metadata (standard processor pattern)
   source_file_path STRING NOT NULL,  -- GCS path
   created_at TIMESTAMP NOT NULL,     -- When record first created
@@ -93,7 +93,7 @@ WHERE is_best_line = TRUE
 
 -- Data quality monitoring view
 CREATE OR REPLACE VIEW `nba_raw.bettingpros_validation_summary` AS
-SELECT 
+SELECT
   game_date,
   COUNT(*) as total_records,
   COUNT(DISTINCT player_lookup) as unique_players,

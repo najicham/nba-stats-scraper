@@ -42,11 +42,11 @@ daily_summary AS (
     COUNT(DISTINCT player_full_name) as players_updated,
     COUNT(DISTINCT CASE WHEN first_seen_date = scrape_date THEN player_full_name END) as new_players,
     STRING_AGG(
-      DISTINCT CASE WHEN first_seen_date = scrape_date 
-      THEN CONCAT(team_abbrev, ':', player_full_name) 
+      DISTINCT CASE WHEN first_seen_date = scrape_date
+      THEN CONCAT(team_abbrev, ':', player_full_name)
       END, ', '
-      ORDER BY CASE WHEN first_seen_date = scrape_date 
-      THEN CONCAT(team_abbrev, ':', player_full_name) 
+      ORDER BY CASE WHEN first_seen_date = scrape_date
+      THEN CONCAT(team_abbrev, ':', player_full_name)
       END
     ) as new_player_details
   FROM last_7_days

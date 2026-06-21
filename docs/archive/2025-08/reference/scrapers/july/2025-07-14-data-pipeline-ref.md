@@ -34,7 +34,7 @@ All scraped data is stored in Google Cloud Storage using the following structure
 - **File**: `scrapers/balldontlie/bdl_player_box_scores.py`
 - **Class**: `BdlPlayerBoxScoresScraper`
 - **Parameters**: start_date, end_date OR game_id
-- **Output Path**: 
+- **Output Path**:
   - By date: `/raw-data/ball-dont-lie/player-box-scores/{date}/{timestamp}.json`
   - By game: `/raw-data/ball-dont-lie/player-box-scores/{date}/game_{id}/{timestamp}.json`
 - **Description**: Player statistics for games
@@ -192,7 +192,7 @@ latest_game_file = sorted(list_files(f"/raw-data/{source}/{type}/{date}/game_{id
 ### Pub/Sub Messages
 Scrapers will publish completion messages containing:
 - Scraper class name
-- Success/failure status  
+- Success/failure status
 - Output file path(s)
 - Timestamp
 - Parameters used
@@ -213,7 +213,7 @@ Scrapers will publish completion messages containing:
 - **Schedule** (NBA.com, Ball Don't Lie): Check for game rescheduling
 - **Odds Events** (Odds API): Get upcoming games for prop bet collection
 
-### Afternoon (12-4 PM ET)  
+### Afternoon (12-4 PM ET)
 **Pre-Game Preparation**
 - **Odds Events** (Odds API): Final check for game events
 - **Player Props** (Odds API): Collect prop odds using event IDs from events API

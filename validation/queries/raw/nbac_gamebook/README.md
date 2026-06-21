@@ -9,7 +9,7 @@
 ### Historical Validation
 
 #### 1. `season_completeness_check.sql`
-**Purpose:** Comprehensive season-by-season validation  
+**Purpose:** Comprehensive season-by-season validation
 **Key Metrics:**
 - Games per team (target: 82 regular season)
 - Total players per game (expected: 30-35)
@@ -21,7 +21,7 @@
 ---
 
 #### 2. `find_missing_regular_season_games.sql`
-**Purpose:** Identify specific games missing from gamebook data  
+**Purpose:** Identify specific games missing from gamebook data
 **Output:** List of completely missing games and incomplete games (<25 players)
 
 **When to Run:** When season completeness shows gaps
@@ -34,7 +34,7 @@
 ---
 
 #### 3. `name_resolution_quality.sql`
-**Purpose:** Analyze name resolution system performance  
+**Purpose:** Analyze name resolution system performance
 **Key Metrics:**
 - Resolution rate by season (target: 98.92%)
 - Resolution methods used (auto_exact, injury_database, etc.)
@@ -48,8 +48,8 @@
 ---
 
 #### 4. `name_resolution_problem_cases.sql`
-**Purpose:** Detailed investigation of specific resolution failures  
-**Output:** 
+**Purpose:** Detailed investigation of specific resolution failures
+**Output:**
 - Individual problem cases with full context
 - Confidence scores for each case
 - Issue descriptions and investigation context
@@ -61,7 +61,7 @@
 ---
 
 #### 5. `player_status_validation.sql`
-**Purpose:** Validate player status logic and data integrity  
+**Purpose:** Validate player status logic and data integrity
 **Validates:**
 - Active players have stats (points, minutes > 0)
 - Inactive players do NOT have stats (all NULL)
@@ -75,7 +75,7 @@
 ### Daily Monitoring
 
 #### 6. `daily_check_yesterday.sql`
-**Purpose:** Morning check to verify yesterday's games processed correctly  
+**Purpose:** Morning check to verify yesterday's games processed correctly
 **Automated:** Yes (recommended cron job at 9 AM)
 
 **Output:**
@@ -86,7 +86,7 @@
 ---
 
 #### 7. `weekly_check_last_7_days.sql`
-**Purpose:** Weekly trend analysis across last 7 days  
+**Purpose:** Weekly trend analysis across last 7 days
 **When to Run:** Monday mornings (manual or automated)
 
 **Detects:**
@@ -98,7 +98,7 @@
 ---
 
 #### 8. `realtime_scraper_check.sql`
-**Purpose:** Monitor today's game processing in real-time  
+**Purpose:** Monitor today's game processing in real-time
 **When to Run:** Hourly after games complete
 
 **Shows:**
@@ -282,7 +282,7 @@ validate-gamebook status --csv
 # Daily monitoring
 validate-gamebook yesterday          # Check yesterday's games
 
-# Weekly health check  
+# Weekly health check
 validate-gamebook week               # Last 7 days trends
 validate-gamebook resolution         # Name resolution quality
 validate-gamebook problems --csv     # Export problem cases
@@ -333,6 +333,6 @@ validate-gamebook today              # Current game processing
 
 ---
 
-**Last Updated:** October 12, 2025  
-**Query Count:** 8  
+**Last Updated:** October 12, 2025
+**Query Count:** 8
 **Target Resolution Rate:** 98.92%

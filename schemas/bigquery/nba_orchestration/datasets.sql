@@ -14,7 +14,7 @@
 --
 -- Tables in this dataset:
 --   1. scraper_execution_log     - Every scraper run (3-status tracking)
---   2. workflow_decisions         - Controller evaluation decisions  
+--   2. workflow_decisions         - Controller evaluation decisions
 --   3. daily_expected_schedule    - Expected runs for monitoring
 --   4. cleanup_operations         - Self-healing Pub/Sub recovery
 --
@@ -47,7 +47,7 @@ OPTIONS (
 -- ============================================================================
 -- Dataset Access Patterns
 -- ============================================================================
--- 
+--
 -- Common Queries:
 --   1. Check if scraper found data today (discovery mode)
 --   2. Count attempts for discovery workflows
@@ -66,7 +66,7 @@ OPTIONS (
 -- ============================================================================
 -- Deployment Notes
 -- ============================================================================
--- 
+--
 -- Prerequisites:
 --   - GCP project: nba-props-platform
 --   - Region: US

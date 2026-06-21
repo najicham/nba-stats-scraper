@@ -1,6 +1,6 @@
 # config/workflows.yaml
 # Single source of truth for Phase 1 orchestration
-# 
+#
 # Master Controller reads this file hourly and decides which workflows to run
 # based on game schedules, time windows, and execution history.
 
@@ -21,7 +21,7 @@ scrapers:
     critical: true
     processor_name: "p2_nbacom_schedule"
     estimated_duration_seconds: 30
-    
+
   nbac_player_list:
     name: "nbac_player_list"
     description: "Current NBA rosters"
@@ -29,7 +29,7 @@ scrapers:
     critical: true
     processor_name: "p2_nbacom_player_list"
     estimated_duration_seconds: 30
-  
+
   br_season_roster:
     name: "br_season_roster"
     description: "Basketball Reference season rosters (for gamebook name resolution)"
@@ -37,7 +37,7 @@ scrapers:
     critical: true
     processor_name: "p2_br_season_roster"
     estimated_duration_seconds: 120
-  
+
   espn_roster:
     name: "espn_roster"
     description: "ESPN team rosters (CRITICAL for Phase 3 game context)"
@@ -59,7 +59,7 @@ scrapers:
     dependency_for: ["oddsa_player_props", "oddsa_game_lines"]
     processor_name: "p2_odds_events"
     estimated_duration_seconds: 30
-  
+
   oddsa_player_props:
     name: "oddsa_player_props"
     description: "Player prop betting lines"
@@ -68,7 +68,7 @@ scrapers:
     depends_on: "oddsa_events"
     processor_name: "p2_odds_player_props"
     estimated_duration_seconds: 120
-  
+
   oddsa_game_lines:
     name: "oddsa_game_lines"
     description: "Game spread/total lines"
@@ -109,7 +109,7 @@ scrapers:
     critical: false
     processor_name: "p2_nbacom_team_boxscore"
     estimated_duration_seconds: 30
-  
+
   nbac_player_boxscore:
     name: "nbac_player_boxscore"
     description: "NBA.com player box scores"
@@ -117,7 +117,7 @@ scrapers:
     critical: true
     processor_name: "p2_nbacom_player_boxscore"
     estimated_duration_seconds: 30
-  
+
   # ────────────────────────────────────────────────────────────
   # Enhanced Data
   # ────────────────────────────────────────────────────────────
@@ -128,7 +128,7 @@ scrapers:
     critical: false
     processor_name: "p2_bigdataball_pbp"
     estimated_duration_seconds: 90
-  
+
   nbac_play_by_play:
     name: "nbac_play_by_play"
     description: "NBA.com official play-by-play"
@@ -136,7 +136,7 @@ scrapers:
     critical: false
     processor_name: "p2_nbacom_play_by_play"
     estimated_duration_seconds: 60
-  
+
   nbac_gamebook_pdf:
     name: "nbac_gamebook_pdf"
     description: "Official gamebook PDF (DNP intelligence)"
@@ -144,7 +144,7 @@ scrapers:
     critical: false
     processor_name: "p2_nbacom_gamebook_pdf"
     estimated_duration_seconds: 45
-  
+
   # ────────────────────────────────────────────────────────────
   # Discovery Mode Scrapers
   # ────────────────────────────────────────────────────────────
@@ -156,7 +156,7 @@ scrapers:
     processor_name: "p2_nbacom_injury_report"
     estimated_duration_seconds: 25
     treat_no_data_as_success: true
-  
+
   nbac_referee_assignments:
     name: "nbac_referee_assignments"
     description: "Official referee assignments"
@@ -178,13 +178,13 @@ workflows:
     priority: "HIGH"
     decision_type: "self_aware"
     description: "Daily foundation data collection - schedule, rosters, standings"
-    
+
     schedule:
       ideal_window:
         start_hour: 6  # 6 AM ET
         end_hour: 10   # 10 AM ET
       run_once_daily: true
-    
+
     execution_plan:
       type: "parallel"  # All scrapers can run simultaneously
       scrapers:
@@ -193,11 +193,11 @@ workflows:
         # NOTE: br_season_roster removed - now runs via br-rosters-batch-daily scheduler
         # to avoid DML throttling (30 individual MERGEs → 1 batch MERGE)
         - espn_roster           # ESPN rosters for Phase 3 game context
-    
+
     alerts:
       failure: "CRITICAL"
       timing_drift: "WARNING"  # If runs outside ideal window
-    
+
     dependencies:
       required_for: ["betting_lines", "post_game_collection"]
 
@@ -247,7 +247,7 @@ workflows:
         start: 5   # 5 AM ET (was 8; moved earlier so lines are available for 2:30 AM predictions next day + early morning runs)
         end: 20    # 8 PM ET
       frequency_hours: 2  # Every 2 hours during window
-    
+
     execution_plan:
       # Step 1: Sequential (events must complete first)
       step_1:
@@ -268,7 +268,7 @@ workflows:
     alerts:
       failure: "CRITICAL"
       quota_warning_pct: 80  # Alert if >80% of Odds API quota used
-    
+
     dependencies:
       requires: ["morning_operations"]  # Need schedule first
 
@@ -479,18 +479,18 @@ workflows:
     priority: "MEDIUM"
     decision_type: "discovery"
     description: "Poll for injury report throughout the day until found (typically published 11 AM - 3 PM)"
-    
+
     schedule:
       discovery_mode: true
       max_attempts_per_day: 12
       retry_interval_hours: 2
       requires_game_day: true
       discovery_duration_weeks: 4  # Learn optimal timing over 4 weeks
-    
+
     execution_plan:
       type: "single"
       scraper: nbac_injury_report
-    
+
     alerts:
       max_attempts_reached: "WARNING"
       discovery_complete: "INFO"
@@ -503,18 +503,18 @@ workflows:
     priority: "MEDIUM"
     decision_type: "discovery"
     description: "Poll for referee assignments (typically published morning of game day)"
-    
+
     schedule:
       discovery_mode: true
       max_attempts_per_day: 12  # Increased from 6 to cover 10 AM-2 PM ET publication window
       retry_interval_hours: 2   # Increased from 1 to spread attempts across full day
       requires_game_day: true
       discovery_duration_weeks: 2  # Learn optimal timing over 2 weeks
-    
+
     execution_plan:
       type: "single"
       scraper: nbac_referee_assignments
-    
+
     alerts:
       max_attempts_reached: "WARNING"
       discovery_complete: "INFO"
@@ -526,11 +526,11 @@ settings:
   timezone: "America/New_York"
   controller_interval_minutes: 60  # Evaluate all workflows hourly
   schedule_refresh_interval_hours: 6
-  
+
   daily_schedule_lock:
     enabled: true
     generation_time: "05:00"  # 5 AM ET daily
-  
+
   cleanup_processor:
     enabled: true
     interval_minutes: 15
@@ -549,12 +549,12 @@ settings:
       br_season_roster: 180  # BR season roster - many teams
       oddsa_player_props: 180  # Props can be slow
       bigdataball_pbp: 120   # Play-by-play is faster
-  
+
   monitoring:
     enable_bigquery_logging: true
     enable_cloud_logging: true
     log_retention_days: 90
-  
+
   notifications:
     email_enabled: true
     slack_enabled: true

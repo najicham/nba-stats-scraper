@@ -101,17 +101,17 @@ while [[ $counter -lt $timeout ]]; do
         --workflow=$WORKFLOW_NAME \
         --location=$REGION \
         --format="value(state)" 2>/dev/null || echo "UNKNOWN")
-    
+
     # Only log status changes to reduce noise
     if [[ "$status" != "$last_status" ]]; then
         echo "$(date '+%H:%M:%S') - Status: $status"
         last_status="$status"
     fi
-    
+
     case "$status" in
         "SUCCEEDED")
             echo -e "${GREEN}✅ Workflow test completed successfully!${NC}"
-            
+
             # Get execution result
             echo ""
             echo "Execution summary:"
@@ -136,7 +136,7 @@ while [[ $counter -lt $timeout ]]; do
             exit 1
             ;;
     esac
-    
+
     sleep 30
     ((counter+=30))
 done

@@ -1,6 +1,6 @@
 # Odds Game Lines Validation Queries
 
-**Location:** `validation/queries/raw/odds_game_lines/`  
+**Location:** `validation/queries/raw/odds_game_lines/`
 **Purpose:** SQL queries for validating NBA odds data completeness and quality
 
 ---
@@ -27,10 +27,10 @@ bq query --use_legacy_sql=false --format=csv \
 ### Historical Validation (Run After Backfills)
 
 #### 1. `season_completeness_check.sql`
-**Purpose:** Comprehensive validation of all 4 seasons with diagnostics  
-**When to Run:** After backfills, quarterly health checks, season end  
-**Expected Runtime:** ~10-15 seconds  
-**Output:** 
+**Purpose:** Comprehensive validation of all 4 seasons with diagnostics
+**When to Run:** After backfills, quarterly health checks, season end
+**Expected Runtime:** ~10-15 seconds
+**Output:**
 - 1 diagnostic row (check for data quality issues)
 - 120 team rows (30 teams × 4 seasons)
 
@@ -48,9 +48,9 @@ bq query --use_legacy_sql=false \
 ---
 
 #### 2. `find_missing_regular_season_games.sql`
-**Purpose:** Identify specific games to backfill  
-**When to Run:** When season_completeness_check shows incomplete data  
-**Expected Runtime:** ~5 seconds  
+**Purpose:** Identify specific games to backfill
+**When to Run:** When season_completeness_check shows incomplete data
+**Expected Runtime:** ~5 seconds
 **Output:** List of missing games with dates and matchups
 
 **Before Running:**
@@ -71,9 +71,9 @@ bq query --use_legacy_sql=false \
 ---
 
 #### 3. `find_market_discrepancies.sql`
-**Purpose:** Find games with only spreads or only totals  
-**When to Run:** Investigating data quality, monthly health checks  
-**Expected Runtime:** ~5 seconds  
+**Purpose:** Find games with only spreads or only totals
+**When to Run:** Investigating data quality, monthly health checks
+**Expected Runtime:** ~5 seconds
 **Output:** Games missing one market type
 
 **Important Notes:**
@@ -94,9 +94,9 @@ bq query --use_legacy_sql=false \
 ---
 
 #### 4. `verify_playoff_completeness.sql`
-**Purpose:** Verify playoff games match expected counts  
-**When to Run:** After playoffs end, during playoff backfills  
-**Expected Runtime:** ~5 seconds  
+**Purpose:** Verify playoff games match expected counts
+**When to Run:** After playoffs end, during playoff backfills
+**Expected Runtime:** ~5 seconds
 **Output:** Expected vs actual playoff games per team
 
 **Before Running:**
@@ -119,9 +119,9 @@ bq query --use_legacy_sql=false \
 ### Daily Monitoring (Run During Season)
 
 #### 5. `daily_check_yesterday.sql`
-**Purpose:** Verify yesterday's games were captured  
-**When to Run:** Every morning at 9 AM (automated)  
-**Expected Runtime:** <2 seconds  
+**Purpose:** Verify yesterday's games were captured
+**When to Run:** Every morning at 9 AM (automated)
+**Expected Runtime:** <2 seconds
 **Output:** Single row summary of yesterday's coverage
 
 **No Configuration Needed:**
@@ -143,9 +143,9 @@ bq query --use_legacy_sql=false \
 ---
 
 #### 6. `weekly_check_last_7_days.sql`
-**Purpose:** Weekly health check showing daily trends  
-**When to Run:** Monday mornings (automated weekly)  
-**Expected Runtime:** ~3 seconds  
+**Purpose:** Weekly health check showing daily trends
+**When to Run:** Monday mornings (automated weekly)
+**Expected Runtime:** ~3 seconds
 **Output:** 7 rows (one per day)
 
 **No Configuration Needed:**
@@ -165,9 +165,9 @@ bq query --use_legacy_sql=false \
 ---
 
 #### 7. `realtime_scraper_check.sql`
-**Purpose:** Real-time scraper health monitoring  
-**When to Run:** Hourly during game days, when investigating issues  
-**Expected Runtime:** <2 seconds  
+**Purpose:** Real-time scraper health monitoring
+**When to Run:** Hourly during game days, when investigating issues
+**Expected Runtime:** <2 seconds
 **Output:** Single row with scraper status
 
 **No Configuration Needed:**
@@ -312,7 +312,7 @@ From `weekly_check_last_7_days.sql`:
 ```bash
 # Verify table exists and has data
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   MIN(game_date) as earliest_date,
   MAX(game_date) as latest_date,
   COUNT(*) as total_rows
@@ -348,7 +348,7 @@ FROM \`nba-props-platform.nba_raw.odds_api_game_lines\`
 ```bash
 # Check abbreviation matching
 bq query --use_legacy_sql=false "
-SELECT DISTINCT 
+SELECT DISTINCT
   o.home_team,
   o.home_team_abbr,
   s.home_team_name,
@@ -420,6 +420,6 @@ These queries complement the automated validator:
 
 ## Support
 
-**Questions?** Check the main validation guide or review query comments.  
-**Found a bug?** Update the query and document changes in git commit.  
+**Questions?** Check the main validation guide or review query comments.
+**Found a bug?** Update the query and document changes in git commit.
 **Need a new query?** Use the template in the validation guide.

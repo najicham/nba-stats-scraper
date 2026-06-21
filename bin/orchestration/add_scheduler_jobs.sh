@@ -50,7 +50,7 @@ else
     gcloud iam service-accounts create scheduler-orchestration \
         --display-name="Cloud Scheduler - Orchestration Jobs" \
         --project=${PROJECT_ID}
-    
+
     echo "✅ Service account created"
 fi
 
@@ -72,17 +72,17 @@ create_or_update_job() {
     local schedule=$2
     local uri=$3
     local description=$4
-    
+
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "Setting up: ${job_name}"
     echo "Schedule: ${schedule}"
     echo "Endpoint: ${uri}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    
+
     if gcloud scheduler jobs describe ${job_name} \
         --location=${REGION} \
         --project=${PROJECT_ID} &>/dev/null; then
-        
+
         echo "Job exists, updating..."
         gcloud scheduler jobs update http ${job_name} \
             --location=${REGION} \
@@ -96,7 +96,7 @@ create_or_update_job() {
             --attempt-deadline=180s \
             --project=${PROJECT_ID} \
             --quiet
-        
+
         echo "✅ Updated: ${job_name}"
     else
         echo "Creating new job..."
@@ -113,7 +113,7 @@ create_or_update_job() {
             --description="${description}" \
             --project=${PROJECT_ID} \
             --quiet
-        
+
         echo "✅ Created: ${job_name}"
     fi
     echo ""

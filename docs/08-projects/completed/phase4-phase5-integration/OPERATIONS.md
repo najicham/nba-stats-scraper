@@ -45,12 +45,12 @@ curl -X POST "https://phase5-coordinator-HASH.run.app/start" \
 
 **Investigation:**
 ```sql
-SELECT player_lookup, is_production_ready, 
+SELECT player_lookup, is_production_ready,
        circuit_breaker_active, data_quality_issues
 FROM `nba_predictions.ml_feature_store_v2`
 WHERE game_date = CURRENT_DATE()
   AND player_lookup NOT IN (
-    SELECT DISTINCT player_lookup 
+    SELECT DISTINCT player_lookup
     FROM `nba_predictions.player_prop_predictions`
     WHERE game_date = CURRENT_DATE()
   );

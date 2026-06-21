@@ -346,7 +346,7 @@ gcloud run jobs describe freshness-monitor \
    # Edit job-config.env
    MEMORY="1Gi"     # Increase from 512Mi
    CPU="2"          # Increase from 1
-   
+
    # Redeploy
    ./deploy.sh
    ```

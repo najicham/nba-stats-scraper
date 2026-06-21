@@ -1,6 +1,6 @@
 #!/bin/bash
 # create_pubsub_infrastructure.sh
-# 
+#
 # File Path: bin/pubsub/create_pubsub_infrastructure.sh
 #
 # Purpose: Create Pub/Sub infrastructure for Phase 1 → Phase 2 handoff

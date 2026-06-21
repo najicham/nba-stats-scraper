@@ -1,7 +1,7 @@
 # Team Offense Game Summary - Test Suite Documentation
 
-**Processor:** `TeamOffenseGameSummaryProcessor`  
-**Location:** `data_processors/analytics/team_offense_game_summary/`  
+**Processor:** `TeamOffenseGameSummaryProcessor`
+**Location:** `data_processors/analytics/team_offense_game_summary/`
 **Test Directory:** `tests/processors/analytics/team_offense_game_summary/`
 
 ---
@@ -25,8 +25,8 @@
 
 This test suite provides comprehensive coverage for the Team Offense Game Summary processor, which aggregates team offensive statistics from raw NBA data into analytics-ready format with advanced metrics.
 
-**Total Tests:** 102 tests across 3 test files  
-**Total Runtime:** ~75 seconds (fast tests ~15s, validation ~60s)  
+**Total Tests:** 102 tests across 3 test files
+**Total Runtime:** ~75 seconds (fast tests ~15s, validation ~60s)
 **Coverage:** ~95% code coverage
 
 ### What We Test
@@ -116,9 +116,9 @@ open htmlcov/index.html
 
 ### 1. Unit Tests (`test_unit.py`)
 
-**Purpose:** Test individual methods in isolation  
-**Runtime:** ~3-5 seconds  
-**Dependencies:** None (all mocked)  
+**Purpose:** Test individual methods in isolation
+**Runtime:** ~3-5 seconds
+**Dependencies:** None (all mocked)
 **Run:** On every code change
 
 **What They Test:**
@@ -153,9 +153,9 @@ pytest test_unit.py::TestOvertimePeriodParsing::test_one_overtime_265_minutes -v
 
 ### 2. Integration Tests (`test_integration.py`)
 
-**Purpose:** Test full processor flow with mocked BigQuery  
-**Runtime:** ~10 seconds  
-**Dependencies:** Mock BigQuery, notifications  
+**Purpose:** Test full processor flow with mocked BigQuery
+**Runtime:** ~10 seconds
+**Dependencies:** Mock BigQuery, notifications
 **Run:** Before committing code, in CI/CD
 
 **What They Test:**
@@ -203,9 +203,9 @@ pytest test_integration.py::TestFullProcessorFlow::test_successful_processing_wi
 
 ### 3. Validation Tests (`test_validation.py`)
 
-**Purpose:** Validate production data quality against real BigQuery  
-**Runtime:** ~60 seconds  
-**Dependencies:** Real BigQuery table with data  
+**Purpose:** Validate production data quality against real BigQuery
+**Runtime:** ~60 seconds
+**Dependencies:** Real BigQuery table with data
 **Run:** Before deployment, nightly, after processor runs
 
 **What They Test:**
@@ -689,13 +689,13 @@ chmod +x .git/hooks/pre-commit
 ## 📚 Best Practices
 
 ### 1. **Test-Driven Development (TDD)**
-✅ Write tests before implementing features  
-✅ Start with failing test, then make it pass  
+✅ Write tests before implementing features
+✅ Start with failing test, then make it pass
 ✅ Refactor with confidence
 
 ### 2. **Test Isolation**
-✅ Each test should be independent  
-✅ Don't rely on test execution order  
+✅ Each test should be independent
+✅ Don't rely on test execution order
 ✅ Clean up resources (use fixtures)
 
 ### 3. **Descriptive Test Names**
@@ -710,30 +710,30 @@ def test_ot(self, processor):
 ```
 
 ### 4. **Test What Matters**
-✅ Test business logic thoroughly  
-✅ Test edge cases and error paths  
-⚠️ Don't test framework/library code  
+✅ Test business logic thoroughly
+✅ Test edge cases and error paths
+⚠️ Don't test framework/library code
 ⚠️ Don't test trivial getters/setters
 
 ### 5. **Keep Tests Fast**
-✅ Mock external dependencies  
-✅ Use in-memory data when possible  
+✅ Mock external dependencies
+✅ Use in-memory data when possible
 ✅ Run expensive tests separately (validation)
 
 ### 6. **Maintain Tests**
-✅ Update tests when code changes  
-✅ Remove obsolete tests  
+✅ Update tests when code changes
+✅ Remove obsolete tests
 ✅ Refactor duplicate test code into fixtures
 
 ### 7. **Document Complex Tests**
-✅ Add docstrings explaining what's being tested  
-✅ Comment why, not what  
+✅ Add docstrings explaining what's being tested
+✅ Comment why, not what
 ✅ Link to related issues/tickets
 
 ### 8. **Monitor Test Health**
-✅ Track test runtime trends  
-✅ Fix flaky tests immediately  
-✅ Maintain >90% code coverage  
+✅ Track test runtime trends
+✅ Fix flaky tests immediately
+✅ Maintain >90% code coverage
 ✅ Review test failures in CI/CD
 
 ---
@@ -814,9 +814,9 @@ pytest -k "overtime" -v                                   # Run specific pattern
 
 ---
 
-**Last Updated:** November 2025  
-**Test Suite Version:** 2.0  
-**Total Tests:** 102 (58 unit + 9 integration + 35 validation)  
+**Last Updated:** November 2025
+**Test Suite Version:** 2.0
+**Total Tests:** 102 (58 unit + 9 integration + 35 validation)
 **Maintained by:** NBA Props Platform Team
 
 ---

@@ -23,20 +23,20 @@ def parse_path_template(template):
     # Convert %(variable)s to {variable} format
     # Example: "odds-api/events/%(date)s/%(timestamp)s.json"
     # Becomes: "odds-api/events/{date}/*.json"
-    
+
     pattern = template
-    
+
     # Replace %(date)s with {date}
     pattern = pattern.replace('%(date)s', '{date}')
-    
+
     # Replace timestamp patterns with wildcard
     pattern = re.sub(r'%\(timestamp\)s', '*', pattern)
     pattern = re.sub(r'%\(hour\d*\)s', '*', pattern)
     pattern = re.sub(r'%\(snap\)s', '*', pattern)
-    
+
     # Replace other variables with wildcards for matching
     pattern = re.sub(r'%\([^)]+\)s', '*', pattern)
-    
+
     return pattern
 
 
@@ -60,14 +60,14 @@ def map_scraper_to_template():
         'bigdataball_pbp': 'bigdataball_pbp',
         'bettingpros_player_props': 'bettingpros_player_props',
     }
-    
+
     return mappings
 
 
 def sync_paths(config_path, dry_run=True):
     """
     Sync GCS paths from path builder to monitoring config.
-    
+
     Args:
         config_path: Path to monitoring_config.yaml
         dry_run: If True, only show changes without applying
@@ -76,38 +76,38 @@ def sync_paths(config_path, dry_run=True):
     print("GCS Path Sync Utility")
     print("=" * 80)
     print()
-    
+
     # Load monitoring config
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
-    
+
     scrapers = config.get('scrapers', {})
     print(f"Loaded {len(scrapers)} scrapers from config")
     print()
-    
+
     # Get mappings
     mappings = map_scraper_to_template()
-    
+
     # Check each scraper
     changes = []
     matched = []
     not_found = []
-    
+
     for scraper_name, scraper_config in scrapers.items():
         current_path = scraper_config.get('gcs', {}).get('path_pattern', '')
-        
+
         # Get template key
         template_key = mappings.get(scraper_name)
-        
+
         if not template_key:
             not_found.append(scraper_name)
             continue
-        
+
         # Get path from builder
         if template_key in GCSPathBuilder.PATH_TEMPLATES:
             builder_template = GCSPathBuilder.PATH_TEMPLATES[template_key]
             suggested_path = parse_path_template(builder_template)
-            
+
             if current_path != suggested_path:
                 changes.append({
                     'scraper': scraper_name,
@@ -119,40 +119,40 @@ def sync_paths(config_path, dry_run=True):
                 matched.append(scraper_name)
         else:
             not_found.append(scraper_name)
-    
+
     # Report results
     print(f"✓ Matched: {len(matched)}")
     print(f"⚠ Changes suggested: {len(changes)}")
     print(f"✗ Not found in path builder: {len(not_found)}")
     print()
-    
+
     if changes:
         print("=" * 80)
         print("Suggested Changes")
         print("=" * 80)
         print()
-        
+
         for change in changes:
             print(f"Scraper: {change['scraper']}")
             print(f"  Current:   {change['current']}")
             print(f"  Suggested: {change['suggested']}")
             print(f"  Builder:   {change['builder_template']}")
             print()
-        
+
         if not dry_run:
             print("Applying changes...")
             for change in changes:
                 config['scrapers'][change['scraper']]['gcs']['path_pattern'] = change['suggested']
-            
+
             # Write back
             with open(config_path, 'w') as f:
                 yaml.dump(config, f, default_flow_style=False, sort_keys=False)
-            
+
             print(f"✓ Updated {len(changes)} scrapers in {config_path}")
         else:
             print("DRY RUN: No changes applied")
             print("Run with --apply to apply changes")
-    
+
     if not_found:
         print("=" * 80)
         print("Not Found in Path Builder")
@@ -163,7 +163,7 @@ def sync_paths(config_path, dry_run=True):
         print()
         print("These scrapers need manual path configuration or")
         print("need to be added to scrapers/utils/gcs_path_builder.py")
-    
+
     if matched:
         print()
         print(f"✓ {len(matched)} scrapers already match path builder")
@@ -172,7 +172,7 @@ def sync_paths(config_path, dry_run=True):
 def main():
     """Main entry point."""
     import argparse
-    
+
     parser = argparse.ArgumentParser(
         description='Sync GCS paths between monitoring config and path builder'
     )
@@ -187,17 +187,17 @@ def main():
         action='store_true',
         help='Apply changes (default is dry-run)'
     )
-    
+
     args = parser.parse_args()
-    
+
     # Get config path
     script_dir = Path(__file__).parent
     config_path = script_dir / args.config
-    
+
     if not config_path.exists():
         print(f"Error: Config file not found: {config_path}")
         sys.exit(1)
-    
+
     # Run sync
     sync_paths(config_path, dry_run=not args.apply)
 

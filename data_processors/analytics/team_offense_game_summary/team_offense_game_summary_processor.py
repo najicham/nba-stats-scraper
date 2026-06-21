@@ -234,11 +234,11 @@ class TeamOffenseGameSummaryProcessor(
     # =========================================================================
     # Dependency System (Phase 3 - Date Range Pattern)
     # =========================================================================
-    
+
     def get_dependencies(self) -> dict:
         """
         Define required upstream Phase 2 tables and their constraints.
-        
+
         Returns:
             dict: Dependency configuration per v4.0 spec
         """
@@ -719,7 +719,7 @@ class TeamOffenseGameSummaryProcessor(
     def _extract_shot_zones(self, start_date: str, end_date: str) -> None:
         """
         Extract shot zone data from play-by-play (optional enhancement).
-        
+
         Gracefully handles missing play-by-play data.
         """
         # Check if play-by-play is available
@@ -728,22 +728,22 @@ class TeamOffenseGameSummaryProcessor(
             self.shot_zones_available = False
             self.shot_zones_source = None
             return
-        
+
         try:
             query = f"""
             WITH team_shots AS (
-                SELECT 
+                SELECT
                     game_id,
                     player_1_team_abbr as team_abbr,
                     -- Classify shot zone
-                    CASE 
+                    CASE
                         WHEN shot_type = '2PT' AND shot_distance <= 8.0 THEN 'paint'
                         WHEN shot_type = '2PT' AND shot_distance > 8.0 THEN 'mid_range'
                         WHEN shot_type = '3PT' THEN 'three'
                         ELSE NULL
                     END as zone,
                     shot_made,
-                    CASE 
+                    CASE
                         WHEN shot_type = '2PT' THEN 2
                         WHEN shot_type = '3PT' THEN 3
                         ELSE 0
@@ -753,7 +753,7 @@ class TeamOffenseGameSummaryProcessor(
                     AND shot_made IS NOT NULL
                     AND game_date BETWEEN '{start_date}' AND '{end_date}'
             )
-            SELECT 
+            SELECT
                 game_id,
                 team_abbr,
                 -- Paint
@@ -769,9 +769,9 @@ class TeamOffenseGameSummaryProcessor(
             FROM team_shots
             GROUP BY game_id, team_abbr
             """
-            
+
             shot_zones_df = self.bq_client.query(query).to_dataframe()
-            
+
             if not shot_zones_df.empty:
                 # Convert to dict keyed by (game_id, team_abbr)
                 for _, row in shot_zones_df.iterrows():
@@ -785,7 +785,7 @@ class TeamOffenseGameSummaryProcessor(
                         'three_attempts_pbp': safe_int(row['three_attempts_pbp']),
                         'three_makes_pbp': safe_int(row['three_makes_pbp']),
                     }
-                
+
                 self.shot_zones_available = True
                 self.shot_zones_source = 'nbac_pbp'
                 logger.info(f"Extracted shot zones for {len(self.shot_zone_data)} team-games from play-by-play")
@@ -793,16 +793,16 @@ class TeamOffenseGameSummaryProcessor(
                 logger.warning("Play-by-play query returned no shot zones")
                 self.shot_zones_available = False
                 self.shot_zones_source = None
-                
+
         except Exception as e:
             logger.warning(f"Failed to extract shot zones (non-critical): {e}")
             self.shot_zones_available = False
             self.shot_zones_source = None
-    
+
     # =========================================================================
     # Data Validation
     # =========================================================================
-    
+
     def validate_extracted_data(self) -> None:
         """Enhanced validation for team offensive data."""
         # Check for graceful empty handling FIRST (before calling super)
@@ -855,13 +855,13 @@ class TeamOffenseGameSummaryProcessor(
                         'difference': points - calculated_points
                     }
                 )
-        
+
         # Check for unrealistic team scores
         unrealistic_scores = self.raw_data[
-            (self.raw_data['points'].notna()) & 
+            (self.raw_data['points'].notna()) &
             ((self.raw_data['points'] < 50) | (self.raw_data['points'] > 200))
         ]
-        
+
         if not unrealistic_scores.empty:
             for _, row in unrealistic_scores.iterrows():
                 self.log_quality_issue(
@@ -872,11 +872,11 @@ class TeamOffenseGameSummaryProcessor(
                         'points_scored': int(row['points'])
                     }
                 )
-    
+
     # =========================================================================
     # Analytics Calculation
     # =========================================================================
-    
+
     def calculate_analytics(self) -> None:
         """Transform team aggregates to final analytics format."""
         records = []
@@ -908,7 +908,7 @@ class TeamOffenseGameSummaryProcessor(
             try:
                 # Parse overtime periods
                 overtime_periods = self._parse_overtime_periods(row['minutes'])
-                
+
                 # Calculate possessions
                 possessions = self._calculate_possessions(
                     row['fg_attempted'],
@@ -916,7 +916,7 @@ class TeamOffenseGameSummaryProcessor(
                     row['turnovers'],
                     row['offensive_rebounds']
                 )
-                
+
                 # minutes field is cumulative player-minutes (5 players × game time)
                 # Convert to actual game minutes by dividing by 5
                 minutes_str = row['minutes'] if pd.notna(row['minutes']) else ''
@@ -929,13 +929,13 @@ class TeamOffenseGameSummaryProcessor(
                     row['fg_attempted'],
                     row['ft_attempted']
                 )
-                
+
                 # Determine win/loss (handle None/empty values)
                 points = safe_int(row['points'])
                 opponent_points = safe_int(row['opponent_points'])
                 win_flag = (points or 0) > (opponent_points or 0)
                 margin_of_victory = (points - opponent_points) if (points is not None and opponent_points is not None) else None
-                
+
                 # Get shot zones (if available)
                 shot_zone_key = (row['game_id'], row['team_abbr'])
                 shot_zones = self.shot_zone_data.get(shot_zone_key, {})
@@ -974,7 +974,7 @@ class TeamOffenseGameSummaryProcessor(
                     'assists': safe_int(row['assists']),
                     'turnovers': safe_int(row['turnovers']),
                     'personal_fouls': safe_int(row['personal_fouls']),
-                    
+
                     # Shot zones (from play-by-play if available)
                     'team_paint_attempts': shot_zones.get('paint_attempts'),
                     'team_paint_makes': shot_zones.get('paint_makes'),
@@ -982,26 +982,26 @@ class TeamOffenseGameSummaryProcessor(
                     'team_mid_range_makes': shot_zones.get('mid_range_makes'),
                     'points_in_paint_scored': shot_zones.get('points_in_paint'),
                     'second_chance_points_scored': None,  # TODO: Complex calculation, defer
-                    
+
                     # Advanced offensive metrics
                     'offensive_rating': round(offensive_rating, 2) if offensive_rating else None,
                     'pace': round(pace, 1) if pace else None,
                     'possessions': int(possessions) if possessions else None,
                     'ts_pct': round(ts_pct, 3) if ts_pct else None,
-                    
+
                     # Game context
                     'home_game': bool(row['is_home']) if pd.notna(row['is_home']) else False,
                     'win_flag': bool(win_flag),
                     'margin_of_victory': int(margin_of_victory) if pd.notna(margin_of_victory) else None,
                     'overtime_periods': int(overtime_periods),
-                    
+
                     # Team situation context (placeholders)
                     'players_inactive': None,
                     'starters_inactive': None,
-                    
+
                     # Referee integration (placeholder)
                     'referee_crew_id': None,
-                    
+
                     # Source tracking (one-liner using base class method!)
                     **self.build_source_tracking_fields(),
 
@@ -1023,7 +1023,7 @@ class TeamOffenseGameSummaryProcessor(
                 record['data_hash'] = self._calculate_data_hash(record)
 
                 records.append(record)
-                
+
             except Exception as e:
                 error_info = {
                     'game_id': row['game_id'],
@@ -1051,14 +1051,14 @@ class TeamOffenseGameSummaryProcessor(
                     missing_game_ids=[row['game_id']] if row.get('game_id') else None
                 )
                 continue
-        
+
         self.transformed_data = records
         logger.info(f"Calculated team offensive analytics for {len(records)} team-game records")
-        
+
         # Notify if high error rate
         if len(processing_errors) > 0:
             error_rate = len(processing_errors) / len(self.raw_data) * 100
-            
+
             if error_rate > 5:
                 notify_warning(
                     title="Team Offense: High Processing Error Rate",
@@ -1073,7 +1073,7 @@ class TeamOffenseGameSummaryProcessor(
                     },
                     processor_name=self.__class__.__name__
                 )
-    
+
     def _process_teams_parallel(
         self,
         fallback_tier: str,
@@ -1382,36 +1382,36 @@ class TeamOffenseGameSummaryProcessor(
         except Exception as e:
             logger.warning(f"Failed to parse OT periods from '{minutes_str}': {e}")
             return 0
-    
+
     def _calculate_possessions(self, fg_attempts: int, ft_attempts: int,
                                turnovers: int, offensive_rebounds: int) -> float:
         """
         Calculate estimated possessions.
-        
+
         Formula: FGA + 0.44×FTA + TO - OREB
         """
         try:
             possessions = (
-                fg_attempts + 
-                (0.44 * ft_attempts) + 
-                turnovers - 
+                fg_attempts +
+                (0.44 * ft_attempts) +
+                turnovers -
                 offensive_rebounds
             )
             return round(possessions, 1)
         except (TypeError, ValueError, ZeroDivisionError) as e:
             logger.debug(f"Failed to calculate possessions: {e}")
             return None
-    
+
     def _calculate_true_shooting_pct(self, points: int, fg_attempts: int,
                                     ft_attempts: int) -> float:
         """
         Calculate true shooting percentage.
-        
+
         Formula: PTS / (2 × (FGA + 0.44×FTA))
         """
         try:
             total_shooting_possessions = 2 * (fg_attempts + 0.44 * ft_attempts)
-            
+
             if total_shooting_possessions <= 0:
                 return None
 
@@ -1420,11 +1420,11 @@ class TeamOffenseGameSummaryProcessor(
         except (TypeError, ValueError, ZeroDivisionError) as e:
             logger.debug(f"Failed to calculate true shooting percentage: {e}")
             return None
-    
+
     def _calculate_quality_tier(self, shot_zones: dict) -> str:
         """
         Determine data quality tier based on source availability.
-        
+
         HIGH: Team boxscore complete (100%) + shot zones
         MEDIUM: Team boxscore complete (100%) only
         LOW: Incomplete data or missing source
@@ -1432,27 +1432,27 @@ class TeamOffenseGameSummaryProcessor(
         # Check if boxscore source is missing (None) OR incomplete (< 100)
         if self.source_nbac_boxscore_completeness_pct is None or self.source_nbac_boxscore_completeness_pct < 100:
             return 'low'
-        
+
         # Boxscore is complete (100%), check if shot zones available
         if shot_zones:
             return 'high'
         else:
             return 'medium'
-    
+
     # =========================================================================
     # Stats & Monitoring
     # =========================================================================
-    
+
     def get_analytics_stats(self) -> Dict:
         """Return team offensive analytics stats."""
         if not self.transformed_data:
             return {}
-            
+
         stats = {
             'records_processed': len(self.transformed_data),
             'shot_zones_available': self.shot_zones_available,
             'shot_zones_source': self.shot_zones_source,
-            'avg_team_points': round(sum(r['points_scored'] for r in self.transformed_data if r['points_scored']) / 
+            'avg_team_points': round(sum(r['points_scored'] for r in self.transformed_data if r['points_scored']) /
                                    len([r for r in self.transformed_data if r['points_scored']]), 1) if any(r['points_scored'] for r in self.transformed_data) else 0,
             'total_assists': sum(r['assists'] for r in self.transformed_data if r['assists']),
             'total_turnovers': sum(r['turnovers'] for r in self.transformed_data if r['turnovers']),
@@ -1467,16 +1467,16 @@ class TeamOffenseGameSummaryProcessor(
                 'play_by_play': self.source_play_by_play_completeness_pct
             }
         }
-        
+
         return stats
-    
+
     def post_process(self) -> None:
         """Post-processing - send success notification with stats."""
         super().post_process()
-        
+
         # Send success notification
         analytics_stats = self.get_analytics_stats()
-        
+
         try:
             notify_info(
                 title="Team Offense: Processing Complete",

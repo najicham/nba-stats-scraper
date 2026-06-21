@@ -37,9 +37,9 @@ if [[ "$PHASE" == "all" || "$PHASE" == "2024-25" ]]; then
   echo "Priority: 🔴 CRITICAL"
   echo "Games: 7 games from April-May 2025"
   echo ""
-  
+
   DATES_2025="2025-04-19,2025-04-21,2025-04-24,2025-04-26,2025-04-29,2025-05-01,2025-05-03"
-  
+
   if [[ "$DRY_RUN" == "--dry-run" ]]; then
     echo -e "${YELLOW}[DRY RUN] Would scrape props for dates: ${DATES_2025}${NC}"
     ./bin/run_backfill.sh scrapers/odds_api_props \
@@ -49,18 +49,18 @@ if [[ "$PHASE" == "all" || "$PHASE" == "2024-25" ]]; then
     echo -e "${GREEN}Step 1: Scraping props from Odds API...${NC}"
     ./bin/run_backfill.sh scrapers/odds_api_props \
       --dates="${DATES_2025}"
-    
+
     echo ""
     echo -e "${GREEN}Step 2: Processing scraped files to BigQuery...${NC}"
     ./bin/run_backfill.sh raw/odds_api_props \
       --dates="${DATES_2025}"
-    
+
     echo ""
     echo -e "${GREEN}✅ Phase 1A Complete!${NC}"
     echo "Run validation query to verify:"
     echo "  bq query --use_legacy_sql=false @validation/queries/raw/odds_api_props/verify_playoff_completeness.sql"
   fi
-  
+
   echo ""
 fi
 
@@ -71,18 +71,18 @@ if [[ "$PHASE" == "all" || "$PHASE" == "2023-24" ]]; then
   echo -e "${GREEN}Phase 1B: 2023-24 Playoffs${NC}"
   echo "Priority: 🔴 HIGH"
   echo ""
-  
+
   # PHX vs MIN (4 games)
   echo "  Series 1: PHX vs MIN (4 games)"
   DATES_PHX_MIN="2024-04-20,2024-04-23,2024-04-26,2024-04-28"
-  
-  # LAC vs DAL (6 games)  
+
+  # LAC vs DAL (6 games)
   echo "  Series 2: LAC vs DAL (6 games)"
   DATES_LAC_DAL="2024-04-21,2024-04-23,2024-04-26,2024-04-28,2024-05-01,2024-05-03"
-  
+
   # Combined dates (some overlap)
   DATES_2024="2024-04-20,2024-04-21,2024-04-23,2024-04-26,2024-04-28,2024-05-01,2024-05-03"
-  
+
   if [[ "$DRY_RUN" == "--dry-run" ]]; then
     echo -e "${YELLOW}[DRY RUN] Would scrape props for dates: ${DATES_2024}${NC}"
     ./bin/run_backfill.sh scrapers/odds_api_props \
@@ -92,18 +92,18 @@ if [[ "$PHASE" == "all" || "$PHASE" == "2023-24" ]]; then
     echo -e "${GREEN}Step 1: Scraping props from Odds API...${NC}"
     ./bin/run_backfill.sh scrapers/odds_api_props \
       --dates="${DATES_2024}"
-    
+
     echo ""
     echo -e "${GREEN}Step 2: Processing scraped files to BigQuery...${NC}"
     ./bin/run_backfill.sh raw/odds_api_props \
       --dates="${DATES_2024}"
-    
+
     echo ""
     echo -e "${GREEN}✅ Phase 1B Complete!${NC}"
     echo "Run validation query to verify:"
     echo "  bq query --use_legacy_sql=false @validation/queries/raw/odds_api_props/verify_playoff_completeness.sql"
   fi
-  
+
   echo ""
 fi
 
@@ -115,10 +115,10 @@ if [[ "$PHASE" == "all" || "$PHASE" == "2022-23" ]]; then
   echo "Priority: 🟡 MEDIUM"
   echo "Note: Older data - may not be available in Odds API"
   echo ""
-  
+
   # Play-In + Conference Semifinals
   DATES_2023="2023-04-11,2023-04-12,2023-04-14,2023-04-29,2023-04-30,2023-05-01,2023-05-02,2023-05-05,2023-05-07,2023-05-09,2023-05-11"
-  
+
   if [[ "$DRY_RUN" == "--dry-run" ]]; then
     echo -e "${YELLOW}[DRY RUN] Would attempt to scrape props for dates: ${DATES_2023}${NC}"
     echo -e "${YELLOW}Testing with first 3 dates only...${NC}"
@@ -129,7 +129,7 @@ if [[ "$PHASE" == "all" || "$PHASE" == "2022-23" ]]; then
     echo -e "${YELLOW}Testing API availability with first 3 dates...${NC}"
     ./bin/run_backfill.sh scrapers/odds_api_props \
       --dates="2023-04-11,2023-04-12,2023-04-14"
-    
+
     echo ""
     read -p "Did the test succeed? Continue with remaining dates? (y/n) " -n 1 -r
     echo
@@ -137,19 +137,19 @@ if [[ "$PHASE" == "all" || "$PHASE" == "2022-23" ]]; then
       echo -e "${GREEN}Step 1: Scraping remaining dates...${NC}"
       ./bin/run_backfill.sh scrapers/odds_api_props \
         --dates="2023-04-29,2023-04-30,2023-05-01,2023-05-02,2023-05-05,2023-05-07,2023-05-09,2023-05-11"
-      
+
       echo ""
       echo -e "${GREEN}Step 2: Processing all scraped files to BigQuery...${NC}"
       ./bin/run_backfill.sh raw/odds_api_props \
         --dates="${DATES_2023}"
-      
+
       echo ""
       echo -e "${GREEN}✅ Phase 2 Complete!${NC}"
     else
       echo -e "${YELLOW}Skipped remaining dates for 2022-23 season${NC}"
     fi
   fi
-  
+
   echo ""
 fi
 

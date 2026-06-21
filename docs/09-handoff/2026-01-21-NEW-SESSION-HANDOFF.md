@@ -163,11 +163,11 @@ CLUSTER BY processor_name, game_date;
 **SQL:**
 ```sql
 ALTER TABLE predictions.player_prop_predictions
-ADD CONSTRAINT confidence_score_valid 
+ADD CONSTRAINT confidence_score_valid
 CHECK (confidence_score BETWEEN 0 AND 100);
 
 ALTER TABLE predictions.player_prop_predictions
-ADD CONSTRAINT predicted_points_valid 
+ADD CONSTRAINT predicted_points_valid
 CHECK (predicted_points >= 0);
 ```
 
@@ -331,7 +331,7 @@ git diff
 feat: Add BigQuery indexes for player lookups (Week 1 Task 7)
 
 - Added search index on player_aliases(alias_lookup)
-- Added search index on nba_players_registry(player_lookup)  
+- Added search index on nba_players_registry(player_lookup)
 - Added composite index on player_daily_cache
 
 Impact: Saves 50-150 sec per run (~30-90 hours/year)

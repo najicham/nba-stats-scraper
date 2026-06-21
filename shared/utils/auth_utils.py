@@ -19,11 +19,11 @@ def get_service_account_credentials(
 ) -> Optional[Credentials]:
     """
     Get Google Cloud service account credentials
-    
+
     Args:
         service_account_path: Path to service account JSON file
                             If None, uses default credential chain
-    
+
     Returns:
         Google Cloud credentials or None if failed
     """
@@ -40,7 +40,7 @@ def get_service_account_credentials(
             credentials, project = default()
             logger.info(f"Using default credentials for project {project}")
             return credentials
-            
+
     except Exception as e:
         logger.error(f"Failed to get credentials: {e}", exc_info=True)
         return None
@@ -49,7 +49,7 @@ def get_service_account_credentials(
 def get_project_id() -> Optional[str]:
     """
     Get the current Google Cloud project ID
-    
+
     Returns:
         Project ID or None if not found
     """
@@ -57,7 +57,7 @@ def get_project_id() -> Optional[str]:
     project_id = os.getenv('GOOGLE_CLOUD_PROJECT') or os.getenv('PROJECT_ID')
     if project_id:
         return project_id
-    
+
     # Try default credentials
     try:
         _, project_id = default()
@@ -70,7 +70,7 @@ def get_project_id() -> Optional[str]:
 def is_authenticated() -> bool:
     """
     Check if we have valid Google Cloud credentials
-    
+
     Returns:
         True if authenticated
     """
@@ -85,11 +85,11 @@ def is_authenticated() -> bool:
 def get_api_key(secret_name: str, default_env_var: Optional[str] = None) -> Optional[str]:
     """
     Get API key from Secret Manager or environment variable
-    
+
     Args:
         secret_name: Name of secret in Secret Manager
         default_env_var: Fallback environment variable name
-        
+
     Returns:
         API key or None if not found
     """
@@ -99,25 +99,25 @@ def get_api_key(secret_name: str, default_env_var: Optional[str] = None) -> Opti
         if api_key:
             logger.info(f"Using API key from environment variable {default_env_var}")
             return api_key
-    
+
     # Try Secret Manager
     try:
         from google.cloud import secretmanager
-        
+
         client = secretmanager.SecretManagerServiceClient()
         project_id = get_project_id()
-        
+
         if not project_id:
             logger.error("No project ID available for Secret Manager", exc_info=True)
             return None
-        
+
         secret_path = f"projects/{project_id}/secrets/{secret_name}/versions/latest"
         response = client.access_secret_version(request={"name": secret_path})
-        
+
         api_key = response.payload.data.decode("UTF-8")
         logger.info(f"Retrieved API key from Secret Manager: {secret_name}")
         return api_key
-        
+
     except Exception as e:
         logger.error(f"Failed to get API key from Secret Manager ({secret_name}): {e}", exc_info=True)
         return None
@@ -126,7 +126,7 @@ def get_api_key(secret_name: str, default_env_var: Optional[str] = None) -> Opti
 def setup_google_cloud_auth():
     """
     Set up Google Cloud authentication for the current environment
-    
+
     This function ensures proper authentication is configured and logs
     the authentication status.
     """
@@ -134,10 +134,10 @@ def setup_google_cloud_auth():
     if not project_id:
         logger.warning("No Google Cloud project ID found")
         return False
-    
+
     if not is_authenticated():
         logger.error("Google Cloud authentication not available", exc_info=True)
         return False
-    
+
     logger.info(f"Google Cloud authentication configured for project: {project_id}")
     return True

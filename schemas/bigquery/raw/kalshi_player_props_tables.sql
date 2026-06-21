@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_raw.kalshi_player_props` (
   series_ticker STRING NOT NULL,
   event_ticker STRING NOT NULL,
   market_ticker STRING NOT NULL,
-  
+
   -- Prop details
   prop_type STRING NOT NULL,  -- points, rebounds, assists, threes
   kalshi_player_name STRING NOT NULL,
@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_raw.kalshi_player_props` (
   home_team STRING,
   away_team STRING,
   game_id STRING,
-  
+
   -- Line and pricing
   line_value FLOAT64 NOT NULL,
   yes_bid INT64,
@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_raw.kalshi_player_props` (
   implied_under_prob FLOAT64,
   equivalent_over_odds INT64,
   equivalent_under_odds INT64,
-  
+
   -- Liquidity metrics
   yes_bid_size INT64,
   yes_ask_size INT64,
@@ -37,18 +37,18 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_raw.kalshi_player_props` (
   total_volume INT64,
   open_interest INT64,
   liquidity_score STRING,
-  
+
   -- Market status
   market_status STRING NOT NULL,
   can_close_early BOOLEAN,
   close_time TIMESTAMP,
-  
+
   -- Team validation fields (has_team_issues defaults to TRUE in application code)
   has_team_issues BOOLEAN NOT NULL,
   validated_team STRING,
   validation_confidence FLOAT64,
   validation_method STRING,
-  
+
   -- Processing metadata
   data_hash STRING,
   scraped_at TIMESTAMP NOT NULL,

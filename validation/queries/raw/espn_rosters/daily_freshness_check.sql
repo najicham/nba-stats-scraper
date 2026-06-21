@@ -50,19 +50,19 @@ SELECT
     -- Yesterday had no data
     WHEN COALESCE(y.teams_with_data, 0) = 0
       THEN '🔴 CRITICAL: No roster data collected'
-    
+
     -- Yesterday incomplete (missing teams)
     WHEN y.teams_with_data < 30
       THEN CONCAT('🟡 WARNING: Only ', CAST(y.teams_with_data AS STRING), '/30 teams')
-    
+
     -- Yesterday suspicious (too few players)
     WHEN y.unique_players < 450  -- 30 teams × 15 min players
       THEN CONCAT('⚠️  WARNING: Only ', CAST(y.unique_players AS STRING), ' players (expected ~500-650)')
-    
+
     -- Yesterday complete
     WHEN y.teams_with_data = 30 AND y.unique_players >= 450
       THEN '✅ Complete: All 30 teams with roster data'
-    
+
     ELSE '📊 Review: Unusual pattern'
   END as status
 FROM yesterday_rosters y

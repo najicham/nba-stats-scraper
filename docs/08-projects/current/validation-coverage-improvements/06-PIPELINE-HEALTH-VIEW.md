@@ -29,7 +29,7 @@ WITH processor_runs AS (
     processor_name,
     MAX(CASE WHEN status = 'success' THEN completed_at END) as last_success_time,
     MAX(CASE WHEN status = 'success' THEN game_date END) as last_success_date,
-    COUNTIF(status IN ('failed', 'partial') 
+    COUNTIF(status IN ('failed', 'partial')
       AND completed_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)) as failures_24h,
     COUNT(*) as total_runs_24h
   FROM (
@@ -59,7 +59,7 @@ SELECT
     ELSE 'HEALTHY'
   END as health_status
 FROM processor_runs
-ORDER BY 
+ORDER BY
   CASE health_status
     WHEN 'UNHEALTHY' THEN 1
     WHEN 'STALE' THEN 2

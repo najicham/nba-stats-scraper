@@ -7,7 +7,7 @@
 
 -- Check which players ESPN has
 WITH espn_players AS (
-  SELECT 
+  SELECT
     player_full_name,
     team_abbr,
     points

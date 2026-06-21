@@ -22,72 +22,72 @@ from typing import List, Dict, Optional
 class MockXGBoostModel:
     """
     Mock XGBoost model that simulates trained ML behavior
-    
+
     This is NOT a real ML model - it uses heuristics to generate
     predictions that look like they came from XGBoost.
-    
+
     When Phase 5 deploys to production with real training data,
     swap this for actual XGBoost model loading.
     """
-    
+
     def __init__(self, seed: Optional[int] = None):
         """
         Initialize mock model
-        
+
         Args:
             seed: Random seed for reproducibility
         """
         if seed is not None:
             np.random.seed(seed)
-        
+
         self.seed = seed
         self.model_version = 'mock_v1'
         self.n_features = 25
-        
+
         # Simulate learned feature importance (from specs)
         self.feature_importance = self._get_feature_importance()
-        
+
         # Learned "optimal" weights (simulated)
         self.feature_weights = self._get_feature_weights()
-    
+
     def predict(self, features: np.ndarray) -> np.ndarray:
         """
         Make prediction on feature array
-        
+
         Args:
             features: Feature array of shape (n_samples, 25) or (25,)
-        
+
         Returns:
             np.ndarray: Predictions (shape: n_samples,)
         """
         # Handle single sample
         if features.ndim == 1:
             features = features.reshape(1, -1)
-        
+
         # Validate shape
         if features.shape[1] != self.n_features:
             raise ValueError(f"Expected {self.n_features} features, got {features.shape[1]}")
-        
+
         predictions = []
-        
+
         for feature_vector in features:
             pred = self._predict_single(feature_vector)
             predictions.append(pred)
-        
+
         return np.array(predictions)
-    
+
     def _predict_single(self, features: np.ndarray) -> float:
         """
         Predict for a single feature vector
-        
+
         Simulates XGBoost by:
         1. Starting with recent performance baseline
         2. Applying learned adjustments based on other features
         3. Adding some variance to simulate model uncertainty
-        
+
         Args:
             features: Single feature vector (25 features)
-        
+
         Returns:
             float: Predicted points
         """
@@ -97,24 +97,24 @@ class MockXGBoostModel:
         points_season = features[2]
         points_std = features[3]
         minutes = features[4]
-        
+
         fatigue = features[5]
         zone_mismatch = features[6]
         pace = features[7]
         usage_spike = features[8]
-        
+
         opp_def_rating = features[13]
         opp_pace = features[14]
         is_home = features[15]
         days_rest = features[16]
         back_to_back = features[17]
-        
+
         paint_rate = features[18]
         three_rate = features[20]
-        
+
         team_pace = features[22]
         usage_rate = features[24]
-        
+
         # === STEP 1: Baseline (weighted recent performance) ===
         # XGBoost learns that recent form matters most
         baseline = (
@@ -122,10 +122,10 @@ class MockXGBoostModel:
             points_last_10 * 0.40 +
             points_season * 0.25
         )
-        
+
         # === STEP 2: Feature-Based Adjustments ===
         # Simulate what XGBoost learned from training data
-        
+
         # Fatigue impact (non-linear learned pattern) - IMPROVED: More gradual 5-level curve
         if fatigue < 40:
             fatigue_adj = -3.0  # Extreme fatigue
@@ -139,22 +139,22 @@ class MockXGBoostModel:
             fatigue_adj = 0.8   # Well-rested boost (increased from 0.5)
         else:
             fatigue_adj = 0.0   # Neutral
-        
+
         # Zone matchup (learned interaction)
         zone_adj = zone_mismatch * 0.35
-        
+
         # Pace interaction (learned that volume scorers benefit more)
         if usage_rate > 28:  # High usage
             pace_adj = pace * 0.12
         else:  # Lower usage
             pace_adj = pace * 0.08
-        
+
         # Usage spike (learned non-linear effect) - IMPROVED: Stronger weight (0.45 from 0.35)
         if abs(usage_spike) > 5:
             usage_adj = usage_spike * 0.45  # Strong signal (increased to catch breakouts)
         else:
             usage_adj = usage_spike * 0.30  # Weak signal (also increased slightly)
-        
+
         # Opponent defense (learned that elite defense matters) - IMPROVED: 6-level nuanced scale
         if opp_def_rating < 106:  # Top 3 defense
             def_adj = -2.0
@@ -168,7 +168,7 @@ class MockXGBoostModel:
             def_adj = 0.8
         else:
             def_adj = 0.0  # Average defense
-        
+
         # Back-to-back (learned from historical patterns) - IMPROVED: Stronger penalty (-2.5 from -2.2)
         if back_to_back:
             b2b_adj = -2.5  # Increased penalty for fatigue
@@ -177,7 +177,7 @@ class MockXGBoostModel:
 
         # Venue (learned home court advantage) - IMPROVED: Higher home boost (1.3 from 1.0)
         venue_adj = 1.3 if is_home else -0.6  # Increased home advantage
-        
+
         # Minutes played (more minutes = more points, learned correlation) - IMPROVED: Added mid-range
         if minutes > 36:
             minutes_adj = 0.8  # High minutes
@@ -198,7 +198,7 @@ class MockXGBoostModel:
             shot_adj = -0.5  # Perimeter vs elite perimeter (unchanged)
         else:
             shot_adj = 0.0
-        
+
         # === STEP 3: Combine All Adjustments ===
         total_adj = (
             fatigue_adj +
@@ -211,37 +211,37 @@ class MockXGBoostModel:
             minutes_adj +
             shot_adj
         )
-        
+
         predicted = baseline + total_adj
-        
+
         # === STEP 4: Add Model Variance ===
         # Real XGBoost has prediction uncertainty
         # Add small random variance to simulate this
         variance = np.random.normal(0, 0.3)  # Small variance
         predicted += variance
-        
+
         # === STEP 5: Clamp to Reasonable Range ===
         predicted = max(0, min(60, predicted))
-        
+
         return predicted
-    
+
     def _get_feature_importance(self) -> Dict[int, float]:
         """
         Simulate feature importance learned by XGBoost
-        
+
         Based on algorithm specs, the most important features are:
         - Recent performance (features 0-2): 14%
         - Shot zone mismatch (feature 6): 11%
         - Pace (feature 7): 6%
         - Opponent defense (feature 13): 8%
         - Usage rate (feature 24): 7%
-        
+
         Returns:
             dict: Feature index → importance (0-1)
         """
         # Initialize all features with low importance
         importance = {i: 0.01 for i in range(self.n_features)}
-        
+
         # High importance features
         importance[0] = 0.14   # points_avg_last_5
         importance[1] = 0.12   # points_avg_last_10
@@ -254,15 +254,15 @@ class MockXGBoostModel:
         importance[4] = 0.04   # minutes
         importance[17] = 0.03  # back_to_back
         importance[15] = 0.02  # is_home
-        
+
         # Remaining features have 0.01 each (already set)
-        
+
         return importance
-    
+
     def _get_feature_weights(self) -> Dict[int, float]:
         """
         Simulate learned feature weights
-        
+
         Returns:
             dict: Feature index → weight
         """
@@ -278,20 +278,20 @@ class MockXGBoostModel:
             15: 0.50,  # is_home
             17: -2.2,  # back_to_back
         }
-    
+
     def get_feature_importance(self) -> Dict[int, float]:
         """
         Get feature importance scores
-        
+
         Returns:
             dict: Feature index → importance
         """
         return self.feature_importance
-    
+
     def get_model_metadata(self) -> Dict:
         """
         Get model metadata
-        
+
         Returns:
             dict: Model information
         """
@@ -311,10 +311,10 @@ class MockXGBoostModel:
 def load_mock_model(seed: Optional[int] = None) -> MockXGBoostModel:
     """
     Load mock XGBoost model
-    
+
     Args:
         seed: Random seed for reproducibility
-    
+
     Returns:
         MockXGBoostModel: Loaded mock model
     """
@@ -324,7 +324,7 @@ def load_mock_model(seed: Optional[int] = None) -> MockXGBoostModel:
 def create_feature_vector(features_dict: Dict) -> np.ndarray:
     """
     Create feature vector array from features dictionary
-    
+
     Features must be in exact order:
     0. points_avg_last_5
     1. points_avg_last_10
@@ -351,10 +351,10 @@ def create_feature_vector(features_dict: Dict) -> np.ndarray:
     22. team_pace_last_10
     23. team_off_rating_last_10
     24. usage_rate_last_10
-    
+
     Args:
         features_dict: Dictionary with feature names and values
-    
+
     Returns:
         np.ndarray: Feature vector (shape: 25,)
     """
@@ -385,11 +385,11 @@ def create_feature_vector(features_dict: Dict) -> np.ndarray:
         'team_off_rating_last_10',
         'usage_rate_last_10'
     ]
-    
+
     feature_vector = []
-    
+
     for feature_name in feature_order:
         value = features_dict.get(feature_name, 0.0)
         feature_vector.append(value)
-    
+
     return np.array(feature_vector)

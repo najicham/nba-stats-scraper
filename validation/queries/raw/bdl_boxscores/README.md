@@ -45,7 +45,7 @@ bq query --use_legacy_sql=false < cross_validate_with_gamebook.sql
 ## 📊 Query Details
 
 ### 1. Season Completeness Check
-**File:** `season_completeness_check.sql`  
+**File:** `season_completeness_check.sql`
 **Purpose:** Comprehensive season validation with player statistics
 
 **Output Columns:**
@@ -69,7 +69,7 @@ bq query --use_legacy_sql=false < cross_validate_with_gamebook.sql
 ---
 
 ### 2. Find Missing Games
-**File:** `find_missing_games.sql`  
+**File:** `find_missing_games.sql`
 **Purpose:** Identify specific games missing from BDL
 
 **When to Use:**
@@ -87,7 +87,7 @@ bq query --use_legacy_sql=false < cross_validate_with_gamebook.sql
 ---
 
 ### 3. Cross-Validate with Gamebook
-**File:** `cross_validate_with_gamebook.sql`  
+**File:** `cross_validate_with_gamebook.sql`
 **Purpose:** Compare BDL stats with NBA.com official data
 
 **Checks:**
@@ -109,7 +109,7 @@ bq query --use_legacy_sql=false < cross_validate_with_gamebook.sql
 ---
 
 ### 4. Verify Playoff Completeness
-**File:** `verify_playoff_completeness.sql`  
+**File:** `verify_playoff_completeness.sql`
 **Purpose:** Dynamic playoff validation using schedule as source of truth
 
 **Key Features:**
@@ -130,7 +130,7 @@ bq query --use_legacy_sql=false < cross_validate_with_gamebook.sql
 ---
 
 ### 5. Daily Check Yesterday
-**File:** `daily_check_yesterday.sql`  
+**File:** `daily_check_yesterday.sql`
 **Purpose:** Automated daily monitoring
 
 **Schedule:** Run daily at 9 AM (after overnight processing)
@@ -155,7 +155,7 @@ bq query --use_legacy_sql=false < cross_validate_with_gamebook.sql
 ---
 
 ### 6. Weekly Check Last 7 Days
-**File:** `weekly_check_last_7_days.sql`  
+**File:** `weekly_check_last_7_days.sql`
 **Purpose:** Trend analysis over past week
 
 **Output:**
@@ -173,7 +173,7 @@ bq query --use_legacy_sql=false < cross_validate_with_gamebook.sql
 ---
 
 ### 7. Real-time Scraper Check
-**File:** `realtime_scraper_check.sql`  
+**File:** `realtime_scraper_check.sql`
 **Purpose:** Monitor today's games as they complete
 
 **Best Time:** 11 PM - 1 AM ET (after games finish)
@@ -318,7 +318,7 @@ WHERE game_date BETWEEN '2025-04-19' AND '2025-06-20'
 
 ---
 
-**Last Updated:** 2025-10-12  
-**Query Version:** 1.0  
-**Data Source:** Ball Don't Lie API  
+**Last Updated:** 2025-10-12
+**Query Version:** 1.0
+**Data Source:** Ball Don't Lie API
 **Coverage:** 2021-22 through 2024-25 seasons

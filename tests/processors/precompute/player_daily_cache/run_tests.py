@@ -12,7 +12,7 @@ Usage:
     python run_tests.py --coverage     # Run with coverage report
     python run_tests.py --quick        # Run fast tests (unit + integration)
     python run_tests.py --verbose      # Run with verbose output
-    
+
 Examples:
     python run_tests.py unit --coverage
     python run_tests.py quick --verbose
@@ -27,7 +27,7 @@ from pathlib import Path
 def run_tests(test_type='all', coverage=False, verbose=False):
     """Run tests with specified options."""
     cmd = ['pytest']
-    
+
     # Test selection
     if test_type == 'unit':
         cmd.append('test_unit.py')
@@ -48,13 +48,13 @@ def run_tests(test_type='all', coverage=False, verbose=False):
     else:
         print("🚀 Running All Tests...")
         print("   58 tests, ~45 seconds")
-    
+
     # Options
     if verbose:
         cmd.append('-vv')
     else:
         cmd.append('-v')
-    
+
     if coverage:
         cmd.extend([
             '--cov=data_processors.precompute.player_daily_cache',
@@ -63,26 +63,26 @@ def run_tests(test_type='all', coverage=False, verbose=False):
             '--cov-report=term-missing'
         ])
         print("📊 Coverage report enabled")
-    
+
     # Additional pytest options
     cmd.extend([
         '--tb=short',           # Short traceback format
         '--color=yes',          # Colored output
         '--durations=10',       # Show 10 slowest tests
     ])
-    
+
     print()
     print("=" * 70)
     result = subprocess.run(cmd)
     print("=" * 70)
-    
+
     if result.returncode == 0:
         print("\n✅ All tests passed!")
         if coverage:
             print("📊 Coverage report: htmlcov/index.html")
     else:
         print("\n❌ Some tests failed")
-    
+
     return result.returncode
 
 
@@ -94,11 +94,11 @@ def print_help():
 def main():
     """Main entry point."""
     args = sys.argv[1:]
-    
+
     test_type = 'all'
     coverage = False
     verbose = False
-    
+
     # Parse arguments
     for arg in args:
         if arg in ['-h', '--help']:
@@ -114,7 +114,7 @@ def main():
             print(f"Unknown option: {arg}")
             print("Run with --help for usage information")
             return 1
-    
+
     return run_tests(test_type, coverage, verbose)
 
 

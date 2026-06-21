@@ -1,6 +1,6 @@
 # NBA.com Referee Assignments - Daily Validation Schedule
 
-**Purpose:** Automated daily validation during NBA season (October - June)  
+**Purpose:** Automated daily validation during NBA season (October - June)
 **Goal:** Catch data issues within 24 hours
 
 ---
@@ -281,8 +281,8 @@ bq query --use_legacy_sql=false < verify_playoff_completeness.sql
 
 ## Contact & Escalation
 
-**Primary:** Data Engineering Team  
-**Slack:** #nba-data-quality  
+**Primary:** Data Engineering Team
+**Slack:** #nba-data-quality
 **Validation Queries:** `validation/queries/raw/nbac_referee/`
 
 **Escalation:**
@@ -294,5 +294,5 @@ bq query --use_legacy_sql=false < verify_playoff_completeness.sql
 
 ---
 
-**Status:** Ready for production after backfill completion  
+**Status:** Ready for production after backfill completion
 **Last Updated:** October 13, 2025

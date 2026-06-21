@@ -52,7 +52,7 @@ recent_activity AS (
 
 SELECT
   CURRENT_TIMESTAMP() as check_time,
-  
+
   -- Today's game status
   ts.games_today,
   tr.games_with_refs as today_games_with_refs,
@@ -62,7 +62,7 @@ SELECT
     WHEN tr.games_with_refs = 0 THEN '❌ No ref data yet'
     ELSE CONCAT('⚠️ ', CAST(tr.games_with_refs AS STRING), '/', CAST(ts.games_today AS STRING), ' games')
   END as today_status,
-  
+
   -- Tomorrow's game status (refs usually published day before)
   toms.games_tomorrow,
   tomr.games_with_refs as tomorrow_games_with_refs,
@@ -72,18 +72,18 @@ SELECT
     WHEN tomr.games_with_refs = 0 THEN '⚠️ No ref data yet (check this afternoon)'
     ELSE CONCAT('⚠️ ', CAST(tomr.games_with_refs AS STRING), '/', CAST(toms.games_tomorrow AS STRING), ' games')
   END as tomorrow_status,
-  
+
   -- Recent processing activity
   ra.last_data_processed,
   TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), ra.last_data_processed, MINUTE) as minutes_since_last_update,
   ra.dates_processed_today,
-  
+
   -- Overall scraper health
   CASE
     WHEN ra.last_data_processed IS NULL THEN '❌ CRITICAL: No data processed today'
     WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), ra.last_data_processed, MINUTE) > 180 THEN '⚠️ WARNING: No updates in 3+ hours'
     WHEN ts.games_today > 0 AND tr.games_with_refs = 0 THEN '⚠️ WARNING: Today games missing refs'
-    WHEN toms.games_tomorrow > 0 AND tomr.games_with_refs = 0 
+    WHEN toms.games_tomorrow > 0 AND tomr.games_with_refs = 0
      AND EXTRACT(HOUR FROM CURRENT_TIMESTAMP()) > 12 THEN '⚠️ WARNING: Tomorrow refs not published yet'
     ELSE '✅ Scraper healthy'
   END as scraper_health

@@ -15,14 +15,14 @@
 -- ============================================================================
 
 WITH todays_games AS (
-  SELECT 
+  SELECT
     COUNT(*) as scheduled_games
   FROM `nba-props-platform.nba_raw.nbac_schedule`
   WHERE game_date = CURRENT_DATE()
 ),
 
 todays_odds AS (
-  SELECT 
+  SELECT
     COUNT(DISTINCT game_id) as games_with_odds,
     MAX(snapshot_timestamp) as latest_snapshot,
     COUNT(DISTINCT snapshot_timestamp) as snapshot_count,
@@ -31,7 +31,7 @@ todays_odds AS (
   WHERE game_date = CURRENT_DATE()
 )
 
-SELECT 
+SELECT
   CURRENT_DATE() as check_date,
   CURRENT_TIMESTAMP() as check_time,
   s.scheduled_games,
@@ -40,11 +40,11 @@ SELECT
   o.latest_snapshot,
   o.snapshot_count,
   TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), o.latest_snapshot, MINUTE) as minutes_since_last_snapshot,
-  CASE 
+  CASE
     WHEN s.scheduled_games = 0 THEN '⚪ No games today'
     WHEN o.games_with_odds = 0 THEN '❌ CRITICAL: No odds captured yet'
     WHEN o.games_with_odds < s.scheduled_games THEN '⚠️ WARNING: Some games missing odds'
-    WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), o.latest_snapshot, MINUTE) > 120 
+    WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), o.latest_snapshot, MINUTE) > 120
     THEN '⚠️ WARNING: Scraper may be stale (>2hrs since last snapshot)'
     ELSE '✅ Scraper healthy'
   END as status

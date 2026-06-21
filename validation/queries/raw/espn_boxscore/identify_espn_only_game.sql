@@ -24,7 +24,7 @@ bdl_games AS (
 ),
 
 espn_only AS (
-  SELECT 
+  SELECT
     e.game_date,
     e.game_id,
     e.season_year,
@@ -53,13 +53,13 @@ SELECT
   rebounds,
   assists,
   minutes,
-  CASE 
+  CASE
     WHEN minutes = '0:00' THEN 'DNP'
     ELSE 'PLAYED'
   END as status
 FROM `nba-props-platform.nba_raw.espn_boxscores`
 WHERE game_id IN (
-  SELECT game_id 
+  SELECT game_id
   FROM espn_games e
   LEFT JOIN bdl_games b ON e.game_id = b.game_id
   WHERE b.game_id IS NULL
@@ -69,7 +69,7 @@ ORDER BY team_abbr, points DESC;
 -- Check if this game exists in schedule (with partition filter)
 SELECT
   '=== SCHEDULE CHECK ===' as section,
-  CASE 
+  CASE
     WHEN COUNT(*) > 0 THEN '✅ Game IS in schedule'
     ELSE '🔴 Game NOT in schedule'
   END as schedule_status,

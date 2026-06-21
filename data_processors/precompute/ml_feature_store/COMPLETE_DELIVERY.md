@@ -197,7 +197,7 @@ Phase 4 Cache (preferred) → Phase 3 Analytics → Sensible Defaults
 ```python
 Quality Score = Σ(source_weight × feature_count) / 25
 - Phase 4: 100 points
-- Phase 3: 75 points  
+- Phase 3: 75 points
 - Calculated: 100 points
 - Defaults: 40 points
 ```

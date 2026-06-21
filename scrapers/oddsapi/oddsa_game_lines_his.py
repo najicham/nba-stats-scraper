@@ -27,7 +27,7 @@ Usage examples
   python scrapers/oddsapi/oddsa_game_lines_his.py --serve --debug
 
   CRITICAL TIMING CONSTRAINT FOR HISTORICAL ODDS:
-  Events disappear from the API when games start or shortly before. If your 
+  Events disappear from the API when games start or shortly before. If your
   snapshot_timestamp is too far after the event was available, you'll get 404 errors.
 
   WORKFLOW TO AVOID 404s:
@@ -38,9 +38,9 @@ Usage examples
   EXAMPLE OF WHAT CAUSES 404s:
   ✗ Events found at: 2024-01-25T03:55:40Z (3:55 AM UTC)
   ✗ Odds requested at: 2024-01-25T14:00:00Z (2:00 PM UTC) → 404 ERROR
-  
+
   CORRECT APPROACH:
-  ✓ Events found at: 2024-01-25T03:55:40Z (3:55 AM UTC)  
+  ✓ Events found at: 2024-01-25T03:55:40Z (3:55 AM UTC)
   ✓ Odds requested at: 2024-01-25T04:00:00Z (4:00 AM UTC) → SUCCESS
 
   SAFE TIMING WINDOWS:
@@ -48,7 +48,7 @@ Usage examples
   • Afternoon (14:00-18:00 UTC): Updated lines (may work if events still listed)
   • Evening (20:00+ UTC): Final lines (risky - events may have started)
 
-  NBA games typically start 23:00-02:00 UTC (evening US time), so events 
+  NBA games typically start 23:00-02:00 UTC (evening US time), so events
   disappear around game time. Always test with events scraper first!
 """
 
@@ -188,14 +188,14 @@ class GetOddsApiHistoricalGameLines(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     def set_additional_opts(self) -> None:
         super().set_additional_opts()  # Base class handles game_date → date conversion
-        
+
         # Snap timestamp to valid 5-minute boundary for API
         if self.opts.get("snapshot_timestamp"):
             original_timestamp = self.opts["snapshot_timestamp"]
             self.opts["snapshot_timestamp"] = snap_iso_ts_to_five_minutes(original_timestamp)
             if original_timestamp != self.opts["snapshot_timestamp"]:
                 logger.debug("Snapped timestamp %s → %s", original_timestamp, self.opts["snapshot_timestamp"])
-        
+
         # Extract snap time for filename (moved from transform_data for early availability)
         if self.opts.get("snapshot_timestamp"):
             snapshot_time = self.opts["snapshot_timestamp"]  # "2024-04-11T04:00:00Z"
@@ -203,7 +203,7 @@ class GetOddsApiHistoricalGameLines(ScraperBase, ScraperFlaskMixin):
             snap_hour = time_part[:2] + time_part[3:5]       # "04" + "00" = "0400"
             self.opts["snap"] = snap_hour                    # For GCS path template
             logger.debug("Extracted snap time for filename: %s", snap_hour)
-        
+
         # ── season‑wide defaults for game lines (spreads & totals) ──────────────────────
         if not self.opts.get("sport"):
             self.opts["sport"] = "basketball_nba"
@@ -230,7 +230,7 @@ class GetOddsApiHistoricalGameLines(ScraperBase, ScraperFlaskMixin):
         )
         if not api_key:
             error_msg = "Missing api_key and env var ODDS_API_KEY not set."
-            
+
             # Send critical notification - API key missing prevents all scraping
             try:
                 notify_error(
@@ -247,7 +247,7 @@ class GetOddsApiHistoricalGameLines(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise DownloadDataException(error_msg)
 
         base = self._API_ROOT_TMPL.format(
@@ -282,10 +282,10 @@ class GetOddsApiHistoricalGameLines(ScraperBase, ScraperFlaskMixin):
         if self.raw_response.status_code in (200, 204):
             # 204 is expected for empty snapshots, just log it
             if self.raw_response.status_code == 204:
-                logger.info("204 response - no game lines data at snapshot %s", 
+                logger.info("204 response - no game lines data at snapshot %s",
                            self.opts.get("snapshot_timestamp"))
             return
-        
+
         # Special handling for 404 - common in historical data due to timing
         if self.raw_response.status_code == 404:
             try:
@@ -325,7 +325,7 @@ class GetOddsApiHistoricalGameLines(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-        
+
         super().check_download_status()
 
     # ------------------------------------------------------------------ #
@@ -338,7 +338,7 @@ class GetOddsApiHistoricalGameLines(ScraperBase, ScraperFlaskMixin):
         """
         # Handle 204 responses (empty snapshot)
         if self.raw_response.status_code == 204:
-            logger.info("204 response - no game lines data available for snapshot %s", 
+            logger.info("204 response - no game lines data available for snapshot %s",
                        self.opts.get("snapshot_timestamp"))
             # Create empty response structure for consistency
             self.decoded_data = {
@@ -346,7 +346,7 @@ class GetOddsApiHistoricalGameLines(ScraperBase, ScraperFlaskMixin):
                 "timestamp": self.opts.get("snapshot_timestamp"),
                 "message": "No game lines data available for this snapshot"
             }
-            
+
             # Send info notification for 204 (expected but worth tracking)
             try:
                 notify_info(
@@ -365,12 +365,12 @@ class GetOddsApiHistoricalGameLines(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             return
 
         if isinstance(self.decoded_data, dict) and "message" in self.decoded_data:
             error_msg = self.decoded_data['message']
-            
+
             # API returned an error message
             try:
                 notify_error(
@@ -388,7 +388,7 @@ class GetOddsApiHistoricalGameLines(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise DownloadDataException(f"API error: {error_msg}")
 
         if not (isinstance(self.decoded_data, dict) and "data" in self.decoded_data):
@@ -410,7 +410,7 @@ class GetOddsApiHistoricalGameLines(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise DownloadDataException("Expected dict with 'data' key.")
 
     # ------------------------------------------------------------------ #
@@ -424,13 +424,13 @@ class GetOddsApiHistoricalGameLines(ScraperBase, ScraperFlaskMixin):
         row_count = 0
         spreads_count = 0
         totals_count = 0
-        
+
         for bm in event_odds.get("bookmakers", []):
             for mk in bm.get("markets", []):
                 market_key = mk.get("key", "")
                 outcome_count = len(mk.get("outcomes", [])) or 1
                 row_count += outcome_count
-                
+
                 if market_key == "spreads":
                     spreads_count += outcome_count
                 elif market_key == "totals":
@@ -483,7 +483,7 @@ class GetOddsApiHistoricalGameLines(ScraperBase, ScraperFlaskMixin):
             "totalsCount": totals_count,
             "eventOdds": event_odds,
         }
-        
+
         # Check for no lines in successful response
         if row_count == 0 and self.raw_response.status_code == 200:
             try:
@@ -508,12 +508,12 @@ class GetOddsApiHistoricalGameLines(ScraperBase, ScraperFlaskMixin):
             # Check for missing specific markets (if requested spreads but got 0, or totals but got 0)
             requested_markets = self.opts.get('markets', 'spreads,totals').split(',')
             missing_markets = []
-            
+
             if 'spreads' in requested_markets and spreads_count == 0:
                 missing_markets.append('spreads')
             if 'totals' in requested_markets and totals_count == 0:
                 missing_markets.append('totals')
-            
+
             if missing_markets:
                 try:
                     notify_warning(
@@ -535,7 +535,7 @@ class GetOddsApiHistoricalGameLines(ScraperBase, ScraperFlaskMixin):
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             # Success! Send info notification with metrics
             try:
                 notify_info(
@@ -562,22 +562,22 @@ class GetOddsApiHistoricalGameLines(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-        
+
         logger.info(
-            "Fetched %d game lines rows (%d spreads, %d totals) for event %s", 
+            "Fetched %d game lines rows (%d spreads, %d totals) for event %s",
             row_count, spreads_count, totals_count, self.opts["event_id"][:12] + "..."
         )
 
     def _extract_teams_suffix(self, event_odds: Dict[str, Any]) -> str:
         """
         Extract team information from event odds data and build teams suffix.
-        
+
         The historical event odds endpoint returns event data including team names.
         We use this to build the teams suffix for enhanced GCS paths.
-        
+
         Args:
             event_odds: Event odds data from API response
-            
+
         Returns:
             Teams suffix (e.g., "LALDET") or empty string if teams not found
         """
@@ -585,45 +585,45 @@ class GetOddsApiHistoricalGameLines(ScraperBase, ScraperFlaskMixin):
         if self.opts.get("teams"):
             logger.debug("Using provided teams suffix: %s", self.opts["teams"])
             return self.opts["teams"]
-        
+
         try:
             # The API response includes the event data with team information
             # Look for team names in the event data
             away_team = event_odds.get("away_team", "")
             home_team = event_odds.get("home_team", "")
-            
+
             # If not found in top level, check if there's an event object
             if not away_team or not home_team:
                 event_info = event_odds.get("event", {})
                 away_team = event_info.get("away_team", "")
                 home_team = event_info.get("home_team", "")
-            
+
             # If still not found, try common alternate field names
             if not away_team or not home_team:
-                away_team = (event_odds.get("awayTeam") or 
-                           event_odds.get("away") or 
+                away_team = (event_odds.get("awayTeam") or
+                           event_odds.get("away") or
                            event_odds.get("visitor_team", ""))
-                home_team = (event_odds.get("homeTeam") or 
-                           event_odds.get("home") or 
+                home_team = (event_odds.get("homeTeam") or
+                           event_odds.get("home") or
                            event_odds.get("home_team", ""))
-            
+
             if away_team and home_team:
                 # Build teams suffix using the utility
                 teams_suffix = build_event_teams_suffix({
                     "away_team": away_team,
                     "home_team": home_team
                 })
-                logger.debug("Extracted teams from API response: %s @ %s -> %s", 
+                logger.debug("Extracted teams from API response: %s @ %s -> %s",
                            away_team, home_team, teams_suffix)
                 return teams_suffix
             else:
-                logger.warning("Could not extract team information from event odds data for event %s", 
+                logger.warning("Could not extract team information from event odds data for event %s",
                              self.opts.get("event_id", "unknown")[:12] + "...")
                 logger.debug("Event odds keys: %s", list(event_odds.keys()))
                 return ""
-                
+
         except Exception as e:
-            logger.warning("Error extracting teams suffix for event %s: %s", 
+            logger.warning("Error extracting teams suffix for event %s: %s",
                          self.opts.get("event_id", "unknown")[:12] + "...", e)
             return ""
 
@@ -639,7 +639,7 @@ class GetOddsApiHistoricalGameLines(ScraperBase, ScraperFlaskMixin):
         if self.raw_response and self.raw_response.status_code == 204:
             logger.info("Skipping save for 204 empty response")
             return False
-            
+
         # Save if we have any rows of data
         return bool(self.data.get("rowCount", 0) > 0)
 

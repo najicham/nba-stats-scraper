@@ -187,11 +187,11 @@ class UpcomingTeamGameContextProcessor(
         self.betting_lines: Optional[pd.DataFrame] = None
         self.injury_data: Optional[pd.DataFrame] = None
         self.travel_distances: Optional[Dict] = None
-        
+
         # Quality tracking
         self.quality_issues: List[Dict] = []
         self.failed_entities: List[Dict] = []
-        
+
         # Source tracking attributes (set by track_source_usage)
         self.source_nbac_schedule_last_updated = None
         self.source_nbac_schedule_rows_found = None
@@ -202,7 +202,7 @@ class UpcomingTeamGameContextProcessor(
         self.source_injury_report_last_updated = None
         self.source_injury_report_rows_found = None
         self.source_injury_report_completeness_pct = None
-        
+
         # Early season tracking
         self.early_season_flag = False
         self.insufficient_data_reason = None
@@ -439,36 +439,36 @@ class UpcomingTeamGameContextProcessor(
             start_date=start_date_str,
             end_date=end_date_str
         )
-        
+
         # Log dependency status
         logger.info(f"Dependency check results:")
         logger.info(f"  All critical present: {dep_check['all_critical_present']}")
         logger.info(f"  Has stale warnings: {dep_check.get('has_stale_warn', False)}")
         logger.info(f"  Has stale failures: {dep_check.get('has_stale_fail', False)}")
-        
+
         for table_name, details in dep_check['details'].items():
             status = "✓" if details.get('exists') else "✗"
             logger.info(f"  {status} {table_name}: {details.get('row_count', 0)} rows")
-        
+
         # ====================================================================
         # STEP 2: Handle Critical Failures
         # ====================================================================
-        
+
         # Check critical dependencies
         if not dep_check['all_critical_present']:
             missing = dep_check.get('missing', [])
             error_msg = f"Missing critical dependencies: {', '.join(missing)}"
             logger.error(error_msg)
-            
+
             self.log_quality_issue(
                 severity='CRITICAL',
                 category='MISSING_DEPENDENCY',
                 message=error_msg,
                 details={'missing': missing}
             )
-            
+
             raise DependencyError(error_msg)
-        
+
         # Check critical staleness (skip in backfill mode)
         if dep_check.get('has_stale_fail') and not self.is_backfill_mode:
             stale = dep_check.get('stale_fail', [])
@@ -486,15 +486,15 @@ class UpcomingTeamGameContextProcessor(
         elif dep_check.get('has_stale_fail') and self.is_backfill_mode:
             stale = dep_check.get('stale_fail', [])
             logger.info(f"BACKFILL_MODE: Skipping stale data check for {stale}")
-        
+
         # ====================================================================
         # STEP 3: Track Source Usage
         # ====================================================================
         logger.info("Step 2: Tracking source usage...")
-        
+
         # Populate source tracking attributes
         self.track_source_usage(dep_check)
-        
+
         # Log source metadata
         logger.info(f"Source Tracking:")
         logger.info(f"  Schedule: {self.source_nbac_schedule_rows_found} rows, "
@@ -503,67 +503,67 @@ class UpcomingTeamGameContextProcessor(
                    f"{self.source_odds_lines_completeness_pct}% complete")
         logger.info(f"  Injury Report: {self.source_injury_report_rows_found} rows, "
                    f"{self.source_injury_report_completeness_pct}% complete")
-        
+
         # ====================================================================
         # STEP 4: Extract Schedule Data (CRITICAL)
         # ====================================================================
         logger.info("Step 3: Extracting schedule data (CRITICAL)...")
-        
+
         self.schedule_data = self._extract_schedule_data(start_date, end_date)
-        
+
         if self.schedule_data is None or len(self.schedule_data) == 0:
             error_msg = "No schedule data found - cannot continue"
             logger.error(error_msg)
-            
+
             self.log_quality_issue(
                 severity='CRITICAL',
                 category='NO_DATA',
                 message=error_msg,
                 details={'date_range': f"{start_date} to {end_date}"}
             )
-            
+
             raise DependencyError(error_msg)
-        
+
         logger.info(f"✓ Extracted {len(self.schedule_data)} schedule records")
-        
+
         # ====================================================================
         # STEP 5: Extract Betting Lines (OPTIONAL)
         # ====================================================================
         logger.info("Step 4: Extracting betting lines (OPTIONAL)...")
-        
+
         self.betting_lines = self._extract_betting_lines(start_date, end_date)
-        
+
         if self.betting_lines is None or len(self.betting_lines) == 0:
             logger.warning("No betting lines available - will continue with NULL spreads/totals")
             self.betting_lines = pd.DataFrame()  # Empty but not None
         else:
             logger.info(f"✓ Extracted {len(self.betting_lines)} betting line records")
-        
+
         # ====================================================================
         # STEP 6: Extract Injury Reports (OPTIONAL)
         # ====================================================================
         logger.info("Step 5: Extracting injury reports (OPTIONAL)...")
-        
+
         self.injury_data = self._extract_injury_data(start_date, end_date)
-        
+
         if self.injury_data is None or len(self.injury_data) == 0:
             logger.warning("No injury data available - will continue with 0 injuries")
             self.injury_data = pd.DataFrame()  # Empty but not None
         else:
             logger.info(f"✓ Extracted {len(self.injury_data)} injury records")
-        
+
         # ====================================================================
         # STEP 7: Load Travel Distances (STATIC)
         # ====================================================================
         logger.info("Step 6: Loading travel distances (STATIC)...")
-        
+
         self.travel_distances = self._load_travel_distances()
         logger.info(f"✓ Loaded {len(self.travel_distances)} travel distance mappings")
-        
+
         logger.info("=" * 80)
         logger.info("EXTRACTION COMPLETE")
         logger.info("=" * 80)
-    
+
     def _extract_schedule_data(
         self,
         start_date: date,
@@ -586,7 +586,7 @@ class UpcomingTeamGameContextProcessor(
             end_date,
             self.log_quality_issue
         )
-    
+
     def _extract_betting_lines(
         self,
         start_date: date,
@@ -609,7 +609,7 @@ class UpcomingTeamGameContextProcessor(
             end_date,
             self.log_quality_issue
         )
-    
+
     def _extract_injury_data(
         self,
         start_date: date,
@@ -632,7 +632,7 @@ class UpcomingTeamGameContextProcessor(
             end_date,
             self.log_quality_issue
         )
-    
+
     def _load_travel_distances(self) -> Dict:
         """
         Load travel distance mappings from static table.
@@ -643,15 +643,15 @@ class UpcomingTeamGameContextProcessor(
             Dict mapping "FROM_TO" → distance_miles
         """
         return self.source_fallback.load_travel_distances()
-    
+
     # ========================================================================
     # DATA VALIDATION
     # ========================================================================
-    
+
     def validate_extracted_data(self) -> None:
         """
         Validate extracted data quality with comprehensive checks.
-        
+
         Validations:
         1. Schedule data completeness
         2. Date range coverage
@@ -659,18 +659,18 @@ class UpcomingTeamGameContextProcessor(
         4. Value ranges valid
         5. Team abbreviations valid
         """
-        
+
         logger.info("=" * 80)
         logger.info("VALIDATION STARTED")
         logger.info("=" * 80)
-        
+
         validation_passed = True
-        
+
         # ====================================================================
         # VALIDATION 1: Schedule Data Completeness
         # ====================================================================
         logger.info("Validation 1: Checking schedule data completeness...")
-        
+
         if self.schedule_data is None or len(self.schedule_data) == 0:
             error_msg = "CRITICAL: No schedule data available"
             logger.error(error_msg)
@@ -680,15 +680,15 @@ class UpcomingTeamGameContextProcessor(
                 message=error_msg
             )
             raise ValidationError(error_msg)
-        
+
         # Check for required fields
         required_fields = [
             'game_id', 'game_date', 'home_team_abbr', 'away_team_abbr',
             'season_year', 'game_status'
         ]
-        
+
         missing_fields = [f for f in required_fields if f not in self.schedule_data.columns]
-        
+
         if missing_fields:
             error_msg = f"Schedule missing required fields: {missing_fields}"
             logger.error(error_msg)
@@ -699,9 +699,9 @@ class UpcomingTeamGameContextProcessor(
                 details={'missing_fields': missing_fields}
             )
             raise ValidationError(error_msg)
-        
+
         logger.info("✓ Schedule data has all required fields")
-        
+
         # ====================================================================
         # VALIDATION 2: Date Range Coverage
         # ====================================================================
@@ -720,7 +720,7 @@ class UpcomingTeamGameContextProcessor(
             (self.schedule_data['game_date'].dt.date >= start_date) &
             (self.schedule_data['game_date'].dt.date <= end_date)
         ]
-        
+
         if len(target_games) == 0:
             error_msg = f"No games found in target date range: {start_date} to {end_date}"
             logger.error(error_msg)
@@ -731,14 +731,14 @@ class UpcomingTeamGameContextProcessor(
                 details={'start_date': str(start_date), 'end_date': str(end_date)}
             )
             raise ValidationError(error_msg)
-        
+
         logger.info(f"✓ Found {len(target_games)} games in target date range")
-        
+
         # Check for date gaps
         dates_found = set(target_games['game_date'].dt.date.unique())
         dates_expected = set(pd.date_range(start_date, end_date).date)
         missing_dates = dates_expected - dates_found
-        
+
         if missing_dates and len(missing_dates) > len(dates_expected) * 0.2:  # >20% missing
             warning_msg = f"Missing {len(missing_dates)} dates (>20% of range)"
             logger.warning(warning_msg)
@@ -749,12 +749,12 @@ class UpcomingTeamGameContextProcessor(
                 details={'missing_dates': sorted([str(d) for d in missing_dates])}
             )
             validation_passed = False
-        
+
         # ====================================================================
         # VALIDATION 3: Value Ranges
         # ====================================================================
         logger.info("Validation 3: Checking value ranges...")
-        
+
         # Check for NULL game_ids
         null_game_ids = self.schedule_data['game_id'].isnull().sum()
         if null_game_ids > 0:
@@ -767,13 +767,13 @@ class UpcomingTeamGameContextProcessor(
                 details={'null_count': int(null_game_ids)}
             )
             validation_passed = False
-        
+
         # Check for invalid game_status
         valid_statuses = [1, 2, 3]
         invalid_status = self.schedule_data[
             ~self.schedule_data['game_status'].isin(valid_statuses)
         ]
-        
+
         if len(invalid_status) > 0:
             warning_msg = f"Found {len(invalid_status)} games with invalid status"
             logger.warning(warning_msg)
@@ -783,27 +783,27 @@ class UpcomingTeamGameContextProcessor(
                 message=warning_msg,
                 details={'invalid_count': len(invalid_status)}
             )
-        
+
         logger.info("✓ Value range validation complete")
-        
+
         # ====================================================================
         # VALIDATION 4: Team Abbreviations
         # ====================================================================
         logger.info("Validation 4: Checking team abbreviations...")
-        
+
         # Valid NBA team abbreviations
         valid_teams = {
             'ATL', 'BOS', 'BKN', 'CHA', 'CHI', 'CLE', 'DAL', 'DEN', 'DET', 'GSW',
             'HOU', 'IND', 'LAC', 'LAL', 'MEM', 'MIA', 'MIL', 'MIN', 'NOP', 'NYK',
             'OKC', 'ORL', 'PHI', 'PHX', 'POR', 'SAC', 'SAS', 'TOR', 'UTA', 'WAS'
         }
-        
+
         home_teams = set(self.schedule_data['home_team_abbr'].unique())
         away_teams = set(self.schedule_data['away_team_abbr'].unique())
         all_teams = home_teams.union(away_teams)
-        
+
         invalid_teams = all_teams - valid_teams
-        
+
         if invalid_teams:
             warning_msg = f"Found invalid team abbreviations: {invalid_teams}"
             logger.warning(warning_msg)
@@ -813,9 +813,9 @@ class UpcomingTeamGameContextProcessor(
                 message=warning_msg,
                 details={'invalid_teams': list(invalid_teams)}
             )
-        
+
         logger.info(f"✓ Found {len(all_teams)} unique teams")
-        
+
         # ====================================================================
         # VALIDATION SUMMARY
         # ====================================================================
@@ -1024,7 +1024,7 @@ class UpcomingTeamGameContextProcessor(
             )
 
         self.transformed_data = successful_records
-        
+
         logger.info("=" * 80)
         logger.info(f"CALCULATION COMPLETE:")
         logger.info(f"  ✓ Successful: {len(successful_records)} team-game records")
@@ -1271,7 +1271,7 @@ class UpcomingTeamGameContextProcessor(
         Returns:
             Dict with all context fields (including 19 completeness metadata fields) or None if calculation fails
         """
-        
+
         try:
             # Start with business keys
             record = {
@@ -1282,7 +1282,7 @@ class UpcomingTeamGameContextProcessor(
                 'opponent_team_abbr': opponent_abbr,
                 'home_game': bool(home_game)
             }
-            
+
             # Calculate each context type
             basic_context = self._calculate_basic_context(game, team_abbr, home_game)
             fatigue_context = self._calculate_fatigue_context(game, team_abbr)
@@ -1290,7 +1290,7 @@ class UpcomingTeamGameContextProcessor(
             personnel_context = self._calculate_personnel_context(game, team_abbr)
             momentum_context = self._calculate_momentum_context(game, team_abbr)
             travel_context = self._calculate_travel_context(game, team_abbr, home_game, fatigue_context)
-            
+
             # Merge all contexts
             record.update(basic_context)
             record.update(fatigue_context)
@@ -1298,7 +1298,7 @@ class UpcomingTeamGameContextProcessor(
             record.update(personnel_context)
             record.update(momentum_context)
             record.update(travel_context)
-            
+
             # Add source tracking (one line!)
             record.update(self.build_source_tracking_fields())
 
@@ -1405,11 +1405,11 @@ class UpcomingTeamGameContextProcessor(
             record['created_at'] = datetime.now(timezone.utc).isoformat()
 
             return record
-            
+
         except Exception as e:
             logger.error(f"Error calculating context for {team_abbr} in game {game['game_id']}: {e}")
             return None
-    
+
     def _calculate_basic_context(
         self,
         game: pd.Series,
@@ -1422,7 +1422,7 @@ class UpcomingTeamGameContextProcessor(
         Delegates to FatigueCalculator.
         """
         return self.fatigue_calculator.calculate_basic_context(game, team_abbr, home_game)
-    
+
     def _calculate_fatigue_context(
         self,
         game: pd.Series,
@@ -1434,7 +1434,7 @@ class UpcomingTeamGameContextProcessor(
         Delegates to FatigueCalculator.
         """
         return self.fatigue_calculator.calculate_fatigue_context(game, team_abbr)
-    
+
     def _calculate_betting_context(
         self,
         game: pd.Series,
@@ -1447,7 +1447,7 @@ class UpcomingTeamGameContextProcessor(
         Delegates to BettingContext calculator.
         """
         return self.betting_context.calculate_betting_context(game, team_abbr, home_game)
-    
+
     def _calculate_personnel_context(
         self,
         game: pd.Series,
@@ -1459,7 +1459,7 @@ class UpcomingTeamGameContextProcessor(
         Delegates to PersonnelTracker.
         """
         return self.personnel_tracker.calculate_personnel_context(game, team_abbr)
-    
+
     def _calculate_momentum_context(
         self,
         game: pd.Series,
@@ -1471,7 +1471,7 @@ class UpcomingTeamGameContextProcessor(
         Delegates to PerformanceAnalyzer.
         """
         return self.performance_analyzer.calculate_momentum_context(game, team_abbr)
-    
+
     def _calculate_travel_context(
         self,
         game: pd.Series,
@@ -1487,7 +1487,7 @@ class UpcomingTeamGameContextProcessor(
         return self.travel_calculator.calculate_travel_context(
             game, team_abbr, home_game, fatigue_context
         )
-    
+
     # ========================================================================
     # HELPER METHODS
     # ========================================================================
@@ -1547,11 +1547,11 @@ class UpcomingTeamGameContextProcessor(
         hash_data = {field: record.get(field) for field in self.HASH_FIELDS}
         sorted_data = json.dumps(hash_data, sort_keys=True, default=str)
         return hashlib.sha256(sorted_data.encode()).hexdigest()[:16]
-    
+
     # ========================================================================
     # SAVE LOGIC
     # ========================================================================
-    
+
     def save_analytics(self) -> bool:
         """
         Save results to BigQuery using atomic MERGE pattern.
@@ -1814,14 +1814,14 @@ def main():
         'skip_downstream_trigger': args.skip_downstream_trigger,
         'backfill_mode': args.backfill_mode
     }
-    
+
     try:
         # Run processing pipeline
         processor.extract_raw_data()
         processor.validate_extracted_data()
         processor.calculate_analytics()
         success = processor.save_analytics()
-        
+
         # Print summary
         print("\n" + "=" * 80)
         print("PROCESSING COMPLETE")
@@ -1830,9 +1830,9 @@ def main():
         print(f"Quality issues: {len(processor.quality_issues)}")
         print(f"Status: {'SUCCESS' if success else 'FAILED'}")
         print("=" * 80)
-        
+
         return 0 if success else 1
-        
+
     except Exception as e:
         logger.error(f"Processing failed: {e}", exc_info=True)
         return 1

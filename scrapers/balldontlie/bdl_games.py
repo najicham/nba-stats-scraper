@@ -337,7 +337,7 @@ class BdlGamesScraper(ScraperBase, ScraperFlaskMixin):
                 "gameCount": len(games),
                 "games": games,
             }
-            
+
             logger.info(
                 "Fetched %d games (%s -> %s) across %d pages",
                 len(games),

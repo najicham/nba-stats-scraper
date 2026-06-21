@@ -16,19 +16,19 @@ class NameResolutionReviewer:
     def __init__(self):
         self.bq_client = bigquery.Client()
         self.project_id = "nba-props-platform"
-        
+
     def get_cases_to_review(self, limit=10, case_type="all"):
         """Get cases that need manual review, prioritized by impact."""
-        
+
         if case_type == "multiple_matches":
             condition = "name_resolution_confidence = 0.6"
         elif case_type == "not_found":
             condition = "name_resolution_confidence = 0.0"
         else:
             condition = "name_resolution_confidence < 0.8"
-        
+
         query = f"""
-        SELECT 
+        SELECT
             player_name_original,
             team_abbr,
             season_year,
@@ -44,13 +44,13 @@ class NameResolutionReviewer:
         ORDER BY game_occurrences DESC, season_year DESC
         LIMIT {limit}
         """
-        
+
         return self.bq_client.query(query).to_dataframe()
-    
+
     def get_roster_context(self, team_abbr, season_year, search_term=""):
         """Get Basketball Reference roster context for decision making."""
         query = f"""
-        SELECT 
+        SELECT
             player_full_name,
             player_last_name,
             team_abbrev,
@@ -61,26 +61,26 @@ class NameResolutionReviewer:
           AND LOWER(player_full_name) LIKE '%{search_term.lower()}%'
         ORDER BY player_last_name
         """
-        
+
         try:
             return self.bq_client.query(query).to_dataframe()
         except Exception as e:
             print(f"Could not get roster context: {e}")
             return None
-    
+
     def update_resolution(self, original_name, team_abbr, season_year, resolved_name, confidence):
         """Update all records for this name case."""
-        
+
         if resolved_name.lower() == original_name.lower():
             # Same name - just update confidence
             method = "manual_confirmed"
         else:
             # Different name - resolution found
             method = "manual_resolved"
-            
+
         update_query = f"""
         UPDATE `{self.project_id}.nba_raw.nbac_gamebook_player_stats`
-        SET 
+        SET
             player_name = '{resolved_name}',
             name_resolution_confidence = {confidence},
             name_resolution_method = '{method}',
@@ -90,18 +90,18 @@ class NameResolutionReviewer:
           AND season_year = {season_year}
           AND player_status IN ('inactive', 'dnp')
         """
-        
+
         result = self.bq_client.query(update_query)
         return result.num_dml_affected_rows
-    
+
     def review_session(self, case_type="multiple_matches", batch_size=10):
         """Interactive review session."""
         print(f"\n=== Name Resolution Review Session ===")
         print(f"Case Type: {case_type}")
         print(f"Commands: (s)kip, (r)esolve NAME, (c)onfirm, (q)uit\n")
-        
+
         cases = self.get_cases_to_review(batch_size, case_type)
-        
+
         for i, case in cases.iterrows():
             print(f"\n--- Case {i+1}/{len(cases)} ---")
             print(f"Original Name: {case['player_name_original']}")
@@ -111,7 +111,7 @@ class NameResolutionReviewer:
             print(f"Sample Games: {case['sample_games']}")
             if case['sample_reasons']:
                 print(f"Sample Reasons: {case['sample_reasons']}")
-            
+
             # Show roster context for decision making
             roster = self.get_roster_context(case['team_abbr'], case['season_year'], case['player_name_original'])
             if roster is not None and len(roster) > 0:
@@ -120,7 +120,7 @@ class NameResolutionReviewer:
                     print(f"  - {player['player_full_name']}")
             else:
                 print(f"\nNo roster matches found for '{case['player_name_original']}'")
-            
+
             # Get user input
             # Safety guard: prevent infinite input loops
             max_input_attempts = 100
@@ -142,8 +142,8 @@ class NameResolutionReviewer:
                 elif action == 'c':
                     # Confirm as-is with high confidence
                     affected = self.update_resolution(
-                        case['player_name_original'], 
-                        case['team_abbr'], 
+                        case['player_name_original'],
+                        case['team_abbr'],
                         case['season_year'],
                         case['player_name_original'],  # Keep same name
                         1.0  # High confidence
@@ -157,7 +157,7 @@ class NameResolutionReviewer:
                         affected = self.update_resolution(
                             case['player_name_original'],
                             case['team_abbr'],
-                            case['season_year'], 
+                            case['season_year'],
                             resolved_name,
                             1.0  # High confidence resolution
                         )
@@ -170,13 +170,13 @@ class NameResolutionReviewer:
 
 if __name__ == "__main__":
     reviewer = NameResolutionReviewer()
-    
+
     # Start with multiple matches (easier to resolve)
     print("Starting with multiple matches cases (easier to resolve)...")
     reviewer.review_session("multiple_matches", 20)
-    
+
     print("\nWould you like to review 'not found' cases? (y/n)")
     if input().lower() == 'y':
         reviewer.review_session("not_found", 20)
-    
+
     print("\nReview session complete!")

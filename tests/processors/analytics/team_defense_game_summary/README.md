@@ -1,8 +1,8 @@
 # Team Defense Game Summary Processor - Test Suite v2.0
 
-**Processor:** `team_defense_game_summary_processor.py` v2.0  
-**Architecture:** Phase 2 → Phase 3 (Corrected)  
-**Test Count:** ~30 unit tests + 8 integration tests + 15 validation tests  
+**Processor:** `team_defense_game_summary_processor.py` v2.0
+**Architecture:** Phase 2 → Phase 3 (Corrected)
+**Test Count:** ~30 unit tests + 8 integration tests + 15 validation tests
 **Last Updated:** November 2, 2025
 
 ---
@@ -225,9 +225,9 @@ def test_perspective_flip_basic(self, processor, sample_team_boxscore):
     """Test opponent offense → team defense perspective flip."""
     # Mock BigQuery to return perspective-flipped data
     processor.bq_client.query.return_value.to_dataframe.return_value = ...
-    
+
     result = processor._extract_opponent_offense('2025-01-15', '2025-01-15')
-    
+
     # Verify LAL's defense = BOS's offense
     assert result['defending_team_abbr'] == 'LAL'
     assert result['opponent_team_abbr'] == 'BOS'
@@ -241,12 +241,12 @@ def test_bdl_fallback_when_gamebook_empty(self, processor):
     """Test BDL fallback when gamebook returns no data."""
     # Mock gamebook to return empty
     processor._try_gamebook_defensive_actions = Mock(return_value=pd.DataFrame())
-    
+
     # Mock BDL to return data
     processor._try_bdl_defensive_actions = Mock(return_value=...)
-    
+
     result = processor._extract_defensive_actions(...)
-    
+
     # Verify BDL was used
     assert result['data_source'] == 'bdl_player_boxscores'
 ```
@@ -260,9 +260,9 @@ def test_data_quality_tier_high(self, processor):
         ...,
         'defensive_actions_source': 'nbac_gamebook'
     }])
-    
+
     processor.calculate_analytics()
-    
+
     assert processor.transformed_data[0]['data_quality_tier'] == 'high'
 ```
 
@@ -421,7 +421,7 @@ python run_tests.py unit || exit 1
 
 ---
 
-**Status:** ✅ Complete - All 30 unit tests written and ready  
-**Coverage:** ~95% of processor code  
-**Run Time:** ~5 seconds  
+**Status:** ✅ Complete - All 30 unit tests written and ready
+**Coverage:** ~95% of processor code
+**Run Time:** ~5 seconds
 **Architecture:** Phase 2 → Phase 3 (Correct)

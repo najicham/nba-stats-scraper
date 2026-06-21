@@ -25,7 +25,7 @@ WITH todays_schedule AS (
     CONCAT(away_team_tricode, ' @ ', home_team_tricode) as matchup,
     -- Estimate game completion time (games ~2.5 hours, add 30 min buffer)
     TIMESTAMP_ADD(
-      TIMESTAMP(CONCAT(CAST(game_date AS STRING), ' 19:00:00')), 
+      TIMESTAMP(CONCAT(CAST(game_date AS STRING), ' 19:00:00')),
       INTERVAL 3 HOUR
     ) as estimated_completion
   FROM `nba-props-platform.nba_raw.nbac_schedule`
@@ -61,13 +61,13 @@ SELECT
   CONCAT(CAST(COALESCE(g.resolution_rate_pct, 0) AS STRING), '%') as resolution_rate,
   g.last_processed,
   CASE
-    WHEN g.game_id IS NULL AND CURRENT_TIMESTAMP() < s.estimated_completion 
+    WHEN g.game_id IS NULL AND CURRENT_TIMESTAMP() < s.estimated_completion
       THEN '⏳ Game in progress'
-    WHEN g.game_id IS NULL AND CURRENT_TIMESTAMP() >= s.estimated_completion 
+    WHEN g.game_id IS NULL AND CURRENT_TIMESTAMP() >= s.estimated_completion
       THEN '❌ MISSING (should be ready)'
-    WHEN g.player_count < 25 
+    WHEN g.player_count < 25
       THEN '⚠️ INCOMPLETE (too few players)'
-    WHEN g.resolution_rate_pct < 98.0 
+    WHEN g.resolution_rate_pct < 98.0
       THEN '⚠️ Low resolution rate'
     ELSE '✅ Processed'
   END as status,
@@ -75,15 +75,15 @@ SELECT
   CASE
     WHEN g.game_id IS NULL AND CURRENT_TIMESTAMP() >= s.estimated_completion
       THEN CONCAT(
-        CAST(TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), s.estimated_completion, MINUTE) AS STRING), 
+        CAST(TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), s.estimated_completion, MINUTE) AS STRING),
         ' min overdue'
       )
     ELSE NULL
   END as delay
 FROM todays_schedule s
 LEFT JOIN todays_gamebook g ON s.game_id = g.game_id
-ORDER BY 
-  CASE 
+ORDER BY
+  CASE
     WHEN g.game_id IS NULL AND CURRENT_TIMESTAMP() >= s.estimated_completion THEN 1
     WHEN g.player_count < 25 THEN 2
     WHEN g.game_id IS NULL THEN 3

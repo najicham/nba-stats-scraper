@@ -6,7 +6,7 @@
 -- ============================================================================
 
 WITH game_summary AS (
-  SELECT 
+  SELECT
     game_date,
     game_id,
     nba_game_id,
@@ -29,7 +29,7 @@ WITH game_summary AS (
   GROUP BY game_date, game_id, nba_game_id, home_team_abbr, away_team_abbr
 )
 
-SELECT 
+SELECT
   game_date,
   game_id,
   home_team_abbr || ' vs ' || away_team_abbr as matchup,
@@ -42,13 +42,13 @@ SELECT
   final_away_score,
   shot_events,
   -- Validation flags
-  CASE 
+  CASE
     WHEN total_events < 400 THEN '🔴 CRITICAL: Too few events (<400)'
     WHEN total_events < 450 THEN '⚠️ WARNING: Low event count (<450)'
     WHEN total_events > 700 THEN '⚠️ WARNING: High event count (>700, verify OT)'
     ELSE '✅ Good'
   END as event_count_status,
-  CASE 
+  CASE
     WHEN unique_players < 15 THEN '🔴 CRITICAL: Too few players (<15)'
     WHEN unique_players < 16 THEN '⚠️ WARNING: Low player count (<16)'
     WHEN unique_players > 25 THEN '⚠️ INFO: Many players (>25, lots of rotation)'

@@ -173,10 +173,10 @@ def test_google_cloud_mocked():
     import sys
     assert 'google.cloud' in sys.modules
     assert 'google.auth' in sys.modules
-    
+
     from google.cloud import bigquery
     from google.auth import default
-    
+
     # Should not raise - modules are mocked
     assert bigquery is not None
     assert default is not None

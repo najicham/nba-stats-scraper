@@ -18,7 +18,7 @@
 WITH
 -- Get all game dates from schedule
 all_scheduled_dates AS (
-  SELECT 
+  SELECT
     s.game_date,
     COUNT(*) as games_on_date,
     STRING_AGG(CONCAT(s.away_team_tricode, '@', s.home_team_tricode) LIMIT 5) as sample_matchups
@@ -64,7 +64,7 @@ SELECT
   s.games_on_date,
   s.sample_matchups,
   CONCAT('🟡 WARNING: Low coverage (', CAST(p.total_records AS STRING), ' records)') as status,
-  CONCAT('Only ', CAST(p.player_count AS STRING), ' players, ', 
+  CONCAT('Only ', CAST(p.player_count AS STRING), ' players, ',
          CAST(p.bookmaker_count AS STRING), ' bookmakers') as likely_cause,
   'Check if scraper ran partially or data quality issues' as recommendation
 FROM all_scheduled_dates s

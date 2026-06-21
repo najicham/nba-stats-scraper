@@ -24,7 +24,7 @@ from pathlib import Path
 def run_tests(test_type='all', coverage=False, verbose=False):
     """
     Run tests with specified options.
-    
+
     Args:
         test_type: 'all', 'unit', 'integration', 'validation', or 'quick'
         coverage: Generate coverage report
@@ -32,7 +32,7 @@ def run_tests(test_type='all', coverage=False, verbose=False):
     """
     # Base pytest command
     cmd = ['pytest']
-    
+
     # Test selection
     if test_type == 'unit':
         cmd.append('test_unit.py')
@@ -48,13 +48,13 @@ def run_tests(test_type='all', coverage=False, verbose=False):
         print("⚡ Running Quick Tests (unit + integration)...")
     else:
         print("🚀 Running All Tests...")
-    
+
     # Verbosity
     if verbose:
         cmd.append('-vv')
     else:
         cmd.append('-v')
-    
+
     # Coverage
     if coverage:
         cmd.extend([
@@ -63,17 +63,17 @@ def run_tests(test_type='all', coverage=False, verbose=False):
             '--cov-report=term'
         ])
         print("📊 Coverage report will be generated...")
-    
+
     # Output formatting
     cmd.extend([
         '--tb=short',           # Short traceback format
         '--color=yes',          # Colored output
     ])
-    
+
     # Run tests
     print(f"\n💻 Command: {' '.join(cmd)}\n")
     result = subprocess.run(cmd)
-    
+
     # Summary
     print("\n" + "="*60)
     if result.returncode == 0:
@@ -84,7 +84,7 @@ def run_tests(test_type='all', coverage=False, verbose=False):
         print("❌ Some tests failed")
         print("💡 Run with --verbose for more details")
     print("="*60 + "\n")
-    
+
     return result.returncode
 
 
@@ -97,16 +97,16 @@ def main():
     """Main entry point."""
     # Parse arguments
     args = sys.argv[1:]
-    
+
     test_type = 'all'
     coverage = False
     verbose = False
-    
+
     # Show help
     if '-h' in args or '--help' in args:
         print_usage()
         return 0
-    
+
     # Parse options
     for arg in args:
         if arg in ['unit', 'integration', 'validation', 'quick']:
@@ -119,7 +119,7 @@ def main():
             print(f"❌ Unknown argument: {arg}")
             print_usage()
             return 1
-    
+
     # Run tests
     return run_tests(test_type, coverage, verbose)
 

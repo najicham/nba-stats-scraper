@@ -1,7 +1,7 @@
 # Processor Execution Monitoring
 
-**Status:** Design Phase  
-**Version:** 1.0  
+**Status:** Design Phase
+**Version:** 1.0
 **Last Updated:** October 4, 2025
 
 ---
@@ -10,7 +10,7 @@
 
 Monitors processor execution history to detect missing runs, failures, and staleness. Tracks whether processors execute successfully and on schedule by analyzing execution records in BigQuery.
 
-**What This Monitors:** Processor execution (did it run? did it succeed?)  
+**What This Monitors:** Processor execution (did it run? did it succeed?)
 **Complements:** File Processing Gap Detection (monitors data flow)
 
 ---
@@ -55,7 +55,7 @@ cd monitoring/processor_execution_monitoring
 
 ```
 1. Query processor_run_history table for date range
-   └─> WHERE processor_name = 'gamebook' 
+   └─> WHERE processor_name = 'gamebook'
        AND processing_date >= '2025-10-01'
 
 2. Find gaps (missing dates)
@@ -119,11 +119,11 @@ class MyProcessor:
             processor_name='my_processor',
             processing_date=processing_date
         )
-        
+
         try:
             # Process data
             result = self.do_work()
-            
+
             # Record success
             self.record_run_complete(
                 run_id=run_id,
@@ -251,5 +251,5 @@ gcloud beta run jobs executions logs read <execution-name> --region=us-west2
 
 ---
 
-**Last Updated:** October 4, 2025  
+**Last Updated:** October 4, 2025
 **Status:** Ready for table creation and processor instrumentation

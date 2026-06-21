@@ -33,16 +33,16 @@ regular_season_games AS (
 
 -- Expand to team-game combinations with location
 team_games AS (
-  SELECT 
+  SELECT
     home_team_tricode as team,
     home_team_name as team_name,
     'home' as location,
     game_id
   FROM regular_season_games
-  
+
   UNION ALL
-  
-  SELECT 
+
+  SELECT
     away_team_tricode as team,
     away_team_name as team_name,
     'away' as location,
@@ -150,7 +150,7 @@ SELECT
   CAST(away_games AS STRING) as away_games,
   CAST(total_games AS STRING) as total_games,
   CONCAT(
-    CASE 
+    CASE
       WHEN games_diff > 0 THEN '+'
       ELSE ''
     END,
@@ -158,7 +158,7 @@ SELECT
   ) as games_diff,
   status
 FROM team_analysis
-ORDER BY 
+ORDER BY
   CASE section
     WHEN '=== LEAGUE SUMMARY ===' THEN 0
     WHEN 'League Average' THEN 1

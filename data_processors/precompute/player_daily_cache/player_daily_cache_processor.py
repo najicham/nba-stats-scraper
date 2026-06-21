@@ -7,20 +7,20 @@ Player Daily Cache Processor
 Purpose:
     Cache static daily player data that won't change during the day.
     Eliminates repeated BigQuery queries during Phase 5 real-time updates.
-    
+
 Input Sources:
     - nba_analytics.player_game_summary (recent performance)
     - nba_analytics.team_offense_game_summary (team context)
     - nba_analytics.upcoming_player_game_context (fatigue metrics)
     - nba_precompute.player_shot_zone_analysis (shot tendencies)
-    
+
 Output:
     - nba_precompute.player_daily_cache
-    
+
 Schedule:
     - Nightly at 12:00 AM (after all Phase 4 processors complete)
     - Processes ~450 active players in 5-10 minutes
-    
+
 Performance Impact:
     - Cost savings: 79% reduction vs repeated queries
     - Speed: 2000x faster lookups (cache vs BigQuery)
@@ -135,12 +135,12 @@ class PlayerDailyCacheProcessor(
     def __init__(self):
         """Initialize the player daily cache processor."""
         super().__init__()
-        
+
         # Table configuration
         self.table_name = 'player_daily_cache'
         self.entity_type = 'player'
         self.entity_field = 'player_lookup'
-        
+
         # Data requirements
         self.min_games_required = 10  # Preferred minimum
         self.absolute_min_games = 3   # Absolute minimum to write record (Session 114: lowered from 5 to match shot_zone)
@@ -239,7 +239,7 @@ class PlayerDailyCacheProcessor(
     def get_dependencies(self) -> dict:
         """
         Define upstream source requirements.
-        
+
         Returns:
             dict: Dependency configuration for each source table
         """
@@ -315,25 +315,25 @@ class PlayerDailyCacheProcessor(
             return {}
 
         tracking_fields = {}
-        
+
         # Get dependencies to know which sources to track
         deps = self.get_dependencies()
-        
+
         for source_table, config in deps.items():
             prefix = config['field_prefix']
-            
+
             # Build field names based on prefix
             last_updated_field = f"{prefix}_last_updated"
             rows_found_field = f"{prefix}_rows_found"
             completeness_field = f"{prefix}_completeness_pct"
-            
+
             # Get values from processor attributes (set by track_source_usage during extract)
             tracking_fields[last_updated_field] = getattr(self, last_updated_field, None)
             tracking_fields[rows_found_field] = getattr(self, rows_found_field, None)
             tracking_fields[completeness_field] = getattr(self, completeness_field, None)
-        
+
         return tracking_fields
-    
+
     def extract_raw_data(self) -> None:
         """
         Extract data from all upstream sources with dependency checking.
@@ -393,14 +393,14 @@ class PlayerDailyCacheProcessor(
             self.insufficient_data_reason = "Season just started, using available games"
 
         # Note: critical dependency and stale checks already done in precompute_base.run()
-        
+
         # Extract from each source
         logger.info("Extracting player game summary data...")
         self._extract_player_game_data(analysis_date, season_year)
-        
+
         logger.info("Extracting team offense data...")
         self._extract_team_offense_data(analysis_date)
-        
+
         logger.info("Extracting upcoming player context data...")
         self._extract_upcoming_context_data(analysis_date)
 
@@ -411,10 +411,10 @@ class PlayerDailyCacheProcessor(
 
         # Extract source hashes from all 4 dependencies (Smart Reprocessing - Pattern #3)
         self._extract_source_hashes(analysis_date)
-    
+
     def _extract_player_game_data(self, analysis_date: date, season_year: int) -> None:
         """Extract player game summary data (season to date)."""
-        
+
         query = f"""
         WITH ranked_games AS (
             SELECT
@@ -444,10 +444,10 @@ class PlayerDailyCacheProcessor(
         WHERE game_rank <= 82  -- Full season
         ORDER BY player_lookup, game_date DESC
         """
-        
+
         self.player_game_data = self.bq_client.query(query).to_dataframe()
         logger.info(f"Extracted {len(self.player_game_data)} player game records")
-    
+
     def _extract_team_offense_data(self, analysis_date: date) -> None:
         """Extract team offense data (last 10 games per team)."""
 
@@ -470,10 +470,10 @@ class PlayerDailyCacheProcessor(
         WHERE game_rank <= 10
         ORDER BY team_abbr, game_date DESC
         """
-        
+
         self.team_offense_data = self.bq_client.query(query).to_dataframe()
         logger.info(f"Extracted {len(self.team_offense_data)} team offense records")
-    
+
     def _extract_upcoming_context_data(self, analysis_date: date) -> None:
         """Extract upcoming player game context (today's games).
 
@@ -625,12 +625,12 @@ class PlayerDailyCacheProcessor(
 
         self.upcoming_context_data = self.bq_client.query(query).to_dataframe()
         logger.info(f"Generated {len(self.upcoming_context_data)} synthetic player contexts from PGS (backfill mode)")
-    
+
     def _extract_shot_zone_data(self, analysis_date: date) -> None:
         """Extract shot zone analysis (today's analysis)."""
-        
+
         query = f"""
-        SELECT 
+        SELECT
             player_lookup,
             universal_player_id,
             analysis_date,
@@ -640,7 +640,7 @@ class PlayerDailyCacheProcessor(
         FROM `{self.project_id}.nba_precompute.player_shot_zone_analysis`
         WHERE analysis_date = '{analysis_date.isoformat()}'
         """
-        
+
         self.shot_zone_data = self.bq_client.query(query).to_dataframe()
         logger.info(f"Extracted {len(self.shot_zone_data)} shot zone analyses")
 
@@ -1021,7 +1021,7 @@ class PlayerDailyCacheProcessor(
     def calculate_precompute(self) -> None:
         """
         Calculate cache records for all players.
-        
+
         Process:
             1. Iterate through all players in upcoming_context
             2. Calculate recent performance metrics (last 5, last 10, season)
@@ -1030,7 +1030,7 @@ class PlayerDailyCacheProcessor(
             5. Copy shot zone tendencies from shot_zone_analysis
             6. Calculate assisted rate from player_game_summary
             7. Build complete cache record with source tracking
-        
+
         Output:
             - self.transformed_data: List of successful cache records
             - self.failed_entities: List of failed players with reasons
@@ -1052,7 +1052,7 @@ class PlayerDailyCacheProcessor(
             self.transformed_data = successful
             self.failed_entities = failed
             return
-        
+
         # Get all players scheduled to play today
         all_players = self.upcoming_context_data['player_lookup'].unique()
         logger.info(f"Processing cache for {len(all_players)} players")
@@ -1644,7 +1644,7 @@ class PlayerDailyCacheProcessor(
                 team_games = self.team_offense_data[
                     self.team_offense_data['team_abbr'] == current_team
                 ].copy()
-                
+
                 # Get shot zone data (optional - proceeds with nulls if missing)
                 shot_zone_row = self.shot_zone_data[
                     self.shot_zone_data['player_lookup'] == player_lookup
@@ -1661,7 +1661,7 @@ class PlayerDailyCacheProcessor(
                     })
                 else:
                     shot_zone_row = shot_zone_row.iloc[0]
-                
+
                 # Calculate all metrics
                 cache_record = self._calculate_player_cache(
                     player_lookup=player_lookup,
@@ -1696,7 +1696,7 @@ class PlayerDailyCacheProcessor(
                 })
 
         return successful, failed
-    
+
     def _calculate_player_cache(
         self,
         player_lookup: str,
@@ -1817,12 +1817,12 @@ class PlayerDailyCacheProcessor(
 def main():
     """
     Main entry point for the player daily cache processor.
-    
+
     Usage:
         python player_daily_cache_processor.py --analysis_date 2025-01-21
     """
     import argparse
-    
+
     parser = argparse.ArgumentParser(description='Player Daily Cache Processor')
     parser.add_argument(
         '--analysis_date',
@@ -1835,26 +1835,26 @@ def main():
         type=int,
         help='Season year (optional, will auto-detect from date)'
     )
-    
+
     args = parser.parse_args()
-    
+
     # Parse analysis date
     analysis_date = datetime.strptime(args.analysis_date, '%Y-%m-%d').date()
-    
+
     # Auto-detect season year if not provided
     season_year = args.season_year
     if not season_year:
         season_year = analysis_date.year if analysis_date.month >= 10 else analysis_date.year - 1
-    
+
     # Initialize processor
     processor = PlayerDailyCacheProcessor()
-    
+
     # Set options
     processor.opts = {
         'analysis_date': analysis_date,
         'season_year': season_year
     }
-    
+
     try:
         # Extract data
         logger.info("Starting data extraction...")

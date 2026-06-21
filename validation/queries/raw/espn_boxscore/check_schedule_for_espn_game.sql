@@ -3,7 +3,7 @@
 -- ============================================================================
 -- Check if the ESPN-only game exists in schedule
 -- Run this AFTER identify_espn_only_game.sql to get game details
--- 
+--
 -- INSTRUCTIONS:
 -- 1. Run identify_espn_only_game.sql first to get: game_date, home_team, away_team
 -- 2. Update the three values below with those results
@@ -32,7 +32,7 @@ WITH schedule_check AS (
 SELECT
   '=== SCHEDULE CHECK RESULTS ===' as section,
   '' as blank1,
-  CASE 
+  CASE
     WHEN COUNT(*) > 0 THEN '✅ Game IS in schedule'
     ELSE '🔴 Game NOT in schedule'
   END as in_schedule,
@@ -41,19 +41,19 @@ SELECT
   MAX(CAST(is_playoffs AS STRING)) as is_playoffs,
   '' as blank2,
   CASE
-    WHEN COUNT(*) = 0 THEN 
+    WHEN COUNT(*) = 0 THEN
       '🔴 Game not in schedule - BDL would skip it'
-    WHEN MAX(game_status_text) LIKE '%Postponed%' THEN 
+    WHEN MAX(game_status_text) LIKE '%Postponed%' THEN
       '⚠️ Game was postponed - check if rescheduled'
-    WHEN MAX(game_status_text) LIKE '%Canceled%' THEN 
+    WHEN MAX(game_status_text) LIKE '%Canceled%' THEN
       '⚠️ Game was canceled'
-    ELSE 
+    ELSE
       '❓ Game in schedule but BDL missed it - check logs'
   END as likely_issue,
   '' as blank3,
   '=== RECOMMENDED ACTION ===' as action_section,
   CASE
-    WHEN COUNT(*) = 0 THEN 
+    WHEN COUNT(*) = 0 THEN
       '1. Verify game on NBA.com | 2. Check schedule import | 3. Re-run BDL scraper'
     WHEN MAX(game_status_text) LIKE '%Postponed%' OR MAX(game_status_text) LIKE '%Canceled%' THEN
       '1. Confirm status NBA.com | 2. Update schedule | 3. Re-scrape correct date'

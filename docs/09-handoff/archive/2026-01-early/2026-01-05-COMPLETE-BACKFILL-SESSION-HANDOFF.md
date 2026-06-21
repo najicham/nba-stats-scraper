@@ -183,10 +183,10 @@ Group 4: ML Feature Store (needs ALL)
    ```bash
    # Check if processes completed
    ps -p 41997,43411
-   
+
    # Verify coverage
    bq query --use_legacy_sql=false "
-   SELECT 
+   SELECT
      'TDZA' as processor, COUNT(DISTINCT analysis_date) as dates
    FROM \`nba-props-platform.nba_precompute.team_defense_zone_analysis\`
    WHERE analysis_date >= '2021-10-19'
@@ -202,13 +202,13 @@ Group 4: ML Feature Store (needs ALL)
    ```bash
    cd /home/naji/code/nba-stats-scraper
    export PYTHONPATH=.
-   
+
    nohup python3 backfill_jobs/precompute/player_composite_factors/player_composite_factors_precompute_backfill.py \
      --start-date 2021-10-19 \
      --end-date 2026-01-03 \
      --parallel --workers 15 \
      > /tmp/phase4_pcf_$(date +%Y%m%d_%H%M%S).log 2>&1 &
-   
+
    echo "PCF PID: $!"
    ```
    - Duration: ~10 hours
@@ -228,8 +228,8 @@ Group 4: ML Feature Store (needs ALL)
    # Group 3: Player Daily Cache
    python3 backfill_jobs/precompute/player_daily_cache/player_daily_cache_precompute_backfill.py \
      --start-date 2021-10-19 --end-date 2026-01-03
-   
-   # Then Group 4: ML Feature Store  
+
+   # Then Group 4: ML Feature Store
    python3 backfill_jobs/precompute/ml_feature_store/ml_feature_store_precompute_backfill.py \
      --start-date 2021-10-19 --end-date 2026-01-03
    ```
@@ -401,7 +401,7 @@ if self.processing_strategy == 'MERGE_UPDATE':
     # Then INSERT runs anyway → duplicates
 ```
 
-### Scope: 21 Processors Affected! 
+### Scope: 21 Processors Affected!
 
 **Analytics (Phase 3)**: 4 processors
 - player_game_summary ⚠️
@@ -447,7 +447,7 @@ INSERT INTO table VALUES (...)
 # Option 1: SQL MERGE (atomic, not affected by streaming buffer)
 MERGE `table` AS target
 USING temp_data AS source
-ON target.game_id = source.game_id 
+ON target.game_id = source.game_id
    AND target.player_lookup = source.player_lookup
    AND target.game_date = source.game_date
 WHEN MATCHED THEN UPDATE SET ...
@@ -480,10 +480,10 @@ class AnalyticsProcessorBase:
         """
         # Create temp table with new data
         temp_table_id = f"{self.table_name}_temp_{self.run_id}"
-        
+
         # Upload to temp table
         self.bq_client.load_table_from_dataframe(df, temp_table_id)
-        
+
         # Atomic MERGE
         merge_query = f"""
         MERGE `{self.table_id}` AS target
@@ -493,7 +493,7 @@ class AnalyticsProcessorBase:
         WHEN NOT MATCHED THEN INSERT *
         """
         self.bq_client.query(merge_query).result()
-        
+
         # Cleanup temp table
         self.bq_client.delete_table(temp_table_id)
 ```
@@ -578,7 +578,7 @@ class AnalyticsProcessorBase:
 **END OF HANDOFF DOCUMENT**
 
 **Session Complete**: January 5, 2026, 8:50 PM PST
-**Next Actions**: 
+**Next Actions**:
 1. Monitor Phase 4 Group 1 overnight (auto-running)
 2. Cleanup duplicates tomorrow morning
 3. Start Phase 4 Group 2 tomorrow ~8 AM

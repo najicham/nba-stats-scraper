@@ -42,7 +42,7 @@ def processor():
     proc = UpcomingTeamGameContextProcessor()
     proc.bq_client = Mock(spec=bigquery.Client)
     proc.project_id = 'test-project'
-    
+
     # Mock travel distances
     proc.travel_distances = {
         'LAL_GSW': 350,
@@ -52,7 +52,7 @@ def processor():
         'BOS_MIA': 1250,
         'MIA_BOS': 1250
     }
-    
+
     return proc
 
 
@@ -167,14 +167,14 @@ def mock_bigquery_responses():
 
 class TestFullProcessorFlow:
     """Test complete end-to-end processor execution."""
-    
+
     def test_successful_full_run(self, processor, mock_bigquery_responses):
         """Test successful processing of date range with all sources."""
-        
+
         # Setup mock responses
         def mock_query(query_str):
             mock_result = Mock()
-            
+
             if 'nbac_schedule' in query_str and 'game_status IN (1, 3)' in query_str:
                 # Combine past and future games
                 all_schedule = pd.concat([
@@ -190,29 +190,29 @@ class TestFullProcessorFlow:
                 mock_result.to_dataframe.return_value = mock_bigquery_responses['travel_distances']
             else:
                 mock_result.to_dataframe.return_value = pd.DataFrame()
-            
+
             # Add result() method for delete query
             mock_result.result.return_value = None
             mock_result.num_dml_affected_rows = 0
-            
+
             return mock_result
-        
+
         processor.bq_client.query.side_effect = mock_query
-        
+
         # Mock insert
         processor.bq_client.insert_rows_json.return_value = []
-        
+
         # Mock load_table_from_file for batch insert
         mock_load_job = Mock()
         mock_load_job.result.return_value = None
         processor.bq_client.load_table_from_file.return_value = mock_load_job
-        
+
         # Set options
         processor.opts = {
             'start_date': date(2025, 1, 15),
             'end_date': date(2025, 1, 16)
         }
-        
+
         # Patch check_dependencies to return success
         with patch.object(processor, 'check_dependencies') as mock_check:
             mock_check.return_value = {
@@ -247,57 +247,57 @@ class TestFullProcessorFlow:
                     }
                 }
             }
-            
+
             # Patch track_source_usage
             with patch.object(processor, 'track_source_usage') as mock_track:
                 # Run extraction
                 processor.extract_raw_data()
-                
+
                 # Verify extraction
                 assert processor.schedule_data is not None
                 assert len(processor.schedule_data) > 0
-                
+
                 # Run validation
                 processor.validate_extracted_data()
-                
+
                 # Run calculation
                 processor.calculate_analytics()
-                
+
                 # Should have records (2 games × 2 teams = 4 records)
                 assert len(processor.transformed_data) == 4
-                
+
                 # Verify record structure
                 first_record = processor.transformed_data[0]
                 assert 'team_abbr' in first_record
                 assert 'game_id' in first_record
                 assert 'team_days_rest' in first_record
                 assert 'game_spread' in first_record
-                
+
                 # Run save
                 success = processor.save_analytics()
                 assert success is True
-                
+
                 # ✅ FIX ISSUE 1: Removed assertion for specific save method
                 # Verify BigQuery calls
                 assert processor.bq_client.query.called
                 # Note: Save method implementation may vary (insert_rows_json vs load_table_from_file)
-    
+
     def test_no_games_in_date_range(self, processor):
         """Test handling when no games found in target date range."""
-        
+
         # Setup: Empty schedule
         def mock_query(query_str):
             mock_result = Mock()
             mock_result.to_dataframe.return_value = pd.DataFrame()
             return mock_result
-        
+
         processor.bq_client.query.side_effect = mock_query
-        
+
         processor.opts = {
             'start_date': date(2025, 7, 1),  # Off-season
             'end_date': date(2025, 7, 7)
         }
-        
+
         # Patch check_dependencies to return success
         with patch.object(processor, 'check_dependencies') as mock_check:
             mock_check.return_value = {
@@ -310,18 +310,18 @@ class TestFullProcessorFlow:
                 'stale_warn': [],
                 'details': {}
             }
-            
+
             with patch.object(processor, 'track_source_usage'):
                 # Should raise error when no schedule data
                 with pytest.raises(DependencyError, match="No schedule data found"):
                     processor.extract_raw_data()
-    
+
     def test_missing_optional_sources(self, processor, mock_bigquery_responses):
         """Test processing continues when optional sources unavailable."""
-        
+
         def mock_query(query_str):
             mock_result = Mock()
-            
+
             if 'nbac_schedule' in query_str:
                 # Schedule available
                 all_schedule = pd.concat([
@@ -339,22 +339,22 @@ class TestFullProcessorFlow:
                 mock_result.to_dataframe.return_value = mock_bigquery_responses['travel_distances']
             else:
                 mock_result.to_dataframe.return_value = pd.DataFrame()
-            
+
             mock_result.result.return_value = None
             return mock_result
-        
+
         processor.bq_client.query.side_effect = mock_query
         processor.bq_client.insert_rows_json.return_value = []
-        
+
         mock_load_job = Mock()
         mock_load_job.result.return_value = None
         processor.bq_client.load_table_from_file.return_value = mock_load_job
-        
+
         processor.opts = {
             'start_date': date(2025, 1, 15),
             'end_date': date(2025, 1, 16)
         }
-        
+
         with patch.object(processor, 'check_dependencies') as mock_check:
             mock_check.return_value = {
                 'all_critical_present': True,
@@ -372,16 +372,16 @@ class TestFullProcessorFlow:
                     }
                 }
             }
-            
+
             with patch.object(processor, 'track_source_usage'):
                 # Run full flow
                 processor.extract_raw_data()
                 processor.validate_extracted_data()
                 processor.calculate_analytics()
-                
+
                 # Should still produce records
                 assert len(processor.transformed_data) > 0
-                
+
                 # Check that betting/injury fields are NULL
                 record = processor.transformed_data[0]
                 assert record['game_spread'] is None
@@ -395,15 +395,15 @@ class TestFullProcessorFlow:
 
 class TestDependencyChecking:
     """Test dependency validation logic."""
-    
+
     def test_missing_critical_dependency(self, processor):
         """Test that missing critical dependency raises error."""
-        
+
         processor.opts = {
             'start_date': date(2025, 1, 15),
             'end_date': date(2025, 1, 16)
         }
-        
+
         # Mock check_dependencies to return missing critical
         with patch.object(processor, 'check_dependencies') as mock_check:
             mock_check.return_value = {
@@ -416,19 +416,19 @@ class TestDependencyChecking:
                 'stale_warn': [],
                 'details': {}
             }
-            
+
             # Should raise DependencyError
             with pytest.raises(DependencyError, match="Missing critical dependencies"):
                 processor.extract_raw_data()
-    
+
     def test_stale_critical_dependency(self, processor):
         """Test that stale critical dependency raises error."""
-        
+
         processor.opts = {
             'start_date': date(2025, 1, 15),
             'end_date': date(2025, 1, 16)
         }
-        
+
         with patch.object(processor, 'check_dependencies') as mock_check:
             mock_check.return_value = {
                 'all_critical_present': True,
@@ -440,14 +440,14 @@ class TestDependencyChecking:
                 'stale_warn': [],
                 'details': {}
             }
-            
+
             # Should raise DataTooStaleError
             with pytest.raises(DataTooStaleError, match="too stale"):
                 processor.extract_raw_data()
-    
+
     def test_stale_warning_continues(self, processor, mock_bigquery_responses):
         """Test that stale warning logs but continues processing."""
-        
+
         def mock_query(query_str):
             mock_result = Mock()
             if 'nbac_schedule' in query_str:
@@ -459,13 +459,13 @@ class TestDependencyChecking:
             else:
                 mock_result.to_dataframe.return_value = pd.DataFrame()
             return mock_result
-        
+
         processor.bq_client.query.side_effect = mock_query
         processor.opts = {
             'start_date': date(2025, 1, 15),
             'end_date': date(2025, 1, 16)
         }
-        
+
         with patch.object(processor, 'check_dependencies') as mock_check:
             mock_check.return_value = {
                 'all_critical_present': True,
@@ -483,7 +483,7 @@ class TestDependencyChecking:
                     }
                 }
             }
-            
+
             with patch.object(processor, 'track_source_usage'):
                 # Should complete successfully despite warning
                 processor.extract_raw_data()
@@ -496,16 +496,16 @@ class TestDependencyChecking:
 
 class TestDataExtractionScenarios:
     """Test various data extraction scenarios."""
-    
+
     def test_espn_fallback_for_missing_dates(self, processor):
         """Test ESPN fallback when nbac_schedule has gaps."""
-        
+
         call_count = [0]
-        
+
         def mock_query(query_str):
             mock_result = Mock()
             call_count[0] += 1
-            
+
             if 'nbac_schedule' in query_str and call_count[0] == 1:
                 # First call: nbac_schedule with gap
                 mock_result.to_dataframe.return_value = pd.DataFrame([{
@@ -539,58 +539,58 @@ class TestDataExtractionScenarios:
                 }])
             else:
                 mock_result.to_dataframe.return_value = pd.DataFrame()
-            
+
             return mock_result
-        
+
         processor.bq_client.query.side_effect = mock_query
         processor.opts = {
             'start_date': date(2025, 1, 15),
             'end_date': date(2025, 1, 16)
         }
-        
+
         # Extract schedule with fallback
         schedule = processor._extract_schedule_data(
             date(2025, 1, 15),
             date(2025, 1, 16)
         )
-        
+
         # Should have games from both sources
         assert len(schedule) == 2
         assert 'nbac_schedule' in schedule['data_source'].values
         assert 'espn_scoreboard' in schedule['data_source'].values
-    
+
     def test_extended_lookback_window(self, processor, mock_bigquery_responses):
         """Test that extraction uses extended lookback for fatigue context."""
-        
+
         query_dates = []
-        
+
         def mock_query(query_str):
             mock_result = Mock()
-            
+
             # Capture date ranges from query
             if 'game_date BETWEEN' in query_str:
                 # Extract dates from query
                 query_dates.append(query_str)
-            
+
             mock_result.to_dataframe.return_value = mock_bigquery_responses['schedule']
             return mock_result
-        
+
         processor.bq_client.query.side_effect = mock_query
         processor.opts = {
             'start_date': date(2025, 1, 15),
             'end_date': date(2025, 1, 16)
         }
-        
+
         # Extract schedule
         processor._extract_schedule_data(
             date(2025, 1, 15),
             date(2025, 1, 16)
         )
-        
+
         # Check that lookback window was used
         assert len(query_dates) > 0
         query = query_dates[0]
-        
+
         # Should look back 30 days and forward 7 days
         # Start: 2025-01-15 - 30 = 2024-12-16
         # End: 2025-01-16 + 7 = 2025-01-23
@@ -604,10 +604,10 @@ class TestDataExtractionScenarios:
 
 class TestCalculationScenarios:
     """Test analytics calculation edge cases."""
-    
+
     def test_multi_game_date_range(self, processor, mock_bigquery_responses):
         """Test processing multiple games across date range."""
-        
+
         # Create 5-game schedule
         multi_game_schedule = pd.DataFrame([
             {
@@ -625,22 +625,22 @@ class TestCalculationScenarios:
             }
             for i in range(5)
         ])
-        
+
         processor.schedule_data = multi_game_schedule
         processor.betting_lines = pd.DataFrame()
         processor.injury_data = pd.DataFrame()
-        
+
         processor.opts = {
             'start_date': date(2025, 1, 15),
             'end_date': date(2025, 1, 19)
         }
-        
+
         # Calculate
         processor.calculate_analytics()
-        
+
         # 5 games × 2 teams = 10 records
         assert len(processor.transformed_data) == 10
-        
+
         # Verify each record has required fields
         for record in processor.transformed_data:
             assert record['team_abbr'] in ['LAL', 'BOS', 'GSW', 'MIA']
@@ -653,19 +653,19 @@ class TestCalculationScenarios:
 
 class TestErrorHandling:
     """Test error handling and recovery."""
-    
+
     def test_bigquery_query_error(self, processor):
         """Test handling of BigQuery query failures."""
-        
+
         # ✅ FIX ISSUE 2: Updated to expect DependencyError to be raised
         # Mock query to raise exception
         processor.bq_client.query.side_effect = Exception("BigQuery connection failed")
-        
+
         processor.opts = {
             'start_date': date(2025, 1, 15),
             'end_date': date(2025, 1, 16)
         }
-        
+
         with patch.object(processor, 'check_dependencies') as mock_check:
             mock_check.return_value = {
                 'all_critical_present': True,
@@ -675,15 +675,15 @@ class TestErrorHandling:
                 'missing': [],
                 'details': {}
             }
-            
+
             with patch.object(processor, 'track_source_usage'):
                 # Should raise DependencyError due to no schedule data
                 with pytest.raises(DependencyError, match="No schedule data found"):
                     processor.extract_raw_data()
-    
+
     def test_validation_error_on_invalid_data(self, processor):
         """Test validation catches invalid data."""
-        
+
         # ✅ FIX ISSUE 3: Added required fields season_year and game_status
         # Create invalid schedule (NULL game_id)
         invalid_schedule = pd.DataFrame([{
@@ -694,21 +694,21 @@ class TestErrorHandling:
             'home_team_abbr': 'LAL',
             'away_team_abbr': 'GSW'
         }])
-        
+
         processor.schedule_data = invalid_schedule
         processor.opts = {
             'start_date': date(2025, 1, 15),
             'end_date': date(2025, 1, 16)
         }
-        
+
         # Validation should detect NULL game_id and log quality issue
         processor.validate_extracted_data()
-        
+
         # Check that quality issue was logged for NULL game_id
         assert len(processor.quality_issues) > 0
         # Find the NULL game_id quality issue
         null_issues = [
-            issue for issue in processor.quality_issues 
+            issue for issue in processor.quality_issues
             if 'NULL game_id' in issue.get('message', '')
         ]
         assert len(null_issues) > 0, "Should have logged NULL game_id quality issue"
@@ -720,10 +720,10 @@ class TestErrorHandling:
 
 class TestSourceTrackingIntegration:
     """Test v4.0 source tracking integration."""
-    
+
     def test_source_tracking_populated_in_flow(self, processor, mock_bigquery_responses):
         """Test that source tracking is populated during extraction."""
-        
+
         def mock_query(query_str):
             mock_result = Mock()
             if 'nbac_schedule' in query_str:
@@ -731,13 +731,13 @@ class TestSourceTrackingIntegration:
             else:
                 mock_result.to_dataframe.return_value = pd.DataFrame()
             return mock_result
-        
+
         processor.bq_client.query.side_effect = mock_query
         processor.opts = {
             'start_date': date(2025, 1, 15),
             'end_date': date(2025, 1, 16)
         }
-        
+
         with patch.object(processor, 'check_dependencies') as mock_check:
             mock_check.return_value = {
                 'all_critical_present': True,
@@ -754,21 +754,21 @@ class TestSourceTrackingIntegration:
                     }
                 }
             }
-            
+
             # Mock track_source_usage to set attributes
             def mock_track(dep_check):
                 processor.source_nbac_schedule_last_updated = datetime.now(timezone.utc)
                 processor.source_nbac_schedule_rows_found = 2
                 processor.source_nbac_schedule_completeness_pct = 100.0
-            
+
             with patch.object(processor, 'track_source_usage', side_effect=mock_track):
                 processor.extract_raw_data()
                 processor.calculate_analytics()
-                
+
                 # Check that records have source tracking
                 assert len(processor.transformed_data) > 0
                 record = processor.transformed_data[0]
-                
+
                 assert 'source_nbac_schedule_last_updated' in record
                 assert 'source_nbac_schedule_rows_found' in record
                 assert 'source_nbac_schedule_completeness_pct' in record

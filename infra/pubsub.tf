@@ -2,7 +2,7 @@
 # Pub/Sub Topics and Subscriptions for NBA Props Platform
 # Phase 4 Precompute Infrastructure
 # ============================================================================
-# 
+#
 # Deployment Strategy:
 # 1. Create topics + PULL subscriptions first (this file)
 # 2. Deploy precompute service

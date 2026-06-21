@@ -50,16 +50,16 @@ class DependencyHealth:
 class HealthChecker:
     """
     Health checker with metrics tracking.
-    
+
     Usage:
         health_checker = HealthChecker(service_name='prediction-coordinator')
         health_checker.record_request(latency_ms=45.2)
-        
+
         @app.route('/health')
         def health():
             return health_checker.get_health_response()
     """
-    
+
     def __init__(self, service_name: str, version: str = '1.0'):
         self.service_name = service_name
         self.version = version
@@ -67,34 +67,34 @@ class HealthChecker:
         self.request_count = 0
         self.total_latency_ms = 0.0
         self.last_request_at = None
-        
+
         # Dependency checkers (optional)
         self.dependency_checkers: Dict[str, Callable[[], bool]] = {}
-    
+
     def record_request(self, latency_ms: float):
         """Record a request for metrics."""
         self.request_count += 1
         self.total_latency_ms += latency_ms
         self.last_request_at = datetime.now(timezone.utc).isoformat()
-    
+
     def get_uptime(self) -> float:
         """Get uptime in seconds."""
         return time.time() - self.start_time
-    
+
     def get_avg_latency(self) -> float:
         """Get average latency in milliseconds."""
         if self.request_count == 0:
             return 0.0
         return self.total_latency_ms / self.request_count
-    
+
     def add_dependency_checker(self, name: str, checker: Callable[[], bool]):
         """Add a dependency health checker function."""
         self.dependency_checkers[name] = checker
-    
+
     def check_dependencies(self) -> Dict[str, DependencyHealth]:
         """Check all dependencies and return health status."""
         results = {}
-        
+
         for name, checker in self.dependency_checkers.items():
             start = time.time()
             try:
@@ -113,9 +113,9 @@ class HealthChecker:
                     latency_ms=round(latency, 2),
                     error=str(e)
                 )
-        
+
         return results
-    
+
     def get_metrics(self) -> HealthMetrics:
         """Get current health metrics."""
         return HealthMetrics(
@@ -126,11 +126,11 @@ class HealthChecker:
             service_name=self.service_name,
             version=self.version
         )
-    
+
     def get_health_response(self, include_dependencies: bool = True) -> tuple:
         """
         Get health check response.
-        
+
         Returns:
             Tuple of (response_dict, status_code)
         """
@@ -140,14 +140,14 @@ class HealthChecker:
             'timestamp': datetime.now(timezone.utc).isoformat(),
             'metrics': asdict(metrics)
         }
-        
+
         # Check dependencies if requested
         if include_dependencies and self.dependency_checkers:
             dependencies = self.check_dependencies()
             response['dependencies'] = {
                 name: asdict(dep) for name, dep in dependencies.items()
             }
-            
+
             # Mark as unhealthy if any dependency is down
             unhealthy_deps = [name for name, dep in dependencies.items() if not dep.healthy]
             if unhealthy_deps:
@@ -165,31 +165,31 @@ def create_health_blueprint(
 ) -> Blueprint:
     """
     Create a health check blueprint with metrics.
-    
+
     Args:
         service_name: Name of the service
         version: Service version
         health_checker: Optional existing HealthChecker instance
-    
+
     Returns:
         Flask Blueprint with /health and /health/metrics endpoints
     """
     bp = Blueprint('health', __name__)
-    
+
     # Use provided health checker or create new one
     checker = health_checker or HealthChecker(service_name=service_name, version=version)
-    
+
     @bp.route('/health', methods=['GET'])
     def health():
         """Basic health check endpoint."""
         return jsonify({'status': 'healthy', 'service': service_name}), 200
-    
+
     @bp.route('/health/metrics', methods=['GET'])
     def health_metrics():
         """Detailed health check with metrics."""
         response, status = checker.get_health_response(include_dependencies=True)
         return jsonify(response), status
-    
+
     @bp.route('/health/ready', methods=['GET'])
     def readiness():
         """Readiness probe (for Kubernetes)."""
@@ -198,13 +198,13 @@ def create_health_blueprint(
             return jsonify({'status': 'ready'}), 200
         else:
             return jsonify({'status': 'not ready', 'reason': response.get('unhealthy_dependencies')}), 503
-    
+
     @bp.route('/health/live', methods=['GET'])
     def liveness():
         """Liveness probe (for Kubernetes)."""
         # Liveness doesn't check dependencies, just if service is alive
         return jsonify({'status': 'alive', 'uptime_seconds': checker.get_uptime()}), 200
-    
+
     return bp
 
 

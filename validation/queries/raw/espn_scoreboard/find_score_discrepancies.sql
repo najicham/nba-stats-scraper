@@ -9,10 +9,10 @@
 --   - Priority: ESPN vs NBA.com (both should be official)
 -- ============================================================================
 
-WITH 
+WITH
 -- ESPN scores
 espn_scores AS (
-  SELECT 
+  SELECT
     game_id,
     game_date,
     home_team_abbr,
@@ -28,7 +28,7 @@ espn_scores AS (
 
 -- BDL scores
 bdl_scores AS (
-  SELECT 
+  SELECT
     game_id,
     game_date,
     home_team_abbr,
@@ -43,7 +43,7 @@ bdl_scores AS (
 
 -- NBA.com Scoreboard V2
 nbac_scores AS (
-  SELECT 
+  SELECT
     game_id,
     game_date,
     home_team_abbr,
@@ -57,7 +57,7 @@ nbac_scores AS (
 
 -- Three-way join
 comparison AS (
-  SELECT 
+  SELECT
     COALESCE(e.game_id, b.game_id, n.game_id) as game_id,
     COALESCE(e.game_date, b.game_date, n.game_date) as game_date,
     COALESCE(e.home_team_abbr, b.home_team_abbr, n.home_team_abbr) as home_team,
@@ -69,12 +69,12 @@ comparison AS (
     n.nbac_home,
     n.nbac_away,
     e.espn_game_id,
-    
+
     -- Source presence flags
     CASE WHEN e.game_id IS NOT NULL THEN 1 ELSE 0 END as has_espn,
     CASE WHEN b.game_id IS NOT NULL THEN 1 ELSE 0 END as has_bdl,
     CASE WHEN n.game_id IS NOT NULL THEN 1 ELSE 0 END as has_nbac,
-    
+
     -- Discrepancy detection
     CASE
       WHEN e.espn_home IS NULL OR b.bdl_home IS NULL OR n.nbac_home IS NULL THEN NULL
@@ -83,7 +83,7 @@ comparison AS (
       WHEN e.espn_home != n.nbac_home THEN 'ESPN_NBAC_DIFFER'
       ELSE 'COMPLEX'
     END as discrepancy_type,
-    
+
     -- Calculate max difference
     GREATEST(
       ABS(COALESCE(e.espn_home, 0) - COALESCE(b.bdl_home, 0)),
@@ -114,7 +114,7 @@ summary AS (
 
 -- Output: Combined results with proper BigQuery syntax
 (
-  SELECT 
+  SELECT
     '📊 3-WAY SUMMARY (Last 90 Days)' as section,
     CAST(total_games AS STRING) as col1,
     CAST(in_all_three AS STRING) as col2,
@@ -133,7 +133,7 @@ summary AS (
   UNION ALL
 
   -- Output: Critical discrepancies (ESPN vs NBA.com official sources)
-  SELECT 
+  SELECT
     '🔴 CRITICAL DISCREPANCIES' as section,
     game_id as col1,
     CONCAT(away_team, ' @ ', home_team) as col2,
@@ -149,7 +149,7 @@ summary AS (
   UNION ALL
 
   -- Output: BDL differs (less critical)
-  SELECT 
+  SELECT
     '⚠️ BDL DIFFERS' as section,
     game_id as col1,
     CONCAT(away_team, ' @ ', home_team) as col2,
@@ -166,7 +166,7 @@ summary AS (
   UNION ALL
 
   -- Output: Coverage analysis
-  SELECT 
+  SELECT
     '📋 COVERAGE' as section,
     CONCAT('ESPN: ', games_in_espn) as col1,
     CONCAT('BDL: ', games_in_bdl) as col2,

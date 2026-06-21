@@ -513,18 +513,18 @@ processed_at TIMESTAMP
   "player_lookup": "lebronjames",
   "game_date": "2025-11-01",
   "game_id": "20251101LAL_GSW",
-  
+
   "fatigue_score": 100,
   "shot_zone_mismatch_score": 5.2,
   "pace_score": 1.8,
   "usage_spike_score": 0.0,
-  
+
   "total_composite_adjustment": 7.00,
-  
+
   "data_completeness_pct": 100.00,
   "has_warnings": false,
   "early_season_flag": null,
-  
+
   "processed_at": "2025-11-01T23:45:00Z"
 }
 ```
@@ -642,7 +642,7 @@ ValueError: Missing critical dependencies: nba_analytics.upcoming_player_game_co
 **Solution:**
 ```bash
 # Check if upstream data exists
-bq query "SELECT COUNT(*) FROM nba_analytics.upcoming_player_game_context 
+bq query "SELECT COUNT(*) FROM nba_analytics.upcoming_player_game_context
           WHERE game_date = '2025-11-01'"
 
 # If count = 0, run upstream processor first
@@ -690,7 +690,7 @@ WARNING: Player kevindurant has data_completeness_pct = 60.0
 **Solution:**
 ```sql
 -- Identify which source is incomplete
-SELECT 
+SELECT
   player_lookup,
   missing_data_fields,
   source_player_context_completeness_pct,
@@ -714,7 +714,7 @@ WARNING: Player has extreme total_composite_adjustment: 18.5
 **Solution:**
 ```sql
 -- Investigate which factors contributed
-SELECT 
+SELECT
   player_lookup,
   total_composite_adjustment,
   fatigue_score,
@@ -745,7 +745,7 @@ WHERE game_date = '2025-11-01'
 2. **Data Quality**
    ```sql
    -- Average completeness should be >95%
-   SELECT 
+   SELECT
      game_date,
      AVG(data_completeness_pct) as avg_completeness,
      COUNT(CASE WHEN has_warnings THEN 1 END) as warnings_count
@@ -757,9 +757,9 @@ WHERE game_date = '2025-11-01'
 3. **Source Staleness**
    ```sql
    -- All sources should be <24 hours old
-   SELECT 
+   SELECT
      game_date,
-     MAX(TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), 
+     MAX(TIMESTAMP_DIFF(CURRENT_TIMESTAMP(),
          source_player_context_last_updated, HOUR)) as max_age_hours
    FROM nba_precompute.player_composite_factors
    WHERE game_date = CURRENT_DATE()
@@ -769,8 +769,8 @@ WHERE game_date = '2025-11-01'
 4. **Adjustment Distribution**
    ```sql
    -- Most adjustments should be between -5 and +5
-   SELECT 
-     CASE 
+   SELECT
+     CASE
        WHEN total_composite_adjustment >= 5 THEN 'Very Favorable'
        WHEN total_composite_adjustment >= 2 THEN 'Favorable'
        WHEN total_composite_adjustment >= -2 THEN 'Neutral'
@@ -824,19 +824,19 @@ schemas/bigquery/precompute/
 def _calculate_altitude_impact(self, player_row: pd.Series) -> float:
     """
     Calculate altitude impact score (-2.0 to +2.0).
-    
+
     High altitude games (Denver) affect player performance.
     """
     home_altitude = player_row.get('home_team_altitude', 0)
     player_home_altitude = player_row.get('player_home_altitude', 0)
-    
+
     altitude_diff = abs(home_altitude - player_home_altitude)
-    
+
     if altitude_diff > 5000:  # Significant difference
         return -2.0  # Penalty
     elif altitude_diff > 3000:
         return -1.0
-    
+
     return 0.0
 ```
 
@@ -846,7 +846,7 @@ def _calculate_player_composite(self, player_row: pd.Series) -> dict:
     # ... existing factors ...
     altitude_score = self._calculate_altitude_impact(player_row)
     altitude_adj = altitude_score  # Direct conversion
-    
+
     total_adjustment = (
         fatigue_adj + shot_zone_adj + pace_adj + usage_spike_adj +
         altitude_adj  # Add new factor
@@ -876,7 +876,7 @@ class TestAltitudeCalculation:
     def test_high_altitude_penalty(self, processor):
         # Test Denver game from sea level team
         pass
-    
+
     def test_no_altitude_difference(self, processor):
         # Test same altitude game
         pass
@@ -980,6 +980,6 @@ Copyright © 2025 NBA Props Platform. All rights reserved.
 
 ---
 
-**Last Updated:** November 1, 2025  
-**Maintained By:** Data Engineering Team  
+**Last Updated:** November 1, 2025
+**Maintained By:** Data Engineering Team
 **Status:** ✅ Production-Ready

@@ -9,28 +9,28 @@ CREATE TABLE IF NOT EXISTS `nba_raw.nbac_scoreboard_v2` (
   game_date DATE NOT NULL,
   season_year INT64 NOT NULL,
   start_time TIMESTAMP,
-  
+
   -- Game status
   game_status_id STRING NOT NULL,
   game_state STRING NOT NULL,
   game_status_text STRING NOT NULL,
-  
+
   -- Home team data
   home_team_id STRING NOT NULL,
   home_team_abbr STRING NOT NULL,
   home_team_abbr_raw STRING NOT NULL,
   home_score INT64,
-  
-  -- Away team data  
+
+  -- Away team data
   away_team_id STRING NOT NULL,
   away_team_abbr STRING NOT NULL,
   away_team_abbr_raw STRING NOT NULL,
   away_score INT64,
-  
+
   -- Game outcome
   winning_team_abbr STRING,
   winning_team_side STRING,
-  
+
   -- Processing metadata
   source_file_path STRING NOT NULL,
   scrape_timestamp TIMESTAMP,
@@ -63,7 +63,7 @@ WHERE game_state = 'post' AND game_status_id = '3';
 -- Team record calculation view
 CREATE OR REPLACE VIEW `nba_raw.nbac_scoreboard_v2_team_records` AS
 WITH team_games AS (
-  SELECT 
+  SELECT
     game_date,
     season_year,
     home_team_abbr as team_abbr,
@@ -71,19 +71,19 @@ WITH team_games AS (
     1 as games
   FROM `nba_raw.nbac_scoreboard_v2`
   WHERE game_state = 'post'
-  
+
   UNION ALL
-  
-  SELECT 
+
+  SELECT
     game_date,
-    season_year, 
+    season_year,
     away_team_abbr as team_abbr,
     CASE WHEN winning_team_side = 'away' THEN 1 ELSE 0 END as wins,
     1 as games
   FROM `nba_raw.nbac_scoreboard_v2`
   WHERE game_state = 'post'
 )
-SELECT 
+SELECT
   season_year,
   team_abbr,
   SUM(wins) as total_wins,

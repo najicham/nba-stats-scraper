@@ -10,7 +10,7 @@ Build a website with NBA player prop betting data, historical performance analys
 ### **Key Achievement**
 Successfully documented and designed schemas for a complete data pipeline that:
 - **Collects prop betting lines** from multiple sportsbooks
-- **Cross-references players** across 4+ different ID systems  
+- **Cross-references players** across 4+ different ID systems
 - **Links betting events** to actual NBA games and player statistics
 - **Tracks historical performance** for predictive modeling
 - **Supports real-time updates** throughout the season
@@ -24,7 +24,7 @@ Successfully documented and designed schemas for a complete data pipeline that:
 **Strengths**: Comprehensive historical data, reliable game/player IDs
 **Coverage**: Games, player boxscores, team boxscores, injuries
 
-### **2. Odds API (4 Scrapers)** 
+### **2. Odds API (4 Scrapers)**
 **Purpose**: Betting lines and prop odds (CORE BUSINESS DATA)
 **Strengths**: Real-time prop odds, multiple sportsbooks
 **Coverage**: Events, current props, historical events, historical props
@@ -60,7 +60,7 @@ Successfully documented and designed schemas for a complete data pipeline that:
 | **NBA.com** | Integer | `1630173` | `PLAYER_FIRST_NAME` + `PLAYER_LAST_NAME` | Official Data |
 | **Odds API** | Name String | `"Jaylen Wells"` | `description` field | Prop Betting |
 
-**Cross-Reference Strategy**: 
+**Cross-Reference Strategy**:
 - Primary matching: `name + team + jersey_number`
 - Secondary matching: Name variations array
 - Confidence scoring for match quality
@@ -95,7 +95,7 @@ Successfully documented and designed schemas for a complete data pipeline that:
 
 #### **Morning (8-10 AM ET): Current State**
 - **Rosters** (ESPN, NBA.com): Catch overnight trades/signings
-- **Injuries** (Ball Don't Lie, NBA.com): Latest injury designations  
+- **Injuries** (Ball Don't Lie, NBA.com): Latest injury designations
 - **Schedule** (NBA.com): Monitor for postponements
 
 #### **Afternoon (12-4 PM ET): Pre-Game Setup**
@@ -133,7 +133,7 @@ Successfully documented and designed schemas for a complete data pipeline that:
 - **Partitioning**: By game_date
 - **Critical**: Links betting events to actual NBA games
 
-#### **teams** 
+#### **teams**
 - **Purpose**: Standardized team reference
 - **Key Fields**: team_abbr (primary), multiple source IDs, league organization
 - **Usage**: Primary key for all team references
@@ -154,7 +154,7 @@ Successfully documented and designed schemas for a complete data pipeline that:
 - **Source**: Ball Don't Lie ongoing injury tracking
 - **Key Fields**: status, description, dates, severity
 
-#### **game_injury_reports** 
+#### **game_injury_reports**
 - **Purpose**: Official pre-game availability (CRITICAL FOR PROPS)
 - **Source**: NBA.com official injury reports
 - **Key Fields**: game-specific status, reason categories (Rest/Injury/Assignment)
@@ -174,7 +174,7 @@ Successfully documented and designed schemas for a complete data pipeline that:
 - **Critical**: Historical performance for prop predictions
 
 #### **team_boxscores**
-- **Purpose**: Team-level game statistics  
+- **Purpose**: Team-level game statistics
 - **Key Fields**: Team stats, pace, ratings, game results
 
 ### **Betting Tables (CORE BUSINESS)**
@@ -229,8 +229,8 @@ Successfully documented and designed schemas for a complete data pipeline that:
 - **Logic**: Map team names to abbreviations, link to games
 - **Priority**: Must run before props-processor
 
-#### **props-processor** 
-- **Input**: Odds API Player Props data  
+#### **props-processor**
+- **Input**: Odds API Player Props data
 - **Output**: player_props + odds_history tables
 - **Dependencies**: Requires events-processor completion
 - **Logic**: Match player names to player IDs, track odds changes
@@ -241,7 +241,7 @@ Successfully documented and designed schemas for a complete data pipeline that:
 - **Output**: games table
 - **Logic**: Cross-reference game IDs, standardize team abbreviations
 
-#### **players-processor** 
+#### **players-processor**
 - **Input**: NBA.com Player List, ESPN Rosters, NBA.com Rosters
 - **Output**: players + team_rosters tables
 - **Logic**: Cross-reference player IDs, track name variations
@@ -263,7 +263,7 @@ Successfully documented and designed schemas for a complete data pipeline that:
 ### **Prop Betting Critical Data Flow**
 1. **Events API** provides game event IDs
 2. **Player Props API** uses event IDs to get betting lines
-3. **Game Injury Reports** show player availability 
+3. **Game Injury Reports** show player availability
 4. **Historical Boxscores** provide performance context
 5. **Cross-referenced Player Data** enables accurate matching
 
@@ -300,7 +300,7 @@ Successfully documented and designed schemas for a complete data pipeline that:
 
 #### **Predictive Modeling Foundation**
 - **Player performance trends**: Recent game statistical patterns
-- **Matchup analysis**: Historical performance vs specific opponents  
+- **Matchup analysis**: Historical performance vs specific opponents
 - **Injury impact**: How different injury types affect player performance
 - **Rest vs play**: Load management impact on prop values
 
@@ -313,7 +313,7 @@ Successfully documented and designed schemas for a complete data pipeline that:
 2. **Establish cross-reference system**: Player/game ID mapping
 3. **Basic data quality checks**: Validate core relationships
 
-### **Phase 2: Betting Pipeline (Weeks 3-4)** 
+### **Phase 2: Betting Pipeline (Weeks 3-4)**
 1. **Deploy events-processor**: Betting events foundation
 2. **Deploy props-processor**: Core business data
 3. **Implement odds tracking**: Historical line movement
@@ -321,7 +321,7 @@ Successfully documented and designed schemas for a complete data pipeline that:
 
 ### **Phase 3: Performance Integration (Weeks 5-6)**
 1. **Deploy boxscores-processor**: Historical performance data
-2. **Deploy injuries-processor**: Player availability tracking  
+2. **Deploy injuries-processor**: Player availability tracking
 3. **Build analytics foundation**: Link performance to prop outcomes
 
 ### **Phase 4: Advanced Features (Weeks 7-8)**

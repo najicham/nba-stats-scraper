@@ -37,7 +37,7 @@ steps:
   - name: 'gcr.io/cloud-builders/docker'
     id: 'build-processors'
     args: [
-      'build', 
+      'build',
       '-f', 'processors/Dockerfile',
       '--build-arg', 'PROJECT_ID=$PROJECT_ID',
       '--build-arg', 'BASE_IMAGE_TAG=$BUILD_ID',
@@ -52,7 +52,7 @@ steps:
     id: 'build-reportgen'
     args: [
       'build',
-      '-f', 'reportgen/Dockerfile', 
+      '-f', 'reportgen/Dockerfile',
       '--build-arg', 'PROJECT_ID=$PROJECT_ID',
       '--build-arg', 'BASE_IMAGE_TAG=$BUILD_ID',
       '-t', 'gcr.io/$PROJECT_ID/nba-reportgen:$BUILD_ID',
@@ -68,7 +68,7 @@ steps:
     waitFor: ['build-scrapers']
 
   - name: 'gcr.io/cloud-builders/docker'
-    id: 'push-processors' 
+    id: 'push-processors'
     args: ['push', '--all-tags', 'gcr.io/$PROJECT_ID/nba-processors']
     waitFor: ['build-processors']
 
@@ -165,7 +165,7 @@ options:
 # Images to retain in Container Registry
 images:
   - 'gcr.io/$PROJECT_ID/nba-base'
-  - 'gcr.io/$PROJECT_ID/nba-scrapers'  
+  - 'gcr.io/$PROJECT_ID/nba-scrapers'
   - 'gcr.io/$PROJECT_ID/nba-processors'
   - 'gcr.io/$PROJECT_ID/nba-reportgen'
 

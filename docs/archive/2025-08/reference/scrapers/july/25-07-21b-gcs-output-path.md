@@ -14,7 +14,7 @@
 ### 2. BdlPlayerBoxScoresScraper
 - **File**: `scrapers/balldontlie/bdl_player_box_scores.py`
 - **Class**: `BdlPlayerBoxScoresScraper`
-- **Output Paths**: 
+- **Output Paths**:
   - By date: `/ball-dont-lie/player-box-scores/{date}/{timestamp}.json`
   - By game: `/ball-dont-lie/player-box-scores/{date}/game_{id}/{timestamp}.json`
 

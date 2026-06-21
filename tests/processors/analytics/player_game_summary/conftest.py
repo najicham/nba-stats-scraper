@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 class MockGoogleModule(MagicMock):
     """
     Mock Google module that allows submodule imports dynamically.
-    
+
     This handles cases like:
     - from google.cloud import bigquery
     - from google.auth import default

@@ -14,7 +14,7 @@ This document defines which scrapers are **primary sources** vs **backups**, how
 
 ### **Backup Strategy Options**
 1. **Same Table Priority**: Primary data wins, backups fill gaps
-2. **Separate Backup Tables**: Keep primary and backup data isolated  
+2. **Separate Backup Tables**: Keep primary and backup data isolated
 3. **GCS-Only Backups**: Only promote to DB when primary fails
 4. **Hybrid Approach**: Different strategies by data type
 
@@ -156,7 +156,7 @@ player_slug, full_url, college, country, draft_round, draft_number
 
 #### **Game Data (Store Core Game Logic)**
 ```sql
--- STORE (Business Critical)  
+-- STORE (Business Critical)
 game_id, game_date, home_team_abbr, away_team_abbr, home_score, away_score
 status, start_time, arena_name, is_neutral
 
@@ -167,7 +167,7 @@ broadcast_details, game_code, arena_state, detailed_venue_info
 #### **Player Stats (Store Performance Only)**
 ```sql
 -- STORE (Business Critical)
-game_id, player_id, minutes_decimal, pts, reb, ast, stl, blk, 
+game_id, player_id, minutes_decimal, pts, reb, ast, stl, blk,
 fgm, fga, fg3m, fg3a, ftm, fta, plus_minus
 
 -- DON'T STORE (Keep in Raw Files)
@@ -177,7 +177,7 @@ fantasy_points, video_available, matchup_string, detailed_shooting_zones
 #### **Betting Data (Store Everything)**
 ```sql
 -- STORE (ALL - Business Critical)
-event_id, player_name, bet_type, line_value, odds_decimal, 
+event_id, player_name, bet_type, line_value, odds_decimal,
 bookmaker_key, market_key, last_update
 
 -- Rationale: All betting data is business-critical
@@ -195,8 +195,8 @@ bookmaker_key, market_key, last_update
 def process_odds_events():
     # Always process to betting_events table
     # No backup strategy - single source
-    
-# Props Processor - Primary Only  
+
+# Props Processor - Primary Only
 def process_player_props():
     # Always process to player_props table
     # No backup strategy - single source
@@ -282,7 +282,7 @@ def promote_backup_data(data_type, date_range, reason):
 # Alert when primary sources fail
 primary_health_checks = {
     'odds_api_events': 'CRITICAL - Business stops',
-    'odds_api_props': 'CRITICAL - Revenue impact', 
+    'odds_api_props': 'CRITICAL - Revenue impact',
     'bdl_games': 'HIGH - Switch to NBA.com backup',
     'bdl_player_stats': 'MEDIUM - Fill gaps from NBA.com',
     'nba_injury_reports': 'HIGH - Switch to Ball Don't Lie'
@@ -329,7 +329,7 @@ primary_health_checks = {
 #### **Core Business Data → Database**
 - **Betting pipeline**: All data (single source)
 - **Player stats**: Primary + gap filling
-- **Game data**: Primary + gap filling  
+- **Game data**: Primary + gap filling
 - **Injury reports**: Dual primary (different purposes)
 
 #### **Supporting Data → GCS + Manual Promotion**
@@ -363,7 +363,7 @@ primary_health_checks = {
 This hybrid strategy maximizes **reliability** while minimizing **costs**:
 
 - **Business-critical data** gets primary + backup sources
-- **Supporting data** uses cost-effective GCS storage  
+- **Supporting data** uses cost-effective GCS storage
 - **Database contains only** business logic and core analytics
 - **Raw files preserve** all data for future flexibility
 

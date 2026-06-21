@@ -179,7 +179,7 @@ Your processor ran in August 2025, so you have test data:
 ```bash
 # Check what data exists
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   scrape_date,
   COUNT(*) as injuries,
   COUNT(DISTINCT team_abbr) as teams
@@ -231,20 +231,20 @@ Save a report:
 
 ### "No data found" Errors
 
-**Cause:** Season hasn't started or scraper hasn't run  
+**Cause:** Season hasn't started or scraper hasn't run
 **Solution:** Check if season is active (Oct-Jun) and verify scraper schedule
 
 ### Low Injury Counts
 
-**Cause:** May be legitimate (healthy league) or scraper issue  
-**Solution:** 
+**Cause:** May be legitimate (healthy league) or scraper issue
+**Solution:**
 1. Check if all teams represented
 2. Compare with NBA.com injury report
 3. Verify scraper logs
 
 ### Confidence Score Drops
 
-**Cause:** BDL API format changed  
+**Cause:** BDL API format changed
 **Solution:**
 1. Check `data_quality_flags` field
 2. Review parser logic
@@ -252,7 +252,7 @@ Save a report:
 
 ### Missing Teams
 
-**Cause:** Some teams may have zero injuries (normal)  
+**Cause:** Some teams may have zero injuries (normal)
 **Solution:** Over 30 days, expect 29-30 teams total
 
 ---
@@ -327,11 +327,11 @@ ORDER BY _TABLE_SUFFIX DESC;
 
 Your validation is working well when:
 
-✅ **Daily checks pass** with "Complete" status  
-✅ **Weekly trends** show consistent coverage  
-✅ **Confidence scores** stay at 1.0  
-✅ **Quality checks** show minimal flags  
-✅ **Real-time status** shows fresh data  
+✅ **Daily checks pass** with "Complete" status
+✅ **Weekly trends** show consistent coverage
+✅ **Confidence scores** stay at 1.0
+✅ **Quality checks** show minimal flags
+✅ **Real-time status** shows fresh data
 
 ---
 
@@ -349,6 +349,6 @@ Your validation is working well when:
 
 ---
 
-**Status:** Ready for NBA Season Start  
-**Last Updated:** October 13, 2025  
+**Status:** Ready for NBA Season Start
+**Last Updated:** October 13, 2025
 **Next Review:** When season begins (October 2025)

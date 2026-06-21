@@ -1,8 +1,8 @@
 # Shot Zone Data Quality Fix - Operational Handoff
 
-**Date:** 2026-01-31  
-**Session:** 53  
-**Status:** ✅ Production Ready  
+**Date:** 2026-01-31
+**Session:** 53
+**Status:** ✅ Production Ready
 **Priority:** HIGH - Affects ML model training and analytics
 
 ---
@@ -57,10 +57,10 @@ has_complete_shot_zones   BOOLEAN  -- TRUE = all zones from same source
 SELECT game_date,
   COUNTIF(has_complete_shot_zones = TRUE) * 100.0 / COUNT(*) as pct_complete,
   ROUND(AVG(CASE WHEN has_complete_shot_zones = TRUE
-    THEN SAFE_DIVIDE(paint_attempts * 100.0, 
+    THEN SAFE_DIVIDE(paint_attempts * 100.0,
          paint_attempts + mid_range_attempts + three_attempts_pbp) END), 1) as paint_rate,
   ROUND(AVG(CASE WHEN has_complete_shot_zones = TRUE
-    THEN SAFE_DIVIDE(three_attempts_pbp * 100.0, 
+    THEN SAFE_DIVIDE(three_attempts_pbp * 100.0,
          paint_attempts + mid_range_attempts + three_attempts_pbp) END), 1) as three_rate
 FROM `nba-props-platform.nba_analytics.player_game_summary`
 WHERE game_date >= CURRENT_DATE() - 3 AND minutes_played > 0
@@ -87,7 +87,7 @@ WHERE game_date >= CURRENT_DATE() - 3
   AND has_complete_shot_zones = TRUE;
 ```
 
-**Expected:** `mismatched = 0`  
+**Expected:** `mismatched = 0`
 **If mismatched > 0:** CODE REGRESSION - Escalate immediately
 
 ---
@@ -97,7 +97,7 @@ WHERE game_date >= CURRENT_DATE() - 3
 ### In Analytics Queries
 ```sql
 -- ALWAYS filter for complete zones when using shot zone data
-SELECT player_lookup, 
+SELECT player_lookup,
   AVG(SAFE_DIVIDE(paint_attempts, paint_attempts + mid_range_attempts + three_attempts_pbp)) as paint_rate
 FROM player_game_summary
 WHERE has_complete_shot_zones = TRUE  -- THIS IS CRITICAL
@@ -150,7 +150,7 @@ GROUP BY 1 ORDER BY 1 DESC;
 **Diagnosis:**
 ```sql
 -- Check a specific date
-SELECT 
+SELECT
   COUNT(*) as total,
   COUNTIF(has_complete_shot_zones = TRUE) as complete,
   COUNTIF(three_pt_attempts = three_attempts_pbp) as matching
@@ -192,10 +192,10 @@ In `bin/validate_pipeline.py` or daily script:
 ```python
 # Check shot zone quality
 query = """
-SELECT 
+SELECT
   COUNTIF(has_complete_shot_zones = TRUE) * 100.0 / COUNT(*) as pct_complete,
-  AVG(CASE WHEN has_complete_shot_zones = TRUE 
-    THEN SAFE_DIVIDE(paint_attempts * 100.0, 
+  AVG(CASE WHEN has_complete_shot_zones = TRUE
+    THEN SAFE_DIVIDE(paint_attempts * 100.0,
          paint_attempts + mid_range_attempts + three_attempts_pbp) END) as paint_rate
 FROM player_game_summary
 WHERE game_date = CURRENT_DATE() - 1 AND minutes_played > 0
@@ -345,6 +345,6 @@ If the fix causes issues:
 
 ---
 
-**Last Updated:** 2026-01-31  
-**Owner:** Data Engineering  
+**Last Updated:** 2026-01-31
+**Owner:** Data Engineering
 **Status:** ✅ Active in Production

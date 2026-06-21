@@ -18,37 +18,37 @@ CREATE TABLE IF NOT EXISTS `nba_raw.nbac_team_boxscore` (
   nba_game_id          STRING NOT NULL,    -- NBA.com game ID: "0022400561"
   game_date            DATE NOT NULL,      -- Game date (partition key)
   season_year          INT64 NOT NULL,     -- NBA season starting year (2024 for 2024-25 season)
-  
+
   -- Team Identifiers
   team_id              INT64 NOT NULL,     -- NBA.com team ID (e.g., 1610612755 for 76ers)
   team_abbr            STRING NOT NULL,    -- Normalized team abbreviation: LAL, BOS, GSW, PHI, etc.
   team_name            STRING,             -- Team name: Lakers, Celtics, Warriors, 76ers, etc.
   team_city            STRING,             -- Team city: Los Angeles, Boston, Golden State, Philadelphia, etc.
   is_home              BOOLEAN NOT NULL,   -- TRUE if home team, FALSE if away team
-  
+
   -- Game Time
   minutes              STRING,             -- Total minutes played: "240:00" for regulation, "265:00" for OT
-  
+
   -- Field Goals
   fg_made              INT64,              -- Field goals made (includes 2PT and 3PT)
   fg_attempted         INT64,              -- Field goals attempted (includes 2PT and 3PT)
   fg_percentage        FLOAT64,            -- Field goal percentage (0.0-1.0, NULL if attempted=0)
-  
+
   -- Three Pointers
   three_pt_made        INT64,              -- Three-pointers made
   three_pt_attempted   INT64,              -- Three-pointers attempted
   three_pt_percentage  FLOAT64,            -- Three-point percentage (0.0-1.0, NULL if attempted=0)
-  
+
   -- Free Throws
   ft_made              INT64,              -- Free throws made
   ft_attempted         INT64,              -- Free throws attempted
   ft_percentage        FLOAT64,            -- Free throw percentage (0.0-1.0, NULL if attempted=0)
-  
+
   -- Rebounds
   offensive_rebounds   INT64,              -- Offensive rebounds
   defensive_rebounds   INT64,              -- Defensive rebounds
   total_rebounds       INT64,              -- Total rebounds (offensive + defensive)
-  
+
   -- Other Statistics
   assists              INT64,              -- Assists
   steals               INT64,              -- Steals
@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS `nba_raw.nbac_team_boxscore` (
   personal_fouls       INT64,              -- Personal fouls
   points               INT64,              -- Total points scored
   plus_minus           INT64,              -- Plus/minus (+/-) - sum of both teams always equals 0
-  
+
   -- Processing Metadata
   source_file_path     STRING,             -- GCS path of source JSON file
   created_at           TIMESTAMP,          -- When record was first created (UTC)
@@ -77,7 +77,7 @@ OPTIONS (
 -- ================================================================
 -- USAGE NOTES
 -- ================================================================
--- 
+--
 -- Game ID System (v2.0):
 --   game_id:     Standardized system format "YYYYMMDD_AWAY_HOME" (e.g., "20250115_LAL_PHI")
 --   nba_game_id: NBA.com source format (e.g., "0022400561")
@@ -95,7 +95,7 @@ OPTIONS (
 --
 -- Clustering: Optimized for queries filtering/joining on:
 --   1. game_id (most common - get both teams for a game)
---   2. team_abbr (team-specific queries)  
+--   2. team_abbr (team-specific queries)
 --   3. season_year (season-level analysis)
 --   4. is_home (home vs away analysis)
 --
@@ -143,7 +143,7 @@ OPTIONS (
 --   AND game_date = '2025-01-15';
 
 -- Team's recent shooting performance (last 30 days)
--- SELECT 
+-- SELECT
 --   game_date,
 --   game_id,
 --   CASE WHEN is_home THEN 'vs' ELSE '@' END as location,
@@ -159,7 +159,7 @@ OPTIONS (
 -- ORDER BY game_date DESC;
 
 -- Home vs Away performance comparison
--- SELECT 
+-- SELECT
 --   is_home,
 --   COUNT(*) as games,
 --   ROUND(AVG(points), 1) as avg_points,
@@ -173,7 +173,7 @@ OPTIONS (
 -- ORDER BY is_home DESC;
 
 -- Season averages for all teams with home/away splits
--- SELECT 
+-- SELECT
 --   team_abbr,
 --   is_home,
 --   COUNT(*) as games_played,
@@ -189,7 +189,7 @@ OPTIONS (
 -- ORDER BY team_abbr, is_home DESC;
 
 -- Cross-validation with player box scores (verify team totals match)
--- SELECT 
+-- SELECT
 --   t.game_date,
 --   t.game_id,
 --   t.team_abbr,
@@ -217,7 +217,7 @@ OPTIONS (
 -- HAVING COUNT(*) != 2;
 
 -- Check 2: Verify each game has exactly 1 home and 1 away team
--- SELECT game_id, game_date, 
+-- SELECT game_id, game_date,
 --        SUM(CASE WHEN is_home THEN 1 ELSE 0 END) as home_count,
 --        SUM(CASE WHEN NOT is_home THEN 1 ELSE 0 END) as away_count
 -- FROM `nba_raw.nbac_team_boxscore`
@@ -282,7 +282,7 @@ OPTIONS (
 -- ================================================================
 
 -- Get table statistics
--- SELECT 
+-- SELECT
 --   COUNT(*) as total_rows,
 --   COUNT(DISTINCT game_id) as unique_games,
 --   COUNT(DISTINCT nba_game_id) as unique_nba_game_ids,
@@ -296,7 +296,7 @@ OPTIONS (
 -- WHERE game_date >= '2024-10-01';
 
 -- Get processing status by date
--- SELECT 
+-- SELECT
 --   DATE(processed_at) as process_date,
 --   COUNT(*) as records_processed,
 --   COUNT(DISTINCT game_id) as unique_games,

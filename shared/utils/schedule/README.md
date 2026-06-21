@@ -256,18 +256,18 @@ class MyProcessor:
     def __init__(self):
         # Uses database by default - fast!
         self.schedule = NBAScheduleService()
-    
+
     def validate_data(self, game_date: str, scraped_count: int):
         # Fast database check (10-50ms)
         expected_count = self.schedule.get_game_count(game_date)
-        
+
         if scraped_count != expected_count:
             logger.warning(
                 f"Game count mismatch on {game_date}: "
                 f"expected {expected_count}, got {scraped_count}"
             )
             return False
-        
+
         return True
 ```
 
@@ -280,18 +280,18 @@ class MyBackfillJob:
     def __init__(self):
         # Explicit GCS mode for source of truth
         self.schedule = NBAScheduleService.from_gcs_only()
-    
+
     def run(self):
         # Get all game dates with full metadata
         all_dates = self.schedule.get_all_game_dates(
             seasons=[2021, 2022, 2023, 2024],
             game_type=GameType.REGULAR_PLAYOFF
         )
-        
+
         for date_info in all_dates:
             game_date = date_info['date']
             games = date_info['games']  # List[NBAGame]
-            
+
             logger.info(f"Processing {game_date}: {len(games)} games")
             # Your backfill logic here...
 ```
@@ -442,7 +442,7 @@ python -c "from shared.utils.schedule import NBAScheduleService"
 ```python
 # This is normal if table doesn't exist yet
 schedule = NBAScheduleService()  # use_database=True by default
-has_games = schedule.has_games_on_date('2024-01-15')  
+has_games = schedule.has_games_on_date('2024-01-15')
 # Logs: "Database unavailable, using GCS fallback"
 # Returns correct result from GCS ✅
 ```

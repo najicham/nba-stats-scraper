@@ -44,7 +44,7 @@ if not _API_KEY:
         "Environment variable BDL_API_KEY is missing. "
         "Add it via Secret Manager or your local .env."
     )
-    
+
     # Notify on missing API key - this affects all Ball Don't Lie scrapers
     try:
         notify_error(
@@ -63,7 +63,7 @@ if not _API_KEY:
         import sys
         print(f"CRITICAL: {error_msg}", file=sys.stderr)
         print(f"Failed to send notification: {notify_ex}", file=sys.stderr)
-    
+
     raise RuntimeError(error_msg)
 
 _REQ_HEADERS: Dict[str, str] = {"Authorization": _API_KEY}
@@ -199,7 +199,7 @@ def get_json(
             else:
                 # Non-429 HTTP error
                 resp.raise_for_status()
-                
+
         except httpx.HTTPStatusError as e:
             # HTTP error (not 429, not success)
             if attempt >= max_retries - 1:
@@ -266,7 +266,7 @@ def get_json(
         attempt += 1
         if attempt >= max_retries:
             error_msg = f"Exceeded {max_retries} retries for {url}"
-            
+
             # Notify on max retries exceeded
             try:
                 notify_error(

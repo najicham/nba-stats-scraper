@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS `nba_analytics.team_offense_game_summary` (
   team_abbr            STRING NOT NULL,    -- Team playing offense: "LAL", "PHI", "BOS", etc.
   opponent_team_abbr   STRING NOT NULL,    -- Opposing defensive team
   season_year          INT64 NOT NULL,     -- NBA season starting year (2024 for 2024-25 season)
-  
+
   -- ============================================================================
   -- BASIC OFFENSIVE STATS (11 fields)
   -- ============================================================================
@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS `nba_analytics.team_offense_game_summary` (
   assists              INT64,              -- Total assists
   turnovers            INT64,              -- Total turnovers
   personal_fouls       INT64,              -- Personal fouls committed
-  
+
   -- ============================================================================
   -- TEAM SHOT ZONE PERFORMANCE (6 fields)
   -- Populated from play-by-play data when available
@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS `nba_analytics.team_offense_game_summary` (
   team_mid_range_makes      INT64,         -- Mid-range makes
   points_in_paint_scored    INT64,         -- Points scored from paint shots
   second_chance_points_scored INT64,       -- Points immediately after offensive rebounds
-  
+
   -- ============================================================================
   -- ADVANCED OFFENSIVE METRICS (4 fields)
   -- Calculated from basic stats
@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS `nba_analytics.team_offense_game_summary` (
   pace                 NUMERIC(5,1),       -- Possessions per 48 minutes (normalized)
   possessions          INT64,              -- Estimated total possessions
   ts_pct               NUMERIC(5,3),       -- Team true shooting percentage
-  
+
   -- ============================================================================
   -- GAME CONTEXT (4 fields)
   -- ============================================================================
@@ -67,20 +67,20 @@ CREATE TABLE IF NOT EXISTS `nba_analytics.team_offense_game_summary` (
   win_flag             BOOLEAN NOT NULL,   -- Whether team won the game
   margin_of_victory    INT64,              -- Point margin (positive = won, negative = lost)
   overtime_periods     INT64,              -- Number of overtime periods (0 = regulation)
-  
+
   -- ============================================================================
   -- TEAM SITUATION CONTEXT (2 fields)
   -- Placeholders for future implementation
   -- ============================================================================
   players_inactive     INT64,              -- Number of players inactive/out (future)
   starters_inactive    INT64,              -- Number of regular starters inactive (future)
-  
+
   -- ============================================================================
   -- REFEREE INTEGRATION (1 field)
   -- Placeholder for future implementation
   -- ============================================================================
   referee_crew_id      STRING,             -- Links to game_referees table (future)
-  
+
   -- ============================================================================
   -- SOURCE TRACKING (8 fields = 2 sources × 4 fields)
   -- Per dependency tracking guide v4.0 + Smart Idempotency (Pattern #14)
@@ -99,7 +99,7 @@ CREATE TABLE IF NOT EXISTS `nba_analytics.team_offense_game_summary` (
   source_play_by_play_rows_found        INT64,          -- How many play-by-play events found
   source_play_by_play_completeness_pct  NUMERIC(5,2),   -- % of expected shot events found
   source_play_by_play_hash              STRING,         -- Smart Idempotency: data_hash from nbac_play_by_play or bigdataball_play_by_play
-  
+
   -- ============================================================================
   -- DATA QUALITY TRACKING (5 fields)
   -- ============================================================================
@@ -242,7 +242,7 @@ OPTIONS (
 -- -- Returns: 2 rows (LAL and PHI)
 
 -- Team's recent offensive performance
--- SELECT 
+-- SELECT
 --   game_date,
 --   opponent_team_abbr,
 --   CASE WHEN home_game THEN 'vs' ELSE '@' END as location,
@@ -258,7 +258,7 @@ OPTIONS (
 -- ORDER BY game_date DESC;
 
 -- Season offensive averages for all teams
--- SELECT 
+-- SELECT
 --   team_abbr,
 --   COUNT(*) as games_played,
 --   ROUND(AVG(points_scored), 1) as ppg,
@@ -268,7 +268,7 @@ OPTIONS (
 --   ROUND(AVG(CAST(turnovers AS FLOAT64)), 1) as tpg,
 --   ROUND(AVG(ts_pct) * 100, 1) as ts_pct,
 --   -- Shot zone percentages (when available)
---   ROUND(AVG(CASE WHEN shot_zones_available THEN 
+--   ROUND(AVG(CASE WHEN shot_zones_available THEN
 --     team_paint_attempts * 100.0 / (team_paint_attempts + team_mid_range_attempts + three_pt_attempts)
 --   END), 1) as paint_rate
 -- FROM `nba_analytics.team_offense_game_summary`
@@ -278,7 +278,7 @@ OPTIONS (
 -- ORDER BY avg_ortg DESC;
 
 -- Home vs away offensive performance
--- SELECT 
+-- SELECT
 --   team_abbr,
 --   home_game,
 --   COUNT(*) as games,
@@ -294,7 +294,7 @@ OPTIONS (
 -- ORDER BY team_abbr, home_game DESC;
 
 -- Shot zone analysis (when available)
--- SELECT 
+-- SELECT
 --   team_abbr,
 --   COUNT(*) as games_with_zones,
 --   -- Paint
@@ -313,7 +313,7 @@ OPTIONS (
 -- ORDER BY avg_paint_att DESC;
 
 -- Overtime games analysis
--- SELECT 
+-- SELECT
 --   game_date,
 --   game_id,
 --   team_abbr,
@@ -332,7 +332,7 @@ OPTIONS (
 -- ============================================================================
 
 -- Check source freshness (calculate age on-demand)
--- SELECT 
+-- SELECT
 --   game_date,
 --   team_abbr,
 --   -- Calculate source age in hours
@@ -351,7 +351,7 @@ OPTIONS (
 -- ORDER BY game_date DESC;
 
 -- Overall data quality summary
--- SELECT 
+-- SELECT
 --   game_date,
 --   COUNT(*) as total_teams,
 --   -- Source completeness
@@ -370,7 +370,7 @@ OPTIONS (
 -- ORDER BY game_date DESC;
 
 -- Games missing shot zones (need reprocessing)
--- SELECT 
+-- SELECT
 --   game_date,
 --   game_id,
 --   COUNT(*) as teams_missing_zones,
@@ -408,7 +408,7 @@ OPTIONS (
 --        fg_makes, fg_attempts, three_pt_makes, three_pt_attempts
 -- FROM `nba_analytics.team_offense_game_summary`
 -- WHERE game_date >= '2025-01-01'
---   AND (fg_makes > fg_attempts 
+--   AND (fg_makes > fg_attempts
 --        OR three_pt_makes > three_pt_attempts
 --        OR three_pt_makes > fg_makes);
 
@@ -465,7 +465,7 @@ OPTIONS (
 -- ============================================================================
 
 -- Alert: Stale team boxscore data (>48 hours old)
--- SELECT 
+-- SELECT
 --   'team_offense_game_summary' as processor,
 --   game_date,
 --   COUNT(*) as affected_teams,
@@ -476,7 +476,7 @@ OPTIONS (
 -- HAVING MAX(TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), source_nbac_boxscore_last_updated, HOUR)) > 48;
 
 -- Alert: Low completeness (<85%)
--- SELECT 
+-- SELECT
 --   'team_offense_game_summary' as processor,
 --   game_date,
 --   AVG(source_nbac_boxscore_completeness_pct) as avg_completeness,
@@ -488,7 +488,7 @@ OPTIONS (
 -- HAVING MIN(source_nbac_boxscore_completeness_pct) < 85;
 
 -- Alert: High percentage of low quality data
--- SELECT 
+-- SELECT
 --   game_date,
 --   COUNT(*) as total_teams,
 --   SUM(CASE WHEN data_quality_tier = 'low' THEN 1 ELSE 0 END) as low_quality_count,
@@ -499,7 +499,7 @@ OPTIONS (
 -- HAVING low_quality_pct > 20;  -- Alert if >20% low quality
 
 -- Alert: Missing shot zones for old games (>3 days)
--- SELECT 
+-- SELECT
 --   game_date,
 --   COUNT(*) as teams_missing_zones,
 --   ARRAY_AGG(DISTINCT game_id) as affected_games
@@ -515,7 +515,7 @@ OPTIONS (
 -- ============================================================================
 
 -- Get table statistics
--- SELECT 
+-- SELECT
 --   COUNT(*) as total_rows,
 --   COUNT(DISTINCT game_id) as unique_games,
 --   COUNT(DISTINCT team_abbr) as unique_teams,
@@ -532,7 +532,7 @@ OPTIONS (
 -- WHERE game_date >= '2024-10-01';
 
 -- Get processing status by date
--- SELECT 
+-- SELECT
 --   DATE(processed_at) as process_date,
 --   COUNT(*) as records_processed,
 --   COUNT(DISTINCT game_id) as unique_games,
@@ -547,7 +547,7 @@ OPTIONS (
 -- ============================================================================
 -- v1.0 (Initial):       Complete schema design with source tracking
 -- v1.1 (+nba_game_id):  Added nba_game_id field for NBA.com API lookups
--- 
+--
 -- Last Updated: January 2025
 -- Status: Ready for Implementation
 -- Next: Implement TeamOffenseGameSummaryProcessor

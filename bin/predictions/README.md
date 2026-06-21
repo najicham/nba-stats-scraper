@@ -102,8 +102,8 @@ gcloud pubsub topics publish prediction-request-dev \
 
 # Check BigQuery
 bq query --project_id=nba-props-platform-dev --use_legacy_sql=false \
-    "SELECT * FROM nba_predictions.player_prop_predictions 
-     WHERE player_lookup = 'lebron-james' 
+    "SELECT * FROM nba_predictions.player_prop_predictions
+     WHERE player_lookup = 'lebron-james'
      ORDER BY created_at DESC LIMIT 5"
 ```
 

@@ -130,16 +130,16 @@ run_query() {
     local query_file=$1
     local output_format=$2
     local query_path="$QUERIES_DIR/$query_file"
-    
+
     if [ ! -f "$query_path" ]; then
         print_error "Query file not found: $query_file"
         echo "Run 'validate-injuries list' to see available queries"
         exit 1
     fi
-    
+
     print_header "Running: $query_file"
     echo ""
-    
+
     # Show query-specific tips
     case $query_file in
         "hourly_snapshot_completeness.sql")
@@ -158,7 +158,7 @@ run_query() {
             echo ""
             ;;
     esac
-    
+
     case $output_format in
         csv)
             local timestamp=$(date +%Y%m%d_%H%M%S)
@@ -187,7 +187,7 @@ run_query() {
 main() {
     local command=$1
     local output_format=""
-    
+
     # Parse options
     shift || true
     while [[ $# -gt 0 ]]; do
@@ -211,51 +211,51 @@ main() {
                 ;;
         esac
     done
-    
+
     # Handle commands
     case $command in
         # Show help
         help|--help|-h|"")
             show_help
             ;;
-        
+
         # List queries
         list|ls)
             list_queries
             ;;
-        
+
         # Historical validation
         completeness|complete|snapshots|hourly)
             run_query "hourly_snapshot_completeness.sql" "$output_format"
             ;;
-        
+
         trends|coverage)
             run_query "player_coverage_trends.sql" "$output_format"
             ;;
-        
+
         confidence|quality|parsing)
             run_query "confidence_score_monitoring.sql" "$output_format"
             ;;
-        
+
         # Game day monitoring
         gameday|games|game-day)
             run_query "game_day_coverage_check.sql" "$output_format"
             ;;
-        
+
         peaks|peak-hours|peak)
             run_query "peak_hour_validation.sql" "$output_format"
             ;;
-        
+
         # Business intelligence
         changes|status|scratches)
             run_query "status_change_detection.sql" "$output_format"
             ;;
-        
+
         # Daily monitoring
         yesterday|daily)
             run_query "daily_check_yesterday.sql" "$output_format"
             ;;
-        
+
         # Unknown command
         *)
             print_error "Unknown command: $command"

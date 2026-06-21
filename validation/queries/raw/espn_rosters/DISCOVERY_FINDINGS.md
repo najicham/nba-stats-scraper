@@ -2,7 +2,7 @@
 
 **File: validation/queries/raw/espn_rosters/DISCOVERY_FINDINGS.md**
 
-**Discovery Date:** October 13, 2025  
+**Discovery Date:** October 13, 2025
 **Table:** `nba-props-platform.nba_raw.espn_team_rosters`
 
 ---
@@ -61,7 +61,7 @@ Scrape Hour | Dates | Teams | Records
 
 ## Pattern Classification
 
-**Pattern:** Time-Series (Current State Only)  
+**Pattern:** Time-Series (Current State Only)
 **Similar To:** NBA.com Player List, Ball Don't Lie Active Players
 
 **NOT Pattern 3 (Game-Based)** because:
@@ -176,7 +176,7 @@ GROUP BY team_abbr
 ORDER BY players DESC;
 
 -- Scrape timing validation
-SELECT roster_date, scrape_hour, COUNT(*) 
+SELECT roster_date, scrape_hour, COUNT(*)
 FROM nba_raw.espn_team_rosters
 GROUP BY roster_date, scrape_hour
 ORDER BY roster_date DESC;
@@ -184,6 +184,6 @@ ORDER BY roster_date DESC;
 
 ---
 
-**Created By:** NBA Props Platform Team  
-**Review Date:** October 13, 2025  
+**Created By:** NBA Props Platform Team
+**Review Date:** October 13, 2025
 **Next Review:** When historical data accumulates (6+ months)

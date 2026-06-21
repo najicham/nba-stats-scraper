@@ -5,12 +5,12 @@
 -- Purpose: Check if event sequences are complete and properly ordered
 -- ============================================================================
 -- This is UNIQUE to play-by-play data (not applicable to box scores)
--- 
+--
 -- Good data:
 --   - event_sequence starts at 1 or 0
 --   - No large gaps in sequence numbers
 --   - Sequences are continuous per game
--- 
+--
 -- Bad data:
 --   - Sequences start at random numbers
 --   - Large gaps = missing events
@@ -48,7 +48,7 @@ SELECT
     ELSE '✅ Complete & ordered'
   END as status
 FROM game_sequences
-WHERE 
+WHERE
   first_sequence NOT IN (0, 1)  -- Non-standard start
   OR total_events != unique_sequences  -- Duplicates
   OR expected_events - unique_sequences > 0  -- Gaps

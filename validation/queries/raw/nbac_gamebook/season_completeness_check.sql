@@ -128,8 +128,8 @@ SELECT
   CAST(SUM(t.active_players) AS STRING) as active_players,
   CAST(SUM(t.inactive_players) AS STRING) as inactive_players,
   CAST(SUM(t.inactive_resolved) AS STRING) as resolved_inactive,
-  CASE 
-    WHEN SUM(t.inactive_players) > 0 
+  CASE
+    WHEN SUM(t.inactive_players) > 0
     THEN CONCAT(CAST(ROUND(SAFE_DIVIDE(SUM(t.inactive_resolved), SUM(t.inactive_players)) * 100, 1) AS STRING), '%')
     ELSE 'N/A'
   END as resolution_rate,
@@ -138,12 +138,12 @@ SELECT
     WHEN SUM(CASE WHEN t.is_playoffs = FALSE THEN t.games ELSE 0 END) < 82 THEN '⚠️ Missing games'
     WHEN SUM(CASE WHEN t.is_playoffs = FALSE THEN t.games ELSE 0 END) > 82 THEN '⚠️ Too many games'
     -- Check if team has games with low player counts
-    WHEN COALESCE(l.games_with_low_players, 0) > 0 
+    WHEN COALESCE(l.games_with_low_players, 0) > 0
       THEN CONCAT('⚠️ ', CAST(l.games_with_low_players AS STRING), ' games with <25 players')
     ELSE ''
   END as notes
 FROM team_stats t
-LEFT JOIN low_player_games l 
+LEFT JOIN low_player_games l
   ON t.season = l.season AND t.team = l.team
 GROUP BY t.season, t.team, l.games_with_low_players
 ORDER BY

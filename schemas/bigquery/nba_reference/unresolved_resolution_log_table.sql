@@ -9,19 +9,19 @@
 CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_reference.unresolved_resolution_log` (
     -- Timestamp
     timestamp TIMESTAMP NOT NULL,
-    
+
     -- Action details
     action STRING NOT NULL,                -- 'ALIAS_CREATED', 'MARKED_INVALID', 'NEW_PLAYER_CREATED', etc.
     normalized_lookup STRING NOT NULL,      -- Player lookup being resolved
     original_name STRING NOT NULL,          -- Original display name
-    
+
     -- Resolution details (JSON)
     resolution_details STRING,              -- JSON with action-specific details
-    
+
     -- Context
     team_abbr STRING,
     season STRING,
-    
+
     -- User tracking
     reviewed_by STRING NOT NULL,            -- Who performed the action
     notes STRING                            -- Additional notes
@@ -37,7 +37,7 @@ OPTIONS (
 -- =============================================================================
 
 -- Recent actions by reviewer
--- SELECT 
+-- SELECT
 --   DATE(timestamp) as date,
 --   action,
 --   COUNT(*) as count
@@ -48,7 +48,7 @@ OPTIONS (
 -- ORDER BY date DESC, action;
 
 -- Most active reviewers this week
--- SELECT 
+-- SELECT
 --   reviewed_by,
 --   COUNT(*) as actions_taken,
 --   COUNT(DISTINCT DATE(timestamp)) as days_active
@@ -58,7 +58,7 @@ OPTIONS (
 -- ORDER BY actions_taken DESC;
 
 -- Action type breakdown
--- SELECT 
+-- SELECT
 --   action,
 --   COUNT(*) as count,
 --   COUNT(DISTINCT reviewed_by) as unique_reviewers

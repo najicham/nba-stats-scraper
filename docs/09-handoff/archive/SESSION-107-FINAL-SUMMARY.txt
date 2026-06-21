@@ -310,7 +310,7 @@ else:
 4. Create data quality dashboard
 
 **Current Branch:** session-98-docs-with-redactions
-**Last Commits:** 
+**Last Commits:**
 - 8cc10e6b (Phase 3 alerts)
 - 5807659e (TOMORROW fix)
 

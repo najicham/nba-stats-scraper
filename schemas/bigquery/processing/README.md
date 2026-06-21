@@ -1,6 +1,6 @@
 # Infrastructure: Processing Monitoring
 
-**Dataset:** `nba_processing`  
+**Dataset:** `nba_processing`
 **Purpose:** Pipeline execution logs and data quality tracking
 
 ## Tables

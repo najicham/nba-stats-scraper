@@ -146,15 +146,15 @@ mkdir -p ~/code/nba-stats-scraper/logs
 ## 🚨 Known Issues
 
 ### Issue 1: 19 Missing Regular Season Dates
-**Severity:** ⚠️ Medium  
-**Impact:** 9% of regular season games missing  
-**Action:** Investigate and backfill if possible  
+**Severity:** ⚠️ Medium
+**Impact:** 9% of regular season games missing
+**Action:** Investigate and backfill if possible
 **Status:** Documented, not blocking production use
 
 ### Issue 2: Discovery Query 3 Had Future Date False Positives
-**Severity:** ✅ Low (Fixed)  
-**Impact:** Query showed 86 "missing" future dates  
-**Action:** Updated query to use `2025-06-30` end date  
+**Severity:** ✅ Low (Fixed)
+**Impact:** Query showed 86 "missing" future dates
+**Action:** Updated query to use `2025-06-30` end date
 **Status:** ✅ Fixed in updated artifacts
 
 ---
@@ -201,6 +201,6 @@ The 19 missing regular season dates represent only 9% of the season and don't im
 
 ---
 
-**Validated:** October 13, 2025  
-**Season:** 2024-25 NBA (Complete)  
+**Validated:** October 13, 2025
+**Season:** 2024-25 NBA (Complete)
 **Status:** Production Ready

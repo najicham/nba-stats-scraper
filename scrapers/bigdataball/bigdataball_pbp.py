@@ -143,11 +143,11 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     def set_additional_opts(self) -> None:
         super().set_additional_opts()
-        
+
         # Validate that we have either game_id or teams
         if not self.opts.get("game_id") and not self.opts.get("teams"):
             raise ValueError("Either game_id or teams parameter is required")
-        
+
         # Build search query for the specific game
         if self.opts.get("game_id"):
             game_id = self.opts["game_id"]
@@ -180,15 +180,15 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
         """Initialize Google Drive API service"""
         try:
             service_account_key_path = (
-                self.opts.get("service_account_key_path") or 
+                self.opts.get("service_account_key_path") or
                 os.getenv("BIGDATABALL_SERVICE_ACCOUNT_KEY_PATH") or
                 os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
             )
-            
+
             if service_account_key_path and os.path.exists(service_account_key_path):
                 # Use explicit key file if provided
                 credentials = service_account.Credentials.from_service_account_file(
-                    service_account_key_path, 
+                    service_account_key_path,
                     scopes=self.SCOPES
                 )
                 self.step_info("drive_init", f"Using service account key: {service_account_key_path}")
@@ -197,13 +197,13 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
                 from google.auth import default
                 credentials, _ = default(scopes=self.SCOPES)
                 self.step_info("drive_init", "Using default credentials (Cloud Run service account)")
-            
+
             self.drive_service = build('drive', 'v3', credentials=credentials)
             self.step_info("drive_init", "Successfully initialized Google Drive service")
-            
+
         except Exception as e:
             logger.error(f"Failed to initialize Google Drive service: {e}")
-            
+
             # Send error notification
             try:
                 notify_error(
@@ -218,7 +218,7 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise
 
     # ------------------------------------------------------------------ #
@@ -374,7 +374,7 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
         """Search for the specific game file"""
         try:
             query = self.opts["search_query"]
-            
+
             results = self.drive_service.files().list(
                 q=query,
                 supportsAllDrives=True,
@@ -382,13 +382,13 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
                 fields="nextPageToken, files(id, name, modifiedTime, size)",
                 pageSize=10  # Should only be 1 file for specific game
             ).execute()
-            
+
             files = results.get('files', [])
-            self.step_info("drive_search_complete", f"Found {len(files)} files matching game query", 
+            self.step_info("drive_search_complete", f"Found {len(files)} files matching game query",
                           extra={"query": query})
-            
+
             return files
-            
+
         except Exception as e:
             logger.error(f"Error searching Drive files: {e}")
             raise
@@ -397,25 +397,25 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
         """Get the target file, with optional filtering for team matchups"""
         if not files:
             raise ValueError("No files provided to get target from")
-        
+
         # For comma-separated teams, filter to find the right matchup
         if self.opts.get("teams") and "," in self.opts["teams"]:
             team1, team2 = self.opts["teams"].split(",")
             team1, team2 = team1.strip(), team2.strip()
-            
+
             for file in files:
                 name = file['name']
                 if (f"{team1}@{team2}" in name) or (f"{team2}@{team1}" in name):
                     logger.info(f"Found matching game: {name}")
                     return file
-            
+
             raise ValueError(f"No game found for teams {team1} vs {team2}")
-        
+
         # For game_id or direct team matchup, take the first (should be only) result
         target_file = files[0]
         if len(files) > 1:
             logger.warning(f"Multiple files found, taking first: {target_file['name']}")
-            
+
             # Send warning for multiple files
             try:
                 notify_warning(
@@ -432,7 +432,7 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-        
+
         return target_file
 
     def _download_drive_file(self, file_info: Dict) -> str:
@@ -441,10 +441,10 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
             # Create temp file path
             temp_filename = f"bigdataball_{self.run_id}_{file_info['name']}"
             local_path = f"/tmp/{temp_filename}"
-            
+
             # Download file
             request = self.drive_service.files().get_media(fileId=file_info['id'])
-            
+
             with io.FileIO(local_path, 'wb') as fh:
                 downloader = MediaIoBaseDownload(fh, request)
                 done = False
@@ -454,14 +454,14 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
                         progress = int(status.progress() * 100)
                         if progress % 25 == 0:  # Log every 25%
                             logger.info(f"Download progress: {progress}%")
-            
-            self.step_info("drive_download", f"Downloaded file to {local_path}", 
+
+            self.step_info("drive_download", f"Downloaded file to {local_path}",
                           extra={"file_size": os.path.getsize(local_path)})
             return local_path
-            
+
         except Exception as e:
             logger.error(f"Error downloading file {file_info['name']}: {e}")
-            
+
             # Send error notification for download failure
             try:
                 notify_error(
@@ -477,7 +477,7 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise
 
     def _process_csv_file(self) -> None:
@@ -485,20 +485,20 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
         try:
             # Read CSV file
             df = pd.read_csv(self.downloaded_file_path)
-            
+
             # Extract game info from filename or data
             game_info = self._extract_game_info_from_data(df)
-            
+
             # Convert to records first, then clean up NaN values
             play_records = df.to_dict('records')
-            
+
             # Clean up NaN values in the records
             import math
             for record in play_records:
                 for key, value in record.items():
                     if pd.isna(value) or (isinstance(value, float) and math.isnan(value)):
                         record[key] = None
-            
+
             # Store processed data in decoded_data for compatibility
             self.decoded_data = {
                 'file_name': os.path.basename(self.downloaded_file_path),
@@ -508,13 +508,13 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
                 'game_info': game_info,
                 'play_by_play_data': play_records
             }
-            
-            self.step_info("csv_process", f"Processed CSV file: {len(df)} plays found", 
+
+            self.step_info("csv_process", f"Processed CSV file: {len(df)} plays found",
                           extra={"columns": len(df.columns), "rows": len(df), "game_id": game_info.get("game_id")})
-            
+
         except Exception as e:
             logger.error(f"Error processing CSV file: {e}")
-            
+
             # Send error notification for CSV processing failure
             try:
                 notify_error(
@@ -530,7 +530,7 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise
         finally:
             # Clean up temp file
@@ -540,14 +540,14 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
     def _extract_game_info_from_data(self, df: pd.DataFrame) -> Dict:
         """Extract game metadata from the play-by-play data"""
         game_info = {}
-        
+
         if not df.empty:
             first_row = df.iloc[0]
-            
+
             # Extract teams from filename if available, fallback to data
             away_team = "unknown"
             home_team = "unknown"
-            
+
             # Try to extract from filename first
             filename = self.downloaded_file_path or ""
             if "@" in filename:
@@ -560,7 +560,7 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
                     # IndexError: split fails; ValueError: unpack fails
                     # Team extraction from filename is optional, continue with defaults
                     pass
-            
+
             # Extract key game information
             game_info = {
                 'game_id': str(first_row.get('game_id', '')),
@@ -569,17 +569,17 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
                 'away_team': away_team,
                 'home_team': home_team
             }
-            
+
             # Try to extract final score from last few rows
             last_rows = df.tail(5)
             final_row = last_rows[last_rows['event_type'] == 'end of period'].iloc[-1] if not last_rows[last_rows['event_type'] == 'end of period'].empty else df.iloc[-1]
-            
+
             game_info.update({
                 'final_away_score': int(final_row.get('away_score', 0)) if pd.notna(final_row.get('away_score')) else 0,
                 'final_home_score': int(final_row.get('home_score', 0)) if pd.notna(final_row.get('home_score')) else 0,
                 'periods_played': int(final_row.get('period', 4)) if pd.notna(final_row.get('period')) else 4
             })
-        
+
         return game_info
 
     # ------------------------------------------------------------------ #
@@ -590,12 +590,12 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
         try:
             if not isinstance(self.decoded_data, dict) or "play_by_play_data" not in self.decoded_data:
                 raise ValueError("BigDataBall response malformed: missing 'play_by_play_data' key")
-            
+
             if not self.decoded_data["play_by_play_data"]:
                 raise ValueError("BigDataBall data is empty: no play-by-play records found")
         except Exception as e:
             logger.error(f"Validation failed: {e}")
-            
+
             # Send error notification for validation failure
             try:
                 notify_error(
@@ -611,7 +611,7 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise
 
     # ------------------------------------------------------------------ #
@@ -621,7 +621,7 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
         """Transform the CSV data into our standard format"""
         plays = self.decoded_data["play_by_play_data"]
         game_info = self.decoded_data["game_info"]
-        
+
         # Sort plays by period and time for proper sequence
         if plays:
             try:
@@ -641,19 +641,19 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
         # FIX: Convert date from BigDataBall format (MM/DD/YYYY) to our format (YYYY-MM-DD)
         # ================================================================
         game_date_raw = game_info.get('date', '')
-        
+
         if game_date_raw:
             try:
                 # BigDataBall CSV returns dates in MM/DD/YYYY format
                 date_obj = datetime.strptime(game_date_raw, '%m/%d/%Y')
                 game_date = date_obj.strftime('%Y-%m-%d')  # Convert to YYYY-MM-DD
-                
+
                 self.opts['date'] = game_date
                 self.opts['nba_season'] = self.derive_nba_season_from_date(game_date)
-                
-                logger.info("Converted date %s to %s, derived season %s", 
+
+                logger.info("Converted date %s to %s, derived season %s",
                            game_date_raw, game_date, self.opts['nba_season'])
-                
+
             except ValueError as e:
                 # Fallback: try to extract date from filename
                 original_filename = self.decoded_data.get("file_name", "")
@@ -662,24 +662,24 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
                     start = original_filename.find('[')
                     end = original_filename.find(']')
                     game_date = original_filename[start+1:end]
-                    
+
                     self.opts['date'] = game_date
                     self.opts['nba_season'] = self.derive_nba_season_from_date(game_date)
-                    
-                    logger.warning("Date parse failed for '%s', extracted from filename: %s", 
+
+                    logger.warning("Date parse failed for '%s', extracted from filename: %s",
                                  game_date_raw, game_date)
                 else:
                     # Last resort: use today's date
                     self.opts['date'] = datetime.now().strftime('%Y-%m-%d')
                     self.opts['nba_season'] = 'unknown'
-                    logger.error("Could not parse date '%s' or extract from filename: %s", 
+                    logger.error("Could not parse date '%s' or extract from filename: %s",
                                game_date_raw, e)
         else:
             # No date available at all
             self.opts['date'] = datetime.now().strftime('%Y-%m-%d')
             self.opts['nba_season'] = 'unknown'
             logger.warning("No game date available for season derivation")
-        
+
         # Extract filename from the downloaded file
         original_filename = self.decoded_data.get("file_name", "")
         if original_filename:
@@ -701,10 +701,10 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
             },
             "playByPlay": plays
         }
-        
-        logger.info("Transformed %d play-by-play records for game %s", 
+
+        logger.info("Transformed %d play-by-play records for game %s",
                 len(plays), game_id)
-        
+
         # Send success notification
         try:
             notify_info(
@@ -723,25 +723,25 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
             )
         except Exception as notify_ex:
             logger.warning(f"Failed to send notification: {notify_ex}")
-        
+
     def derive_nba_season_from_date(self, date_str: str) -> str:
         """
         Convert a date string to NBA season format.
-        
+
         Args:
             date_str: Date in format YYYY-MM-DD (e.g., "2021-10-19")
-            
+
         Returns:
             NBA season format (e.g., "2021-22")
-            
+
         NBA seasons start in October, so:
         - 2021-10-19 → 2021-22 season
-        - 2022-03-15 → 2021-22 season  
+        - 2022-03-15 → 2021-22 season
         """
         try:
             year = int(date_str[:4])
             month = int(date_str[5:7])
-            
+
             # NBA season starts in October
             if month >= 10:
                 # October-December: start of new season
@@ -760,7 +760,7 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
         play_count = len(self.data.get("playByPlay", []))
         game_info = self.data.get("game_info", {})
         file_name = self.data.get("file_info", {}).get("name", "unknown")
-        
+
         return {
             "playCount": play_count,
             "gameId": game_info.get("game_id"),

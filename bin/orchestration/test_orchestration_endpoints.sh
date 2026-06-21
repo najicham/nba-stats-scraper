@@ -31,25 +31,25 @@ test_endpoint() {
     local endpoint="$3"
     local data="$4"
     local expected_status="$5"
-    
+
     echo "────────────────────────────────────────────────"
     echo "Test: $name"
     echo "Method: $method $endpoint"
-    
+
     if [ -z "$data" ]; then
         response=$(curl -s -w "\n%{http_code}" -X "$method" "$BASE_URL$endpoint" -H "Content-Type: application/json")
     else
         response=$(curl -s -w "\n%{http_code}" -X "$method" "$BASE_URL$endpoint" -H "Content-Type: application/json" -d "$data")
     fi
-    
+
     # Split response and status code
     http_code=$(echo "$response" | tail -n1)
     body=$(echo "$response" | sed '$d')
-    
+
     # Check HTTP status
     if [ "$http_code" = "$expected_status" ]; then
         echo -e "${GREEN}✓ HTTP Status: $http_code${NC}"
-        
+
         # Parse JSON to check for errors
         if echo "$body" | jq -e '.status' > /dev/null 2>&1; then
             status=$(echo "$body" | jq -r '.status')
@@ -64,18 +64,18 @@ test_endpoint() {
             echo -e "${YELLOW}⚠ Could not parse status from response${NC}"
             PASSED=$((PASSED + 1))
         fi
-        
+
         # Show relevant response data
         echo "Response preview:"
         echo "$body" | jq -C '.' 2>/dev/null | head -20 || echo "$body" | head -20
-        
+
     else
         echo -e "${RED}✗ HTTP Status: $http_code (expected $expected_status)${NC}"
         echo "Response:"
         echo "$body" | jq -C '.' 2>/dev/null || echo "$body"
         FAILED=$((FAILED + 1))
     fi
-    
+
     echo ""
 }
 

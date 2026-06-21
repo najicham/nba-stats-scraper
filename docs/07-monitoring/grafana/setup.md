@@ -2,8 +2,8 @@
 
 `docs/monitoring/grafana_setup_guide.md`
 
-**Version:** 1.0  
-**Created:** November 11, 2025  
+**Version:** 1.0
+**Created:** November 11, 2025
 **Purpose:** Step-by-step guide to set up Grafana dashboards for NBA Props Platform monitoring
 
 ---
@@ -110,14 +110,14 @@ WHERE decision_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
 
 ### Panel 1: Expected vs Actual Executions ⭐ MOST IMPORTANT
 
-**Visualization:** Table  
-**Query Mode:** SQL  
+**Visualization:** Table
+**Query Mode:** SQL
 **Refresh:** 5 minutes
 
 ```sql
 WITH expected AS (
-  SELECT 
-    workflow_name, 
+  SELECT
+    workflow_name,
     expected_run_time,
     FORMAT_TIMESTAMP('%H:%M ET', expected_run_time, 'America/New_York') as expected_time,
     priority
@@ -125,30 +125,30 @@ WITH expected AS (
   WHERE date = CURRENT_DATE('America/New_York')
 ),
 actual AS (
-  SELECT DISTINCT 
-    workflow_name, 
+  SELECT DISTINCT
+    workflow_name,
     decision_time,
     FORMAT_TIMESTAMP('%H:%M ET', decision_time, 'America/New_York') as actual_time
   FROM `nba-props-platform.nba_orchestration.workflow_decisions`
   WHERE DATE(decision_time, 'America/New_York') = CURRENT_DATE('America/New_York')
     AND action = 'RUN'
 )
-SELECT 
+SELECT
   expected.workflow_name as "Workflow",
   expected.priority as "Priority",
   expected.expected_time as "Expected Time",
   COALESCE(actual.actual_time, '—') as "Actual Time",
-  CASE 
+  CASE
     WHEN actual.workflow_name IS NULL THEN '🔴 MISSING'
-    WHEN actual.decision_time > TIMESTAMP_ADD(expected.expected_run_time, INTERVAL 15 MINUTE) 
+    WHEN actual.decision_time > TIMESTAMP_ADD(expected.expected_run_time, INTERVAL 15 MINUTE)
       THEN '🟡 LATE'
     ELSE '✅ ON TIME'
   END as "Status",
   TIMESTAMP_DIFF(actual.decision_time, expected.expected_run_time, MINUTE) as "Minutes Late"
 FROM expected
 LEFT JOIN actual ON expected.workflow_name = actual.workflow_name
-ORDER BY 
-  CASE 
+ORDER BY
+  CASE
     WHEN actual.workflow_name IS NULL THEN 1
     WHEN actual.decision_time > TIMESTAMP_ADD(expected.expected_run_time, INTERVAL 15 MINUTE) THEN 2
     ELSE 3
@@ -166,8 +166,8 @@ ORDER BY
 
 ### Panel 2: Missing Workflows Alert
 
-**Visualization:** Stat (big number)  
-**Query Mode:** SQL  
+**Visualization:** Stat (big number)
+**Query Mode:** SQL
 **Refresh:** 1 minute
 
 ```sql
@@ -200,12 +200,12 @@ WHERE actual.workflow_name IS NULL
 
 ### Panel 3: Workflow Success Rate (7 Days)
 
-**Visualization:** Time series  
-**Query Mode:** SQL  
+**Visualization:** Time series
+**Query Mode:** SQL
 **Refresh:** 10 minutes
 
 ```sql
-SELECT 
+SELECT
   TIMESTAMP_TRUNC(decision_time, DAY) as time,
   workflow_name,
   COUNTIF(action = 'RUN') * 100.0 / COUNT(*) as success_rate
@@ -224,12 +224,12 @@ ORDER BY time
 
 ### Panel 4: Scraper Execution Status
 
-**Visualization:** Table  
-**Query Mode:** SQL  
+**Visualization:** Table
+**Query Mode:** SQL
 **Refresh:** 5 minutes
 
 ```sql
-SELECT 
+SELECT
   scraper_name as "Scraper",
   COUNT(*) as "Total Runs",
   COUNTIF(status = 'success') as "Success",
@@ -248,12 +248,12 @@ ORDER BY "Success Rate %" ASC, "Total Runs" DESC
 
 ### Panel 5: Self-Healing Activity
 
-**Visualization:** Stat  
-**Query Mode:** SQL  
+**Visualization:** Stat
+**Query Mode:** SQL
 **Refresh:** 5 minutes
 
 ```sql
-SELECT 
+SELECT
   SUM(files_republished) as total_recovered
 FROM `nba-props-platform.nba_orchestration.cleanup_operations`
 WHERE cleanup_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)

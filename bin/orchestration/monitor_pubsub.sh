@@ -24,28 +24,28 @@ ISSUES_FOUND=0
 
 for SUB in $SUBSCRIPTIONS; do
     SUB_NAME=$(basename $SUB)
-    
+
     # Get subscription details
     DETAILS=$(gcloud pubsub subscriptions describe $SUB --format="json")
-    
+
     UNDELIVERED=$(echo "$DETAILS" | jq -r '.numUndeliveredMessages // 0')
     TOPIC=$(echo "$DETAILS" | jq -r '.topic' | xargs basename)
     ACK_DEADLINE=$(echo "$DETAILS" | jq -r '.ackDeadlineSeconds')
     PUSH_ENDPOINT=$(echo "$DETAILS" | jq -r '.pushConfig.pushEndpoint // "PULL"')
-    
+
     # Get oldest unacked message age (handle empty/null values)
     OLDEST_AGE=$(gcloud pubsub subscriptions describe $SUB \
         --format="value(oldestUnackedMessageAge)" 2>/dev/null)
-    
+
     # Default to 0 if empty or null
     if [ -z "$OLDEST_AGE" ] || [ "$OLDEST_AGE" = "null" ]; then
         OLDEST_AGE=0
     fi
-    
+
     # Determine status
     STATUS="✅"
     ALERT=""
-    
+
     if [ "$UNDELIVERED" -gt 1000 ]; then
         STATUS="🚨"
         ALERT="CRITICAL: $UNDELIVERED messages stuck!"
@@ -60,7 +60,7 @@ for SUB in $SUBSCRIPTIONS; do
     else
         ALERT="Healthy"
     fi
-    
+
     # Check message age (convert seconds to hours) - only if greater than 0
     if [ "$OLDEST_AGE" -gt 3600 ] 2>/dev/null; then
         HOURS=$((OLDEST_AGE / 3600))
@@ -68,17 +68,17 @@ for SUB in $SUBSCRIPTIONS; do
         ALERT="$ALERT | Oldest message: ${HOURS}h old"
         ISSUES_FOUND=$((ISSUES_FOUND + 1))
     fi
-    
+
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "$STATUS Subscription: $SUB_NAME"
     echo "   Topic: $TOPIC"
     echo "   Undelivered: $UNDELIVERED messages"
-    
+
     # Only show age if it's greater than 0
     if [ "$OLDEST_AGE" -gt 0 ] 2>/dev/null; then
         echo "   Oldest message: $((OLDEST_AGE / 60)) minutes"
     fi
-    
+
     echo "   ACK deadline: ${ACK_DEADLINE}s"
     echo "   Push endpoint: $PUSH_ENDPOINT"
     echo "   Status: $ALERT"

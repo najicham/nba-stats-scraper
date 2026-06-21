@@ -14,11 +14,11 @@ Main Classes:
 
 Usage:
     from shared.utils.schedule import NBAScheduleService, GameType
-    
+
     # Default: Database-first with GCS fallback (fast queries)
     schedule = NBAScheduleService()
     has_games = schedule.has_games_on_date('2024-01-15')
-    
+
     # Explicit GCS-only mode (for backfills)
     schedule = NBAScheduleService.from_gcs_only()
     games = schedule.get_games_for_date('2024-01-15')
@@ -31,7 +31,7 @@ from .gcs_reader import ScheduleGCSReader
 
 __all__ = [
     'NBAScheduleService',
-    'NBAGame', 
+    'NBAGame',
     'GameType',
     'ScheduleDatabaseReader',
     'ScheduleGCSReader'

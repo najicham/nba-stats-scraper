@@ -52,7 +52,7 @@ class MetricsClient:
             self._monitoring = monitoring
             self._client = monitoring.MetricServiceClient()
         return self._client
-    
+
     def send_metric(self, metric_name: str, value: float,
                    labels: Optional[Dict[str, str]] = None,
                    metric_type: str = "GAUGE") -> bool:
@@ -118,7 +118,7 @@ class MetricsClient:
         except Exception as e:
             logger.error(f"Failed to send metric {metric_name}: {e}", exc_info=True)
             return False
-    
+
     def create_metric_descriptor(self, metric_name: str, description: str,
                                metric_kind: str = "GAUGE",
                                value_type: str = "DOUBLE") -> bool:
@@ -184,25 +184,25 @@ _metrics_client = None
 def get_metrics_client(project_id: Optional[str] = None) -> Optional[MetricsClient]:
     """Get or create global metrics client"""
     global _metrics_client
-    
+
     if _metrics_client is None and project_id:
         _metrics_client = MetricsClient(project_id)
-    
+
     return _metrics_client
 
 
-def send_metric(metric_name: str, value: float, 
+def send_metric(metric_name: str, value: float,
                labels: Optional[Dict[str, str]] = None,
                project_id: Optional[str] = None) -> bool:
     """
     Convenience function to send a metric
-    
+
     Args:
         metric_name: Name of the metric
         value: Metric value
         labels: Optional labels
         project_id: Optional project ID (uses global client if not provided)
-        
+
     Returns:
         True if successful
     """
@@ -210,7 +210,7 @@ def send_metric(metric_name: str, value: float,
     if client is None:
         logger.warning("No metrics client available")
         return False
-    
+
     return client.send_metric(metric_name, value, labels)
 
 
@@ -218,12 +218,12 @@ def create_custom_metric(metric_name: str, description: str,
                         project_id: Optional[str] = None) -> bool:
     """
     Convenience function to create a custom metric descriptor
-    
+
     Args:
         metric_name: Name of the metric
         description: Description of the metric
         project_id: Optional project ID
-        
+
     Returns:
         True if successful
     """
@@ -231,19 +231,19 @@ def create_custom_metric(metric_name: str, description: str,
     if client is None:
         logger.warning("No metrics client available")
         return False
-    
+
     return client.create_metric_descriptor(metric_name, description)
 
 
 # Standard NBA platform metrics
-def send_scraper_metrics(scraper_name: str, records_count: int, 
+def send_scraper_metrics(scraper_name: str, records_count: int,
                         execution_time: float, success: bool = True):
     """Send standard scraper metrics"""
     labels = {
         'scraper': scraper_name,
         'status': 'success' if success else 'failure'
     }
-    
+
     send_metric('scraper_records_scraped', records_count, labels)
     send_metric('scraper_execution_time_seconds', execution_time, labels)
     send_metric('scraper_runs_total', 1, labels)
@@ -256,7 +256,7 @@ def send_processor_metrics(processor_name: str, records_processed: int,
         'processor': processor_name,
         'status': 'success' if success else 'failure'
     }
-    
+
     send_metric('processor_records_processed', records_processed, labels)
     send_metric('processor_execution_time_seconds', processing_time, labels)
     send_metric('processor_runs_total', 1, labels)
@@ -269,7 +269,7 @@ def send_report_metrics(report_type: str, reports_generated: int,
         'report_type': report_type,
         'status': 'success' if success else 'failure'
     }
-    
+
     send_metric('reports_generated', reports_generated, labels)
     send_metric('report_generation_time_seconds', generation_time, labels)
     send_metric('report_runs_total', 1, labels)

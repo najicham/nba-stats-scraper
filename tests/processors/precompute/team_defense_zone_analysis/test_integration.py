@@ -50,13 +50,13 @@ class TestFullProcessingFlow:
             ])
 
             return proc
-    
+
     @pytest.fixture
     def mock_team_defense_data(self):
         """Create realistic team defense game summary data."""
         teams = ['LAL', 'GSW', 'BOS', 'MIA', 'PHX']
         data = []
-        
+
         for team in teams:
             # Create 15 games per team
             for game_num in range(15):
@@ -81,9 +81,9 @@ class TestFullProcessingFlow:
                     'opponent_pace': 98.0 + (game_num % 5),
                     'processed_at': datetime(2025, 1, 27, 23, 5, 0, tzinfo=UTC)
                 })
-        
+
         return pd.DataFrame(data)
-    
+
     def test_successful_processing(self, processor, mock_team_defense_data):
         """Test successful end-to-end processing."""
         # Setup
@@ -93,7 +93,7 @@ class TestFullProcessingFlow:
             'run_id': 'test-123'
         }
         processor.season_start_date = date(2024, 10, 22)
-        
+
         # Mock dependency check (all pass)
         mock_dep_check = {
             'all_critical_present': True,
@@ -112,12 +112,12 @@ class TestFullProcessingFlow:
                 }
             }
         }
-        
+
         with patch.object(processor, 'check_dependencies', return_value=mock_dep_check):
             with patch.object(processor, 'track_source_usage'):
                 # Mock BigQuery query for data extraction
                 processor.bq_client.query.return_value.to_dataframe.return_value = mock_team_defense_data
-                
+
                 # Mock league average calculation
                 mock_league_df = pd.DataFrame([{
                     'league_avg_paint_pct': 0.580,
@@ -125,37 +125,37 @@ class TestFullProcessingFlow:
                     'league_avg_three_pt_pct': 0.355,
                     'teams_in_sample': 5
                 }])
-                
+
                 # Set up sequential query responses
                 processor.bq_client.query.return_value.to_dataframe.side_effect = [
                     mock_team_defense_data,  # extract_raw_data
                     mock_league_df           # _calculate_league_averages
                 ]
-                
+
                 # Execute
                 processor.extract_raw_data()
                 processor.calculate_precompute()
-                
+
                 # Verify results
                 assert len(processor.transformed_data) == 5  # 5 teams
-                
+
                 # Check first team's data
                 lal_data = next(t for t in processor.transformed_data if t['team_abbr'] == 'LAL')
-                
+
                 assert lal_data['analysis_date'] == '2025-01-27'
                 assert lal_data['games_in_sample'] == 15
                 assert lal_data['data_quality_tier'] == 'high'
-                
+
                 # Verify metrics exist
                 assert lal_data['paint_pct_allowed_last_15'] is not None
                 assert lal_data['mid_range_pct_allowed_last_15'] is not None
                 assert lal_data['three_pt_pct_allowed_last_15'] is not None
-                
+
                 # Verify vs league metrics calculated
                 assert lal_data['paint_defense_vs_league_avg'] is not None
                 assert lal_data['mid_range_defense_vs_league_avg'] is not None
                 assert lal_data['three_pt_defense_vs_league_avg'] is not None
-                
+
                 # Verify strengths/weaknesses identified
                 assert lal_data['strongest_zone'] in ['paint', 'mid_range', 'perimeter']
                 assert lal_data['weakest_zone'] in ['paint', 'mid_range', 'perimeter']
@@ -170,7 +170,7 @@ class TestFullProcessingFlow:
             'run_id': 'test-early'
         }
         processor.season_start_date = date(2024, 10, 22)
-        
+
         # Mock dependency check (early season)
         mock_dep_check = {
             'all_critical_present': False,
@@ -189,22 +189,22 @@ class TestFullProcessingFlow:
                 }
             }
         }
-        
+
         with patch.object(processor, 'check_dependencies', return_value=mock_dep_check):
             with patch.object(processor, 'track_source_usage'):
                 # Mock game count queries (3 games per team)
                 mock_game_count = pd.DataFrame([{'game_count': 3}])
                 processor.bq_client.query.return_value.to_dataframe.return_value = mock_game_count
-                
+
                 # Execute
                 processor.extract_raw_data()
-                
+
                 # Verify placeholders created
                 assert len(processor.transformed_data) == 5  # 5 teams
-                
+
                 # Check placeholder structure
                 lal_placeholder = next(t for t in processor.transformed_data if t['team_abbr'] == 'LAL')
-                
+
                 # All business metrics should be None
                 assert lal_placeholder['paint_pct_allowed_last_15'] is None
                 assert lal_placeholder['mid_range_pct_allowed_last_15'] is None
@@ -212,13 +212,13 @@ class TestFullProcessingFlow:
                 assert lal_placeholder['defensive_rating_last_15'] is None
                 assert lal_placeholder['strongest_zone'] is None
                 assert lal_placeholder['weakest_zone'] is None
-                
+
                 # Context fields should be set
                 assert lal_placeholder['games_in_sample'] == 3
                 assert lal_placeholder['data_quality_tier'] == 'low'
                 assert lal_placeholder['early_season_flag'] is True
                 assert 'Only 3 games available, need 15' in lal_placeholder['insufficient_data_reason']
-    
+
     def test_insufficient_games_handling(self, processor, mock_team_defense_data):
         """Test handling when some teams have insufficient games."""
         # Setup
@@ -228,13 +228,13 @@ class TestFullProcessingFlow:
             'run_id': 'test-insufficient'
         }
         processor.season_start_date = date(2024, 10, 22)
-        
+
         # Remove games for one team (LAL only has 10 games)
         insufficient_data = mock_team_defense_data[
-            ~((mock_team_defense_data['defending_team_abbr'] == 'LAL') & 
+            ~((mock_team_defense_data['defending_team_abbr'] == 'LAL') &
               (mock_team_defense_data.index >= 10))
         ]
-        
+
         # Mock dependency check (passes but one team insufficient)
         mock_dep_check = {
             'all_critical_present': True,
@@ -252,7 +252,7 @@ class TestFullProcessingFlow:
                 }
             }
         }
-        
+
         with patch.object(processor, 'check_dependencies', return_value=mock_dep_check):
             with patch.object(processor, 'track_source_usage'):
                 # Mock league averages
@@ -262,20 +262,20 @@ class TestFullProcessingFlow:
                     'league_avg_three_pt_pct': 0.355,
                     'teams_in_sample': 4
                 }])
-                
+
                 processor.bq_client.query.return_value.to_dataframe.side_effect = [
                     insufficient_data,
                     mock_league_df
                 ]
-                
+
                 # Execute
                 processor.extract_raw_data()
                 processor.calculate_precompute()
-                
+
                 # Should process 4 teams successfully, fail 1
                 assert len(processor.transformed_data) == 4
                 assert len(processor.failed_entities) == 1
-                
+
                 # Check failed entity
                 failed = processor.failed_entities[0]
                 assert failed['entity_id'] == 'LAL'
@@ -285,7 +285,7 @@ class TestFullProcessingFlow:
 
 class TestDependencyChecking:
     """Test dependency checking logic."""
-    
+
     @pytest.fixture
     def processor(self):
         with patch('data_processors.precompute.team_defense_zone_analysis.team_defense_zone_analysis_processor.bigquery.Client'):
@@ -298,7 +298,7 @@ class TestDependencyChecking:
             }
             proc.season_start_date = date(2024, 10, 22)
             return proc
-    
+
     def test_check_table_data_per_team_game_count(self, processor):
         """Test custom per_team_game_count check type."""
         config = {
@@ -307,7 +307,7 @@ class TestDependencyChecking:
             'min_teams_with_data': 25,
             'entity_field': 'defending_team_abbr'
         }
-        
+
         # Use SimpleNamespace instead of dict for mock result
         mock_row = SimpleNamespace(
             teams_with_min_games=28,
@@ -315,16 +315,16 @@ class TestDependencyChecking:
             last_updated=datetime(2025, 1, 27, 23, 5, 0, tzinfo=UTC),
             total_teams=30
         )
-        
+
         processor.bq_client.query.return_value.result.return_value = [mock_row]
-        
+
         # Execute
         exists, details = processor._check_table_data(
             'nba_analytics.team_defense_game_summary',
             date(2025, 1, 27),
             config
         )
-        
+
         # Verify
         assert exists is True
         assert details['teams_found'] == 28
@@ -332,7 +332,7 @@ class TestDependencyChecking:
         assert details['row_count'] == 420
         assert details['min_games_required'] == 15
         assert details['age_hours'] is not None
-    
+
     def test_check_table_data_insufficient_teams(self, processor):
         """Test per_team_game_count when insufficient teams."""
         config = {
@@ -341,7 +341,7 @@ class TestDependencyChecking:
             'min_teams_with_data': 25,
             'entity_field': 'defending_team_abbr'
         }
-        
+
         # Use SimpleNamespace instead of dict for mock result
         mock_row = SimpleNamespace(
             teams_with_min_games=20,
@@ -349,16 +349,16 @@ class TestDependencyChecking:
             last_updated=datetime(2025, 1, 27, 23, 5, 0, tzinfo=UTC),
             total_teams=30
         )
-        
+
         processor.bq_client.query.return_value.result.return_value = [mock_row]
-        
+
         # Execute
         exists, details = processor._check_table_data(
             'nba_analytics.team_defense_game_summary',
             date(2025, 1, 27),
             config
         )
-        
+
         # Should fail (20 < 25)
         assert exists is False
         assert details['teams_found'] == 20
@@ -393,7 +393,7 @@ class TestErrorHandling:
             'run_id': 'test-error'
         }
         processor.season_start_date = date(2024, 10, 22)
-        
+
         # Mock dependency check failure
         mock_dep_check = {
             'all_critical_present': False,
@@ -408,13 +408,13 @@ class TestErrorHandling:
                 }
             }
         }
-        
+
         with patch.object(processor, 'check_dependencies', return_value=mock_dep_check):
             with patch.object(processor, 'track_source_usage'):
                 # Should raise ValueError
                 with pytest.raises(ValueError, match="Missing critical dependencies"):
                     processor.extract_raw_data()
-    
+
     def test_stale_data_warning(self, processor):
         """Test handling of stale upstream data."""
         processor.opts = {
@@ -423,7 +423,7 @@ class TestErrorHandling:
             'run_id': 'test-stale'
         }
         processor.season_start_date = date(2024, 10, 22)
-        
+
         # Mock stale data (5 days old)
         mock_dep_check = {
             'all_critical_present': True,
@@ -441,7 +441,7 @@ class TestErrorHandling:
                 }
             }
         }
-        
+
         # Should not raise, just warn
         with patch.object(processor, 'check_dependencies', return_value=mock_dep_check):
             with patch.object(processor, 'track_source_usage'):
@@ -455,7 +455,7 @@ class TestErrorHandling:
                     'defensive_rating', 'opponent_pace', 'processed_at'
                 ])
                 processor.bq_client.query.return_value.to_dataframe.return_value = empty_df
-                
+
                 # Should not raise exception
                 try:
                     processor.extract_raw_data()
@@ -465,7 +465,7 @@ class TestErrorHandling:
 
 class TestSourceTrackingIntegration:
     """Test v4.0 source tracking integration."""
-    
+
     @pytest.fixture
     def processor(self):
         with patch('data_processors.precompute.team_defense_zone_analysis.team_defense_zone_analysis_processor.bigquery.Client'):
@@ -473,7 +473,7 @@ class TestSourceTrackingIntegration:
             proc.bq_client = Mock()
             proc.project_id = 'test-project'
             return proc
-    
+
     def test_source_tracking_populated_in_output(self, processor):
         """Test that source tracking fields are in output records."""
         processor.opts = {
@@ -481,7 +481,7 @@ class TestSourceTrackingIntegration:
             'season_year': 2024
         }
         processor.season_start_date = date(2024, 10, 22)
-        
+
         # Mock source metadata
         processor.source_metadata = {
             'nba_analytics.team_defense_game_summary': {
@@ -490,7 +490,7 @@ class TestSourceTrackingIntegration:
                 'completeness_pct': 100.00
             }
         }
-        
+
         # Provide 15 games of data instead of 1
         processor.raw_data = pd.DataFrame([
             {
@@ -514,25 +514,25 @@ class TestSourceTrackingIntegration:
             }
             for i in range(15)  # 15 games
         ])
-        
+
         processor.league_averages = {
             'paint_pct': 0.580,
             'mid_range_pct': 0.410,
             'three_pt_pct': 0.355
         }
-        
+
         # Execute
         processor.calculate_precompute()
-        
+
         # Verify source tracking in output
         assert len(processor.transformed_data) == 1
         record = processor.transformed_data[0]
-        
+
         # Check v4.0 fields present
         assert 'source_team_defense_last_updated' in record
         assert 'source_team_defense_rows_found' in record
         assert 'source_team_defense_completeness_pct' in record
-        
+
         # Check values
         assert record['source_team_defense_last_updated'] == '2025-01-27T23:05:00Z'
         assert record['source_team_defense_rows_found'] == 450

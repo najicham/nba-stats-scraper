@@ -62,9 +62,9 @@ logger = logging.getLogger("scraper_base")
 class GetNbaComScheduleApi(ScraperBase, ScraperFlaskMixin):
     """
     NBA.com stats API schedule scraper with enhanced transformation.
-    
+
     Uses shared ScheduleTransformer for consistent output with CDN scraper.
-    
+
     Required opts:
         season: 4-digit start year (e.g., 2025 for 2025-26 season)
     """
@@ -75,13 +75,13 @@ class GetNbaComScheduleApi(ScraperBase, ScraperFlaskMixin):
     optional_params = {
         "api_key": None,
     }
-    
+
     required_opts = ["season"]
     download_type = DownloadType.JSON
     decode_download_data = True
     header_profile = "stats"  # Use NBA stats headers
     proxy_enabled = True      # stats.nba.com may need proxy
-    
+
     BASE_URL = "https://stats.nba.com/stats/scheduleleaguev2int"
 
     # GCS path configuration
@@ -126,7 +126,7 @@ class GetNbaComScheduleApi(ScraperBase, ScraperFlaskMixin):
             "pretty_print": True,
             "groups": ["capture"],
         },
-        
+
         # ========== METADATA EXPORTERS ==========
         {
             "type": "gcs",
@@ -154,7 +154,7 @@ class GetNbaComScheduleApi(ScraperBase, ScraperFlaskMixin):
             "groups": ["capture"],
         },
     ]
-    
+
     def set_additional_opts(self) -> None:
         super().set_additional_opts()
         """Convert season to NBA format and set timestamp"""
@@ -162,13 +162,13 @@ class GetNbaComScheduleApi(ScraperBase, ScraperFlaskMixin):
         season_year = int(self.opts["season"])
         next_year = (season_year + 1) % 100  # Get last 2 digits of next year
         self.opts["season_nba_format"] = f"{season_year}-{next_year:02d}"
-        
+
         # Add timestamp for exporters
         self.opts["timestamp"] = datetime.now(timezone.utc).isoformat()
-        
-        logger.info("Season: %s -> NBA format: %s", 
+
+        logger.info("Season: %s -> NBA format: %s",
                    self.opts["season"], self.opts["season_nba_format"])
-    
+
     def set_url(self) -> None:
         """Build the stats.nba.com schedule URL"""
         params = {
@@ -177,17 +177,17 @@ class GetNbaComScheduleApi(ScraperBase, ScraperFlaskMixin):
             "Season": self.opts["season_nba_format"],
             # "SeasonType": "Regular Season"
         }
-        
+
         # Build query string
         query_params = []
         for key, value in params.items():
             query_params.append(f"{key}={value}")
-        
+
         query_string = "&".join(query_params)
         self.url = f"{self.BASE_URL}?{query_string}"
-        
+
         logger.info("NBA.com schedule URL: %s", self.url)
-    
+
     def validate_download_data(self) -> None:
         """Validate the NBA.com API response"""
         try:
@@ -209,7 +209,7 @@ class GetNbaComScheduleApi(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException(error_msg)
-            
+
             # The actual response has 'leagueSchedule' not 'resultSets'
             if "leagueSchedule" not in self.decoded_data:
                 error_msg = "Missing 'leagueSchedule' in response"
@@ -229,7 +229,7 @@ class GetNbaComScheduleApi(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException(error_msg)
-            
+
             league_schedule = self.decoded_data["leagueSchedule"]
             if not isinstance(league_schedule, dict):
                 error_msg = "leagueSchedule is not an object"
@@ -249,7 +249,7 @@ class GetNbaComScheduleApi(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException(error_msg)
-            
+
             if "gameDates" not in league_schedule:
                 error_msg = "Missing 'gameDates' in leagueSchedule"
                 logger.error("%s for season %s", error_msg, self.opts["season"])
@@ -268,7 +268,7 @@ class GetNbaComScheduleApi(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException(error_msg)
-            
+
             game_dates = league_schedule["gameDates"]
             if not isinstance(game_dates, list):
                 error_msg = "gameDates is not a list"
@@ -288,7 +288,7 @@ class GetNbaComScheduleApi(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException(error_msg)
-            
+
             # Warning for suspiciously low game date count
             min_game_dates = int(os.environ.get('SCHEDULE_MIN_GAME_DATES', '50'))
             if len(game_dates) < min_game_dates:
@@ -308,9 +308,9 @@ class GetNbaComScheduleApi(ScraperBase, ScraperFlaskMixin):
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             logger.info("Validation passed: %d game dates found", len(game_dates))
-            
+
         except DownloadDataException:
             # Already handled and notified above
             raise
@@ -353,39 +353,39 @@ class GetNbaComScheduleApi(ScraperBase, ScraperFlaskMixin):
             else:
                 # Fallback to the season we computed in set_additional_opts
                 self.opts['actual_season_nba_format'] = self.opts['season_nba_format']
-            
+
             game_dates = league_schedule.get("gameDates", [])
-            
+
             # Initialize shared transformer with season
             transformer = ScheduleTransformer(self.opts['actual_season_nba_format'])
-            
+
             # Flatten and enhance all games from all dates
             all_games = []
             for game_date_obj in game_dates:
                 game_date = game_date_obj.get("gameDate", "")
                 games = game_date_obj.get("games", [])
-                
+
                 for game in games:
                     # Enhance with computed flags using shared logic
                     enhanced_game = transformer.enhance_game(game, game_date)
-                    
+
                     # Add metadata
                     enhanced_game.update({
                         "gameDate": game_date,
                         "gameDateObj": game_date_obj.get("gameDate", ""),
                         "source": "api_stats"  # Tag to identify data source
                     })
-                    
+
                     all_games.append(enhanced_game)
-            
+
             # Sort games by date and game sequence
             all_games.sort(key=lambda x: (x.get("gameDateEst", ""), x.get("gameSequence", 0)))
-            
+
             # Generate season metadata using shared logic
             metadata = transformer.generate_metadata(all_games)
             metadata['scraped_at'] = self.opts["timestamp"]
             metadata['source'] = 'api_stats'
-            
+
             # Warning for suspiciously low game count
             min_games = int(os.environ.get('SCHEDULE_MIN_GAMES', '100'))
             if len(all_games) < min_games:
@@ -405,7 +405,7 @@ class GetNbaComScheduleApi(ScraperBase, ScraperFlaskMixin):
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             # Store both schedule data and metadata
             self.data = {
                 "season": self.opts["season"],
@@ -420,12 +420,12 @@ class GetNbaComScheduleApi(ScraperBase, ScraperFlaskMixin):
                 "metadata": metadata,
                 "source": "api_stats"
             }
-            
-            logger.info("Processed %d games across %d dates for %s season", 
+
+            logger.info("Processed %d games across %d dates for %s season",
                     len(all_games), len(game_dates), self.opts["season_nba_format"])
-            logger.info("Generated metadata: %d total games, %d backfill eligible", 
+            logger.info("Generated metadata: %d total games, %d backfill eligible",
                     metadata["total_games"], metadata["backfill"]["total_games"])
-                    
+
         except KeyError as e:
             logger.error("Missing expected key during transformation for season %s: %s", self.opts["season"], e)
             try:
@@ -460,7 +460,7 @@ class GetNbaComScheduleApi(ScraperBase, ScraperFlaskMixin):
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
             raise DownloadDataException(f"Data transformation failed: {e}") from e
-    
+
     def get_scraper_stats(self) -> dict:
         """Return scraper statistics"""
         return {

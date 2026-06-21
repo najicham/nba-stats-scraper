@@ -8,7 +8,7 @@
 -- ============================================================================
 
 CREATE OR REPLACE VIEW `nba-props-platform.nba_predictions.system_comparison_today` AS
-SELECT 
+SELECT
   s.system_name,
   s.system_type,
   s.is_champion,
@@ -19,7 +19,7 @@ SELECT
   SUM(CASE WHEN p.recommendation = 'UNDER' THEN 1 ELSE 0 END) as under_count,
   SUM(CASE WHEN p.recommendation = 'PASS' THEN 1 ELSE 0 END) as pass_count
 FROM `nba-props-platform.nba_predictions.player_prop_predictions` p
-JOIN `nba-props-platform.nba_predictions.prediction_systems` s 
+JOIN `nba-props-platform.nba_predictions.prediction_systems` s
   ON p.system_id = s.system_id
 WHERE p.game_date = CURRENT_DATE()
   AND p.is_active = TRUE

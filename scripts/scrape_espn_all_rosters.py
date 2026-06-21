@@ -81,28 +81,28 @@ logger = logging.getLogger(__name__)
 
 class EspnRosterCoordinator:
     """Coordinates scraping of all NBA team rosters from ESPN."""
-    
+
     def __init__(self, delay_seconds: int = 3, debug: bool = False, dry_run: bool = False):
         self.delay_seconds = delay_seconds
         self.dry_run = dry_run
         self.debug = debug
-        
+
         if debug:
             logging.getLogger().setLevel(logging.DEBUG)
             logger.setLevel(logging.DEBUG)
-        
+
         self.results = {
             'success': [],
             'failed': [],
             'skipped': []
         }
-        
+
         self.start_time = None
         self.end_time = None
-    
+
     def scrape_team(self, team_abbr: str) -> Dict:
         """Scrape roster for a single team using subprocess.
-        
+
         Returns:
             Dict with keys: team, status, player_count, error (if failed)
         """
@@ -113,10 +113,10 @@ class EspnRosterCoordinator:
                 'status': 'dry_run',
                 'player_count': 0
             }
-        
+
         try:
             logger.info(f"Scraping roster for {team_abbr}...")
-            
+
             # Build command to run scraper
             cmd = [
                 sys.executable,  # Use same Python interpreter
@@ -124,10 +124,10 @@ class EspnRosterCoordinator:
                 '--team_abbr', team_abbr,
                 '--group', 'prod'  # Enable GCS export
             ]
-            
+
             if self.debug:
                 cmd.append('--debug')
-            
+
             # Run scraper as subprocess
             result = subprocess.run(
                 cmd,
@@ -135,15 +135,15 @@ class EspnRosterCoordinator:
                 text=True,
                 cwd=os.path.join(os.path.dirname(__file__), '..')  # Run from project root
             )
-            
+
             if result.returncode == 0:
                 # Parse player count from stdout or stderr (logs might go to either)
                 player_count = 0
                 import re
-                
+
                 # Check both stdout and stderr for the log line
                 combined_output = result.stdout + "\n" + result.stderr
-                
+
                 for line in combined_output.split('\n'):
                     # Look for "Parsed X players for TEAM"
                     if 'Parsed' in line and 'players for' in line and team_abbr in line:
@@ -151,7 +151,7 @@ class EspnRosterCoordinator:
                         if match:
                             player_count = int(match.group(1))
                             break
-                
+
                 # Fallback: Check the exported JSON file if we couldn't parse from logs
                 if player_count == 0:
                     try:
@@ -163,9 +163,9 @@ class EspnRosterCoordinator:
                                 player_count = data.get('playerCount', 0)
                     except Exception as e:
                         logger.debug(f"Could not read JSON file for player count: {e}")
-                
+
                 logger.info(f"✓ {team_abbr} complete - {player_count} players")
-                
+
                 return {
                     'team': team_abbr,
                     'status': 'success',
@@ -179,7 +179,7 @@ class EspnRosterCoordinator:
                     'status': 'failed',
                     'error': error_msg[:200]  # Truncate long errors
                 }
-            
+
         except Exception as e:
             logger.error(f"✗ {team_abbr} failed: {str(e)}", exc_info=logger.isEnabledFor(logging.DEBUG))
             return {
@@ -187,7 +187,7 @@ class EspnRosterCoordinator:
                 'status': 'failed',
                 'error': str(e)
             }
-    
+
     def scrape_teams(self, team_list: Optional[List[str]] = None) -> Dict:
         """Scrape rosters for multiple teams serially.
 
@@ -211,118 +211,118 @@ class EspnRosterCoordinator:
             logger.warning(f"Invalid team abbreviations: {invalid_teams}")
             self.results['skipped'].extend(invalid_teams)
             team_list = [t for t in team_list if t in ESPN_TEAM_IDS]
-        
+
         if not team_list:
             logger.error("No valid teams to scrape")
             return self.results
-        
+
         logger.info(f"Starting scrape of {len(team_list)} teams with {self.delay_seconds}s delay")
         self.start_time = datetime.now(timezone.utc)
-        
+
         # Scrape each team
         for i, team_abbr in enumerate(team_list, 1):
             logger.info(f"[{i}/{len(team_list)}] Processing {team_abbr}...")
-            
+
             result = self.scrape_team(team_abbr)
-            
+
             if result['status'] == 'success':
                 self.results['success'].append(result)
             elif result['status'] == 'failed':
                 self.results['failed'].append(result)
-            
+
             # Rate limiting: sleep between teams (but not after the last one)
             if i < len(team_list):
                 logger.debug(f"Waiting {self.delay_seconds}s before next team...")
                 time.sleep(self.delay_seconds)
-        
+
         self.end_time = datetime.now(timezone.utc)
         return self.results
-    
+
     def retry_failed(self, extended_delay: int = 10) -> Dict:
         """Retry teams that failed on first attempt.
-        
+
         Args:
             extended_delay: Longer delay for retry attempts
         """
         if not self.results['failed']:
             logger.info("No failed teams to retry")
             return self.results
-        
+
         failed_teams = [r['team'] for r in self.results['failed']]
         logger.info(f"Retrying {len(failed_teams)} failed teams with {extended_delay}s delay")
-        
+
         # Clear failed list for retry
         retry_results = self.results['failed']
         self.results['failed'] = []
-        
+
         # Use extended delay for retries
         original_delay = self.delay_seconds
         self.delay_seconds = extended_delay
-        
+
         # Retry each failed team
         self.scrape_teams(failed_teams)
-        
+
         # Restore original delay
         self.delay_seconds = original_delay
-        
+
         return self.results
-    
+
     def print_summary(self):
         """Print summary of scraping results."""
         if not self.start_time:
             logger.warning("No scraping performed yet")
             return
-        
+
         # Calculate duration (handle case where end_time might be None due to interrupt)
         if self.end_time:
             duration = (self.end_time - self.start_time).total_seconds()
         else:
             duration = (datetime.now(timezone.utc) - self.start_time).total_seconds()
-        
+
         print("\n" + "="*60)
         print("ESPN ROSTER SCRAPING SUMMARY")
         print("="*60)
-        
+
         # Success summary
         success_count = len(self.results['success'])
         total_players = sum(r['player_count'] for r in self.results['success'])
         print(f"\n✓ Successful: {success_count} teams, {total_players} total players")
         if self.results['success']:
             print("  Teams:", ", ".join(r['team'] for r in self.results['success']))
-        
+
         # Failed summary
         failed_count = len(self.results['failed'])
         if failed_count > 0:
             print(f"\n✗ Failed: {failed_count} teams")
             for result in self.results['failed']:
                 print(f"  {result['team']}: {result.get('error', 'Unknown error')}")
-        
+
         # Skipped summary
         skipped_count = len(self.results['skipped'])
         if skipped_count > 0:
             print(f"\n⊘ Skipped: {skipped_count} teams (invalid abbreviations)")
             print("  Teams:", ", ".join(self.results['skipped']))
-        
+
         # Timing
         print(f"\nDuration: {duration:.1f} seconds")
         total_attempts = success_count + failed_count
         if total_attempts > 0:
             print(f"Average: {duration/total_attempts:.1f}s per team")
-        
+
         print("="*60 + "\n")
-    
+
     def send_notification(self):
         """Send notification about scraping results."""
         if not NOTIFICATIONS_AVAILABLE or self.dry_run:
             return
-        
+
         success_count = len(self.results['success'])
         failed_count = len(self.results['failed'])
         total_teams = success_count + failed_count
-        
+
         if total_teams == 0:
             return
-        
+
         # Determine notification type
         if failed_count == 0:
             # Complete success
@@ -369,67 +369,67 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__
     )
-    
+
     parser.add_argument(
         '--delay',
         type=int,
         default=3,
         help='Delay between teams in seconds (default: 3)'
     )
-    
+
     parser.add_argument(
         '--teams',
         type=str,
         help='Comma-separated list of team abbreviations (default: all 30 teams)'
     )
-    
+
     parser.add_argument(
         '--retry-failed',
         action='store_true',
         help='Retry teams that failed on previous run'
     )
-    
+
     parser.add_argument(
         '--debug',
         action='store_true',
         help='Enable debug logging'
     )
-    
+
     parser.add_argument(
         '--dry-run',
         action='store_true',
         help='Show what would be scraped without executing'
     )
-    
+
     args = parser.parse_args()
-    
+
     # Parse team list if provided
     team_list = None
     if args.teams:
         team_list = [t.strip().upper() for t in args.teams.split(',')]
-    
+
     # Create coordinator
     coordinator = EspnRosterCoordinator(
         delay_seconds=args.delay,
         debug=args.debug,
         dry_run=args.dry_run
     )
-    
+
     try:
         # Scrape teams
         coordinator.scrape_teams(team_list)
-        
+
         # Retry failed if requested
         if args.retry_failed and coordinator.results['failed']:
             logger.info("\nRetrying failed teams...")
             coordinator.retry_failed(extended_delay=args.delay * 2)
-        
+
         # Print summary
         coordinator.print_summary()
-        
+
         # Send notification
         coordinator.send_notification()
-        
+
         # Exit code based on results
         if coordinator.results['failed']:
             logger.warning("Some teams failed to scrape")
@@ -437,7 +437,7 @@ def main():
         else:
             logger.info("All teams scraped successfully")
             sys.exit(0)
-            
+
     except KeyboardInterrupt:
         logger.warning("\nScraping interrupted by user")
         coordinator.print_summary()

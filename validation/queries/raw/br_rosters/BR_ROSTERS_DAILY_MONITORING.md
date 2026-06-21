@@ -1,8 +1,8 @@
 # Basketball Reference Rosters - Daily Monitoring Guide
 
-**Purpose:** Monitor Basketball Reference roster data quality during the 2025-26 NBA season  
-**When to Use:** October 2025 - June 2026 (NBA season)  
-**Frequency:** Daily checks + weekly reviews  
+**Purpose:** Monitor Basketball Reference roster data quality during the 2025-26 NBA season
+**When to Use:** October 2025 - June 2026 (NBA season)
+**Frequency:** Daily checks + weekly reviews
 
 ---
 
@@ -329,7 +329,7 @@ crontab -e
 def check_br_rosters_daily():
     """Run daily BR roster check and alert on Slack if issues found"""
     result = run_bq_query("validation/queries/raw/br_rosters/daily_check_yesterday.sql")
-    
+
     if "⚠️" in result or "❌" in result:
         send_slack_alert(
             channel="#data-alerts",
@@ -421,7 +421,7 @@ During the 3-day trade deadline window, expect:
 # End-of-day trade deadline summary (11 PM PT)
 0 6 * * * cd ~/code/nba-stats-scraper && \
   bq query --use_legacy_sql=false "
-  SELECT 
+  SELECT
     last_scraped_date,
     COUNT(DISTINCT player_full_name) as players_added_today,
     STRING_AGG(CONCAT(team_abbrev, ': ', player_full_name), ', ' ORDER BY team_abbrev) as new_players
@@ -523,7 +523,7 @@ LIMIT 10
 ```bash
 # Find duplicates
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   season_year,
   team_abbrev,
   player_full_name,
@@ -581,17 +581,17 @@ Track these metrics each season for comparison:
 
 ### Daily Monitoring Goals
 
-✅ **Zero Data Loss:** Catch missing days within 24 hours  
-✅ **Trade Detection:** Identify roster changes within 1 day  
-✅ **Data Quality:** Maintain 0 nulls in critical fields  
-✅ **Scraper Uptime:** >95% daily success rate during season  
+✅ **Zero Data Loss:** Catch missing days within 24 hours
+✅ **Trade Detection:** Identify roster changes within 1 day
+✅ **Data Quality:** Maintain 0 nulls in critical fields
+✅ **Scraper Uptime:** >95% daily success rate during season
 
 ### Season-End Goals
 
-✅ **Complete Coverage:** All 30 teams present  
-✅ **Data Quality:** 0 nulls in critical fields all season  
-✅ **Timeliness:** No gaps >2 days in roster updates  
-✅ **Accuracy:** Cross-validate 100% of trades with NBA.com  
+✅ **Complete Coverage:** All 30 teams present
+✅ **Data Quality:** 0 nulls in critical fields all season
+✅ **Timeliness:** No gaps >2 days in roster updates
+✅ **Accuracy:** Cross-validate 100% of trades with NBA.com
 
 ---
 
@@ -622,6 +622,6 @@ python -m scrapers.basketball_reference.br_season_roster --season 2025 --teams L
 
 ---
 
-**Last Updated:** October 13, 2025  
-**Next Review:** Before 2025-26 season starts (September 2025)  
+**Last Updated:** October 13, 2025
+**Next Review:** Before 2025-26 season starts (September 2025)
 **Maintained By:** Data Engineering Team

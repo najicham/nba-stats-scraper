@@ -1,8 +1,8 @@
 # Phase 1 Orchestration - Deployment Guide
 ## From Local Testing to Production
 
-**Status:** All local tests passing ✅  
-**Version:** 2.2.2 (Orchestration-enabled)  
+**Status:** All local tests passing ✅
+**Version:** 2.2.2 (Orchestration-enabled)
 **Date:** November 11, 2025
 
 ---
@@ -246,7 +246,7 @@ gcloud scheduler jobs run master-controller-hourly --location=us-central1
 
 # Wait a few seconds, then check BigQuery
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   decision_time,
   workflow_name,
   action,
@@ -273,7 +273,7 @@ Check data is being written:
 
 ```sql
 -- Check workflow decisions (should update hourly)
-SELECT 
+SELECT
   DATE(decision_time) as date,
   COUNT(*) as decisions,
   COUNT(DISTINCT workflow_name) as workflows
@@ -282,7 +282,7 @@ WHERE DATE(decision_time) = CURRENT_DATE()
 GROUP BY date;
 
 -- Check cleanup operations (should update every 15 min)
-SELECT 
+SELECT
   DATE(operation_time) as date,
   COUNT(*) as operations,
   SUM(files_checked) as total_files_checked,
@@ -292,7 +292,7 @@ WHERE DATE(operation_time) = CURRENT_DATE()
 GROUP BY date;
 
 -- Check daily schedule (should have today's entry)
-SELECT 
+SELECT
   schedule_date,
   games_count,
   first_game_time,
@@ -327,7 +327,7 @@ Wait for scheduled execution (on the hour), then check:
 
 ```sql
 -- Check if scrapers are being executed by workflows
-SELECT 
+SELECT
   DATE(triggered_at) as date,
   workflow,
   COUNT(*) as executions,
@@ -368,7 +368,7 @@ Check these metrics over the first 24 hours:
 
 ### Issue: Docker build fails with "orchestration not found"
 
-**Cause:** Dockerfile not updated with orchestration directories  
+**Cause:** Dockerfile not updated with orchestration directories
 **Fix:**
 ```bash
 # Verify Dockerfile has these lines:
@@ -381,7 +381,7 @@ grep -A 2 "Copy orchestration" scrapers/Dockerfile
 
 ### Issue: Cloud Run endpoint returns 500 errors
 
-**Cause:** Missing environment variables or IAM permissions  
+**Cause:** Missing environment variables or IAM permissions
 **Fix:**
 ```bash
 # Check Cloud Run environment variables
@@ -398,7 +398,7 @@ gcloud projects get-iam-policy nba-props-platform \
 
 ### Issue: Scheduler jobs fail with 403 Forbidden
 
-**Cause:** OIDC authentication issue  
+**Cause:** OIDC authentication issue
 **Fix:**
 ```bash
 # Verify service account has Cloud Run Invoker role
@@ -410,7 +410,7 @@ gcloud run services add-iam-policy-binding nba-scrapers \
 
 ### Issue: Workflow trigger says "No scrapers defined"
 
-**Cause:** workflows.yaml structure mismatch  
+**Cause:** workflows.yaml structure mismatch
 **Fix:** Scrapers should be at `execution_plan.scrapers` as strings:
 ```yaml
 workflow_name:
@@ -422,7 +422,7 @@ workflow_name:
 
 ### Issue: BigQuery writes failing
 
-**Cause:** Service account missing BigQuery permissions  
+**Cause:** Service account missing BigQuery permissions
 **Fix:**
 ```bash
 # Grant BigQuery Data Editor role
@@ -484,6 +484,6 @@ bq query --use_legacy_sql=false "SELECT * FROM \`nba-props-platform.nba_orchestr
 
 ---
 
-**Deployment Guide Version:** 1.0  
-**Last Updated:** November 11, 2025  
+**Deployment Guide Version:** 1.0
+**Last Updated:** November 11, 2025
 **Next Review:** After 24-hour monitoring period

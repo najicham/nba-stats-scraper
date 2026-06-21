@@ -19,7 +19,7 @@ print_deployment_summary() {
     local end_time=$(date +%s)
     local duration=$((end_time - DEPLOY_WRAPPER_START_TIME))
     local end_display=$(TZ=America/Los_Angeles date '+%Y-%m-%d %I:%M:%S %p %Z')
-    
+
     # Format duration nicely
     local duration_display
     if [ $duration -lt 60 ]; then
@@ -34,7 +34,7 @@ print_deployment_summary() {
         local seconds=$((duration % 60))
         duration_display="${hours}h ${minutes}m ${seconds}s"
     fi
-    
+
     echo ""
     echo -e "\033[1;31m🎯 TOTAL DEPLOYMENT TIME\033[0m"
     echo -e "\033[1;31m========================\033[0m"

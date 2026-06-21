@@ -17,8 +17,8 @@
 WITH
 -- Check if tables have data
 data_check AS (
-  SELECT 
-    (SELECT COUNT(*) FROM `nba-props-platform.nba_raw.nbac_player_boxscores` 
+  SELECT
+    (SELECT COUNT(*) FROM `nba-props-platform.nba_raw.nbac_player_boxscores`
      WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)) as nbac_records,
     (SELECT COUNT(*) FROM `nba-props-platform.nba_raw.bdl_player_boxscores`
      WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)) as bdl_records
@@ -163,9 +163,9 @@ SELECT
   END as status,
 
   CURRENT_DATE() as report_date,
-  CONCAT('Points: ', COALESCE(CAST(nbac_points AS STRING), 'NULL'), ' vs ', 
+  CONCAT('Points: ', COALESCE(CAST(nbac_points AS STRING), 'NULL'), ' vs ',
          COALESCE(CAST(bdl_points AS STRING), 'NULL')) as message,
-  CONCAT('Rebounds: ', COALESCE(CAST(nbac_rebounds AS STRING), 'NULL'), ' vs ', 
+  CONCAT('Rebounds: ', COALESCE(CAST(nbac_rebounds AS STRING), 'NULL'), ' vs ',
          COALESCE(CAST(bdl_rebounds AS STRING), 'NULL')) as bdl_message,
   game_date,
   player_name,
@@ -187,7 +187,7 @@ SELECT
 
 FROM comparison
 CROSS JOIN data_check
-WHERE data_check.nbac_records > 0 
+WHERE data_check.nbac_records > 0
   AND data_check.bdl_records > 0
 
 -- Show issues first, then perfect matches

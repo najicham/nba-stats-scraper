@@ -1,16 +1,16 @@
 # NBA Props Platform - Historical Backfill Summary
 
-**Document Version:** 1.0  
-**Date:** August 13, 2025  
+**Document Version:** 1.0
+**Date:** August 13, 2025
 **Status:** Core backfill complete, supplemental data ongoing
 
 ## Executive Summary
 
 Successfully collected 4 seasons (2021-2025) of comprehensive NBA data across multiple sources to power prop betting analytics. Core dataset includes game schedules, player performance data, prop betting odds, and supporting roster information.
 
-**Total Data Collected:** 15,000+ files across 4 seasons  
-**Coverage Period:** 2021-22 through 2024-25 seasons  
-**Data Quality:** 99%+ validation success rate  
+**Total Data Collected:** 15,000+ files across 4 seasons
+**Coverage Period:** 2021-22 through 2024-25 seasons
+**Data Quality:** 99%+ validation success rate
 **Storage:** ~15GB organized in Google Cloud Storage
 
 ## Data Sources & Collection Results
@@ -18,18 +18,18 @@ Successfully collected 4 seasons (2021-2025) of comprehensive NBA data across mu
 ### 🏗️ Foundation Backfill (Google Cloud Workflows)
 
 ### ✅ NBA.com Schedule Collection - COMPLETE
-**Purpose:** Foundation game inventory enabling all subsequent backfills  
-**Implementation:** Google Cloud Workflow (not Cloud Run job)  
+**Purpose:** Foundation game inventory enabling all subsequent backfills
+**Implementation:** Google Cloud Workflow (not Cloud Run job)
 **Workflow File:** `workflows/backfill/collect-nba-historical-schedules.yaml`
 
 **Architecture:**
-- Uses existing scraper service (`nbac_schedule_api`) 
+- Uses existing scraper service (`nbac_schedule_api`)
 - One workflow call per season
 - Highly efficient: 4 files total for 4 seasons
 
 **Results:**
 - **Coverage:** 4 complete seasons (2021-2025)
-- **Total Games:** 5,583 games collected  
+- **Total Games:** 5,583 games collected
 - **File Size:** ~3.3MB per season
 - **Storage:** `gs://nba-scraped-data/nba-com/schedule/{season}/{timestamp}.json`
 - **Metadata:** `gs://nba-scraped-data/nba-com/schedule-metadata/{season}/{timestamp}.json`
@@ -41,21 +41,21 @@ Successfully collected 4 seasons (2021-2025) of comprehensive NBA data across mu
 
 **Critical Dependency:** All other backfill jobs read these schedule files to extract game dates, avoiding inefficient date-range processing.
 
-**Future Enhancements:** 
+**Future Enhancements:**
 - Consider adding validation script to match other backfill jobs' quality assurance patterns
 - Add jq-based data inspection script for quick validation of specific dates, game counts, and team codes
 
 ### 📊 Historical Data Backfills (Cloud Run Jobs)
 
 ### ✅ NBA.com Gamebooks - COMPLETE
-**Purpose:** Player box scores, game context, injury status  
-**Coverage:** 4 complete seasons (2021-2025)  
-**Files Collected:** 7,128+ JSON files  
+**Purpose:** Player box scores, game context, injury status
+**Coverage:** 4 complete seasons (2021-2025)
+**Files Collected:** 7,128+ JSON files
 **Success Rate:** 99.6%
 
 **Data Includes:**
 - Complete player statistics per game
-- Active/inactive player rosters  
+- Active/inactive player rosters
 - DNP reasons and injury status (last names only)
 - Game officials, arena, final scores
 - Team performance metrics
@@ -67,8 +67,8 @@ Successfully collected 4 seasons (2021-2025) of comprehensive NBA data across mu
 - Validation: Two-layer system with 99.6% success
 
 ### ✅ Odds API - PARTIAL COMPLETE
-**Purpose:** Historical prop betting odds and lines  
-**Coverage:** Events (2021-2025), Props (May 2023-2025)  
+**Purpose:** Historical prop betting odds and lines
+**Coverage:** Events (2021-2025), Props (May 2023-2025)
 **Success Rate:** 95%+
 
 **Events Collection:**
@@ -79,15 +79,15 @@ Successfully collected 4 seasons (2021-2025) of comprehensive NBA data across mu
 **Props Collection:**
 - **2022-23 Season:** May 2023 onwards only (partial)
 - **2023-24 Season:** Complete season
-- **2024-25 Season:** Complete season  
+- **2024-25 Season:** Complete season
 - Player points props with closing odds
 - Storage: `gs://nba-scraped-data/odds-api/props-history/{season}/`
 
 **Rate Limiting:** 30 calls/second, 1.5s delays between calls
 
 ### ✅ BettingPros - COMPLETE
-**Purpose:** Fill gaps in historical prop data (2021-2023)  
-**Coverage:** 4 complete seasons (2021-2025)  
+**Purpose:** Fill gaps in historical prop data (2021-2023)
+**Coverage:** 4 complete seasons (2021-2025)
 **Files Collected:** 800+ files
 
 **Data Includes:**
@@ -102,8 +102,8 @@ Successfully collected 4 seasons (2021-2025) of comprehensive NBA data across mu
 - Rate limiting: 3 seconds between calls
 
 ### ✅ Basketball Reference Rosters - COMPLETE
-**Purpose:** Supporting data for player name resolution  
-**Coverage:** 4 complete seasons (2021-2025)  
+**Purpose:** Supporting data for player name resolution
+**Coverage:** 4 complete seasons (2021-2025)
 **Files Collected:** 120 roster files (30 teams × 4 seasons)
 
 **Business Value:**
@@ -114,24 +114,24 @@ Successfully collected 4 seasons (2021-2025) of comprehensive NBA data across mu
 **Storage:** `gs://nba-analytics-raw-data/raw/basketball_reference/season_rosters/`
 
 ### ✅ NBA.com Schedules - COMPLETE
-**Purpose:** Game inventory and scheduling foundation  
-**Coverage:** 4 complete seasons  
+**Purpose:** Game inventory and scheduling foundation
+**Coverage:** 4 complete seasons
 **Files Collected:** 5,583 games
 
 **Usage:** Foundation data for all other collection workflows
 
 ### ✅ Big Data Ball Enhanced Play-by-Play - PARTIAL COMPLETE
-**Purpose:** Advanced play-by-play data with shot locations and defensive matchups  
-**Coverage:** 3 seasons complete (2021-2023), 2024-25 pending  
+**Purpose:** Advanced play-by-play data with shot locations and defensive matchups
+**Coverage:** 3 seasons complete (2021-2023), 2024-25 pending
 **Source:** Purchased season data downloads + Google Drive access
 
 **Data Includes:**
 - Enhanced PBP with 40+ fields per event
-- Shot locations and defensive matchups  
+- Shot locations and defensive matchups
 - ~500-800 events per game
 - Advanced analytics-ready format
 
-**Status:** 
+**Status:**
 - 2021-22, 2022-23, 2023-24: ✅ Complete (purchased and organized)
 - 2024-25: 📋 Pending Google Drive collection via Cloud Run job
 
@@ -217,7 +217,7 @@ workflows/backfill/
 
 ### Cloud Run Jobs Deployed
 - `nba-gamebook-backfill` - NBA.com game data
-- `nba-odds-api-season-backfill` - Odds API collection  
+- `nba-odds-api-season-backfill` - Odds API collection
 - `nba-bp-backfill` - BettingPros historical data
 - `nba-schedule-backfill` - Game schedules (workflow-based)
 
@@ -279,7 +279,7 @@ workflows/backfill/
 - **Big Data Ball 2024-25:** Complete enhanced play-by-play dataset via Google Drive Cloud Run job
 - **NBA.com Injury Reports:** Historical PDF collection for player availability context
 
-### 🔍 Under Evaluation  
+### 🔍 Under Evaluation
 - **Ball Don't Lie Box Scores:** Small dataset for comparison to gamebook data (low priority)
 
 ### ❌ Not Planned
@@ -289,7 +289,7 @@ workflows/backfill/
 
 ### Technical
 - **Schedule-based approach:** More reliable than date ranges for NBA data
-- **Resume logic essential:** Large backfills need restart capability  
+- **Resume logic essential:** Large backfills need restart capability
 - **Multi-source strategy:** BettingPros fills Odds API gaps effectively
 - **Validation critical:** Catches special games, data quality issues
 - **Consistent organization:** `source_datatype` naming enables easy scaling
@@ -317,13 +317,13 @@ workflows/backfill/
 ### Next Steps
 1. **Big Data Ball 2024-25:** Cloud Run job for Google Drive collection
 2. **Analytics Integration:** Connect historical data to current season workflows
-3. **Model Development:** Train prop prediction models on complete dataset  
+3. **Model Development:** Train prop prediction models on complete dataset
 4. **Real-time Integration:** Combine historical patterns with live data
 5. **Injury Reports:** Historical PDF collection for availability context
 
 ---
 
-**Document Owner:** Data Engineering Team  
-**Total Implementation Time:** 6 weeks  
-**Data Foundation Status:** Complete and production-ready  
+**Document Owner:** Data Engineering Team
+**Total Implementation Time:** 6 weeks
+**Data Foundation Status:** Complete and production-ready
 **Next Phase:** Analytics integration and model training

@@ -9,10 +9,10 @@
 --   - Cross-check team mapping (ESPN codes → NBA codes)
 -- ============================================================================
 
-WITH 
+WITH
 -- ESPN data from yesterday
 espn_yesterday AS (
-  SELECT 
+  SELECT
     game_id,
     game_date,
     home_team_abbr,
@@ -53,7 +53,7 @@ summary AS (
 
 -- Main output: Combined results with proper BigQuery syntax
 (
-  SELECT 
+  SELECT
     '🔍 ESPN BACKUP SOURCE' as check_type,
     CAST(DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY) AS STRING) as check_date,
     CAST(s.scheduled_games AS STRING) as total_scheduled,
@@ -76,13 +76,13 @@ summary AS (
   UNION ALL
 
   -- Game details (if any exist)
-  SELECT 
+  SELECT
     '📋 GAME DETAILS' as check_type,
     game_id as check_date,
     CONCAT(away_team_abbr, ' @ ', home_team_abbr) as total_scheduled,
     CONCAT(away_team_score, '-', home_team_score) as espn_collected,
     CASE WHEN is_completed THEN '✅ Complete' ELSE '⏳ In Progress' END as status,
-    CASE 
+    CASE
       WHEN home_team_espn_abbr != home_team_abbr THEN CONCAT('Mapped: ', home_team_espn_abbr, '→', home_team_abbr)
       ELSE 'No mapping'
     END as details,

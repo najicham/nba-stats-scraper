@@ -55,11 +55,11 @@ echo "3. Checking BigQuery Table..."
 if bq show --project_id="${PROJECT_ID}" nba_reference.processor_run_history &>/dev/null; then
     pass "processor_run_history table exists"
     ((TESTS_PASSED++))
-    
+
     # Check if table has data
     ROW_COUNT=$(bq query --use_legacy_sql=false --format=csv \
         "SELECT COUNT(*) FROM \`${PROJECT_ID}.nba_reference.processor_run_history\`" 2>/dev/null | tail -n1)
-    
+
     if [ "$ROW_COUNT" -gt 0 ]; then
         pass "Table has ${ROW_COUNT} execution records"
     else
@@ -137,10 +137,10 @@ echo "8. Checking for Sample Run History Data..."
 if bq show --project_id="${PROJECT_ID}" nba_reference.processor_run_history &>/dev/null; then
     GAMEBOOK_RUNS=$(bq query --use_legacy_sql=false --format=csv \
         "SELECT COUNT(*) FROM \`${PROJECT_ID}.nba_reference.processor_run_history\` WHERE processor_name = 'gamebook'" 2>/dev/null | tail -n1)
-    
+
     ROSTER_RUNS=$(bq query --use_legacy_sql=false --format=csv \
         "SELECT COUNT(*) FROM \`${PROJECT_ID}.nba_reference.processor_run_history\` WHERE processor_name = 'roster'" 2>/dev/null | tail -n1)
-    
+
     if [ "$GAMEBOOK_RUNS" -gt 0 ] || [ "$ROSTER_RUNS" -gt 0 ]; then
         pass "Found run history data (gamebook: ${GAMEBOOK_RUNS}, roster: ${ROSTER_RUNS})"
         ((TESTS_PASSED++))

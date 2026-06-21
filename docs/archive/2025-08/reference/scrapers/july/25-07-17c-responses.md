@@ -22,7 +22,7 @@ This document provides detailed analysis of response structures from all 22 NBA 
 ```json
 {
   "startDate": "2025-02-20",
-  "endDate": "2025-02-20", 
+  "endDate": "2025-02-20",
   "timestamp": "2025-07-17T14:30:00Z",
   "gameCount": 2,
   "games": [
@@ -40,7 +40,7 @@ This document provides detailed analysis of response structures from all 22 NBA 
       "home_team": {
         "id": 8,
         "conference": "West",
-        "division": "Northwest", 
+        "division": "Northwest",
         "city": "Denver",
         "name": "Nuggets",
         "full_name": "Denver Nuggets",
@@ -50,7 +50,7 @@ This document provides detailed analysis of response structures from all 22 NBA 
         "id": 4,
         "conference": "East",
         "division": "Southeast",
-        "city": "Charlotte", 
+        "city": "Charlotte",
         "name": "Hornets",
         "full_name": "Charlotte Hornets",
         "abbreviation": "CHA"
@@ -297,7 +297,7 @@ This document provides detailed analysis of response structures from all 22 NBA 
                 "point": 11.5
               },
               {
-                "name": "Under", 
+                "name": "Under",
                 "description": "Jaylen Wells",
                 "price": 1.94,
                 "point": 11.5
@@ -310,7 +310,7 @@ This document provides detailed analysis of response structures from all 22 NBA 
               },
               {
                 "name": "Under",
-                "description": "Desmond Bane", 
+                "description": "Desmond Bane",
                 "price": 1.94,
                 "point": 28.5
               }
@@ -394,7 +394,7 @@ This document provides detailed analysis of response structures from all 22 NBA 
 
 #### **Data Format Notes**
 - **Team abbreviation**: Lowercase ("bos" not "BOS")
-- **Player ID**: String format vs Ball Don't Lie integers  
+- **Player ID**: String format vs Ball Don't Lie integers
 - **Height/Weight**: Formatted strings ("6' 6\"", "223 lbs")
 - **Rich metadata**: URLs, slugs for ESPN integration
 
@@ -425,7 +425,7 @@ This document provides detailed analysis of response structures from all 22 NBA 
           "homeAway": "home"
         },
         {
-          "teamId": "10", 
+          "teamId": "10",
           "displayName": "Houston Rockets",
           "abbreviation": "HOU",
           "score": "115",
@@ -466,9 +466,9 @@ This document provides detailed analysis of response structures from all 22 NBA 
     {
       "name": "PlayerIndex",
       "headers": [
-        "PERSON_ID", "PLAYER_LAST_NAME", "PLAYER_FIRST_NAME", 
+        "PERSON_ID", "PLAYER_LAST_NAME", "PLAYER_FIRST_NAME",
         "PLAYER_SLUG", "TEAM_ID", "TEAM_SLUG", "TEAM_ABBREVIATION",
-        "JERSEY_NUMBER", "POSITION", "HEIGHT", "WEIGHT", 
+        "JERSEY_NUMBER", "POSITION", "HEIGHT", "WEIGHT",
         "COLLEGE", "COUNTRY", "DRAFT_YEAR", "DRAFT_ROUND", "DRAFT_NUMBER"
       ],
       "rowSet": [
@@ -534,7 +534,7 @@ This document provides detailed analysis of response structures from all 22 NBA 
             },
             "awayTeam": {
               "teamId": 1610612738,
-              "teamTricode": "BOS", 
+              "teamTricode": "BOS",
               "score": 107
             }
           }
@@ -571,7 +571,7 @@ This document provides detailed analysis of response structures from all 22 NBA 
   },
   {
     "date": "03/15/25",
-    "gametime": "06:00 (ET)", 
+    "gametime": "06:00 (ET)",
     "matchup": "BOS@BKN",
     "team": "Nets",
     "player": "Melton, De'Anthony",
@@ -591,7 +591,7 @@ This document provides detailed analysis of response structures from all 22 NBA 
 
 #### **Status Categories**
 - **"Out"** - Player unavailable
-- **"Questionable"** - Game-time decision  
+- **"Questionable"** - Game-time decision
 - **"Probable"** - Likely to play
 
 #### **Reason Categories**
@@ -710,13 +710,13 @@ def validate_player_prop(prop_data):
 def validate_player_match(odds_name, db_player, confidence_threshold=0.8):
     # Name similarity check
     similarity = calculate_name_similarity(odds_name, db_player.full_name)
-    
+
     # Team validation
     team_match = validate_team_context(odds_name, db_player.team_abbr)
-    
+
     # Overall confidence
     confidence = (similarity * 0.7) + (team_match * 0.3)
-    
+
     return confidence >= confidence_threshold
 ```
 
@@ -745,7 +745,7 @@ quality_metrics = {
 
 ### **Prop Betting Data Flow**
 1. **Events API** → Extract event IDs and team names
-2. **Team mapping** → Convert full names to abbreviations  
+2. **Team mapping** → Convert full names to abbreviations
 3. **Game linking** → Match events to games table
 4. **Props API** → Collect prop odds using event IDs
 5. **Player matching** → Link prop player names to player IDs
@@ -759,12 +759,12 @@ def determine_prop_availability(player_id, game_date):
     game_status = get_game_injury_status(player_id, game_date)
     if game_status in ['Out']:
         return 'unavailable'
-    
+
     # Check general injury status
     general_status = get_general_injury_status(player_id)
     if general_status in ['Out']:
         return 'questionable'
-    
+
     return 'available'
 ```
 
@@ -783,7 +783,7 @@ def determine_prop_availability(player_id, game_date):
 2. **Player cross-referencing** - Build reliable ID mapping
 3. **Game linking** - Connect games across all sources
 
-### **Phase 2: Betting Pipeline** 
+### **Phase 2: Betting Pipeline**
 1. **Events processing** - Foundation for all prop data
 2. **Props processing** - Core business value
 3. **Player matching** - Critical for prop analysis

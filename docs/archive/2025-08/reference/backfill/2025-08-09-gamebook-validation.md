@@ -23,13 +23,13 @@ This document outlines the comprehensive data validation strategy for NBA gamebo
 ## 🎯 Validation Layers
 
 ### Layer 1: Scraper Validation (Light & Fast)
-**Purpose**: Prevent obviously broken data from being stored  
-**When**: During scraping, before storing to GCS  
+**Purpose**: Prevent obviously broken data from being stored
+**When**: During scraping, before storing to GCS
 **Performance**: Must be fast (<100ms per game)
 
 ### Layer 2: Post-Scraping Validation (Comprehensive)
-**Purpose**: Thorough data quality analysis and monitoring  
-**When**: After scraping completes, via triggers or scheduled runs  
+**Purpose**: Thorough data quality analysis and monitoring
+**When**: After scraping completes, via triggers or scheduled runs
 **Performance**: Can take seconds per file for thorough analysis
 
 ---
@@ -47,22 +47,22 @@ from .validation import GamebookLightValidator
 class ScraperService:
     def __init__(self):
         self.validator = GamebookLightValidator()
-    
+
     def scrape_game(self, game_code: str) -> bool:
         try:
             # Existing scraping logic
             raw_data = self.fetch_gamebook_data(game_code)
-            
+
             # Light validation before storage
             validation_result = self.validator.validate_scraped_data(raw_data)
             if not validation_result.is_valid:
                 logger.warning(f"Validation failed for {game_code}: {validation_result.errors}")
                 return False  # Trigger retry
-            
+
             # Store if validation passes
             self.store_gamebook_data(game_code, raw_data)
             return True
-            
+
         except Exception as e:
             logger.error(f"Scraping failed for {game_code}: {e}")
             return False
@@ -73,34 +73,34 @@ class ScraperService:
 def process_gamebook_response(self, response_data: dict, game_code: str) -> dict:
     # Existing parsing logic
     parsed_data = self.parse_gamebook_data(response_data)
-    
+
     # Quick validation checks
     validation_errors = []
-    
+
     # Required fields check
     required_fields = ['game_code', 'date', 'away_team', 'home_team', 'active_players']
     for field in required_fields:
         if field not in parsed_data or not parsed_data[field]:
             validation_errors.append(f"Missing required field: {field}")
-    
+
     # Basic format validation
     if 'game_code' in parsed_data:
         if not re.match(r'\d{8}/[A-Z]{6}', parsed_data['game_code']):
             validation_errors.append(f"Invalid game_code format: {parsed_data['game_code']}")
-    
+
     # Team code validation
     valid_teams = {'ATL', 'BOS', 'BKN', 'CHA', 'CHI', 'CLE', 'DAL', 'DEN', 'DET', 'GSW',
                    'HOU', 'IND', 'LAC', 'LAL', 'MEM', 'MIA', 'MIL', 'MIN', 'NOP', 'NYK',
                    'OKC', 'ORL', 'PHI', 'PHX', 'POR', 'SAC', 'SAS', 'TOR', 'UTA', 'WAS'}
-    
+
     if parsed_data.get('away_team') not in valid_teams:
         # Check if this might be a special game
         if not self._is_likely_special_game(parsed_data):
             validation_errors.append(f"Invalid away_team: {parsed_data.get('away_team')}")
-    
+
     if validation_errors:
         raise ScrapingValidationError(f"Validation failed: {validation_errors}")
-    
+
     return parsed_data
 
 def _is_likely_special_game(self, data: dict) -> bool:
@@ -132,59 +132,59 @@ class ValidationResult:
 
 class GamebookLightValidator:
     """Fast validation for scraped data before storage"""
-    
+
     REQUIRED_FIELDS = ['game_code', 'date', 'away_team', 'home_team', 'active_players']
     VALID_TEAMS = {'ATL', 'BOS', 'BKN', 'CHA', 'CHI', 'CLE', 'DAL', 'DEN', 'DET', 'GSW',
                    'HOU', 'IND', 'LAC', 'LAL', 'MEM', 'MIA', 'MIL', 'MIN', 'NOP', 'NYK',
                    'OKC', 'ORL', 'PHI', 'PHX', 'POR', 'SAC', 'SAS', 'TOR', 'UTA', 'WAS'}
-    
+
     def validate_scraped_data(self, data: Dict[str, Any]) -> ValidationResult:
         errors = []
         warnings = []
-        
+
         # Check required fields
         for field in self.REQUIRED_FIELDS:
             if field not in data or not data[field]:
                 errors.append(f"Missing required field: {field}")
-        
+
         # Validate game_code format
         if 'game_code' in data:
             if not re.match(r'\d{8}/[A-Z]{6}', data['game_code']):
                 errors.append(f"Invalid game_code format: {data['game_code']}")
-        
+
         # Validate date format
         if 'date' in data:
             try:
                 datetime.strptime(data['date'], '%Y-%m-%d')
             except ValueError:
                 errors.append(f"Invalid date format: {data['date']}")
-        
+
         # Quick team validation (with special game allowance)
         is_special = self._is_special_game(data)
-        
+
         if 'away_team' in data and data['away_team'] not in self.VALID_TEAMS:
             if is_special:
                 warnings.append(f"Non-standard away team in special game: {data['away_team']}")
             else:
                 errors.append(f"Invalid away team: {data['away_team']}")
-        
+
         if 'home_team' in data and data['home_team'] not in self.VALID_TEAMS:
             if is_special:
                 warnings.append(f"Non-standard home team in special game: {data['home_team']}")
             else:
                 errors.append(f"Invalid home team: {data['home_team']}")
-        
+
         # Validate minimum player count
         if 'active_players' in data:
             if len(data['active_players']) < 10:
                 warnings.append(f"Low player count: {len(data['active_players'])}")
-        
+
         return ValidationResult(
             is_valid=len(errors) == 0,
             errors=errors,
             warnings=warnings
         )
-    
+
     def _is_special_game(self, data: Dict[str, Any]) -> bool:
         """Quick special game detection"""
         if 'date' in data:
@@ -218,26 +218,26 @@ The comprehensive validation script (`scripts/validate_gamebook_data.py`) provid
 ```yaml
 # Cloud Function trigger after scraping completes
 name: comprehensive-validation
-trigger: 
+trigger:
   pubsub_topic: gamebook-scraping-complete
 runtime: python39
 
 # Function code
 def validate_scraped_data(cloud_event):
     """Triggered when scraping job completes"""
-    
+
     # Get scraping job details from message
     job_data = json.loads(base64.b64decode(cloud_event.data['message']['data']))
     date_range = job_data.get('date_range', 'today')
-    
+
     # Run appropriate validation
     if date_range == 'today':
         cmd = ['python', 'scripts/validate_gamebook_data.py', '--today', '--sample-size', '50']
     elif date_range == 'season':
         cmd = ['python', 'scripts/validate_gamebook_data.py', '--this-week', '--sample-size', '200']
-    
+
     result = subprocess.run(cmd, capture_output=True, text=True)
-    
+
     # Parse results and send alerts if needed
     if result.returncode != 0:
         send_validation_alert(result.stdout, result.stderr)
@@ -254,12 +254,12 @@ steps:
     image: gcr.io/your-project/nba-validator
     command: ["python", "scripts/validate_gamebook_data.py"]
     args: ["--yesterday", "--sample-size", "100"]
-    
+
   - name: validate-this-week
-    image: gcr.io/your-project/nba-validator  
+    image: gcr.io/your-project/nba-validator
     command: ["python", "scripts/validate_gamebook_data.py"]
     args: ["--this-week", "--sample-size", "200"]
-    
+
   - name: alert-on-failure
     if: failure()
     command: ["python", "scripts/send_alert.py"]
@@ -320,9 +320,9 @@ steps:
 ```python
 def send_slack_alert(validation_stats, level="WARNING"):
     webhook_url = os.getenv('SLACK_WEBHOOK_URL')
-    
+
     color = {"INFO": "good", "WARNING": "warning", "ERROR": "danger"}[level]
-    
+
     message = {
         "attachments": [{
             "color": color,
@@ -336,7 +336,7 @@ def send_slack_alert(validation_stats, level="WARNING"):
             "text": f"Validation completed for {validation_stats.date_range}"
         }]
     }
-    
+
     requests.post(webhook_url, json=message)
 ```
 
@@ -349,10 +349,10 @@ def send_email_alert(validation_stats):
             subject="CRITICAL: NBA Data Validation Failure",
             body=f"""
             Validation failed with {validation_stats.success_rate:.1f}% success rate.
-            
+
             Errors found:
             {chr(10).join(validation_stats.errors[:10])}
-            
+
             Immediate investigation required.
             """
         )
@@ -372,7 +372,7 @@ def determine_alert_level(stats):
     if stats.success_rate < ALERT_THRESHOLDS['critical_success_rate']:
         return "ERROR"
     elif stats.success_rate < ALERT_THRESHOLDS['warning_success_rate']:
-        return "WARNING" 
+        return "WARNING"
     elif stats.schema_errors > ALERT_THRESHOLDS['max_schema_errors']:
         return "ERROR"
     else:
@@ -459,7 +459,7 @@ python scripts/validate_gamebook_data.py --season "2025-26" --show-special-games
 - **Early Detection**: Catch data issues before they affect betting models
 - **Consistency**: Standardized validation across all data sources
 
-### Operational Efficiency  
+### Operational Efficiency
 - **Automated Monitoring**: Reduce manual data quality checks
 - **Quick Recovery**: Fast identification and remediation of data issues
 - **Scalability**: Handle increasing data volumes with consistent quality

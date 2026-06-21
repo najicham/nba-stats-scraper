@@ -79,7 +79,7 @@ class ScraperPubSubPublisher:
             )
 
         logger.info(f"ScraperPubSubPublisher initialized: {self.topic_name}")
-    
+
     def publish_completion_event(
         self,
         scraper_name: str,
@@ -203,7 +203,7 @@ class ScraperPubSubPublisher:
                 logger.debug(f"Sentry capture failed (non-critical): {sentry_error}")
 
             return None
-    
+
     def publish_batch_events(self, events: list[dict]) -> dict:
         """
         Publish multiple scraper events in batch.

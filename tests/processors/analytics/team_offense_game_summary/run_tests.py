@@ -20,7 +20,7 @@ import subprocess
 def run_tests(test_type='all', coverage=False, verbose=False):
     """Run tests with specified options."""
     cmd = ['pytest']
-    
+
     # Test selection
     if test_type == 'unit':
         cmd.append('test_unit.py')
@@ -33,13 +33,13 @@ def run_tests(test_type='all', coverage=False, verbose=False):
         print("⚡ Running Quick Tests...")
     else:
         print("🚀 Running All Tests...")
-    
+
     # Options
     if verbose:
         cmd.append('-vv')
     else:
         cmd.append('-v')
-    
+
     if coverage:
         cmd.extend([
             '--cov=analytics_processors.team_offense_game_summary',
@@ -47,9 +47,9 @@ def run_tests(test_type='all', coverage=False, verbose=False):
             '--cov-report=term'
         ])
         print("📊 Coverage report will be generated")
-    
+
     cmd.extend(['--tb=short', '--color=yes'])
-    
+
     print(f"Running: {' '.join(cmd)}\n")
     result = subprocess.run(cmd)
     return result.returncode
@@ -58,15 +58,15 @@ def run_tests(test_type='all', coverage=False, verbose=False):
 def main():
     """Main entry point."""
     args = sys.argv[1:]
-    
+
     test_type = 'all'
     coverage = False
     verbose = False
-    
+
     if '-h' in args or '--help' in args:
         print(__doc__)
         return 0
-    
+
     for arg in args:
         if arg in ['unit', 'integration', 'quick']:
             test_type = arg
@@ -74,7 +74,7 @@ def main():
             coverage = True
         elif arg in ['--verbose', '-v']:
             verbose = True
-    
+
     return run_tests(test_type, coverage, verbose)
 
 

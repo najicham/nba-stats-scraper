@@ -36,15 +36,15 @@ def mock_bigquery_client():
 def mock_pubsub_publisher():
     """Mock Pub/Sub publisher for testing"""
     publisher = MagicMock()
-    
+
     # Mock topic_path method
     publisher.topic_path.return_value = 'projects/test-project/topics/test-topic'
-    
+
     # Mock publish method returns future
     mock_future = MagicMock()
     mock_future.result.return_value = 'message-id-123'
     publisher.publish.return_value = mock_future
-    
+
     return publisher
 
 
@@ -158,10 +158,10 @@ def sample_prediction_request():
 def create_mock_bigquery_row(**kwargs):
     """
     Create a mock BigQuery row object
-    
+
     Args:
         **kwargs: Field name and value pairs
-    
+
     Returns:
         Mock object with attributes matching kwargs
     """

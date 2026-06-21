@@ -43,8 +43,8 @@ If `catboost_v9_2026_02` is missing, the prediction worker may need to be trigge
 ```sql
 SELECT
   ROUND(100.0 * COUNTIF(recommendation = 'OVER') / COUNT(*), 1) as pct_over,
-  CASE 
-    WHEN ROUND(100.0 * COUNTIF(recommendation = 'OVER') / COUNT(*), 1) < 25 
+  CASE
+    WHEN ROUND(100.0 * COUNTIF(recommendation = 'OVER') / COUNT(*), 1) < 25
     THEN '⚠️ UNDER_HEAVY - Expect ~54% HR'
     ELSE '✅ BALANCED - Expect ~82% HR'
   END as signal
@@ -71,7 +71,7 @@ The pct_over signal is validated. Consider adding it to the `/top-picks` skill t
 After a few days, compare v9 vs v9_2026_02:
 
 ```sql
-SELECT 
+SELECT
   system_id,
   COUNT(*) as predictions,
   COUNTIF(ABS(predicted_points - line_value) >= 5) as high_edge,

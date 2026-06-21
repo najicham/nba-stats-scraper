@@ -36,19 +36,19 @@ class RateLimitConfig:
     """Configuration for rate limiting."""
     # Max alerts per hour per error signature
     rate_limit_per_hour: int = 5
-    
+
     # Cooldown period in minutes before resetting count
     cooldown_minutes: int = 60
-    
+
     # Send aggregated summary after this many occurrences
     aggregate_threshold: int = 3
-    
+
     # Whether rate limiting is enabled at all
     enabled: bool = True
-    
+
     # Backfill mode - more aggressive rate limiting
     backfill_mode: bool = False
-    
+
     @classmethod
     def from_env(cls) -> 'RateLimitConfig':
         """Load configuration from environment variables."""
@@ -76,16 +76,16 @@ class ErrorState:
 class AlertManager:
     """
     Manages rate-limited alerting across the system.
-    
+
     Thread-safe implementation using locks.
-    
+
     Example:
         mgr = AlertManager()
-        
+
         # Check if we should send alert
         if mgr.should_send('NbacScheduleProcessor', 'TypeError', 'missing argument'):
             send_email(...)
-        
+
         # Or let AlertManager handle sending
         mgr.send_alert(
             severity='error',
@@ -94,20 +94,20 @@ class AlertManager:
             category='NbacScheduleProcessor_TypeError'
         )
     """
-    
+
     def __init__(self, config: RateLimitConfig = None):
         """Initialize AlertManager with configuration."""
         self.config = config or RateLimitConfig.from_env()
         self._error_states: Dict[str, ErrorState] = {}
         self._lock = threading.Lock()
-        
+
         logger.info(
             f"AlertManager initialized: rate_limit={self.config.rate_limit_per_hour}/hr, "
             f"cooldown={self.config.cooldown_minutes}min, "
             f"aggregate_threshold={self.config.aggregate_threshold}, "
             f"enabled={self.config.enabled}"
         )
-    
+
     def should_send(
         self,
         processor_name: str,
@@ -116,12 +116,12 @@ class AlertManager:
     ) -> Tuple[bool, Optional[Dict[str, Any]]]:
         """
         Check if an alert should be sent based on rate limiting.
-        
+
         Args:
             processor_name: Name of the processor/component
             error_type: Type of error (e.g., TypeError, ValueError)
             message: Error message (first 100 chars used for signature)
-        
+
         Returns:
             Tuple of (should_send, metadata)
             - should_send: True if alert should be sent
@@ -129,14 +129,14 @@ class AlertManager:
         """
         if not self.config.enabled:
             return True, None
-        
+
         signature = get_error_signature(processor_name, error_type, message)
         now = datetime.now(timezone.utc)
-        
+
         with self._lock:
             # Clean up expired entries
             self._cleanup_expired(now)
-            
+
             # Get or create error state
             if signature not in self._error_states:
                 self._error_states[signature] = ErrorState(
@@ -152,11 +152,11 @@ class AlertManager:
                 state.last_alert_time = now
                 logger.debug(f"First occurrence of {signature[:16]}..., sending alert")
                 return True, None
-            
+
             state = self._error_states[signature]
             state.count += 1
             state.last_seen = now
-            
+
             # Check if we're within rate limit
             if state.alerts_sent < self.config.rate_limit_per_hour:
                 # Check if we should aggregate
@@ -175,7 +175,7 @@ class AlertManager:
                         f"sending summary (count={state.count})"
                     )
                     return True, metadata
-                
+
                 # Normal send
                 state.alerts_sent += 1
                 state.last_alert_time = now
@@ -184,10 +184,10 @@ class AlertManager:
                     f"sending alert ({state.alerts_sent}/{self.config.rate_limit_per_hour})"
                 )
                 return True, None
-            
+
             # Rate limit exceeded
             state.suppressed += 1
-            
+
             # Log periodically (every 10 suppressions)
             if state.suppressed % 10 == 0:
                 logger.warning(
@@ -195,9 +195,9 @@ class AlertManager:
                     f"suppressed {state.suppressed} alerts "
                     f"(total occurrences: {state.count})"
                 )
-            
+
             return False, None
-    
+
     def send_alert(
         self,
         severity: str,
@@ -209,7 +209,7 @@ class AlertManager:
     ) -> bool:
         """
         Send an alert with rate limiting applied.
-        
+
         Args:
             severity: 'info', 'warning', 'error', 'critical'
             title: Alert title
@@ -217,7 +217,7 @@ class AlertManager:
             category: Category for rate limiting (e.g., 'ProcessorName_ErrorType')
             context: Additional context dict
             send_fn: Optional function to call for sending (for custom channels)
-        
+
         Returns:
             True if alert was sent, False if suppressed
         """
@@ -225,12 +225,12 @@ class AlertManager:
         parts = category.split('_', 1)
         processor_name = parts[0] if parts else 'unknown'
         error_type = parts[1] if len(parts) > 1 else 'error'
-        
+
         should_send, metadata = self.should_send(processor_name, error_type, message)
-        
+
         if not should_send:
             return False
-        
+
         # Modify message if this is a summary
         if metadata and metadata.get('is_summary'):
             original_title = title
@@ -243,12 +243,12 @@ class AlertManager:
                 f"Suppressed alerts: {metadata['suppressed_count']}\n"
                 f"Further occurrences will be suppressed for {self.config.cooldown_minutes} minutes."
             )
-            
+
             if context is None:
                 context = {}
             context['aggregated'] = True
             context['occurrence_count'] = metadata['occurrence_count']
-        
+
         # If custom send function provided, use it
         if send_fn:
             try:
@@ -256,11 +256,11 @@ class AlertManager:
             except Exception as e:
                 logger.error(f"Custom send_fn failed: {e}", exc_info=True)
                 return False
-        
+
         # Log the alert (actual sending done by caller)
         logger.info(f"ALERT [{severity.upper()}] {title}: {message[:100]}...")
         return True
-    
+
     def get_stats(self) -> Dict[str, Any]:
         """Get current rate limiting statistics."""
         with self._lock:
@@ -268,7 +268,7 @@ class AlertManager:
             total_occurrences = sum(s.count for s in self._error_states.values())
             total_suppressed = sum(s.suppressed for s in self._error_states.values())
             total_sent = sum(s.alerts_sent for s in self._error_states.values())
-            
+
             return {
                 'tracked_signatures': total_tracked,
                 'total_occurrences': total_occurrences,
@@ -281,7 +281,7 @@ class AlertManager:
                     'aggregate_threshold': self.config.aggregate_threshold
                 }
             }
-    
+
     def _cleanup_expired(self, now: datetime) -> None:
         """Remove expired error states (older than cooldown period)."""
         cutoff = now - timedelta(minutes=self.config.cooldown_minutes)
@@ -289,7 +289,7 @@ class AlertManager:
             sig for sig, state in self._error_states.items()
             if state.last_seen < cutoff
         ]
-        
+
         for sig in expired:
             state = self._error_states.pop(sig)
             if state.suppressed > 0:
@@ -298,7 +298,7 @@ class AlertManager:
                     f"final stats: {state.count} occurrences, "
                     f"{state.suppressed} suppressed"
                 )
-    
+
     def reset(self) -> None:
         """Reset all rate limiting state (for testing)."""
         with self._lock:
@@ -313,7 +313,7 @@ def get_error_signature(
 ) -> str:
     """
     Generate a consistent signature for an error.
-    
+
     Uses hash of processor + error_type + first 100 chars of message.
     This groups similar errors together for rate limiting.
     """
@@ -321,35 +321,35 @@ def get_error_signature(
     processor_name = (processor_name or 'unknown').strip().lower()
     error_type = (error_type or 'error').strip().lower()
     message_prefix = (message or '')[:100].strip().lower()
-    
+
     # Create signature
     signature_input = f"{processor_name}:{error_type}:{message_prefix}"
     signature = hashlib.md5(signature_input.encode()).hexdigest()
-    
+
     return signature
 
 
 def get_alert_manager(backfill_mode: bool = False) -> AlertManager:
     """
     Get or create the singleton AlertManager instance.
-    
+
     Args:
         backfill_mode: If True, uses more aggressive rate limiting
     """
     global _alert_manager_instance
-    
+
     with _alert_manager_lock:
         if _alert_manager_instance is None:
             config = RateLimitConfig.from_env()
             config.backfill_mode = backfill_mode
-            
+
             # More aggressive limits for backfill
             if backfill_mode:
                 config.rate_limit_per_hour = max(1, config.rate_limit_per_hour // 5)
                 config.aggregate_threshold = 1  # Always aggregate immediately
-            
+
             _alert_manager_instance = AlertManager(config)
-        
+
         return _alert_manager_instance
 
 
@@ -360,12 +360,12 @@ def should_send_alert(
 ) -> bool:
     """
     Convenience function to check if an alert should be sent.
-    
+
     Args:
         processor_name: Name of the processor/component
         error_type: Type of error
         message: Error message
-    
+
     Returns:
         True if alert should be sent, False if rate limited
     """

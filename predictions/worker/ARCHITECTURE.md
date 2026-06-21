@@ -2,8 +2,8 @@
 
 `/predictions/worker/ARCHITECTURE.md`
 
-**Version**: 1.0  
-**Last Updated**: November 8, 2025  
+**Version**: 1.0
+**Last Updated**: November 8, 2025
 **Status**: Production Ready
 
 ---
@@ -177,8 +177,8 @@ Returns:
 
 **Step 4b: Load Historical Games**
 ```sql
-SELECT game_date, opponent_team_abbr, is_home, days_rest, 
-       points, opponent_def_rating_last_15, 
+SELECT game_date, opponent_team_abbr, is_home, days_rest,
+       points, opponent_def_rating_last_15,
        points_avg_last_5, points_avg_season
 FROM nba_analytics.player_game_summary
 WHERE player_lookup = 'lebron-james'
@@ -371,12 +371,12 @@ except Exception as e:
     'recommendation': 'OVER',
     'current_points_line': 25.5,
     'line_margin': 1.6,
-    
+
     # System-specific fields (Similarity only)
     'similarity_baseline': 26.8,
     'similar_games_count': 18,
     'avg_similarity_score': 82.3,
-    
+
     # Timestamps
     'created_at': '2025-11-08T10:30:00.123Z',
     'is_active': True
@@ -494,7 +494,7 @@ Timeout: 300s
 **Prediction Metrics**:
 ```sql
 -- Daily prediction counts by system
-SELECT 
+SELECT
     system_id,
     COUNT(*) as predictions,
     COUNT(DISTINCT player_lookup) as unique_players,
@@ -508,14 +508,14 @@ GROUP BY system_id
 ```sql
 -- System failure rates
 WITH predictions_per_player AS (
-    SELECT 
+    SELECT
         player_lookup,
         COUNT(DISTINCT system_id) as systems_count
     FROM nba_predictions.player_prop_predictions
     WHERE game_date = CURRENT_DATE()
     GROUP BY player_lookup
 )
-SELECT 
+SELECT
     COUNTIF(systems_count = 5) as all_systems,
     COUNTIF(systems_count = 4) as four_systems,
     COUNTIF(systems_count = 3) as three_systems,
@@ -607,5 +607,5 @@ curl -H "Authorization: Bearer $TOKEN" "${SERVICE_URL}/health"
 
 ---
 
-*Last Updated: November 8, 2025*  
+*Last Updated: November 8, 2025*
 *Version: 1.0*

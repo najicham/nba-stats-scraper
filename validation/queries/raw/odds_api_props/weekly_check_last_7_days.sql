@@ -67,11 +67,11 @@ SELECT
   CASE
     WHEN COALESCE(s.scheduled_games, 0) = 0 THEN '⚪ No games'
     WHEN COALESCE(p.games_with_props, 0) = 0 THEN '❌ Missing all'
-    WHEN COALESCE(p.games_with_props, 0) < COALESCE(s.scheduled_games, 0) THEN 
-      CONCAT('🔴 Incomplete (', 
-        CAST(COALESCE(s.scheduled_games, 0) - COALESCE(p.games_with_props, 0) AS STRING), 
+    WHEN COALESCE(p.games_with_props, 0) < COALESCE(s.scheduled_games, 0) THEN
+      CONCAT('🔴 Incomplete (',
+        CAST(COALESCE(s.scheduled_games, 0) - COALESCE(p.games_with_props, 0) AS STRING),
         ' missing)')
-    WHEN COALESCE(p.avg_players_per_game, 0) < 6.0 THEN 
+    WHEN COALESCE(p.avg_players_per_game, 0) < 6.0 THEN
       CONCAT('🟡 Low coverage (', CAST(COALESCE(p.avg_players_per_game, 0) AS STRING), ' avg)')
     ELSE '✅ Complete'
   END as status

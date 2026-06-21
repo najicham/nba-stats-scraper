@@ -76,7 +76,7 @@ else
   echo "  Max delivery attempts: 5"
   echo "  DLQ: $DLQ_TOPIC"
   echo ""
-  
+
   gcloud pubsub subscriptions create $SUB_NAME \
     --topic=$TOPIC \
     --ack-deadline=600 \
@@ -86,7 +86,7 @@ else
     --push-endpoint="$PROCESSOR_URL/process" \
     --push-auth-service-account=$PROCESSOR_SA \
     --project=$PROJECT_ID
-  
+
   echo "✅ Created subscription: $SUB_NAME"
 fi
 
@@ -96,7 +96,7 @@ echo ""
 # Uncomment if you want to route specific scrapers differently
 
 # echo "📋 Phase 3: Creating filtered subscriptions (optional)..."
-# 
+#
 # # Example: Morning operations only
 # if ! gcloud pubsub subscriptions describe nba-processors-morning-sub --project=$PROJECT_ID &>/dev/null; then
 #   gcloud pubsub subscriptions create nba-processors-morning-sub \

@@ -1,7 +1,7 @@
 # Grading Coverage Alert - Deployment Complete ✅
 
 **Deployed:** 2026-01-18 17:54 UTC
-**Revision:** nba-grading-alerts-00005-swh  
+**Revision:** nba-grading-alerts-00005-swh
 **Service:** nba-grading-alerts (Cloud Run)
 
 ---
@@ -33,7 +33,7 @@ WITH predictions AS (
 ),
 graded AS (
     SELECT COUNT(DISTINCT CONCAT(player_lookup, '|', system_id)) as graded_preds
-    FROM prediction_accuracy  
+    FROM prediction_accuracy
     WHERE game_date = '{game_date}'
 )
 SELECT
@@ -93,7 +93,7 @@ gcloud run services invoke nba-grading-alerts \
 **Check logs:**
 ```bash
 gcloud logging read \
-  'resource.labels.service_name="nba-grading-alerts" AND 
+  'resource.labels.service_name="nba-grading-alerts" AND
    jsonPayload.coverage_pct!=null' \
   --limit=5
 ```
@@ -107,7 +107,7 @@ The service now performs **6 checks** daily:
 1. **Grading Coverage** ← NEW!
    - Predictions vs graded
    - Threshold: 70%
-   
+
 2. **Grading Health**
    - Grades generated
    - Issue rate

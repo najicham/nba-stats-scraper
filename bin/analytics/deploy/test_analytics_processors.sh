@@ -14,11 +14,11 @@ echo "==================================="
 echo "📊 Phase 1: Checking raw data availability..."
 
 RAW_DATA_CHECK=$(bq query --use_legacy_sql=false --format=json --max_rows=1 "
-SELECT 
+SELECT
     COUNT(*) as nbac_gamebook_records,
     (SELECT COUNT(*) FROM \`$PROJECT_ID.nba_raw.bdl_player_boxscores\` WHERE game_date >= '2024-01-01') as bdl_records,
     (SELECT COUNT(*) FROM \`$PROJECT_ID.nba_raw.odds_api_player_points_props\` WHERE game_date >= '2024-01-01') as props_records
-FROM \`$PROJECT_ID.nba_raw.nbac_gamebook_player_stats\`  
+FROM \`$PROJECT_ID.nba_raw.nbac_gamebook_player_stats\`
 WHERE game_date >= '2024-01-01' AND player_status = 'active'
 ")
 
@@ -31,19 +31,19 @@ echo "📊 Phase 2: Testing player game summary processor..."
 
 if gcloud run jobs describe "player-game-summary-analytics-backfill" --region=$REGION >/dev/null 2>&1; then
     echo "Running dry run test..."
-    
+
     EXECUTION_OUTPUT=$(gcloud run jobs execute "player-game-summary-analytics-backfill" \
         --args=--dry-run,--start-date=2024-01-01,--end-date=2024-01-07 \
         --region=$REGION \
         --format="value(name)" \
         --quiet)
-    
+
     if [[ -n "$EXECUTION_OUTPUT" ]]; then
         echo "Execution started: $EXECUTION_OUTPUT"
-        
+
         # Wait for completion
         sleep 10
-        
+
         echo "Checking execution logs..."
         gcloud beta run jobs executions logs read "$EXECUTION_OUTPUT" --region=$REGION --limit=50
     else
@@ -62,13 +62,13 @@ SCHEMA_CHECK=$(bq ls --format=json "$PROJECT_ID:nba_analytics" 2>/dev/null | jq 
 
 if [[ "$SCHEMA_CHECK" -ge 3 ]]; then
     echo "✅ Analytics schema tables exist"
-    
+
     # Check if any data exists
     EXISTING_DATA=$(bq query --use_legacy_sql=false --format=csv --max_rows=1 "
-    SELECT COUNT(*) as record_count 
+    SELECT COUNT(*) as record_count
     FROM \`$PROJECT_ID.nba_analytics.player_game_summary\`
     " | tail -n +2)
-    
+
     echo "  Existing analytics records: $EXISTING_DATA"
 else
     echo "⚠️  Analytics schema incomplete. Run schema creation:"
@@ -100,7 +100,7 @@ echo ""
 echo "🎯 Testing Summary:"
 echo "=================="
 echo "✅ Raw data availability checked"
-echo "✅ Analytics processor dry run tested" 
+echo "✅ Analytics processor dry run tested"
 echo "✅ Schema verification completed"
 echo "✅ Travel integration tested"
 echo ""

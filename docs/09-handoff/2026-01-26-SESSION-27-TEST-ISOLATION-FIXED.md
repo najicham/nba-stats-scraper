@@ -204,28 +204,28 @@ sed -i "s|OLD_PATCH|NEW_PATCH|g" test_file.py
 def test_bigquery_write(self, mock_bq):
     # 1. Mock the BigQuery client
     mock_bq_client = Mock()
-    
+
     # 2. Mock get_table (for schema)
     mock_table = Mock()
     mock_table.schema = []
     mock_bq_client.get_table.return_value = mock_table
-    
+
     # 3. Mock load_table_from_json
     mock_load_job = Mock()
     mock_load_job.errors = None
     mock_load_job.result.return_value = None
     mock_bq_client.load_table_from_json.return_value = mock_load_job
-    
+
     # 4. Return the mocked client
     mock_bq.return_value = mock_bq_client
-    
+
     # 5. Test the method
     processor.method_that_writes_to_bigquery()
-    
+
     # 6. Verify calls
     assert mock_bq_client.get_table.called
     assert mock_bq_client.load_table_from_json.called
-    
+
     # 7. Verify data
     call_args = mock_bq_client.load_table_from_json.call_args
     record = call_args[0][0][0]

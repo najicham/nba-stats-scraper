@@ -1,5 +1,5 @@
 #!/bin/bash
-# File: bin/validation/validate_bdl_boxscore.sh  
+# File: bin/validation/validate_bdl_boxscore.sh
 # Purpose: Season-targeted validator for Ball Don't Lie boxscore data
 
 set -euo pipefail
@@ -29,7 +29,7 @@ print_header() {
 # Get recent activity from monitoring logs (for BDL boxscore backfill)
 get_recent_activity_from_logs() {
     local count="${1:-10}"
-    
+
     # Look for BDL boxscore download logs
     local recent_logs=$(gcloud logging read \
         "resource.type=cloud_run_job AND textPayload:\"✅ Downloaded\"" \
@@ -37,11 +37,11 @@ get_recent_activity_from_logs() {
         --format="value(textPayload)" \
         --project="nba-props-platform" \
         --freshness=30m 2>/dev/null | grep -E "[0-9]{4}-[0-9]{2}-[0-9]{2}" | head -$count)
-    
+
     if [[ -z "$recent_logs" ]]; then
         return 1
     fi
-    
+
     # Extract dates from logs (BDL uses YYYY-MM-DD format directly)
     local recent_dates=()
     while IFS= read -r log_line; do
@@ -53,7 +53,7 @@ get_recent_activity_from_logs() {
             fi
         fi
     done <<< "$recent_logs"
-    
+
     # Return unique dates
     printf '%s\n' "${recent_dates[@]}" | sort -u | head -$count
 }
@@ -61,15 +61,15 @@ get_recent_activity_from_logs() {
 # Fallback method using directory scanning
 get_recent_activity_dates_fallback() {
     local count="${1:-5}"
-    
+
     echo -e "Scanning for recent date directories..."
-    
+
     # Look for YYYY-MM-DD format directories
     local recent_dirs=$(timeout 60 gcloud storage ls "$BUCKET/$JSON_PATH/" 2>/dev/null | \
         grep -E "[0-9]{4}-[0-9]{2}-[0-9]{2}" | \
         sort -r | \
         head -$count)
-    
+
     if [[ -n "$recent_dirs" ]]; then
         # Extract just the date part
         while IFS= read -r dir; do
@@ -87,24 +87,24 @@ get_recent_activity_dates_fallback() {
 check_date_for_boxscores() {
     local date="$1"
     local date_path="$BUCKET/$JSON_PATH/$date/"
-    
+
     echo -e "  ${BLUE}Checking path:${NC} $date_path" >&2
-    
+
     # Check if date directory exists with timeout
     if ! timeout 30 gcloud storage ls "$date_path" >/dev/null 2>&1; then
         echo -e "    ${YELLOW}No data for $date${NC} (path: $date_path)" >&2
         return 1
     fi
-    
+
     # Get JSON files from this specific date
     local json_files=$(timeout 60 gcloud storage ls --recursive "$date_path" 2>/dev/null | grep "\.json$")
-    
+
     if [[ -n "$json_files" ]]; then
         local json_count=$(echo "$json_files" | wc -l | tr -d ' ')
         echo -e "    ${GREEN}$date${NC}: $json_count JSON files" >&2
         echo -e "    ${BLUE}JSON files found:${NC}" >&2
         echo "$json_files" | sed 's/^/      /' >&2
-        
+
         # Return ONLY the JSON files for validation (to stdout)
         echo "$json_files"
         return 0
@@ -118,7 +118,7 @@ check_date_for_boxscores() {
 validate_json_file() {
     local file_path="$1"
     local temp_file="/tmp/bdl_validate_$(date +%s)_$.json"
-    
+
     # Download file with better error reporting
     echo -e "    ${BLUE}Downloading:${NC} $file_path"
     if ! gcloud storage cp "$file_path" "$temp_file" >/dev/null 2>&1; then
@@ -126,7 +126,7 @@ validate_json_file() {
         echo -e "    ${RED}   Failed path: $file_path${NC}"
         return 1
     fi
-    
+
     # Check file size
     local file_size=$(stat -f%z "$temp_file" 2>/dev/null || stat -c%s "$temp_file" 2>/dev/null || echo "0")
     if [[ $file_size -eq 0 ]]; then
@@ -134,7 +134,7 @@ validate_json_file() {
         rm -f "$temp_file"
         return 1
     fi
-    
+
     # Validate JSON structure
     if ! jq empty "$temp_file" 2>/dev/null; then
         echo -e "    ${RED}❌ Invalid JSON format${NC}"
@@ -142,7 +142,7 @@ validate_json_file() {
         rm -f "$temp_file"
         return 1
     fi
-    
+
     # BDL-specific data analysis
     local analysis=$(jq -r '
         {
@@ -158,19 +158,19 @@ validate_json_file() {
             sample_minutes: ((.boxScores // [])[0].min // "0:00")
         }
     ' "$temp_file" 2>/dev/null)
-    
+
     if [[ -z "$analysis" ]]; then
         echo -e "    ${RED}❌ Failed to analyze JSON structure${NC}"
         echo -e "    ${RED}   File may be corrupted or have unexpected format${NC}"
-        
+
         # Show first few lines for debugging
         echo -e "    ${YELLOW}First 3 lines of file:${NC}"
         head -3 "$temp_file" | sed 's/^/      /'
-        
+
         rm -f "$temp_file"
         return 1
     fi
-    
+
     # Extract values safely
     local date=$(echo "$analysis" | jq -r '.date // "Unknown"')
     local timestamp=$(echo "$analysis" | jq -r '.timestamp // "Unknown"')
@@ -182,63 +182,63 @@ validate_json_file() {
     local sample_game_id=$(echo "$analysis" | jq -r '.sample_game_id // 0')
     local sample_points=$(echo "$analysis" | jq -r '.sample_points // 0')
     local sample_minutes=$(echo "$analysis" | jq -r '.sample_minutes // "0:00"')
-    
+
     # Quality assessment for BDL boxscore data
     local quality_score=0
     local quality_notes=()
-    
+
     # Basic structure validation
     if [[ "$has_box_scores" == "true" && $box_scores_count -gt 0 ]]; then
         quality_score=$((quality_score + 25))
     else
         quality_notes+=("No box score data")
     fi
-    
+
     # Row count consistency
     if [[ $row_count -eq $box_scores_count && $row_count -gt 0 ]]; then
         quality_score=$((quality_score + 25))
     else
         quality_notes+=("Row count mismatch: declared $row_count, actual $box_scores_count")
     fi
-    
+
     # Date validation
     if [[ "$date" != "Unknown" && "$date" != "null" && -n "$date" ]]; then
         quality_score=$((quality_score + 20))
     else
         quality_notes+=("Missing/invalid date")
     fi
-    
+
     # Sample data validation
     if [[ "$sample_player" != "None" && "$sample_player" != " " && -n "$sample_player" ]]; then
         quality_score=$((quality_score + 15))
     else
         quality_notes+=("No player names found")
     fi
-    
+
     # Game ID validation
     if [[ $sample_game_id -gt 0 ]]; then
         quality_score=$((quality_score + 15))
     else
         quality_notes+=("Invalid game IDs")
     fi
-    
+
     # Display results with color coding
     local quality_color=$GREEN
     [[ $quality_score -lt 75 ]] && quality_color=$YELLOW
     [[ $quality_score -lt 50 ]] && quality_color=$RED
-    
+
     echo -e "    ${GREEN}✅ Valid BDL Boxscore JSON${NC} - ${file_size}B"
     echo -e "    📅 Date: $date | ⏰ Timestamp: $(echo $timestamp | cut -d'T' -f1)"
     echo -e "    📊 Box Scores: $box_scores_count records (declared: $row_count)"
     echo -e "    👤 Sample Player: ${sample_player} (${sample_team})"
     echo -e "    🏀 Sample Stats: ${sample_points} pts, ${sample_minutes} min (Game ID: $sample_game_id)"
     echo -e "    📈 Quality: ${quality_color}$quality_score/100${NC}"
-    
+
     # Show quality notes if any
     if [[ ${#quality_notes[@]} -gt 0 ]]; then
         echo -e "    ⚠️  Notes: ${quality_notes[*]}"
     fi
-    
+
     # Show additional stats if available
     local stats_summary=$(jq -r '
         if (.boxScores // []) | length > 0 then
@@ -252,16 +252,16 @@ validate_json_file() {
             null
         end
     ' "$temp_file" 2>/dev/null)
-    
+
     if [[ -n "$stats_summary" && "$stats_summary" != "null" ]]; then
         local avg_points=$(echo "$stats_summary" | jq -r '.avg_points // 0')
         local max_points=$(echo "$stats_summary" | jq -r '.max_points // 0')
         local total_games=$(echo "$stats_summary" | jq -r '.total_games // 0')
         local total_teams=$(echo "$stats_summary" | jq -r '.total_teams // 0')
-        
+
         echo -e "    📊 Stats: Avg ${avg_points} pts, Max ${max_points} pts, ${total_games} games, ${total_teams} teams"
     fi
-    
+
     rm -f "$temp_file"
     return 0
 }
@@ -269,25 +269,25 @@ validate_json_file() {
 # Helper function to validate a list of sample files
 validate_sample_files() {
     local files=("$@")
-    
+
     echo -e "${BLUE}📊 Validating ${#files[@]} sample files:${NC}"
     echo ""
-    
+
     local valid_files=0
     local file_num=0
-    
+
     for file_path in "${files[@]}"; do
         file_num=$((file_num + 1))
-        
+
         echo -e "${CYAN}[$file_num/${#files[@]}]${NC} $(basename "$(dirname "$file_path")")/$(basename "$file_path")"
         echo -e "  ${BLUE}Full path:${NC} $file_path"
-        
+
         if validate_json_file "$file_path"; then
             valid_files=$((valid_files + 1))
         fi
         echo ""
     done
-    
+
     # Summary
     echo -e "${CYAN}📋 Validation Summary:${NC}"
     echo -e "  Files validated: ${#files[@]}"
@@ -298,18 +298,18 @@ validate_sample_files() {
 # Validate a sample of files from specific dates
 validate_date_sample() {
     local dates=("$@")
-    
+
     echo -e "${BLUE}🔍 Validating sample files from selected dates:${NC}"
     echo ""
-    
+
     local total_files=0
     local valid_files=0
     local sample_files=()
-    
+
     # Collect files from each date
     for date in "${dates[@]}"; do
         echo -e "${CYAN}Checking $date:${NC}"
-        
+
         # Call check_date_for_boxscores and capture output
         local date_files
         if date_files=$(check_date_for_boxscores "$date"); then
@@ -325,13 +325,13 @@ validate_date_sample() {
         fi
         echo ""
     done
-    
+
     # Validate the collected sample files
     if [[ ${#sample_files[@]} -gt 0 ]]; then
         validate_sample_files "${sample_files[@]}"
     else
         echo -e "${YELLOW}No files found in the specified dates${NC}"
-        
+
         # Show which dates were checked for debugging
         echo -e "${BLUE}Dates checked:${NC}"
         for date in "${dates[@]}"; do
@@ -343,21 +343,21 @@ validate_date_sample() {
 # Recent activity command - uses monitoring logs
 cmd_recent_activity() {
     local count="${1:-5}"
-    
+
     print_header
     echo -e "${BLUE}📅 Recent Activity Validation (from BDL backfill logs):${NC}"
     echo ""
-    
+
     # Get recent activity from logs
     echo -e "Getting recent activity from BDL backfill logs..."
     local recent_activities
     recent_activities=$(get_recent_activity_from_logs "$count")
-    
+
     if [[ -n "$recent_activities" ]]; then
         echo -e "${GREEN}Found recent activity from backfill logs:${NC}"
         echo "$recent_activities" | sed 's/^/  /'
         echo ""
-        
+
         # Convert to array for validation
         local dates_array=()
         while IFS= read -r date; do
@@ -365,7 +365,7 @@ cmd_recent_activity() {
                 dates_array+=("$date")
             fi
         done <<< "$recent_activities"
-        
+
         if [[ ${#dates_array[@]} -gt 0 ]]; then
             validate_date_sample "${dates_array[@]}"
         else
@@ -374,12 +374,12 @@ cmd_recent_activity() {
     else
         echo -e "${YELLOW}No recent activity found in logs, trying fallback method...${NC}"
         echo ""
-        
+
         # Fallback to date-based checking
         echo -e "Scanning recent date directories..."
         local recent_dates
         recent_dates=$(get_recent_activity_dates_fallback "$count")
-        
+
         if [[ -n "$recent_dates" ]]; then
             local dates_array=()
             while IFS= read -r date; do
@@ -387,7 +387,7 @@ cmd_recent_activity() {
                     dates_array+=("$date")
                 fi
             done <<< "$recent_dates"
-            
+
             if [[ ${#dates_array[@]} -gt 0 ]]; then
                 echo -e "${GREEN}Found recent dates:${NC}"
                 printf '  %s\n' "${dates_array[@]}"
@@ -405,7 +405,7 @@ cmd_recent_activity() {
 # Custom date validation
 cmd_custom_dates() {
     local dates=("$@")
-    
+
     if [[ ${#dates[@]} -eq 0 ]]; then
         echo "Usage: $0 dates YYYY-MM-DD [YYYY-MM-DD ...]"
         echo ""
@@ -414,10 +414,10 @@ cmd_custom_dates() {
         echo "  $0 dates 2024-01-01"
         return 1
     fi
-    
+
     print_header
     echo -e "${BLUE}🗓️ Custom Date Validation:${NC}"
-    
+
     # Validate date format
     local validated_dates=()
     for date in "${dates[@]}"; do
@@ -429,7 +429,7 @@ cmd_custom_dates() {
             return 1
         fi
     done
-    
+
     echo ""
     validate_date_sample "${validated_dates[@]}"
 }
@@ -439,7 +439,7 @@ cmd_test() {
     print_header
     echo -e "${BLUE}🧪 Simple Test Mode (BDL Boxscores):${NC}"
     echo ""
-    
+
     # Test basic GCS access
     echo -e "1. Testing basic GCS access..."
     if gcloud storage ls "$BUCKET/$JSON_PATH/" >/dev/null 2>&1; then
@@ -448,31 +448,31 @@ cmd_test() {
         echo -e "   ${RED}❌ Cannot access $BUCKET/$JSON_PATH/${NC}"
         return 1
     fi
-    
+
     # Get a few recent date directories
     echo -e "2. Finding recent date directories..."
     local recent_dirs=$(gcloud storage ls "$BUCKET/$JSON_PATH/" 2>/dev/null | \
         grep -E "[0-9]{4}-[0-9]{2}-[0-9]{2}" | sort -r | head -3)
-    
+
     if [[ -n "$recent_dirs" ]]; then
         echo -e "   ${GREEN}✅ Found recent directories:${NC}"
         echo "$recent_dirs" | sed 's/^/     /'
-        
+
         # Test one directory
         local test_date=$(echo "$recent_dirs" | head -1 | xargs basename)
         echo -e "3. Testing directory: $test_date"
-        
+
         local test_path="$BUCKET/$JSON_PATH/$test_date/"
         local files=$(timeout 30 gcloud storage ls --recursive "$test_path" 2>/dev/null | grep "\.json$" | head -2)
-        
+
         if [[ -n "$files" ]]; then
             echo -e "   ${GREEN}✅ Found JSON files in $test_date:${NC}"
             echo "$files" | sed 's/^/     /'
-            
+
             # Test one JSON file
             local test_file=$(echo "$files" | head -1)
             echo -e "4. Testing JSON file download and validation..."
-            
+
             if validate_json_file "$test_file"; then
                 echo -e "   ${GREEN}✅ File validation passed${NC}"
             else
@@ -484,7 +484,7 @@ cmd_test() {
     else
         echo -e "   ${RED}❌ No date directories found${NC}"
     fi
-    
+
     echo ""
     echo -e "${CYAN}Test complete!${NC}"
 }

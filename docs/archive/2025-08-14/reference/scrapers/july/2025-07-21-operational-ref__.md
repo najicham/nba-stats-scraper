@@ -4,7 +4,7 @@
 
 This is the **daily operational reference** for NBA data scrapers. Use this document for:
 - **Deployment**: Class names and file locations
-- **Debugging**: Parameter requirements and output paths  
+- **Debugging**: Parameter requirements and output paths
 - **Monitoring**: Schedules and dependencies
 - **Troubleshooting**: API limits and common issues
 
@@ -23,7 +23,7 @@ gs://nba-scraped-data/
 ├── ball-dont-lie/           # Ball Don't Lie API data
 ├── odds-api/                # Odds API data (business critical)
 ├── espn/                    # ESPN data
-├── nba-com/                 # NBA.com data  
+├── nba-com/                 # NBA.com data
 └── big-data-ball/           # Enhanced analytics data
 ```
 
@@ -49,19 +49,19 @@ Scrapers are organized by **business function** and **timing requirements** rath
 
 #### **Scrapers**
 - `GetNbaComPlayerList` ⭐ **Primary source**
-- `GetNbaComPlayerMovement` - Transaction context  
+- `GetNbaComPlayerMovement` - Transaction context
 - `BdlActivePlayersScraper` ⭐ **Third-party validation** (5-6 API requests, aggregated output)
 - `GetEspnTeamRosterAPI` - Trade validation
 
 #### **Dependencies**: None (runs first)
-#### **Processing Notes**: 
+#### **Processing Notes**:
 - **Upcoming games**: Use real-time scraped data for current team assignments
 - **Historical analysis**: Use game boxscores to determine player's team during specific games
 
 ---
 
 ### **Category: Live Prop Markets**
-- **Timing**: **Upcoming**  
+- **Timing**: **Upcoming**
 - **Purpose**: Current betting lines for today's games
 - **Priority**: **🔴 CORE BUSINESS** - Primary revenue source
 - **Business Need**: Collect player prop odds for points betting
@@ -70,7 +70,7 @@ Scrapers are organized by **business function** and **timing requirements** rath
 - `GetOddsApiEvents` ⭐ **Must run first**
 - `GetOddsApiCurrentEventOdds` ⭐ **Core business data**
 
-#### **Dependencies**: 
+#### **Dependencies**:
 - **CRITICAL**: Events must run before Props (provides event IDs)
 - **REQUIRES**: Player Intelligence (for team assignments)
 
@@ -95,7 +95,7 @@ Scrapers are organized by **business function** and **timing requirements** rath
 
 ### **Category: Game Scheduling**
 - **Timing**: **Upcoming** (+ backfill capability via date parameters)
-- **Purpose**: When games happen, detect postponements and time changes  
+- **Purpose**: When games happen, detect postponements and time changes
 - **Priority**: **🟡 HIGH** - Timing affects all downstream processing
 - **Business Need**: Know when to collect props, when games start
 
@@ -209,7 +209,7 @@ Scrapers are organized by **business function** and **timing requirements** rath
 - **File**: `scrapers/balldontlie/bdl_player_box_scores.py`
 - **Class**: `BdlPlayerBoxScoresScraper`
 - **Parameters**: `start_date`, `end_date` OR `game_id`
-- **Output Path**: 
+- **Output Path**:
   - By date: `/ball-dont-lie/player-box-scores/{date}/{timestamp}.json`
   - By game: `/ball-dont-lie/player-box-scores/{date}/game_{id}/{timestamp}.json`
 - **Schedule**: Daily at 9 PM ET (after games complete)
@@ -559,7 +559,7 @@ alert_on_failure: true
 
 ### **Critical Alerts (Business Stopping)**
 - `GetOddsApiEvents` failure
-- `GetOddsApiCurrentEventOdds` failure  
+- `GetOddsApiCurrentEventOdds` failure
 - `GetNbaComPlayerList` failure during trade season
 - Any scraper failure rate >10% in 24 hours
 
@@ -629,7 +629,7 @@ alert_on_failure: true
 ```
 scrapers/
 ├── balldontlie/          # Ball Don't Lie scrapers
-├── oddsapi/              # Odds API scrapers  
+├── oddsapi/              # Odds API scrapers
 ├── espn/                 # ESPN scrapers
 ├── nbacom/               # NBA.com scrapers
 ├── bigdataball/          # Big Data Ball integration
@@ -642,7 +642,7 @@ gs://nba-scraped-data/
 ├── ball-dont-lie/        # BDL data
 ├── odds-api/             # Odds API data (business critical)
 ├── espn/                 # ESPN data
-├── nba-com/              # NBA.com data  
+├── nba-com/              # NBA.com data
 └── big-data-ball/        # Enhanced analytics data
 ```
 

@@ -146,7 +146,7 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
     def set_additional_opts(self) -> None:
         """Fill season-wide defaults for optional opts (FIXED: handle None values)."""
         super().set_additional_opts()  # Base class handles game_date → date conversion
-        
+
         # ── season‑wide defaults (FIXED: handle None values) ──────────────────────────────
         if not self.opts.get("sport"):
             self.opts["sport"] = "basketball_nba"
@@ -172,7 +172,7 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
         )
         if not api_key:
             error_msg = "Missing api_key and env var ODDS_API_KEY not set."
-            
+
             # Send critical notification - API key missing prevents all scraping
             try:
                 notify_error(
@@ -188,7 +188,7 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise DownloadDataException(error_msg)
 
         base = self._API_ROOT_TMPL.format(
@@ -220,7 +220,7 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
         """
         if self.raw_response.status_code in (200, 204):
             return
-        
+
         # Non-success status code - send error notification
         status_code = self.raw_response.status_code
         try:
@@ -240,7 +240,7 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
             )
         except Exception as notify_ex:
             logger.warning(f"Failed to send notification: {notify_ex}")
-        
+
         super().check_download_status()
 
     # ------------------------------------------------------------------ #
@@ -252,7 +252,7 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
         """
         if isinstance(self.decoded_data, dict) and "message" in self.decoded_data:
             error_msg = self.decoded_data['message']
-            
+
             # API returned an error message
             try:
                 notify_error(
@@ -269,7 +269,7 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise DownloadDataException(f"API error: {error_msg}")
 
         if not isinstance(self.decoded_data, (dict, list)):
@@ -290,7 +290,7 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise DownloadDataException("Expected dict or list for odds payload.")
 
     # ------------------------------------------------------------------ #
@@ -355,7 +355,7 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
             # Session 401: CLV tracking — 'opening' (morning) or 'closing' (evening)
             "snapshot_type": self.opts.get("snapshot_type") or "opening",
         }
-        
+
         # Check for no props available (might be expected but worth tracking)
         if row_count == 0:
             try:
@@ -397,7 +397,7 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-        
+
         logger.info(
             "Fetched %d bookmaker-market rows for event %s",
             row_count,
@@ -407,56 +407,56 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
     def _extract_teams_suffix(self, event_data: Dict[str, Any]) -> str:
         """
         Extract team information from current event odds data and build teams suffix.
-        
+
         The current event odds endpoint returns event data including team names.
         We use this to build the teams suffix for enhanced GCS paths.
-        
+
         Args:
             event_data: Event data from API response
-            
+
         Returns:
             Teams suffix (e.g., "LALDET") or empty string if teams not found
         """
         # Check if teams suffix was provided directly (from job/external source)
         if self.opts.get("teams"):
             return self.opts["teams"]
-        
+
         try:
             # The current event odds API response includes team information
             # Look for team names in various possible field names
-            away_team = (event_data.get("away_team") or 
+            away_team = (event_data.get("away_team") or
                         event_data.get("awayTeam") or
                         event_data.get("away") or
                         event_data.get("visitor_team", ""))
-                        
-            home_team = (event_data.get("home_team") or 
+
+            home_team = (event_data.get("home_team") or
                         event_data.get("homeTeam") or
                         event_data.get("home", ""))
-            
+
             # Some APIs nest team info under team objects
             if not away_team or not home_team:
                 away_team_obj = event_data.get("away_team_obj", {}) or event_data.get("awayTeam_obj", {})
                 home_team_obj = event_data.get("home_team_obj", {}) or event_data.get("homeTeam_obj", {})
-                
+
                 if away_team_obj:
                     away_team = away_team_obj.get("name", away_team_obj.get("title", ""))
                 if home_team_obj:
                     home_team = home_team_obj.get("name", home_team_obj.get("title", ""))
-            
+
             if away_team and home_team:
                 # Build teams suffix using the utility
                 teams_suffix = build_event_teams_suffix({
                     "away_team": away_team,
                     "home_team": home_team
                 })
-                logger.debug("Extracted teams from current API response: %s @ %s -> %s", 
+                logger.debug("Extracted teams from current API response: %s @ %s -> %s",
                            away_team, home_team, teams_suffix)
                 return teams_suffix
             else:
                 logger.warning("Could not extract team information from current event odds data")
                 logger.debug("Event data keys: %s", list(event_data.keys()) if event_data else [])
                 return ""
-                
+
         except Exception as e:
             logger.warning("Error extracting teams suffix: %s", e)
             return ""

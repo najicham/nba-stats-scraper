@@ -8,34 +8,34 @@ CREATE TABLE IF NOT EXISTS `nba_raw.odds_api_game_lines` (
   snapshot_timestamp TIMESTAMP NOT NULL,
   previous_snapshot_timestamp TIMESTAMP,
   next_snapshot_timestamp TIMESTAMP,
-  
-  -- Game identifiers  
+
+  -- Game identifiers
   game_id STRING NOT NULL,
   sport_key STRING NOT NULL,
   sport_title STRING NOT NULL,
   commence_time TIMESTAMP NOT NULL,
   game_date DATE NOT NULL,
-  
+
   -- Teams
   home_team STRING NOT NULL,
   away_team STRING NOT NULL,
   home_team_abbr STRING,
   away_team_abbr STRING,
-  
+
   -- Bookmaker info
   bookmaker_key STRING NOT NULL,
   bookmaker_title STRING NOT NULL,
   bookmaker_last_update TIMESTAMP NOT NULL,
-  
+
   -- Market info
   market_key STRING NOT NULL,  -- 'spreads' or 'totals'
   market_last_update TIMESTAMP NOT NULL,
-  
+
   -- Outcome info
   outcome_name STRING NOT NULL,  -- Team name or 'Over'/'Under'
   outcome_price FLOAT64 NOT NULL,  -- Decimal odds
   outcome_point FLOAT64,  -- Spread value or total value
-  
+
   -- Processing metadata
   source_file_path STRING NOT NULL,
   data_source STRING,  -- 'current' | 'historical' | 'backfill' | 'manual' | NULL (legacy)
@@ -63,19 +63,19 @@ CREATE OR REPLACE VIEW `nba_raw.odds_api_game_lines_latest_by_game` AS
 WITH ranked_snapshots AS (
   SELECT *,
     ROW_NUMBER() OVER (
-      PARTITION BY game_id, bookmaker_key, market_key, outcome_name 
+      PARTITION BY game_id, bookmaker_key, market_key, outcome_name
       ORDER BY snapshot_timestamp DESC
     ) as rn
   FROM `nba_raw.odds_api_game_lines`
   WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
 )
 SELECT * EXCEPT(rn)
-FROM ranked_snapshots 
+FROM ranked_snapshots
 WHERE rn = 1;
 
 -- View for data source analysis
 CREATE OR REPLACE VIEW `nba_raw.odds_api_game_lines_source_stats` AS
-SELECT 
+SELECT
   game_date,
   data_source,
   COUNT(*) as row_count,

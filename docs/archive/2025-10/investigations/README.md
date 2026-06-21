@@ -16,8 +16,8 @@ Format: `YYYY-MM-DD-problem-description.md`
 ```markdown
 # [Problem Description]
 
-**Date:** YYYY-MM-DD  
-**Status:** [Investigating | Resolved | Ongoing]  
+**Date:** YYYY-MM-DD
+**Status:** [Investigating | Resolved | Ongoing]
 **Affected Components:** [service names]
 
 ## Symptoms

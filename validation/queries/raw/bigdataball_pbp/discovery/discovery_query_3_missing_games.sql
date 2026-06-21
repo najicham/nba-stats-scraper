@@ -19,7 +19,7 @@ actual_data_dates AS (
   FROM `nba-props-platform.nba_raw.bigdataball_play_by_play`
   WHERE game_date BETWEEN '2024-10-22' AND '2025-06-22'  -- Match schedule range
 )
-SELECT 
+SELECT
   g.game_date,
   FORMAT_DATE('%A', g.game_date) as day_of_week,
   '❌ MISSING FROM PLAY-BY-PLAY' as status

@@ -51,13 +51,13 @@ if [[ -n "$SLACK_WEBHOOK_URL" ]]; then
     echo -e "${GREEN}✅ Adding Slack alerting configuration...${NC}"
     ENV_VARS="$ENV_VARS,SLACK_ALERTS_ENABLED=true"
     ENV_VARS="$ENV_VARS,SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL}"
-    
+
     # Add level-specific webhooks if configured
     [[ -n "$SLACK_WEBHOOK_URL_ERROR" ]] && ENV_VARS="$ENV_VARS,SLACK_WEBHOOK_URL_ERROR=${SLACK_WEBHOOK_URL_ERROR}"
     [[ -n "$SLACK_WEBHOOK_URL_CRITICAL" ]] && ENV_VARS="$ENV_VARS,SLACK_WEBHOOK_URL_CRITICAL=${SLACK_WEBHOOK_URL_CRITICAL}"
     [[ -n "$SLACK_WEBHOOK_URL_WARNING" ]] && ENV_VARS="$ENV_VARS,SLACK_WEBHOOK_URL_WARNING=${SLACK_WEBHOOK_URL_WARNING}"
     [[ -n "$SLACK_WEBHOOK_URL_INFO" ]] && ENV_VARS="$ENV_VARS,SLACK_WEBHOOK_URL_INFO=${SLACK_WEBHOOK_URL_INFO}"
-    
+
     SLACK_STATUS="ENABLED"
 else
     echo -e "${YELLOW}⚠️  Slack configuration missing - Slack alerting will be disabled${NC}"
@@ -67,7 +67,7 @@ fi
 # Add email configuration if available
 if [[ -n "$BREVO_SMTP_PASSWORD" && -n "$EMAIL_ALERTS_TO" ]]; then
     echo -e "${GREEN}✅ Adding email alerting configuration...${NC}"
-    
+
     ENV_VARS="$ENV_VARS,BREVO_SMTP_HOST=${BREVO_SMTP_HOST:-smtp-relay.brevo.com}"
     ENV_VARS="$ENV_VARS,BREVO_SMTP_PORT=${BREVO_SMTP_PORT:-587}"
     ENV_VARS="$ENV_VARS,BREVO_SMTP_USERNAME=${BREVO_SMTP_USERNAME}"
@@ -77,12 +77,12 @@ if [[ -n "$BREVO_SMTP_PASSWORD" && -n "$EMAIL_ALERTS_TO" ]]; then
     ENV_VARS="$ENV_VARS,EMAIL_ALERTS_ENABLED=true"
     ENV_VARS="$ENV_VARS,EMAIL_ALERTS_TO=${EMAIL_ALERTS_TO}"
     ENV_VARS="$ENV_VARS,EMAIL_CRITICAL_TO=${EMAIL_CRITICAL_TO:-$EMAIL_ALERTS_TO}"
-    
+
     # Alert thresholds
     ENV_VARS="$ENV_VARS,EMAIL_ALERT_UNRESOLVED_COUNT_THRESHOLD=${EMAIL_ALERT_UNRESOLVED_COUNT_THRESHOLD:-50}"
     ENV_VARS="$ENV_VARS,EMAIL_ALERT_SUCCESS_RATE_THRESHOLD=${EMAIL_ALERT_SUCCESS_RATE_THRESHOLD:-90.0}"
     ENV_VARS="$ENV_VARS,EMAIL_ALERT_MAX_PROCESSING_TIME=${EMAIL_ALERT_MAX_PROCESSING_TIME:-30}"
-    
+
     EMAIL_STATUS="ENABLED"
 else
     echo -e "${YELLOW}⚠️  Email configuration missing - email alerting will be disabled${NC}"
@@ -135,7 +135,7 @@ JOB_EXISTS=$(gcloud run jobs describe "${SERVICE_NAME}" \
 
 if [ "${JOB_EXISTS}" = "yes" ]; then
     echo -e "${BLUE}Updating existing Cloud Run job...${NC}"
-    
+
     gcloud run jobs update "${SERVICE_NAME}" \
         --image="${IMAGE_NAME}" \
         --region="${REGION}" \
@@ -148,7 +148,7 @@ if [ "${JOB_EXISTS}" = "yes" ]; then
         --labels="component=monitoring,type=freshness-check"
 else
     echo -e "${BLUE}Creating new Cloud Run job...${NC}"
-    
+
     gcloud run jobs create "${SERVICE_NAME}" \
         --image="${IMAGE_NAME}" \
         --region="${REGION}" \
@@ -240,16 +240,16 @@ EXECUTION_NAME=$(gcloud run jobs execute "${SERVICE_NAME}" \
 
 if [ -n "${EXECUTION_NAME}" ]; then
     echo -e "${GREEN}✅ Test execution started: ${EXECUTION_NAME}${NC}"
-    
+
     # Wait a few seconds for logs
     sleep 5
-    
+
     # Check execution status
     EXECUTION_STATUS=$(gcloud run jobs executions describe "${EXECUTION_NAME}" \
         --region="${REGION}" \
         --project="${GCP_PROJECT_ID}" \
         --format='value(status.conditions[0].status)' 2>/dev/null || echo "Unknown")
-    
+
     if [ "${EXECUTION_STATUS}" = "True" ]; then
         echo -e "${GREEN}✅ Test execution completed successfully${NC}"
     else

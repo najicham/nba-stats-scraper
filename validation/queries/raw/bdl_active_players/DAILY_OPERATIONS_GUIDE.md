@@ -200,7 +200,7 @@ cd ~/code/nba-stats-scraper
    ```bash
    # Check last scraper run
    gsutil ls -l gs://nba-props-platform-raw-data/ball_dont_lie/active_players/ | tail -10
-   
+
    # Check scraper logs
    gcloud logging read "resource.type=cloud_function AND resource.labels.function_name=bdl-active-players-scraper" --limit 50 --format json
    ```
@@ -268,7 +268,7 @@ cd ~/code/nba-stats-scraper
 1. Identify duplicates:
    ```bash
    bq query --use_legacy_sql=false "
-   SELECT 
+   SELECT
      player_lookup,
      COUNT(*) as dup_count,
      STRING_AGG(player_full_name) as names,
@@ -377,7 +377,7 @@ RESULT=$(cd ~/code/nba-stats-scraper && ./scripts/validate-bdl-active-players da
 if echo "$RESULT" | grep -q "🔴 CRITICAL"; then
     # Send email alert
     echo "$RESULT" | mail -s "🔴 BDL Validation CRITICAL" ops-team@yourcompany.com
-    
+
     # Or Slack webhook
     curl -X POST -H 'Content-type: application/json' \
         --data "{\"text\":\"🔴 BDL Active Players Validation CRITICAL\n\`\`\`$RESULT\`\`\`\"}" \
@@ -422,7 +422,7 @@ from google.cloud import bigquery
 
 def validate_bdl_active_players(request):
     """Cloud Function to run BDL validation and send alerts."""
-    
+
     # Run validation
     result = subprocess.run(
         ['./scripts/validate-bdl-active-players', 'daily'],
@@ -430,9 +430,9 @@ def validate_bdl_active_players(request):
         capture_output=True,
         text=True
     )
-    
+
     output = result.stdout
-    
+
     # Check for critical alerts
     if '🔴 CRITICAL' in output:
         # Send Slack alert
@@ -441,7 +441,7 @@ def validate_bdl_active_players(request):
             requests.post(slack_webhook, json={
                 'text': f'🔴 BDL Active Players Validation CRITICAL\n```{output}```'
             })
-        
+
         # Log to BigQuery
         client = bigquery.Client()
         table_id = 'nba-props-platform.nba_processing.validation_alerts'
@@ -452,7 +452,7 @@ def validate_bdl_active_players(request):
             'details': output
         }]
         client.insert_rows_json(table_id, rows)
-    
+
     return {'status': 'success', 'output': output}
 ```
 
@@ -468,11 +468,11 @@ def validate_bdl_active_players(request):
 
 def load_data(self, rows: List[Dict], **kwargs) -> Dict:
     # ... existing code ...
-    
+
     # After successful load, run validation
     if not errors:
         self._run_validation_checks()
-    
+
     return {'rows_processed': len(rows), 'errors': errors}
 
 def _run_validation_checks(self):
@@ -480,7 +480,7 @@ def _run_validation_checks(self):
     try:
         # Run daily check query
         query = """
-        SELECT 
+        SELECT
             COUNT(*) as total_players,
             COUNT(DISTINCT team_abbr) as total_teams,
             COUNT(CASE WHEN has_validation_issues = FALSE THEN 1 END) as validated,
@@ -489,7 +489,7 @@ def _run_validation_checks(self):
         """
         result = self.bq_client.query(query).result()
         row = next(result)
-        
+
         # Check critical conditions
         if row.total_teams != 30:
             notify_error(
@@ -497,14 +497,14 @@ def _run_validation_checks(self):
                 message=f"Only {row.total_teams} of 30 teams found",
                 details={'total_players': row.total_players}
             )
-        
+
         if row.total_players < 500:
             notify_warning(
                 title="Low Player Count",
                 message=f"Only {row.total_players} players found (expected 550-600)",
                 details={'total_teams': row.total_teams}
             )
-        
+
         validation_rate = (row.validated / row.total_players) * 100
         if validation_rate < 45:
             notify_warning(
@@ -512,7 +512,7 @@ def _run_validation_checks(self):
                 message=f"Only {validation_rate:.1f}% validation rate",
                 details={'validated': row.validated, 'total': row.total_players}
             )
-            
+
     except Exception as e:
         logging.warning(f"Validation checks failed: {e}")
 ```
@@ -564,7 +564,7 @@ def _run_validation_checks(self):
 
 def generate_props(game_date: str):
     """Generate player props, but only if data passes validation."""
-    
+
     # Gate check: Validate BDL data quality
     if not _validate_bdl_data_quality():
         logging.error("BDL validation failed - blocking props generation")
@@ -574,26 +574,26 @@ def generate_props(game_date: str):
             details={'game_date': game_date}
         )
         return {'status': 'blocked', 'reason': 'validation_failed'}
-    
+
     # Proceed with props generation
     # ... rest of code ...
 
 def _validate_bdl_data_quality() -> bool:
     """Quick validation check before props generation."""
     client = bigquery.Client()
-    
+
     query = """
-    SELECT 
+    SELECT
         MAX(last_seen_date) as last_update,
         COUNT(DISTINCT team_abbr) as total_teams,
         COUNT(*) as total_players,
         COUNT(CASE WHEN player_lookup IS NULL THEN 1 END) as null_lookups
     FROM `nba-props-platform.nba_raw.bdl_active_players_current`
     """
-    
+
     result = client.query(query).result()
     row = next(result)
-    
+
     # Critical checks
     checks = {
         'data_fresh': (datetime.now().date() - row.last_update).days <= 2,
@@ -601,10 +601,10 @@ def _validate_bdl_data_quality() -> bool:
         'reasonable_count': 500 <= row.total_players <= 650,
         'no_nulls': row.null_lookups == 0
     }
-    
+
     # Log results
     logging.info(f"BDL validation checks: {checks}")
-    
+
     # Return True only if all critical checks pass
     return all(checks.values())
 ```
@@ -746,12 +746,12 @@ gcloud pubsub subscriptions list --filter="name:bdl-active-players"
 ```bash
 # Find the duplicate
 bq query --use_legacy_sql=false "
-SELECT * 
+SELECT *
 FROM \`nba-props-platform.nba_raw.bdl_active_players_current\`
 WHERE player_lookup IN (
-  SELECT player_lookup 
+  SELECT player_lookup
   FROM \`nba-props-platform.nba_raw.bdl_active_players_current\`
-  GROUP BY player_lookup 
+  GROUP BY player_lookup
   HAVING COUNT(*) > 1
 )
 ORDER BY player_lookup, processed_at
@@ -862,7 +862,7 @@ ORDER BY player_lookup, processed_at
 
 # Query historical trends
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   DATE_TRUNC(processed_at, WEEK) as week,
   AVG(CASE WHEN has_validation_issues = FALSE THEN 100 ELSE 0 END) as avg_validation_rate,
   COUNT(DISTINCT team_abbr) as teams,

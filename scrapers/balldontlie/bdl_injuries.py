@@ -233,8 +233,8 @@ class BdlInjuriesScraper(ScraperBase, ScraperFlaskMixin):
                 "rowCount": len(injuries),
                 "injuries": injuries,
             }
-            
-            logger.info("Fetched %d injury rows for %s across %d pages", 
+
+            logger.info("Fetched %d injury rows for %s across %d pages",
                        len(injuries), self.opts["ident"], pages_fetched)
 
             # Data quality checks
@@ -253,7 +253,7 @@ class BdlInjuriesScraper(ScraperBase, ScraperFlaskMixin):
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send high count warning: {notify_ex}")
-            
+
             # Success notification (injuries can be 0, which is normal)
             try:
                 notify_info(

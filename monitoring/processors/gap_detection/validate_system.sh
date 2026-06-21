@@ -72,7 +72,7 @@ detector = ProcessingGapDetector()
 test_cases = [
     ("gs://bucket/path/to/file.json", "path/to/file.json"),
     ("path/to/file.json", "path/to/file.json"),
-    ("gs://nba-scraped-data/nba-com/player-list/2025-10-01/file.json", 
+    ("gs://nba-scraped-data/nba-com/player-list/2025-10-01/file.json",
      "nba-com/player-list/2025-10-01/file.json")
 ]
 
@@ -136,14 +136,14 @@ echo "7. Checking Cloud Run Deployment..."
 if gcloud run jobs describe processing-gap-monitor --region=us-west2 &>/dev/null; then
     pass "Cloud Run job deployed"
     ((TESTS_PASSED++))
-    
+
     # Check recent executions
     RECENT_EXEC=$(gcloud run jobs executions list \
         --job=processing-gap-monitor \
         --region=us-west2 \
         --limit=1 \
         --format="value(name)" 2>/dev/null | head -n1)
-    
+
     if [ ! -z "$RECENT_EXEC" ]; then
         pass "Found recent execution: ${RECENT_EXEC}"
     else
@@ -160,7 +160,7 @@ echo ""
 echo "8. Checking Notification Configuration..."
 if [ -f "${SCRIPT_DIR}/../../.env" ]; then
     source "${SCRIPT_DIR}/../../.env"
-    
+
     if [ ! -z "${SLACK_WEBHOOK_MONITORING_ERROR}" ]; then
         pass "Slack webhook configured"
         ((TESTS_PASSED++))
@@ -168,7 +168,7 @@ if [ -f "${SCRIPT_DIR}/../../.env" ]; then
         warn "Slack webhook not configured"
         ((TESTS_WARNED++))
     fi
-    
+
     if [ ! -z "${BREVO_SMTP_USERNAME}" ]; then
         pass "Email (Brevo) configured"
         ((TESTS_PASSED++))
@@ -212,10 +212,10 @@ TEST_PREFIX="nba-com/player-list/${RECENT_DATE}/"
 
 if gsutil ls "gs://nba-scraped-data/${TEST_PREFIX}" &>/dev/null; then
     pass "Found files for ${RECENT_DATE}"
-    
+
     echo "   Running gap check on ${RECENT_DATE}..."
     if python processing_gap_monitor_job.py --date=${RECENT_DATE} --dry-run --processors=nbac_player_list &>/tmp/gap_test_real.log; then
-        
+
         # Check if gap was detected or not
         if grep -q "No processing gaps detected" /tmp/gap_test_real.log; then
             pass "Gap check passed: File processed correctly"

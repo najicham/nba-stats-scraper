@@ -39,9 +39,9 @@ expected_playoff_games AS (
   WHERE is_playoffs = TRUE
     AND game_date BETWEEN '2021-10-19' AND '2025-06-20'
   GROUP BY home_team_tricode, season_nba_format
-  
+
   UNION ALL
-  
+
   SELECT
     away_team_tricode as team_abbr,
     season_nba_format,
@@ -85,9 +85,9 @@ SELECT
   tps.avg_players_per_game,
   (et.expected_games - tps.actual_games) as missing_games,
   CASE
-    WHEN tps.actual_games = et.expected_games 
+    WHEN tps.actual_games = et.expected_games
       AND tps.min_players_per_game >= 20 THEN '✅ Complete'
-    WHEN tps.actual_games < et.expected_games THEN 
+    WHEN tps.actual_games < et.expected_games THEN
       CONCAT('❌ Missing ', CAST(et.expected_games - tps.actual_games AS STRING), ' games')
     WHEN tps.min_players_per_game < 20 THEN '⚠️ Low player count detected'
     ELSE '⚠️ Data quality issue'
@@ -96,7 +96,7 @@ FROM team_playoff_stats tps
 INNER JOIN expected_totals et
   ON tps.team_abbr = et.team_abbr
   AND tps.season_nba_format = et.season_nba_format
-ORDER BY 
+ORDER BY
   tps.season_nba_format DESC,
   missing_games DESC,
   team;

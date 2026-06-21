@@ -62,7 +62,7 @@ def _is_structured_logging_enabled() -> bool:
 class StructuredLogger:
     """
     Structured logging wrapper that adds JSON fields to log records.
-    
+
     Usage:
         logger = StructuredLogger(__name__)
         logger.info("Batch complete", extra={
@@ -71,46 +71,46 @@ class StructuredLogger:
             'duration_seconds': 12.5
         })
     """
-    
+
     def __init__(self, name: str):
         self.logger = logging.getLogger(name)
         self.enabled = _is_structured_logging_enabled()
-    
+
     def _add_context(self, extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Add thread-local context to extra fields."""
         merged = {}
-        
+
         # Add thread-local context if available
         if hasattr(_context, 'fields'):
             merged.update(_context.fields)
-        
+
         # Add provided extra fields
         if extra:
             merged.update(extra)
-        
+
         return merged
-    
+
     def info(self, msg: str, extra: Optional[Dict[str, Any]] = None):
         """Log info message with structured fields."""
         if self.enabled and extra:
             self.logger.info(msg, extra=self._add_context(extra))
         else:
             self.logger.info(msg)
-    
+
     def warning(self, msg: str, extra: Optional[Dict[str, Any]] = None):
         """Log warning message with structured fields."""
         if self.enabled and extra:
             self.logger.warning(msg, extra=self._add_context(extra))
         else:
             self.logger.warning(msg)
-    
+
     def error(self, msg: str, extra: Optional[Dict[str, Any]] = None, exc_info: bool = False):
         """Log error message with structured fields."""
         if self.enabled and extra:
             self.logger.error(msg, extra=self._add_context(extra), exc_info=exc_info)
         else:
             self.logger.error(msg, exc_info=exc_info)
-    
+
     def debug(self, msg: str, extra: Optional[Dict[str, Any]] = None):
         """Log debug message with structured fields."""
         if self.enabled and extra:
@@ -122,9 +122,9 @@ class StructuredLogger:
 def set_logging_context(**fields):
     """
     Set thread-local logging context.
-    
+
     These fields will be automatically added to all log statements in this thread.
-    
+
     Usage:
         set_logging_context(
             workflow_name='morning_operations',

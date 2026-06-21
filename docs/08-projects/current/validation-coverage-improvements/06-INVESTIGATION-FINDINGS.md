@@ -33,7 +33,7 @@ Existing views at `monitoring/bigquery_views/` cover Phases 3-5 only. Need to ex
 
 **Normalization needed:**
 ```sql
-CASE 
+CASE
   WHEN status IN ('success', 'complete') THEN 'success'
   WHEN status IN ('failed', 'partial', 'deadline_exceeded') THEN 'failed'
   WHEN status = 'no_data' THEN 'no_data'

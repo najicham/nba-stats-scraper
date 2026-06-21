@@ -1,8 +1,8 @@
 # Phase 4: Precompute
 
-**Dataset:** `nba_precompute`  
-**Purpose:** Pre-computed aggregations and composite factors for prediction optimization  
-**Retention:** 90 days for most tables, 365 days for analysis tables  
+**Dataset:** `nba_precompute`
+**Purpose:** Pre-computed aggregations and composite factors for prediction optimization
+**Retention:** 90 days for most tables, 365 days for analysis tables
 **Update Schedule:** Nightly (11 PM - 12:15 AM) + real-time when context changes
 
 ## Overview
@@ -36,7 +36,7 @@ Phase 4 precompute tables contain pre-calculated data that speeds up predictions
    - **Purpose:** Caches 25-feature vectors generated nightly
    - **Why Different Dataset?** Tightly coupled with Phase 5 prediction tables
 
-> **Note:** ml_feature_store_v2 is managed by Phase 4 processors but stored in the 
+> **Note:** ml_feature_store_v2 is managed by Phase 4 processors but stored in the
 > predictions dataset for Phase 5 consumption. See the Phase 5 README for schema details.
 
 ---
@@ -44,8 +44,8 @@ Phase 4 precompute tables contain pre-calculated data that speeds up predictions
 ## Table Details
 
 ### 1. player_shot_zone_analysis
-**Purpose:** Player's offensive shot distribution and efficiency by court zone  
-**Updated:** Nightly after games complete  
+**Purpose:** Player's offensive shot distribution and efficiency by court zone
+**Updated:** Nightly after games complete
 **Used By:** Shot zone mismatch calculations, player reports
 
 **Key Fields:**
@@ -58,7 +58,7 @@ Phase 4 precompute tables contain pre-calculated data that speeds up predictions
 **Sample Query:**
 ```sql
 -- Get paint-dominant players
-SELECT 
+SELECT
   player_lookup,
   paint_rate_last_10,
   paint_pct_last_10,
@@ -72,8 +72,8 @@ ORDER BY paint_rate_last_10 DESC;
 ---
 
 ### 2. team_defense_zone_analysis
-**Purpose:** Team defensive performance by shot zone  
-**Updated:** Nightly after games complete  
+**Purpose:** Team defensive performance by shot zone
+**Updated:** Nightly after games complete
 **Used By:** Shot zone mismatch calculations, opponent analysis
 
 **Key Fields:**
@@ -85,7 +85,7 @@ ORDER BY paint_rate_last_10 DESC;
 **Sample Query:**
 ```sql
 -- Find teams with weak interior defense
-SELECT 
+SELECT
   team_abbr,
   paint_pct_allowed_last_15,
   paint_defense_vs_league_avg,
@@ -99,8 +99,8 @@ ORDER BY paint_pct_allowed_last_15 DESC;
 ---
 
 ### 3. player_composite_factors ⭐ CRITICAL TABLE
-**Purpose:** Pre-calculated composite scores for all adjustment factors  
-**Updated:** Nightly (6 AM) + real-time when context changes  
+**Purpose:** Pre-calculated composite scores for all adjustment factors
+**Updated:** Nightly (6 AM) + real-time when context changes
 **Used By:** ALL prediction systems for calculating adjustments
 
 **This is the heart of the prediction adjustments system.**
@@ -117,7 +117,7 @@ ORDER BY paint_pct_allowed_last_15 DESC;
   - `fatigue_adjustment` (expected points impact)
   - `shot_zone_adjustment` (expected points impact)
   - Each score converts to actual point impact
-  
+
 - **Supporting Details (JSON):**
   - `fatigue_factors` - Breakdown of what contributed to score
   - `shot_zone_matchup` - Detailed matchup analysis
@@ -126,7 +126,7 @@ ORDER BY paint_pct_allowed_last_15 DESC;
 **Sample Query:**
 ```sql
 -- Get players with extreme fatigue today
-SELECT 
+SELECT
   player_lookup,
   game_id,
   fatigue_score,
@@ -158,8 +158,8 @@ final_prediction = baseline + adjustment
 ---
 
 ### 4. player_daily_cache
-**Purpose:** Player data that won't change throughout the day  
-**Updated:** Once daily at 6 AM  
+**Purpose:** Player data that won't change throughout the day
+**Updated:** Once daily at 6 AM
 **Used By:** Fast prediction updates when betting lines change
 
 **Performance Optimization:** When a betting line changes from 26.5 to 27.0, you need to regenerate the report. But shot zone preferences, fatigue metrics, and recent form don't change. This cache prevents recalculating static data.
@@ -179,7 +179,7 @@ final_prediction = baseline + adjustment
 **Sample Query:**
 ```sql
 -- Get cached data for today's players
-SELECT 
+SELECT
   player_lookup,
   paint_rate_last_10,
   games_in_last_7_days,
@@ -192,8 +192,8 @@ WHERE cache_date = CURRENT_DATE();
 ---
 
 ### 5. similarity_match_cache (OPTIONAL)
-**Purpose:** Pre-calculated similarity matches for performance boost  
-**Created:** Only if similarity queries take >2 seconds  
+**Purpose:** Pre-calculated similarity matches for performance boost
+**Created:** Only if similarity queries take >2 seconds
 **Updated:** Nightly
 
 **When to Create:** Test similarity matching performance first. If queries are fast enough (<2 seconds), you don't need this table. Only create if you need the extra speed.
@@ -207,9 +207,9 @@ WHERE cache_date = CURRENT_DATE();
 
 ### 6. ml_feature_store_v2 ⚠️ CROSS-DATASET TABLE
 
-**Physical Location:** `nba_predictions.ml_feature_store_v2`  
-**Schema File:** `schemas/bigquery/predictions/04_ml_feature_store_v2.sql`  
-**Written By:** Phase 4 Precompute Processor (5th processor)  
+**Physical Location:** `nba_predictions.ml_feature_store_v2`
+**Schema File:** `schemas/bigquery/predictions/04_ml_feature_store_v2.sql`
+**Written By:** Phase 4 Precompute Processor (5th processor)
 **Read By:** Phase 5 Prediction Systems
 
 **Purpose:** Caches 25-feature vectors for all prediction systems to use
@@ -238,7 +238,7 @@ WHERE cache_date = CURRENT_DATE();
 **Sample Query:**
 ```sql
 -- Get cached features for today's players
-SELECT 
+SELECT
   player_lookup,
   game_date,
   features,  -- Array of 25 floats
@@ -406,7 +406,7 @@ See `data_processors/precompute/regeneration/` for scripts.
 
 ```sql
 -- Check data freshness (all Phase 4 tables)
-SELECT 
+SELECT
   'player_shot_zone_analysis' as table_name,
   MAX(analysis_date) as latest_date,
   COUNT(*) as total_rows
@@ -415,7 +415,7 @@ WHERE analysis_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
 
 UNION ALL
 
-SELECT 
+SELECT
   'player_composite_factors' as table_name,
   MAX(game_date) as latest_date,
   COUNT(*) as total_rows
@@ -424,7 +424,7 @@ WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
 
 UNION ALL
 
-SELECT 
+SELECT
   'ml_feature_store_v2' as table_name,
   MAX(game_date) as latest_date,
   COUNT(*) as total_rows
@@ -461,7 +461,7 @@ WHERE upg.game_date = CURRENT_DATE()
 ### Issue: Missing ml_feature_store_v2 for today
 ```sql
 -- Check if features generated
-SELECT 
+SELECT
   COUNT(DISTINCT player_lookup) as players_with_features
 FROM `nba-props-platform.nba_predictions.ml_feature_store_v2`
 WHERE game_date = CURRENT_DATE();
@@ -475,7 +475,7 @@ WHERE game_date = CURRENT_DATE();
 ### Issue: Stale daily cache
 ```sql
 -- Check cache age
-SELECT 
+SELECT
   cache_date,
   COUNT(*) as players_cached
 FROM `nba-props-platform.nba_precompute.player_daily_cache`

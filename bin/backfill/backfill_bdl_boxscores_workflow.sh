@@ -147,7 +147,7 @@ EOF
 
 get_priority_dates() {
     local priority=$1
-    
+
     case $priority in
         1)
             # Priority 1: 2023-24 Regular Season
@@ -178,7 +178,7 @@ get_priority_dates() {
 
 get_priority_description() {
     local priority=$1
-    
+
     case $priority in
         1)
             echo "Priority 1: 2023-24 Regular Season (66 games, 10 dates)"
@@ -204,18 +204,18 @@ get_priority_description() {
 
 run_validation() {
     print_header "Step 1: Validation - Finding Missing Dates"
-    
+
     print_info "Running: ./scripts/validate-bdl-boxscores missing"
-    
+
     # Run validation query
     "${PROJECT_ROOT}/scripts/validate-bdl-boxscores" missing --csv
-    
+
     if [ $? -eq 0 ]; then
         print_success "Validation complete - check validation_bdl_find_missing_games_*.csv"
     else
         print_warning "Validation had warnings or errors"
     fi
-    
+
     echo ""
 }
 
@@ -226,14 +226,14 @@ run_validation() {
 run_scraper_backfill() {
     local dates=$1
     local dry_run_flag=$2
-    
+
     print_header "Step 2: Scraper Backfill - Downloading Box Scores"
-    
+
     # Count dates
     local date_count=$(echo "$dates" | tr ',' '\n' | wc -l | xargs)
     print_info "Processing $date_count dates"
     print_info "Dates: ${dates:0:100}..."
-    
+
     if [ "$dry_run_flag" = "true" ]; then
         print_info "DRY RUN - Would execute:"
         echo "  gcloud run jobs execute bdl-boxscore-backfill \\"
@@ -242,9 +242,9 @@ run_scraper_backfill() {
         echo ""
         return 0
     fi
-    
+
     print_info "Executing scraper backfill..."
-    
+
     # Execute Cloud Run job
     if gcloud run jobs execute bdl-boxscore-backfill \
         --args="--service-url=$SCRAPER_SERVICE_URL,--dates=$dates" \
@@ -255,7 +255,7 @@ run_scraper_backfill() {
         print_error "Scraper backfill failed"
         return 1
     fi
-    
+
     echo ""
 }
 
@@ -266,14 +266,14 @@ run_scraper_backfill() {
 run_processor_backfill() {
     local dates=$1
     local dry_run_flag=$2
-    
+
     print_header "Step 3: Processor Backfill - Loading to BigQuery"
-    
+
     # Count dates
     local date_count=$(echo "$dates" | tr ',' '\n' | wc -l | xargs)
     print_info "Processing $date_count dates"
     print_info "Dates: ${dates:0:100}..."
-    
+
     if [ "$dry_run_flag" = "true" ]; then
         print_info "DRY RUN - Would execute:"
         echo "  gcloud run jobs execute bdl-boxscores-processor-backfill \\"
@@ -282,9 +282,9 @@ run_processor_backfill() {
         echo ""
         return 0
     fi
-    
+
     print_info "Executing processor backfill..."
-    
+
     # Execute Cloud Run job
     if gcloud run jobs execute bdl-boxscores-processor-backfill \
         --args="--dates=$dates" \
@@ -295,7 +295,7 @@ run_processor_backfill() {
         print_error "Processor backfill failed"
         return 1
     fi
-    
+
     echo ""
 }
 
@@ -305,21 +305,21 @@ run_processor_backfill() {
 
 run_final_validation() {
     print_header "Step 4: Final Validation - Confirming Completion"
-    
+
     print_info "Running season completeness check..."
     "${PROJECT_ROOT}/scripts/validate-bdl-boxscores" completeness
-    
+
     echo ""
-    
+
     print_info "Running missing games check..."
     "${PROJECT_ROOT}/scripts/validate-bdl-boxscores" missing
-    
+
     if [ $? -eq 0 ]; then
         print_success "Final validation complete"
     else
         print_warning "Validation found issues - review output above"
     fi
-    
+
     echo ""
 }
 
@@ -358,29 +358,29 @@ main() {
                 ;;
         esac
     done
-    
+
     # Validate inputs
     if [ -z "$PRIORITY" ] && [ -z "$CUSTOM_DATES" ]; then
         print_error "Must specify either --priority or --dates"
         show_help
         exit 1
     fi
-    
+
     if [ -n "$PRIORITY" ] && [ -n "$CUSTOM_DATES" ]; then
         print_error "Cannot specify both --priority and --dates"
         show_help
         exit 1
     fi
-    
+
     # Determine dates to process
     local dates_to_process=""
-    
+
     if [ -n "$PRIORITY" ]; then
         dates_to_process=$(get_priority_dates "$PRIORITY")
         if [ $? -ne 0 ]; then
             exit 1
         fi
-        
+
         print_header "BDL Boxscore Backfill Workflow"
         echo ""
         print_info "Mode: $(get_priority_description "$PRIORITY")"
@@ -390,15 +390,15 @@ main() {
         echo ""
         print_info "Mode: Custom Dates"
     fi
-    
+
     if [ "$DRY_RUN" = true ]; then
         print_warning "DRY RUN MODE - No actual processing will occur"
     fi
-    
+
     echo ""
     print_info "Dates to process: $dates_to_process"
     echo ""
-    
+
     # Confirm execution
     if [ "$DRY_RUN" = false ]; then
         read -p "Continue with backfill? (y/N) " -n 1 -r
@@ -409,10 +409,10 @@ main() {
         fi
         echo ""
     fi
-    
+
     # Execute workflow
     local start_time=$(date +%s)
-    
+
     # Step 1: Validation (optional - only if not using custom dates)
     if [ -z "$CUSTOM_DATES" ] && [ "$SKIP_VALIDATION" = false ]; then
         run_validation
@@ -420,35 +420,35 @@ main() {
         print_info "Skipping initial validation (using predefined dates)"
         echo ""
     fi
-    
+
     # Step 2: Scraper Backfill
     if ! run_scraper_backfill "$dates_to_process" "$DRY_RUN"; then
         print_error "Workflow failed at scraper step"
         exit 1
     fi
-    
+
     # Step 3: Processor Backfill
     if ! run_processor_backfill "$dates_to_process" "$DRY_RUN"; then
         print_error "Workflow failed at processor step"
         exit 1
     fi
-    
+
     # Step 4: Final Validation
     if [ "$DRY_RUN" = false ] && [ "$SKIP_VALIDATION" = false ]; then
         run_final_validation
     fi
-    
+
     # Summary
     local end_time=$(date +%s)
     local duration=$((end_time - start_time))
     local duration_min=$((duration / 60))
-    
+
     print_header "Workflow Complete"
     echo ""
     print_success "All steps completed successfully"
     print_info "Duration: ${duration_min} minutes"
     echo ""
-    
+
     if [ "$DRY_RUN" = false ]; then
         print_info "Next steps:"
         echo "  1. Review validation output above"

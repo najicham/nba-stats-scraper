@@ -91,7 +91,7 @@ team_games AS (
     ROUND(AVG(shots_with_coords * 100.0 / NULLIF(shots_in_game, 0)), 1) as pct_shots_with_coords
   FROM (
     -- Home games
-    SELECT season, home_team_abbr as team_abbr, game_id, is_playoffs, 
+    SELECT season, home_team_abbr as team_abbr, game_id, is_playoffs,
            events_in_game, shots_in_game, shots_with_coords
     FROM game_level_stats
     UNION ALL

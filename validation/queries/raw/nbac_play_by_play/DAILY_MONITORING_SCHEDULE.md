@@ -7,10 +7,10 @@ This document defines when and how to run validation queries during the NBA seas
 
 ## When This Applies
 
-**Active Monitoring Period**: October - June (NBA Season)  
-**Frequency**: Daily during season, weekly during offseason  
-**Owner**: Data Engineering Team  
-**Alert Channel**: #data-quality-alerts (Slack)  
+**Active Monitoring Period**: October - June (NBA Season)
+**Frequency**: Daily during season, weekly during offseason
+**Owner**: Data Engineering Team
+**Alert Channel**: #data-quality-alerts (Slack)
 
 ---
 
@@ -158,11 +158,11 @@ Run comprehensive validation across the past week.
 
 ### Issue 1: Shot Made Detection Not Working
 
-**Symptom**: All shots show 0.0% made (shot_pct = 0.0)  
-**Cause**: Processor not correctly parsing shot_made from NBA.com data  
-**Impact**: Cannot track shooting percentages  
-**Status**: Known bug, needs processor fix  
-**Workaround**: Use box scores for shooting stats  
+**Symptom**: All shots show 0.0% made (shot_pct = 0.0)
+**Cause**: Processor not correctly parsing shot_made from NBA.com data
+**Impact**: Cannot track shooting percentages
+**Status**: Known bug, needs processor fix
+**Workaround**: Use box scores for shooting stats
 
 **Evidence**:
 ```
@@ -176,11 +176,11 @@ Run comprehensive validation across the past week.
 
 ### Issue 2: Score Progression Has Period Transitions
 
-**Symptom**: Scores appear to decrease at period boundaries  
-**Cause**: Period start/end events may reset running totals  
-**Impact**: False positives in score validation  
-**Status**: Expected behavior in some cases  
-**Workaround**: Filter SCORE ANOMALIES by period transitions  
+**Symptom**: Scores appear to decrease at period boundaries
+**Cause**: Period start/end events may reset running totals
+**Impact**: False positives in score validation
+**Status**: Expected behavior in some cases
+**Workaround**: Filter SCORE ANOMALIES by period transitions
 
 **Example**:
 ```
@@ -336,31 +336,31 @@ exit $EXIT_CODE
 
 ### "Query requires partition filter"
 
-**Error**: `Cannot query over table without a filter...`  
-**Cause**: Missing `WHERE game_date >= 'YYYY-MM-DD'` in query  
-**Fix**: All queries include partition filters, this shouldn't happen  
-**Action**: Check query file wasn't modified  
+**Error**: `Cannot query over table without a filter...`
+**Cause**: Missing `WHERE game_date >= 'YYYY-MM-DD'` in query
+**Fix**: All queries include partition filters, this shouldn't happen
+**Action**: Check query file wasn't modified
 
 ### "No data returned"
 
-**Symptom**: All queries return empty results  
-**Cause**: No play-by-play data in table for date range  
-**Fix**: Expected if scraper hasn't run yet  
-**Action**: Verify scraper is scheduled during NBA season  
+**Symptom**: All queries return empty results
+**Cause**: No play-by-play data in table for date range
+**Fix**: Expected if scraper hasn't run yet
+**Action**: Verify scraper is scheduled during NBA season
 
 ### "All games showing as missing"
 
-**Symptom**: `missing` query shows hundreds of games  
-**Cause**: Scraper not running or historical backfill not done  
-**Fix**: Expected current state (only 2 test games exist)  
-**Action**: Review BACKFILL_OPPORTUNITY.md for expansion plan  
+**Symptom**: `missing` query shows hundreds of games
+**Cause**: Scraper not running or historical backfill not done
+**Fix**: Expected current state (only 2 test games exist)
+**Action**: Review BACKFILL_OPPORTUNITY.md for expansion plan
 
 ### "Score anomalies every game"
 
-**Symptom**: Every game shows score decrease warnings  
-**Cause**: Period transitions or processor bug  
-**Fix**: Review specific event_sequences  
-**Action**: May need processor enhancement for period handling  
+**Symptom**: Every game shows score decrease warnings
+**Cause**: Period transitions or processor bug
+**Fix**: Review specific event_sequences
+**Action**: May need processor enhancement for period handling
 
 ---
 
@@ -423,10 +423,10 @@ Track these metrics over the season:
 
 ## Contact Information
 
-**Data Quality Issues**: #data-quality-alerts (Slack)  
-**Processor Bugs**: Create issue in GitHub repo  
-**Urgent Issues**: Page on-call engineer  
-**Questions**: Data Engineering Team lead  
+**Data Quality Issues**: #data-quality-alerts (Slack)
+**Processor Bugs**: Create issue in GitHub repo
+**Urgent Issues**: Page on-call engineer
+**Questions**: Data Engineering Team lead
 
 ---
 

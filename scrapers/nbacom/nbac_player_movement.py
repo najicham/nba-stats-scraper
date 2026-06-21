@@ -2,7 +2,7 @@
 """
 NBA Player-Movement / Transaction feed                    v2 - 2025-06-16
 ------------------------------------------------------------------------
-Downloads player movement and transaction data from NBA.com. Useful for 
+Downloads player movement and transaction data from NBA.com. Useful for
 tracking roster changes, trades, signings, and player availability.
 
 Usage examples
@@ -99,7 +99,7 @@ class GetNbaComPlayerMovement(ScraperBase, ScraperFlaskMixin):
             "groups": ["prod", "gcs"],
         },
         # {
-        #     "type": "gcs", 
+        #     "type": "gcs",
         #     "key": "nbacom/player-movement/%(year)s/current/current.json",
         #     "export_mode": ExportMode.DATA,
         #     "groups": ["prod", "gcs"],
@@ -120,7 +120,7 @@ class GetNbaComPlayerMovement(ScraperBase, ScraperFlaskMixin):
         },
         {
             "type": "file",
-            "filename": "/tmp/exp_%(run_id)s.json", 
+            "filename": "/tmp/exp_%(run_id)s.json",
             "export_mode": ExportMode.DATA,
             "pretty_print": True,
             "groups": ["capture"],
@@ -158,7 +158,7 @@ class GetNbaComPlayerMovement(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException("Player movement response is not a valid JSON object")
-                
+
             root = self.decoded_data.get("NBA_Player_Movement")
             if root is None:
                 try:
@@ -176,7 +176,7 @@ class GetNbaComPlayerMovement(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException("Missing 'NBA_Player_Movement' key in response")
-                
+
             if not isinstance(root, dict):
                 try:
                     notify_error(
@@ -193,7 +193,7 @@ class GetNbaComPlayerMovement(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException("NBA_Player_Movement is not a valid object")
-                
+
             rows = root.get("rows", [])
             if not isinstance(rows, list):
                 try:
@@ -211,7 +211,7 @@ class GetNbaComPlayerMovement(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException("NBA_Player_Movement.rows is not a list")
-                
+
             if len(rows) == 0:
                 try:
                     notify_error(
@@ -228,9 +228,9 @@ class GetNbaComPlayerMovement(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException("NBA_Player_Movement.rows is empty - no movement data found")
-                
+
             logger.info("Found %d movement rows for year=%s", len(rows), self.opts["year"])
-            
+
         except DownloadDataException:
             # Re-raise validation exceptions (already notified above)
             raise
@@ -262,7 +262,7 @@ class GetNbaComPlayerMovement(ScraperBase, ScraperFlaskMixin):
         """
         try:
             rows = self.data["rows"]
-            
+
             # 1. REASONABLE RECORD COUNT CHECK
             record_count = len(rows)
             if record_count < 10:
@@ -299,7 +299,7 @@ class GetNbaComPlayerMovement(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException(f"Suspiciously high record count: {record_count} (expected 100-15000)")
-            
+
             # 2. SAMPLE RECORD VALIDATION (check first few records)
             sample_size = min(5, len(rows))
             for i, row in enumerate(rows[:sample_size]):
@@ -320,7 +320,7 @@ class GetNbaComPlayerMovement(ScraperBase, ScraperFlaskMixin):
                     except Exception as notify_ex:
                         logger.warning(f"Failed to send notification: {notify_ex}")
                     raise DownloadDataException(f"Row {i} is not a dict or list: {type(row)}")
-                    
+
                 # For dictionary rows, check for reasonable keys
                 if isinstance(row, dict):
                     if len(row) < 2:
@@ -329,16 +329,16 @@ class GetNbaComPlayerMovement(ScraperBase, ScraperFlaskMixin):
                     if i == 0:
                         sample_keys = list(row.keys())[:5]  # First 5 keys
                         logger.info(f"Sample row keys: {sample_keys}")
-                
-                # For list rows, check for reasonable columns  
+
+                # For list rows, check for reasonable columns
                 elif isinstance(row, list):
                     if len(row) < 3:
                         logger.warning(f"Row {i} has fewer columns than expected: {len(row)}")
-            
+
             # 3. YEAR CONSISTENCY CHECK
             current_year = int(self.opts["year"])
             current_season_years = [current_year - 1, current_year, current_year + 1]
-            
+
             # Look for year patterns in sample data (movement data often contains dates)
             found_years = set()
             for row in rows[:10]:  # Check first 10 rows
@@ -356,12 +356,12 @@ class GetNbaComPlayerMovement(ScraperBase, ScraperFlaskMixin):
                             for year in current_season_years:
                                 if str(year) in cell:
                                     found_years.add(year)
-            
+
             if found_years:
                 logger.info(f"Found year references in data: {sorted(found_years)}")
             else:
                 logger.info("No specific year references found in sample data")
-            
+
             # 4. DATA STRUCTURE INSIGHTS
             if rows:
                 first_row = rows[0]
@@ -369,14 +369,14 @@ class GetNbaComPlayerMovement(ScraperBase, ScraperFlaskMixin):
                     logger.info(f"Dictionary-based data with {len(first_row)} fields per record")
                 elif isinstance(first_row, list):
                     logger.info(f"List-based data with {len(first_row)} columns per record")
-            
+
             # Check for headers in original data structure
             data_headers = self.decoded_data.get("NBA_Player_Movement", {}).get("headers", [])
             if data_headers:
                 logger.info(f"Movement data has {len(data_headers)} headers: {data_headers[:5]}")  # Show first 5
-            
+
             logger.info(f"✅ Player movement validation passed: {record_count} records")
-            
+
             # Send success notification
             try:
                 notify_info(
@@ -393,7 +393,7 @@ class GetNbaComPlayerMovement(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-                
+
         except DownloadDataException:
             # Re-raise validation exceptions (already notified above)
             raise
@@ -422,7 +422,7 @@ class GetNbaComPlayerMovement(ScraperBase, ScraperFlaskMixin):
     def transform_data(self) -> None:
         rows = self.decoded_data["NBA_Player_Movement"]["rows"]
         headers = self.decoded_data["NBA_Player_Movement"].get("headers", [])
-        
+
         self.data: Dict[str, any] = {
             "metadata": {
                 "year": self.opts["year"],
@@ -433,7 +433,7 @@ class GetNbaComPlayerMovement(ScraperBase, ScraperFlaskMixin):
             "headers": headers,
             "rows": rows,
         }
-        
+
         # Add production validation
         self.validate_player_movement_data()
 

@@ -13,7 +13,7 @@ Week 1-4 Implementation (v1_4factors):
         2. Shot Zone Mismatch (-10.0 to +10.0)
         3. Pace Score (-3.0 to +3.0)
         4. Usage Spike Score (-3.0 to +3.0)
-    
+
     Deferred Factors (4) - Set to 0 (neutral):
         5. Referee Favorability (0.0)
         6. Look-Ahead Pressure (0.0)
@@ -82,7 +82,7 @@ class PlayerCompositeFactorsProcessor(
     influence baseline predictions. Week 1-4 implementation includes
     4 active factors with 4 deferred factors set to neutral (0).
     """
-    
+
     # Processor configuration
     table_name = "player_composite_factors"
     dataset_id = "nba_precompute"
@@ -279,11 +279,11 @@ class PlayerCompositeFactorsProcessor(
                 'field_prefix': 'source_team_defense'
             }
         }
-    
+
     # ========================================================================
     # DATA EXTRACTION
     # ========================================================================
-    
+
     def extract_raw_data(self) -> None:
         """
         Extract data from Phase 3 analytics and Phase 4 precompute tables.
@@ -330,7 +330,7 @@ class PlayerCompositeFactorsProcessor(
         # Store season start date for completeness checking (Week 4)
         # BUG FIX: Use actual season start date, not hardcoded Oct 1
         self.season_start_date = get_season_start_date(season_year)
-        
+
         # Extract player context
         player_context_query = f"""
         SELECT
@@ -354,7 +354,7 @@ class PlayerCompositeFactorsProcessor(
         FROM `{self.project_id}.nba_analytics.upcoming_player_game_context`
         WHERE game_date = '{analysis_date}'
         """
-        
+
         self.player_context_df = self.bq_client.query(player_context_query).to_dataframe()
         upcg_count = len(self.player_context_df)
         logger.info(f"Extracted {upcg_count} player context records from upcoming_player_game_context")
@@ -439,10 +439,10 @@ class PlayerCompositeFactorsProcessor(
         FROM `{self.project_id}.nba_analytics.upcoming_team_game_context`
         WHERE game_date = '{analysis_date}'
         """
-        
+
         self.team_context_df = self.bq_client.query(team_context_query).to_dataframe()
         logger.info(f"Extracted {len(self.team_context_df)} team context records")
-        
+
         # Extract player shot zone analysis
         player_shot_query = f"""
         SELECT
@@ -456,10 +456,10 @@ class PlayerCompositeFactorsProcessor(
         FROM `{self.project_id}.nba_precompute.player_shot_zone_analysis`
         WHERE analysis_date = '{analysis_date}'
         """
-        
+
         self.player_shot_df = self.bq_client.query(player_shot_query).to_dataframe()
         logger.info(f"Extracted {len(self.player_shot_df)} player shot zone records")
-        
+
         # Extract team defense zone analysis
         team_defense_query = f"""
         SELECT
@@ -473,7 +473,7 @@ class PlayerCompositeFactorsProcessor(
         FROM `{self.project_id}.nba_precompute.team_defense_zone_analysis`
         WHERE analysis_date = '{analysis_date}'
         """
-        
+
         self.team_defense_df = self.bq_client.query(team_defense_query).to_dataframe()
         logger.info(f"Extracted {len(self.team_defense_df)} team defense zone records")
 
@@ -614,7 +614,7 @@ class PlayerCompositeFactorsProcessor(
     def _is_early_season(self, analysis_date: date) -> bool:
         """
         Check if we're in early season (insufficient data).
-        
+
         Early season = >50% of players have early_season_flag set in
         their shot zone analysis.
         """
@@ -626,30 +626,30 @@ class PlayerCompositeFactorsProcessor(
             FROM `{self.project_id}.nba_precompute.player_shot_zone_analysis`
             WHERE analysis_date = '{analysis_date}'
             """
-            
+
             result_df = self.bq_client.query(early_season_query).to_dataframe()
-            
+
             if result_df.empty:
                 return False
-            
+
             total = result_df.iloc[0].get('total_players', 0)
             early = result_df.iloc[0].get('early_season_players', 0)
-            
+
             if total > 0 and (early / total) > 0.5:
                 self.early_season_flag = True  # Set instance flag
                 self.insufficient_data_reason = f"Early season: {early}/{total} players lack historical data"
                 return True
-            
+
             return False
-            
+
         except Exception as e:
             logger.warning(f"Error checking early season status: {e}")
             return False
-    
+
     def _create_early_season_placeholders(self, analysis_date: date) -> None:
         """
         Create placeholder records for early season.
-        
+
         All factor scores set to NULL, early_season_flag = TRUE.
         """
         # Get list of players with games
@@ -662,11 +662,11 @@ class PlayerCompositeFactorsProcessor(
         FROM `{self.project_id}.nba_analytics.upcoming_player_game_context`
         WHERE game_date = '{analysis_date}'
         """
-        
+
         players_df = self.bq_client.query(player_query).to_dataframe()
-        
+
         self.transformed_data = []
-        
+
         for _, row in players_df.iterrows():
             record = {
                 'player_lookup': row['player_lookup'],
@@ -674,7 +674,7 @@ class PlayerCompositeFactorsProcessor(
                 'game_date': row['game_date'],
                 'game_id': row['game_id'],
                 'analysis_date': analysis_date,
-                
+
                 # All scores NULL
                 'fatigue_score': None,
                 'shot_zone_mismatch_score': None,
@@ -685,7 +685,7 @@ class PlayerCompositeFactorsProcessor(
                 'travel_impact_score': 0.0,
                 'opponent_strength_score': 0.0,
                 'total_composite_adjustment': None,
-                
+
                 # Metadata
                 'calculation_version': self.calculation_version,
                 'early_season_flag': True,
@@ -694,12 +694,12 @@ class PlayerCompositeFactorsProcessor(
                 'missing_data_fields': 'All: Early season',
                 'has_warnings': True,
                 'warning_details': 'EARLY_SEASON: Insufficient historical data',
-                
+
                 # Timestamps
                 'created_at': datetime.now(timezone.utc).isoformat(),
                 'processed_at': datetime.now(timezone.utc).isoformat()
             }
-            
+
             # Add source tracking fields
             record.update(self.build_source_tracking_fields())
 
@@ -713,7 +713,7 @@ class PlayerCompositeFactorsProcessor(
             record['data_hash'] = self.compute_data_hash(record)
 
             self.transformed_data.append(record)
-        
+
         logger.info(f"Created {len(self.transformed_data)} early season placeholder records")
 
     # ============================================================
@@ -1012,7 +1012,7 @@ class PlayerCompositeFactorsProcessor(
     def calculate_precompute(self) -> None:
         """
         Calculate composite factors for each player.
-        
+
         Flow:
         1. Iterate through each player in upcoming games
         2. Calculate 4 active factor scores
@@ -1023,11 +1023,11 @@ class PlayerCompositeFactorsProcessor(
         if self.early_season_flag:
             # Placeholders already created in extract
             return
-        
+
         if self.player_context_df is None or self.player_context_df.empty:
             logger.warning("No player context data to process")
             return
-        
+
         self.transformed_data = []
         self.failed_entities = []
 
@@ -1580,17 +1580,17 @@ class PlayerCompositeFactorsProcessor(
 
         # Sum all adjustments for total composite
         total_adjustment = sum(factor_scores.values())
-        
+
         # Calculate data quality metrics
         completeness_pct, missing_fields = self._calculate_completeness(
             player_row, player_shot, team_defense
         )
-        
+
         # Check for warnings
         has_warnings, warning_details = self._check_warnings(
             fatigue_score, shot_zone_score, total_adjustment
         )
-        
+
         # Build output record
         record = {
             # Identifiers
@@ -1599,7 +1599,7 @@ class PlayerCompositeFactorsProcessor(
             'game_date': player_row['game_date'],
             'game_id': player_row['game_id'],
             'analysis_date': self.opts['analysis_date'],
-            
+
             # Active factor scores (v1)
             # Note: NUMERIC fields have limited scale in BigQuery schema
             # shot_zone_mismatch_score: precision=4, scale=1 (XXX.X)
@@ -1625,7 +1625,7 @@ class PlayerCompositeFactorsProcessor(
             'shot_zone_context_json': json.dumps(factor_contexts['shot_zone_context_json']),
             'pace_context_json': json.dumps(factor_contexts['pace_context_json']),
             'usage_context_json': json.dumps(factor_contexts['usage_context_json']),
-            
+
             # Metadata
             'calculation_version': self.calculation_version,
             'early_season_flag': self.early_season_flag,
@@ -1685,7 +1685,7 @@ class PlayerCompositeFactorsProcessor(
             'created_at': datetime.now(timezone.utc).isoformat(),
             'processed_at': datetime.now(timezone.utc).isoformat()
         }
-        
+
         # Add v4.0 source tracking fields
         record.update(self.build_source_tracking_fields())
 
@@ -1699,7 +1699,7 @@ class PlayerCompositeFactorsProcessor(
         record['data_hash'] = self.compute_data_hash(record)
 
         return record
-    
+
     # ========================================================================
     # SAFE VALUE EXTRACTION HELPERS
     # ========================================================================
@@ -1761,7 +1761,7 @@ class PlayerCompositeFactorsProcessor(
     # ========================================================================
     # DATA QUALITY CHECKS
     # ========================================================================
-    
+
     def _calculate_completeness(
         self,
         player_row: pd.Series,
@@ -1770,7 +1770,7 @@ class PlayerCompositeFactorsProcessor(
     ) -> tuple:
         """
         Calculate data completeness percentage and identify missing fields.
-        
+
         Returns:
             tuple: (completeness_pct, missing_fields_str)
         """
@@ -1779,34 +1779,34 @@ class PlayerCompositeFactorsProcessor(
             'player_shot_zone': player_shot is not None,
             'team_defense_zone': team_defense is not None
         }
-        
+
         missing = []
         total_checks = 5  # 3 player fields + 2 zone datasets
         passed_checks = 0
-        
+
         # Check player context fields
         for field in required_fields['player_context']:
             if pd.notna(player_row.get(field)):
                 passed_checks += 1
             else:
                 missing.append(field)
-        
+
         # Check zone datasets
         if required_fields['player_shot_zone']:
             passed_checks += 1
         else:
             missing.append('player_shot_zone')
-        
+
         if required_fields['team_defense_zone']:
             passed_checks += 1
         else:
             missing.append('team_defense_zone')
-        
+
         completeness_pct = (passed_checks / total_checks) * 100
         missing_str = ', '.join(missing) if missing else None
-        
+
         return round(completeness_pct, 1), missing_str
-    
+
     def _check_warnings(
         self,
         fatigue_score: float,
@@ -1815,72 +1815,72 @@ class PlayerCompositeFactorsProcessor(
     ) -> tuple:
         """
         Check for warning conditions.
-        
+
         Returns:
             tuple: (has_warnings, warning_details_str)
         """
         warnings = []
-        
+
         if fatigue_score < 50:
             warnings.append("EXTREME_FATIGUE: Player showing severe fatigue")
-        
+
         if abs(shot_zone_score) > 8.0:
             warnings.append("EXTREME_MATCHUP: Unusual zone mismatch")
-        
+
         if abs(total_adj) > 12.0:
             warnings.append("EXTREME_ADJUSTMENT: Very large composite adjustment")
-        
+
         if warnings:
             return True, '; '.join(warnings)
-        
+
         return False, None
-    
+
     # ========================================================================
     # HELPER METHODS
     # ========================================================================
-    
+
     def _get_player_shot_data(self, player_lookup: str) -> Optional[pd.Series]:
         """Get player shot zone data."""
         if self.player_shot_df is None or self.player_shot_df.empty:
             return None
-        
+
         match = self.player_shot_df[
             self.player_shot_df['player_lookup'] == player_lookup
         ]
-        
+
         if match.empty:
             return None
-        
+
         return match.iloc[0]
-    
+
     def _get_team_defense_data(self, team_abbr: str) -> Optional[pd.Series]:
         """Get team defense zone data."""
         if team_abbr is None or self.team_defense_df is None or self.team_defense_df.empty:
             return None
-        
+
         match = self.team_defense_df[
             self.team_defense_df['team_abbr'] == team_abbr
         ]
-        
+
         if match.empty:
             return None
-        
+
         return match.iloc[0]
-    
+
     # ========================================================================
     # SOURCE TRACKING (v4.0)
     # ========================================================================
-    
+
     def build_source_tracking_fields(self) -> dict:
         """
         Build dict of all source tracking fields for output records.
         Uses attributes set by track_source_usage() in base class.
-        
+
         Returns:
             Dict with 12 source tracking fields (3 per source × 4 sources)
         """
         fields = {}
-        
+
         # Source 1: Player Context
         fields['source_player_context_last_updated'] = getattr(
             self, 'source_player_context_last_updated', None
@@ -1891,7 +1891,7 @@ class PlayerCompositeFactorsProcessor(
         fields['source_player_context_completeness_pct'] = getattr(
             self, 'source_player_context_completeness_pct', None
         )
-        
+
         # Source 2: Team Context
         fields['source_team_context_last_updated'] = getattr(
             self, 'source_team_context_last_updated', None
@@ -1902,7 +1902,7 @@ class PlayerCompositeFactorsProcessor(
         fields['source_team_context_completeness_pct'] = getattr(
             self, 'source_team_context_completeness_pct', None
         )
-        
+
         # Source 3: Player Shot Zone
         fields['source_player_shot_last_updated'] = getattr(
             self, 'source_player_shot_last_updated', None
@@ -1913,7 +1913,7 @@ class PlayerCompositeFactorsProcessor(
         fields['source_player_shot_completeness_pct'] = getattr(
             self, 'source_player_shot_completeness_pct', None
         )
-        
+
         # Source 4: Team Defense Zone
         fields['source_team_defense_last_updated'] = getattr(
             self, 'source_team_defense_last_updated', None
@@ -1924,17 +1924,17 @@ class PlayerCompositeFactorsProcessor(
         fields['source_team_defense_completeness_pct'] = getattr(
             self, 'source_team_defense_completeness_pct', None
         )
-        
+
         # Early season fields
         fields['early_season_flag'] = getattr(self, 'early_season_flag', None)
         fields['insufficient_data_reason'] = getattr(self, 'insufficient_data_reason', None)
-        
+
         return fields
-    
+
     # ========================================================================
     # STATS & REPORTING
     # ========================================================================
-    
+
     def get_precompute_stats(self) -> dict:
         """Get processor-specific stats for logging."""
         return {

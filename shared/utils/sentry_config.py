@@ -29,9 +29,9 @@ def configure_sentry():
     sentry_dsn = get_sentry_dsn()
     if not sentry_dsn:
         return
-        
+
     environment = "development" if is_local() else os.getenv("ENVIRONMENT", "production")
-    
+
     # Determine sampling rates based on environment
     if environment == "development":
         error_sample_rate = 1.0
@@ -45,21 +45,21 @@ def configure_sentry():
         error_sample_rate = 1.0
         traces_sample_rate = 0.1
         profiles_sample_rate = 0.01
-    
+
     sentry_sdk.init(
         dsn=sentry_dsn,
         environment=environment,
-        
+
         # Error tracking
         sample_rate=error_sample_rate,
-        
+
         # Performance monitoring
         enable_tracing=True,
         traces_sample_rate=traces_sample_rate,
-        
+
         # Profiling (helps identify slow code)
         profiles_sample_rate=profiles_sample_rate,
-        
+
         # Integrations
         integrations=[
             FlaskIntegration(
@@ -74,17 +74,17 @@ def configure_sentry():
                 event_level=None  # Send logs as breadcrumbs
             ),
         ],
-        
+
         # Release tracking
         release=os.getenv("SENTRY_RELEASE", "unknown"),
-        
+
         # Additional context
         before_send=before_send_filter,
         before_send_transaction=before_send_transaction_filter,
-        
+
         # PII settings
         send_default_pii=False,  # Don't send sensitive data
-        
+
         # Performance
         max_breadcrumbs=50,  # Keep reasonable history
         attach_stacktrace=True,  # Always include stack traces
@@ -92,41 +92,41 @@ def configure_sentry():
 
 def before_send_filter(event, hint):
     """Filter and enhance events before sending to Sentry"""
-    
+
     # Add custom tags for better organization
     event.setdefault('tags', {})
     event['tags']['service'] = os.getenv('K_SERVICE', 'unknown')
     event['tags']['project'] = 'nba-analytics'
-    
+
     # Add custom context
     event.setdefault('extra', {})
     event['extra']['container_id'] = os.getenv('HOSTNAME', 'unknown')
-    
+
     # Filter out expected errors (don't spam Sentry)
     if 'exception' in event:
         exc_type = event['exception']['values'][0]['type']
-        
+
         # Don't send these common/expected errors
         if exc_type in ['KeyboardInterrupt', 'SystemExit']:
             return None
-            
+
         # Don't send rate limit errors (we expect these)
         if 'rate limit' in str(event).lower():
             return None
-    
+
     return event
 
 def before_send_transaction_filter(event, hint):
     """Filter performance transactions"""
-    
+
     # Don't track health check requests (too noisy)
     if event.get('transaction', '').endswith('/health'):
         return None
-        
+
     # Add custom tags for performance analysis
     event.setdefault('tags', {})
     event['tags']['service'] = os.getenv('K_SERVICE', 'unknown')
-    
+
     return event
 
 def add_scraper_context(scraper_name: str, run_id: str, opts: dict):

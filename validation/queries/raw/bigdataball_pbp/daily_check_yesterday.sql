@@ -41,7 +41,7 @@ game_event_counts AS (
 yesterday_pbp AS (
   SELECT
     (SELECT COUNT(DISTINCT game_id) FROM game_event_counts) as games_with_data,
-    (SELECT COUNT(*) FROM `nba-props-platform.nba_raw.bigdataball_play_by_play` 
+    (SELECT COUNT(*) FROM `nba-props-platform.nba_raw.bigdataball_play_by_play`
      WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)) as total_events,
     ROUND(AVG(events_per_game), 1) as avg_events_per_game,
     MIN(events_per_game) as min_events_per_game,
@@ -65,7 +65,7 @@ SELECT
   p.min_players,
   CASE
     WHEN s.scheduled_games = 0 THEN '✅ No games scheduled'
-    WHEN p.games_with_data = s.scheduled_games 
+    WHEN p.games_with_data = s.scheduled_games
      AND p.min_events_per_game >= 400
      AND p.pct_shots_with_coords >= 70
      AND p.min_players >= 15

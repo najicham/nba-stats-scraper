@@ -2,7 +2,7 @@
 set -euo pipefail
 
 PROJECT="nba-props-platform"
-REGION="us-west2" 
+REGION="us-west2"
 TAG="dev-$(date +%H%M%S)"
 
 # Use Artifact Registry consistently
@@ -16,7 +16,7 @@ echo "⏱️  This will take ~2 minutes (uses cached base)"
 cat > /tmp/cloudbuild-service.yaml << EOF
 steps:
 - name: 'gcr.io/cloud-builders/docker'
-  args: ['build', '-t', '${SERVICE_IMAGE}', '-f', 'Dockerfile.service', 
+  args: ['build', '-t', '${SERVICE_IMAGE}', '-f', 'Dockerfile.service',
          '--build-arg', 'PROJECT_ID=${PROJECT}',
          '--build-arg', 'REGION=${REGION}',
          '.']

@@ -9,7 +9,7 @@
 
 CREATE OR REPLACE VIEW `nba-props-platform.nba_predictions.v_system_agreement` AS
 WITH system_predictions AS (
-  SELECT 
+  SELECT
     player_lookup,
     game_date,
     game_id,
@@ -23,9 +23,9 @@ WITH system_predictions AS (
   WHERE is_active = TRUE
   GROUP BY player_lookup, game_date, game_id
 )
-SELECT 
+SELECT
   *,
-  CASE 
+  CASE
     WHEN prediction_range <= 2 THEN 'HIGH_AGREEMENT'
     WHEN prediction_range <= 4 THEN 'MODERATE_AGREEMENT'
     WHEN prediction_range <= 6 THEN 'LOW_AGREEMENT'

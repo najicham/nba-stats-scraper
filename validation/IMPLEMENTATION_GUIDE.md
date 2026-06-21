@@ -113,11 +113,11 @@ from google.cloud import bigquery
 
 class NBASeasonCalendar:
     """Understands NBA season structure and special dates"""
-    
+
     def __init__(self, bq_client: bigquery.Client):
         self.bq_client = bq_client
         self.project_id = 'nba-props-platform'
-    
+
     def get_current_season_year(self) -> int:
         """Determine current season (2024 for 2024-25 season)"""
         today = date.today()
@@ -125,23 +125,23 @@ class NBASeasonCalendar:
             return today.year
         else:
             return today.year - 1
-    
+
     def get_season_date_range(self, season_year: int) -> Tuple[str, str]:
         """Get season boundaries (regular season + playoffs)"""
         start_date = f"{season_year}-10-01"
         end_date = f"{season_year + 1}-06-30"
         return start_date, end_date
-    
+
     def get_game_dates(
-        self, 
-        start_date: str, 
+        self,
+        start_date: str,
         end_date: str,
         include_preseason: bool = False
     ) -> List[str]:
         """Get actual game dates from schedule"""
-        
+
         preseason_filter = "" if include_preseason else "AND game_type != 'preseason'"
-        
+
         query = f"""
         SELECT DISTINCT game_date
         FROM `{self.project_id}.nba_raw.nbac_schedule`
@@ -150,31 +150,31 @@ class NBASeasonCalendar:
           {preseason_filter}
         ORDER BY game_date
         """
-        
+
         result = self.bq_client.query(query).result()
         return [str(row.game_date) for row in result]
-    
+
     def is_season_active(self) -> bool:
         """Check if NBA season is currently active"""
         today = date.today()
         month = today.month
-        
+
         # Season runs October-June
         return month >= 10 or month <= 6
-    
+
     def is_playoff_time(self) -> bool:
         """Check if playoffs are happening"""
         today = date.today()
         # Playoffs typically April-June
         return today.month >= 4 and today.month <= 6
-    
+
     def get_special_dates(self, season_year: int) -> Dict[str, List[str]]:
         """Get special dates (All-Star break, Christmas, etc.)"""
-        
+
         query = f"""
-        SELECT 
+        SELECT
           game_date,
-          CASE 
+          CASE
             WHEN game_id LIKE '003%' THEN 'all_star'
             WHEN EXTRACT(MONTH FROM game_date) = 12 AND EXTRACT(DAY FROM game_date) = 25 THEN 'christmas'
             WHEN EXTRACT(MONTH FROM game_date) = 1 AND EXTRACT(DAY FROM game_date) = 18 THEN 'mlk_day'
@@ -183,20 +183,20 @@ class NBASeasonCalendar:
         FROM `{self.project_id}.nba_raw.nbac_schedule`
         WHERE season_year = {season_year}
         """
-        
+
         result = self.bq_client.query(query).result()
-        
+
         special_dates = {
             'all_star': [],
             'christmas': [],
             'mlk_day': []
         }
-        
+
         for row in result:
             date_str = str(row.game_date)
             if row.special_type in special_dates:
                 special_dates[row.special_type].append(date_str)
-        
+
         return special_dates
 ```
 
@@ -211,31 +211,31 @@ class BaseValidator:
     def __init__(self, config_path: str):
         # ... existing code ...
         self.calendar = NBASeasonCalendar(self.bq_client)
-    
+
     def _auto_detect_date_range(self, season_year: Optional[int]) -> Tuple[str, str]:
         """Auto-detect date range based on current season state"""
-        
+
         if season_year:
             # Use specific season
             return self.calendar.get_season_date_range(season_year)
-        
+
         if not self.calendar.is_season_active():
             # Off-season: validate most recent complete season
             season_year = self.calendar.get_current_season_year() - 1
             return self.calendar.get_season_date_range(season_year)
-        
+
         # In-season: validate recent games
         today = date.today()
-        
+
         if self.calendar.is_playoff_time():
             # Playoffs: last 14 days
             start_date = (today - timedelta(days=14)).isoformat()
         else:
             # Regular season: last 7 days
             start_date = (today - timedelta(days=7)).isoformat()
-        
+
         end_date = today.isoformat()
-        
+
         return start_date, end_date
 ```
 
@@ -262,20 +262,20 @@ processors:
   - name: espn_scoreboard
     date_range: last_1_day
     severity_threshold: error
-  
+
   - name: bdl_boxscores
     date_range: last_1_day
     severity_threshold: error
-  
+
   - name: nbac_gamebook
     date_range: last_1_day
     severity_threshold: error
-  
+
   # Important: Check recent props
   - name: odds_api_props
     date_range: last_7_days
     severity_threshold: warning
-  
+
   # Schedule validation (weekly)
   - name: nbac_schedule
     date_range: current_season
@@ -305,18 +305,18 @@ processors:
       - completeness
       - team_presence
       - game_count_validation
-  
+
   - name: nbac_player_list
     date_range: current
     severity_threshold: error
     checks:
       - all_teams_have_rosters
       - no_duplicate_players
-  
+
   - name: br_rosters
     date_range: current_season
     severity_threshold: warning
-  
+
   # ... all other processors ...
 ```
 
@@ -377,7 +377,7 @@ app = Flask(__name__)
 def run_validation():
     """
     Run validation based on schedule or manual trigger
-    
+
     POST /validate
     {
         "schedule_name": "daily_validation",  // or null for all
@@ -387,15 +387,15 @@ def run_validation():
     }
     """
     data = request.json
-    
+
     schedule_name = data.get('schedule_name', 'daily_validation')
     processors = data.get('processors')
     notify = data.get('notify', True)
-    
+
     # Load schedule
     with open(f'validation/schedules/{schedule_name}.yaml', 'r') as f:
         schedule = yaml.safe_load(f)
-    
+
     # Check if schedule should run
     calendar = NBASeasonCalendar()
     if not should_run_schedule(schedule, calendar):
@@ -403,13 +403,13 @@ def run_validation():
             'status': 'skipped',
             'reason': 'Schedule not active'
         })
-    
+
     # Run validations
     results = {}
     for proc_config in schedule['processors']:
         if processors and proc_config['name'] not in processors:
             continue
-        
+
         try:
             report = run_processor_validation(proc_config, notify)
             results[proc_config['name']] = {
@@ -422,7 +422,7 @@ def run_validation():
                 'status': 'error',
                 'error': str(e)
             }
-    
+
     return jsonify({
         'status': 'completed',
         'schedule': schedule_name,
@@ -431,29 +431,29 @@ def run_validation():
 
 def should_run_schedule(schedule: dict, calendar: NBASeasonCalendar) -> bool:
     """Check if schedule should run now"""
-    
+
     if not schedule.get('enabled', True):
         return False
-    
+
     # Check month
     active_months = schedule['schedule'].get('active_months', [])
     if active_months and datetime.now().month not in active_months:
         return False
-    
+
     # Check if season active
     if not calendar.is_season_active():
         return False
-    
+
     return True
 
 def run_processor_validation(proc_config: dict, notify: bool):
     """Run validation for a single processor"""
-    
+
     processor_name = proc_config['name']
-    
+
     # Load validator
     config_path = f'validation/configs/{processor_name}.yaml'
-    
+
     # Check if custom validator exists
     try:
         validator_class = getattr(
@@ -465,10 +465,10 @@ def run_processor_validation(proc_config: dict, notify: bool):
         # Use base validator
         from validation.base_validator import BaseValidator
         validator = BaseValidator(config_path)
-    
+
     # Determine date range
     date_range_spec = proc_config.get('date_range', 'auto')
-    
+
     if date_range_spec == 'auto':
         start_date, end_date = None, None
     elif date_range_spec.startswith('last_'):
@@ -477,14 +477,14 @@ def run_processor_validation(proc_config: dict, notify: bool):
         start_date = (date.today() - timedelta(days=days)).isoformat()
     else:
         start_date, end_date = None, None  # Let validator auto-detect
-    
+
     # Run validation
     report = validator.validate(
         start_date=start_date,
         end_date=end_date,
         notify=notify
     )
-    
+
     return report
 
 if __name__ == '__main__':
@@ -600,7 +600,7 @@ Remediation Commands:
      name: "new_processor"
      description: "..."
      layers: [bigquery]
-   
+
    bigquery_validations:
      enabled: true
      completeness:
@@ -613,7 +613,7 @@ Remediation Commands:
 2. **Test with Base Validator** (1 hour)
    ```python
    from validation.base_validator import BaseValidator
-   
+
    validator = BaseValidator('validation/configs/new_processor.yaml')
    report = validator.validate(start_date='2024-11-01', end_date='2024-11-30')
    ```
@@ -640,7 +640,7 @@ Remediation Commands:
    ```bash
    # Manual test
    python validation/validators/new_processor_validator.py --last-days=7
-   
+
    # Scheduled test
    curl -X POST http://localhost:8080/validate \
      -H "Content-Type: application/json" \
@@ -666,7 +666,7 @@ CREATE TABLE IF NOT EXISTS `nba_processing.validation_results` (
   message STRING,
   affected_count INT64,
   overall_status STRING NOT NULL,
-  
+
   -- Metadata
   execution_duration_seconds FLOAT64,
   validator_version STRING
@@ -684,7 +684,7 @@ ORDER BY validation_timestamp DESC;
 
 -- View for processor health
 CREATE OR REPLACE VIEW `nba_processing.processor_health_summary` AS
-SELECT 
+SELECT
   processor_name,
   DATE(validation_timestamp) as validation_date,
   COUNT(*) as total_checks,
@@ -711,7 +711,7 @@ def test_date_range_detection():
     """Test auto date range detection"""
     validator = BaseValidator('validation/configs/test_processor.yaml')
     start, end = validator._auto_detect_date_range(season_year=2024)
-    
+
     assert start == '2024-10-01'
     assert end == '2025-06-30'
 
@@ -719,9 +719,9 @@ def test_consecutive_date_grouping():
     """Test grouping consecutive dates"""
     validator = BaseValidator('validation/configs/test_processor.yaml')
     dates = ['2024-11-01', '2024-11-02', '2024-11-03', '2024-11-05', '2024-11-06']
-    
+
     groups = validator._group_consecutive_dates(dates)
-    
+
     assert len(groups) == 2
     assert groups[0] == ('2024-11-01', '2024-11-03')
     assert groups[1] == ('2024-11-05', '2024-11-06')
@@ -733,14 +733,14 @@ def test_consecutive_date_grouping():
 def test_espn_scoreboard_validation():
     """End-to-end test for ESPN Scoreboard"""
     from validation.validators.espn_scoreboard_validator import EspnScoreboardValidator
-    
+
     validator = EspnScoreboardValidator('validation/configs/espn_scoreboard.yaml')
     report = validator.validate(
         start_date='2024-11-01',
         end_date='2024-11-07',
         notify=False
     )
-    
+
     assert report.overall_status in ['pass', 'warn', 'fail']
     assert report.total_checks > 0
     assert len(report.results) == report.total_checks
@@ -784,7 +784,7 @@ Before deploying:
 
 ```sql
 -- Daily validation summary
-SELECT 
+SELECT
   processor_name,
   overall_status,
   COUNT(*) as validation_runs,
@@ -796,7 +796,7 @@ GROUP BY processor_name, overall_status
 ORDER BY processor_name;
 
 -- Trending issues
-SELECT 
+SELECT
   processor_name,
   check_name,
   COUNT(*) as failure_count,

@@ -11,17 +11,17 @@ from dataclasses import dataclass
 from typing import List, Optional, Tuple
 from shared.utils.nba_team_mapper import TeamInfo as BaseTeamInfo
 
-@dataclass 
+@dataclass
 class TravelTeamInfo(BaseTeamInfo):
     """Extended TeamInfo with travel/distance fields for analytics."""
-    
+
     # Travel-specific fields
-    arena_name: str = ""         # "State Farm Arena" 
+    arena_name: str = ""         # "State Farm Arena"
     latitude: float = 0.0        # 33.7573
     longitude: float = 0.0       # -84.3963
     timezone: str = ""           # "America/New_York"
     airport_code: str = ""       # "ATL"
-    
+
     # For international games
     country: str = "USA"         # "USA" for all NBA teams, "CAN" for Toronto
 

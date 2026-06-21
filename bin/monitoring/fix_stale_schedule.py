@@ -43,10 +43,10 @@ def find_stale_games(client: bigquery.Client) -> list:
       AND game_date < CURRENT_DATE('America/New_York')  -- Past dates only
     ORDER BY game_date DESC, time_slot
     """
-    
+
     results = list(client.query(query).result(timeout=60))
     stale_games = []
-    
+
     for row in results:
         # Game is stale if > 4 hours since start time
         if row.hours_since_start and row.hours_since_start > 4:
@@ -58,7 +58,7 @@ def find_stale_games(client: bigquery.Client) -> list:
                 'matchup': f"{row.away_team_abbr}@{row.home_team_abbr}",
                 'hours_since_start': row.hours_since_start
             })
-    
+
     return stale_games
 
 
@@ -67,16 +67,16 @@ def fix_stale_games(client: bigquery.Client, stale_games: list, dry_run: bool = 
     if not stale_games:
         logger.info("No stale games to fix")
         return 0
-    
+
     game_ids = [g['game_id'] for g in stale_games]
-    
+
     if dry_run:
         logger.info(f"[DRY RUN] Would update {len(game_ids)} games to Final status")
         for game in stale_games:
             hours = game['hours_since_start'] if game['hours_since_start'] else 0
             logger.info(f"  - {game['game_date']} {game['matchup']} (status={game['current_status']}, {hours:.1f}h old)")
         return 0
-    
+
     # Build update query - must include partition filter on game_date
     # Group games by date for partition-safe updates
     games_by_date = {}
@@ -109,7 +109,7 @@ def fix_stale_games(client: bigquery.Client, stale_games: list, dry_run: bool = 
 
     for game in stale_games:
         logger.info(f"  - {game['game_date']} {game['matchup']}")
-    
+
     return len(game_ids)
 
 
@@ -117,19 +117,19 @@ def main():
     parser = argparse.ArgumentParser(description='Fix stale schedule data')
     parser.add_argument('--dry-run', action='store_true', help='Show what would be updated without making changes')
     args = parser.parse_args()
-    
+
     client = bigquery.Client(project=PROJECT_ID)
-    
+
     logger.info("Checking for stale schedule data...")
     stale_games = find_stale_games(client)
-    
+
     if not stale_games:
         logger.info("✅ No stale schedule data found")
         return 0
-    
+
     logger.info(f"Found {len(stale_games)} stale games")
     fixed = fix_stale_games(client, stale_games, dry_run=args.dry_run)
-    
+
     return 0 if fixed >= 0 else 1
 
 

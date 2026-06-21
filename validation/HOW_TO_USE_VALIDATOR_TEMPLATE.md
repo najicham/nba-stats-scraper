@@ -64,53 +64,53 @@ Once complete:
 ## 🎯 Template Sections Explained
 
 ### Section 1: BigQuery Schema
-**Why:** Tells us table structure, partition strategy, field types  
-**How:** Run `INFORMATION_SCHEMA.COLUMNS` query or paste CREATE TABLE  
+**Why:** Tells us table structure, partition strategy, field types
+**How:** Run `INFORMATION_SCHEMA.COLUMNS` query or paste CREATE TABLE
 **Time:** 5 minutes
 
-### Section 2: GCS Storage  
-**Why:** Validates raw files exist before processing  
-**How:** Provide bucket path, file naming pattern, sample file content  
+### Section 2: GCS Storage
+**Why:** Validates raw files exist before processing
+**How:** Provide bucket path, file naming pattern, sample file content
 **Time:** 5 minutes
 
 ### Section 3: Coverage & Expectations
-**Why:** Defines what "complete" data looks like  
-**How:** Specify date ranges, seasons, expected record counts  
+**Why:** Defines what "complete" data looks like
+**How:** Specify date ranges, seasons, expected record counts
 **Time:** 10 minutes
 
 ### Section 4: Data Quality Rules
-**Why:** Defines what "valid" data looks like  
-**How:** List required fields, numeric ranges, valid enum values  
+**Why:** Defines what "valid" data looks like
+**How:** List required fields, numeric ranges, valid enum values
 **Time:** 15 minutes
 
 ### Section 5: Known Issues
-**Why:** Avoids false alarms on expected edge cases  
-**How:** Document any known gaps, quirks, or systematic issues  
+**Why:** Avoids false alarms on expected edge cases
+**How:** Document any known gaps, quirks, or systematic issues
 **Time:** 5 minutes
 
 ### Section 6: Cross-Validation
-**Why:** Ensures consistency across related tables  
-**How:** Specify reference tables to validate against  
+**Why:** Ensures consistency across related tables
+**How:** Specify reference tables to validate against
 **Time:** 10 minutes
 
 ### Section 7: Sample Data
-**Why:** Shows us actual data structure and patterns  
-**How:** Run provided queries, paste results  
+**Why:** Shows us actual data structure and patterns
+**How:** Run provided queries, paste results
 **Time:** 10 minutes
 
 ### Section 8: Processor Info
-**Why:** Helps us understand any transformations  
-**How:** Link to processor code, describe any special logic  
+**Why:** Helps us understand any transformations
+**How:** Link to processor code, describe any special logic
 **Time:** 5 minutes
 
 ### Section 9: Timeline
-**Why:** Determines when/how to run validations  
-**How:** Specify backfill dates, completion timeline  
+**Why:** Determines when/how to run validations
+**How:** Specify backfill dates, completion timeline
 **Time:** 2 minutes
 
 ### Section 10: Success Criteria
-**Why:** Defines what passes vs fails  
-**How:** Set thresholds, priorities, alert preferences  
+**Why:** Defines what passes vs fails
+**How:** Set thresholds, priorities, alert preferences
 **Time:** 5 minutes
 
 **Total time to complete:** ~60-90 minutes
@@ -187,11 +187,11 @@ game_date  | count | teams
 
 ### After You Submit
 
-**Hour 0:** You submit completed template  
-**Hour 1:** Validation team reviews, asks clarifying questions  
-**Hour 2:** Validator code is written based on template  
-**Hour 3:** You test validator on your data  
-**Hour 4:** Iterate based on results  
+**Hour 0:** You submit completed template
+**Hour 1:** Validation team reviews, asks clarifying questions
+**Hour 2:** Validator code is written based on template
+**Hour 3:** You test validator on your data
+**Hour 4:** Iterate based on results
 **Done:** Deploy to production!
 
 ### What You'll Receive
@@ -263,7 +263,7 @@ Before submitting, verify:
 
 This is a completed example showing:
 - How to fill out each section
-- What level of detail is appropriate  
+- What level of detail is appropriate
 - How to paste query results
 - How to document edge cases
 
@@ -275,19 +275,19 @@ Use it as a reference!
 
 **Common questions:**
 
-**Q: What if I don't know some information?**  
+**Q: What if I don't know some information?**
 A: Mark as `[NEED CLARIFICATION]` and submit anyway. We'll fill gaps together.
 
-**Q: How detailed should I be?**  
+**Q: How detailed should I be?**
 A: Enough for someone unfamiliar with your data to understand it. When in doubt, more is better.
 
-**Q: Can I submit partial template?**  
+**Q: Can I submit partial template?**
 A: Yes! Fill out Critical sections (1, 2, 7) and we can start. Rest can be filled iteratively.
 
-**Q: What if my data doesn't fit the template?**  
+**Q: What if my data doesn't fit the template?**
 A: That's fine! Add custom sections or skip irrelevant ones. Template is a guide, not a strict requirement.
 
-**Q: How long until I get a validator?**  
+**Q: How long until I get a validator?**
 A: ~1-2 hours after submitting complete template.
 
 ---
@@ -296,7 +296,7 @@ A: ~1-2 hours after submitting complete template.
 
 **ESPN Scoreboard Validator**
 - Template filled: 45 minutes
-- Validator built: 60 minutes  
+- Validator built: 60 minutes
 - Result: 14/14 checks passing ✅
 
 **Odds API Props Validator**

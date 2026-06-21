@@ -10,10 +10,10 @@ gantt
     title NBA Data Collection - Daily Schedule (Pacific Time)
     dateFormat HH:mm
     axisFormat %H:%M
-    
+
     section Morning Setup
     Morning Operations        :morning, 08:00, 15m
-    
+
     section Business Hours (Revenue Critical)
     Real-Time Business 1      :crit, rt1, 08:00, 10m
     Real-Time Business 2      :crit, rt2, 10:00, 10m
@@ -22,7 +22,7 @@ gantt
     Real-Time Business 5      :crit, rt5, 16:00, 10m
     Real-Time Business 6      :crit, rt6, 18:00, 10m
     Real-Time Business 7      :crit, rt7, 20:00, 10m
-    
+
     section Game Day Coverage
     Game Day Evening 1        :active, ge1, 18:00, 10m
     Game Day Evening 2        :active, ge2, 21:00, 10m
@@ -37,17 +37,17 @@ gantt
 ```mermaid
 flowchart TD
     Schedule["📅 SCHEDULE<br/>6AM: Final Check | 8AM: Morning Ops | Every 2h: Real-Time | 8PM & 11PM: Post-Game | 2AM: Recovery"]
-    
+
     Schedule --> FinalStart
     FinalStart --> FinalEnd
     FinalEnd --> MorningStart
     MorningStart --> MorningEnd
     MorningEnd --> RTStart
-    RTStart --> RTEnd  
+    RTStart --> RTEnd
     RTEnd --> PostGameStart
     PostGameStart --> PostGameEnd
     PostGameEnd --> RecoveryStart
-    
+
     subgraph " "
         FinalStart -.-> FinalEnd
         subgraph "☀️ Early Morning Final Check (6AM PT) - Last Chance Recovery"
@@ -59,11 +59,11 @@ flowchart TD
             FC6["📊 Player Averages (bdl_player_averages)"]
             FC7["🧮 Advanced Stats (bdl_game_adv_stats)"]
             FC8["📝 Write Status to GCS"]
-            
+
             FC2 -.->|Game IDs| FC3
         end
     end
-    
+
     subgraph "  "
         MorningStart -.-> MorningEnd
         subgraph "🌅 Morning Operations (8AM PT) - Setup & Enhanced PBP Recovery"
@@ -78,7 +78,7 @@ flowchart TD
             MO9["📝 Write Status to GCS"]
         end
     end
-    
+
     subgraph "   "
         RTStart -.-> RTEnd
         subgraph "💰 Real-Time Business (Every 2h: 8AM-8PM PT) - Revenue Critical"
@@ -88,11 +88,11 @@ flowchart TD
             RT4["🏥 Injury Report (nbac_injury_report)"]
             RT5["✅ BDL Players (bdl_active_players)"]
             RT6["📝 Write Status to GCS"]
-            
+
             RT1 -.->|Must Succeed| RT2
         end
     end
-    
+
     subgraph "    "
         PostGameStart -.-> PostGameEnd
         subgraph "🎮 Post-Game Collection (8PM & 11PM PT) - Core Game Data"
@@ -105,11 +105,11 @@ flowchart TD
             PG7["📊 Player Averages (bdl_player_averages)"]
             PG8["🧮 Advanced Stats (bdl_game_adv_stats)"]
             PG9["📝 Write Status to GCS"]
-            
+
             PG3 -.->|Game IDs| PG4
         end
     end
-    
+
     subgraph "     "
         RecoveryStart
         subgraph "🌙 Late Night Recovery (2AM PT) - Enhanced PBP + Comprehensive Retry"
@@ -123,7 +123,7 @@ flowchart TD
             LN8["📝 Write Status to GCS"]
         end
     end
-    
+
     style FinalStart fill:transparent,stroke:transparent
     style FinalEnd fill:transparent,stroke:transparent
     style MorningStart fill:transparent,stroke:transparent
@@ -133,7 +133,7 @@ flowchart TD
     style PostGameStart fill:transparent,stroke:transparent
     style PostGameEnd fill:transparent,stroke:transparent
     style RecoveryStart fill:transparent,stroke:transparent
-    
+
     style RT1 fill:#ff6b6b
     style RT2 fill:#ff6b6b
     style PG3 fill:#ffd93d
@@ -155,17 +155,17 @@ flowchart LR
         P1[Props API<br/>oddsa_player_props]
         E1 -->|Event IDs| P1
     end
-    
+
     subgraph "ESPN Data Chain"
         E2[ESPN Scoreboard<br/>espn_scoreboard_api]
         P2[ESPN Boxscore<br/>espn_game_boxscore]
         E2 -->|Game IDs| P2
     end
-    
+
     subgraph "⚠️ Current Issue"
         ISSUE["ESPN scrapers run in PARALLEL<br/>❌ This breaks the dependency"]
     end
-    
+
     style E1 fill:#ff6b6b
     style P1 fill:#ff6b6b
     style E2 fill:#ffd93d
@@ -182,12 +182,12 @@ sequenceDiagram
     participant E as Events API
     participant P as Props API
     participant R as Revenue
-    
+
     Note over S,R: Every 2 Hours (8AM-8PM PT)
-    
+
     S->>W: Trigger Workflow
     W->>E: GET Events Data
-    
+
     alt Events API Success ✅
         E-->>W: Events Available
         Note over W: Wait 30 seconds (processing time)
@@ -214,7 +214,7 @@ mindmap
       Events API
         Betting Events
         Game Schedules
-      Props API  
+      Props API
         Player Props
         Odds Data
     Foundation Data
@@ -253,29 +253,29 @@ flowchart LR
     subgraph "Triggers"
         CS[Cloud Scheduler<br/>4 Triggers]
     end
-    
+
     subgraph "Orchestration"
         WF[Google Cloud Workflows<br/>4 Business Processes]
     end
-    
+
     subgraph "Execution"
         CR[Cloud Run Scrapers<br/>25+ Data Sources]
     end
-    
+
     subgraph "Storage"
         GCS[(Google Cloud Storage<br/>Raw JSON Data)]
     end
-    
+
     subgraph "Processing"
         PS[Pub/Sub Topics<br/>Event-Driven Processing]
         PROC[Data Processors<br/>Business Intelligence]
     end
-    
+
     subgraph "Output"
         DB[(Database<br/>Structured Data)]
         RPT[Player Reports<br/>Predictions & Analysis]
     end
-    
+
     CS --> WF
     WF --> CR
     CR --> GCS
@@ -283,7 +283,7 @@ flowchart LR
     PS --> PROC
     PROC --> DB
     DB --> RPT
-    
+
     style CS fill:#ffd93d
     style WF fill:#ff6b6b
     style CR fill:#4ecdc4
@@ -339,7 +339,7 @@ Total Daily Executions: 12 workflows
 
 ### **🎯 Implementation Priority**
 1. **Update existing workflows** (maintain revenue stream)
-2. **Deploy new workflows** (add recovery capabilities)  
+2. **Deploy new workflows** (add recovery capabilities)
 3. **Update schedulers** (12 total triggers)
 4. **Clean up old files** (remove post-game-analysis)
 

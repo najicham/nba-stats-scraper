@@ -39,20 +39,20 @@ print_warning() {
 run_query() {
     local query_file=$1
     local query_name=$2
-    
+
     if [ ! -f "$QUERIES_DIR/$query_file" ]; then
         print_error "Query file not found: $QUERIES_DIR/$query_file"
         exit 1
     fi
-    
+
     print_header "$query_name"
-    
+
     if [ "$OUTPUT_FORMAT" = "csv" ]; then
         bq query --use_legacy_sql=false --format=csv < "$QUERIES_DIR/$query_file"
     else
         bq query --use_legacy_sql=false --format=pretty < "$QUERIES_DIR/$query_file"
     fi
-    
+
     echo ""
 }
 
@@ -60,19 +60,19 @@ run_query() {
 save_to_table() {
     local query_file=$1
     local table_name=$2
-    
+
     if [ ! -f "$QUERIES_DIR/$query_file" ]; then
         print_error "Query file not found: $QUERIES_DIR/$query_file"
         exit 1
     fi
-    
+
     print_header "Saving results to table: $table_name"
-    
+
     bq query --use_legacy_sql=false \
         --destination_table="nba-props-platform.nba_validation.$table_name" \
         --replace \
         < "$QUERIES_DIR/$query_file"
-    
+
     print_success "Results saved to nba_validation.$table_name"
     echo ""
 }
@@ -92,7 +92,7 @@ COMMANDS:
     quality            Comprehensive data quality check
     realtime           Check if today's scraper has run
     all                Run all validation queries
-    
+
 OPTIONS:
     --csv              Output in CSV format
     --table [name]     Save results to BigQuery table
@@ -162,7 +162,7 @@ case ${COMMAND:-help} in
             run_query "daily_check_yesterday.sql" "Daily Check: Yesterday's Scraper Run"
         fi
         ;;
-    
+
     weekly)
         if [ -n "$SAVE_TABLE" ]; then
             save_to_table "weekly_check_last_7_days.sql" "$SAVE_TABLE"
@@ -170,7 +170,7 @@ case ${COMMAND:-help} in
             run_query "weekly_check_last_7_days.sql" "Weekly Check: Last 7 Days Trend"
         fi
         ;;
-    
+
     confidence)
         if [ -n "$SAVE_TABLE" ]; then
             save_to_table "confidence_score_monitoring.sql" "$SAVE_TABLE"
@@ -178,7 +178,7 @@ case ${COMMAND:-help} in
             run_query "confidence_score_monitoring.sql" "Confidence Score Monitoring"
         fi
         ;;
-    
+
     quality)
         if [ -n "$SAVE_TABLE" ]; then
             save_to_table "data_quality_check.sql" "$SAVE_TABLE"
@@ -186,7 +186,7 @@ case ${COMMAND:-help} in
             run_query "data_quality_check.sql" "Comprehensive Data Quality Check"
         fi
         ;;
-    
+
     realtime)
         if [ -n "$SAVE_TABLE" ]; then
             save_to_table "realtime_scraper_check.sql" "$SAVE_TABLE"
@@ -194,24 +194,24 @@ case ${COMMAND:-help} in
             run_query "realtime_scraper_check.sql" "Real-Time Scraper Status"
         fi
         ;;
-    
+
     all)
         print_header "Running Full BDL Injuries Validation Suite"
         echo ""
-        
+
         run_query "daily_check_yesterday.sql" "1/5: Daily Check"
         run_query "weekly_check_last_7_days.sql" "2/5: Weekly Trend"
         run_query "confidence_score_monitoring.sql" "3/5: Confidence Monitoring"
         run_query "data_quality_check.sql" "4/5: Data Quality"
         run_query "realtime_scraper_check.sql" "5/5: Real-Time Status"
-        
+
         print_success "Full validation complete!"
         ;;
-    
+
     help|--help|-h)
         show_usage
         ;;
-    
+
     *)
         print_error "Unknown command: ${COMMAND}"
         echo ""

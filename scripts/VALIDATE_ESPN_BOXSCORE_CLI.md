@@ -1,8 +1,8 @@
 # ESPN Boxscore Validation CLI
 
-**Data Source:** ESPN Game Boxscores  
-**Table:** `nba_raw.espn_boxscores`  
-**Pattern:** Sparse Backup Source (expect 0-10 games)  
+**Data Source:** ESPN Game Boxscores
+**Table:** `nba_raw.espn_boxscores`
+**Pattern:** Sparse Backup Source (expect 0-10 games)
 **Last Updated:** October 18, 2025
 
 ---
@@ -96,7 +96,7 @@ ESPN Only: >0 (phantom games)
 Stats differ: >5 points
 NULL points values
 ```
-**Action:** 
+**Action:**
 1. Run `scripts/espn_validation_bq_commands.sh` to investigate
 2. Verify game exists in schedule
 3. Compare with BDL data
@@ -113,10 +113,10 @@ bq query --use_legacy_sql=false "
 WITH espn_only AS (
   SELECT e.game_id, e.game_date,
     CONCAT(e.away_team_abbr, ' @ ', e.home_team_abbr) as matchup
-  FROM (SELECT DISTINCT game_date, game_id, away_team_abbr, home_team_abbr 
+  FROM (SELECT DISTINCT game_date, game_id, away_team_abbr, home_team_abbr
         FROM \`nba-props-platform.nba_raw.espn_boxscores\`
         WHERE game_date >= '2020-01-01') e
-  LEFT JOIN (SELECT DISTINCT game_id 
+  LEFT JOIN (SELECT DISTINCT game_id
              FROM \`nba-props-platform.nba_raw.bdl_player_boxscores\`
              WHERE game_date >= '2020-01-01') b
     ON e.game_id = b.game_id
@@ -177,7 +177,7 @@ WHERE game_date = '[DATE]'
 ## Common Issues
 
 ### Issue: "ESPN Only" games detected
-**Cause:** ESPN scraped a game BDL doesn't have  
+**Cause:** ESPN scraped a game BDL doesn't have
 **Solution:**
 1. Check if game exists in schedule
 2. Check if BDL has any games on that date
@@ -185,11 +185,11 @@ WHERE game_date = '[DATE]'
 4. If BDL missed it → investigate BDL scraper
 
 ### Issue: Partition filter errors
-**Cause:** BigQuery table requires partition filter  
+**Cause:** BigQuery table requires partition filter
 **Solution:** Always include `WHERE game_date >= 'YYYY-MM-DD'`
 
 ### Issue: No ESPN data but expected
-**Cause:** ESPN is sparse backup, not daily collection  
+**Cause:** ESPN is sparse backup, not daily collection
 **Solution:** This is NORMAL, not an error
 
 ---
@@ -205,12 +205,12 @@ WHERE game_date = '[DATE]'
 
 ## Emergency Contacts
 
-**Data Issues:** Check validation reports  
-**Scraper Issues:** Review scraper logs  
+**Data Issues:** Check validation reports
+**Scraper Issues:** Review scraper logs
 **Questions:** See README.md in validation/queries/raw/espn_boxscore/
 
 ---
 
-**Last Validation:** October 18, 2025  
-**Status:** ✅ Clean (phantom game removed)  
+**Last Validation:** October 18, 2025
+**Status:** ✅ Clean (phantom game removed)
 **Next Review:** Weekly

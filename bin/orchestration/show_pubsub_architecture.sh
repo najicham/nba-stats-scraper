@@ -32,19 +32,19 @@ if [ -z "$SUBSCRIPTIONS" ]; then
 else
     for SUB in $SUBSCRIPTIONS; do
         SUB_NAME=$(basename $SUB)
-        
+
         # Get subscription details
         DETAILS=$(gcloud pubsub subscriptions describe $SUB --format="json")
-        
+
         TOPIC=$(echo "$DETAILS" | jq -r '.topic' | xargs basename)
         PUSH_ENDPOINT=$(echo "$DETAILS" | jq -r '.pushConfig.pushEndpoint // "PULL"')
         DLQ_TOPIC=$(echo "$DETAILS" | jq -r '.deadLetterPolicy.deadLetterTopic // "none"' | xargs basename)
         MAX_DELIVERY=$(echo "$DETAILS" | jq -r '.deadLetterPolicy.maxDeliveryAttempts // "none"')
-        
+
         echo "   📬 $SUB_NAME"
         echo "      ├─ Reads from: $TOPIC"
         echo "      ├─ Delivers to: $PUSH_ENDPOINT"
-        
+
         if [ "$DLQ_TOPIC" != "none" ] && [ "$DLQ_TOPIC" != "null" ]; then
             echo "      └─ Dead letter: $DLQ_TOPIC (after $MAX_DELIVERY attempts)"
         else

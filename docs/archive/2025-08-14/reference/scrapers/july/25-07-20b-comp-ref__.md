@@ -10,7 +10,7 @@ Build a website with NBA player prop betting data, historical performance analys
 ### **Key Achievement**
 Successfully documented and designed schemas for a complete data pipeline that:
 - **Collects prop betting lines** from multiple sportsbooks
-- **Cross-references players** across 4+ different ID systems  
+- **Cross-references players** across 4+ different ID systems
 - **Links betting events** to actual NBA games and player statistics
 - **Tracks historical performance** for predictive modeling
 - **Supports real-time updates** throughout the season
@@ -31,12 +31,12 @@ daily_player_intelligence_workflow:
     - trigger_scrapers:
         parallel:
           - nba_player_list: "Deploy to Cloud Run"
-          - bdl_active_players: "Deploy to Cloud Run (5-6 API requests, aggregated)" 
+          - bdl_active_players: "Deploy to Cloud Run (5-6 API requests, aggregated)"
           - player_movement: "Deploy to Cloud Run"
-    
+
     - scrapers_publish_completion:
         action: "Each scraper publishes to Pub/Sub when complete"
-        message_format: 
+        message_format:
           file_path: "/raw-data/ball-dont-lie/active-players/2025-07-18/20250718_143000.json"
           data_source: "ball-dont-lie"
           data_type: "active-players"
@@ -69,7 +69,7 @@ daily_player_intelligence_workflow:
 #### **Raw Data Processing (Individual Processors)**
 *Each scraper triggers its own processor via Pub/Sub:*
 - **raw-nba-processor**: NBA.com Player List → `raw_nba_com_player_list` table
-- **raw-bdl-processor**: BDL Active Players → `raw_bdl_active_players` table  
+- **raw-bdl-processor**: BDL Active Players → `raw_bdl_active_players` table
 - **raw-espn-processor**: ESPN Rosters → `raw_espn_team_rosters` table
 
 #### **Unified Lookup Generation (Dedicated Processor)**
@@ -80,27 +80,27 @@ def build_unified_player_lookup():
     # Get latest data from all raw sources
     nba_players = query_latest_nba_players()
     bdl_players = query_latest_bdl_players()
-    
+
     # Cross-validate and build consensus
     unified_lookup = {}
     for nba_player in nba_players:
         player_name = f"{nba_player['first_name']} {nba_player['last_name']}"
-        
+
         # Find matching BDL player
         bdl_match = find_bdl_player_by_name(player_name, bdl_players)
-        
+
         # Determine consensus team and confidence
         consensus_team, confidence = resolve_team_assignment(
             nba_player['team'], bdl_match['team'] if bdl_match else None
         )
-        
+
         unified_lookup[player_name] = {
             'team_abbr': consensus_team,
             'confidence_score': confidence,
             'nba_com_player_id': nba_player['id'],
             'bdl_player_id': bdl_match['id'] if bdl_match else None
         }
-    
+
     # Update unified table
     update_player_team_lookup_table(unified_lookup)
 ```
@@ -111,13 +111,13 @@ def build_unified_player_lookup():
 # Illustrative logic for prop processing
 def process_player_props(props_data):
     enriched_props = []
-    
+
     for prop in props_data['outcomes']:
         player_name = prop['description']  # "Jaylen Wells"
-        
+
         # Fast lookup from unified table
         player_info = lookup_player_team(player_name)
-        
+
         if player_info and player_info['confidence_score'] > 0.8:
             enriched_props.append({
                 'player_name': player_name,
@@ -125,7 +125,7 @@ def process_player_props(props_data):
                 'line_value': prop['point'],
                 'odds': prop['price']
             })
-    
+
     return enriched_props
 ```
 
@@ -150,20 +150,20 @@ class BdlActivePlayersScraper(ScraperBase):
         cursor = None
         request_count = 0
         start_time = time.time()
-        
+
         # Collect all pages with rate limiting
         while True:
             if request_count > 0:
                 time.sleep(0.1)  # 100ms delay (well under 600/min limit)
-            
+
             response = self.get_players_page(cursor)
             all_players.extend(response['data'])
             request_count += 1
-            
+
             cursor = response['meta'].get('next_cursor')
             if not cursor:
                 break
-        
+
         # Save aggregated result
         return self.save_aggregated_data({
             'timestamp': start_time,
@@ -220,7 +220,7 @@ bigquery_alerts:
   - threshold: 10 failed queries/hour
 ```
 
-#### **Cloud Run Spending Limits** 
+#### **Cloud Run Spending Limits**
 ```yaml
 # Prevent runaway scraper costs
 cloud_run_limits:
@@ -235,7 +235,7 @@ cloud_run_limits:
 # Project-wide cost controls
 project_billing_alerts:
   - $25: "Low alert - normal monthly spend"
-  - $75: "Medium alert - investigate unusual activity" 
+  - $75: "Medium alert - investigate unusual activity"
   - $150: "High alert - potential runaway costs"
   - $200: "Critical alert - consider billing account protection"
 
@@ -307,7 +307,7 @@ OPTIONS (partition_expiration_days = 90);
 ```sql
 -- Single source of truth for player → team lookup
 CREATE TABLE player_team_lookup (
-    player_name STRING NOT NULL,           -- "Jaylen Wells" 
+    player_name STRING NOT NULL,           -- "Jaylen Wells"
     team_abbr STRING NOT NULL,             -- "MEM"
     nba_com_player_id INT64,               -- Cross-reference
     bdl_player_id INT64,                   -- Cross-reference
@@ -384,7 +384,7 @@ CREATE TABLE player_team_lookup (
 **Primary Sources (Multi-Source Intelligence)**:
 - **NBA.com Player List**: Official source, 4-6 times/day (1 request each)
 - **Ball Don't Lie Active Players**: **Critical validation**, daily (**5-6 paginated requests, aggregated into single file**)
-- **ESPN Team Rosters**: Trade validation, 1-2 times/day (30 requests each)  
+- **ESPN Team Rosters**: Trade validation, 1-2 times/day (30 requests each)
 - **NBA.com Player Movement**: Transaction detection, daily (1 request)
 
 **Total Daily API Usage**: 45-80 requests (trade season intensive, regular season routine, includes BDL pagination)
@@ -415,7 +415,7 @@ CREATE TABLE player_team_lookup (
 
 #### **Trade Detection & Edge Cases**
 - **Same-day trades**: Multi-source validation catches rapid changes
-- **G-League assignments**: Player Movement API explains disappeared players  
+- **G-League assignments**: Player Movement API explains disappeared players
 - **Recent waivers**: Transaction data prevents props on released players
 - **Historical analysis**: Use game boxscores when current lookup not needed
 - **Pagination failures**: BDL Active Players incomplete data detection
@@ -497,7 +497,7 @@ CREATE TABLE player_team_lookup (
 - **Partitioning**: By game_date
 - **Critical**: Links betting events to actual NBA games
 
-#### **teams** 
+#### **teams**
 - **Purpose**: Standardized team reference
 - **Key Fields**: team_abbr (primary), multiple source IDs, league organization
 - **Usage**: Primary key for all team references
@@ -518,7 +518,7 @@ CREATE TABLE player_team_lookup (
 - **Source**: Ball Don't Lie ongoing injury tracking
 - **Key Fields**: status, description, dates, severity
 
-#### **game_injury_reports** 
+#### **game_injury_reports**
 - **Purpose**: Official pre-game availability (CRITICAL FOR PROPS)
 - **Source**: NBA.com official injury reports
 - **Key Fields**: game-specific status, reason categories (Rest/Injury/Assignment)
@@ -538,7 +538,7 @@ CREATE TABLE player_team_lookup (
 - **Critical**: Historical performance for prop predictions
 
 #### **team_boxscores**
-- **Purpose**: Team-level game statistics  
+- **Purpose**: Team-level game statistics
 - **Key Fields**: Team stats, pace, ratings, game results
 
 ### **Betting Tables (CORE BUSINESS)**
@@ -594,8 +594,8 @@ CREATE TABLE player_team_lookup (
 - **Logic**: Map team names to abbreviations, link to games
 - **Priority**: Must run before props-processor
 
-#### **props-processor** 
-- **Input**: Odds API Player Props data  
+#### **props-processor**
+- **Input**: Odds API Player Props data
 - **Output**: player_props + odds_history tables
 - **Dependencies**: Requires events-processor completion
 - **Logic**: Match player names to player IDs, track odds changes, **validate against BDL Active Players**
@@ -606,7 +606,7 @@ CREATE TABLE player_team_lookup (
 - **Output**: games table
 - **Logic**: Cross-reference game IDs, standardize team abbreviations
 
-#### **players-processor** 
+#### **players-processor**
 - **Input**: NBA.com Player List, ESPN Rosters, NBA.com Rosters, **BDL Active Players (aggregated)**
 - **Output**: players + team_rosters tables
 - **Logic**: Cross-reference player IDs, track name variations, **validate pagination completion**
@@ -639,19 +639,19 @@ CREATE TABLE player_team_lookup (
 def handle_pagination_failure(scraper_name, page_number, error, retry_count=0):
     """Handle pagination failures with intelligent retry"""
     max_retries = 3
-    
+
     if retry_count < max_retries:
         # Exponential backoff for pagination
         sleep_time = (2 ** retry_count) * 0.5  # 0.5, 1, 2 seconds
         time.sleep(sleep_time)
-        
+
         logger.info(
             "retrying_pagination",
             scraper=scraper_name,
             page=page_number,
             retry_count=retry_count
         )
-        
+
         return retry_page(page_number, retry_count + 1)
     else:
         # Mark pagination as incomplete
@@ -706,12 +706,12 @@ resource_profiles:
     memory: 256Mi
     cpu: 0.5
     timeout: 300s
-    
+
   multi_request_paginated:
     memory: 512Mi
     cpu: 1
     timeout: 900s
-    
+
   large_data_aggregation:
     memory: 1Gi
     cpu: 2
@@ -726,7 +726,7 @@ resource_profiles:
 1. **Events API** provides game event IDs
 2. **Player Props API** uses event IDs to get betting lines
 3. **BDL Active Players** provides critical player validation (5-6 requests, aggregated)
-4. **Game Injury Reports** show player availability 
+4. **Game Injury Reports** show player availability
 5. **Historical Boxscores** provide performance context
 6. **Cross-referenced Player Data** enables accurate matching
 
@@ -767,7 +767,7 @@ resource_profiles:
 
 #### **Predictive Modeling Foundation**
 - **Player performance trends**: Recent game statistical patterns
-- **Matchup analysis**: Historical performance vs specific opponents  
+- **Matchup analysis**: Historical performance vs specific opponents
 - **Injury impact**: How different injury types affect player performance
 - **Rest vs play**: Load management impact on prop values
 - **Multi-source confidence**: Use agreement across sources for model weighting
@@ -782,7 +782,7 @@ resource_profiles:
 3. **Establish cross-reference system**: Player/game ID mapping with BDL validation
 4. **Basic data quality checks**: Validate core relationships and pagination completion
 
-### **Phase 2: Betting Pipeline (Weeks 3-4)** 
+### **Phase 2: Betting Pipeline (Weeks 3-4)**
 1. **Deploy events-processor**: Betting events foundation
 2. **Deploy props-processor**: Core business data with player validation
 3. **Implement odds tracking**: Historical line movement
@@ -790,7 +790,7 @@ resource_profiles:
 
 ### **Phase 3: Performance Integration (Weeks 5-6)**
 1. **Deploy boxscores-processor**: Historical performance data
-2. **Deploy injuries-processor**: Player availability tracking  
+2. **Deploy injuries-processor**: Player availability tracking
 3. **Build analytics foundation**: Link performance to prop outcomes
 4. **Enhance monitoring**: Multi-source agreement tracking
 

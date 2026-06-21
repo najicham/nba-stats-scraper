@@ -194,7 +194,7 @@ export PYTHONPATH=.
 
 # Validate Phase 4 coverage
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   'team_defense_zone_analysis' as table,
   COUNT(DISTINCT analysis_date) as dates
 FROM \`nba-props-platform.nba_precompute.team_defense_zone_analysis\`

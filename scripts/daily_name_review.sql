@@ -1,5 +1,5 @@
 -- Check new unresolved names from yesterday
-SELECT 
+SELECT
     resolution_id,
     team_abbr,
     original_name,

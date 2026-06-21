@@ -287,42 +287,42 @@ source_player_game_completeness_pct NUMERIC(5,2)
   "player_lookup": "lebronjames",
   "universal_player_id": "lebronjames_001",
   "analysis_date": "2025-10-30",
-  
+
   "paint_rate_last_10": 45.2,
   "mid_range_rate_last_10": 19.8,
   "three_pt_rate_last_10": 35.0,
   "total_shots_last_10": 181,
   "games_in_sample_10": 10,
   "sample_quality_10": "excellent",
-  
+
   "paint_pct_last_10": 0.623,
   "mid_range_pct_last_10": 0.412,
   "three_pt_pct_last_10": 0.367,
-  
+
   "paint_attempts_per_game": 8.2,
   "mid_range_attempts_per_game": 3.7,
   "three_pt_attempts_per_game": 6.1,
-  
+
   "paint_rate_last_20": 44.8,
   "paint_pct_last_20": 0.618,
   "games_in_sample_20": 20,
   "sample_quality_20": "excellent",
-  
+
   "assisted_rate_last_10": 62.3,
   "unassisted_rate_last_10": 37.7,
-  
+
   "player_position": null,
   "primary_scoring_zone": "paint",
   "data_quality_tier": "high",
   "calculation_notes": null,
-  
+
   "source_player_game_last_updated": "2025-10-30T10:00:00Z",
   "source_player_game_rows_found": 10,
   "source_player_game_completeness_pct": 100.00,
-  
+
   "early_season_flag": false,
   "insufficient_data_reason": null,
-  
+
   "created_at": "2025-10-30T23:15:00Z",
   "processed_at": "2025-10-30T23:15:00Z"
 }
@@ -534,13 +534,13 @@ python run_tests.py --verbose
 
 ```sql
 -- All checks should pass
-SELECT 
+SELECT
   COUNT(*) >= 400 as enough_players,              -- At least 400 players
   AVG(source_player_game_completeness_pct) >= 85 as good_completeness,
   COUNTIF(data_quality_tier = 'high') / COUNT(*) >= 0.70 as mostly_high_quality,
   MAX(TIMESTAMP_DIFF(
-    CURRENT_TIMESTAMP(), 
-    source_player_game_last_updated, 
+    CURRENT_TIMESTAMP(),
+    source_player_game_last_updated,
     HOUR
   )) <= 72 as source_fresh,
   MAX(TIMESTAMP_DIFF(
@@ -567,7 +567,7 @@ WHERE analysis_date = CURRENT_DATE();
 
 **Check recent run status:**
 ```sql
-SELECT 
+SELECT
   processor_name,
   run_date,
   success,
@@ -583,13 +583,13 @@ LIMIT 10;
 
 **Check data freshness:**
 ```sql
-SELECT 
+SELECT
   analysis_date,
   COUNT(*) as player_count,
   AVG(source_player_game_completeness_pct) as avg_completeness,
   MAX(TIMESTAMP_DIFF(
-    CURRENT_TIMESTAMP(), 
-    source_player_game_last_updated, 
+    CURRENT_TIMESTAMP(),
+    source_player_game_last_updated,
     HOUR
   )) as hours_since_source_update,
   COUNTIF(early_season_flag) as early_season_count
@@ -601,7 +601,7 @@ ORDER BY analysis_date DESC;
 
 **Identify data quality issues:**
 ```sql
-SELECT 
+SELECT
   player_lookup,
   data_quality_tier,
   games_in_sample_10,
@@ -626,8 +626,8 @@ ORDER BY data_quality_tier, source_player_game_completeness_pct;
 
 ```sql
 -- Find which players have incomplete data
-SELECT 
-  player_lookup, 
+SELECT
+  player_lookup,
   games_in_sample_10,
   source_player_game_rows_found,
   source_player_game_completeness_pct,
@@ -643,12 +643,12 @@ ORDER BY source_player_game_completeness_pct;
 
 ```sql
 -- Check source freshness
-SELECT 
+SELECT
   player_lookup,
   source_player_game_last_updated,
   TIMESTAMP_DIFF(
-    CURRENT_TIMESTAMP(), 
-    source_player_game_last_updated, 
+    CURRENT_TIMESTAMP(),
+    source_player_game_last_updated,
     HOUR
   ) as hours_old
 FROM `nba_precompute.player_shot_zone_analysis`
@@ -662,7 +662,7 @@ LIMIT 10;
 
 ```sql
 -- Check early season count and reasons
-SELECT 
+SELECT
   COUNT(*) as early_season_count,
   insufficient_data_reason,
   COUNT(*) as count_per_reason
@@ -677,7 +677,7 @@ GROUP BY insufficient_data_reason;
 
 ```sql
 -- Find players with incorrect rate sums
-SELECT 
+SELECT
   player_lookup,
   paint_rate_last_10,
   mid_range_rate_last_10,
@@ -713,7 +713,7 @@ ORDER BY ABS((paint_rate_last_10 + mid_range_rate_last_10 + three_pt_rate_last_1
 
 ```sql
 -- Find favorable matchups where player's strength meets opponent's weakness
-SELECT 
+SELECT
   p.player_lookup,
   p.primary_scoring_zone,
   t.weakest_zone,
@@ -736,20 +736,20 @@ LIMIT 20;
 ```sql
 -- Project shot volume for tonight's game based on pace
 WITH pace_factors AS (
-  SELECT 
+  SELECT
     team_abbr,
     avg_possessions_per_game / 100 as pace_factor
   FROM `nba_analytics.team_pace_stats`
   WHERE analysis_date = CURRENT_DATE()
 )
-SELECT 
+SELECT
   p.player_lookup,
   p.paint_attempts_per_game,
   p.three_pt_attempts_per_game,
   pf.pace_factor,
   (p.paint_attempts_per_game * pf.pace_factor) as projected_paint_attempts,
   (p.three_pt_attempts_per_game * pf.pace_factor) as projected_three_attempts,
-  ((p.paint_attempts_per_game * p.paint_pct_last_10) + 
+  ((p.paint_attempts_per_game * p.paint_pct_last_10) +
    (p.three_pt_attempts_per_game * p.three_pt_pct_last_10 * 1.5)) * pf.pace_factor as projected_points
 FROM `nba_precompute.player_shot_zone_analysis` p
 JOIN pace_factors pf
@@ -762,7 +762,7 @@ WHERE p.analysis_date = CURRENT_DATE()
 
 ```sql
 -- Compare player efficiency vs specific opponent defense
-SELECT 
+SELECT
   p.player_lookup,
   p.primary_scoring_zone,
   p.paint_pct_last_10 as player_paint_pct,
@@ -771,7 +771,7 @@ SELECT
   p.three_pt_pct_last_10 as player_three_pct,
   t.three_pt_pct_allowed_last_15 as opponent_three_defense,
   (p.three_pt_pct_last_10 - t.three_pt_pct_allowed_last_15) as three_advantage,
-  CASE 
+  CASE
     WHEN (p.paint_pct_last_10 - t.paint_pct_allowed_last_15) > 0.05 THEN 'Strong Paint Matchup'
     WHEN (p.three_pt_pct_last_10 - t.three_pt_pct_allowed_last_15) > 0.03 THEN 'Strong Perimeter Matchup'
     ELSE 'Neutral Matchup'
@@ -781,7 +781,7 @@ JOIN `nba_precompute.team_defense_zone_analysis` t
   ON p.analysis_date = t.analysis_date
 WHERE p.analysis_date = CURRENT_DATE()
   AND p.data_quality_tier = 'high'
-ORDER BY 
+ORDER BY
   GREATEST(
     (p.paint_pct_last_10 - t.paint_pct_allowed_last_15),
     (p.three_pt_pct_last_10 - t.three_pt_pct_allowed_last_15)
@@ -793,7 +793,7 @@ LIMIT 20;
 
 ```sql
 -- Find players with significant recent changes in zone preference or efficiency
-SELECT 
+SELECT
   player_lookup,
   primary_scoring_zone,
   paint_rate_last_10,
@@ -802,7 +802,7 @@ SELECT
   paint_pct_last_10,
   paint_pct_last_20,
   (paint_pct_last_10 - paint_pct_last_20) as paint_efficiency_change,
-  CASE 
+  CASE
     WHEN (paint_rate_last_10 - paint_rate_last_20) > 10 THEN 'Increasing Paint Usage'
     WHEN (paint_rate_last_10 - paint_rate_last_20) < -10 THEN 'Decreasing Paint Usage'
     WHEN (paint_pct_last_10 - paint_pct_last_20) > 0.10 THEN 'Hot in Paint'
@@ -859,9 +859,9 @@ For issues or questions:
 
 ---
 
-**Status:** ✅ Production Ready  
-**Test Coverage:** >95%  
-**Documentation:** Complete  
+**Status:** ✅ Production Ready
+**Test Coverage:** >95%
+**Documentation:** Complete
 **Next Steps:** Monitor nightly runs, validate output quality
 
 *Last Updated: October 30, 2025*

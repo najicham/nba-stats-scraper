@@ -50,7 +50,7 @@ month_expectations AS (
     year_month,
     month,
     CASE
-      WHEN month IN (10, 11, 12, 1, 2, 3) THEN 
+      WHEN month IN (10, 11, 12, 1, 2, 3) THEN
         EXTRACT(DAY FROM LAST_DAY(PARSE_DATE('%Y-%m', year_month)))
       WHEN month = 4 THEN 25
       WHEN month IN (5, 6) THEN 15
@@ -84,7 +84,7 @@ SELECT
     WHEN c.avg_teams_per_day = 30 AND c.unique_dates = c.dates_with_data
          AND c.dates_with_data >= e.expected_days * 0.9
       THEN '✅ Excellent'
-    WHEN c.dates_with_data >= e.expected_days * 0.9 
+    WHEN c.dates_with_data >= e.expected_days * 0.9
          AND c.avg_teams_per_day >= 29
       THEN '✅ Good'
     WHEN c.dates_with_data >= e.expected_days * 0.7
@@ -101,7 +101,7 @@ SELECT
       THEN '⚠️ Incomplete team coverage'
     WHEN c.avg_east_teams != 15 OR c.avg_west_teams != 15
       THEN '⚠️ Conference imbalance'
-    WHEN c.dates_with_data < e.expected_days * 0.5 
+    WHEN c.dates_with_data < e.expected_days * 0.5
          AND e.season_phase IN ('Regular Season', 'Playoffs')
       THEN '🚨 Missing >50% of days'
     ELSE '✅ Data quality good'

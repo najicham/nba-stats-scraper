@@ -52,7 +52,7 @@ graph TB
 2. **No roster/injury scraping needed** → Box score contains all status info
 3. **Rich historical dataset** → 4 years of complete player data
 
-### 🔮 **Daily Operations Workflow** 
+### 🔮 **Daily Operations Workflow**
 1. **Current injury reports** → Who's hurt right now?
 2. **Daily rosters** → Who's available today?
 3. **Forecast engine** → Predict the upcoming box score

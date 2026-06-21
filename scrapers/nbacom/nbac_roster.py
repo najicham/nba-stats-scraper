@@ -138,7 +138,7 @@ class GetNbaTeamRoster(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------ helpers
     def set_additional_opts(self) -> None:
         super().set_additional_opts()
-        
+
         now = datetime.now(timezone.utc)
         self.opts["date"] = now.strftime("%Y-%m-%d")
         self.opts["time"] = now.strftime("%H-%M-%S")
@@ -181,7 +181,7 @@ class GetNbaTeamRoster(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException(error_msg)
-                
+
             if not isinstance(self.decoded_data, str):
                 error_msg = "Roster page response is not HTML text"
                 logger.error("%s for team %s", error_msg, self.opts["team_abbr"])
@@ -200,7 +200,7 @@ class GetNbaTeamRoster(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException(error_msg)
-                
+
             if "<html" not in self.decoded_data.lower():
                 error_msg = "Response does not appear to be valid HTML"
                 logger.error("%s for team %s", error_msg, self.opts["team_abbr"])
@@ -220,7 +220,7 @@ class GetNbaTeamRoster(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException(error_msg)
-                
+
             if len(self.decoded_data) < 1000:
                 error_msg = "HTML response suspiciously short - possible error page"
                 logger.error("%s for team %s: %d bytes", error_msg, self.opts["team_abbr"], len(self.decoded_data))
@@ -240,7 +240,7 @@ class GetNbaTeamRoster(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException(error_msg)
-                
+
         except DownloadDataException:
             # Already handled and notified above
             raise
@@ -270,12 +270,12 @@ class GetNbaTeamRoster(ScraperBase, ScraperFlaskMixin):
         """
         try:
             players = self.data["players"]
-            
+
             # 1. REASONABLE PLAYER COUNT CHECK
             player_count = len(players)
             min_players = int(os.environ.get('ROSTER_MIN_PLAYERS', '8'))
             max_players = int(os.environ.get('ROSTER_MAX_PLAYERS', '25'))
-            
+
             if player_count < min_players:
                 error_msg = f"Suspiciously low player count: {player_count} (expected {min_players}-{max_players})"
                 logger.error("%s for team %s", error_msg, self.opts["team_abbr"])
@@ -314,7 +314,7 @@ class GetNbaTeamRoster(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException(error_msg)
-            
+
             # 2. REQUIRED PLAYER FIELDS VALIDATION
             required_fields = ['name', 'slug', 'playerId', 'number', 'position']
             for i, player in enumerate(players[:5]):  # Check first 5 players
@@ -338,7 +338,7 @@ class GetNbaTeamRoster(ScraperBase, ScraperFlaskMixin):
                         except Exception as notify_ex:
                             logger.warning(f"Failed to send notification: {notify_ex}")
                         raise DownloadDataException(error_msg)
-            
+
             # 3. PLAYER ID VALIDATION
             player_ids = [p.get('playerId') for p in players if p.get('playerId')]
             if len(player_ids) != len(set(player_ids)):
@@ -359,7 +359,7 @@ class GetNbaTeamRoster(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException(error_msg)
-            
+
             # Check for reasonable player ID values
             for player in players[:3]:  # Check first 3
                 player_id = player.get('playerId')
@@ -382,7 +382,7 @@ class GetNbaTeamRoster(ScraperBase, ScraperFlaskMixin):
                     except Exception as notify_ex:
                         logger.warning(f"Failed to send notification: {notify_ex}")
                     raise DownloadDataException(error_msg)
-            
+
             # 4. POSITION VALIDATION
             valid_positions = {'G', 'F', 'C', 'PG', 'SG', 'SF', 'PF', 'G-F', 'F-G', 'F-C', 'C-F'}
             invalid_positions = []
@@ -390,10 +390,10 @@ class GetNbaTeamRoster(ScraperBase, ScraperFlaskMixin):
                 position = player.get('position', '').upper()
                 if position and position not in valid_positions:
                     invalid_positions.append(f"{player.get('name')}: {position}")
-            
+
             if invalid_positions:
                 # Log warning but don't fail - positions might have new formats
-                logger.warning("Unusual position formats found for team %s: %s", 
+                logger.warning("Unusual position formats found for team %s: %s",
                              self.opts["team_abbr"], invalid_positions[:3])
                 try:
                     notify_warning(
@@ -409,12 +409,12 @@ class GetNbaTeamRoster(ScraperBase, ScraperFlaskMixin):
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             # 5. TEAM CONSISTENCY CHECK
             team_abbr = self.data.get('team_abbr', '').upper()
             expected_abbr = self.opts.get('team_abbr', '').upper()
             if team_abbr != expected_abbr:
-                logger.warning("Team abbreviation mismatch for %s: expected %s, got %s", 
+                logger.warning("Team abbreviation mismatch for %s: expected %s, got %s",
                              self.opts["team_abbr"], expected_abbr, team_abbr)
                 try:
                     notify_warning(
@@ -429,9 +429,9 @@ class GetNbaTeamRoster(ScraperBase, ScraperFlaskMixin):
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             logger.info(f"✅ Roster validation passed: {player_count} players for {team_abbr}")
-            
+
         except DownloadDataException:
             # Already handled and notified above
             raise
@@ -499,7 +499,7 @@ class GetNbaTeamRoster(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException(error_msg)
-                
+
             if not tag.string:
                 error_msg = "__NEXT_DATA__ script tag is empty"
                 logger.error("%s for team %s", error_msg, self.opts["team_abbr"])
@@ -595,10 +595,10 @@ class GetNbaTeamRoster(ScraperBase, ScraperFlaskMixin):
             }
 
             logger.info("Found %d players for %s", len(players), self.opts["team_abbr"])
-            
+
             # Add production validation
             self.validate_roster_data()
-            
+
         except DownloadDataException:
             # Already handled and notified above
             raise

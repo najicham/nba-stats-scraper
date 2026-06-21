@@ -34,19 +34,19 @@ quality_checks AS (
     conference_wins,
     conference_losses,
     conference_wins + conference_losses as conf_total_games,
-    CASE 
-      WHEN conference_wins > wins THEN TRUE 
+    CASE
+      WHEN conference_wins > wins THEN TRUE
       WHEN conference_losses > losses THEN TRUE
-      ELSE FALSE 
+      ELSE FALSE
     END as conf_record_exceeds_total,
     division_record,
     division_wins,
     division_losses,
     division_wins + division_losses as div_total_games,
-    CASE 
-      WHEN division_wins > wins THEN TRUE 
+    CASE
+      WHEN division_wins > wins THEN TRUE
       WHEN division_losses > losses THEN TRUE
-      ELSE FALSE 
+      ELSE FALSE
     END as div_record_exceeds_total,
     home_record,
     home_wins,
@@ -79,26 +79,26 @@ SELECT
   team_full_name,
   conference,
   CASE
-    WHEN games_played_diff != 0 
-      THEN CONCAT('🔴 Games played mismatch: ', 
-                  CAST(wins AS STRING), '+', CAST(losses AS STRING), 
+    WHEN games_played_diff != 0
+      THEN CONCAT('🔴 Games played mismatch: ',
+                  CAST(wins AS STRING), '+', CAST(losses AS STRING),
                   '=', CAST(calculated_games_played AS STRING),
                   ' but games_played=', CAST(games_played AS STRING))
     WHEN win_pct_diff > 0.001
-      THEN CONCAT('⚠️ Win % mismatch: stored=', CAST(win_percentage AS STRING), 
+      THEN CONCAT('⚠️ Win % mismatch: stored=', CAST(win_percentage AS STRING),
                   ' calculated=', CAST(calculated_win_pct AS STRING))
     WHEN conf_record_exceeds_total
       THEN '🔴 Conference record exceeds total record'
     WHEN div_record_exceeds_total
       THEN '🔴 Division record exceeds total record'
     WHEN home_road_wins_diff > 0 OR home_road_losses_diff > 0
-      THEN CONCAT('🔴 Home/Road split error: home+road wins=', 
-                  CAST(calculated_total_wins AS STRING), 
+      THEN CONCAT('🔴 Home/Road split error: home+road wins=',
+                  CAST(calculated_total_wins AS STRING),
                   ' but total wins=', CAST(wins AS STRING))
     ELSE '✅ All checks passed'
   END as issue_description,
   CASE
-    WHEN games_played_diff != 0 OR conf_record_exceeds_total 
+    WHEN games_played_diff != 0 OR conf_record_exceeds_total
          OR div_record_exceeds_total OR home_road_wins_diff > 0
       THEN 'CRITICAL'
     WHEN win_pct_diff > 0.001
@@ -127,10 +127,10 @@ SELECT
   CASE
     WHEN conference_record IS NULL AND (conference_wins IS NULL OR conference_losses IS NULL)
       THEN '⚪ No conference record data'
-    WHEN conference_record IS NOT NULL 
+    WHEN conference_record IS NOT NULL
          AND CONCAT(CAST(conference_wins AS STRING), '-', CAST(conference_losses AS STRING)) = conference_record
       THEN '✅ Correctly parsed'
-    WHEN conference_record IS NOT NULL 
+    WHEN conference_record IS NOT NULL
          AND conference_wins = 0 AND conference_losses = 0
       THEN '🔴 CRITICAL: Parsing failed (0-0)'
     ELSE '⚠️ WARNING: Parsing mismatch'
@@ -138,10 +138,10 @@ SELECT
   CASE
     WHEN division_record IS NULL AND (division_wins IS NULL OR division_losses IS NULL)
       THEN '⚪ No division record data'
-    WHEN division_record IS NOT NULL 
+    WHEN division_record IS NOT NULL
          AND CONCAT(CAST(division_wins AS STRING), '-', CAST(division_losses AS STRING)) = division_record
       THEN '✅ Correctly parsed'
-    WHEN division_record IS NOT NULL 
+    WHEN division_record IS NOT NULL
          AND division_wins = 0 AND division_losses = 0
       THEN '🔴 CRITICAL: Parsing failed (0-0)'
     ELSE '⚠️ WARNING: Parsing mismatch'
@@ -152,9 +152,9 @@ SELECT
 FROM quality_checks
 WHERE (conference_record IS NOT NULL AND (conference_wins = 0 AND conference_losses = 0))
    OR (division_record IS NOT NULL AND (division_wins = 0 AND division_losses = 0))
-   OR (conference_record IS NOT NULL 
+   OR (conference_record IS NOT NULL
        AND CONCAT(CAST(conference_wins AS STRING), '-', CAST(conference_losses AS STRING)) != conference_record)
-   OR (division_record IS NOT NULL 
+   OR (division_record IS NOT NULL
        AND CONCAT(CAST(division_wins AS STRING), '-', CAST(division_losses AS STRING)) != division_record)
 
 UNION ALL
@@ -169,12 +169,12 @@ SELECT
   CONCAT('Conf record valid: ', CAST(SUM(CASE WHEN NOT conf_record_exceeds_total THEN 1 ELSE 0 END) AS STRING)) as severity,
   CONCAT('Div record valid: ', CAST(SUM(CASE WHEN NOT div_record_exceeds_total THEN 1 ELSE 0 END) AS STRING)) as extra1,
   CONCAT('Home/road correct: ', CAST(SUM(CASE WHEN home_road_wins_diff = 0 AND home_road_losses_diff = 0 THEN 1 ELSE 0 END) AS STRING)) as extra2,
-  CONCAT('Overall: ', CAST(ROUND(SUM(CASE WHEN games_played_diff = 0 
-                      AND win_pct_diff <= 0.001 
-                      AND NOT conf_record_exceeds_total 
-                      AND NOT div_record_exceeds_total 
-                      AND home_road_wins_diff = 0 
-                      AND home_road_losses_diff = 0 
+  CONCAT('Overall: ', CAST(ROUND(SUM(CASE WHEN games_played_diff = 0
+                      AND win_pct_diff <= 0.001
+                      AND NOT conf_record_exceeds_total
+                      AND NOT div_record_exceeds_total
+                      AND home_road_wins_diff = 0
+                      AND home_road_losses_diff = 0
                  THEN 1 ELSE 0 END) / COUNT(*) * 100, 1) AS STRING), '%') as extra3
 FROM quality_checks
 GROUP BY date_recorded
@@ -198,7 +198,7 @@ SELECT
   NULL as extra3
 FROM ranking_validation
 
-ORDER BY 
+ORDER BY
   CASE section
     WHEN '🔍 DATA QUALITY ISSUES' THEN 1
     WHEN '📝 RECORD STRING PARSING' THEN 2

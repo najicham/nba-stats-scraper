@@ -1,6 +1,6 @@
 # Phase 4→5 Integration - Complete Implementation Guide
 
-**Status:** Production-Ready Implementation  
+**Status:** Production-Ready Implementation
 **All code tested and verified from external AI analysis**
 
 ---
@@ -30,9 +30,9 @@ import json
 
 ```python
 class MLFeatureStoreProcessor(...):
-    
+
     # Existing constants...
-    
+
     # NEW: Phase 4 completion topic
     PHASE4_COMPLETE_TOPIC = 'nba-phase4-precompute-complete'
 ```
@@ -43,13 +43,13 @@ class MLFeatureStoreProcessor(...):
 def post_process(self) -> None:
     """
     Post-processing - publish completion event for Phase 5.
-    
+
     Called after save_precompute() completes successfully.
     Publishes Pub/Sub event to trigger Phase 5 coordinator.
     """
     # Call base class (logging, stats)
     super().post_process()
-    
+
     # NEW: Publish completion event
     self._publish_completion_event()
 ```
@@ -60,7 +60,7 @@ def post_process(self) -> None:
 def _publish_completion_event(self) -> None:
     """
     Publish Pub/Sub event to trigger Phase 5.
-    
+
     Message includes:
     - game_date: Date predictions are for
     - players_processed: Total records written
@@ -69,19 +69,19 @@ def _publish_completion_event(self) -> None:
     - processor: Processor name for routing
     - timestamp: When processing completed
     - run_id: Correlation ID for debugging
-    
+
     On failure: Logs error but doesn't fail the processor.
     Phase 5 will use Cloud Scheduler backup.
     """
     try:
         publisher = pubsub_v1.PublisherClient()
         topic_path = publisher.topic_path(self.project_id, self.PHASE4_COMPLETE_TOPIC)
-        
+
         analysis_date = self.opts['analysis_date']
-        
+
         # Count production-ready players
         ready_count = self._count_production_ready()
-        
+
         message = {
             'event_type': 'phase4_complete',
             'processor': 'ml_feature_store_v2',
@@ -92,20 +92,20 @@ def _publish_completion_event(self) -> None:
             'timestamp': datetime.now(timezone.utc).isoformat(),
             'run_id': self.run_id if hasattr(self, 'run_id') else None
         }
-        
+
         message_bytes = json.dumps(message).encode('utf-8')
         future = publisher.publish(topic_path, data=message_bytes)
         future.result(timeout=10.0)
-        
+
         logger.info(
             f"Published phase4_complete event for {analysis_date}: "
             f"{ready_count}/{message['players_processed']} players ready"
         )
-        
+
     except Exception as e:
         # Log but don't fail - Phase 5 has scheduler backup
         logger.error(f"Failed to publish phase4_complete event: {e}")
-        
+
         # Send warning alert since this affects Phase 5 triggering
         try:
             notify_warning(
@@ -145,10 +145,10 @@ from google.cloud import bigquery
 def handle_phase4_trigger():
     """
     Handle Phase 4 completion event from Pub/Sub (PRIMARY TRIGGER)
-    
+
     Called via Pub/Sub push subscription when ml_feature_store_v2 completes.
     This is the fastest path to predictions - triggered immediately when data is ready.
-    
+
     Message format (from Phase 4):
     {
         'event_type': 'phase4_complete',
@@ -158,7 +158,7 @@ def handle_phase4_trigger():
         'players_ready': 420,
         'timestamp': '2025-11-28T00:30:00Z'
     }
-    
+
     Returns:
         202: Batch started successfully
         204: Already complete or skipped (past date, idempotent)
@@ -171,38 +171,38 @@ def handle_phase4_trigger():
         if not envelope or 'message' not in envelope:
             logger.error("Invalid Pub/Sub message format")
             return ('Bad Request: invalid Pub/Sub message', 400)
-        
+
         # Decode message
         pubsub_message = envelope['message']
         message_data = base64.b64decode(pubsub_message['data']).decode('utf-8')
         event = json.loads(message_data)
-        
+
         logger.info(f"Received phase4_complete event: {event}")
-        
+
         # Extract and validate game_date
         game_date_str = event.get('game_date')
         if not game_date_str:
             logger.error("Missing game_date in phase4_complete event")
             return ('Bad Request: missing game_date', 400)
-        
+
         game_date = datetime.strptime(game_date_str, '%Y-%m-%d').date()
-        
+
         # Skip past dates (backfills don't trigger predictions)
         today = date.today()
         if game_date < today:
             logger.info(f"Ignoring phase4_complete for past date {game_date}")
             return ('', 204)
-        
+
         # Start batch with event context
         result = _start_batch_internal(
             game_date=game_date,
             trigger_source='pubsub',
             phase4_event=event
         )
-        
+
         status_code = result.pop('status_code', 202)
         return jsonify(result), status_code
-        
+
     except json.JSONDecodeError as e:
         logger.error(f"Invalid JSON in Pub/Sub message: {e}")
         return ('Bad Request: invalid JSON', 400)
@@ -220,18 +220,18 @@ def handle_phase4_trigger():
 def start_prediction_batch():
     """
     Start prediction batch (BACKUP TRIGGER)
-    
+
     Called by:
     - Cloud Scheduler at 6:00 AM PT (daily backup)
     - Manual HTTP request for testing/recovery
-    
+
     This endpoint validates Phase 4 completion and handles partial processing.
     If Pub/Sub trigger already ran, this will detect completion and skip (idempotent).
-    
+
     If Phase 4 not ready and called by scheduler:
     - Enters 30-minute wait loop (poll every 60 seconds)
     - Sends CRITICAL alert if timeout expires
-    
+
     Request body (optional):
     {
         "game_date": "2025-11-08",     // defaults to today
@@ -239,7 +239,7 @@ def start_prediction_batch():
         "force": false,                 // skip deduplication check
         "trigger_source": "manual"      // for tracking
     }
-    
+
     Returns:
         200: Already complete (idempotent)
         202: Batch started
@@ -248,23 +248,23 @@ def start_prediction_batch():
     """
     try:
         request_data = request.get_json() or {}
-        
+
         # Parse game date
         game_date_str = request_data.get('game_date')
-        game_date = (datetime.strptime(game_date_str, '%Y-%m-%d').date() 
+        game_date = (datetime.strptime(game_date_str, '%Y-%m-%d').date()
                     if game_date_str else date.today())
-        
+
         trigger_source = request_data.get('trigger_source', 'manual')
         force = request_data.get('force', False)
         min_minutes = request_data.get('min_minutes', 15)
-        
+
         # Detect if called by Cloud Scheduler (for wait logic)
         is_scheduler = request.headers.get('X-CloudScheduler') == 'true'
         if is_scheduler:
             trigger_source = 'scheduler_backup'
-        
+
         logger.info(f"Starting prediction batch for {game_date} (trigger: {trigger_source})")
-        
+
         result = _start_batch_internal(
             game_date=game_date,
             trigger_source=trigger_source,
@@ -272,10 +272,10 @@ def start_prediction_batch():
             min_minutes=min_minutes,
             wait_for_phase4=is_scheduler  # Only wait if scheduler trigger
         )
-        
+
         status_code = result.pop('status_code', 202)
         return jsonify(result), status_code
-        
+
     except Exception as e:
         logger.error(f"Error in /start: {e}", exc_info=True)
         return jsonify({'status': 'error', 'message': str(e)}), 500
@@ -290,22 +290,22 @@ def start_prediction_batch():
 def retry_incomplete_players():
     """
     Retry predictions for players that weren't ready earlier.
-    
+
     Called by:
     - Cloud Scheduler at 6:15 AM, 6:30 AM PT (catch stragglers)
     - Manual HTTP request for recovery
-    
+
     Only processes players that:
     1. Have is_production_ready = TRUE in ml_feature_store_v2 NOW
     2. Don't have predictions in player_prop_predictions for today
-    
+
     This is incremental - won't reprocess already-completed players.
-    
+
     Request body (optional):
     {
         "game_date": "2025-11-08"  // defaults to today
     }
-    
+
     Returns:
         200: All players already processed (nothing to do)
         202: Retry batch started
@@ -314,14 +314,14 @@ def retry_incomplete_players():
     try:
         request_data = request.get_json() or {}
         game_date_str = request_data.get('game_date')
-        game_date = (datetime.strptime(game_date_str, '%Y-%m-%d').date() 
+        game_date = (datetime.strptime(game_date_str, '%Y-%m-%d').date()
                     if game_date_str else date.today())
-        
+
         logger.info(f"Checking for incomplete players for {game_date}")
-        
+
         # Get players needing retry
         players_needing_retry = _get_players_needing_retry(game_date)
-        
+
         if not players_needing_retry:
             logger.info(f"No players need retry for {game_date}")
             return jsonify({
@@ -329,15 +329,15 @@ def retry_incomplete_players():
                 'message': 'All available players already processed',
                 'game_date': game_date.isoformat()
             }), 200
-        
+
         logger.info(f"Found {len(players_needing_retry)} players needing retry")
-        
+
         # Process retry batch
         result = _process_retry_batch(game_date, players_needing_retry)
-        
+
         status_code = result.pop('status_code', 202)
         return jsonify(result), status_code
-        
+
     except Exception as e:
         logger.error(f"Error in /retry: {e}", exc_info=True)
         return jsonify({'status': 'error', 'message': str(e)}), 500
@@ -358,14 +358,14 @@ def _start_batch_internal(
 ) -> Dict:
     """
     Internal batch processing logic - shared by /start, /trigger, /retry
-    
+
     Flow:
     1. Check deduplication (already complete?)
     2. Validate Phase 4 status (optionally wait if scheduler)
     3. Determine which players to process
     4. Publish prediction requests
     5. Record results and schedule retry if needed
-    
+
     Args:
         game_date: Date to generate predictions for
         trigger_source: 'pubsub', 'scheduler_backup', 'manual'
@@ -373,17 +373,17 @@ def _start_batch_internal(
         force: Skip deduplication check
         min_minutes: Minimum projected minutes filter
         wait_for_phase4: If True, wait up to 30 min for Phase 4
-    
+
     Returns:
         Dict with status, counts, and metadata
     """
     global current_tracker, current_batch_id
-    
+
     # =========================================================
     # STEP 1: Deduplication Check
     # =========================================================
     existing_status = _get_batch_status(game_date)
-    
+
     if existing_status['fully_complete'] and not force:
         logger.info(f"Batch fully complete for {game_date}, skipping")
         return {
@@ -393,24 +393,24 @@ def _start_batch_internal(
             'trigger_source': trigger_source,
             'status_code': 200
         }
-    
+
     if existing_status['partially_complete']:
         logger.info(
             f"Partial completion detected: {existing_status['players_processed']}/"
             f"{existing_status['players_expected']} players done"
         )
-    
+
     # =========================================================
     # STEP 2: Validate Phase 4 Status
     # =========================================================
     phase4_status = _validate_phase4_ready(game_date)
-    
+
     if not phase4_status['ready']:
         if wait_for_phase4:
             # Scheduler trigger - wait up to 30 minutes
             logger.warning(f"Phase 4 not ready, entering wait loop (max 30 min)")
             phase4_status = _wait_for_phase4(game_date, timeout_minutes=30)
-        
+
         if not phase4_status['ready']:
             # Still not ready after waiting (or no wait requested)
             if phase4_status['players_ready'] < 50:
@@ -431,33 +431,33 @@ def _start_batch_internal(
                     'trigger_source': trigger_source,
                     'status_code': 503
                 }
-            
+
             # Some players ready - proceed with graceful degradation
             logger.warning(
                 f"Proceeding with partial data: {phase4_status['players_ready']} players ready"
             )
-    
+
     # =========================================================
     # STEP 3: Determine Players to Process
     # =========================================================
     # PlayerLoader already filters by is_production_ready = TRUE
     # We just need to exclude players we've already processed
-    
+
     already_processed = set(existing_status.get('players_processed_list', []))
-    
+
     player_loader = get_player_loader()
     all_ready_players = player_loader.create_prediction_requests(
         game_date=game_date,
         min_minutes=min_minutes,
         use_multiple_lines=False
     )
-    
+
     # Filter out already processed
     players_to_process = [
-        p for p in all_ready_players 
+        p for p in all_ready_players
         if p['player_lookup'] not in already_processed
     ]
-    
+
     if not players_to_process:
         if phase4_status['players_ready'] < phase4_status['players_total']:
             # Some players still not ready in Phase 4
@@ -481,28 +481,28 @@ def _start_batch_internal(
                 'trigger_source': trigger_source,
                 'status_code': 200
             }
-    
+
     # =========================================================
     # STEP 4: Process Players
     # =========================================================
     batch_id = f"batch_{game_date.isoformat()}_{int(time.time())}"
     current_batch_id = batch_id
     current_tracker = ProgressTracker(expected_players=len(players_to_process))
-    
+
     logger.info(f"Publishing {len(players_to_process)} prediction requests")
     published_count = publish_prediction_requests(players_to_process, batch_id)
-    
+
     # =========================================================
     # STEP 5: Record Results
     # =========================================================
     total_processed = len(already_processed) + published_count
     total_ready = phase4_status['players_ready']
     total_expected = phase4_status['players_total']
-    
+
     # Determine completion status
     is_complete = total_processed >= total_ready
     is_partial = total_processed > 0 and total_processed < total_expected
-    
+
     # Record to processor_run_history
     _record_batch_run(
         game_date=game_date,
@@ -514,12 +514,12 @@ def _start_batch_internal(
         players_expected=total_expected,
         status='success' if is_complete else 'partial'
     )
-    
+
     # Alert if significant gap (>5% OR >20 players)
     if is_partial:
         gap = total_expected - total_processed
         gap_pct = (gap / total_expected * 100) if total_expected > 0 else 0
-        
+
         if gap_pct > 5 and gap > 20:
             _send_alert(
                 severity='warning',
@@ -529,7 +529,7 @@ def _start_batch_internal(
                     f"{gap} players pending ({gap_pct:.1f}%). Will retry at next scheduled interval."
                 )
             )
-    
+
     return {
         'status': 'started' if is_partial else 'complete',
         'batch_id': batch_id,

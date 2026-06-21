@@ -57,13 +57,13 @@ data_quality_issues AS (
     minutes,
     minutes_decimal,
     CASE
-      WHEN player_status = 'active' AND (points IS NULL OR points = 0) AND minutes_decimal > 5 
+      WHEN player_status = 'active' AND (points IS NULL OR points = 0) AND minutes_decimal > 5
         THEN 'Active player with minutes but no points'
-      WHEN player_status = 'active' AND minutes IS NULL 
+      WHEN player_status = 'active' AND minutes IS NULL
         THEN 'Active player missing minutes data'
-      WHEN player_status = 'inactive' AND (points IS NOT NULL AND points > 0) 
+      WHEN player_status = 'inactive' AND (points IS NOT NULL AND points > 0)
         THEN 'Inactive player has stats (should be NULL)'
-      WHEN player_status = 'dnp' AND minutes_decimal > 0 
+      WHEN player_status = 'dnp' AND minutes_decimal > 0
         THEN 'DNP player has playing time'
       ELSE 'Unknown issue'
     END as issue_type

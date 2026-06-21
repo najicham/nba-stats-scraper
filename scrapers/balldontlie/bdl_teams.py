@@ -223,7 +223,7 @@ class BdlTeams(ScraperBase, ScraperFlaskMixin):
                 "teamCount": len(teams),
                 "teams": teams,
             }
-            
+
             logger.info("Fetched %d NBA franchises across %d pages", len(teams), pages_fetched)
 
             # Data quality check - NBA should have exactly 30 teams

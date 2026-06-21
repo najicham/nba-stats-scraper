@@ -1,7 +1,7 @@
 # BDL Standings Validation - Pre-Season Checklist
 
-**Season:** 2025-26 NBA Season  
-**Season Start:** Tuesday, October 22, 2025  
+**Season:** 2025-26 NBA Season
+**Season Start:** Tuesday, October 22, 2025
 **Checklist Deadline:** Monday, October 20, 2025
 
 ---
@@ -39,7 +39,7 @@ cd ~/code/nba-stats-scraper
 
 # Test each query individually
 ./scripts/validate-bdl-standings daily
-./scripts/validate-bdl-standings weekly  
+./scripts/validate-bdl-standings weekly
 ./scripts/validate-bdl-standings coverage
 ./scripts/validate-bdl-standings conference
 ./scripts/validate-bdl-standings quality
@@ -285,9 +285,9 @@ mkdir -p validation/results/bdl_standings/
 
 ## ✅ Sign-Off
 
-**Completed By:** ___________________  
-**Date:** ___________________  
-**Ready for Season:** [ ] Yes [ ] No  
+**Completed By:** ___________________
+**Date:** ___________________
+**Ready for Season:** [ ] Yes [ ] No
 **Notes:** _________________________
 
 ---

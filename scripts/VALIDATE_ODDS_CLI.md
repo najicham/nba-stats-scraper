@@ -398,7 +398,7 @@ validate-odds completeness --table  # Saves with timestamp in table name
 # Daily
 validate-odds yesterday              # Check yesterday
 
-# Weekly  
+# Weekly
 validate-odds week                   # Last 7 days
 
 # After Backfills
@@ -420,5 +420,5 @@ validate-odds list                   # List queries
 
 ---
 
-**Last Updated:** October 12, 2025  
+**Last Updated:** October 12, 2025
 **Version:** 1.0

@@ -47,7 +47,7 @@ def base_systems():
     zone_matchup = ZoneMatchupV1()
     similarity = SimilarityBalancedV1()
     xgboost = XGBoostV1(model=MockXGBoostModel(seed=42))
-    
+
     return moving_avg, zone_matchup, similarity, xgboost
 
 
@@ -112,7 +112,7 @@ def sample_historical_games():
 
 class TestBasicEnsemble:
     """Test basic ensemble operations with 4 systems"""
-    
+
     def test_ensemble_initialization(self, ensemble_system):
         """Test ensemble initializes correctly"""
         assert ensemble_system.system_id == 'ensemble_v1'
@@ -121,7 +121,7 @@ class TestBasicEnsemble:
         assert ensemble_system.zone_matchup is not None
         assert ensemble_system.similarity is not None
         assert ensemble_system.xgboost is not None
-    
+
     def test_ensemble_predict_all_systems(
         self,
         ensemble_system,
@@ -136,18 +136,18 @@ class TestBasicEnsemble:
             prop_line=25.5,
             historical_games=sample_historical_games
         )
-        
+
         # Should return valid prediction
         assert pred is not None
         assert 0 < pred < 60
         assert 0 <= conf <= 1.0
         assert rec in ['OVER', 'UNDER', 'PASS']
-        
+
         # Metadata should show 4 systems used (or 3 if similarity fails)
         assert metadata['systems_used'] >= 3
         assert 'agreement' in metadata
         assert 'predictions' in metadata
-    
+
     def test_ensemble_without_historical_games(
         self,
         ensemble_system,
@@ -161,7 +161,7 @@ class TestBasicEnsemble:
             prop_line=25.5,
             historical_games=None  # No historical games
         )
-        
+
         # Should still work with 3 systems
         assert pred is not None
         assert metadata['systems_used'] == 3  # MA, ZM, XGB (no similarity)
@@ -173,7 +173,7 @@ class TestBasicEnsemble:
 
 class TestAgreementCalculation:
     """Test 4-way agreement metrics"""
-    
+
     def test_high_agreement(self, ensemble_system):
         """Test high agreement detection (variance < 2.0)"""
         predictions = [
@@ -182,13 +182,13 @@ class TestAgreementCalculation:
             {'system': 'sim', 'prediction': 25.8, 'confidence': 85.0, 'recommendation': 'OVER'},
             {'system': 'xgb', 'prediction': 26.2, 'confidence': 84.0, 'recommendation': 'OVER'}
         ]
-        
+
         agreement = ensemble_system._calculate_agreement_metrics(predictions)
-        
+
         assert agreement['type'] == 'high'
         assert agreement['variance'] < 2.0
         assert agreement['agreement_percentage'] >= 90
-    
+
     def test_good_agreement(self, ensemble_system):
         """Test good agreement (variance 2.0-3.0)"""
         # Predictions with std dev ~2.5 (between high threshold 2.0 and good threshold 3.0)
@@ -204,7 +204,7 @@ class TestAgreementCalculation:
         assert agreement['type'] == 'good'
         assert 2.0 <= agreement['variance'] < 3.0
         assert agreement['agreement_percentage'] >= 80
-    
+
     def test_low_agreement(self, ensemble_system):
         """Test low agreement detection"""
         predictions = [
@@ -213,9 +213,9 @@ class TestAgreementCalculation:
             {'system': 'sim', 'prediction': 24.0, 'confidence': 70.0, 'recommendation': 'PASS'},
             {'system': 'xgb', 'prediction': 32.0, 'confidence': 80.0, 'recommendation': 'OVER'}
         ]
-        
+
         agreement = ensemble_system._calculate_agreement_metrics(predictions)
-        
+
         assert agreement['type'] in ['moderate', 'low']
         assert agreement['variance'] >= 4.0
 
@@ -226,7 +226,7 @@ class TestAgreementCalculation:
 
 class TestWeightedPrediction:
     """Test confidence-weighted averaging with 4 systems"""
-    
+
     def test_weighted_average_equal_confidence(self, ensemble_system):
         """Test weighted average with equal confidences"""
         predictions = [
@@ -235,13 +235,13 @@ class TestWeightedPrediction:
             {'system': 'sim', 'prediction': 25.0, 'confidence': 80.0},
             {'system': 'xgb', 'prediction': 27.0, 'confidence': 80.0}
         ]
-        
+
         weighted = ensemble_system._calculate_weighted_prediction(predictions)
-        
+
         # With equal weights, should be simple average
         expected = (24.0 + 26.0 + 25.0 + 27.0) / 4
         assert abs(weighted - expected) < 0.1
-    
+
     def test_weighted_average_different_confidence(self, ensemble_system):
         """Test weighted average with different confidences"""
         predictions = [
@@ -250,12 +250,12 @@ class TestWeightedPrediction:
             {'system': 'sim', 'prediction': 25.0, 'confidence': 75.0},
             {'system': 'xgb', 'prediction': 27.0, 'confidence': 85.0}
         ]
-        
+
         weighted = ensemble_system._calculate_weighted_prediction(predictions)
-        
+
         # Should be closer to high-confidence predictions (zm=26, xgb=27)
         assert 25.5 < weighted < 27.0
-    
+
     def test_weighted_with_three_systems(self, ensemble_system):
         """Test that ensemble works with only 3 systems"""
         predictions = [
@@ -263,9 +263,9 @@ class TestWeightedPrediction:
             {'system': 'zm', 'prediction': 26.0, 'confidence': 85.0},
             {'system': 'xgb', 'prediction': 25.5, 'confidence': 82.0}
         ]
-        
+
         weighted = ensemble_system._calculate_weighted_prediction(predictions)
-        
+
         assert 25.0 <= weighted <= 26.0
 
 
@@ -275,7 +275,7 @@ class TestWeightedPrediction:
 
 class TestEnsembleConfidence:
     """Test ensemble confidence calculation"""
-    
+
     def test_confidence_with_high_agreement(self, ensemble_system):
         """Test confidence boost with high agreement"""
         predictions = [
@@ -284,12 +284,12 @@ class TestEnsembleConfidence:
             {'system': 'sim', 'prediction': 25.9, 'confidence': 85.0, 'recommendation': 'OVER'},
             {'system': 'xgb', 'prediction': 26.1, 'confidence': 84.0, 'recommendation': 'OVER'}
         ]
-        
+
         confidence = ensemble_system._calculate_ensemble_confidence(predictions)
-        
+
         # Should have high confidence due to agreement + all 4 systems
         assert confidence > 85.0
-    
+
     def test_confidence_with_low_agreement(self, ensemble_system):
         """Test lower confidence with disagreement"""
         predictions = [
@@ -298,12 +298,12 @@ class TestEnsembleConfidence:
             {'system': 'sim', 'prediction': 24.0, 'confidence': 70.0, 'recommendation': 'PASS'},
             {'system': 'xgb', 'prediction': 30.0, 'confidence': 80.0, 'recommendation': 'OVER'}
         ]
-        
+
         confidence = ensemble_system._calculate_ensemble_confidence(predictions)
-        
+
         # Should have lower confidence due to disagreement
         assert confidence < 85.0
-    
+
     def test_confidence_with_three_systems(self, ensemble_system):
         """Test confidence penalty when only 3 systems"""
         predictions = [
@@ -311,9 +311,9 @@ class TestEnsembleConfidence:
             {'system': 'zm', 'prediction': 26.2, 'confidence': 82.0, 'recommendation': 'OVER'},
             {'system': 'xgb', 'prediction': 26.1, 'confidence': 84.0, 'recommendation': 'OVER'}
         ]
-        
+
         confidence = ensemble_system._calculate_ensemble_confidence(predictions)
-        
+
         # Should be lower than with 4 systems (no all-systems bonus)
         assert confidence < 95.0
 
@@ -324,7 +324,7 @@ class TestEnsembleConfidence:
 
 class TestRecommendationLogic:
     """Test ensemble recommendation generation"""
-    
+
     def test_strong_over_recommendation(self, ensemble_system):
         """Test OVER when all systems agree"""
         predictions = [
@@ -333,45 +333,45 @@ class TestRecommendationLogic:
             {'system': 'sim', 'prediction': 27.8, 'confidence': 85.0, 'recommendation': 'OVER'},
             {'system': 'xgb', 'prediction': 28.2, 'confidence': 86.0, 'recommendation': 'OVER'}
         ]
-        
+
         rec = ensemble_system._determine_ensemble_recommendation(
             ensemble_pred=28.1,
             prop_line=25.5,
             ensemble_conf=90.0,
             predictions=predictions
         )
-        
+
         assert rec == 'OVER'
-    
+
     def test_pass_on_low_confidence(self, ensemble_system):
         """Test PASS when confidence too low"""
         predictions = [
             {'system': 'ma', 'prediction': 28.0, 'confidence': 60.0, 'recommendation': 'OVER'},
             {'system': 'zm', 'prediction': 22.0, 'confidence': 55.0, 'recommendation': 'UNDER'}
         ]
-        
+
         rec = ensemble_system._determine_ensemble_recommendation(
             ensemble_pred=25.0,
             prop_line=24.5,
             ensemble_conf=50.0,  # Too low
             predictions=predictions
         )
-        
+
         assert rec == 'PASS'
-    
+
     def test_pass_on_small_edge(self, ensemble_system):
         """Test PASS when edge too small"""
         predictions = [
             {'system': 'ma', 'prediction': 26.0, 'confidence': 85.0, 'recommendation': 'OVER'}
         ]
-        
+
         rec = ensemble_system._determine_ensemble_recommendation(
             ensemble_pred=26.0,
             prop_line=25.5,  # Only 0.5 edge (< 1.5 threshold)
             ensemble_conf=85.0,
             predictions=predictions
         )
-        
+
         assert rec == 'PASS'
 
 
@@ -381,7 +381,7 @@ class TestRecommendationLogic:
 
 class TestIntegration:
     """Test complete workflow with generated data"""
-    
+
     def test_full_prediction_with_mock_data(
         self,
         ensemble_system,
@@ -395,7 +395,7 @@ class TestIntegration:
             tier='star',
             position='SF'
         )
-        
+
         # Generate historical games
         historical_games = mock_generator.generate_historical_games(
             'lebron-james',
@@ -403,7 +403,7 @@ class TestIntegration:
             num_games=30,
             tier='star'
         )
-        
+
         # Make prediction
         pred, conf, rec, metadata = ensemble_system.predict(
             features=features,
@@ -412,14 +412,14 @@ class TestIntegration:
             prop_line=25.5,
             historical_games=historical_games
         )
-        
+
         # Verify results
         assert pred is not None
         assert 0 < pred < 60
         assert 0 <= conf <= 1.0
         assert rec in ['OVER', 'UNDER', 'PASS']
         assert metadata['systems_used'] >= 3
-    
+
     def test_multiple_players(
         self,
         ensemble_system,
@@ -427,7 +427,7 @@ class TestIntegration:
     ):
         """Test predictions for players of different tiers"""
         tiers = ['superstar', 'star', 'starter', 'rotation']
-        
+
         for tier in tiers:
             features = mock_generator.generate_all_features(
                 f'player-{tier}',
@@ -435,14 +435,14 @@ class TestIntegration:
                 tier=tier,
                 position='SF'
             )
-            
+
             historical_games = mock_generator.generate_historical_games(
                 f'player-{tier}',
                 date(2025, 1, 15),
                 num_games=20,
                 tier=tier
             )
-            
+
             pred, conf, rec, metadata = ensemble_system.predict(
                 features=features,
                 player_lookup=f'player-{tier}',
@@ -450,7 +450,7 @@ class TestIntegration:
                 prop_line=20.5,
                 historical_games=historical_games
             )
-            
+
             # All should work
             assert pred is not None
             assert metadata['systems_used'] >= 2
@@ -462,7 +462,7 @@ class TestIntegration:
 
 class TestErrorHandling:
     """Test error handling when systems fail"""
-    
+
     def test_insufficient_systems(
         self,
         ensemble_system,
@@ -478,7 +478,7 @@ class TestErrorHandling:
             prop_line=25.5,
             historical_games=None
         )
-        
+
         # Should handle gracefully (might PASS or have low confidence)
         assert rec in ['OVER', 'UNDER', 'PASS']
 

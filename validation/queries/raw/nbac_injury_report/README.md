@@ -326,7 +326,7 @@ status: EXPECTED - off day sparse reports
 Adjust expectations based on season:
 ```sql
 -- Add to queries as needed
-CASE 
+CASE
   WHEN EXTRACT(MONTH FROM report_date) BETWEEN 7 AND 9 THEN 'off-season'
   WHEN EXTRACT(MONTH FROM report_date) BETWEEN 10 AND 6 THEN 'active-season'
 END as season_phase
@@ -374,7 +374,7 @@ validate-injuries trends --table
 
 ---
 
-**Last Updated:** October 12, 2025  
-**Query Count:** 7  
-**Status:** Production Ready  
+**Last Updated:** October 12, 2025
+**Query Count:** 7
+**Status:** Production Ready
 **Critical Priority:** P0 (Revenue Protecting)

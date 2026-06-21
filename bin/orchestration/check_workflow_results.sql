@@ -1,4 +1,4 @@
-SELECT 
+SELECT
   execution_id,
   workflow_name,
   status,

@@ -45,7 +45,7 @@ All deployed successfully with breakout detection v2 features:
 
 ### P1: Real injured_teammates_ppg Calculation
 
-**Problem:** Placeholder returned 0, missing important opportunity signal  
+**Problem:** Placeholder returned 0, missing important opportunity signal
 **Impact:** 30+ PPG injured → 24.5% breakout rate vs 16.2% baseline
 
 **Solution:** Added method to query real injury data

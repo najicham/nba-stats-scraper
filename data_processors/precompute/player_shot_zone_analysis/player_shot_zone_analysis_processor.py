@@ -539,7 +539,7 @@ class PlayerShotZoneAnalysisProcessor(
     def get_dependencies(self) -> dict:
         """
         Define source table requirements.
-        
+
         Returns:
             dict: Dependency configuration for player_game_summary
         """
@@ -548,24 +548,24 @@ class PlayerShotZoneAnalysisProcessor(
                 'field_prefix': 'source_player_game',
                 'description': 'Player game-level shot zone stats',
                 'check_type': 'per_player_game_count',
-                
+
                 # Requirements
                 'min_games_required': self.min_games_required,
                 'min_players_with_data': 400,  # Expect at least 400 active players
                 'entity_field': 'player_lookup',
-                
+
                 # Freshness thresholds
                 'max_age_hours_warn': 24,   # Warn if >24 hours old
                 'max_age_hours_fail': 72,   # Fail if >72 hours old
-                
+
                 # Early season handling (first 2 weeks of season)
                 'early_season_days': 14,
                 'early_season_behavior': 'WRITE_PLACEHOLDER',
-                
+
                 'critical': True
             }
         }
-    
+
     def extract_raw_data(self) -> None:
         """
         Extract player game data from Phase 3 analytics.
@@ -636,19 +636,19 @@ class PlayerShotZoneAnalysisProcessor(
 
         logger.info(f"Season {season_year} start date: {season_start_date}")
         self.season_start_date = season_start_date  # Store for completeness checking
-        
+
         # Query player game data
         # Get last 20 games to support both 10-game and 20-game windows
         query = f"""
         WITH ranked_games AS (
-            SELECT 
+            SELECT
                 -- Identifiers
                 player_lookup,
                 universal_player_id,
                 game_id,
                 game_date,
                 opponent_team_abbr,
-                
+
                 -- Shot zone fields
                 paint_attempts,
                 paint_makes,
@@ -656,22 +656,22 @@ class PlayerShotZoneAnalysisProcessor(
                 mid_range_makes,
                 three_pt_attempts,
                 three_pt_makes,
-                
+
                 -- Shot creation
                 assisted_fg_makes,
                 unassisted_fg_makes,
                 fg_makes,
-                
+
                 -- Supporting fields
                 minutes_played,
                 is_active,
-                
+
                 -- Rank by recency
                 ROW_NUMBER() OVER (
-                    PARTITION BY player_lookup 
+                    PARTITION BY player_lookup
                     ORDER BY game_date DESC
                 ) as game_rank
-                
+
             FROM `{self.project_id}.nba_analytics.player_game_summary`
             WHERE game_date < '{analysis_date}'  -- FIX: Changed <= to < (must not include analysis_date games)
               AND game_date >= '{season_start_date}'
@@ -680,21 +680,21 @@ class PlayerShotZoneAnalysisProcessor(
               -- NOTE: Zone completeness is validated in _calculate_zone_metrics_static()
               -- which sets rates to NULL when zone data is incomplete (mixed PBP/box score sources)
         )
-        SELECT * 
+        SELECT *
         FROM ranked_games
         WHERE game_rank <= {self.trend_window}
         ORDER BY player_lookup, game_date DESC
         """
-        
+
         logger.info(f"Querying player_game_summary for last {self.trend_window} games per player")
-        
+
         try:
             self.raw_data = self.bq_client.query(query).to_dataframe()
-            
+
             if self.raw_data.empty:
                 logger.warning(f"No player game data found for {analysis_date}")
                 return
-            
+
             logger.info(f"Extracted {len(self.raw_data)} game records for "
                        f"{self.raw_data['player_lookup'].nunique()} players")
 
@@ -739,14 +739,14 @@ class PlayerShotZoneAnalysisProcessor(
     def _write_placeholder_rows(self, dep_check: dict) -> None:
         """
         Write placeholder rows for early season when insufficient games available.
-        
+
         Args:
             dep_check: Dependency check results with early season info
         """
         analysis_date = self.opts.get('analysis_date')
-        
+
         logger.info(f"Writing early season placeholders for {analysis_date}")
-        
+
         # Query active players (even if <10 games)
         query = f"""
         SELECT DISTINCT
@@ -757,10 +757,10 @@ class PlayerShotZoneAnalysisProcessor(
           AND game_date >= DATE_SUB('{analysis_date}', INTERVAL 30 DAY)
           AND is_active = TRUE
         """
-        
+
         try:
             players_df = self.bq_client.query(query).to_dataframe()
-            
+
             placeholder_rows = []
             for _, player in players_df.iterrows():
                 row = {
@@ -768,7 +768,7 @@ class PlayerShotZoneAnalysisProcessor(
                     'player_lookup': player['player_lookup'],
                     'universal_player_id': player.get('universal_player_id'),
                     'analysis_date': analysis_date.isoformat(),
-                    
+
                     # All metrics NULL for early season
                     'paint_rate_last_10': None,
                     'mid_range_rate_last_10': None,
@@ -776,37 +776,37 @@ class PlayerShotZoneAnalysisProcessor(
                     'total_shots_last_10': None,
                     'games_in_sample_10': 0,
                     'sample_quality_10': 'insufficient',
-                    
+
                     'paint_pct_last_10': None,
                     'mid_range_pct_last_10': None,
                     'three_pt_pct_last_10': None,
-                    
+
                     'paint_attempts_per_game': None,
                     'mid_range_attempts_per_game': None,
                     'three_pt_attempts_per_game': None,
-                    
+
                     'paint_rate_last_20': None,
                     'paint_pct_last_20': None,
                     'games_in_sample_20': 0,
                     'sample_quality_20': 'insufficient',
-                    
+
                     'assisted_rate_last_10': None,
                     'unassisted_rate_last_10': None,
-                    
+
                     'player_position': None,
                     'primary_scoring_zone': None,
-                    
+
                     'data_quality_tier': 'low',
                     'calculation_notes': 'Early season - insufficient games for analysis',
-                    
+
                     # v4.0 source tracking
                     **self.build_source_tracking_fields(),
-                    
+
                     # Early season flags
                     'early_season_flag': True,
-                    'insufficient_data_reason': dep_check.get('early_season_reason', 
+                    'insufficient_data_reason': dep_check.get('early_season_reason',
                                                               'Season start - insufficient games'),
-                    
+
                     # Processing metadata
                     'created_at': datetime.now(timezone.utc).isoformat(),
                     'processed_at': datetime.now(timezone.utc).isoformat()
@@ -819,10 +819,10 @@ class PlayerShotZoneAnalysisProcessor(
                 row['data_hash'] = self.compute_data_hash(row)
 
                 placeholder_rows.append(row)
-            
+
             self.transformed_data = placeholder_rows
             logger.info(f"Created {len(placeholder_rows)} early season placeholder rows")
-            
+
         except Exception as e:
             logger.error(f"Error creating placeholder rows: {e}")
             raise
@@ -935,7 +935,7 @@ class PlayerShotZoneAnalysisProcessor(
     def calculate_precompute(self) -> None:
         """
         Calculate shot zone metrics for each player.
-        
+
         For each player with sufficient games:
         - Calculate shot distribution rates by zone
         - Calculate efficiency by zone (FG%)
@@ -947,7 +947,7 @@ class PlayerShotZoneAnalysisProcessor(
         if self.raw_data is None or self.raw_data.empty:
             logger.warning("No raw data to process")
             return
-        
+
         logger.info("Calculating shot zone metrics for all players")
 
         successful = []
@@ -1634,7 +1634,7 @@ class PlayerShotZoneAnalysisProcessor(
                 })
 
         return successful, failed
-    
+
     def _calculate_zone_metrics(self, games_df: pd.DataFrame) -> dict:
         """
         Calculate shot zone metrics for a sample of games.
@@ -1735,7 +1735,7 @@ class PlayerShotZoneAnalysisProcessor(
             # Add flag to track incomplete zone data
             'zones_complete': zones_complete
         }
-    
+
     def _determine_primary_zone(self, metrics: dict) -> Optional[str]:
         """
         Determine player's primary scoring zone based on shot distribution.
@@ -1743,11 +1743,11 @@ class PlayerShotZoneAnalysisProcessor(
         paint_rate = metrics.get('paint_rate', 0) or 0
         mid_rate = metrics.get('mid_range_rate', 0) or 0
         three_rate = metrics.get('three_pt_rate', 0) or 0
-        
+
         # If missing data, return None
         if paint_rate == 0 and mid_rate == 0 and three_rate == 0:
             return None
-        
+
         # Check for clear dominance first
         if paint_rate >= 40:
             return 'paint'
@@ -1757,7 +1757,7 @@ class PlayerShotZoneAnalysisProcessor(
             return 'mid_range'
         else:
             return 'balanced'
-    
+
     def _get_dynamic_min_games(self, analysis_date: date, season_start_date: date) -> int:
         """
         Calculate minimum games required based on days into season.
@@ -1812,15 +1812,15 @@ class PlayerShotZoneAnalysisProcessor(
             return 'medium'
         else:
             return 'low'
-    
+
     def _determine_sample_quality(self, games_count: int, target_window: int) -> str:
         """
         Assess sample quality relative to target window.
-        
+
         Args:
             games_count: Number of games in sample
             target_window: Target number of games (10 or 20)
-            
+
         Returns:
             str: 'excellent', 'good', 'limited', or 'insufficient'
         """
@@ -1832,40 +1832,40 @@ class PlayerShotZoneAnalysisProcessor(
             return 'limited'
         else:
             return 'insufficient'
-    
+
     def save_precompute(self) -> bool:
         """
         Save calculated metrics to BigQuery using parent class implementation.
-        
+
         Parent class handles:
         - MERGE_UPDATE strategy (delete + insert)
         - Batch INSERT via BigQuery load jobs
         - Streaming buffer error handling
-        
+
         Returns:
             bool: True if successful, False otherwise
         """
         if not self.transformed_data:
             logger.warning("No data to save")
             return True
-        
+
         logger.info(f"Saving {len(self.transformed_data)} records")
-        
+
         try:
             # Use parent class save implementation
             super().save_precompute()
-            
+
             # Save failure records if any
             if self.failed_entities:
                 self._save_failures()
-            
+
             logger.info(f"Successfully saved {len(self.transformed_data)} records")
             return True
-            
+
         except Exception as e:
             logger.error(f"Error saving to BigQuery: {e}")
             return False
-    
+
     def _save_failures(self) -> None:
         """Save failed entity records for debugging."""
         if not self.failed_entities:
@@ -1922,38 +1922,38 @@ class PlayerShotZoneAnalysisProcessor(
 if __name__ == '__main__':
     import sys
     from datetime import date
-    
+
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
-    
+
     # Parse command line arguments
     if len(sys.argv) > 1:
         analysis_date = datetime.strptime(sys.argv[1], '%Y-%m-%d').date()
     else:
         analysis_date = date.today()
-    
+
     logger.info(f"Running Player Shot Zone Analysis for {analysis_date}")
-    
+
     # Initialize and run processor
     processor = PlayerShotZoneAnalysisProcessor()
     processor.opts = {'analysis_date': analysis_date}
-    
+
     try:
         # Extract data
         processor.extract_raw_data()
-        
+
         # Calculate metrics
         processor.calculate_precompute()
-        
+
         # Save results
         if processor.save_precompute():
             logger.info("✓ Processing complete!")
         else:
             logger.error("✗ Processing failed")
             sys.exit(1)
-            
+
     except Exception as e:
         logger.error(f"✗ Processing error: {e}")
         sys.exit(1)

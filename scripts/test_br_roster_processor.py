@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 def test_with_sample_data():
     """Test with sample roster data."""
-    
+
     # Sample data matching scraper output
     sample_data = {
         "team": "Los Angeles Lakers",
@@ -56,11 +56,11 @@ def test_with_sample_data():
             }
         ]
     }
-    
+
     print("=" * 50)
     print("Testing Basketball Reference Roster Processor")
     print("=" * 50)
-    
+
     # Test name normalization
     print("\n1. Testing name normalization:")
     test_names = [
@@ -72,14 +72,14 @@ def test_with_sample_data():
     for name in test_names:
         normalized = normalize_name(name)
         print(f"  {name:20} -> {normalized}")
-    
+
     # Test processor initialization
     print("\n2. Testing processor initialization:")
     processor = BasketballRefRosterProcessor()
     print(f"  ✓ Processor created: {processor.__class__.__name__}")
     print(f"  ✓ Required opts: {processor.required_opts}")
     print(f"  ✓ Table name: {processor.table_name}")
-    
+
     # Test data transformation
     print("\n3. Testing data transformation:")
     processor.raw_data = sample_data
@@ -89,11 +89,11 @@ def test_with_sample_data():
         "file_path": "test/sample.json"
     }
     processor.set_additional_opts()
-    
+
     try:
         processor.transform_data()
         print(f"  ✓ Transformed {len(processor.transformed_data)} players")
-        
+
         # Show sample transformed data
         if processor.transformed_data:
             sample = processor.transformed_data[0]
@@ -101,15 +101,15 @@ def test_with_sample_data():
             for key in ["player_full_name", "player_lookup", "experience_years", "first_seen_date"]:
                 if key in sample:
                     print(f"    {key}: {sample[key]}")
-    
+
     except Exception as e:
         print(f"  ✗ Transform failed: {e}")
-    
+
     # Test stats
     print("\n4. Testing processor stats:")
     stats = processor.get_processor_stats()
     print(f"  Stats: {json.dumps(stats, indent=2)}")
-    
+
     print("\n" + "=" * 50)
     print("✓ Test completed successfully!")
     print("=" * 50)
@@ -117,18 +117,18 @@ def test_with_sample_data():
 
 def test_with_gcs_file(bucket_name: str, file_path: str):
     """Test with actual GCS file."""
-    
+
     print(f"\nTesting with GCS file: gs://{bucket_name}/{file_path}")
-    
+
     processor = BasketballRefRosterProcessor()
-    
+
     # Extract season and team from path
     # Expected: basketball_reference/season_rosters/2023-24/LAL.json
     parts = file_path.split("/")
     season_str = parts[-2]  # "2023-24"
     team_abbrev = parts[-1].replace(".json", "")  # "LAL"
     season_year = int(season_str.split("-")[0])  # 2023
-    
+
     opts = {
         "season_year": season_year,
         "team_abbrev": team_abbrev,
@@ -136,12 +136,12 @@ def test_with_gcs_file(bucket_name: str, file_path: str):
         "bucket": bucket_name,
         "project_id": os.environ.get("GCP_PROJECT_ID", "nba-props-platform")
     }
-    
+
     print(f"  Season: {season_year}")
     print(f"  Team: {team_abbrev}")
-    
+
     success = processor.run(opts)
-    
+
     if success:
         stats = processor.get_processor_stats()
         print(f"\n✓ Processing successful!")
@@ -152,16 +152,16 @@ def test_with_gcs_file(bucket_name: str, file_path: str):
 
 if __name__ == "__main__":
     import argparse
-    
+
     parser = argparse.ArgumentParser(description="Test Basketball Reference Roster Processor")
     parser.add_argument("--gcs-file", help="GCS file path to test")
     parser.add_argument("--bucket", default="nba-scraped-data", help="GCS bucket name")
-    
+
     args = parser.parse_args()
-    
+
     # Always run sample test
     test_with_sample_data()
-    
+
     # Optionally test with GCS file
     if args.gcs_file:
         test_with_gcs_file(args.bucket, args.gcs_file)

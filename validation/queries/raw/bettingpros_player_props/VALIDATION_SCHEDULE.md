@@ -1,8 +1,8 @@
 # BettingPros Player Props - Validation Schedule
 
-**Purpose**: Automated data quality monitoring during NBA season  
-**Season**: 2025-26 (October 2025 - June 2026)  
-**Tool**: `validate-bettingpros` CLI  
+**Purpose**: Automated data quality monitoring during NBA season
+**Season**: 2025-26 (October 2025 - June 2026)
+**Tool**: `validate-bettingpros` CLI
 **Status**: Production Ready
 
 ---
@@ -230,7 +230,7 @@ GSW  | 34        | 241.2     | 0             | ✅
 ./scripts/validate-bettingpros playoffs
 ```
 
-**Schedule**: 
+**Schedule**:
 - **Regular Season**: Skip (no playoff games)
 - **Playoffs**: Daily during playoffs (Apr 19 - Jun 22)
 - **Post-Season**: Run once after Finals completion
@@ -272,7 +272,7 @@ SEASON SUMMARY:
 ./scripts/validate-bettingpros missing
 ```
 
-**Schedule**: 
+**Schedule**:
 - **Regular Season**: Weekly (included in Monday checks)
 - **Playoffs**: Daily (2 hours after last game tipoff)
 
@@ -537,14 +537,14 @@ target:
 
 ## 📞 Support Contacts
 
-**Data Engineering Team**: #nba-data-engineering  
-**On-Call Rotation**: PagerDuty schedule "NBA-Data-Oncall"  
-**Business Stakeholders**: #nba-props-business  
+**Data Engineering Team**: #nba-data-engineering
+**On-Call Rotation**: PagerDuty schedule "NBA-Data-Oncall"
+**Business Stakeholders**: #nba-props-business
 **BettingPros API Support**: support@bettingpros.com
 
 ---
 
-**Document Owner**: NBA Props Data Team  
-**Last Updated**: October 13, 2025  
-**Next Review**: October 22, 2025 (Season Start)  
+**Document Owner**: NBA Props Data Team
+**Last Updated**: October 13, 2025
+**Next Review**: October 22, 2025 (Season Start)
 **Status**: ✅ Production Ready - Awaiting Season Start

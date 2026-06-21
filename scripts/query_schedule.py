@@ -16,17 +16,17 @@ def load_schedule(filename: str) -> List[Dict[str, Any]]:
     with open(filename, 'r') as f:
         return json.load(f)
 
-def filter_games(games: List[Dict], date: str = None, start_date: str = None, 
+def filter_games(games: List[Dict], date: str = None, start_date: str = None,
                  end_date: str = None, season: str = None, team: str = None) -> List[Dict]:
     """Filter games based on criteria."""
     filtered = []
-    
+
     for game in games:
         game_date = game.get('date', '')
         away_team = game.get('away_team', '')
         home_team = game.get('home_team', '')
         game_season = game.get('season', '')
-        
+
         # Date filtering
         if date and game_date != date:
             continue
@@ -38,9 +38,9 @@ def filter_games(games: List[Dict], date: str = None, start_date: str = None,
             continue
         if team and team.upper() not in [away_team.upper(), home_team.upper()]:
             continue
-            
+
         filtered.append(game)
-    
+
     return filtered
 
 def main():
@@ -55,13 +55,13 @@ def main():
     parser.add_argument('--count', action='store_true', help='Just show count')
     parser.add_argument('--format', choices=['game_code', 'full'], default='game_code',
                        help='Output format')
-    
+
     args = parser.parse_args()
-    
+
     try:
         # Load schedule
         schedule = load_schedule(args.schedule_file)
-        
+
         # Apply filters
         filtered_games = filter_games(
             schedule,
@@ -71,11 +71,11 @@ def main():
             season=args.season,
             team=args.team
         )
-        
+
         if args.count:
             print(len(filtered_games))
             return
-        
+
         # Output results
         for game in filtered_games:
             if args.format == 'game_code':
@@ -84,7 +84,7 @@ def main():
                 print(f"{game.get('game_code', ''):<15} {game.get('date', ''):<12} "
                       f"{game.get('away_team', '')}@{game.get('home_team', ''):<8} "
                       f"{game.get('season', '')}")
-                
+
     except FileNotFoundError:
         print(f"Error: Schedule file not found: {args.schedule_file}")
         print("Make sure you've run Phase 1 (schedule collection) first")

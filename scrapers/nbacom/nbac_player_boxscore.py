@@ -128,7 +128,7 @@ class GetNbaComPlayerBoxscore(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     def set_additional_opts(self) -> None:
         super().set_additional_opts()
-        
+
         raw_date = self.opts["gamedate"].replace("-", "")
         if len(raw_date) != 8 or not raw_date.isdigit():
             raise DownloadDataException("gamedate must be YYYYMMDD or YYYY-MM-DD")
@@ -138,13 +138,13 @@ class GetNbaComPlayerBoxscore(ScraperBase, ScraperFlaskMixin):
         # NBA season logic: seasons run October to April (next year)
         year = int(raw_date[0:4])
         month = int(raw_date[4:6])
-        
+
         # If month is Jan-Sep, it's part of the previous season start year
         if month < 10:  # January through September
             season_start_year = year - 1
         else:  # October, November, December
             season_start_year = year
-        
+
         # FIX: Check if value is None/empty before setting
         # setdefault() doesn't work if key exists with None value
         if not self.opts.get("season"):
@@ -245,7 +245,7 @@ class GetNbaComPlayerBoxscore(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException(error_msg)
-            
+
             # Check for resultSets
             rs = self.decoded_data.get("resultSets", [])
             if not rs:
@@ -267,7 +267,7 @@ class GetNbaComPlayerBoxscore(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException(error_msg)
-            
+
             # Check for rowSet in first result
             if "rowSet" not in rs[0]:
                 error_msg = "Missing rowSet in leaguegamelog resultSets"
@@ -288,7 +288,7 @@ class GetNbaComPlayerBoxscore(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException(error_msg)
-            
+
             # Check if rowSet is empty
             if not rs[0]["rowSet"]:
                 error_msg = "No player rows in leaguegamelog JSON"
@@ -308,10 +308,10 @@ class GetNbaComPlayerBoxscore(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException(error_msg)
-            
+
             player_count = len(rs[0]["rowSet"])
             logger.info("Found %d players in rowSet for gamedate=%s.", player_count, self.opts["gamedate"])
-            
+
             # Warning for suspiciously low player count (typical NBA game has 20-30 players)
             min_players = int(os.environ.get('PLAYER_BOXSCORE_MIN_PLAYERS', '10'))
             if player_count < min_players:
@@ -332,7 +332,7 @@ class GetNbaComPlayerBoxscore(ScraperBase, ScraperFlaskMixin):
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
         except DownloadDataException:
             # Already handled and notified above
             raise

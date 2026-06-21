@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_precompute.player_daily_cache
   player_lookup STRING NOT NULL,                    -- Normalized player identifier
   universal_player_id STRING,                       -- Universal player ID (e.g., lebronjames_001)
   cache_date DATE NOT NULL,                         -- Date this cache represents (partition key)
-  
+
   -- ============================================================================
   -- RECENT PERFORMANCE - Won't change during the day (8 fields)
   -- Source: nba_analytics.player_game_summary (aggregated)
@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_precompute.player_daily_cache
   usage_rate_last_10 NUMERIC(5,2),                  -- Average usage rate over last 10 games
   ts_pct_last_10 NUMERIC(5,3),                      -- Average true shooting % over last 10 games
   games_played_season INT64,                        -- Total games played this season
-  
+
   -- ============================================================================
   -- TEAM CONTEXT - Won't change during the day (3 fields)
   -- Source: nba_analytics.team_offense_game_summary + player_game_summary
@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_precompute.player_daily_cache
   team_pace_last_10 NUMERIC(5,1),                   -- Team's recent pace (possessions per 48 min)
   team_off_rating_last_10 NUMERIC(6,2),             -- Team's offensive efficiency (points per 100 poss)
   player_usage_rate_season NUMERIC(5,2),            -- Season-long usage rate
-  
+
   -- ============================================================================
   -- FATIGUE METRICS - Won't change during the day (7 fields)
   -- Source: nba_analytics.upcoming_player_game_context (direct copy!)
@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_precompute.player_daily_cache
   back_to_backs_last_14_days INT64,                 -- Back-to-back games in last 14 days
   avg_minutes_per_game_last_7 NUMERIC(5,1),         -- Average minutes per game (last 7 days)
   fourth_quarter_minutes_last_7 INT64,              -- 4th quarter minutes (last 7 days)
-  
+
   -- ============================================================================
   -- SHOT ZONE TENDENCIES - Won't change during the day (4 fields)
   -- Source: nba_precompute.player_shot_zone_analysis + player_game_summary
@@ -69,13 +69,13 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_precompute.player_daily_cache
   paint_rate_last_10 NUMERIC(5,2),                  -- % of shots from paint (last 10 games)
   three_pt_rate_last_10 NUMERIC(5,2),               -- % of shots from three (last 10 games)
   assisted_rate_last_10 NUMERIC(5,2),               -- % of made FGs that were assisted (last 10)
-  
+
   -- ============================================================================
   -- PLAYER DEMOGRAPHICS (1 field)
   -- Source: nba_analytics.upcoming_player_game_context
   -- ============================================================================
   player_age INT64,                                 -- Player's current age
-  
+
   -- ============================================================================
   -- SOURCE TRACKING: player_game_summary (3 fields)
   -- Dependency v4.0 tracking for performance and usage stats
@@ -222,7 +222,7 @@ OPTIONS(
   "player_lookup": "lebronjames",
   "universal_player_id": "lebronjames_001",
   "cache_date": "2025-01-21",
-  
+
   -- Recent Performance
   "points_avg_last_5": 27.6,
   "points_avg_last_10": 26.4,
@@ -232,12 +232,12 @@ OPTIONS(
   "usage_rate_last_10": 30.8,
   "ts_pct_last_10": 0.618,
   "games_played_season": 45,
-  
+
   -- Team Context
   "team_pace_last_10": 103.2,
   "team_off_rating_last_10": 115.6,
   "player_usage_rate_season": 29.9,
-  
+
   -- Fatigue Metrics
   "games_in_last_7_days": 3,
   "games_in_last_14_days": 5,
@@ -246,37 +246,37 @@ OPTIONS(
   "back_to_backs_last_14_days": 1,
   "avg_minutes_per_game_last_7": 36.0,
   "fourth_quarter_minutes_last_7": 28,
-  
+
   -- Shot Zone Tendencies
   "primary_scoring_zone": "paint",
   "paint_rate_last_10": 48.3,
   "three_pt_rate_last_10": 31.2,
   "assisted_rate_last_10": 0.423,
-  
+
   -- Demographics
   "player_age": 40,
-  
+
   -- Source Tracking
   "source_player_game_last_updated": "2025-01-21T02:15:00Z",
   "source_player_game_rows_found": 45,
   "source_player_game_completeness_pct": 100.0,
-  
+
   "source_team_offense_last_updated": "2025-01-21T02:20:00Z",
   "source_team_offense_rows_found": 10,
   "source_team_offense_completeness_pct": 100.0,
-  
+
   "source_upcoming_context_last_updated": "2025-01-20T23:45:00Z",
   "source_upcoming_context_rows_found": 1,
   "source_upcoming_context_completeness_pct": 100.0,
-  
+
   "source_shot_zone_last_updated": "2025-01-21T00:05:00Z",
   "source_shot_zone_rows_found": 1,
   "source_shot_zone_completeness_pct": 100.0,
-  
+
   -- Early Season
   "early_season_flag": false,
   "insufficient_data_reason": null,
-  
+
   -- Metadata
   "cache_version": "v1",
   "created_at": "2025-01-21T00:15:00Z",
@@ -293,7 +293,7 @@ OPTIONS(
   "player_lookup": "victorwembanyama",
   "universal_player_id": "victorwembanyama_001",
   "cache_date": "2024-11-05",
-  
+
   -- Recent Performance (only 7 games played)
   "points_avg_last_5": 23.4,
   "points_avg_last_10": 23.4,                       -- Only 7 games, so same as season
@@ -303,12 +303,12 @@ OPTIONS(
   "usage_rate_last_10": 28.5,
   "ts_pct_last_10": 0.571,
   "games_played_season": 7,                         -- Small sample size!
-  
+
   -- Team Context (also limited data)
   "team_pace_last_10": 98.7,
   "team_off_rating_last_10": 112.3,
   "player_usage_rate_season": 28.5,
-  
+
   -- Fatigue Metrics (copied from context)
   "games_in_last_7_days": 2,
   "games_in_last_14_days": 4,
@@ -317,37 +317,37 @@ OPTIONS(
   "back_to_backs_last_14_days": 0,
   "avg_minutes_per_game_last_7": 31.0,
   "fourth_quarter_minutes_last_7": 18,
-  
+
   -- Shot Zone Tendencies
   "primary_scoring_zone": "paint",
   "paint_rate_last_10": 52.1,
   "three_pt_rate_last_10": 25.6,
   "assisted_rate_last_10": 0.615,                   -- Rookie, more assisted shots
-  
+
   -- Demographics
   "player_age": 20,
-  
+
   -- Source Tracking (all sources present but limited data)
   "source_player_game_last_updated": "2024-11-05T02:10:00Z",
   "source_player_game_rows_found": 7,               -- Only 7 games!
   "source_player_game_completeness_pct": 70.0,      -- 7/10 = 70%
-  
+
   "source_team_offense_last_updated": "2024-11-05T02:18:00Z",
   "source_team_offense_rows_found": 7,
   "source_team_offense_completeness_pct": 70.0,
-  
+
   "source_upcoming_context_last_updated": "2024-11-04T23:40:00Z",
   "source_upcoming_context_rows_found": 1,
   "source_upcoming_context_completeness_pct": 100.0,
-  
+
   "source_shot_zone_last_updated": "2024-11-05T00:02:00Z",
   "source_shot_zone_rows_found": 1,
   "source_shot_zone_completeness_pct": 100.0,       -- Shot zones work with 7 games
-  
+
   -- Early Season (flagged!)
   "early_season_flag": true,
   "insufficient_data_reason": "Only 7 games played, need 10 minimum",
-  
+
   -- Metadata
   "cache_version": "v1",
   "created_at": "2024-11-05T00:17:00Z",
@@ -364,7 +364,7 @@ OPTIONS(
   "player_lookup": "kawhileonard",
   "universal_player_id": "kawhileonard_001",
   "cache_date": "2025-01-21",
-  
+
   -- Recent Performance (hasn't played in 14 days)
   "points_avg_last_5": 24.8,                        -- From games 14-21 days ago
   "points_avg_last_10": 25.1,
@@ -374,12 +374,12 @@ OPTIONS(
   "usage_rate_last_10": 29.2,
   "ts_pct_last_10": 0.642,
   "games_played_season": 28,                        -- But last game was 14 days ago
-  
+
   -- Team Context (current, but player wasn't playing)
   "team_pace_last_10": 101.8,
   "team_off_rating_last_10": 114.2,
   "player_usage_rate_season": 29.2,
-  
+
   -- Fatigue Metrics (will show rested)
   "games_in_last_7_days": 0,                        -- Injured!
   "games_in_last_14_days": 0,                       -- No games
@@ -388,37 +388,37 @@ OPTIONS(
   "back_to_backs_last_14_days": 0,
   "avg_minutes_per_game_last_7": 0.0,
   "fourth_quarter_minutes_last_7": 0,
-  
+
   -- Shot Zone Tendencies (from before injury)
   "primary_scoring_zone": "mid_range",
   "paint_rate_last_10": 35.2,
   "three_pt_rate_last_10": 38.4,
   "assisted_rate_last_10": 0.512,
-  
+
   -- Demographics
   "player_age": 33,
-  
+
   -- Source Tracking (player_game is stale!)
   "source_player_game_last_updated": "2025-01-07T02:15:00Z",  -- 14 days old!
   "source_player_game_rows_found": 28,
   "source_player_game_completeness_pct": 100.0,
-  
+
   "source_team_offense_last_updated": "2025-01-21T02:20:00Z",  -- Current
   "source_team_offense_rows_found": 10,
   "source_team_offense_completeness_pct": 100.0,
-  
+
   "source_upcoming_context_last_updated": "2025-01-20T23:45:00Z",  -- Current
   "source_upcoming_context_rows_found": 1,
   "source_upcoming_context_completeness_pct": 100.0,
-  
+
   "source_shot_zone_last_updated": "2025-01-07T00:05:00Z",  -- 14 days old!
   "source_shot_zone_rows_found": 1,
   "source_shot_zone_completeness_pct": 100.0,
-  
+
   -- Early Season
   "early_season_flag": false,
   "insufficient_data_reason": null,
-  
+
   -- Metadata
   "cache_version": "v1",
   "created_at": "2025-01-21T00:15:00Z",
@@ -430,7 +430,7 @@ OPTIONS(
 -- USAGE EXAMPLE: Phase 5 Morning Load (6 AM)
 -- ============================================================================
 -- Load all player cache data into memory at startup
--- SELECT * 
+-- SELECT *
 -- FROM `nba-props-platform.nba_precompute.player_daily_cache`
 -- WHERE cache_date = CURRENT_DATE()
 -- ORDER BY player_lookup;
@@ -445,38 +445,38 @@ OPTIONS(
 
 -- Query 1: Check cache completeness for today
 -- Expected: ~450 players (all with games today)
-SELECT 
+SELECT
   cache_date,
   COUNT(DISTINCT player_lookup) as players_cached,
   COUNT(CASE WHEN early_season_flag = TRUE THEN 1 END) as early_season_count,
-  
+
   -- Average completeness across all sources
   AVG(source_player_game_completeness_pct) as avg_player_game_completeness,
   AVG(source_team_offense_completeness_pct) as avg_team_offense_completeness,
   AVG(source_upcoming_context_completeness_pct) as avg_context_completeness,
   AVG(source_shot_zone_completeness_pct) as avg_shot_zone_completeness,
-  
+
   -- Processing time
   MIN(processed_at) as first_processed,
   MAX(processed_at) as last_processed,
   TIMESTAMP_DIFF(MAX(processed_at), MIN(processed_at), MINUTE) as processing_duration_mins
-  
+
 FROM `nba-props-platform.nba_precompute.player_daily_cache`
 WHERE cache_date = CURRENT_DATE()
 GROUP BY cache_date;
 
 -- Query 2: Check source data freshness
 -- Expected: All sources <24 hours old
-SELECT 
+SELECT
   cache_date,
   player_lookup,
-  
+
   -- Calculate age for each source
   TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), source_player_game_last_updated, HOUR) as player_game_age_hrs,
   TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), source_team_offense_last_updated, HOUR) as team_offense_age_hrs,
   TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), source_upcoming_context_last_updated, HOUR) as context_age_hrs,
   TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), source_shot_zone_last_updated, HOUR) as shot_zone_age_hrs,
-  
+
   -- Identify stalest source
   GREATEST(
     TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), source_player_game_last_updated, HOUR),
@@ -484,7 +484,7 @@ SELECT
     TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), source_upcoming_context_last_updated, HOUR),
     TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), source_shot_zone_last_updated, HOUR)
   ) as stalest_source_age_hrs
-  
+
 FROM `nba-props-platform.nba_precompute.player_daily_cache`
 WHERE cache_date = CURRENT_DATE()
   AND GREATEST(
@@ -497,17 +497,17 @@ ORDER BY stalest_source_age_hrs DESC;
 
 -- Query 3: Find players with low data completeness
 -- Expected: 0 rows (all players have complete data)
-SELECT 
+SELECT
   cache_date,
   player_lookup,
   games_played_season,
-  
+
   -- Completeness by source
   source_player_game_completeness_pct,
   source_team_offense_completeness_pct,
   source_upcoming_context_completeness_pct,
   source_shot_zone_completeness_pct,
-  
+
   -- Identify bottleneck source
   CASE
     WHEN source_player_game_completeness_pct < 85 THEN 'player_game'
@@ -516,10 +516,10 @@ SELECT
     WHEN source_shot_zone_completeness_pct < 85 THEN 'shot_zone'
     ELSE 'all_good'
   END as problem_source,
-  
+
   early_season_flag,
   insufficient_data_reason
-  
+
 FROM `nba-props-platform.nba_precompute.player_daily_cache`
 WHERE cache_date = CURRENT_DATE()
   AND (
@@ -528,7 +528,7 @@ WHERE cache_date = CURRENT_DATE()
     source_upcoming_context_completeness_pct < 85 OR
     source_shot_zone_completeness_pct < 85
   )
-ORDER BY 
+ORDER BY
   LEAST(
     source_player_game_completeness_pct,
     source_team_offense_completeness_pct,
@@ -538,20 +538,20 @@ ORDER BY
 
 -- Query 4: Find missing players (scheduled to play but no cache)
 -- Expected: 0 rows (all scheduled players have cache)
-SELECT 
+SELECT
   upg.player_lookup,
   upg.player_full_name,
   upg.team_abbr,
   upg.opponent_team_abbr,
   COUNT(DISTINCT pgs.game_id) as games_played_season,
-  
+
   -- Why might they be missing?
-  CASE 
+  CASE
     WHEN COUNT(DISTINCT pgs.game_id) < 5 THEN 'too_few_games'
     WHEN MAX(pgs.game_date) < DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY) THEN 'injured_recently'
     ELSE 'unknown'
   END as likely_reason
-  
+
 FROM `nba-props-platform.nba_analytics.upcoming_player_game_context` upg
 LEFT JOIN `nba-props-platform.nba_precompute.player_daily_cache` pdc
   ON upg.player_lookup = pdc.player_lookup
@@ -566,30 +566,30 @@ ORDER BY 5 DESC;
 
 -- Query 5: Distribution of key metrics
 -- Shows typical values for cache data
-SELECT 
+SELECT
   cache_date,
-  
+
   -- Performance metrics distribution
   APPROX_QUANTILES(points_avg_season, 100)[OFFSET(25)] as points_p25,
   APPROX_QUANTILES(points_avg_season, 100)[OFFSET(50)] as points_median,
   APPROX_QUANTILES(points_avg_season, 100)[OFFSET(75)] as points_p75,
-  
+
   -- Usage distribution
   APPROX_QUANTILES(usage_rate_last_10, 100)[OFFSET(25)] as usage_p25,
   APPROX_QUANTILES(usage_rate_last_10, 100)[OFFSET(50)] as usage_median,
   APPROX_QUANTILES(usage_rate_last_10, 100)[OFFSET(75)] as usage_p75,
-  
+
   -- Minutes distribution
   APPROX_QUANTILES(minutes_avg_last_10, 100)[OFFSET(25)] as minutes_p25,
   APPROX_QUANTILES(minutes_avg_last_10, 100)[OFFSET(50)] as minutes_median,
   APPROX_QUANTILES(minutes_avg_last_10, 100)[OFFSET(75)] as minutes_p75,
-  
+
   -- Fatigue metrics
   AVG(games_in_last_7_days) as avg_games_last_7,
   AVG(back_to_backs_last_14_days) as avg_back_to_backs,
-  
+
   COUNT(*) as total_players
-  
+
 FROM `nba-props-platform.nba_precompute.player_daily_cache`
 WHERE cache_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
   AND early_season_flag IS NULL
@@ -602,11 +602,11 @@ ORDER BY cache_date DESC;
 
 -- View: Latest cache for today's games
 CREATE OR REPLACE VIEW `nba-props-platform.nba_precompute.v_latest_player_cache` AS
-SELECT 
+SELECT
   player_lookup,
   universal_player_id,
   cache_date,
-  
+
   -- Recent Performance
   points_avg_last_5,
   points_avg_last_10,
@@ -616,28 +616,28 @@ SELECT
   usage_rate_last_10,
   ts_pct_last_10,
   games_played_season,
-  
+
   -- Team Context
   team_pace_last_10,
   team_off_rating_last_10,
   player_usage_rate_season,
-  
+
   -- Fatigue
   games_in_last_7_days,
   games_in_last_14_days,
   minutes_in_last_7_days,
   back_to_backs_last_14_days,
-  
+
   -- Shot Zones
   primary_scoring_zone,
   paint_rate_last_10,
   three_pt_rate_last_10,
   assisted_rate_last_10,
-  
+
   -- Quality
   early_season_flag,
   processed_at
-  
+
 FROM `nba-props-platform.nba_precompute.player_daily_cache`
 WHERE cache_date = CURRENT_DATE()
   AND early_season_flag IS NULL
@@ -645,16 +645,16 @@ ORDER BY player_lookup;
 
 -- View: Cache quality summary
 CREATE OR REPLACE VIEW `nba-props-platform.nba_precompute.v_cache_quality_summary` AS
-SELECT 
+SELECT
   cache_date,
   COUNT(*) as total_players,
-  
+
   -- Completeness
   AVG(source_player_game_completeness_pct) as avg_completeness_player_game,
   AVG(source_team_offense_completeness_pct) as avg_completeness_team_offense,
   AVG(source_upcoming_context_completeness_pct) as avg_completeness_context,
   AVG(source_shot_zone_completeness_pct) as avg_completeness_shot_zone,
-  
+
   -- Minimum completeness (bottleneck)
   MIN(LEAST(
     source_player_game_completeness_pct,
@@ -662,20 +662,20 @@ SELECT
     source_upcoming_context_completeness_pct,
     source_shot_zone_completeness_pct
   )) as min_completeness_any_source,
-  
+
   -- Freshness
   MAX(TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), source_player_game_last_updated, HOUR)) as max_age_player_game,
   MAX(TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), source_team_offense_last_updated, HOUR)) as max_age_team_offense,
   MAX(TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), source_upcoming_context_last_updated, HOUR)) as max_age_context,
   MAX(TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), source_shot_zone_last_updated, HOUR)) as max_age_shot_zone,
-  
+
   -- Flags
   SUM(CASE WHEN early_season_flag THEN 1 ELSE 0 END) as early_season_count,
-  
+
   -- Processing
   MIN(processed_at) as first_processed,
   MAX(processed_at) as last_processed
-  
+
 FROM `nba-props-platform.nba_precompute.player_daily_cache`
 WHERE cache_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
 GROUP BY cache_date
@@ -683,10 +683,10 @@ ORDER BY cache_date DESC;
 
 -- View: Players with stale or incomplete data
 CREATE OR REPLACE VIEW `nba-props-platform.nba_precompute.v_cache_data_issues` AS
-SELECT 
+SELECT
   cache_date,
   player_lookup,
-  
+
   -- Issue classification
   CASE
     WHEN GREATEST(
@@ -715,7 +715,7 @@ SELECT
     ) < 85 THEN 'WARNING_INCOMPLETE'
     ELSE 'UNKNOWN'
   END as issue_type,
-  
+
   -- Metrics
   LEAST(
     source_player_game_completeness_pct,
@@ -723,17 +723,17 @@ SELECT
     source_upcoming_context_completeness_pct,
     source_shot_zone_completeness_pct
   ) as worst_completeness_pct,
-  
+
   GREATEST(
     TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), source_player_game_last_updated, HOUR),
     TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), source_team_offense_last_updated, HOUR),
     TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), source_upcoming_context_last_updated, HOUR),
     TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), source_shot_zone_last_updated, HOUR)
   ) as stalest_source_age_hrs,
-  
+
   early_season_flag,
   insufficient_data_reason
-  
+
 FROM `nba-props-platform.nba_precompute.player_daily_cache`
 WHERE cache_date = CURRENT_DATE()
   AND (
@@ -750,7 +750,7 @@ WHERE cache_date = CURRENT_DATE()
       source_shot_zone_completeness_pct
     ) < 85
   )
-ORDER BY 
+ORDER BY
   CASE issue_type
     WHEN 'CRITICAL_STALE' THEN 1
     WHEN 'CRITICAL_INCOMPLETE' THEN 2
@@ -765,7 +765,7 @@ ORDER BY
 -- ============================================================================
 
 -- Alert: Too few players cached (<400)
-SELECT 
+SELECT
   'player_daily_cache' as processor,
   cache_date,
   COUNT(*) as players_cached
@@ -775,7 +775,7 @@ GROUP BY cache_date
 HAVING COUNT(*) < 400;
 
 -- Alert: Stale source data (>24 hours old)
-SELECT 
+SELECT
   'player_daily_cache' as processor,
   cache_date,
   MAX(GREATEST(
@@ -795,7 +795,7 @@ HAVING MAX(GREATEST(
 )) > 24;
 
 -- Alert: Low completeness (<85%)
-SELECT 
+SELECT
   'player_daily_cache' as processor,
   cache_date,
   AVG(LEAST(
@@ -821,7 +821,7 @@ HAVING MIN(LEAST(
 )) < 85;
 
 -- Alert: Processing took too long (>15 minutes)
-SELECT 
+SELECT
   'player_daily_cache' as processor,
   cache_date,
   TIMESTAMP_DIFF(MAX(processed_at), MIN(processed_at), MINUTE) as processing_duration_mins
@@ -833,7 +833,7 @@ HAVING TIMESTAMP_DIFF(MAX(processed_at), MIN(processed_at), MINUTE) > 15;
 -- ============================================================================
 -- USAGE IN PHASE 5 PREDICTIONS
 -- ============================================================================
--- 
+--
 -- Morning Load (6 AM):
 --   1. Load all cache records for today into memory (450 rows)
 --   2. Convert to dictionary keyed by player_lookup
@@ -899,7 +899,7 @@ HAVING TIMESTAMP_DIFF(MAX(processed_at), MIN(processed_at), MINUTE) > 15;
 -- ============================================================================
 
 -- Check cache completeness for today
--- SELECT 
+-- SELECT
 --   COUNT(DISTINCT player_lookup) as players_cached,
 --   AVG(source_player_game_completeness_pct) as avg_completeness,
 --   SUM(CASE WHEN early_season_flag THEN 1 ELSE 0 END) as early_season_count,
@@ -909,7 +909,7 @@ HAVING TIMESTAMP_DIFF(MAX(processed_at), MIN(processed_at), MINUTE) > 15;
 -- WHERE cache_date = CURRENT_DATE();
 
 -- Check source freshness (all sources should be < 24 hours old)
--- SELECT 
+-- SELECT
 --   player_lookup,
 --   TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), source_player_game_last_updated, HOUR) as player_game_age_hrs,
 --   TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), source_team_offense_last_updated, HOUR) as team_offense_age_hrs,
@@ -926,7 +926,7 @@ HAVING TIMESTAMP_DIFF(MAX(processed_at), MIN(processed_at), MINUTE) > 15;
 -- ORDER BY player_game_age_hrs DESC;
 
 -- Find players missing from cache (scheduled to play but no cache record)
--- SELECT 
+-- SELECT
 --   upg.player_lookup,
 --   upg.player_full_name,
 --   upg.team_abbr,
@@ -955,7 +955,7 @@ HAVING TIMESTAMP_DIFF(MAX(processed_at), MIN(processed_at), MINUTE) > 15;
 --     - Fatigue metrics: 7
 --     - Shot zones: 4
 --     - Demographics: 1
---   
+--
 --   Tracking fields: 17
 --     - Source tracking (4 sources × 3 fields): 12
 --     - Optional tracking: 2

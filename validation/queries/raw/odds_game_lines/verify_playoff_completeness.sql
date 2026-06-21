@@ -12,7 +12,7 @@
 --       Schedule uses tricodes, odds uses full names - we join on abbreviations
 -- ============================================================================
 
-WITH 
+WITH
 -- Get expected playoff games from schedule using tricodes (source of truth)
 expected_playoff_games_raw AS (
   SELECT DISTINCT
@@ -27,16 +27,16 @@ expected_playoff_games_raw AS (
 
 -- Count expected games per team (by tricode)
 expected_by_tricode AS (
-  SELECT 
-    tricode, 
+  SELECT
+    tricode,
     COUNT(*) as expected_games
   FROM (
-    SELECT home_team_tricode as tricode 
+    SELECT home_team_tricode as tricode
     FROM expected_playoff_games_raw
-    
+
     UNION ALL
-    
-    SELECT away_team_tricode as tricode 
+
+    SELECT away_team_tricode as tricode
     FROM expected_playoff_games_raw
   )
   GROUP BY tricode
@@ -58,33 +58,33 @@ actual_playoff_games_raw AS (
 
 -- Count actual games per team (by tricode) and get full team name
 actual_by_tricode AS (
-  SELECT 
+  SELECT
     tricode,
     MAX(team_full_name) as team,  -- Get full team name from odds table for display
     COUNT(DISTINCT game_id) as actual_games,
     COUNT(DISTINCT CASE WHEN market_key = 'spreads' THEN game_id END) as actual_spreads,
     COUNT(DISTINCT CASE WHEN market_key = 'totals' THEN game_id END) as actual_totals
   FROM (
-    SELECT 
-      home_team_abbr as tricode, 
-      home_team as team_full_name, 
-      game_id, 
+    SELECT
+      home_team_abbr as tricode,
+      home_team as team_full_name,
+      game_id,
       market_key
     FROM actual_playoff_games_raw
-    
+
     UNION ALL
-    
-    SELECT 
-      away_team_abbr as tricode, 
-      away_team as team_full_name, 
-      game_id, 
+
+    SELECT
+      away_team_abbr as tricode,
+      away_team as team_full_name,
+      game_id,
       market_key
     FROM actual_playoff_games_raw
   )
   GROUP BY tricode
 )
 
-SELECT 
+SELECT
   COALESCE(a.team, e.tricode) as team,
   e.tricode,
   e.expected_games,
@@ -92,12 +92,12 @@ SELECT
   COALESCE(a.actual_spreads, 0) as actual_spreads,
   COALESCE(a.actual_totals, 0) as actual_totals,
   e.expected_games - COALESCE(a.actual_games, 0) as missing_games,
-  CASE 
-    WHEN COALESCE(a.actual_games, 0) = e.expected_games 
+  CASE
+    WHEN COALESCE(a.actual_games, 0) = e.expected_games
      AND COALESCE(a.actual_spreads, 0) = e.expected_games
      AND COALESCE(a.actual_totals, 0) = e.expected_games
     THEN '✅ Complete'
-    WHEN COALESCE(a.actual_games, 0) = 0 
+    WHEN COALESCE(a.actual_games, 0) = 0
     THEN '❌ All Missing'
     WHEN COALESCE(a.actual_games, 0) < e.expected_games
     THEN '⚠️ Incomplete'

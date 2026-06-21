@@ -9,9 +9,9 @@
 --   - Playoff games should match actual playoff results
 -- ============================================================================
 
-WITH 
+WITH
 odds_with_season_info AS (
-  SELECT 
+  SELECT
     o.game_date,
     o.game_id as odds_game_id,
     o.home_team,
@@ -22,15 +22,15 @@ odds_with_season_info AS (
     o.bookmaker_key,
     s.is_playoffs,
     s.game_id as schedule_game_id,
-    CASE 
+    CASE
       WHEN o.game_date BETWEEN '2021-10-19' AND '2022-06-20' THEN '2021-22'
       WHEN o.game_date BETWEEN '2022-10-18' AND '2023-06-20' THEN '2022-23'
       WHEN o.game_date BETWEEN '2023-10-24' AND '2024-06-20' THEN '2023-24'
       WHEN o.game_date BETWEEN '2024-10-22' AND '2025-06-20' THEN '2024-25'
     END as season
   FROM `nba-props-platform.nba_raw.odds_api_game_lines` o
-  LEFT JOIN `nba-props-platform.nba_raw.nbac_schedule` s 
-    ON o.game_date = s.game_date 
+  LEFT JOIN `nba-props-platform.nba_raw.nbac_schedule` s
+    ON o.game_date = s.game_date
     AND o.home_team_abbr = s.home_team_tricode
     AND o.away_team_abbr = s.away_team_tricode
   WHERE o.game_date BETWEEN '2021-10-19' AND '2025-06-20'
@@ -40,7 +40,7 @@ odds_with_season_info AS (
 
 -- Diagnostic checks for data quality
 diagnostics AS (
-  SELECT 
+  SELECT
     'DIAGNOSTICS' as row_type,
     COUNT(DISTINCT odds_game_id) as total_games,
     COUNT(DISTINCT CASE WHEN is_playoffs IS NULL THEN odds_game_id END) as null_playoff_flag_games,
@@ -62,9 +62,9 @@ team_games AS (
     odds_game_id
   FROM odds_with_season_info
   WHERE season IS NOT NULL
-  
+
   UNION DISTINCT
-  
+
   SELECT DISTINCT
     season,
     away_team as team,
@@ -76,7 +76,7 @@ team_games AS (
 ),
 
 team_stats AS (
-  SELECT 
+  SELECT
     season,
     team,
     COUNT(DISTINCT CASE WHEN is_playoffs = FALSE AND market_key = 'spreads' THEN odds_game_id END) as reg_spreads,
@@ -89,7 +89,7 @@ team_stats AS (
 )
 
 -- Output diagnostics first
-SELECT 
+SELECT
   row_type,
   CAST(total_games AS STRING) as season,
   'null_playoff_flag' as team,
@@ -113,12 +113,12 @@ SELECT
   CAST(playoff_spreads AS STRING) as playoff_spreads,
   CAST(playoff_totals AS STRING) as playoff_totals,
   CAST(total_games AS STRING) as total,
-  CASE 
+  CASE
     WHEN reg_spreads < 82 OR reg_totals < 82 THEN '⚠️ Missing games'
     ELSE ''
   END as notes
 FROM team_stats
-ORDER BY 
+ORDER BY
   row_type,
   season,
   CAST(playoff_spreads AS INT64) DESC,

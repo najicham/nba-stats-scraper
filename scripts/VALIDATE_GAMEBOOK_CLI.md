@@ -547,7 +547,7 @@ validate-gamebook missing --csv
 # Daily
 validate-gamebook yesterday          # Check yesterday
 
-# Weekly  
+# Weekly
 validate-gamebook week               # Last 7 days
 validate-gamebook resolution         # Name resolution quality
 
@@ -589,6 +589,6 @@ These are **legitimate exclusions** (cannot receive prop bets), so 98.92% is eff
 
 ---
 
-**Last Updated:** October 12, 2025  
-**Version:** 1.0  
+**Last Updated:** October 12, 2025
+**Version:** 1.0
 **Target Resolution Rate:** 98.92%

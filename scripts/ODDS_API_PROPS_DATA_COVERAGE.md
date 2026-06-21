@@ -21,7 +21,7 @@
 
 ### 2021-22 Season: ❌ NO DATA
 
-**Status:** Complete season missing  
+**Status:** Complete season missing
 **Coverage:** 0% (0 of 1,327 games)
 
 #### Details
@@ -43,7 +43,7 @@ Historical scraper for player props not built until 2023. The Odds API historica
 
 ### 2022-23 Season: ❌ MOSTLY MISSING
 
-**Status:** Regular season missing, partial playoffs  
+**Status:** Regular season missing, partial playoffs
 **Coverage:** 2.4% (31 of 1,324 games)
 
 #### Details
@@ -70,14 +70,14 @@ Historical scraper began collecting playoff data in late May 2023 (likely during
 - Cannot compare year-over-year trends 2022 vs 2023
 
 #### Backfill Feasibility
-🟡 **Partial** - Playoffs may be backfillable (May-June 2023)  
+🟡 **Partial** - Playoffs may be backfillable (May-June 2023)
 🔴 **Not Possible** - Regular season data not available
 
 ---
 
 ### 2023-24 Season: ✅ GOOD (First Production Season)
 
-**Status:** Good coverage with known early season gaps  
+**Status:** Good coverage with known early season gaps
 **Coverage:** 70.3% (944 of 1,322 games)
 
 #### Details
@@ -118,18 +118,18 @@ Historical scraper began collecting playoff data in late May 2023 (likely during
 - Low coverage games (336) acceptable for non-primetime matchups
 
 #### Backfill Feasibility
-🟢 **Possible** - Historical data available for Oct-Nov 2023 gap  
+🟢 **Possible** - Historical data available for Oct-Nov 2023 gap
 🔴 **Not Worth It** - Scattered missing games throughout season not critical
 
 #### Recommended Action
-✅ **Accept as-is** - 70% coverage sufficient for analysis  
+✅ **Accept as-is** - 70% coverage sufficient for analysis
 🟡 **Optional:** Backfill Oct-Nov 2023 if historical data needed
 
 ---
 
 ### 2024-25 Season: ✅ EXCELLENT (Current Production)
 
-**Status:** Excellent coverage, best season to date  
+**Status:** Excellent coverage, best season to date
 **Coverage:** 74.1% (995 of 1,236 games to date)
 
 #### Details
@@ -164,7 +164,7 @@ Historical scraper began collecting playoff data in late May 2023 (likely during
 - Minimal critical gaps
 
 #### Current Status
-🟢 **Actively Monitored** - Daily validation in place  
+🟢 **Actively Monitored** - Daily validation in place
 ✅ **Production Ready** - Used for live prop betting analysis
 
 ---
@@ -202,12 +202,12 @@ All critical gaps are from historical periods (2021-22, 2022-23) where data is n
 
 **Definition:** Games with <6 unique players having props
 
-**Cause:** 
+**Cause:**
 - Less interesting matchups (non-primetime games)
 - Sportsbooks offering fewer props
 - Not a scraper failure
 
-**Business Impact:** 
+**Business Impact:**
 ✅ **Acceptable** - These games naturally have fewer props available
 
 **Examples:**
@@ -360,7 +360,7 @@ validate-odds-props today
 
 ---
 
-**Document Owner:** Data Engineering Team  
-**Last Validated:** October 12, 2025  
-**Next Review:** Monthly during season, quarterly in off-season  
+**Document Owner:** Data Engineering Team
+**Last Validated:** October 12, 2025
+**Next Review:** Monthly during season, quarterly in off-season
 **Status:** ✅ PRODUCTION DOCUMENTED

@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.team_defense_game_s
   defending_team_abbr STRING NOT NULL,              -- Team playing defense
   opponent_team_abbr STRING NOT NULL,               -- Opposing offensive team
   season_year INT64 NOT NULL,                       -- Season year
-  
+
   -- ============================================================================
   -- DEFENSIVE STATS - Opponent Performance Allowed (11 fields)
   -- Derived from opponent's offensive stats in Phase 2 team boxscore
@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.team_defense_game_s
   opp_assists INT64,                                -- Assists allowed to opponent
   turnovers_forced INT64,                           -- Turnovers forced by defense
   fouls_committed INT64,                            -- Fouls committed by defending team
-  
+
   -- ============================================================================
   -- DEFENSIVE SHOT ZONE PERFORMANCE (9 fields)
   -- Currently NULL - requires play-by-play data (Phase 2 enhancement)
@@ -39,16 +39,16 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.team_defense_game_s
   opp_paint_makes INT64,                            -- Paint shot makes allowed
   opp_mid_range_attempts INT64,                     -- Mid-range attempts allowed
   opp_mid_range_makes INT64,                        -- Mid-range makes allowed
-  
+
   -- Points allowed by zone (calculated from makes when available)
   points_in_paint_allowed INT64,                    -- Points from paint shots (2 × makes)
   mid_range_points_allowed INT64,                   -- Points from mid-range (2 × makes)
   three_pt_points_allowed INT64,                    -- Points from three-pointers (3 × makes)
-  
+
   -- Special situations (Phase 2 enhancement)
   second_chance_points_allowed INT64,               -- Points from offensive rebounds
   fast_break_points_allowed INT64,                  -- Points from fast breaks
-  
+
   -- ============================================================================
   -- DEFENSIVE ACTIONS (5 fields)
   -- Aggregated from Phase 2 player boxscores
@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.team_defense_game_s
   blocks_three_pt INT64,                            -- Blocks on three-pointers (need play-by-play)
   steals INT64,                                     -- Total steals by defending team
   defensive_rebounds INT64,                         -- Defensive rebounds secured
-  
+
   -- ============================================================================
   -- ADVANCED DEFENSIVE METRICS (3 fields)
   -- Calculated from opponent offensive efficiency
@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.team_defense_game_s
   defensive_rating NUMERIC(6,2),                    -- Points allowed per 100 possessions
   opponent_pace NUMERIC(5,1),                       -- Pace allowed to opponent
   opponent_ts_pct NUMERIC(5,3),                     -- True shooting percentage allowed
-  
+
   -- ============================================================================
   -- GAME CONTEXT (4 fields)
   -- ============================================================================
@@ -74,20 +74,20 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.team_defense_game_s
   win_flag BOOLEAN,                                 -- Whether defending team won
   margin_of_victory INT64,                          -- Point margin (positive = won)
   overtime_periods INT64,                           -- Number of overtime periods
-  
+
   -- ============================================================================
   -- TEAM SITUATION CONTEXT (2 fields)
   -- Currently NULL - requires injury/roster data (Phase 2 enhancement)
   -- ============================================================================
   players_inactive INT64,                           -- Number of defensive players inactive
   starters_inactive INT64,                          -- Number of starting defenders inactive
-  
+
   -- ============================================================================
   -- REFEREE INTEGRATION (1 field)
   -- Currently NULL - requires referee data (Phase 2 enhancement)
   -- ============================================================================
   referee_crew_id STRING,                           -- Links to game_referees table
-  
+
   -- ============================================================================
   -- DATA QUALITY TRACKING (3 fields)
   -- Tracks which Phase 2 sources were used
@@ -95,7 +95,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.team_defense_game_s
   data_quality_tier STRING,                         -- 'high', 'medium', 'low'
   primary_source_used STRING,                       -- e.g., "nbac_team_boxscore+nbac_gamebook"
   processed_with_issues BOOLEAN,                    -- TRUE if defensive actions missing
-  
+
   -- ============================================================================
   -- DEPENDENCY TRACKING v4.0 - PHASE 2 SOURCES (12 fields = 3 sources × 4 fields)
   -- Tracks which Phase 2 raw tables were used and their quality + Smart Idempotency (Pattern #14)
@@ -118,7 +118,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.team_defense_game_s
   source_bdl_players_rows_found INT64,              -- How many BDL player records used
   source_bdl_players_completeness_pct NUMERIC(5,2), -- % of expected players found
   source_bdl_players_hash STRING,                   -- Smart Idempotency: data_hash from bdl_player_boxscores
-  
+
   -- ============================================================================
   -- SMART REPROCESSING (1 field)
   -- Pattern #3: Phase 4 processors compare this hash to detect meaningful changes
@@ -143,7 +143,7 @@ OPTIONS(
 
 -- View: Recent high-quality defensive stats
 CREATE OR REPLACE VIEW `nba_analytics.team_defense_recent_quality` AS
-SELECT 
+SELECT
   game_date,
   defending_team_abbr,
   opponent_team_abbr,
@@ -160,29 +160,29 @@ ORDER BY game_date DESC, defending_team_abbr;
 
 -- View: Data quality monitoring
 CREATE OR REPLACE VIEW `nba_analytics.team_defense_quality_check` AS
-SELECT 
+SELECT
   game_date,
   COUNT(*) as total_records,
   COUNT(DISTINCT game_id) as unique_games,
   COUNT(DISTINCT defending_team_abbr) as unique_teams,
-  
+
   -- Quality distribution
   COUNT(CASE WHEN data_quality_tier = 'high' THEN 1 END) as high_quality,
   COUNT(CASE WHEN data_quality_tier = 'medium' THEN 1 END) as medium_quality,
   COUNT(CASE WHEN data_quality_tier = 'low' THEN 1 END) as low_quality,
-  
+
   -- Source usage
   COUNT(CASE WHEN primary_source_used LIKE '%nbac_gamebook%' THEN 1 END) as using_gamebook,
   COUNT(CASE WHEN primary_source_used LIKE '%bdl_player%' THEN 1 END) as using_bdl_fallback,
-  
+
   -- Completeness
   AVG(source_team_boxscore_completeness_pct) as avg_team_boxscore_completeness,
   AVG(source_gamebook_players_completeness_pct) as avg_gamebook_completeness,
-  
+
   -- Data availability
   COUNT(CASE WHEN steals IS NOT NULL AND steals > 0 THEN 1 END) as has_steals_data,
   COUNT(CASE WHEN defensive_rating IS NOT NULL THEN 1 END) as has_defensive_rating
-  
+
 FROM `nba_analytics.team_defense_game_summary`
 WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
 GROUP BY game_date
@@ -190,24 +190,24 @@ ORDER BY game_date DESC;
 
 -- View: Source freshness monitoring
 CREATE OR REPLACE VIEW `nba_analytics.team_defense_source_freshness` AS
-SELECT 
+SELECT
   game_date,
   defending_team_abbr,
-  
+
   -- Calculate age of each source
   TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), source_team_boxscore_last_updated, HOUR) as team_boxscore_age_hours,
   TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), source_gamebook_players_last_updated, HOUR) as gamebook_age_hours,
   TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), source_bdl_players_last_updated, HOUR) as bdl_age_hours,
-  
+
   -- Completeness
   source_team_boxscore_completeness_pct,
   source_gamebook_players_completeness_pct,
   source_bdl_players_completeness_pct,
-  
+
   -- Overall quality
   data_quality_tier,
   processed_at
-  
+
 FROM `nba_analytics.team_defense_game_summary`
 WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 3 DAY)
   AND (
@@ -223,7 +223,7 @@ ORDER BY game_date DESC, team_boxscore_age_hours DESC;
 -- ARCHITECTURE CHANGE (v2.0):
 --   v1.0: Read from Phase 3 tables (team_offense_game_summary, player_game_summary)
 --   v2.0: Read from Phase 2 raw tables (nbac_team_boxscore, nbac_gamebook_player_stats)
---   
+--
 --   This eliminates circular Phase 3 dependencies and properly follows
 --   Phase 2 → Phase 3 → Phase 4 architecture.
 --

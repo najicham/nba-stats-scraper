@@ -12,7 +12,7 @@ while true; do
     clear
     echo "⏰ $(date '+%Y-%m-%d %H:%M:%S')"
     echo ""
-    
+
     # Quick summary
     echo "📊 Queue Summary:"
     gcloud pubsub subscriptions list --format="table(
@@ -21,7 +21,7 @@ while true; do
         numUndeliveredMessages:label='Queued',
         pushConfig.pushEndpoint.basename():label='Endpoint'
     )"
-    
+
     echo ""
     echo "Refreshing in 30 seconds... (Ctrl+C to stop)"
     sleep 30

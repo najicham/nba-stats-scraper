@@ -107,8 +107,8 @@ source bin/deployment-aliases.sh
 ```bash
 # Recent predictions
 bq query --use_legacy_sql=false "
-  SELECT COUNT(*), MAX(created_at) 
-  FROM nba_predictions.player_prop_predictions 
+  SELECT COUNT(*), MAX(created_at)
+  FROM nba_predictions.player_prop_predictions
   WHERE game_date = CURRENT_DATE()
 "
 
@@ -190,12 +190,12 @@ These were prepared but not executed (require GCP authentication):
    ```bash
    # 12 ALTER TABLE statements ready
    bash /tmp/apply_schema_migration.sh
-   
+
    # Or manually execute from:
    tail -60 schemas/bigquery/predictions/01_player_prop_predictions.sql
    ```
-   
-   **Fields to add**: `build_commit_sha`, `deployment_revision`, `predicted_at`, 
+
+   **Fields to add**: `build_commit_sha`, `deployment_revision`, `predicted_at`,
    `prediction_run_mode`, `kalshi_*` (6 fields), `critical_features`, `line_discrepancy`
 
 2. **Integration Tests Execution**

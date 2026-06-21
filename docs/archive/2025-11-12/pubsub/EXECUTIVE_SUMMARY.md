@@ -1,8 +1,8 @@
 # Phase 2 Pub/Sub Integration - Executive Summary
 
-**Date**: November 13, 2025  
-**Status**: Ready for Implementation  
-**Time Estimate**: 2-3 hours  
+**Date**: November 13, 2025
+**Status**: Ready for Implementation
+**Time Estimate**: 2-3 hours
 
 ---
 
@@ -10,8 +10,8 @@
 
 Adding Pub/Sub event publishing to scrapers so Phase 2 processors can automatically process scraped data.
 
-**Before**: Scrapers write to GCS → Nothing happens  
-**After**: Scrapers write to GCS → Publish Pub/Sub event → Processor auto-triggers → Writes to BigQuery  
+**Before**: Scrapers write to GCS → Nothing happens
+**After**: Scrapers write to GCS → Publish Pub/Sub event → Processor auto-triggers → Writes to BigQuery
 
 ---
 
@@ -56,7 +56,7 @@ chmod +x bin/pubsub/*.sh
 
 # ✅ Creates:
 # - nba-scraper-complete topic
-# - nba-scraper-complete-dlq topic  
+# - nba-scraper-complete-dlq topic
 # - nba-phase2-complete topic
 # - IAM permissions
 ```
@@ -195,13 +195,13 @@ For complete details, see:
 
 # Check scraper logs
 gcloud logging read \
-  "resource.type=cloud_run_revision 
+  "resource.type=cloud_run_revision
    AND resource.labels.service_name=nba-scrapers" \
   --limit=20
 
 # Check processor logs
 gcloud logging read \
-  "resource.type=cloud_run_revision 
+  "resource.type=cloud_run_revision
    AND resource.labels.service_name=nba-processors" \
   --limit=20
 

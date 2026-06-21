@@ -31,22 +31,22 @@ logger = logging.getLogger(__name__)
 class XGBoostV1:
     """
     XGBoost-based prediction system
-    
+
     Uses machine learning to learn optimal patterns from historical data.
     Can capture non-linear interactions that rule-based systems miss.
     """
-    
+
     def __init__(self, model=None, model_path: Optional[str] = None):
         """
         Initialize XGBoost V1 system
-        
+
         Args:
             model: Pre-loaded model (for testing with mock model)
             model_path: Path to trained model in GCS (for production)
         """
         self.system_id = 'xgboost_v1'
         self.model_version = 'v1'
-        
+
         # Load model
         if model is not None:
             self.model = model
@@ -56,7 +56,7 @@ class XGBoostV1:
             # For testing: use mock model
             from predictions.shared.mock_xgboost_model import load_mock_model
             self.model = load_mock_model(seed=42)
-    
+
     def predict(
         self,
         player_lookup: str,
@@ -65,18 +65,18 @@ class XGBoostV1:
     ) -> Dict:
         """
         Generate prediction using XGBoost model
-        
+
         Args:
             player_lookup: Player identifier
             features: Current game features (25 features)
             betting_line: Current over/under line (optional)
-        
+
         Returns:
             dict: Prediction with metadata
         """
         # Step 1: Prepare feature vector
         feature_vector = self._prepare_feature_vector(features)
-        
+
         # Step 2: Validate feature vector
         if feature_vector is None:
             return {
@@ -87,7 +87,7 @@ class XGBoostV1:
                 'recommendation': 'PASS',
                 'error': 'Invalid feature vector'
             }
-        
+
         # Step 3: Make prediction
         try:
             predicted_points = float(self.model.predict(feature_vector)[0])
@@ -118,20 +118,20 @@ class XGBoostV1:
                 'recommendation': 'PASS',
                 'error': f'Model prediction unexpected error ({type(e).__name__}): {str(e)}'
             }
-        
+
         # Clamp to reasonable range
         predicted_points = max(0, min(60, predicted_points))
-        
+
         # Step 4: Calculate confidence
         confidence = self._calculate_confidence(features, feature_vector)
-        
+
         # Step 5: Generate recommendation
         recommendation = self._generate_recommendation(
             predicted_points,
             betting_line,
             confidence
         )
-        
+
         return {
             'system_id': self.system_id,
             'model_version': self.model_version,
@@ -140,17 +140,17 @@ class XGBoostV1:
             'recommendation': recommendation,
             'model_type': self._get_model_type()
         }
-    
+
     # ========================================================================
     # FEATURE PREPARATION
     # ========================================================================
-    
+
     def _prepare_feature_vector(self, features: Dict) -> Optional[np.ndarray]:
         """
         Prepare feature vector in exact order required by model
-        
+
         CRITICAL: Features must be in this exact order or predictions will be wrong!
-        
+
         Order:
         0. points_avg_last_5
         1. points_avg_last_10
@@ -177,10 +177,10 @@ class XGBoostV1:
         22. team_pace_last_10
         23. team_off_rating_last_10
         24. usage_rate_last_10
-        
+
         Args:
             features: Dictionary with feature names and values
-        
+
         Returns:
             np.ndarray: Feature vector (shape: 1, 25) or None if invalid
         """
@@ -212,13 +212,13 @@ class XGBoostV1:
                 features.get('team_off_rating_last_10', 112),
                 features.get('usage_rate_last_10', 25)
             ]).reshape(1, -1)
-            
+
             # Validate no NaN or Inf values
             if np.any(np.isnan(feature_vector)) or np.any(np.isinf(feature_vector)):
                 return None
-            
+
             return feature_vector
-            
+
         except (KeyError, TypeError) as e:
             logger.warning(f"Missing or invalid feature value: {e}")
             return None
@@ -228,11 +228,11 @@ class XGBoostV1:
         except Exception as e:
             logger.error(f"Unexpected error preparing feature vector ({type(e).__name__}): {e}", exc_info=True)
             return None
-    
+
     # ========================================================================
     # MODEL LOADING
     # ========================================================================
-    
+
     def _load_model_from_gcs(self, model_path: str):
         """
         Load trained XGBoost model from Google Cloud Storage
@@ -309,11 +309,11 @@ class XGBoostV1:
             logger.info("Falling back to mock model for testing")
             from predictions.shared.mock_xgboost_model import load_mock_model
             return load_mock_model(seed=42)
-    
+
     # ========================================================================
     # CONFIDENCE CALCULATION
     # ========================================================================
-    
+
     def _calculate_confidence(
         self,
         features: Dict,
@@ -321,24 +321,24 @@ class XGBoostV1:
     ) -> float:
         """
         Calculate confidence score
-        
+
         For ML models, confidence is harder to estimate than rule-based systems.
         We use several heuristics:
-        
+
         1. Base ML confidence (70% - higher than rules due to training)
         2. Data quality adjustment (±10 points)
         3. Feature consistency adjustment (±10 points)
         4. Model uncertainty (if available) (±10 points)
-        
+
         Args:
             features: Feature dictionary
             feature_vector: Prepared feature vector
-        
+
         Returns:
             float: Confidence score (0-100)
         """
         confidence = 70.0  # ML models start with higher base confidence
-        
+
         # Data quality adjustment (±10 points)
         quality = features.get('feature_quality_score', 80)
         if quality >= 90:
@@ -351,7 +351,7 @@ class XGBoostV1:
             confidence += 2
         else:
             confidence += 0
-        
+
         # Consistency adjustment (±10 points)
         # Lower variance = more predictable = higher confidence
         std_dev = features.get('points_std_last_10', 5)
@@ -363,17 +363,17 @@ class XGBoostV1:
             confidence += 5
         else:
             confidence += 2
-        
+
         # Model uncertainty (if available)
         # Real XGBoost can estimate uncertainty via prediction intervals
         # For mock model, we skip this
-        
+
         return max(0, min(100, confidence))
-    
+
     # ========================================================================
     # RECOMMENDATION LOGIC
     # ========================================================================
-    
+
     def _generate_recommendation(
         self,
         predicted_points: float,
@@ -382,65 +382,65 @@ class XGBoostV1:
     ) -> str:
         """
         Generate betting recommendation
-        
+
         XGBoost can be more aggressive with edge threshold since
         it learns from historical data.
-        
+
         Args:
             predicted_points: Model's prediction
             betting_line: Current betting line
             confidence: Confidence score
-        
+
         Returns:
             str: 'OVER', 'UNDER', or 'PASS'
         """
         # Need betting line
         if betting_line is None:
             return 'PASS'
-        
+
         # Minimum confidence threshold
         if confidence < 60:
             return 'PASS'
-        
+
         # Calculate edge
         edge = predicted_points - betting_line
-        
+
         # ML can use lower threshold (1.5 vs 2.0 for rules)
         min_edge = 1.5
-        
+
         if edge >= min_edge:
             return 'OVER'
         elif edge <= -min_edge:
             return 'UNDER'
         else:
             return 'PASS'
-    
+
     # ========================================================================
     # UTILITY METHODS
     # ========================================================================
-    
+
     def _get_model_type(self) -> str:
         """Get model type (mock or real)"""
         if hasattr(self.model, 'get_model_metadata'):
             metadata = self.model.get_model_metadata()
             return 'mock' if metadata.get('is_mock', False) else 'xgboost'
         return 'xgboost'
-    
+
     def get_feature_importance(self) -> Dict:
         """
         Get feature importance from model
-        
+
         Returns:
             dict: Feature importance scores
         """
         if hasattr(self.model, 'get_feature_importance'):
             return self.model.get_feature_importance()
         return {}
-    
+
     def get_model_info(self) -> Dict:
         """
         Get model information
-        
+
         Returns:
             dict: Model metadata
         """
@@ -449,14 +449,14 @@ class XGBoostV1:
             'model_version': self.model_version,
             'model_type': self._get_model_type()
         }
-        
+
         if hasattr(self.model, 'get_model_metadata'):
             metadata = self.model.get_model_metadata()
             # Add metadata but don't overwrite model_type
             for key, value in metadata.items():
                 if key not in ['model_type', 'system_id', 'model_version']:
                     info[key] = value
-        
+
         return info
 
 
@@ -467,10 +467,10 @@ class XGBoostV1:
 def load_production_model(model_path: str) -> XGBoostV1:
     """
     Load production XGBoost model from GCS
-    
+
     Args:
         model_path: GCS path to model (e.g., 'gs://bucket/models/xgboost_v1.json')
-    
+
     Returns:
         XGBoostV1: System with loaded model
     """
@@ -480,7 +480,7 @@ def load_production_model(model_path: str) -> XGBoostV1:
 def load_mock_system() -> XGBoostV1:
     """
     Load system with mock model for testing
-    
+
     Returns:
         XGBoostV1: System with mock model
     """

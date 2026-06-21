@@ -21,7 +21,7 @@ ORDER BY game_date;
 -- Check if BDL has ANY data for 2025-01-15 specifically
 SELECT
   '=== BDL on 2025-01-15 ===' as check,
-  CASE 
+  CASE
     WHEN COUNT(*) = 0 THEN '🔴 BDL has NO games on 2025-01-15'
     ELSE CONCAT('✅ BDL has ', CAST(COUNT(DISTINCT game_id) AS STRING), ' games on 2025-01-15')
   END as status

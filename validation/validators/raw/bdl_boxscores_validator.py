@@ -30,46 +30,46 @@ logger = logging.getLogger(__name__)
 class BdlBoxscoresValidator(BaseValidator):
     """
     Custom validator for BDL box scores with player-level checks.
-    
+
     Additional validations:
     - Player count per game (should be 20-40 active players)
     - Cross-validation with NBA.com gamebook
     - Points sum validation (player stats sum to team totals)
     - Minutes played validation
     """
-    
+
     def _run_custom_validations(
-        self, 
-        start_date: str, 
+        self,
+        start_date: str,
         end_date: str,
         season_year: Optional[int]
     ):
         """BDL-specific validations"""
-        
+
         logger.info("Running BDL-specific custom validations...")
-        
+
         # Check 1: Player count per game
         self._validate_player_count_per_game(start_date, end_date)
-        
+
         # Check 2: Cross-validate with NBA.com gamebook
         self._validate_cross_source_scores(start_date, end_date)
-        
+
         # Check 3: Validate points sum to team totals
         self._validate_player_team_sum(start_date, end_date)
-        
+
         # Check 4: Minutes played validation
         self._validate_minutes_played(start_date, end_date)
-        
+
         logger.info("Completed BDL-specific validations")
-    
+
     def _validate_player_count_per_game(self, start_date: str, end_date: str):
         """Check if each game has reasonable number of players (20-40)"""
-        
+
         check_start = time.time()
-        
+
         query = f"""
         WITH game_player_counts AS (
-          SELECT 
+          SELECT
             game_id,
             game_date,
             COUNT(*) as player_count
@@ -78,7 +78,7 @@ class BdlBoxscoresValidator(BaseValidator):
             AND game_date <= '{end_date}'
           GROUP BY game_id, game_date
         )
-        SELECT 
+        SELECT
           game_id,
           game_date,
           player_count
@@ -87,14 +87,14 @@ class BdlBoxscoresValidator(BaseValidator):
         ORDER BY game_date, game_id
         LIMIT 50
         """
-        
+
         try:
             result = self._execute_query(query, start_date, end_date)
             anomalies = [(row.game_id, str(row.game_date), row.player_count) for row in result]
-            
+
             passed = len(anomalies) == 0
             duration = time.time() - check_start
-            
+
             self.results.append(ValidationResult(
                 check_name="player_count_per_game",
                 check_type="data_quality",
@@ -107,12 +107,12 @@ class BdlBoxscoresValidator(BaseValidator):
                 query_used=query,
                 execution_duration=duration
             ))
-            
+
             if not passed:
                 logger.warning(f"Player count validation: {len(anomalies)} games with unusual counts")
                 for game_id, game_date, count in anomalies[:3]:
                     logger.warning(f"  {game_date} {game_id}: {count} players")
-                    
+
         except Exception as e:
             logger.error(f"Player count validation failed: {e}")
             duration = time.time() - check_start
@@ -125,15 +125,15 @@ class BdlBoxscoresValidator(BaseValidator):
                 message=f"Validation failed: {str(e)}",
                 execution_duration=duration
             ))
-    
+
     def _validate_cross_source_scores(self, start_date: str, end_date: str):
         """Compare BDL scores with NBA.com gamebook"""
-        
+
         check_start = time.time()
-        
+
         query = f"""
         WITH bdl_totals AS (
-          SELECT 
+          SELECT
             game_id,
             player_lookup,
             points as bdl_points
@@ -142,7 +142,7 @@ class BdlBoxscoresValidator(BaseValidator):
             AND game_date <= '{end_date}'
         ),
         gamebook_totals AS (
-          SELECT 
+          SELECT
             game_id,
             player_lookup,
             points as gamebook_points
@@ -151,29 +151,29 @@ class BdlBoxscoresValidator(BaseValidator):
             AND game_date <= '{end_date}'
             AND player_status = 'active'
         )
-        SELECT 
+        SELECT
           b.game_id,
           b.player_lookup,
           b.bdl_points,
           g.gamebook_points,
           ABS(b.bdl_points - g.gamebook_points) as points_diff
         FROM bdl_totals b
-        JOIN gamebook_totals g 
-          ON b.game_id = g.game_id 
+        JOIN gamebook_totals g
+          ON b.game_id = g.game_id
           AND b.player_lookup = g.player_lookup
         WHERE ABS(b.bdl_points - g.gamebook_points) > 0
         ORDER BY points_diff DESC
         LIMIT 20
         """
-        
+
         try:
             result = self._execute_query(query, start_date, end_date)
-            mismatches = [(row.game_id, row.player_lookup, row.bdl_points, 
+            mismatches = [(row.game_id, row.player_lookup, row.bdl_points,
                           row.gamebook_points, row.points_diff) for row in result]
-            
+
             passed = len(mismatches) == 0
             duration = time.time() - check_start
-            
+
             self.results.append(ValidationResult(
                 check_name="cross_source_score_validation",
                 check_type="cross_validation",
@@ -186,12 +186,12 @@ class BdlBoxscoresValidator(BaseValidator):
                 query_used=query,
                 execution_duration=duration
             ))
-            
+
             if not passed:
                 logger.warning(f"Cross-source validation: {len(mismatches)} score mismatches found")
                 for game_id, player, bdl, nba, diff in mismatches[:3]:
                     logger.warning(f"  {player} ({game_id}): BDL={bdl}, NBA={nba}, diff={diff}")
-                    
+
         except Exception as e:
             # Gamebook data might not be available - that's okay
             duration = time.time() - check_start
@@ -206,15 +206,15 @@ class BdlBoxscoresValidator(BaseValidator):
                 affected_count=0,
                 execution_duration=duration
             ))
-    
+
     def _validate_player_team_sum(self, start_date: str, end_date: str):
         """Verify player points sum to team totals"""
-        
+
         check_start = time.time()
-        
+
         query = f"""
         WITH player_sums AS (
-          SELECT 
+          SELECT
             game_id,
             team_abbr,
             SUM(points) as player_total
@@ -224,7 +224,7 @@ class BdlBoxscoresValidator(BaseValidator):
           GROUP BY game_id, team_abbr
         ),
         team_scores AS (
-          SELECT 
+          SELECT
             game_id,
             home_team_abbr as team,
             home_team_score as team_total
@@ -232,7 +232,7 @@ class BdlBoxscoresValidator(BaseValidator):
           WHERE game_date >= '{start_date}'
             AND game_date <= '{end_date}'
           UNION ALL
-          SELECT 
+          SELECT
             game_id,
             away_team_abbr as team,
             away_team_score as team_total
@@ -240,29 +240,29 @@ class BdlBoxscoresValidator(BaseValidator):
           WHERE game_date >= '{start_date}'
             AND game_date <= '{end_date}'
         )
-        SELECT 
+        SELECT
           p.game_id,
           p.team_abbr,
           p.player_total,
           t.team_total,
           ABS(p.player_total - t.team_total) as diff
         FROM player_sums p
-        JOIN team_scores t 
-          ON p.game_id = t.game_id 
+        JOIN team_scores t
+          ON p.game_id = t.game_id
           AND p.team_abbr = t.team
         WHERE ABS(p.player_total - t.team_total) > 2  -- Allow 2 point tolerance for rounding
         ORDER BY diff DESC
         LIMIT 20
         """
-        
+
         try:
             result = self._execute_query(query, start_date, end_date)
-            mismatches = [(row.game_id, row.team_abbr, row.player_total, 
+            mismatches = [(row.game_id, row.team_abbr, row.player_total,
                           row.team_total, row.diff) for row in result]
-            
+
             passed = len(mismatches) == 0
             duration = time.time() - check_start
-            
+
             self.results.append(ValidationResult(
                 check_name="player_team_sum_validation",
                 check_type="data_quality",
@@ -275,12 +275,12 @@ class BdlBoxscoresValidator(BaseValidator):
                 query_used=query,
                 execution_duration=duration
             ))
-            
+
             if not passed:
                 logger.warning(f"Player-team sum validation: {len(mismatches)} mismatches found")
                 for game_id, team, player_sum, team_total, diff in mismatches[:3]:
                     logger.warning(f"  {team} ({game_id}): Players={player_sum}, Team={team_total}, diff={diff}")
-                    
+
         except Exception as e:
             duration = time.time() - check_start
             logger.warning(f"Player-team sum validation skipped: {str(e)}")
@@ -294,15 +294,15 @@ class BdlBoxscoresValidator(BaseValidator):
                 affected_count=0,
                 execution_duration=duration
             ))
-    
+
     def _validate_minutes_played(self, start_date: str, end_date: str):
         """Check if minutes played are reasonable"""
-        
+
         check_start = time.time()
-        
+
         query = f"""
         WITH player_minutes AS (
-          SELECT 
+          SELECT
             game_id,
             game_date,
             player_lookup,
@@ -313,7 +313,7 @@ class BdlBoxscoresValidator(BaseValidator):
             AND game_date <= '{end_date}'
             AND (minutes_played > 60 OR minutes_played < 0)  -- Impossible values
         )
-        SELECT 
+        SELECT
           game_id,
           game_date,
           player_lookup,
@@ -323,15 +323,15 @@ class BdlBoxscoresValidator(BaseValidator):
         ORDER BY game_date, game_id
         LIMIT 50
         """
-        
+
         try:
             result = self._execute_query(query, start_date, end_date)
-            anomalies = [(row.game_id, str(row.game_date), row.player_lookup, 
+            anomalies = [(row.game_id, str(row.game_date), row.player_lookup,
                          row.team_abbr, row.minutes_played) for row in result]
-            
+
             passed = len(anomalies) == 0
             duration = time.time() - check_start
-            
+
             self.results.append(ValidationResult(
                 check_name="minutes_played_validation",
                 check_type="data_quality",
@@ -344,12 +344,12 @@ class BdlBoxscoresValidator(BaseValidator):
                 query_used=query,
                 execution_duration=duration
             ))
-            
+
             if not passed:
                 logger.warning(f"Minutes validation: {len(anomalies)} players with invalid minutes")
                 for game_id, game_date, player, team, minutes in anomalies[:3]:
                     logger.warning(f"  {player} ({game_date}): {minutes} minutes")
-                    
+
         except Exception as e:
             logger.error(f"Minutes validation failed: {e}")
             duration = time.time() - check_start
@@ -367,7 +367,7 @@ class BdlBoxscoresValidator(BaseValidator):
 def main():
     """Run validation from command line"""
     import argparse
-    
+
     parser = argparse.ArgumentParser(
         description='Validate BDL box scores',
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -375,13 +375,13 @@ def main():
 Examples:
   # Validate last 7 days
   python bdl_boxscores_validator.py --last-days 7
-  
+
   # Validate specific date range
   python bdl_boxscores_validator.py --start-date 2024-01-01 --end-date 2024-01-31
-  
+
   # Validate entire season
   python bdl_boxscores_validator.py --season 2024
-  
+
   # Validate without sending notifications
   python bdl_boxscores_validator.py --last-days 7 --no-notify
         """
@@ -392,22 +392,22 @@ Examples:
     parser.add_argument('--last-days', type=int, help='Validate last N days')
     parser.add_argument('--no-notify', action='store_true', help='Disable notifications')
     parser.add_argument('--verbose', '-v', action='store_true', help='Verbose logging')
-    
+
     args = parser.parse_args()
-    
+
     # Set log level
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
-    
+
     # Initialize validator
     config_path = 'validation/configs/raw/bdl_boxscores.yaml'
-    
+
     try:
         validator = BdlBoxscoresValidator(config_path)
     except Exception as e:
         logger.error(f"Failed to initialize validator: {e}")
         sys.exit(1)
-    
+
     # Determine date range
     if args.last_days:
         from datetime import date, timedelta
@@ -419,7 +419,7 @@ Examples:
     else:
         start_date = None
         end_date = None
-    
+
     # Run validation
     try:
         report = validator.validate(
@@ -428,7 +428,7 @@ Examples:
             season_year=args.season,
             notify=not args.no_notify
         )
-        
+
         # Exit with error code if validation failed
         if report.overall_status == 'fail':
             sys.exit(1)
@@ -436,7 +436,7 @@ Examples:
             sys.exit(2)
         else:
             sys.exit(0)
-            
+
     except Exception as e:
         logger.error(f"Validation execution failed: {e}")
         sys.exit(1)

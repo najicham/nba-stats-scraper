@@ -60,7 +60,7 @@ Current State (November 12, 2025):
 5:00 AM ET → Schedule Locker generates daily plan
 6:00 AM ET → Master Controller evaluates → RUN decisions logged
 6:05 AM ET → Workflow Executor reads decisions → Scrapers execute
-7:00 AM ET → Master Controller evaluates → RUN decisions logged  
+7:00 AM ET → Master Controller evaluates → RUN decisions logged
 7:05 AM ET → Workflow Executor reads decisions → Scrapers execute
 ... continues hourly through 11 PM ET ...
 
@@ -300,7 +300,7 @@ Success Criteria:
 
 Monitoring Query:
 
-SELECT 
+SELECT
   date,
   locked_at,
   COUNT(*) as workflows_scheduled
@@ -405,7 +405,7 @@ Success Criteria:
 
 Monitoring Query:
 
-SELECT 
+SELECT
   EXTRACT(HOUR FROM decision_time AT TIME ZONE 'America/New_York') as hour_et,
   COUNT(*) as evaluations,
   COUNTIF(action = 'RUN') as run_decisions,
@@ -492,7 +492,7 @@ Success Criteria:
 
 Monitoring Query:
 
-SELECT 
+SELECT
   DATE(cleanup_time, 'America/New_York') as date,
   COUNT(*) as cleanup_runs,
   SUM(files_checked) as total_files_checked,
@@ -634,7 +634,7 @@ gcloud scheduler jobs run master-controller-hourly --location=us-west2
 
 Verify Execution:
 
-SELECT 
+SELECT
   decision_time,
   workflow_name,
   action,
@@ -694,7 +694,7 @@ gcloud scheduler jobs run cleanup-processor --location=us-west2
 
 Verify Execution:
 
-SELECT 
+SELECT
   cleanup_time,
   files_checked,
   missing_files_found,
@@ -762,7 +762,7 @@ gcloud scheduler jobs run execute-workflows --location=us-west2
 
 Verify Execution:
 
-SELECT 
+SELECT
   workflow_name,
   status,
   scrapers_triggered,
@@ -777,7 +777,7 @@ ORDER BY execution_time DESC;
 Link to Decision:
 
 -- Trace decision → execution → scraper runs
-SELECT 
+SELECT
   d.workflow_name,
   d.action,
   d.decision_time,
@@ -872,7 +872,7 @@ Monitoring Queries:
 
 Daily Summary:
 
-SELECT 
+SELECT
   date,
   COUNT(*) as workflows_scheduled,
   COUNT(DISTINCT workflow_name) as unique_workflows,
@@ -885,7 +885,7 @@ GROUP BY date;
 
 Workflow Breakdown:
 
-SELECT 
+SELECT
   workflow_name,
   COUNT(*) as scheduled_count,
   MIN(expected_run_time) as earliest,
@@ -966,7 +966,7 @@ Monitoring Queries:
 
 Action Summary:
 
-SELECT 
+SELECT
   action,
   COUNT(*) as count,
   ROUND(COUNT(*) / SUM(COUNT(*)) OVER() * 100, 1) as pct
@@ -977,7 +977,7 @@ GROUP BY action;
 
 Alert Summary:
 
-SELECT 
+SELECT
   alert_level,
   workflow_name,
   COUNT(*) as count
@@ -990,7 +990,7 @@ ORDER BY alert_level DESC, count DESC;
 
 Hourly Pattern:
 
-SELECT 
+SELECT
   EXTRACT(HOUR FROM decision_time AT TIME ZONE 'America/New_York') as hour_et,
   COUNT(*) as evaluations,
   COUNTIF(action = 'RUN') as run_count,
@@ -1052,7 +1052,7 @@ Monitoring Queries:
 
 Daily Summary:
 
-SELECT 
+SELECT
   DATE(cleanup_time, 'America/New_York') as date,
   COUNT(*) as cleanup_runs,
   SUM(files_checked) as total_files_checked,
@@ -1067,7 +1067,7 @@ GROUP BY date;
 
 Alert: High Missing File Count:
 
-SELECT 
+SELECT
   cleanup_time,
   files_checked,
   missing_files_found,
@@ -1120,7 +1120,7 @@ Future Monitoring Queries:
 
 Scraper Success Rate:
 
-SELECT 
+SELECT
   scraper_name,
   COUNT(*) as total_runs,
   COUNTIF(status = 'SUCCESS') as successful,
@@ -1145,14 +1145,14 @@ CREATE TABLE `nba-props-platform.nba_orchestration.workflow_executions` (
   execution_time TIMESTAMP NOT NULL,   -- When execution started (partition key)
   workflow_name STRING NOT NULL,       -- Which workflow
   decision_id STRING,                  -- Links to workflow_decisions.decision_id
-  
+
   -- Scraper tracking
   scrapers_requested ARRAY<STRING> NOT NULL,  -- Scrapers to execute
   scrapers_triggered INT64 NOT NULL,          -- Number attempted
   scrapers_succeeded INT64 NOT NULL,          -- Number succeeded
   scrapers_failed INT64 NOT NULL,             -- Number failed
   scraper_execution_ids ARRAY<STRING>,        -- Links to scraper_execution_log
-  
+
   -- Status
   status STRING NOT NULL,              -- completed, failed
   duration_seconds FLOAT64,            -- Execution time
@@ -1191,7 +1191,7 @@ Monitoring Queries:
 
 Daily Summary:
 
-SELECT 
+SELECT
   workflow_name,
   status,
   COUNT(*) as executions,
@@ -1206,7 +1206,7 @@ GROUP BY workflow_name, status;
 
 Execution Success Rate:
 
-SELECT 
+SELECT
   workflow_name,
   COUNT(*) as total_executions,
   COUNTIF(status = 'completed') as successful,
@@ -1221,7 +1221,7 @@ ORDER BY success_rate_pct ASC;
 End-to-End Flow (Decision → Execution → Scrapers):
 
 WITH flow AS (
-  SELECT 
+  SELECT
     d.workflow_name,
     d.decision_time,
     d.action,
@@ -1236,7 +1236,7 @@ WITH flow AS (
   WHERE DATE(d.decision_time, 'America/New_York') = CURRENT_DATE('America/New_York')
     AND d.action = 'RUN'
 )
-SELECT 
+SELECT
   f.workflow_name,
   f.decision_time,
   f.execution_time,
@@ -1571,7 +1571,7 @@ echo ""
 # 1. Check if schedule was generated today
 echo "1. Schedule Generation (5 AM ET):"
 bq query --use_legacy_sql=false --format=prettyjson "
-SELECT 
+SELECT
   date,
   locked_at,
   COUNT(*) as workflows_scheduled
@@ -1584,7 +1584,7 @@ GROUP BY date, locked_at
 echo ""
 echo "2. Workflow Evaluations (6 AM-11 PM ET hourly):"
 bq query --use_legacy_sql=false --format=prettyjson "
-SELECT 
+SELECT
   COUNT(DISTINCT EXTRACT(HOUR FROM decision_time AT TIME ZONE 'America/New_York')) as hours_evaluated,
   COUNT) as total_decisions,
   COUNTIF(action = 'RUN') as run_decisions,
@@ -1598,7 +1598,7 @@ WHERE DATE(decision_time, 'America/New_York') = CURRENT_DATE('America/New_York')
 echo ""
 eo "3. Cleanup Operations (Every 15 min):"
 bq query --use_legacy_sql=false --format=prettyjson "
-SELECT 
+SELECT
   COUNT(*) as cleanup_runs,
   SUM(missing_files_found) as total_missing,
   SUM(republished_count) as total_republished
@@ -1610,7 +1610,7 @@ WHERE DATE(cleanup_time, 'America/New_York') = CURRENT_DATE('America/New_York')
 echo ""
 echo "4. Alerts (WARNING or ERROR):"
 bq query --use_legacy_sql=false --format=prettyjson "
-SELECT 
+SELECT
   alert_level,
   workflow_name,
   COUNT(*) as count
@@ -1658,7 +1658,7 @@ WHERE date = CURRENT_DATE('America/New_York')
 
 Hourly Evaluation Count:
 
-SELECT 
+SELECT
   TIMESTAMP_TRUNC(decision_time, HOUR) as hour,
   COUNT(*) as evaluations
 FROM `nba-props-platform.nba_orchestration.workflow_decisions`
@@ -1735,7 +1735,7 @@ View Orchestration Logs
 Schedule Locker Logs:
 
 gcloud logging read \
-  "resource.type=cloud_run_revision 
+  "resource.type=cloud_run_revision
    AND resource.labels.service_name=nba-scrapers
    AND textPayload=~'Schedule'" \
   --limit=20 \
@@ -1745,7 +1745,7 @@ gcloud logging read \
 Master Controller Logs:
 
 gcloud logging read \
-  "resource.type=cloud_run_revision 
+  "resource.type=cloud_run_revision
    AND resource.labels.service_name=nba-scrapers
    AND textPayload=~'Decision'" \
   --limit=50 \
@@ -1755,7 +1755,7 @@ gcloud logging read \
 Cleanup Processor Logs:
 
 gcloud logging read \
-  "resource.type=cloud_run_revision 
+  "resource.type=cloud_run_revision
    AND resource.labels.service_name=nba-scrapers
    AND textPayload=~'Cleanup'" \
   --limit=20 \
@@ -1909,14 +1909,14 @@ Value: Confidence in production automation
 Monitorinds:
 
 # Check today's executions
-bq query "SELECT workflow_name, status, COUNT(*) FROM 
-nba_orchestration.workflow_executions WHERE 
-DATE(execution_time, 'America/New_York') = CURRENT_DATE('America/New_York') 
+bq query "SELECT workflow_name, status, COUNT(*) FROM
+nba_orchestration.workflow_executions WHERE
+DATE(execution_time, 'America/New_York') = CURRENT_DATE('America/New_York')
 GROUP BY 1,2"
 
 # Check success rate
-bq query "SELECT ROUND(COUNTIF(status='completed')/COUNT(*)*100,1) 
-as success_rate FROM nba_orchestration.workflow_executions 
+bq query "SELECT ROUND(COUNTIF(status='completed')/COUNT(*)*100,1)
+as success_rate FROM nba_orchestration.workflow_executions
 WHERE DATE(execution_time, 'America/New_York') = CURRENT_DATE('America/New_York')"
 
 
@@ -2000,14 +2000,14 @@ Diagnosis:
 
 # Check if job ran
 gcloud logging read \
-  "resource.type=cloud_scheduler_job 
+  "resource.type=cloud_scheduler_job
    AND resource.labels.job_id=daily-schedule-locker" \
   --limit=5 \
   --format="table(timestamp,httpRequest.status)"
 
 # Check Cloud Run logs
 gcloud logging read \
-  "resource.type=cloud_run_revision 
+  "resource.type=cloud_run_revision
    AND resource.labels.service_name=nba-scrapers
    AND timestamp>=DATE_SUB(CURRENT_TIMESTAMP(), INTERVAL 2 HOUR)" \
   --limit=50
@@ -2024,7 +2024,7 @@ curl -X POST "${SERVICE_URL}/generate-daily-schedule" \
   -H "Authorization: Bearer $TOKEN"
 
 # Verify it worked
-bq query "SELECT COUNT(*) FROM nba_orchestration.daily_expected_schedule 
+bq query "SELECT COUNT(*) FROM nba_orchestration.daily_expected_schedule
 WHERE date = CURRENT_DATE('America/New_York')"
 
 
@@ -2039,7 +2039,7 @@ Gap in workflow_decisions table
 Diagnosis:
 
 # Check last decision time
-bq query "SELECT MAX(decision_time) as last_decision 
+bq query "SELECT MAX(decision_time) as last_decision
 FROM nba_orchestration.workflow_decisions"
 
 # Check if job exists and is enabled
@@ -2066,7 +2066,7 @@ Indicates scraper failures or Pub/Sub issues
 Diagnosis:
 
 -- Find which files are missing
-SELECT 
+SELECT
   cleanup_time,
   missing_files_found,
   republished_count

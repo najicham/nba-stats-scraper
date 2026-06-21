@@ -87,7 +87,7 @@ SELECT
   COALESCE(b.avg_players_per_game, 0) as avg_players_per_game,
   COALESCE(b.avg_starters_per_game, 0) as avg_starters_per_game,
   COALESCE(b.min_players_per_game, 0) as min_players_per_game,
-  
+
   -- Primary status
   CASE
     WHEN COALESCE(s.scheduled_games, 0) = 0 THEN '⚪ No games'
@@ -97,14 +97,14 @@ SELECT
     THEN '✅ Complete'
     WHEN COALESCE(b.games_with_data, 0) = 0 THEN '❌ Missing all'
     WHEN COALESCE(b.min_players_per_game, 0) < 20 THEN '⚠️ Low player count'
-    WHEN COALESCE(b.avg_starters_per_game, 0) < 9 OR COALESCE(b.avg_starters_per_game, 0) > 11 
+    WHEN COALESCE(b.avg_starters_per_game, 0) < 9 OR COALESCE(b.avg_starters_per_game, 0) > 11
       THEN '⚠️ Unusual starter count'
     ELSE '⚠️ Incomplete'
   END as status,
-  
+
   -- BDL consistency check
   CASE
-    WHEN COALESCE(b.games_with_data, 0) = COALESCE(bdl.bdl_games, 0) 
+    WHEN COALESCE(b.games_with_data, 0) = COALESCE(bdl.bdl_games, 0)
       AND COALESCE(b.games_with_data, 0) > 0
       THEN '✅ Matches BDL'
     WHEN COALESCE(bdl.bdl_games, 0) = 0 AND COALESCE(b.games_with_data, 0) = 0
@@ -117,19 +117,19 @@ SELECT
       THEN '🟡 NBA.com has data, BDL missing'
     ELSE '❌ Major discrepancy'
   END as bdl_consistency,
-  
+
   -- Detailed notes
   CASE
     WHEN COALESCE(s.scheduled_games, 0) = 0 THEN 'Off day - no games scheduled'
     WHEN COALESCE(b.games_with_data, 0) = 0 AND COALESCE(s.scheduled_games, 0) > 0
       THEN CONCAT('❌ CRITICAL: ', CAST(COALESCE(s.scheduled_games, 0) AS STRING), ' games missing - check scraper')
     WHEN COALESCE(b.games_with_data, 0) < COALESCE(s.scheduled_games, 0)
-      THEN CONCAT('⚠️ Missing ', 
-           CAST(COALESCE(s.scheduled_games, 0) - COALESCE(b.games_with_data, 0) AS STRING), 
+      THEN CONCAT('⚠️ Missing ',
+           CAST(COALESCE(s.scheduled_games, 0) - COALESCE(b.games_with_data, 0) AS STRING),
            ' games - run find_missing_games.sql')
     WHEN COALESCE(b.unique_nba_ids, 0) < COALESCE(b.unique_players, 0)
-      THEN CONCAT('⚠️ ', 
-           CAST(COALESCE(b.unique_players, 0) - COALESCE(b.unique_nba_ids, 0) AS STRING), 
+      THEN CONCAT('⚠️ ',
+           CAST(COALESCE(b.unique_players, 0) - COALESCE(b.unique_nba_ids, 0) AS STRING),
            ' players missing NBA player IDs')
     WHEN ABS(COALESCE(b.games_with_data, 0) - COALESCE(bdl.bdl_games, 0)) > 1
       THEN 'Cross-validate with BDL - significant discrepancy'

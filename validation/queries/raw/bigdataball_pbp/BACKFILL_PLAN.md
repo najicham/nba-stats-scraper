@@ -2,9 +2,9 @@
 
 **FILE:** `validation/queries/raw/bigdataball_pbp/BACKFILL_PLAN.md`
 
-**Created:** October 13, 2025  
-**Season:** 2024-25 NBA Regular Season  
-**Missing Games:** 100 games across 19 dates  
+**Created:** October 13, 2025
+**Season:** 2024-25 NBA Regular Season
+**Missing Games:** 100 games across 19 dates
 **Coverage:** 91% (1,111 of 1,236 games present)
 
 ---
@@ -115,7 +115,7 @@
 
 **Priority Dates (Most Games Missing):**
 1. November 15, 2024 - 8 games
-2. February 2, 2025 - 8 games  
+2. February 2, 2025 - 8 games
 3. April 4, 2025 - 8 games
 
 ---
@@ -276,13 +276,13 @@ grep '"game_date"' missing_after_backfill.txt | wc -l
 ```bash
 # Check specific date was loaded
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   game_date,
   COUNT(DISTINCT game_id) as games,
   COUNT(*) as events,
   ROUND(AVG(events_per_game), 1) as avg_events
 FROM (
-  SELECT 
+  SELECT
     game_date,
     game_id,
     COUNT(*) as events_per_game
@@ -309,7 +309,7 @@ GROUP BY game_date
 # Check games per team increased
 grep '"reg_games"' season_after_backfill.txt | head -5
 
-# Expected: 
+# Expected:
 # - Before: 73-76 games per team
 # - After: Closer to 82 games per team
 ```
@@ -321,12 +321,12 @@ grep '"reg_games"' season_after_backfill.txt | head -5
 ```bash
 # Verify backfilled games have good quality
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   game_id,
   COUNT(*) as total_events,
   COUNT(CASE WHEN event_type = 'shot' THEN 1 END) as shots,
   COUNT(CASE WHEN original_x IS NOT NULL THEN 1 END) as shots_with_coords,
-  ROUND(COUNT(CASE WHEN original_x IS NOT NULL THEN 1 END) * 100.0 / 
+  ROUND(COUNT(CASE WHEN original_x IS NOT NULL THEN 1 END) * 100.0 /
         NULLIF(COUNT(CASE WHEN event_type = 'shot' THEN 1 END), 0), 1) as coord_pct
 FROM \`nba-props-platform.nba_raw.bigdataball_play_by_play\`
 WHERE game_date = '2024-11-11'
@@ -346,7 +346,7 @@ GROUP BY game_id
 ```bash
 # Verify games match BDL box scores
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   b.game_date,
   b.game_id,
   COUNT(DISTINCT b.player_lookup) as bdl_players,
@@ -425,7 +425,7 @@ Use this to track backfill progress:
 ### All-Star Weekend (Feb 14-16, 2025)
 **Issue:** BigDataBall may not provide play-by-play for All-Star exhibition games.
 
-**Action:** 
+**Action:**
 - Feb 14: No games scheduled (skip)
 - Feb 16: Check if BigDataBall has data for All-Star Game before backfilling
 
@@ -441,7 +441,7 @@ Use this to track backfill progress:
 ### Playoff Games with 0% Coordinates (Apr 15-18, 2025)
 **Issue:** 7 playoff games have 0% shot coordinates (different issue than missing games).
 
-**Action:** 
+**Action:**
 - This is a **BigDataBall data quality issue**, not a missing data issue
 - These games ARE in the database but have incomplete coordinate data
 - Monitor if future BigDataBall releases fix the coordinates
@@ -478,7 +478,7 @@ Backfill is complete when:
 
 ---
 
-**Last Updated:** October 13, 2025  
-**Status:** Ready for Execution  
-**Priority:** Medium (8% missing data)  
+**Last Updated:** October 13, 2025
+**Status:** Ready for Execution
+**Priority:** Medium (8% missing data)
 **Timeline:** Execute when BigDataBall data availability confirmed

@@ -121,7 +121,7 @@ Each workflow writes execution results to:
 ## 📊 **Data Collection Strategy**
 
 - **Early games**: Collected at 8PM PT (East Coast games finished)
-- **Late games**: Collected at 11PM PT (West Coast games finished)  
+- **Late games**: Collected at 11PM PT (West Coast games finished)
 - **Enhanced PBP**: Available 2+ hours after game end (collected at 2AM/6AM)
 - **Recovery**: Multiple attempts across 2AM and 6AM windows
 - **Deduplication**: Handled by data processors, not workflows

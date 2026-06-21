@@ -8,7 +8,7 @@ This document outlines the monitoring and tracking strategy for NBA data scraper
 
 ### **Keep Scrapers Simple**
 - **Single responsibility**: Collect data, save to GCS, publish completion status
-- **No database dependencies**: Reduces complexity and failure modes  
+- **No database dependencies**: Reduces complexity and failure modes
 - **Stateless operation**: Easy to restart, scale, and debug
 - **File existence = proof of success**: GCS files are the source of truth
 
@@ -53,7 +53,7 @@ main:
                   scraper_url: ${schedule_scraper_url}
                   timeout: 300
                 result: schedule_result
-    
+
     - check_dependencies:
         switch:
           - condition: ${roster_result.status == "success"}
@@ -144,20 +144,20 @@ def on_file_created(event, context):
     """Track file creation in real-time"""
     file_path = event['name']
     bucket = event['bucket']
-    
+
     # Parse file metadata
     metadata = parse_gcs_file_path(file_path)
-    
+
     # Update monitoring dashboard
     update_file_tracking_dashboard({
         'source': metadata['source'],
-        'data_type': metadata['data_type'], 
+        'data_type': metadata['data_type'],
         'date': metadata['date'],
         'timestamp': event['timeCreated'],
         'size': event['size'],
         'status': 'created'
     })
-    
+
     # Check against expected patterns
     validate_expected_file(metadata)
 
@@ -167,7 +167,7 @@ def parse_gcs_file_path(file_path):
     parts = file_path.split('/')
     return {
         'source': parts[2],           # ball-dont-lie
-        'data_type': parts[3],        # games  
+        'data_type': parts[3],        # games
         'date': parts[4],             # 2025-07-15
         'filename': parts[5],         # 20250715_143000.json
         'timestamp': extract_timestamp_from_filename(parts[5])
@@ -180,18 +180,18 @@ def parse_gcs_file_path(file_path):
 def daily_scraper_audit():
     """Comprehensive daily audit of scraper outputs"""
     target_date = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-    
+
     audit_results = {}
-    
+
     for time_period, expected in DAILY_EXPECTED_FILES.items():
         period_results = {}
-        
+
         for source, data_types in expected.items():
             source_results = {}
-            
+
             for data_type in data_types:
                 files = list_gcs_files(f'/raw-data/{source}/{data_type}/{target_date}/')
-                
+
                 source_results[data_type] = {
                     'expected': True,
                     'found': len(files),
@@ -200,25 +200,25 @@ def daily_scraper_audit():
                     'total_size': sum([f['size'] for f in files]),
                     'status': 'healthy' if files else 'missing'
                 }
-            
+
             period_results[source] = source_results
         audit_results[time_period] = period_results
-    
+
     # Generate audit report
     generate_audit_report(target_date, audit_results)
-    
+
     # Send alerts for missing data
     send_missing_data_alerts(audit_results)
-    
+
     return audit_results
 
 def list_gcs_files(prefix):
     """List files in GCS with metadata"""
     from google.cloud import storage
-    
+
     client = storage.Client()
     bucket = client.bucket('your-nba-data-bucket')
-    
+
     blobs = bucket.list_blobs(prefix=prefix)
     return [{
         'name': blob.name,
@@ -233,16 +233,16 @@ def list_gcs_files(prefix):
 def check_data_freshness():
     """Monitor data staleness and gaps"""
     freshness_report = {}
-    
+
     for source in ['ball-dont-lie', 'odds-api', 'espn', 'nba-com']:
         source_freshness = {}
-        
+
         # Check each data type for this source
         data_types = get_data_types_for_source(source)
-        
+
         for data_type in data_types:
             latest_file = get_latest_file(source, data_type)
-            
+
             if latest_file:
                 age_hours = (datetime.now() - latest_file['created']).total_seconds() / 3600
                 source_freshness[data_type] = {
@@ -255,9 +255,9 @@ def check_data_freshness():
                     'status': 'missing',
                     'age_hours': float('inf')
                 }
-        
+
         freshness_report[source] = source_freshness
-    
+
     return freshness_report
 ```
 
@@ -271,7 +271,7 @@ Monitor scraper completion messages for operational insights:
 def track_scraper_completion(message):
     """Process scraper completion messages for monitoring"""
     data = json.loads(message.data.decode('utf-8'))
-    
+
     completion_record = {
         'scraper_class': data['scraper_class'],
         'status': data['status'],
@@ -282,23 +282,23 @@ def track_scraper_completion(message):
         'error_message': data.get('error_message'),
         'parameters': data.get('parameters', {})
     }
-    
+
     # Store in monitoring database
     store_completion_record(completion_record)
-    
+
     # Update real-time dashboard
     update_scraper_dashboard(completion_record)
-    
+
     # Check for alerts
     check_completion_alerts(completion_record)
-    
+
     message.ack()
 
 def store_completion_record(record):
     """Store scraper completion in monitoring table"""
     # Optional: Lightweight monitoring table separate from process tracking
     query = """
-    INSERT INTO scraper_completions 
+    INSERT INTO scraper_completions
     (scraper_class, status, file_path, timestamp, execution_time, file_size, error_message)
     VALUES (%s, %s, %s, %s, %s, %s, %s)
     """
@@ -343,13 +343,13 @@ conditions:
 notificationChannels:
   - "projects/PROJECT_ID/notificationChannels/SLACK_CHANNEL"
 
-# Missing files alert  
+# Missing files alert
 displayName: "Expected Files Missing"
 conditions:
   - displayName: "Daily audit found missing files"
     conditionThreshold:
       filter: 'resource.type="cloud_function" AND jsonPayload.missing_files > 0'
-      comparison: COMPARISON_GREATER_THAN  
+      comparison: COMPARISON_GREATER_THAN
       thresholdValue: 0
       duration: 300s
 
@@ -369,13 +369,13 @@ conditions:
 def send_slack_alert(message, severity='warning'):
     """Send alert to Slack channel"""
     webhook_url = os.getenv('SLACK_WEBHOOK_URL')
-    
+
     color_map = {
         'critical': '#FF0000',
-        'warning': '#FFA500', 
+        'warning': '#FFA500',
         'info': '#00FF00'
     }
-    
+
     payload = {
         'attachments': [{
             'color': color_map.get(severity, '#FFA500'),
@@ -384,7 +384,7 @@ def send_slack_alert(message, severity='warning'):
             'timestamp': int(datetime.now().timestamp())
         }]
     }
-    
+
     requests.post(webhook_url, json=payload)
 
 def send_email_alert(subject, body, recipients):
@@ -397,15 +397,15 @@ def check_completion_alerts(completion_record):
     if completion_record['status'] == 'failure':
         if completion_record['scraper_class'] in CRITICAL_SCRAPERS:
             send_slack_alert(
-                f"CRITICAL: {completion_record['scraper_class']} failed: {completion_record['error_message']}", 
+                f"CRITICAL: {completion_record['scraper_class']} failed: {completion_record['error_message']}",
                 severity='critical'
             )
         else:
             send_slack_alert(
-                f"WARNING: {completion_record['scraper_class']} failed: {completion_record['error_message']}", 
+                f"WARNING: {completion_record['scraper_class']} failed: {completion_record['error_message']}",
                 severity='warning'
             )
-    
+
     # Check performance alerts
     if completion_record.get('execution_time', 0) > 600:  # 10 minutes
         send_slack_alert(
@@ -421,7 +421,7 @@ def check_completion_alerts(completion_record):
 def generate_dashboard_data():
     """Generate data for monitoring dashboard"""
     today = datetime.now().strftime('%Y-%m-%d')
-    
+
     dashboard_data = {
         'last_updated': datetime.now().isoformat(),
         'date': today,
@@ -432,24 +432,24 @@ def generate_dashboard_data():
         'alerts': get_active_alerts(),
         'performance_metrics': get_performance_metrics()
     }
-    
+
     return dashboard_data
 
 def get_scraper_health_status(date):
     """Get health status for each scraper"""
     health_status = {}
-    
+
     for scraper_class in ALL_SCRAPERS:
         files = get_files_for_scraper(scraper_class, date)
         latest_completion = get_latest_completion(scraper_class)
-        
+
         health_status[scraper_class] = {
             'files_today': len(files),
             'expected_runs': get_expected_runs(scraper_class),
             'last_success': latest_completion['timestamp'] if latest_completion else None,
             'status': determine_health_status(scraper_class, files, latest_completion)
         }
-    
+
     return health_status
 ```
 
@@ -459,11 +459,11 @@ NBA Data Pipeline Status - July 15, 2025 14:30 ET
 
 📊 WORKFLOW STATUS
 ✅ Morning Collection: Completed (3/3 scrapers)
-🟡 Afternoon Prep: In Progress (2/3 scrapers)  
+🟡 Afternoon Prep: In Progress (2/3 scrapers)
 ⚪ Evening Results: Pending
 ⚪ Night Analytics: Pending
 
-📈 SCRAPER HEALTH  
+📈 SCRAPER HEALTH
 ✅ BdlGamesScraper: 3/3 runs (Last: 14:15)
 ✅ BdlInjuriesScraper: 4/4 runs (Last: 14:20)
 ❌ GetOddsApiEvents: 0/2 runs (Failed since 12:00)
@@ -471,7 +471,7 @@ NBA Data Pipeline Status - July 15, 2025 14:30 ET
 
 📁 FILE COUNTS
 ball-dont-lie: 45 files (102MB)
-odds-api: 12 files (34MB) 
+odds-api: 12 files (34MB)
 espn: 28 files (78MB)
 nba-com: 19 files (156MB)
 
@@ -504,7 +504,7 @@ nba-com: 19 files (156MB)
 
 ### **Machine Learning Enhancement**
 - **Anomaly detection**: Identify unusual file sizes, timing patterns, or data distributions
-- **Predictive maintenance**: Forecast scraper failures based on historical patterns  
+- **Predictive maintenance**: Forecast scraper failures based on historical patterns
 - **Auto-scaling triggers**: Dynamic resource allocation based on predicted workloads
 
 ### **Advanced Monitoring Features**
@@ -529,7 +529,7 @@ nba-com: 19 files (156MB)
 
 ### **Operational Metrics**
 - **Scraper success rate**: Percentage of successful runs per scraper per day
-- **Data completeness**: Files received vs. files expected  
+- **Data completeness**: Files received vs. files expected
 - **Processing latency**: Time from scraper completion to database storage
 - **Error recovery time**: Time to resolve failed scraper runs
 
@@ -539,7 +539,7 @@ nba-com: 19 files (156MB)
 - **Resource utilization**: CPU, memory, and storage usage
 - **Cost per data point**: Economic efficiency of data collection
 
-### **Business Metrics**  
+### **Business Metrics**
 - **Data freshness**: Age of most recent data for critical sources
 - **Coverage completeness**: Percentage of games/players/props covered
 - **Prediction accuracy**: How monitoring helps predict issues

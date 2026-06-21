@@ -9,10 +9,10 @@
 --   - ESPN may have fewer games (backup collection pattern)
 -- ============================================================================
 
-WITH 
+WITH
 -- ESPN scores
 espn_scores AS (
-  SELECT 
+  SELECT
     game_id,
     game_date,
     home_team_abbr,
@@ -28,7 +28,7 @@ espn_scores AS (
 
 -- NBA.com Scoreboard V2 scores
 nbac_scores AS (
-  SELECT 
+  SELECT
     game_id,
     game_date,
     home_team_abbr,
@@ -43,7 +43,7 @@ nbac_scores AS (
 
 -- Full outer join to find coverage differences
 comparison AS (
-  SELECT 
+  SELECT
     COALESCE(e.game_id, n.game_id) as game_id,
     COALESCE(e.game_date, n.game_date) as game_date,
     COALESCE(e.home_team_abbr, n.home_team_abbr) as home_team,
@@ -79,7 +79,7 @@ summary AS (
 
 -- Output: Combined results with proper BigQuery syntax
 (
-  SELECT 
+  SELECT
     '📊 SUMMARY (Last 30 Days)' as section,
     CAST(total_games AS STRING) as col1,
     CAST(both_sources AS STRING) as col2,
@@ -100,7 +100,7 @@ summary AS (
   UNION ALL
 
   -- Output: Score mismatches (critical errors) - Top 10 only
-  SELECT 
+  SELECT
     '🔴 SCORE MISMATCHES' as section,
     game_id as col1,
     CONCAT(away_team, ' @ ', home_team) as col2,
@@ -119,7 +119,7 @@ summary AS (
   UNION ALL
 
   -- Output: Coverage analysis
-  SELECT 
+  SELECT
     '📋 COVERAGE ANALYSIS' as section,
     CAST(COUNT(*) AS STRING) as col1,
     source_status as col2,

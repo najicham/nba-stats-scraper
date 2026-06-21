@@ -49,26 +49,26 @@ class NbacRefereeProcessor(SmartIdempotencyMixin, ProcessorBase):
         # Use connection pool for BigQuery (reduces connection overhead by 40%+)
         self.project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
         self.bq_client = get_bigquery_client(self.project_id)
-        
+
         # Get table schemas for enforcement
         self.main_table = None
         self.replay_table = None
         self._load_table_schemas()
-    
+
     def _load_table_schemas(self):
         """Load table schemas for schema enforcement."""
         try:
             main_table_id = f"{self.project_id}.{self.table_name}"
             self.main_table = self.bq_client.get_table(main_table_id)
-            
+
             replay_table_id = f"{self.project_id}.{self.replay_table_name}"
             self.replay_table = self.bq_client.get_table(replay_table_id)
-            
+
             logging.info(f"Loaded schemas for {self.table_name} and {self.replay_table_name}")
         except NotFound as e:
             logging.error(f"Table not found: {e}")
             raise
-    
+
     def load_data(self) -> None:
         """Load referee assignments JSON from GCS."""
         self.raw_data = self.load_json_from_gcs()
@@ -80,13 +80,13 @@ class NbacRefereeProcessor(SmartIdempotencyMixin, ProcessorBase):
         normalized = text.strip()
         normalized = re.sub(r'\s+', ' ', normalized)
         return normalized
-    
+
     def extract_scrape_timestamp(self, raw_data: Dict) -> Optional[datetime]:
         """Extract scrape timestamp from raw data if available."""
         timestamp_str = raw_data.get('timestamp') or raw_data.get('fetchedUtc')
         if not timestamp_str:
             return None
-            
+
         try:
             if timestamp_str.endswith('Z'):
                 return datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
@@ -97,23 +97,23 @@ class NbacRefereeProcessor(SmartIdempotencyMixin, ProcessorBase):
         except (ValueError, AttributeError):
             logging.warning(f"Could not parse timestamp: {timestamp_str}")
             return None
-    
+
     def validate_data(self, data: Dict) -> List[str]:
         """Validate the referee assignments data structure."""
         errors = []
-        
+
         if 'refereeAssignments' not in data:
             errors.append("Missing refereeAssignments in data")
             return errors
-            
+
         if 'nba' not in data['refereeAssignments']:
             errors.append("Missing nba section in refereeAssignments")
             return errors
-            
+
         nba_data = data['refereeAssignments']['nba']
         if 'Table' not in nba_data or 'rows' not in nba_data['Table']:
             errors.append("Missing Table/rows in NBA referee data")
-        
+
         if errors:
             try:
                 notify_warning(
@@ -128,26 +128,26 @@ class NbacRefereeProcessor(SmartIdempotencyMixin, ProcessorBase):
                 )
             except Exception as notify_ex:
                 logging.warning(f"Failed to send notification: {notify_ex}")
-            
+
         return errors
-    
+
     def ensure_required_defaults(self, record: Dict, table_schema: bigquery.Table) -> Dict:
         """Ensure all REQUIRED fields have non-null values."""
         output = dict(record)
         current_utc = datetime.now(timezone.utc)
-        
+
         # Get required field names from schema
         required_fields = {
-            field.name: field for field in table_schema.schema 
+            field.name: field for field in table_schema.schema
             if field.mode == 'REQUIRED'
         }
-        
+
         # Ensure required timestamp fields have values
         if 'created_at' in required_fields and not output.get('created_at'):
             output['created_at'] = current_utc
         if 'processed_at' in required_fields and not output.get('processed_at'):
             output['processed_at'] = current_utc
-            
+
         # Ensure other required fields have non-null values
         for field_name, field in required_fields.items():
             if not output.get(field_name):
@@ -156,23 +156,23 @@ class NbacRefereeProcessor(SmartIdempotencyMixin, ProcessorBase):
                 elif field.field_type == 'INT64':
                     output[field_name] = 0
                 # Don't default DATE or TIMESTAMP - these should be present
-                    
+
         return output
-    
+
     def transform_data(self) -> None:
         """Transform game referee assignments into normalized rows."""
         raw_data = self.raw_data
         file_path = self.opts.get('file_path', 'unknown')
         rows = []
-        
+
         try:
             scrape_timestamp = self.extract_scrape_timestamp(raw_data)
             nba_assignments = raw_data['refereeAssignments']['nba']['Table']['rows']
-            
+
             for game_row in nba_assignments:
                 game_id = game_row.get('game_id', '')
                 game_date_str = game_row.get('game_date', '')
-                
+
                 # Parse game date
                 game_date = None
                 if game_date_str:
@@ -181,22 +181,22 @@ class NbacRefereeProcessor(SmartIdempotencyMixin, ProcessorBase):
                     except (ValueError, TypeError):
                         logging.warning(f"Invalid game_date format: {game_date_str}")
                         continue
-                        
+
                 season = game_row.get('season', '')
-                
+
                 # Process each official (1-4 officials per game)
                 for official_num in range(1, 5):
                     official_key = f'official{official_num}'
                     official_code_key = f'official{official_num}_code'
                     official_jnum_key = f'official{official_num}_JNum'
-                    
+
                     official_name = game_row.get(official_key)
                     official_code = game_row.get(official_code_key)
                     official_jersey = game_row.get(official_jnum_key)
-                    
+
                     if not official_name or not official_code:
                         continue
-                    
+
                     row = {
                         'game_id': game_id,
                         'game_date': game_date.isoformat() if game_date else None,
@@ -217,7 +217,7 @@ class NbacRefereeProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'created_at': datetime.utcnow().isoformat(),
                         'processed_at': datetime.utcnow().isoformat()
                     }
-                    
+
                     rows.append(row)
 
             self.transformed_data = rows
@@ -240,23 +240,23 @@ class NbacRefereeProcessor(SmartIdempotencyMixin, ProcessorBase):
             except Exception as notify_ex:
                 logging.warning(f"Failed to send notification: {notify_ex}")
             raise e
-    
+
     def transform_replay_center_data(self, raw_data: Dict, file_path: str) -> List[Dict]:
         """Transform replay center officials data."""
         rows = []
-        
+
         try:
             scrape_timestamp = self.extract_scrape_timestamp(raw_data)
-            
+
             nba_data = raw_data.get('refereeAssignments', {}).get('nba', {})
             if 'Table1' not in nba_data or 'rows' not in nba_data['Table1']:
                 return rows
-                
+
             replay_rows = nba_data['Table1']['rows']
-            
+
             for replay_row in replay_rows:
                 game_date_str = replay_row.get('game_date', '')
-                
+
                 game_date = None
                 if game_date_str:
                     try:
@@ -264,7 +264,7 @@ class NbacRefereeProcessor(SmartIdempotencyMixin, ProcessorBase):
                     except (ValueError, TypeError):
                         logging.warning(f"Invalid replay center game_date format: {game_date_str}")
                         continue
-                
+
                 row = {
                     'game_date': game_date.isoformat() if game_date else None,
                     'official_code': replay_row.get('official_code'),
@@ -274,11 +274,11 @@ class NbacRefereeProcessor(SmartIdempotencyMixin, ProcessorBase):
                     'created_at': datetime.utcnow().isoformat(),
                     'processed_at': datetime.utcnow().isoformat()
                 }
-                
+
                 rows.append(row)
-            
+
             return rows
-            
+
         except Exception as e:
             logging.error(f"Error in transform_replay_center_data: {e}")
             try:
@@ -294,7 +294,7 @@ class NbacRefereeProcessor(SmartIdempotencyMixin, ProcessorBase):
             except Exception as notify_ex:
                 logging.warning(f"Failed to send notification: {notify_ex}")
             return rows
-    
+
     def load_data_with_merge(self, rows: List[Dict], table_id: str, table_schema: bigquery.Table) -> Dict:
         """
         Load data using batch loading + MERGE pattern.
@@ -302,24 +302,24 @@ class NbacRefereeProcessor(SmartIdempotencyMixin, ProcessorBase):
         """
         if not rows:
             return {'rows_processed': 0, 'errors': []}
-        
+
         temp_table_id = None
-        
+
         try:
             # 1. Create temporary table
             temp_table_name = f"{table_id}_temp_{uuid.uuid4().hex[:8]}"
             temp_table_id = f"{self.project_id}.{temp_table_name}"
-            
+
             temp_table = bigquery.Table(temp_table_id, schema=table_schema.schema)
             self.bq_client.create_table(temp_table)
             logging.info(f"Created temp table: {temp_table_id}")
-            
+
             # 2. Validate and prepare data
             validated_rows = [
-                self.ensure_required_defaults(row, table_schema) 
+                self.ensure_required_defaults(row, table_schema)
                 for row in rows
             ]
-            
+
             # 3. Batch load to temp table (NO streaming buffer)
             job_config = bigquery.LoadJobConfig(
                 schema=table_schema.schema,  # Enforce exact schema
@@ -328,33 +328,33 @@ class NbacRefereeProcessor(SmartIdempotencyMixin, ProcessorBase):
                 write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
                 ignore_unknown_values=True
             )
-            
+
             load_start = datetime.utcnow()
             load_job = self.bq_client.load_table_from_json(
-                validated_rows, 
-                temp_table_id, 
+                validated_rows,
+                temp_table_id,
                 job_config=job_config
             )
             load_job.result(timeout=60)  # Wait for completion
             load_duration = (datetime.utcnow() - load_start).total_seconds()
-            
+
             logging.info(f"✅ Data loaded to temp table: {len(rows)} rows ({load_duration:.2f}s)")
-            
+
             # 4. MERGE from temp table to target table
             full_table_id = f"{self.project_id}.{table_id}"
-            
+
             # Get unique game dates for partition filter
             game_dates = list(set(row['game_date'] for row in rows if row['game_date']))
             if not game_dates:
                 logging.error("No valid game_dates found in rows")
                 return {'rows_processed': 0, 'errors': ['No valid game_dates']}
-            
+
             game_dates_str = "', '".join(game_dates)
-            
+
             # Determine merge key and query based on table
             if 'replay_center' in table_id:
                 merge_key = "T.game_date = S.game_date AND T.official_code = S.official_code"
-                
+
                 # For replay center, use filtered MERGE to satisfy partition requirement
                 merge_query = f"""
                 MERGE `{full_table_id}` AS T
@@ -374,11 +374,11 @@ class NbacRefereeProcessor(SmartIdempotencyMixin, ProcessorBase):
                 """
             else:
                 merge_key = """
-                    T.game_id = S.game_id 
-                    AND T.official_position = S.official_position 
+                    T.game_id = S.game_id
+                    AND T.official_position = S.official_position
                     AND T.official_code = S.official_code
                 """
-                
+
                 # For game assignments, use filtered MERGE to satisfy partition requirement
                 merge_query = f"""
                 MERGE `{full_table_id}` AS T
@@ -406,14 +406,14 @@ class NbacRefereeProcessor(SmartIdempotencyMixin, ProcessorBase):
                 WHEN NOT MATCHED BY TARGET THEN
                     INSERT ROW
                 """
-            
+
             merge_start = datetime.utcnow()
             merge_job = self.bq_client.query(merge_query)
             merge_result = merge_job.result(timeout=60)
             merge_duration = (datetime.utcnow() - merge_start).total_seconds()
-            
+
             logging.info(f"✅ MERGE completed successfully ({merge_duration:.2f}s)")
-            
+
             return {
                 'rows_processed': len(rows),
                 'errors': [],
@@ -421,15 +421,15 @@ class NbacRefereeProcessor(SmartIdempotencyMixin, ProcessorBase):
                     'rows_inserted': merge_result.num_dml_affected_rows if hasattr(merge_result, 'num_dml_affected_rows') else None
                 }
             }
-            
+
         except Exception as e:
             error_msg = str(e)
-            
+
             # Check for streaming buffer conflict
             if "streaming buffer" in error_msg.lower():
                 logging.warning(f"⚠️  MERGE blocked by streaming buffer - {len(rows)} records skipped")
                 logging.info("Records will be processed on next run when buffer clears")
-                
+
                 try:
                     notify_warning(
                         title="Referee MERGE Blocked by Streaming Buffer",
@@ -443,7 +443,7 @@ class NbacRefereeProcessor(SmartIdempotencyMixin, ProcessorBase):
                     )
                 except Exception as notify_ex:
                     logging.warning(f"Failed to send notification: {notify_ex}")
-                
+
                 # Graceful failure - return success with note
                 return {
                     'rows_processed': 0,
@@ -454,7 +454,7 @@ class NbacRefereeProcessor(SmartIdempotencyMixin, ProcessorBase):
             else:
                 # Real error - log and notify
                 logging.error(f"Error in MERGE operation: {error_msg}")
-                
+
                 try:
                     notify_error(
                         title="Referee MERGE Failed",
@@ -468,12 +468,12 @@ class NbacRefereeProcessor(SmartIdempotencyMixin, ProcessorBase):
                     )
                 except Exception as notify_ex:
                     logging.warning(f"Failed to send notification: {notify_ex}")
-                
+
                 return {
                     'rows_processed': 0,
                     'errors': [error_msg]
                 }
-        
+
         finally:
             # 5. Always cleanup temp table
             if temp_table_id:
@@ -482,31 +482,31 @@ class NbacRefereeProcessor(SmartIdempotencyMixin, ProcessorBase):
                     logging.info(f"Cleaned up temp table: {temp_table_id}")
                 except Exception as cleanup_error:
                     logging.warning(f"Failed to cleanup temp table: {cleanup_error}")
-    
+
     def process_file(self, file_path: str, **kwargs) -> Dict:
         """Process a single referee assignments file."""
         try:
             logging.info(f"Processing referee file: {file_path}")
-            
+
             # Read file content
             from google.cloud import storage
             storage_client = storage.Client()
-            
+
             if file_path.startswith('gs://'):
                 path_parts = file_path[5:].split('/', 1)
                 bucket_name = path_parts[0]
                 blob_path = path_parts[1]
             else:
                 raise ValueError(f"Invalid file path format: {file_path}")
-            
+
             bucket = storage_client.bucket(bucket_name)
             blob = bucket.blob(blob_path)
             content = blob.download_as_text()
             raw_data = json.loads(content)
-            
+
             # Validate data
             validation_errors = self.validate_data(raw_data)
-            
+
             if validation_errors:
                 logging.warning(f"Validation errors for {file_path}: {validation_errors}")
                 return {
@@ -516,47 +516,47 @@ class NbacRefereeProcessor(SmartIdempotencyMixin, ProcessorBase):
                     'game_assignments_processed': 0,
                     'replay_center_processed': 0
                 }
-            
+
             # Transform data
             game_rows = self.transform_data(raw_data, file_path)
             replay_rows = self.transform_replay_center_data(raw_data, file_path)
-            
+
             logging.info(f"Transformed: {len(game_rows)} game assignments, {len(replay_rows)} replay center records")
-            
+
             # Load game assignments using MERGE
             game_result = self.load_data_with_merge(
-                game_rows, 
-                self.table_name, 
+                game_rows,
+                self.table_name,
                 self.main_table
             )
-            
+
             # Load replay center data using MERGE
             replay_result = self.load_data_with_merge(
-                replay_rows, 
-                self.replay_table_name, 
+                replay_rows,
+                self.replay_table_name,
                 self.replay_table
             )
-            
+
             # Process results
             game_processed = game_result.get('rows_processed', 0)
             replay_processed = replay_result.get('rows_processed', 0)
             game_skipped = game_result.get('skipped', 0)
             replay_skipped = replay_result.get('skipped', 0)
-            
+
             all_errors = game_result.get('errors', []) + replay_result.get('errors', [])
-            
+
             if all_errors:
                 status = 'failed'
             elif game_skipped > 0 or replay_skipped > 0:
                 status = 'skipped'
             else:
                 status = 'success'
-            
+
             logging.info(
                 f"Processed {file_path}: {game_processed} game assignments, "
                 f"{replay_processed} replay center records (status: {status})"
             )
-            
+
             if status == 'success':
                 try:
                     notify_info(
@@ -571,7 +571,7 @@ class NbacRefereeProcessor(SmartIdempotencyMixin, ProcessorBase):
                     )
                 except Exception as notify_ex:
                     logging.warning(f"Failed to send notification: {notify_ex}")
-            
+
             return {
                 'file_path': file_path,
                 'status': status,
@@ -581,11 +581,11 @@ class NbacRefereeProcessor(SmartIdempotencyMixin, ProcessorBase):
                 'replay_center_skipped': replay_skipped,
                 'errors': all_errors
             }
-            
+
         except Exception as e:
             error_msg = str(e)
             logging.error(f"Error processing referee file {file_path}: {error_msg}")
-            
+
             try:
                 notify_error(
                     title="Referee File Processing Failed",
@@ -598,7 +598,7 @@ class NbacRefereeProcessor(SmartIdempotencyMixin, ProcessorBase):
                 )
             except Exception as notify_ex:
                 logging.warning(f"Failed to send notification: {notify_ex}")
-            
+
             return {
                 'file_path': file_path,
                 'status': 'error',

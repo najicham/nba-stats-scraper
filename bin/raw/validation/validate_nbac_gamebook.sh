@@ -13,7 +13,7 @@ echo ""
 
 echo "1. Data Coverage by Season:"
 bq query --use_legacy_sql=false --format=pretty <<SQL
-SELECT 
+SELECT
   season_year,
   COUNT(DISTINCT game_id) as games,
   COUNT(DISTINCT game_date) as days,
@@ -29,7 +29,7 @@ SQL
 echo ""
 echo "2. Name Resolution Status:"
 bq query --use_legacy_sql=false --format=pretty <<SQL
-SELECT 
+SELECT
   name_resolution_status,
   COUNT(*) as count,
   ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 1) as percentage
@@ -43,31 +43,31 @@ echo ""
 echo "3. Data Quality Issues:"
 bq query --use_legacy_sql=false --format=pretty <<SQL
 WITH quality_checks AS (
-  SELECT 
+  SELECT
     'Missing player names' as check_type,
     COUNT(*) as issue_count
   FROM \`${PROJECT_ID}.nba_raw.nbac_gamebook_player_stats\`
   WHERE player_name IS NULL OR player_name = ''
-  
+
   UNION ALL
-  
-  SELECT 
+
+  SELECT
     'Active players without points',
     COUNT(*)
   FROM \`${PROJECT_ID}.nba_raw.nbac_gamebook_player_stats\`
   WHERE player_status = 'active' AND points IS NULL
-  
+
   UNION ALL
-  
-  SELECT 
+
+  SELECT
     'Invalid minutes (negative or > 60)',
     COUNT(*)
   FROM \`${PROJECT_ID}.nba_raw.nbac_gamebook_player_stats\`
   WHERE minutes_decimal < 0 OR minutes_decimal > 60
-  
+
   UNION ALL
-  
-  SELECT 
+
+  SELECT
     'Missing team abbreviations',
     COUNT(*)
   FROM \`${PROJECT_ID}.nba_raw.nbac_gamebook_player_stats\`
@@ -79,13 +79,13 @@ SQL
 echo ""
 echo "4. Sample Inactive Players (Unresolved Names):"
 bq query --use_legacy_sql=false --format=pretty <<SQL
-SELECT 
+SELECT
   game_date,
   team_abbr,
   player_name_original,
   dnp_reason
 FROM \`${PROJECT_ID}.nba_raw.nbac_gamebook_player_stats\`
-WHERE player_status = 'inactive' 
+WHERE player_status = 'inactive'
   AND name_resolution_status != 'resolved'
 ORDER BY game_date DESC
 LIMIT 10;
@@ -94,7 +94,7 @@ SQL
 echo ""
 echo "5. Recent Processing Activity:"
 bq query --use_legacy_sql=false --format=pretty <<SQL
-SELECT 
+SELECT
   DATE(processed_at) as process_date,
   COUNT(DISTINCT game_id) as games_processed,
   COUNT(*) as records_added,

@@ -54,7 +54,7 @@ class TestFullProcessorFlow:
         proc.bq_client = mock_client
         proc.project_id = 'test-project'
         return proc
-    
+
     @pytest.fixture
     def mock_bigquery_responses(self):
         """Create realistic BigQuery response data."""
@@ -140,7 +140,7 @@ class TestFullProcessorFlow:
                 {'median_line': 226.5, 'bookmakers': 'draftkings,fanduel,betmgm', 'bookmaker_count': 3}
             ])
         }
-    
+
     @pytest.mark.skip(reason="Needs extensive mock data update - mock DataFrame missing required columns")
     def test_successful_full_run(self, processor, mock_bigquery_responses):
         """Test complete successful processor run."""
@@ -183,25 +183,25 @@ class TestFullProcessorFlow:
 
         processor.bq_client.query.side_effect = mock_query_response
         processor.bq_client.insert_rows_json.return_value = []  # Success
-        
+
         # Run processor
         result = processor.process_date(date(2025, 11, 20))
-        
+
         # Verify success
         assert result['status'] == 'success'
         assert result['players_processed'] == 2  # LeBron and Curry
         assert result['players_failed'] == 0
-        
+
         # Verify BigQuery insert was called
         assert processor.bq_client.insert_rows_json.called
-        
+
         # Get inserted data
         insert_call = processor.bq_client.insert_rows_json.call_args
         inserted_data = insert_call[0][1]
-        
+
         # Verify we have 2 records
         assert len(inserted_data) == 2
-        
+
         # Verify record structure
         record = inserted_data[0]
         assert 'player_lookup' in record
@@ -210,7 +210,7 @@ class TestFullProcessorFlow:
         assert 'current_points_line' in record
         assert 'days_rest' in record
         assert 'points_avg_last_5' in record
-    
+
     @pytest.mark.skip(reason="Needs mock to handle .result() iterator pattern")
     def test_no_players_with_props(self, processor):
         """Test handling when no players have prop bets."""
@@ -225,7 +225,7 @@ class TestFullProcessorFlow:
         # Should succeed with 0 players processed
         assert result['status'] == 'success'
         assert result['players_processed'] == 0
-    
+
     @pytest.mark.skip(reason="Needs mock to handle .result() iterator pattern")
     def test_player_with_no_history(self, processor, mock_bigquery_responses):
         """Test handling of rookie player with no boxscore history."""
@@ -237,7 +237,7 @@ class TestFullProcessorFlow:
             'home_team_abbr': 'BOS',
             'away_team_abbr': 'LAL'
         }])
-        
+
         def mock_query_response(query):
             mock_result = Mock()
             if 'odds_api_player_points_props' in query:
@@ -253,20 +253,20 @@ class TestFullProcessorFlow:
                     {'points_line': 15.5, 'bookmaker': 'draftkings', 'snapshot_timestamp': datetime.now()}
                 ])
             return mock_result
-        
+
         processor.bq_client.query.side_effect = mock_query_response
         processor.bq_client.insert_rows_json.return_value = []
-        
+
         # Run processor
         result = processor.process_date(date(2025, 11, 20))
-        
+
         # Should fail to process this player (can't determine team)
         assert result['players_failed'] == 1
 
 
 class TestDataExtractionScenarios:
     """Test various data extraction scenarios."""
-    
+
     @pytest.fixture
     def processor(self):
         """Create processor with mocked BigQuery client."""
@@ -275,35 +275,35 @@ class TestDataExtractionScenarios:
         proc.project_id = 'test-project'
         proc.target_date = date(2025, 11, 20)
         return proc
-    
+
     @pytest.mark.skip(reason="Needs mock to handle .result() iterator pattern")
     def test_extract_players_with_props_success(self, processor):
         """Test successful extraction of players with props."""
         # Mock response
         mock_result = Mock()
         mock_result.to_dataframe.return_value = pd.DataFrame([
-            {'player_lookup': 'lebronjames', 'game_id': '20251120_LAL_BOS', 
+            {'player_lookup': 'lebronjames', 'game_id': '20251120_LAL_BOS',
              'game_date': date(2025, 11, 20), 'home_team_abbr': 'BOS', 'away_team_abbr': 'LAL'},
             {'player_lookup': 'stephencurry', 'game_id': '20251120_GSW_PHX',
              'game_date': date(2025, 11, 20), 'home_team_abbr': 'PHX', 'away_team_abbr': 'GSW'}
         ])
         processor.bq_client.query.return_value = mock_result
-        
+
         # Extract
         processor._extract_players_with_props()
-        
+
         # Verify
         assert len(processor.players_to_process) == 2
         assert processor.source_tracking['props']['rows_found'] == 2
         assert processor.players_to_process[0]['player_lookup'] == 'lebronjames'
-    
+
     def test_extract_schedule_data(self, processor):
         """Test schedule data extraction."""
         # Setup players
         processor.players_to_process = [
             {'player_lookup': 'lebronjames', 'game_id': '20251120_LAL_BOS'}
         ]
-        
+
         # Mock response
         mock_result = Mock()
         mock_result.to_dataframe.return_value = pd.DataFrame([
@@ -318,10 +318,10 @@ class TestDataExtractionScenarios:
             }
         ])
         processor.bq_client.query.return_value = mock_result
-        
+
         # Extract
         processor._extract_schedule_data()
-        
+
         # Verify
         assert '20251120_LAL_BOS' in processor.schedule_data
         assert processor.schedule_data['20251120_LAL_BOS']['home_team_abbr'] == 'BOS'
@@ -330,7 +330,7 @@ class TestDataExtractionScenarios:
 
 class TestCalculationScenarios:
     """Test calculation scenarios with realistic data."""
-    
+
     @pytest.fixture
     def processor(self):
         """Create processor with sample data."""
@@ -338,11 +338,11 @@ class TestCalculationScenarios:
         proc.bq_client = Mock()
         proc.project_id = 'test-project'
         proc.target_date = date(2025, 11, 20)
-        
+
         # Setup sample historical data
         proc.historical_boxscores = {
             'lebronjames': pd.DataFrame([
-                {'game_date': date(2025, 11, 19), 'team_abbr': 'LAL', 'points': 25, 
+                {'game_date': date(2025, 11, 19), 'team_abbr': 'LAL', 'points': 25,
                  'minutes': '35:30', 'minutes_decimal': 35.5},
                 {'game_date': date(2025, 11, 17), 'team_abbr': 'LAL', 'points': 28,
                  'minutes': '37:15', 'minutes_decimal': 37.25},
@@ -350,7 +350,7 @@ class TestCalculationScenarios:
                  'minutes': '34:00', 'minutes_decimal': 34.0}
             ])
         }
-        
+
         # Setup game info
         proc.schedule_data = {
             '20251120_LAL_BOS': {
@@ -360,7 +360,7 @@ class TestCalculationScenarios:
                 'game_date': date(2025, 11, 20)
             }
         }
-        
+
         # Setup prop lines
         proc.prop_lines = {
             ('lebronjames', '20251120_LAL_BOS'): {
@@ -371,7 +371,7 @@ class TestCalculationScenarios:
                 'line_movement': 1.0
             }
         }
-        
+
         # Setup game lines
         proc.game_lines = {
             '20251120_LAL_BOS': {
@@ -385,7 +385,7 @@ class TestCalculationScenarios:
                 'total_source': 'consensus'
             }
         }
-        
+
         # Setup source tracking
         proc.source_tracking = {
             'boxscore': {'last_updated': datetime(2025, 11, 20, 10, 0), 'rows_found': 3},
@@ -393,9 +393,9 @@ class TestCalculationScenarios:
             'props': {'last_updated': datetime(2025, 11, 20, 11, 0), 'rows_found': 1},
             'game_lines': {'last_updated': datetime(2025, 11, 20, 11, 0), 'rows_found': 1}
         }
-        
+
         return proc
-    
+
     @pytest.mark.skip(reason="API signature changed - needs 8 additional arguments")
     def test_calculate_player_context_complete(self, processor):
         """Test complete player context calculation."""
@@ -405,37 +405,37 @@ class TestCalculationScenarios:
             'home_team_abbr': 'BOS',
             'away_team_abbr': 'LAL'
         }
-        
+
         # Calculate context
         context = processor._calculate_player_context(player_info)
-        
+
         # Verify core fields
         assert context is not None
         assert context['player_lookup'] == 'lebronjames'
         assert context['game_id'] == '20251120_LAL_BOS'
         assert context['team_abbr'] == 'LAL'
         assert context['opponent_team_abbr'] == 'BOS'
-        
+
         # Verify prop context
         assert context['current_points_line'] == 25.5
         assert context['opening_points_line'] == 24.5
         assert context['line_movement'] == 1.0
-        
+
         # Verify fatigue metrics
         assert context['days_rest'] == 1  # Last game was 11/19
         assert context['back_to_back'] is False
-        
+
         # Verify performance metrics
         assert context['points_avg_last_5'] is not None
-        
+
         # Verify game context
         assert context['game_spread'] == -5.5
         assert context['game_total'] == 226.5
         assert context['home_game'] is False  # LAL is away team
-        
+
         # Verify data quality
         assert context['data_quality_tier'] == 'low'  # Only 3 games
-        
+
         # Verify source tracking fields exist
         assert 'source_boxscore_last_updated' in context
         assert 'source_schedule_last_updated' in context
@@ -467,7 +467,7 @@ class TestErrorHandling:
         proc.bq_client.load_table_from_json.return_value = mock_load_job
 
         return proc
-    
+
     @pytest.mark.skip(reason="Exception handling in test needs update for new code path")
     def test_bigquery_query_error(self, processor):
         """Test handling of BigQuery query error."""
@@ -488,25 +488,25 @@ class TestErrorHandling:
         mock_result = Mock()
         mock_result.to_dataframe.return_value = pd.DataFrame()
         processor.bq_client.query.return_value = mock_result
-        
+
         # Mock insert error
         processor.bq_client.insert_rows_json.return_value = [
             {'index': 0, 'errors': [{'reason': 'invalid', 'message': 'Invalid data'}]}
         ]
-        
+
         # Setup some data to save
         processor.transformed_data = [{'player_lookup': 'test', 'game_date': '2025-11-20'}]
-        
+
         # Try to save
         success = processor.save_analytics()
-        
+
         # Should fail
         assert success is False
 
 
 class TestSourceTracking:
     """Test source tracking functionality."""
-    
+
     @pytest.fixture
     def processor(self):
         """Create processor with source tracking data."""
@@ -538,29 +538,29 @@ class TestSourceTracking:
         proc.players_to_process = [{'player_lookup': f'player{i}', 'game_id': f'game{i}'} for i in range(10)]
         proc.lookback_days = 30
         return proc
-    
+
     @pytest.mark.skip(reason="Expected source tracking fields not present in current output")
     def test_source_tracking_fields_populated(self, processor):
         """Test that source tracking fields are properly populated."""
         fields = processor._build_source_tracking_fields()
-        
+
         # Check all expected fields exist
         assert 'source_boxscore_last_updated' in fields
         assert 'source_boxscore_rows_found' in fields
         assert 'source_boxscore_completeness_pct' in fields
-        
+
         assert 'source_schedule_last_updated' in fields
         assert 'source_schedule_rows_found' in fields
         assert 'source_schedule_completeness_pct' in fields
-        
+
         assert 'source_props_last_updated' in fields
         assert 'source_props_rows_found' in fields
         assert 'source_props_completeness_pct' in fields
-        
+
         assert 'source_game_lines_last_updated' in fields
         assert 'source_game_lines_rows_found' in fields
         assert 'source_game_lines_completeness_pct' in fields
-        
+
         # Check values are correct
         assert fields['source_boxscore_rows_found'] == 25
         assert fields['source_schedule_rows_found'] == 10

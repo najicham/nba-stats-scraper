@@ -205,31 +205,31 @@ fi
 if [ $DEPLOY_STATUS -eq 0 ]; then
     echo ""
     echo "Deployment completed successfully in $DURATION_DISPLAY!"
-    
+
     # Phase 4: Testing with real-time progress
     TEST_START=$(date +%s)
     echo "$(show_elapsed_time $DEPLOY_START_TIME) Phase 4: Testing health endpoint..."
-    
+
     # Wait for service to be ready
     for i in {1..10}; do
         printf "\r$(show_elapsed_time $DEPLOY_START_TIME) Waiting for service to be ready... ${i}s"
         sleep 1
     done
     echo ""
-    
+
     SERVICE_URL=$(gcloud run services describe $SERVICE_NAME --region=$REGION --format="value(status.url)" 2>/dev/null)
-    
+
     if [ ! -z "$SERVICE_URL" ]; then
         echo "$(show_elapsed_time $DEPLOY_START_TIME) Service URL: $SERVICE_URL"
-        
+
         # Test health endpoint
         echo "$(show_elapsed_time $DEPLOY_START_TIME) Testing health endpoint..."
         HEALTH_RESPONSE=$(curl -s -w "\nHTTP_CODE:%{http_code}" -X GET "$SERVICE_URL/health" \
             -H "Authorization: Bearer $(gcloud auth print-identity-token)" 2>/dev/null)
-        
+
         HTTP_CODE=$(echo "$HEALTH_RESPONSE" | grep "HTTP_CODE:" | cut -d: -f2)
         RESPONSE_BODY=$(echo "$HEALTH_RESPONSE" | grep -v "HTTP_CODE:")
-        
+
         if [ "$HTTP_CODE" = "200" ]; then
             echo "$(show_elapsed_time $DEPLOY_START_TIME) Health check passed!"
             echo "$RESPONSE_BODY" | jq '.' 2>/dev/null || echo "$RESPONSE_BODY"
@@ -237,34 +237,34 @@ if [ $DEPLOY_STATUS -eq 0 ]; then
             echo "$(show_elapsed_time $DEPLOY_START_TIME) Health check failed (HTTP $HTTP_CODE)"
             echo "$RESPONSE_BODY"
         fi
-        
+
         TEST_END=$(date +%s)
         TEST_DURATION=$((TEST_END - TEST_START))
         echo "$(show_elapsed_time $DEPLOY_START_TIME) Phase 4 completed in ${TEST_DURATION}s"
-        
+
         # Final total with test time
         FINAL_TOTAL=$((TEST_END - DEPLOY_START_TIME))
         FINAL_DURATION_DISPLAY=$(format_duration $FINAL_TOTAL)
-        
+
         echo ""
         echo "FINAL TIMING SUMMARY"
         echo "==================="
         echo "Total time (including tests): $FINAL_DURATION_DISPLAY"
         echo "Service URL: $SERVICE_URL"
-        
+
     fi
 else
     echo ""
     echo "Deployment failed after $DURATION_DISPLAY!"
     echo "Check build logs with: gcloud beta run jobs logs read --job=$SERVICE_NAME --region=$REGION"
-    
+
     # Show deployment output for debugging
     if [ -f /tmp/deploy_output.log ]; then
         echo ""
         echo "Deployment output:"
         cat /tmp/deploy_output.log
     fi
-    
+
     exit 1
 fi
 

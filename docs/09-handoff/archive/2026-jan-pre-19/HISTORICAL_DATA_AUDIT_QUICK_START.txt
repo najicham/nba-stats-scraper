@@ -6,7 +6,7 @@ I need you to audit all historical NBA prediction data to verify data quality
 and identify placeholder line issues across all systems and time periods.
 
 BACKGROUND:
-- Recently discovered: CatBoost V8 used placeholder lines (20.0) instead of 
+- Recently discovered: CatBoost V8 used placeholder lines (20.0) instead of
   real DraftKings lines from Nov 4 - Dec 19, 2025
 - XGBoost V1 used placeholders on Jan 9-10, 2026
 - Historical data shows 72-79% win rates but unknown if using real lines

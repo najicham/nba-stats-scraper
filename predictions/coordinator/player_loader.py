@@ -41,11 +41,11 @@ logger = logging.getLogger(__name__)
 class PlayerLoader:
     """
     Loads players scheduled to play on a given date
-    
+
     Queries Phase 3 upcoming_player_game_context table and creates
     prediction request messages for the worker.
     """
-    
+
     def __init__(self, project_id: str, location: str = 'us-west2', dataset_prefix: str = ''):
         """
         Initialize player loader
@@ -62,11 +62,11 @@ class PlayerLoader:
         self.client = get_bigquery_client(project_id)
 
         logger.info(f"Initialized PlayerLoader for project {project_id} (location: {location}, dataset_prefix: {dataset_prefix or 'production'})")
-    
+
     # ========================================================================
     # MAIN API
     # ========================================================================
-    
+
     @retry_on_transient
     def create_prediction_requests(
         self,
@@ -179,7 +179,7 @@ class PlayerLoader:
                 logger.info(f"Including {no_prop_line_count} players without betting lines (for accuracy tracking)")
 
         return requests
-    
+
     @retry_on_transient
     def get_summary_stats(self, game_date: date, dataset_prefix: str = None) -> Dict:
         """
@@ -193,7 +193,7 @@ class PlayerLoader:
 
         Returns:
             Dict with summary stats
-            
+
         Example Return:
             {
                 'game_date': '2025-11-08',
@@ -225,17 +225,17 @@ class PlayerLoader:
         FROM `{project}.nba_analytics.upcoming_player_game_context`
         WHERE game_date = @game_date
         """.format(project=self.project_id)
-        
+
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
                 bigquery.ScalarQueryParameter("game_date", "DATE", game_date)
             ]
         )
-        
+
         try:
             results = self.client.query(query, job_config=job_config).result(timeout=60)
             row = next(results, None)
-            
+
             if row is None:
                 logger.warning(f"No data found for {game_date}")
                 return {
@@ -245,7 +245,7 @@ class PlayerLoader:
                     'teams_playing': 0,
                     'avg_projected_minutes': 0.0
                 }
-            
+
             summary = {
                 'game_date': game_date.isoformat(),
                 'total_games': int(row.total_games or 0),
@@ -273,9 +273,9 @@ class PlayerLoader:
                 f"avg completeness: {summary['completeness']['avg_completeness_pct']}%, "
                 f"prop line: {summary['prop_line_coverage']['with_prop_line']}/{summary['total_players']})"
             )
-            
+
             return summary
-            
+
         except Exception as e:
             logger.error(f"Error getting summary stats for {game_date}: {e}", exc_info=True)
             return {
@@ -285,11 +285,11 @@ class PlayerLoader:
                 'teams_playing': 0,
                 'error': str(e)
             }
-    
+
     # ========================================================================
     # INTERNAL METHODS
     # ========================================================================
-    
+
     @retry_on_transient
     def _query_players_for_date(
         self,
@@ -347,17 +347,17 @@ class PlayerLoader:
         ORDER BY avg_minutes_per_game_last_7 DESC
         LIMIT 500  -- Memory optimization: Cap at 500 players per day (covers ~20 games)
         """.format(project=self.project_id, dataset=dataset)
-        
+
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
                 bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
                 bigquery.ScalarQueryParameter("min_minutes", "INT64", min_minutes)
             ]
         )
-        
+
         try:
             results = self.client.query(query, job_config=job_config).result(timeout=60)
-            
+
             players = []
             for row in results:
                 player = {
@@ -377,14 +377,14 @@ class PlayerLoader:
                     'current_points_line': float(row.current_points_line) if row.current_points_line else None
                 }
                 players.append(player)
-            
+
             logger.info(f"Queried {len(players)} players for {game_date}")
             return players
-            
+
         except Exception as e:
             logger.error(f"Error querying players for {game_date}: {e}", exc_info=True)
             return []
-    
+
     def _create_request_for_player(
         self,
         player: Dict,
@@ -483,7 +483,7 @@ class PlayerLoader:
         }
 
         return request
-    
+
     def _get_betting_lines(
         self,
         player_lookup: str,
@@ -1594,7 +1594,7 @@ class PlayerLoader:
         except Exception as e:
             logger.warning(f"No betting line found in bettingpros for {player_lookup}: {e}")
             return None
-    
+
     def _estimate_betting_line(self, player_lookup: str) -> float:
         """
         Estimate betting line from player's season average (legacy method)
@@ -1785,17 +1785,17 @@ class PlayerLoader:
     # ========================================================================
     # VALIDATION & DEBUGGING UTILITIES
     # ========================================================================
-    
+
     def validate_player_exists(self, player_lookup: str, game_date: date) -> bool:
         """
         Check if player has a game on the specified date
-        
+
         Useful for validating manual prediction requests
-        
+
         Args:
             player_lookup: Player identifier
             game_date: Game date
-        
+
         Returns:
             bool: True if player has game, False otherwise
         """
@@ -1805,14 +1805,14 @@ class PlayerLoader:
         WHERE player_lookup = @player_lookup
           AND game_date = @game_date
         """.format(project=self.project_id)
-        
+
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
                 bigquery.ScalarQueryParameter("player_lookup", "STRING", player_lookup),
                 bigquery.ScalarQueryParameter("game_date", "DATE", game_date)
             ]
         )
-        
+
         try:
             results = self.client.query(query, job_config=job_config).result(timeout=60)
             row = next(results, None)
@@ -1820,7 +1820,7 @@ class PlayerLoader:
         except Exception as e:
             logger.error(f"Error validating player {player_lookup}: {e}", exc_info=True)
             return False
-    
+
     def get_players_for_game(self, game_id: str) -> List[Dict]:
         """
         Get all players for a specific game
@@ -1859,10 +1859,10 @@ class PlayerLoader:
                 bigquery.ScalarQueryParameter("game_id", "STRING", game_id),
             ]
         )
-        
+
         try:
             results = self.client.query(query, job_config=job_config).result(timeout=60)
-            
+
             players = []
             for row in results:
                 players.append({
@@ -1872,18 +1872,18 @@ class PlayerLoader:
                     'projected_minutes': float(row.projected_minutes or 0),  # v3.7: Handle NULL for injury-return players
                     'injury_status': row.injury_status
                 })
-            
+
             logger.info(f"Found {len(players)} players for game {game_id}")
             return players
-            
+
         except Exception as e:
             logger.error(f"Error getting players for game {game_id}: {e}", exc_info=True)
             return []
-    
+
     # ========================================================================
     # BATCH OPERATIONS (Future optimization)
     # ========================================================================
-    
+
     def get_players_with_stale_predictions(
         self,
         game_date: date,
@@ -2126,26 +2126,26 @@ def validate_game_date(game_date: date) -> bool:
 def get_nba_season(game_date: date) -> str:
     """
     Get NBA season for a given date
-    
+
     NBA seasons are YYYY-YY format (e.g., '2024-25')
     Season starts in October
-    
+
     Args:
         game_date: Date to get season for
-    
+
     Returns:
         str: Season string (e.g., '2024-25')
     """
     year = game_date.year
-    
+
     # If before July, season started previous year
     if game_date.month < 7:
         season_start_year = year - 1
     else:
         season_start_year = year
-    
+
     season_end_year = str(season_start_year + 1)[-2:]  # Last 2 digits
-    
+
     return f"{season_start_year}-{season_end_year}"
 
 
@@ -2157,15 +2157,15 @@ def create_manual_prediction_request(
 ) -> Dict:
     """
     Create a manual prediction request for testing
-    
+
     Useful for testing worker with specific players/scenarios
-    
+
     Args:
         player_lookup: Player identifier
         game_date: Game date
         game_id: Game identifier
         line_values: List of line values to test
-    
+
     Returns:
         dict: Prediction request ready for Pub/Sub
     """

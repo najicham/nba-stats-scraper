@@ -17,18 +17,18 @@ echo "=========================================="
 run_sql() {
     local sql_file=$1
     local description=$2
-    
+
     echo ""
     echo "➤ $description"
     echo "  File: $sql_file"
-    
+
     if [ -f "$sql_file" ]; then
         bq query \
             --project_id="$PROJECT_ID" \
             --location="$LOCATION" \
             --use_legacy_sql=false \
             < "$sql_file"
-        
+
         if [ $? -eq 0 ]; then
             echo "  ✓ Success"
         else

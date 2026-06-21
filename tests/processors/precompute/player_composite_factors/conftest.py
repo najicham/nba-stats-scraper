@@ -21,12 +21,12 @@ from unittest.mock import Mock
 def pytest_configure(config):
     """
     Pytest hook that runs once before test collection.
-    
+
     Used to set up any global test configuration.
     """
     # Add custom markers if needed
     config.addinivalue_line(
-        "markers", 
+        "markers",
         "slow: marks tests as slow (deselect with '-m \"not slow\"')"
     )
 
@@ -34,7 +34,7 @@ def pytest_configure(config):
 def pytest_collection_modifyitems(config, items):
     """
     Pytest hook that runs after test collection.
-    
+
     Can be used to modify test items, add markers, skip tests, etc.
     """
     pass
@@ -49,7 +49,7 @@ def pytest_collection_modifyitems(config, items):
 def mock_bigquery_client():
     """
     Session-scoped mock BigQuery client.
-    
+
     Use this fixture when you need a consistent mock client
     across multiple tests.
     """
@@ -62,7 +62,7 @@ def mock_bigquery_client():
 def mock_logger():
     """
     Function-scoped mock logger.
-    
+
     Use this to verify logging calls in tests.
     """
     return Mock()

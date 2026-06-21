@@ -82,7 +82,7 @@ class GetNbaComTeamBoxscore(ScraperBase, ScraperFlaskMixin):
     decode_download_data = True
     header_profile = "stats"  # Use standard NBA stats headers
     proxy_enabled = True
-    
+
     # ------------------------------------------------------------------ #
     # Exporters
     # ------------------------------------------------------------------ #
@@ -146,24 +146,24 @@ class GetNbaComTeamBoxscore(ScraperBase, ScraperFlaskMixin):
     def set_additional_opts(self) -> None:
         """Validate and normalize options"""
         super().set_additional_opts()
-        
+
         # Validate game_id format (should be 10 digits: 0022400561)
         game_id = self.opts["game_id"]
         if not isinstance(game_id, str) or len(game_id) != 10 or not game_id.isdigit():
             raise DownloadDataException(
                 f"game_id must be 10-digit NBA game ID (e.g., 0022400561), got: {game_id}"
             )
-        
+
         # Validate and normalize game_date (YYYY-MM-DD or YYYYMMDD)
         game_date = str(self.opts["game_date"]).replace("-", "")
         if len(game_date) != 8 or not game_date.isdigit():
             raise DownloadDataException(
                 f"game_date must be YYYYMMDD or YYYY-MM-DD format, got: {self.opts['game_date']}"
             )
-        
+
         # Store normalized date (YYYYMMDD format for exporters)
         self.opts["game_date"] = game_date
-        
+
         # Create display date (YYYY-MM-DD for logging)
         self.display_date = f"{game_date[0:4]}-{game_date[4:6]}-{game_date[6:8]}"
 

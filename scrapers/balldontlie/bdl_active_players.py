@@ -241,8 +241,8 @@ class BdlActivePlayersScraper(ScraperBase, ScraperFlaskMixin):
                 "playerCount": len(players),
                 "activePlayers": players,
             }
-            
-            logger.info("Fetched %d active players (%s) across %d pages", 
+
+            logger.info("Fetched %d active players (%s) across %d pages",
                        len(players), self.opts["ident"], pages_fetched)
 
             # Check for unexpectedly low player counts

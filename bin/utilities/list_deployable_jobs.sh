@@ -11,14 +11,14 @@ echo ""
 get_job_details() {
     local config_file="$1"
     local job_name description memory cpu timeout
-    
+
     if [[ -f "$config_file" ]]; then
         job_name=$(grep "^JOB_NAME=" "$config_file" | cut -d'=' -f2- | tr -d '"')
         description=$(grep "^JOB_DESCRIPTION=" "$config_file" | cut -d'=' -f2- | tr -d '"')
         memory=$(grep "^MEMORY=" "$config_file" | cut -d'=' -f2- | tr -d '"')
         cpu=$(grep "^CPU=" "$config_file" | cut -d'=' -f2- | tr -d '"')
         timeout=$(grep "^TASK_TIMEOUT=" "$config_file" | cut -d'=' -f2- | tr -d '"')
-        
+
         printf "  %-25s %s\n" "$job_name" "$description"
         printf "  %-25s Resources: %s, %s, %s\n" "" "$memory" "$cpu" "$timeout"
         echo ""

@@ -78,7 +78,7 @@ WITH recent_games AS (
     COUNT(DISTINCT game_id) as games,
     COUNT(*) as player_records,
     STRING_AGG(
-      CONCAT(away_team_abbr, '@', home_team_abbr), 
+      CONCAT(away_team_abbr, '@', home_team_abbr),
       ', '
     ) as matchups
   FROM \`$PROJECT_ID.nba_raw.espn_boxscores\`
@@ -86,12 +86,12 @@ WITH recent_games AS (
   GROUP BY game_date
   ORDER BY game_date DESC
 )
-SELECT 
+SELECT
   game_date,
   games,
   player_records,
   matchups,
-  CASE 
+  CASE
     WHEN games = 0 THEN '⚪ No data (normal for backup)'
     WHEN games > 0 THEN '✅ Data collected'
   END as status

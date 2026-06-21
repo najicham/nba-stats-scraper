@@ -1,7 +1,7 @@
 # Backfill Validation & Planning Tool
 
-**Tool:** `bin/backfill/validate_and_plan.py`  
-**Purpose:** Check what data exists and get exact commands for what needs to run  
+**Tool:** `bin/backfill/validate_and_plan.py`
+**Purpose:** Check what data exists and get exact commands for what needs to run
 **Use Before:** Every backfill operation (single date, range, or full backfill)
 
 ---
@@ -91,7 +91,7 @@ python3 bin/backfill/validate_and_plan.py 2024-01-15 2024-01-28 --plan
 
 **Use case:** Before starting a backfill (recommended!)
 
-**Output:** 
+**Output:**
 - Status for all phases
 - Exact commands to run for missing data
 - Correct execution order (Phase 3 parallel, Phase 4 sequential)
@@ -200,10 +200,10 @@ PYTHONPATH=$(pwd) python3 backfill_jobs/precompute/team_defense_zone_analysis/te
 
 The tool automatically accounts for bootstrap periods (first 7 days of each season):
 
-**2021-22:** Oct 15-21, 2021  
-**2022-23:** Oct 18-24, 2022  
-**2023-24:** Oct 24-30, 2023  
-**2024-25:** Oct 22-28, 2024  
+**2021-22:** Oct 15-21, 2021
+**2022-23:** Oct 18-24, 2022
+**2023-24:** Oct 24-30, 2023
+**2024-25:** Oct 22-28, 2024
 
 **Phase 4 skips these dates** - this is intentional and expected.
 
@@ -234,7 +234,7 @@ python3 bin/backfill/validate_and_plan.py START END
 
 # 5. Run Phase 4 (sequential only!)
 
-# 6. Validate Phase 4 complete  
+# 6. Validate Phase 4 complete
 python3 bin/backfill/validate_and_plan.py START END
 ```
 
@@ -284,26 +284,26 @@ python3 bin/backfill/validate_and_plan.py START END
 ## Troubleshooting
 
 ### "Table not found" errors
-**Cause:** Dataset or table doesn't exist  
+**Cause:** Dataset or table doesn't exist
 **Fix:** Check that processors have been deployed
 
 ### Unexpected percentages
-**Cause:** Real-time processing may have added some dates  
+**Cause:** Real-time processing may have added some dates
 **Action:** This is OK - just backfill the missing dates
 
 ### Phase 4 shows less than expected
-**Cause:** Bootstrap dates are being skipped (intentional)  
+**Cause:** Bootstrap dates are being skipped (intentional)
 **Check:** Look for "Note: X bootstrap dates" message
 
 ### All zeros despite running backfill
-**Cause:** Backfill may have failed silently  
+**Cause:** Backfill may have failed silently
 **Action:** Check Cloud Run logs for the specific job
 
 ---
 
 ## Technical Details
 
-**Project:** nba-props-platform  
+**Project:** nba-props-platform
 **Datasets Checked:**
 - nba_raw (Phase 2)
 - nba_analytics (Phase 3)

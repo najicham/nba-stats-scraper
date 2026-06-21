@@ -4,7 +4,7 @@
 
 **Purpose:** Comprehensive guide for running ESPN roster validation queries on a schedule during NBA season
 
-**Last Updated:** October 13, 2025  
+**Last Updated:** October 13, 2025
 **Status:** Production Ready - Awaiting Season Start
 
 ---
@@ -29,9 +29,9 @@ ESPN roster validation runs **every day during NBA season** to ensure data colle
 ### Priority 1: Critical Daily Queries (Run Every Day)
 
 #### 1. Daily Freshness Check
-**Query:** `daily_freshness_check.sql`  
-**Schedule:** Every day at **10:00 AM PT**  
-**Purpose:** Verify yesterday's roster data was collected  
+**Query:** `daily_freshness_check.sql`
+**Schedule:** Every day at **10:00 AM PT**
+**Purpose:** Verify yesterday's roster data was collected
 **Alert On:** Status != "✅ Complete"
 
 ```bash
@@ -57,9 +57,9 @@ bq query --use_legacy_sql=false < validation/queries/raw/espn_rosters/daily_fres
 ---
 
 #### 2. Team Coverage Check
-**Query:** `team_coverage_check.sql`  
-**Schedule:** Every day at **10:05 AM PT** (5 minutes after freshness check)  
-**Purpose:** Verify all 30 teams have roster data  
+**Query:** `team_coverage_check.sql`
+**Schedule:** Every day at **10:05 AM PT** (5 minutes after freshness check)
+**Purpose:** Verify all 30 teams have roster data
 **Alert On:** Any team with status != "✅ Normal"
 
 ```bash
@@ -85,9 +85,9 @@ bq query --use_legacy_sql=false < validation/queries/raw/espn_rosters/team_cover
 ### Priority 2: Weekly Validation Queries (Run Weekly)
 
 #### 3. Cross-Validation with NBA.com
-**Query:** `cross_validate_with_nbac.sql`  
-**Schedule:** Every **Monday at 10:00 AM PT**  
-**Purpose:** Compare ESPN rosters with NBA.com (primary source)  
+**Query:** `cross_validate_with_nbac.sql`
+**Schedule:** Every **Monday at 10:00 AM PT**
+**Purpose:** Compare ESPN rosters with NBA.com (primary source)
 **Alert On:** Match rate < 80%
 
 ```bash
@@ -117,9 +117,9 @@ bq query --use_legacy_sql=false < validation/queries/raw/espn_rosters/cross_vali
 ### Priority 3: Ad-Hoc Analysis (Run As Needed)
 
 #### 4. Player Count Distribution
-**Query:** `player_count_distribution.sql`  
-**Schedule:** As needed (not automated)  
-**Purpose:** Understand roster size patterns  
+**Query:** `player_count_distribution.sql`
+**Schedule:** As needed (not automated)
+**Purpose:** Understand roster size patterns
 **Use When:** Investigating unusual team player counts
 
 ```bash
@@ -174,7 +174,7 @@ Create scheduled Cloud Functions to run queries automatically:
 name: espn-rosters-daily-freshness
 schedule: "0 10 * * *"  # 10 AM daily
 timezone: America/Los_Angeles
-target: 
+target:
   function: run-bq-validation-query
   data:
     query_file: validation/queries/raw/espn_rosters/daily_freshness_check.sql
@@ -307,7 +307,7 @@ Missing: SAC, POR
    SELECT a.team_abbr as missing_team
    FROM all_teams a
    LEFT JOIN (
-     SELECT DISTINCT team_abbr 
+     SELECT DISTINCT team_abbr
      FROM `nba-props-platform.nba_raw.espn_team_rosters`
      WHERE roster_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
    ) e ON a.team_abbr = e.team_abbr
@@ -337,7 +337,7 @@ Team Mismatches: 15% (expected: <5%)
 **Investigation Steps:**
 1. Check data timestamps:
    ```sql
-   SELECT 
+   SELECT
      'ESPN' as source,
      MAX(roster_date) as latest_date,
      MAX(processed_at) as latest_processing
@@ -346,7 +346,7 @@ Team Mismatches: 15% (expected: <5%)
    SELECT
      'NBA.com' as source,
      MAX(last_seen_date) as latest_date,
-     MAX(processed_at) as latest_processing  
+     MAX(processed_at) as latest_processing
    FROM `nba-props-platform.nba_raw.nbac_player_list_current`;
    ```
 
@@ -385,7 +385,7 @@ status: "🔴 CRITICAL: Too few players"
 2. Check for recent roster moves:
    ```sql
    SELECT * FROM `nba-props-platform.nba_raw.nbac_player_movement`
-   WHERE team_abbr = 'POR' 
+   WHERE team_abbr = 'POR'
      AND transaction_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
    ORDER BY transaction_date DESC;
    ```
@@ -479,7 +479,7 @@ action_required: "Check scraper logs and GCS bucket"
    ```sql
    -- Change from:
    WHERE roster_date >= '2025-01-01'
-   
+
    -- To (for 2025-26 season):
    WHERE roster_date >= '2025-10-01'
    ```
@@ -498,7 +498,7 @@ action_required: "Check scraper logs and GCS bucket"
 
 Current query performance (as of Oct 2025):
 - `daily_freshness_check.sql`: <5 seconds
-- `team_coverage_check.sql`: <5 seconds  
+- `team_coverage_check.sql`: <5 seconds
 - `cross_validate_with_nbac.sql`: ~10 seconds
 - `player_count_distribution.sql`: <5 seconds
 
@@ -554,6 +554,6 @@ Track these KPIs for ESPN rosters validation:
 
 ---
 
-**Last Updated:** October 13, 2025  
-**Next Review:** Start of 2025-26 NBA Season  
+**Last Updated:** October 13, 2025
+**Next Review:** Start of 2025-26 NBA Season
 **Owner:** NBA Props Platform Data Team

@@ -36,23 +36,23 @@ echo "------------------------"
 
 if gcloud run jobs describe "${SERVICE_NAME}" --region="${REGION}" --project="${GCP_PROJECT_ID}" &>/dev/null; then
     echo -e "${GREEN}✓${NC} Job exists: ${SERVICE_NAME}"
-    
+
     # Get job details
     IMAGE=$(gcloud run jobs describe "${SERVICE_NAME}" \
         --region="${REGION}" \
         --project="${GCP_PROJECT_ID}" \
         --format='value(template.template.spec.containers[0].image)' 2>/dev/null)
-    
+
     MEMORY=$(gcloud run jobs describe "${SERVICE_NAME}" \
         --region="${REGION}" \
         --project="${GCP_PROJECT_ID}" \
         --format='value(template.template.spec.containers[0].resources.limits.memory)' 2>/dev/null)
-    
+
     CPU=$(gcloud run jobs describe "${SERVICE_NAME}" \
         --region="${REGION}" \
         --project="${GCP_PROJECT_ID}" \
         --format='value(template.template.spec.containers[0].resources.limits.cpu)' 2>/dev/null)
-    
+
     echo -e "${GREEN}✓${NC} Image: ${IMAGE##*/}"
     echo -e "${GREEN}✓${NC} Resources: ${MEMORY} memory, ${CPU} CPU"
 else
@@ -79,7 +79,7 @@ if [ -n "${EXECUTIONS}" ]; then
         COMPLETION_TIME=$(echo "$line" | awk '{print $2}')
         SUCCEEDED=$(echo "$line" | awk '{print $3}')
         FAILED=$(echo "$line" | awk '{print $4}')
-        
+
         if [ "${SUCCEEDED}" = "1" ]; then
             echo -e "${GREEN}✓${NC} ${EXEC_NAME} - ${COMPLETION_TIME}"
         else
@@ -108,7 +108,7 @@ if [ -n "${HEALTH_LOG}" ]; then
     OK_COUNT=$(echo "$HEALTH_LOG" | awk '{print $4}')
     WARNING_COUNT=$(echo "$HEALTH_LOG" | awk '{print $5}')
     CRITICAL_COUNT=$(echo "$HEALTH_LOG" | awk '{print $6}')
-    
+
     # Color code health score
     if (( $(echo "$HEALTH_SCORE >= 90" | bc -l) )); then
         HEALTH_COLOR="${GREEN}"
@@ -120,7 +120,7 @@ if [ -n "${HEALTH_LOG}" ]; then
         HEALTH_COLOR="${RED}"
         HEALTH_ICON="✗"
     fi
-    
+
     echo -e "${HEALTH_COLOR}${HEALTH_ICON}${NC} Health Score: ${HEALTH_COLOR}${HEALTH_SCORE}%${NC} (${TIMESTAMP})"
     echo -e "  ${GREEN}OK:${NC} ${OK_COUNT}  ${YELLOW}Warnings:${NC} ${WARNING_COUNT}  ${RED}Critical:${NC} ${CRITICAL_COUNT}"
 else
@@ -154,7 +154,7 @@ else
     echo -e "${YELLOW}⚠${NC} Total alerts: ${ALERT_COUNT}"
     echo -e "  ${RED}Critical:${NC} ${CRITICAL_COUNT}"
     echo -e "  ${YELLOW}Warnings:${NC} ${WARNING_COUNT}"
-    
+
     if [ "$CRITICAL_COUNT" -gt 0 ]; then
         echo ""
         echo -e "${RED}Recent Critical Issues:${NC}"
@@ -176,31 +176,31 @@ echo "-------------------------"
 
 if gcloud scheduler jobs describe "${SCHEDULER_NAME}" --location="${REGION}" --project="${GCP_PROJECT_ID}" &>/dev/null; then
     echo -e "${GREEN}✓${NC} Scheduler exists: ${SCHEDULER_NAME}"
-    
+
     # Get schedule details
     SCHEDULE=$(gcloud scheduler jobs describe "${SCHEDULER_NAME}" \
         --location="${REGION}" \
         --project="${GCP_PROJECT_ID}" \
         --format='value(schedule)' 2>/dev/null)
-    
+
     STATE=$(gcloud scheduler jobs describe "${SCHEDULER_NAME}" \
         --location="${REGION}" \
         --project="${GCP_PROJECT_ID}" \
         --format='value(state)' 2>/dev/null)
-    
+
     LAST_ATTEMPT=$(gcloud scheduler jobs describe "${SCHEDULER_NAME}" \
         --location="${REGION}" \
         --project="${GCP_PROJECT_ID}" \
         --format='value(status.lastAttemptTime)' 2>/dev/null)
-    
+
     echo -e "${GREEN}✓${NC} Schedule: ${SCHEDULE}"
-    
+
     if [ "${STATE}" = "ENABLED" ]; then
         echo -e "${GREEN}✓${NC} State: ${STATE}"
     else
         echo -e "${YELLOW}⚠${NC} State: ${STATE}"
     fi
-    
+
     if [ -n "${LAST_ATTEMPT}" ]; then
         echo -e "${GREEN}✓${NC} Last attempt: ${LAST_ATTEMPT}"
     fi

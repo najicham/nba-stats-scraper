@@ -20,7 +20,7 @@ LIMIT 1;
 -- Step 2: Check if BDL has this exact game_id
 SELECT
   '=== BDL CHECK (Exact Match) ===' as section,
-  CASE 
+  CASE
     WHEN COUNT(*) > 0 THEN '✅ BDL HAS this exact game_id'
     ELSE '🔴 BDL DOES NOT have this game_id'
   END as bdl_status,
@@ -43,7 +43,7 @@ ORDER BY matchup;
 -- Step 4: Check schedule for HOU @ PHI
 SELECT
   '=== SCHEDULE CHECK (HOU @ PHI) ===' as section,
-  CASE 
+  CASE
     WHEN COUNT(*) > 0 THEN '✅ HOU @ PHI IS in schedule'
     ELSE '🔴 HOU @ PHI NOT in schedule'
   END as schedule_status,

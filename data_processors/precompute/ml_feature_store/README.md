@@ -1,7 +1,7 @@
 # ML Feature Store V2 Processor
 
-**Phase 4 Precompute Processor**  
-**Version:** 1.0.0  
+**Phase 4 Precompute Processor**
+**Version:** 1.0.0
 **Created:** November 5, 2025
 
 ## Overview

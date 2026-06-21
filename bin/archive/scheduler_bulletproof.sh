@@ -388,11 +388,11 @@ echo ""
 if [[ $missing_critical -gt 0 ]]; then
     echo -e "${RED}🚨 IMMEDIATE ACTION REQUIRED${NC}"
     echo "Missing $missing_critical critical business scrapers:"
-    
+
     is_scheduled "GetOddsApiEvents" || echo "   • GetOddsApiEvents (foundation for all prop betting)"
     is_scheduled "GetOddsApiCurrentEventOdds" || echo "   • GetOddsApiCurrentEventOdds (core business revenue)"
     is_scheduled "GetNbaComInjuryReport" || echo "   • GetNbaComInjuryReport (player availability)"
-    
+
     echo ""
     echo "🎯 FOCUSED APPROACH (Recommended):"
     echo "   Add $missing_critical critical scrapers first"
@@ -416,7 +416,7 @@ echo ""
 if [[ $missing_critical -gt 0 ]]; then
     echo "Critical business scrapers (run in order):"
     echo ""
-    
+
     if ! is_scheduled "GetOddsApiEvents"; then
         echo "# 1. Events (foundation - must run first)"
         echo "gcloud scheduler jobs create http nba-odds-events \\"
@@ -425,7 +425,7 @@ if [[ $missing_critical -gt 0 ]]; then
         echo "  --http-method=POST --location=us-west2"
         echo ""
     fi
-    
+
     if ! is_scheduled "GetOddsApiCurrentEventOdds"; then
         echo "# 2. Props (revenue - depends on events)"
         echo "gcloud scheduler jobs create http nba-player-props \\"
@@ -434,7 +434,7 @@ if [[ $missing_critical -gt 0 ]]; then
         echo "  --http-method=POST --location=us-west2"
         echo ""
     fi
-    
+
     if ! is_scheduled "GetNbaComInjuryReport"; then
         echo "# 3. Injuries (availability)"
         echo "gcloud scheduler jobs create http nba-injury-report \\"

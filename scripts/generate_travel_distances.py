@@ -27,7 +27,7 @@ from typing import Dict, List, Tuple
 NBA_TEAMS = {
     "ATL": {
         "city": "Atlanta",
-        "state": "Georgia", 
+        "state": "Georgia",
         "arena": "State Farm Arena",
         "coordinates": [33.7573, -84.3963],
         "timezone": "America/New_York"
@@ -35,7 +35,7 @@ NBA_TEAMS = {
     "BOS": {
         "city": "Boston",
         "state": "Massachusetts",
-        "arena": "TD Garden", 
+        "arena": "TD Garden",
         "coordinates": [42.3662, -71.0621],
         "timezone": "America/New_York"
     },
@@ -54,7 +54,7 @@ NBA_TEAMS = {
         "timezone": "America/New_York"
     },
     "CHI": {
-        "city": "Chicago", 
+        "city": "Chicago",
         "state": "Illinois",
         "arena": "United Center",
         "coordinates": [41.8807, -87.6742],
@@ -62,7 +62,7 @@ NBA_TEAMS = {
     },
     "CLE": {
         "city": "Cleveland",
-        "state": "Ohio", 
+        "state": "Ohio",
         "arena": "Rocket Mortgage FieldHouse",
         "coordinates": [41.4965, -81.6882],
         "timezone": "America/New_York"
@@ -70,7 +70,7 @@ NBA_TEAMS = {
     "DAL": {
         "city": "Dallas",
         "state": "Texas",
-        "arena": "American Airlines Center", 
+        "arena": "American Airlines Center",
         "coordinates": [32.7906, -96.8103],
         "timezone": "America/Chicago"
     },
@@ -82,7 +82,7 @@ NBA_TEAMS = {
         "timezone": "America/Denver"
     },
     "DET": {
-        "city": "Detroit", 
+        "city": "Detroit",
         "state": "Michigan",
         "arena": "Little Caesars Arena",
         "coordinates": [42.3411, -83.0553],
@@ -90,7 +90,7 @@ NBA_TEAMS = {
     },
     "GSW": {
         "city": "San Francisco",
-        "state": "California", 
+        "state": "California",
         "arena": "Chase Center",
         "coordinates": [37.7679, -122.3873],
         "timezone": "America/Los_Angeles"
@@ -103,7 +103,7 @@ NBA_TEAMS = {
         "timezone": "America/Chicago"
     },
     "IND": {
-        "city": "Indianapolis", 
+        "city": "Indianapolis",
         "state": "Indiana",
         "arena": "Gainbridge Fieldhouse",
         "coordinates": [39.7640, -86.1555],
@@ -117,9 +117,9 @@ NBA_TEAMS = {
         "timezone": "America/Los_Angeles"
     },
     "LAL": {
-        "city": "Los Angeles", 
+        "city": "Los Angeles",
         "state": "California",
-        "arena": "Crypto.com Arena", 
+        "arena": "Crypto.com Arena",
         "coordinates": [34.0430, -118.2673],
         "timezone": "America/Los_Angeles"
     },
@@ -133,7 +133,7 @@ NBA_TEAMS = {
     "MIA": {
         "city": "Miami",
         "state": "Florida",
-        "arena": "Kaseya Center", 
+        "arena": "Kaseya Center",
         "coordinates": [25.7814, -80.1870],
         "timezone": "America/New_York"
     },
@@ -146,7 +146,7 @@ NBA_TEAMS = {
     },
     "MIN": {
         "city": "Minneapolis",
-        "state": "Minnesota", 
+        "state": "Minnesota",
         "arena": "Target Center",
         "coordinates": [44.9795, -93.2760],
         "timezone": "America/Chicago"
@@ -160,7 +160,7 @@ NBA_TEAMS = {
     },
     "NYK": {
         "city": "New York",
-        "state": "New York", 
+        "state": "New York",
         "arena": "Madison Square Garden",
         "coordinates": [40.7505, -73.9934],
         "timezone": "America/New_York"
@@ -168,7 +168,7 @@ NBA_TEAMS = {
     "OKC": {
         "city": "Oklahoma City",
         "state": "Oklahoma",
-        "arena": "Paycom Center", 
+        "arena": "Paycom Center",
         "coordinates": [35.4634, -97.5151],
         "timezone": "America/Chicago"
     },
@@ -181,13 +181,13 @@ NBA_TEAMS = {
     },
     "PHI": {
         "city": "Philadelphia",
-        "state": "Pennsylvania", 
+        "state": "Pennsylvania",
         "arena": "Wells Fargo Center",
         "coordinates": [39.9012, -75.1720],
         "timezone": "America/New_York"
     },
     "PHX": {
-        "city": "Phoenix", 
+        "city": "Phoenix",
         "state": "Arizona",
         "arena": "Footprint Center",
         "coordinates": [33.4457, -112.0712],
@@ -201,7 +201,7 @@ NBA_TEAMS = {
         "timezone": "America/Los_Angeles"
     },
     "SAC": {
-        "city": "Sacramento", 
+        "city": "Sacramento",
         "state": "California",
         "arena": "Golden 1 Center",
         "coordinates": [38.5816, -121.4999],
@@ -215,7 +215,7 @@ NBA_TEAMS = {
         "timezone": "America/Chicago"
     },
     "TOR": {
-        "city": "Toronto", 
+        "city": "Toronto",
         "state": "Ontario",
         "arena": "Scotiabank Arena",
         "coordinates": [43.6434, -79.3791],
@@ -225,7 +225,7 @@ NBA_TEAMS = {
         "city": "Salt Lake City",
         "state": "Utah",
         "arena": "Delta Center",
-        "coordinates": [40.7683, -111.9011], 
+        "coordinates": [40.7683, -111.9011],
         "timezone": "America/Denver"
     },
     "WAS": {
@@ -240,7 +240,7 @@ NBA_TEAMS = {
 # Timezone UTC offsets (standard time, not accounting for DST)
 TIMEZONE_OFFSETS = {
     "America/New_York": -5,
-    "America/Chicago": -6, 
+    "America/Chicago": -6,
     "America/Denver": -7,
     "America/Los_Angeles": -8,
     "America/Phoenix": -7,  # Arizona doesn't observe DST
@@ -251,56 +251,56 @@ def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> in
     """
     Calculate the great circle distance between two points in miles.
     Uses the haversine formula for accuracy over long distances.
-    
+
     Args:
         lat1, lon1: Latitude and longitude of first point (degrees)
         lat2, lon2: Latitude and longitude of second point (degrees)
-    
+
     Returns:
         Distance in miles (rounded to nearest mile)
     """
     if lat1 == lat2 and lon1 == lon2:
         return 0
-    
+
     # Convert decimal degrees to radians
     lat1_rad = math.radians(lat1)
     lon1_rad = math.radians(lon1)
     lat2_rad = math.radians(lat2)
     lon2_rad = math.radians(lon2)
-    
+
     # Haversine formula
     dlat = lat2_rad - lat1_rad
     dlon = lon2_rad - lon1_rad
-    
-    a = (math.sin(dlat/2)**2 + 
+
+    a = (math.sin(dlat/2)**2 +
          math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlon/2)**2)
-    
+
     c = 2 * math.asin(math.sqrt(a))
-    
+
     # Earth radius in miles (mean radius)
     earth_radius_miles = 3959
-    
+
     return round(c * earth_radius_miles)
 
 def calculate_jet_lag_metrics(from_timezone: str, to_timezone: str) -> Tuple[int, str, float]:
     """
     Calculate time zone changes and jet lag impact factor.
-    
+
     Args:
         from_timezone: Origin timezone string
         to_timezone: Destination timezone string
-    
+
     Returns:
         Tuple of (zones_crossed, direction, jet_lag_factor)
     """
     from_offset = TIMEZONE_OFFSETS.get(from_timezone, 0)
     to_offset = TIMEZONE_OFFSETS.get(to_timezone, 0)
-    
+
     zones_crossed = abs(from_offset - to_offset)
-    
+
     if zones_crossed == 0:
         return 0, 'neutral', 0.0
-    
+
     # Determine travel direction
     if from_offset > to_offset:
         # Moving east (losing time) - harder on circadian rhythms
@@ -308,39 +308,39 @@ def calculate_jet_lag_metrics(from_timezone: str, to_timezone: str) -> Tuple[int
         jet_lag_factor = zones_crossed * 1.5
     else:
         # Moving west (gaining time) - easier adjustment
-        direction = 'west' 
+        direction = 'west'
         jet_lag_factor = zones_crossed * 1.0
-    
+
     return zones_crossed, direction, round(jet_lag_factor, 1)
 
 def generate_all_distances() -> List[Dict]:
     """
     Generate distance matrix for all NBA team combinations.
-    
+
     Returns:
         List of dictionaries containing distance data for each team pair
     """
     print(f"Calculating distances for {len(NBA_TEAMS)} NBA teams...")
-    
+
     distances = []
-    
+
     for from_team, from_data in NBA_TEAMS.items():
         from_lat, from_lon = from_data['coordinates']
-        
+
         for to_team, to_data in NBA_TEAMS.items():
             if from_team == to_team:
                 continue  # Skip same team
-            
+
             to_lat, to_lon = to_data['coordinates']
-            
+
             # Calculate distance
             distance_miles = haversine_distance(from_lat, from_lon, to_lat, to_lon)
-            
+
             # Calculate jet lag metrics
             zones_crossed, direction, jet_lag_factor = calculate_jet_lag_metrics(
                 from_data['timezone'], to_data['timezone']
             )
-            
+
             distances.append({
                 'from_team': from_team,
                 'to_team': to_team,
@@ -351,12 +351,12 @@ def generate_all_distances() -> List[Dict]:
                 'travel_direction': direction,
                 'jet_lag_factor': jet_lag_factor
             })
-    
+
     return distances
 
 def validate_distances(distances: List[Dict]) -> None:
     """Validate calculated distances against known benchmarks."""
-    
+
     # Known approximate distances for validation
     benchmarks = {
         ('LAL', 'BOS'): 2605,  # Coast to coast
@@ -365,18 +365,18 @@ def validate_distances(distances: List[Dict]) -> None:
         ('MIA', 'POR'): 2739,  # Long diagonal
         ('NYK', 'BKN'): 8,     # Same metro area
     }
-    
+
     print("\nValidating calculated distances:")
-    
+
     # Create lookup dictionary for fast access
     distance_lookup = {
-        (d['from_team'], d['to_team']): d['distance_miles'] 
+        (d['from_team'], d['to_team']): d['distance_miles']
         for d in distances
     }
-    
+
     for (from_team, to_team), expected in benchmarks.items():
         actual = distance_lookup.get((from_team, to_team), None)
-        
+
         if actual is not None:
             diff = abs(actual - expected)
             status = "✓" if diff <= 100 else "⚠"
@@ -387,37 +387,37 @@ def validate_distances(distances: List[Dict]) -> None:
 
 def export_to_csv(distances: List[Dict], filename: str = 'nba_travel_distances.csv') -> None:
     """Export distance data to CSV file."""
-    
+
     fieldnames = [
         'from_team', 'to_team', 'from_city', 'to_city',
         'distance_miles', 'time_zones_crossed', 'travel_direction', 'jet_lag_factor'
     ]
-    
+
     with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(distances)
-    
+
     print(f"\n✓ Exported {len(distances)} distances to {filename}")
 
 def generate_bigquery_sql(distances: List[Dict], filename: str = 'nba_travel_distances_insert.sql') -> None:
     """Generate BigQuery INSERT statement."""
-    
+
     with open(filename, 'w', encoding='utf-8') as f:
         f.write("""-- Generated NBA Travel Distances INSERT Statement
 -- File: nba_travel_distances_insert.sql
--- 
+--
 -- Load with:
 --   bq query --use_legacy_sql=false < nba_travel_distances_insert.sql
 --
 -- This will insert all 870 team-to-team distance combinations into:
 --   nba-props-platform.nba_enriched.travel_distances
 
-INSERT INTO `nba-props-platform.nba_enriched.travel_distances` 
+INSERT INTO `nba-props-platform.nba_enriched.travel_distances`
 (from_team, to_team, from_city, to_city, distance_miles, time_zones_crossed, travel_direction, jet_lag_factor)
 VALUES
 """)
-        
+
         # Generate VALUES clauses
         value_rows = []
         for d in distances:
@@ -425,24 +425,24 @@ VALUES
                 f"('{d['from_team']}', '{d['to_team']}', '{d['from_city']}', '{d['to_city']}', "
                 f"{d['distance_miles']}, {d['time_zones_crossed']}, '{d['travel_direction']}', {d['jet_lag_factor']})"
             )
-        
+
         f.write(",\n".join(value_rows))
         f.write(";\n")
-    
+
     print(f"✓ Generated BigQuery SQL: {filename}")
 
 def print_summary_stats(distances: List[Dict]) -> None:
     """Print summary statistics about the distance data."""
-    
+
     all_distances = [d['distance_miles'] for d in distances]
     jet_lag_factors = [d['jet_lag_factor'] for d in distances]
-    
+
     print(f"\n=== Distance Matrix Summary ===")
     print(f"Total combinations: {len(distances)}")
     print(f"Distance range: {min(all_distances)} - {max(all_distances)} miles")
     print(f"Average distance: {sum(all_distances) // len(all_distances)} miles")
     print(f"Max jet lag factor: {max(jet_lag_factors)}")
-    
+
     # Show a few sample distances
     print(f"\nSample distances:")
     for i in range(min(5, len(distances))):
@@ -452,30 +452,30 @@ def print_summary_stats(distances: List[Dict]) -> None:
 
 def main():
     """Main execution function."""
-    
+
     print("=" * 50)
     print("NBA Travel Distance Generator")
     print("=" * 50)
-    
+
     # Generate all distance combinations
     distances = generate_all_distances()
-    
+
     if not distances:
         print("❌ No distances generated. Check team data.")
         return
-    
+
     print(f"✓ Generated {len(distances)} team-to-team combinations")
-    
+
     # Validate results
     validate_distances(distances)
-    
+
     # Export data
     export_to_csv(distances)
     generate_bigquery_sql(distances)
-    
+
     # Show summary
     print_summary_stats(distances)
-    
+
     print(f"\n{'=' * 50}")
     print("🎯 Files ready for BigQuery!")
     print("Next steps:")

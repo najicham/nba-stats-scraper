@@ -207,17 +207,17 @@ gcloud scheduler jobs list --location=${REGION}
 ```
 5:00 AM ET - Schedule Locker runs
   ↓ Check BigQuery
-  ↓ Query: SELECT * FROM nba_orchestration.daily_expected_schedule 
+  ↓ Query: SELECT * FROM nba_orchestration.daily_expected_schedule
            WHERE date = '2025-11-12'
 
 6:00 AM ET - Master Controller first run
   ↓ Check BigQuery
-  ↓ Query: SELECT * FROM nba_orchestration.workflow_decisions 
+  ↓ Query: SELECT * FROM nba_orchestration.workflow_decisions
            WHERE DATE(decision_time) = '2025-11-12'
 
 Every 15 min - Cleanup Processor
   ↓ Check BigQuery
-  ↓ Query: SELECT * FROM nba_orchestration.cleanup_operations 
+  ↓ Query: SELECT * FROM nba_orchestration.cleanup_operations
            WHERE DATE(cleanup_time) = '2025-11-12'
 ```
 
@@ -230,7 +230,7 @@ Every 15 min - Cleanup Processor
 **What to Check:**
 ```sql
 -- Did schedule locker run?
-SELECT 
+SELECT
   date,
   workflow_name,
   expected_run_time,
@@ -257,7 +257,7 @@ gcloud logging read \
 **What to Check:**
 ```sql
 -- Did master controller evaluate workflows?
-SELECT 
+SELECT
   decision_time,
   workflow_name,
   action,
@@ -284,7 +284,7 @@ gcloud logging read \
 **What to Check:**
 ```sql
 -- Did cleanup processor run?
-SELECT 
+SELECT
   cleanup_time,
   files_checked,
   missing_files_found,
@@ -305,7 +305,7 @@ LIMIT 10;
 
 1. **Hourly Controller Runs:**
 ```sql
-SELECT 
+SELECT
   EXTRACT(HOUR FROM decision_time AT TIME ZONE 'America/New_York') as hour_et,
   COUNT(*) as evaluation_count
 FROM `nba-props-platform.nba_orchestration.workflow_decisions`
@@ -318,7 +318,7 @@ ORDER BY hour_et;
 
 2. **Workflow Actions:**
 ```sql
-SELECT 
+SELECT
   workflow_name,
   action,
   COUNT(*) as count
@@ -449,8 +449,8 @@ scrapers/
 
 ### For Tomorrow:
 
-**Do:** Add scheduler jobs to existing `nba-scrapers` service  
-**Don't:** Create new Dockerfiles or services  
+**Do:** Add scheduler jobs to existing `nba-scrapers` service
+**Don't:** Create new Dockerfiles or services
 **Why:** Simplest path to working system
 
 ---
@@ -553,6 +553,6 @@ gcloud run services describe nba-scrapers --region=us-west2
 
 ---
 
-**Document Version:** 1.0  
-**Status:** Ready for Tomorrow's Deployment  
+**Document Version:** 1.0
+**Status:** Ready for Tomorrow's Deployment
 **Next Update:** After Day 1 (Nov 12 evening)

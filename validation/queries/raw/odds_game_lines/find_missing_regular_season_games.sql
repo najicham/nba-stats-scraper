@@ -13,7 +13,7 @@
 --   - Empty result = all regular season games present
 -- ============================================================================
 
-WITH 
+WITH
 -- Get all regular season games from schedule
 all_scheduled_games AS (
   SELECT DISTINCT
@@ -40,7 +40,7 @@ odds_games AS (
 )
 
 -- Find games in schedule but not in odds
-SELECT 
+SELECT
   s.game_date,
   s.home_team,
   s.away_team,

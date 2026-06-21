@@ -28,14 +28,14 @@ SCHEDULER_JOB_NAME="${JOB_NAME}-scheduler"
 if gcloud scheduler jobs describe "${SCHEDULER_JOB_NAME}" \
     --location="${REGION}" \
     --project="${PROJECT_ID}" &>/dev/null; then
-    
+
     echo "Scheduler job '${SCHEDULER_JOB_NAME}' already exists."
     read -p "Do you want to update it? (y/n) " -n 1 -r
     echo
-    
+
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         echo "Updating existing scheduler job..."
-        
+
         gcloud scheduler jobs update http "${SCHEDULER_JOB_NAME}" \
             --location="${REGION}" \
             --project="${PROJECT_ID}" \
@@ -44,7 +44,7 @@ if gcloud scheduler jobs describe "${SCHEDULER_JOB_NAME}" \
             --uri="https://${REGION}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT_ID}/jobs/${JOB_NAME}:run" \
             --http-method=POST \
             --oauth-service-account-email="${SERVICE_ACCOUNT}"
-        
+
         echo ""
         echo "Scheduler job updated successfully!"
     else
@@ -53,7 +53,7 @@ if gcloud scheduler jobs describe "${SCHEDULER_JOB_NAME}" \
     fi
 else
     echo "Creating new scheduler job..."
-    
+
     gcloud scheduler jobs create http "${SCHEDULER_JOB_NAME}" \
         --location="${REGION}" \
         --project="${PROJECT_ID}" \
@@ -63,7 +63,7 @@ else
         --http-method=POST \
         --oauth-service-account-email="${SERVICE_ACCOUNT}" \
         --description="Automated processor execution monitoring"
-    
+
     echo ""
     echo "Scheduler job created successfully!"
 fi

@@ -119,13 +119,13 @@ def remove_diacritics(text: str) -> str:
 def extract_suffix(name: str) -> tuple[str, Optional[str]]:
     """
     Extract name suffix (Jr., Sr., II, III, etc.) from player name.
-    
+
     Args:
         name: Full player name
-        
+
     Returns:
         Tuple of (name_without_suffix, suffix_or_none)
-        
+
     Examples:
         >>> extract_suffix("Charlie Brown Jr.")
         ('Charlie Brown', 'Jr.')
@@ -136,7 +136,7 @@ def extract_suffix(name: str) -> tuple[str, Optional[str]]:
     """
     if not name:
         return "", None
-    
+
     # Define common suffixes - SORTED BY LENGTH DESC to avoid partial matches
     # e.g., "III" must be checked before "II" since "iii".endswith("ii") is True
     suffixes = [
@@ -146,31 +146,31 @@ def extract_suffix(name: str) -> tuple[str, Optional[str]]:
         '3rd', '4th', '5th', '2nd',  # Ordinals
         'Jr', 'Sr',  # Without periods last
     ]
-    
+
     name_trimmed = name.strip()
-    
+
     for suffix in suffixes:
         # Check if name ends with this suffix (case insensitive)
         if name_trimmed.lower().endswith(suffix.lower()):
             # Extract the base name (without suffix)
             base_name = name_trimmed[:-len(suffix)].strip()
             return base_name, suffix
-    
+
     return name_trimmed, None
 
 
 def standardize_name_format(first_name: str, last_name: str, suffix: str = None) -> str:
     """
     Create standardized full name format.
-    
+
     Args:
         first_name: Player's first name
-        last_name: Player's last name  
+        last_name: Player's last name
         suffix: Optional suffix (Jr., Sr., etc.)
-        
+
     Returns:
         Standardized full name
-        
+
     Examples:
         >>> standardize_name_format("LeBron", "James")
         'LeBron James'
@@ -179,7 +179,7 @@ def standardize_name_format(first_name: str, last_name: str, suffix: str = None)
     """
     if not first_name and not last_name:
         return ""
-    
+
     parts = []
     if first_name:
         parts.append(first_name.strip())
@@ -187,7 +187,7 @@ def standardize_name_format(first_name: str, last_name: str, suffix: str = None)
         parts.append(last_name.strip())
     if suffix:
         parts.append(suffix.strip())
-    
+
     return ' '.join(parts)
 
 
@@ -215,7 +215,7 @@ if __name__ == "__main__":
         "LeBron James",
         "LeBron James Jr.",
         "Charlie Brown Jr.",
-        "José Alvarado", 
+        "José Alvarado",
         "Dāvis Bertāns",
         "Bogdanović",
         "O'Neal",
@@ -227,26 +227,26 @@ if __name__ == "__main__":
         "Michael Porter Jr.",
         "",
     ]
-    
+
     print("Player Name Normalization Test Results:")
     print("=" * 60)
-    
+
     for name in test_names:
         if not name:
             continue
-            
+
         try:
             # Test core normalization function
             normalized = normalize_name_for_lookup(name)
             ascii_name = remove_diacritics(name)
             base_name, suffix = extract_suffix(name)
-            
+
             print(f"\nOriginal: '{name}'")
             print(f"Normalized: '{normalized}'")
             print(f"ASCII: '{ascii_name}'")
             print(f"Without suffix: '{base_name}'")
             print(f"Suffix: {suffix}")
-            
+
             # Show the specific fixes this addresses
             if '.' in name:
                 print(f"  ✓ Fixed period issue: '{name}' → '{normalized}'")
@@ -254,14 +254,14 @@ if __name__ == "__main__":
                 print(f"  ✓ Fixed punctuation: removed apostrophes/hyphens")
             if suffix:
                 print(f"  ✓ Detected suffix: '{suffix}'")
-                
+
         except Exception as e:
             print(f"ERROR with '{name}': {e}")
-    
+
     print(f"\n{'=' * 60}")
     print("Testing specific issues from your database:")
     print(f"{'=' * 60}")
-    
+
     # Test the specific cases from the user's database
     problem_cases = [
         ("Charlie Brown Jr.", "charliebrownjr.", "charliebrownjr"),  # current vs expected
@@ -269,7 +269,7 @@ if __name__ == "__main__":
         ("T.J. McConnell", "t.j.mcconnell", "tjmcconnell"),
         ("Michael Porter Jr.", "michaelporterjr.", "michaelporterjr"),
     ]
-    
+
     for original, current_bad, expected_good in problem_cases:
         new_result = normalize_name_for_lookup(original)
         status = "✅ FIXED" if new_result == expected_good else "❌ STILL BROKEN"

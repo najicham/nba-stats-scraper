@@ -41,12 +41,12 @@ print_error() {
 run_query() {
     local query_file=$1
     local output_format=${2:-pretty}
-    
+
     if [ ! -f "$QUERIES_DIR/$query_file" ]; then
         print_error "Query file not found: $query_file"
         exit 1
     fi
-    
+
     if [ "$output_format" == "csv" ]; then
         bq query --use_legacy_sql=false --format=csv < "$QUERIES_DIR/$query_file"
     elif [ "$output_format" == "json" ]; then
@@ -64,7 +64,7 @@ cmd_daily() {
     run_query "daily_check_yesterday.sql" "$1"
 }
 
-# Command: weekly  
+# Command: weekly
 cmd_weekly() {
     print_header "BDL Standings Weekly Check"
     echo "Reviewing last 7 days of standings..."
@@ -110,31 +110,31 @@ cmd_missing() {
 cmd_all() {
     print_header "Running All BDL Standings Validations"
     echo ""
-    
+
     print_success "1/6: Daily check..."
     cmd_daily
     echo ""
-    
+
     print_success "2/6: Weekly check..."
     cmd_weekly
     echo ""
-    
+
     print_success "3/6: Season coverage..."
     cmd_coverage
     echo ""
-    
+
     print_success "4/6: Conference standings..."
     cmd_conference
     echo ""
-    
+
     print_success "5/6: Data quality..."
     cmd_quality
     echo ""
-    
+
     print_success "6/6: Missing dates..."
     cmd_missing
     echo ""
-    
+
     print_header "All Validations Complete"
 }
 
@@ -197,15 +197,15 @@ main() {
         print_error "BigQuery CLI (bq) not found. Please install Google Cloud SDK."
         exit 1
     fi
-    
+
     # Parse command
     local command=${1:-help}
     shift || true
-    
+
     # Parse options
     local output_format="pretty"
     local output_table=""
-    
+
     while [[ $# -gt 0 ]]; do
         case $1 in
             --csv)
@@ -227,7 +227,7 @@ main() {
                 ;;
         esac
     done
-    
+
     # Execute command
     case $command in
         daily)

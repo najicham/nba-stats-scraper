@@ -14,7 +14,7 @@ This guide covers common issues, debugging techniques, and solutions for the NBA
 # Individual service status
 gcloud run services describe nba-scraper-events --region=us-central1
 
-# Get service URLs  
+# Get service URLs
 gcloud run services list --platform=managed --region=us-central1
 ```
 
@@ -176,7 +176,7 @@ def load_data_with_auto_schema(data, table_id):
         write_disposition="WRITE_APPEND",
         create_disposition="CREATE_IF_NEEDED"
     )
-    
+
     job = client.load_table_from_json(data, table_id, job_config=job_config)
     job.result()  # Wait for completion
 
@@ -314,12 +314,12 @@ cat docker/cloudbuild.yaml | grep timeout
 steps:
   - name: 'gcr.io/cloud-builders/docker'
     args: ['build', '--cache-from', 'gcr.io/$PROJECT_ID/nba-base:latest', ...]
-    
+
 # 2. Use build caching
 options:
   machineType: 'E2_HIGHCPU_8'
   substitution_option: 'ALLOW_LOOSE'
-  
+
 timeout: '3600s'  # Increase timeout
 ```
 
@@ -629,24 +629,24 @@ from google.cloud import monitoring_v3
 def create_custom_metric(metric_name, metric_type='GAUGE'):
     client = monitoring_v3.MetricServiceClient()
     project_name = f"projects/{PROJECT_ID}"
-    
+
     descriptor = monitoring_v3.MetricDescriptor(
         type=f"custom.googleapis.com/nba/{metric_name}",
         metric_kind=monitoring_v3.MetricDescriptor.MetricKind.GAUGE,
         value_type=monitoring_v3.MetricDescriptor.ValueType.INT64,
         description=f"NBA platform {metric_name} metric"
     )
-    
+
     client.create_metric_descriptor(name=project_name, metric_descriptor=descriptor)
 
 # 2. Send metrics consistently
 def send_metric(metric_name, value, labels=None):
     if labels is None:
         labels = {}
-    
+
     client = monitoring_v3.MetricServiceClient()
     project_name = f"projects/{PROJECT_ID}"
-    
+
     series = monitoring_v3.TimeSeries(
         metric=monitoring_v3.Metric(
             type=f"custom.googleapis.com/nba/{metric_name}",
@@ -663,7 +663,7 @@ def send_metric(metric_name, value, labels=None):
             value=monitoring_v3.TypedValue(int64_value=value)
         )]
     )
-    
+
     client.create_time_series(name=project_name, time_series=[series])
 ```
 
@@ -747,7 +747,7 @@ DELETE FROM nba_analytics.events WHERE DATE(game_date) = '2025-01-15';
 # Service health
 ./bin/check_service_health.sh
 
-# View recent errors  
+# View recent errors
 gcloud logs read "severity=ERROR" --limit=20
 
 # Rollback service

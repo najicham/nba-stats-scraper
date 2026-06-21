@@ -45,7 +45,7 @@ This session conducted a **comprehensive data audit** across all 5 NBA seasons (
 
 3. **Identified critical issues:**
    - Jan 10: ALL 6 BDL box scores missing
-   - Jan 11: 1 BDL box score missing  
+   - Jan 11: 1 BDL box score missing
    - 214 player-date combinations need PSZA reprocessing
    - BDL validator has column name bug
 

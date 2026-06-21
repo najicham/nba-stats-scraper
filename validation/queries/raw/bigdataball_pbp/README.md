@@ -8,10 +8,10 @@ Complete validation system for BigDataBall enhanced play-by-play data.
 
 ## 📋 Overview
 
-**Data Source:** BigDataBall Enhanced Play-by-Play  
-**Table:** `nba-props-platform.nba_raw.bigdataball_play_by_play`  
-**Pattern:** Pattern 3 (Game-Based, Single Event per key)  
-**Expected Coverage:** October 2024 - June 2025 (2024-25 season)  
+**Data Source:** BigDataBall Enhanced Play-by-Play
+**Table:** `nba-props-platform.nba_raw.bigdataball_play_by_play`
+**Pattern:** Pattern 3 (Game-Based, Single Event per key)
+**Expected Coverage:** October 2024 - June 2025 (2024-25 season)
 **Expected Volume:** ~400-600 events per game, ~1,200+ games per season
 
 ---
@@ -65,8 +65,8 @@ Coverage Assessment: [X%] complete
 ## ✅ Production Validation Queries
 
 ### 1. Season Completeness Check
-**File:** `season_completeness_check.sql`  
-**Purpose:** Verify complete data coverage across all seasons and teams  
+**File:** `season_completeness_check.sql`
+**Purpose:** Verify complete data coverage across all seasons and teams
 **When to run:** After backfills or to verify historical data integrity
 
 **Expected Results:**
@@ -84,8 +84,8 @@ Coverage Assessment: [X%] complete
 ---
 
 ### 2. Find Missing Games
-**File:** `find_missing_games.sql`  
-**Purpose:** Identify specific games missing from play-by-play data  
+**File:** `find_missing_games.sql`
+**Purpose:** Identify specific games missing from play-by-play data
 **When to run:** When completeness check shows teams with <82 games
 
 **Expected Results:**
@@ -100,8 +100,8 @@ Coverage Assessment: [X%] complete
 ---
 
 ### 3. Daily Check Yesterday
-**File:** `daily_check_yesterday.sql`  
-**Purpose:** Verify yesterday's games were captured correctly  
+**File:** `daily_check_yesterday.sql`
+**Purpose:** Verify yesterday's games were captured correctly
 **When to run:** Every morning at ~9 AM (after scraper/processor)
 
 **Expected Results:**
@@ -124,8 +124,8 @@ crontab -e
 ---
 
 ### 4. Weekly Check Last 7 Days
-**File:** `weekly_check_last_7_days.sql`  
-**Purpose:** Weekly health check showing daily coverage trends  
+**File:** `weekly_check_last_7_days.sql`
+**Purpose:** Weekly health check showing daily coverage trends
 **When to run:** Weekly (e.g., Monday mornings)
 
 **Expected Results:**
@@ -140,8 +140,8 @@ crontab -e
 ---
 
 ### 5. Event Quality Checks
-**File:** `event_quality_checks.sql`  
-**Purpose:** Play-by-play specific quality validation  
+**File:** `event_quality_checks.sql`
+**Purpose:** Play-by-play specific quality validation
 **When to run:** After backfills, when investigating data quality issues
 
 **Checks Performed:**
@@ -159,8 +159,8 @@ crontab -e
 ---
 
 ### 6. Realtime Scraper Check
-**File:** `realtime_scraper_check.sql`  
-**Purpose:** Verify scraper/processor is running and current  
+**File:** `realtime_scraper_check.sql`
+**Purpose:** Verify scraper/processor is running and current
 **When to run:** Anytime to check data freshness
 
 **Expected Behavior:**
@@ -180,7 +180,7 @@ crontab -e
 ## 🚨 Common Issues & Solutions
 
 ### Issue 1: Low Event Counts
-**Symptoms:** Games with <400 events  
+**Symptoms:** Games with <400 events
 **Causes:**
 - Scraper timeout (BigDataBall releases data 2+ hours after game)
 - Processor error during transformation
@@ -192,7 +192,7 @@ crontab -e
 3. Re-run processor for specific date
 
 ### Issue 2: Missing Shot Coordinates
-**Symptoms:** <70% of shots have coordinates  
+**Symptoms:** <70% of shots have coordinates
 **Causes:**
 - BigDataBall data format change
 - Coordinate field mapping issue in processor
@@ -203,7 +203,7 @@ crontab -e
 3. Compare against raw CSV files
 
 ### Issue 3: Incomplete Lineups
-**Symptoms:** Not all 10 lineup positions filled  
+**Symptoms:** Not all 10 lineup positions filled
 **Causes:**
 - Substitution timing during events
 - Beginning/end of periods
@@ -215,7 +215,7 @@ crontab -e
 - <80% indicates data quality issue
 
 ### Issue 4: Sequence Gaps
-**Symptoms:** Missing event_sequence numbers  
+**Symptoms:** Missing event_sequence numbers
 **Causes:**
 - Events filtered out during processing
 - CSV parsing skipped rows
@@ -294,7 +294,7 @@ crontab -e
 
 ---
 
-**Last Updated:** 2025-10-13  
-**Version:** 1.0  
-**Pattern:** Pattern 3 (Game-Based, Single Event)  
+**Last Updated:** 2025-10-13
+**Version:** 1.0
+**Pattern:** Pattern 3 (Game-Based, Single Event)
 **Coverage:** 2024-25 NBA Season

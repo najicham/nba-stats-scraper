@@ -9,14 +9,14 @@ CREATE TABLE IF NOT EXISTS `nba_raw.nbac_player_boxscores` (
   game_date DATE NOT NULL,
   season_year INT64 NOT NULL,
   season_type STRING,
-  
+
   -- Game context
   nba_game_id STRING NOT NULL,
   game_code STRING,
   game_status STRING,
   period INT64,
   is_playoff_game BOOLEAN,
-  
+
   -- Team information
   home_team_id INT64,
   home_team_abbr STRING NOT NULL,
@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS `nba_raw.nbac_player_boxscores` (
   away_team_id INT64,
   away_team_abbr STRING NOT NULL,
   away_team_score INT64,
-  
+
   -- Player identification
   nba_player_id INT64 NOT NULL,
   player_full_name STRING NOT NULL,
@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS `nba_raw.nbac_player_boxscores` (
   jersey_number STRING,
   position STRING,
   starter BOOLEAN,
-  
+
   -- Core statistics
   minutes STRING,
   points INT64,
@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS `nba_raw.nbac_player_boxscores` (
   free_throws_made INT64,
   free_throws_attempted INT64,
   free_throw_percentage FLOAT64,
-  
+
   -- Advanced statistics
   offensive_rebounds INT64,
   defensive_rebounds INT64,
@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS `nba_raw.nbac_player_boxscores` (
   flagrant_fouls INT64,
   technical_fouls INT64,
   plus_minus INT64,
-  
+
   -- Enhanced metrics (future implementation)
   true_shooting_pct FLOAT64,
   effective_fg_pct FLOAT64,
@@ -69,14 +69,14 @@ CREATE TABLE IF NOT EXISTS `nba_raw.nbac_player_boxscores` (
   defensive_rating FLOAT64,
   pace FLOAT64,
   pie FLOAT64,
-  
+
   -- Quarter breakdown (future implementation)
   points_q1 INT64,
   points_q2 INT64,
   points_q3 INT64,
   points_q4 INT64,
   points_ot INT64,
-  
+
   -- Processing metadata
   source_file_path STRING NOT NULL,
   scrape_timestamp TIMESTAMP,
@@ -108,7 +108,7 @@ WHERE minutes IS NOT NULL AND minutes != '0:00';
 
 -- View for prop validation (clean data for joining with odds)
 CREATE OR REPLACE VIEW `nba_raw.nbac_player_boxscores_prop_validation` AS
-SELECT 
+SELECT
   game_id,
   game_date,
   player_lookup,
@@ -126,7 +126,7 @@ WHERE points IS NOT NULL  -- Only include players who actually played
 
 -- Cross-validation view comparing NBA.com vs Ball Don't Lie
 CREATE OR REPLACE VIEW `nba_raw.player_boxscore_comparison` AS
-SELECT 
+SELECT
   n.game_id,
   n.game_date,
   n.player_lookup,

@@ -13,7 +13,7 @@ else
     echo "❌ No API key found"
 fi
 
-# Test Ball Don't Lie API  
+# Test Ball Don't Lie API
 echo "Testing Ball Don't Lie API..."
 BDL_KEY=$(docker-compose -f docker-compose.dev.yml exec scrapers printenv BDL_API_KEY 2>/dev/null | tr -d '\r')
 if [ -n "$BDL_KEY" ]; then

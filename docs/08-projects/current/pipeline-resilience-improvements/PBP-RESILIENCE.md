@@ -113,17 +113,17 @@ bigdataball_pbp:
 def process(self, game_id, game_date):
     # Try BDB first
     bdb_data = self.fetch_bdb_data(game_id, game_date)
-    
+
     if bdb_data:
         return self.transform_bdb(bdb_data)
-    
+
     # Fallback to NBA.com
     logger.warning(f"BDB missing for {game_id}, using NBA.com fallback")
     nbacom_data = self.fetch_nbacom_pbp(game_id)
-    
+
     if nbacom_data:
         return self.transform_nbacom(nbacom_data, source='nbacom_fallback')
-    
+
     raise DataNotAvailableError(f"No PBP data for {game_id}")
 ```
 
@@ -133,7 +133,7 @@ def process(self, game_id, game_date):
 # In bin/monitoring/bdb_pbp_monitor.py
 def check_and_recover(self, game_date):
     gaps = self.find_gaps(game_date)
-    
+
     for gap in gaps:
         if gap.age_hours < 6:
             # Recent gap - trigger retry

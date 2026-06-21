@@ -63,22 +63,22 @@ Each scraper can be run **locally** or deployed as a **Google Cloud Function**. 
 
 **Responsibilities**:
 
-1. **Option Validation**  
+1. **Option Validation**
    Each child class declares `required_opts` (e.g., `["gamedate"]`). `ScraperBase` checks them before running.
 
-2. **`download_and_decode()`**  
+2. **`download_and_decode()`**
    Handles HTTP GET with retries (and optional proxy). If `download_type` is JSON, it automatically decodes into `self.decoded_data`. Otherwise, you can parse it manually (e.g., PDFs).
 
-3. **`validate_download_data()`**  
+3. **`validate_download_data()`**
    Child scrapers override to ensure required fields exist in `self.decoded_data` (or the raw bytes).
 
-4. **Exporting**  
+4. **Exporting**
    Each scraper’s `exporters` list specifies how to save data (e.g. GCS, file, Slack). Config fields like `"export_mode": "raw"` or `"decoded"` control whether the exporter receives bytes (`raw_response.content`), the JSON object (`decoded_data`), or a custom slice from `self.data`.
 
-5. **Structured Logging**  
+5. **Structured Logging**
    Logs key steps (download, retries, validation) plus a final `SCRAPER_STATS` line you can parse for daily summaries. You can also override `post_export()` to add additional behaviors after exporting.
 
-6. **Hooks** (e.g. `set_url()`, `transform_data()`, `should_save_data()`)  
+6. **Hooks** (e.g. `set_url()`, `transform_data()`, `should_save_data()`)
    Child classes override these for domain-specific logic. That includes building URLs, deciding if data is valid, or slicing the final data for partial exports.
 
 ---
@@ -87,36 +87,36 @@ Each scraper can be run **locally** or deployed as a **Google Cloud Function**. 
 
 ### NBA.com Scrapers
 
-- **`nba_com_game_score.py`**  
+- **`nba_com_game_score.py`**
   Fetches the scoreboard data (scores/games) from NBA stats.
 
-- **`nba_com_injury_report.py`**  
+- **`nba_com_injury_report.py`**
   Parses the NBA injury report PDF file.
 
-- **`nba_com_player_boxscore.py`**  
+- **`nba_com_player_boxscore.py`**
   Retrieves per-player boxscores for a given date.
 
-- **`nba_com_player_list.py`**  
+- **`nba_com_player_list.py`**
   Retrieves the current list of all NBA players from the stats API.
 
-- **`nba_com_player_movement.py`**  
+- **`nba_com_player_movement.py`**
   Fetches transaction / movement data (player trades, signings).
 
-- **`nba_com_schedule.py`**  
+- **`nba_com_schedule.py`**
   Downloads the full NBA schedule, then slices it by date/team to produce multiple exports.
 
 ### Odds API Scrapers
 
-- **`odds_api_historical_events.py`**  
+- **`odds_api_historical_events.py`**
   Fetches historical odds events for a given date/time range.
 
-- **`odds_api_player_props_history.py`**  
+- **`odds_api_player_props_history.py`**
   Fetches historical player props for a given event ID.
 
-- **`odds_api_current_event_odds.py`**  
+- **`odds_api_current_event_odds.py`**
   Retrieves current odds for a specific event (by sport + event ID).
 
-- **`odds_api_team_players.py`**  
+- **`odds_api_team_players.py`**
   Fetches a team’s player roster from an undocumented endpoint of The Odds API.
 
 ---

@@ -10,7 +10,7 @@ CREATE TABLE `nba-props-platform.nba_raw.espn_team_rosters` (
   season_year          INT64        NOT NULL,   -- Starting year (2024 for 2024-25 season)
   team_abbr            STRING       NOT NULL,   -- Three-letter code (LAL, BOS, etc.)
   team_display_name    STRING,                  -- "Los Angeles Lakers" (may be NULL for HTML scraper)
-  
+
   -- Player identification (with registry integration)
   espn_player_id       INT64        NOT NULL,   -- ESPN unique player ID
   player_full_name     STRING       NOT NULL,   -- "LeBron James"
@@ -18,7 +18,7 @@ CREATE TABLE `nba-props-platform.nba_raw.espn_team_rosters` (
   universal_player_id  STRING,                  -- NEW: Cross-source player ID from registry (e.g., "lebronjames_001")
                                                  -- NULL if player not yet in registry (added to unresolved queue)
                                                  -- Links to nba_reference.nba_players_registry.universal_player_id
-  
+
   -- Player details (availability varies by scraper type)
   jersey_number        STRING,                  -- "6" (string for "00", "0", multi-digit)
   position             STRING,                  -- "SF" or "Small Forward" (varies by source)
@@ -26,23 +26,23 @@ CREATE TABLE `nba-props-platform.nba_raw.espn_team_rosters` (
   height               STRING,                  -- "6' 9\"" (ESPN formatted string)
   weight               STRING,                  -- "250 lbs" (ESPN formatted string)
   age                  INT64,                   -- Current age (API only)
-  
+
   -- Experience and background (API scraper only - NULL for HTML scraper)
   experience_years     INT64,                   -- Years in NBA
   college              STRING,                  -- College name or "None" for international
   birth_place          STRING,                  -- "Akron, OH"
   birth_date           DATE,                    -- Birth date
-  
+
   -- Status and contract (limited availability)
   status               STRING,                  -- "Active", "Inactive", "Injured" (API only)
   roster_status        STRING,                  -- "Active Roster", "Two-Way", etc.
   salary               STRING,                  -- Contract info (rarely available)
-  
+
   -- Source and lineage tracking
   espn_roster_url      STRING,                  -- Source URL for verification
   source_file_path     STRING       NOT NULL,   -- GCS path: espn/rosters/{date}/team_{TEAM}/{timestamp}.json
   source_file_date     DATE,                    -- Date extracted from file path (for gap detection)
-  
+
   -- Processing metadata
   created_at           TIMESTAMP    NOT NULL,   -- When record first created (UTC)
 
@@ -70,7 +70,7 @@ OPTIONS (
 -- PLAYER REGISTRY INTEGRATION:
 -- =============================================================================
 -- The processor uses RegistryReader (lenient consumer pattern) to resolve players:
--- 
+--
 -- 1. For each player, attempts to resolve universal_player_id from registry
 -- 2. If found: universal_player_id is populated
 -- 3. If NOT found: universal_player_id is NULL, player added to unresolved queue
@@ -93,7 +93,7 @@ OPTIONS (
 -- USAGE EXAMPLES:
 -- =============================================================================
 -- Check resolution rate:
-SELECT 
+SELECT
   roster_date,
   COUNT(*) as total_players,
   COUNT(universal_player_id) as resolved,
@@ -104,7 +104,7 @@ GROUP BY roster_date
 ORDER BY roster_date DESC;
 
 -- Find unresolved players:
-SELECT 
+SELECT
   roster_date,
   team_abbr,
   player_full_name,
@@ -117,7 +117,7 @@ WHERE universal_player_id IS NULL
 ORDER BY team_abbr, player_full_name;
 
 -- Join with registry for enriched data:
-SELECT 
+SELECT
   r.roster_date,
   r.team_abbr,
   r.player_full_name,

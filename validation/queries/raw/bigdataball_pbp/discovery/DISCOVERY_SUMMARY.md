@@ -106,7 +106,7 @@ Date Ranges for Validation Queries:
 Once you've run the queries and documented findings, I'll create:
 
 ✅ **Season Completeness Check** (adapted from BDL)
-✅ **Find Missing Games** (adapted from BDL)  
+✅ **Find Missing Games** (adapted from BDL)
 ✅ **Daily Check Yesterday** (adapted from BDL)
 ✅ **Weekly Check Last 7 Days** (adapted from BDL)
 ✅ **Event Quality Checks** (play-by-play specific)

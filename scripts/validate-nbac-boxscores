@@ -49,14 +49,14 @@ run_query() {
     local query_file=$1
     local output_format=$2
     local output_table=$3
-    
+
     if [ ! -f "$query_file" ]; then
         print_error "Query file not found: $query_file"
         return 1
     fi
-    
+
     print_status "Running query: $(basename $query_file)"
-    
+
     if [ "$output_format" = "csv" ]; then
         bq query --use_legacy_sql=false --format=csv < "$query_file"
     elif [ "$output_format" = "table" ]; then
@@ -180,70 +180,70 @@ case $COMMAND in
         print_section "Running All Validation Queries for NBA.com Player Boxscores"
         print_warning "Note: Table is currently empty - awaiting NBA season start"
         echo ""
-        
+
         print_section "1. Season Completeness Check"
         run_query "$QUERIES_DIR/season_completeness_check.sql" "$OUTPUT_FORMAT" "$OUTPUT_TABLE"
-        
+
         print_section "2. Find Missing Games"
         run_query "$QUERIES_DIR/find_missing_games.sql" "$OUTPUT_FORMAT" "$OUTPUT_TABLE"
-        
+
         print_section "3. Cross-Validate with BDL (CRITICAL)"
         run_query "$QUERIES_DIR/cross_validate_with_bdl.sql" "$OUTPUT_FORMAT" "$OUTPUT_TABLE"
-        
+
         print_section "4. Daily Check (Yesterday)"
         run_query "$QUERIES_DIR/daily_check_yesterday.sql" "$OUTPUT_FORMAT" "$OUTPUT_TABLE"
-        
+
         print_section "5. Data Quality Checks"
         run_query "$QUERIES_DIR/data_quality_checks.sql" "$OUTPUT_FORMAT" "$OUTPUT_TABLE"
-        
+
         print_section "6. Playoff Completeness"
         run_query "$QUERIES_DIR/verify_playoff_completeness.sql" "$OUTPUT_FORMAT" "$OUTPUT_TABLE"
-        
+
         print_section "7. Weekly Check (Last 7 Days)"
         run_query "$QUERIES_DIR/weekly_check_last_7_days.sql" "$OUTPUT_FORMAT" "$OUTPUT_TABLE"
-        
+
         print_success "All validation queries completed!"
         ;;
-        
+
     season-completeness)
         print_section "Season Completeness Check"
         run_query "$QUERIES_DIR/season_completeness_check.sql" "$OUTPUT_FORMAT" "$OUTPUT_TABLE"
         ;;
-        
+
     missing-games)
         print_section "Find Missing Games"
         run_query "$QUERIES_DIR/find_missing_games.sql" "$OUTPUT_FORMAT" "$OUTPUT_TABLE"
         ;;
-        
+
     cross-validate-bdl)
         print_section "Cross-Validate with BDL (CRITICAL for Props)"
         run_query "$QUERIES_DIR/cross_validate_with_bdl.sql" "$OUTPUT_FORMAT" "$OUTPUT_TABLE"
         ;;
-        
+
     daily-check)
         print_section "Daily Check - Yesterday's Games"
         run_query "$QUERIES_DIR/daily_check_yesterday.sql" "$OUTPUT_FORMAT" "$OUTPUT_TABLE"
         ;;
-        
+
     data-quality)
         print_section "Data Quality Checks"
         run_query "$QUERIES_DIR/data_quality_checks.sql" "$OUTPUT_FORMAT" "$OUTPUT_TABLE"
         ;;
-        
+
     playoff-completeness)
         print_section "Verify Playoff Completeness"
         run_query "$QUERIES_DIR/verify_playoff_completeness.sql" "$OUTPUT_FORMAT" "$OUTPUT_TABLE"
         ;;
-        
+
     weekly-check)
         print_section "Weekly Check - Last 7 Days"
         run_query "$QUERIES_DIR/weekly_check_last_7_days.sql" "$OUTPUT_FORMAT" "$OUTPUT_TABLE"
         ;;
-        
+
     help|--help|-h)
         show_help
         ;;
-        
+
     *)
         print_error "Unknown command: $COMMAND"
         echo ""
