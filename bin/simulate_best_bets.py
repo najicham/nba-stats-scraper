@@ -181,9 +181,31 @@ def simulate_date(
         key = f"{pred.get('player_lookup', '')}::{pred.get('game_id', '')}"
         signal_results_map[key] = all_results
 
+    # 7b. Live signal_health + regime context (STEP 4 gated re-run).
+    # Without these the aggregator runs regime-neutral: the rescue-health gate
+    # (RESCUE_MIN_HR_7D) and the TIGHT-market disable_over_rescue / OVER-floor
+    # raise are OFF, so the HSE OVER-rescue lane is ungated. These are
+    # production-history-derived for `target_date` (point-in-time safe:
+    # signal_health_daily / league_macro_daily for D are computed from games
+    # before D), so they reproduce the gating production actually applied.
+    from ml.signals.signal_health import get_signal_health_summary
+    from ml.signals.regime_context import get_regime_context
+    try:
+        signal_health = get_signal_health_summary(bq_client, target_date)
+    except Exception as e:
+        logger.warning(f"signal_health load failed: {e}")
+        signal_health = {}
+    try:
+        regime_context = get_regime_context(bq_client, target_date)
+    except Exception as e:
+        logger.warning(f"regime_context load failed: {e}")
+        regime_context = {}
+
     # 8. Run aggregator
     aggregator = BestBetsAggregator(
         combo_registry=combo_registry,
+        signal_health=signal_health,
+        regime_context=regime_context,
         player_blacklist=player_blacklist,
         model_direction_blocks=model_dir_blocks,
         model_direction_affinity_stats=model_dir_stats,
