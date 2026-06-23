@@ -97,8 +97,16 @@ Detail: `docs/09-handoff/2026-06-23-edge-calibration-RESULT.md`.
 - [ ] **Cross-book OVER multi-season test:** the +13.7pp work left this on the table. `line_movement` /
       `line_std` / `book_count` BettingPros feeds DO have full pre-2025 coverage (only HSE/pace/projection are
       dead pre-2025), so `over_line_rose_heavy` / `book_disagree_over` are genuinely cross-season testable.
-- [ ] **Validated cheap signal to consider:** low-line + low-variance UNDER (62% HR, N=819, 4/4 seasons,
-      strictly pre-game) — higher-certainty than the deferred non-tree diversity build.
+- [ ] **REINSTATE `b2b_under` (2026-06-23 finding — strongest actionable edge):** back-to-back (days_rest=1)
+      UNDER edge3+ = **63.2%, above breakeven in ALL 5 seasons** (N=174). It was wrongly removed (Session 494,
+      "54% CF HR") because the production signal used `is_b2b`, which is populated **0 times in 2021-25 and only
+      in 2025-26** (b2b UNDER's WEAKEST season at 54.3%). Rebuild on `days_rest==1` (or backfill `is_b2b`) and
+      reinstate as ACTIVE UNDER signal. Mechanistically sound (fatigue), cross-season-durable, OVER-independent.
+- [ ] **Candidate `rested_under_block`:** UNDER on 3+ days rest = 52.4%, profitable in only 1/5 seasons — block
+      or down-weight UNDER picks on well-rested players (the inverse of b2b). Detail:
+      `docs/09-handoff/2026-06-23-broad-research-findings.md`.
+- [ ] ~~low-line + low-variance UNDER archetype~~ — does NOT reproduce on the BB edge3+ population (50%); the
+      62%/N=819 claim was a different population. Prefer b2b_under above.
 - [ ] **OVER-signal decay watch (2026-06-23 trust-map — HIGH PRIORITY):** the OVER signal layer is pervasively
       2025-26-overfit. Put ALL of these on a re-validation watch (re-grade by ~Dec 2026; if 2026-27 HR not
       clearly above breakeven at N≥30, demote weight / move to shadow):
