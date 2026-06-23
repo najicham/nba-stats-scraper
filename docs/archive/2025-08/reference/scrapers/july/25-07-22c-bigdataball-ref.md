@@ -242,7 +242,7 @@ jq '.playByPlay | map(select(.event_type == "free throw")) | group_by(.player) |
 ```json
 {
   "game_id": "42400407",
-  "date": "2025-06-22", 
+  "date": "2025-06-22",
   "data_set": "NBA 2025 Playoffs",
   "away_team": "IND",
   "home_team": "OKC",
@@ -277,7 +277,7 @@ jq '.playByPlay | map(select(.event_type == "free throw")) | group_by(.player) |
 ```json
 {
   "player": "Pascal Siakam",
-  "assist": "Andrew Nembhard", 
+  "assist": "Andrew Nembhard",
   "points": 3.0,
   "description": "Siakam 25' 3PT Jump Shot (3 PTS) (Nembhard 1 AST)"
 }
@@ -337,7 +337,7 @@ spec:
 - **Analysis**: Points per game, shooting efficiency, shot distance analysis
 - **Context**: Lineup combinations, game flow, clutch situations
 
-### **Assists Props**  
+### **Assists Props**
 - **Data Available**: Every assist attribution with recipient
 - **Analysis**: Assist rates, player combinations, pick-and-roll effectiveness
 - **Context**: Pace of play, teammate shooting performance
@@ -385,6 +385,6 @@ pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib p
 
 ---
 
-*Last Updated: July 23, 2025*  
-*Data Source: BigDataBall Enhanced Play-by-Play via Google Drive*  
+*Last Updated: July 23, 2025*
+*Data Source: BigDataBall Enhanced Play-by-Play via Google Drive*
 *Optimized for NBA Props Platform*

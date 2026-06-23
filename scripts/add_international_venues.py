@@ -27,7 +27,7 @@ INTERNATIONAL_VENUES = {
         "country": "United Kingdom",
         "venue": "AO Arena",
         "coordinates": [53.4808, -2.2426],
-        "timezone": "Europe/London", 
+        "timezone": "Europe/London",
         "airport_code": "MAN"
     },
     "LONDON": {
@@ -39,7 +39,7 @@ INTERNATIONAL_VENUES = {
         "airport_code": "LHR"
     },
     "PARIS": {
-        "city": "Paris", 
+        "city": "Paris",
         "country": "France",
         "venue": "AccorHotels Arena",
         "coordinates": [48.8396, 2.3781],  # AccorHotels Arena
@@ -48,7 +48,7 @@ INTERNATIONAL_VENUES = {
     },
     "BERLIN": {
         "city": "Berlin",
-        "country": "Germany", 
+        "country": "Germany",
         "venue": "Mercedes-Benz Arena",
         "coordinates": [52.5067, 13.4435],  # Mercedes-Benz Arena Berlin
         "timezone": "Europe/Berlin",
@@ -65,12 +65,12 @@ INTERNATIONAL_VENUES = {
     "ISTANBUL": {
         "city": "Istanbul",
         "country": "Turkey",
-        "venue": "Sinan Erdem Dome", 
+        "venue": "Sinan Erdem Dome",
         "coordinates": [41.0082, 28.9784],  # Istanbul center
         "timezone": "Europe/Istanbul",
         "airport_code": "IST"
     },
-    
+
     # Americas
     "MEXICO_CITY": {
         "city": "Mexico City",
@@ -81,7 +81,7 @@ INTERNATIONAL_VENUES = {
         "airport_code": "MEX"
     },
     "MONTREAL": {
-        "city": "Montreal", 
+        "city": "Montreal",
         "country": "Canada",
         "venue": "Bell Centre",
         "coordinates": [45.5019, -73.5674],
@@ -90,13 +90,13 @@ INTERNATIONAL_VENUES = {
     },
     "VANCOUVER": {
         "city": "Vancouver",
-        "country": "Canada", 
+        "country": "Canada",
         "venue": "Rogers Arena",
         "coordinates": [49.2778, -123.1089],
         "timezone": "America/Vancouver",
         "airport_code": "YVR"
     },
-    
+
     # Asia-Pacific
     "TOKYO": {
         "city": "Tokyo",
@@ -109,7 +109,7 @@ INTERNATIONAL_VENUES = {
     "TAIPEI": {
         "city": "Taipei",
         "country": "Taiwan",
-        "venue": "Taipei Arena", 
+        "venue": "Taipei Arena",
         "coordinates": [25.0330, 121.5654],
         "timezone": "Asia/Taipei",
         "airport_code": "TPE"
@@ -119,7 +119,7 @@ INTERNATIONAL_VENUES = {
         "country": "Philippines",
         "venue": "Mall of Asia Arena",
         "coordinates": [14.5995, 120.9842],
-        "timezone": "Asia/Manila", 
+        "timezone": "Asia/Manila",
         "airport_code": "MNL"
     },
     "MUMBAI": {
@@ -130,14 +130,14 @@ INTERNATIONAL_VENUES = {
         "timezone": "Asia/Kolkata",
         "airport_code": "BOM"
     },
-    
+
     # Middle East
     "ABU_DHABI": {
         "city": "Abu Dhabi",
         "country": "UAE",
         "venue": "Etihad Arena",
         "coordinates": [24.4539, 54.3773],
-        "timezone": "Asia/Dubai", 
+        "timezone": "Asia/Dubai",
         "airport_code": "AUH"
     }
 }
@@ -146,7 +146,7 @@ INTERNATIONAL_VENUES = {
 INTERNATIONAL_TIMEZONE_OFFSETS = {
     "Europe/London": 0,        # GMT
     "Europe/Paris": 1,         # CET
-    "Europe/Berlin": 1,        # CET  
+    "Europe/Berlin": 1,        # CET
     "Europe/Madrid": 1,        # CET
     "Europe/Istanbul": 3,      # TRT
     "America/Mexico_City": -6, # CST
@@ -173,53 +173,53 @@ def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> in
     """Calculate distance using haversine formula"""
     if lat1 == lat2 and lon1 == lon2:
         return 0
-    
+
     lat1_rad = math.radians(lat1)
     lon1_rad = math.radians(lon1)
     lat2_rad = math.radians(lat2)
     lon2_rad = math.radians(lon2)
-    
+
     dlat = lat2_rad - lat1_rad
     dlon = lon2_rad - lon1_rad
-    
-    a = (math.sin(dlat/2)**2 + 
+
+    a = (math.sin(dlat/2)**2 +
          math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlon/2)**2)
-    
+
     c = 2 * math.asin(math.sqrt(a))
     earth_radius_miles = 3959
-    
+
     return round(c * earth_radius_miles)
 
 def calculate_international_jet_lag(from_tz_offset: float, to_tz_offset: float) -> tuple:
     """Calculate jet lag for international travel (handles half-hour timezones)"""
-    
+
     # Convert to total hours difference
     hours_diff = abs(to_tz_offset - from_tz_offset)
-    
+
     # Calculate zones crossed (round to nearest zone for half-hour timezones)
     zones_crossed = round(hours_diff)
-    
+
     if zones_crossed == 0:
         return 0, 'neutral', 0.0
-    
+
     # Determine direction
     if from_tz_offset < to_tz_offset:
         direction = 'east'
         jet_lag_factor = zones_crossed * 1.5  # Eastward harder
     else:
-        direction = 'west' 
+        direction = 'west'
         jet_lag_factor = zones_crossed * 1.0  # Westward easier
-    
+
     return zones_crossed, direction, round(jet_lag_factor, 1)
 
 def generate_international_venue_sql() -> str:
     """Generate SQL to add international venues to team_locations table"""
-    
+
     sql_lines = []
     sql_lines.append("-- Insert international NBA game venues")
     sql_lines.append("INSERT INTO `nba-props-platform.nba_enriched.team_locations`")
     sql_lines.append("(team_abbr, city, state, arena_name, latitude, longitude, timezone, airport_code, country) VALUES")
-    
+
     values = []
     for venue_code, venue_data in INTERNATIONAL_VENUES.items():
         lat, lon = venue_data['coordinates']
@@ -228,13 +228,13 @@ def generate_international_venue_sql() -> str:
             f"'{venue_data['venue']}', {lat}, {lon}, '{venue_data['timezone']}', "
             f"'{venue_data['airport_code']}', '{venue_data['country']}')"
         )
-    
+
     sql_lines.append(",\n".join(values) + ";")
     return "\n".join(sql_lines)
 
 def generate_international_distances_sql() -> str:
     """Generate distances from all NBA teams to international venues"""
-    
+
     # NBA team coordinates (from your existing system)
     nba_teams = {
         "ATL": {"city": "Atlanta", "coordinates": [33.7573, -84.3963], "timezone": "America/New_York"},
@@ -268,72 +268,72 @@ def generate_international_distances_sql() -> str:
         "UTA": {"city": "Salt Lake City", "coordinates": [40.7683, -111.9011], "timezone": "America/Denver"},
         "WAS": {"city": "Washington", "coordinates": [38.8981, -77.0209], "timezone": "America/New_York"}
     }
-    
+
     all_timezone_offsets = {**US_TIMEZONE_OFFSETS, **INTERNATIONAL_TIMEZONE_OFFSETS}
-    
+
     sql_lines = []
     sql_lines.append("-- Insert distances from NBA teams to international venues")
     sql_lines.append("INSERT INTO `nba-props-platform.nba_enriched.travel_distances`")
     sql_lines.append("(from_team, to_team, from_city, to_city, distance_miles, time_zones_crossed, travel_direction, jet_lag_factor) VALUES")
-    
+
     values = []
-    
+
     # Generate distances: NBA teams → International venues
     for nba_team, nba_data in nba_teams.items():
         nba_lat, nba_lon = nba_data['coordinates']
         nba_tz_offset = all_timezone_offsets[nba_data['timezone']]
-        
+
         for venue_code, venue_data in INTERNATIONAL_VENUES.items():
             venue_lat, venue_lon = venue_data['coordinates']
             venue_tz_offset = all_timezone_offsets[venue_data['timezone']]
-            
+
             distance = haversine_distance(nba_lat, nba_lon, venue_lat, venue_lon)
             zones_crossed, direction, jet_lag_factor = calculate_international_jet_lag(nba_tz_offset, venue_tz_offset)
-            
+
             values.append(
                 f"('{nba_team}', '{venue_code}', '{nba_data['city']}', '{venue_data['city']}', "
                 f"{distance}, {zones_crossed}, '{direction}', {jet_lag_factor})"
             )
-            
+
             # Also add reverse direction (international venue → NBA team)
             reverse_zones_crossed, reverse_direction, reverse_jet_lag_factor = calculate_international_jet_lag(venue_tz_offset, nba_tz_offset)
-            
+
             values.append(
                 f"('{venue_code}', '{nba_team}', '{venue_data['city']}', '{nba_data['city']}', "
                 f"{distance}, {reverse_zones_crossed}, '{reverse_direction}', {reverse_jet_lag_factor})"
             )
-    
+
     sql_lines.append(",\n".join(values) + ";")
     return "\n".join(sql_lines)
 
 def main():
     """Generate international venue additions"""
-    
+
     print("=" * 60)
     print("NBA International Venues System")
     print("=" * 60)
     print(f"Adding {len(INTERNATIONAL_VENUES)} international venues:")
-    
+
     for code, venue in INTERNATIONAL_VENUES.items():
         print(f"  {code}: {venue['city']}, {venue['country']} - {venue['venue']}")
-    
+
     # Generate venue additions
     venues_sql = generate_international_venue_sql()
     with open('add_international_venues.sql', 'w') as f:
         f.write(venues_sql)
-    
-    # Generate distance calculations  
+
+    # Generate distance calculations
     distances_sql = generate_international_distances_sql()
     with open('add_international_distances.sql', 'w') as f:
         f.write(distances_sql)
-    
+
     print(f"\n✓ Generated add_international_venues.sql")
     print(f"✓ Generated add_international_distances.sql")
-    
+
     # Calculate total new distance combinations
     total_new_distances = len(INTERNATIONAL_VENUES) * 30 * 2  # 30 NBA teams * 2 directions
     print(f"✓ Will add {total_new_distances} new distance combinations")
-    
+
     print(f"\n" + "=" * 60)
     print("Next Steps:")
     print("1. bq query --use_legacy_sql=false < add_international_venues.sql")

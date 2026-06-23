@@ -18,7 +18,7 @@
 
 **Error Breakdown**:
 - prediction-worker: 46 errors
-- unknown services (Cloud Functions): 36 errors  
+- unknown services (Cloud Functions): 36 errors
 - nba-phase3-analytics-processors: 18 errors
 
 **Error Timeline**:

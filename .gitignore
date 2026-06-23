@@ -208,3 +208,8 @@ failed_games_*.json
 experiments/results/
 ml/experiments/results/
 .benchmarks/
+
+# Regenerated discovery caches (reproducible via build_walkforward_predictions.py / bb_simulator extracts)
+results/nba_walkforward*/
+results/bb_simulator/
+results/signal_discovery/

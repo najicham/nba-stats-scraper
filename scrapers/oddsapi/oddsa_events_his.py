@@ -3,8 +3,8 @@
 odds_api_historical_events.py
 Scraper for The-Odds-API v4 "historical events" endpoint.
 
-This scraper retrieves event IDs and basic event information (teams, commence times) 
-for a given date and timestamp. Use this to discover available events before fetching 
+This scraper retrieves event IDs and basic event information (teams, commence times)
+for a given date and timestamp. Use this to discover available events before fetching
 their odds with the historical event odds scrapers.
 
 SNAPSHOT TIMESTAMP STRATEGY FOR EVENTS:
@@ -188,7 +188,7 @@ class GetOddsApiHistoricalEvents(ScraperBase, ScraperFlaskMixin):
         """
         # Call base class first for standard processing
         super().set_additional_opts()  # Base class handles game_date → date conversion
-        
+
         # Snap the snapshot timestamp to valid 5-minute boundary for API
         if self.opts.get("snapshot_timestamp"):
             original_timestamp = self.opts["snapshot_timestamp"]
@@ -200,9 +200,9 @@ class GetOddsApiHistoricalEvents(ScraperBase, ScraperFlaskMixin):
             self.opts["sport"] = "basketball_nba"
         if not self.opts.get("regions"):
             self.opts["regions"] = "us"
-        
+
         # Debug logging to verify path variables
-        logger.debug("Events scraper path variables: date=%s, game_date=%s, snapshot_timestamp=%s", 
+        logger.debug("Events scraper path variables: date=%s, game_date=%s, snapshot_timestamp=%s",
                     self.opts.get("date"), self.opts.get("game_date"), self.opts.get("snapshot_timestamp"))
 
     # ------------------------------------------------------------------ #
@@ -220,7 +220,7 @@ class GetOddsApiHistoricalEvents(ScraperBase, ScraperFlaskMixin):
         )
         if not api_key:
             error_msg = "Missing api_key and no ODDS_API_KEY env var found."
-            
+
             # Send critical notification - API key missing prevents all scraping
             try:
                 notify_error(
@@ -237,7 +237,7 @@ class GetOddsApiHistoricalEvents(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise DownloadDataException(error_msg)
 
         query: Dict[str, Any] = {
@@ -266,10 +266,10 @@ class GetOddsApiHistoricalEvents(ScraperBase, ScraperFlaskMixin):
         if self.raw_response.status_code in (200, 204):
             # 204 is expected for empty snapshots, just log it
             if self.raw_response.status_code == 204:
-                logger.info("204 response - no events at snapshot %s", 
+                logger.info("204 response - no events at snapshot %s",
                            self.opts.get("snapshot_timestamp"))
             return
-        
+
         # Special handling for 404 - though less common for events than odds
         if self.raw_response.status_code == 404:
             try:
@@ -307,7 +307,7 @@ class GetOddsApiHistoricalEvents(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-        
+
         super().check_download_status()
 
     # ------------------------------------------------------------------ #
@@ -320,7 +320,7 @@ class GetOddsApiHistoricalEvents(ScraperBase, ScraperFlaskMixin):
         """
         # Handle 204 responses (empty snapshot)
         if self.raw_response.status_code == 204:
-            logger.info("204 response - no events available for snapshot %s", 
+            logger.info("204 response - no events available for snapshot %s",
                        self.opts.get("snapshot_timestamp"))
             # Create empty response structure for consistency
             self.decoded_data = {
@@ -328,7 +328,7 @@ class GetOddsApiHistoricalEvents(ScraperBase, ScraperFlaskMixin):
                 "timestamp": self.opts.get("snapshot_timestamp"),
                 "message": "No events available for this snapshot"
             }
-            
+
             # Send info notification for 204 (expected but worth tracking)
             try:
                 notify_info(
@@ -346,12 +346,12 @@ class GetOddsApiHistoricalEvents(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             return
 
         if isinstance(self.decoded_data, dict) and "message" in self.decoded_data:
             error_msg = self.decoded_data['message']
-            
+
             # API returned an error message
             try:
                 notify_error(
@@ -368,7 +368,7 @@ class GetOddsApiHistoricalEvents(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise DownloadDataException(f"API error: {error_msg}")
 
         if not (isinstance(self.decoded_data, dict) and "data" in self.decoded_data):
@@ -389,7 +389,7 @@ class GetOddsApiHistoricalEvents(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise DownloadDataException("Expected dict with 'data' key.")
 
     # ------------------------------------------------------------------ #
@@ -410,7 +410,7 @@ class GetOddsApiHistoricalEvents(ScraperBase, ScraperFlaskMixin):
             "rowCount": len(events),
             "events": events,
         }
-        
+
         # Check for no events in successful response
         if len(events) == 0 and self.raw_response.status_code == 200:
             try:
@@ -434,7 +434,7 @@ class GetOddsApiHistoricalEvents(ScraperBase, ScraperFlaskMixin):
                 # Extract earliest and latest commence times for context
                 earliest_time = events[0].get("commence_time", "unknown") if events else "unknown"
                 latest_time = events[-1].get("commence_time", "unknown") if events else "unknown"
-                
+
                 notify_info(
                     title="Historical Events Scraped Successfully",
                     message=f"Retrieved {len(events)} historical events from snapshot",
@@ -455,8 +455,8 @@ class GetOddsApiHistoricalEvents(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-        
-        logger.info("Fetched %d events @ %s for date %s", 
+
+        logger.info("Fetched %d events @ %s for date %s",
                    len(events), self.data["snapshot_timestamp"], self.opts["game_date"])
 
     # ------------------------------------------------------------------ #
@@ -470,7 +470,7 @@ class GetOddsApiHistoricalEvents(ScraperBase, ScraperFlaskMixin):
         if self.raw_response and self.raw_response.status_code == 204:
             logger.info("Skipping save for 204 empty response")
             return False
-            
+
         # Save if we have any events
         return bool(self.data.get("rowCount", 0) > 0)
 

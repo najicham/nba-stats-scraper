@@ -56,7 +56,7 @@ Metrics populated: 292 players (97.33%)
 
 Metrics found and populated:
 ✅ pace_differential - 97.33% populated
-✅ opponent_pace_last_10 - 97.33% populated  
+✅ opponent_pace_last_10 - 97.33% populated
 ✅ opponent_ft_rate_allowed - 97.33% populated
 ✅ opponent_def_rating_last_10 - 97.33% populated
 
@@ -126,7 +126,7 @@ Session 102: ⚠️ UNCLEAR STATUS
 - No batch loading log evidence
 - Need to verify logging implementation
 
-Session 101: ⚠️ UNCLEAR STATUS  
+Session 101: ⚠️ UNCLEAR STATUS
 - Model version query needs optimization
 - Recent predictions exist (good sign)
 

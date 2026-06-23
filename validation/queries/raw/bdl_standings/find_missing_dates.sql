@@ -46,7 +46,7 @@ season_context AS (
 ),
 
 actual_dates AS (
-  SELECT DISTINCT 
+  SELECT DISTINCT
     date_recorded,
     COUNT(*) as team_count
   FROM `nba-props-platform.nba_raw.bdl_standings`
@@ -192,7 +192,7 @@ SELECT
   NULL as detail8
 FROM gap_ranges
 
-ORDER BY 
+ORDER BY
   CASE section
     WHEN 'MISSING DATES' THEN 1
     WHEN '📊 MISSING DATES SUMMARY' THEN 2

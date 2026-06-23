@@ -31,7 +31,7 @@ pbp_games AS (
   GROUP BY game_date, game_id, home_team_abbr, away_team_abbr
 )
 
-SELECT 
+SELECT
   s.game_date,
   FORMAT_DATE('%A', s.game_date) as day_of_week,
   s.schedule_game_id,

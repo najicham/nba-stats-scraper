@@ -6,11 +6,11 @@
 -- ============================================================================
 
 WITH yesterday_schedule AS (
-  SELECT 
+  SELECT
     COUNT(DISTINCT game_id) as scheduled_games,
     STRING_AGG(
-      CONCAT(away_team_tricode, '@', home_team_tricode), 
-      ', ' 
+      CONCAT(away_team_tricode, '@', home_team_tricode),
+      ', '
       ORDER BY home_team_tricode
       LIMIT 10
     ) as sample_matchups
@@ -21,12 +21,12 @@ WITH yesterday_schedule AS (
 ),
 
 yesterday_espn AS (
-  SELECT 
+  SELECT
     COUNT(DISTINCT game_id) as espn_games,
     COUNT(*) as espn_player_records,
     COUNT(DISTINCT player_lookup) as unique_players,
     STRING_AGG(
-      CONCAT(away_team_abbr, '@', home_team_abbr), 
+      CONCAT(away_team_abbr, '@', home_team_abbr),
       ', '
       ORDER BY home_team_abbr
     ) as espn_matchups,
@@ -36,7 +36,7 @@ yesterday_espn AS (
 ),
 
 yesterday_bdl AS (
-  SELECT 
+  SELECT
     COUNT(DISTINCT game_id) as bdl_games,
     COUNT(*) as bdl_player_records
   FROM `nba-props-platform.nba_raw.bdl_player_boxscores`
@@ -44,40 +44,40 @@ yesterday_bdl AS (
 )
 
 -- Output summary
-SELECT 
+SELECT
   DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY) as check_date,
-  
+
   -- Schedule context
   s.scheduled_games,
   s.sample_matchups as scheduled_matchups,
-  
+
   -- ESPN data
   COALESCE(e.espn_games, 0) as espn_games_collected,
   COALESCE(e.espn_player_records, 0) as espn_player_records,
   e.espn_matchups as espn_matchups_collected,
-  
+
   -- BDL comparison (primary source)
   COALESCE(b.bdl_games, 0) as bdl_games_collected,
-  
+
   -- Status assessment
-  CASE 
+  CASE
     WHEN s.scheduled_games = 0 THEN '⚪ NO GAMES SCHEDULED'
     WHEN e.espn_games IS NULL OR e.espn_games = 0 THEN '⚪ NO ESPN DATA (Normal for backup source)'
     WHEN b.bdl_games = 0 THEN '🔴 CRITICAL: No BDL data but ESPN collected'
     WHEN e.espn_games > 0 AND b.bdl_games > 0 THEN '✅ ESPN backup data exists (with BDL)'
     ELSE '⚪ ESPN Only (investigate why no BDL)'
   END as status,
-  
+
   -- Data quality check
-  CASE 
+  CASE
     WHEN e.espn_games > 0 AND e.espn_player_records / e.espn_games < 20 THEN '⚠️ Low player count per game'
     WHEN e.espn_games > 0 AND e.espn_player_records / e.espn_games > 35 THEN '⚠️ High player count per game'
     WHEN e.espn_games > 0 THEN '✅ Player counts normal'
     ELSE 'N/A'
   END as quality_check,
-  
+
   -- Interpretation
-  CASE 
+  CASE
     WHEN s.scheduled_games = 0 THEN 'Off day - no validation needed'
     WHEN e.espn_games = 0 THEN 'Normal - ESPN is sparse backup, not collected every day'
     WHEN e.espn_games > 0 AND b.bdl_games > 0 THEN 'Good - Both sources available for validation'
@@ -95,7 +95,7 @@ CROSS JOIN yesterday_bdl b;
 
 -- Uncomment to see per-game breakdown when ESPN data exists
 /*
-SELECT 
+SELECT
   game_id,
   home_team_abbr || ' vs ' || away_team_abbr as matchup,
   COUNT(*) as player_count,
@@ -103,7 +103,7 @@ SELECT
   SUM(points) as total_points,
   AVG(points) as avg_points_per_player,
   MAX(points) as top_scorer_points,
-  CASE 
+  CASE
     WHEN COUNT(*) < 20 THEN '⚠️ Low player count'
     WHEN COUNT(*) > 35 THEN '⚠️ High player count'
     WHEN COUNT(DISTINCT team_abbr) != 2 THEN '🔴 Wrong team count'
@@ -117,7 +117,7 @@ ORDER BY game_id;
 
 -- ============================================================================
 -- EXPECTED RESULTS:
--- 
+--
 -- Most days: "⚪ NO ESPN DATA (Normal for backup source)"
 -- This is EXPECTED and CORRECT behavior
 --
@@ -130,7 +130,7 @@ ORDER BY game_id;
 -- ⚪ No ESPN Data = Normal (backup source, not daily collection)
 -- ✅ ESPN + BDL = Excellent (both sources for validation)
 -- 🔴 ESPN Only = Investigate (why no BDL data?)
--- 
+--
 -- CRITICAL: Do NOT alert on "no ESPN data" - this is expected behavior
 -- ONLY alert if ESPN exists but BDL doesn't (role reversal = problem)
 -- ============================================================================

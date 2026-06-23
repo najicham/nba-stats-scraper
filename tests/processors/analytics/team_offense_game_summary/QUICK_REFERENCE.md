@@ -42,7 +42,7 @@ python run_tests.py --verbose
 
 ### Calculation Methods
 - ✅ `_parse_overtime_periods()` - 9 tests
-- ✅ `_calculate_possessions()` - 6 tests  
+- ✅ `_calculate_possessions()` - 6 tests
 - ✅ `_calculate_true_shooting_pct()` - 8 tests
 - ✅ `_calculate_quality_tier()` - 7 tests
 
@@ -139,6 +139,6 @@ def test_[method]_[scenario]_[expected_behavior](self):
 
 ---
 
-**Status:** ✅ Production Ready  
-**Version:** 1.0  
+**Status:** ✅ Production Ready
+**Version:** 1.0
 **Last Updated:** January 2025

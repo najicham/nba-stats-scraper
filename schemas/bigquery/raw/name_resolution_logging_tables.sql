@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_processing.name_resolution_lo
   -- Processing context
   processing_run_id STRING NOT NULL,
   processing_timestamp TIMESTAMP NOT NULL,
-  
+
   -- Player context
   original_name STRING NOT NULL,
   team_abbr STRING NOT NULL,
@@ -14,12 +14,12 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_processing.name_resolution_lo
   game_id STRING NOT NULL,
   game_date DATE NOT NULL,
   player_status STRING NOT NULL,        -- 'inactive', 'dnp' - helps filter to injured players
-  
+
   -- Resolution results
   resolution_status STRING NOT NULL,     -- 'resolved', 'not_found', 'multiple_matches', 'original', 'error'
   resolution_method STRING,              -- 'direct_lookup', 'team_mapped', 'suffix_handled', 'team_mapped_suffix_handled'
   confidence_score FLOAT64,
-  
+
   -- Resolution details
   resolved_name STRING,
   resolved_lookup STRING,
@@ -27,10 +27,10 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_processing.name_resolution_lo
   roster_matches_found INT64,
   potential_matches STRING,              -- JSON string of potential matches
   error_details STRING,
-  
+
   -- Traceability
   source_file_path STRING,               -- GCS path for debugging
-  
+
   -- Metadata
   processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
 )
@@ -46,33 +46,33 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_processing.resolution_perform
   -- Run identification
   processing_run_id STRING NOT NULL,
   processing_timestamp TIMESTAMP NOT NULL,
-  
+
   -- Volume metrics
   total_inactive_players INT64,
   total_dnp_players INT64,               -- Separate tracking for DNP vs inactive
   files_processed INT64,
   processing_duration_minutes FLOAT64,
-  
+
   -- Resolution metrics
   resolved_count INT64,
   not_found_count INT64,
   multiple_matches_count INT64,
   original_count INT64,
   error_count INT64,
-  
+
   -- Method effectiveness
   team_mapping_fixes INT64,
   suffix_handling_fixes INT64,
   direct_lookup_successes INT64,
-  
+
   -- Performance indicators
   resolution_rate FLOAT64,               -- resolved / total
   improvement_from_baseline FLOAT64,     -- Can be calculated later
-  
+
   -- Processing scope
   date_range_start DATE,
   date_range_end DATE,
-  
+
   -- Metadata
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
 )
@@ -82,7 +82,7 @@ OPTIONS (
 
 -- Views for injured player monitoring
 CREATE OR REPLACE VIEW `nba_processing.injured_player_failures` AS
-SELECT 
+SELECT
   original_name,
   team_abbr,
   br_team_abbr_used,
@@ -102,7 +102,7 @@ GROUP BY original_name, team_abbr, br_team_abbr_used, season_year, resolution_st
 ORDER BY failure_count DESC;
 
 CREATE OR REPLACE VIEW `nba_processing.team_mapping_issues` AS
-SELECT 
+SELECT
   team_abbr as original_team,
   br_team_abbr_used as mapped_team,
   COUNT(*) as failed_attempts,
@@ -116,7 +116,7 @@ GROUP BY team_abbr, br_team_abbr_used
 ORDER BY failed_attempts DESC;
 
 CREATE OR REPLACE VIEW `nba_processing.resolution_quality_by_team` AS
-SELECT 
+SELECT
   team_abbr,
   br_team_abbr_used,
   season_year,
@@ -135,8 +135,8 @@ ORDER BY success_rate ASC, total_attempts DESC;
 CREATE OR REPLACE VIEW `nba_processing.fixable_resolutions` AS
 WITH failed_resolutions AS (
   SELECT DISTINCT
-    original_name, 
-    team_abbr, 
+    original_name,
+    team_abbr,
     br_team_abbr_used,
     season_year,
     COUNT(DISTINCT game_id) as games_affected
@@ -147,14 +147,14 @@ WITH failed_resolutions AS (
 ),
 roster_matches AS (
   SELECT DISTINCT
-    player_last_name, 
-    player_full_name, 
-    player_lookup, 
-    team_abbrev, 
+    player_last_name,
+    player_full_name,
+    player_lookup,
+    team_abbrev,
     season_year
   FROM `nba_raw.br_rosters_current`
 )
-SELECT 
+SELECT
   f.original_name,
   f.team_abbr,
   f.br_team_abbr_used,

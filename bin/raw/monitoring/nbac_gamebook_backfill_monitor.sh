@@ -55,7 +55,7 @@ Data Quality Check:
 
 # Check BigQuery for recent data
 bq query --use_legacy_sql=false --format=prettyjson <<SQL
-SELECT 
+SELECT
   player_status,
   name_resolution_status,
   COUNT(*) as count

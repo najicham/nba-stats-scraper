@@ -56,12 +56,12 @@ run_query() {
     local query_file=$1
     local output_format=${2:-"terminal"}
     local output_table=$3
-    
+
     if [ ! -f "$QUERIES_DIR/$query_file" ]; then
         print_error "Query file not found: $query_file"
         exit 1
     fi
-    
+
     case $output_format in
         csv)
             bq query --use_legacy_sql=false --format=csv < "$QUERIES_DIR/$query_file"
@@ -140,18 +140,18 @@ cmd_distribution() {
 
 cmd_discovery() {
     print_header "Discovery Phase - Understanding the Data"
-    
+
     print_info "Running Discovery Query 1: Date Range & Volume..."
     echo ""
     bq query --use_legacy_sql=false < "$QUERIES_DIR/../discovery/discovery_date_range.sql" 2>/dev/null || \
         print_warning "Discovery query not found - run queries manually"
-    
+
     echo ""
     print_info "Running Discovery Query 2: Team Distribution..."
     echo ""
     bq query --use_legacy_sql=false < "$QUERIES_DIR/../discovery/discovery_team_distribution.sql" 2>/dev/null || \
         print_warning "Discovery query not found - run queries manually"
-    
+
     echo ""
     print_info "Running Discovery Query 3: Duplicate Detection..."
     echo ""
@@ -162,22 +162,22 @@ cmd_discovery() {
 cmd_all() {
     print_header "Running Complete Validation Suite"
     echo ""
-    
+
     cmd_daily "$1" "$2"
     echo ""
-    
+
     cmd_freshness "$1" "$2"
     echo ""
-    
+
     cmd_teams "$1" "$2"
     echo ""
-    
+
     cmd_quality "$1" "$2"
     echo ""
-    
+
     cmd_bdl_comparison "$1" "$2"
     echo ""
-    
+
     print_success "Complete validation suite finished"
 }
 
@@ -241,14 +241,14 @@ EOF
 # Main script logic
 main() {
     check_queries_dir
-    
+
     # Parse command and options
     COMMAND=${1:-""}
     shift || true
-    
+
     OUTPUT_FORMAT="terminal"
     OUTPUT_TABLE=""
-    
+
     # Parse options
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -272,7 +272,7 @@ main() {
                 ;;
         esac
     done
-    
+
     # Execute command
     case $COMMAND in
         daily)

@@ -9,21 +9,21 @@ CREATE TABLE IF NOT EXISTS `nba_raw.bdl_player_boxscores` (
   game_status STRING,
   period INT64,
   is_postseason BOOL NOT NULL,
-  
+
   -- Team context
   home_team_abbr STRING NOT NULL,
   away_team_abbr STRING NOT NULL,
   home_team_score INT64,
   away_team_score INT64,
   team_abbr STRING NOT NULL,
-  
+
   -- Player identification
   player_full_name STRING NOT NULL,
   player_lookup STRING NOT NULL,
   bdl_player_id INT64,
   jersey_number STRING,
   position STRING,
-  
+
   -- Performance stats (critical for props validation)
   minutes STRING,
   points INT64,
@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS `nba_raw.bdl_player_boxscores` (
   blocks INT64,
   turnovers INT64,
   personal_fouls INT64,
-  
+
   -- Shooting stats
   field_goals_made INT64,
   field_goals_attempted INT64,
@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS `nba_raw.bdl_player_boxscores` (
   free_throws_made INT64,
   free_throws_attempted INT64,
   free_throw_pct FLOAT64,
-  
+
   -- Processing metadata
   source_file_path STRING NOT NULL,
   created_at TIMESTAMP NOT NULL,

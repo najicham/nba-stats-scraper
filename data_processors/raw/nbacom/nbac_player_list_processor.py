@@ -49,57 +49,57 @@ class NbacPlayerListProcessor(SmartIdempotencyMixin, ProcessorBase):
         super().__init__()
         self.table_name = 'nbac_player_list_current'
         self.dataset_id = 'nba_raw'
-        
+
         # Tracking counters
         self.players_processed = 0
         self.players_failed = 0
         self.duplicate_count = 0
-    
+
     def set_additional_opts(self) -> None:
         """Validate that we have either file_path or date."""
         super().set_additional_opts()
-        
+
         # Validate inputs - file discovery happens later in load_data()
         if not self.opts.get('file_path') and not self.opts.get('date'):
             raise ValueError("Must provide either 'file_path' or 'date'")
-    
+
     def _find_latest_file(self, bucket_name: str, prefix: str) -> Optional[str]:
         """
         Find latest JSON file in GCS for given prefix.
-        
+
         Args:
             bucket_name: GCS bucket name
             prefix: Path prefix (e.g., 'nba-com/player-list/2025-10-02/')
-            
+
         Returns:
             Full file path or None if no files found
         """
         try:
             bucket = self.gcs_client.bucket(bucket_name)
             blobs = list(bucket.list_blobs(prefix=prefix))
-            
+
             if not blobs:
                 logger.warning(f"No blobs found with prefix: {prefix}")
                 return None
-            
+
             # Filter to JSON files
             json_blobs = [b for b in blobs if b.name.endswith('.json')]
-            
+
             if not json_blobs:
                 logger.warning(f"No JSON files found with prefix: {prefix}")
                 return None
-            
+
             # Sort by creation time, take latest
             json_blobs.sort(key=lambda b: b.time_created, reverse=True)
             latest_blob = json_blobs[0]
-            
+
             logger.info(f"Found {len(json_blobs)} files, using latest: {latest_blob.name}")
             return latest_blob.name
-            
+
         except Exception as e:
             logger.error(f"Error finding latest file: {e}")
             return None
-    
+
     # ================================================================
     # STEP 1: LOAD DATA FROM GCS
     # ================================================================
@@ -107,40 +107,40 @@ class NbacPlayerListProcessor(SmartIdempotencyMixin, ProcessorBase):
         """Load JSON data from GCS bucket (implements ProcessorBase interface)."""
         bucket_name = self.opts.get('bucket')
         file_path = self.opts.get('file_path')
-        
+
         # If date provided but no file_path, discover now (after gcs_client initialized)
         if not file_path and self.opts.get('date'):
             date_str = self.opts['date']
             logger.info(f"No file_path provided, discovering latest file for {date_str}")
-            
+
             prefix = f"nba-com/player-list/{date_str}/"
             file_path = self._find_latest_file(bucket_name, prefix)
-            
+
             if not file_path:
                 raise FileNotFoundError(f"No files found in gs://{bucket_name}/{prefix}")
-            
+
             # Store discovered path to opts so transform_data can access it
             self.opts['file_path'] = file_path
             logger.info(f"Discovered file: {file_path}")
-        
+
         if not bucket_name or not file_path:
             raise ValueError("Missing 'bucket' or 'file_path' in opts")
-        
+
         logger.info(f"Loading data from gs://{bucket_name}/{file_path}")
-        
+
         try:
             bucket = self.gcs_client.bucket(bucket_name)
             blob = bucket.blob(file_path)
-            
+
             if not blob.exists():
                 raise FileNotFoundError(f"File not found: gs://{bucket_name}/{file_path}")
-            
+
             # Download and parse JSON
             json_string = blob.download_as_string()
             self.raw_data = json.loads(json_string)
-            
+
             logger.info(f"Successfully loaded {len(json_string)} bytes from GCS")
-            
+
         except Exception as e:
             logger.error(f"Failed to load data from GCS: {e}")
             try:
@@ -158,7 +158,7 @@ class NbacPlayerListProcessor(SmartIdempotencyMixin, ProcessorBase):
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
             raise
-    
+
     # ================================================================
     # STEP 2: VALIDATE LOADED DATA
     # ================================================================
@@ -166,9 +166,9 @@ class NbacPlayerListProcessor(SmartIdempotencyMixin, ProcessorBase):
         """Validate the JSON data structure (overrides ProcessorBase)."""
         if not self.raw_data:
             raise ValueError("No data loaded")
-        
+
         errors = []
-        
+
         if 'resultSets' not in self.raw_data:
             errors.append("Missing 'resultSets' in data")
         else:
@@ -178,7 +178,7 @@ class NbacPlayerListProcessor(SmartIdempotencyMixin, ProcessorBase):
                 if result_set.get('name') == 'PlayerIndex':
                     player_result = result_set
                     break
-            
+
             if not player_result:
                 errors.append("No 'PlayerIndex' result set found")
                 try:
@@ -193,10 +193,10 @@ class NbacPlayerListProcessor(SmartIdempotencyMixin, ProcessorBase):
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             elif 'headers' not in player_result or 'rowSet' not in player_result:
                 errors.append("Missing headers or rowSet in player data")
-        
+
         if errors:
             error_msg = "; ".join(errors)
             try:
@@ -209,16 +209,16 @@ class NbacPlayerListProcessor(SmartIdempotencyMixin, ProcessorBase):
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
             raise ValueError(error_msg)
-        
+
         logger.info("Data validation passed")
-    
+
     # ================================================================
     # STEP 3: TRANSFORM DATA
     # ================================================================
     def transform_data(self) -> None:
         """Transform NBA.com player list to BigQuery rows (implements ProcessorBase interface)."""
         rows = []
-        
+
         try:
             # Find PlayerIndex result set
             player_result = None
@@ -226,27 +226,27 @@ class NbacPlayerListProcessor(SmartIdempotencyMixin, ProcessorBase):
                 if result_set.get('name') == 'PlayerIndex':
                     player_result = result_set
                     break
-            
+
             if not player_result:
                 logger.error("No PlayerIndex result set found")
                 self.transformed_data = []
                 return
-            
+
             headers = player_result['headers']
             header_map = {h: i for i, h in enumerate(headers)}
-            
+
             # Get current season year
             current_date = datetime.now()
             season_year = current_date.year if current_date.month >= 10 else current_date.year - 1
-            
+
             # Track duplicates
             seen_lookups = {}
             self.players_processed = 0
             self.players_failed = 0
             self.duplicate_count = 0
-            
+
             file_path = self.opts.get('file_path', 'unknown')
-            
+
             # Extract source_file_date from file path
             # Path format: nba-com/player-list/2025-10-01/20251001_220717.json
             source_file_date = None
@@ -259,7 +259,7 @@ class NbacPlayerListProcessor(SmartIdempotencyMixin, ProcessorBase):
             except (IndexError, ValueError) as e:
                 logger.warning(f"Could not extract source_file_date from path '{file_path}': {e}")
                 source_file_date = date.today()  # Fallback to today
-            
+
             for player_row in player_result['rowSet']:
                 try:
                     # Extract fields
@@ -269,15 +269,15 @@ class NbacPlayerListProcessor(SmartIdempotencyMixin, ProcessorBase):
                     full_name = f"{first_name} {last_name}"
                     team_id = player_row[header_map.get('TEAM_ID', 4)]
                     team_abbr = player_row[header_map.get('TEAM_ABBREVIATION', 9)] or ""
-                    
+
                     # Generate player_lookup
                     player_lookup = self._normalize_player_name(full_name)
-                    
+
                     # Check for duplicates
                     if player_lookup in seen_lookups:
                         self.duplicate_count += 1
                         logger.warning(f"Duplicate player_lookup '{player_lookup}': {full_name} ({team_abbr}) vs {seen_lookups[player_lookup]}")
-                        
+
                         if self.duplicate_count == 1:
                             try:
                                 notify_warning(
@@ -293,14 +293,14 @@ class NbacPlayerListProcessor(SmartIdempotencyMixin, ProcessorBase):
                                 )
                             except Exception as notify_ex:
                                 logger.warning(f"Failed to send notification: {notify_ex}")
-                    
+
                     seen_lookups[player_lookup] = f"{full_name} ({team_abbr})"
-                    
+
                     # Determine roster status
                     roster_status_code = player_row[header_map.get('ROSTER_STATUS', 19)]
                     is_active = roster_status_code == 1
                     roster_status = 'active' if is_active else 'inactive'
-                    
+
                     row = {
                         'player_lookup': player_lookup,
                         'player_id': player_id,
@@ -327,14 +327,14 @@ class NbacPlayerListProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'source_file_path': file_path,
                         'processed_at': datetime.utcnow().isoformat()
                     }
-                    
+
                     rows.append(row)
                     self.players_processed += 1
-                    
+
                 except Exception as e:
                     self.players_failed += 1
                     logger.error(f"Error processing player row: {e}")
-                    
+
                     if self.players_failed == 1:
                         try:
                             notify_error(
@@ -350,7 +350,7 @@ class NbacPlayerListProcessor(SmartIdempotencyMixin, ProcessorBase):
                         except Exception as notify_ex:
                             logger.warning(f"Failed to send notification: {notify_ex}")
                     continue
-            
+
             # Store transformed data
             self.transformed_data = rows
 
@@ -374,7 +374,7 @@ class NbacPlayerListProcessor(SmartIdempotencyMixin, ProcessorBase):
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             # Check for high failure rate
             if total_players > 0:
                 failure_rate = self.players_failed / total_players
@@ -394,9 +394,9 @@ class NbacPlayerListProcessor(SmartIdempotencyMixin, ProcessorBase):
                         )
                     except Exception as notify_ex:
                         logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             logger.info(f"Transformed {len(rows)} players (failed: {self.players_failed}, duplicates: {self.duplicate_count})")
-            
+
         except Exception as e:
             logger.error(f"Critical error in transform_data: {e}")
             try:
@@ -414,102 +414,102 @@ class NbacPlayerListProcessor(SmartIdempotencyMixin, ProcessorBase):
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
             raise
-    
+
     # ================================================================
     # STEP 4: SAVE DATA (OVERRIDE WITH MERGE STRATEGY)
     # ================================================================
     def save_data(self) -> None:
         """
         Override to use MERGE instead of APPEND.
-        
+
         Uses staging table approach from lessons learned doc.
         Prevents duplicate accumulation from multiple daily runs.
         """
         if not self.transformed_data:
             logger.warning("No transformed data to save")
             return
-        
+
         rows = self.transformed_data if isinstance(self.transformed_data, list) else [self.transformed_data]
-        
+
         if not rows:
             logger.warning("No rows to save")
             return
-        
+
         logger.info(f"Using MERGE strategy for {len(rows)} rows")
-        
+
         # Use staging table MERGE
         self._merge_via_staging_table(
             rows=rows,
             merge_keys=['player_lookup', 'team_abbr', 'season_year']
         )
-        
+
         self.stats["rows_inserted"] = len(rows)
         logger.info(f"Successfully merged {len(rows)} rows")
-    
+
     def _merge_via_staging_table(self, rows: List[Dict], merge_keys: List[str]) -> None:
         """
         MERGE records using staging table approach (from lessons learned).
-        
+
         Args:
             rows: List of record dictionaries
             merge_keys: Keys to match on for MERGE (e.g., ['player_lookup', 'team_abbr', 'season_year'])
         """
         if not rows:
             return
-        
+
         project_id = self.bq_client.project
         table_id = f"{project_id}.{self.dataset_id}.{self.table_name}"
         staging_table_name = f"{self.table_name}_staging_{self.run_id}"
         staging_table_id = f"{project_id}.{self.dataset_id}.{staging_table_name}"
-        
+
         try:
             # 1. Create staging table
             logger.info(f"Creating staging table: {staging_table_id}")
-            
+
             # Get main table schema
             main_table = self.bq_client.get_table(table_id)
-            
+
             # Create staging table with same schema and 30 min expiration
             staging_table = bigquery.Table(staging_table_id, schema=main_table.schema)
             staging_table.expires = datetime.utcnow() + timedelta(minutes=30)
             self.bq_client.create_table(staging_table)
-            
+
             # 2. Load data to staging table
             logger.info(f"Loading {len(rows)} rows to staging table")
-            
+
             # Convert types for JSON loading
             processed_rows = []
             for row in rows:
                 converted = self._convert_for_json_load(row)
                 processed_rows.append(converted)
-            
+
             job_config = bigquery.LoadJobConfig(
                 schema=main_table.schema,
                 write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE
             )
-            
+
             load_job = self.bq_client.load_table_from_json(
                 processed_rows,
                 staging_table_id,
                 job_config=job_config
             )
             load_job.result(timeout=60)  # Wait for completion
-            
+
             # 3. Execute MERGE from staging to main
             logger.info("Executing MERGE from staging to main table")
-            
+
             # Build ON clause
             on_conditions = " AND ".join([f"T.{key} = S.{key}" for key in merge_keys])
-            
+
             # Build UPDATE SET clause (all fields except merge keys)
             all_fields = [field.name for field in main_table.schema]
             update_fields = [f for f in all_fields if f not in merge_keys]
             update_set = ", ".join([f"{field} = S.{field}" for field in update_fields])
-            
+
             # Build INSERT clause
             insert_fields = ", ".join(all_fields)
             insert_values = ", ".join([f"S.{field}" for field in all_fields])
-            
+
             merge_query = f"""
             MERGE `{table_id}` T
             USING `{staging_table_id}` S
@@ -520,16 +520,16 @@ class NbacPlayerListProcessor(SmartIdempotencyMixin, ProcessorBase):
                 INSERT ({insert_fields})
                 VALUES ({insert_values})
             """
-            
+
             merge_job = self.bq_client.query(merge_query)
             merge_job.result(timeout=60)  # Wait for completion
-            
+
             logger.info("MERGE completed successfully")
-            
+
         except Exception as e:
             logger.error(f"MERGE operation failed: {e}")
             raise
-            
+
         finally:
             # Cleanup staging table
             try:
@@ -537,35 +537,35 @@ class NbacPlayerListProcessor(SmartIdempotencyMixin, ProcessorBase):
                 logger.debug(f"Cleaned up staging table: {staging_table_id}")
             except Exception as cleanup_error:
                 logger.warning(f"Failed to cleanup staging table: {cleanup_error}")
-    
+
     def _convert_for_json_load(self, record: Dict) -> Dict:
         """
         Convert record types for JSON loading (from lessons learned).
-        
+
         Args:
             record: Dictionary with potentially problematic types
-            
+
         Returns:
             Dictionary with JSON-safe types
         """
         import pandas as pd
-        
+
         converted = {}
-        
+
         timestamp_fields = {'processed_at', 'created_at', 'updated_at'}
         date_fields = {'last_seen_date', 'birth_date'}
-        
+
         for key, value in record.items():
             # Handle lists first (never call pd.isna on arrays)
             if isinstance(value, list):
                 converted[key] = value
                 continue
-            
+
             # Check for None/NaN on scalar values only
             if pd.isna(value):
                 converted[key] = None
                 continue
-            
+
             # TIMESTAMP fields - convert to ISO strings
             if key in timestamp_fields:
                 if isinstance(value, (datetime, pd.Timestamp)):
@@ -574,7 +574,7 @@ class NbacPlayerListProcessor(SmartIdempotencyMixin, ProcessorBase):
                     converted[key] = value
                 else:
                     converted[key] = None
-            
+
             # DATE fields - convert to ISO date strings
             elif key in date_fields:
                 if isinstance(value, (date, datetime)):
@@ -583,36 +583,36 @@ class NbacPlayerListProcessor(SmartIdempotencyMixin, ProcessorBase):
                     converted[key] = value
                 else:
                     converted[key] = None
-            
+
             # Other types pass through
             else:
                 converted[key] = value
-        
+
         return converted
-    
+
     # ================================================================
     # HELPER METHODS
     # ================================================================
     def _normalize_player_name(self, full_name: str) -> str:
         """Create normalized player lookup key - preserves suffixes, removes special chars."""
         import unicodedata
-        
+
         if not full_name:
             return ""
-        
+
         # Remove accents/diacritics (ñ → n, é → e, etc)
         normalized = unicodedata.normalize('NFD', full_name)
         normalized = ''.join(char for char in normalized if unicodedata.category(char) != 'Mn')
-        
+
         # Lowercase
         normalized = normalized.lower()
-        
+
         # Remove punctuation and spaces (but keep suffixes like jr, sr, ii, iii)
         for char in [' ', "'", '.', '-', ',']:
             normalized = normalized.replace(char, '')
-        
+
         return normalized
-    
+
     def get_processor_stats(self) -> Dict:
         """Return processor statistics."""
         return {
@@ -666,7 +666,7 @@ if __name__ == "__main__":
     # Run processor
     processor = NbacPlayerListProcessor()
     success = processor.run(opts)
-    
+
     logger.info("=" * 60)
     if success:
         logger.info("SUCCESS")

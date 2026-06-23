@@ -58,22 +58,22 @@ def delete_existing_data(self, records: List[Dict]) -> None:
     """
     if not records:
         return
-    
+
     # Get unique scrape_dates from records
     scrape_dates = set(record['scrape_date'] for record in records)
-    
+
     for scrape_date in scrape_dates:
         delete_query = f"""
         DELETE FROM `{self.project_id}.{self.dataset}.{self.table}`
         WHERE scrape_date = '{scrape_date}'
         """
-        
+
         self.logger.info(f"Deleting existing data for scrape_date: {scrape_date}")
-        
+
         try:
             query_job = self.bq_client.query(delete_query)
             query_job.result()  # Wait for completion
-            
+
             self.logger.info(f"Successfully deleted existing data for {scrape_date}")
         except Exception as e:
             self.logger.error(f"Error deleting data for {scrape_date}: {e}")
@@ -88,10 +88,10 @@ def insert_to_bigquery(self, records: List[Dict]) -> None:
     if not records:
         self.logger.warning("No records to insert")
         return
-    
+
     # Delete existing data for these dates first
     self.delete_existing_data(records)
-    
+
     # Then insert new data
     super().insert_to_bigquery(records)
 ```
@@ -110,10 +110,10 @@ def deduplicate_records(self, records: List[Dict]) -> List[Dict]:
     """
     seen_keys = set()
     deduplicated = []
-    
+
     for record in records:
         key = (record['scrape_date'], record['bdl_player_id'])
-        
+
         if key not in seen_keys:
             seen_keys.add(key)
             deduplicated.append(record)
@@ -121,27 +121,27 @@ def deduplicate_records(self, records: List[Dict]) -> List[Dict]:
             self.logger.warning(
                 f"Duplicate detected: {record['player_full_name']} on {record['scrape_date']} - skipping"
             )
-    
+
     original_count = len(records)
     final_count = len(deduplicated)
-    
+
     if original_count != final_count:
         self.logger.warning(
             f"Deduplication: {original_count} → {final_count} records "
             f"({original_count - final_count} duplicates removed)"
         )
-    
+
     return deduplicated
 
 def process_file(self, file_path: str) -> List[Dict]:
     """Process a single file and return deduplicated records."""
     # ... existing file processing logic ...
-    
+
     records = self.transform_records(raw_data)
-    
+
     # Add deduplication before returning
     deduplicated_records = self.deduplicate_records(records)
-    
+
     return deduplicated_records
 ```
 
@@ -168,13 +168,13 @@ def validate_unique_key(self, records: List[Dict]) -> bool:
     Validate that records have unique (scrape_date, bdl_player_id) combinations.
     """
     keys = [(r['scrape_date'], r['bdl_player_id']) for r in records]
-    
+
     if len(keys) != len(set(keys)):
         self.logger.error(
             f"Duplicate keys detected! {len(keys)} records, {len(set(keys))} unique keys"
         )
         return False
-    
+
     return True
 ```
 
@@ -213,7 +213,7 @@ def validate_unique_key(self, records: List[Dict]) -> bool:
 
 Likely causes:
 1. **JSON parsing issue** - Players array processed twice
-2. **Loop bug** - Iterating over players twice  
+2. **Loop bug** - Iterating over players twice
 3. **APPEND_ALWAYS + no deduplication** - Just inserts everything
 
 **Check these in processor code:**
@@ -237,7 +237,7 @@ all_injuries = injuries_1 + injuries_2  # DUPLICATES!
 
 ### Before Fix (Current)
 ```sql
-SELECT 
+SELECT
   scrape_date,
   COUNT(*) as total_records,
   COUNT(DISTINCT bdl_player_id) as unique_players
@@ -253,7 +253,7 @@ GROUP BY scrape_date;
 
 ### After Fix (Expected)
 ```sql
-SELECT 
+SELECT
   scrape_date,
   COUNT(*) as total_records,
   COUNT(DISTINCT bdl_player_id) as unique_players
@@ -298,7 +298,7 @@ gcloud run jobs execute bdl-injuries-processor-backfill \
 ```bash
 # Should show 115 records, not 230
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   scrape_date,
   COUNT(*) as total_records,
   COUNT(DISTINCT bdl_player_id) as unique_players
@@ -309,7 +309,7 @@ GROUP BY scrape_date;
 
 # Should return 0 rows (no duplicates)
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   scrape_date,
   bdl_player_id,
   player_full_name,
@@ -392,11 +392,11 @@ class BdlStandingsProcessor(BaseProcessor):
 
 After implementing fix:
 
-✅ **No duplicates:** `COUNT(*) = COUNT(DISTINCT bdl_player_id)` per date  
-✅ **Reprocessing safe:** Running twice on same date = same record count  
-✅ **Storage efficient:** ~115 records/day, not 230+  
-✅ **Query simplification:** No need for COUNT DISTINCT everywhere  
-✅ **Validation passing:** All validation queries work correctly  
+✅ **No duplicates:** `COUNT(*) = COUNT(DISTINCT bdl_player_id)` per date
+✅ **Reprocessing safe:** Running twice on same date = same record count
+✅ **Storage efficient:** ~115 records/day, not 230+
+✅ **Query simplification:** No need for COUNT DISTINCT everywhere
+✅ **Validation passing:** All validation queries work correctly
 
 ---
 
@@ -409,13 +409,13 @@ After implementing fix:
 
 ---
 
-**Priority:** HIGH - Fix before NBA season starts (October 22, 2025)  
-**Effort:** Medium - ~2-3 hours including testing  
-**Risk:** Low - Pattern proven in other processors  
+**Priority:** HIGH - Fix before NBA season starts (October 22, 2025)
+**Effort:** Medium - ~2-3 hours including testing
+**Risk:** Low - Pattern proven in other processors
 **Impact:** High - Prevents data bloat and query complexity
 
 ---
 
-**Last Updated:** October 13, 2025  
-**Status:** Specification Ready for Implementation  
+**Last Updated:** October 13, 2025
+**Status:** Specification Ready for Implementation
 **Target Completion:** Before Season Start (October 2025)

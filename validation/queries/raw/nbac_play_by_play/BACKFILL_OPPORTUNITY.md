@@ -3,10 +3,10 @@
 
 ## Executive Summary
 
-**Current Coverage**: 2 games (0.04% of available data)  
-**Available Data**: 5,400+ games from October 2021 onwards  
-**Business Impact**: HIGH - Official NBA play-by-play for advanced prop analysis  
-**Processing Time**: ~18-24 seconds per game = ~27-36 hours for full backfill  
+**Current Coverage**: 2 games (0.04% of available data)
+**Available Data**: 5,400+ games from October 2021 onwards
+**Business Impact**: HIGH - Official NBA play-by-play for advanced prop analysis
+**Processing Time**: ~18-24 seconds per game = ~27-36 hours for full backfill
 
 ## Coverage Analysis
 
@@ -58,18 +58,18 @@ Based on typical NBA schedule:
 
 ### Technical Advantages
 
-✅ **Processor Proven**: 100% success rate on test games  
-✅ **Infrastructure Ready**: BigQuery tables configured  
-✅ **Data Available**: NBA.com has historical play-by-play  
-✅ **Fast Processing**: 18-24 seconds per game  
+✅ **Processor Proven**: 100% success rate on test games
+✅ **Infrastructure Ready**: BigQuery tables configured
+✅ **Data Available**: NBA.com has historical play-by-play
+✅ **Fast Processing**: 18-24 seconds per game
 
 ## Backfill Strategy
 
 ### Phase 1: Current Season (Priority)
 
-**Target**: 2024-25 season games  
-**Reasoning**: Most valuable for current operations  
-**Timeline**: 1-2 days  
+**Target**: 2024-25 season games
+**Reasoning**: Most valuable for current operations
+**Timeline**: 1-2 days
 
 ```bash
 # Current season dates (adjust as needed)
@@ -89,16 +89,16 @@ python scrapers/nba_com/nbac_play_by_play.py \
 
 ### Phase 2: Recent Historical (High Value)
 
-**Target**: 2023-24 and 2022-23 seasons  
-**Reasoning**: Recent data for model training  
-**Timeline**: 3-4 days  
+**Target**: 2023-24 and 2022-23 seasons
+**Reasoning**: Recent data for model training
+**Timeline**: 3-4 days
 
 ```bash
 # 2023-24 season
 START_DATE="2023-10-24"
 END_DATE="2024-06-17"  # Finals
 
-# 2022-23 season  
+# 2022-23 season
 START_DATE="2022-10-18"
 END_DATE="2023-06-12"  # Finals
 
@@ -117,9 +117,9 @@ done
 
 ### Phase 3: Complete Historical (Full Coverage)
 
-**Target**: 2021-22 season  
-**Reasoning**: Complete 4-season dataset  
-**Timeline**: 2-3 days  
+**Target**: 2021-22 season
+**Reasoning**: Complete 4-season dataset
+**Timeline**: 2-3 days
 
 ```bash
 # 2021-22 season
@@ -210,14 +210,14 @@ diff pre_backfill_*.csv post_backfill_*.csv
 
 # Verify expected metrics
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   EXTRACT(YEAR FROM game_date) as season,
   COUNT(DISTINCT game_id) as games,
   COUNT(*) as total_events,
   COUNT(DISTINCT player_1_id) as unique_players,
   ROUND(AVG(events_per_game), 0) as avg_events
 FROM (
-  SELECT 
+  SELECT
     game_date,
     game_id,
     player_1_id,
@@ -234,26 +234,26 @@ ORDER BY season DESC
 
 ### Data Quality Risks
 
-**Risk**: Older games may have different data formats  
-**Mitigation**: Process most recent season first, validate thoroughly  
+**Risk**: Older games may have different data formats
+**Mitigation**: Process most recent season first, validate thoroughly
 **Rollback**: Keep pre-backfill snapshot
 
-**Risk**: Scraper rate limits from NBA.com  
-**Mitigation**: Implement delays between requests  
+**Risk**: Scraper rate limits from NBA.com
+**Mitigation**: Implement delays between requests
 **Monitoring**: Track HTTP errors
 
-**Risk**: BigQuery streaming buffer conflicts  
-**Mitigation**: MERGE_UPDATE strategy handles duplicates  
+**Risk**: BigQuery streaming buffer conflicts
+**Mitigation**: MERGE_UPDATE strategy handles duplicates
 **Validation**: Row count verification after each phase
 
 ### Processing Risks
 
-**Risk**: Cloud Run timeouts on large batches  
-**Mitigation**: Process month-by-month, not full season  
+**Risk**: Cloud Run timeouts on large batches
+**Mitigation**: Process month-by-month, not full season
 **Recovery**: Resume from last successful date
 
-**Risk**: Out of memory errors  
-**Mitigation**: 8Gi memory allocation  
+**Risk**: Out of memory errors
+**Mitigation**: 8Gi memory allocation
 **Alternative**: Process games individually if needed
 
 ## Success Criteria

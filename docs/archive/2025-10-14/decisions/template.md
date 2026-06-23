@@ -1,8 +1,8 @@
 # ADR-NNN: [Title]
 
-**Date:** YYYY-MM-DD  
-**Status:** [Proposed | Accepted | Deprecated | Superseded by ADR-XXX]  
-**Deciders:** [Names or roles]  
+**Date:** YYYY-MM-DD
+**Status:** [Proposed | Accepted | Deprecated | Superseded by ADR-XXX]
+**Deciders:** [Names or roles]
 **Tags:** [e.g., architecture, scrapers, database]
 
 ## Context

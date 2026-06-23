@@ -59,11 +59,11 @@ GCS_RETRY = retry.Retry(
 
 class StorageClient:
     """Centralized Cloud Storage operations for NBA platform"""
-    
+
     def __init__(self, project_id: str):
         self.client = storage.Client(project=project_id)
         self.project_id = project_id
-    
+
     def upload_json(self, bucket_name: str, blob_name: str,
                    data: Dict[str, Any], compress: bool = True) -> bool:
         """
@@ -105,7 +105,7 @@ class StorageClient:
         except Exception as e:
             logger.error(f"Failed to upload to gs://{bucket_name}/{blob_name}: {e}", exc_info=True)
             return False
-    
+
     def download_json(self, bucket_name: str, blob_name: str) -> Optional[Dict[str, Any]]:
         """
         Download and parse JSON from Cloud Storage with retry on transient errors.
@@ -147,7 +147,7 @@ class StorageClient:
         except Exception as e:
             logger.error(f"Failed to download from gs://{bucket_name}/{blob_name}: {e}", exc_info=True)
             return None
-    
+
     def upload_raw_bytes(self, bucket_name: str, blob_name: str,
                         data: bytes, content_type: str = 'application/octet-stream') -> bool:
         """Upload raw bytes to Cloud Storage with retry on transient errors."""
@@ -167,7 +167,7 @@ class StorageClient:
         except Exception as e:
             logger.error(f"Failed to upload bytes to gs://{bucket_name}/{blob_name}: {e}", exc_info=True)
             return False
-    
+
     def list_objects(self, bucket_name: str, prefix: str = "",
                     max_results: int = 1000) -> List[str]:
         """
@@ -196,7 +196,7 @@ class StorageClient:
         except Exception as e:
             logger.error(f"Failed to list objects in gs://{bucket_name}: {e}", exc_info=True)
             return []
-    
+
     def delete_object(self, bucket_name: str, blob_name: str) -> bool:
         """Delete object from Cloud Storage with retry on transient errors"""
         try:
@@ -211,14 +211,14 @@ class StorageClient:
 
             logger.info(f"Deleted gs://{bucket_name}/{blob_name}")
             return True
-            
+
         except exceptions.NotFound:
             logger.warning(f"Object gs://{bucket_name}/{blob_name} not found")
             return True  # Consider this success
         except Exception as e:
             logger.error(f"Failed to delete gs://{bucket_name}/{blob_name}: {e}", exc_info=True)
             return False
-    
+
     def object_exists(self, bucket_name: str, blob_name: str) -> bool:
         """Check if object exists in Cloud Storage"""
         try:
@@ -228,23 +228,23 @@ class StorageClient:
         except Exception as e:
             logger.error(f"Error checking if gs://{bucket_name}/{blob_name} exists: {e}", exc_info=True)
             return False
-    
-    def generate_storage_path(self, service: str, component: str, 
+
+    def generate_storage_path(self, service: str, component: str,
                             run_id: str, timestamp: Optional[datetime] = None) -> str:
         """
         Generate standardized storage path for NBA platform
-        
+
         Args:
             service: Service name (scrapers, processors, reportgen)
             component: Component name (odds_api_events, etc.)
             run_id: Unique run identifier
             timestamp: Optional timestamp (defaults to now)
-            
+
         Returns:
             Standardized path like: scrapers/odds_api_events/2025/01/15/run_id.json
         """
         if timestamp is None:
             timestamp = datetime.utcnow()
-        
+
         date_path = timestamp.strftime('%Y/%m/%d')
         return f"{service}/{component}/{date_path}/{run_id}.json"

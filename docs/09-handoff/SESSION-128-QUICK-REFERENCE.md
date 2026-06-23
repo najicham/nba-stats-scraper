@@ -12,8 +12,8 @@
 
 2. **Check grading coverage for Feb 4:**
    ```bash
-   bq query "SELECT COUNT(*), COUNTIF(prediction_correct IS NOT NULL) 
-   FROM nba_predictions.prediction_accuracy 
+   bq query "SELECT COUNT(*), COUNTIF(prediction_correct IS NOT NULL)
+   FROM nba_predictions.prediction_accuracy
    WHERE game_date = '2026-02-04' AND system_id = 'catboost_v9'"
    ```
    Expected: ≥80% graded. If <80%, run manual regrade.
@@ -61,7 +61,7 @@
 
 **Deploying (verify completion):**
 - nba-phase3-analytics-processors
-- prediction-coordinator  
+- prediction-coordinator
 - prediction-worker
 
 **Already up-to-date:**

@@ -415,7 +415,7 @@ class PrecomputeProcessorBase(
     DEBUG_FILE_PREFIX: str = 'precompute_debug'  # For debug file naming
     OUTPUT_TABLE: str = ''  # Set to table_name in run()
     OUTPUT_DATASET: str = None  # Will be set from sport_config in __init__
-    
+
     def __init__(self):
         """
         Initialize precompute processor with GCP clients and tracking state.
@@ -1063,7 +1063,7 @@ class PrecomputeProcessorBase(
     # =========================================================================
     # Dependency Checking System
     # =========================================================================
-    
+
     def get_dependencies(self) -> dict:
         """
         Define required upstream tables and their validation constraints.
@@ -1142,7 +1142,7 @@ class PrecomputeProcessorBase(
             - ``track_source_usage()``: Records metadata from dependency check
         """
         raise NotImplementedError("Child classes must implement get_dependencies()")
-    
+
     def check_dependencies(self, analysis_date: date) -> dict:
         """
         Validate that upstream data exists and meets freshness requirements.
@@ -1191,7 +1191,7 @@ class PrecomputeProcessorBase(
             analysis_date = datetime.strptime(analysis_date, '%Y-%m-%d').date()
 
         dependencies = self.get_dependencies()
-        
+
         results = {
             'all_critical_present': True,
             'all_fresh': True,
@@ -1199,17 +1199,17 @@ class PrecomputeProcessorBase(
             'stale': [],
             'details': {}
         }
-        
+
         for table_name, config in dependencies.items():
             logger.info(f"Checking dependency: {table_name}")
-            
+
             # Check existence and metadata
             exists, details = self._check_table_data(
                 table_name=table_name,
                 analysis_date=analysis_date,
                 config=config
             )
-            
+
             # Check if missing
             if not exists:
                 if config.get('critical', True):
@@ -1218,7 +1218,7 @@ class PrecomputeProcessorBase(
                     logger.error(f"Missing critical dependency: {table_name}")
                 else:
                     logger.warning(f"Missing optional dependency: {table_name}")
-            
+
             # Check freshness (if exists)
             if exists and details.get('age_hours') is not None:
                 max_age = config.get('max_age_hours', 24)
@@ -1228,7 +1228,7 @@ class PrecomputeProcessorBase(
                                f"(max: {max_age}h)")
                     results['stale'].append(stale_msg)
                     logger.warning(f"Stale dependency: {stale_msg}")
-            
+
             results['details'][table_name] = details
 
         # Check if this is early season (first 14 days) - processors may skip during this period
@@ -1247,7 +1247,7 @@ class PrecomputeProcessorBase(
                    f"fresh={results['all_fresh']}")
 
         return results
-    
+
     def _check_table_data(self, table_name: str, analysis_date: date,
                           config: dict) -> tuple:
         """
@@ -1300,33 +1300,33 @@ class PrecomputeProcessorBase(
             if check_type == 'date_match':
                 # Check for exact date match
                 query = f"""
-                SELECT 
+                SELECT
                     COUNT(*) as row_count,
                     MAX(processed_at) as last_updated
                 FROM `{self.project_id}.{table_name}`
                 WHERE {date_field} = '{analysis_date}'
                 """
-                
+
             elif check_type == 'lookback':
                 # Check for rolling window (e.g., last 15 games)
                 lookback_games = config.get('lookback_games', 10)
                 # Approximate: lookback_games * 30 teams (for team data)
                 # or lookback_games * 450 players (for player data)
                 limit = lookback_games * 100  # Conservative estimate
-                
+
                 query = f"""
-                SELECT 
+                SELECT
                     COUNT(*) as row_count,
                     MAX(processed_at) as last_updated
                 FROM (
-                    SELECT * 
+                    SELECT *
                     FROM `{self.project_id}.{table_name}`
                     WHERE {date_field} <= '{analysis_date}'
                     ORDER BY {date_field} DESC
                     LIMIT {limit}
                 )
                 """
-                
+
             elif check_type == 'existence':
                 # Just check if any data exists
                 query = f"""
@@ -1359,7 +1359,7 @@ class PrecomputeProcessorBase(
             query_timeout = 60 if self.is_backfill_mode else 300  # 60s for backfill, 5min otherwise
             query_job = self.bq_client.query(query)
             result = list(query_job.result(timeout=query_timeout))
-            
+
             if not result:
                 return False, {
                     'exists': False,
@@ -1368,7 +1368,7 @@ class PrecomputeProcessorBase(
                     'last_updated': None,
                     'error': 'No query results'
                 }
-            
+
             row = result[0]
             row_count = row.row_count
             last_updated = row.last_updated
@@ -1382,11 +1382,11 @@ class PrecomputeProcessorBase(
                 age_hours = (datetime.now(timezone.utc) - last_updated).total_seconds() / 3600
             else:
                 age_hours = None
-            
+
             # Determine if exists based on minimum count
             expected_min = config.get('expected_count_min', 1)
             exists = row_count >= expected_min
-            
+
             details = {
                 'exists': exists,
                 'row_count': row_count,
@@ -1394,9 +1394,9 @@ class PrecomputeProcessorBase(
                 'age_hours': round(age_hours, 2) if age_hours else None,
                 'last_updated': last_updated.isoformat() if last_updated else None
             }
-            
+
             logger.debug(f"{table_name}: {details}")
-            
+
             return exists, details
 
         except GoogleAPIError as e:

@@ -91,7 +91,7 @@ Look for any new error emails about:
 ## Commits from Session 184
 ```
 cbe162e fix: Add storage import for ESPN roster folder handling
-e1d8401 fix: Handle ESPN roster folder paths in processor orchestration  
+e1d8401 fix: Handle ESPN roster folder paths in processor orchestration
 ba5bb8c docs: Update Session 184 handoff with verification results
 d59d596 fix: Handle gcs_path-only messages in processor orchestration
 68cf293 docs: Add Session 184 handoff - game_id format fix

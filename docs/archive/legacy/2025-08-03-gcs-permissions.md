@@ -1,7 +1,7 @@
 # NBA Props Platform - GCS Permissions & Service Account Guide
 
-**Document Version:** 1.0  
-**Date:** August 3, 2025  
+**Document Version:** 1.0
+**Date:** August 3, 2025
 **Context:** Backfill workflow development and GCS permissions troubleshooting
 
 ## Overview
@@ -69,7 +69,7 @@ Project-level `roles/editor` should theoretically grant storage access, but GCS 
 # Check what service account workflows use
 gcloud workflows describe collect-nba-historical-schedules --location=us-west2 --format="value(serviceAccount)"
 
-# Check what service account Cloud Run uses  
+# Check what service account Cloud Run uses
 gcloud run services describe nba-scrapers --region=us-west2 --format="value(spec.template.spec.serviceAccountName)"
 ```
 
@@ -138,7 +138,7 @@ args:
 Service Account: 756957797294-compute@developer.gserviceaccount.com
 Roles:
   - roles/editor                    # Broad project permissions
-  - roles/logging.logWriter         # Write to Cloud Logging  
+  - roles/logging.logWriter         # Write to Cloud Logging
   - roles/monitoring.metricWriter   # Write metrics
   - roles/workflows.invoker         # Invoke workflows
 ```
@@ -150,11 +150,11 @@ Roles:
 Project-level bindings:
   - projectEditor:nba-props-platform
   - projectOwner:nba-props-platform
-  
+
 Note: Cloud Run services write successfully through project-level inheritance
 ```
 
-#### `nba-props-status` bucket  
+#### `nba-props-status` bucket
 ```
 Project-level bindings:
   - projectEditor:nba-props-platform
@@ -300,6 +300,6 @@ Implement lifecycle policies for status files (e.g., delete after 90 days) to ma
 
 ---
 
-**Document Owner:** Development Team  
-**Last Updated:** August 3, 2025  
+**Document Owner:** Development Team
+**Last Updated:** August 3, 2025
 **Next Review:** During next major system expansion

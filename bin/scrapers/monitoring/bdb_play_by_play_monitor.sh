@@ -32,14 +32,14 @@ LATEST_EXECUTION=$(gcloud run jobs executions list \
 if [ -n "$LATEST_EXECUTION" ]; then
     echo "Latest execution: $LATEST_EXECUTION"
     echo ""
-    
+
     # Show execution details
     echo "Execution status:"
     gcloud run jobs executions describe ${LATEST_EXECUTION} \
         --region=${REGION} \
         --project=${PROJECT_ID} \
         --format="table(metadata.name,status.conditions[0].type,status.conditions[0].status,status.startTime,status.completionTime)"
-    
+
     echo ""
     echo "Recent logs (last 50 lines):"
     gcloud logging read "resource.type=cloud_run_job AND resource.labels.job_name=${JOB_NAME} AND resource.labels.location=${REGION}" \
@@ -67,17 +67,17 @@ if [ "$EXISTING_DATES" -gt 0 ]; then
     echo ""
     echo "Sample of existing dates:"
     gcloud storage ls gs://nba-scraped-data/big-data-ball/2024-25/ | head -10
-    
+
     echo ""
     echo "Recent dates added:"
     gcloud storage ls gs://nba-scraped-data/big-data-ball/2024-25/ | tail -5
-    
+
     # Count total games
     echo ""
     echo "Counting total games in 2024-25..."
     TOTAL_GAMES=$(gcloud storage ls -r gs://nba-scraped-data/big-data-ball/2024-25/*/game_*/ 2>/dev/null | wc -l || echo "0")
     echo "Total games collected: $TOTAL_GAMES"
-    
+
     # Check file sizes
     echo ""
     echo "Sample file sizes (should be ~2-5MB each):"

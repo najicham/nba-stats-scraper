@@ -100,7 +100,7 @@ gcloud storage cat $LATEST_BDL | jq '{
   team_analysis: {
     teams_count: ([.activePlayers[] | .team.abbreviation] | unique | length),
     players_per_team: ([.activePlayers[] | .team.abbreviation] | group_by(.) | map({
-      team: .[0], 
+      team: .[0],
       players: length
     }) | sort_by(.team))
   },
@@ -135,7 +135,7 @@ gcloud storage cat $LATEST_MOVEMENT | jq '{
   },
   transaction_breakdown: {
     by_type: ([.rows[] | .Transaction_Type] | group_by(.) | map({
-      type: .[0], 
+      type: .[0],
       count: length
     }) | sort_by(-.count)),
     recent_activity: [.rows[] | select(.TRANSACTION_DATE | contains("2025-07")) | {
@@ -438,7 +438,7 @@ gcloud storage cat $LATEST_TEAM_PLAYERS | jq '{
 # LATEST_BDL_TEAMS=$(gcloud storage ls gs://nba-analytics-raw-data/ball-dont-lie/teams/$(date +%Y-%m-%d)/ | tail -1)
 # gcloud storage cat $LATEST_BDL_TEAMS | jq '{ TODO: Add after fixing GCS path }'
 
-# bdl_players.py - Missing path key: bdl_players  
+# bdl_players.py - Missing path key: bdl_players
 # LATEST_BDL_PLAYERS=$(gcloud storage ls gs://nba-analytics-raw-data/ball-dont-lie/players/$(date +%Y-%m-%d)/ | tail -1)
 # gcloud storage cat $LATEST_BDL_PLAYERS | jq '{ TODO: Add after fixing GCS path }'
 
@@ -473,7 +473,7 @@ gcloud storage cat $LATEST_TEAM_PLAYERS | jq '{
 # LATEST_NBA_PBP=$(gcloud storage ls gs://nba-analytics-raw-data/nba-com/play-by-play/$(date +%Y-%m-%d)/game_GAME_ID/ | tail -1)
 # gcloud storage cat $LATEST_NBA_PBP | jq '{ TODO: Add after testing }'
 
-# nbac_schedule_api.py - Needs testing  
+# nbac_schedule_api.py - Needs testing
 # LATEST_NBA_SCHEDULE_API=$(gcloud storage ls gs://nba-analytics-raw-data/nba-com/schedule-api/$(date +%Y-%m-%d)/ | tail -1)
 # gcloud storage cat $LATEST_NBA_SCHEDULE_API | jq '{ TODO: Add after testing }'
 ```

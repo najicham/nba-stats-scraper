@@ -21,17 +21,17 @@ WITH last_7_days AS (
     COUNT(DISTINCT season_year) as distinct_seasons,
     -- Get top team from each conference for context
     STRING_AGG(
-      CASE WHEN conference_rank = 1 AND conference = 'East' 
-           THEN CONCAT(team_abbr, ' (', CAST(wins AS STRING), '-', CAST(losses AS STRING), ')') 
+      CASE WHEN conference_rank = 1 AND conference = 'East'
+           THEN CONCAT(team_abbr, ' (', CAST(wins AS STRING), '-', CAST(losses AS STRING), ')')
       END, ', ' LIMIT 1
     ) as east_leader,
     STRING_AGG(
-      CASE WHEN conference_rank = 1 AND conference = 'West' 
-           THEN CONCAT(team_abbr, ' (', CAST(wins AS STRING), '-', CAST(losses AS STRING), ')') 
+      CASE WHEN conference_rank = 1 AND conference = 'West'
+           THEN CONCAT(team_abbr, ' (', CAST(wins AS STRING), '-', CAST(losses AS STRING), ')')
       END, ', ' LIMIT 1
     ) as west_leader
   FROM `nba-props-platform.nba_raw.bdl_standings`
-  WHERE date_recorded BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY) 
+  WHERE date_recorded BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
                           AND CURRENT_DATE()
   GROUP BY date_recorded
 ),
@@ -40,15 +40,15 @@ all_dates AS (
   -- Generate all dates in the last 7 days
   SELECT date_val as expected_date
   FROM UNNEST(GENERATE_DATE_ARRAY(
-    DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY), 
+    DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY),
     CURRENT_DATE()
   )) as date_val
 ),
 
 season_context AS (
-  SELECT 
+  SELECT
     expected_date,
-    CASE 
+    CASE
       WHEN EXTRACT(MONTH FROM expected_date) BETWEEN 10 AND 12 THEN TRUE
       WHEN EXTRACT(MONTH FROM expected_date) BETWEEN 1 AND 6 THEN TRUE
       ELSE FALSE
@@ -73,24 +73,24 @@ SELECT
     -- Perfect snapshot
     WHEN d.team_count = 30 AND d.east_teams = 15 AND d.west_teams = 15
       THEN '✅ Complete'
-    
+
     -- Missing data during offseason (normal)
     WHEN d.team_count IS NULL AND NOT s.is_nba_season
       THEN '⚪ No data (offseason - normal)'
-    
+
     -- Missing data during season (CRITICAL)
     WHEN d.team_count IS NULL AND s.is_nba_season
       THEN '🔴 MISSING: No data during season'
-    
+
     -- Wrong team count
     WHEN d.team_count != 30
       THEN CONCAT('⚠️ Incomplete: ', CAST(d.team_count AS STRING), ' teams')
-    
+
     -- Conference imbalance
     WHEN d.east_teams != 15 OR d.west_teams != 15
-      THEN CONCAT('⚠️ Imbalance: E', CAST(d.east_teams AS STRING), 
+      THEN CONCAT('⚠️ Imbalance: E', CAST(d.east_teams AS STRING),
                   '/W', CAST(d.west_teams AS STRING))
-    
+
     ELSE '✅ Complete'
   END as status
 
@@ -114,21 +114,21 @@ WITH last_7_days AS (
     MAX(games_played) as max_games_played,
     COUNT(DISTINCT season_year) as distinct_seasons,
     STRING_AGG(
-      CASE WHEN conference_rank = 1 AND conference = 'East' 
-           THEN CONCAT(team_abbr, ' (', CAST(wins AS STRING), '-', CAST(losses AS STRING), ')') 
+      CASE WHEN conference_rank = 1 AND conference = 'East'
+           THEN CONCAT(team_abbr, ' (', CAST(wins AS STRING), '-', CAST(losses AS STRING), ')')
       END, ', ' LIMIT 1
     ) as east_leader,
     STRING_AGG(
-      CASE WHEN conference_rank = 1 AND conference = 'West' 
-           THEN CONCAT(team_abbr, ' (', CAST(wins AS STRING), '-', CAST(losses AS STRING), ')') 
+      CASE WHEN conference_rank = 1 AND conference = 'West'
+           THEN CONCAT(team_abbr, ' (', CAST(wins AS STRING), '-', CAST(losses AS STRING), ')')
       END, ', ' LIMIT 1
     ) as west_leader
   FROM `nba-props-platform.nba_raw.bdl_standings`
-  WHERE date_recorded BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY) 
+  WHERE date_recorded BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
                           AND CURRENT_DATE()
   GROUP BY date_recorded
 )
-SELECT 
+SELECT
   '📊 WEEKLY SUMMARY' as section,
   COUNT(DISTINCT date_recorded) as dates_with_data,
   7 as dates_expected,

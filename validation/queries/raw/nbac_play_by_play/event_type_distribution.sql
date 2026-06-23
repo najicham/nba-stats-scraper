@@ -6,7 +6,7 @@
 -- ============================================================================
 
 WITH event_stats AS (
-  SELECT 
+  SELECT
     game_date,
     game_id,
     event_type,
@@ -20,7 +20,7 @@ WITH event_stats AS (
   GROUP BY game_date, game_id, event_type, event_action_type
 )
 
-SELECT 
+SELECT
   event_type,
   event_action_type,
   SUM(event_count) as total_events,
@@ -30,8 +30,8 @@ SELECT
   SUM(shots_made) as total_made,
   SUM(shots_missed) as total_missed,
   -- Calculate shooting percentage for shot events
-  CASE 
-    WHEN event_type IN ('2pt', '3pt', 'freethrow') AND (SUM(shots_made) + SUM(shots_missed)) > 0 
+  CASE
+    WHEN event_type IN ('2pt', '3pt', 'freethrow') AND (SUM(shots_made) + SUM(shots_missed)) > 0
     THEN ROUND(100.0 * SUM(shots_made) / (SUM(shots_made) + SUM(shots_missed)), 1)
     ELSE NULL
   END as shot_pct

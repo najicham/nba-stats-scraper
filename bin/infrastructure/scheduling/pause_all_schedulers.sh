@@ -13,7 +13,7 @@ echo ""
 # List of individual schedulers (not workflow triggers)
 INDIVIDUAL_SCHEDULERS=(
     "nba-odds-events"
-    "nba-odds-props" 
+    "nba-odds-props"
     "nba-odds-team-players"
     "nba-player-list"
     "nba-injury-report"
@@ -35,11 +35,11 @@ INDIVIDUAL_SCHEDULERS=(
 show_current_status() {
     echo "📊 Current Scheduler Status"
     echo "=========================="
-    
+
     echo ""
     echo "🔄 Workflow Schedulers (New System):"
     gcloud scheduler jobs list --location=$REGION --filter="name ~ .*trigger" --format="table(name,schedule,state)" 2>/dev/null
-    
+
     echo ""
     echo "🗓️ Individual Schedulers (Old System):"
     gcloud scheduler jobs list --location=$REGION --filter="NOT name ~ .*trigger" --format="table(name,schedule,state)" 2>/dev/null
@@ -52,7 +52,7 @@ pause_individual_schedulers() {
     echo "This will pause (not delete) all individual schedulers."
     echo "You can always resume them if needed."
     echo ""
-    
+
     # Show what will be paused
     echo "📋 Schedulers that will be paused:"
     for scheduler in "${INDIVIDUAL_SCHEDULERS[@]}"; do
@@ -62,14 +62,14 @@ pause_individual_schedulers() {
             echo "  ⚠️ $scheduler (not found - skipping)"
         fi
     done
-    
+
     echo ""
     read -p "Are you sure you want to pause these individual schedulers? (y/N): " confirm
-    
+
     if [[ $confirm =~ ^[Yy]$ ]]; then
         echo ""
         echo "⏸️ Pausing schedulers..."
-        
+
         paused_count=0
         for scheduler in "${INDIVIDUAL_SCHEDULERS[@]}"; do
             if gcloud scheduler jobs describe $scheduler --location=$REGION >/dev/null 2>&1; then
@@ -82,11 +82,11 @@ pause_individual_schedulers() {
                 fi
             fi
         done
-        
+
         echo ""
         echo "✅ Paused $paused_count individual schedulers"
         echo "🔄 Workflow schedulers continue running"
-        
+
     else
         echo "❌ Pausing cancelled"
     fi
@@ -98,13 +98,13 @@ resume_individual_schedulers() {
     echo "================================="
     echo "This will resume all paused individual schedulers."
     echo ""
-    
+
     read -p "Are you sure you want to resume individual schedulers? (y/N): " confirm
-    
+
     if [[ $confirm =~ ^[Yy]$ ]]; then
         echo ""
         echo "▶️ Resuming schedulers..."
-        
+
         resumed_count=0
         for scheduler in "${INDIVIDUAL_SCHEDULERS[@]}"; do
             if gcloud scheduler jobs describe $scheduler --location=$REGION >/dev/null 2>&1; then
@@ -120,10 +120,10 @@ resume_individual_schedulers() {
                 fi
             fi
         done
-        
+
         echo ""
         echo "✅ Resumed $resumed_count individual schedulers"
-        
+
     else
         echo "❌ Resuming cancelled"
     fi
@@ -136,22 +136,22 @@ delete_individual_schedulers() {
     echo "⚠️ WARNING: This will PERMANENTLY DELETE all individual schedulers!"
     echo "Only do this after workflows have been running successfully for at least 1 week."
     echo ""
-    
+
     echo "📋 Schedulers that will be DELETED:"
     for scheduler in "${INDIVIDUAL_SCHEDULERS[@]}"; do
         if gcloud scheduler jobs describe $scheduler --location=$REGION >/dev/null 2>&1; then
             echo "  • $scheduler"
         fi
     done
-    
+
     echo ""
     echo "⚠️ This action cannot be undone!"
     read -p "Type 'DELETE' to confirm permanent deletion: " confirm
-    
+
     if [[ $confirm == "DELETE" ]]; then
         echo ""
         echo "🗑️ Deleting schedulers..."
-        
+
         deleted_count=0
         for scheduler in "${INDIVIDUAL_SCHEDULERS[@]}"; do
             if gcloud scheduler jobs describe $scheduler --location=$REGION >/dev/null 2>&1; then
@@ -164,11 +164,11 @@ delete_individual_schedulers() {
                 fi
             fi
         done
-        
+
         echo ""
         echo "✅ Deleted $deleted_count individual schedulers"
         echo "🔄 Only workflow schedulers remain"
-        
+
     else
         echo "❌ Deletion cancelled"
     fi
@@ -190,7 +190,7 @@ show_menu() {
 while true; do
     show_menu
     read -p "Enter your choice (1-5): " choice
-    
+
     case $choice in
         1)
             show_current_status
@@ -216,7 +216,7 @@ while true; do
             echo "❌ Invalid choice. Please enter 1-5."
             ;;
     esac
-    
+
     echo ""
     echo "Press Enter to continue..."
     read

@@ -10,7 +10,7 @@ Great news - I've completed the top 5 priority analyses you requested! Here are 
 
 Performance by tier (Dec 20, 2025 - Jan 15, 2026):
 - 92%+: 74.8% win rate ✅
-- 90-92%: 75.1% win rate ✅  
+- 90-92%: 75.1% win rate ✅
 - **88-90%: 44.3% win rate** ❌❌❌ (7.86 pts avg error)
 - 86-88%: 67.6% win rate ✅
 - 80-86%: 52.0% win rate ⚠️
@@ -85,7 +85,7 @@ confidence >= 0.86 AND NOT (confidence >= 0.88 AND confidence < 0.90)
 
 **Critical finding**: Confidence dropped dramatically on Jan 8
 - Jan 1-7: 90% avg confidence
-- Jan 8-15: 50-89% avg confidence  
+- Jan 8-15: 50-89% avg confidence
 - **Something changed between Jan 7 and Jan 8!**
 
 **Action needed**: Check system logs, deployments, config changes for Jan 7-8.

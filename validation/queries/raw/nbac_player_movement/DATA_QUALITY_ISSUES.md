@@ -1,8 +1,8 @@
 # NBA.com Player Movement - Data Quality Issues & Resolutions
 
-**Document Version:** 1.0  
-**Last Updated:** October 13, 2025  
-**Status:** Active Issues Identified  
+**Document Version:** 1.0
+**Last Updated:** October 13, 2025
+**Status:** Active Issues Identified
 **Table:** `nba-props-platform.nba_raw.nbac_player_movement`
 
 ---
@@ -27,10 +27,10 @@ Both issues have known root causes, clear resolution paths, and preventative mea
 
 ### Problem Description
 
-**Count:** 18 duplicate records (out of 4,457 total records = 0.4%)  
-**Affected Data:** Non-player trade transactions only (`player_id = 0`, `is_player_transaction = FALSE`)  
-**Scope:** Draft picks and cash considerations in trades  
-**Discovery Date:** October 13, 2025  
+**Count:** 18 duplicate records (out of 4,457 total records = 0.4%)
+**Affected Data:** Non-player trade transactions only (`player_id = 0`, `is_player_transaction = FALSE`)
+**Scope:** Draft picks and cash considerations in trades
+**Discovery Date:** October 13, 2025
 **Detection Method:** `data_quality_checks.sql` validation query
 
 ### Evidence
@@ -51,7 +51,7 @@ Trade 2024036 (MIL):
 
 **Query to Verify:**
 ```sql
-SELECT 
+SELECT
   player_id, team_id, transaction_date, transaction_type, group_sort,
   player_full_name, team_abbr,
   COUNT(*) as duplicate_count,
@@ -102,7 +102,7 @@ AS SELECT * FROM \`nba-props-platform.nba_raw.nbac_player_movement\`
 
 ```sql
 -- Confirm all duplicates are non-player trades
-SELECT 
+SELECT
   COUNT(*) as total_duplicate_records,
   COUNT(DISTINCT player_id) as unique_player_ids,
   COUNT(CASE WHEN player_id = 0 THEN 1 END) as non_player_duplicates,
@@ -141,7 +141,7 @@ WHERE (player_id, team_id, transaction_date, transaction_type, group_sort, creat
 
 ```sql
 -- Should return 0 rows
-SELECT 
+SELECT
   player_id, team_id, transaction_date, transaction_type, group_sort,
   COUNT(*) as duplicate_count
 FROM `nba-props-platform.nba_raw.nbac_player_movement`
@@ -163,11 +163,11 @@ HAVING COUNT(*) > 1;
 # 1. Separate handling of non-player transactions
 if not is_player_transaction:
     # Check if this block processes same record twice
-    
+
 # 2. Loop over trade parts
 for trade_part in trade_data:
     # Verify non-player assets only processed once
-    
+
 # 3. INSERT_NEW_ONLY validation
 # Confirm primary key check applies to ALL records, including player_id=0
 ```
@@ -186,7 +186,7 @@ for record in records_to_insert:
         record['transaction_type'],
         record['group_sort']
     )
-    
+
     if key not in seen_keys:
         unique_records.append(record)
         seen_keys.add(key)
@@ -214,10 +214,10 @@ def verify_no_duplicates():
     """
     result = bq_client.query(query).result()
     duplicate_count = list(result)[0].duplicate_count
-    
+
     if duplicate_count > 0:
         raise DataQualityError(f"Inserted {duplicate_count} duplicates!")
-    
+
     return duplicate_count
 ```
 
@@ -233,9 +233,9 @@ def test_no_duplicate_non_player_transactions():
             {'player_id': 0, 'team_id': 123, 'date': '2025-01-01', 'type': 'Trade', 'group': 'Trade001'},  # Duplicate
         ]
     }
-    
+
     processed = processor.process_transactions(sample_data)
-    
+
     # Should deduplicate before insert
     assert len(processed) == 1, "Duplicate non-player transaction not deduplicated"
 ```
@@ -250,10 +250,10 @@ See **Document 2** for full processor_runs table architecture.
 
 ### Problem Description
 
-**Count:** 22 orphaned trades (out of ~450 trades = ~4.9%)  
-**Affected Data:** Multi-part trade transactions with only one team recorded  
-**Scope:** Trades from 2022-2025 (most are recent)  
-**Discovery Date:** October 13, 2025  
+**Count:** 22 orphaned trades (out of ~450 trades = ~4.9%)
+**Affected Data:** Multi-part trade transactions with only one team recorded
+**Scope:** Trades from 2022-2025 (most are recent)
+**Discovery Date:** October 13, 2025
 **Detection Method:** `trade_validation.sql` validation query
 
 ### Evidence
@@ -269,7 +269,7 @@ Valid trades should have 2+ teams involved. Orphaned trades have only 1 team:
 
 **Query to Identify:**
 ```sql
-SELECT 
+SELECT
   group_sort,
   transaction_date,
   STRING_AGG(DISTINCT team_abbr) as teams,
@@ -319,7 +319,7 @@ The orphaned trades indicate NBA.com's Player Movement API returned partial trad
 ```bash
 # Export all orphaned trades for investigation
 bq query --use_legacy_sql=false --format=csv "
-SELECT 
+SELECT
   t.group_sort,
   t.transaction_date,
   t.season_year,
@@ -439,23 +439,23 @@ Create tracking document: `docs/data_quality/orphaned_trades_status.md`
 def validate_trade_completeness(trades_to_insert):
     """Validate all trades have 2+ teams before inserting"""
     from collections import defaultdict
-    
+
     trade_teams = defaultdict(set)
-    
+
     for record in trades_to_insert:
         if record['transaction_type'] == 'Trade':
             trade_teams[record['group_sort']].add(record['team_id'])
-    
+
     orphaned = [
         trade_id for trade_id, teams in trade_teams.items()
         if len(teams) == 1
     ]
-    
+
     if orphaned:
         logger.warning(f"Found {len(orphaned)} potentially orphaned trades: {orphaned}")
         # Don't fail - log for investigation
         # May be legitimate future considerations
-    
+
     return len(orphaned)
 ```
 
@@ -466,16 +466,16 @@ Add secondary source validation:
 ```python
 def cross_validate_trades(nba_trades, espn_trades):
     """Compare NBA.com trades with ESPN.com for completeness"""
-    
+
     for trade in nba_trades:
         # Find matching ESPN trade
         espn_match = find_matching_trade(trade, espn_trades)
-        
+
         if espn_match:
             # Compare team counts
             nba_teams = trade.team_count
             espn_teams = espn_match.team_count
-            
+
             if nba_teams < espn_teams:
                 logger.warning(
                     f"Trade {trade.group_sort}: NBA.com has {nba_teams} teams, "
@@ -489,11 +489,11 @@ def cross_validate_trades(nba_trades, espn_trades):
 def should_process_trade(trade_date):
     """Wait 24 hours before processing recent trades to avoid mid-update captures"""
     hours_since_trade = (datetime.now() - trade_date).total_seconds() / 3600
-    
+
     if hours_since_trade < 24:
         logger.info(f"Trade from {trade_date} is <24h old, will process tomorrow")
         return False
-    
+
     return True
 ```
 
@@ -545,7 +545,7 @@ Run these validation queries daily during the season:
 # Check for new duplicates
 ./scripts/validate-player-movement quality
 
-# Check for new orphaned trades  
+# Check for new orphaned trades
 ./scripts/validate-player-movement trades
 
 # Alert thresholds:
@@ -564,7 +564,7 @@ Run these validation queries daily during the season:
 
 WITH quality_checks AS (
   -- Check 1: Count duplicates
-  SELECT 
+  SELECT
     'duplicates' as check_type,
     COUNT(*) as issue_count
   FROM (
@@ -574,9 +574,9 @@ WITH quality_checks AS (
     GROUP BY player_id, team_id, transaction_date, transaction_type, group_sort
     HAVING COUNT(*) > 1
   )
-  
+
   UNION ALL
-  
+
   -- Check 2: Count orphaned trades
   SELECT
     'orphaned_trades' as check_type,
@@ -641,9 +641,9 @@ Both data quality issues are well-understood and have clear resolution paths:
 
 ---
 
-**Document Owner:** Data Engineering Team  
-**Next Review:** After deduplication + processor fix completion  
-**Related Docs:** 
+**Document Owner:** Data Engineering Team
+**Next Review:** After deduplication + processor fix completion
+**Related Docs:**
 - `validation/queries/raw/nbac_player_movement/README.md`
 - `docs/PROCESSOR_MONITORING_IDEAS.md`
 - Player Movement Daily Operations Guide (Document 2)

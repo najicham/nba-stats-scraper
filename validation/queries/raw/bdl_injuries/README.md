@@ -26,8 +26,8 @@ Ball Don't Lie (BDL) Injuries is a **daily snapshot** data source that shows **c
 ### Daily Operations (Run Every Morning)
 
 #### 1. `daily_check_yesterday.sql`
-**Purpose:** Verify yesterday's scraper ran successfully  
-**Schedule:** Run at 9 AM daily during season  
+**Purpose:** Verify yesterday's scraper ran successfully
+**Schedule:** Run at 9 AM daily during season
 **Alerts:** Status != "✅ Complete" or "⚪ Off-season"
 
 **What it checks:**
@@ -42,8 +42,8 @@ bq query --use_legacy_sql=false < daily_check_yesterday.sql
 ```
 
 #### 2. `weekly_check_last_7_days.sql`
-**Purpose:** Trend monitoring and pattern detection  
-**Schedule:** Run weekly or when investigating issues  
+**Purpose:** Trend monitoring and pattern detection
+**Schedule:** Run weekly or when investigating issues
 **Alerts:** Missing days or declining quality
 
 **What it checks:**
@@ -60,8 +60,8 @@ bq query --use_legacy_sql=false < weekly_check_last_7_days.sql
 ### Data Quality Monitoring
 
 #### 3. `confidence_score_monitoring.sql`
-**Purpose:** Track parsing quality over time  
-**Schedule:** Run weekly  
+**Purpose:** Track parsing quality over time
+**Schedule:** Run weekly
 **Alerts:** Confidence drops below 0.9
 
 **What it checks:**
@@ -76,8 +76,8 @@ bq query --use_legacy_sql=false < confidence_score_monitoring.sql
 ```
 
 #### 4. `data_quality_check.sql`
-**Purpose:** Comprehensive quality validation  
-**Schedule:** Run weekly or monthly  
+**Purpose:** Comprehensive quality validation
+**Schedule:** Run weekly or monthly
 **Alerts:** Review section summaries
 
 **What it checks:**
@@ -95,8 +95,8 @@ bq query --use_legacy_sql=false < data_quality_check.sql
 ### Real-Time Monitoring
 
 #### 5. `realtime_scraper_check.sql`
-**Purpose:** Check if today's scraper has run  
-**Schedule:** Run anytime during the day  
+**Purpose:** Check if today's scraper has run
+**Schedule:** Run anytime during the day
 **Alerts:** No data after 10 AM during season
 
 **What it checks:**
@@ -180,17 +180,17 @@ bq query --use_legacy_sql=false < data_quality_check.sql
 
 ## Data Source Information
 
-**Table:** `nba-props-platform.nba_raw.bdl_injuries`  
-**Partition:** `scrape_date` (REQUIRED in all queries)  
-**Processor:** BdlInjuriesProcessor  
-**Update Frequency:** Daily during season (8 AM PT)  
+**Table:** `nba-props-platform.nba_raw.bdl_injuries`
+**Partition:** `scrape_date` (REQUIRED in all queries)
+**Processor:** BdlInjuriesProcessor
+**Update Frequency:** Daily during season (8 AM PT)
 **Data Type:** Current state snapshot (not historical)
 
 ## Season Schedule
 
-**Active Season:** October - June  
-**Off-Season:** July - September  
-**Expected Data:** Only during active season  
+**Active Season:** October - June
+**Off-Season:** July - September
+**Expected Data:** Only during active season
 **Alert Suppression:** Auto-suppresses off-season alerts
 
 ## Related Tables
@@ -209,6 +209,6 @@ bq query --use_legacy_sql=false < data_quality_check.sql
 
 ---
 
-**Last Updated:** October 13, 2025  
-**Status:** Ready for NBA Season Start  
+**Last Updated:** October 13, 2025
+**Status:** Ready for NBA Season Start
 **Pattern:** Time-Series (Daily Snapshots)

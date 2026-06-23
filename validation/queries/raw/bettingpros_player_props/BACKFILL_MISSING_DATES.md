@@ -1,8 +1,8 @@
 # BettingPros Player Props - Missing Data Backfill Plan
 
-**Generated**: October 13, 2025  
-**Validation Query**: `validate-bettingpros missing`  
-**Season**: 2024-25 Regular Season  
+**Generated**: October 13, 2025
+**Validation Query**: `validate-bettingpros missing`
+**Season**: 2024-25 Regular Season
 **Status**: 🔴 12 dates with ZERO props data
 
 ---
@@ -198,7 +198,7 @@ After running backfill jobs, verify completion:
 ```bash
 # Verify November 12 specifically
 bq query --use_legacy_sql=false '
-SELECT 
+SELECT
   game_date,
   COUNT(*) as total_records,
   COUNT(DISTINCT player_lookup) as unique_players,
@@ -209,7 +209,7 @@ GROUP BY game_date
 '
 ```
 
-**Expected Result**: 
+**Expected Result**:
 - 3,500-8,000 records (November had 8 games that day)
 - 100-240 unique players
 - 15-20 bookmakers
@@ -232,7 +232,7 @@ GROUP BY game_date
 | **Regular Season Games** | ~5,275 | ~5,355 | +80 games |
 | **Total Props Records** | 2,179,496 | ~2,520,000** | +340,504 |
 
-*Excluding Feb All-Star games (2 dates)  
+*Excluding Feb All-Star games (2 dates)
 **Estimated: 10 dates × 8 avg games × 4,250 avg props/date
 
 ---
@@ -240,7 +240,7 @@ GROUP BY game_date
 ## 🚨 Priority Ranking
 
 ### 🔴 HIGH PRIORITY (Backfill Required)
-**Dates**: November 12, 15, 19, 22, 26, 29 (6 dates)  
+**Dates**: November 12, 15, 19, 22, 26, 29 (6 dates)
 **Dates**: December 3, 10, 11, 14 (4 dates)
 
 **Reason**: Regular season games with significant betting volume
@@ -327,6 +327,6 @@ If backfill cannot be completed:
 
 ---
 
-**Document Owner**: NBA Props Platform Team  
-**Last Validation**: October 13, 2025  
+**Document Owner**: NBA Props Platform Team
+**Last Validation**: October 13, 2025
 **Next Review**: After backfill completion

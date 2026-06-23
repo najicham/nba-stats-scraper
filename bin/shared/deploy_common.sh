@@ -6,28 +6,28 @@
 discover_config_file() {
     local job_type="$1"
     local input="$2"
-    
+
     # If it's already a path to a file, use it directly
     if [[ -f "$input" ]]; then
         echo "$input"
         return 0
     fi
-    
+
     # Convert job name variations to directory name
     local patterns=(
         "backfill_jobs/${job_type}/${input}/job-config.env"                    # gamebook_registry → backfill_jobs/reference/gamebook_registry/job-config.env
-        "backfill_jobs/${job_type}/${input/_/-}/job-config.env"                # gamebook_registry → backfill_jobs/reference/gamebook-registry/job-config.env  
+        "backfill_jobs/${job_type}/${input/_/-}/job-config.env"                # gamebook_registry → backfill_jobs/reference/gamebook-registry/job-config.env
         "backfill_jobs/${job_type}/${input//-/_}/job-config.env"               # gamebook-registry → backfill_jobs/reference/gamebook_registry/job-config.env
         "backfill_jobs/${job_type}/${input%-backfill}/job-config.env"          # gamebook-registry-backfill → backfill_jobs/reference/gamebook-registry/job-config.env
     )
-    
+
     for pattern in "${patterns[@]}"; do
         if [[ -f "$pattern" ]]; then
             echo "$pattern"
             return 0
         fi
     done
-    
+
     # Not found
     return 1
 }
@@ -37,14 +37,14 @@ validate_required_vars() {
     local config_file="$1"
     shift
     local required_vars=("$@")
-    
+
     local missing_vars=()
     for var in "${required_vars[@]}"; do
         if [[ -z "${!var}" ]]; then
             missing_vars+=("$var")
         fi
     done
-    
+
     if [[ ${#missing_vars[@]} -gt 0 ]]; then
         echo "❌ Error: Missing required variables in $config_file:"
         printf '   %s\n' "${missing_vars[@]}"
@@ -56,17 +56,17 @@ validate_required_vars() {
 verify_required_files() {
     local job_script="$1"
     local dockerfile="$2"
-    
+
     if [[ ! -f "$job_script" ]]; then
         echo "❌ Error: Job script not found: $job_script"
         exit 1
     fi
-    
+
     if [[ ! -f "$dockerfile" ]]; then
         echo "❌ Error: Dockerfile not found: $dockerfile"
         exit 1
     fi
-    
+
     echo "✅ Required files verified"
 }
 
@@ -75,14 +75,14 @@ show_continuous_progress() {
     local start_time="$1"
     local phases=("Uploading source code" "Starting build" "Downloading base image" "Installing dependencies" "Building application" "Creating layers" "Pushing to registry" "Finalizing")
     local phase_times=(10 20 30 50 80 110 140 160)  # Time thresholds for each phase
-    
+
     while true; do
         local current_time=$(date +%s)
         local elapsed=$((current_time - start_time))
         local minutes=$((elapsed / 60))
         local seconds=$((elapsed % 60))
         local timestamp="[$(printf "%02d:%02d" "$minutes" "$seconds")]"
-        
+
         # Determine current phase based on elapsed time
         local current_phase="Building..."
         for i in "${!phase_times[@]}"; do
@@ -94,10 +94,10 @@ show_continuous_progress() {
                 fi
             fi
         done
-        
+
         # Show progress every second
         printf "\r\033[K%s %s" "$timestamp" "$current_phase" >&2
-        
+
         sleep 1
     done
 }
@@ -108,11 +108,11 @@ build_and_push_image() {
     local job_script="$2"
     local job_name="$3"
     local project_id="$4"
-    
+
     local image_name="gcr.io/$project_id/$job_name"
     local build_start=$(date +%s)
     local build_start_display=$(date '+%H:%M:%S')
-    
+
     # Display build info to stderr (so it doesn't interfere with image name return)
     echo "" >&2
     echo "🏗️ Building job image..." >&2
@@ -121,14 +121,14 @@ build_and_push_image() {
     echo "   Image: $image_name" >&2
     echo "   Started: $build_start_display" >&2
     echo "" >&2
-    
+
     # Start progress indicator in background
     show_continuous_progress "$build_start" &
     local progress_pid=$!
-    
+
     # Ensure progress background process is killed when function exits
     trap "kill $progress_pid 2>/dev/null" RETURN
-    
+
     # Run build (remove --quiet to see detailed output processed in background)
     gcloud builds submit . \
         --config=<(cat <<EOF
@@ -150,27 +150,27 @@ timeout: '600s'
 EOF
 ) \
         --project="$project_id" >/dev/null 2>&1
-    
+
     local build_result=$?
-    
+
     # Stop progress indicator
     kill $progress_pid 2>/dev/null
     wait $progress_pid 2>/dev/null
-    
+
     # Calculate and display timing summary
     local build_end=$(date +%s)
     local build_duration=$((build_end - build_start))
     local minutes=$((build_duration / 60))
     local seconds=$((build_duration % 60))
-    
+
     printf "\r\033[K" >&2  # Clear progress line
     echo "" >&2
-    
+
     if [[ $build_result -eq 0 ]]; then
         echo "✅ Successfully built in $(printf "%02d:%02d" "$minutes" "$seconds")" >&2
         echo "   Image: $image_name" >&2
         echo "" >&2
-        
+
         # Only echo the image name to stdout (this gets captured by $(...))
         echo "$image_name"
         return 0
@@ -190,7 +190,7 @@ deploy_cloud_run_job() {
     local memory="$6"
     local cpu="$7"
     local env_vars="$8"
-    
+
     # Delete existing job if it exists
     if gcloud run jobs describe "$job_name" --region="$region" --project="$project_id" &>/dev/null; then
         echo "📝 Job exists - deleting and recreating..."
@@ -200,14 +200,14 @@ deploy_cloud_run_job() {
             --quiet
         echo "   ✅ Old job deleted"
     fi
-    
+
     echo "🆕 Creating Cloud Run job..."
     echo "   Job Name: $job_name"
     echo "   Image: $image_name"
     echo "   Memory: $memory"
     echo "   CPU: $cpu"
     echo "   Timeout: $task_timeout"
-    
+
     # Build the gcloud command
     local gcloud_cmd="gcloud run jobs create \"$job_name\""
     gcloud_cmd="$gcloud_cmd --image=\"$image_name\""
@@ -219,16 +219,16 @@ deploy_cloud_run_job() {
     gcloud_cmd="$gcloud_cmd --max-retries=1"
     gcloud_cmd="$gcloud_cmd --tasks=1"
     gcloud_cmd="$gcloud_cmd --quiet"
-    
+
     # Add environment variables if provided
     if [[ -n "$env_vars" ]]; then
         gcloud_cmd="$gcloud_cmd --update-env-vars=\"$env_vars\""
         echo "   Environment variables: ${#env_vars} characters"
     fi
-    
+
     # Execute the command
     eval "$gcloud_cmd"
-    
+
     if [[ $? -eq 0 ]]; then
         echo "✅ Cloud Run job created successfully"
         return 0

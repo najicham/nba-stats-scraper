@@ -87,10 +87,10 @@ ${YELLOW}BACKFILL WORKFLOW:${NC}
      validate-odds-props identify-missing --csv
      validate-odds-props playoffs
      validate-odds-props missing --csv
-  
+
   ${GREEN}2. Run backfill script:${NC}
      ./scripts/backfill_missing_props.sh 2023-24
-  
+
   ${GREEN}3. Validate results:${NC}
      validate-odds-props validate-backfill
      validate-odds-props playoffs
@@ -143,16 +143,16 @@ run_query() {
     local query_file=$1
     local output_format=$2
     local query_path="$QUERIES_DIR/$query_file"
-    
+
     if [ ! -f "$query_path" ]; then
         print_error "Query file not found: $query_file"
         echo "Run 'validate-odds-props list' to see available queries"
         exit 1
     fi
-    
+
     print_header "Running: $query_file"
     echo ""
-    
+
     case $output_format in
         csv)
             local timestamp=$(date +%Y%m%d_%H%M%S)
@@ -181,7 +181,7 @@ run_query() {
 main() {
     local command=$1
     local output_format=""
-    
+
     # Parse options
     shift || true
     while [[ $# -gt 0 ]]; do
@@ -205,66 +205,66 @@ main() {
                 ;;
         esac
     done
-    
+
     # Handle commands
     case $command in
         # Show help
         help|--help|-h|"")
             show_help
             ;;
-        
+
         # List queries
         list|ls)
             list_queries
             ;;
-        
+
         # Historical validation
         gaps|gap-analysis|overview)
             run_query "comprehensive_gap_analysis.sql" "$output_format"
             ;;
-        
+
         may-2023|may2023|verify-may|since-may)
             run_query "verify_may_2023_coverage.sql" "$output_format"
             ;;
-        
+
         completeness|complete|teams)
             run_query "season_completeness_check.sql" "$output_format"
             ;;
-        
+
         missing|no-props|critical)
             run_query "find_missing_games.sql" "$output_format"
             ;;
-        
+
         low-coverage|low|sparse)
             run_query "find_low_coverage_games.sql" "$output_format"
             ;;
-        
+
         playoffs|playoff)
             run_query "verify_playoff_completeness.sql" "$output_format"
             ;;
-        
+
         # Backfill support (NEW)
         identify-missing|identify|backfill-list)
             run_query "identify_missing_playoff_games.sql" "$output_format"
             ;;
-        
+
         validate-backfill|check-backfill|after-backfill)
             run_query "validate_backfill_results.sql" "$output_format"
             ;;
-        
+
         # Daily monitoring
         yesterday|daily)
             run_query "daily_check_yesterday.sql" "$output_format"
             ;;
-        
+
         week|weekly|7days)
             run_query "weekly_check_last_7_days.sql" "$output_format"
             ;;
-        
+
         today|now|realtime)
             run_query "realtime_scraper_check.sql" "$output_format"
             ;;
-        
+
         # Unknown command
         *)
             print_error "Unknown command: $command"

@@ -39,7 +39,7 @@ echo "2️⃣  Daily Schedule Generation (5:00 AM ET)"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 bq query --use_legacy_sql=false --format=pretty "
-SELECT 
+SELECT
   date,
   FORMAT_TIMESTAMP('%Y-%m-%d %H:%M:%S %Z', locked_at, 'America/New_York') as locked_at_et,
   COUNT(*) as workflows_scheduled
@@ -63,7 +63,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo ""
 echo "📊 Decision Summary:"
 bq query --use_legacy_sql=false --format=pretty "
-SELECT 
+SELECT
   action,
   COUNT(*) as count,
   ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 1) as pct
@@ -76,7 +76,7 @@ ORDER BY count DESC
 echo ""
 echo "📈 Hourly Pattern:"
 bq query --use_legacy_sql=false --format=pretty "
-SELECT 
+SELECT
   EXTRACT(HOUR FROM decision_time AT TIME ZONE 'America/New_York') as hour_et,
   COUNT(*) as total_evaluations,
   COUNTIF(action = 'RUN') as run_decisions,
@@ -91,7 +91,7 @@ ORDER BY hour_et
 echo ""
 echo "🚨 Alerts (if any):"
 bq query --use_legacy_sql=false --format=pretty "
-SELECT 
+SELECT
   FORMAT_TIMESTAMP('%H:%M:%S %Z', decision_time, 'America/New_York') as time_et,
   workflow_name,
   alert_level,
@@ -116,7 +116,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo ""
 echo "📊 Execution Summary:"
 bq query --use_legacy_sql=false --format=pretty "
-SELECT 
+SELECT
   workflow_name,
   status,
   COUNT(*) as executions,
@@ -134,7 +134,7 @@ ORDER BY workflow_name, status
 echo ""
 echo "⏱️  Recent Executions:"
 bq query --use_legacy_sql=false --format=pretty "
-SELECT 
+SELECT
   FORMAT_TIMESTAMP('%H:%M:%S %Z', execution_time, 'America/New_York') as time_et,
   workflow_name,
   status,
@@ -161,7 +161,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo ""
 echo "🔗 Decision-to-Execution Link:"
 bq query --use_legacy_sql=false --format=pretty "
-SELECT 
+SELECT
   d.workflow_name,
   FORMAT_TIMESTAMP('%H:%M %Z', d.decision_time, 'America/New_York') as decision_time_et,
   d.action,
@@ -192,7 +192,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo ""
 echo "📊 Scraper Summary (Controller-triggered only):"
 bq query --use_legacy_sql=false --format=pretty "
-SELECT 
+SELECT
   scraper_name,
   COUNT(*) as total_runs,
   COUNTIF(status = 'SUCCESS') as successful,
@@ -218,7 +218,7 @@ echo "7️⃣  Cleanup Operations (Every 15 minutes)"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 bq query --use_legacy_sql=false --format=pretty "
-SELECT 
+SELECT
   COUNT(*) as cleanup_runs,
   SUM(files_checked) as total_files_checked,
   SUM(missing_files_found) as total_missing,
@@ -232,7 +232,7 @@ WHERE DATE(cleanup_time, 'America/New_York') = CURRENT_DATE('America/New_York')
 echo ""
 echo "⚠️  Recovery Events (if any):"
 bq query --use_legacy_sql=false --format=pretty "
-SELECT 
+SELECT
   FORMAT_TIMESTAMP('%H:%M:%S %Z', cleanup_time, 'America/New_York') as time_et,
   files_checked,
   missing_files_found,
@@ -277,7 +277,7 @@ echo ""
 
 # Check schedule generated today
 SCHEDULE_COUNT=$(bq query --use_legacy_sql=false --format=csv --quiet "
-SELECT COUNT(*) as cnt 
+SELECT COUNT(*) as cnt
 FROM \`nba-props-platform.nba_orchestration.daily_expected_schedule\`
 WHERE date = CURRENT_DATE('America/New_York')
 " | tail -n 1)
@@ -290,7 +290,7 @@ fi
 
 # Check recent decisions (last 2 hours)
 RECENT_DECISIONS=$(bq query --use_legacy_sql=false --format=csv --quiet "
-SELECT COUNT(*) as cnt 
+SELECT COUNT(*) as cnt
 FROM \`nba-props-platform.nba_orchestration.workflow_decisions\`
 WHERE decision_time > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 2 HOUR)
 " | tail -n 1)
@@ -303,7 +303,7 @@ fi
 
 # Check recent executions (last 2 hours)
 RECENT_EXECUTIONS=$(bq query --use_legacy_sql=false --format=csv --quiet "
-SELECT COUNT(*) as cnt 
+SELECT COUNT(*) as cnt
 FROM \`nba-props-platform.nba_orchestration.workflow_executions\`
 WHERE execution_time > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 2 HOUR)
 " | tail -n 1)
@@ -316,7 +316,7 @@ fi
 
 # Check cleanup running
 RECENT_CLEANUP=$(bq query --use_legacy_sql=false --format=csv --quiet "
-SELECT COUNT(*) as cnt 
+SELECT COUNT(*) as cnt
 FROM \`nba-props-platform.nba_orchestration.cleanup_operations\`
 WHERE cleanup_time > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 MINUTE)
 " | tail -n 1)

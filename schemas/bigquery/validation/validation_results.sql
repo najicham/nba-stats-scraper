@@ -27,41 +27,41 @@ CREATE TABLE IF NOT EXISTS `validation.validation_results` (
   -- Run identification
   validation_run_id STRING NOT NULL,           -- UUID for this validation run
   validation_timestamp TIMESTAMP NOT NULL,     -- When validation ran
-  
+
   -- Processor identification
   processor_name STRING NOT NULL,              -- "espn_scoreboard", "bdl_boxscores", etc.
   processor_type STRING NOT NULL,              -- "raw", "analytics", "reports", "reference"
-  
+
   -- Date range validated
   date_range_start DATE,                       -- Start of validated range
   date_range_end DATE,                         -- End of validated range
   season_year INT64,                           -- Season if applicable
-  
+
   -- Check details
   check_name STRING NOT NULL,                  -- "completeness_game_date", "team_presence", etc.
   check_type STRING NOT NULL,                  -- "completeness", "field_validation", "team_presence", etc.
   validation_layer STRING NOT NULL,            -- "gcs", "bigquery", "schedule"
-  
+
   -- Result
   passed BOOLEAN NOT NULL,                     -- TRUE = check passed, FALSE = failed
   severity STRING NOT NULL,                    -- "info", "warning", "error", "critical"
   message STRING,                              -- Human-readable result message
-  
+
   -- Impact
   affected_count INT64,                        -- Number of records/dates/items affected
   affected_items STRING,                       -- JSON array of affected items (first 20)
-  
+
   -- Technical details
   query_used STRING,                           -- SQL query that was run (if applicable)
   execution_duration_seconds FLOAT64,          -- How long the check took
-  
+
   -- Remediation
   remediation_commands STRING,                 -- JSON array of fix commands
   remediation_generated BOOLEAN DEFAULT FALSE, -- Whether remediation was auto-generated
-  
+
   -- Overall status context
   overall_status STRING NOT NULL,              -- "pass", "warn", "fail" for this run
-  
+
   -- Metadata
   validator_version STRING,                    -- Version of validation framework
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
@@ -82,35 +82,35 @@ CREATE TABLE IF NOT EXISTS `validation.validation_runs` (
   -- Run identification
   validation_run_id STRING NOT NULL,           -- UUID for this run (matches validation_results)
   validation_timestamp TIMESTAMP NOT NULL,     -- When run started
-  
+
   -- Processor details
   processor_name STRING NOT NULL,
   processor_type STRING NOT NULL,
-  
+
   -- Configuration
   date_range_start DATE,
   date_range_end DATE,
   season_year INT64,
   layers_validated STRING,                     -- JSON array: ["gcs", "bigquery", "schedule"]
-  
+
   -- Results summary
   total_checks INT64 NOT NULL,
   passed_checks INT64 NOT NULL,
   failed_checks INT64 NOT NULL,
   overall_status STRING NOT NULL,              -- "pass", "warn", "fail"
-  
+
   -- Execution details
   execution_duration_seconds FLOAT64,
   triggered_by STRING,                         -- "manual", "scheduler", "api"
-  
+
   -- Notification
   notification_sent BOOLEAN DEFAULT FALSE,
   notification_channels STRING,                -- JSON array: ["slack", "email"]
-  
+
   -- Remediation
   remediation_available BOOLEAN DEFAULT FALSE,
   remediation_commands_count INT64,
-  
+
   -- Metadata
   validator_version STRING,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
@@ -127,7 +127,7 @@ OPTIONS (
 -- ============================================================================
 
 CREATE OR REPLACE VIEW `validation.validation_failures_recent` AS
-SELECT 
+SELECT
   validation_timestamp,
   processor_name,
   processor_type,
@@ -142,7 +142,7 @@ SELECT
 FROM `validation.validation_results`
 WHERE passed = FALSE
   AND validation_timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
-ORDER BY 
+ORDER BY
   CASE severity
     WHEN 'critical' THEN 1
     WHEN 'error' THEN 2
@@ -157,7 +157,7 @@ ORDER BY
 
 CREATE OR REPLACE VIEW `validation.processor_health_summary` AS
 WITH daily_stats AS (
-  SELECT 
+  SELECT
     processor_name,
     processor_type,
     DATE(validation_timestamp) as validation_date,
@@ -172,7 +172,7 @@ WITH daily_stats AS (
   WHERE validation_timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY)
   GROUP BY processor_name, processor_type, DATE(validation_timestamp)
 )
-SELECT 
+SELECT
   processor_name,
   processor_type,
   validation_date,
@@ -193,7 +193,7 @@ ORDER BY validation_date DESC, processor_name;
 
 CREATE OR REPLACE VIEW `validation.validation_trends` AS
 WITH weekly_stats AS (
-  SELECT 
+  SELECT
     processor_name,
     processor_type,
     DATE_TRUNC(DATE(validation_timestamp), WEEK) as week_start,
@@ -206,7 +206,7 @@ WITH weekly_stats AS (
   WHERE validation_timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 90 DAY)
   GROUP BY processor_name, processor_type, DATE_TRUNC(DATE(validation_timestamp), WEEK)
 )
-SELECT 
+SELECT
   processor_name,
   processor_type,
   week_start,
@@ -217,7 +217,7 @@ SELECT
   validation_runs,
   -- Trend indicator (compare to previous week)
   pass_rate - LAG(pass_rate) OVER (
-    PARTITION BY processor_name 
+    PARTITION BY processor_name
     ORDER BY week_start
   ) as pass_rate_change
 FROM weekly_stats
@@ -229,14 +229,14 @@ ORDER BY week_start DESC, processor_name;
 
 CREATE OR REPLACE VIEW `validation.processor_status_current` AS
 WITH latest_runs AS (
-  SELECT 
+  SELECT
     processor_name,
     processor_type,
     MAX(validation_timestamp) as latest_validation
   FROM `validation.validation_runs`
   GROUP BY processor_name, processor_type
 )
-SELECT 
+SELECT
   r.processor_name,
   r.processor_type,
   r.validation_timestamp,
@@ -252,7 +252,7 @@ SELECT
   -- Time since last validation
   TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), r.validation_timestamp, HOUR) as hours_since_validation,
   -- Status indicator
-  CASE 
+  CASE
     WHEN r.overall_status = 'fail' THEN '🔴 FAILING'
     WHEN r.overall_status = 'warn' THEN '🟡 WARNING'
     WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), r.validation_timestamp, HOUR) > 48 THEN '⚠️ STALE'
@@ -263,7 +263,7 @@ INNER JOIN latest_runs l
   ON r.processor_name = l.processor_name
   AND r.processor_type = l.processor_type
   AND r.validation_timestamp = l.latest_validation
-ORDER BY 
+ORDER BY
   CASE r.overall_status
     WHEN 'fail' THEN 1
     WHEN 'warn' THEN 2
@@ -278,7 +278,7 @@ ORDER BY
 CREATE OR REPLACE VIEW `validation.validation_coverage` AS
 WITH processor_list AS (
   -- All processors that have ever been validated
-  SELECT DISTINCT 
+  SELECT DISTINCT
     processor_name,
     processor_type
   FROM `validation.validation_runs`
@@ -293,16 +293,16 @@ last_30_days AS (
   FROM `validation.validation_runs`
   WHERE validation_timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY)
 )
-SELECT 
+SELECT
   p.processor_name,
   p.processor_type,
-  CASE 
+  CASE
     WHEN d7.processor_name IS NOT NULL THEN '✅ Active (7d)'
     WHEN d30.processor_name IS NOT NULL THEN '⚠️ Inactive (7d)'
     ELSE '🔴 No Recent Validation'
   END as validation_status,
-  (SELECT MAX(validation_timestamp) 
-   FROM `validation.validation_runs` 
+  (SELECT MAX(validation_timestamp)
+   FROM `validation.validation_runs`
    WHERE processor_name = p.processor_name) as last_validated,
   (SELECT COUNT(DISTINCT DATE(validation_timestamp))
    FROM `validation.validation_runs`
@@ -312,8 +312,8 @@ SELECT
 FROM processor_list p
 LEFT JOIN last_7_days d7 ON p.processor_name = d7.processor_name
 LEFT JOIN last_30_days d30 ON p.processor_name = d30.processor_name
-ORDER BY 
-  CASE 
+ORDER BY
+  CASE
     WHEN d7.processor_name IS NOT NULL THEN 1
     WHEN d30.processor_name IS NOT NULL THEN 2
     ELSE 3
@@ -336,7 +336,7 @@ SELECT * FROM `validation.processor_status_current`
 WHERE overall_status IN ('fail', 'warn');
 
 -- Example 3: Get remediation commands for failures
-SELECT 
+SELECT
   processor_name,
   check_name,
   message,
@@ -347,7 +347,7 @@ WHERE passed = FALSE
   AND remediation_commands IS NOT NULL;
 
 -- Example 4: Data quality trend for specific processor
-SELECT 
+SELECT
   week_start,
   pass_rate,
   pass_rate_change,
@@ -359,7 +359,7 @@ ORDER BY week_start DESC
 LIMIT 12;  -- Last 12 weeks
 
 -- Example 5: Critical failures that need immediate attention
-SELECT 
+SELECT
   validation_timestamp,
   processor_name,
   check_name,
@@ -374,7 +374,7 @@ ORDER BY validation_timestamp DESC;
 
 -- Example 6: Validation coverage report
 SELECT * FROM `validation.validation_coverage`
-ORDER BY 
+ORDER BY
   CASE validation_status
     WHEN '✅ Active (7d)' THEN 1
     WHEN '⚠️ Inactive (7d)' THEN 2

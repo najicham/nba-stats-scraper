@@ -1,7 +1,7 @@
 # NBA Props Platform - Backfill Scrapers Reference
 
-**Document Version:** 1.0  
-**Date:** August 4, 2025  
+**Document Version:** 1.0
+**Date:** August 4, 2025
 **Purpose:** Quick reference for scrapers used in historical data collection (backfill)
 
 ## Overview
@@ -11,8 +11,8 @@ The NBA Props Platform backfill process uses specific scrapers to collect 4+ sea
 ## Phase 1: Schedule Foundation ✅ COMPLETE
 
 ### `nbac_schedule_api.py` ✅ ACTIVE
-**Purpose:** Collect NBA game schedules for historical seasons  
-**Data:** Game IDs, dates, teams, basic game info  
+**Purpose:** Collect NBA game schedules for historical seasons
+**Data:** Game IDs, dates, teams, basic game info
 **Backfill Usage:**
 - **Workflow:** `collect-nba-historical-schedules`
 - **Seasons:** 2021-22, 2022-23, 2023-24, 2024-25
@@ -36,8 +36,8 @@ The NBA Props Platform backfill process uses specific scrapers to collect 4+ sea
 ## Phase 2: Box Score Collection 📋 PLANNED
 
 ### `nbac_player_boxscore.py` 📋 PRIMARY
-**Purpose:** Collect detailed player statistics for historical games  
-**Data:** Points, rebounds, assists, shooting stats per player per game  
+**Purpose:** Collect detailed player statistics for historical games
+**Data:** Points, rebounds, assists, shooting stats per player per game
 **Backfill Usage:**
 - **Workflow:** `collect-nba-historical-boxscores` (planned)
 - **Input:** Game IDs from Phase 1 schedule data
@@ -58,8 +58,8 @@ for season in ['2021-22', '2022-23', '2023-24', '2024-25']:
 **Rate Limiting:** 50-100 games per batch with pauses
 
 ### `bdl_box_scores.py` 📋 SUPPLEMENTAL
-**Purpose:** Alternative box score data source for validation/enrichment  
-**Data:** Player and team statistics from Ball Don't Lie API  
+**Purpose:** Alternative box score data source for validation/enrichment
+**Data:** Player and team statistics from Ball Don't Lie API
 **Backfill Usage:**
 - **Workflow:** Extension of Phase 2 box score collection
 - **Role:** Data validation and gap filling
@@ -72,8 +72,8 @@ for season in ['2021-22', '2022-23', '2023-24', '2024-25']:
 ## Phase 3: Enhanced Player Data 📋 PLANNED
 
 ### `bdl_player_averages.py` 📋 PLANNED
-**Purpose:** Historical season and career player averages  
-**Data:** Aggregated statistics, performance trends  
+**Purpose:** Historical season and career player averages
+**Data:** Aggregated statistics, performance trends
 **Backfill Usage:**
 - **Workflow:** `collect-nba-historical-player-baselines` (planned)
 - **Scope:** Player performance baselines for each historical season
@@ -82,8 +82,8 @@ for season in ['2021-22', '2022-23', '2023-24', '2024-25']:
 **Use Case:** Compare individual game stats to season averages for outlier detection
 
 ### `bdl_active_players.py` 📋 SUPPORTING
-**Purpose:** Historical player database and metadata  
-**Data:** Player IDs, names, team history  
+**Purpose:** Historical player database and metadata
+**Data:** Player IDs, names, team history
 **Backfill Usage:**
 - **Workflow:** Player ID mapping for historical data
 - **Purpose:** Link players across different data sources
@@ -91,8 +91,8 @@ for season in ['2021-22', '2022-23', '2023-24', '2024-25']:
 ## Phase 4: Enhanced Play-by-Play 📋 PLANNED
 
 ### `bigdataball_pbp.py` 📋 ADVANCED
-**Purpose:** Enhanced play-by-play data for historical games  
-**Data:** Shot locations, defensive matchups, advanced play types  
+**Purpose:** Enhanced play-by-play data for historical games
+**Data:** Shot locations, defensive matchups, advanced play types
 **Key Advantage:** 2+ hour processing delay irrelevant for historical data
 
 **Backfill Usage:**
@@ -110,8 +110,8 @@ for season in ['2021-22', '2022-23', '2023-24', '2024-25']:
 ## Phase 5: Historical Props Data 📋 PLANNED
 
 ### `oddsa_player_props_his.py` 📋 PLANNED
-**Purpose:** Historical player prop bet odds and lines  
-**Data:** Past betting lines, market movement, closing odds  
+**Purpose:** Historical player prop bet odds and lines
+**Data:** Past betting lines, market movement, closing odds
 **Backfill Usage:**
 - **Workflow:** `collect-nba-historical-props` (planned)
 - **Scope:** Historical prop data for model training targets
@@ -131,7 +131,7 @@ for season in ['2021-22', '2022-23', '2023-24', '2024-25']:
 Phase 1: nbac_schedule_api.py → Game foundation
     ↓
 Phase 2: nbac_player_boxscore.py → Player performance data
-    ↓  
+    ↓
 Phase 3: bdl_player_averages.py → Performance baselines
     ↓
 Phase 4: bigdataball_pbp.py → Enhanced analytics
@@ -146,7 +146,7 @@ All backfill workflows follow consistent patterns:
 # Template structure
 - Season-by-season collection (2021-22 → 2024-25)
 - Batch processing with rate limiting
-- Individual season error handling  
+- Individual season error handling
 - Season-based GCS storage paths
 - Status monitoring integration
 - Restart capability for failed executions
@@ -163,7 +163,7 @@ All backfill workflows follow consistent patterns:
 ### API Constraints by Source
 - **NBA.com:** Moderate limits, batch 50-100 requests
 - **Ball Don't Lie:** Subscription limits, smaller batches
-- **Big Data Ball:** Processing delays, not rate limits  
+- **Big Data Ball:** Processing delays, not rate limits
 - **The Odds API:** Cost per request, careful usage
 
 ### Batch Processing Strategy
@@ -177,7 +177,7 @@ exponential_backoff = True  # For rate limit errors
 ### Timeline Estimates
 - **Phase 1:** ✅ Complete (117 seconds)
 - **Phase 2:** 2-3 days (140k requests with rate limiting)
-- **Phase 3:** 1 day (player aggregates)  
+- **Phase 3:** 1 day (player aggregates)
 - **Phase 4:** 3-5 days (enhanced PBP for 5,583 games)
 - **Phase 5:** 1-2 days (limited historical props)
 
@@ -189,7 +189,7 @@ gs://nba-scraped-data/
 ├── nba-com/
 │   ├── schedule/
 │   │   ├── 2021-22/...json     ✅ Complete
-│   │   ├── 2022-23/...json     ✅ Complete  
+│   │   ├── 2022-23/...json     ✅ Complete
 │   │   ├── 2023-24/...json     ✅ Complete
 │   │   └── 2024-25/...json     ✅ Complete
 │   └── box-scores/
@@ -242,5 +242,5 @@ gcloud workflows run collect-nba-historical-boxscores --location=us-west2 \
 
 ---
 
-**Current Status:** Phase 1 complete, Phase 2 ready for implementation  
+**Current Status:** Phase 1 complete, Phase 2 ready for implementation
 **Next Implementation:** Box score collection workflow using `nbac_player_boxscore.py`

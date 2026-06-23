@@ -117,7 +117,7 @@ The `player_shot_zone_analysis_processor` has safeguards that check if zone data
 Add to daily validation:
 ```sql
 -- Alert if shot zone completeness < 90% for yesterday
-SELECT game_date, 
+SELECT game_date,
   COUNTIF(has_complete_shot_zones = TRUE) * 100.0 / COUNT(*) as pct_complete
 FROM player_game_summary
 WHERE game_date = CURRENT_DATE() - 1 AND minutes_played > 0
@@ -159,7 +159,7 @@ ORDER BY game_date DESC
 ## Status
 
 ✅ **Fix applied and validated**
-✅ **Historical data backfilled (Jan 17-30)**  
+✅ **Historical data backfilled (Jan 17-30)**
 ✅ **Downstream processors checked**
 ✅ **Schema updated**
 ✅ **Commits pushed**

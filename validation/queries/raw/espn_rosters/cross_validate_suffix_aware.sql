@@ -186,7 +186,7 @@ SELECT
   match_status,
   COALESCE(espn_name, nbac_name) as count,
   CONCAT(
-    'ESPN: ', COALESCE(espn_team, 'N/A'), 
+    'ESPN: ', COALESCE(espn_team, 'N/A'),
     ' (', COALESCE(espn_raw_lookup, 'N/A'), ')',
     ' | NBA.com: ', COALESCE(nbac_team, 'N/A'),
     ' (', COALESCE(nbac_raw_lookup, 'N/A'), ')'

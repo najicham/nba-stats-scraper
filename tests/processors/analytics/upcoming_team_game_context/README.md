@@ -1,8 +1,8 @@
 # Upcoming Team Game Context Processor - Test Suite
 
-**Processor:** `upcoming_team_game_context`  
-**Phase:** 3 (Analytics)  
-**Test Coverage:** >95%  
+**Processor:** `upcoming_team_game_context`
+**Phase:** 3 (Analytics)
+**Test Coverage:** >95%
 **Total Tests:** 35+ unit tests
 
 ## Overview
@@ -42,8 +42,8 @@ python run_tests.py quick
 
 ## Unit Tests (test_unit.py)
 
-**Runtime:** ~10 seconds  
-**Count:** 35+ tests  
+**Runtime:** ~10 seconds
+**Count:** 35+ tests
 **Coverage:** >95%
 
 ### Test Classes
@@ -103,8 +103,8 @@ python run_tests.py quick
 
 ## Integration Tests (test_integration.py)
 
-**Runtime:** ~15 seconds  
-**Count:** 10 tests  
+**Runtime:** ~15 seconds
+**Count:** 10 tests
 **Coverage:** End-to-end processor flow
 
 ### Test Classes
@@ -147,8 +147,8 @@ python run_tests.py quick
 
 ## Validation Tests (test_validation.py)
 
-**Status:** TODO  
-**Planned Tests:** 15  
+**Status:** TODO
+**Planned Tests:** 15
 **Runtime:** ~30 seconds
 
 Planned coverage:
@@ -246,10 +246,10 @@ Example:
 def test_calculate_fatigue_normal_rest(self, processor, sample_schedule_data):
     """Test fatigue calculation with 2-day rest between games."""
     processor.schedule_data = sample_schedule_data
-    
+
     game = sample_schedule_data[sample_schedule_data['game_date'] == '2025-01-14'].iloc[0]
     result = processor._calculate_fatigue_context(game, 'LAL')
-    
+
     # 2 days between games = 1 day of rest
     assert result['team_days_rest'] == 1
     assert result['team_back_to_back'] is False
@@ -271,7 +271,7 @@ def test_calculation_correct_math(self, processor):
     """Test mathematical calculation is correct."""
     # Show expected calculation
     expected = (total_paint / total_shots) * 100
-    
+
     result = processor._calculate_metric(data)
     assert result['metric'] == pytest.approx(expected, abs=0.01)
 ```
@@ -365,6 +365,6 @@ def processor():
 
 ---
 
-**Status:** Unit Tests Complete ✅  
-**Last Updated:** November 2, 2025  
+**Status:** Unit Tests Complete ✅
+**Last Updated:** November 2, 2025
 **Maintainer:** NBA Props Platform Team

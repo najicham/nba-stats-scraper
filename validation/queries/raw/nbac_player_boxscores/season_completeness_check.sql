@@ -130,11 +130,11 @@ SELECT
   CAST(MIN(CASE WHEN is_playoffs = FALSE THEN min_players END) AS STRING) as min_players,
   CAST(MAX(CASE WHEN is_playoffs = FALSE THEN max_players END) AS STRING) as max_players,
   CASE
-    WHEN SUM(CASE WHEN is_playoffs = FALSE THEN games ELSE 0 END) < 82 
+    WHEN SUM(CASE WHEN is_playoffs = FALSE THEN games ELSE 0 END) < 82
       THEN '⚠️ Missing regular season games'
-    WHEN MIN(CASE WHEN is_playoffs = FALSE THEN min_players END) < 20 
+    WHEN MIN(CASE WHEN is_playoffs = FALSE THEN min_players END) < 20
       THEN '⚠️ Suspiciously low player count'
-    WHEN MAX(CASE WHEN is_playoffs = FALSE THEN avg_starters_per_game END) > 5.5 
+    WHEN MAX(CASE WHEN is_playoffs = FALSE THEN avg_starters_per_game END) > 5.5
       THEN '⚠️ Too many starters (should be ~5)'
     ELSE '✅ Complete'
   END as notes

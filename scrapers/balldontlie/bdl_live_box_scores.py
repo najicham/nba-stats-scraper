@@ -251,8 +251,8 @@ class BdlLiveBoxScoresScraper(ScraperBase, ScraperFlaskMixin):
                 "gameCount": len(live_boxes),
                 "liveBoxes": live_boxes,
             }
-            
-            logger.info("Fetched live box-scores for %d in-progress games (poll: %s)", 
+
+            logger.info("Fetched live box-scores for %d in-progress games (poll: %s)",
                        len(live_boxes), self.opts["ts"])
 
             # Success notification - note that 0 games is normal for off-hours

@@ -355,8 +355,8 @@ Teams with identical records may have same rank in Ball Don't Lie data. This is 
 
 ---
 
-**Last Updated:** 2025-10-13  
-**Query Version:** 1.0  
-**Data Source:** Ball Don't Lie API  
-**Current Coverage:** 2024-25 season (2 offseason snapshots)  
+**Last Updated:** 2025-10-13
+**Query Version:** 1.0
+**Data Source:** Ball Don't Lie API
+**Current Coverage:** 2024-25 season (2 offseason snapshots)
 **Expected Growth:** Daily collection October 2025 onwards

@@ -10,30 +10,30 @@
 --   - No NULL scores for completed games
 -- ============================================================================
 
-WITH 
+WITH
 -- Overall data quality metrics
 quality_metrics AS (
-  SELECT 
+  SELECT
     COUNT(*) as total_games,
     COUNT(CASE WHEN is_completed = TRUE THEN 1 END) as completed_games,
     COUNT(CASE WHEN is_completed = FALSE THEN 1 END) as in_progress_games,
-    
+
     -- Score validation
     COUNT(CASE WHEN home_team_score IS NULL OR away_team_score IS NULL THEN 1 END) as null_scores,
     COUNT(CASE WHEN home_team_score + away_team_score < 100 THEN 1 END) as very_low_scores,
     COUNT(CASE WHEN home_team_score + away_team_score > 280 THEN 1 END) as very_high_scores,
     COUNT(CASE WHEN home_team_score = away_team_score AND is_completed = TRUE THEN 1 END) as tied_final_games,
-    
+
     -- Winner validation
     COUNT(CASE WHEN home_team_winner = TRUE AND away_team_winner = TRUE THEN 1 END) as both_winners,
     COUNT(CASE WHEN home_team_winner = FALSE AND away_team_winner = FALSE THEN 1 END) as no_winner_completed,
     COUNT(CASE WHEN (home_team_score > away_team_score) != home_team_winner AND is_completed = TRUE THEN 1 END) as wrong_winner_flag,
-    
+
     -- Confidence and status
     AVG(processing_confidence) as avg_confidence,
     COUNT(CASE WHEN processing_confidence != 1.0 THEN 1 END) as non_perfect_confidence,
     COUNT(CASE WHEN is_completed = TRUE AND game_status != 'final' THEN 1 END) as status_mismatch,
-    
+
     -- Timestamp validation
     COUNT(CASE WHEN created_at > processed_at THEN 1 END) as time_logic_errors
   FROM `nba-props-platform.nba_raw.espn_scoreboard`
@@ -42,7 +42,7 @@ quality_metrics AS (
 
 -- Score distribution analysis
 score_distribution AS (
-  SELECT 
+  SELECT
     CASE
       WHEN home_team_score + away_team_score < 150 THEN '< 150 (Very Low)'
       WHEN home_team_score + away_team_score < 180 THEN '150-179 (Low)'
@@ -61,7 +61,7 @@ score_distribution AS (
 
 -- Recent data quality (last 30 days)
 recent_quality AS (
-  SELECT 
+  SELECT
     'Last 30 Days' as period,
     COUNT(*) as games,
     COUNT(CASE WHEN is_completed = TRUE THEN 1 END) as completed,
@@ -74,7 +74,7 @@ recent_quality AS (
 
 -- Output: Combined results with proper BigQuery syntax
 (
-  SELECT 
+  SELECT
     '📊 OVERALL QUALITY' as section,
     'Total/Completed' as metric,
     CAST(total_games AS STRING) as value,
@@ -91,7 +91,7 @@ recent_quality AS (
 
   UNION ALL
 
-  SELECT 
+  SELECT
     '📊 OVERALL QUALITY' as section,
     'Score Issues' as metric,
     CAST(very_low_scores AS STRING) as value,
@@ -107,7 +107,7 @@ recent_quality AS (
 
   UNION ALL
 
-  SELECT 
+  SELECT
     '📊 OVERALL QUALITY' as section,
     'Confidence & Status' as metric,
     CAST(ROUND(avg_confidence, 3) AS STRING) as value,
@@ -125,7 +125,7 @@ recent_quality AS (
   UNION ALL
 
   -- Output: Score distribution
-  SELECT 
+  SELECT
     '📈 SCORE DISTRIBUTION' as section,
     score_range as metric,
     CAST(games AS STRING) as value,
@@ -149,7 +149,7 @@ recent_quality AS (
   UNION ALL
 
   -- Output: Recent quality
-  SELECT 
+  SELECT
     '📅 RECENT QUALITY' as section,
     period as metric,
     CAST(games AS STRING) as value,

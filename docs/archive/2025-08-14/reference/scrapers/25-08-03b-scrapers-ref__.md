@@ -4,7 +4,7 @@
 
 This is the **daily operational reference** for NBA data scrapers. Use this document for:
 - **Deployment**: Class names and file locations
-- **Debugging**: Parameter requirements and output paths  
+- **Debugging**: Parameter requirements and output paths
 - **Monitoring**: Schedules and dependencies
 - **Troubleshooting**: API limits and common issues
 
@@ -23,7 +23,7 @@ gs://nba-scraped-data/
 ├── ball-dont-lie/           # Ball Don't Lie API data
 ├── odds-api/                # Odds API data (business critical)
 ├── espn/                    # ESPN data
-├── nba-com/                 # NBA.com data  
+├── nba-com/                 # NBA.com data
 ├── big-data-ball/           # Enhanced analytics data
 └── bigdataball/             # BigDataBall play-by-play
 ```
@@ -53,7 +53,7 @@ Scrapers are organized by **business function** and **timing requirements**. Thi
 - `GetOddsApiEvents` ⭐ **Must run first**
 - `GetOddsApiCurrentEventOdds` ⭐ **Core business data**
 
-#### **Dependencies**: 
+#### **Dependencies**:
 - **CRITICAL**: Events must run before Props (provides event IDs)
 - **REQUIRES**: Player Intelligence (for team assignments)
 
@@ -73,7 +73,7 @@ Scrapers are organized by **business function** and **timing requirements**. Thi
 - `BdlActivePlayersScraper` ⭐ **Third-party validation** (Morning + Real-Time)
 
 #### **Dependencies**: None (runs first)
-#### **Processing Notes**: 
+#### **Processing Notes**:
 - **Real-time**: Use current data for team assignments
 - **Historical**: Use box scores to determine player's team during specific games
 
@@ -96,7 +96,7 @@ Scrapers are organized by **business function** and **timing requirements**. Thi
 
 ### **Category: Game Scheduling**
 - **Timing**: **Daily Setup**
-- **Purpose**: When games happen, detect postponements and time changes  
+- **Purpose**: When games happen, detect postponements and time changes
 - **Priority**: **🟡 HIGH** - Timing affects all downstream processing
 - **Business Need**: Know when to collect props, when games start
 

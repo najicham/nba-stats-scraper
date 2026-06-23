@@ -145,26 +145,26 @@ get_files_by_date() {
 analyze_file() {
     local file_path="$1"
     local temp_file="$TEMP_DIR/$(basename "$file_path")"
-    
+
     echo -e "${CYAN}📁 Analyzing: $(basename "$file_path")${NC}"
-    
+
     # Download file
     if gcloud storage cp "$file_path" "$temp_file" 2>/dev/null; then
         # Extract key information using jq
         local season=$(jq -r '.season_nba_format // .season // "Unknown"' "$temp_file" 2>/dev/null)
         local game_count=$(jq -r '.game_count // (.games | length) // 0' "$temp_file" 2>/dev/null)
         local timestamp=$(jq -r '.timestamp // "Unknown"' "$temp_file" 2>/dev/null)
-        
+
         # Get date range from games
         local first_game_date=$(jq -r '.games[0].gameDate // "Unknown"' "$temp_file" 2>/dev/null)
         local last_game_date=$(jq -r '.games[-1].gameDate // "Unknown"' "$temp_file" 2>/dev/null)
-        
+
         # Get unique teams
         local team_count=$(jq -r '[.games[].homeTeam.teamName, .games[].awayTeam.teamName] | unique | length' "$temp_file" 2>/dev/null)
-        
+
         # File size
         local file_size=$(du -h "$temp_file" | cut -f1)
-        
+
         echo "  Season: $season"
         echo "  Games: $game_count"
         echo "  Date Range: $first_game_date to $last_game_date"
@@ -172,7 +172,7 @@ analyze_file() {
         echo "  File Size: $file_size"
         echo "  Timestamp: $timestamp"
         echo ""
-        
+
         # Return key metrics for summary
         echo "$season,$game_count,$team_count,$file_size"
     else
@@ -185,19 +185,19 @@ analyze_file() {
 show_files() {
     echo -e "${CYAN}📁 Schedule Files Inventory${NC}"
     echo "=========================="
-    
+
     local all_files
     all_files=$(get_all_files)
-    
+
     if [[ -z "$all_files" ]]; then
         echo -e "${RED}❌ No schedule files found${NC}"
         return 1
     fi
-    
+
     local file_count=$(echo "$all_files" | wc -l)
     echo "Total files: $file_count"
     echo ""
-    
+
     echo "Files by date:"
     echo "$all_files" | while read -r file; do
         # Extract date from path
@@ -205,7 +205,7 @@ show_files() {
         local timestamp_part=$(basename "$file" .json)
         echo "  $date_part: $timestamp_part"
     done
-    
+
     echo ""
     echo "Storage locations:"
     echo "$all_files" | sed 's|/[^/]*\.json$||' | sort | uniq -c | while read -r count path; do
@@ -218,34 +218,34 @@ show_files() {
 show_summary() {
     echo -e "${CYAN}📊 Schedule Data Summary${NC}"
     echo "======================="
-    
+
     local all_files
     all_files=$(get_all_files)
-    
+
     if [[ -z "$all_files" ]]; then
         echo -e "${RED}❌ No schedule files found${NC}"
         return 1
     fi
-    
+
     local file_count=$(echo "$all_files" | wc -l)
     echo "Total files: $file_count"
     echo ""
-    
+
     # Analyze up to 10 most recent files for summary
     local recent_files
     recent_files=$(echo "$all_files" | tail -10)
-    
+
     echo -e "${YELLOW}Analyzing recent files...${NC}"
     local total_games=0
     local seasons_found=()
-    
+
     while read -r file; do
         if [[ -n "$file" ]]; then
             local result
             result=$(analyze_file "$file")
             local metrics
             metrics=$(echo "$result" | tail -1)
-            
+
             IFS=',' read -r season games teams size <<< "$metrics"
             if [[ "$games" != "0" && "$season" != "Unknown" ]]; then
                 total_games=$((total_games + games))
@@ -253,14 +253,14 @@ show_summary() {
             fi
         fi
     done <<< "$recent_files"
-    
+
     echo -e "${GREEN}📈 Summary Statistics${NC}"
     echo "===================="
     echo "Total games analyzed: $total_games"
     echo "Seasons found: $(printf '%s\n' "${seasons_found[@]}" | sort | uniq | tr '\n' ', ' | sed 's/,$//')"
     echo "Unique seasons: $(printf '%s\n' "${seasons_found[@]}" | sort | uniq | wc -l)"
     echo ""
-    
+
     echo -e "${BLUE}💡 Quick Stats${NC}"
     echo "============="
     if [[ ${#seasons_found[@]} -gt 0 ]]; then
@@ -274,39 +274,39 @@ show_summary() {
 analyze_latest() {
     echo -e "${CYAN}🕐 Latest Collection Analysis${NC}"
     echo "============================="
-    
+
     local all_files
     all_files=$(get_all_files)
-    
+
     if [[ -z "$all_files" ]]; then
         echo -e "${RED}❌ No schedule files found${NC}"
         return 1
     fi
-    
+
     # Get the most recent date directory
     local latest_date
     latest_date=$(echo "$all_files" | grep -o '[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}' | sort | tail -1)
-    
+
     echo "Latest collection date: $latest_date"
     echo ""
-    
+
     # Get all files from latest date
     local latest_files
     latest_files=$(get_files_by_date "$latest_date")
-    
+
     if [[ -z "$latest_files" ]]; then
         echo -e "${RED}❌ No files found for latest date${NC}"
         return 1
     fi
-    
+
     local file_count=$(echo "$latest_files" | wc -l)
     echo "Files in latest collection: $file_count"
     echo ""
-    
+
     # Analyze each file from latest collection
     local total_games=0
     local file_index=1
-    
+
     while read -r file; do
         if [[ -n "$file" ]]; then
             echo -e "${YELLOW}File $file_index/$file_count:${NC}"
@@ -314,12 +314,12 @@ analyze_latest() {
             result=$(analyze_file "$file")
             local metrics
             metrics=$(echo "$result" | tail -1)
-            
+
             IFS=',' read -r season games teams size <<< "$metrics"
             if [[ "$games" != "0" ]]; then
                 total_games=$((total_games + games))
             fi
-            
+
             # Download latest file if requested
             if [[ "$DOWNLOAD_LATEST" == true && $file_index -eq 1 ]]; then
                 local temp_file="$TEMP_DIR/latest_schedule.json"
@@ -332,17 +332,17 @@ analyze_latest() {
                 jq '.games[0:3] | .[] | {gameDate, homeTeam: .homeTeam.teamName, awayTeam: .awayTeam.teamName, gameId}' "$temp_file" 2>/dev/null || echo "Could not parse sample data"
                 echo ""
             fi
-            
+
             file_index=$((file_index + 1))
         fi
     done <<< "$latest_files"
-    
+
     echo -e "${GREEN}🎯 Latest Collection Summary${NC}"
     echo "============================"
     echo "Total games in latest collection: $total_games"
     echo "Collection date: $latest_date"
     echo "Files collected: $file_count"
-    
+
     if [[ "$DOWNLOAD_LATEST" == true ]]; then
         echo ""
         echo -e "${BLUE}💻 Local Files Available:${NC}"
@@ -354,33 +354,33 @@ analyze_latest() {
 show_detailed_analysis() {
     echo -e "${CYAN}🔍 Detailed Schedule Analysis${NC}"
     echo "============================="
-    
+
     # First show summary
     show_summary
-    
+
     echo ""
     echo -e "${CYAN}📊 Advanced Statistics${NC}"
     echo "====================="
-    
+
     # Analyze all files for detailed stats
     local all_files
     all_files=$(get_all_files)
-    
+
     if [[ -z "$all_files" ]]; then
         echo -e "${RED}❌ No files to analyze${NC}"
         return 1
     fi
-    
+
     echo "Performing comprehensive analysis..."
     echo ""
-    
+
     # Storage analysis
     echo -e "${YELLOW}💾 Storage Analysis${NC}"
     echo "=================="
     local total_size
     total_size=$(gcloud storage du -s "gs://$BUCKET/$SCHEDULE_PATH/" 2>/dev/null | grep -o '^[0-9]*' || echo "0")
     echo "Total storage used: ${total_size} bytes"
-    
+
     # File distribution by date
     echo ""
     echo -e "${YELLOW}📅 File Distribution${NC}"
@@ -388,7 +388,7 @@ show_detailed_analysis() {
     echo "$all_files" | grep -o '[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}' | sort | uniq -c | while read -r count date; do
         echo "  $date: $count files"
     done
-    
+
     echo ""
     echo -e "${BLUE}💡 Recommendations${NC}"
     echo "=================="
@@ -418,22 +418,22 @@ case "$MODE" in
             echo "Example: $0 --mode date --date 2025-08-03"
             exit 1
         fi
-        
+
         echo -e "${CYAN}📅 Analyzing files from $SPECIFIC_DATE${NC}"
         echo "================================="
-        
+
         local date_files
         date_files=$(get_files_by_date "$SPECIFIC_DATE")
-        
+
         if [[ -z "$date_files" ]]; then
             echo -e "${RED}❌ No files found for date: $SPECIFIC_DATE${NC}"
             exit 1
         fi
-        
+
         local file_count=$(echo "$date_files" | wc -l)
         echo "Files found: $file_count"
         echo ""
-        
+
         while read -r file; do
             if [[ -n "$file" ]]; then
                 analyze_file "$file"

@@ -21,7 +21,7 @@ import pandas as pd
 class MockGoogleModule(MagicMock):
     """
     Mock Google module that allows submodule imports dynamically.
-    
+
     This handles cases like:
     - from google.cloud import bigquery
     - from google.auth import default
@@ -263,7 +263,7 @@ def dependency_check_result_missing():
 def sample_raw_extracted_data():
     """
     Sample raw extracted data for testing.
-    
+
     This represents the merged output from:
     - _extract_opponent_offense (opponent's offensive stats)
     - _extract_defensive_actions (defensive player stats aggregated)
@@ -275,12 +275,12 @@ def sample_raw_extracted_data():
             'game_date': date(2024, 10, 21),
             'season_year': 2024,
             'nba_game_id': '0022400123',
-            
+
             # Defensive perspective
             'defending_team_abbr': 'LAL',
             'opponent_team_abbr': 'GSW',
             'home_game': True,
-            
+
             # Opponent offensive stats (= LAL's defensive stats)
             'points_allowed': 112,
             'opp_fg_makes': 42,
@@ -296,30 +296,30 @@ def sample_raw_extracted_data():
             'opp_offensive_rebounds': 10,
             'opp_defensive_rebounds': 36,
             'opp_assists': 26,
-            
+
             # Defensive actions (forced by LAL)
             'turnovers_forced': 13,
             'fouls_committed': 19,
             'steals': 8,
             'blocks_total': 5,
             'defensive_rebounds': 36,
-            
+
             # Blocks by zone (currently NULL - need play-by-play)
             'blocks_paint': 0,
             'blocks_mid_range': 0,
             'blocks_three_pt': 0,
-            
+
             # Advanced defensive metrics
             'defensive_rating': 109.8,
             'opponent_pace': 98.5,
             'opponent_ts_pct': 0.565,
             'possessions': 102,
-            
+
             # Game result (from LAL perspective)
             'win_flag': True,
             'margin_of_victory': 6,
             'overtime_periods': 0,
-            
+
             # Shot zones (currently NULL - need play-by-play)
             'opp_paint_attempts': None,
             'opp_paint_makes': None,
@@ -327,19 +327,19 @@ def sample_raw_extracted_data():
             'opp_mid_range_makes': None,
             'points_in_paint_allowed': None,
             'second_chance_points_allowed': None,
-            
+
             # Team situation (currently NULL - need injury data)
             'players_inactive': 0,
             'starters_inactive': 0,
-            
+
             # Referee (currently NULL)
             'referee_crew_id': None,
-            
+
             # Data quality
             'data_quality_tier': 'high',
             'primary_source_used': 'nbac_team_boxscore+nbac_gamebook',
             'defensive_actions_source': 'nbac_gamebook',
-            
+
             # Source timestamps
             'opponent_data_processed_at': datetime(2024, 10, 21, 23, 0, 0),
             'defensive_actions_processed_at': datetime(2024, 10, 21, 23, 0, 0)
@@ -350,11 +350,11 @@ def sample_raw_extracted_data():
             'game_date': date(2024, 10, 21),
             'season_year': 2024,
             'nba_game_id': '0022400123',
-            
+
             'defending_team_abbr': 'GSW',
             'opponent_team_abbr': 'LAL',
             'home_game': False,
-            
+
             'points_allowed': 118,
             'opp_fg_makes': 45,
             'opp_fg_attempts': 92,
@@ -369,7 +369,7 @@ def sample_raw_extracted_data():
             'opp_offensive_rebounds': 12,
             'opp_defensive_rebounds': 36,
             'opp_assists': 28,
-            
+
             'turnovers_forced': 11,
             'fouls_committed': 17,
             'steals': 7,
@@ -378,31 +378,31 @@ def sample_raw_extracted_data():
             'blocks_paint': 0,
             'blocks_mid_range': 0,
             'blocks_three_pt': 0,
-            
+
             'defensive_rating': 115.7,
             'opponent_pace': 98.5,
             'opponent_ts_pct': 0.592,
             'possessions': 102,
-            
+
             'win_flag': False,
             'margin_of_victory': -6,
             'overtime_periods': 0,
-            
+
             'opp_paint_attempts': None,
             'opp_paint_makes': None,
             'opp_mid_range_attempts': None,
             'opp_mid_range_makes': None,
             'points_in_paint_allowed': None,
             'second_chance_points_allowed': None,
-            
+
             'players_inactive': 0,
             'starters_inactive': 0,
             'referee_crew_id': None,
-            
+
             'data_quality_tier': 'high',
             'primary_source_used': 'nbac_team_boxscore+nbac_gamebook',
             'defensive_actions_source': 'nbac_gamebook',
-            
+
             'opponent_data_processed_at': datetime(2024, 10, 21, 23, 0, 0),
             'defensive_actions_processed_at': datetime(2024, 10, 21, 23, 0, 0)
         }

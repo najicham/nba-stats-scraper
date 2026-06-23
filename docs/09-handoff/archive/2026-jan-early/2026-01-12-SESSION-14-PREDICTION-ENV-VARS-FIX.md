@@ -31,7 +31,7 @@ The prediction worker was missing critical environment variables, causing:
 google.api_core.exceptions.NotFound: 404 Resource not found (resource=prediction-ready)
 ```
 
-**Impact:** 
+**Impact:**
 - Staging writes succeeded
 - Completion events failed to publish
 - Coordinator never received completions
@@ -159,7 +159,7 @@ ORDER BY game_date, system_id
 
 2. **Grading Backfill**
    - Once predictions confirmed, run grading for Jan 8-11
-   
+
 3. **Session 13B Pending**
    - Run player_lookup normalization backfill SQL
    - Regenerate upstream_player_game_context

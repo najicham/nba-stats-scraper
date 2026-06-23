@@ -49,7 +49,7 @@ echo ""
 # 4. Check scraper failures
 echo "4️⃣ Failed Scrapers (last hour):"
 bq query --use_legacy_sql=false --format=pretty "
-SELECT 
+SELECT
   scraper_name,
   COUNT(*) as failures,
   ARRAY_AGG(error_message LIMIT 2) as sample_errors

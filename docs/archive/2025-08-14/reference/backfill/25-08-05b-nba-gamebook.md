@@ -51,7 +51,7 @@ The NBA Gamebook PDF Scraper extracts comprehensive player statistics and game d
 ```json
 {
   "name": "Santi Aldama",
-  "team": "Memphis Grizzlies", 
+  "team": "Memphis Grizzlies",
   "status": "did_not_play",
   "dnp_reason": "NWT - Injury/Illness - Right Foot; Strain",
   "category": "NWT"
@@ -63,7 +63,7 @@ The NBA Gamebook PDF Scraper extracts comprehensive player statistics and game d
 {
   "name": "Morant",
   "team": "Memphis Grizzlies",
-  "status": "inactive", 
+  "status": "inactive",
   "reason": "Injury/Illness - Right Shoulder; Labral Repair",
   "category": "inactive"
 }
@@ -73,7 +73,7 @@ The NBA Gamebook PDF Scraper extracts comprehensive player statistics and game d
 ```json
 {
   "game_code": "20240410/MEMCLE",
-  "date": "2024-04-10", 
+  "date": "2024-04-10",
   "matchup": "MEM@CLE",
   "arena": "Rocket Mortgage FieldHouse",
   "city": "Cleveland",
@@ -186,7 +186,7 @@ The NBA Gamebook PDF Scraper extracts comprehensive player statistics and game d
 {
   "total_players": 41,
   "active_count": 21,
-  "dnp_count": 6, 
+  "dnp_count": 6,
   "inactive_count": 14,
   "parser_used": "pdfplumber"
 }
@@ -409,7 +409,7 @@ The NBA Gamebook PDF Scraper provides comprehensive player statistics and game d
 
 **Key Strengths:**
 - **Complete data extraction** (16+ stats per player)
-- **Production-ready** logging and monitoring  
+- **Production-ready** logging and monitoring
 - **Scalable processing** (parallel execution)
 - **Flexible filtering** (date, season, team)
 - **Rich prop betting context** (DNP reasons, game environment)

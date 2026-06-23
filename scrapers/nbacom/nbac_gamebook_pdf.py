@@ -195,7 +195,7 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
     download_type: DownloadType = DownloadType.BINARY
     proxy_enabled: bool = True
     timeout_http = 60
-    
+
     # ------------------------------------------------------------------ #
     # Exporters - Save BOTH PDF and parsed data
     # NOTE: DATA exporter MUST be first so its path is used for Phase 2 Pub/Sub
@@ -296,34 +296,34 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
         game_code = self.opts["game_code"]
         if "/" not in game_code:
             raise DownloadDataException("game_code must be in format YYYYMMDD/TEAMTEAM")
-        
+
         date_part, teams_part = game_code.split("/")
-        
+
         # FORCE the game date (override parent class default)
         year = date_part[:4]    # "2024"
-        month = date_part[4:6]  # "04" 
+        month = date_part[4:6]  # "04"
         day = date_part[6:8]    # "10"
         self.opts["date"] = f"{year}-{month}-{day}"  # "2024-04-10" - GAME DATE
-        
+
         # Now call super() - it won't override our date since it's already set
         super().set_additional_opts()
-        
+
         # AUTO-DERIVE TEAMS from game_code (unless overridden)
         if len(teams_part) != 6:
             raise DownloadDataException("Teams part must be 6 characters (3+3)")
-        
+
         if not self.opts.get("away_team"):
             self.opts["away_team"] = teams_part[:3]  # "MEM"
         if not self.opts.get("home_team"):
             self.opts["home_team"] = teams_part[3:]  # "CLE"
-        
+
         # Set derived values
         self.opts["date_part"] = date_part
         self.opts["teams_part"] = teams_part
         self.opts["matchup"] = f"{self.opts['away_team']}@{self.opts['home_team']}"
         self.opts["clean_game_code"] = game_code.replace("/", "_")  # For filenames
         self.opts["clean_game_code_dashes"] = game_code.replace("/", "-")  # "20211003-BKNLAL"
-        
+
         # Set defaults for NEW parameters
         self.opts["pdf_source"] = self.opts.get("pdf_source", "download")
         self.opts["bucket_name"] = self.opts.get("bucket_name", "nba-scraped-data")
@@ -348,21 +348,21 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
             self.proxy_enabled = False  # Disable proxy for GCS
             self.gcs_bucket = self.opts["bucket_name"]
             self.gcs_path = self._construct_gcs_path()
-            logger.info("Configured for GCS: bucket=%s, path=%s", 
+            logger.info("Configured for GCS: bucket=%s, path=%s",
                     self.gcs_bucket, self.gcs_path)
         else:
             # Use existing HTTP download
             self.gcs_enabled = False
             self.proxy_enabled = True
             logger.info("Configured for HTTP download")
-        
+
         # GCS client will be initialized lazily when needed
         self.gcs_client = None
-        
+
         # Log to verify correct configuration
-        logger.info("Using game date: %s, pdf_source: %s (game_code: %s)", 
+        logger.info("Using game date: %s, pdf_source: %s (game_code: %s)",
                    self.opts["date"], self.opts["pdf_source"], game_code)
-        
+
     def _construct_gcs_path(self) -> str:
         """
         Construct GCS path based on actual structure.
@@ -370,7 +370,7 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
         """
         date = self.opts["date"]  # "2021-10-03"
         clean_game_code_dashes = self.opts["clean_game_code_dashes"]  # "20211003-BKNLAL"
-        
+
         # Pattern: nba-com/gamebooks-pdf/2021-10-03/20211003-BKNLAL/
         return f"nba-com/gamebooks-pdf/{date}/{clean_game_code_dashes}/"
 
@@ -384,11 +384,11 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
             self.url = None
             logger.info("PDF source is GCS - skipping URL construction")
             return
-            
+
         date_part = self.opts["date_part"]
         teams_part = self.opts["teams_part"]
         version = self.opts["version"]
-        
+
         # CORRECTED URL format
         if version == "short":
             # Short version - basic box score (NO _book suffix)
@@ -398,7 +398,7 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
             self.url = f"https://statsdmz.nba.com/pdfs/{date_part}/{date_part}_{teams_part}_book.pdf"
         else:
             raise DownloadDataException("version must be 'short' or 'full'")
-        
+
         logger.info("NBA Gamebook PDF URL (%s): %s", version, self.url)
 
     # ------------------------------------------------------------------ #
@@ -406,17 +406,17 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     def validate_opts(self) -> None:
         super().validate_opts()
-        
+
         # Validate game_code format
         game_code = self.opts["game_code"]
         if not re.match(r'^\d{8}/[A-Z]{6}$', game_code):
             raise DownloadDataException("game_code must be in format YYYYMMDD/TEAMTEAM")
-        
+
         # Validate pdf_source
         pdf_source = self.opts.get("pdf_source", "download")
         if pdf_source not in ["download", "gcs"]:
             raise DownloadDataException("pdf_source must be 'download' or 'gcs'")
-        
+
     # ------------------------------------------------------------------ #
     # ENHANCED Download Methods - Support GCS source
     # ------------------------------------------------------------------ #
@@ -490,7 +490,7 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
             raise
-    
+
     def _download_pdf_from_gcs(self) -> None:
         """
         NEW METHOD: Read PDF from GCS bucket instead of downloading from NBA.com.
@@ -498,7 +498,7 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
         """
         try:
             logger.info("Reading PDF from GCS bucket: %s", self.opts["bucket_name"])
-            
+
             # Lazy initialization of GCS client with error handling
             if not self.gcs_client:
                 try:
@@ -540,11 +540,11 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
                     except Exception as notify_ex:
                         logger.warning(f"Failed to send notification: {notify_ex}")
                     raise DownloadDataException(error_msg) from e
-            
+
             # Construct GCS path based on expected structure from original scraper
             gcs_pdf_path = self._construct_gcs_pdf_path()
             logger.info("Looking for PDF in GCS path: %s", gcs_pdf_path)
-            
+
             # Find the PDF in GCS
             pdf_blob = self._find_pdf_blob(gcs_pdf_path)
             if not pdf_blob:
@@ -565,11 +565,11 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException(error_msg)
-            
+
             # Download PDF content from GCS
             pdf_content = pdf_blob.download_as_bytes()
             logger.info("Successfully read PDF from GCS: %s (%d bytes)", pdf_blob.name, len(pdf_content))
-            
+
             # Create a mock response object that mimics requests.Response
             # This allows existing parsing logic to work unchanged
             class MockResponse:
@@ -577,15 +577,15 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
                     self.content = content
                     self.status_code = 200
                     self.text = "PDF from GCS"
-                    
+
             self.raw_response = MockResponse(pdf_content)
-            
+
             # Call the existing decode logic (this is where all the battle-tested parsing happens)
             if self.decode_download_data:
                 self.decode_download_content()
-            
+
             logger.info("✅ Successfully processed PDF from GCS")
-            
+
         except DownloadDataException:
             # Already handled above, just re-raise
             raise
@@ -617,7 +617,7 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
         """
         date = self.opts["date"]  # "2024-04-10"
         clean_game_code_dashes = self.opts["clean_game_code_dashes"]  # "20240410-MEMCLE"
-        
+
         # Expected path: nba-com/gamebooks-pdf/2024-04-10/20240410-MEMCLE/
         return f"nba-com/gamebooks-pdf/{date}/{clean_game_code_dashes}/"
 
@@ -627,19 +627,19 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
         Handles timestamped filenames from the original scraper.
         """
         bucket = self.gcs_client.bucket(self.opts["bucket_name"])
-        
-        # List all blobs with the path prefix  
+
+        # List all blobs with the path prefix
         blobs = bucket.list_blobs(prefix=gcs_path_prefix)
-        
+
         # Primary matching - use the dash format since that's what we found in GCS
         clean_game_code_dashes = self.opts["clean_game_code_dashes"]  # "20240410-MEMCLE"
-        
+
         # Find PDF that matches our game code (should be in the directory already)
         for blob in blobs:
             if blob.name.endswith('.pdf'):
                 logger.debug("Found PDF in path: %s", blob.name)
                 return blob  # Since we're looking in the specific game directory, any PDF should work
-        
+
         logger.debug("No PDFs found in path: %s", gcs_path_prefix)
         return None
 
@@ -653,23 +653,23 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
         """
         # Filter exporters based on conditions
         effective_exporters = []
-        
+
         for config in self.exporters:
             # Check condition
             condition = config.get("condition")
-            
+
             if condition == "pdf_source_download" and self.opts["pdf_source"] != "download":
                 # Skip PDF export when reading from GCS (since PDF already exists there)
-                logger.debug("Skipping PDF export (condition: %s, pdf_source: %s)", 
+                logger.debug("Skipping PDF export (condition: %s, pdf_source: %s)",
                            condition, self.opts["pdf_source"])
                 continue
-            
+
             effective_exporters.append(config)
-        
+
         # Temporarily replace exporters for this run
         original_exporters = self.exporters
         self.exporters = effective_exporters
-        
+
         try:
             # Call original export logic
             super().export_data()
@@ -710,7 +710,7 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
         active_players = []
         dnp_players = []  # Did Not Play (NWT/DNP) - game-specific
         inactive_players = []  # Truly inactive (longer-term unavailable)
-        
+
         game_info = {
             "game_code": self.opts["game_code"],
             "date": self.opts["date"],
@@ -724,12 +724,12 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
 
         # Extract text using pdfplumber
         logger.info("Extracting text with pdfplumber")
-        
+
         # Save content to temp file for pdfplumber
         with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as temp_file:
             temp_file.write(content)
             temp_file_path = temp_file.name
-        
+
         try:
             # Extract text using pdfplumber
             with pdfplumber.open(temp_file_path) as pdf:
@@ -738,10 +738,10 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
                     page_text = page.extract_text()
                     if page_text:
                         full_text += page_text + "\n"
-            
+
             logger.debug("pdfplumber extracted %d characters", len(full_text))
             logger.debug("Text sample (first 500 chars):\n%s", full_text[:500])
-            
+
         except Exception as e:
             logger.error("pdfplumber failed to extract text: %s", e)
             try:
@@ -764,7 +764,7 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
         finally:
             # Clean up temp file
             os.unlink(temp_file_path)
-        
+
         if not full_text:
             logger.error("pdfplumber extracted no text from PDF")
             try:
@@ -817,7 +817,7 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
 
         # Calculate issue summary for monitoring
         total_issues = sum(len(issues) for issues in self.parsing_issues.values())
-        
+
         # Set final data structure with proper categories
         self.data = {
             **game_info,  # This now includes arena, officials, attendance, etc.
@@ -840,9 +840,9 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
             # R-009 Fix: Mark data as partial when no active players found
             "data_status": "partial" if len(active_players) == 0 else "complete",
         }
-        
+
         self.decoded_data = self.data
-        
+
         # CRITICAL: Check for no active players - major data quality issue
         if len(active_players) == 0:
             logger.warning("No active players found in game %s", self.opts["game_code"])
@@ -863,7 +863,7 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-        
+
         # Warning for high parsing issues
         parsing_issue_threshold = int(os.environ.get('PDF_PARSING_ISSUE_THRESHOLD', '10'))
         if total_issues > parsing_issue_threshold:
@@ -886,7 +886,7 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-        
+
         # Log summary with issue count for monitoring
         if total_issues > 0:
             logger.warning("Parsed PDF with %d parsing issues: %d active, %d DNP, %d inactive players (source: %s)",
@@ -905,19 +905,19 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
 
     def _normalize_team_name(self, team_name: str) -> str:
         """Normalize team name from inactive line to full team name."""
-        
+
         # Clean up the input
         team_name = team_name.strip()
-        
+
         # Map common team abbreviations/names to full names
         team_mappings = {
             # Use the away/home teams from the game as primary mapping
             self.opts.get("away_team", "").upper(): f"{self.opts.get('away_team', '')} (Away)",
             self.opts.get("home_team", "").upper(): f"{self.opts.get('home_team', '')} (Home)",
-            
+
             # Common team name variations seen in PDFs
             "PELICANS": "New Orleans Pelicans",
-            "SUNS": "Phoenix Suns", 
+            "SUNS": "Phoenix Suns",
             "GRIZZLIES": "Memphis Grizzlies",
             "CAVALIERS": "Cleveland Cavaliers",
             "CAVS": "Cleveland Cavaliers",
@@ -939,7 +939,7 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
             "HORNETS": "Charlotte Hornets",
             "MAGIC": "Orlando Magic",
             "WIZARDS": "Washington Wizards",
-            "NUGGETS": "Denver Nuggets", 
+            "NUGGETS": "Denver Nuggets",
             "JAZZ": "Utah Jazz",
             "THUNDER": "Oklahoma City Thunder",
             "TRAIL BLAZERS": "Portland Trail Blazers",
@@ -952,35 +952,35 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
             "TIMBERWOLVES": "Minnesota Timberwolves",
             "WOLVES": "Minnesota Timberwolves",
         }
-        
+
         # Try exact match first
         team_upper = team_name.upper()
         if team_upper in team_mappings:
             return team_mappings[team_upper]
-        
+
         # Try partial matches for team names
         for key, full_name in team_mappings.items():
             if key in team_upper or team_upper in key:
                 return full_name
-        
+
         # If no mapping found, return the original team name
         # This ensures the function doesn't fail even for unknown teams
         logger.debug("No team mapping found for '%s', using as-is", team_name)
         return team_name
-        
+
     def _extract_dnd_from_clean_line(self, line: str, team: str) -> Optional[Dict]:
         """Extract DND (Did Not Dress) player from clean line like '23 Mitchell Robinson DND - Injury/Illness - Back; Sore lower'"""
         try:
             parts = line.split(' DND - ', 1)
             if len(parts) != 2:
                 return None
-            
+
             name_part = parts[0].strip()
             reason_part = parts[1].strip()
-            
+
             # Remove jersey number from start - FIXED to include hyphens
             name = re.sub(r'^\d+\s+', '', name_part).strip()
-            
+
             if name and len(name) > 1:
                 return {
                     "name": name,
@@ -1008,13 +1008,13 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
 
     def _extract_game_metadata(self, text: str, game_info: Dict) -> None:
         """Extract additional game metadata from PDF header."""
-        
+
         lines = text.split('\n')[:20]  # Look at first 20 lines for metadata
-        
+
         try:
             for line in lines:
                 line = line.strip()
-                
+
                 # Extract arena and location
                 # Pattern: "Wednesday, April 10, 2024 Rocket Mortgage FieldHouse, Cleveland, OH"
                 arena_match = re.search(r'\d{4}\s+(.+?),\s+([A-Za-z\s]+),\s+([A-Z]{2})', line)
@@ -1022,14 +1022,14 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
                     arena = arena_match.group(1).strip()
                     city = arena_match.group(2).strip()
                     state = arena_match.group(3).strip()
-                    
+
                     game_info["arena"] = arena
                     game_info["city"] = city
                     game_info["state"] = state
                     game_info["location"] = f"{city}, {state}"
-                    
+
                     logger.debug("Found game location: %s at %s", game_info["location"], arena)
-                
+
                 # Extract officials
                 # Pattern: "Officials: #24 Kevin Scott, #36 Brent Barnaky, #41 Nate Green"
                 elif line.startswith('Officials:'):
@@ -1037,7 +1037,7 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
                     if officials:
                         game_info["officials"] = officials
                         logger.debug("Found officials: %s", [f["name"] for f in officials])
-                
+
                 # Extract game duration
                 # Pattern: "Game Duration: 2:10"
                 elif line.startswith('Game Duration:'):
@@ -1045,7 +1045,7 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
                     if duration_match:
                         game_info["game_duration"] = duration_match.group(1)
                         logger.debug("Found game duration: %s", game_info["game_duration"])
-                
+
                 # Extract attendance
                 # Pattern: "Attendance: 19432 (Sellout)" or "Attendance: 19432"
                 elif line.startswith('Attendance:'):
@@ -1055,7 +1055,7 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
                         if attendance_match.group(2):
                             game_info["attendance_note"] = attendance_match.group(2)
                         logger.debug("Found attendance: %s", game_info["attendance"])
-        
+
         except AttributeError as e:
             logger.error("CRITICAL CODE BUG extracting game metadata: %s", e)
             self.error_tracker.record_error("game_metadata", f"AttributeError: {e}",
@@ -1072,14 +1072,14 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
     def _parse_officials(self, officials_line: str) -> List[Dict[str, Any]]:
         """Parse officials from line like 'Officials: #24 Kevin Scott, #36 Brent Barnaky, #41 Nate Green'"""
         officials = []
-        
+
         try:
             # Remove "Officials:" prefix
             officials_text = officials_line.replace('Officials:', '').strip()
-            
+
             # Split by commas
             official_parts = [part.strip() for part in officials_text.split(',')]
-            
+
             for part in official_parts:
                 # Extract number and name
                 # Pattern: "#24 Kevin Scott"
@@ -1087,17 +1087,17 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
                 if match:
                     number = int(match.group(1))
                     name = match.group(2).strip()
-                    
+
                     officials.append({
                         "number": number,
                         "name": name
                     })
                 else:
                     logger.debug("Could not parse official: '%s'", part)
-                    self._log_parsing_issue("warnings", 
-                                           context="official_parsing", 
+                    self._log_parsing_issue("warnings",
+                                           context="official_parsing",
                                            unparsed_text=part)
-        
+
         except AttributeError as e:
             logger.error("CRITICAL CODE BUG parsing officials from '%s': %s", officials_line, e)
             self.error_tracker.record_error("officials_parsing", f"AttributeError: {e}",
@@ -1116,42 +1116,42 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
     def _extract_inactive_players_from_line(self, line: str, all_lines: List[str], line_idx: int) -> List[Dict]:
         """Extract truly inactive players from 'Inactive:' sections."""
         inactive_list = []
-        
+
         try:
             logger.debug("Processing inactive line: %s", line)
-            
+
             # Generic team extraction from "Inactive: [TEAM] - [PLAYERS]" format
             team_match = re.search(r'Inactive:\s*([^-]+?)\s*-', line)
             if not team_match:
                 logger.warning("Could not extract team from inactive line: %s", line)
-                self._log_parsing_issue("warnings", 
-                                       context="inactive_team_extraction", 
+                self._log_parsing_issue("warnings",
+                                       context="inactive_team_extraction",
                                        text=line)
                 return inactive_list
-                
+
             team_name = team_match.group(1).strip()
-            
+
             # Map team abbreviations/names to full names if needed
             team = self._normalize_team_name(team_name)
-            
+
             if not team:
                 logger.warning("Could not determine team from inactive line: %s", line)
-                self._log_parsing_issue("warnings", 
-                                       context="team_name_normalization", 
+                self._log_parsing_issue("warnings",
+                                       context="team_name_normalization",
                                        text=line, team_name=team_name)
                 return inactive_list
-            
+
             # Remove "Inactive: Grizzlies - " or similar prefix
             team_prefix = f"Inactive: {team_name.strip()} - "
             content = line.replace(team_prefix, '')
-            
+
             # Check if inactive list continues on next lines (common in PDFs)
             full_content = content
             next_line_idx = line_idx + 1
             while next_line_idx < len(all_lines):
                 next_line = all_lines[next_line_idx].strip()
                 # FIXED: Stop if next line starts with another "Inactive:" section
-                if (next_line and 
+                if (next_line and
                     not next_line.startswith(('Points in the Paint', 'SCORE BY', 'Technical fouls', 'MEMO', 'Copyright', 'Inactive:')) and
                     not re.match(r'^\d+\s+[A-Za-z]', next_line)):  # Not a new player stat line
                     full_content += " " + next_line
@@ -1159,32 +1159,32 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
                 else:
                     logger.debug("Stopping line continuation at: %s", next_line[:50])
                     break
-            
+
             logger.debug("Full inactive content for %s: %s", team, full_content)
-            
+
             # Split by commas to get individual players - parentheses-aware splitting
             raw_parts = self._smart_comma_split(full_content)
-            
+
             player_parts = []
             for part in raw_parts:
                 part = part.strip()
                 if part:
-                    # Additional cleanup: Remove any remaining "Inactive:" contamination 
+                    # Additional cleanup: Remove any remaining "Inactive:" contamination
                     part_cleaned = re.sub(r'\s*\)\s*Inactive:.*$', ')', part)
                     part_cleaned = part_cleaned.strip()
-                    
+
                     if part_cleaned:
                         player_parts.append(part_cleaned)
-            
+
             logger.debug("Player parts after splitting: %s", player_parts)
-            
+
             for part in player_parts:
                 player = self._parse_individual_inactive_player(part, team)
                 if player:
                     inactive_list.append(player)
                 else:
                     logger.debug("Could not parse player part: '%s'", part)
-        
+
         except AttributeError as e:
             # Code bugs (missing methods, wrong object types)
             logger.error("CRITICAL CODE BUG in inactive player extraction: %s", e)
@@ -1201,13 +1201,13 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
             # Don't raise - continue processing other sections
 
         return inactive_list
-    
+
     def _smart_comma_split(self, text: str) -> List[str]:
         """Split by commas but respect parentheses - don't split commas inside ()."""
         parts = []
         current_part = ""
         paren_depth = 0
-        
+
         for char in text:
             if char == '(':
                 paren_depth += 1
@@ -1221,39 +1221,39 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
                 current_part = ""
             else:
                 current_part += char
-        
+
         if current_part.strip():
             parts.append(current_part.strip())
-        
+
         # SAFETY CHECK: Track unbalanced parentheses
         if paren_depth != 0:
-            self._log_parsing_issue("unbalanced_parentheses", 
+            self._log_parsing_issue("unbalanced_parentheses",
                                    text=text, paren_depth=paren_depth)
             logger.warning("Unbalanced parentheses detected: %s", text)
             return [p.strip() for p in text.split(',') if p.strip()]
-        
+
         return parts
 
     def _parse_individual_inactive_player(self, player_text: str, team: str) -> Optional[Dict]:
         """Parse individual inactive player - handles 'Name (Reason)', 'Name ()', and 'Name' formats"""
         try:
             logger.debug("Parsing inactive player text: '%s' for team: '%s'", player_text, team)
-            
+
             # Clean up the player text first
             player_text = player_text.strip()
             if not player_text:
                 return None
-            
+
             # Pattern 1: "PlayerName (Reason)" - player with injury/reason - FIXED to include hyphens
             match = re.match(r'^([A-Za-z\s\.\'\-Jr Sr]+?)\s*\((.+?)\s*\)\s*$', player_text)
             if match:
                 name = match.group(1).strip()
                 reason = match.group(2).strip()
-                
+
                 if match.group(2).strip():  # Make sure reason isn't empty
                     # Clean up name
                     name = re.sub(r'\s+', ' ', name)  # Multiple spaces to single
-                    
+
                     if name and len(name) > 1:
                         return {
                             "name": name,
@@ -1261,15 +1261,15 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
                             "status": "inactive",
                             "reason": reason
                         }
-            
+
             # Pattern 2: "PlayerName ()" - player with empty parentheses - FIXED to include hyphens
             empty_parens_match = re.match(r'^([A-Za-z\s\.\'\-Jr Sr]+?)\s*\(\s*\)\s*$', player_text)
             if empty_parens_match:
                 name = empty_parens_match.group(1).strip()
-                
+
                 # Clean up name
                 name = re.sub(r'\s+', ' ', name)  # Multiple spaces to single
-                
+
                 if name and len(name) > 1:
                     return {
                         "name": name,
@@ -1277,15 +1277,15 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
                         "status": "inactive",
                         "reason": "Not specified"
                     }
-            
+
             # Pattern 3: "PlayerName" - player with no parentheses at all - FIXED to include hyphens
             name_only_match = re.match(r'^([A-Za-z\s\.\'\-Jr Sr]+)$', player_text)
             if name_only_match:
                 name = name_only_match.group(1).strip()
-                
+
                 # Clean up name
                 name = re.sub(r'\s+', ' ', name)  # Multiple spaces to single
-                
+
                 # Make sure it's a reasonable name (not just single letter, etc.)
                 if name and len(name) > 1 and not name.isdigit():
                     return {
@@ -1294,12 +1294,12 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
                         "status": "inactive",
                         "reason": "Not specified"
                     }
-            
+
             # If we get here, we couldn't parse the player
-            self._log_parsing_issue("malformed_inactive_players", 
+            self._log_parsing_issue("malformed_inactive_players",
                                    text=player_text, team=team)
             logger.debug("Could not parse inactive player text: '%s'", player_text)
-                
+
         except AttributeError as e:
             # Code bugs (regex issues, wrong method calls)
             logger.error("CRITICAL CODE BUG parsing individual inactive player '%s': %s", player_text, e)
@@ -1326,13 +1326,13 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
             parts = line.split(' NWT - ', 1)
             if len(parts) != 2:
                 return None
-            
+
             name_part = parts[0].strip()
             reason_part = parts[1].strip()
-            
-            # Remove jersey number from start - FIXED to include hyphens  
+
+            # Remove jersey number from start - FIXED to include hyphens
             name = re.sub(r'^\d+\s+', '', name_part).strip()
-            
+
             if name and len(name) > 1:
                 return {
                     "name": name,
@@ -1364,13 +1364,13 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
             parts = line.split(' DNP - ', 1)
             if len(parts) != 2:
                 return None
-            
+
             name_part = parts[0].strip()
             reason_part = parts[1].strip()
-            
+
             # Remove jersey number from start - FIXED to include hyphens
             name = re.sub(r'^\d+\s+', '', name_part).strip()
-            
+
             if name and len(name) > 1:
                 return {
                     "name": name,
@@ -1404,32 +1404,32 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
             if not minutes_match:
                 return None
             minutes = minutes_match.group(1)
-            
+
             # Split on minutes to get parts before and after
             before_minutes = line.split(minutes)[0].strip()
             after_minutes = line.split(minutes)[1].strip() if minutes in line else ""
-            
+
             # Extract name from before minutes - FIXED to include hyphens
             # Typical pattern: "32 Karl-Anthony Towns C" -> want "Karl-Anthony Towns"
             name_match = re.search(r'^\d+\s+([A-Za-z\s\.\'\-Jr Sr]+?)\s+[FGC]?\s*$', before_minutes)
             if not name_match:
                 # Try simpler pattern without position
                 name_match = re.search(r'^\d+\s+([A-Za-z\s\.\'\-Jr Sr]+)', before_minutes)
-            
+
             if not name_match:
-                self._log_parsing_issue("failed_stat_lines", 
+                self._log_parsing_issue("failed_stat_lines",
                                        text=line, team=team, reason="no_name_match")
                 return None
-            
+
             name = name_match.group(1).strip()
-            
+
             # Parse full stat line from after minutes
             # Expected order: FG FGA 3P 3PA FT FTA OR DR TOT A PF ST TO BS +/- PTS
             stats = self._parse_stat_line(after_minutes, line)
-            
+
             # Add minutes to stats
             stats["minutes"] = minutes
-            
+
             # Sanity check
             if name and len(name) > 2 and not name.isdigit():
                 return {
@@ -1439,9 +1439,9 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
                     "stats": stats
                 }
             else:
-                self._log_parsing_issue("failed_stat_lines", 
+                self._log_parsing_issue("failed_stat_lines",
                                        text=line, team=team, reason="invalid_name", name=name)
-                
+
         except AttributeError as e:
             logger.error("CRITICAL CODE BUG extracting active player from line '%s': %s", line, e)
             self.error_tracker.record_error("active_player_extraction", f"AttributeError: {e}",
@@ -1463,7 +1463,7 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
         """Parse NBA stat line into structured data."""
         # Split stats by spaces and clean
         stat_parts = [s.strip() for s in stat_text.split() if s.strip()]
-        
+
         # Initialize with defaults
         stats = {
             "minutes": "0:00",
@@ -1488,7 +1488,7 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
             "three_point_percentage": 0.0,
             "free_throw_percentage": 0.0,
         }
-        
+
         try:
             # Expected order after minutes: FG FGA 3P 3PA FT FTA OR DR TOT A PF ST TO BS +/- PTS
             if len(stat_parts) >= 16:  # Minimum expected for full stat line
@@ -1506,17 +1506,17 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
                 stats["steals"] = self._safe_int(stat_parts[11])
                 stats["turnovers"] = self._safe_int(stat_parts[12])
                 stats["blocks"] = self._safe_int(stat_parts[13])
-                
+
                 # Plus/minus can be negative, handle carefully
                 plus_minus_str = stat_parts[14]
                 if plus_minus_str.startswith('-'):
                     stats["plus_minus"] = -self._safe_int(plus_minus_str[1:])
                 else:
                     stats["plus_minus"] = self._safe_int(plus_minus_str)
-                
+
                 # Points is typically the last number
                 stats["points"] = self._safe_int(stat_parts[15])
-                
+
                 # Calculate percentages
                 stats["field_goal_percentage"] = self._safe_percentage(
                     stats["field_goals_made"], stats["field_goals_attempted"]
@@ -1527,15 +1527,15 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
                 stats["free_throw_percentage"] = self._safe_percentage(
                     stats["free_throws_made"], stats["free_throws_attempted"]
                 )
-                
+
             else:
                 # Log the short stat line issue
-                self._log_parsing_issue("failed_stat_lines", 
-                                       text=full_line, 
-                                       reason="insufficient_stats", 
+                self._log_parsing_issue("failed_stat_lines",
+                                       text=full_line,
+                                       reason="insufficient_stats",
                                        stat_parts_count=len(stat_parts),
                                        stat_parts=stat_parts[:10])  # Only log first 10 to avoid huge logs
-                
+
                 # Fallback: try to at least get points (last number)
                 if stat_parts:
                     # Look for points at the end
@@ -1543,9 +1543,9 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
                         if part.isdigit():
                             stats["points"] = int(part)
                             break
-                            
+
                 logger.debug("Stat line too short (%d parts), using fallback: %s", len(stat_parts), stat_parts)
-        
+
         except AttributeError as e:
             logger.error("CRITICAL CODE BUG parsing stat line '%s': %s", stat_text, e)
             self.error_tracker.record_error("stat_line_parsing", f"AttributeError: {e}",
@@ -1576,81 +1576,81 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
             return round(made / attempted, 3) if attempted > 0 else 0.0
         except (ZeroDivisionError, TypeError):
             return 0.0
-        
+
     def _detect_special_venue_game(self, text: str, game_info: Dict) -> Dict[str, bool]:
         """
         Detect if this is a special venue game and what type.
         Returns flags for different types of special games.
         """
         arena = game_info.get("arena", "").lower()
-        city = game_info.get("city", "").lower() 
-        
+        city = game_info.get("city", "").lower()
+
         # Neutral site venues (neither team's home court)
         neutral_venues = [
             "t-mobile arena",  # Las Vegas
-            "accor arena",     # Paris  
+            "accor arena",     # Paris
             "o2 arena",        # London
             "arena cdmx",      # Mexico City
             "saitama super arena",  # Tokyo
             "etihad arena",    # Abu Dhabi
         ]
-        
+
         # Relocated home games (team playing at alternate venue)
         relocated_patterns = [
             ("moody center", "austin"),  # San Antonio games in Austin
             ("honda center", "anaheim"), # Potential LA team relocations
         ]
-        
+
         is_neutral_site = any(venue in arena for venue in neutral_venues)
-        is_relocated_home = any(venue in arena and location in city 
+        is_relocated_home = any(venue in arena and location in city
                             for venue, location in relocated_patterns)
         is_international = city in ["paris", "london", "tokyo", "mexico city", "abu dhabi"]
-        
+
         # Check if standard parsing labels exist
         has_standard_labels = "HOME:" in text and "VISITOR:" in text
-        
+
         return {
             "is_special_venue": is_neutral_site or is_relocated_home or is_international,
             "is_neutral_site": is_neutral_site,
-            "is_relocated_home": is_relocated_home, 
+            "is_relocated_home": is_relocated_home,
             "is_international": is_international,
             "has_standard_labels": has_standard_labels,
             "needs_fallback_parsing": not has_standard_labels
         }
 
-    def _parse_clean_text(self, text: str, active_players: List[Dict], 
+    def _parse_clean_text(self, text: str, active_players: List[Dict],
                         dnp_players: List[Dict], inactive_players: List[Dict], game_info: Dict) -> None:
         """Enhanced parsing with neutral site support."""
-        
+
         logger.info("Parsing clean text (%d chars)", len(text))
-        
+
         # Extract game metadata from the top of the PDF
         self._extract_game_metadata(text, game_info)
-        
+
         # ENHANCED: Detect special venue games and set flags
         venue_flags = self._detect_special_venue_game(text, game_info)
         game_info.update(venue_flags)
-        
+
         # ENHANCED: Choose parsing strategy based on venue type
         if venue_flags["needs_fallback_parsing"]:
-            logger.warning("Standard HOME/VISITOR labels missing - using fallback parsing for %s", 
+            logger.warning("Standard HOME/VISITOR labels missing - using fallback parsing for %s",
                         self.opts["game_code"])
             self._parse_special_venue_format(text, active_players, dnp_players, inactive_players, game_info)
         else:
             logger.info("Using standard parsing format for %s", self.opts["game_code"])
             self._parse_standard_format(text, active_players, dnp_players, inactive_players, game_info)
 
-    def _parse_standard_format(self, text: str, active_players: List[Dict], 
+    def _parse_standard_format(self, text: str, active_players: List[Dict],
                             dnp_players: List[Dict], inactive_players: List[Dict], game_info: Dict) -> None:
         """Original parsing logic for standard games."""
         lines = text.split('\n')
         current_team = None
-        
+
         for i, line in enumerate(lines):
             line = line.strip()
             if not line:
                 continue
-            
+
             # Standard team detection
             if 'VISITOR:' in line:
                 team_match = re.search(r'VISITOR:\s*(.+?)\s*\(', line)
@@ -1664,52 +1664,52 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
                     current_team = team_match.group(1)
                     logger.debug("Found home team: %s", current_team)
                 continue
-            
+
             # Continue with existing parsing logic...
             self._parse_player_line(line, current_team, active_players, dnp_players, inactive_players, lines, i)
 
-    def _parse_special_venue_format(self, text: str, active_players: List[Dict], 
+    def _parse_special_venue_format(self, text: str, active_players: List[Dict],
                                dnp_players: List[Dict], inactive_players: List[Dict], game_info: Dict) -> None:
         """Fallback parsing for neutral site/international games without HOME/VISITOR labels."""
-        
+
         lines = text.split('\n')
-        
+
         away_team_abbr = self.opts["away_team"]  # "ATL"
         home_team_abbr = self.opts["home_team"]   # "MIL"
-        
+
         current_team = None
         current_team_abbr = None
-        
+
         for i, line in enumerate(lines):
             line = line.strip()
             if not line:
                 continue
-                
+
             # Detect team sections by team name with record
             team_section = self._detect_team_section_fallback(line, {}, away_team_abbr, home_team_abbr)
             if team_section:
                 current_team = team_section["team_name"]
-                current_team_abbr = team_section["abbr"] 
+                current_team_abbr = team_section["abbr"]
                 logger.debug("Found %s team section: %s (%s)", team_section["type"], current_team, current_team_abbr)
                 continue
-            
+
             # Parse player lines with team context
             if current_team:
                 self._parse_player_line(line, current_team, active_players, dnp_players, inactive_players, lines, i)
-        
+
         # Log results
-        logger.info("Special venue parsing complete: %d active, %d DNP, %d inactive players", 
+        logger.info("Special venue parsing complete: %d active, %d DNP, %d inactive players",
                 len(active_players), len(dnp_players), len(inactive_players))
-        
+
         # Warning (not error) if no active players found
         if len(active_players) == 0:
-            logger.warning("No active players found in special venue game %s - may need manual review", 
+            logger.warning("No active players found in special venue game %s - may need manual review",
                         self.opts["game_code"])
             # Don't crash - just log the issue
             if hasattr(self, 'parsing_issues') and 'parsing_failure' in self.parsing_issues:
-                self._log_parsing_issue("parsing_failure", 
+                self._log_parsing_issue("parsing_failure",
                                     game_code=self.opts["game_code"],
-                                    venue_type="special_venue", 
+                                    venue_type="special_venue",
                                     arena=game_info.get("arena"),
                                     total_dnp=len(dnp_players),
                                     total_inactive=len(inactive_players))
@@ -1723,43 +1723,43 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
         team_patterns = [
             # Pattern: Team name followed by record in parentheses
             rf"({away_abbr}|{home_abbr})\s*\(\d+-\d+\)",
-            # Pattern: Full team names 
+            # Pattern: Full team names
             r"(Hawks|Bucks|Suns|Pacers|Warriors|Lakers)",  # Add more as needed
         ]
-        
+
         sections = {"away": None, "home": None}
-        
+
         # This is a simplified version - you'd want to make this more robust
         # by actually parsing the team names and positions in the PDF
-        
+
         return sections
 
-    def _detect_team_section_fallback(self, line: str, team_sections: Dict, 
+    def _detect_team_section_fallback(self, line: str, team_sections: Dict,
                                     away_abbr: str, home_abbr: str) -> Optional[Dict]:
         """
         Detect team sections without HOME/VISITOR labels.
         Look for team names with records like "Atlanta Hawks (14-13)"
         """
-        
+
         # Pattern: Team name followed by record in parentheses
         team_record_pattern = r'^([A-Z][A-Za-z\s]+)\s+\((\d+-\d+)\)$'
         match = re.match(team_record_pattern, line.strip())
-        
+
         if match:
             team_full_name = match.group(1).strip()
             normalized_pdf_name = self._normalize_team_name_for_comparison(team_full_name)
-            
+
             # Clean team name lookup (only one version of each)
             team_name_to_abbr = {
                 # Eastern Conference
                 "Atlanta Hawks": "ATL",
-                "Boston Celtics": "BOS", 
+                "Boston Celtics": "BOS",
                 "Brooklyn Nets": "BKN",
                 "Charlotte Hornets": "CHA",
                 "Chicago Bulls": "CHI",
                 "Cleveland Cavaliers": "CLE",
                 "Detroit Pistons": "DET",
-                "Indiana Pacers": "IND", 
+                "Indiana Pacers": "IND",
                 "Miami Heat": "MIA",
                 "Milwaukee Bucks": "MIL",
                 "New York Knicks": "NYK",
@@ -1767,17 +1767,17 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
                 "Philadelphia 76ers": "PHI",
                 "Toronto Raptors": "TOR",
                 "Washington Wizards": "WAS",
-                
-                # Western Conference  
+
+                # Western Conference
                 "Dallas Mavericks": "DAL",
                 "Denver Nuggets": "DEN",
                 "Golden State Warriors": "GSW",
                 "Houston Rockets": "HOU",
-                "Los Angeles Clippers": "LAC", 
+                "Los Angeles Clippers": "LAC",
                 "Los Angeles Lakers": "LAL",
                 "Memphis Grizzlies": "MEM",
                 "Minnesota Timberwolves": "MIN",
-                "New Orleans Pelicans": "NOP", 
+                "New Orleans Pelicans": "NOP",
                 "Oklahoma City Thunder": "OKC",
                 "Phoenix Suns": "PHX",
                 "Portland Trail Blazers": "POR",
@@ -1785,18 +1785,18 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
                 "San Antonio Spurs": "SAS",
                 "Utah Jazz": "UTA"
             }
-            
+
             # Find matching team by normalized comparison
             team_abbr = None
             matched_team_name = None
-            
+
             for lookup_name, abbr in team_name_to_abbr.items():
                 normalized_lookup = self._normalize_team_name_for_comparison(lookup_name)
                 if normalized_pdf_name == normalized_lookup:
                     team_abbr = abbr
                     matched_team_name = lookup_name
                     break
-            
+
             if team_abbr:
                 # Determine if this is away or home team based on game_code
                 if team_abbr == away_abbr:
@@ -1804,52 +1804,52 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
                 elif team_abbr == home_abbr:
                     return {"type": "home", "team_name": matched_team_name, "abbr": team_abbr}
                 else:
-                    logger.debug("Found team %s (%s) but doesn't match game teams %s vs %s", 
+                    logger.debug("Found team %s (%s) but doesn't match game teams %s vs %s",
                             matched_team_name, team_abbr, away_abbr, home_abbr)
             else:
                 logger.debug("Unknown team name: %s (normalized: %s)", team_full_name, normalized_pdf_name)
-        
+
         return None
 
     def _normalize_team_name_for_comparison(self, team_name: str) -> str:
         """Normalize team name for comparison by removing spaces, lowercasing, and removing punctuation."""
         return re.sub(r'[^a-z]', '', team_name.lower())
 
-    def _parse_player_line(self, line: str, current_team: str, active_players: List[Dict], 
-                        dnp_players: List[Dict], inactive_players: List[Dict], 
+    def _parse_player_line(self, line: str, current_team: str, active_players: List[Dict],
+                        dnp_players: List[Dict], inactive_players: List[Dict],
                         all_lines: List[str], line_idx: int) -> None:
         """Consolidated player line parsing logic."""
-        
+
         # NWT players
         if ' NWT - ' in line:
             player = self._extract_nwt_from_clean_line(line, current_team)
             if player:
                 dnp_players.append(player)
                 logger.debug("Found NWT player: %s - %s", player['name'], player['dnp_reason'])
-        
+
         # DNP players
         elif ' DNP - ' in line:
             player = self._extract_dnp_from_clean_line(line, current_team)
             if player:
                 dnp_players.append(player)
                 logger.debug("Found DNP player: %s - %s", player['name'], player['dnp_reason'])
-        
+
         # DND players
         elif ' DND - ' in line:
             player = self._extract_dnd_from_clean_line(line, current_team)
             if player:
                 dnp_players.append(player)
                 logger.debug("Found DND player: %s - %s", player['name'], player['dnp_reason'])
-        
+
         # Active players (lines with minutes like "35:42")
         elif re.search(r'\d{1,2}:\d{2}', line) and current_team:
             player = self._extract_active_from_clean_line(line, current_team)
             if player:
                 active_players.append(player)
                 logger.debug("Found active player: %s (%s pts, %s min)",
-                        player['name'], player.get('stats', {}).get('points', 0), 
+                        player['name'], player.get('stats', {}).get('points', 0),
                         player.get('stats', {}).get('minutes', '0:00'))
-        
+
         # Inactive player sections
         elif line.startswith('Inactive:'):
             inactive_list = self._extract_inactive_players_from_line(line, all_lines, line_idx)
@@ -1858,7 +1858,7 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
                 logger.debug("Found inactive player: %s - %s (%s)",
                         player['name'], player['reason'], player['team'])
 
-    
+
     # ------------------------------------------------------------------ #
     # Stats
     # ------------------------------------------------------------------ #

@@ -1,8 +1,8 @@
 # NBA.com Player Boxscores - Validation Operations Guide
 
-**Purpose:** Step-by-step guide for validating NBA.com player boxscore data during active season and after historical backfills  
-**Audience:** Data Engineers, DevOps, Analytics Team  
-**Status:** Ready for Season Start  
+**Purpose:** Step-by-step guide for validating NBA.com player boxscore data during active season and after historical backfills
+**Audience:** Data Engineers, DevOps, Analytics Team
+**Status:** Ready for Season Start
 **Last Updated:** October 13, 2025
 
 ---
@@ -26,9 +26,9 @@
 
 ### What is NBA.com Player Boxscores?
 
-**Data Source:** Official NBA.com player statistics (authoritative)  
-**Processor:** `NbacPlayerBoxscoreProcessor`  
-**Table:** `nba-props-platform.nba_raw.nbac_player_boxscores`  
+**Data Source:** Official NBA.com player statistics (authoritative)
+**Processor:** `NbacPlayerBoxscoreProcessor`
+**Table:** `nba-props-platform.nba_raw.nbac_player_boxscores`
 **Update Frequency:** Post-game (8 PM & 11 PM PT) + Recovery workflows
 
 ### Why This Data Matters
@@ -124,7 +124,7 @@ cd /path/to/nba-stats-scraper
 ```bash
 # Check if any data exists
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   COUNT(*) as total_records,
   COUNT(DISTINCT game_id) as games,
   MIN(game_date) as first_game_date
@@ -205,7 +205,7 @@ WHERE game_date >= CURRENT_DATE() - 7
 #### Baseline Establishment Checklist
 
 - [ ] Day 1 data captured successfully
-- [ ] Day 2 data captured successfully  
+- [ ] Day 2 data captured successfully
 - [ ] Day 3 data captured successfully
 - [ ] BDL comparison shows high match rate
 - [ ] No critical point discrepancies
@@ -217,8 +217,8 @@ WHERE game_date >= CURRENT_DATE() - 7
 
 ## 🔄 Daily Operations Workflow {#daily-operations}
 
-**When:** Every day during NBA season  
-**Who:** Data Engineer on duty  
+**When:** Every day during NBA season
+**Who:** Data Engineer on duty
 **Duration:** 5-10 minutes
 
 ### Morning Validation (9 AM PT)
@@ -258,7 +258,7 @@ WHERE game_date >= CURRENT_DATE() - 7
 ```bash
 # Verify a specific game from yesterday
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   player_full_name,
   team_abbr,
   minutes,
@@ -304,8 +304,8 @@ If validation fails:
 
 ## 📊 Weekly Validation Routine {#weekly-validation}
 
-**When:** Monday mornings at 9 AM PT  
-**Who:** Data Engineering team lead  
+**When:** Monday mornings at 9 AM PT
+**Who:** Data Engineering team lead
 **Duration:** 30-45 minutes
 
 ### Step 1: Weekly Trends Review (10 minutes)
@@ -358,7 +358,7 @@ cat reports/cross_validation_$(date +%Y%m%d).csv | grep "Perfect Match" | wc -l
 
 ```sql
 -- Find patterns in point discrepancies
-SELECT 
+SELECT
   team_abbr,
   COUNT(*) as discrepancy_count,
   AVG(ABS(nbac_points - bdl_points)) as avg_point_diff
@@ -443,8 +443,8 @@ If patterns emerge (e.g., one team consistently wrong):
 
 ## 🗄️ Historical Backfill Validation {#backfill-validation}
 
-**When:** After completing historical season backfill  
-**Who:** Data Engineering team  
+**When:** After completing historical season backfill
+**Who:** Data Engineering team
 **Duration:** 2-3 hours per season
 
 ### Before Starting Backfill
@@ -516,7 +516,7 @@ Monitor via:
 ```bash
 # Quick verification that data appeared
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   EXTRACT(YEAR FROM game_date) as year,
   COUNT(*) as total_records,
   COUNT(DISTINCT game_id) as total_games,
@@ -567,7 +567,7 @@ cat backfill_results.csv | grep "82" | wc -l
 
 ```sql
 -- Season-level summary
-SELECT 
+SELECT
   season,
   COUNT(DISTINCT team) as teams,
   SUM(CAST(reg_games AS INT64)) / COUNT(DISTINCT team) as avg_games_per_team,
@@ -636,7 +636,7 @@ echo "Critical Discrepancies: $critical"
 ```sql
 -- Pattern analysis query
 WITH discrepancies AS (
-  SELECT 
+  SELECT
     game_date,
     team_abbr,
     EXTRACT(YEAR FROM game_date) as year,
@@ -647,7 +647,7 @@ WITH discrepancies AS (
   WHERE status LIKE '%CRITICAL%' OR status LIKE '%WARNING%'
   GROUP BY game_date, team_abbr, year
 )
-SELECT 
+SELECT
   year,
   team_abbr,
   COUNT(*) as games_with_discrepancies,
@@ -741,7 +741,7 @@ bq query --use_legacy_sql=false "$(cat validation/queries/raw/nbac_player_boxsco
 - Backfill plan: [Yes/No]
 
 ### Cross-Validation with BDL
-- Perfect matches: [X]% 
+- Perfect matches: [X]%
 - Minor discrepancies: [X]%
 - Critical discrepancies: [X]%
 - Patterns identified: [description]
@@ -790,7 +790,7 @@ bq query --use_legacy_sql=false "$(cat validation/queries/raw/nbac_player_boxsco
 
 #### Critical Alerts (Immediate Response)
 
-**Trigger:** Within 15 minutes  
+**Trigger:** Within 15 minutes
 **Escalation:** Page on-call engineer
 
 | Alert | Threshold | Query | Action |
@@ -802,7 +802,7 @@ bq query --use_legacy_sql=false "$(cat validation/queries/raw/nbac_player_boxsco
 
 #### Warning Alerts (Review Within 4 Hours)
 
-**Trigger:** Business hours  
+**Trigger:** Business hours
 **Escalation:** Slack notification
 
 | Alert | Threshold | Query | Action |
@@ -815,7 +815,7 @@ bq query --use_legacy_sql=false "$(cat validation/queries/raw/nbac_player_boxsco
 
 #### Info Alerts (Review Next Business Day)
 
-**Trigger:** Daily summary  
+**Trigger:** Daily summary
 **Escalation:** Email report
 
 | Alert | Threshold | Query | Action |
@@ -827,18 +827,18 @@ bq query --use_legacy_sql=false "$(cat validation/queries/raw/nbac_player_boxsco
 ### Escalation Matrix
 
 #### Level 1: Data Engineer On-Call
-**Handles:** All daily validation, warnings, info alerts  
-**Response Time:** 4 business hours  
+**Handles:** All daily validation, warnings, info alerts
+**Response Time:** 4 business hours
 **Escalate When:** Critical alerts, unable to resolve warnings
 
 #### Level 2: Data Engineering Lead
-**Handles:** Critical issues, pattern investigations  
-**Response Time:** 1 hour (critical), 4 hours (pattern)  
+**Handles:** Critical issues, pattern investigations
+**Response Time:** 1 hour (critical), 4 hours (pattern)
 **Escalate When:** System-wide failures, data integrity concerns
 
 #### Level 3: Engineering Manager
-**Handles:** Vendor escalation, process changes  
-**Response Time:** 2 hours  
+**Handles:** Vendor escalation, process changes
+**Response Time:** 2 hours
 **Escalate When:** NBA.com API issues, architectural problems
 
 ### Alert Response Playbook
@@ -848,7 +848,7 @@ bq query --use_legacy_sql=false "$(cat validation/queries/raw/nbac_player_boxsco
 ```bash
 # Step 1: Verify games were scheduled
 bq query --use_legacy_sql=false "
-SELECT COUNT(*) as games 
+SELECT COUNT(*) as games
 FROM \`nba-props-platform.nba_raw.nbac_schedule\`
 WHERE game_date = CURRENT_DATE() - 1
 "
@@ -934,7 +934,7 @@ gsutil ls gs://nba-scraped-data/nba-com/player-boxscores/$(date -d yesterday +%Y
 
 ```sql
 -- Check specific discrepancy
-SELECT 
+SELECT
   n.player_full_name,
   n.team_abbr,
   n.game_id,
@@ -979,7 +979,7 @@ WHERE ABS(n.points - b.points) > 2
 
 ```sql
 -- Find games with low player counts
-SELECT 
+SELECT
   game_id,
   game_date,
   COUNT(DISTINCT player_lookup) as players,
@@ -1068,7 +1068,7 @@ Create a Looker Studio (or similar) dashboard with these key metrics:
 
 ```sql
 -- Dashboard Tile: Daily Validation Status
-SELECT 
+SELECT
   game_date,
   scheduled_games,
   games_with_data,
@@ -1079,7 +1079,7 @@ SELECT
     ELSE 'Incomplete'
   END as status
 FROM (
-  SELECT 
+  SELECT
     s.game_date,
     COUNT(*) as scheduled_games,
     COUNT(DISTINCT b.game_id) as games_with_data
@@ -1096,13 +1096,13 @@ ORDER BY game_date DESC
 
 ```sql
 -- Dashboard Tile: BDL Consistency (7-day rolling)
-SELECT 
+SELECT
   game_date,
   total_players,
   perfect_matches,
   ROUND(100.0 * perfect_matches / total_players, 1) as match_rate_pct
 FROM (
-  SELECT 
+  SELECT
     n.game_date,
     COUNT(*) as total_players,
     COUNT(CASE WHEN ABS(n.points - b.points) = 0 THEN 1 END) as perfect_matches
@@ -1119,7 +1119,7 @@ ORDER BY game_date DESC
 
 ```sql
 -- Dashboard Tile: Processing Latency
-SELECT 
+SELECT
   game_date,
   AVG(TIMESTAMP_DIFF(processed_at, scrape_timestamp, MINUTE)) as avg_latency_minutes,
   MAX(TIMESTAMP_DIFF(processed_at, scrape_timestamp, MINUTE)) as max_latency_minutes
@@ -1135,7 +1135,7 @@ ORDER BY game_date DESC
 
 ```sql
 -- Dashboard Tile: Daily Data Quality Score (0-100)
-SELECT 
+SELECT
   game_date,
   ROUND(
     (nba_id_completeness * 0.4) +  -- 40% weight
@@ -1143,10 +1143,10 @@ SELECT
     (bdl_match_rate * 0.3),          -- 30% weight
   1) as quality_score
 FROM (
-  SELECT 
+  SELECT
     game_date,
     100.0 * COUNT(CASE WHEN nba_player_id IS NOT NULL THEN 1 END) / COUNT(*) as nba_id_completeness,
-    CASE 
+    CASE
       WHEN AVG(players_per_game) BETWEEN 28 AND 37 THEN 100
       WHEN AVG(players_per_game) BETWEEN 25 AND 40 THEN 80
       ELSE 50
@@ -1154,7 +1154,7 @@ FROM (
     -- BDL match rate subquery would go here
     95.0 as bdl_match_rate  -- Placeholder
   FROM (
-    SELECT 
+    SELECT
       game_date,
       game_id,
       nba_player_id,
@@ -1333,7 +1333,7 @@ ORDER BY game_date DESC
 
 ---
 
-**Document Owner:** NBA Props Data Engineering Team  
-**Last Updated:** October 13, 2025  
-**Next Review:** When NBA season starts  
+**Document Owner:** NBA Props Data Engineering Team
+**Last Updated:** October 13, 2025
+**Next Review:** When NBA season starts
 **Feedback:** Update this document as procedures are refined during actual season operations

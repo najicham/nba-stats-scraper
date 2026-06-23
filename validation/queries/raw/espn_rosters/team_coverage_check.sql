@@ -25,7 +25,7 @@ team_rosters AS (
     MAX(roster_date) as latest_update
   FROM `nba-props-platform.nba_raw.espn_team_rosters`
   WHERE roster_date = (
-      SELECT MAX(roster_date) 
+      SELECT MAX(roster_date)
       FROM `nba-props-platform.nba_raw.espn_team_rosters`
       WHERE roster_date >= '2025-01-01'
     )

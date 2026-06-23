@@ -16,7 +16,7 @@ echo ""
 
 # Step 1: Check current state
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   game_date,
   COUNT(*) as total_records,
   COUNT(DISTINCT source_file_path) as unique_files
@@ -53,7 +53,7 @@ WHERE game_date = '$DATE'
     FROM (
       SELECT *,
         ROW_NUMBER() OVER (
-          PARTITION BY offer_id, bet_side, bookmaker, line_id 
+          PARTITION BY offer_id, bet_side, bookmaker, line_id
           ORDER BY processed_at DESC
         ) as rn
       FROM \`nba-props-platform.nba_raw.bettingpros_player_points_props\`
@@ -65,7 +65,7 @@ WHERE game_date = '$DATE'
 
 # Step 4: Verify
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   game_date,
   COUNT(*) as total_records,
   COUNT(DISTINCT source_file_path) as unique_files

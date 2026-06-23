@@ -69,7 +69,7 @@ experience_distribution AS (
   FROM `nba-props-platform.nba_raw.nbac_player_list_current`
   WHERE season_year >= 2024
   GROUP BY experience_level
-  ORDER BY 
+  ORDER BY
     CASE experience_level
       WHEN 'Rookies (0 years)' THEN 1
       WHEN 'Young (1-3 years)' THEN 2

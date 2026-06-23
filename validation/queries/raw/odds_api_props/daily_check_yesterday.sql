@@ -67,9 +67,9 @@ SELECT
   CASE
     WHEN s.scheduled_games = 0 THEN '✅ No games scheduled'
     WHEN ps.games_with_props = 0 THEN '❌ CRITICAL: No props data'
-    WHEN ps.games_with_props < s.scheduled_games THEN 
+    WHEN ps.games_with_props < s.scheduled_games THEN
       CONCAT('🔴 CRITICAL: ', CAST(s.scheduled_games - ps.games_with_props AS STRING), ' games missing props')
-    WHEN pg.avg_players_per_game < 6.0 THEN 
+    WHEN pg.avg_players_per_game < 6.0 THEN
       CONCAT('🟡 WARNING: Low average coverage (', CAST(pg.avg_players_per_game AS STRING), ' players/game)')
     WHEN l.low_coverage_games > 0 THEN
       CONCAT('⚠️ WARNING: ', CAST(l.low_coverage_games AS STRING), ' games with <6 players')

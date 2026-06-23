@@ -32,25 +32,25 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_orchestration.daily_expected_
   -- ==========================================================================
   -- DATE IDENTIFIERS (2 fields)
   -- ==========================================================================
-  
+
   date DATE NOT NULL,
     -- Schedule date in Eastern Time (YYYY-MM-DD)
     -- Partition key (daily partitions)
     -- Example: "2025-01-15"
     -- Used for: Grouping by date, partition filtering
     -- Always filter on this field for efficient queries
-  
+
   locked_at TIMESTAMP NOT NULL,
     -- When this schedule was generated in UTC
     -- Typically 5 AM ET = 9-10 AM UTC (depending on DST)
     -- Example: "2025-01-15T10:00:00Z" (5 AM ET during EST)
     -- Used for: Audit trail, schedule version tracking
     -- Once locked, this schedule doesn't change for the day
-  
+
   -- ==========================================================================
   -- WORKFLOW IDENTIFICATION (1 field)
   -- ==========================================================================
-  
+
   workflow_name STRING NOT NULL,
     -- Workflow expected to run
     -- Examples:
@@ -59,11 +59,11 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_orchestration.daily_expected_
     --   'morning_operations' (daily foundation data)
     --   'post_game_window_1' (first post-game collection)
     -- Used for: Matching with actual executions
-  
+
   -- ==========================================================================
   -- EXPECTED EXECUTION (2 fields)
   -- ==========================================================================
-  
+
   expected_run_time TIMESTAMP NOT NULL,
     -- When workflow should execute in UTC
     -- Converted from ET to UTC for consistency
@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_orchestration.daily_expected_
     --   "2025-01-15T16:00:00Z" (11 AM ET - betting lines window start)
     --   "2025-01-16T02:30:00Z" (9:30 PM ET prev day - post-game window 1)
     -- Used for: Expected vs actual comparison, lateness detection
-  
+
   reason STRING,
     -- Why this execution is expected
     -- Examples:
@@ -82,11 +82,11 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_orchestration.daily_expected_
     --   'Post-game collection (8 games scheduled)'
     -- Helps understand the context in Grafana dashboards
     -- Used for: Dashboard labels, debugging schedule logic
-  
+
   -- ==========================================================================
   -- WORKFLOW COMPOSITION (1 field)
   -- ==========================================================================
-  
+
   scrapers ARRAY<STRING>,
     -- List of scrapers expected to run in this workflow execution
     -- Examples:
@@ -94,11 +94,11 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_orchestration.daily_expected_
     --   ['nbac_injury_report'] (injury_discovery)
     --   ['oddsa_events', 'oddsa_player_props'] (betting_lines)
     -- Used for: Understanding workflow scope, debugging
-  
+
   -- ==========================================================================
   -- GAME CONTEXT (1 field)
   -- ==========================================================================
-  
+
   games_today INT64,
     -- Number of games scheduled for this date
     -- Range: 0-15 (typical NBA day)
@@ -109,11 +109,11 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_orchestration.daily_expected_
     --   13-15 = Heavy game day
     -- NULL for: Workflows not dependent on game count
     -- Used for: Context in dashboards, understanding workflow triggers
-  
+
   -- ==========================================================================
   -- PRIORITY (1 field)
   -- ==========================================================================
-  
+
   priority STRING,
     -- Workflow priority level
     -- Values:
@@ -122,38 +122,38 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_orchestration.daily_expected_
     --   'MEDIUM' = Normal operations (backfills, analytics)
     --   'LOW' = Nice to have (reference data)
     -- Used for: Alert severity, dashboard filtering
-  
+
   -- ==========================================================================
   -- VERSION TRACKING (2 fields)
   -- ==========================================================================
-  
+
   schedule_version STRING,
     -- Config version used to generate schedule
     -- Format: "v1.2.3" or config file hash
     -- Example: "v1.0.0", "abc123def"
     -- Used for: Tracking config changes over time
     -- Helps explain schedule variations after config updates
-  
+
   generated_by STRING,
     -- Controller instance that generated schedule
     -- Examples:
     --   'nba-scrapers-prod' (production controller)
     --   'local-test' (development)
     -- Used for: Debugging, identifying test vs production schedules
-  
+
   -- ==========================================================================
   -- ENVIRONMENT (1 field)
   -- ==========================================================================
-  
+
   environment STRING,
     -- Environment where schedule was generated
     -- Values: 'prod', 'dev'
     -- Used for: Filtering production schedules only
-  
+
   -- ==========================================================================
   -- METADATA (1 field)
   -- ==========================================================================
-  
+
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
     -- Row creation timestamp (auto-populated by BigQuery)
     -- Used for: Audit trail, data freshness checks
@@ -305,7 +305,7 @@ OPTIONS(
 -- Query 1: Today's expected schedule
 -- Purpose: Quick view of what should happen today
 -- Expected: All workflows listed with execution times
--- SELECT 
+-- SELECT
 --   workflow_name,
 --   FORMAT_TIMESTAMP('%H:%M', expected_run_time, 'America/New_York') as time_et,
 --   reason,
@@ -320,7 +320,7 @@ OPTIONS(
 -- -- Purpose: Core monitoring query for Grafana
 -- -- Expected: All expected workflows executed on time
 -- WITH expected AS (
---   SELECT 
+--   SELECT
 --     workflow_name,
 --     expected_run_time,
 --     reason as expected_reason,
@@ -329,7 +329,7 @@ OPTIONS(
 --   WHERE date = CURRENT_DATE('America/New_York')
 -- ),
 -- actual AS (
---   SELECT 
+--   SELECT
 --     workflow_name,
 --     decision_time as actual_run_time,
 --     action,
@@ -338,12 +338,12 @@ OPTIONS(
 --   WHERE DATE(decision_time, 'America/New_York') = CURRENT_DATE('America/New_York')
 --     AND action = 'RUN'
 -- )
--- SELECT 
+-- SELECT
 --   expected.workflow_name,
 --   expected.priority,
 --   FORMAT_TIMESTAMP('%H:%M', expected.expected_run_time, 'America/New_York') as expected_time_et,
 --   FORMAT_TIMESTAMP('%H:%M', actual.actual_run_time, 'America/New_York') as actual_time_et,
---   CASE 
+--   CASE
 --     WHEN actual.workflow_name IS NULL THEN '🔴 MISSING'
 --     WHEN TIMESTAMP_DIFF(actual.actual_run_time, expected.expected_run_time, MINUTE) > 30 THEN '🟡 LATE'
 --     WHEN TIMESTAMP_DIFF(actual.actual_run_time, expected.expected_run_time, MINUTE) < -30 THEN '🟠 EARLY'
@@ -353,7 +353,7 @@ OPTIONS(
 --   expected.expected_reason,
 --   actual.actual_reason
 -- FROM expected
--- LEFT JOIN actual 
+-- LEFT JOIN actual
 --   ON expected.workflow_name = actual.workflow_name
 --   AND ABS(TIMESTAMP_DIFF(actual.actual_run_time, expected.expected_run_time, MINUTE)) < 120
 -- ORDER BY expected.expected_run_time;
@@ -362,7 +362,7 @@ OPTIONS(
 -- -- Purpose: Track reliability of workflow execution
 -- -- Expected: >95% on-time execution for CRITICAL workflows
 -- WITH expected AS (
---   SELECT 
+--   SELECT
 --     workflow_name,
 --     priority,
 --     date,
@@ -372,7 +372,7 @@ OPTIONS(
 --   GROUP BY workflow_name, priority, date
 -- ),
 -- actual AS (
---   SELECT 
+--   SELECT
 --     workflow_name,
 --     DATE(decision_time, 'America/New_York') as date,
 --     COUNT(*) as actual_count
@@ -381,14 +381,14 @@ OPTIONS(
 --     AND action = 'RUN'
 --   GROUP BY workflow_name, date
 -- )
--- SELECT 
+-- SELECT
 --   expected.workflow_name,
 --   expected.priority,
 --   SUM(expected.expected_count) as total_expected,
 --   SUM(COALESCE(actual.actual_count, 0)) as total_actual,
 --   ROUND(SUM(COALESCE(actual.actual_count, 0)) * 100.0 / SUM(expected.expected_count), 1) as execution_rate_pct
 -- FROM expected
--- LEFT JOIN actual 
+-- LEFT JOIN actual
 --   ON expected.workflow_name = actual.workflow_name
 --   AND expected.date = actual.date
 -- GROUP BY expected.workflow_name, expected.priority
@@ -397,7 +397,7 @@ OPTIONS(
 -- -- Query 4: Games per day schedule pattern
 -- -- Purpose: Understand how schedule varies by game count
 -- -- Expected: More workflows on heavy game days
--- SELECT 
+-- SELECT
 --   date,
 --   games_today,
 --   COUNT(DISTINCT workflow_name) as workflows_scheduled,
@@ -411,7 +411,7 @@ OPTIONS(
 -- -- Query 5: Discovery mode expected attempts
 -- -- Purpose: Verify discovery workflows have correct attempt count
 -- -- Expected: Up to 12 attempts for injury_discovery
--- SELECT 
+-- SELECT
 --   workflow_name,
 --   date,
 --   COUNT(*) as expected_attempts,
@@ -426,7 +426,7 @@ OPTIONS(
 -- -- Query 6: Config version tracking
 -- -- Purpose: Track when schedule logic changes
 -- -- Expected: Version changes correlate with behavior changes
--- SELECT 
+-- SELECT
 --   schedule_version,
 --   MIN(date) as first_used,
 --   MAX(date) as last_used,
@@ -443,7 +443,7 @@ OPTIONS(
 
 -- -- Alert: Critical workflow missing from today's schedule
 -- -- Threshold: CRITICAL workflows must be in schedule every day
--- SELECT 
+-- SELECT
 --   'daily_expected_schedule' as alert_source,
 --   'Missing critical workflows' as alert_type,
 --   CURRENT_DATE() as date,
@@ -457,7 +457,7 @@ OPTIONS(
 
 -- -- Alert: Schedule not generated today
 -- -- Threshold: Schedule should be generated by 6 AM ET
--- SELECT 
+-- SELECT
 --   'daily_expected_schedule' as alert_source,
 --   'Schedule not generated' as alert_type,
 --   CURRENT_DATE() as date,
@@ -472,7 +472,7 @@ OPTIONS(
 -- -- Alert: Execution rate below threshold
 -- -- Threshold: <90% execution rate for HIGH/CRITICAL workflows
 -- WITH rates AS (
---   SELECT 
+--   SELECT
 --     e.workflow_name,
 --     e.priority,
 --     COUNT(DISTINCT e.date) as expected_days,
@@ -480,7 +480,7 @@ OPTIONS(
 --     ROUND(COUNT(DISTINCT a.date) * 100.0 / COUNT(DISTINCT e.date), 1) as execution_rate_pct
 --   FROM `nba-props-platform.nba_orchestration.daily_expected_schedule` e
 --   LEFT JOIN (
---     SELECT 
+--     SELECT
 --       workflow_name,
 --       DATE(decision_time, 'America/New_York') as date
 --     FROM `nba-props-platform.nba_orchestration.workflow_decisions`
@@ -490,7 +490,7 @@ OPTIONS(
 --     AND e.priority IN ('CRITICAL', 'HIGH')
 --   GROUP BY e.workflow_name, e.priority
 -- )
--- SELECT 
+-- SELECT
 --   'daily_expected_schedule' as alert_source,
 --   workflow_name,
 --   priority,
@@ -507,7 +507,7 @@ OPTIONS(
 -- -- View: Today's schedule with status
 -- CREATE OR REPLACE VIEW `nba-props-platform.nba_orchestration.v_todays_schedule_status` AS
 -- WITH expected AS (
---   SELECT 
+--   SELECT
 --     workflow_name,
 --     expected_run_time,
 --     reason,
@@ -518,14 +518,14 @@ OPTIONS(
 --   WHERE date = CURRENT_DATE('America/New_York')
 -- ),
 -- actual AS (
---   SELECT 
+--   SELECT
 --     workflow_name,
 --     decision_time as actual_run_time,
 --     action
 --   FROM `nba-props-platform.nba_orchestration.workflow_decisions`
 --   WHERE DATE(decision_time, 'America/New_York') = CURRENT_DATE('America/New_York')
 -- )
--- SELECT 
+-- SELECT
 --   expected.workflow_name,
 --   expected.priority,
 --   expected.expected_run_time,
@@ -534,7 +534,7 @@ OPTIONS(
 --   expected.games_today,
 --   actual.actual_run_time,
 --   actual.action,
---   CASE 
+--   CASE
 --     WHEN actual.workflow_name IS NULL AND expected.expected_run_time > CURRENT_TIMESTAMP() THEN 'PENDING'
 --     WHEN actual.workflow_name IS NULL THEN 'MISSING'
 --     WHEN actual.action = 'RUN' AND TIMESTAMP_DIFF(actual.actual_run_time, expected.expected_run_time, MINUTE) <= 30 THEN 'ON_TIME'

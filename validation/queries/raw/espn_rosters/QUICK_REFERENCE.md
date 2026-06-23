@@ -87,7 +87,7 @@ WITH all_teams AS (
 SELECT a.team_abbr as missing_team
 FROM all_teams a
 LEFT JOIN (
-  SELECT DISTINCT team_abbr 
+  SELECT DISTINCT team_abbr
   FROM `nba-props-platform.nba_raw.espn_team_rosters`
   WHERE roster_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
     AND roster_date >= '2025-01-01'
@@ -99,7 +99,7 @@ WHERE e.team_abbr IS NULL;
 ```bash
 # Check data timestamps
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   'ESPN' as source,
   MAX(roster_date) as latest_date,
   MAX(processed_at) as latest_processing
@@ -109,7 +109,7 @@ UNION ALL
 SELECT
   'NBA.com' as source,
   MAX(last_seen_date) as latest_date,
-  MAX(processed_at) as latest_processing  
+  MAX(processed_at) as latest_processing
 FROM \`nba-props-platform.nba_raw.nbac_player_list_current\`
 "
 ```
@@ -118,12 +118,12 @@ FROM \`nba-props-platform.nba_raw.nbac_player_list_current\`
 
 ## 📞 Contacts
 
-**Primary On-Call:** NBA Data Engineer  
-**Secondary:** Platform Team  
+**Primary On-Call:** NBA Data Engineer
+**Secondary:** Platform Team
 **Escalation:** Engineering Manager
 
-**Slack Channel:** `#nba-data-alerts`  
-**Documentation:** `validation/queries/raw/espn_rosters/README.md`  
+**Slack Channel:** `#nba-data-alerts`
+**Documentation:** `validation/queries/raw/espn_rosters/README.md`
 **Operations Guide:** `validation/queries/raw/espn_rosters/SCHEDULING_OPERATIONS.md`
 
 ---
@@ -146,7 +146,7 @@ gcloud run jobs execute espn-team-roster-processor-backfill \
 ### Check recent data
 ```bash
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   roster_date,
   COUNT(DISTINCT team_abbr) as teams,
   COUNT(DISTINCT player_lookup) as players
@@ -172,6 +172,6 @@ ORDER BY roster_date DESC
 
 ---
 
-**Print Date:** October 13, 2025  
-**Valid For:** 2024-25 and 2025-26 NBA Seasons  
+**Print Date:** October 13, 2025
+**Valid For:** 2024-25 and 2025-26 NBA Seasons
 **Update When:** Schema changes, business logic changes, or season rollover

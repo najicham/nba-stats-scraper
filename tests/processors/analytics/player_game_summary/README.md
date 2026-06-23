@@ -1,7 +1,7 @@
 # Player Game Summary Processor - Test Suite
 
-**Version:** 2.0  
-**Last Updated:** November 2025  
+**Version:** 2.0
+**Last Updated:** November 2025
 **Status:** ✅ Complete (51 unit tests)
 
 ## Overview
@@ -119,10 +119,10 @@ Tests for `get_analytics_stats()` method:
 def test_calculate_ts_pct(self, processor, sample_data):
     """Test true shooting percentage calculation."""
     result = processor._calculate_ts_pct(sample_data)
-    
+
     # Show expected calculation
     expected = 25 / (2 * (20 + 0.44 * 4))
-    
+
     assert result == pytest.approx(expected, abs=0.001)
 ```
 
@@ -336,6 +336,6 @@ Coverage report not found
 
 ---
 
-**Status:** ✅ Ready for use  
-**Last Test Run:** 🎯 Run `python run_tests.py unit` to execute  
+**Status:** ✅ Ready for use
+**Last Test Run:** 🎯 Run `python run_tests.py unit` to execute
 **Coverage:** 🎯 Run with `--coverage` to generate report

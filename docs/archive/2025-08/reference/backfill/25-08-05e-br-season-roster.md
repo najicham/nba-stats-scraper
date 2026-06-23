@@ -27,7 +27,7 @@ Historical team rosters from Basketball Reference provide the missing mapping:
 ```json
 {
   "team": "Memphis Grizzlies",
-  "season": "2023-24", 
+  "season": "2023-24",
   "players": [
     {
       "name": "Ja Morant",
@@ -36,7 +36,7 @@ Historical team rosters from Basketball Reference provide the missing mapping:
       "position": "PG"
     },
     {
-      "name": "Desmond Bane", 
+      "name": "Desmond Bane",
       "last_name": "Bane",
       "jersey_number": "22",
       "position": "SG"
@@ -65,7 +65,7 @@ Historical team rosters from Basketball Reference provide the missing mapping:
 - **Proxy Support**: Integrated with Proxy Fuel rotating proxies
 
 #### **2. Backfill Script**
-- **File**: `scripts/scrape_br_season_rosters.py` 
+- **File**: `scripts/scrape_br_season_rosters.py`
 - **Purpose**: Bulk collection across multiple teams/seasons
 - **Features**: Progress tracking, error handling, resume capability
 
@@ -128,7 +128,7 @@ gs://nba-analytics-raw-data/raw/basketball_reference/season_rosters/
       "jersey_number": "12",
       "name": "Ja Morant",
       "last_name": "Morant",
-      "position": "PG", 
+      "position": "PG",
       "height": "6-2",
       "weight": "174",
       "birth_date": "",
@@ -151,7 +151,7 @@ gs://nba-analytics-raw-data/raw/basketball_reference/season_rosters/
 
 ### **Phase 1: Validation & Testing** ✅ **COMPLETE**
 - [x] Single team/season testing (MEM 2024)
-- [x] Multiple team testing (MEM, LAL, GSW)  
+- [x] Multiple team testing (MEM, LAL, GSW)
 - [x] Full season testing (2024 - all 30 teams)
 - [x] Data quality validation
 - [x] GCS path configuration
@@ -164,7 +164,7 @@ gs://nba-analytics-raw-data/raw/basketball_reference/season_rosters/
 
 #### **Season Priority Order**
 1. **2024 Season (2023-24)** ✅ **COMPLETE** - Most recent data for current analysis
-2. **2023 Season (2022-23)** 📋 **NEXT** - Previous season for trend analysis  
+2. **2023 Season (2022-23)** 📋 **NEXT** - Previous season for trend analysis
 3. **2025 Season (2024-25)** 📋 **FUTURE** - Current season (partially available)
 4. **2022 Season (2021-22)** 📋 **FINAL** - Historical baseline
 
@@ -173,7 +173,7 @@ gs://nba-analytics-raw-data/raw/basketball_reference/season_rosters/
 # Season 2: 2022-23 season
 python scripts/scrape_br_season_rosters.py --seasons 2023 --group prod --debug
 
-# Season 3: 2024-25 season  
+# Season 3: 2024-25 season
 python scripts/scrape_br_season_rosters.py --seasons 2025 --group prod --debug
 
 # Season 4: 2021-22 season
@@ -182,7 +182,7 @@ python scripts/scrape_br_season_rosters.py --seasons 2022 --group prod --debug
 
 #### **Expected Results Per Season**
 - **30 JSON files** in GCS
-- **~2 minutes runtime** (30 teams × 4 seconds average)  
+- **~2 minutes runtime** (30 teams × 4 seconds average)
 - **Zero failures expected** (100% success rate in testing)
 - **15-25 players per team** (normal NBA roster size)
 
@@ -215,20 +215,20 @@ cat /tmp/MEM.json | jq '.players[] | select(.name | contains("Morant") or contai
 ### **Confirmed Working Abbreviations**
 ```
 ATL - Atlanta Hawks          BOS - Boston Celtics         BRK - Brooklyn Nets
-CHA - Charlotte Hornets      CHI - Chicago Bulls          CLE - Cleveland Cavaliers  
+CHA - Charlotte Hornets      CHI - Chicago Bulls          CLE - Cleveland Cavaliers
 DAL - Dallas Mavericks       DEN - Denver Nuggets         DET - Detroit Pistons
 GSW - Golden State Warriors  HOU - Houston Rockets        IND - Indiana Pacers
 LAC - Los Angeles Clippers   LAL - Los Angeles Lakers     MEM - Memphis Grizzlies
 MIA - Miami Heat            MIL - Milwaukee Bucks         MIN - Minnesota Timberwolves
 NOP - New Orleans Pelicans   NYK - New York Knicks        OKC - Oklahoma City Thunder
 ORL - Orlando Magic          PHI - Philadelphia 76ers     PHO - Phoenix Suns
-POR - Portland Trail Blazers SAC - Sacramento Kings       SAS - San Antonio Spurs  
+POR - Portland Trail Blazers SAC - Sacramento Kings       SAS - San Antonio Spurs
 TOR - Toronto Raptors        UTA - Utah Jazz              WAS - Washington Wizards
 ```
 
 ### **Key Differences vs Standard NBA Abbreviations**
 - **Brooklyn**: `BRK` (not BKN)
-- **Charlotte**: `CHO` (not CHA) 
+- **Charlotte**: `CHO` (not CHA)
 - **Phoenix**: `PHO` (not PHX)
 
 **Note**: Basketball Reference uses some non-standard team abbreviations. Our scraper handles these correctly.
@@ -237,7 +237,7 @@ TOR - Toronto Raptors        UTA - Utah Jazz              WAS - Washington Wizar
 
 ## **Rate Limiting & Ethics**
 
-### **Basketball Reference Policy** 
+### **Basketball Reference Policy**
 - **Rate Limit**: 20 requests per minute maximum
 - **Crawl Delay**: 3 seconds between requests (per robots.txt)
 - **Our Implementation**: 3.5 seconds (respectful buffer)
@@ -308,11 +308,11 @@ NBA.com Gamebook PDF → PDF Parser → Player Stats → Database
             Incomplete Names: "Morant" (limited context)
 ```
 
-#### **Enhanced Data Flow**  
+#### **Enhanced Data Flow**
 ```
 NBA.com Gamebook PDF → PDF Parser → Name Resolver → Player Stats → Database
                           ↓              ↓
-            Incomplete Names      Basketball Reference  
+            Incomplete Names      Basketball Reference
                                  Roster Lookup
                                       ↓
                               Complete Names: "Ja Morant"
@@ -401,7 +401,7 @@ done
 - [ ] Validate: Confirm 30 files in `gs://nba-analytics-raw-data/raw/basketball_reference/season_rosters/2024-25/`
 - [ ] Note: Some rosters may be incomplete (season in progress)
 
-### **Season 4: 2021-22 Data Collection** 
+### **Season 4: 2021-22 Data Collection**
 - [ ] Execute: `python scripts/scrape_br_season_rosters.py --seasons 2022 --group prod --debug`
 - [ ] Monitor: Oldest season, most stable roster data
 - [ ] Validate: Confirm 30 files in `gs://nba-analytics-raw-data/raw/basketball_reference/season_rosters/2021-22/`
@@ -444,7 +444,7 @@ WARNING: SSLCertVerificationError
 ```
 **Solution**: Proxy SSL certificate issue. Scraper has built-in retry logic - should resolve automatically.
 
-#### **GCS Path Issues**  
+#### **GCS Path Issues**
 ```
 [GCS Exporter] Uploaded to .../season_rosters/{season}/{teamAbbr}.json
 ```
@@ -458,7 +458,7 @@ WARNING: SSLCertVerificationError
 3. **Resolution**: If site changes detected, update scraper CSS selectors
 4. **Recovery**: Re-run failed season after fixes
 
-#### **Partial Season Failure** 
+#### **Partial Season Failure**
 1. **Identify**: Check which teams failed in log output
 2. **Targeted Retry**: `python scripts/scrape_br_season_rosters.py --teams BRK,CHO,PHO --seasons 2023 --group prod --debug`
 3. **Verification**: Confirm all 30 teams present after retry
@@ -487,7 +487,7 @@ WARNING: SSLCertVerificationError
 
 ### **Performance Characteristics**
 - **Single Team**: ~4 seconds (3.5s delay + ~0.5s processing)
-- **Full Season**: ~2 minutes (30 teams × 4 seconds)  
+- **Full Season**: ~2 minutes (30 teams × 4 seconds)
 - **Complete Backfill**: ~8 minutes (4 seasons × 2 minutes)
 - **Maintenance**: ~2 minutes per quarterly update
 
@@ -509,7 +509,7 @@ WARNING: SSLCertVerificationError
 
 ### **Project Completion Benefits**
 1. **Enhanced Data Quality**: NBA Gamebook PDFs will have complete player names
-2. **Historical Analysis**: 4 seasons of roster context for trend analysis  
+2. **Historical Analysis**: 4 seasons of roster context for trend analysis
 3. **Phase 2 Foundation**: Critical supporting data for gamebook backfill project
 4. **Operational Excellence**: Proven scraper architecture for future enhancements
 
@@ -523,7 +523,7 @@ WARNING: SSLCertVerificationError
 3. **Execute 2024-25 Season**: Collect current season data
 4. **Execute 2021-22 Season**: Complete historical backfill
 
-### **Short Term (Next 2 Weeks)**  
+### **Short Term (Next 2 Weeks)**
 1. **Integration Planning**: Design name mapping logic for NBA Gamebook processor
 2. **Testing Framework**: Create integration tests with sample PDF data
 3. **Documentation**: Complete technical integration guide
@@ -535,7 +535,7 @@ WARNING: SSLCertVerificationError
 
 ### **Long Term (Quarterly)**
 1. **Maintenance Automation**: Automate quarterly roster updates
-2. **Monitoring Setup**: Implement automated data quality checks  
+2. **Monitoring Setup**: Implement automated data quality checks
 3. **Expansion Planning**: Consider additional Basketball Reference data sources
 
 ---

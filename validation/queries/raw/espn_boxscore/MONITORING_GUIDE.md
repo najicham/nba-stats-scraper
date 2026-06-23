@@ -1,8 +1,8 @@
 # ESPN Boxscore Daily Monitoring Guide
 
-**File:** `validation/queries/raw/espn_boxscore/MONITORING_GUIDE.md`  
-**Purpose:** Daily validation workflow for ESPN backup data during NBA season  
-**Created:** October 13, 2025  
+**File:** `validation/queries/raw/espn_boxscore/MONITORING_GUIDE.md`
+**Purpose:** Daily validation workflow for ESPN backup data during NBA season
+**Created:** October 13, 2025
 **Status:** Ready for Season Start
 
 ---
@@ -58,12 +58,12 @@ Create alerts for these conditions:
 #### 1. **ESPN Exists But BDL Doesn't** 🔴 CRITICAL
 ```bash
 # Query to detect role reversal
-SELECT 
+SELECT
   game_date,
   COUNT(DISTINCT CASE WHEN source = 'ESPN' THEN game_id END) as espn_games,
   COUNT(DISTINCT CASE WHEN source = 'BDL' THEN game_id END) as bdl_games
 FROM (
-  SELECT game_date, game_id, 'ESPN' as source 
+  SELECT game_date, game_id, 'ESPN' as source
   FROM `nba-props-platform.nba_raw.espn_boxscores`
   WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
   UNION ALL
@@ -75,7 +75,7 @@ GROUP BY game_date
 HAVING espn_games > 0 AND bdl_games = 0;
 ```
 
-**Alert Severity:** 🔴 CRITICAL  
+**Alert Severity:** 🔴 CRITICAL
 **Action:** Investigate why BDL (primary source) failed
 
 ---
@@ -90,7 +90,7 @@ HAVING espn_games > 0 AND bdl_games = 0;
 # - Critical Issues > 0
 ```
 
-**Alert Severity:** 🔴 CRITICAL  
+**Alert Severity:** 🔴 CRITICAL
 **Action:** Investigate data accuracy, check NBA.com official stats
 
 ---
@@ -103,7 +103,7 @@ HAVING espn_games > 0 AND bdl_games = 0;
 # Alert if: Team Mismatches > 0
 ```
 
-**Alert Severity:** 🔴 CRITICAL  
+**Alert Severity:** 🔴 CRITICAL
 **Action:** Data corruption, investigate processor logic
 
 ---
@@ -116,7 +116,7 @@ HAVING espn_games > 0 AND bdl_games = 0;
 # Alert if: NULL Points Values > 0
 ```
 
-**Alert Severity:** ⚠️ WARNING  
+**Alert Severity:** ⚠️ WARNING
 **Action:** Processing error, check ESPN scraper/processor
 
 ---
@@ -184,7 +184,7 @@ Edit `validation/queries/raw/espn_boxscore/cross_validate_with_bdl.sql`:
 Uncomment the "DETAILED DISCREPANCIES" section at the bottom:
 ```sql
 /*
-SELECT 
+SELECT
   game_date,
   game_id,
   player_lookup,
@@ -195,9 +195,9 @@ SELECT
   points_diff,
   ...
 FROM player_stat_comparison
-WHERE points_diff > 0 
-   OR rebounds_diff > 0 
-   OR assists_diff > 0 
+WHERE points_diff > 0
+   OR rebounds_diff > 0
+   OR assists_diff > 0
    OR team_mismatch
 ORDER BY points_diff DESC;
 */
@@ -214,7 +214,7 @@ bq query --use_legacy_sql=false < validation/queries/raw/espn_boxscore/cross_val
 
 ```sql
 -- Get NBA.com gamebook stats for comparison
-SELECT 
+SELECT
   player_full_name,
   points,
   rebounds,
@@ -252,7 +252,7 @@ Resolution: [Action taken]
 **1. ESPN Collection Frequency**
 ```sql
 -- How often does ESPN backup collect data?
-SELECT 
+SELECT
   DATE_TRUNC(game_date, MONTH) as month,
   COUNT(DISTINCT game_date) as dates_with_espn,
   COUNT(DISTINCT game_id) as games_collected
@@ -269,13 +269,13 @@ ORDER BY month DESC;
 **2. Data Quality Trends**
 ```sql
 -- Track quality metrics over time
-SELECT 
+SELECT
   DATE_TRUNC(game_date, WEEK) as week,
   COUNT(DISTINCT game_id) as games,
   AVG(player_count) as avg_players,
   SUM(CASE WHEN null_points > 0 THEN 1 ELSE 0 END) as games_with_nulls
 FROM (
-  SELECT 
+  SELECT
     game_date,
     game_id,
     COUNT(*) as player_count,
@@ -295,12 +295,12 @@ ORDER BY week DESC;
 **3. ESPN vs BDL Overlap**
 ```sql
 -- How often do we get both sources?
-SELECT 
+SELECT
   DATE_TRUNC(game_date, MONTH) as month,
   COUNT(DISTINCT game_id) as overlapping_games,
   AVG(stat_accuracy) as avg_accuracy
 FROM (
-  SELECT 
+  SELECT
     e.game_date,
     e.game_id,
     AVG(CASE WHEN e.points = b.points THEN 1.0 ELSE 0.0 END) as stat_accuracy
@@ -379,24 +379,24 @@ Create a scheduled query to track metrics:
 -- Destination: validation.espn_daily_metrics
 
 INSERT INTO `nba-props-platform.validation.espn_daily_metrics`
-SELECT 
+SELECT
   CURRENT_DATE() as check_date,
   CURRENT_TIMESTAMP() as check_time,
-  
+
   -- Yesterday's data
-  (SELECT COUNT(DISTINCT game_id) 
-   FROM `nba-props-platform.nba_raw.espn_boxscores` 
+  (SELECT COUNT(DISTINCT game_id)
+   FROM `nba-props-platform.nba_raw.espn_boxscores`
    WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)) as espn_games,
-  
+
   (SELECT COUNT(DISTINCT game_id)
    FROM `nba-props-platform.nba_raw.bdl_player_boxscores`
    WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)) as bdl_games,
-  
+
   -- Last 7 days
   (SELECT COUNT(DISTINCT game_date)
    FROM `nba-props-platform.nba_raw.espn_boxscores`
    WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)) as espn_dates_last_7d,
-  
+
   -- Quality metrics
   (SELECT COUNT(*)
    FROM `nba-props-platform.nba_raw.espn_boxscores`
@@ -412,7 +412,7 @@ Create these as Cloud Monitoring alerts:
 
 **Alert 1: ESPN Without BDL (Critical)**
 ```sql
-SELECT 
+SELECT
   COUNT(*) as problem_count
 FROM (
   SELECT game_date, game_id FROM `nba-props-platform.nba_raw.espn_boxscores`
@@ -424,23 +424,23 @@ FROM (
 HAVING problem_count > 0;
 ```
 
-**Alert Condition:** `problem_count > 0`  
-**Severity:** Critical  
+**Alert Condition:** `problem_count > 0`
+**Severity:** Critical
 **Notification:** Slack + Email
 
 ---
 
 **Alert 2: NULL Core Stats (Warning)**
 ```sql
-SELECT 
+SELECT
   COUNT(*) as null_count
 FROM `nba-props-platform.nba_raw.espn_boxscores`
 WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
   AND points IS NULL;
 ```
 
-**Alert Condition:** `null_count > 0`  
-**Severity:** Warning  
+**Alert Condition:** `null_count > 0`
+**Severity:** Warning
 **Notification:** Slack
 
 ---
@@ -611,9 +611,9 @@ validation/queries/raw/espn_boxscore/
 
 ---
 
-**Last Updated:** October 13, 2025  
-**Next Review:** September 2026 (before 2026-27 season)  
-**Owner:** Data Engineering Team  
+**Last Updated:** October 13, 2025
+**Next Review:** September 2026 (before 2026-27 season)
+**Owner:** Data Engineering Team
 **Status:** Ready for Season Start
 
 ---

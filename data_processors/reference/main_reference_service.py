@@ -32,29 +32,29 @@ app = Flask(__name__)
 def update_registry_from_gamebook(game_date: str, season: str) -> Dict[str, Any]:
     """
     Update registry after gamebook processing.
-    
+
     Args:
         game_date: Date of games processed (YYYY-MM-DD)
         season: NBA season (e.g., 2024-25)
-    
+
     Returns:
         Processing result dictionary
     """
     try:
         logger.info(f"Updating gamebook registry for {game_date}, season {season}")
-        
+
         # Use gamebook processor with name change detection enabled for daily updates
         processor = GamebookRegistryProcessor(
             test_mode=False,
             strategy="merge",  # Safe MERGE strategy for daily updates
             enable_name_change_detection=True  # Enable for production daily runs
         )
-        
+
         # Build registry for the specific season
         result = processor.build_registry_for_season(season)
-        
+
         logger.info(f"Gamebook registry update complete: {result['records_processed']} records processed")
-        
+
         return {
             'scenario': 'gamebook_processed_update',
             'game_date': game_date,
@@ -66,7 +66,7 @@ def update_registry_from_gamebook(game_date: str, season: str) -> Dict[str, Any]
             'errors': result.get('errors', []),
             'processing_run_id': result['processing_run_id']
         }
-        
+
     except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded, KeyError, AttributeError, TypeError, ValueError) as e:
         error_msg = f"Error updating registry from gamebook: {str(e)}"
         logger.error(error_msg)
@@ -89,7 +89,7 @@ def update_registry_from_gamebook(game_date: str, season: str) -> Dict[str, Any]
             )
         except (RequestException, Timeout, RequestsConnectionError) as notify_ex:
             logger.warning(f"Failed to send notification: {notify_ex}")
-        
+
         return {
             'scenario': 'gamebook_processed_update',
             'game_date': game_date,
@@ -102,11 +102,11 @@ def update_registry_from_gamebook(game_date: str, season: str) -> Dict[str, Any]
 def update_registry_from_rosters(season: str, teams: Optional[List[str]] = None) -> Dict[str, Any]:
     """
     Update registry after roster scraping.
-    
+
     Args:
         season: NBA season (e.g., 2024-25)
         teams: Optional list of specific teams to update
-    
+
     Returns:
         Processing result dictionary
     """
@@ -114,21 +114,21 @@ def update_registry_from_rosters(season: str, teams: Optional[List[str]] = None)
         logger.info(f"Updating roster registry for season {season}")
         if teams:
             logger.info(f"Specific teams: {teams}")
-        
+
         # Use roster processor with name change detection enabled for daily updates
         processor = RosterRegistryProcessor(
             test_mode=False,
             strategy="merge",  # Safe MERGE strategy for daily updates
             enable_name_change_detection=True  # Enable for production daily runs
         )
-        
+
         if teams:
             # Process specific teams
             results = []
             total_records = 0
             total_players = 0
             all_errors = []
-            
+
             for team in teams:
                 logger.info(f"Processing roster data for team: {team}")
                 result = processor.build_registry_for_season(season, team)
@@ -141,7 +141,7 @@ def update_registry_from_rosters(season: str, teams: Optional[List[str]] = None)
                 total_records += result['records_processed']
                 total_players += result['players_processed']
                 all_errors.extend(result.get('errors', []))
-            
+
             return {
                 'scenario': 'roster_scraped_update',
                 'season': season,
@@ -155,9 +155,9 @@ def update_registry_from_rosters(season: str, teams: Optional[List[str]] = None)
         else:
             # Process entire season
             result = processor.build_registry_for_season(season)
-            
+
             logger.info(f"Roster registry update complete: {result['records_processed']} records processed")
-            
+
             return {
                 'scenario': 'roster_scraped_update',
                 'season': season,
@@ -169,7 +169,7 @@ def update_registry_from_rosters(season: str, teams: Optional[List[str]] = None)
                 'errors': result.get('errors', []),
                 'processing_run_id': result['processing_run_id']
             }
-        
+
     except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded, KeyError, AttributeError, TypeError, ValueError) as e:
         error_msg = f"Error updating registry from rosters: {str(e)}"
         logger.error(error_msg)
@@ -192,7 +192,7 @@ def update_registry_from_rosters(season: str, teams: Optional[List[str]] = None)
             )
         except (RequestException, Timeout, RequestsConnectionError) as notify_ex:
             logger.warning(f"Failed to send notification: {notify_ex}")
-        
+
         return {
             'scenario': 'roster_scraped_update',
             'season': season,
@@ -205,7 +205,7 @@ def update_registry_from_rosters(season: str, teams: Optional[List[str]] = None)
 def get_registry_summary() -> Dict[str, Any]:
     """
     Get registry statistics from both gamebook and roster sources.
-    
+
     Returns:
         Registry summary dictionary
     """
@@ -213,18 +213,18 @@ def get_registry_summary() -> Dict[str, Any]:
         # Get gamebook registry summary
         gamebook_processor = GamebookRegistryProcessor()
         gamebook_summary = gamebook_processor.get_registry_summary()
-        
+
         # Get roster registry summary
         roster_processor = RosterRegistryProcessor()
         roster_summary = roster_processor.get_registry_summary()
-        
+
         return {
             'summary_type': 'combined_registry_summary',
             'gamebook_registry': gamebook_summary,
             'roster_registry': roster_summary,
             'generated_at': datetime.now().isoformat()
         }
-        
+
     except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded, KeyError, AttributeError, TypeError, ValueError) as e:
         error_msg = f"Error getting registry summary: {str(e)}"
         logger.error(error_msg)
@@ -243,7 +243,7 @@ def get_registry_summary() -> Dict[str, Any]:
             )
         except (RequestException, Timeout, RequestsConnectionError) as notify_ex:
             logger.warning(f"Failed to send notification: {notify_ex}")
-        
+
         return {
             'summary_type': 'combined_registry_summary',
             'error': error_msg,
@@ -254,7 +254,7 @@ def get_registry_summary() -> Dict[str, Any]:
 def process_pub_sub_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
     """
     Process Pub/Sub messages for registry updates.
-    
+
     Supported message types:
     - gamebook_processed: Update registry after gamebook processing
     - roster_scraped: Update registry after roster scraping
@@ -263,12 +263,12 @@ def process_pub_sub_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
     try:
         trigger_type = message_data.get('trigger_type')
         logger.info(f"Processing trigger: {trigger_type}")
-        
+
         if trigger_type == 'gamebook_processed':
             # Scenario 2: Nightly update after gamebook processing
             game_date = message_data.get('game_date')
             season = message_data.get('season')
-            
+
             if not game_date or not season:
                 error_msg = 'Missing game_date or season for gamebook_processed trigger'
                 try:
@@ -294,18 +294,18 @@ def process_pub_sub_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
 
             logger.info(f"Updating registry for gamebook processing: {game_date}, season {season}")
             result = update_registry_from_gamebook(game_date, season)
-            
+
             return {
                 'status': 'success',
                 'trigger_type': trigger_type,
                 'result': result
             }
-        
+
         elif trigger_type == 'roster_scraped':
             # Scenario 3: Morning update after roster scraping
             season = message_data.get('season')
             teams = message_data.get('teams')  # Optional list of teams
-            
+
             if not season:
                 error_msg = 'Missing season for roster_scraped trigger'
                 try:
@@ -331,41 +331,41 @@ def process_pub_sub_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
             logger.info(f"Updating registry for roster scraping: season {season}")
             if teams:
                 logger.info(f"Teams to update: {teams}")
-            
+
             result = update_registry_from_rosters(season, teams)
-            
+
             return {
                 'status': 'success',
                 'trigger_type': trigger_type,
                 'result': result
             }
-        
+
         elif trigger_type == 'manual_refresh':
             # Manual registry refresh - FIXED to work with split architecture
             season = message_data.get('season')
             team = message_data.get('team')
             processor_type = message_data.get('processor_type', 'gamebook')  # Default to gamebook
-            
+
             if processor_type == 'gamebook':
                 processor = GamebookRegistryProcessor(enable_name_change_detection=True)
-                
+
                 if season:
                     logger.info(f"Manual gamebook refresh for season {season}")
                     result = processor.build_registry_for_season(season, team)
                 else:
                     logger.info("Manual gamebook refresh for all seasons")
                     result = processor.build_historical_registry()
-                    
+
             elif processor_type == 'roster':
                 processor = RosterRegistryProcessor(enable_name_change_detection=True)
-                
+
                 if season:
                     logger.info(f"Manual roster refresh for season {season}")
                     result = processor.build_registry_for_season(season, team)
                 else:
                     logger.info("Manual roster refresh for all seasons")
                     result = processor.build_historical_registry()
-                
+
             else:
                 error_msg = f'Unknown processor_type: {processor_type}. Use "gamebook" or "roster"'
                 try:
@@ -411,7 +411,7 @@ def process_pub_sub_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
                 )
             except (RequestException, Timeout, RequestsConnectionError) as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             return {
                 'status': 'error',
                 'message': error_msg
@@ -434,7 +434,7 @@ def process_pub_sub_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
             )
         except (RequestException, Timeout, RequestsConnectionError) as notify_ex:
             logger.warning(f"Failed to send notification: {notify_ex}")
-        
+
         return {
             'status': 'error',
             'message': str(e)
@@ -461,7 +461,7 @@ def process_message():
     try:
         # Extract message from Pub/Sub format
         envelope = request.get_json()
-        
+
         if not envelope:
             try:
                 notify_error(
@@ -517,10 +517,10 @@ def process_message():
             except (RequestException, Timeout, RequestsConnectionError) as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
             return jsonify({'error': f'Message decode failed: {str(e)}'}), 400
-        
+
         # Process the message
         result = process_pub_sub_message(message_data)
-        
+
         # Return appropriate HTTP status
         if result.get('status') == 'success':
             return jsonify(result), 200
@@ -543,7 +543,7 @@ def process_message():
             )
         except (RequestException, Timeout, RequestsConnectionError) as notify_ex:
             logger.warning(f"Failed to send notification: {notify_ex}")
-        
+
         return jsonify({
             'status': 'error',
             'message': str(e)
@@ -556,13 +556,13 @@ def manual_trigger(trigger_type: str):
     try:
         # Get parameters from request
         params = request.get_json() or {}
-        
+
         # Build message data
         message_data = {
             'trigger_type': trigger_type,
             **params
         }
-        
+
         # Process the message
         result = process_pub_sub_message(message_data)
 
@@ -599,7 +599,7 @@ def gamebook_specific_trigger(action: str):
     """Gamebook-specific trigger endpoints."""
     try:
         params = request.get_json() or {}
-        
+
         if action == 'refresh':
             message_data = {
                 'trigger_type': 'manual_refresh',
@@ -618,7 +618,7 @@ def gamebook_specific_trigger(action: str):
                 'status': 'error',
                 'message': f'Unknown gamebook action: {action}'
             }), 400
-        
+
         result = process_pub_sub_message(message_data)
         return jsonify(result)
 

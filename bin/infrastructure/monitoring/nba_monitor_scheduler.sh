@@ -32,13 +32,13 @@ main() {
     echo -e "${BLUE}🏀 NBA Priority Scrapers - Complete Operational Monitor${NC}"
     echo -e "${BLUE}======================================================${NC}"
     echo "Project: $PROJECT_ID"
-    echo "Region: $REGION"  
+    echo "Region: $REGION"
     echo "Timestamp: $(date)"
     echo ""
 
     # Get current jobs
     current_jobs=$(get_current_jobs)
-    
+
     echo -e "${CYAN}📋 Current Scheduler Jobs${NC}"
     echo "=========================="
     if [[ -n "$current_jobs" ]]; then
@@ -50,7 +50,7 @@ main() {
 
     echo -e "${PURPLE}📊 Complete Operational Analysis (17 Scrapers)${NC}"
     echo "=============================================="
-    
+
     # Critical scrapers
     echo -e "${RED}🔴 CRITICAL SCRAPERS${NC}"
     echo "1. GetOddsApiEvents (nba-odds-events)"
@@ -233,7 +233,7 @@ main() {
     echo -e "${PURPLE}📈 Complete Operational Summary${NC}"
     echo "==============================="
     echo "🔴 Critical: $critical_count / 4 scheduled"
-    echo "🟡 High Priority: $high_count / 4 scheduled"  
+    echo "🟡 High Priority: $high_count / 4 scheduled"
     echo "🔵 Additional Operational: $additional_count / 9 scheduled"
     echo "📊 Total: $total_count / 17 scheduled"
 
@@ -287,10 +287,10 @@ case "${1:-}" in
         current_jobs=$(get_current_jobs)
         SERVICE_URL="https://nba-scrapers-756957797294.us-west2.run.app/scrape"
         scheduled_count=0
-        
+
         echo "🔵 Scheduling 9 Additional Operational Scrapers"
         echo ""
-        
+
         # Daily 8 AM scrapers
         if [[ $(check_job "nba-player-movement") == "MISSING" ]]; then
             echo "Scheduling: nba-player-movement"
@@ -305,7 +305,7 @@ case "${1:-}" in
             echo "✅ Scheduled: nba-player-movement"
             ((scheduled_count++))
         fi
-        
+
         if [[ $(check_job "nba-team-roster") == "MISSING" ]]; then
             echo "Scheduling: nba-team-roster"
             gcloud scheduler jobs create http nba-team-roster \
@@ -319,7 +319,7 @@ case "${1:-}" in
             echo "✅ Scheduled: nba-team-roster"
             ((scheduled_count++))
         fi
-        
+
         # Game day evening scrapers
         if [[ $(check_job "nba-espn-scoreboard") == "MISSING" ]]; then
             echo "Scheduling: nba-espn-scoreboard"
@@ -334,7 +334,7 @@ case "${1:-}" in
             echo "✅ Scheduled: nba-espn-scoreboard"
             ((scheduled_count++))
         fi
-        
+
         if [[ $(check_job "nba-nbacom-scoreboard") == "MISSING" ]]; then
             echo "Scheduling: nba-nbacom-scoreboard"
             gcloud scheduler jobs create http nba-nbacom-scoreboard \
@@ -348,7 +348,7 @@ case "${1:-}" in
             echo "✅ Scheduled: nba-nbacom-scoreboard"
             ((scheduled_count++))
         fi
-        
+
         # Post-game scrapers (9 PM ET after games complete)
         if [[ $(check_job "nba-bdl-player-boxscores") == "MISSING" ]]; then
             echo "Scheduling: nba-bdl-player-boxscores"
@@ -363,7 +363,7 @@ case "${1:-}" in
             echo "✅ Scheduled: nba-bdl-player-boxscores"
             ((scheduled_count++))
         fi
-        
+
         if [[ $(check_job "nba-bdl-boxscores") == "MISSING" ]]; then
             echo "Scheduling: nba-bdl-boxscores"
             gcloud scheduler jobs create http nba-bdl-boxscores \
@@ -377,7 +377,7 @@ case "${1:-}" in
             echo "✅ Scheduled: nba-bdl-boxscores"
             ((scheduled_count++))
         fi
-        
+
         if [[ $(check_job "nba-nbacom-player-boxscore") == "MISSING" ]]; then
             echo "Scheduling: nba-nbacom-player-boxscore"
             gcloud scheduler jobs create http nba-nbacom-player-boxscore \
@@ -391,7 +391,7 @@ case "${1:-}" in
             echo "✅ Scheduled: nba-nbacom-player-boxscore"
             ((scheduled_count++))
         fi
-        
+
         if [[ $(check_job "nba-espn-boxscore") == "MISSING" ]]; then
             echo "Scheduling: nba-espn-boxscore"
             gcloud scheduler jobs create http nba-espn-boxscore \
@@ -405,7 +405,7 @@ case "${1:-}" in
             echo "✅ Scheduled: nba-espn-boxscore"
             ((scheduled_count++))
         fi
-        
+
         if [[ $(check_job "nba-nbacom-playbyplay") == "MISSING" ]]; then
             echo "Scheduling: nba-nbacom-playbyplay"
             gcloud scheduler jobs create http nba-nbacom-playbyplay \
@@ -419,12 +419,12 @@ case "${1:-}" in
             echo "✅ Scheduled: nba-nbacom-playbyplay"
             ((scheduled_count++))
         fi
-        
+
         echo ""
         echo "📊 Scheduled $scheduled_count new jobs"
         echo "🔄 Run './$(basename $0)' to verify complete operational coverage"
         ;;
-        
+
     "help"|"-h"|"--help")
         echo "NBA Complete Operational Scrapers Monitor"
         echo ""
@@ -438,7 +438,7 @@ case "${1:-}" in
         echo "  High Priority (4): Schedule, Team Players, BDL Players, ESPN Roster"
         echo "  Additional Operational (9): Player Movement, Team Rosters, Scoreboards, Boxscores, Play-by-Play"
         ;;
-        
+
     *)
         main
         ;;

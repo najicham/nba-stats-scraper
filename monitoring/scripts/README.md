@@ -36,7 +36,7 @@ Command-line tools for monitoring NBA Props Platform scrapers, workflows, and da
 # Today's status
 nba-monitor status
 
-# Yesterday's status  
+# Yesterday's status
 nba-monitor status yesterday
 
 # Specific date

@@ -10,7 +10,7 @@
 
 -- Active aliases view for production lookups
 CREATE OR REPLACE VIEW `nba-props-platform.nba_reference.active_aliases` AS
-SELECT 
+SELECT
     alias_lookup,
     alias_display,
     nba_canonical_lookup,
@@ -25,7 +25,7 @@ WHERE is_active = TRUE;
 
 -- Current season players view
 CREATE OR REPLACE VIEW `nba-props-platform.nba_reference.current_season_players` AS
-SELECT 
+SELECT
     player_name,
     player_lookup,
     team_abbr,
@@ -37,13 +37,13 @@ SELECT
     confidence_score
 FROM `nba-props-platform.nba_reference.nba_players_registry`
 WHERE season = (
-    SELECT MAX(season) 
+    SELECT MAX(season)
     FROM `nba-props-platform.nba_reference.nba_players_registry`
 );
 
 -- Pending review queue (prioritized)
 CREATE OR REPLACE VIEW `nba-props-platform.nba_reference.review_queue` AS
-SELECT 
+SELECT
     source,
     original_name,
     normalized_lookup,
@@ -54,7 +54,7 @@ SELECT
     last_seen_date,
     example_games[SAFE_OFFSET(0)] as sample_game_id,
     -- Priority scoring for manual review
-    CASE 
+    CASE
         WHEN occurrences >= 10 THEN 'high'
         WHEN occurrences >= 5 THEN 'medium'
         ELSE 'low'
@@ -65,7 +65,7 @@ ORDER BY occurrences DESC, first_seen_date ASC;
 
 -- Data quality monitoring view (FIXED: Consistent TIMESTAMP types)
 CREATE OR REPLACE VIEW `nba-props-platform.nba_reference.data_quality_summary` AS
-SELECT 
+SELECT
     'aliases' as table_name,
     COUNT(*) as total_records,
     COUNT(CASE WHEN is_active THEN 1 END) as active_records,
@@ -75,7 +75,7 @@ FROM `nba-props-platform.nba_reference.player_aliases`
 
 UNION ALL
 
-SELECT 
+SELECT
     'registry' as table_name,
     COUNT(*) as total_records,
     COUNT(DISTINCT player_lookup) as unique_players,
@@ -85,7 +85,7 @@ FROM `nba-props-platform.nba_reference.nba_players_registry`
 
 UNION ALL
 
-SELECT 
+SELECT
     'unresolved' as table_name,
     COUNT(*) as total_records,
     COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_review,
@@ -95,7 +95,7 @@ FROM `nba-props-platform.nba_reference.unresolved_player_names`;
 
 -- Player name resolution lookup view (for debugging)
 CREATE OR REPLACE VIEW `nba-props-platform.nba_reference.name_resolution_debug` AS
-SELECT 
+SELECT
     'alias' as source_type,
     alias_display as input_name,
     nba_canonical_display as resolved_name,
@@ -108,7 +108,7 @@ FROM `nba-props-platform.nba_reference.player_aliases`
 
 UNION ALL
 
-SELECT 
+SELECT
     'registry' as source_type,
     player_name as input_name,
     player_name as resolved_name,
@@ -122,7 +122,7 @@ WHERE season = (SELECT MAX(season) FROM `nba-props-platform.nba_reference.nba_pl
 
 -- Team roster summary view
 CREATE OR REPLACE VIEW `nba-props-platform.nba_reference.team_rosters_current` AS
-SELECT 
+SELECT
     team_abbr,
     season,
     COUNT(*) as total_players,
@@ -138,7 +138,7 @@ ORDER BY team_abbr;
 
 -- Resolution success rate by source
 CREATE OR REPLACE VIEW `nba-props-platform.nba_reference.resolution_success_rates` AS
-SELECT 
+SELECT
     source,
     COUNT(*) as total_attempts,
     COUNT(CASE WHEN status = 'resolved' THEN 1 END) as successful_resolutions,

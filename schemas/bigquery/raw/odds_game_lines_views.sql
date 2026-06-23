@@ -1,6 +1,6 @@
 -- View: nba_raw.odds_api_game_lines_preferred
 -- Description: Game lines with DraftKings preferred, FanDuel fallback
--- 
+--
 -- Coverage Stats (Oct 2021 → Mar 2025):
 --   - Total games: 5,260
 --   - DraftKings: 5,235 games (99.52%)
@@ -13,22 +13,22 @@
 
 CREATE OR REPLACE VIEW `nba_raw.odds_api_game_lines_preferred` AS
 WITH ranked_bookmakers AS (
-  SELECT 
+  SELECT
     *,
     -- Rank: DraftKings=1, FanDuel=2 (lower is better)
     ROW_NUMBER() OVER (
       PARTITION BY game_id, game_date, market_key, outcome_name
-      ORDER BY 
-        CASE bookmaker_key 
-          WHEN 'draftkings' THEN 1 
-          WHEN 'fanduel' THEN 2 
-          ELSE 99 
+      ORDER BY
+        CASE bookmaker_key
+          WHEN 'draftkings' THEN 1
+          WHEN 'fanduel' THEN 2
+          ELSE 99
         END,
         snapshot_timestamp DESC  -- If both exist, take latest
     ) as bookmaker_rank
   FROM `nba_raw.odds_api_game_lines`
 )
-SELECT 
+SELECT
   snapshot_timestamp,
   previous_snapshot_timestamp,
   next_snapshot_timestamp,

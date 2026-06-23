@@ -112,14 +112,14 @@ echo ""
 # Quick team check
 echo "📊 Checking critical teams (PHX, LAC, DAL)..."
 bq query --use_legacy_sql=false '
-SELECT 
+SELECT
   game_date,
   CONCAT(away_team_abbr, " @ ", home_team_abbr) as matchup,
   COUNT(DISTINCT player_name) as players,
   COUNT(DISTINCT bookmaker) as bookmakers
 FROM `nba-props-platform.nba_raw.odds_api_player_points_props`
 WHERE game_date BETWEEN "2024-04-20" AND "2024-05-03"
-  AND (home_team_abbr IN ("PHX","LAC","DAL") 
+  AND (home_team_abbr IN ("PHX","LAC","DAL")
    OR away_team_abbr IN ("PHX","LAC","DAL"))
 GROUP BY game_date, matchup
 ORDER BY game_date' | head -30

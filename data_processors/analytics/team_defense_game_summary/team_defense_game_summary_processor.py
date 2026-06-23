@@ -11,7 +11,7 @@ ARCHITECTURE:
     - nba_raw.nbac_gamebook_player_stats (defensive actions - PRIMARY)
     - nba_raw.bdl_player_boxscores (defensive actions - FALLBACK)
     - nba_raw.nbac_player_boxscores (defensive actions - FALLBACK #2)
-  
+
   Phase 3 Output:
     - nba_analytics.team_defense_game_summary
 
@@ -206,7 +206,7 @@ class TeamDefenseGameSummaryProcessor(
     def get_dependencies(self) -> Dict:
         """
         Define Phase 2 raw data sources required.
-        
+
         Returns:
             dict: Configuration for each Phase 2 dependency
         """
@@ -337,7 +337,7 @@ class TeamDefenseGameSummaryProcessor(
             f"Found {len(opponent_offense_df)} opponent offense records "
             f"(source: {fallback_result.source_used}, quality: {fallback_result.quality_tier})"
         )
-        
+
         # Step 2: Get defensive actions with multi-source fallback
         defensive_actions_df = self._extract_defensive_actions(start_date, end_date)
 
@@ -358,14 +358,14 @@ class TeamDefenseGameSummaryProcessor(
         self.raw_data = self._merge_defense_data(opponent_offense_df, defensive_actions_df, shot_zone_df)
 
         logger.info(f"Extracted {len(self.raw_data)} complete team defensive records")
-    
+
     def _extract_opponent_offense(self, start_date: str, end_date: str) -> pd.DataFrame:
         """
         Extract opponent's offensive performance from team boxscore.
-        
+
         Strategy: For each game, there are 2 rows in nbac_team_boxscore (home and away).
         To get Team A's defense, we look at Team B's (opponent) offensive stats.
-        
+
         Returns:
             DataFrame with columns:
               - game_id, game_date, season_year
@@ -421,22 +421,22 @@ class TeamDefenseGameSummaryProcessor(
             -- Deduplicate: keep only most recent record per game-team
             SELECT * EXCEPT(rn) FROM game_teams_raw WHERE rn = 1
         ),
-        
+
         defense_perspective AS (
             -- Create defensive perspective by pairing teams
-            SELECT 
+            SELECT
                 t1.game_id,
                 t1.game_date,
                 t1.season_year,
                 t1.nba_game_id,
-                
+
                 -- Team playing defense
                 t1.team_abbr as defending_team_abbr,
                 t1.is_home as home_game,
-                
+
                 -- Opponent (their offense = our defense)
                 t2.team_abbr as opponent_team_abbr,
-                
+
                 -- Defensive stats = opponent's offensive performance
                 t2.points as points_allowed,
                 t2.fg_made as opp_fg_makes,
@@ -452,22 +452,22 @@ class TeamDefenseGameSummaryProcessor(
                 t2.offensive_rebounds as opp_offensive_rebounds,
                 t2.defensive_rebounds as opp_defensive_rebounds,
                 t2.assists as opp_assists,
-                
+
                 -- Defense forced these turnovers
                 t2.turnovers as turnovers_forced,
-                
+
                 -- Defense committed these fouls
                 t1.personal_fouls as fouls_committed,
-                
+
                 -- Game result from defensive team perspective
-                CASE 
+                CASE
                     WHEN t1.plus_minus > 0 THEN TRUE
                     WHEN t1.plus_minus < 0 THEN FALSE
                     ELSE NULL  -- Tie (shouldn't happen in NBA)
                 END as win_flag,
-                
+
                 t1.plus_minus as margin_of_victory,
-                
+
                 -- Calculate defensive rating (points per 100 possessions)
                 -- Simple formula: (Points Allowed / Possessions) × 100
                 -- Possessions ≈ FGA + 0.44×FTA - ORB + TO
@@ -478,33 +478,33 @@ class TeamDefenseGameSummaryProcessor(
                     )) * 100,
                     2
                 ) as defensive_rating,
-                
+
                 -- Opponent pace (possessions per 48 minutes)
                 ROUND(
                     (t2.fg_attempted + (0.44 * t2.ft_attempted) - t2.offensive_rebounds + t2.turnovers) * (48.0 / 48.0),
                     1
                 ) as opponent_pace,
-                
+
                 -- Opponent true shooting percentage
                 ROUND(
                     t2.points / NULLIF(2.0 * (t2.fg_attempted + 0.44 * t2.ft_attempted), 0),
                     3
                 ) as opponent_ts_pct,
-                
+
                 -- Source tracking
                 'nbac_team_boxscore' as data_source,
                 t2.processed_at as opponent_data_processed_at
-                
+
             FROM game_teams t1
             INNER JOIN game_teams t2
                 ON t1.game_id = t2.game_id
                 AND t1.team_abbr != t2.team_abbr  -- Get opponent
         )
-        
+
         SELECT * FROM defense_perspective
         ORDER BY game_date DESC, game_id, defending_team_abbr
         """
-        
+
         try:
             df = self.bq_client.query(query).to_dataframe()
 
@@ -761,12 +761,12 @@ class TeamDefenseGameSummaryProcessor(
     def _extract_defensive_actions(self, start_date: str, end_date: str) -> pd.DataFrame:
         """
         Extract individual defensive actions aggregated to team level.
-        
+
         Multi-source strategy:
           1. Try gamebook (best quality) - PRIMARY
           2. Fall back to BDL if gamebook incomplete
           3. Fall back to nbac_player_boxscores if needed
-        
+
         Returns:
             DataFrame with columns:
               - game_id
@@ -778,20 +778,20 @@ class TeamDefenseGameSummaryProcessor(
         """
         # Try gamebook first (PRIMARY)
         gamebook_df = self._try_gamebook_defensive_actions(start_date, end_date)
-        
+
         # Check completeness
         if not gamebook_df.empty:
             games_with_gamebook = set(gamebook_df['game_id'].unique())
             logger.info(f"Gamebook provides defensive actions for {len(games_with_gamebook)} games")
-            
+
             # Check if we need fallback for any games
             all_games = self._get_all_game_ids(start_date, end_date)
             missing_games = all_games - games_with_gamebook
-            
+
             if missing_games:
                 logger.warning(f"Gamebook missing {len(missing_games)} games, falling back to BDL")
                 bdl_df = self._try_bdl_defensive_actions(start_date, end_date, missing_games)
-                
+
                 if not bdl_df.empty:
                     # Combine gamebook + BDL
                     combined_df = pd.concat([gamebook_df, bdl_df], ignore_index=True)
@@ -807,38 +807,38 @@ class TeamDefenseGameSummaryProcessor(
             # No gamebook data, try BDL as primary
             logger.warning("No gamebook data found, using BDL as primary source")
             bdl_df = self._try_bdl_defensive_actions(start_date, end_date, None)
-            
+
             if not bdl_df.empty:
                 return bdl_df
             else:
                 logger.error("No defensive actions data from any source")
                 return pd.DataFrame()
-    
+
     def _try_gamebook_defensive_actions(self, start_date: str, end_date: str) -> pd.DataFrame:
         """Extract defensive actions from NBA.com gamebook (PRIMARY source)."""
         query = f"""
-        SELECT 
+        SELECT
             game_id,
             team_abbr as defending_team_abbr,
-            
+
             -- Aggregate defensive actions (only active players)
             SUM(CASE WHEN player_status = 'active' THEN COALESCE(steals, 0) ELSE 0 END) as steals,
             SUM(CASE WHEN player_status = 'active' THEN COALESCE(blocks, 0) ELSE 0 END) as blocks_total,
             SUM(CASE WHEN player_status = 'active' THEN COALESCE(defensive_rebounds, 0) ELSE 0 END) as defensive_rebounds,
-            
+
             -- Track source
             'nbac_gamebook' as data_source,
             MAX(processed_at) as defensive_actions_processed_at,
-            
+
             -- Data quality
             COUNT(CASE WHEN player_status = 'active' THEN 1 END) as active_players_count
-            
+
         FROM `{self.project_id}.nba_raw.nbac_gamebook_player_stats`
         WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
         GROUP BY game_id, team_abbr
         HAVING active_players_count >= 5  -- Ensure reasonable data quality
         """
-        
+
         try:
             df = self.bq_client.query(query).to_dataframe()
             logger.info(f"Gamebook defensive actions: {len(df)} team-game records")
@@ -846,41 +846,41 @@ class TeamDefenseGameSummaryProcessor(
         except Exception as e:
             logger.warning(f"Failed to extract gamebook defensive actions: {e}")
             return pd.DataFrame()
-    
-    def _try_bdl_defensive_actions(self, start_date: str, end_date: str, 
+
+    def _try_bdl_defensive_actions(self, start_date: str, end_date: str,
                                     missing_games: Optional[set] = None) -> pd.DataFrame:
         """Extract defensive actions from Ball Don't Lie (FALLBACK source)."""
-        
+
         # Build game filter if specific games needed
         game_filter = ""
         if missing_games:
             game_list = "', '".join(missing_games)
             game_filter = f"AND game_id IN ('{game_list}')"
-        
+
         query = f"""
-        SELECT 
+        SELECT
             game_id,
             team_abbr as defending_team_abbr,
-            
+
             -- Aggregate defensive actions
             SUM(COALESCE(steals, 0)) as steals,
             SUM(COALESCE(blocks, 0)) as blocks_total,
             SUM(COALESCE(defensive_rebounds, 0)) as defensive_rebounds,
-            
+
             -- Track source
             'bdl_player_boxscores' as data_source,
             MAX(processed_at) as defensive_actions_processed_at,
-            
+
             -- Data quality
             COUNT(*) as players_count
-            
+
         FROM `{self.project_id}.nba_raw.bdl_player_boxscores`
         WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
             {game_filter}
         GROUP BY game_id, team_abbr
         HAVING players_count >= 5  -- Ensure reasonable data quality
         """
-        
+
         try:
             df = self.bq_client.query(query).to_dataframe()
             logger.info(f"BDL defensive actions: {len(df)} team-game records")
@@ -888,7 +888,7 @@ class TeamDefenseGameSummaryProcessor(
         except Exception as e:
             logger.warning(f"Failed to extract BDL defensive actions: {e}")
             return pd.DataFrame()
-    
+
     def _get_all_game_ids(self, start_date: str, end_date: str) -> set:
         """Get all game IDs from team boxscore to check completeness."""
         query = f"""
@@ -896,7 +896,7 @@ class TeamDefenseGameSummaryProcessor(
         FROM `{self.project_id}.nba_raw.nbac_team_boxscore`
         WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
         """
-        
+
         try:
             df = self.bq_client.query(query).to_dataframe()
             return set(df['game_id'].unique())
@@ -1280,11 +1280,11 @@ class TeamDefenseGameSummaryProcessor(
 
         self.transformed_data = records
         logger.info(f"Calculated team defensive analytics for {len(records)} team-game records")
-        
+
         # Notify if significant processing errors
         if len(processing_errors) > 0:
             error_rate = len(processing_errors) / len(self.raw_data) * 100
-            
+
             if error_rate > 5:
                 try:
                     notify_warning(
@@ -1556,29 +1556,29 @@ class TeamDefenseGameSummaryProcessor(
         """Return team defensive analytics stats."""
         if not self.transformed_data:
             return {}
-        
+
         # Calculate stats from transformed data
         total_records = len(self.transformed_data)
-        
+
         # Points allowed stats
         points_allowed_list = [r['points_allowed'] for r in self.transformed_data if r['points_allowed']]
         avg_points_allowed = round(sum(points_allowed_list) / len(points_allowed_list), 1) if points_allowed_list else 0
-        
+
         # Defensive actions stats
         total_steals = sum(r['steals'] for r in self.transformed_data if r['steals'])
         total_blocks = sum(r.get('steals', 0) for r in self.transformed_data)  # Using steals as proxy since blocks_total not in final record
         total_turnovers_forced = sum(r['turnovers_forced'] for r in self.transformed_data if r['turnovers_forced'])
-        
+
         # Game context stats
         home_games = sum(1 for r in self.transformed_data if r['home_game'])
         road_games = total_records - home_games
-        
+
         # Data quality stats (using standard quality_tier column)
         gold_quality = sum(1 for r in self.transformed_data if r.get('quality_tier') == 'gold')
         silver_quality = sum(1 for r in self.transformed_data if r.get('quality_tier') == 'silver')
         bronze_quality = sum(1 for r in self.transformed_data if r.get('quality_tier') == 'bronze')
         production_ready = sum(1 for r in self.transformed_data if r.get('is_production_ready', False))
-        
+
         return {
             'records_processed': total_records,
             'avg_points_allowed': avg_points_allowed,
@@ -1592,13 +1592,13 @@ class TeamDefenseGameSummaryProcessor(
             'bronze_quality_records': bronze_quality,
             'production_ready_records': production_ready,
         }
-    
+
     def post_process(self) -> None:
         """Post-processing - send success notification with stats."""
         super().post_process()
-        
+
         analytics_stats = self.get_analytics_stats()
-        
+
         try:
             notify_info(
                 title="Team Defense: Processing Complete",

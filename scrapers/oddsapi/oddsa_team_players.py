@@ -134,7 +134,7 @@ class GetOddsApiTeamPlayers(ScraperBase, ScraperFlaskMixin):
         api_key = self.opts.get("api_key") or os.getenv("ODDS_API_KEY")
         if not api_key:
             error_msg = "Missing api_key and env var ODDS_API_KEY not set."
-            
+
             # Send critical notification - API key missing prevents all scraping
             try:
                 notify_error(
@@ -150,7 +150,7 @@ class GetOddsApiTeamPlayers(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise DownloadDataException(error_msg)
 
         base = self._API_ROOT_TMPL.format(
@@ -174,10 +174,10 @@ class GetOddsApiTeamPlayers(ScraperBase, ScraperFlaskMixin):
         if self.raw_response.status_code in (200, 204):
             # 204 is expected for teams with no roster data
             if self.raw_response.status_code == 204:
-                logger.info("204 response - no roster data for participant %s", 
+                logger.info("204 response - no roster data for participant %s",
                            self.opts.get("participant_id"))
             return
-        
+
         # Non-success status code - send error notification
         status_code = self.raw_response.status_code
         try:
@@ -195,7 +195,7 @@ class GetOddsApiTeamPlayers(ScraperBase, ScraperFlaskMixin):
             )
         except Exception as notify_ex:
             logger.warning(f"Failed to send notification: {notify_ex}")
-        
+
         super().check_download_status()
 
     # ------------------------------------------------------------------ #
@@ -204,7 +204,7 @@ class GetOddsApiTeamPlayers(ScraperBase, ScraperFlaskMixin):
     def validate_download_data(self) -> None:
         if isinstance(self.decoded_data, dict) and "message" in self.decoded_data:
             error_msg = self.decoded_data['message']
-            
+
             # API returned an error message
             try:
                 notify_error(
@@ -220,7 +220,7 @@ class GetOddsApiTeamPlayers(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise DownloadDataException(f"API error: {error_msg}")
 
         if not isinstance(self.decoded_data, (list, dict)):
@@ -240,7 +240,7 @@ class GetOddsApiTeamPlayers(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise DownloadDataException("Expected list or dict payload.")
 
     # ------------------------------------------------------------------ #
@@ -262,7 +262,7 @@ class GetOddsApiTeamPlayers(ScraperBase, ScraperFlaskMixin):
             "rowCount": len(players),
             "players": players,
         }
-        
+
         # Check for no players returned
         if len(players) == 0:
             try:
@@ -295,7 +295,7 @@ class GetOddsApiTeamPlayers(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-        
+
         logger.info(
             "Fetched %d players for participantId=%s",
             len(players),

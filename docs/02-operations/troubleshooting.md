@@ -77,7 +77,7 @@ cd ~/code/nba-stats-scraper
 ```
 Error: Scraper Proxy Exhaustion - GetNbaComPlayerList
 Error Details: All 1 proxies failed
-failures: [{'proxy': 'http://nohammas.gmail.com:bbuyfd@gate2.proxyfuel.com:2000', 
+failures: [{'proxy': 'http://nohammas.gmail.com:bbuyfd@gate2.proxyfuel.com:2000',
            'error': 'ConnectionError'}]
 ```
 
@@ -176,8 +176,8 @@ Duration: 15 minutes (still running)
 **Check Cloud Run logs:**
 ```bash
 # Get logs from the time of execution
-gcloud logging read "resource.type=cloud_run_revision 
-  AND resource.labels.service_name=nba-scrapers 
+gcloud logging read "resource.type=cloud_run_revision
+  AND resource.labels.service_name=nba-scrapers
   AND timestamp>=\"2025-10-14T15:00:00Z\"
   AND timestamp<=\"2025-10-14T15:20:00Z\"" \
   --limit=100 \
@@ -254,7 +254,7 @@ main:
 
 # Check BigQuery for data quality
 bq query --use_legacy_sql=false '
-SELECT 
+SELECT
   COUNT(*) as total_rows,
   COUNT(DISTINCT player_id) as unique_players,
   SUM(CASE WHEN points_line IS NULL THEN 1 ELSE 0 END) as missing_points
@@ -289,9 +289,9 @@ valid_players = [p for p in players if validate_player_data(p)]
 **Duplicate records:**
 ```sql
 -- Find duplicates in BigQuery
-SELECT 
-  game_id, 
-  player_id, 
+SELECT
+  game_id,
+  player_id,
   COUNT(*) as count
 FROM `nba-props-platform.raw.player_props`
 WHERE DATE(scraped_at) = '2025-10-14'
@@ -498,7 +498,7 @@ gcloud scheduler jobs run same-day-predictions --location=us-west2
 3. **Check recent deployments:**
    ```bash
    # Did someone just deploy?
-   gcloud logging read "resource.type=cloud_run_revision 
+   gcloud logging read "resource.type=cloud_run_revision
      AND textPayload=~\"Deploying\"" \
      --limit=10
    ```
@@ -507,7 +507,7 @@ gcloud scheduler jobs run same-day-predictions --location=us-west2
    ```bash
    # List revisions
    gcloud run revisions list --service=nba-scrapers --region=us-west2
-   
+
    # Rollback to previous
    gcloud run services update-traffic nba-scrapers \
      --region=us-west2 \

@@ -152,20 +152,20 @@ def test_pipeline_tracks_processing_time(
     sample_raw_extracted_data
 ):
     """Test pipeline tracks processing time correctly."""
-    
+
     # Mock extract_raw_data to set raw_data
     def mock_extract():
         mock_processor.raw_data = sample_raw_extracted_data
-    
+
     with patch.object(mock_processor, 'extract_raw_data', side_effect=mock_extract):
         # Mock build_source_tracking_fields
         mock_processor.build_source_tracking_fields = Mock(return_value={})
-        
+
         result = mock_processor.run({
             'start_date': '2024-10-21',
             'end_date': '2024-10-21'
         })
-        
+
         assert result is True
         assert 'extract_time' in mock_processor.stats
         assert 'transform_time' in mock_processor.stats

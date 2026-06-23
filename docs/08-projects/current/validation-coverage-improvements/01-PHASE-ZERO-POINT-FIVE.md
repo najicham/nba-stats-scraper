@@ -43,7 +43,7 @@ LEFT JOIN actual_logs a USING (phase_name);
 ### Check 2: Stalled Orchestrators
 ```sql
 -- Query: Detect orchestrators that started but didn't complete
-SELECT 
+SELECT
   phase_name,
   game_date,
   start_time,

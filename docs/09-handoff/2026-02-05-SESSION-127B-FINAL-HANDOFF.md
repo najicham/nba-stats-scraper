@@ -305,7 +305,7 @@ WHERE game_date >= '2026-02-05';
 ### Check NBA.com Injury Data
 ```sql
 -- Verify NBA.com has injury data for today's games
-SELECT 
+SELECT
   team,
   player_lookup,
   injury_status,
@@ -362,7 +362,7 @@ Breakout detection predicts when role players (8-16 PPG) will have exceptional g
 
 ### Issue 2: Role Player Definition Not Decided
 **Status:** Open question (P3)
-**Options:** 
+**Options:**
 - A: 8-16 season PPG (recommended)
 - B: Rolling per-game PPG
 - C: Minutes-based (15-28 min)
@@ -387,8 +387,8 @@ Breakout detection predicts when role players (8-16 PPG) will have exceptional g
 | `207364b9` | docs: Session 127B mid-session handoff | ✅ Committed |
 | `db45a4e6` | docs: Data sources discovery improvements | ✅ Committed |
 
-**Branch:** main  
-**Latest Commit:** db45a4e6  
+**Branch:** main
+**Latest Commit:** db45a4e6
 **Deployment Status:** ⏳ Phase4 needs redeployment
 
 ---
@@ -492,6 +492,6 @@ git show db45a4e6 --stat
 
 ---
 
-*End of Session 127B Final Handoff*  
-*Next Session: Deploy phase4, verify feature generation*  
+*End of Session 127B Final Handoff*
+*Next Session: Deploy phase4, verify feature generation*
 *Handoff created for fresh chat session due to context usage (64%)*

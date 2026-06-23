@@ -34,8 +34,8 @@ schedule_with_season AS (
   FROM `nba-props-platform.nba_raw.nbac_schedule`
   WHERE game_date BETWEEN '2021-10-19' AND '2026-06-20'
     -- Exclude special event games (All-Star, exhibitions, international)
-    AND home_team_tricode NOT IN ('BAR', 'DRT', 'IAH', 'LBN', 'PAY', 'WOR', 
-                                   'DRN', 'GNS', 'JAS', 'JKM', 'PAU', 
+    AND home_team_tricode NOT IN ('BAR', 'DRT', 'IAH', 'LBN', 'PAY', 'WOR',
+                                   'DRN', 'GNS', 'JAS', 'JKM', 'PAU',
                                    'DLF', 'EST')
     AND away_team_tricode NOT IN ('BAR', 'DRT', 'IAH', 'LBN', 'PAY', 'WOR',
                                    'DRN', 'GNS', 'JAS', 'JKM', 'PAU',

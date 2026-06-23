@@ -71,28 +71,28 @@ print_info() {
 
 parse_validation_status() {
     local output="$1"
-    
+
     # Check for critical issues (exit code 2)
     if echo "$output" | grep -q "❌ CRITICAL"; then
         print_error "CRITICAL issues found in validation results"
         EXIT_CODE=2
         return 2
     fi
-    
+
     # Check for point discrepancies (critical for props)
     if echo "$output" | grep -q "🔴 CRITICAL: Point discrepancy"; then
         print_error "Point discrepancies detected (affects prop settlement)"
         EXIT_CODE=2
         return 2
     fi
-    
+
     # Check for missing data patterns
     if echo "$output" | grep -q "❌ Missing all"; then
         print_error "Complete data loss detected"
         EXIT_CODE=2
         return 2
     fi
-    
+
     # Check for warnings (exit code 1)
     if echo "$output" | grep -q "⚠️ WARNING"; then
         print_warning "Warnings found in validation results"
@@ -101,7 +101,7 @@ parse_validation_status() {
         fi
         return 1
     fi
-    
+
     if echo "$output" | grep -q "⚠️ Incomplete"; then
         print_warning "Incomplete data detected"
         if [ $EXIT_CODE -lt 1 ]; then
@@ -109,7 +109,7 @@ parse_validation_status() {
         fi
         return 1
     fi
-    
+
     # No issues found
     print_success "Validation passed - no issues detected"
     return 0
@@ -153,19 +153,19 @@ ${YELLOW}EXAMPLES:${NC}
   # Morning routine (automated)
   validate-bdl-boxscores yesterday --json --quiet
   echo "Exit code: \$?"  # 0=success, 1=warning, 2=critical
-  
+
   # Weekly check with CSV export
   validate-bdl-boxscores week --csv
-  
+
   # Find missing games and export
   validate-bdl-boxscores missing --csv
-  
+
   # Cross-validate with NBA.com
   validate-bdl-boxscores cross-validate
-  
+
   # Validate specific date (backfill)
   validate-bdl-boxscores yesterday --date 2025-11-15
-  
+
   # Quiet mode for cron jobs
   validate-bdl-boxscores yesterday --quiet
 
@@ -214,20 +214,20 @@ list_queries() {
 apply_date_substitution() {
     local query_path="$1"
     local temp_file=$(mktemp)
-    
+
     if [ -n "$CUSTOM_DATE" ]; then
         print_info "Using custom date: $CUSTOM_DATE"
-        
+
         # Calculate yesterday from custom date
         local custom_yesterday=$(date -d "$CUSTOM_DATE - 1 day" +%Y-%m-%d 2>/dev/null || \
                                  date -v-1d -j -f "%Y-%m-%d" "$CUSTOM_DATE" +%Y-%m-%d 2>/dev/null)
-        
+
         # Replace date functions with custom dates
         sed -e "s/CURRENT_DATE()/'$CUSTOM_DATE'/g" \
             -e "s/DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)/'$custom_yesterday'/g" \
             -e "s/DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)/DATE_SUB('$CUSTOM_DATE', INTERVAL 7 DAY)/g" \
             "$query_path" > "$temp_file"
-        
+
         echo "$temp_file"
     else
         echo "$query_path"
@@ -255,44 +255,44 @@ run_query() {
 
     # Apply date substitution if custom date provided
     local actual_query_path=$(apply_date_substitution "$query_path")
-    
+
     # Capture output for status parsing
     local output
     local temp_output=$(mktemp)
-    
+
     case $output_format in
         json)
             local timestamp=$(date +%Y%m%d_%H%M%S)
             local output_file="validation_bdl_${query_file%.sql}_${timestamp}.json"
-            
+
             if [ "$QUIET_MODE" = false ]; then
                 print_info "Saving results to: $output_file"
             fi
-            
+
             # Run query and save to file
             if bq query --use_legacy_sql=false --format=json < "$actual_query_path" > "$output_file" 2>&1; then
                 output=$(cat "$output_file")
-                
+
                 # Also show formatted output if not quiet
                 if [ "$QUIET_MODE" = false ]; then
                     cat "$output_file" | jq '.' 2>/dev/null || cat "$output_file"
                 fi
-                
+
                 print_success "Results saved to $output_file"
             else
                 print_error "Query execution failed"
                 EXIT_CODE=2
             fi
             ;;
-            
+
         csv)
             local timestamp=$(date +%Y%m%d_%H%M%S)
             local output_file="validation_bdl_${query_file%.sql}_${timestamp}.csv"
-            
+
             if [ "$QUIET_MODE" = false ]; then
                 print_info "Saving results to: $output_file"
             fi
-            
+
             # Run query and save to file, also capture for status parsing
             if bq query --use_legacy_sql=false --format=csv < "$actual_query_path" | tee "$output_file" > "$temp_output" 2>&1; then
                 output=$(cat "$temp_output")
@@ -302,31 +302,31 @@ run_query() {
                 EXIT_CODE=2
             fi
             ;;
-            
+
         table)
             local timestamp=$(date +%Y%m%d)
             local table_name="validation.bdl_${query_file%.sql}_${timestamp}"
-            
+
             if [ "$QUIET_MODE" = false ]; then
                 print_info "Saving to BigQuery table: $table_name"
             fi
-            
+
             # Run query and save to table
             if bq query --use_legacy_sql=false --destination_table="nba-props-platform:${table_name}" \
                --replace < "$actual_query_path" > "$temp_output" 2>&1; then
                 output=$(cat "$temp_output")
-                
+
                 if [ "$QUIET_MODE" = false ]; then
                     echo "$output"
                 fi
-                
+
                 print_success "Results saved to nba-props-platform:${table_name}"
             else
                 print_error "Query execution failed"
                 EXIT_CODE=2
             fi
             ;;
-            
+
         *)
             # Default: output to terminal
             if bq query --use_legacy_sql=false < "$actual_query_path" | tee "$temp_output"; then
@@ -337,12 +337,12 @@ run_query() {
             fi
             ;;
     esac
-    
+
     # Parse validation status from output
     if [ $EXIT_CODE -eq 0 ]; then
         parse_validation_status "$output"
     fi
-    
+
     # Cleanup temp files
     rm -f "$temp_output"
     if [ "$actual_query_path" != "$query_path" ]; then

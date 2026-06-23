@@ -63,7 +63,7 @@ Expected: ~50-65% hit rate (confirms RED signal working)
 
 Verify catboost_v9_2026_02 is generating predictions:
 ```sql
-SELECT system_id, COUNT(*) 
+SELECT system_id, COUNT(*)
 FROM nba_predictions.player_prop_predictions
 WHERE game_date >= '2026-02-02' AND system_id LIKE 'catboost%'
 GROUP BY 1;

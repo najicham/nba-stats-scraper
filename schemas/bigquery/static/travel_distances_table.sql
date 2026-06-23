@@ -11,15 +11,15 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_static.travel_distances` (
   to_team STRING NOT NULL,                          -- Destination team abbreviation
   from_city STRING NOT NULL,                        -- Origin city (for reference)
   to_city STRING NOT NULL,                          -- Destination city (for reference)
-  
+
   -- Distance metrics
   distance_miles INT64 NOT NULL,                    -- Great circle distance using haversine formula
-  
+
   -- Time zone and jet lag metrics
   time_zones_crossed INT64 NOT NULL,                -- Number of time zones crossed (0-4)
   travel_direction STRING NOT NULL,                 -- 'east', 'west', or 'neutral'
   jet_lag_factor FLOAT64 NOT NULL,                  -- Weighted impact: eastward=1.5x, westward=1.0x
-  
+
   -- Processing metadata
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()

@@ -8,7 +8,7 @@
 --   - Missing reports on game days = CRITICAL risk for props
 -- ============================================================================
 
-WITH 
+WITH
 -- Get all game dates from schedule
 all_game_dates AS (
   SELECT DISTINCT
@@ -25,7 +25,7 @@ all_game_dates AS (
 
 -- Get injury report coverage for those dates
 injury_report_coverage AS (
-  SELECT 
+  SELECT
     report_date,
     COUNT(DISTINCT report_hour) as hourly_snapshots,
     COUNT(DISTINCT player_lookup) as unique_players,
@@ -39,7 +39,7 @@ injury_report_coverage AS (
   GROUP BY report_date
 )
 
-SELECT 
+SELECT
   g.game_date,
   FORMAT_DATE('%A', g.game_date) as day_of_week,
   g.games_scheduled,
@@ -56,18 +56,18 @@ SELECT
     ELSE '✅ Complete'
   END as status,
   -- Show sample matchups for context (truncated to avoid long strings)
-  CASE 
+  CASE
     WHEN LENGTH(g.matchups) > 100 THEN CONCAT(SUBSTR(g.matchups, 1, 97), '...')
     ELSE g.matchups
   END as sample_matchups
 FROM all_game_dates g
 LEFT JOIN injury_report_coverage i ON g.game_date = i.report_date
-WHERE 
+WHERE
   -- Only show issues or recent dates
   (i.report_date IS NULL OR i.hourly_snapshots < 5 OR g.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY))
-ORDER BY 
+ORDER BY
   -- Critical issues first
-  CASE 
+  CASE
     WHEN i.report_date IS NULL THEN 1
     WHEN i.hourly_snapshots < 3 THEN 2
     ELSE 3

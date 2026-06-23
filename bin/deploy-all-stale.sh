@@ -51,28 +51,28 @@ FAILED=0
 # Check each service for staleness
 for service in "${SERVICE_ORDER[@]}"; do
     source_dir="${SERVICES[$service]}"
-    
+
     # Get deployment time
     deploy_time=$(gcloud run services describe "$service" --region="$REGION" \
         --format="value(status.conditions[0].lastTransitionTime)" 2>/dev/null || echo "")
-    
+
     if [[ -z "$deploy_time" ]]; then
         echo -e "${YELLOW}⚠️  $service: Could not get deployment time${NC}"
         continue
     fi
-    
+
     # Get latest code change time
     code_time=$(git log -1 --format="%ci" -- "$source_dir" 2>/dev/null || echo "")
-    
+
     if [[ -z "$code_time" ]]; then
         echo -e "${YELLOW}⚠️  $service: Could not get code change time${NC}"
         continue
     fi
-    
+
     # Compare times
     deploy_epoch=$(date -d "$deploy_time" +%s 2>/dev/null || echo "0")
     code_epoch=$(date -d "$code_time" +%s 2>/dev/null || echo "0")
-    
+
     if [[ "$code_epoch" -gt "$deploy_epoch" ]]; then
         echo -e "${RED}❌ $service: STALE${NC}"
         echo "   Deployed: $deploy_time"
@@ -95,12 +95,12 @@ echo ""
 
 for service in "${STALE_SERVICES[@]}"; do
     echo -e "${BLUE}Deploying $service...${NC}"
-    
+
     if [[ "$DRY_RUN" == "true" ]]; then
         echo "  [DRY RUN] Would run: gcloud run deploy $service --image=$REGISTRY/$service:latest --region=$REGION"
         continue
     fi
-    
+
     if gcloud run deploy "$service" \
         --image="$REGISTRY/$service:latest" \
         --region="$REGION" \

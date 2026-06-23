@@ -239,8 +239,8 @@ class BdlOddsScraper(ScraperBase, ScraperFlaskMixin):
                 "rowCount": len(rows),
                 "odds": rows,
             }
-            
-            logger.info("Fetched %d odds rows for %s across %d pages", 
+
+            logger.info("Fetched %d odds rows for %s across %d pages",
                        len(rows), self.opts["ident"], pages_fetched)
 
             # Success notification

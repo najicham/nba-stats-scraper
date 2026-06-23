@@ -9,10 +9,10 @@
 --   - EAST (1) = All-Star game - should be filtered by processor
 -- ============================================================================
 
-WITH 
+WITH
 -- Home team mappings
 home_mappings AS (
-  SELECT 
+  SELECT
     home_team_espn_abbr as espn_code,
     home_team_abbr as nba_code,
     COUNT(*) as occurrences,
@@ -25,7 +25,7 @@ home_mappings AS (
 
 -- Away team mappings
 away_mappings AS (
-  SELECT 
+  SELECT
     away_team_espn_abbr as espn_code,
     away_team_abbr as nba_code,
     COUNT(*) as occurrences,
@@ -38,7 +38,7 @@ away_mappings AS (
 
 -- Combine both (total occurrences)
 all_mappings AS (
-  SELECT 
+  SELECT
     espn_code,
     nba_code,
     SUM(occurrences) as total_occurrences,
@@ -54,7 +54,7 @@ all_mappings AS (
 
 -- Classification
 classified_mappings AS (
-  SELECT 
+  SELECT
     *,
     CASE
       -- Known standard mappings
@@ -65,13 +65,13 @@ classified_mappings AS (
       WHEN espn_code = 'NO' AND nba_code = 'NOP' THEN 'MAPPED'
       WHEN espn_code = 'UTAH' AND nba_code = 'UTA' THEN 'MAPPED'
       WHEN espn_code = 'WSH' AND nba_code = 'WAS' THEN 'MAPPED'
-      
+
       -- Special events
       WHEN espn_code = 'EAST' OR espn_code = 'WEST' THEN 'ALL_STAR'
-      
+
       -- Unknown/problematic codes
       WHEN espn_code IN ('CHK', 'SHQ') THEN 'UNKNOWN'
-      
+
       -- Anything else is unexpected
       ELSE 'UNEXPECTED'
     END as mapping_type,
@@ -91,7 +91,7 @@ classified_mappings AS (
 
 -- Output: Combined results with proper BigQuery syntax
 (
-  SELECT 
+  SELECT
     '📊 MAPPING SUMMARY' as section,
     mapping_type as col1,
     CAST(COUNT(*) AS STRING) as col2,
@@ -116,7 +116,7 @@ classified_mappings AS (
   UNION ALL
 
   -- Output: Detailed mappings (all records)
-  SELECT 
+  SELECT
     '📋 ALL MAPPINGS' as section,
     espn_code as col1,
     nba_code as col2,
@@ -133,7 +133,7 @@ classified_mappings AS (
   UNION ALL
 
   -- Output: Problem cases (for investigation)
-  SELECT 
+  SELECT
     '🔴 INVESTIGATE THESE' as section,
     game_id as col1,
     CAST(game_date AS STRING) as col2,

@@ -7,7 +7,7 @@
 -- CRITICAL: Run this FIRST to verify coverage before creating validation queries
 -- ============================================================================
 
-SELECT 
+SELECT
   MIN(game_date) as earliest_date,
   MAX(game_date) as latest_date,
   COUNT(DISTINCT game_date) as total_dates_with_data,

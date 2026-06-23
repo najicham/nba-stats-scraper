@@ -18,13 +18,13 @@ WITH date_series AS (
   ORDER BY game_date
 ),
 with_next_date AS (
-  SELECT 
+  SELECT
     game_date,
     LEAD(game_date) OVER (ORDER BY game_date) as next_date,
     DATE_DIFF(LEAD(game_date) OVER (ORDER BY game_date), game_date, DAY) as days_gap
   FROM date_series
 )
-SELECT 
+SELECT
   game_date,
   next_date,
   days_gap,

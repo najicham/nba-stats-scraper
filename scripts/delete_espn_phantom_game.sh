@@ -76,7 +76,7 @@ bq query --use_legacy_sql=false "
 SELECT
   '=== POST-DELETION CHECK ===' as check,
   COUNT(*) as remaining_records,
-  CASE 
+  CASE
     WHEN COUNT(*) = 0 THEN '✅ Phantom game successfully deleted'
     ELSE '🔴 ERROR: Records still exist!'
   END as status

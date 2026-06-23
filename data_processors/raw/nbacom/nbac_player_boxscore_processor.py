@@ -73,7 +73,7 @@ class NbacPlayerBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
 
         self.project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
         self.bq_client = bigquery.Client(project=self.project_id)
-        
+
         # Column index mapping (based on leaguegamelog headers)
         self.COLUMN_MAP = {
             'SEASON_ID': 0,
@@ -109,12 +109,12 @@ class NbacPlayerBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
             'FANTASY_PTS': 30,
             'VIDEO_AVAILABLE': 31
         }
-        
+
         # Tracking
         self.players_processed = 0
         self.players_failed = 0
         self.games_found = set()
-    
+
     def normalize_player_name(self, name: str) -> str:
         """Normalize player names for cross-source matching.
 
@@ -125,7 +125,7 @@ class NbacPlayerBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
         creating 40+ duplicate player_lookup values.
         """
         return normalize_name_for_lookup(name)
-    
+
     def safe_int(self, value) -> Optional[int]:
         """Safely convert value to int."""
         if value is None or value == "":
@@ -134,7 +134,7 @@ class NbacPlayerBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
             return int(float(str(value)))
         except (ValueError, TypeError):
             return None
-    
+
     def safe_float(self, value) -> Optional[float]:
         """Safely convert value to float."""
         if value is None or value == "":
@@ -143,7 +143,7 @@ class NbacPlayerBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
             return float(str(value))
         except (ValueError, TypeError):
             return None
-    
+
     def determine_season_year(self, game_date: str) -> int:
         """Determine NBA season year from game date."""
         date_obj = datetime.strptime(game_date, '%Y-%m-%d')
@@ -151,7 +151,7 @@ class NbacPlayerBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
             return date_obj.year
         else:
             return date_obj.year - 1
-    
+
     def parse_matchup(self, matchup: str) -> Dict[str, str]:
         """
         Parse MATCHUP field to get home/away teams.
@@ -170,7 +170,7 @@ class NbacPlayerBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
         else:
             logging.warning(f"Could not parse matchup: {matchup}")
             return {'away': '', 'home': ''}
-    
+
     def construct_game_id(self, game_date: str, home_team: str, away_team: str) -> str:
         """Construct consistent game_id format: YYYYMMDD_AWAY_HOME"""
         date_str = game_date.replace('-', '')
@@ -233,28 +233,28 @@ class NbacPlayerBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
         """Load JSON from GCS."""
         self.raw_data = self.load_json_from_gcs()
         logging.info(f"Loaded leaguegamelog data from GCS")
-    
+
     def validate_loaded_data(self) -> None:
         """Validate the leaguegamelog structure."""
         if not self.raw_data:
             raise ValueError("No data loaded")
-        
+
         if 'resultSets' not in self.raw_data:
             raise ValueError("Missing 'resultSets' in data")
-        
+
         result_sets = self.raw_data['resultSets']
         if not result_sets or len(result_sets) == 0:
             raise ValueError("Empty resultSets")
-        
+
         if 'rowSet' not in result_sets[0]:
             raise ValueError("Missing 'rowSet' in resultSets[0]")
-        
+
         if 'headers' not in result_sets[0]:
             raise ValueError("Missing 'headers' in resultSets[0]")
-        
+
         row_count = len(result_sets[0]['rowSet'])
         logging.info(f"Validated {row_count} player rows in leaguegamelog data")
-    
+
     def transform_data(self) -> None:
         """Transform leaguegamelog format to BigQuery player boxscore format."""
         try:
@@ -277,64 +277,64 @@ class NbacPlayerBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
             # Validate column structure matches expectations
             if len(headers) != 32:
                 logging.warning(f"Expected 32 columns, got {len(headers)}")
-            
+
             rows = []
             current_time = datetime.now(timezone.utc).isoformat()
             self.players_processed = 0
             self.players_failed = 0
-            
+
             for row_data in rows_data:
                 try:
                     # Extract data using column map
                     col = self.COLUMN_MAP
-                    
+
                     # Player identification
                     nba_player_id = self.safe_int(row_data[col['PLAYER_ID']])
                     player_full_name = row_data[col['PLAYER_NAME']]
                     player_lookup = self.normalize_player_name(player_full_name)
-                    
+
                     if not nba_player_id or not player_full_name:
                         self.players_failed += 1
                         continue
-                    
+
                     # Team info
                     team_abbr = self.team_mapper.get_nba_tricode(
                         row_data[col['TEAM_ABBREVIATION']]
                     )
                     team_id = self.safe_int(row_data[col['TEAM_ID']])
-                    
+
                     # Game info
                     nba_game_id = row_data[col['GAME_ID']]
                     game_date_str = row_data[col['GAME_DATE']]  # "2024-10-29"
                     matchup = row_data[col['MATCHUP']]
-                    
+
                     # Parse matchup to get home/away
                     teams = self.parse_matchup(matchup)
                     home_team_abbr = self.team_mapper.get_nba_tricode(teams['home'])
                     away_team_abbr = self.team_mapper.get_nba_tricode(teams['away'])
-                    
+
                     # Construct our standard game_id
                     game_id = self.construct_game_id(game_date_str, home_team_abbr, away_team_abbr)
                     self.games_found.add(game_id)
-                    
+
                     # Season info
                     season_year = self.determine_season_year(game_date_str)
-                    
+
                     # Stats
                     minutes = str(row_data[col['MIN']]) if row_data[col['MIN']] else None
                     points = self.safe_int(row_data[col['PTS']])
                     field_goals_made = self.safe_int(row_data[col['FGM']])
                     field_goals_attempted = self.safe_int(row_data[col['FGA']])
                     field_goal_percentage = self.safe_float(row_data[col['FG_PCT']])
-                    
+
                     three_pointers_made = self.safe_int(row_data[col['FG3M']])
                     three_pointers_attempted = self.safe_int(row_data[col['FG3A']])
                     three_point_percentage = self.safe_float(row_data[col['FG3_PCT']])
-                    
+
                     free_throws_made = self.safe_int(row_data[col['FTM']])
                     free_throws_attempted = self.safe_int(row_data[col['FTA']])
                     free_throw_percentage = self.safe_float(row_data[col['FT_PCT']])
-                    
+
                     offensive_rebounds = self.safe_int(row_data[col['OREB']])
                     defensive_rebounds = self.safe_int(row_data[col['DREB']])
                     total_rebounds = self.safe_int(row_data[col['REB']])
@@ -344,7 +344,7 @@ class NbacPlayerBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
                     turnovers = self.safe_int(row_data[col['TOV']])
                     personal_fouls = self.safe_int(row_data[col['PF']])
                     plus_minus = self.safe_int(row_data[col['PLUS_MINUS']])
-                    
+
                     # Build row matching BigQuery schema
                     row = {
                         # Core identifiers
@@ -352,14 +352,14 @@ class NbacPlayerBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'game_date': game_date_str,
                         'season_year': season_year,
                         'season_type': 'Regular Season',
-                        
+
                         # Game context
                         'nba_game_id': nba_game_id,
                         'game_code': None,  # Not available in leaguegamelog
                         'game_status': 'Final',  # Assume final
                         'period': 4,  # Assume regulation
                         'is_playoff_game': False,
-                        
+
                         # Team information (we don't have scores in leaguegamelog)
                         'home_team_id': None,
                         'home_team_abbr': home_team_abbr,
@@ -367,7 +367,7 @@ class NbacPlayerBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'away_team_id': None,
                         'away_team_abbr': away_team_abbr,
                         'away_team_score': None,
-                        
+
                         # Player identification
                         'nba_player_id': nba_player_id,
                         'player_full_name': player_full_name,
@@ -377,7 +377,7 @@ class NbacPlayerBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'jersey_number': None,  # Not in leaguegamelog
                         'position': None,  # Not in leaguegamelog
                         'starter': None,  # Not in leaguegamelog
-                        
+
                         # Core statistics
                         'minutes': minutes,
                         'points': points,
@@ -390,7 +390,7 @@ class NbacPlayerBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'free_throws_made': free_throws_made,
                         'free_throws_attempted': free_throws_attempted,
                         'free_throw_percentage': free_throw_percentage,
-                        
+
                         # Advanced statistics
                         'offensive_rebounds': offensive_rebounds,
                         'defensive_rebounds': defensive_rebounds,
@@ -403,7 +403,7 @@ class NbacPlayerBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'flagrant_fouls': None,  # Not in leaguegamelog
                         'technical_fouls': None,  # Not in leaguegamelog
                         'plus_minus': plus_minus,
-                        
+
                         # Enhanced metrics (not available)
                         'true_shooting_pct': None,
                         'effective_fg_pct': None,
@@ -412,47 +412,47 @@ class NbacPlayerBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'defensive_rating': None,
                         'pace': None,
                         'pie': None,
-                        
+
                         # Quarter breakdown (not available)
                         'points_q1': None,
                         'points_q2': None,
                         'points_q3': None,
                         'points_q4': None,
                         'points_ot': None,
-                        
+
                         # Processing metadata
                         'source_file_path': self.opts.get('file_path', ''),
                         'scrape_timestamp': current_time,
                         'created_at': current_time,
                         'processed_at': current_time
                     }
-                    
+
                     rows.append(row)
                     self.players_processed += 1
-                    
+
                 except Exception as e:
                     self.players_failed += 1
                     logging.error(f"Error processing player row: {str(e)}", exc_info=True)
                     continue
-            
+
             self.transformed_data = rows
 
             # Smart Idempotency: Add data_hash to all records
             self.add_data_hash()
 
             logging.info(f"Transformed {len(rows)} player records from {len(self.games_found)} games")
-            
+
             # Warn if high failure rate
             total_players = len(rows_data)
             if total_players > 0:
                 failure_rate = self.players_failed / total_players
                 if failure_rate > 0.1:
                     logging.warning(f"High failure rate: {failure_rate:.1%} ({self.players_failed}/{total_players})")
-            
+
         except Exception as e:
             logging.error(f"Error in transform_data: {str(e)}", exc_info=True)
             raise
-    
+
     def load_data_to_bq(self, rows: List[Dict]) -> Dict:
         """Load transformed data into BigQuery with MERGE strategy.
 
@@ -532,7 +532,7 @@ class NbacPlayerBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
             'errors': errors,
             'games_processed': len(game_ids)
         }
-    
+
     def save_data(self) -> None:
         """Override save to use custom load method."""
         result = self.load_data_to_bq(self.transformed_data)
@@ -541,7 +541,7 @@ class NbacPlayerBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
 
         if result.get('errors'):
             raise Exception(f"BigQuery load errors: {result['errors']}")
-    
+
     def get_processor_stats(self) -> Dict:
         """Return processor statistics."""
         return {

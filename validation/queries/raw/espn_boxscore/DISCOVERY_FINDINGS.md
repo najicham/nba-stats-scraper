@@ -1,10 +1,10 @@
 # ESPN Boxscore Data - Discovery Findings
 
-**File:** `validation/queries/raw/espn_boxscore/DISCOVERY_FINDINGS.md`  
-**Date:** October 13, 2025  
-**Processor:** `espn_boxscore_processor.py`  
-**Table:** `nba_raw.espn_boxscores`  
-**Pattern:** Pattern 3 (Single Event) - Extremely Sparse Backup Source  
+**File:** `validation/queries/raw/espn_boxscore/DISCOVERY_FINDINGS.md`
+**Date:** October 13, 2025
+**Processor:** `espn_boxscore_processor.py`
+**Table:** `nba_raw.espn_boxscores`
+**Pattern:** Pattern 3 (Single Event) - Extremely Sparse Backup Source
 
 ---
 
@@ -34,7 +34,7 @@ Unique Players:       25
 Unique Teams:         2
 ```
 
-**Analysis:** 
+**Analysis:**
 - Only a single game collected in entire dataset
 - 25 players = reasonable (12-13 per team with bench)
 - This is a backup validation source, not comprehensive collection
@@ -158,7 +158,7 @@ Total Games:        228
 
 ```sql
 -- This will NOT work - game_id formats don't match
-LEFT JOIN nba_raw.nbac_schedule s 
+LEFT JOIN nba_raw.nbac_schedule s
   ON espn.game_id = s.game_id
 ```
 
@@ -224,8 +224,8 @@ Given ESPN's extremely sparse coverage, validation queries should focus on:
 
 ### ESPN's Role in Data Pipeline
 
-**Workflow Position:** Early Morning Final Check (5 AM PT)  
-**Purpose:** Final backup validation before prop settlement  
+**Workflow Position:** Early Morning Final Check (5 AM PT)
+**Purpose:** Final backup validation before prop settlement
 **Collection Frequency:** Ad-hoc during backup workflows only
 
 **Why ESPN is Sparse:**
@@ -236,7 +236,7 @@ Given ESPN's extremely sparse coverage, validation queries should focus on:
 
 ### Revenue Impact
 
-**Priority:** MEDIUM-LOW  
+**Priority:** MEDIUM-LOW
 **Risk:** LOW - ESPN is backup only, not critical path
 
 **Impact if ESPN fails:**
@@ -302,14 +302,14 @@ ESPN Boxscore is an **extremely sparse backup data source** with unique validati
 5. Validation should focus on accuracy, not completeness
 
 **Validation Philosophy:**
-> "When ESPN has data, is it correct?"  
+> "When ESPN has data, is it correct?"
 > NOT: "Does ESPN have all the data?"
 
 This is fundamentally different from BDL or NBA.com validation where comprehensive coverage is expected.
 
 ---
 
-**Document Status:** ✅ Discovery Complete  
-**Next Step:** Create validation queries adapted for sparse backup source  
-**Pattern:** Pattern 3 with date + team join strategy  
+**Document Status:** ✅ Discovery Complete
+**Next Step:** Create validation queries adapted for sparse backup source
+**Pattern:** Pattern 3 with date + team join strategy
 **Priority:** Medium-Low (backup source)

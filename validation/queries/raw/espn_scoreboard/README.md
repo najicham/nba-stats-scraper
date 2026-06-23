@@ -1,8 +1,8 @@
 # ESPN Scoreboard Validation Queries
 
-**Purpose**: Validate ESPN scoreboard data (backup validation source)  
-**Pattern**: Pattern 1 (1 record per game with home/away in same row)  
-**Business Role**: Early Morning Final Check workflow backup (5 AM PT)  
+**Purpose**: Validate ESPN scoreboard data (backup validation source)
+**Pattern**: Pattern 1 (1 record per game with home/away in same row)
+**Business Role**: Early Morning Final Check workflow backup (5 AM PT)
 **Data Characteristics**: Sparse backup collection (~6 games/day average)
 
 ---
@@ -119,7 +119,7 @@ Verify ESPN team code conversions to NBA standard codes.
 **Known Issues**:
 ```
 CHK → CHK (2 occurrences) - Unknown team code
-SHQ → SHQ (1 occurrence) - Unknown team code  
+SHQ → SHQ (1 occurrence) - Unknown team code
 EAST → EAST (1 occurrence) - All-Star game (filter in processor)
 ```
 
@@ -287,7 +287,7 @@ For daily checks:
 
 ---
 
-**Last Updated**: 2025-10-13  
-**Validation Pattern**: Pattern 1 (1 record per game)  
-**Business Priority**: MEDIUM (backup validation source)  
+**Last Updated**: 2025-10-13
+**Validation Pattern**: Pattern 1 (1 record per game)
+**Business Priority**: MEDIUM (backup validation source)
 **Processing Strategy**: MERGE_UPDATE with staging table (production-safe)

@@ -37,17 +37,17 @@ roster_data AS (
 completeness_summary AS (
   SELECT
     COUNT(*) as total_records,
-    
+
     -- Critical fields (should be 100%)
     COUNT(CASE WHEN season_year IS NULL THEN 1 END) as null_season_year,
     COUNT(CASE WHEN team_abbrev IS NULL THEN 1 END) as null_team_abbrev,
     COUNT(CASE WHEN player_full_name IS NULL THEN 1 END) as null_full_name,
     COUNT(CASE WHEN player_lookup IS NULL THEN 1 END) as null_player_lookup,
-    
+
     -- Important fields (should be >95%)
     COUNT(CASE WHEN player_last_name IS NULL THEN 1 END) as null_last_name,
     COUNT(CASE WHEN position IS NULL THEN 1 END) as null_position,
-    
+
     -- Optional fields (can have some NULLs)
     COUNT(CASE WHEN jersey_number IS NULL THEN 1 END) as null_jersey,
     COUNT(CASE WHEN height IS NULL THEN 1 END) as null_height,
@@ -55,7 +55,7 @@ completeness_summary AS (
     COUNT(CASE WHEN birth_date IS NULL THEN 1 END) as null_birth_date,
     COUNT(CASE WHEN college IS NULL THEN 1 END) as null_college,
     COUNT(CASE WHEN experience_years IS NULL THEN 1 END) as null_experience,
-    
+
     -- Date tracking
     COUNT(CASE WHEN first_seen_date IS NULL THEN 1 END) as null_first_seen,
     COUNT(CASE WHEN last_scraped_date IS NULL THEN 1 END) as null_last_scraped

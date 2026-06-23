@@ -2,7 +2,7 @@
 
 **Purpose:** This template lists all information needed to build a comprehensive data validator for any processor/data source.
 
-**Instructions:** 
+**Instructions:**
 1. Copy this template for your specific processor
 2. Fill in all sections marked with `[FILL IN]`
 3. Check all boxes as you provide information
@@ -12,14 +12,14 @@
 
 ## 📌 Basic Information
 
-**Processor Name:** `[FILL IN: e.g., odds_api_game_lines]`  
-**Data Source:** `[FILL IN: e.g., The Odds API, ESPN, NBA.com]`  
-**Data Type:** `[SELECT: Raw Scraper Data / API Data / Analytics Table / Reference Data]`  
-**Point of Contact:** `[FILL IN: Name/Email]`  
-**Target Validator:** `validation/validators/[layer]/[processor_name]_validator.py`  
+**Processor Name:** `[FILL IN: e.g., odds_api_game_lines]`
+**Data Source:** `[FILL IN: e.g., The Odds API, ESPN, NBA.com]`
+**Data Type:** `[SELECT: Raw Scraper Data / API Data / Analytics Table / Reference Data]`
+**Point of Contact:** `[FILL IN: Name/Email]`
+**Target Validator:** `validation/validators/[layer]/[processor_name]_validator.py`
 **Target Config:** `validation/configs/[layer]/[processor_name].yaml`
 
-**Data Description:**  
+**Data Description:**
 `[FILL IN: 2-3 sentence description of what this data represents and why it's important]`
 
 **Example:**
@@ -49,7 +49,7 @@
 
 **Option B: Run this query and paste results:**
 ```sql
-SELECT 
+SELECT
   column_name,
   data_type,
   is_nullable,
@@ -174,9 +174,9 @@ Or paste sample here:
 **Which fields should ALWAYS have values?**
 
 - [ ] `[List field names, one per line]`
-- [ ] 
-- [ ] 
-- [ ] 
+- [ ]
+- [ ]
+- [ ]
 
 ### Valid Ranges
 **For numeric fields, what are acceptable ranges?**
@@ -242,7 +242,7 @@ Example: ATL, BOS, BKN, CHA, CHI, CLE, DAL, DEN, DET, GSW, HOU, IND, LAC, LAL, M
 ### Edge Cases
 **Describe any special situations to be aware of:**
 ```
-[FILL IN: 
+[FILL IN:
 - Example: Some games don't have odds if line is pulled
 - Example: Playoff games may have delayed data
 - etc.]
@@ -257,10 +257,10 @@ Example: ATL, BOS, BKN, CHA, CHI, CLE, DAL, DEN, DET, GSW, HOU, IND, LAC, LAL, M
 
 - [ ] **Schedule table:** `[FILL IN table name or "N/A"]`
   - Purpose: `[e.g., Ensure all completed games have data]`
-  
+
 - [ ] **Team reference:** `[FILL IN table name or "N/A"]`
   - Purpose: `[e.g., Validate team names/IDs]`
-  
+
 - [ ] **Related data table:** `[FILL IN table name or "N/A"]`
   - Purpose: `[e.g., Cross-check with boxscore data]`
 
@@ -268,7 +268,7 @@ Example: ATL, BOS, BKN, CHA, CHI, CLE, DAL, DEN, DET, GSW, HOU, IND, LAC, LAL, M
 **What relationships should hold true?**
 
 ```
-[FILL IN: 
+[FILL IN:
 - Example: Every completed regular season game in schedule should have odds data
 - Example: Every player in boxscore should exist in player registry
 - Example: Game dates should match between this table and schedule
@@ -308,7 +308,7 @@ LIMIT 10;
 **Please provide recent daily counts:**
 
 ```sql
-SELECT 
+SELECT
   game_date,
   COUNT(*) as total_records,
   COUNT(DISTINCT [KEY_FIELD]) as unique_items,
@@ -330,7 +330,7 @@ ORDER BY game_date DESC;
 
 ```sql
 [EXAMPLE: For categorical fields, show counts per category]
-SELECT 
+SELECT
   [CATEGORICAL_FIELD],
   COUNT(*) as count
 FROM `[PROJECT_ID].[DATASET].[TABLE_NAME]`
@@ -446,7 +446,7 @@ ORDER BY count DESC;
 
 ### Must Have (Critical - Needed to Start)
 1. ✅ BigQuery table name and partition details
-2. ✅ GCS bucket path and file pattern  
+2. ✅ GCS bucket path and file pattern
 3. ✅ Key field names (date, game_id, teams, etc.)
 4. ✅ Sample data (10 rows)
 5. ✅ Required fields (never null)
@@ -481,7 +481,7 @@ ORDER BY count DESC;
 ## 🎯 Next Steps
 
 1. ✅ Fill out this template completely
-2. ✅ Run the sample queries and paste results  
+2. ✅ Run the sample queries and paste results
 3. ✅ Share completed document with validation team
 4. ⏳ Validation team builds validator (30-60 minutes)
 5. ✅ Test validator on your data
@@ -492,5 +492,5 @@ ORDER BY count DESC;
 
 ---
 
-*Template Version: 1.0*  
+*Template Version: 1.0*
 *Last Updated: 2025-10-10*

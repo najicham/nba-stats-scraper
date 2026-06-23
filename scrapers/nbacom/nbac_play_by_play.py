@@ -90,7 +90,7 @@ class GetNbaComPlayByPlay(ScraperBase, ScraperFlaskMixin):
             "export_mode": ExportMode.DATA,
             "pretty_print": True,
             "groups": ["dev", "test", "prod"],
-        },        
+        },
         # ADD CAPTURE EXPORTERS for testing with capture.py
         {
             "type": "file",
@@ -99,7 +99,7 @@ class GetNbaComPlayByPlay(ScraperBase, ScraperFlaskMixin):
             "groups": ["capture"],
         },
         {
-            "type": "file", 
+            "type": "file",
             "filename": "/tmp/exp_%(run_id)s.json",
             "export_mode": ExportMode.DATA,
             "pretty_print": True,
@@ -112,11 +112,11 @@ class GetNbaComPlayByPlay(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     def set_additional_opts(self) -> None:
         super().set_additional_opts()
-        
+
         # Add timestamp for exports
         now = datetime.now(timezone.utc)
         self.opts["time"] = now.strftime("%H-%M-%S")
-        
+
         # Derive season from game_id (e.g., "0022400987" -> "2024-25")
         gid = self.opts["game_id"]
         try:
@@ -161,7 +161,7 @@ class GetNbaComPlayByPlay(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException(error_msg)
-                
+
             game = self.decoded_data.get("game")
             if game is None:
                 error_msg = "PBP JSON missing 'game' key"
@@ -182,7 +182,7 @@ class GetNbaComPlayByPlay(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException(error_msg)
-                
+
             if "actions" not in game:
                 error_msg = "PBP JSON missing game.actions array"
                 logger.error("%s for game_id %s", error_msg, self.opts["game_id"])
@@ -202,7 +202,7 @@ class GetNbaComPlayByPlay(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException(error_msg)
-                
+
             actions = game["actions"]
             if not isinstance(actions, list):
                 error_msg = "game.actions is not a list"
@@ -223,7 +223,7 @@ class GetNbaComPlayByPlay(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException(error_msg)
-                
+
             if len(actions) == 0:
                 error_msg = "game.actions is empty - no play-by-play events found"
                 logger.error("%s for game_id %s", error_msg, self.opts["game_id"])
@@ -242,7 +242,7 @@ class GetNbaComPlayByPlay(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException(error_msg)
-                
+
         except DownloadDataException:
             # Already handled and notified above
             raise
@@ -276,12 +276,12 @@ class GetNbaComPlayByPlay(ScraperBase, ScraperFlaskMixin):
         try:
             game = self.data["playByPlay"]["game"]
             actions = game["actions"]
-            
+
             # 1. REASONABLE EVENT COUNT CHECK
             event_count = len(actions)
             min_events = int(os.environ.get('PBP_MIN_EVENTS', '50'))
             max_events = int(os.environ.get('PBP_MAX_EVENTS', '1000'))
-            
+
             if event_count < min_events:
                 error_msg = f"Suspiciously low event count: {event_count} (expected {min_events}-{max_events})"
                 logger.error("%s for game_id %s", error_msg, self.opts["game_id"])
@@ -322,8 +322,8 @@ class GetNbaComPlayByPlay(ScraperBase, ScraperFlaskMixin):
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
                 raise DownloadDataException(error_msg)
-            
-            # 2. BASIC DATA STRUCTURE VALIDATION  
+
+            # 2. BASIC DATA STRUCTURE VALIDATION
             required_game_keys = ['gameId', 'actions']
             for key in required_game_keys:
                 if key not in game:
@@ -345,7 +345,7 @@ class GetNbaComPlayByPlay(ScraperBase, ScraperFlaskMixin):
                     except Exception as notify_ex:
                         logger.warning(f"Failed to send notification: {notify_ex}")
                     raise DownloadDataException(error_msg)
-            
+
             # 3. SAMPLE ACTION VALIDATION (check first few events)
             sample_size = min(10, len(actions))
             for i, action in enumerate(actions[:sample_size]):
@@ -368,17 +368,17 @@ class GetNbaComPlayByPlay(ScraperBase, ScraperFlaskMixin):
                     except Exception as notify_ex:
                         logger.warning(f"Failed to send notification: {notify_ex}")
                     raise DownloadDataException(error_msg)
-                    
+
                 # Check for essential action fields
                 if 'actionType' not in action:
                     logger.warning(f"Action {i} missing actionType for game_id {self.opts['game_id']}: {action}")
                     # This is a warning, not an error - some actions may legitimately not have this
-            
+
             # 4. GAME ID CONSISTENCY
             game_id_from_data = game.get('gameId', '')
             expected_game_id = self.opts['game_id']
             if game_id_from_data != expected_game_id:
-                logger.warning("Game ID mismatch for game_id %s: expected %s, got %s", 
+                logger.warning("Game ID mismatch for game_id %s: expected %s, got %s",
                              self.opts['game_id'], expected_game_id, game_id_from_data)
                 try:
                     notify_warning(
@@ -395,9 +395,9 @@ class GetNbaComPlayByPlay(ScraperBase, ScraperFlaskMixin):
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             logger.info(f"✅ PBP validation passed: {event_count} events for game_id {self.opts['game_id']}")
-            
+
         except DownloadDataException:
             # Already handled and notified above
             raise
@@ -460,10 +460,10 @@ class GetNbaComPlayByPlay(ScraperBase, ScraperFlaskMixin):
                 # Without this, Phase 2 skips processing despite GCS data existing.
                 "record_count": len(actions),
             }
-            
+
             # Add production validation
             self.validate_pbp_data()
-            
+
         except KeyError as e:
             logger.error("Transformation failed - missing key %s for game_id %s", e, self.opts["game_id"])
             try:

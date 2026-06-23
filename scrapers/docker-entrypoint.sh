@@ -19,7 +19,7 @@ case "${1:-serve}" in
         exec python -m scrapers.oddsapi.oddsa_events_his --serve
         ;;
     "--props" | "props")
-        echo "Starting Player Props scraper service"  
+        echo "Starting Player Props scraper service"
         exec python -m scrapers.oddsapi.oddsa_player_props_his --serve
         ;;
     "--serve" | "serve" | "")

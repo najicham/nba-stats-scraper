@@ -1,8 +1,8 @@
 # Phase 2 Pub/Sub Integration - Complete Implementation Guide
 
-**Date**: November 13, 2025  
-**Status**: Ready for Implementation  
-**Estimated Time**: 2-3 hours total  
+**Date**: November 13, 2025
+**Status**: Ready for Implementation
+**Estimated Time**: 2-3 hours total
 
 ---
 
@@ -10,8 +10,8 @@
 
 Enable automatic event-driven processing by establishing Pub/Sub handoff from Phase 1 (scrapers) to Phase 2 (processors).
 
-**Current State**: ❌ Scrapers log to BigQuery but don't notify processors  
-**Target State**: ✅ Scrapers publish Pub/Sub events → Processors auto-trigger  
+**Current State**: ❌ Scrapers log to BigQuery but don't notify processors
+**Target State**: ✅ Scrapers publish Pub/Sub events → Processors auto-trigger
 
 ---
 
@@ -87,7 +87,7 @@ nba-processors-sub → nba-processors/process
 
 **Answer**: Likely created by processors on first run (common pattern).
 
-**Recommendation**: 
+**Recommendation**:
 1. Implement Pub/Sub integration first
 2. Test with one scraper + processor
 3. Verify table creation happens automatically
@@ -105,7 +105,7 @@ nba-processors-sub → nba-processors/process
 
 **Recommendation**: **Option A - Fix Everything End-to-End (2-3 hours)**
 
-**Why**: 
+**Why**:
 - You already have solid foundation (orchestration working)
 - Pub/Sub is straightforward (1 hour)
 - Testing confirms end-to-end flow works
@@ -113,7 +113,7 @@ nba-processors-sub → nba-processors/process
 
 **Timeline**:
 - Infrastructure setup: 30 minutes
-- Code modifications: 30 minutes  
+- Code modifications: 30 minutes
 - Deployment: 30 minutes
 - Testing: 30 minutes
 - Buffer: 30 minutes
@@ -301,7 +301,7 @@ gcloud pubsub subscriptions pull nba-processors-sub \
 ```bash
 # Check orchestration log
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   scraper_name,
   status,
   record_count,
@@ -315,7 +315,7 @@ LIMIT 10
 
 # Check processor logs
 gcloud logging read \
-  "resource.type=cloud_run_revision 
+  "resource.type=cloud_run_revision
    AND resource.labels.service_name=nba-processors" \
   --limit=20 \
   --format="table(timestamp,severity,textPayload)"
@@ -347,7 +347,7 @@ You'll know everything is working when:
 
 ### **Issue 1: ModuleNotFoundError: google.cloud.pubsub**
 
-**Cause**: Pub/Sub library not installed  
+**Cause**: Pub/Sub library not installed
 **Fix**:
 ```bash
 echo "google-cloud-pubsub>=2.13.0" >> scrapers/requirements.txt
@@ -358,7 +358,7 @@ echo "google-cloud-pubsub>=2.13.0" >> scrapers/requirements.txt
 
 ### **Issue 2: Topic Not Found**
 
-**Cause**: Pub/Sub infrastructure not created  
+**Cause**: Pub/Sub infrastructure not created
 **Fix**:
 ```bash
 ./bin/pubsub/create_pubsub_infrastructure.sh
@@ -368,7 +368,7 @@ echo "google-cloud-pubsub>=2.13.0" >> scrapers/requirements.txt
 
 ### **Issue 3: Permission Denied When Publishing**
 
-**Cause**: Service account lacks Pub/Sub publisher role  
+**Cause**: Service account lacks Pub/Sub publisher role
 **Fix**:
 ```bash
 SA="756957797294-compute@developer.gserviceaccount.com"
@@ -381,7 +381,7 @@ gcloud projects add-iam-policy-binding nba-props-platform \
 
 ### **Issue 4: Processor Not Triggered**
 
-**Cause**: Subscription not created or misconfigured  
+**Cause**: Subscription not created or misconfigured
 **Fix**:
 ```bash
 # Check subscription exists
@@ -396,7 +396,7 @@ gcloud pubsub subscriptions delete nba-processors-sub
 
 ### **Issue 5: Messages in DLQ**
 
-**Cause**: Processor failing to process messages  
+**Cause**: Processor failing to process messages
 **Fix**:
 ```bash
 # Check DLQ
@@ -404,7 +404,7 @@ gcloud pubsub subscriptions pull nba-scraper-complete-dlq-sub --limit=10
 
 # Check processor logs for errors
 gcloud logging read \
-  "resource.type=cloud_run_revision 
+  "resource.type=cloud_run_revision
    AND resource.labels.service_name=nba-processors
    AND severity>=ERROR" \
   --limit=50
@@ -448,7 +448,7 @@ gcloud pubsub subscriptions pull nba-processors-sub --limit=5
 ```bash
 # Scraper executions today
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   scraper_name,
   status,
   COUNT(*) as executions
@@ -460,7 +460,7 @@ ORDER BY scraper_name
 
 # Processor logs (last 20)
 gcloud logging read \
-  "resource.type=cloud_run_revision 
+  "resource.type=cloud_run_revision
    AND resource.labels.service_name=nba-processors" \
   --limit=20
 ```

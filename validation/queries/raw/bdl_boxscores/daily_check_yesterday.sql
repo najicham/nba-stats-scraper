@@ -35,9 +35,9 @@ game_player_counts AS (
 yesterday_boxscores AS (
   SELECT
     (SELECT COUNT(DISTINCT game_id) FROM game_player_counts) as games_with_data,
-    (SELECT COUNT(*) FROM `nba-props-platform.nba_raw.bdl_player_boxscores` 
+    (SELECT COUNT(*) FROM `nba-props-platform.nba_raw.bdl_player_boxscores`
      WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)) as total_player_records,
-    (SELECT COUNT(DISTINCT player_lookup) FROM `nba-props-platform.nba_raw.bdl_player_boxscores` 
+    (SELECT COUNT(DISTINCT player_lookup) FROM `nba-props-platform.nba_raw.bdl_player_boxscores`
      WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)) as unique_players,
     ROUND(AVG(players_per_game), 1) as avg_players_per_game,
     MIN(players_per_game) as min_players_per_game,
@@ -56,7 +56,7 @@ SELECT
   b.max_players_per_game,
   CASE
     WHEN s.scheduled_games = 0 THEN '✅ No games scheduled'
-    WHEN b.games_with_data = s.scheduled_games 
+    WHEN b.games_with_data = s.scheduled_games
      AND b.min_players_per_game >= 20  -- Sanity check: at least 20 players per game
     THEN '✅ Complete'
     WHEN b.games_with_data = 0 THEN '❌ CRITICAL: No box score data'

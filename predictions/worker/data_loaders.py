@@ -284,11 +284,11 @@ class PredictionDataLoader:
         except Exception as e:
             logger.error(f"Unexpected error in batch features load for {game_date}: {type(e).__name__}: {e}", exc_info=True)
             return None
-    
+
     # ========================================================================
     # HISTORICAL GAMES LOADING (Required by Similarity system)
     # ========================================================================
-    
+
     @retry_on_transient
     def load_historical_games(
         self,
@@ -491,27 +491,27 @@ class PredictionDataLoader:
         except Exception as e:
             logger.error(f"Unexpected error loading historical games for {player_lookup}: {type(e).__name__}: {e}", exc_info=True)
             return []
-    
+
     def _calculate_opponent_tier(self, def_rating: Optional[float]) -> str:
         """
         Categorize opponent into defensive tiers
-        
+
         Args:
             def_rating: Opponent's defensive rating (100-120 range, 110 = average)
-        
+
         Returns:
             'tier_1_elite', 'tier_2_average', or 'tier_3_weak'
         """
         if def_rating is None:
             return 'tier_2_average'  # Default to average if unknown
-        
+
         if def_rating < 110:
             return 'tier_1_elite'
         elif def_rating < 115:
             return 'tier_2_average'
         else:
             return 'tier_3_weak'
-    
+
     def _calculate_recent_form(
         self,
         points_last_5: Optional[float],
@@ -519,30 +519,30 @@ class PredictionDataLoader:
     ) -> str:
         """
         Categorize player's recent form
-        
+
         Args:
             points_last_5: Points per game last 5 games
             points_season: Points per game season average
-        
+
         Returns:
             'hot', 'normal', or 'cold'
         """
         if points_last_5 is None or points_season is None:
             return 'normal'  # Default if data missing
-        
+
         diff = points_last_5 - points_season
-        
+
         if diff >= 3:
             return 'hot'
         elif diff <= -3:
             return 'cold'
         else:
             return 'normal'
-    
+
     # ========================================================================
     # GAME CONTEXT LOADING (Optional metadata)
     # ========================================================================
-    
+
     @retry_on_transient
     def load_game_context(
         self,
@@ -668,7 +668,7 @@ class PredictionDataLoader:
         except Exception as e:
             logger.error(f"Unexpected error in batch game context load: {type(e).__name__}: {e}", exc_info=True)
             return {}
-    
+
     # ========================================================================
     # BATCH LOADING (Optimized - 10-40x speedup)
     # ========================================================================
@@ -1212,10 +1212,10 @@ def validate_features(features: Dict, min_quality_score: float = None) -> tuple:
     Note: The threshold difference (50 vs 70) is intentional:
         - 70: Default for strict validation (data quality checks)
         - 50: Used in worker for predictions (allows more through, tracks confidence)
-    
+
     Returns:
         tuple: (is_valid, list_of_errors)
-        
+
     Example:
         is_valid, errors = validate_features(features)
         if not is_valid:
@@ -1270,19 +1270,19 @@ def validate_features(features: Dict, min_quality_score: float = None) -> tuple:
         # Metadata (from row, not feature array)
         'feature_quality_score'
     ]
-    
+
     # Check 1: All required fields present
     missing_fields = [f for f in required_fields if f not in features]
     if missing_fields:
         errors.append(f"Missing fields: {', '.join(missing_fields)}")
         return False, errors
-    
+
     # Check 2: Quality score threshold
     quality_score = features.get('feature_quality_score', 0)
     if quality_score < min_quality_score:
         errors.append(f"Quality score {quality_score} below threshold {min_quality_score}")
         return False, errors
-    
+
     # Check 3: No null or NaN values in critical fields
     for field in required_fields[:-1]:  # Skip quality_score
         value = features[field]
@@ -1290,10 +1290,10 @@ def validate_features(features: Dict, min_quality_score: float = None) -> tuple:
             errors.append(f"{field} is None")
         elif isinstance(value, float) and value != value:  # NaN check
             errors.append(f"{field} is NaN")
-    
+
     if errors:
         return False, errors
-    
+
     # Check 4: Values in reasonable ranges
     # Note: -1.0 is allowed as a sentinel value for "unknown" in some fields
     range_checks = [
@@ -1311,10 +1311,10 @@ def validate_features(features: Dict, min_quality_score: float = None) -> tuple:
         value = features.get(field)
         if value is not None and (value < min_val or value > max_val):
             errors.append(f"{field}={value} outside range [{min_val}, {max_val}]")
-    
+
     if errors:
         return False, errors
-    
+
     return True, []
 
 
@@ -1364,10 +1364,10 @@ def normalize_confidence(confidence: float, system_id: str) -> float:
 def validate_date(date_str: str) -> bool:
     """
     Validate date string is in ISO format (YYYY-MM-DD)
-    
+
     Args:
         date_str: Date string to validate
-    
+
     Returns:
         True if valid, False otherwise
     """

@@ -95,8 +95,8 @@ For non-dated docs, add metadata:
 ```markdown
 # Scraper Development Guide
 
-**Last Updated:** 2025-10-14  
-**Last Reviewed:** 2025-10-14  
+**Last Updated:** 2025-10-14
+**Last Reviewed:** 2025-10-14
 **Maintainer:** @your-handle
 
 ---
@@ -174,9 +174,9 @@ docs/
 3. **Include status in content:**
    ```markdown
    # Backfill Strategy
-   
-   **Status:** Superseded by [25-08-14-backfill-final-summary.md]  
-   **Date:** 2025-08-02  
+
+   **Status:** Superseded by [25-08-14-backfill-final-summary.md]
+   **Date:** 2025-08-02
    **Context:** Initial exploration, later revised
    ```
 
@@ -185,14 +185,14 @@ docs/
 1. **Include "Last Updated":**
    ```markdown
    # Scraper Development Guide
-   
+
    **Last Updated:** 2025-10-14
    ```
 
 2. **Link to historical context:**
    ```markdown
    ## History
-   
+
    This guide consolidates:
    - [Flask decision (2025-07-12)](reference/scrapers/25-07-12-flask-decision.md)
    - [Pipeline v2 changes (2025-07-17)](reference/scrapers/25-07-17-pipeline-v2.md)
@@ -216,12 +216,12 @@ for file in docs/**/*-*-*-*.md; do
         mm="${BASH_REMATCH[2]}"
         dd="${BASH_REMATCH[3]}"
         name="${BASH_REMATCH[4]}"
-        
+
         # Convert 25 -> 2025
         yyyy="20${yy}"
-        
+
         newname="${yyyy}-${mm}-${dd}-${name}"
-        
+
         # Only rename if format changed
         if [[ $file != *"$newname"* ]]; then
             echo "Renaming: $(basename $file) -> ${newname}"
@@ -238,9 +238,9 @@ For architecture decisions, use this template:
 ```markdown
 # ADR-NNN: Title
 
-**Date:** YYYY-MM-DD  
-**Status:** [Proposed | Accepted | Deprecated | Superseded by ADR-XXX]  
-**Deciders:** [Names]  
+**Date:** YYYY-MM-DD
+**Status:** [Proposed | Accepted | Deprecated | Superseded by ADR-XXX]
+**Deciders:** [Names]
 **Tags:** [architecture, scrapers, data-pipeline]
 
 ## Context

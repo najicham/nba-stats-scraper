@@ -15,7 +15,7 @@ We have robust alerting (Slack, email, Cloud Monitoring) but NO trend detection.
 
 **Field Completeness** (`shared/validation/feature_thresholds.py`):
 - minutes_played: 99% threshold
-- usage_rate: 95% threshold  
+- usage_rate: 95% threshold
 - points, rebounds, assists: 99%+
 - Shot distribution metrics: 40-99%
 

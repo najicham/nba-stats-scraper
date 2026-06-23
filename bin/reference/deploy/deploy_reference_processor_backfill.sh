@@ -1,4 +1,4 @@
-#!/bin/bash  
+#!/bin/bash
 # File: bin/reference/deploy/deploy_reference_processor_backfill.sh
 # Deploy reference processor backfill job with email alerting support
 
@@ -20,7 +20,7 @@ if [[ -z "$1" ]]; then
     echo ""
     echo "Examples:"
     echo "  $0 gamebook_registry      # Deploy gamebook registry processor"
-    echo "  $0 roster_registry        # Deploy roster registry processor" 
+    echo "  $0 roster_registry        # Deploy roster registry processor"
     echo "  $0 player_aliases         # Deploy player aliases processor"
     echo ""
     echo "Available reference jobs:"
@@ -51,7 +51,7 @@ PROJECT_ID="${PROJECT_ID:-nba-props-platform}"
 echo "🏀 Deploying Reference Processor Backfill Job: $JOB_NAME"
 echo "======================================================="
 echo "Script: $JOB_SCRIPT"
-echo "Description: $JOB_DESCRIPTION" 
+echo "Description: $JOB_DESCRIPTION"
 echo "Resources: ${MEMORY}, ${CPU}, ${TASK_TIMEOUT}"
 echo "Region: $REGION"
 echo ""
@@ -73,7 +73,7 @@ ENV_VARS="$ENV_VARS,BIGQUERY_DATASET=${BIGQUERY_DATASET:-nba_analytics}"
 # Add email configuration if available
 if [[ -n "$BREVO_SMTP_PASSWORD" && -n "$EMAIL_ALERTS_TO" ]]; then
     echo "✅ Adding email alerting configuration..."
-    
+
     # Add email-related environment variables
     ENV_VARS="$ENV_VARS,BREVO_SMTP_HOST=${BREVO_SMTP_HOST:-smtp-relay.brevo.com}"
     ENV_VARS="$ENV_VARS,BREVO_SMTP_PORT=${BREVO_SMTP_PORT:-587}"
@@ -83,12 +83,12 @@ if [[ -n "$BREVO_SMTP_PASSWORD" && -n "$EMAIL_ALERTS_TO" ]]; then
     ENV_VARS="$ENV_VARS,BREVO_FROM_NAME=${BREVO_FROM_NAME:-NBA Registry System}"
     ENV_VARS="$ENV_VARS,EMAIL_ALERTS_TO=${EMAIL_ALERTS_TO}"
     ENV_VARS="$ENV_VARS,EMAIL_CRITICAL_TO=${EMAIL_CRITICAL_TO:-$EMAIL_ALERTS_TO}"
-    
+
     # Alert thresholds for registry processors
     ENV_VARS="$ENV_VARS,EMAIL_ALERT_UNRESOLVED_COUNT_THRESHOLD=${EMAIL_ALERT_UNRESOLVED_COUNT_THRESHOLD:-50}"
     ENV_VARS="$ENV_VARS,EMAIL_ALERT_SUCCESS_RATE_THRESHOLD=${EMAIL_ALERT_SUCCESS_RATE_THRESHOLD:-90.0}"
     ENV_VARS="$ENV_VARS,EMAIL_ALERT_MAX_PROCESSING_TIME=${EMAIL_ALERT_MAX_PROCESSING_TIME:-30}"
-    
+
     EMAIL_STATUS="ENABLED"
 else
     echo "⚠️  Email configuration missing - email alerting will be disabled"

@@ -74,18 +74,18 @@ OPTIONS (
 -- Monitoring & Alerts
 -- ============================================================================
 -- Monitor dataset health:
-SELECT 
+SELECT
   table_name,
-  TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), 
+  TIMESTAMP_DIFF(CURRENT_TIMESTAMP(),
     (SELECT MAX(processed_at) FROM `nba-props-platform.nba_precompute.{table_name}`),
     HOUR
   ) as hours_since_update,
-  (SELECT COUNT(*) FROM `nba-props-platform.nba_precompute.{table_name}` 
+  (SELECT COUNT(*) FROM `nba-props-platform.nba_precompute.{table_name}`
    WHERE DATE(processed_at) = CURRENT_DATE()) as today_rows
 FROM `nba-props-platform.nba_precompute.INFORMATION_SCHEMA.TABLES`
 WHERE table_name IN (
   'player_shot_zone_analysis',
-  'team_defense_zone_analysis', 
+  'team_defense_zone_analysis',
   'player_composite_factors',
   'player_daily_cache'
 );

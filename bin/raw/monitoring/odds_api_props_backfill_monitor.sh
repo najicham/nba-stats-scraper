@@ -78,8 +78,8 @@ echo ""
 # Stream recent logs
 echo "📜 Recent Logs (last 50 lines):"
 echo "================================"
-gcloud logging read "resource.type=\"cloud_run_job\" 
-  AND resource.labels.job_name=\"${JOB_NAME}\" 
+gcloud logging read "resource.type=\"cloud_run_job\"
+  AND resource.labels.job_name=\"${JOB_NAME}\"
   AND labels.execution_name=\"${EXECUTION_NAME}\"" \
   --project=${PROJECT_ID} \
   --limit=50 \
@@ -146,8 +146,8 @@ echo "🔍 Checking for Processing Issues:"
 echo "==================================="
 
 # Count of recent errors in logs
-ERROR_COUNT=$(gcloud logging read "resource.type=\"cloud_run_job\" 
-  AND resource.labels.job_name=\"${JOB_NAME}\" 
+ERROR_COUNT=$(gcloud logging read "resource.type=\"cloud_run_job\"
+  AND resource.labels.job_name=\"${JOB_NAME}\"
   AND labels.execution_name=\"${EXECUTION_NAME}\"
   AND severity=\"ERROR\"" \
   --project=${PROJECT_ID} \
@@ -157,8 +157,8 @@ ERROR_COUNT=$(gcloud logging read "resource.type=\"cloud_run_job\"
 if [ "$ERROR_COUNT" -gt 0 ]; then
   echo -e "${RED}⚠️  Found $ERROR_COUNT error messages in logs${NC}"
   echo "Recent errors:"
-  gcloud logging read "resource.type=\"cloud_run_job\" 
-    AND resource.labels.job_name=\"${JOB_NAME}\" 
+  gcloud logging read "resource.type=\"cloud_run_job\"
+    AND resource.labels.job_name=\"${JOB_NAME}\"
     AND labels.execution_name=\"${EXECUTION_NAME}\"
     AND severity=\"ERROR\"" \
     --project=${PROJECT_ID} \
@@ -184,15 +184,15 @@ echo ""
 # Calculate estimated completion
 if [ "$STATUS" != "True" ]; then
   echo "⏱️  Estimating completion time..."
-  
+
   # Get processed count
   PROCESSED=$(bq query --use_legacy_sql=false --format=csv --project_id=${PROJECT_ID} \
-    "SELECT COUNT(DISTINCT game_date) FROM \`${PROJECT_ID}.nba_raw.odds_api_player_points_props\` 
+    "SELECT COUNT(DISTINCT game_date) FROM \`${PROJECT_ID}.nba_raw.odds_api_player_points_props\`
      WHERE DATE(processing_timestamp) = CURRENT_DATE()" | tail -n 1)
-  
+
   # Rough estimate: ~730 days total
   TOTAL_DAYS=730
-  
+
   if [ -n "$PROCESSED" ] && [ "$PROCESSED" -gt 0 ]; then
     PERCENT=$((PROCESSED * 100 / TOTAL_DAYS))
     echo -e "${YELLOW}Progress: Approximately ${PERCENT}% complete (${PROCESSED}/${TOTAL_DAYS} days)${NC}"

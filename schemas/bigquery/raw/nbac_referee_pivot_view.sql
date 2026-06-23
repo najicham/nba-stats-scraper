@@ -1,20 +1,20 @@
 -- ============================================================================
 -- File: schemas/bigquery/raw/nbac_referee_pivot_view.sql
 -- Description: Pivot view for game-level referee assignments
--- 
+--
 -- Purpose: Transform one-row-per-official into one-row-per-game format
 -- Strategy: VIEW (not processor) - always up-to-date, no additional maintenance
 -- ============================================================================
 
 -- Main pivot view: One row per game with all officials
 CREATE OR REPLACE VIEW `nba-props-platform.nba_raw.nbac_referee_game_pivot` AS
-SELECT 
+SELECT
   -- Core identifiers
   game_id,
   game_date,
   CAST(SUBSTR(season, 1, 4) AS INT64) as season_year,
   game_code,
-  
+
   -- Team information
   home_team_id,
   home_team,
@@ -22,29 +22,29 @@ SELECT
   away_team_id,
   away_team,
   away_team_abbr,
-  
+
   -- Pivot officials by position
   MAX(CASE WHEN official_position = 1 THEN official_name END) as chief_referee,
   MAX(CASE WHEN official_position = 2 THEN official_name END) as crew_referee_1,
   MAX(CASE WHEN official_position = 3 THEN official_name END) as crew_referee_2,
   MAX(CASE WHEN official_position = 4 THEN official_name END) as crew_referee_3,
-  
+
   -- Include official codes for potential lookups
   MAX(CASE WHEN official_position = 1 THEN official_code END) as chief_referee_code,
   MAX(CASE WHEN official_position = 2 THEN official_code END) as crew_referee_1_code,
   MAX(CASE WHEN official_position = 3 THEN official_code END) as crew_referee_2_code,
   MAX(CASE WHEN official_position = 4 THEN official_code END) as crew_referee_3_code,
-  
+
   -- Metadata
   MAX(scrape_timestamp) as refs_announced_timestamp,
   MAX(source_file_path) as refs_source,
   COUNT(*) as total_officials
-  
+
 FROM `nba-props-platform.nba_raw.nbac_referee_game_assignments`
-GROUP BY 
-  game_id, 
-  game_date, 
-  season, 
+GROUP BY
+  game_id,
+  game_date,
+  season,
   game_code,
   home_team_id,
   home_team,
@@ -58,7 +58,7 @@ GROUP BY
 -- ============================================================================
 
 CREATE OR REPLACE VIEW `nba-props-platform.nba_raw.nbac_referee_game_pivot_recent` AS
-SELECT 
+SELECT
   game_date,
   game_id,
   home_team_abbr,
@@ -77,7 +77,7 @@ ORDER BY game_date DESC, game_id;
 -- ============================================================================
 
 CREATE OR REPLACE VIEW `nba-props-platform.nba_raw.nbac_chief_referee_summary` AS
-SELECT 
+SELECT
   chief_referee,
   chief_referee_code,
   COUNT(*) as games_worked,
@@ -103,21 +103,21 @@ USAGE EXAMPLES:
 ---------------
 
 1. Get referees for a specific game:
-   
+
    SELECT chief_referee, crew_referee_1, crew_referee_2
    FROM `nba-props-platform.nba_raw.nbac_referee_game_pivot`
    WHERE game_id = '0012400123';
 
 2. Find all games worked by a specific referee:
-   
+
    SELECT game_date, game_id, home_team_abbr, away_team_abbr
    FROM `nba-props-platform.nba_raw.nbac_referee_game_pivot`
    WHERE chief_referee = 'Scott Foster'
    ORDER BY game_date DESC;
 
 3. Use in upcoming_team_game_context JOIN:
-   
-   SELECT 
+
+   SELECT
      t.game_id,
      t.team_abbr,
      r.chief_referee,
@@ -127,7 +127,7 @@ USAGE EXAMPLES:
      ON t.game_id = r.game_id;
 
 4. Get today's referee assignments:
-   
+
    SELECT *
    FROM `nba-props-platform.nba_raw.nbac_referee_game_pivot`
    WHERE game_date = CURRENT_DATE();

@@ -61,7 +61,7 @@ validate-bdl-active-players daily
 
 # 2. Check current record count
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   MAX(last_seen_date) as last_update,
   MAX(processed_at) as last_processed,
   COUNT(*) as total_records
@@ -209,7 +209,7 @@ validate-bdl-active-players quality
 
 # 2. Find the duplicates
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   player_lookup,
   COUNT(*) as dup_count,
   STRING_AGG(player_full_name) as names,
@@ -311,7 +311,7 @@ validate-bdl-active-players all
 
 # 2. Review historical trends
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   DATE_TRUNC(processed_at, MONTH) as month,
   AVG(CASE WHEN has_validation_issues = FALSE THEN 1 ELSE 0 END) * 100 as avg_validation_rate
 FROM \`nba-props-platform.nba_raw.bdl_active_players_current\`

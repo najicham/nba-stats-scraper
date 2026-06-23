@@ -54,7 +54,7 @@ USAGE:
 COMMANDS:
     discover       Run all 5 discovery queries (MANDATORY first step)
     season         Check season completeness
-    missing        Find missing games  
+    missing        Find missing games
     daily          Check yesterday's games (for automation)
     weekly         Check last 7 days trend
     quality        Run event quality checks (shots, lineups, sequences)
@@ -104,7 +104,7 @@ run_query() {
     fi
 
     echo -e "${BLUE}Running: $(basename "$query_file")${NC}"
-    
+
     if [ "$output_format" = "csv" ]; then
         bq query --use_legacy_sql=false --format=csv < "$query_file"
     elif [ -n "$output_table" ]; then
@@ -139,14 +139,14 @@ cmd_discover() {
     echo -e "${BLUE}BigDataBall Discovery Phase${NC}"
     echo -e "${BLUE}========================================${NC}"
     echo ""
-    
+
     echo -e "${YELLOW}This will run 5 discovery queries to understand your data.${NC}"
     echo -e "${YELLOW}Document the results before creating validation queries!${NC}"
     echo ""
-    
+
     # Discovery queries would be in discovery/ subdirectory
     local discovery_dir="$QUERIES_DIR/discovery"
-    
+
     if [ -d "$discovery_dir" ]; then
         for i in {1..5}; do
             if [ -f "$discovery_dir/discovery_query_${i}.sql" ]; then
@@ -205,27 +205,27 @@ cmd_all() {
     echo -e "${BLUE}Full Validation Report${NC}"
     echo -e "${BLUE}========================================${NC}"
     echo ""
-    
+
     echo -e "${BLUE}1. Season Completeness${NC}"
     cmd_season
     echo ""
-    
+
     echo -e "${BLUE}2. Missing Games${NC}"
     cmd_missing
     echo ""
-    
+
     echo -e "${BLUE}3. Yesterday's Check${NC}"
     cmd_daily
     echo ""
-    
+
     echo -e "${BLUE}4. Weekly Trend${NC}"
     cmd_weekly
     echo ""
-    
+
     echo -e "${BLUE}5. Event Quality${NC}"
     cmd_quality
     echo ""
-    
+
     echo -e "${BLUE}6. Realtime Status${NC}"
     cmd_realtime
     echo ""

@@ -129,7 +129,7 @@ WORKFLOW_MAX_WORKERS=10
 WORKFLOW_EXECUTION_TIMEOUT=600
 ```
 
-**Before:** Hardcoded `parallel_workflows = ['morning_operations']`  
+**Before:** Hardcoded `parallel_workflows = ['morning_operations']`
 **After:** Config-driven, add workflows via env var
 
 ---
@@ -352,7 +352,7 @@ ENABLE_STRUCTURED_LOGGING=false
 
 **Co-Authored-By**: Claude Sonnet 4.5 <noreply@anthropic.com>
 
-**Week 0 Foundation**: Session 2 (80-85% issue prevention)  
+**Week 0 Foundation**: Session 2 (80-85% issue prevention)
 **Week 1 Sprint**: All tasks complete in record time!
 
 ---

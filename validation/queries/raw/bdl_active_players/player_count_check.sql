@@ -11,13 +11,13 @@
 --     - Teams found: 30
 --     - Players per team: 17-26 (average ~22)
 --     - Validation rate: 50%+ (higher is better!)
---   
+--
 --   Regular Season (Dec-Apr):
 --     - Total players: 540-620
 --     - Teams found: 30
 --     - Players per team: 15-21 (average ~19)
 --     - Validation rate: 55%+ (higher is better!)
---   
+--
 --   Playoffs (May-Jun):
 --     - Total players: 450-550
 --     - Teams found: 16-30 (decreasing as teams eliminated)

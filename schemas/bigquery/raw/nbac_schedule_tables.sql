@@ -6,36 +6,36 @@ CREATE TABLE IF NOT EXISTS `nba_raw.nbac_schedule` (
   -- Core identifiers
   game_id STRING NOT NULL,
   game_code STRING NOT NULL,
-  season STRING NOT NULL,                    -- "2023" 
+  season STRING NOT NULL,                    -- "2023"
   season_nba_format STRING NOT NULL,         -- "2023-24"
   season_year INT64 NOT NULL,                -- 2023 for 2023-24 season
-  
+
   -- Game details
   game_date DATE NOT NULL,
   game_date_est TIMESTAMP,                   -- Full timestamp with time
   game_status INT64,                         -- 1=scheduled, 2=in progress, 3=final
   game_status_text STRING,                   -- "Scheduled", "Final", etc.
-  
+
   -- Teams
   home_team_id INT64 NOT NULL,
-  home_team_tricode STRING NOT NULL,         -- "MIN", "DAL"  
+  home_team_tricode STRING NOT NULL,         -- "MIN", "DAL"
   home_team_name STRING NOT NULL,            -- "Timberwolves"
   away_team_id INT64 NOT NULL,
   away_team_tricode STRING NOT NULL,         -- "DAL", "MIN"
   away_team_name STRING NOT NULL,            -- "Mavericks"
-  
+
   -- Venue
   arena_name STRING,
   arena_city STRING,
   arena_state STRING,
-  
+
   -- Broadcaster context (from scraper analysis)
   is_primetime BOOLEAN,                     -- ESPN/TNT/ABC variants
   has_national_tv BOOLEAN,                  -- Any national TV coverage
   primary_network STRING,                   -- Main national broadcaster
   traditional_networks STRING,              -- JSON array of traditional TV networks
   streaming_platforms STRING,               -- JSON array of streaming platforms
-  
+
   -- Game type classification
   is_regular_season BOOLEAN,                -- Regular season game
   is_playoffs BOOLEAN,                      -- Any playoff game
@@ -44,28 +44,28 @@ CREATE TABLE IF NOT EXISTS `nba_raw.nbac_schedule` (
   playoff_round STRING,                     -- Specific playoff round
   is_christmas BOOLEAN,                     -- Christmas Day game
   is_mlk_day BOOLEAN,                       -- Martin Luther King Jr. Day game
-  
+
   -- Scheduling context
   day_of_week STRING,                       -- Day of week (lowercase)
   is_weekend BOOLEAN,                       -- Friday, Saturday, or Sunday
   time_slot STRING,                         -- Rough time classification
-  
+
   -- Special venue context
   neutral_site_flag BOOLEAN,                -- Game at neutral venue (not home/away arena)
   international_game BOOLEAN,               -- Game outside US/Canada
   arena_timezone STRING,                    -- Arena timezone (e.g., "America/New_York")
-  
+
   -- Game results (for completed games)
   home_team_score INT64,
   away_team_score INT64,
   winning_team_tricode STRING,
-  
+
   -- =========================================================================
   -- NEW: Source tracking (added 2025-10-19)
   -- =========================================================================
   data_source STRING,                       -- "api_stats" or "cdn_static"
   source_updated_at TIMESTAMP,              -- When this source last updated the record
-  
+
   -- Processing metadata
   source_file_path STRING NOT NULL,
   scrape_timestamp TIMESTAMP,
@@ -88,7 +88,7 @@ CREATE OR REPLACE VIEW `nba_raw.nbac_schedule_current_season` AS
 SELECT *
 FROM `nba_raw.nbac_schedule`
 WHERE season_year = (
-  SELECT MAX(season_year) 
+  SELECT MAX(season_year)
   FROM `nba_raw.nbac_schedule`
   WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 365 DAY)
 );
@@ -122,7 +122,7 @@ WHERE is_playoffs = TRUE
 ORDER BY game_date, playoff_round;
 
 CREATE OR REPLACE VIEW `nba_raw.nbac_schedule_national_tv` AS
-SELECT 
+SELECT
   game_date,
   home_team_tricode,
   away_team_tricode,
@@ -138,7 +138,7 @@ WHERE has_national_tv = TRUE
 ORDER BY game_date DESC;
 
 CREATE OR REPLACE VIEW `nba_raw.nbac_schedule_analytics` AS
-SELECT 
+SELECT
   season_nba_format,
   data_source,
   COUNT(*) as total_games,

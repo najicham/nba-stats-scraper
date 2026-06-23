@@ -18,9 +18,9 @@ Official NBA play-by-play events validation for advanced analytics and prop bett
 
 ## Current Status
 
-**Table**: `nba_raw.nbac_play_by_play`  
-**Pattern**: Pattern 3 (Single Event)  
-**Coverage**: 2 games (LAL vs TOR, PHI vs NYK)  
+**Table**: `nba_raw.nbac_play_by_play`
+**Pattern**: Pattern 3 (Single Event)
+**Coverage**: 2 games (LAL vs TOR, PHI vs NYK)
 **Backfill Opportunity**: 5,400+ games available
 
 ### Data Characteristics
@@ -138,18 +138,18 @@ validate-nbac-pbp games --csv --table
 ## Known Issues & Limitations
 
 ### Limited Coverage
-**Issue**: Only 2 games currently processed  
-**Cause**: Scraper runs during Late Night Recovery + Early Morning Final Check workflows  
+**Issue**: Only 2 games currently processed
+**Cause**: Scraper runs during Late Night Recovery + Early Morning Final Check workflows
 **Solution**: Normal - will expand during NBA season
 
 ### Home/Away Accuracy
-**Issue**: Requires schedule cross-reference  
-**Status**: ✅ Working correctly  
+**Issue**: Requires schedule cross-reference
+**Status**: ✅ Working correctly
 **Validation**: game_id format is YYYYMMDD_AWAY_HOME
 
 ### Missing Historical Data
-**Issue**: No 2021-2024 data yet  
-**Opportunity**: 5,400+ games available for backfill  
+**Issue**: No 2021-2024 data yet
+**Opportunity**: 5,400+ games available for backfill
 **Action**: Run scraper on historical dates when needed
 
 ## Future Enhancements
@@ -173,22 +173,22 @@ validate-nbac-pbp games --csv --table
 ## Troubleshooting
 
 ### No Data Available
-**Problem**: Queries return empty results  
+**Problem**: Queries return empty results
 **Solution**: Expected - scraper only runs during NBA season workflows
 
 ### Score Mismatch with Box Scores
-**Problem**: Final scores don't match  
-**Debug**: Run `score_progression_validation.sql` to find anomalies  
+**Problem**: Final scores don't match
+**Debug**: Run `score_progression_validation.sql` to find anomalies
 **Action**: Investigate event_sequence around score issues
 
 ### Player Missing from Play-by-Play
-**Problem**: Player in box scores but not in play-by-play  
-**Cause**: Player was DNP or inactive  
+**Problem**: Player in box scores but not in play-by-play
+**Cause**: Player was DNP or inactive
 **Solution**: Expected behavior - only active players appear
 
 ### Home/Away Teams Seem Wrong
-**Problem**: Team assignments don't match expectations  
-**Validation**: Cross-check with `nbac_schedule` table  
+**Problem**: Team assignments don't match expectations
+**Validation**: Cross-check with `nbac_schedule` table
 **Note**: game_id format is AWAY_HOME (away team first)
 
 ## Data Quality Checks
@@ -225,13 +225,13 @@ Before using play-by-play data for revenue operations:
 
 ## Support
 
-**Documentation**: See `NBA_DATA_VALIDATION_MASTER_GUIDE.md`  
-**Pattern Reference**: Pattern 3 (Single Event)  
+**Documentation**: See `NBA_DATA_VALIDATION_MASTER_GUIDE.md`
+**Pattern Reference**: Pattern 3 (Single Event)
 **Chat History**: See chat a12b4e63-6577-4370-8f98-8a73f9bee8ac (BDL box scores - similar pattern)
 
 ## Last Updated
 
-**Date**: October 13, 2025  
-**Version**: 1.0  
-**Status**: Production Ready  
+**Date**: October 13, 2025
+**Version**: 1.0
+**Status**: Production Ready
 **Next Review**: When NBA season starts

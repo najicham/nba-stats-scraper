@@ -6,11 +6,11 @@ CREATE TABLE IF NOT EXISTS `nba_raw.nbac_player_list_current` (
   player_lookup STRING NOT NULL,     -- Primary key: normalized name
   player_id INT64,                   -- NBA.com player ID
   player_full_name STRING,           -- Display name
-  
+
   -- Team Assignment
   team_id INT64,                     -- NBA.com team ID
   team_abbr STRING,                  -- Three-letter code
-  
+
   -- Player Details
   jersey_number STRING,
   position STRING,
@@ -24,12 +24,12 @@ CREATE TABLE IF NOT EXISTS `nba_raw.nbac_player_list_current` (
   years_pro INT64,
   college STRING,
   country STRING,
-  
+
   -- Status
   is_active BOOLEAN,
   roster_status STRING,              -- 'active', 'inactive', 'g-league'
   season_year INT64,
-  
+
   -- Tracking
   source_file_date DATE,             -- Date from source file path (when roster was scraped)
   first_seen_date DATE,
@@ -50,7 +50,7 @@ OPTIONS(
 
 -- Create monitoring view for duplicates
 CREATE OR REPLACE VIEW `nba_processing.player_name_collisions` AS
-SELECT 
+SELECT
     player_lookup,
     COUNT(*) as duplicate_count,
     STRING_AGG(CONCAT(player_full_name, ' (', team_abbr, ')'), ', ') as players

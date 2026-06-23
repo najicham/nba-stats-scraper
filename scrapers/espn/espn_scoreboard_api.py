@@ -201,7 +201,7 @@ class GetEspnScoreboard(ScraperBase, ScraperFlaskMixin):
         try:
             if not isinstance(self.decoded_data, dict):
                 error_msg = "Scoreboard response is not JSON dict."
-                
+
                 # Send error notification
                 try:
                     notify_error(
@@ -217,12 +217,12 @@ class GetEspnScoreboard(ScraperBase, ScraperFlaskMixin):
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-                
+
                 raise ValueError(error_msg)
-                
+
             if "events" not in self.decoded_data:
                 error_msg = "'events' key missing in JSON."
-                
+
                 # Send error notification
                 try:
                     notify_error(
@@ -238,9 +238,9 @@ class GetEspnScoreboard(ScraperBase, ScraperFlaskMixin):
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-                
+
                 raise ValueError(error_msg)
-                
+
         except Exception as e:
             # Re-raise the original exception
             raise

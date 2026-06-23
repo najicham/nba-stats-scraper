@@ -98,23 +98,23 @@ echo "Raw jobs configured: $raw_jobs"
 
 if [[ $reference_jobs -gt 0 ]]; then
     echo "✅ PASS: Reference jobs found"
-    
+
     # Test one reference job config
     first_ref_config=$(find backfill_jobs/reference/ -name "job-config.env" 2>/dev/null | head -1)
     if [[ -n "$first_ref_config" ]]; then
         echo "Testing config: $first_ref_config"
         source "$first_ref_config"
-        
+
         required_vars=("JOB_NAME" "JOB_SCRIPT" "JOB_DESCRIPTION" "TASK_TIMEOUT" "MEMORY" "CPU")
         config_valid=true
-        
+
         for var in "${required_vars[@]}"; do
             if [[ -z "${!var}" ]]; then
                 echo "❌ FAIL: Required variable $var not set in $first_ref_config"
                 config_valid=false
             fi
         done
-        
+
         if [[ "$config_valid" == true ]]; then
             echo "✅ PASS: Reference job config validation successful"
         fi
@@ -132,21 +132,21 @@ echo "--------------------------------------"
 if gcloud auth list --filter=status:ACTIVE --format="value(account)" | head -1 >/dev/null 2>&1; then
     active_account=$(gcloud auth list --filter=status:ACTIVE --format="value(account)" | head -1)
     echo "✅ PASS: Authenticated as $active_account"
-    
+
     # Test project access
     if gcloud projects describe "$PROJECT_ID" >/dev/null 2>&1; then
         echo "✅ PASS: Can access project $PROJECT_ID"
     else
         echo "❌ FAIL: Cannot access project $PROJECT_ID"
     fi
-    
+
     # Test Cloud Run access
     if gcloud run jobs list --project="$PROJECT_ID" --region="$REGION" >/dev/null 2>&1; then
         echo "✅ PASS: Can access Cloud Run in $REGION"
     else
         echo "❌ FAIL: Cannot access Cloud Run in $REGION"
     fi
-    
+
 else
     echo "❌ FAIL: Not authenticated with gcloud"
     echo "Run: gcloud auth login"
@@ -187,7 +187,7 @@ echo ""
 if [[ $reference_jobs -gt 0 ]]; then
     echo "Ready to test deployment! Try:"
     echo ""
-    
+
     first_job_dir=$(find backfill_jobs/reference/ -name "job-config.env" 2>/dev/null | head -1 | xargs dirname | xargs basename)
     if [[ -n "$first_job_dir" ]]; then
         echo "  ./bin/reference/deploy/deploy_reference_processor_backfill.sh $first_job_dir"

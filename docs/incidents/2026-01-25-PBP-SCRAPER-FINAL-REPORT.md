@@ -29,7 +29,7 @@
 | 0022500655 | MIA @ PHX | ✅ Success | 603 | |
 | 0022500656 | BKN @ LAC | ✅ Success | 546 | |
 
-**Total Events Downloaded**: 3,517 / 4,517 (77.9%)  
+**Total Events Downloaded**: 3,517 / 4,517 (77.9%)
 **Games Uploaded to GCS**: 6/8 (75%)
 
 ---
@@ -48,7 +48,7 @@ cdn.nba.com applies **IP-based rate limiting** with the following characteristic
 ### 2. Observed Failure Pattern
 
 ```
-Request 1 (0022500650): ✅ Success  
+Request 1 (0022500650): ✅ Success
 Request 2 (0022500651): ❌ 403 (RATE LIMITED)
 Request 3 (0022500644): ✅ Success (after retry delays)
 Request 4 (0022500652): ❌ 403 (RATE LIMITED)
@@ -85,7 +85,7 @@ import time
 for game in games:
     result = backfill_game(game_id=game["game_id"], ...)
     results.append(result)
-    
+
     # Add 10-15 second delay between requests
     if game != games[-1]:  # Don't delay after last game
         time.sleep(15)
@@ -198,9 +198,9 @@ gs://nba-scraped-data/nba-com/play-by-play/2026-01-25/game-0022500656/20260126_0
 
 ## Document Metadata
 
-**Status**: ✅ Investigation Complete, ⚠️ Partial Remediation  
-**Authored By**: Claude Sonnet 4.5  
-**Date**: 2026-01-26 05:30 UTC  
+**Status**: ✅ Investigation Complete, ⚠️ Partial Remediation
+**Authored By**: Claude Sonnet 4.5
+**Date**: 2026-01-26 05:30 UTC
 **Related Files**:
 - Original incident: `docs/incidents/2026-01-25-ORCHESTRATION-FAILURES-ACTION-PLAN.md`
 - Backfill script: `scripts/backfill_pbp_20260125.py`

@@ -15,12 +15,12 @@ processor:
 # GCS Layer Validations
 gcs_validations:
   enabled: true
-  
+
   file_presence:
     bucket: "nba-scraped-data"
     path_pattern: "odds-api/player-props-history/{date}/*/*.json"
     severity: "error"
-  
+
   file_structure:
     format: "json"
     required_keys:
@@ -31,17 +31,17 @@ gcs_validations:
 # BigQuery Layer Validations
 bigquery_validations:
   enabled: true
-  
+
   completeness:
     target_table: "nba_raw.odds_api_player_points_props"
     reference_table: "nba_raw.nbac_schedule"
     match_field: "game_date"
     reference_filter: "game_status = 3"
     severity: "error"
-  
+
   field_validation:
     target_table: "nba_raw.odds_api_player_points_props"
-    
+
     required_not_null:
       - game_id
       - game_date
@@ -49,7 +49,7 @@ bigquery_validations:
       - player_lookup  # CRITICAL: Must be normalized
       - bookmaker
       - points_line
-    
+
     # Props-specific ranges
     value_ranges:
       - field: points_line
@@ -57,23 +57,23 @@ bigquery_validations:
         max: 50.5
         severity: "warning"
         message: "Unusual points line detected"
-      
+
       - field: over_price_american
         min: -500
         max: 500
         severity: "warning"
         message: "Unusual odds detected"
-      
+
       - field: under_price_american
         min: -500
         max: 500
         severity: "warning"
-  
+
   # Bookmaker coverage validation
   bookmaker_coverage:
     enabled: true
     query: |
-      SELECT 
+      SELECT
         game_date,
         game_id,
         COUNT(DISTINCT bookmaker) as bookmaker_count,
@@ -87,12 +87,12 @@ bigquery_validations:
     primary_bookmakers: ["DraftKings", "FanDuel"]
     severity: "warning"
     message: "Insufficient bookmaker coverage"
-  
+
   # Player coverage validation
   player_coverage:
     enabled: true
     query: |
-      SELECT 
+      SELECT
         game_date,
         game_id,
         COUNT(DISTINCT player_lookup) as player_count
@@ -104,7 +104,7 @@ bigquery_validations:
     min_players_per_game: 10
     severity: "warning"
     message: "Low player props coverage"
-  
+
   # Snapshot tracking
   snapshot_validation:
     enabled: true
@@ -115,7 +115,7 @@ bigquery_validations:
 # Schedule Validations
 schedule_validations:
   enabled: true
-  
+
   data_freshness:
     target_table: "nba_raw.odds_api_player_points_props"
     timestamp_field: "processing_timestamp"
@@ -128,7 +128,7 @@ remediation:
     gcloud run jobs execute odds-api-props-backfill \
       --args=--start-date={start_date},--end-date={end_date} \
       --region=us-west2
-  
+
   scraper_backfill_template: |
     gcloud run jobs execute odds-api-props-scraper \
       --args=--date={date} \

@@ -1,8 +1,8 @@
 # NBA Workflows Configuration Guide
 *Google Cloud Workflows Architecture for NBA Prop Betting Data Pipeline*
 
-**Document Version:** 2.0  
-**Last Updated:** August 2025  
+**Document Version:** 2.0
+**Last Updated:** August 2025
 **System Status:** Production ✅
 
 ---
@@ -62,7 +62,7 @@ graph TB
         CS5[Post-Game Trigger #2<br/>Daily: 11PM PT]
         CS6[Late Night Recovery Trigger<br/>Daily: 2AM PT]
     end
-    
+
     subgraph "Orchestration Layer"
         WF1[Early Morning Final Check Workflow]
         WF2[Morning Operations Workflow]
@@ -70,39 +70,39 @@ graph TB
         WF4[Post-Game Collection Workflow]
         WF5[Late Night Recovery Workflow]
     end
-    
+
     subgraph "Execution Layer"
         CR[Cloud Run Scrapers<br/>nba-scrapers-*.us-west2.run.app]
     end
-    
+
     subgraph "Storage Layer"
         GCS[(Google Cloud Storage<br/>Raw Data + Status Tracking)]
         BQ[(BigQuery<br/>Structured Data)]
         PS[Pub/Sub Topics<br/>Processing Triggers]
     end
-    
+
     subgraph "Processing Layer"
         PROC[Data Processors<br/>Business Intelligence]
     end
-    
+
     CS1 --> WF1
     CS2 --> WF2
     CS3 --> WF3
     CS4 --> WF3
     CS5 --> WF4
     CS6 --> WF5
-    
+
     WF1 --> CR
     WF2 --> CR
     WF3 --> CR
     WF4 --> CR
     WF5 --> CR
-    
+
     CR --> GCS
     GCS --> PS
     PS --> PROC
     PROC --> BQ
-    
+
     style WF2 fill:#ff6b6b
     style CS2 fill:#ff6b6b
     style WF4 fill:#96ceb4
@@ -123,13 +123,13 @@ sequenceDiagram
     participant CR as Cloud Run
     participant GCS as Cloud Storage
     participant ST as Status Tracking
-    
+
     CS->>WF: Trigger (Every 2 hours)
     WF->>CR: GET /scrape?scraper=oddsa_events
     CR->>EA: Execute Events Scraper
     EA-->>CR: Success/Failure Response
     CR-->>WF: Events Result
-    
+
     alt Events API Success
         WF->>WF: Wait 30 seconds (processing time)
         WF->>CR: GET /scrape?scraper=oddsa_player_props
@@ -143,7 +143,7 @@ sequenceDiagram
         WF->>ST: Write Status to GCS
         WF-->>CS: PARTIAL_FAILURE (Revenue Blocked)
     end
-    
+
     CR->>GCS: Store Raw Data
     Note over WF: Foundation scrapers run in parallel
 ```
@@ -153,8 +153,8 @@ sequenceDiagram
 ## ⚙️ Individual Workflow Configurations
 
 ### **1. Morning Operations Workflow** 🌅
-**File:** `workflows/morning-operations.yaml`  
-**Purpose:** Daily setup + overnight recovery + Enhanced PBP cleanup  
+**File:** `workflows/morning-operations.yaml`
+**Purpose:** Daily setup + overnight recovery + Enhanced PBP cleanup
 **Schedule:** Daily at 8 AM PT
 
 #### **Configuration Details:**
@@ -175,7 +175,7 @@ phases:
 
 #### **Scrapers Executed:**
 - **NBA Rosters** (`nbac_roster`) - Team composition
-- **ESPN Rosters** (`espn_roster_api`) - Backup roster data  
+- **ESPN Rosters** (`espn_roster_api`) - Backup roster data
 - **Player Movement** (`nbac_player_movement`) - Trades/signings
 - **NBA Schedule** (`nbac_schedule_api`) - Game scheduling
 - **BDL Standings** (`bdl_standings`) - League standings
@@ -184,8 +184,8 @@ phases:
 - **Enhanced PBP Recovery** (`pbp_enhanced_pbp`) - Yesterday's play-by-play
 
 ### **2. Real-Time Business Workflow** 💰
-**File:** `workflows/real-time-business.yaml`  
-**Purpose:** Revenue-critical Events→Props dependency management  
+**File:** `workflows/real-time-business.yaml`
+**Purpose:** Revenue-critical Events→Props dependency management
 **Schedule:** Every 2 hours (8 AM - 8 PM PT) - 7 executions daily
 
 #### **Configuration Details:**
@@ -209,7 +209,7 @@ phases:
 - **Events API** (`oddsa_events`) - Must succeed for Props (**CRITICAL**)
 - **Props API** (`oddsa_player_props`) - Revenue generation (**CRITICAL**)
 - **Player List** (`nbac_player_list`) - Foundation data
-- **Injury Report** (`nbac_injury_report`) - Foundation data  
+- **Injury Report** (`nbac_injury_report`) - Foundation data
 - **BDL Players** (`bdl_active_players`) - Validation data
 
 #### **Business Logic:**
@@ -225,7 +225,7 @@ flowchart TD
     H --> I[SUCCESS Return]
     E --> J[Write Status to GCS]
     J --> K[PARTIAL_FAILURE Return]
-    
+
     style B fill:#ff6b6b
     style G fill:#ff6b6b
     style I fill:#96ceb4
@@ -233,8 +233,8 @@ flowchart TD
 ```
 
 ### **3. Post-Game Collection Workflow** 🎮
-**File:** `workflows/post-game-collection.yaml`  
-**Purpose:** Collect completed game data (early + late games)  
+**File:** `workflows/post-game-collection.yaml`
+**Purpose:** Collect completed game data (early + late games)
 **Schedule:** 8PM PT & 11PM PT (same workflow, 2 schedulers)
 
 #### **Configuration Details:**
@@ -268,8 +268,8 @@ phases:
 - **Processor Deduplication**: Handles duplicate data from both runs
 
 ### **4. Late Night Recovery Workflow** 🌙
-**File:** `workflows/late-night-recovery.yaml`  
-**Purpose:** Enhanced PBP collection + comprehensive retry of game data  
+**File:** `workflows/late-night-recovery.yaml`
+**Purpose:** Enhanced PBP collection + comprehensive retry of game data
 **Schedule:** Daily at 2 AM PT
 
 #### **Configuration Details:**
@@ -298,8 +298,8 @@ phases:
 - **Player Movement** (`nbac_player_movement`) - Roster changes
 
 ### **5. Early Morning Final Check Workflow** ☀️
-**File:** `workflows/early-morning-final-check.yaml`  
-**Purpose:** Last chance recovery + Enhanced PBP final attempt  
+**File:** `workflows/early-morning-final-check.yaml`
+**Purpose:** Last chance recovery + Enhanced PBP final attempt
 **Schedule:** Daily at 6 AM PT
 
 #### **Configuration Details:**
@@ -339,7 +339,7 @@ graph LR
     B -->|No| D[Skip Props<br/>Revenue Blocked]
     C --> E[Revenue Generated ✅]
     D --> F[Revenue Lost ❌]
-    
+
     style A fill:#ff6b6b
     style C fill:#ff6b6b
     style E fill:#96ceb4
@@ -371,7 +371,7 @@ flowchart TD
     F -->|Yes| G[Success]
     F -->|No| H[Final Check<br/>6AM]
     H --> I[Best Effort Complete]
-    
+
     style D fill:#96ceb4
     style G fill:#96ceb4
     style I fill:#96ceb4
@@ -400,13 +400,13 @@ gantt
     title NBA Workflows - Daily Schedule (Pacific Time)
     dateFormat HH:mm
     axisFormat %H:%M
-    
+
     section Early Morning
     Final Check             :active, fc, 06:00, 15m
-    
+
     section Morning
     Morning Operations      :done, mo, 08:00, 15m
-    
+
     section Business Hours (Revenue Critical)
     Real-Time Business 1    :crit, rt1, 08:00, 10m
     Real-Time Business 2    :crit, rt2, 10:00, 10m
@@ -415,11 +415,11 @@ gantt
     Real-Time Business 5    :crit, rt5, 16:00, 10m
     Real-Time Business 6    :crit, rt6, 18:00, 10m
     Real-Time Business 7    :crit, rt7, 20:00, 10m
-    
+
     section Evening Game Coverage
     Post-Game Collection 1  :active, pg1, 20:00, 10m
     Post-Game Collection 2  :active, pg2, 23:00, 10m
-    
+
     section Recovery
     Late Night Recovery     :milestone, lnr, 02:00, 15m
 ```
@@ -452,12 +452,12 @@ Example: /workflow-status/2025-08-01/post-game-collection-20h15m.json
   "total_duration": 342.5,
   "scrapers": {
     "espn_scoreboard_api": {
-      "status": "success", 
+      "status": "success",
       "duration": 12.3,
       "http_code": 200
     },
     "espn_game_boxscore": {
-      "status": "failed", 
+      "status": "failed",
       "error": "timeout",
       "duration": 300.0,
       "dependency_met": true
@@ -513,18 +513,18 @@ recovery_logic:
 #### **Real-Time Business (Revenue Critical)**
 ```yaml
 error_handling:
-  events_api_failure: 
+  events_api_failure:
     action: "Return CRITICAL_FAILURE"
     impact: "Revenue generation blocked"
     business_logic: "Skip Props API (cannot bet without events)"
     recovery: "Next 2-hour execution attempts retry"
-  
+
   props_api_failure:
-    action: "Return CRITICAL_FAILURE" 
+    action: "Return CRITICAL_FAILURE"
     impact: "Revenue generation blocked"
     prerequisite: "Events API must succeed first"
     recovery: "Next 2-hour execution attempts retry"
-  
+
   foundation_scraper_failure:
     action: "Continue execution + log warning"
     impact: "Reduced data quality (non-blocking)"
@@ -539,12 +539,12 @@ error_handling:
     impact: "Partial data collection"
     business_logic: "Collect what's available"
     recovery: "Multiple recovery workflows attempt retry"
-  
+
   dependency_chain_failure:
     action: "Skip dependent scrapers"
     example: "ESPN Scoreboard fails → Skip ESPN Boxscore"
     recovery: "Retry entire chain in recovery workflows"
-  
+
   total_workflow_failure:
     action: "Return failure status + write to GCS"
     impact: "Missing scheduled data collection"
@@ -559,7 +559,7 @@ flowchart TD
     B -->|400-499| D[Client Error - Log & Continue]
     B -->|500-599| E[Server Error - Log & Continue]
     B -->|Timeout| F[Timeout Error - Log & Continue]
-    
+
     C --> G[Continue Workflow]
     D --> H[Mark Failed in Status]
     E --> H
@@ -567,7 +567,7 @@ flowchart TD
     H --> I{Critical Scraper?}
     I -->|Yes - Real-Time Business| J[Workflow Failure]
     I -->|No - All Others| K[Continue + Recovery Later]
-    
+
     style C fill:#96ceb4
     style J fill:#ff6b6b
     style K fill:#ffd93d
@@ -611,7 +611,7 @@ flowchart TD
 # Comprehensive monitoring
 ./bin/monitoring/monitor_workflows.sh detailed
 
-# Business metrics focus  
+# Business metrics focus
 ./bin/monitoring/monitor_workflows.sh business
 
 # Recovery analysis
@@ -687,18 +687,18 @@ external_apis:
     limit: "600 requests/minute"
     daily_usage: "~50-80 requests/day (5 workflows)"
     status: "Well within limits ✅"
-  
+
   odds_api:
     limit: "500 requests/month"
     daily_usage: "~15-20 requests/day (7 Real-Time executions)"
     monthly_projection: "~450-600 requests/month"
     status: "Monitor closely ⚠️"
-  
+
   nba_com:
     limit: "No official limit"
     daily_usage: "~30-50 requests/day"
     monitoring: "Watch for 429 responses"
-  
+
   espn:
     limit: "No official limit"
     daily_usage: "~20-30 requests/day"
@@ -750,7 +750,7 @@ gsutil ls gs://your-bucket/workflow-status/$(date +%Y-%m-%d)/
 ### **Daily Execution Pattern**
 **Total Daily Executions:** 12 workflow runs
 - **6:00 AM**: Final Check (1)
-- **8:00 AM**: Morning Operations (1) + Real-Time Business #1 (1)  
+- **8:00 AM**: Morning Operations (1) + Real-Time Business #1 (1)
 - **10:00 AM - 8:00 PM**: Real-Time Business #2-7 (6)
 - **8:00 PM**: Post-Game Collection #1 (1)
 - **11:00 PM**: Post-Game Collection #2 (1)
@@ -801,8 +801,8 @@ gsutil ls gs://your-bucket/workflow-status/$(date +%Y-%m-%d)/
 
 *This document provides comprehensive configuration details for the NBA prop betting data pipeline's 5-workflow Google Cloud system. The architecture reflects the actual implemented workflow files and provides the definitive deployment and operational guide.*
 
-**Document Status:** Ready for Production Deployment ✅  
-**System Version:** 2.0 (5-Workflow Architecture with Status Tracking)  
-**Implementation Status:** Workflow files created, ready for deployment  
-**Last Updated:** August 2025  
+**Document Status:** Ready for Production Deployment ✅
+**System Version:** 2.0 (5-Workflow Architecture with Status Tracking)
+**Implementation Status:** Workflow files created, ready for deployment
+**Last Updated:** August 2025
 **Next Review:** After successful deployment and first month of operation

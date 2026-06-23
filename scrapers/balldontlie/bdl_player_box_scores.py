@@ -395,7 +395,7 @@ class BdlPlayerBoxScoresScraper(ScraperBase, ScraperFlaskMixin):
                 "rowCount": len(rows),
                 "stats": rows,
             }
-            
+
             logger.info(
                 "Fetched %d player box-score rows across %d dates (%s -> %s, %d pages)",
                 len(rows),

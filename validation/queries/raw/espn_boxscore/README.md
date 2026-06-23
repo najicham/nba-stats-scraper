@@ -1,10 +1,10 @@
 # ESPN Boxscore Validation Queries
 
-**File:** `validation/queries/raw/espn_boxscore/README.md`  
-**Data Source:** ESPN Game Boxscores  
-**Table:** `nba_raw.espn_boxscores`  
-**Pattern:** Pattern 3 (Single Event) - Extremely Sparse Backup Source  
-**Created:** October 13, 2025  
+**File:** `validation/queries/raw/espn_boxscore/README.md`
+**Data Source:** ESPN Game Boxscores
+**Table:** `nba_raw.espn_boxscores`
+**Pattern:** Pattern 3 (Single Event) - Extremely Sparse Backup Source
+**Created:** October 13, 2025
 **Status:** ✅ Production Ready
 
 ---
@@ -31,7 +31,7 @@
 ## 📊 Available Validation Queries
 
 ### 1. **Data Existence Check** ⭐ START HERE
-**File:** `data_existence_check.sql`  
+**File:** `data_existence_check.sql`
 **Purpose:** Verify ESPN backup data exists and understand its scope
 
 ```bash
@@ -50,7 +50,7 @@ bq query --use_legacy_sql=false < data_existence_check.sql
 ---
 
 ### 2. **Cross-Validation with BDL** 🔥 MOST IMPORTANT
-**File:** `cross_validate_with_bdl.sql`  
+**File:** `cross_validate_with_bdl.sql`
 **Purpose:** Compare ESPN backup data against BDL primary source
 
 ```bash
@@ -68,7 +68,7 @@ bq query --use_legacy_sql=false < cross_validate_with_bdl.sql
 ---
 
 ### 3. **Daily Check Yesterday**
-**File:** `daily_check_yesterday.sql`  
+**File:** `daily_check_yesterday.sql`
 **Purpose:** Monitor if ESPN backup collection ran yesterday
 
 ```bash
@@ -87,7 +87,7 @@ bq query --use_legacy_sql=false < daily_check_yesterday.sql
 ---
 
 ### 4. **Data Quality Checks**
-**File:** `data_quality_checks.sql`  
+**File:** `data_quality_checks.sql`
 **Purpose:** Identify suspicious patterns when ESPN data exists
 
 ```bash
@@ -108,7 +108,7 @@ bq query --use_legacy_sql=false < data_quality_checks.sql
 ---
 
 ### 5. **Player Stats Comparison**
-**File:** `player_stats_comparison.sql`  
+**File:** `player_stats_comparison.sql`
 **Purpose:** Detailed stat validation between ESPN and BDL
 
 ```bash
@@ -154,7 +154,7 @@ Schedule Format:  0022400604         (NBA.com official)
 **Correct Join Strategy:**
 ```sql
 -- ❌ WRONG: This will NOT work
-LEFT JOIN nba_raw.nbac_schedule s 
+LEFT JOIN nba_raw.nbac_schedule s
   ON espn.game_id = s.game_id
 
 -- ✅ CORRECT: Use date + teams
@@ -178,10 +178,10 @@ SELECT COUNT(*) FROM schedule WHERE NOT EXISTS (
 )
 ```
 
-**Reality:**  
+**Reality:**
 ESPN is a **sparse backup source**. 0% coverage is **EXPECTED and NORMAL**.
 
-**Solution:**  
+**Solution:**
 Don't create "missing games" queries. Focus on data quality when it exists.
 
 ---
@@ -197,7 +197,7 @@ LEFT JOIN nbac_schedule s ON espn.game_id = s.game_id
 **Solution:**
 ```sql
 -- Always use date + teams for schedule joins
-LEFT JOIN nbac_schedule s 
+LEFT JOIN nbac_schedule s
   ON espn.game_date = s.game_date
   AND espn.home_team_abbr = s.home_team_tricode
   AND espn.away_team_abbr = s.away_team_tricode
@@ -207,13 +207,13 @@ LEFT JOIN nbac_schedule s
 
 ### Pitfall 3: Alerting on "No Data"
 
-**Problem:**  
+**Problem:**
 Setting up alerts for "ESPN has no data yesterday"
 
-**Reality:**  
+**Reality:**
 ESPN backup collection runs **ad-hoc**, not daily. Most days have no data.
 
-**Solution:**  
+**Solution:**
 Only alert if:
 - ✅ ESPN data exists BUT BDL doesn't (role reversal = problem)
 - ✅ ESPN and BDL stats differ by >5 points (validation failure)
@@ -380,12 +380,12 @@ Backup Sources (Sparse Coverage):
     Validates BDL accuracy in edge cases
 ```
 
-**Revenue Impact:** **MEDIUM-LOW**  
+**Revenue Impact:** **MEDIUM-LOW**
 ESPN failure doesn't impact operations (BDL is primary). Provides extra validation confidence.
 
 ---
 
-**Last Updated:** October 13, 2025  
-**Status:** ✅ Production Ready - Validation queries complete  
-**Pattern:** Pattern 3 with date + team join strategy  
+**Last Updated:** October 13, 2025
+**Status:** ✅ Production Ready - Validation queries complete
+**Pattern:** Pattern 3 with date + team join strategy
 **Coverage:** Extremely sparse (1 game) - **NORMAL** for backup source

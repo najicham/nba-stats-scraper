@@ -136,7 +136,7 @@ class BdlPlayerLeadersScraper(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     def set_additional_opts(self) -> None:
         super().set_additional_opts()
-        
+
         try:
             stat_type = (self.opts.get("statType") or "pts").lower()
             if stat_type not in _VALID_STATS:
@@ -146,7 +146,7 @@ class BdlPlayerLeadersScraper(ScraperBase, ScraperFlaskMixin):
             self.opts["statType"] = stat_type
             self.opts["season"] = int(self.opts.get("season") or _current_nba_season())
             self.opts["ident"] = f"{self.opts['season']}_{stat_type}"
-        
+
         except Exception as e:
             # Send error notification for parameter validation failure
             try:
@@ -274,8 +274,8 @@ class BdlPlayerLeadersScraper(ScraperBase, ScraperFlaskMixin):
                 "rowCount": len(leaders),
                 "leaders": leaders,
             }
-            
-            logger.info("Fetched %d leader rows for %s across %d pages", 
+
+            logger.info("Fetched %d leader rows for %s across %d pages",
                        len(leaders), self.opts["ident"], pages_fetched)
 
             # Success notification

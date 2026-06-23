@@ -36,14 +36,14 @@ Select 10-20 player-dates that cover:
 for player_date in golden_dataset:
     # 1. Fetch raw box scores for player's last 20 games
     raw_games = query_raw_boxscores(player, last_20_games)
-    
+
     # 2. Calculate expected rolling averages
     expected_l5 = calculate_l5_average(raw_games)
     expected_l10 = calculate_l10_average(raw_games)
-    
+
     # 3. Fetch cached values from analytics table
     actual = query_player_game_summary(player, date)
-    
+
     # 4. Compare with tolerance
     if abs(expected_l5 - actual.pts_l5) > 0.1:
         alert("L5 points mismatch", player, date, expected_l5, actual.pts_l5)

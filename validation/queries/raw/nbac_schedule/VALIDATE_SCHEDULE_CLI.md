@@ -536,7 +536,7 @@ validate-schedule fields --csv >> field_quality_history.csv
 validate-schedule yesterday          # Check yesterday
 validate-schedule horizon            # Future schedule
 
-# Weekly  
+# Weekly
 validate-schedule completeness       # Full check
 validate-schedule balance            # Team balance
 validate-schedule fields             # Data quality
@@ -595,6 +595,6 @@ validate-schedule list               # List queries
 
 ---
 
-**Last Updated:** October 12, 2025  
-**Version:** 1.0  
+**Last Updated:** October 12, 2025
+**Version:** 1.0
 **Table:** `nba-props-platform.nba_raw.nbac_schedule`

@@ -14,17 +14,17 @@ class PlayerGameSummaryProcessor:
             source_name='player_game_summary',
             cache_ttl_seconds=300  # 5-minute cache
         )
-    
+
     def process_games(self, games, season):
         # Set default context once for entire run
         self.registry.set_default_context(season=season)
-        
+
         for game in games:
             self._process_game(game)
-        
+
         # Flush unresolved players at end
         self.registry.flush_unresolved_players()
-    
+
     def _process_game(self, game):
         for player_stat in game.player_stats:
             # Get universal ID (lenient mode for analytics)
@@ -33,11 +33,11 @@ class PlayerGameSummaryProcessor:
                 required=False,  # Don't fail on missing players
                 context={'game_id': game.id, 'team_abbr': player_stat.team}
             )
-            
+
             if uid is None:
                 # Player not in registry - skip this record
                 continue
-            
+
             # Process with universal_player_id
             summary_record = {
                 'universal_player_id': uid,
@@ -45,7 +45,7 @@ class PlayerGameSummaryProcessor:
                 'points': player_stat.points,
                 # ... other fields
             }
-            
+
             self._save_summary(summary_record)
 ```
 
@@ -61,34 +61,34 @@ class PlayerGameSummaryProcessor:
             cache_ttl_seconds=300
         )
         self.skipped_count = 0
-    
+
     def process_batch(self, games):
         self.registry.set_default_context(season='2024-25')
-        
+
         # Use batch operation for efficiency
         all_player_lookups = [
-            player.lookup for game in games 
+            player.lookup for game in games
             for player in game.players
         ]
-        
+
         # Get all universal IDs in one query
         uid_map = self.registry.get_universal_ids_batch(all_player_lookups)
-        
+
         # Process games
         for game in games:
             for player in game.players:
                 uid = uid_map.get(player.lookup)
-                
+
                 if uid is None:
                     self.skipped_count += 1
                     continue  # Skip missing player
-                
+
                 # Process with uid
                 self._create_summary(uid, player, game)
-        
+
         # Flush at end
         self.registry.flush_unresolved_players()
-        
+
         if self.skipped_count > 0:
             logger.warning(f"Skipped {self.skipped_count} records due to missing players")
 ```
@@ -104,10 +104,10 @@ class PropBetProcessor:
             source_name='prop_bet_processor',
             cache_ttl_seconds=300
         )
-    
+
     def process_prop_bets(self, prop_bets):
         self.registry.set_default_context(season='2024-25')
-        
+
         for prop_bet in prop_bets:
             try:
                 # Strict mode - raises exception if not found
@@ -119,7 +119,7 @@ class PropBetProcessor:
                         'sportsbook': prop_bet.sportsbook
                     }
                 )
-                
+
                 # Validate player-team combination
                 if not self.registry.validate_player_team(
                     prop_bet.player_lookup,
@@ -130,15 +130,15 @@ class PropBetProcessor:
                         f"Player {prop_bet.player_lookup} not on {prop_bet.team}"
                     )
                     continue
-                
+
                 # Create prop bet record
                 self._create_prop_bet_record(uid, prop_bet)
-                
+
             except PlayerNotFoundError as e:
                 logger.error(f"Cannot process prop bet: {e}")
                 # Don't create record for unknown player
                 continue
-        
+
         self.registry.flush_unresolved_players()
 ```
 
@@ -153,10 +153,10 @@ from shared.utils.player_registry import RegistryReader
 
 class AnalyticsBase(ProcessorBase):
     """Base class for analytics processors."""
-    
+
     # Override in subclass if needed
     REGISTRY_CACHE_TTL = 300  # 5 minutes default
-    
+
     @property
     def registry(self):
         """Lazy-loaded registry reader."""
@@ -166,7 +166,7 @@ class AnalyticsBase(ProcessorBase):
                 cache_ttl_seconds=self.REGISTRY_CACHE_TTL
             )
         return self._registry
-    
+
     def finalize_processing(self):
         """Call at end of processor run."""
         if hasattr(self, '_registry'):
@@ -179,16 +179,16 @@ Then in processors:
 ```python
 class PlayerGameSummaryProcessor(AnalyticsBase):
     # Just use self.registry - base class handles creation
-    
+
     def process_games(self, games):
         self.registry.set_default_context(season='2024-25')
-        
+
         for game in games:
             for player in game.players:
                 uid = self.registry.get_universal_id(player.lookup, required=False)
                 if uid:
                     self._process_player(uid, player, game)
-        
+
         # Base class finalize_processing() will flush
         self.finalize_processing()
 ```
@@ -206,14 +206,14 @@ def analyze_player_data():
         auto_flush=True  # Auto-flush on exit
     ) as registry:
         registry.set_default_context(season='2024-25')
-        
+
         players = ['lebronjames', 'stephencurry', 'kevindurant']
-        
+
         for player in players:
             uid = registry.get_universal_id(player, required=False)
             if uid:
                 print(f"{player}: {uid}")
-    
+
     # Auto-flushed on exit
 ```
 
@@ -347,18 +347,18 @@ class TestMyProcessor(unittest.TestCase):
     def test_process_with_registry(self, mock_client_class):
         mock_client = Mock()
         mock_client_class.return_value = mock_client
-        
+
         # Mock registry response
         import pandas as pd
         mock_df = pd.DataFrame([{'universal_player_id': 'test_001'}])
         mock_query_job = Mock()
         mock_query_job.to_dataframe.return_value = mock_df
         mock_client.query.return_value = mock_query_job
-        
+
         # Test processor
         processor = MyProcessor()
         result = processor.process_data(test_data)
-        
+
         self.assertIsNotNone(result)
 ```
 
@@ -368,7 +368,7 @@ Check unresolved players regularly:
 
 ```sql
 -- View recent unresolved players
-SELECT 
+SELECT
     source,
     normalized_lookup,
     team_abbr,

@@ -1,12 +1,12 @@
 # NBA Workflows Reference
 
-**Purpose:** Complete reference for all NBA data collection workflows - operational and backfill  
+**Purpose:** Complete reference for all NBA data collection workflows - operational and backfill
 **Status:** Production ready - 16 operational scrapers + 4 backfill scrapers planned
 
 ---
 
-## **Morning Operations** 
-**Schedule:** Daily at 8 AM PT  
+## **Morning Operations**
+**Schedule:** Daily at 8 AM PT
 **Total Scrapers:** 8
 
 | Endpoint | Class Name (in workflow) | ✅/❌ Status | Notes |
@@ -28,7 +28,7 @@
 ---
 
 ## **Real-Time Business**
-**Schedule:** Every 2 hours, 8 AM - 8 PM PT  
+**Schedule:** Every 2 hours, 8 AM - 8 PM PT
 **Total Scrapers:** 6
 
 | Endpoint | Class Name (in workflow) | ✅/❌ Status | Notes |
@@ -45,7 +45,7 @@
 ---
 
 ## **Post-Game Collection**
-**Schedule:** 8 PM PT & 11 PM PT (2 schedulers, same workflow)  
+**Schedule:** 8 PM PT & 11 PM PT (2 schedulers, same workflow)
 **Total Scrapers:** 2
 
 | Endpoint | Class Name (in workflow) | ✅/❌ Status | Notes |
@@ -64,7 +64,7 @@
 ---
 
 ## **Late Night Recovery**
-**Schedule:** Daily at 2 AM PT  
+**Schedule:** Daily at 2 AM PT
 **Total Scrapers:** 3
 
 | Endpoint | Class Name (in workflow) | ✅/❌ Status | Notes |
@@ -84,7 +84,7 @@
 ---
 
 ## **Early Morning Final Check**
-**Schedule:** Daily at 5 AM PT  
+**Schedule:** Daily at 5 AM PT
 **Total Scrapers:** 5
 
 | Endpoint | Class Name (in workflow) | ✅/❌ Status | Notes |
@@ -109,8 +109,8 @@
 ### **Completed Backfill**
 
 #### **NBA Historical Schedules** ✅ **COMPLETE**
-**Workflow:** `collect-nba-historical-schedules.yaml`  
-**Status:** Successfully completed  
+**Workflow:** `collect-nba-historical-schedules.yaml`
+**Status:** Successfully completed
 **Total Scrapers:** 1
 
 | Endpoint | Class Name | ✅/❌ Status | Notes |
@@ -127,8 +127,8 @@
 ### **Planned Backfill Workflows**
 
 #### **NBA Historical Box Scores** 📋 **PLANNED**
-**Purpose:** Player performance data for all historical games  
-**Input:** Game IDs from completed schedule collection  
+**Purpose:** Player performance data for all historical games
+**Input:** Game IDs from completed schedule collection
 **Total Scrapers:** 2
 
 | Endpoint | Class Name | ✅/❌ Status | Notes |
@@ -139,7 +139,7 @@
 **Scope:** ~140,000 player performances (5,583 games × ~25 players)
 
 #### **NBA Historical Props Data** 📋 **PLANNED**
-**Purpose:** Historical betting lines for model training  
+**Purpose:** Historical betting lines for model training
 **Total Scrapers:** 2
 
 | Endpoint | Class Name | ✅/❌ Status | Notes |
@@ -160,8 +160,8 @@
 ### **Operational Workflows**
 **Total Unique Scrapers:** 16 (daily operations)
 
-### **Backfill Workflows** 
-**Completed:** 1 scraper (NBA schedules - ✅ 5,583 games collected)  
+### **Backfill Workflows**
+**Completed:** 1 scraper (NBA schedules - ✅ 5,583 games collected)
 **Planned:** 4 scrapers (box scores, historical props)
 
 ### **Issues Found:**
@@ -206,7 +206,7 @@
 
 #### **Operational Workflows:**
 1. **Update operational workflows** to match this optimized scraper list
-2. **Update operational doc** to reflect 16 active workflow scrapers  
+2. **Update operational doc** to reflect 16 active workflow scrapers
 3. **Deploy backup monitoring** - Schedule CDN vs API, NBA.com vs BigDataBall play-by-play, NBA.com vs BDL injuries
 4. **Monitor NBA.com scoreboard v2** for potential deprecation
 

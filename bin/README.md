@@ -5,7 +5,7 @@
 
 **Current Production System:**
 - **Google Cloud Workflows** - 4 orchestrated business processes ✅
-- **Cloud Schedulers** - Automatic workflow triggers ✅  
+- **Cloud Schedulers** - Automatic workflow triggers ✅
 - **Cloud Run** - Unified scraper service ✅
 - **Individual Schedulers** - Migrated/Paused ✅
 
@@ -34,7 +34,7 @@ Scripts for managing automated execution:
 ### **`monitoring/`** - System Health & Observability
 Monitor workflows, schedulers, and system health:
 
-- **`monitor_workflows.sh`** - Comprehensive workflow monitoring ⭐ **Primary**  
+- **`monitor_workflows.sh`** - Comprehensive workflow monitoring ⭐ **Primary**
 - **`system_overview.sh`** - System-wide health check ⭐ **Still Useful**
 - **`scraper_status.sh`** - Individual scraper health ⭐ **Still Useful**
 - **`nba_monitor_scheduler.sh`** - Legacy scheduler monitoring (backup)
@@ -77,7 +77,7 @@ Archived scripts from individual scheduler system (pre-August 2025).
 # Deploy workflow changes
 ./bin/deployment/deploy_workflows.sh
 
-# Deploy scraper service updates  
+# Deploy scraper service updates
 ./bin/deployment/deploy_scrapers.sh
 
 # Quick scraper updates
@@ -112,7 +112,7 @@ gcloud scheduler jobs list --location=us-west2 --filter="name ~ .*trigger"
 ### **🎯 Active Workflows**
 - **Real-Time Business**: Every 2 hours (8 AM - 8 PM PT) - Events → Props dependency
 - **Morning Operations**: Daily at 8 AM PT - Roster & schedule updates
-- **Game Day Evening**: 6 PM, 9 PM, 11 PM PT - Live game monitoring  
+- **Game Day Evening**: 6 PM, 9 PM, 11 PM PT - Live game monitoring
 - **Post-Game Analysis**: Daily at 9 PM PT - Detailed stats & analytics
 
 ### **💼 Critical Business Dependencies**
@@ -124,23 +124,23 @@ gcloud scheduler jobs list --location=us-west2 --filter="name ~ .*trigger"
 ## 🎯 Key Business Processes
 
 ### **Real-Time Business (Revenue Critical) 🔴**
-**Purpose:** NBA prop betting data with Events→Props dependency  
-**Schedule:** Every 2 hours (8 AM - 8 PM PT)  
+**Purpose:** NBA prop betting data with Events→Props dependency
+**Schedule:** Every 2 hours (8 AM - 8 PM PT)
 **Monitor:** `./bin/monitoring/monitor_workflows.sh business`
 
-### **Morning Operations 🌅**  
-**Purpose:** Daily setup and roster management  
-**Schedule:** Daily 8 AM PT  
+### **Morning Operations 🌅**
+**Purpose:** Daily setup and roster management
+**Schedule:** Daily 8 AM PT
 **Components:** Team rosters, schedules, player movement
 
 ### **Game Day Evening 🎮**
-**Purpose:** Live game monitoring  
-**Schedule:** 6 PM, 9 PM, 11 PM PT  
+**Purpose:** Live game monitoring
+**Schedule:** 6 PM, 9 PM, 11 PM PT
 **Components:** Live scoreboards, box scores
 
 ### **Post-Game Analysis 📊**
-**Purpose:** End-of-day comprehensive analysis  
-**Schedule:** Daily 9 PM PT  
+**Purpose:** End-of-day comprehensive analysis
+**Schedule:** Daily 9 PM PT
 **Components:** Final stats, historical data
 
 ---
@@ -218,7 +218,7 @@ gcloud workflows executions list WORKFLOW_NAME --location=us-west2
 
 ### **✅ COMPLETE: Workflow Migration (August 2025)**
 - ✅ **4 Production Workflows** deployed and running
-- ✅ **Automatic Scheduling** every few hours  
+- ✅ **Automatic Scheduling** every few hours
 - ✅ **Events→Props Dependency** properly managed
 - ✅ **Individual Schedulers** successfully migrated/paused
 - ✅ **Business Logic** embedded in workflow orchestration
@@ -230,7 +230,7 @@ gcloud workflows executions list WORKFLOW_NAME --location=us-west2
 
 ### **📈 Future Enhancements**
 - Enhanced business metrics and alerting
-- Advanced data quality monitoring  
+- Advanced data quality monitoring
 - Performance optimization based on usage patterns
 
 ---
@@ -242,7 +242,7 @@ The **Real-Time Business** workflow is **revenue-critical**. It manages the Even
 
 ### **API Rate Limits**
 - **Ball Don't Lie**: 600 requests/minute (currently ~15-20/day) ✅
-- **Odds API**: 500 requests/month (currently ~60-80/month) ✅  
+- **Odds API**: 500 requests/month (currently ~60-80/month) ✅
 - **NBA.com/ESPN**: Monitor for 429 responses
 
 ### **Service Accounts**
@@ -267,14 +267,14 @@ The **Real-Time Business** workflow is **revenue-critical**. It manages the Even
 
 ## 🎉 Migration Success
 
-**From:** 17 individual Cloud Scheduler jobs  
-**To:** 4 orchestrated Google Cloud Workflows  
-**Result:** Better dependency management, error handling, and business logic  
+**From:** 17 individual Cloud Scheduler jobs
+**To:** 4 orchestrated Google Cloud Workflows
+**Result:** Better dependency management, error handling, and business logic
 **Status:** Production ✅
 
 ---
 
-*Last Updated: August 2025*  
-*System Status: Production ✅*  
-*Architecture: Google Cloud Workflows + Cloud Run*  
+*Last Updated: August 2025*
+*System Status: Production ✅*
+*Architecture: Google Cloud Workflows + Cloud Run*
 *Migration: Individual Schedulers → Workflows Complete ✅*

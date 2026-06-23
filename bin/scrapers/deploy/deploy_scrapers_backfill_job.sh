@@ -1,6 +1,6 @@
 #!/bin/bash
 # FILE: bin/scrapers/deploy/deploy_scrapers_backfill_job.sh
-# 
+#
 # Simplified deployment script using single parameterized Dockerfile
 # Auto-discovers config file from job name for cleaner usage
 
@@ -37,32 +37,32 @@ JOB_INPUT="$1"
 # Auto-discover config file from job name
 discover_config_file() {
     local input="$1"
-    
+
     # If it's already a path to a file, use it directly
     if [[ -f "$input" ]]; then
         echo "$input"
         return 0
     fi
-    
+
     # Convert job name variations to directory name
     local job_dir=""
-    
+
     # Try various patterns to find the config
     local patterns=(
         "backfill_jobs/scrapers/${input}/job-config.env"                    # bdl_boxscore → backfill_jobs/scrapers/bdl_boxscore/job-config.env
-        "backfill_jobs/scrapers/${input/_/-}/job-config.env"                # bdl_boxscore → backfill_jobs/scrapers/bdl-boxscore/job-config.env  
+        "backfill_jobs/scrapers/${input/_/-}/job-config.env"                # bdl_boxscore → backfill_jobs/scrapers/bdl-boxscore/job-config.env
         "backfill_jobs/scrapers/${input//-/_}/job-config.env"               # bdl-boxscore → backfill_jobs/scrapers/bdl_boxscore/job-config.env
         "backfill_jobs/scrapers/${input%-backfill}/job-config.env"          # bdl-boxscore-backfill → backfill_jobs/scrapers/bdl-boxscore/job-config.env
         "backfill_jobs/scrapers/${input%-backfill}/job-config.env"          # bdl_boxscore_backfill → backfill_jobs/scrapers/bdl_boxscore/job-config.env
     )
-    
+
     for pattern in "${patterns[@]}"; do
         if [[ -f "$pattern" ]]; then
             echo "$pattern"
             return 0
         fi
     done
-    
+
     # Not found
     return 1
 }
@@ -116,7 +116,7 @@ ENV_VARS="SCRAPER_SERVICE_URL=$SERVICE_URL"
 # Add email configuration if available
 if [[ -n "$BREVO_SMTP_PASSWORD" && -n "$EMAIL_ALERTS_TO" ]]; then
     echo "✅ Adding email alerting configuration..."
-    
+
     ENV_VARS="$ENV_VARS,BREVO_SMTP_HOST=${BREVO_SMTP_HOST:-smtp-relay.brevo.com}"
     ENV_VARS="$ENV_VARS,BREVO_SMTP_PORT=${BREVO_SMTP_PORT:-587}"
     ENV_VARS="$ENV_VARS,BREVO_SMTP_USERNAME=${BREVO_SMTP_USERNAME}"
@@ -125,12 +125,12 @@ if [[ -n "$BREVO_SMTP_PASSWORD" && -n "$EMAIL_ALERTS_TO" ]]; then
     ENV_VARS="$ENV_VARS,BREVO_FROM_NAME=${BREVO_FROM_NAME:-NBA Scrapers Backfill}"
     ENV_VARS="$ENV_VARS,EMAIL_ALERTS_TO=${EMAIL_ALERTS_TO}"
     ENV_VARS="$ENV_VARS,EMAIL_CRITICAL_TO=${EMAIL_CRITICAL_TO:-$EMAIL_ALERTS_TO}"
-    
+
     # Alert thresholds
     ENV_VARS="$ENV_VARS,EMAIL_ALERT_UNRESOLVED_COUNT_THRESHOLD=${EMAIL_ALERT_UNRESOLVED_COUNT_THRESHOLD:-50}"
     ENV_VARS="$ENV_VARS,EMAIL_ALERT_SUCCESS_RATE_THRESHOLD=${EMAIL_ALERT_SUCCESS_RATE_THRESHOLD:-90.0}"
     ENV_VARS="$ENV_VARS,EMAIL_ALERT_MAX_PROCESSING_TIME=${EMAIL_ALERT_MAX_PROCESSING_TIME:-30}"
-    
+
     EMAIL_STATUS="ENABLED"
 else
     echo "⚠️  Email configuration missing - email alerting will be disabled"

@@ -1,13 +1,13 @@
 -- Generated NBA Travel Distances INSERT Statement
 -- File: nba_travel_distances_insert.sql
--- 
+--
 -- Load with:
 --   bq query --use_legacy_sql=false < nba_travel_distances_insert.sql
 --
 -- This will insert all 870 team-to-team distance combinations into:
 --   nba-props-platform.nba_enriched.travel_distances
 
-INSERT INTO `nba-props-platform.nba_enriched.travel_distances` 
+INSERT INTO `nba-props-platform.nba_enriched.travel_distances`
 (from_team, to_team, from_city, to_city, distance_miles, time_zones_crossed, travel_direction, jet_lag_factor)
 VALUES
 ('ATL', 'BOS', 'Atlanta', 'Boston', 936, 0, 'neutral', 0.0),

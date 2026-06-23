@@ -29,7 +29,7 @@ check_result() {
     local name="$1"
     local status="$2"
     local detail="$3"
-    
+
     if [[ "$status" == "ok" ]]; then
         echo -e "${GREEN}✅ $name${NC}"
         [[ -n "$detail" ]] && echo "   $detail"
@@ -99,8 +99,8 @@ echo ""
 # 4. PIPELINE ERRORS (last 24h)
 echo -e "${BLUE}[4] PIPELINE ERRORS (last 24h)${NC}"
 ERROR_COUNT=$(bq query --use_legacy_sql=false --format=csv \
-    "SELECT COUNT(*) FROM nba_orchestration.pipeline_event_log 
-     WHERE event_type LIKE '%error%' 
+    "SELECT COUNT(*) FROM nba_orchestration.pipeline_event_log
+     WHERE event_type LIKE '%error%'
      AND created_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)" 2>/dev/null | tail -1)
 if [[ "$ERROR_COUNT" == "0" ]]; then
     check_result "Pipeline errors" "ok" "No errors in last 24h"

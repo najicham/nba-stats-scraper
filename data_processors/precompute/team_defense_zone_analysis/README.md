@@ -1,11 +1,11 @@
 # Team Defense Zone Analysis Processor
 
-**Path:** `data_processors/precompute/team_defense_zone_analysis/team_defense_zone_analysis_processor.py`  
-**Phase:** 4 (Precompute)  
-**Output Table:** `nba_precompute.team_defense_zone_analysis`  
-**Processing Strategy:** `MERGE_UPDATE` (replace by analysis_date)  
-**Schedule:** Nightly at 11:00 PM (before player processors)  
-**Duration:** 2-3 minutes (~30 teams)  
+**Path:** `data_processors/precompute/team_defense_zone_analysis/team_defense_zone_analysis_processor.py`
+**Phase:** 4 (Precompute)
+**Output Table:** `nba_precompute.team_defense_zone_analysis`
+**Processing Strategy:** `MERGE_UPDATE` (replace by analysis_date)
+**Schedule:** Nightly at 11:00 PM (before player processors)
+**Duration:** 2-3 minutes (~30 teams)
 **Version:** 1.0
 
 ---
@@ -102,7 +102,7 @@ This processor implements a custom `per_team_game_count` check type:
 def _check_table_data(self, table_name: str, analysis_date: date, config: dict):
     """
     Count how many teams have minimum required games.
-    
+
     Different from standard checks:
     - Counts games PER TEAM (not total rows)
     - Verifies minimum teams threshold
@@ -116,7 +116,7 @@ def _check_table_data(self, table_name: str, analysis_date: date, config: dict):
           AND game_date >= '{season_start}'
         GROUP BY defending_team_abbr
     )
-    SELECT 
+    SELECT
         COUNT(*) as teams_with_min_games,
         SUM(game_count) as total_games
     FROM team_game_counts
@@ -131,9 +131,9 @@ def _check_table_data(self, table_name: str, analysis_date: date, config: dict):
 
 ### Table Details
 
-**Table:** `nba_precompute.team_defense_zone_analysis`  
-**Partitioned By:** `analysis_date` (daily partitions)  
-**Clustered By:** `team_abbr`  
+**Table:** `nba_precompute.team_defense_zone_analysis`
+**Partitioned By:** `analysis_date` (daily partitions)
+**Clustered By:** `team_abbr`
 **Retention:** 365 days (automatic deletion after 1 year)
 
 ### Field Categories (33 total fields)
@@ -193,49 +193,49 @@ def _check_table_data(self, table_name: str, analysis_date: date, config: dict):
 {
   "team_abbr": "BOS",
   "analysis_date": "2025-01-27",
-  
+
   // Paint Defense - Elite (42nd percentile vs league)
   "paint_pct_allowed_last_15": 0.558,
   "paint_attempts_allowed_per_game": 32.4,
   "paint_points_allowed_per_game": 38.2,
   "paint_blocks_per_game": 2.8,
   "paint_defense_vs_league_avg": -2.2,
-  
+
   // Mid-Range Defense - Above Average
   "mid_range_pct_allowed_last_15": 0.395,
   "mid_range_attempts_allowed_per_game": 18.6,
   "mid_range_blocks_per_game": 0.9,
   "mid_range_defense_vs_league_avg": -1.5,
-  
+
   // Three-Point Defense - League Average
   "three_pt_pct_allowed_last_15": 0.356,
   "three_pt_attempts_allowed_per_game": 34.8,
   "three_pt_blocks_per_game": 0.3,
   "three_pt_defense_vs_league_avg": 0.1,
-  
+
   // Overall Defense
   "defensive_rating_last_15": 108.4,
   "opponent_points_per_game": 106.2,
   "opponent_pace": 98.7,
-  
+
   // Strengths/Weaknesses
   "strongest_zone": "paint",
   "weakest_zone": "perimeter",
-  
+
   // Data Quality
   "games_in_sample": 15,
   "data_quality_tier": "high",
   "calculation_notes": null,
-  
+
   // Source Tracking (v4.0)
   "source_team_defense_last_updated": "2025-01-27T23:05:00Z",
   "source_team_defense_rows_found": 450,
   "source_team_defense_completeness_pct": 100.0,
-  
+
   // Early Season
   "early_season_flag": null,
   "insufficient_data_reason": null,
-  
+
   // Metadata
   "processed_at": "2025-01-27T23:15:32Z"
 }
@@ -317,15 +317,15 @@ query = """
 WITH ranked_games AS (
     SELECT *,
       ROW_NUMBER() OVER (
-        PARTITION BY defending_team_abbr 
+        PARTITION BY defending_team_abbr
         ORDER BY game_date DESC
       ) as game_rank
     FROM nba_analytics.team_defense_game_summary
     WHERE game_date <= '{analysis_date}'
       AND game_date >= '{season_start_date}'
 )
-SELECT * 
-FROM ranked_games 
+SELECT *
+FROM ranked_games
 WHERE game_rank <= 15
 ORDER BY defending_team_abbr, game_date DESC
 """
@@ -344,12 +344,12 @@ logger.info(
 def _calculate_league_averages(self):
     """
     Calculate league-wide defensive averages for comparison.
-    
+
     Uses 30-day window (configurable) to get representative sample.
     Falls back to historical defaults if <10 teams available.
     """
     lookback_date = analysis_date - timedelta(days=30)
-    
+
     query = """
     WITH team_aggregates AS (
         SELECT
@@ -379,9 +379,9 @@ def _calculate_league_averages(self):
         COUNT(*) as teams_in_sample
     FROM team_percentages
     """
-    
+
     result = bq_client.query(query).to_dataframe()
-    
+
     if result.empty or result['teams_in_sample'].iloc[0] < 10:
         # Use historical NBA defaults
         return {
@@ -390,7 +390,7 @@ def _calculate_league_averages(self):
             'three_pt_pct': 0.355,
             'teams_in_sample': 0
         }
-    
+
     return {
         'paint_pct': float(result['league_avg_paint_pct'].iloc[0]),
         'mid_range_pct': float(result['league_avg_mid_range_pct'].iloc[0]),
@@ -413,9 +413,9 @@ for team_abbr in all_teams:
         team_data = raw_data[
             raw_data['defending_team_abbr'] == team_abbr
         ].copy()
-        
+
         games_count = len(team_data)
-        
+
         # Validate sufficient games
         if games_count < 15:
             failed.append({
@@ -424,7 +424,7 @@ for team_abbr in all_teams:
                 'category': 'INSUFFICIENT_DATA'
             })
             continue
-        
+
         # Sum across all games
         total_paint_makes = team_data['opp_paint_makes'].sum()
         total_paint_attempts = team_data['opp_paint_attempts'].sum()
@@ -432,34 +432,34 @@ for team_abbr in all_teams:
         total_mid_range_attempts = team_data['opp_mid_range_attempts'].sum()
         total_three_pt_makes = team_data['opp_three_pt_makes'].sum()
         total_three_pt_attempts = team_data['opp_three_pt_attempts'].sum()
-        
+
         # Calculate FG% allowed
         paint_pct = (
-            total_paint_makes / total_paint_attempts 
+            total_paint_makes / total_paint_attempts
             if total_paint_attempts > 0 else None
         )
         mid_range_pct = (
-            total_mid_range_makes / total_mid_range_attempts 
+            total_mid_range_makes / total_mid_range_attempts
             if total_mid_range_attempts > 0 else None
         )
         three_pt_pct = (
-            total_three_pt_makes / total_three_pt_attempts 
+            total_three_pt_makes / total_three_pt_attempts
             if total_three_pt_attempts > 0 else None
         )
-        
+
         # Calculate per-game metrics
         paint_attempts_pg = total_paint_attempts / games_count
         paint_points_pg = team_data['points_in_paint_allowed'].sum() / games_count
         paint_blocks_pg = team_data['blocks_paint'].sum() / games_count
-        
+
         # Similar for mid-range and three-point...
-        
+
         # Calculate vs league average (percentage points difference)
         paint_vs_league = (
             (paint_pct - league_averages['paint_pct']) * 100
             if paint_pct is not None else None
         )
-        
+
         # Identify strengths/weaknesses
         zones = {
             'paint': paint_vs_league,
@@ -468,35 +468,35 @@ for team_abbr in all_teams:
         }
         strongest = min(zones, key=zones.get)  # Most negative = best
         weakest = max(zones, key=zones.get)    # Most positive = worst
-        
+
         # Build output record
         record = {
             'team_abbr': team_abbr,
             'analysis_date': analysis_date.isoformat(),
-            
+
             # Paint defense
             'paint_pct_allowed_last_15': float(paint_pct) if paint_pct else None,
             'paint_attempts_allowed_per_game': float(paint_attempts_pg),
             'paint_defense_vs_league_avg': float(paint_vs_league) if paint_vs_league else None,
             # ... more fields
-            
+
             # Strengths
             'strongest_zone': strongest,
             'weakest_zone': weakest,
-            
+
             # Quality
             'games_in_sample': games_count,
             'data_quality_tier': 'high' if games_count >= 15 else 'medium',
-            
+
             # Source tracking (v4.0)
             **self.build_source_tracking_fields(),
-            
+
             # Metadata
             'processed_at': datetime.now(UTC).isoformat()
         }
-        
+
         successful.append(record)
-        
+
     except Exception as e:
         failed.append({
             'entity_id': team_abbr,
@@ -535,18 +535,18 @@ When early season is detected:
 def _write_placeholder_rows(self, dep_check: dict):
     """Write placeholder rows for early season."""
     placeholders = []
-    
+
     # Get all 30 NBA teams
     all_teams = self.team_mapper.get_all_nba_tricodes()
-    
+
     for team_abbr in all_teams:
         # Count available games for context
         games_count = count_games_for_team(team_abbr, analysis_date)
-        
+
         placeholder = {
             'team_abbr': team_abbr,
             'analysis_date': analysis_date.isoformat(),
-            
+
             # All defense metrics = NULL
             'paint_pct_allowed_last_15': None,
             'mid_range_pct_allowed_last_15': None,
@@ -555,25 +555,25 @@ def _write_placeholder_rows(self, dep_check: dict):
             'strongest_zone': None,
             'weakest_zone': None,
             # ... all other metrics NULL
-            
+
             # Context
             'games_in_sample': games_count,
             'data_quality_tier': 'low',
-            
+
             # Source tracking (still populated!)
             **self.build_source_tracking_fields(),
-            
+
             # Early season flags
             'early_season_flag': True,
             'insufficient_data_reason': (
                 f"Only {games_count} games available, need 15"
             ),
-            
+
             'processed_at': datetime.now(UTC).isoformat()
         }
-        
+
         placeholders.append(placeholder)
-    
+
     self.transformed_data = placeholders
 ```
 
@@ -583,7 +583,7 @@ def _write_placeholder_rows(self, dep_check: dict):
 {
   "team_abbr": "BOS",
   "analysis_date": "2024-10-28",
-  
+
   // All metrics NULL
   "paint_pct_allowed_last_15": null,
   "mid_range_pct_allowed_last_15": null,
@@ -591,16 +591,16 @@ def _write_placeholder_rows(self, dep_check: dict):
   "defensive_rating_last_15": null,
   "strongest_zone": null,
   "weakest_zone": null,
-  
+
   // Context
   "games_in_sample": 3,
   "data_quality_tier": "low",
-  
+
   // Source tracking still works
   "source_team_defense_last_updated": "2024-10-28T23:05:00Z",
   "source_team_defense_rows_found": 90,
   "source_team_defense_completeness_pct": 100.0,
-  
+
   // Early season flag
   "early_season_flag": true,
   "insufficient_data_reason": "Only 3 games available, need 15"
@@ -659,7 +659,7 @@ resources:
   limits:
     memory: 2Gi
     cpu: "2"
-  
+
 timeout: 600s  # 10 minutes max
 
 environment:
@@ -734,15 +734,15 @@ Player prediction models use team defense data to adjust for opponent strength:
 ```python
 def predict_player_points(player, opponent_team):
     """Predict points considering opponent defense."""
-    
+
     # Get player's scoring tendencies
     player_zones = get_player_shot_zones(player)
     # {'paint': 0.45, 'mid_range': 0.30, 'three_pt': 0.25}
-    
+
     # Get opponent's defensive strength by zone
     opponent_defense = get_team_defense_zones(opponent_team)
     # {'paint_vs_league': -2.2, 'mid_range_vs_league': -1.5, ...}
-    
+
     # Calculate zone-specific adjustments
     paint_adjustment = calculate_zone_adjustment(
         player_rate=player_zones['paint'],
@@ -750,28 +750,28 @@ def predict_player_points(player, opponent_team):
     )
     # If player shoots 45% in paint, opponent allows 2.2pp less than league
     # → Tougher matchup, reduce prediction
-    
+
     mid_adjustment = calculate_zone_adjustment(
         player_rate=player_zones['mid_range'],
         defense_vs_league=opponent_defense['mid_range_vs_league']
     )
-    
+
     three_adjustment = calculate_zone_adjustment(
         player_rate=player_zones['three_pt'],
         defense_vs_league=opponent_defense['three_pt_defense_vs_league_avg']
     )
-    
+
     # Weight adjustments by player's shot distribution
     total_adjustment = (
         paint_adjustment * player_zones['paint'] +
         mid_adjustment * player_zones['mid_range'] +
         three_adjustment * player_zones['three_pt']
     )
-    
+
     # Apply to base prediction
     base_prediction = player.points_avg_last_10
     adjusted_prediction = base_prediction * (1 + total_adjustment)
-    
+
     return adjusted_prediction
 ```
 
@@ -809,7 +809,7 @@ boston_defense = {
 
 ```sql
 -- How many teams processed today?
-SELECT 
+SELECT
   COUNT(DISTINCT team_abbr) as teams_processed,
   AVG(source_team_defense_completeness_pct) as avg_completeness,
   SUM(CASE WHEN early_season_flag THEN 1 ELSE 0 END) as early_season_count,
@@ -849,7 +849,7 @@ WITH vs_league AS (
   WHERE analysis_date = CURRENT_DATE()
     AND early_season_flag IS NOT TRUE
 )
-SELECT 
+SELECT
   ROUND(avg_paint_vs_league, 2) as paint_centered,
   ROUND(avg_mid_vs_league, 2) as mid_centered,
   ROUND(avg_three_vs_league, 2) as three_centered
@@ -878,11 +878,11 @@ ORDER BY 2 DESC;
 
 ```sql
 -- Is source data fresh?
-SELECT 
+SELECT
   MAX(source_team_defense_last_updated) as last_updated,
   TIMESTAMP_DIFF(
-    CURRENT_TIMESTAMP(), 
-    MAX(source_team_defense_last_updated), 
+    CURRENT_TIMESTAMP(),
+    MAX(source_team_defense_last_updated),
     HOUR
   ) as age_hours
 FROM nba_precompute.team_defense_zone_analysis
@@ -963,9 +963,9 @@ def test_vs_league_average_calculations(self, processor):
     """Test vs league average percentage point calculations."""
     # Team allows 57.1% in paint, league average is 58.0%
     # Should return -0.9 (better defense)
-    
+
     zone_metrics = processor._calculate_zone_defense(team_data, 15)
-    
+
     assert zone_metrics['paint_vs_league'] == pytest.approx(-0.9, abs=0.1)
     # Negative = Better than league (allowing lower FG%)
 ```
@@ -997,14 +997,14 @@ def test_successful_processing(self, processor, mock_team_defense_data):
         'analysis_date': date(2025, 1, 27),
         'season_year': 2024
     }
-    
+
     # Execute
     processor.extract_raw_data()
     processor.calculate_precompute()
-    
+
     # Verify
     assert len(processor.transformed_data) == 5
-    
+
     bos_data = next(t for t in processor.transformed_data if t['team_abbr'] == 'BOS')
     assert bos_data['games_in_sample'] == 15
     assert bos_data['paint_pct_allowed_last_15'] is not None
@@ -1020,7 +1020,7 @@ python data_processors/precompute/team_defense_zone_analysis/team_defense_zone_a
 
 # Check results
 bq query --use_legacy_sql=false '
-SELECT 
+SELECT
   team_abbr,
   paint_pct_allowed_last_15,
   paint_defense_vs_league_avg,
@@ -1046,7 +1046,7 @@ WHERE analysis_date = '2025-01-27';
 -- Expected: 30 teams
 
 -- 2. Check no NULL values in key fields (except early season)
-SELECT 
+SELECT
   COUNTIF(team_abbr IS NULL) as null_team,
   COUNTIF(paint_pct_allowed_last_15 IS NULL) as null_paint_pct,
   COUNTIF(defensive_rating_last_15 IS NULL) as null_def_rating,
@@ -1057,7 +1057,7 @@ WHERE analysis_date = '2025-01-27'
 -- Expected: All zeros
 
 -- 3. Check reasonable ranges
-SELECT 
+SELECT
   MIN(paint_pct_allowed_last_15) as min_paint_pct,
   MAX(paint_pct_allowed_last_15) as max_paint_pct,
   MIN(defensive_rating_last_15) as min_def_rating,
@@ -1068,7 +1068,7 @@ WHERE analysis_date = '2025-01-27'
 -- Expected: paint 50-70%, def rating 100-120
 
 -- 4. Check source completeness
-SELECT 
+SELECT
   AVG(source_team_defense_completeness_pct) as avg_completeness,
   MIN(source_team_defense_completeness_pct) as min_completeness
 FROM nba_precompute.team_defense_zone_analysis
@@ -1076,7 +1076,7 @@ WHERE analysis_date = '2025-01-27';
 -- Expected: Avg 100%, min >= 95%
 
 -- 5. Spot check specific teams
-SELECT 
+SELECT
   team_abbr,
   paint_defense_vs_league_avg,
   mid_range_defense_vs_league_avg,
@@ -1100,7 +1100,7 @@ ORDER BY team_abbr;
 
 **Symptoms:**
 ```sql
-SELECT COUNT(*) FROM nba_precompute.team_defense_zone_analysis 
+SELECT COUNT(*) FROM nba_precompute.team_defense_zone_analysis
 WHERE analysis_date = CURRENT_DATE();
 -- Returns: 0
 ```
@@ -1108,7 +1108,7 @@ WHERE analysis_date = CURRENT_DATE();
 **Check:**
 1. Is `team_defense_game_summary` populated?
    ```sql
-   SELECT 
+   SELECT
      defending_team_abbr,
      COUNT(*) as game_count
    FROM nba_analytics.team_defense_game_summary
@@ -1120,7 +1120,7 @@ WHERE analysis_date = CURRENT_DATE();
 
 2. Check for early season:
    ```sql
-   SELECT 
+   SELECT
      CURRENT_DATE() as today,
      '2024-10-22' as season_start,
      DATE_DIFF(CURRENT_DATE(), '2024-10-22', DAY) as days_since_start;
@@ -1138,7 +1138,7 @@ WHERE analysis_date = CURRENT_DATE();
 
 **Symptoms:**
 ```sql
-SELECT 
+SELECT
   AVG(paint_defense_vs_league_avg) as avg_paint_vs_league
 FROM nba_precompute.team_defense_zone_analysis
 WHERE analysis_date = CURRENT_DATE()
@@ -1149,7 +1149,7 @@ WHERE analysis_date = CURRENT_DATE()
 **Diagnose:**
 ```sql
 -- Check league average calculation
-SELECT 
+SELECT
   team_abbr,
   paint_pct_allowed_last_15,
   paint_defense_vs_league_avg
@@ -1177,13 +1177,13 @@ ORDER BY team_abbr;
 ```sql
 -- All 30 NBA teams
 WITH all_teams AS (
-  SELECT team_abbr 
+  SELECT team_abbr
   FROM UNNEST(['ATL','BOS','BRK','CHA','CHI','CLE','DAL','DEN','DET','GSW',
                'HOU','IND','LAC','LAL','MEM','MIA','MIL','MIN','NOP','NYK',
-               'OKC','ORL','PHI','PHX','POR','SAC','SAS','TOR','UTA','WAS']) 
+               'OKC','ORL','PHI','PHX','POR','SAC','SAS','TOR','UTA','WAS'])
   AS team_abbr
 )
-SELECT 
+SELECT
   t.team_abbr,
   COUNT(DISTINCT tds.game_id) as games_in_source
 FROM all_teams t
@@ -1225,7 +1225,7 @@ WHERE analysis_date = CURRENT_DATE()
 **Diagnose:**
 ```sql
 -- Check the actual percentages
-SELECT 
+SELECT
   team_abbr,
   paint_pct_allowed_last_15,
   paint_defense_vs_league_avg,
@@ -1255,7 +1255,7 @@ WHERE analysis_date = CURRENT_DATE()
 ```sql
 -- Check day-over-day changes
 WITH daily AS (
-  SELECT 
+  SELECT
     team_abbr,
     analysis_date,
     paint_pct_allowed_last_15,
@@ -1265,7 +1265,7 @@ WITH daily AS (
   FROM nba_precompute.team_defense_zone_analysis
   WHERE analysis_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 3 DAY)
 )
-SELECT 
+SELECT
   team_abbr,
   ABS(paint_pct_allowed_last_15 - prev_paint_pct) * 100 as pct_point_change
 FROM daily
@@ -1382,14 +1382,14 @@ tests/processors/precompute/team_defense_zone_analysis/
 
 Your processor is working correctly when:
 
-✅ **Completeness:** All 30 NBA teams have records (or placeholders if early season)  
-✅ **Freshness:** Source data < 72 hours old  
-✅ **Quality:** 95%+ source completeness across all teams  
-✅ **Accuracy:** Spot-check 5 teams shows calculations match manual verification  
-✅ **League Averages:** vs_league_avg fields average to ~0.0 (within ±1.0 pp)  
-✅ **Timeliness:** Processor completes in < 5 minutes  
-✅ **Tests:** 21/21 unit tests pass, 8/8 integration tests pass  
-✅ **Stability:** Day-over-day changes < 5 percentage points  
+✅ **Completeness:** All 30 NBA teams have records (or placeholders if early season)
+✅ **Freshness:** Source data < 72 hours old
+✅ **Quality:** 95%+ source completeness across all teams
+✅ **Accuracy:** Spot-check 5 teams shows calculations match manual verification
+✅ **League Averages:** vs_league_avg fields average to ~0.0 (within ±1.0 pp)
+✅ **Timeliness:** Processor completes in < 5 minutes
+✅ **Tests:** 21/21 unit tests pass, 8/8 integration tests pass
+✅ **Stability:** Day-over-day changes < 5 percentage points
 
 ---
 
@@ -1419,6 +1419,6 @@ Your processor is working correctly when:
 
 ---
 
-**Last Updated:** November 1, 2025  
-**Status:** Production Ready ✅  
+**Last Updated:** November 1, 2025
+**Status:** Production Ready ✅
 **Tests:** All 29 tests passing (21 unit + 8 integration)

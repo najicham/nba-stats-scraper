@@ -241,7 +241,7 @@ cat docs/09-handoff/week-1-monitoring-log.md | grep "Day [1-7]" -A 5
 
 # 2. Check subcollection data completeness
 bq query --use_legacy_sql=false '
-SELECT 
+SELECT
   COUNT(*) as total_rows,
   COUNT(DISTINCT game_date) as days_covered,
   MIN(game_date) as earliest_date,

@@ -1,15 +1,15 @@
 # NBA Props Platform - Backfill Strategy
 
-**Document Version:** 1.0  
-**Date:** August 4, 2025  
+**Document Version:** 1.0
+**Date:** August 4, 2025
 **Status:** Phase 1 Complete, Phase 2-4 Planning
 
 ## Executive Summary
 
 The NBA Props Platform backfill strategy provides 4+ seasons of historical NBA data to power predictive models for player prop betting. The strategy leverages multiple data sources and is executed in phases to build a comprehensive foundation while managing API rate limits and data quality.
 
-**Current Status:** ✅ Phase 1 Complete (Schedule Foundation)  
-**Data Collected:** 5,583 games across 4 seasons (2021-2025)  
+**Current Status:** ✅ Phase 1 Complete (Schedule Foundation)
+**Data Collected:** 5,583 games across 4 seasons (2021-2025)
 **Storage:** Season-organized GCS structure ready for analytics
 
 ## Overall Backfill Architecture
@@ -30,7 +30,7 @@ gs://nba-scraped-data/
 │   ├── schedule/2021-22/ → 2024-25/    ✅ Complete
 │   └── box-scores/2021-22/ → 2024-25/  📋 Phase 2
 ├── ball-dont-lie/
-│   └── player-stats/2021-22/ → 2024-25/ 📋 Phase 3  
+│   └── player-stats/2021-22/ → 2024-25/ 📋 Phase 3
 ├── big-data-ball/
 │   └── enhanced-pbp/2021-22/ → 2024-25/ 📋 Phase 4
 └── odds-api/
@@ -43,7 +43,7 @@ gs://nba-scraped-data/
 Establish the foundational game inventory across 4 seasons to drive all subsequent data collection.
 
 ### Implementation
-- **Scraper:** `nbac_schedule_api.py` 
+- **Scraper:** `nbac_schedule_api.py`
 - **Workflow:** `collect-nba-historical-schedules`
 - **Execution:** Single workflow run collecting all seasons
 - **Output:** Season-organized schedule files with game IDs
@@ -67,7 +67,7 @@ Collect detailed box scores for all games identified in Phase 1, providing playe
 
 ### Proposed Implementation
 - **Base Scraper:** `nbac_player_boxscore.py` (existing)
-- **New Workflow:** `collect-nba-historical-boxscores`  
+- **New Workflow:** `collect-nba-historical-boxscores`
 - **Execution Strategy:** Season-by-season, chunked by date ranges
 - **Input:** Game IDs from Phase 1 schedule data
 - **Output:** Player box scores organized by season and game
@@ -131,7 +131,7 @@ All backfill workflows follow consistent patterns established in Phase 1:
 ```yaml
 # Workflow template structure
 - Season-by-season collection with individual error handling
-- Cloud Run service integration for data processing  
+- Cloud Run service integration for data processing
 - Season-based GCS storage paths
 - Status monitoring integration
 - Parallel processing with rate limiting
@@ -184,7 +184,7 @@ All backfill workflows follow consistent patterns established in Phase 1:
 2. **Create game ID extraction utility** from Phase 1 schedule data
 3. **Test batch processing** with small game samples
 
-### Short Term (Weeks 2-3)  
+### Short Term (Weeks 2-3)
 1. **Execute Phase 2** box score collection
 2. **Validate data quality** and coverage
 3. **Design Phase 3** Ball Don't Lie integration
@@ -201,13 +201,13 @@ The backfill strategy directly supports the operational data pipeline:
 **Backfill Foundation** → **Current Season Operations** → **Predictive Models**
 
 - Historical data trains models
-- Current operations provide live data  
+- Current operations provide live data
 - Predictions power prop bet recommendations
 
 **Storage paths align** between backfill and operational workflows for seamless analytics integration.
 
 ---
 
-**Document Owner:** Development Team  
-**Related Systems:** Cloud Run Services, Google Cloud Workflows, GCS Storage  
+**Document Owner:** Development Team
+**Related Systems:** Cloud Run Services, Google Cloud Workflows, GCS Storage
 **Dependencies:** NBA.com API, Ball Don't Lie API, Big Data Ball, The Odds API

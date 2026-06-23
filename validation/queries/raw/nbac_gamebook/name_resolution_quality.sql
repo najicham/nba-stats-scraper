@@ -40,7 +40,7 @@ resolution_by_method AS (
     name_resolution_method,
     COUNT(*) as usage_count,
     ROUND(SAFE_DIVIDE(COUNT(*), (
-      SELECT COUNT(*) 
+      SELECT COUNT(*)
       FROM `nba-props-platform.nba_raw.nbac_gamebook_player_stats`
       WHERE player_status = 'inactive'
         AND name_resolution_status = 'resolved'

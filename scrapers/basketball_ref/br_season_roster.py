@@ -101,7 +101,7 @@ class BasketballRefSeasonRoster(ScraperBase, ScraperFlaskMixin):
     download_type: DownloadType = DownloadType.HTML
     decode_download_data: bool = True
     header_profile: str | None = None  # Use default headers
-    
+
     # Enable proxy support for Basketball Reference
     proxy_enabled: bool = True
 
@@ -120,7 +120,7 @@ class BasketballRefSeasonRoster(ScraperBase, ScraperFlaskMixin):
         },
         # Local development export
         {
-            "type": "file", 
+            "type": "file",
             "filename": "/tmp/br_season_roster_%(teamAbbr)s_%(year)s_%(date)s.json",
             "export_mode": ExportMode.DATA,
             "pretty_print": True,
@@ -146,12 +146,12 @@ class BasketballRefSeasonRoster(ScraperBase, ScraperFlaskMixin):
     def set_additional_opts(self) -> None:
         """Add season string and validate team abbreviation."""
         super().set_additional_opts()
-        
+
         # Validate team abbreviation against shared config
         team_abbr = self.opts["teamAbbr"].upper()
         if team_abbr not in BASKETBALL_REF_TEAMS:
             error_msg = f"Invalid team abbreviation: {team_abbr}. Must be one of: {BASKETBALL_REF_TEAMS}"
-            
+
             # Send error notification
             try:
                 notify_error(
@@ -167,14 +167,14 @@ class BasketballRefSeasonRoster(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise ValueError(error_msg)
-            
+
         self.opts["teamAbbr"] = team_abbr
-        
+
         # Add full team name
         self.opts["teamName"] = TEAM_NAMES[team_abbr]
-        
+
         # Create season string (year represents ending year)
         year = int(self.opts["year"])
         self.opts["season"] = f"{year-1}-{str(year)[2:]}"  # e.g., 2024 -> "2023-24"
@@ -201,15 +201,15 @@ class BasketballRefSeasonRoster(ScraperBase, ScraperFlaskMixin):
     def download_data(self):
         """Override to add rate limiting delay before each request."""
         # Rate limiting: Basketball Reference allows max 20 req/min with 3s crawl-delay
-        logger.info("Waiting %.1f seconds to respect Basketball Reference rate limits...", 
+        logger.info("Waiting %.1f seconds to respect Basketball Reference rate limits...",
                    self.CRAWL_DELAY_SECONDS)
         time.sleep(self.CRAWL_DELAY_SECONDS)
-        
+
         try:
             super().download_data()
         except Exception as e:
             logger.error(f"Failed to download roster data: {e}")
-            
+
             # Send error notification
             try:
                 notify_error(
@@ -226,7 +226,7 @@ class BasketballRefSeasonRoster(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise
 
     def validate_download_data(self) -> None:
@@ -234,22 +234,22 @@ class BasketballRefSeasonRoster(ScraperBase, ScraperFlaskMixin):
         try:
             if not isinstance(self.decoded_data, str):
                 raise ValueError("Expected HTML string but got different data type")
-            
+
             html_lower = self.decoded_data.lower()
             if "<html" not in html_lower:
                 raise ValueError("Response doesn't appear to be HTML")
-                
+
             # Check for Basketball Reference specific markers
             if "basketball-reference.com" not in html_lower:
-                raise ValueError("Response doesn't appear to be from Basketball Reference") 
-                
+                raise ValueError("Response doesn't appear to be from Basketball Reference")
+
             # Check for roster table or team data
             if "roster" not in html_lower and self.opts["teamAbbr"].lower() not in html_lower:
                 raise ValueError(f"Page doesn't appear to contain roster data for {self.opts['teamAbbr']}")
-                
+
         except Exception as e:
             logger.error(f"Validation failed: {e}")
-            
+
             # Send error notification
             try:
                 notify_error(
@@ -266,7 +266,7 @@ class BasketballRefSeasonRoster(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise
 
     def safe_extract_text(self, element) -> str:
@@ -276,11 +276,11 @@ class BasketballRefSeasonRoster(ScraperBase, ScraperFlaskMixin):
         """
         if not element:
             return ""
-        
+
         try:
             # Get raw text and ensure proper UTF-8 handling
             text = element.get_text(strip=True)
-            
+
             # If text is already a string, ensure it's properly decoded UTF-8
             if isinstance(text, str):
                 # Try to detect and fix encoding issues
@@ -295,9 +295,9 @@ class BasketballRefSeasonRoster(ScraperBase, ScraperFlaskMixin):
                 except (UnicodeDecodeError, UnicodeEncodeError):
                     # If fix fails, keep original
                     pass
-            
+
             return text
-            
+
         except Exception as e:
             logger.warning("Error extracting text from element: %s", e)
             return ""
@@ -306,7 +306,7 @@ class BasketballRefSeasonRoster(ScraperBase, ScraperFlaskMixin):
         """
         Clean and normalize Unicode text from HTML.
         Converts accented characters to ASCII equivalents for reliable matching.
-        
+
         Examples:
         - "Dāvis Bertāns" → "Davis Bertans"
         - "Bogdan Bogdanović" → "Bogdan Bogdanovic"
@@ -314,30 +314,30 @@ class BasketballRefSeasonRoster(ScraperBase, ScraperFlaskMixin):
         """
         if not text:
             return ""
-        
+
         try:
             # Step 1: Normalize Unicode to decomposed form (separates base + accents)
             normalized = unicodedata.normalize('NFD', text)
-            
+
             # Step 2: Remove combining characters (accents, diacritics)
             # Category 'Mn' = nonspacing marks (accents, tildes, etc.)
             ascii_text = ''.join(
-                char for char in normalized 
+                char for char in normalized
                 if unicodedata.category(char) != 'Mn'
             )
-            
+
             # Step 3: Ensure it's valid ASCII (fallback for any remaining issues)
             ascii_text = ascii_text.encode('ascii', 'ignore').decode('ascii')
-            
+
             # Step 4: Clean up extra spaces
             ascii_text = ' '.join(ascii_text.split())
-            
+
             # Debug logging for international names
             if text != ascii_text:
                 logger.debug("Unicode cleanup: '%s' → '%s'", text, ascii_text)
-            
+
             return ascii_text
-            
+
         except Exception as e:
             logger.warning("Error cleaning Unicode text '%s': %s", text, e)
             # Fallback: try simple ASCII conversion
@@ -351,7 +351,7 @@ class BasketballRefSeasonRoster(ScraperBase, ScraperFlaskMixin):
         """
         Normalize name for matching against gamebook data.
         NOW WITH UNICODE SUPPORT!
-        
+
         Steps:
         1. Clean Unicode characters (accents → ASCII)
         2. Remove suffixes (Jr, Sr, II, etc.)
@@ -360,28 +360,28 @@ class BasketballRefSeasonRoster(ScraperBase, ScraperFlaskMixin):
         """
         if not name:
             return ""
-        
+
         # Step 1: FIXED - Clean Unicode characters first
         clean_name = self.clean_unicode_text(name)
-        
+
         # Step 2: Remove common suffixes
         suffixes = ["Jr.", "Sr.", "Jr", "Sr", "II", "III", "IV", "V"]
         for suffix in suffixes:
             clean_name = clean_name.replace(f" {suffix}", "")
-        
+
         # Step 3: Normalize case and spacing
         normalized = clean_name.lower().strip()
-        
+
         # Step 4: Remove extra spaces
         normalized = ' '.join(normalized.split())
-        
+
         return normalized
 
     def transform_data(self) -> None:
         """Parse Basketball Reference roster page and extract player data."""
         # FIXED: Ensure proper UTF-8 handling for international characters
         soup = BeautifulSoup(self.decoded_data, "html.parser")
-        
+
         # Find the roster table - Basketball Reference uses id="roster"
         roster_table = soup.find("table", {"id": "roster"})
         if not roster_table:
@@ -393,15 +393,15 @@ class BasketballRefSeasonRoster(ScraperBase, ScraperFlaskMixin):
                 if "player" in header_text and ("no" in header_text or "pos" in header_text):
                     roster_table = table
                     break
-        
+
         if not roster_table:
             warning_msg = f"Could not find roster table for {self.opts['teamAbbr']} {self.opts['year']}"
             logger.warning(warning_msg)
             sentry_sdk.capture_message(
-                f"No roster table found for {self.opts['teamAbbr']} {self.opts['year']}", 
+                f"No roster table found for {self.opts['teamAbbr']} {self.opts['year']}",
                 level="warning"
             )
-            
+
             # Send warning notification
             try:
                 notify_warning(
@@ -418,7 +418,7 @@ class BasketballRefSeasonRoster(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             self.data = self._create_empty_roster()
             return
 
@@ -435,7 +435,7 @@ class BasketballRefSeasonRoster(ScraperBase, ScraperFlaskMixin):
             cells = row.find_all(["td", "th"])
             if len(cells) < 2:
                 continue
-                
+
             # Skip totals/summary rows
             row_text = " ".join([self.safe_extract_text(cell).lower() for cell in cells])
             if any(skip in row_text for skip in ["team totals", "totals"]):
@@ -444,7 +444,7 @@ class BasketballRefSeasonRoster(ScraperBase, ScraperFlaskMixin):
             player_data = self._extract_player_from_row(cells)
             if player_data and player_data.get("full_name"):
                 players.append(player_data)
-        
+
         # Create final data structure with enhanced fields
         self.data = {
             "team": self.opts["teamName"],
@@ -464,19 +464,19 @@ class BasketballRefSeasonRoster(ScraperBase, ScraperFlaskMixin):
                 "version": "2.1"
             }
         }
-        
-        logger.info("Parsed %d players for %s %s", 
+
+        logger.info("Parsed %d players for %s %s",
                 len(players), self.opts["teamAbbr"], self.opts["season"])
-        
+
         # Log sample for verification
         if players:
             sample = players[0]
             logger.debug("Sample player: %s -> last_name='%s', normalized='%s', suffix='%s'",
-                        sample.get("full_name", ""), 
+                        sample.get("full_name", ""),
                         sample.get("last_name", ""),
                         sample.get("normalized", ""),
                         sample.get("suffix", ""))
-            
+
             # Send success notification
             try:
                 notify_info(
@@ -532,56 +532,56 @@ class BasketballRefSeasonRoster(ScraperBase, ScraperFlaskMixin):
                 """Detect if cell contains jersey number(s) - HANDLES MULTIPLE NUMBERS."""
                 if not text:
                     return False
-                
+
                 # Pattern 1: Single number (4, 23, etc.)
                 if re.match(r'^\d{1,2}$', text):
                     return True
-                
+
                 # Pattern 2: Multiple numbers with comma/space (4, 44 or 4,44 or 4 44)
                 if re.match(r'^\d{1,2}[\s,]+\d{1,2}$', text):
                     return True
-                    
+
                 # Pattern 3: Multiple numbers with slash (4/44)
                 # Note: Dashes excluded - they're used for heights (6-8)
                 if re.match(r'^\d{1,2}/\d{1,2}$', text):
                     return True
-                    
+
                 return False
 
             def is_likely_name(text: str) -> bool:
                 """Enhanced name detection - EXCLUDES JERSEY NUMBERS."""
                 if not text or len(text.strip()) < 2:
                     return False
-                    
+
                 # FIXED: Exclude jersey number patterns first
                 if is_jersey_number_cell(text):
                     return False
-                    
+
                 # Must have at least 2 words for first/last name
                 words = text.split()
                 if len(words) < 2:
                     return False
-                    
+
                 # Exclude obvious non-names (numbers, measurements, etc.)
                 if re.match(r'^[\d\-\.\s,/]+$', text):
                     return False
-                    
+
                 # Exclude measurements/stats
                 if "'" in text or '"' in text:  # Heights like 6'8"
                     return False
-                    
+
                 if re.match(r'^\d+\s*(lbs?|kg)$', text.lower()):  # Weights
                     return False
-                    
+
                 # Exclude positions
                 if re.match(r'^[A-Z]{1,3}(-[A-Z]{1,3})?$', text):
                     return False
-                    
+
                 return True
 
             # Find player name - prioritize links, then use enhanced detection
             raw_full_name = ""
-            
+
             # Step 1: Look for player links (most reliable)
             for cell in cells:
                 player_link = cell.find("a", href=re.compile(r"/players/"))
@@ -598,7 +598,7 @@ class BasketballRefSeasonRoster(ScraperBase, ScraperFlaskMixin):
                         break
 
             if not raw_full_name:
-                logger.debug("No valid player name found in row cells: %s", 
+                logger.debug("No valid player name found in row cells: %s",
                             [self.safe_extract_text(cell) for cell in cells[:5]])
                 return {}
 
@@ -612,14 +612,14 @@ class BasketballRefSeasonRoster(ScraperBase, ScraperFlaskMixin):
             if name_parts:
                 suffixes = ["Jr.", "Sr.", "Jr", "Sr", "II", "III", "IV", "V"]
                 last_part = name_parts[-1]
-                
+
                 if last_part in suffixes and len(name_parts) > 1:
                     player_data["last_name"] = name_parts[-2]
                     player_data["suffix"] = last_part
                 else:
                     player_data["last_name"] = last_part
                     player_data["suffix"] = ""
-            
+
             # Add normalized name
             player_data["normalized"] = self.normalize_name(raw_full_name)
 
@@ -639,20 +639,20 @@ class BasketballRefSeasonRoster(ScraperBase, ScraperFlaskMixin):
                         # Multiple jersey numbers with slash
                         numbers = re.findall(r'\d{1,2}', text)
                         jersey_numbers.extend(numbers)
-                    
+
             if jersey_numbers:
                 # Use the first number as primary
                 player_data["jersey_number"] = jersey_numbers[0]
-                
+
                 # Store all numbers if multiple (for debugging/reference)
                 if len(jersey_numbers) > 1:
                     player_data["all_jersey_numbers"] = jersey_numbers
-                    logger.debug("Player %s has multiple jersey numbers: %s", 
+                    logger.debug("Player %s has multiple jersey numbers: %s",
                             raw_full_name, jersey_numbers)
 
             # Extract other fields by position
             cell_texts = [self.safe_extract_text(cell) for cell in cells]
-            
+
             # Position (PG, SG, PF-C, etc.)
             for text in cell_texts:
                 if re.match(r'^[A-Z]{1,3}(-[A-Z]{1,3})?$', text):
@@ -684,7 +684,7 @@ class BasketballRefSeasonRoster(ScraperBase, ScraperFlaskMixin):
         """Create empty roster structure when no data found."""
         return {
             "team": self.opts["teamName"],
-            "team_abbrev": self.opts["teamAbbr"], 
+            "team_abbrev": self.opts["teamAbbr"],
             "season": self.opts["season"],
             "year": int(self.opts["year"]),
             "timestamp": datetime.now(timezone.utc).isoformat(),

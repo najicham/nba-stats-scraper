@@ -12,7 +12,7 @@ echo ""
 echo "📊 Overall Health (Last 24 Hours)"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 bq query --use_legacy_sql=false --format=pretty "
-SELECT 
+SELECT
   COUNT(*) as total_runs,
   COUNTIF(status = 'SUCCESS') as succeeded,
   COUNTIF(status = 'FAILED') as failed,
@@ -26,7 +26,7 @@ echo ""
 echo "❌ Top Failing Scrapers (Last 24 Hours)"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 bq query --use_legacy_sql=false --format=pretty "
-SELECT 
+SELECT
   scraper_name,
   COUNT(*) as total_runs,
   COUNTIF(status = 'FAILED') as failures,
@@ -45,8 +45,8 @@ echo ""
 echo "🔎 Common Error Patterns"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 bq query --use_legacy_sql=false --format=pretty "
-SELECT 
-  CASE 
+SELECT
+  CASE
     WHEN error_message LIKE '%timeout%' THEN 'Timeout'
     WHEN error_message LIKE '%429%' OR error_message LIKE '%rate limit%' THEN 'Rate Limit'
     WHEN error_message LIKE '%401%' OR error_message LIKE '%403%' OR error_message LIKE '%Unauthorized%' THEN 'Auth Error'
@@ -57,8 +57,8 @@ SELECT
     ELSE 'Other'
   END as error_type,
   COUNT(*) as occurrences,
-  ROUND(COUNT(*) / (SELECT COUNT(*) FROM \`nba-props-platform.nba_orchestration.scraper_execution_log\` 
-                      WHERE triggered_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR) 
+  ROUND(COUNT(*) / (SELECT COUNT(*) FROM \`nba-props-platform.nba_orchestration.scraper_execution_log\`
+                      WHERE triggered_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
                         AND status = 'FAILED') * 100, 1) as pct_of_failures
 FROM \`nba-props-platform.nba_orchestration.scraper_execution_log\`
 WHERE triggered_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
@@ -82,7 +82,7 @@ WITH failing_scrapers AS (
   ORDER BY COUNT(*) DESC
   LIMIT 5
 )
-SELECT 
+SELECT
   l.scraper_name,
   l.triggered_at,
   SUBSTR(l.error_message, 1, 100) as error_sample
@@ -100,7 +100,7 @@ echo ""
 echo "⏰ Failure Distribution by Hour (Last 24 Hours)"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 bq query --use_legacy_sql=false --format=pretty "
-SELECT 
+SELECT
   EXTRACT(HOUR FROM triggered_at AT TIME ZONE 'America/New_York') as hour_et,
   COUNT(*) as total_runs,
   COUNTIF(status = 'FAILED') as failures,

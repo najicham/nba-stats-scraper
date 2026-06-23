@@ -5,7 +5,7 @@ Integration Tests for Player Composite Factors Processor
 =========================================================
 
 Tests full end-to-end flow with mocked BigQuery responses.
-Covers complete processor.run() execution, dependency checking, 
+Covers complete processor.run() execution, dependency checking,
 early season handling, and error conditions.
 
 Run with: pytest test_integration.py -v
@@ -254,10 +254,10 @@ def mock_dependency_check_success():
 
 class TestFullEndToEndFlow:
     """Test complete processor execution flow."""
-    
+
     def test_successful_processing_three_players(
-        self, 
-        processor, 
+        self,
+        processor,
         analysis_date,
         mock_player_context_data,
         mock_team_context_data,
@@ -267,7 +267,7 @@ class TestFullEndToEndFlow:
     ):
         """
         Test full end-to-end processing of 3 players with different profiles.
-        
+
         Players:
         - LeBron: Fresh, paint scorer vs weak paint defense (favorable)
         - Curry: Moderate rest, perimeter scorer with star out
@@ -278,11 +278,11 @@ class TestFullEndToEndFlow:
             with patch.object(processor, 'track_source_usage'):
                 # Set opts BEFORE extract
                 processor.opts = {'analysis_date': analysis_date}
-                
+
                 # Mock BigQuery queries
                 def mock_query(query_string):
                     mock_result = Mock()
-                    
+
                     # Return different data based on query
                     if 'upcoming_player_game_context' in query_string:
                         mock_result.to_dataframe.return_value = mock_player_context_data
@@ -300,62 +300,62 @@ class TestFullEndToEndFlow:
                         }])
                     else:
                         mock_result.to_dataframe.return_value = pd.DataFrame()
-                    
+
                     return mock_result
-                
+
                 processor.bq_client.query = mock_query
-                
+
                 # Set source tracking attributes
                 processor.source_player_context_last_updated = datetime(2025, 11, 1, 22, 0)
                 processor.source_player_context_rows_found = 3
                 processor.source_player_context_completeness_pct = 100.0
-                
+
                 processor.source_team_context_last_updated = datetime(2025, 11, 1, 22, 5)
                 processor.source_team_context_rows_found = 3
                 processor.source_team_context_completeness_pct = 100.0
-                
+
                 processor.source_player_shot_last_updated = datetime(2025, 11, 1, 23, 15)
                 processor.source_player_shot_rows_found = 3
                 processor.source_player_shot_completeness_pct = 100.0
-                
+
                 processor.source_team_defense_last_updated = datetime(2025, 11, 1, 23, 10)
                 processor.source_team_defense_rows_found = 3
                 processor.source_team_defense_completeness_pct = 100.0
-                
+
                 # Run full extraction
                 processor.extract_raw_data()
-                
+
                 # Manually set the DataFrames (since extract may not populate them correctly with mocks)
                 processor.player_context_df = mock_player_context_data
                 processor.team_context_df = mock_team_context_data
                 processor.player_shot_df = mock_player_shot_data
                 processor.team_defense_df = mock_team_defense_data
-                
+
                 # Run calculations
                 processor.calculate_precompute()
-                
+
                 # Verify results
                 assert len(processor.transformed_data) == 3, "Should process all 3 players"
                 assert len(processor.failed_entities) == 0, "No failures expected"
-                
+
                 # Check LeBron (fresh, favorable matchup)
                 lebron = next(r for r in processor.transformed_data if r['player_lookup'] == 'lebronjames')
                 assert lebron['fatigue_score'] == 100, "Fresh player should score 100"
                 assert lebron['shot_zone_mismatch_score'] > 3.0, "Favorable matchup"
                 assert lebron['pace_score'] > 0, "Fast game"
                 assert lebron['total_composite_adjustment'] > 3.0, "Net positive adjustment"
-                
+
                 # Check Curry (perimeter scorer, 1 star out)
                 curry = next(r for r in processor.transformed_data if r['player_lookup'] == 'stephencurry')
                 assert 85 <= curry['fatigue_score'] <= 100, "Moderate fatigue"
                 assert curry['usage_spike_score'] > 0.4, "Usage boost with star out"
-                
+
                 # Check Durant (exhausted, 2 stars out)
                 durant = next(r for r in processor.transformed_data if r['player_lookup'] == 'kevindurant')
                 assert durant['fatigue_score'] < 70, "Exhausted from B2B"
                 assert durant['usage_spike_score'] > 0.7, "Big usage boost with 2 stars out"
                 assert durant['pace_score'] < 0, "Slow game"
-                
+
                 # Verify all have required fields
                 required_fields = [
                     'player_lookup', 'universal_player_id', 'game_date', 'game_id',
@@ -363,11 +363,11 @@ class TestFullEndToEndFlow:
                     'total_composite_adjustment', 'calculation_version',
                     'data_completeness_pct', 'has_warnings'
                 ]
-                
+
                 for record in processor.transformed_data:
                     for field in required_fields:
                         assert field in record, f"Missing field: {field}"
-                
+
                 # Verify source tracking fields present
                 source_fields = [
                     'source_player_context_last_updated',
@@ -375,11 +375,11 @@ class TestFullEndToEndFlow:
                     'source_player_shot_last_updated',
                     'source_team_defense_last_updated'
                 ]
-                
+
                 for record in processor.transformed_data:
                     for field in source_fields:
                         assert field in record, f"Missing source tracking: {field}"
-    
+
     def test_processing_with_partial_data_completeness(
         self,
         processor,
@@ -394,10 +394,10 @@ class TestFullEndToEndFlow:
             with patch.object(processor, 'track_source_usage'):
                 # Set opts BEFORE extract
                 processor.opts = {'analysis_date': analysis_date}
-                
+
                 def mock_query(query_string):
                     mock_result = Mock()
-                    
+
                     if 'upcoming_player_game_context' in query_string:
                         mock_result.to_dataframe.return_value = mock_player_context_data
                     elif 'upcoming_team_game_context' in query_string:
@@ -415,48 +415,48 @@ class TestFullEndToEndFlow:
                         }])
                     else:
                         mock_result.to_dataframe.return_value = pd.DataFrame()
-                    
+
                     return mock_result
-                
+
                 processor.bq_client.query = mock_query
-                
+
                 # Set source tracking
                 processor.source_player_context_last_updated = datetime(2025, 11, 1, 22, 0)
                 processor.source_player_context_rows_found = 3
                 processor.source_player_context_completeness_pct = 100.0
-                
+
                 processor.source_team_context_last_updated = datetime(2025, 11, 1, 22, 5)
                 processor.source_team_context_rows_found = 3
                 processor.source_team_context_completeness_pct = 100.0
-                
+
                 processor.source_player_shot_last_updated = datetime(2025, 11, 1, 23, 15)
                 processor.source_player_shot_rows_found = 0
                 processor.source_player_shot_completeness_pct = 0.0
-                
+
                 processor.source_team_defense_last_updated = datetime(2025, 11, 1, 23, 10)
                 processor.source_team_defense_rows_found = 0
                 processor.source_team_defense_completeness_pct = 0.0
-                
+
                 # Run processing
                 processor.extract_raw_data()
-                
+
                 # Manually set the DataFrames (with empty shot zone/defense)
                 processor.player_context_df = mock_player_context_data
                 processor.team_context_df = mock_team_context_data
                 processor.player_shot_df = pd.DataFrame()  # Empty
                 processor.team_defense_df = pd.DataFrame()  # Empty
-                
+
                 processor.calculate_precompute()
-                
+
                 # Should still process (fatigue, pace, usage work without zones)
                 assert len(processor.transformed_data) == 3
-                
+
                 # Check data completeness
                 for record in processor.transformed_data:
                     assert record['data_completeness_pct'] < 100.0, "Should flag incomplete data"
                     assert 'player_shot_zone' in record['missing_data_fields'], "Should list missing shot zones"
                     assert 'team_defense_zone' in record['missing_data_fields'], "Should list missing defense"
-                    
+
                     # Shot zone score should be 0 (neutral) when data missing
                     assert record['shot_zone_mismatch_score'] == 0.0
 
@@ -472,10 +472,10 @@ class TestDependencyChecking:
             mock_result = Mock()
             mock_result.to_dataframe.return_value = pd.DataFrame()
             return mock_result
-        
+
         processor.bq_client.query = mock_query
         processor.opts = {'analysis_date': analysis_date}
-        
+
         # Mock failed dependency check
         failed_check = {
             'all_critical_present': False,
@@ -485,16 +485,16 @@ class TestDependencyChecking:
             'stale_fail': [],
             'details': {}
         }
-        
+
         with patch.object(processor, 'check_dependencies', return_value=failed_check):
             # Should not raise during extract (just log warning)
             # In production, run() method would check dependencies first and raise
             processor.extract_raw_data()
-            
+
             # Verify it extracted empty data (graceful handling)
             assert processor.player_context_df is not None
             assert len(processor.player_context_df) == 0
-    
+
     def test_stale_data_raises_error(self, processor, analysis_date):
         """Test that stale data warning is logged (not raised as error in extract)."""
         # Mock stale data check (but all present)
@@ -523,14 +523,14 @@ class TestDependencyChecking:
                 }
             }
         }
-        
+
         with patch.object(processor, 'check_dependencies', return_value=stale_check):
             with patch.object(processor, 'track_source_usage'):
                 processor.opts = {'analysis_date': analysis_date}
-                
+
                 # Mock query to return empty DataFrames
                 processor.bq_client.query = Mock(return_value=Mock(to_dataframe=Mock(return_value=pd.DataFrame())))
-                
+
                 # Should not raise exception for stale (warning only)
                 processor.extract_raw_data()
 
@@ -551,7 +551,7 @@ class TestEarlySeasonHandling:
             with patch.object(processor, 'track_source_usage'):
                 def mock_query(query_string):
                     mock_result = Mock()
-                    
+
                     if 'early_season_flag' in query_string and 'COUNT' in query_string:
                         # Indicate early season (> 50% of players have flag)
                         mock_result.to_dataframe.return_value = pd.DataFrame([{
@@ -563,35 +563,35 @@ class TestEarlySeasonHandling:
                         mock_result.to_dataframe.return_value = mock_player_context_data[['player_lookup', 'universal_player_id', 'game_id', 'game_date']]
                     else:
                         mock_result.to_dataframe.return_value = pd.DataFrame()
-                    
+
                     return mock_result
-                
+
                 processor.bq_client.query = mock_query
-                
+
                 # Set source tracking
                 processor.source_player_context_last_updated = datetime(2025, 11, 1, 22, 0)
                 processor.source_player_context_rows_found = 3
                 processor.source_player_context_completeness_pct = 100.0
-                
+
                 processor.source_team_context_last_updated = datetime(2025, 11, 1, 22, 5)
                 processor.source_team_context_rows_found = 0
                 processor.source_team_context_completeness_pct = 0.0
-                
+
                 processor.source_player_shot_last_updated = datetime(2025, 11, 1, 23, 15)
                 processor.source_player_shot_rows_found = 0
                 processor.source_player_shot_completeness_pct = 0.0
-                
+
                 processor.source_team_defense_last_updated = datetime(2025, 11, 1, 23, 10)
                 processor.source_team_defense_rows_found = 0
                 processor.source_team_defense_completeness_pct = 0.0
-                
+
                 # Run extraction (should create placeholders)
                 processor.opts = {'analysis_date': analysis_date}
                 processor.extract_raw_data()
-                
+
                 # Verify placeholder records created
                 assert len(processor.transformed_data) == 3, "Should create placeholder for each player"
-                
+
                 for record in processor.transformed_data:
                     # All scores should be NULL
                     assert record['fatigue_score'] is None
@@ -599,15 +599,15 @@ class TestEarlySeasonHandling:
                     assert record['pace_score'] is None
                     assert record['usage_spike_score'] is None
                     assert record['total_composite_adjustment'] is None
-                    
+
                     # Early season flag set
                     assert record['early_season_flag'] is True
                     assert record['insufficient_data_reason'] is not None
-                    
+
                     # Warning details
                     assert record['has_warnings'] is True
                     assert 'EARLY_SEASON' in record['warning_details']
-                    
+
                     # Deferred scores still at 0
                     assert record['referee_favorability_score'] == 0.0
                     assert record['look_ahead_pressure_score'] == 0.0
@@ -615,7 +615,7 @@ class TestEarlySeasonHandling:
 
 class TestErrorHandling:
     """Test error handling and failed entity tracking."""
-    
+
     def test_single_player_failure_continues_processing(
         self,
         processor,
@@ -630,10 +630,10 @@ class TestErrorHandling:
         with patch.object(processor, 'check_dependencies', return_value=mock_dependency_check_success):
             with patch.object(processor, 'track_source_usage'):
                 processor.opts = {'analysis_date': analysis_date}
-                
+
                 def mock_query(query_string):
                     mock_result = Mock()
-                    
+
                     if 'upcoming_player_game_context' in query_string:
                         # Use all player data
                         mock_result.to_dataframe.return_value = mock_player_context_data
@@ -650,46 +650,46 @@ class TestErrorHandling:
                         }])
                     else:
                         mock_result.to_dataframe.return_value = pd.DataFrame()
-                    
+
                     return mock_result
-                
+
                 processor.bq_client.query = mock_query
-                
+
                 # Set source tracking
                 processor.source_player_context_last_updated = datetime(2025, 11, 1, 22, 0)
                 processor.source_player_context_rows_found = 3
                 processor.source_player_context_completeness_pct = 100.0
-                
+
                 processor.source_team_context_last_updated = datetime(2025, 11, 1, 22, 5)
                 processor.source_team_context_rows_found = 3
                 processor.source_team_context_completeness_pct = 100.0
-                
+
                 processor.source_player_shot_last_updated = datetime(2025, 11, 1, 23, 15)
                 processor.source_player_shot_rows_found = 3
                 processor.source_player_shot_completeness_pct = 100.0
-                
+
                 processor.source_team_defense_last_updated = datetime(2025, 11, 1, 23, 10)
                 processor.source_team_defense_rows_found = 3
                 processor.source_team_defense_completeness_pct = 100.0
-                
+
                 # Run processing
                 processor.extract_raw_data()
-                
+
                 # Set DataFrames
                 processor.player_context_df = mock_player_context_data
                 processor.team_context_df = mock_team_context_data
                 processor.player_shot_df = mock_player_shot_data
                 processor.team_defense_df = mock_team_defense_data
-                
+
                 processor.calculate_precompute()
-                
+
                 # Should process all successfully (no actual errors in our test data)
                 assert len(processor.transformed_data) >= 2, "Should process at least 2 players"
 
 
 class TestSourceTrackingPopulation:
     """Test that v4.0 source tracking fields are populated correctly."""
-    
+
     def test_source_tracking_fields_populated(
         self,
         processor,
@@ -704,10 +704,10 @@ class TestSourceTrackingPopulation:
         with patch.object(processor, 'check_dependencies', return_value=mock_dependency_check_success):
             with patch.object(processor, 'track_source_usage'):
                 processor.opts = {'analysis_date': analysis_date}
-                
+
                 def mock_query(query_string):
                     mock_result = Mock()
-                    
+
                     if 'upcoming_player_game_context' in query_string:
                         mock_result.to_dataframe.return_value = mock_player_context_data
                     elif 'upcoming_team_game_context' in query_string:
@@ -723,55 +723,55 @@ class TestSourceTrackingPopulation:
                         }])
                     else:
                         mock_result.to_dataframe.return_value = pd.DataFrame()
-                    
+
                     return mock_result
-                
+
                 processor.bq_client.query = mock_query
-                
+
                 # Set specific source tracking values
                 processor.source_player_context_last_updated = datetime(2025, 11, 1, 22, 0, 15)
                 processor.source_player_context_rows_found = 150
                 processor.source_player_context_completeness_pct = 98.5
-                
+
                 processor.source_team_context_last_updated = datetime(2025, 11, 1, 22, 5, 30)
                 processor.source_team_context_rows_found = 30
                 processor.source_team_context_completeness_pct = 100.0
-                
+
                 processor.source_player_shot_last_updated = datetime(2025, 11, 1, 23, 15, 45)
                 processor.source_player_shot_rows_found = 145
                 processor.source_player_shot_completeness_pct = 96.7
-                
+
                 processor.source_team_defense_last_updated = datetime(2025, 11, 1, 23, 10, 20)
                 processor.source_team_defense_rows_found = 30
                 processor.source_team_defense_completeness_pct = 100.0
-                
+
                 # Run processing
                 processor.extract_raw_data()
-                
+
                 # Set DataFrames
                 processor.player_context_df = mock_player_context_data
                 processor.team_context_df = mock_team_context_data
                 processor.player_shot_df = mock_player_shot_data
                 processor.team_defense_df = mock_team_defense_data
-                
+
                 processor.calculate_precompute()
-                
+
                 # Check first record's source tracking
                 record = processor.transformed_data[0]
-                
+
                 # Verify all 12 tracking fields present
                 assert record['source_player_context_last_updated'] == datetime(2025, 11, 1, 22, 0, 15)
                 assert record['source_player_context_rows_found'] == 150
                 assert record['source_player_context_completeness_pct'] == 98.5
-                
+
                 assert record['source_team_context_last_updated'] == datetime(2025, 11, 1, 22, 5, 30)
                 assert record['source_team_context_rows_found'] == 30
                 assert record['source_team_context_completeness_pct'] == 100.0
-                
+
                 assert record['source_player_shot_last_updated'] == datetime(2025, 11, 1, 23, 15, 45)
                 assert record['source_player_shot_rows_found'] == 145
                 assert record['source_player_shot_completeness_pct'] == 96.7
-                
+
                 assert record['source_team_defense_last_updated'] == datetime(2025, 11, 1, 23, 10, 20)
                 assert record['source_team_defense_rows_found'] == 30
                 assert record['source_team_defense_completeness_pct'] == 100.0
@@ -779,7 +779,7 @@ class TestSourceTrackingPopulation:
 
 class TestDataQualityChecks:
     """Test data quality validation and warning generation."""
-    
+
     def test_extreme_fatigue_generates_warning(
         self,
         processor,
@@ -810,14 +810,14 @@ class TestDataQualityChecks:
             'pace_differential': 0.0,
             'opponent_pace_last_10': 100.0
         }])
-        
+
         with patch.object(processor, 'check_dependencies', return_value=mock_dependency_check_success):
             with patch.object(processor, 'track_source_usage'):
                 processor.opts = {'analysis_date': analysis_date}
-                
+
                 def mock_query(query_string):
                     mock_result = Mock()
-                    
+
                     if 'upcoming_player_game_context' in query_string:
                         mock_result.to_dataframe.return_value = exhausted_player
                     elif 'upcoming_team_game_context' in query_string:
@@ -833,42 +833,42 @@ class TestDataQualityChecks:
                         }])
                     else:
                         mock_result.to_dataframe.return_value = pd.DataFrame()
-                    
+
                     return mock_result
-                
+
                 processor.bq_client.query = mock_query
-                
+
                 # Set source tracking
                 processor.source_player_context_last_updated = datetime(2025, 11, 1, 22, 0)
                 processor.source_player_context_rows_found = 1
                 processor.source_player_context_completeness_pct = 100.0
-                
+
                 processor.source_team_context_last_updated = datetime(2025, 11, 1, 22, 5)
                 processor.source_team_context_rows_found = 1
                 processor.source_team_context_completeness_pct = 100.0
-                
+
                 processor.source_player_shot_last_updated = datetime(2025, 11, 1, 23, 15)
                 processor.source_player_shot_rows_found = 1
                 processor.source_player_shot_completeness_pct = 100.0
-                
+
                 processor.source_team_defense_last_updated = datetime(2025, 11, 1, 23, 10)
                 processor.source_team_defense_rows_found = 1
                 processor.source_team_defense_completeness_pct = 100.0
-                
+
                 # Run processing
                 processor.extract_raw_data()
-                
+
                 # Set DataFrames
                 processor.player_context_df = exhausted_player
                 processor.team_context_df = mock_team_context_data
                 processor.player_shot_df = mock_player_shot_data
                 processor.team_defense_df = mock_team_defense_data
-                
+
                 processor.calculate_precompute()
-                
+
                 # Check for warning
                 record = processor.transformed_data[0]
-                
+
                 assert record['has_warnings'] is True, "Should have warnings"
                 assert 'EXTREME_FATIGUE' in record['warning_details'], "Should flag extreme fatigue"
                 assert record['fatigue_score'] < 50, "Fatigue score should be very low"

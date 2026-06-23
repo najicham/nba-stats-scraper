@@ -292,21 +292,21 @@ team_boxscores AS (
         # Example: 2 teams out of 18 considered success, reconstruction never tried
         if fallback_result.source_used == 'nbac_team_boxscore':
             team_count = len(self.raw_data)
-            
+
             # Reasonable threshold: 10+ teams (5+ games)
             # Normal game day: 20-30 teams (10-15 games)
             MIN_TEAMS_THRESHOLD = 10
-            
+
             if team_count < MIN_TEAMS_THRESHOLD:
                 logger.warning(
                     f"⚠️  COMPLETENESS CHECK FAILED: nbac_team_boxscore returned only {team_count} teams "
                     f"(threshold: {MIN_TEAMS_THRESHOLD}). This is likely incomplete data. "
                     f"Forcing reconstruction from player boxscores..."
                 )
-                
+
                 # Try reconstruction instead
                 reconstructed_data = self._reconstruct_team_from_players(start_date, end_date)
-                
+
                 if reconstructed_data is not None and not reconstructed_data.empty:
                     reconstructed_count = len(reconstructed_data)
                     logger.info(
@@ -353,7 +353,7 @@ team_boxscores AS (
                 "Using reconstruction from player boxscores only."
             )
             self.raw_data = self._reconstruct_team_from_players(start_date, end_date)
-            
+
             if self.raw_data is not None and not self.raw_data.empty:
                 self._source_used = 'reconstructed_team_from_players (forced by env var)'
                 logger.info(f"✅ Reconstructed {len(self.raw_data)} team-game records from players")
@@ -460,7 +460,7 @@ print(f"Unique games: {df['game_id'].nunique()}")
 # Check format
 for game_id in df['game_id'].unique()[:3]:
     print(f"game_id: {game_id}")
-    
+
 # Validation
 errors = []
 if 'DEN' in df['team_abbr'].values and 'GSW' in df['team_abbr'].values:
@@ -471,12 +471,12 @@ if 'DEN' in df['team_abbr'].values and 'GSW' in df['team_abbr'].values:
             errors.append(f"FAIL: DEN/GSW game_id is '{game_id}' (expected '20240104_DEN_GSW')")
         else:
             print("\n✅ PASS: game_id format is correct (AWAY_HOME)")
-            
+
 if len(df) < 20:
     errors.append(f"FAIL: Only {len(df)} teams (expected 20+)")
 else:
     print(f"✅ PASS: {len(df)} teams (complete data)")
-    
+
 if errors:
     print("\n❌ VALIDATION FAILED:")
     for e in errors:

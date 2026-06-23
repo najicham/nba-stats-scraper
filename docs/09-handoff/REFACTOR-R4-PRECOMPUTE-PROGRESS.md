@@ -109,7 +109,7 @@ python -c "from data_processors.precompute.precompute_base import PrecomputeProc
 python -c "
 from data_processors.precompute.precompute_base import PrecomputeProcessorBase
 p = PrecomputeProcessorBase()
-methods = ['track_source_usage', 'build_source_tracking_fields', 
+methods = ['track_source_usage', 'build_source_tracking_fields',
            'is_backfill_mode', 'log_quality_issue']
 assert all(hasattr(p, m) for m in methods)
 print('✅ All methods accessible')
@@ -180,7 +180,7 @@ print('✅ All methods accessible')
    - Requires cleaning up orphaned code fragments
    - Estimated 1-2 hours
 
-### Medium Priority  
+### Medium Priority
 2. **Extract remaining BigQuery operations** (if any)
    - Adapt from analytics BigQuery ops
    - Estimated time: 1 hour

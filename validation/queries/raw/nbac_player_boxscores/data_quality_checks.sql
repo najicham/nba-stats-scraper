@@ -49,7 +49,7 @@ recent_data AS (
     flagrant_fouls,
     technical_fouls,
     plus_minus,
-    
+
     -- Enhanced metrics (currently NULL but planned)
     true_shooting_pct,
     effective_fg_pct,
@@ -58,14 +58,14 @@ recent_data AS (
     defensive_rating,
     pace,
     pie,
-    
+
     -- Quarter breakdowns (currently NULL but planned)
     points_q1,
     points_q2,
     points_q3,
     points_q4,
     points_ot
-    
+
   FROM `nba-props-platform.nba_raw.nbac_player_boxscores`
   WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
 ),
@@ -79,9 +79,9 @@ feature_availability AS (
     COUNT(CASE WHEN true_shooting_pct IS NOT NULL THEN 1 END) as populated_records,
     ROUND(100.0 * COUNT(CASE WHEN true_shooting_pct IS NOT NULL THEN 1 END) / NULLIF(COUNT(*), 0), 1) as availability_pct
   FROM recent_data
-  
+
   UNION ALL
-  
+
   SELECT
     'Enhanced Metrics',
     'Effective FG %',
@@ -89,9 +89,9 @@ feature_availability AS (
     COUNT(CASE WHEN effective_fg_pct IS NOT NULL THEN 1 END),
     ROUND(100.0 * COUNT(CASE WHEN effective_fg_pct IS NOT NULL THEN 1 END) / NULLIF(COUNT(*), 0), 1)
   FROM recent_data
-  
+
   UNION ALL
-  
+
   SELECT
     'Enhanced Metrics',
     'Usage Rate',
@@ -99,9 +99,9 @@ feature_availability AS (
     COUNT(CASE WHEN usage_rate IS NOT NULL THEN 1 END),
     ROUND(100.0 * COUNT(CASE WHEN usage_rate IS NOT NULL THEN 1 END) / NULLIF(COUNT(*), 0), 1)
   FROM recent_data
-  
+
   UNION ALL
-  
+
   SELECT
     'Enhanced Metrics',
     'Offensive Rating',
@@ -109,25 +109,25 @@ feature_availability AS (
     COUNT(CASE WHEN offensive_rating IS NOT NULL THEN 1 END),
     ROUND(100.0 * COUNT(CASE WHEN offensive_rating IS NOT NULL THEN 1 END) / NULLIF(COUNT(*), 0), 1)
   FROM recent_data
-  
+
   UNION ALL
-  
+
   SELECT
     'Quarter Breakdown',
     'Points Q1-Q4',
     COUNT(*),
-    COUNT(CASE WHEN points_q1 IS NOT NULL 
-               OR points_q2 IS NOT NULL 
-               OR points_q3 IS NOT NULL 
+    COUNT(CASE WHEN points_q1 IS NOT NULL
+               OR points_q2 IS NOT NULL
+               OR points_q3 IS NOT NULL
                OR points_q4 IS NOT NULL THEN 1 END),
-    ROUND(100.0 * COUNT(CASE WHEN points_q1 IS NOT NULL 
-               OR points_q2 IS NOT NULL 
-               OR points_q3 IS NOT NULL 
+    ROUND(100.0 * COUNT(CASE WHEN points_q1 IS NOT NULL
+               OR points_q2 IS NOT NULL
+               OR points_q3 IS NOT NULL
                OR points_q4 IS NOT NULL THEN 1 END) / NULLIF(COUNT(*), 0), 1)
   FROM recent_data
-  
+
   UNION ALL
-  
+
   SELECT
     'Core Stats',
     'Plus/Minus',
@@ -144,14 +144,14 @@ quality_checks AS (
     'Missing NBA Player IDs' as check_name,
     COUNT(*) as total_records,
     COUNT(CASE WHEN nba_player_id IS NULL THEN 1 END) as issue_count,
-    CASE 
+    CASE
       WHEN COUNT(CASE WHEN nba_player_id IS NULL THEN 1 END) = 0 THEN '✅ All present'
       ELSE CONCAT('⚠️ ', CAST(COUNT(CASE WHEN nba_player_id IS NULL THEN 1 END) AS STRING), ' missing')
     END as status
   FROM recent_data
-  
+
   UNION ALL
-  
+
   SELECT
     'Starter Flag',
     'Starters per game',
@@ -165,47 +165,47 @@ quality_checks AS (
       ELSE '✅ Acceptable range'
     END
   FROM (
-    SELECT 
+    SELECT
       game_id,
       COUNT(CASE WHEN starter = TRUE THEN 1 END) as starters_per_game
     FROM recent_data
     GROUP BY game_id
   )
-  
+
   UNION ALL
-  
+
   SELECT
     'Field Goal %',
     'FG% Calculation Match',
     COUNT(*),
-    COUNT(CASE 
-      WHEN field_goals_attempted > 0 
+    COUNT(CASE
+      WHEN field_goals_attempted > 0
        AND field_goal_percentage IS NOT NULL
        AND ABS(field_goal_percentage - (CAST(field_goals_made AS FLOAT64) / field_goals_attempted)) > 0.01
       THEN 1 END),
     CASE
-      WHEN COUNT(CASE 
-        WHEN field_goals_attempted > 0 
+      WHEN COUNT(CASE
+        WHEN field_goals_attempted > 0
          AND field_goal_percentage IS NOT NULL
          AND ABS(field_goal_percentage - (CAST(field_goals_made AS FLOAT64) / field_goals_attempted)) > 0.01
         THEN 1 END) = 0 THEN '✅ All match'
-      ELSE CONCAT('⚠️ ', CAST(COUNT(CASE 
-        WHEN field_goals_attempted > 0 
+      ELSE CONCAT('⚠️ ', CAST(COUNT(CASE
+        WHEN field_goals_attempted > 0
          AND field_goal_percentage IS NOT NULL
          AND ABS(field_goal_percentage - (CAST(field_goals_made AS FLOAT64) / field_goals_attempted)) > 0.01
         THEN 1 END) AS STRING), ' mismatches')
     END
   FROM recent_data
-  
+
   UNION ALL
-  
+
   SELECT
     'Fouls',
     'Technical/Flagrant Availability',
     COUNT(*),
     COUNT(*) - COUNT(CASE WHEN technical_fouls IS NOT NULL OR flagrant_fouls IS NOT NULL THEN 1 END),
     CASE
-      WHEN COUNT(CASE WHEN technical_fouls IS NOT NULL OR flagrant_fouls IS NOT NULL THEN 1 END) > 0 
+      WHEN COUNT(CASE WHEN technical_fouls IS NOT NULL OR flagrant_fouls IS NOT NULL THEN 1 END) > 0
         THEN '✅ Data available'
       ELSE '⚪ No data (may be normal)'
     END

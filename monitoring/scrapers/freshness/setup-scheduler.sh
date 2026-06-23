@@ -70,7 +70,7 @@ SCHEDULER_EXISTS=$(gcloud scheduler jobs describe "${SCHEDULER_NAME}" \
 
 if [ "${SCHEDULER_EXISTS}" = "yes" ]; then
     echo -e "${YELLOW}Scheduler job already exists. Updating...${NC}"
-    
+
     gcloud scheduler jobs update http "${SCHEDULER_NAME}" \
         --location="${REGION}" \
         --schedule="${SCHEDULE}" \
@@ -81,7 +81,7 @@ if [ "${SCHEDULER_EXISTS}" = "yes" ]; then
         --project="${GCP_PROJECT_ID}"
 else
     echo -e "${GREEN}Creating new scheduler job...${NC}"
-    
+
     gcloud scheduler jobs create http "${SCHEDULER_NAME}" \
         --location="${REGION}" \
         --schedule="${SCHEDULE}" \

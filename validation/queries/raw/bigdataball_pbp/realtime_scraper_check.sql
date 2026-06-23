@@ -47,54 +47,54 @@ SELECT
   DATE_DIFF(CURRENT_DATE(), l.last_game_date, DAY) as days_since_last_game,
   l.last_processed_timestamp,
   l.minutes_since_last_processing,
-  
+
   -- Today's status
   t.scheduled_today,
   t.completed_today,
   l.games_today as games_in_db_today,
-  
-  -- Yesterday's status  
+
+  -- Yesterday's status
   y.scheduled_yesterday,
   l.games_yesterday as games_in_db_yesterday,
-  
+
   -- Health status
   CASE
     -- Season active checks
-    WHEN t.scheduled_today > 0 AND t.completed_today > 0 
-         AND l.games_today < t.completed_today 
+    WHEN t.scheduled_today > 0 AND t.completed_today > 0
+         AND l.games_today < t.completed_today
          AND l.minutes_since_last_processing > 240  -- 4 hours after game
     THEN '🔴 CRITICAL: Games completed but not in DB'
-    
+
     -- Yesterday's games check
     WHEN y.scheduled_yesterday > 0 AND l.games_yesterday < y.scheduled_yesterday
     THEN '⚠️ WARNING: Missing yesterday''s games'
-    
+
     -- Normal processing lag
     WHEN t.completed_today > 0 AND l.minutes_since_last_processing < 240
     THEN '⏳ PROCESSING: Within normal 2-4 hour delay'
-    
+
     -- Off season or off day
     WHEN t.scheduled_today = 0 AND y.scheduled_yesterday = 0
     THEN '⚪ OFF DAY: No games scheduled'
-    
+
     -- Current with data
     WHEN l.games_yesterday = y.scheduled_yesterday OR l.games_today > 0
     THEN '✅ CURRENT: Data up to date'
-    
+
     -- Stale data during season
     WHEN DATE_DIFF(CURRENT_DATE(), l.last_game_date, DAY) > 2
     THEN '⚠️ WARNING: Data is stale'
-    
+
     ELSE '⚪ Unknown status'
   END as status,
-  
+
   -- Context notes
   CASE
     WHEN t.scheduled_today > 0 THEN CONCAT('Waiting for ', CAST(t.scheduled_today AS STRING), ' games today')
     WHEN y.scheduled_yesterday > 0 THEN 'Check yesterday''s games'
     ELSE 'No recent games scheduled'
   END as notes
-  
+
 FROM latest_data l
 CROSS JOIN today_schedule t
 CROSS JOIN yesterday_schedule y;

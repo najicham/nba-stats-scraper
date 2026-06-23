@@ -10,31 +10,31 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.prediction_system
   system_name STRING NOT NULL,                      -- Human-readable name
   system_type STRING NOT NULL,                      -- 'similarity_based', 'ml', 'ensemble'
   version STRING NOT NULL,                          -- Semantic version: "1.2.3"
-  
+
   -- Status (2 fields)
   active BOOLEAN NOT NULL DEFAULT TRUE,             -- Whether system runs in production
   is_champion BOOLEAN NOT NULL DEFAULT FALSE,       -- Designated as primary recommendation system
-  
+
   -- Configuration (stored as JSON) (1 field)
   config JSON NOT NULL,                             -- Full system configuration (weights, thresholds, features)
-  
+
   -- Performance Tracking (4 fields)
   lifetime_predictions INT64 DEFAULT 0,             -- Total predictions made
   lifetime_accuracy NUMERIC(5,3),                   -- Overall accuracy (0-1)
   last_7_days_accuracy NUMERIC(5,3),                -- Recent accuracy
   last_30_days_accuracy NUMERIC(5,3),               -- Monthly accuracy
-  
+
   -- ML Model Reference (2 fields) - Only populated for ML systems
   model_id STRING,                                  -- Links to ml_models table
   model_file_path STRING,                           -- GCS path to model file
-  
+
   -- System Metadata (5 fields) - Added in migration
   system_category STRING,                           -- 'rule_based', 'ml', 'ensemble', 'baseline'
   requires_similarity BOOLEAN DEFAULT FALSE,        -- Needs similarity matching
   requires_ml_model BOOLEAN DEFAULT FALSE,          -- Needs ML model
   min_required_data_points INT64,                   -- Minimum data needed to make prediction
   expected_latency_ms INT64,                        -- Expected prediction time in ms
-  
+
   -- Metadata (5 fields)
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP() NOT NULL,
   last_updated TIMESTAMP,
@@ -52,7 +52,7 @@ OPTIONS(
 
 -- System 1: Moving Average Baseline
 INSERT INTO `nba-props-platform.nba_predictions.prediction_systems`
-(system_id, system_name, system_type, version, active, is_champion, config, 
+(system_id, system_name, system_type, version, active, is_champion, config,
  system_category, requires_similarity, requires_ml_model, min_required_data_points, expected_latency_ms,
  created_at, created_by, notes)
 VALUES (
@@ -175,7 +175,7 @@ ON CONFLICT (system_id) DO NOTHING;
 -- ============================================================================
 
 -- Get all active systems
--- SELECT system_id, system_name, system_category, is_champion 
+-- SELECT system_id, system_name, system_category, is_champion
 -- FROM `nba-props-platform.nba_predictions.prediction_systems`
 -- WHERE active = TRUE
 -- ORDER BY is_champion DESC, system_category;

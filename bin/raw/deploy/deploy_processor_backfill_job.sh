@@ -1,4 +1,4 @@
-#!/bin/bash  
+#!/bin/bash
 # File: bin/raw/deploy/deploy_processor_backfill_job.sh
 # Deploy raw data processor backfill job
 

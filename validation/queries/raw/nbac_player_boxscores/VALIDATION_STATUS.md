@@ -1,6 +1,6 @@
 # NBA.com Player Boxscore Validation Status
 
-**Last Updated:** October 19, 2025  
+**Last Updated:** October 19, 2025
 **Status:** ✅ **OPERATIONAL** - Single date validated, ready for expansion
 
 ---
@@ -81,8 +81,8 @@ WHERE game_date = "2024-10-29"
 ## ⚠️ Validations NOT Yet Run
 
 ### 1. Cross-Validation with BDL ⚪ NOT RUN
-**Status:** No BDL data available for 2024-10-29  
-**Query:** `validation/queries/raw/nbac_player_boxscores/cross_validate_with_bdl.sql`  
+**Status:** No BDL data available for 2024-10-29
+**Query:** `validation/queries/raw/nbac_player_boxscores/cross_validate_with_bdl.sql`
 **Result:** ⚪ No Data Available
 
 **To Run This:**
@@ -95,7 +95,7 @@ WHERE game_date = "2024-10-29"
 ---
 
 ### 2. Season Completeness ⚪ NOT RUN
-**Status:** Only 1 day of data  
+**Status:** Only 1 day of data
 **Query:** `validation/queries/raw/nbac_player_boxscores/season_completeness_check.sql`
 
 **Current State:** Would show 1 game for most teams (incomplete)
@@ -107,13 +107,13 @@ WHERE game_date = "2024-10-29"
 ---
 
 ### 3. Historical Back-to-Back Detection ⚪ NOT RUN
-**Status:** Need multiple consecutive days  
+**Status:** Need multiple consecutive days
 **Requires:** At least 7-14 days of data
 
 **To Test:**
 ```sql
 -- Check for games on consecutive days
-SELECT 
+SELECT
   team_abbr,
   game_date,
   LAG(game_date) OVER (PARTITION BY team_abbr ORDER BY game_date) as prev_game
@@ -124,7 +124,7 @@ WHERE game_date BETWEEN '2024-10-22' AND '2024-11-01'
 ---
 
 ### 4. Weekly Trends ⚪ NOT RUN
-**Query:** `validation/queries/raw/nbac_player_boxscores/weekly_check_last_7_days.sql`  
+**Query:** `validation/queries/raw/nbac_player_boxscores/weekly_check_last_7_days.sql`
 **Status:** Need 7 days of data
 
 **Current:** Would only show 1 day
@@ -132,7 +132,7 @@ WHERE game_date BETWEEN '2024-10-22' AND '2024-11-01'
 ---
 
 ### 5. Missing Games Detection ⚪ NOT RUN
-**Query:** `validation/queries/raw/nbac_player_boxscores/find_missing_games.sql`  
+**Query:** `validation/queries/raw/nbac_player_boxscores/find_missing_games.sql`
 **Status:** Can run, but limited value with 1 day
 
 **To Run:**
@@ -143,7 +143,7 @@ bq query --use_legacy_sql=false < validation/queries/raw/nbac_player_boxscores/f
 ---
 
 ### 6. Playoff Completeness ⚪ NOT APPLICABLE
-**Query:** `validation/queries/raw/nbac_player_boxscores/verify_playoff_completeness.sql`  
+**Query:** `validation/queries/raw/nbac_player_boxscores/verify_playoff_completeness.sql`
 **Status:** No playoff data (regular season only)
 
 **Will be needed:** April-June 2025 (playoffs)
@@ -151,7 +151,7 @@ bq query --use_legacy_sql=false < validation/queries/raw/nbac_player_boxscores/f
 ---
 
 ### 7. Data Quality Checks (Advanced) ⚪ NOT RUN
-**Query:** `validation/queries/raw/nbac_player_boxscores/data_quality_checks.sql`  
+**Query:** `validation/queries/raw/nbac_player_boxscores/data_quality_checks.sql`
 **Status:** Can run, but some features not available
 
 **Current Limitations:**

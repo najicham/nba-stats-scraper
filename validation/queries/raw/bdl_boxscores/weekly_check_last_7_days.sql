@@ -61,8 +61,8 @@ SELECT
   COALESCE(b.min_players_per_game, 0) as min_players_per_game,
   CASE
     WHEN COALESCE(s.scheduled_games, 0) = 0 THEN '⚪ No games'
-    WHEN COALESCE(b.games_with_data, 0) = COALESCE(s.scheduled_games, 0) 
-     AND COALESCE(b.min_players_per_game, 0) >= 20 
+    WHEN COALESCE(b.games_with_data, 0) = COALESCE(s.scheduled_games, 0)
+     AND COALESCE(b.min_players_per_game, 0) >= 20
     THEN '✅ Complete'
     WHEN COALESCE(b.games_with_data, 0) = 0 THEN '❌ Missing all'
     WHEN COALESCE(b.min_players_per_game, 0) < 20 THEN '⚠️ Low player count'

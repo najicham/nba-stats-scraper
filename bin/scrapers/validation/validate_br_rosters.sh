@@ -31,7 +31,7 @@ show_usage() {
     echo ""
     echo "Commands:"
     echo "  quick          - Quick validation (2 sample teams, current season)"
-    echo "  sample         - Sample validation (5 teams, current season)"  
+    echo "  sample         - Sample validation (5 teams, current season)"
     echo "  full           - Full validation (all 30 teams, current season)"
     echo "  all-seasons    - All seasons, sample teams"
     echo "  comprehensive  - All seasons, all teams (complete validation)"
@@ -70,7 +70,7 @@ check_validator() {
 get_current_season() {
     local current_year=$(date +%Y)
     local current_month=$(date +%m)
-    
+
     # NBA season spans two calendar years, season name is the ending year
     # Season starts in October, so if we're before October, use current year
     # If October or later, use next year
@@ -126,12 +126,12 @@ cmd_comprehensive() {
 main() {
     print_header
     check_validator
-    
+
     if [[ $# -eq 0 ]]; then
         show_usage
         exit 0
     fi
-    
+
     case "$1" in
         "quick")
             shift
@@ -178,14 +178,14 @@ check_dependencies() {
         echo -e "${RED}❌ Error: python3 not found${NC}"
         exit 1
     fi
-    
+
     # Check gcloud (used by Python validator)
     if ! command -v gcloud &> /dev/null; then
         echo -e "${RED}❌ Error: gcloud CLI not found${NC}"
         echo -e "${YELLOW}Install from: https://cloud.google.com/sdk/docs/install${NC}"
         exit 1
     fi
-    
+
     # Check jq (used by Python validator for analysis)
     if ! command -v jq &> /dev/null; then
         echo -e "${YELLOW}⚠️  Warning: jq not found (required for --show-jq and --jq-only modes)${NC}"

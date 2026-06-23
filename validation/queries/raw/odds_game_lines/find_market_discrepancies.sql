@@ -15,7 +15,7 @@
 -- ============================================================================
 
 WITH game_markets AS (
-  SELECT 
+  SELECT
     game_date,
     game_id,
     home_team,
@@ -27,7 +27,7 @@ WITH game_markets AS (
   WHERE game_date BETWEEN '2021-10-19' AND '2022-06-20'  -- UPDATE: Full season including playoffs
   GROUP BY game_date, game_id, home_team, away_team
 )
-SELECT 
+SELECT
   game_date,
   home_team,
   away_team,
@@ -35,7 +35,7 @@ SELECT
   bookmakers,
   has_spreads,
   has_totals,
-  CASE 
+  CASE
     WHEN has_spreads = 1 AND has_totals = 0 THEN 'Missing Totals'
     WHEN has_spreads = 0 AND has_totals = 1 THEN 'Missing Spreads'
   END as issue

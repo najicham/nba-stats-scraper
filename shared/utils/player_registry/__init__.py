@@ -19,33 +19,33 @@ Exceptions:
 
 Example:
     from shared.utils.player_registry import RegistryReader, PlayerNotFoundError
-    
+
     # Initialize with caching
     registry = RegistryReader(
         source_name='player_game_summary',
         cache_ttl_seconds=300
     )
-    
+
     # Set context for unresolved tracking
     registry.set_default_context(season='2024-25')
-    
+
     # Get universal ID (strict mode)
     try:
         uid = registry.get_universal_id('lebronjames')
     except PlayerNotFoundError:
         # Handle missing player
         pass
-    
+
     # Get universal ID (lenient mode)
     uid = registry.get_universal_id('unknownplayer', required=False)
     if uid is None:
         # Player not found, but no exception raised
         pass
-    
+
     # Batch operations
     player_list = ['lebronjames', 'stephencurry', 'kevindurant']
     uids = registry.get_universal_ids_batch(player_list)
-    
+
     # Flush unresolved players at end of run
     registry.flush_unresolved_players()
 """

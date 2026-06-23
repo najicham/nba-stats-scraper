@@ -70,7 +70,7 @@ gcloud workflows executions describe <EXECUTION_ID> \
 - Execution times are reasonable (< 2 min usually)
 
 ⚠️ **Needs Attention:**
-- Any workflow shows ✗ (red) 
+- Any workflow shows ✗ (red)
 - Multiple errors from the same scraper
 - Unusually long execution times (> 5 min)
 
@@ -278,13 +278,13 @@ gcloud workflows executions describe <EXECUTION_ID> \
 
 ```bash
 # View workflow logs
-gcloud logging read "resource.type=workflows.googleapis.com/Workflow 
+gcloud logging read "resource.type=workflows.googleapis.com/Workflow
   AND resource.labels.workflow_id=morning-operations" \
   --limit=20
 
 # View scraper logs
-gcloud logging read "resource.type=cloud_run_revision 
-  AND resource.labels.service_name=nba-scrapers 
+gcloud logging read "resource.type=cloud_run_revision
+  AND resource.labels.service_name=nba-scrapers
   AND severity>=WARNING" \
   --limit=50
 ```

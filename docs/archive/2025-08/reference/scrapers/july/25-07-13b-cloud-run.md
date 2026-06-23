@@ -32,7 +32,7 @@ This guide documents our NBA Analytics scraper service running on Google Cloud R
 
 ### **Service vs Instance vs Revision**
 
-#### **Service** 
+#### **Service**
 - **What**: The top-level Cloud Run resource
 - **Think of it as**: Your application's "permanent address"
 - **Example**: `nba-scrapers` service lives at a stable URL
@@ -45,7 +45,7 @@ This guide documents our NBA Analytics scraper service running on Google Cloud R
 - **Naming**: Automatically named (e.g., `nba-scrapers-00042-abc`)
 - **Traffic**: Can split traffic between revisions (blue/green deployments)
 
-#### **Instance** 
+#### **Instance**
 - **What**: A running container serving requests
 - **Think of it as**: The actual "worker" handling requests
 - **Lifecycle**: Created on-demand when requests come in
@@ -96,7 +96,7 @@ SENTRY_DSN=***
 
 ### **Available Scrapers**
 1. `oddsa_events_his` - Historical odds events
-2. `oddsa_events` - Current odds events  
+2. `oddsa_events` - Current odds events
 3. `oddsa_player_props` - Player proposition bets
 4. `bdl_players` - Ball Don't Lie players
 5. `bdl_games` - Ball Don't Lie games
@@ -139,14 +139,14 @@ class ScraperBase:
     def __init__(self):
         self.metrics_client = monitoring_v3.MetricServiceClient()
         self.start_time = time.time()
-    
+
     def record_scraper_metrics(self, scraper_name, success, row_count):
         """Record custom metrics for scraper execution"""
         project_name = f"projects/{os.getenv('GCP_PROJECT')}"
-        
+
         # Record execution time
         execution_time = time.time() - self.start_time
-        
+
         # Record success/failure
         # Record data volume
         # etc.
@@ -208,14 +208,14 @@ def health_check():
             "available_scrapers": len(SCRAPER_REGISTRY)
         }
     }
-    
+
     # Return 503 if any critical check fails
     if not all([
         health_status["checks"]["gcs_connectivity"],
         health_status["checks"]["api_keys"]
     ]):
         return jsonify(health_status), 503
-    
+
     return jsonify(health_status), 200
 
 def check_gcs_connection():
@@ -291,7 +291,7 @@ Condition:
   - Notification: Slack + Email
 ```
 
-#### **Memory/CPU Alerts**  
+#### **Memory/CPU Alerts**
 ```yaml
 # High Memory Usage
 Display Name: "NBA Scrapers - High Memory Usage"
@@ -306,7 +306,7 @@ Condition:
 def send_scraper_alert(scraper_name, error_message):
     """Send alert when scraper fails"""
     slack_webhook = os.getenv('SLACK_WEBHOOK_URL')
-    
+
     message = {
         "text": f"🚨 Scraper Alert: {scraper_name}",
         "attachments": [{
@@ -318,7 +318,7 @@ def send_scraper_alert(scraper_name, error_message):
             ]
         }]
     }
-    
+
     requests.post(slack_webhook, json=message)
 ```
 
@@ -327,7 +327,7 @@ def send_scraper_alert(scraper_name, error_message):
 #### **Automatic Restarts**
 Cloud Run automatically handles:
 - ✅ **Container crashes**: Automatically restarts failed instances
-- ✅ **Memory leaks**: Kills and restarts high-memory instances  
+- ✅ **Memory leaks**: Kills and restarts high-memory instances
 - ✅ **Hanging requests**: Times out after configured duration
 - ✅ **Load balancing**: Routes around unhealthy instances
 
@@ -336,19 +336,19 @@ Cloud Run automatically handles:
 def handle_scraper_failure(scraper_name, error, retry_count=0):
     """Handle scraper failures with intelligent retry"""
     max_retries = 3
-    
+
     if retry_count < max_retries:
         # Exponential backoff
         sleep_time = 2 ** retry_count
         time.sleep(sleep_time)
-        
+
         logger.info(
             "retrying_scraper",
             scraper=scraper_name,
             retry_count=retry_count,
             sleep_time=sleep_time
         )
-        
+
         return retry_scraper(scraper_name, retry_count + 1)
     else:
         # Max retries exceeded - alert and graceful degradation
@@ -442,7 +442,7 @@ gcloud run services update-traffic nba-scrapers \
 - [ ] Set up basic Cloud Monitoring alerts
 - [ ] Add Slack notifications for failures
 
-### **Phase 2: Short-term (Next Month)**  
+### **Phase 2: Short-term (Next Month)**
 - [ ] Implement Secret Manager
 - [ ] Add custom metrics for scrapers
 - [ ] Set up comprehensive alerting
@@ -474,7 +474,7 @@ Business Metrics:
 
 Operational:
 - Container startup time
-- Memory/CPU utilization  
+- Memory/CPU utilization
 - Failed deployment rate
 - Alert notification response time
 ```
@@ -499,7 +499,7 @@ jsonPayload.message="scraper completed successfully"
 - [ ] Automatic retry logic
 - [ ] Circuit breakers for external dependencies
 
-### **Observability**  
+### **Observability**
 - [x] Basic Cloud Run metrics
 - [x] Application logs
 - [ ] Structured logging

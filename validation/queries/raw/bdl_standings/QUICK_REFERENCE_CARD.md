@@ -7,8 +7,8 @@ cd ~/code/nba-stats-scraper
 ./scripts/validate-bdl-standings daily
 ```
 
-**✅ Healthy:** Status = "✅ Complete", 30 teams, 15 East/15 West  
-**🔴 Alert:** Status ≠ Complete → Check logs, re-run scraper  
+**✅ Healthy:** Status = "✅ Complete", 30 teams, 15 East/15 West
+**🔴 Alert:** Status ≠ Complete → Check logs, re-run scraper
 
 ---
 
@@ -20,8 +20,8 @@ cd ~/code/nba-stats-scraper
 ./scripts/validate-bdl-standings quality     # Data quality check
 ```
 
-**✅ Healthy:** 7/7 days, 100% coverage, >95% quality  
-**⚠️ Warning:** Missing days → Backfill needed  
+**✅ Healthy:** 7/7 days, 100% coverage, >95% quality
+**⚠️ Warning:** Missing days → Backfill needed
 
 ---
 
@@ -31,8 +31,8 @@ cd ~/code/nba-stats-scraper
 ./scripts/validate-bdl-standings coverage    # Season coverage
 ```
 
-**✅ Healthy:** >95% monthly coverage  
-**⚠️ Warning:** <90% coverage → Run `missing` to identify gaps  
+**✅ Healthy:** >95% monthly coverage
+**⚠️ Warning:** <90% coverage → Run `missing` to identify gaps
 
 ---
 

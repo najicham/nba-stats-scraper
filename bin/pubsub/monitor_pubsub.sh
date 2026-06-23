@@ -34,7 +34,7 @@ NC='\033[0m' # No Color
 print_status() {
   local status=$1
   local message=$2
-  
+
   case $status in
     "ok")
       echo -e "${GREEN}✅${NC} $message"
@@ -58,11 +58,11 @@ monitor_pubsub() {
   echo "=============================================="
   echo "Time: $(date '+%Y-%m-%d %H:%M:%S')"
   echo ""
-  
+
   # Phase 1: Topic Health
   echo "📋 Phase 1: Topic Health"
   echo "------------------------"
-  
+
   if gcloud pubsub topics describe $TOPIC --project=$PROJECT_ID &>/dev/null; then
     print_status "ok" "Topic exists: $TOPIC"
   else
@@ -70,20 +70,20 @@ monitor_pubsub() {
     echo ""
     return 1
   fi
-  
+
   echo ""
-  
+
   # Phase 2: Subscription Health
   echo "📋 Phase 2: Subscription Health"
   echo "--------------------------------"
-  
+
   if gcloud pubsub subscriptions describe $SUBSCRIPTION --project=$PROJECT_ID &>/dev/null; then
     print_status "ok" "Subscription exists: $SUBSCRIPTION"
-    
+
     # Check backlog
     BACKLOG=$(gcloud pubsub subscriptions describe $SUBSCRIPTION \
       --format='value(numUndeliveredMessages)' --project=$PROJECT_ID 2>/dev/null || echo "unknown")
-    
+
     if [ "$BACKLOG" = "unknown" ]; then
       print_status "error" "Unable to check backlog"
     elif [ "$BACKLOG" -eq 0 ]; then
@@ -93,11 +93,11 @@ monitor_pubsub() {
     else
       print_status "error" "Backlog: $BACKLOG messages (processing lag!)"
     fi
-    
+
     # Check oldest unacked message age
     OLDEST_AGE=$(gcloud pubsub subscriptions describe $SUBSCRIPTION \
       --format='value(oldestUnackedMessageAge)' --project=$PROJECT_ID 2>/dev/null || echo "0s")
-    
+
     if [ "$OLDEST_AGE" != "0s" ] && [ "$OLDEST_AGE" != "" ]; then
       # Convert to seconds for comparison
       AGE_SECONDS=$(echo "$OLDEST_AGE" | sed 's/s//')
@@ -109,21 +109,21 @@ monitor_pubsub() {
         print_status "ok" "Oldest unacked message: $OLDEST_AGE"
       fi
     fi
-    
+
   else
     print_status "error" "Subscription not found: $SUBSCRIPTION"
   fi
-  
+
   echo ""
-  
+
   # Phase 3: Dead Letter Queue
   echo "📋 Phase 3: Dead Letter Queue"
   echo "------------------------------"
-  
+
   if gcloud pubsub subscriptions describe $DLQ_SUBSCRIPTION --project=$PROJECT_ID &>/dev/null; then
     DLQ_COUNT=$(gcloud pubsub subscriptions describe $DLQ_SUBSCRIPTION \
       --format='value(numUndeliveredMessages)' --project=$PROJECT_ID 2>/dev/null || echo "unknown")
-    
+
     if [ "$DLQ_COUNT" = "unknown" ]; then
       print_status "error" "Unable to check DLQ"
     elif [ "$DLQ_COUNT" -eq 0 ]; then
@@ -137,18 +137,18 @@ monitor_pubsub() {
   else
     print_status "warning" "DLQ subscription not found"
   fi
-  
+
   echo ""
-  
+
   # Phase 4: Cloud Run Service Health
   echo "📋 Phase 4: Cloud Run Services"
   echo "-------------------------------"
-  
+
   # Check scraper service
   SCRAPER_URL=$(gcloud run services describe nba-scrapers \
     --region=$REGION \
     --format="value(status.url)" 2>/dev/null || echo "")
-  
+
   if [ -n "$SCRAPER_URL" ]; then
     SCRAPER_HEALTH=$(curl -s "$SCRAPER_URL/health" 2>/dev/null | jq -r '.status' 2>/dev/null || echo "unknown")
     if [ "$SCRAPER_HEALTH" = "healthy" ]; then
@@ -159,12 +159,12 @@ monitor_pubsub() {
   else
     print_status "error" "Scraper service: not found"
   fi
-  
+
   # Check processor service
   PROCESSOR_URL=$(gcloud run services describe nba-processors \
     --region=$REGION \
     --format="value(status.url)" 2>/dev/null || echo "")
-  
+
   if [ -n "$PROCESSOR_URL" ]; then
     TOKEN=$(gcloud auth print-identity-token 2>/dev/null)
     PROCESSOR_HEALTH=$(curl -s -H "Authorization: Bearer $TOKEN" \
@@ -177,73 +177,73 @@ monitor_pubsub() {
   else
     print_status "error" "Processor service: not found"
   fi
-  
+
   echo ""
-  
+
   # Phase 5: Recent Activity
   echo "📋 Phase 5: Recent Activity (Last Hour)"
   echo "----------------------------------------"
-  
+
   # Count recent scraper executions
   RECENT_EXECUTIONS=$(bq query --use_legacy_sql=false --format=csv \
-    "SELECT COUNT(*) as count 
-     FROM \`nba-props-platform.nba_orchestration.scraper_execution_log\` 
+    "SELECT COUNT(*) as count
+     FROM \`nba-props-platform.nba_orchestration.scraper_execution_log\`
      WHERE triggered_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 1 HOUR)" \
     2>/dev/null | tail -1)
-  
+
   if [ -n "$RECENT_EXECUTIONS" ] && [ "$RECENT_EXECUTIONS" != "count" ]; then
     print_status "info" "Scraper executions (last hour): $RECENT_EXECUTIONS"
   fi
-  
+
   # Count successful vs failed
   SUCCESS_COUNT=$(bq query --use_legacy_sql=false --format=csv \
-    "SELECT COUNT(*) as count 
-     FROM \`nba-props-platform.nba_orchestration.scraper_execution_log\` 
+    "SELECT COUNT(*) as count
+     FROM \`nba-props-platform.nba_orchestration.scraper_execution_log\`
      WHERE triggered_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 1 HOUR)
      AND status = 'success'" \
     2>/dev/null | tail -1)
-  
+
   FAILED_COUNT=$(bq query --use_legacy_sql=false --format=csv \
-    "SELECT COUNT(*) as count 
-     FROM \`nba-props-platform.nba_orchestration.scraper_execution_log\` 
+    "SELECT COUNT(*) as count
+     FROM \`nba-props-platform.nba_orchestration.scraper_execution_log\`
      WHERE triggered_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 1 HOUR)
      AND status = 'failed'" \
     2>/dev/null | tail -1)
-  
+
   if [ -n "$SUCCESS_COUNT" ] && [ "$SUCCESS_COUNT" != "count" ]; then
     print_status "info" "  ✓ Successful: $SUCCESS_COUNT"
   fi
-  
+
   if [ -n "$FAILED_COUNT" ] && [ "$FAILED_COUNT" != "count" ] && [ "$FAILED_COUNT" -gt 0 ]; then
     print_status "warning" "  ✗ Failed: $FAILED_COUNT"
   fi
-  
+
   echo ""
-  
+
   # Phase 6: Summary & Recommendations
   echo "📋 Summary"
   echo "----------"
-  
+
   # Overall health assessment
   HEALTH_OK=true
-  
+
   if [ "$BACKLOG" != "unknown" ] && [ "$BACKLOG" -gt 10 ]; then
     HEALTH_OK=false
     print_status "warning" "High backlog detected - processors may be slow"
   fi
-  
+
   if [ "$DLQ_COUNT" != "unknown" ] && [ "$DLQ_COUNT" -gt 0 ]; then
     HEALTH_OK=false
     print_status "error" "Failed messages in DLQ - investigate processor errors"
   fi
-  
+
   if $HEALTH_OK; then
     print_status "ok" "All systems operational"
   fi
-  
+
   echo ""
   echo "Last updated: $(date '+%H:%M:%S')"
-  
+
   if [ "$1" = "--watch" ]; then
     echo ""
     echo "Press Ctrl+C to stop watching..."

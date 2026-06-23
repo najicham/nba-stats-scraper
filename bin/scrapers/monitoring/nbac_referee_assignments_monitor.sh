@@ -17,7 +17,7 @@ CACHE_TTL=300     # 5 minutes cache
 
 # Expected totals based on 4 seasons (approximate dates)
 EXPECTED_TOTAL_DATES=1400  # ~350 dates per season across 4 seasons
-FALLBACK_TOTAL_DATES=1400  
+FALLBACK_TOTAL_DATES=1400
 
 # GCS bucket paths
 GCS_DATA_PATH="gs://nba-scraped-data/nba-com/referee-assignments"
@@ -51,20 +51,20 @@ gcs_operation_safe() {
     local cache_key="$2"
     local cache_file="$CACHE_DIR/${cache_key}.cache"
     local cache_time_file="$CACHE_DIR/${cache_key}.time"
-    
+
     # Check cache validity
     if [[ -f "$cache_file" && -f "$cache_time_file" ]]; then
         local cache_time=$(cat "$cache_time_file" 2>/dev/null || echo "0")
         local current_time=$(date +%s)
         local age=$((current_time - cache_time))
-        
+
         if [[ $age -lt $CACHE_TTL ]]; then
             # Use cached result
             cat "$cache_file"
             return 0
         fi
     fi
-    
+
     # Execute operation with timeout
     local result=""
     if result=$(timeout $TIMEOUT_LONG bash -c "$operation" 2>/dev/null); then
@@ -90,19 +90,19 @@ count_json_files_fast() {
     local cache_key="json_count"
     local cache_file="$CACHE_DIR/${cache_key}.cache"
     local cache_time_file="$CACHE_DIR/${cache_key}.time"
-    
+
     # Use 60-second cache for JSON count
     if [[ -f "$cache_file" && -f "$cache_time_file" ]]; then
         local cache_time=$(cat "$cache_time_file" 2>/dev/null || echo "0")
         local current_time=$(date +%s)
         local age=$((current_time - cache_time))
-        
+
         if [[ $age -lt 60 ]]; then
             cat "$cache_file"
             return 0
         fi
     fi
-    
+
     # Count JSON files with timeout
     local count=0
     if count=$(timeout $TIMEOUT_LONG gsutil ls -r "$GCS_DATA_PATH/" 2>/dev/null | grep -c "\.json$" 2>/dev/null); then
@@ -120,22 +120,22 @@ count_json_files_fast() {
 # Parse ISO timestamp for elapsed time calculations
 parse_iso_timestamp() {
     local iso_time="$1"
-    
+
     if [[ -n "$iso_time" ]]; then
         # Clean up the timestamp
         local clean_time=$(echo "$iso_time" | sed 's/\.[0-9]*Z$/Z/')
-        
+
         # Try to parse with date command
         local epoch=""
-        
+
         # Try GNU date (Linux)
         epoch=$(date -d "$clean_time" +%s 2>/dev/null || echo "")
-        
+
         # If that failed, try BSD date (macOS)
         if [[ -z "$epoch" ]]; then
             epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$clean_time" "+%s" 2>/dev/null || echo "")
         fi
-        
+
         if [[ -n "$epoch" && "$epoch" -gt 1700000000 ]]; then
             echo "$epoch"
         fi
@@ -146,7 +146,7 @@ calculate_elapsed_time() {
     local start_time="$1"
     local start_epoch=$(parse_iso_timestamp "$start_time")
     local current_epoch=$(date +%s)
-    
+
     if [[ -n "$start_epoch" && "$start_epoch" -gt 0 ]]; then
         local duration_seconds=$((current_epoch - start_epoch))
         local duration_hours=$((duration_seconds / 3600))
@@ -158,7 +158,7 @@ calculate_elapsed_time() {
 # Find ALL running executions (not just one)
 find_all_running_executions() {
     local running_execs=()
-    
+
     # Get recent executions with their status
     local executions=""
     if executions=$(timeout $TIMEOUT_SHORT gcloud run jobs executions list \
@@ -166,7 +166,7 @@ find_all_running_executions() {
         --region=$REGION \
         --format="value(metadata.name,status.conditions[0].type,status.conditions[0].status,status.startTime)" \
         --limit=10 2>/dev/null); then
-        
+
         while IFS=$'\t' read -r exec_name type status start_time; do
             if [[ -n "$exec_name" ]]; then
                 # Check for running jobs
@@ -175,14 +175,14 @@ find_all_running_executions() {
                    [[ "$type" == "Started" ]] || \
                    [[ "$type" == "Pending" ]] || \
                    [[ ("$type" == "Completed" && "$status" == "Unknown") ]]; then
-                    
+
                     # Check if stuck (>8 hours for referee assignments)
                     if [[ -n "$start_time" ]]; then
                         local start_epoch=$(parse_iso_timestamp "$start_time")
                         local current_epoch=$(date +%s)
                         if [[ -n "$start_epoch" ]]; then
                             local elapsed_hours=$(( (current_epoch - start_epoch) / 3600 ))
-                            
+
                             if [[ $elapsed_hours -gt 8 ]]; then
                                 running_execs+=("STUCK:$exec_name:$elapsed_hours")
                             else
@@ -198,7 +198,7 @@ find_all_running_executions() {
             fi
         done <<< "$executions"
     fi
-    
+
     # Return array as newline-separated string
     printf '%s\n' "${running_execs[@]}"
 }
@@ -207,25 +207,25 @@ find_all_running_executions() {
 show_concurrent_status() {
     echo -e "${PURPLE}🎯 CONCURRENT JOBS STATUS:${NC}"
     echo ""
-    
+
     # Get all running executions
     local running_execs=$(find_all_running_executions)
-    
+
     if [[ -z "$running_execs" ]] || [[ "$running_execs" == "" ]]; then
         echo -e "${YELLOW}  No running jobs detected${NC}"
         echo -e "${BLUE}  Hint: Jobs might have completed or not started yet${NC}"
         return
     fi
-    
+
     local total_downloads=0
     local job_count=0
-    
+
     # Process each running job
     while IFS= read -r exec; do
         [[ -z "$exec" ]] && continue
-        
+
         job_count=$((job_count + 1))
-        
+
         # Check if stuck
         if [[ "$exec" =~ ^STUCK: ]]; then
             local exec_name=$(echo "$exec" | cut -d: -f2)
@@ -235,17 +235,17 @@ show_concurrent_status() {
             echo -e "  ${CYAN}gcloud run jobs executions cancel $exec_name --region=$REGION${NC}"
         else
             echo -e "${GREEN}📦 $exec:${NC}"
-            
+
             # Get execution details
             local exec_info=$(gcloud run jobs executions describe "$exec" \
                 --region=$REGION \
                 --format="value(status.startTime)" 2>/dev/null)
-            
+
             if [[ -n "$exec_info" ]]; then
                 local elapsed=$(calculate_elapsed_time "$exec_info")
                 echo -e "  Runtime: ${CYAN}$elapsed${NC}"
             fi
-            
+
             # Get last download
             local last_log=$(gcloud logging read \
                 "resource.type=\"cloud_run_job\" AND \
@@ -255,7 +255,7 @@ show_concurrent_status() {
                 --limit=1 \
                 --order="desc" \
                 --freshness=10m 2>/dev/null | head -1)
-            
+
             if [[ -n "$last_log" ]]; then
                 # Extract date info
                 local date_info=$(echo "$last_log" | grep -o "Downloaded [^:]*" | head -1)
@@ -263,7 +263,7 @@ show_concurrent_status() {
             else
                 echo -e "  Last: ${YELLOW}No recent downloads${NC}"
             fi
-            
+
             # Count downloads for this execution (quick estimate)
             local download_count=$(gcloud logging read \
                 "resource.type=\"cloud_run_job\" AND \
@@ -271,13 +271,13 @@ show_concurrent_status() {
                 textPayload:\"Downloaded\"" \
                 --format="value(textPayload)" \
                 --limit=1000 2>/dev/null | wc -l)
-            
+
             total_downloads=$((total_downloads + download_count))
             echo -e "  Downloads: ${GREEN}$download_count${NC} dates"
         fi
         echo ""
     done <<< "$running_execs"
-    
+
     # Summary
     if [[ $job_count -gt 0 ]]; then
         echo -e "${BLUE}📊 SUMMARY:${NC}"
@@ -292,7 +292,7 @@ cmd_quick_optimized() {
     local running_execs=$(find_all_running_executions)
     local running_count=0
     local stuck_count=0
-    
+
     # Count running and stuck jobs
     while IFS= read -r exec; do
         [[ -z "$exec" ]] && continue
@@ -302,7 +302,7 @@ cmd_quick_optimized() {
             running_count=$((running_count + 1))
         fi
     done <<< "$running_execs"
-    
+
     # Status line
     if [[ $stuck_count -gt 0 ]]; then
         echo "Status: ${RED}$stuck_count STUCK${NC}, $running_count running"
@@ -313,13 +313,13 @@ cmd_quick_optimized() {
     else
         echo "Status: NO ACTIVE JOBS"
     fi
-    
+
     # JSON count and progress
     local json_count=$(count_json_files_fast)
     if [[ "$json_count" -gt 0 ]]; then
         local pct=$((json_count * 100 / EXPECTED_TOTAL_DATES))
         echo "Progress: $json_count / $EXPECTED_TOTAL_DATES dates ($pct%)"
-        
+
         # Estimate rate if jobs are running
         if [[ $running_count -gt 0 ]]; then
             # Get earliest start time
@@ -329,7 +329,7 @@ cmd_quick_optimized() {
                 --filter="status.conditions[0].type=Unknown" \
                 --format="value(status.startTime)" \
                 --limit=10 2>/dev/null | tail -1)
-            
+
             if [[ -n "$earliest_start" ]]; then
                 local start_epoch=$(parse_iso_timestamp "$earliest_start")
                 local current_epoch=$(date +%s)
@@ -348,7 +348,7 @@ cmd_quick_optimized() {
     else
         echo "Progress: Calculating..."
     fi
-    
+
     # Show latest activity
     local latest=$(gcloud logging read \
         "resource.type=cloud_run_job AND textPayload:\"Downloaded\"" \
@@ -356,7 +356,7 @@ cmd_quick_optimized() {
         --format="value(textPayload)" \
         --project=$PROJECT \
         --freshness=10m 2>/dev/null | head -1)
-    
+
     if [[ -n "$latest" ]]; then
         local date_info=$(echo "$latest" | grep -o "Downloaded [^:]*" | head -1)
         echo "Latest: $date_info"
@@ -376,7 +376,7 @@ cmd_status() {
 # Show execution status table
 show_execution_status() {
     echo -e "${BLUE}🏃 Recent Executions:${NC}"
-    
+
     # Get execution data
     local executions_data=""
     if executions_data=$(timeout $TIMEOUT_LONG gcloud run jobs executions list \
@@ -384,11 +384,11 @@ show_execution_status() {
         --region=$REGION \
         --limit=8 \
         --format="value(metadata.name,status.conditions[0].type,status.startTime,status.completionTime)" 2>/dev/null); then
-        
+
         # Custom table header
         printf "%-36s %-12s %-20s %s\n" "EXECUTION" "STATUS" "STARTED" "ELAPSED/DURATION"
         printf "%-36s %-12s %-20s %s\n" "$(printf '%*s' 36 '' | tr ' ' '-')" "$(printf '%*s' 12 '' | tr ' ' '-')" "$(printf '%*s' 20 '' | tr ' ' '-')" "$(printf '%*s' 15 '' | tr ' ' '-')"
-        
+
         # Process each execution
         while IFS=$'\t' read -r exec_name status start_time completed; do
             if [[ -n "$exec_name" ]]; then
@@ -411,13 +411,13 @@ show_execution_status() {
                         [[ -n "$time_display" ]] && time_display="$time_display (running)"
                     fi
                 fi
-                
+
                 # Format start time for display
                 local start_display="--"
                 if [[ -n "$start_time" ]]; then
                     start_display=$(echo "$start_time" | sed 's/T/ /' | sed 's/\.[0-9]*Z$//' | cut -d' ' -f2)
                 fi
-                
+
                 # Color code status
                 local status_colored="$status"
                 case "$status" in
@@ -426,7 +426,7 @@ show_execution_status() {
                     "Failed") status_colored="${RED}$status${NC}" ;;
                     *) status_colored="${YELLOW}$status${NC}" ;;
                 esac
-                
+
                 printf "%-36s %-12b %-20s %s\n" "$exec_name" "$status_colored" "$start_display" "$time_display"
             fi
         done <<< "$executions_data"
@@ -438,7 +438,7 @@ show_execution_status() {
 # Check activity health
 check_activity_health() {
     echo -e "${BLUE}🏥 Activity Health:${NC}"
-    
+
     # Get recent logs
     local recent_logs=""
     if recent_logs=$(gcloud logging read \
@@ -447,19 +447,19 @@ check_activity_health() {
         --format="value(textPayload)" \
         --project=$PROJECT \
         --freshness=30m 2>/dev/null); then
-        
+
         if [[ -n "$recent_logs" ]]; then
             local recent_downloads=$(echo "$recent_logs" | grep -c "✅ Downloaded" || echo "0")
             local no_games=$(echo "$recent_logs" | grep -c "📅 No games" || echo "0")
             local recent_errors=$(echo "$recent_logs" | grep -c "❌" || echo "0")
             local recent_timeouts=$(echo "$recent_logs" | grep -c "Timeout" || echo "0")
-            
+
             echo -e "  Last 30 minutes:"
             echo -e "    Downloads: ${GREEN}$recent_downloads${NC}"
             echo -e "    No games: ${CYAN}$no_games${NC}"
             echo -e "    Errors: ${RED}$recent_errors${NC}"
             echo -e "    Timeouts: ${YELLOW}$recent_timeouts${NC}"
-            
+
             local total_activity=$((recent_downloads + no_games))
             if [[ $total_activity -gt 0 ]]; then
                 echo -e "  Status: ${GREEN}✅ Healthy - Active processing${NC}"
@@ -479,16 +479,16 @@ check_activity_health() {
 # Progress command
 cmd_progress() {
     print_header
-    
+
     echo -e "${BLUE}📊 BACKFILL PROGRESS:${NC}"
     echo ""
-    
+
     # Get JSON count
     local json_count=$(count_json_files_fast)
-    
+
     # Progress bar
     local json_pct=$((json_count * 100 / EXPECTED_TOTAL_DATES))
-    
+
     # JSON Progress
     echo -e "${PURPLE}📄 Referee Assignments:${NC}"
     printf "  Progress: ["
@@ -498,7 +498,7 @@ cmd_progress() {
     for ((i=filled; i<bar_width; i++)); do printf " "; done
     printf "] ${GREEN}%d%%${NC}\n" "$json_pct"
     echo -e "  Count: ${GREEN}$json_count${NC} / $EXPECTED_TOTAL_DATES dates"
-    
+
     # Year breakdown
     echo ""
     echo -e "${BLUE}📅 BY YEAR:${NC}"
@@ -511,7 +511,7 @@ cmd_progress() {
 # Watch command
 cmd_watch() {
     echo -e "${GREEN}Starting continuous monitoring (Ctrl+C to stop)...${NC}"
-    
+
     while true; do
         clear
         cmd_quick_optimized
@@ -529,7 +529,7 @@ cmd_logs() {
     local count=${1:-20}
     print_header
     echo -e "${BLUE}📄 Recent Logs (last $count):${NC}"
-    
+
     gcloud logging read \
         "resource.type=cloud_run_job AND resource.labels.job_name=\"$JOB_NAME\"" \
         --limit=$count \
@@ -545,21 +545,21 @@ cmd_logs() {
 cmd_cancel_stuck() {
     print_header
     echo -e "${BLUE}🔍 Checking for stuck jobs...${NC}"
-    
+
     local running_execs=$(find_all_running_executions)
     local found_stuck=false
-    
+
     while IFS= read -r exec; do
         [[ -z "$exec" ]] && continue
-        
+
         if [[ "$exec" =~ ^STUCK: ]]; then
             found_stuck=true
             local exec_name=$(echo "$exec" | cut -d: -f2)
             local stuck_hours=$(echo "$exec" | cut -d: -f3)
-            
+
             echo -e "${RED}Found stuck job: $exec_name (${stuck_hours}h elapsed)${NC}"
             echo -e "${YELLOW}Cancelling...${NC}"
-            
+
             if gcloud run jobs executions cancel "$exec_name" --region=$REGION --quiet; then
                 echo -e "${GREEN}✅ Successfully cancelled${NC}"
             else
@@ -567,7 +567,7 @@ cmd_cancel_stuck() {
             fi
         fi
     done <<< "$running_execs"
-    
+
     if [[ "$found_stuck" == "false" ]]; then
         echo -e "${GREEN}✅ No stuck jobs found${NC}"
     fi
@@ -577,7 +577,7 @@ cmd_cancel_stuck() {
 cmd_restart() {
     print_header
     echo -e "${BLUE}🔄 Restarting backfill job...${NC}"
-    
+
     # Check for running jobs
     local running_execs=$(find_all_running_executions | grep -v "^STUCK:")
     if [[ -n "$running_execs" ]]; then
@@ -594,7 +594,7 @@ cmd_restart() {
             return 1
         fi
     fi
-    
+
     echo -e "${BLUE}Starting new execution...${NC}"
     if gcloud run jobs execute $JOB_NAME --region=$REGION; then
         echo -e "${GREEN}✅ Job started${NC}"

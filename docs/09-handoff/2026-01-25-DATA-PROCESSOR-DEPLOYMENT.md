@@ -1,8 +1,8 @@
 # Data Processor Deployment - January 25, 2026
 
-**Date:** 2026-01-25 20:30 UTC  
-**Session Focus:** Deploy Data Processor Fixes (Priority 4)  
-**Status:** ✅ COMPLETE  
+**Date:** 2026-01-25 20:30 UTC
+**Session Focus:** Deploy Data Processor Fixes (Priority 4)
+**Status:** ✅ COMPLETE
 **Duration:** ~35 minutes
 
 ---
@@ -11,8 +11,8 @@
 
 Successfully deployed data processor fixes across all three processor tiers (Raw, Analytics, Precompute). All critical fixes from commit b853051a are now in production, including unsafe next() fixes, batch processor failure tracking, and MLB pitcher features improvements.
 
-**Services Deployed:** 3  
-**Total Deploy Time:** ~33 minutes  
+**Services Deployed:** 3
+**Total Deploy Time:** ~33 minutes
 **Commit:** e05b63b3 (includes b853051a fixes)
 
 ---
@@ -20,8 +20,8 @@ Successfully deployed data processor fixes across all three processor tiers (Raw
 ## What Was Deployed
 
 ### 1. Raw Processors (Phase 2)
-**Service:** `nba-phase2-raw-processors`  
-**Revision:** `nba-phase2-raw-processors-00105-4g2`  
+**Service:** `nba-phase2-raw-processors`
+**Revision:** `nba-phase2-raw-processors-00105-4g2`
 **Deploy Time:** 11 minutes
 
 **Fixes:**
@@ -32,20 +32,20 @@ Successfully deployed data processor fixes across all three processor tiers (Raw
   - `mlb_batter_stats_processor.py`
   - `mlb_pitcher_stats_processor.py`
   - `nbac_team_boxscore_processor.py`
-  
+
 - **Batch processor failure tracking** (`oddsapi_batch_processor.py`):
   - Tracks failed files during batch processing
   - Aborts if >20% failure rate
   - Prevents incomplete data loads
-  
+
 - **Streaming buffer retry logic** (`processor_base.py`):
   - Exponential backoff: 60s, 120s, 240s
   - Prevents silent data loss on buffer conflicts
   - Raises exception after 3 failed retries
 
 ### 2. Analytics Processors (Phase 3)
-**Service:** `nba-phase3-analytics-processors`  
-**Revision:** `nba-phase3-analytics-processors-00104-lxp`  
+**Service:** `nba-phase3-analytics-processors`
+**Revision:** `nba-phase3-analytics-processors-00104-lxp`
 **Deploy Time:** 11 minutes
 
 **Fixes:**
@@ -54,8 +54,8 @@ Successfully deployed data processor fixes across all three processor tiers (Raw
 - Updated `analytics_base.py` with better patterns
 
 ### 3. Precompute Processors (Phase 4)
-**Service:** `nba-phase4-precompute-processors`  
-**Revision:** `nba-phase4-precompute-processors-00051-42q`  
+**Service:** `nba-phase4-precompute-processors`
+**Revision:** `nba-phase4-precompute-processors-00051-42q`
 **Deploy Time:** 11 minutes
 
 **Fixes:**
@@ -130,7 +130,7 @@ for attempt in range(max_retries):
     backoff_seconds = (2 ** attempt) * 60  # 60s, 120s, 240s
     logger.warning(f"Streaming buffer conflict, retrying in {backoff_seconds}s")
     time.sleep(backoff_seconds)
-    
+
     try:
         load_job = self.bq_client.load_table_from_file(...)
         load_job.result(timeout=60)
@@ -235,15 +235,15 @@ Services are accepting requests and processing data.
 ## Known Issues
 
 ### Issue 1: Precompute Processors - Missing sqlalchemy
-**Error:** `ModuleNotFoundError: No module named 'sqlalchemy'`  
-**Impact:** Some precompute processors may fail  
-**Priority:** Medium (doesn't affect core NBA processors)  
+**Error:** `ModuleNotFoundError: No module named 'sqlalchemy'`
+**Impact:** Some precompute processors may fail
+**Priority:** Medium (doesn't affect core NBA processors)
 **Resolution:** Add sqlalchemy to `docker/precompute-processor.Dockerfile`
 
 ### Issue 2: Analytics Processors - BigQuery Quota
-**Warning:** Quota exceeded for circuit breaker state writes  
-**Impact:** Circuit breaker state not persisted (degraded functionality)  
-**Priority:** Low  
+**Warning:** Quota exceeded for circuit breaker state writes
+**Impact:** Circuit breaker state not persisted (degraded functionality)
+**Priority:** Low
 **Resolution:** Reduce circuit breaker write frequency
 
 ---
@@ -318,7 +318,7 @@ gcloud run services logs read nba-phase4-precompute-processors \
 
 ---
 
-**Session End:** 2026-01-25 21:00 UTC  
-**Status:** ✅ All processor fixes deployed successfully  
-**Total Time:** 35 minutes  
+**Session End:** 2026-01-25 21:00 UTC
+**Status:** ✅ All processor fixes deployed successfully
+**Total Time:** 35 minutes
 **Success Rate:** 100% (3/3 services deployed)

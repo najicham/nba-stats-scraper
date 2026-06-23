@@ -10,11 +10,11 @@ Everything you need to validate BigDataBall enhanced play-by-play data.
 
 ## 🎯 What You're Validating
 
-**Data Source:** BigDataBall Enhanced Play-by-Play  
-**Table:** `nba-props-platform.nba_raw.bigdataball_play_by_play`  
-**Business Purpose:** Advanced shot analytics, lineup analysis, event-level betting intelligence  
-**Expected Coverage:** 2024-25 NBA season (possibly 2021-2025 based on your note)  
-**Expected Volume:** ~400-600 events per game, ~1,200 games per season  
+**Data Source:** BigDataBall Enhanced Play-by-Play
+**Table:** `nba-props-platform.nba_raw.bigdataball_play_by_play`
+**Business Purpose:** Advanced shot analytics, lineup analysis, event-level betting intelligence
+**Expected Coverage:** 2024-25 NBA season (possibly 2021-2025 based on your note)
+**Expected Volume:** ~400-600 events per game, ~1,200 games per season
 **Pattern:** Pattern 3 (Game-Based, Single Event) - Same as BDL Boxscores
 
 ---
@@ -364,14 +364,14 @@ You now have:
 4. Investigate any issues with `missing` and `quality` commands
 5. Set up daily automation with cron
 
-**Questions?** 
+**Questions?**
 - Check README.md for query details
 - Review Installation Guide for setup issues
 - Compare to BDL Boxscores (same Pattern 3 approach)
 
 ---
 
-**Created:** 2025-10-13  
-**Pattern:** Pattern 3 (Game-Based, Single Event)  
-**Data Source:** BigDataBall Enhanced Play-by-Play  
+**Created:** 2025-10-13
+**Pattern:** Pattern 3 (Game-Based, Single Event)
+**Data Source:** BigDataBall Enhanced Play-by-Play
 **Status:** Ready for production use

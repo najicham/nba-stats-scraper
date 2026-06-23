@@ -5,16 +5,16 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_raw.bdl_injuries` (
   -- Core identifiers
   scrape_date          DATE         NOT NULL OPTIONS(description="Date data was scraped"),
   season_year          INT64        NOT NULL OPTIONS(description="Current NBA season (2024 for 2024-25)"),
-  
+
   -- Player identification
   bdl_player_id        INT64        NOT NULL OPTIONS(description="Ball Don't Lie unique player ID"),
   player_full_name     STRING       NOT NULL OPTIONS(description="Full player name: 'Jacob Toppin'"),
   player_lookup        STRING       NOT NULL OPTIONS(description="Normalized name for matching: 'jacobtoppin'"),
-  
+
   -- Team assignment
   bdl_team_id          INT64        OPTIONS(description="Ball Don't Lie team ID"),
   team_abbr            STRING       NOT NULL OPTIONS(description="Standard team abbreviation: 'ATL', 'LAL'"),
-  
+
   -- Injury details
   injury_status        STRING       NOT NULL OPTIONS(description="Original status: 'Day-To-Day', 'Out', 'Questionable'"),
   injury_status_normalized STRING   NOT NULL OPTIONS(description="Standardized: 'out', 'questionable', 'doubtful', 'probable'"),
@@ -22,12 +22,12 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_raw.bdl_injuries` (
   return_date_original STRING       OPTIONS(description="Original return date text: 'Jul 17', 'TBD', 'Unknown'"),
   injury_description   STRING       OPTIONS(description="Full injury description text"),
   reason_category      STRING       NOT NULL OPTIONS(description="Categorized reason: 'injury', 'g_league', 'rest', 'personal', 'suspension'"),
-  
+
   -- Data quality tracking
   parsing_confidence   FLOAT64      NOT NULL OPTIONS(description="Data extraction confidence: 0.0-1.0"),
   data_quality_flags   STRING       OPTIONS(description="Parsing issues: 'unparseable_date,unknown_status'"),
   return_date_parsed   BOOLEAN      NOT NULL OPTIONS(description="TRUE if return_date successfully parsed"),
-  
+
   -- Processing metadata
   scrape_timestamp     TIMESTAMP    OPTIONS(description="When scraper ran (for intraday tracking)"),
   source_file_path     STRING       NOT NULL OPTIONS(description="GCS path to source JSON file"),
@@ -51,7 +51,7 @@ CREATE OR REPLACE VIEW `nba-props-platform.nba_raw.bdl_injuries_latest_daily` AS
 SELECT * FROM (
   SELECT *,
     ROW_NUMBER() OVER (
-      PARTITION BY scrape_date, bdl_player_id 
+      PARTITION BY scrape_date, bdl_player_id
       ORDER BY scrape_timestamp DESC
     ) as rn
   FROM `nba-props-platform.nba_raw.bdl_injuries`
@@ -65,7 +65,7 @@ WHERE parsing_confidence >= 0.8;
 
 -- Data quality monitoring view
 CREATE OR REPLACE VIEW `nba-props-platform.nba_raw.bdl_injuries_quality_metrics` AS
-SELECT 
+SELECT
   scrape_date,
   COUNT(*) as total_records,
   ROUND(AVG(parsing_confidence), 3) as avg_confidence,
@@ -81,16 +81,16 @@ ORDER BY scrape_date DESC;
 
 -- Cross-validation comparison with NBA.com injury reports
 CREATE OR REPLACE VIEW `nba-props-platform.nba_raw.injury_report_comparison` AS
-SELECT 
+SELECT
   COALESCE(n.game_date, b.scrape_date) as report_date,
   COALESCE(n.player_lookup, b.player_lookup) as player_lookup,
   n.player_full_name as nba_name,
   b.player_full_name as bdl_name,
   n.injury_status as nba_status,
   b.injury_status_normalized as bdl_status,
-  CASE 
+  CASE
     WHEN n.player_lookup IS NULL THEN 'BDL_ONLY'
-    WHEN b.player_lookup IS NULL THEN 'NBA_ONLY' 
+    WHEN b.player_lookup IS NULL THEN 'NBA_ONLY'
     WHEN n.injury_status != b.injury_status_normalized THEN 'STATUS_MISMATCH'
     ELSE 'MATCH'
   END as comparison_status,
@@ -99,11 +99,11 @@ SELECT
   b.parsing_confidence
 FROM `nba-props-platform.nba_raw.nbac_injury_report` n
 FULL OUTER JOIN `nba-props-platform.nba_raw.bdl_injuries_latest_daily` b
-  ON n.player_lookup = b.player_lookup 
+  ON n.player_lookup = b.player_lookup
   AND DATE(n.game_date) = b.scrape_date
 WHERE COALESCE(n.game_date, b.scrape_date) >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY);
 
 -- Index recommendations (BigQuery will auto-optimize, but good for documentation)
 -- PRIMARY KEY: (scrape_date, bdl_player_id) - enforced by APPEND_ALWAYS strategy
--- PARTITION KEY: scrape_date - enables efficient date range queries  
+-- PARTITION KEY: scrape_date - enables efficient date range queries
 -- CLUSTER KEYS: player_lookup, team_abbr, injury_status_normalized - optimizes joins and filters

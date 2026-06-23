@@ -8,19 +8,19 @@
 CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_static.team_locations` (
   -- Primary identifiers
   team_abbr STRING NOT NULL,                        -- NBA standard three-letter team abbreviation
-  
+
   -- Geographic information
   city STRING NOT NULL,                             -- Team home city name
   state STRING NOT NULL,                            -- Team home state/province
   arena_name STRING NOT NULL,                       -- Current home arena/stadium name
   latitude FLOAT64 NOT NULL,                        -- Arena latitude for distance calculations
   longitude FLOAT64 NOT NULL,                       -- Arena longitude for distance calculations
-  
+
   -- Travel information
   timezone STRING NOT NULL,                         -- Arena timezone (e.g., America/New_York)
   airport_code STRING NOT NULL,                     -- Nearest major airport code
   country STRING DEFAULT "USA",                     -- Country code (USA except TOR=CAN)
-  
+
   -- Processing metadata
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
@@ -38,7 +38,7 @@ OPTIONS(
 --
 -- Or manually insert:
 -- INSERT INTO `nba-props-platform.nba_static.team_locations` VALUES
--- ('ATL', 'Atlanta', 'Georgia', 'State Farm Arena', 33.7573, -84.3963, 
+-- ('ATL', 'Atlanta', 'Georgia', 'State Farm Arena', 33.7573, -84.3963,
 --  'America/New_York', 'ATL', 'USA', CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()),
 -- ...
 -- ============================================================================

@@ -101,26 +101,26 @@ class NotificationConfig:
     email_enabled: bool = True
     slack_enabled: bool = False
     discord_enabled: bool = False
-    
+
     # Email recipients by level
     email_info_recipients: List[str] = field(default_factory=list)
     email_warning_recipients: List[str] = field(default_factory=list)
     email_critical_recipients: List[str] = field(default_factory=list)
-    
+
     # Slack configuration (extensible multi-tier)
     slack_webhooks: Dict[NotificationLevel, str] = field(default_factory=dict)
     slack_default_webhook: str = None
-    
+
     # Discord configuration
     discord_webhook_url_info: str = None
     discord_webhook_url_warning: str = None
     discord_webhook_url_critical: str = None
-    
+
     # Routing rules
     email_only_types: List[NotificationType] = field(default_factory=list)
     slack_only_types: List[NotificationType] = field(default_factory=list)
     both_channels_types: List[NotificationType] = field(default_factory=list)
-    
+
     def __post_init__(self):
         """Initialize default routing rules if not provided."""
         # Default routing: critical goes to both, warnings to Slack, info to email
@@ -138,27 +138,27 @@ class NotificationConfig:
 class NotificationRouter:
     """
     Generic notification router that sends alerts to appropriate channels.
-    
+
     Extensible Slack Routing:
     Configure specific webhooks per level, or use default fallback.
     """
-    
+
     def __init__(self, config: NotificationConfig = None):
         """Initialize notification router with configuration."""
         self.config = config or self._load_config_from_env()
-        
+
         # Initialize channel handlers (with error protection)
         self._email_handler = None
         self._slack_handler = None
         self._discord_handler = None
-        
+
         self._initialize_handlers()
-        
+
         logger.info(f"Notification router initialized: "
                    f"email={self.config.email_enabled}, "
                    f"slack={self.config.slack_enabled}, "
                    f"discord={self.config.discord_enabled}")
-    
+
     def _initialize_handlers(self):
         """Initialize notification handlers with error protection."""
         if self.config.email_enabled:
@@ -177,7 +177,7 @@ class NotificationRouter:
                 logger.error(f"Failed to initialize email handler: {e}", exc_info=True)
                 self._email_handler = None
                 self.config.email_enabled = False
-        
+
         if self.config.slack_enabled:
             try:
                 self._slack_handler = SlackNotifier(
@@ -188,7 +188,7 @@ class NotificationRouter:
                 logger.error(f"Failed to initialize Slack handler: {e}", exc_info=True)
                 self._slack_handler = None
                 self.config.slack_enabled = False
-        
+
         if self.config.discord_enabled:
             try:
                 self._discord_handler = DiscordNotifier(
@@ -200,7 +200,7 @@ class NotificationRouter:
                 logger.error(f"Failed to initialize Discord handler: {e}", exc_info=True)
                 self._discord_handler = None
                 self.config.discord_enabled = False
-    
+
     def _load_config_from_env(self) -> NotificationConfig:
         """Load notification configuration from environment variables."""
         # Load Slack webhooks (extensible multi-tier)
@@ -210,35 +210,35 @@ class NotificationRouter:
             webhook_url = os.environ.get(webhook_key)
             if webhook_url:
                 slack_webhooks[level] = webhook_url
-        
+
         # Fallback webhook for any level not specifically configured
         slack_default_webhook = os.environ.get('SLACK_WEBHOOK_URL')
-        
+
         # Parse email recipients
         email_alerts_to = os.environ.get('EMAIL_ALERTS_TO', '')
         email_critical_to = os.environ.get('EMAIL_CRITICAL_TO', '')
-        
+
         return NotificationConfig(
             # Channel enablement
             email_enabled=os.environ.get('EMAIL_ALERTS_ENABLED', 'true').lower() == 'true',
             slack_enabled=os.environ.get('SLACK_ALERTS_ENABLED', 'false').lower() == 'true',
             discord_enabled=os.environ.get('DISCORD_ALERTS_ENABLED', 'false').lower() == 'true',
-            
+
             # Email recipients
             email_info_recipients=[e.strip() for e in email_alerts_to.split(',') if e.strip()],
             email_warning_recipients=[e.strip() for e in email_alerts_to.split(',') if e.strip()],
             email_critical_recipients=[e.strip() for e in email_critical_to.split(',') if e.strip()],
-            
+
             # Slack (extensible)
             slack_webhooks=slack_webhooks,
             slack_default_webhook=slack_default_webhook,
-            
+
             # Discord
             discord_webhook_url_info=os.environ.get('DISCORD_WEBHOOK_URL_INFO'),
             discord_webhook_url_warning=os.environ.get('DISCORD_WEBHOOK_URL_WARNING'),
             discord_webhook_url_critical=os.environ.get('DISCORD_WEBHOOK_URL_CRITICAL'),
         )
-    
+
     def send_notification(
         self,
         level: NotificationLevel,
@@ -250,61 +250,61 @@ class NotificationRouter:
     ) -> Dict[str, bool]:
         """
         Send notification to appropriate channels based on level and type.
-        
+
         Returns:
             Dictionary mapping channel names to success status
         """
         results = {}
-        
+
         # Determine which channels to use
         channels = self._determine_channels(level, notification_type)
-        
+
         logger.info(f"Sending {level.value} notification '{title}' to channels: {channels}")
-        
+
         # Send to each determined channel
         for channel in channels:
             try:
                 if channel == NotificationChannel.EMAIL:
                     success = self._send_to_email(level, notification_type, title, message, details, processor_name)
                     results['email'] = success
-                
+
                 elif channel == NotificationChannel.SLACK:
                     success = self._send_to_slack(level, notification_type, title, message, details, processor_name)
                     results['slack'] = success
-                
+
                 elif channel == NotificationChannel.DISCORD:
                     success = self._send_to_discord(level, notification_type, title, message, details, processor_name)
                     results['discord'] = success
-                
+
                 elif channel == NotificationChannel.CONSOLE:
                     self._send_to_console(level, notification_type, title, message, details)
                     results['console'] = True
-                    
+
             except Exception as e:
                 logger.error(f"Failed to send notification to {channel.value}: {e}", exc_info=True)
                 results[channel.value] = False
-        
+
         return results
-    
+
     def _determine_channels(
-        self, 
-        level: NotificationLevel, 
+        self,
+        level: NotificationLevel,
         notification_type: NotificationType
     ) -> List[NotificationChannel]:
         """Determine which channels should receive this notification."""
         channels = []
-        
+
         # Check explicit routing rules first
         if notification_type in self.config.email_only_types:
             if self.config.email_enabled:
                 channels.append(NotificationChannel.EMAIL)
-        
+
         elif notification_type in self.config.slack_only_types:
             if self.config.slack_enabled:
                 channels.append(NotificationChannel.SLACK)
             elif self.config.discord_enabled:
                 channels.append(NotificationChannel.DISCORD)
-        
+
         elif notification_type in self.config.both_channels_types:
             if self.config.email_enabled:
                 channels.append(NotificationChannel.EMAIL)
@@ -312,7 +312,7 @@ class NotificationRouter:
                 channels.append(NotificationChannel.SLACK)
             elif self.config.discord_enabled:
                 channels.append(NotificationChannel.DISCORD)
-        
+
         # Level-based routing if no type-specific rules matched
         if not channels:
             if level in [NotificationLevel.CRITICAL, NotificationLevel.ERROR]:
@@ -323,7 +323,7 @@ class NotificationRouter:
                     channels.append(NotificationChannel.SLACK)
                 elif self.config.discord_enabled:
                     channels.append(NotificationChannel.DISCORD)
-            
+
             elif level == NotificationLevel.WARNING:
                 # Warnings: Prefer Slack/Discord for quick visibility
                 if self.config.slack_enabled:
@@ -332,20 +332,20 @@ class NotificationRouter:
                     channels.append(NotificationChannel.DISCORD)
                 elif self.config.email_enabled:
                     channels.append(NotificationChannel.EMAIL)
-            
+
             elif level == NotificationLevel.INFO:
                 # Info: Email only (less urgent)
                 if self.config.email_enabled:
                     channels.append(NotificationChannel.EMAIL)
-        
+
         # Fallback to console if no channels enabled (development)
         if not channels:
             channels.append(NotificationChannel.CONSOLE)
-        
+
         return channels
-    
+
     def _send_to_email(
-        self, 
+        self,
         level: NotificationLevel,
         notification_type: NotificationType,
         title: str,
@@ -357,11 +357,11 @@ class NotificationRouter:
         if not self._email_handler:
             logger.warning("Email handler not available")
             return False
-        
+
         try:
             if level in [NotificationLevel.CRITICAL, NotificationLevel.ERROR]:
                 return self._email_handler.send_error_alert(message, details, processor_name)
-            
+
             elif level == NotificationLevel.INFO:
                 # INFO: log it, don't send critical error emails
                 logger.info(f"INFO (from notifier): {title} - {message}")
@@ -373,24 +373,24 @@ class NotificationRouter:
                 if self._email_handler.should_send_unresolved_alert(count, threshold):
                     return self._email_handler.send_unresolved_players_alert(count, threshold)
                 return True
-            
+
             elif notification_type == NotificationType.DAILY_SUMMARY and details:
                 return self._email_handler.send_daily_summary(details)
-            
+
             elif notification_type == NotificationType.NEW_PLAYERS and details:
                 return self._email_handler.send_new_players_discovery_alert(
                     details.get('players', []),
                     details.get('processing_run_id', 'unknown')
                 )
-            
+
             else:
                 # Generic email for other types
                 return self._email_handler.send_error_alert(f"{title}: {message}", details, processor_name)
-        
+
         except Exception as e:
             logger.error(f"Failed to send email: {e}", exc_info=True)
             return False
-    
+
     def _send_to_slack(
         self,
         level: NotificationLevel,
@@ -404,7 +404,7 @@ class NotificationRouter:
         if not self._slack_handler:
             logger.warning("Slack handler not available")
             return False
-        
+
         try:
             return self._slack_handler.send_notification(
                 level=level,
@@ -416,7 +416,7 @@ class NotificationRouter:
         except Exception as e:
             logger.error(f"Failed to send Slack notification: {e}", exc_info=True)
             return False
-    
+
     def _send_to_discord(
         self,
         level: NotificationLevel,
@@ -430,7 +430,7 @@ class NotificationRouter:
         if not self._discord_handler:
             logger.warning("Discord handler not available")
             return False
-        
+
         try:
             return self._discord_handler.send_notification(
                 level=level,
@@ -442,7 +442,7 @@ class NotificationRouter:
         except Exception as e:
             logger.error(f"Failed to send Discord notification: {e}", exc_info=True)
             return False
-    
+
     def _send_to_console(
         self,
         level: NotificationLevel,
@@ -459,41 +459,41 @@ class NotificationRouter:
             NotificationLevel.ERROR: logging.ERROR,
             NotificationLevel.CRITICAL: logging.CRITICAL,
         }
-        
+
         log_message = f"[{notification_type.value.upper()}] {title}: {message}"
         if details:
             log_message += f" | Details: {details}"
-        
+
         logger.log(level_map[level], log_message)
 
 
 class SlackNotifier:
     """Slack-specific notification handler with extensible webhook routing."""
-    
+
     def __init__(self, webhooks: Dict[NotificationLevel, str] = None, default_webhook: str = None):
         """
         Initialize Slack notifier with webhook URLs.
-        
+
         Args:
             webhooks: Dictionary mapping notification levels to specific webhook URLs
             default_webhook: Fallback webhook for levels not in webhooks dict
         """
         self.webhooks = webhooks or {}
         self.default_webhook = default_webhook
-        
+
         if not webhooks and not default_webhook:
             logger.warning("No Slack webhook URLs configured")
-    
+
     def _get_webhook_for_level(self, level: NotificationLevel) -> Optional[str]:
         """Get the appropriate webhook URL for a given level."""
         # Try level-specific webhook first
         webhook = self.webhooks.get(level)
         if webhook:
             return webhook
-        
+
         # Fall back to default
         return self.default_webhook
-    
+
     def send_notification(
         self,
         level: NotificationLevel,
@@ -504,14 +504,14 @@ class SlackNotifier:
     ) -> bool:
         """Send notification to Slack using appropriate webhook based on level."""
         webhook_url = self._get_webhook_for_level(level)
-        
+
         if not webhook_url:
             logger.warning(f"Cannot send Slack notification: no webhook URL configured for {level.value}")
             return False
-        
+
         # Determine channel name from webhook (for display)
         channel_name = f"#{level.value}-alerts"
-        
+
         # Map level to color
         color_map = {
             NotificationLevel.DEBUG: "#6c757d",
@@ -520,7 +520,7 @@ class SlackNotifier:
             NotificationLevel.ERROR: "#dc3545",
             NotificationLevel.CRITICAL: "#8b0000",
         }
-        
+
         # Build Slack message (escape HTML)
         payload = {
             "attachments": [{
@@ -548,7 +548,7 @@ class SlackNotifier:
                 "ts": int(datetime.now().timestamp())
             }]
         }
-        
+
         # Add details as fields (limit to 5, escape values)
         if details:
             for key, value in list(details.items())[:5]:
@@ -557,7 +557,7 @@ class SlackNotifier:
                     "value": html.escape(str(value)),
                     "short": True
                 })
-        
+
         # Use circuit breaker protection for Slack API calls
         if CIRCUIT_BREAKER_AVAILABLE:
             cb = get_service_circuit_breaker(SLACK_CIRCUIT_BREAKER_SERVICE)
@@ -594,9 +594,9 @@ class SlackNotifier:
 
 class DiscordNotifier:
     """Discord-specific notification handler."""
-    
+
     def __init__(
-        self, 
+        self,
         webhook_url_info: str = None,
         webhook_url_warning: str = None,
         webhook_url_critical: str = None
@@ -608,10 +608,10 @@ class DiscordNotifier:
             NotificationLevel.ERROR: webhook_url_critical or webhook_url_warning or webhook_url_info,
             NotificationLevel.CRITICAL: webhook_url_critical or webhook_url_warning or webhook_url_info,
         }
-        
+
         if not any(self.webhook_urls.values()):
             logger.warning("No Discord webhook URLs configured")
-    
+
     def send_notification(
         self,
         level: NotificationLevel,
@@ -625,7 +625,7 @@ class DiscordNotifier:
         if not webhook_url:
             logger.warning(f"No Discord webhook configured for level: {level.value}")
             return False
-        
+
         # Map level to color (Discord uses decimal color codes)
         color_map = {
             NotificationLevel.DEBUG: 7506394,
@@ -634,7 +634,7 @@ class DiscordNotifier:
             NotificationLevel.ERROR: 15548997,
             NotificationLevel.CRITICAL: 10038562,
         }
-        
+
         # Build Discord embed (escape HTML)
         embed = {
             "title": f"{level.value.upper()}: {html.escape(title)}",
@@ -657,7 +657,7 @@ class DiscordNotifier:
             },
             "timestamp": datetime.utcnow().isoformat()
         }
-        
+
         # Add details as fields (escape values)
         if details:
             for key, value in list(details.items())[:5]:
@@ -666,11 +666,11 @@ class DiscordNotifier:
                     "value": html.escape(str(value)),
                     "inline": True
                 })
-        
+
         payload = {
             "embeds": [embed]
         }
-        
+
         try:
             # Use pooled HTTP session with automatic retry on transient errors
             session = get_http_session()

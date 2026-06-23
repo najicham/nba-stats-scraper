@@ -445,7 +445,7 @@ game_date  | day_of_week | scheduled_games | games_with_data | min_players_per_g
 2025-10-07 | Monday      | 8               | 8               | 19                   | ⚠️ Low player count
 ```
 
-**Pattern Found:** 
+**Pattern Found:**
 - Tuesday missing 1 game - investigate that specific date
 - Monday had suspiciously low player count - possible data quality issue
 - Rest of week looks healthy
@@ -523,7 +523,7 @@ grep "CRITICAL" validation_bdl_cross_validate_*.csv
 # Daily
 validate-bdl-boxscores yesterday              # Check yesterday
 
-# Weekly  
+# Weekly
 validate-bdl-boxscores week                   # Last 7 days
 validate-bdl-boxscores cross-validate         # Data quality check
 
@@ -573,7 +573,7 @@ Because BDL is a third-party API, always verify against NBA.com:
 
 ---
 
-**Last Updated:** October 12, 2025  
-**Version:** 1.0  
+**Last Updated:** October 12, 2025
+**Version:** 1.0
 **Script Name:** `validate-bdl-boxscores`
 **Data Source:** Ball Don't Lie API player box scores

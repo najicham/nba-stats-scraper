@@ -12,7 +12,7 @@ Rate limiting is now applied to ALL `notify_error()` calls:
 
 ```
 Error #1: SENT (first occurrence)
-Error #2: SENT 
+Error #2: SENT
 Error #3: SENT [AGGREGATED] (summary with count)
 Error #4: SENT
 Error #5: SENT (rate limit)

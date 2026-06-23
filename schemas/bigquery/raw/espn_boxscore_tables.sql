@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS `nba_raw.espn_boxscores` (
   game_status STRING NOT NULL,
   period INT64,
   is_postseason BOOLEAN NOT NULL,
-  
+
   -- Team information
   home_team_abbr STRING NOT NULL,
   away_team_abbr STRING NOT NULL,
@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS `nba_raw.espn_boxscores` (
   away_team_score INT64 NOT NULL,
   home_team_espn_id STRING,
   away_team_espn_id STRING,
-  
+
   -- Player information
   team_abbr STRING NOT NULL,
   player_full_name STRING NOT NULL,
@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS `nba_raw.espn_boxscores` (
   jersey_number STRING,
   position STRING,
   starter BOOLEAN NOT NULL,
-  
+
   -- Core statistics (points props focus)
   minutes STRING,
   points INT64,
@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS `nba_raw.espn_boxscores` (
   free_throws_made INT64,
   free_throws_attempted INT64,
   free_throw_percentage FLOAT64,
-  
+
   -- Additional statistics
   rebounds INT64,
   offensive_rebounds INT64,
@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS `nba_raw.espn_boxscores` (
   turnovers INT64,
   fouls INT64,
   plus_minus INT64,
-  
+
   -- Processing metadata
   source_file_path STRING NOT NULL,
   created_at TIMESTAMP NOT NULL,
@@ -78,7 +78,7 @@ WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY);
 
 -- View for prop validation (points only)
 CREATE OR REPLACE VIEW `nba_raw.espn_boxscores_prop_validation` AS
-SELECT 
+SELECT
   game_id,
   game_date,
   player_lookup,
@@ -95,14 +95,14 @@ WHERE points IS NOT NULL
 
 -- Cross-validation view (ESPN vs Ball Don't Lie)
 CREATE OR REPLACE VIEW `nba_raw.boxscores_cross_validation` AS
-SELECT 
+SELECT
   COALESCE(b.game_id, e.game_id) as game_id,
   COALESCE(b.player_lookup, e.player_lookup) as player_lookup,
   COALESCE(b.player_full_name, e.player_full_name) as player_name,
   b.points as bdl_points,
   e.points as espn_points,
   ABS(COALESCE(b.points, 0) - COALESCE(e.points, 0)) as points_diff,
-  CASE 
+  CASE
     WHEN b.points IS NOT NULL AND e.points IS NOT NULL THEN 'both_sources'
     WHEN b.points IS NOT NULL THEN 'bdl_only'
     WHEN e.points IS NOT NULL THEN 'espn_only'

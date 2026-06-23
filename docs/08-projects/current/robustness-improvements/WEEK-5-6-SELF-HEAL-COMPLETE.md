@@ -1,7 +1,7 @@
 # Week 5-6: Self-Heal Expansion - Implementation Complete
 
-**Date:** January 21, 2026  
-**Session:** Robustness Improvements - Self-Heal Expansion  
+**Date:** January 21, 2026
+**Session:** Robustness Improvements - Self-Heal Expansion
 **Status:** ✅ Complete (7/7 tasks)
 
 ---
@@ -14,7 +14,7 @@ Extended the self-healing pipeline to detect and heal Phase 2 and Phase 4 data g
 
 **Core Capabilities:**
 - Phase 2 completeness detection (raw data scrapers)
-- Phase 4 completeness detection (precompute processors)  
+- Phase 4 completeness detection (precompute processors)
 - Automated healing triggers with correlation tracking
 - Slack alerts for all healing operations
 - Firestore logging for healing history
@@ -32,7 +32,7 @@ Extended the self-healing pipeline to detect and heal Phase 2 and Phase 4 data g
 **Checks tables:**
 ```python
 - nba_raw.bdl_player_boxscores
-- nba_raw.nbac_gamebook_player_stats  
+- nba_raw.nbac_gamebook_player_stats
 - nba_raw.odds_api_game_lines
 - nba_raw.nbac_schedule
 ```
@@ -168,8 +168,8 @@ Missing Components:
 }
 ```
 
-**Collection:** `self_heal_history`  
-**Document ID:** `{date}_{phase}_{correlation_id[:8]}`  
+**Collection:** `self_heal_history`
+**Document ID:** `{date}_{phase}_{correlation_id[:8]}`
 **Example:** `2026-01-21_phase2_a1b2c3d4`
 
 **Location:** Lines 624-659
@@ -187,18 +187,18 @@ Missing Components:
 # Check yesterday's Phase 2 data
 if yesterday_games > 0:
     phase2_data = check_phase2_completeness(bq_client, yesterday)
-    
+
     if not phase2_data['is_complete']:
         # Trigger healing
         healing_result = trigger_phase2_healing(
-            yesterday, 
+            yesterday,
             phase2_data['missing_processors'],
             correlation_id
         )
-        
+
         # Send alert
         send_healing_alert(...)
-        
+
         # Log to Firestore
         log_healing_to_firestore(...)
 ```
@@ -208,7 +208,7 @@ if yesterday_games > 0:
 # Check today's Phase 4 data
 if today_games > 0:
     phase4_data = check_phase4_completeness(bq_client, today)
-    
+
     if not phase4_data['is_complete']:
         # Trigger healing
         healing_result = trigger_phase4_healing(
@@ -216,10 +216,10 @@ if today_games > 0:
             phase4_data['missing_processors'],
             correlation_id
         )
-        
+
         # Send alert
         send_healing_alert(...)
-        
+
         # Log to Firestore
         log_healing_to_firestore(...)
 ```
@@ -286,12 +286,12 @@ docs = db.collection('self_heal_history').where('correlation_id', '==', 'abc123'
 1. **Simulate Phase 2 Missing Data:**
    ```sql
    -- Temporarily rename table
-   ALTER TABLE `nba-props-platform.nba_raw.bdl_player_boxscores` 
+   ALTER TABLE `nba-props-platform.nba_raw.bdl_player_boxscores`
    RENAME TO `bdl_player_boxscores_backup`;
-   
+
    -- Trigger self-heal
    -- curl to self-heal endpoint
-   
+
    -- Restore table
    ALTER TABLE `nba-props-platform.nba_raw.bdl_player_boxscores_backup`
    RENAME TO `bdl_player_boxscores`;
@@ -302,7 +302,7 @@ docs = db.collection('self_heal_history').where('correlation_id', '==', 'abc123'
    -- Delete records for test date
    DELETE FROM `nba-props-platform.nba_predictions.ml_feature_store_v2`
    WHERE DATE(game_date) = '2026-01-21';
-   
+
    -- Trigger self-heal
    -- Verify Phase 4 runs
    ```
@@ -320,10 +320,10 @@ docs = db.collection('self_heal_history').where('correlation_id', '==', 'abc123'
 def test_phase2_completeness_detection():
     """Test Phase 2 completeness detection"""
     from orchestration.cloud_functions.self_heal.main import check_phase2_completeness
-    
+
     bq_client = get_test_client()
     result = check_phase2_completeness(bq_client, '2026-01-20')
-    
+
     assert 'is_complete' in result
     assert 'missing_processors' in result
     assert 'record_counts' in result
@@ -411,7 +411,7 @@ curl -X POST https://STAGING_URL/ \
 # Monitor Firestore
 # Check for self_heal_history collection
 
-# Monitor Slack  
+# Monitor Slack
 # Verify alerts received
 
 # Deploy to production (after 48h validation)
@@ -466,7 +466,7 @@ gcloud functions deploy self-heal-check \
 
 ---
 
-**Document Version:** 1.0  
-**Last Updated:** January 21, 2026  
-**Author:** Claude (Sonnet 4.5)  
+**Document Version:** 1.0
+**Last Updated:** January 21, 2026
+**Author:** Claude (Sonnet 4.5)
 **Session ID:** nba-stats-scraper robustness improvements

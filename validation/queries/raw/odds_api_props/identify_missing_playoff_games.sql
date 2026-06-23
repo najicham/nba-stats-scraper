@@ -41,7 +41,7 @@ missing_games AS (
     e.away_team_name,
     e.matchup,
     e.playoff_round,
-    CASE 
+    CASE
       WHEN e.game_date >= '2024-04-12' THEN '2023-24'
       WHEN e.game_date >= '2023-04-12' THEN '2022-23'
       ELSE '2024-25'

@@ -13,7 +13,7 @@ class RegistryError(Exception):
 
 class PlayerNotFoundError(RegistryError):
     """Player does not exist in registry."""
-    
+
     def __init__(self, player_lookup: str, message: str = None):
         self.player_lookup = player_lookup
         if message is None:
@@ -23,7 +23,7 @@ class PlayerNotFoundError(RegistryError):
 
 class MultipleRecordsError(RegistryError):
     """Player has multiple records (e.g., traded mid-season)."""
-    
+
     def __init__(self, player_lookup: str, teams: list, message: str = None):
         self.player_lookup = player_lookup
         self.teams = teams
@@ -37,7 +37,7 @@ class MultipleRecordsError(RegistryError):
 
 class AmbiguousNameError(RegistryError):
     """Multiple players match search criteria."""
-    
+
     def __init__(self, name_pattern: str, matches: list, message: str = None):
         self.name_pattern = name_pattern
         self.matches = matches
@@ -51,7 +51,7 @@ class AmbiguousNameError(RegistryError):
 
 class RegistryConnectionError(RegistryError):
     """Cannot connect to registry (BigQuery error)."""
-    
+
     def __init__(self, original_error: Exception, message: str = None):
         self.original_error = original_error
         if message is None:

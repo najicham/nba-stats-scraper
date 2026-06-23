@@ -1,7 +1,7 @@
 # Basketball Reference Season Rosters Validation Queries
 
-**Location:** `validation/queries/raw/br_rosters/`  
-**Purpose:** SQL queries for validating Basketball Reference roster data completeness and quality  
+**Location:** `validation/queries/raw/br_rosters/`
+**Purpose:** SQL queries for validating Basketball Reference roster data completeness and quality
 **Data Pattern:** Season-level snapshots (not game-by-game)
 
 ---
@@ -28,9 +28,9 @@ bq query --use_legacy_sql=false --format=csv \
 ### Historical Validation (Run After Backfills)
 
 #### 1. `season_completeness_check.sql`
-**Purpose:** Comprehensive validation of all 4 seasons with team-level breakdown  
-**When to Run:** After backfills, quarterly health checks, season end  
-**Expected Runtime:** ~5-10 seconds  
+**Purpose:** Comprehensive validation of all 4 seasons with team-level breakdown
+**When to Run:** After backfills, quarterly health checks, season end
+**Expected Runtime:** ~5-10 seconds
 **Output:**
 - Diagnostic rows (data quality checks)
 - Season summaries (30 teams × 4 seasons)
@@ -51,9 +51,9 @@ bq query --use_legacy_sql=false \
 ---
 
 #### 2. `find_missing_teams.sql`
-**Purpose:** Identify specific team-season combinations to backfill  
-**When to Run:** When season_completeness_check shows incomplete data  
-**Expected Runtime:** ~3 seconds  
+**Purpose:** Identify specific team-season combinations to backfill
+**When to Run:** When season_completeness_check shows incomplete data
+**Expected Runtime:** ~3 seconds
 **Output:** List of missing team-season combos or suspiciously small rosters
 
 **Success Criteria:**
@@ -69,9 +69,9 @@ bq query --use_legacy_sql=false \
 ---
 
 #### 3. `player_distribution_check.sql`
-**Purpose:** Analyze player counts and identify multi-team scenarios  
-**When to Run:** Investigating roster patterns, understanding normal ranges  
-**Expected Runtime:** ~5 seconds  
+**Purpose:** Analyze player counts and identify multi-team scenarios
+**When to Run:** Investigating roster patterns, understanding normal ranges
+**Expected Runtime:** ~5 seconds
 **Output:**
 - Season summaries with avg/min/max players per team
 - Multi-team player counts (trades)
@@ -96,9 +96,9 @@ bq query --use_legacy_sql=false \
 ---
 
 #### 4. `data_quality_check.sql`
-**Purpose:** Validate field completeness and name normalization  
-**When to Run:** After backfills, investigating data quality issues  
-**Expected Runtime:** ~5-8 seconds  
+**Purpose:** Validate field completeness and name normalization
+**When to Run:** After backfills, investigating data quality issues
+**Expected Runtime:** ~5-8 seconds
 **Output:**
 - Completeness metrics for all fields
 - Name normalization quality checks
@@ -122,9 +122,9 @@ bq query --use_legacy_sql=false \
 ### Daily Monitoring (Run During Season)
 
 #### 5. `daily_check_yesterday.sql`
-**Purpose:** Detect new roster additions from yesterday's scrape  
-**When to Run:** Every morning at 9 AM (automated) during season  
-**Expected Runtime:** <2 seconds  
+**Purpose:** Detect new roster additions from yesterday's scrape
+**When to Run:** Every morning at 9 AM (automated) during season
+**Expected Runtime:** <2 seconds
 **Output:** Summary of yesterday's updates + list of new players
 
 **No Configuration Needed:**
@@ -147,9 +147,9 @@ bq query --use_legacy_sql=false \
 ---
 
 #### 6. `weekly_check_last_7_days.sql`
-**Purpose:** Weekly trend analysis of roster activity  
-**When to Run:** Monday mornings (automated weekly)  
-**Expected Runtime:** ~3 seconds  
+**Purpose:** Weekly trend analysis of roster activity
+**When to Run:** Monday mornings (automated weekly)
+**Expected Runtime:** ~3 seconds
 **Output:** 7 rows (one per day) showing scraper runs and changes
 
 **No Configuration Needed:**
@@ -170,9 +170,9 @@ bq query --use_legacy_sql=false \
 ---
 
 #### 7. `realtime_scraper_check.sql`
-**Purpose:** Real-time scraper health monitoring  
-**When to Run:** When investigating scraper issues, during season  
-**Expected Runtime:** <2 seconds  
+**Purpose:** Real-time scraper health monitoring
+**When to Run:** When investigating scraper issues, during season
+**Expected Runtime:** <2 seconds
 **Output:** Single row with scraper status and freshness
 
 **No Configuration Needed:**
@@ -497,8 +497,8 @@ These queries complement other roster data sources:
 
 ## Support
 
-**Questions?** Review query comments or processor documentation  
-**Found a bug?** Update the query and document changes in git commit  
+**Questions?** Review query comments or processor documentation
+**Found a bug?** Update the query and document changes in git commit
 **Need a new query?** Follow the template from existing queries
 
 ---
@@ -520,6 +520,6 @@ These queries complement other roster data sources:
 
 ---
 
-Last Updated: October 2025  
-Data Coverage: 2021-22 through 2024-25 NBA seasons  
+Last Updated: October 2025
+Data Coverage: 2021-22 through 2024-25 NBA seasons
 Total Expected Records: ~2,600 (650 per season × 4 seasons)

@@ -8,24 +8,24 @@ CREATE TABLE IF NOT EXISTS `nba_raw.nbac_player_movement` (
   transaction_type STRING NOT NULL,
   transaction_date DATE NOT NULL,
   season_year INT64 NOT NULL,
-  
+
   -- Player information
   player_id INT64 NOT NULL,
   player_slug STRING,
   player_full_name STRING,
   player_lookup STRING,
   is_player_transaction BOOLEAN NOT NULL,
-  
+
   -- Team information
   team_id INT64 NOT NULL,
   team_slug STRING NOT NULL,
   team_abbr STRING NOT NULL,
-  
+
   -- Transaction details
   transaction_description STRING NOT NULL,
   additional_sort INT64,
   group_sort STRING NOT NULL,
-  
+
   -- Processing metadata
   source_file_path STRING NOT NULL,
   scrape_timestamp TIMESTAMP NOT NULL,
@@ -55,8 +55,8 @@ FROM `nba_raw.nbac_player_movement`
 WHERE is_player_transaction = TRUE
 ORDER BY transaction_date DESC, player_lookup;
 
-CREATE OR REPLACE VIEW `nba_raw.nbac_player_movement_trades` AS  
-SELECT 
+CREATE OR REPLACE VIEW `nba_raw.nbac_player_movement_trades` AS
+SELECT
   group_sort,
   transaction_date,
   COUNT(*) as transaction_parts,

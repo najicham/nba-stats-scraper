@@ -55,7 +55,7 @@ gap_dates AS (
 )
 
 -- Output with proper column names
-SELECT 
+SELECT
   '1_SUMMARY' as section,
   CAST(MIN(game_date) AS STRING) as col1,
   CAST(MAX(game_date) AS STRING) as col2,
@@ -74,7 +74,7 @@ SELECT
   CAST(with_props AS STRING) as col3,
   CAST(missing AS STRING) as col4,
   CONCAT(CAST(coverage_pct AS STRING), '% ',
-    CASE 
+    CASE
       WHEN coverage_pct >= 100 THEN '✅'
       WHEN coverage_pct >= 90 THEN '🟢'
       WHEN coverage_pct >= 70 THEN '🟡'
@@ -92,7 +92,7 @@ SELECT
   CAST(game_date AS STRING) as col1,
   CAST(scheduled_games AS STRING) as col2,
   CAST(missing_games AS STRING) as col3,
-  CASE 
+  CASE
     WHEN LAG(game_date) OVER (ORDER BY game_date) IS NULL THEN 'First'
     WHEN DATE_DIFF(game_date, LAG(game_date) OVER (ORDER BY game_date), DAY) = 1 THEN 'Consecutive'
     ELSE CONCAT(CAST(DATE_DIFF(game_date, LAG(game_date) OVER (ORDER BY game_date), DAY) AS STRING), ' day gap')

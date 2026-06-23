@@ -7,7 +7,7 @@
 # Quick status check
 ./monitoring/scripts/system_status.sh
 
-# Load development aliases  
+# Load development aliases
 source monitoring/scripts/aliases.sh
 nba-status
 ```

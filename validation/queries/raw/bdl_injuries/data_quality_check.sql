@@ -66,7 +66,7 @@ latest_date_quality AS (
 )
 
 -- Output overall stats
-SELECT 
+SELECT
   'OVERALL_STATS' as section,
   'Last 30 Days' as metric,
   CAST(total_records AS STRING) as value1,
@@ -81,7 +81,7 @@ SELECT
   'Confidence Scores' as metric,
   CONCAT('Avg: ', CAST(ROUND(avg_confidence, 3) AS STRING)) as value1,
   CONCAT('Min: ', CAST(ROUND(min_confidence, 3) AS STRING)) as value2,
-  CASE 
+  CASE
     WHEN avg_confidence >= 0.95 THEN '✅ Excellent'
     WHEN avg_confidence >= 0.8 THEN '⚠️  Acceptable'
     ELSE '🔴 Poor'
@@ -125,7 +125,7 @@ SELECT
   'Quality Flags' as metric,
   CAST(records_with_flags AS STRING) as value1,
   CONCAT(CAST(ROUND(100.0 * records_with_flags / total_records, 1) AS STRING), '% flagged') as value2,
-  CASE 
+  CASE
     WHEN records_with_flags * 100.0 / total_records < 5 THEN '✅ Good'
     WHEN records_with_flags * 100.0 / total_records < 15 THEN '⚠️  Review'
     ELSE '🔴 High flag rate'
@@ -149,14 +149,14 @@ SELECT
   'Teams Missing Data' as metric,
   CAST(30 - COUNT(*) AS STRING) as value1,
   CONCAT('Covered: ', CAST(COUNT(*) AS STRING), '/30 teams') as value2,
-  CASE 
+  CASE
     WHEN COUNT(*) >= 25 THEN '✅ Good coverage'
     WHEN COUNT(*) >= 20 THEN '⚠️  Moderate coverage'
     ELSE '🔴 Low coverage'
   END as value3
 FROM team_coverage
 
-ORDER BY 
+ORDER BY
   CASE section
     WHEN 'OVERALL_STATS' THEN 1
     WHEN 'INJURY_STATUS' THEN 2

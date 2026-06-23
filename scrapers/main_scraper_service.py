@@ -57,13 +57,13 @@ app = create_app()
 
 if __name__ == "__main__":
     import argparse
-    
+
     parser = argparse.ArgumentParser(description="NBA Scrapers Service with Phase 1 Orchestration")
     parser.add_argument("--port", type=int, default=int(os.getenv("PORT", 8080)))
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--host", default="0.0.0.0")
-    
+
     args = parser.parse_args()
-    
+
     app = create_app()
     app.run(host=args.host, port=args.port, debug=args.debug)

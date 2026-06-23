@@ -47,30 +47,30 @@ if gsutil ls "${JSON_PATH}*.json" &>/dev/null; then
     TEMP_FILE="/tmp/test_game.json"
     JSON_FILE=$(gsutil ls "${JSON_PATH}*.json" | head -1)
     gsutil cp "$JSON_FILE" "$TEMP_FILE" 2>/dev/null
-    
+
     if [[ -f "$TEMP_FILE" ]]; then
         # Check file size
         SIZE=$(stat -f%z "$TEMP_FILE" 2>/dev/null || stat -c%s "$TEMP_FILE" 2>/dev/null)
         echo "File size: ${SIZE} bytes"
-        
+
         # Check JSON structure
         if command -v jq &> /dev/null; then
             echo "Player counts:"
-            jq -r '.players | length as $total | 
+            jq -r '.players | length as $total |
                    [.[] | select(.status == "ACTIVE")] | length as $active |
                    [.[] | select(.status == "DNP")] | length as $dnp |
                    [.[] | select(.status == "INACTIVE")] | length as $inactive |
                    "  Active: \($active), DNP: \($dnp), Inactive: \($inactive), Total: \($total)"' "$TEMP_FILE" 2>/dev/null || echo "  Could not parse player data"
-            
+
             echo "Sample active player:"
             jq -r '.players[] | select(.status == "ACTIVE") | "  \(.player_name): \(.pts) pts, \(.min) min"' "$TEMP_FILE" 2>/dev/null | head -1 || echo "  Could not find active player"
-            
+
             echo "Sample DNP player:"
             jq -r '.players[] | select(.status == "DNP") | "  \(.player_name): \(.dnp_reason // "No reason")"' "$TEMP_FILE" 2>/dev/null | head -1 || echo "  Could not find DNP player"
         else
             echo "Install 'jq' for detailed JSON analysis"
         fi
-        
+
         rm "$TEMP_FILE"
     fi
 else

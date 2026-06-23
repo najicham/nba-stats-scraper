@@ -1,8 +1,8 @@
 # ESPN Scoreboard Validation - Production Operations Guide
 
-**Purpose**: Complete operational procedures for ESPN Scoreboard validation  
-**Audience**: Data engineers, on-call rotation, automation scripts  
-**Status**: Production Ready  
+**Purpose**: Complete operational procedures for ESPN Scoreboard validation
+**Audience**: Data engineers, on-call rotation, automation scripts
+**Status**: Production Ready
 **Last Updated**: October 13, 2025
 
 ---
@@ -78,7 +78,7 @@ If you want to track coverage trends over time:
 **Dashboard Query**:
 ```sql
 -- Track ESPN backup coverage over time
-SELECT 
+SELECT
   check_date,
   espn_collected,
   total_scheduled,
@@ -474,9 +474,9 @@ gsutil ls gs://nba-scraped-data/espn/scoreboard/$(date -d yesterday +%Y-%m-%d)/
 # Expected: JSON files present
 
 # Step 3: Check processor logs
-gcloud logging read "resource.type=cloud_run_job 
-  AND resource.labels.job_name=espn-scoreboard-processor-backfill 
-  AND timestamp>=yesterday" 
+gcloud logging read "resource.type=cloud_run_job
+  AND resource.labels.job_name=espn-scoreboard-processor-backfill
+  AND timestamp>=yesterday"
   --limit 50 --format json
 
 # Step 4: Check for processing errors
@@ -505,7 +505,7 @@ gcloud logging read "resource.type=cloud_run_job
 
 # Step 2: Get game details
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   e.game_id,
   e.home_team_abbr,
   e.away_team_abbr,
@@ -551,7 +551,7 @@ gsutil cat gs://nba-scraped-data/espn/scoreboard/YYYY-MM-DD/*.json | jq .
 
 # Step 2: Find the game
 bq query --use_legacy_sql=false "
-SELECT game_id, game_date, 
+SELECT game_id, game_date,
   home_team_espn_abbr, away_team_espn_abbr,
   home_team_name, away_team_name
 FROM \`nba-props-platform.nba_raw.espn_scoreboard\`
@@ -668,7 +668,7 @@ gsutil -m cp -r ${REPORT_DIR} gs://nba-validation-reports/espn/
 ```sql
 -- Daily coverage trend
 CREATE OR REPLACE VIEW `nba-props-platform.validation.espn_daily_trend` AS
-SELECT 
+SELECT
   check_date,
   CAST(espn_collected AS INT64) as games_collected,
   CAST(total_scheduled AS INT64) as games_scheduled,
@@ -679,7 +679,7 @@ ORDER BY check_date DESC;
 
 -- Quality metrics trend
 CREATE OR REPLACE VIEW `nba-props-platform.validation.espn_quality_trend` AS
-SELECT 
+SELECT
   EXTRACT(DATE FROM processed_at) as report_date,
   COUNT(*) as total_games,
   AVG(processing_confidence) as avg_confidence,
@@ -708,7 +708,7 @@ ORDER BY report_date DESC;
 function send_slack_alert() {
   local severity=$1
   local message=$2
-  
+
   curl -X POST ${SLACK_WEBHOOK_URL} \
     -H 'Content-Type: application/json' \
     -d "{
@@ -735,7 +735,7 @@ fi
 # Example PagerDuty event
 function trigger_pagerduty() {
   local summary=$1
-  
+
   curl -X POST https://events.pagerduty.com/v2/enqueue \
     -H 'Content-Type: application/json' \
     -d "{
@@ -909,7 +909,7 @@ scripts/validate-espn-scoreboard [command] [options]
 
 ---
 
-**Last Updated**: October 13, 2025  
-**Next Review**: Start of 2025-26 NBA Season  
-**Document Owner**: Data Engineering Team  
+**Last Updated**: October 13, 2025
+**Next Review**: Start of 2025-26 NBA Season
+**Document Owner**: Data Engineering Team
 **Status**: Production Ready - Approved for Operational Use

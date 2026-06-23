@@ -17,6 +17,22 @@ from google.cloud import bigquery
 
 from shared.config.cross_model_subsets import build_system_id_sql_filter, build_noveg_mae_sql_filter, classify_system_id
 from shared.config.model_selection import get_best_bets_model_id
+from shared.config.nba_season_dates import get_season_start_date, get_season_year_from_date
+
+
+def _season_start_for(target_date) -> str:
+    """ISO season-start date for target_date's NBA season (e.g. 2024-01-15 -> 2023-10-24).
+
+    Replaces hardcoded '2025-10-22' literals so the rolling-season-stat windows
+    bound to the CORRECT season — required for multi-season walk-forward
+    evaluation, and a latent prod fix (the 2025 literal would pull prior-season
+    data into 2026-27 windows). Uses the no-I/O FALLBACK opening-night dates.
+    """
+    from datetime import date as _date
+    td = _date.fromisoformat(target_date) if isinstance(target_date, str) else target_date
+    return get_season_start_date(
+        get_season_year_from_date(td), use_schedule_service=False
+    ).isoformat()
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +85,7 @@ def query_predictions_with_supplements(
     system_id: Optional[str] = None,
     multi_model: bool = False,
     skip_disabled_filter: bool = False,
+    predictions_table: Optional[str] = None,
 ) -> Tuple[List[Dict], Dict[str, Dict]]:
     """Query active predictions with supplemental signal data.
 
@@ -82,11 +99,18 @@ def query_predictions_with_supplements(
         skip_disabled_filter: If True, include predictions from disabled/blocked
             models. Used by simulation tools to evaluate historical periods
             where models were active but are now disabled.
+        predictions_table: Optional fully-qualified table to read the prediction
+            SOURCE from instead of nba_predictions.player_prop_predictions. Used
+            by the walk-forward BB-injection harness (INC-4) to run the real
+            pipeline on counterfactual predictions in a scratch table. Supplement
+            tables (feature store, injuries, etc.) are unaffected. Default = prod.
 
     Returns:
         Tuple of (predictions list, supplemental_map keyed by player_lookup).
     """
     model_id = system_id or get_best_bets_model_id()
+    preds_table = predictions_table or f"{PROJECT_ID}.nba_predictions.player_prop_predictions"
+    season_start = _season_start_for(target_date)  # @season_start param (multi-season)
 
     if multi_model:
         system_filter = build_system_id_sql_filter('p')
@@ -156,7 +180,7 @@ def query_predictions_with_supplements(
           CASE WHEN mh.n_14d >= 10 THEN mh.hr_14d ELSE NULL END,
           50.0
         ) / 55.0) AS model_hr_weight
-      FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions` p
+      FROM `{preds_table}` p
       LEFT JOIN model_hr mh ON mh.model_id = p.system_id
       LEFT JOIN disabled_models dm ON p.system_id = dm.model_id
       WHERE p.game_date = @target_date
@@ -232,7 +256,7 @@ def query_predictions_with_supplements(
         CAST(p.predicted_points - p.current_points_line AS FLOAT64) AS edge,
         CAST(p.confidence_score AS FLOAT64) AS confidence_score,
         COALESCE(p.feature_quality_score, 0) AS feature_quality_score
-      FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions` p
+      FROM `{preds_table}` p
       LEFT JOIN disabled_models dm ON p.system_id = dm.model_id
       WHERE p.game_date = @target_date
         AND p.system_id = '{model_id}'
@@ -323,7 +347,7 @@ def query_predictions_with_supplements(
         LAG(CASE WHEN plus_minus < 0 THEN 1 ELSE 0 END, 3)
           OVER (PARTITION BY player_lookup ORDER BY game_date) AS neg_pm_3
       FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
-      WHERE game_date >= '2025-10-22'
+      WHERE game_date >= @season_start
         AND minutes_played > 0
     ),
 
@@ -355,7 +379,7 @@ def query_predictions_with_supplements(
       FROM (
         SELECT *
         FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy`
-        WHERE game_date >= '2025-10-22'
+        WHERE game_date >= @season_start
           AND system_id = '{model_id}'
           AND prediction_correct IS NOT NULL
           AND is_voided IS NOT TRUE
@@ -511,7 +535,7 @@ def query_predictions_with_supplements(
         SELECT player_lookup, ft_attempts,
           ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY game_date DESC) AS rn
         FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
-        WHERE game_date >= '2025-10-22'
+        WHERE game_date >= @season_start
           AND game_date < @target_date
           AND minutes_played > 0
           AND (is_dnp IS NULL OR is_dnp = FALSE)
@@ -603,6 +627,7 @@ def query_predictions_with_supplements(
     job_config = bigquery.QueryJobConfig(
         query_parameters=[
             bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+            bigquery.ScalarQueryParameter('season_start', 'DATE', season_start),
         ]
     )
 
@@ -617,7 +642,7 @@ def query_predictions_with_supplements(
     INNER JOIN (
       SELECT player_lookup, team_abbr
       FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
-      WHERE game_date >= '2025-10-22' AND game_date < @target_date
+      WHERE game_date >= @season_start AND game_date < @target_date
       GROUP BY player_lookup, team_abbr
       HAVING AVG(points) >= 18 OR AVG(minutes_played) >= 28
     ) stars ON ir.player_lookup = stars.player_lookup AND ir.team = stars.team_abbr
@@ -645,7 +670,7 @@ def query_predictions_with_supplements(
           PARTITION BY player_lookup ORDER BY game_date DESC
         ) AS rn
       FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
-      WHERE game_date >= '2025-10-22'
+      WHERE game_date >= @season_start
         AND game_date < @target_date
         AND minutes_played > 0
     )
@@ -678,7 +703,7 @@ def query_predictions_with_supplements(
           SUM(points_scored)
         ) as q4_ratio
       FROM `{PROJECT_ID}.nba_raw.bigdataball_play_by_play`
-      WHERE game_date >= '2025-10-01'
+      WHERE game_date >= @season_start
         AND game_date < @target_date
         AND event_type IN ('shot', 'free throw') AND points_scored > 0
       GROUP BY 1, 2
@@ -761,7 +786,7 @@ def query_predictions_with_supplements(
     FROM `{PROJECT_ID}.nba_raw.teamrankings_team_stats`
     WHERE game_date = (
       SELECT MAX(game_date) FROM `{PROJECT_ID}.nba_raw.teamrankings_team_stats`
-      WHERE game_date <= @target_date
+      WHERE game_date <= @target_date  -- <= correct: latest pre-game scrape snapshot as of target_date (team-level, no per-game leak)
     )
     AND pace IS NOT NULL
     """
@@ -783,7 +808,7 @@ def query_predictions_with_supplements(
       FROM `{PROJECT_ID}.nba_raw.hashtagbasketball_dvp`
       WHERE game_date = (
         SELECT MAX(game_date) FROM `{PROJECT_ID}.nba_raw.hashtagbasketball_dvp`
-        WHERE game_date <= @target_date
+        WHERE game_date <= @target_date  -- <= correct: latest pre-game scrape snapshot as of target_date (team-level, no per-game leak)
       )
       AND points_allowed IS NOT NULL
       AND position = 'ALL'
@@ -1590,10 +1615,11 @@ def query_games_vs_opponent(
         logger.info(f"games_vs_opponent cache hit for {target_date}")
         return _gvo_cache[target_date]
 
+    season_start = _season_start_for(target_date)  # @season_start param (multi-season)
     query = f"""
     SELECT player_lookup, opponent_team_abbr, COUNT(*) as games_played
     FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
-    WHERE game_date >= '2025-10-22'
+    WHERE game_date >= @season_start
       AND game_date < @target_date
       AND minutes_played > 0
     GROUP BY 1, 2
@@ -1602,6 +1628,7 @@ def query_games_vs_opponent(
     job_config = bigquery.QueryJobConfig(
         query_parameters=[
             bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+            bigquery.ScalarQueryParameter('season_start', 'DATE', season_start),
         ]
     )
 

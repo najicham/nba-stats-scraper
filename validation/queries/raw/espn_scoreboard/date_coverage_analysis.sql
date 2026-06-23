@@ -9,10 +9,10 @@
 --   - Identifies large gaps (offseason, collection issues)
 -- ============================================================================
 
-WITH 
+WITH
 -- Overall coverage summary
 coverage_summary AS (
-  SELECT 
+  SELECT
     MIN(game_date) as earliest_date,
     MAX(game_date) as latest_date,
     COUNT(DISTINCT game_date) as total_dates_with_data,
@@ -25,7 +25,7 @@ coverage_summary AS (
 
 -- Season-level coverage
 season_coverage AS (
-  SELECT 
+  SELECT
     season_year,
     COUNT(*) as games,
     COUNT(DISTINCT game_date) as dates_with_data,
@@ -39,7 +39,7 @@ season_coverage AS (
 
 -- Monthly coverage pattern
 monthly_coverage AS (
-  SELECT 
+  SELECT
     FORMAT_DATE('%Y-%m', game_date) as year_month,
     COUNT(*) as games,
     COUNT(DISTINCT game_date) as dates_with_data,
@@ -53,7 +53,7 @@ monthly_coverage AS (
 
 -- Find large gaps (>10 days without data)
 date_gaps AS (
-  SELECT 
+  SELECT
     game_date,
     LEAD(game_date) OVER (ORDER BY game_date) as next_date,
     DATE_DIFF(LEAD(game_date) OVER (ORDER BY game_date), game_date, DAY) as days_gap
@@ -66,7 +66,7 @@ date_gaps AS (
 
 -- Output: Combined results with proper BigQuery syntax
 (
-  SELECT 
+  SELECT
     '📊 SUMMARY' as section,
     CAST(earliest_date AS STRING) as metric,
     CAST(latest_date AS STRING) as value,
@@ -77,7 +77,7 @@ date_gaps AS (
 
   UNION ALL
 
-  SELECT 
+  SELECT
     '📊 SUMMARY' as section,
     'Average games/date' as metric,
     CAST(avg_games_per_date AS STRING) as value,
@@ -89,7 +89,7 @@ date_gaps AS (
   UNION ALL
 
   -- Output: Season breakdown
-  SELECT 
+  SELECT
     '📅 BY SEASON' as section,
     CONCAT('Season ', season_year) as metric,
     CAST(games AS STRING) as value,
@@ -101,7 +101,7 @@ date_gaps AS (
   UNION ALL
 
   -- Output: Recent months
-  SELECT 
+  SELECT
     '📈 RECENT MONTHS' as section,
     year_month as metric,
     CAST(games AS STRING) as value,
@@ -113,12 +113,12 @@ date_gaps AS (
   UNION ALL
 
   -- Output: Large gaps
-  SELECT 
+  SELECT
     '⚠️ LARGE GAPS' as section,
     CAST(game_date AS STRING) as metric,
     CAST(days_gap AS STRING) as value,
     CONCAT('Gap to ', next_date) as detail,
-    CASE 
+    CASE
       WHEN days_gap > 100 THEN 'Offseason (expected)'
       WHEN days_gap > 30 THEN 'Long gap - investigate'
       ELSE 'Medium gap - check'

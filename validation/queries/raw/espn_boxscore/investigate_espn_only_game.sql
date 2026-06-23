@@ -24,7 +24,7 @@ WITH espn_only_game AS (
 
 -- Check if this game is in the schedule
 schedule_check AS (
-  SELECT 
+  SELECT
     s.game_date,
     s.game_id as schedule_game_id,
     s.home_team_tricode,
@@ -67,8 +67,8 @@ SELECT
   CAST(eog.espn_player_count AS STRING) as player_count,
   '' as blank2,
   '=== SCHEDULE CHECK ===' as schedule_section,
-  CASE 
-    WHEN sc.schedule_game_id IS NOT NULL 
+  CASE
+    WHEN sc.schedule_game_id IS NOT NULL
     THEN '✅ Game IS in schedule'
     ELSE '🔴 Game NOT in schedule'
   END as in_schedule,
@@ -86,7 +86,7 @@ SELECT
   '' as blank4,
   '=== NEXT STEPS ===' as next_steps_section,
   CASE
-    WHEN sc.schedule_game_id IS NULL THEN 
+    WHEN sc.schedule_game_id IS NULL THEN
       '1. Verify game actually happened on NBA.com\n2. Check if schedule import missed this game\n3. Manually add to schedule if needed'
     WHEN sc.game_status_text LIKE '%Postponed%' OR sc.game_status_text LIKE '%Canceled%' THEN
       '1. Check if game was rescheduled\n2. Update schedule status\n3. Re-run BDL scraper for this date'

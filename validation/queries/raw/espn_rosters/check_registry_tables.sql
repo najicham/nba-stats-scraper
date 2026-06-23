@@ -6,7 +6,7 @@
 
 SELECT
   table_name,
-  CASE 
+  CASE
     WHEN table_name LIKE '%registry%' THEN '📋 Registry table'
     WHEN table_name LIKE '%alias%' THEN '🔗 Alias table'
     ELSE '📊 Other'
@@ -14,7 +14,7 @@ SELECT
 FROM `nba-props-platform.INFORMATION_SCHEMA.TABLES`
 WHERE table_schema IN ('nba_raw', 'nba_players', 'nba_analytics')
   AND (
-    table_name LIKE '%registry%' 
+    table_name LIKE '%registry%'
     OR table_name LIKE '%alias%'
     OR table_name LIKE '%player%'
   )

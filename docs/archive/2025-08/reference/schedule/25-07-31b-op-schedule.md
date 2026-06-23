@@ -2,11 +2,11 @@
 
 **Document Purpose**: Canonical source of truth for all NBA scraper scheduling decisions. All schedule changes must be made in this document FIRST, then propagated to implementation.
 
-**Last Updated**: July 31, 2025  
-**Current Status**: 17/17 Operational Scrapers Scheduled (100% Coverage)  
-**Service URL**: `https://nba-scrapers-756957797294.us-west2.run.app/scrape`  
-**Timezone**: America/Los_Angeles (Pacific Time)  
-**Region**: us-west2  
+**Last Updated**: July 31, 2025
+**Current Status**: 17/17 Operational Scrapers Scheduled (100% Coverage)
+**Service URL**: `https://nba-scrapers-756957797294.us-west2.run.app/scrape`
+**Timezone**: America/Los_Angeles (Pacific Time)
+**Region**: us-west2
 
 ---
 
@@ -50,13 +50,13 @@
 | 9:15 PM | GetEspnBoxscore | nba-espn-boxscore | `15 21 * * *` | espn_game_boxscore | Alternative boxscore validation |
 | 9:20 PM | GetNbaComPlayByPlay | nba-nbacom-playbyplay | `20 21 * * *` | nbac_play_by_play | Detailed play-by-play with coordinates |
 
-### **Regular Season Schedule (August 1 - February 1)**  
+### **Regular Season Schedule (August 1 - February 1)**
 *Reduced frequency monitoring during stable roster period*
 
 #### **Changes from Trade Season**
 - **Real-Time Operations**: Change from every 2 hours to every 4 hours
   - GetNbaComPlayerList: `0 */4 * * *` (instead of `0 */2 * * *`)
-  - GetNbaComInjuryReport: `0 */4 * * *` (instead of `0 */2 * * *`)  
+  - GetNbaComInjuryReport: `0 */4 * * *` (instead of `0 */2 * * *`)
   - BdlActivePlayersScraper: `5 */4 * * *` (instead of `5 */2 * * *`)
 - **All other schedules remain identical**
 
@@ -65,7 +65,7 @@
 ## Business Rules & Dependencies
 
 ### **Critical Dependencies**
-1. **Events → Props Dependency**: 
+1. **Events → Props Dependency**:
    - `nba-odds-events` MUST complete before `nba-odds-props` runs
    - 30-minute timing window: Events at :00, Props at :30
    - **Business Impact**: Props API will fail without valid event IDs
@@ -127,7 +127,7 @@
 
 ### **🔴 Critical Scrapers (4) - Business Stopping if Missing**
 1. **GetOddsApiEvents** - Foundation for all prop betting
-2. **GetOddsApiCurrentEventOdds** - Core business revenue source  
+2. **GetOddsApiCurrentEventOdds** - Core business revenue source
 3. **GetNbaComPlayerList** - Official player-to-team mapping
 4. **GetNbaComInjuryReport** - Player availability for props
 
@@ -145,7 +145,7 @@
 13. **BdlPlayerBoxScoresScraper** - Individual player statistics
 14. **BdlBoxScoresScraper** - Team stats with embedded players
 15. **GetNbaComPlayerBoxscore** - Official player stats with fantasy points
-16. **GetEspnBoxscore** - Alternative boxscore validation  
+16. **GetEspnBoxscore** - Alternative boxscore validation
 17. **GetNbaComPlayByPlay** - Detailed play-by-play with coordinates
 
 ---
@@ -178,7 +178,7 @@
 ```bash
 # Re-enable critical scrapers immediately
 gcloud scheduler jobs resume nba-odds-events --location=us-west2
-gcloud scheduler jobs resume nba-odds-props --location=us-west2  
+gcloud scheduler jobs resume nba-odds-props --location=us-west2
 gcloud scheduler jobs resume nba-player-list --location=us-west2
 gcloud scheduler jobs resume nba-injury-report --location=us-west2
 ```
@@ -233,7 +233,7 @@ gcloud scheduler jobs resume nba-injury-report --location=us-west2
 ```markdown
 ### **YYYY-MM-DD: Change Description**
 - **Status**: X/17 scrapers scheduled (X% coverage)
-- **Changes**: 
+- **Changes**:
   - Added: [New scrapers]
   - Modified: [Schedule changes]
   - Removed: [Deprecated scrapers]

@@ -30,15 +30,15 @@ print_header() {
 validate_lines_json() {
     local file_path="$1"
     local temp_file="/tmp/lines_validate_$(date +%s)_$.json"
-    
+
     echo -e "    ${BLUE}Downloading:${NC} $(basename "$file_path")"
-    
+
     # Download file
     if ! gcloud storage cp "$file_path" "$temp_file" >/dev/null 2>&1; then
         echo -e "    ${RED}❌ Download failed${NC}"
         return 1
     fi
-    
+
     # Check file size
     local file_size=$(stat -f%z "$temp_file" 2>/dev/null || stat -c%s "$temp_file" 2>/dev/null || echo "0")
     if [[ $file_size -eq 0 ]]; then
@@ -46,14 +46,14 @@ validate_lines_json() {
         rm -f "$temp_file"
         return 1
     fi
-    
+
     # Validate JSON
     if ! jq empty "$temp_file" 2>/dev/null; then
         echo -e "    ${RED}❌ Invalid JSON format${NC}"
         rm -f "$temp_file"
         return 1
     fi
-    
+
     # Extract key data points for game lines
     local analysis=$(jq -r '
         {
@@ -80,7 +80,7 @@ validate_lines_json() {
         else
             $base + {
                 game_id: "missing",
-                home_team: "missing", 
+                home_team: "missing",
                 away_team: "missing",
                 commence_time: "missing",
                 bookmaker_count: 0,
@@ -94,13 +94,13 @@ validate_lines_json() {
             }
         end
     ' "$temp_file" 2>/dev/null)
-    
+
     if [[ -z "$analysis" ]]; then
         echo -e "    ${RED}❌ Failed to analyze JSON structure${NC}"
         rm -f "$temp_file"
         return 1
     fi
-    
+
     # Extract values
     local has_timestamp=$(echo "$analysis" | jq -r '.has_timestamp')
     local has_data=$(echo "$analysis" | jq -r '.has_data')
@@ -120,28 +120,28 @@ validate_lines_json() {
     local total_max=$(echo "$analysis" | jq -r '.total_range[1]')
     local h2h_price_min=$(echo "$analysis" | jq -r '.h2h_price_range[0]')
     local h2h_price_max=$(echo "$analysis" | jq -r '.h2h_price_range[1]')
-    
+
     # Validation checks
     local quality_score=0
     local issues=()
-    
+
     # Required structure
     [[ "$has_timestamp" == "true" ]] && quality_score=$((quality_score + 10)) || issues+=("Missing timestamp")
     [[ "$has_data" == "true" ]] && quality_score=$((quality_score + 10)) || issues+=("Missing/invalid data array")
-    
+
     # Game count (expecting 1 game per file for individual game lines)
     if [[ $game_count -eq 1 ]]; then
         quality_score=$((quality_score + 15))
     else
         issues+=("Expected 1 game, got $game_count")
     fi
-    
+
     # Game info (if we have games)
     if [[ $game_count -gt 0 ]]; then
         [[ "$game_id" != "missing" && "$game_id" != "null" ]] && quality_score=$((quality_score + 10)) || issues+=("Missing game ID")
         [[ "$home_team" != "missing" && "$away_team" != "missing" ]] && quality_score=$((quality_score + 10)) || issues+=("Missing team info")
         [[ "$commence_time" != "missing" ]] && quality_score=$((quality_score + 5)) || issues+=("Missing commence time")
-        
+
         # Bookmaker validation (expecting 2-8 bookmakers)
         if [[ $bookmaker_count -ge 2 && $bookmaker_count -le 8 ]]; then
             quality_score=$((quality_score + 15))
@@ -153,13 +153,13 @@ validate_lines_json() {
         else
             issues+=("Expected 2-8 bookmakers, got $bookmaker_count")
         fi
-        
+
         # Market type validation
         local market_score=0
         [[ "$has_spreads" == "true" ]] && market_score=$((market_score + 1))
         [[ "$has_totals" == "true" ]] && market_score=$((market_score + 1))
         [[ "$has_h2h" == "true" ]] && market_score=$((market_score + 1))
-        
+
         if [[ $market_score -eq 2 ]]; then
             quality_score=$((quality_score + 15))  # spreads + totals is what we requested
         elif [[ $market_score -eq 3 ]]; then
@@ -170,7 +170,7 @@ validate_lines_json() {
         else
             issues+=("No market types found")
         fi
-        
+
         # Spread range validation (typically -20 to +20)
         if [[ "$spread_min" != "null" && "$spread_max" != "null" ]]; then
             if [[ $(echo "$spread_min >= -25 && $spread_max <= 25" | bc -l 2>/dev/null || echo 0) -eq 1 ]]; then
@@ -179,7 +179,7 @@ validate_lines_json() {
                 issues+=("Spread range: $spread_min to $spread_max")
             fi
         fi
-        
+
         # Total range validation (typically 200-250 for NBA)
         if [[ "$total_min" != "null" && "$total_max" != "null" ]]; then
             if [[ $(echo "$total_min >= 180 && $total_max <= 280" | bc -l 2>/dev/null || echo 0) -eq 1 ]]; then
@@ -188,7 +188,7 @@ validate_lines_json() {
                 issues+=("Total range: $total_min to $total_max")
             fi
         fi
-        
+
         # H2H price range validation (decimal odds: typically 1.4-3.0)
         if [[ "$h2h_price_min" != "null" && "$h2h_price_max" != "null" ]]; then
             if [[ $(echo "$h2h_price_min >= 1.2 && $h2h_price_max <= 4.0" | bc -l 2>/dev/null || echo 0) -eq 1 ]]; then
@@ -198,17 +198,17 @@ validate_lines_json() {
             fi
         fi
     fi
-    
+
     # Display results
     local quality_color=$GREEN
     [[ $quality_score -lt 75 ]] && quality_color=$YELLOW
     [[ $quality_score -lt 50 ]] && quality_color=$RED
-    
+
     echo -e "    ${GREEN}✅ Valid Lines JSON${NC} - ${file_size}B"
     echo -e "    🏀 Game: $away_team @ $home_team"
     echo -e "    📊 Bookmakers: $bookmaker_count ($bookmaker_names)"
     echo -e "    📈 Markets: $([ "$has_spreads" == "true" ] && echo "Spreads" || echo "")$([ "$has_totals" == "true" ] && echo " Totals" || echo "")$([ "$has_h2h" == "true" ] && echo " H2H" || echo "")"
-    
+
     if [[ "$spread_min" != "null" && "$spread_min" != "" ]]; then
         echo -e "    📊 Spreads: $spread_min to $spread_max"
     fi
@@ -218,13 +218,13 @@ validate_lines_json() {
     if [[ "$h2h_price_min" != "null" && "$h2h_price_min" != "" ]]; then
         echo -e "    💰 H2H Odds: $h2h_price_min to $h2h_price_max (decimal)"
     fi
-    
+
     echo -e "    📈 Quality: ${quality_color}$quality_score/100${NC}"
-    
+
     if [[ ${#issues[@]} -gt 0 ]]; then
         echo -e "    ⚠️  Issues: ${issues[*]}"
     fi
-    
+
     rm -f "$temp_file"
     return 0
 }
@@ -233,25 +233,25 @@ validate_lines_json() {
 check_date_for_lines() {
     local date="$1"
     local date_path="$BUCKET/$LINES_PATH/$date/"
-    
+
     echo -e "  ${BLUE}Checking date:${NC} $date" >&2
-    
+
     if ! timeout 30 gcloud storage ls "$date_path" >/dev/null 2>&1; then
         echo -e "    ${YELLOW}No data for $date${NC}" >&2
         return 1
     fi
-    
+
     # FIXED: Get game subdirectories first, then look for JSON files within them
     local game_dirs=$(timeout 30 gcloud storage ls "$date_path" 2>/dev/null | grep "/" | head -5)
     local game_count=$(echo "$game_dirs" | grep -c "/$" 2>/dev/null || echo "0")
-    
+
     if [[ $game_count -eq 0 ]]; then
         echo -e "    ${YELLOW}No game directories found${NC}" >&2
         return 1
     fi
-    
+
     echo -e "    ${GREEN}Found $game_count game directories${NC}" >&2
-    
+
     # Get sample JSON files from game directories
     local sample_files=()
     while IFS= read -r game_dir; do
@@ -263,7 +263,7 @@ check_date_for_lines() {
             fi
         fi
     done <<< "$game_dirs"
-    
+
     if [[ ${#sample_files[@]} -gt 0 ]]; then
         echo -e "    ${BLUE}Sample files found: ${#sample_files[@]}${NC}" >&2
         # Return files for validation
@@ -278,12 +278,12 @@ check_date_for_lines() {
 # Get recent dates from the game lines data
 get_recent_dates() {
     local count="${1:-3}"
-    
+
     echo -e "Scanning for recent dates..." >&2
     local recent_dates=$(timeout 45 gcloud storage ls "$BUCKET/$LINES_PATH/" 2>/dev/null | \
         grep -E "[0-9]{4}-[0-9]{2}-[0-9]{2}" | \
         sort -r | head -$count | xargs -I {} basename {})
-    
+
     if [[ -n "$recent_dates" ]]; then
         echo "$recent_dates"
         return 0
@@ -295,16 +295,16 @@ get_recent_dates() {
 # Validate sample files
 validate_sample_files() {
     local files=("$@")
-    
+
     echo -e "${BLUE}📊 Validating ${#files[@]} sample files:${NC}"
     echo ""
-    
+
     local valid_files=0
     local file_num=0
-    
+
     for file_path in "${files[@]}"; do
         file_num=$((file_num + 1))
-        
+
         # Extract game info from path for display
         local path_parts=(${file_path//\// })
         local date_part=""
@@ -316,15 +316,15 @@ validate_sample_files() {
                 game_part="$part"
             fi
         done
-        
+
         echo -e "${CYAN}[$file_num/${#files[@]}]${NC} $date_part/$game_part/$(basename "$file_path")"
-        
+
         if validate_lines_json "$file_path"; then
             valid_files=$((valid_files + 1))
         fi
         echo ""
     done
-    
+
     # Summary
     echo -e "${CYAN}📋 Validation Summary:${NC}"
     echo -e "  Files validated: ${#files[@]}"
@@ -337,7 +337,7 @@ cmd_test() {
     print_header
     echo -e "${BLUE}🧪 Basic Test Mode${NC}"
     echo ""
-    
+
     # Test GCS access
     echo -e "1. Testing GCS access..."
     if gcloud storage ls "$BUCKET/$LINES_PATH/" >/dev/null 2>&1; then
@@ -346,20 +346,20 @@ cmd_test() {
         echo -e "   ${RED}❌ Cannot access $BUCKET/$LINES_PATH/${NC}"
         return 1
     fi
-    
+
     # Find a recent date
     echo -e "2. Finding recent dates..."
     local test_date=$(get_recent_dates 1)
-    
+
     if [[ -n "$test_date" ]]; then
         echo -e "   ${GREEN}✅ Found recent date: $test_date${NC}"
-        
+
         # Check this date
         local sample_files
         if sample_files=$(check_date_for_lines "$test_date"); then
             if [[ -n "$sample_files" ]]; then
                 echo -e "   ${GREEN}✅ Found JSON files${NC}"
-                
+
                 # Test one file
                 local test_file=$(echo "$sample_files" | head -1)
                 echo -e "3. Testing file validation..."
@@ -377,17 +377,17 @@ cmd_test() {
 
 cmd_recent() {
     local count="${1:-3}"
-    
+
     print_header
     echo -e "${BLUE}📅 Recent Dates Validation${NC}"
     echo ""
-    
+
     local recent_dates
     if recent_dates=$(get_recent_dates "$count"); then
         echo -e "${GREEN}Recent dates found:${NC}"
         echo "$recent_dates" | sed 's/^/  /'
         echo ""
-        
+
         # Collect sample files from each date
         local all_files=()
         while IFS= read -r date; do
@@ -404,7 +404,7 @@ cmd_recent() {
                 echo ""
             fi
         done <<< "$recent_dates"
-        
+
         # Validate collected files
         if [[ ${#all_files[@]} -gt 0 ]]; then
             validate_sample_files "${all_files[@]}"
@@ -418,7 +418,7 @@ cmd_recent() {
 
 cmd_dates() {
     local dates=("$@")
-    
+
     if [[ ${#dates[@]} -eq 0 ]]; then
         echo "Usage: $0 dates YYYY-MM-DD [YYYY-MM-DD ...]"
         echo ""
@@ -427,11 +427,11 @@ cmd_dates() {
         echo "  $0 dates 2021-10-19 2021-10-20 2021-10-21"
         return 1
     fi
-    
+
     print_header
     echo -e "${BLUE}🗓️ Custom Date Validation${NC}"
     echo ""
-    
+
     # Collect files from specified dates
     local all_files=()
     for date in "${dates[@]}"; do
@@ -446,7 +446,7 @@ cmd_dates() {
         fi
         echo ""
     done
-    
+
     # Validate collected files
     if [[ ${#all_files[@]} -gt 0 ]]; then
         validate_sample_files "${all_files[@]}"

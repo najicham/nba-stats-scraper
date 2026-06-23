@@ -71,7 +71,7 @@ bq query --use_legacy_sql=false \
 
 # Check feature version
 bq query --use_legacy_sql=false \
-  'SELECT feature_version, feature_count, active 
+  'SELECT feature_version, feature_count, active
    FROM `nba-props-platform.nba_predictions.feature_versions`'
 ```
 

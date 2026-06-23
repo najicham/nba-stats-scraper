@@ -11,14 +11,14 @@ Usage:
     python run_tests.py --integration   # Run integration tests only
     python run_tests.py --coverage      # Run with coverage report
     python run_tests.py -v              # Verbose output
-    
+
 Examples:
     # Quick unit test run
     python run_tests.py --unit
-    
+
     # Full test suite with coverage
     python run_tests.py --coverage
-    
+
     # Integration tests only (verbose)
     python run_tests.py --integration -v
 """
@@ -32,7 +32,7 @@ from pathlib import Path
 def run_tests(test_type='all', coverage=False, verbose=False):
     """
     Run pytest with specified options.
-    
+
     Args:
         test_type: 'all', 'unit', 'integration'
         coverage: Whether to generate coverage report
@@ -40,10 +40,10 @@ def run_tests(test_type='all', coverage=False, verbose=False):
     """
     # Base command
     cmd = ['pytest']
-    
+
     # Determine test path
     test_dir = Path(__file__).parent
-    
+
     if test_type == 'unit':
         cmd.append(str(test_dir / 'test_unit.py'))
         print("🧪 Running UNIT tests...")
@@ -53,7 +53,7 @@ def run_tests(test_type='all', coverage=False, verbose=False):
     else:
         cmd.append(str(test_dir))
         print("🧪 Running ALL tests...")
-    
+
     # Add coverage options
     if coverage:
         cmd.extend([
@@ -62,13 +62,13 @@ def run_tests(test_type='all', coverage=False, verbose=False):
             '--cov-report=term-missing',
             '--cov-report=term:skip-covered'
         ])
-    
+
     # Add verbosity
     if verbose:
         cmd.append('-vv')
     else:
         cmd.append('-v')
-    
+
     # Additional options
     cmd.extend([
         '--color=yes',           # Colored output
@@ -76,12 +76,12 @@ def run_tests(test_type='all', coverage=False, verbose=False):
         '--strict-markers',      # Strict marker checking
         '-ra',                   # Show all test outcomes
     ])
-    
+
     print(f"Command: {' '.join(cmd)}\n")
-    
+
     # Run tests
     result = subprocess.run(cmd)
-    
+
     return result.returncode
 
 
@@ -91,7 +91,7 @@ def main():
         description='Run ML Feature Store V2 tests',
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    
+
     # Test type selection
     test_group = parser.add_mutually_exclusive_group()
     test_group.add_argument(
@@ -109,7 +109,7 @@ def main():
         action='store_true',
         help='Run all tests (default)'
     )
-    
+
     # Options
     parser.add_argument(
         '--coverage',
@@ -121,9 +121,9 @@ def main():
         action='store_true',
         help='Extra verbose output (-vv)'
     )
-    
+
     args = parser.parse_args()
-    
+
     # Determine test type
     if args.unit:
         test_type = 'unit'
@@ -131,7 +131,7 @@ def main():
         test_type = 'integration'
     else:
         test_type = 'all'
-    
+
     # Print configuration
     print("="*70)
     print("ML FEATURE STORE V2 - TEST RUNNER")
@@ -140,10 +140,10 @@ def main():
     print(f"Coverage:  {'ON' if args.coverage else 'OFF'}")
     print(f"Verbose:   {'ON' if args.verbose else 'OFF'}")
     print("="*70 + "\n")
-    
+
     # Run tests
     exit_code = run_tests(test_type, args.coverage, args.verbose)
-    
+
     # Print summary
     print("\n" + "="*70)
     if exit_code == 0:
@@ -155,7 +155,7 @@ def main():
         print(f"❌ TESTS FAILED (exit code: {exit_code})")
         print("="*70)
     print()
-    
+
     sys.exit(exit_code)
 
 

@@ -14,38 +14,38 @@ Combines:
 
 Usage:
     from shared.utils.nba_team_mapper import NBATeamMapper
-    
+
     mapper = NBATeamMapper()
-    
+
     # ORIGINAL FEATURES (Backward Compatible)
     # ========================================
-    
+
     # Basic mapping
     tricode = mapper.get_nba_tricode('Lakers')  # 'LAL'
     team_info = mapper.get_team_info('LAL')     # TeamInfo object
-    
+
     # Fuzzy matching (handles typos)
     tricode = mapper.get_nba_tricode_fuzzy('Lakres', min_confidence=80)  # 'LAL'
-    
+
     # Multiple tricode systems
     br_code = mapper.get_br_tricode('Lakers')    # Basketball Reference format
     espn_code = mapper.get_espn_tricode('Lakers') # ESPN format
-    
+
     # Find by location
     la_teams = mapper.find_teams_by_city('Los Angeles')  # [LAL, LAC]
-    
+
     # NEW SCHEDULE-AWARE FEATURES
     # ===========================
-    
+
     # Team schedule
     schedule = mapper.get_team_schedule('LAL', season=2024)
-    
+
     # Back-to-back detection
     b2b_games = mapper.get_back_to_back_games('LAL', season=2024)
-    
+
     # Rest days
     rest = mapper.get_rest_days('LAL', '2024-01-15')
-    
+
     # Comprehensive game context (perfect for player props!)
     context = mapper.get_game_context('LAL', '2024-01-15')
     # Returns: opponent, is_home_game, rest_days, is_back_to_back, matchup
@@ -84,17 +84,17 @@ class TeamInfo:
     """Complete team information with all identifier variations."""
     # Standard identifiers
     nba_tricode: str        # NBA.com standard (ATL, LAL, etc.)
-    br_tricode: str         # Basketball Reference (ATL, LAL, BRK, etc.) 
+    br_tricode: str         # Basketball Reference (ATL, LAL, BRK, etc.)
     espn_tricode: str       # ESPN (ATL, LAL, GS, etc.)
-    
+
     # Names
     full_name: str          # "Atlanta Hawks"
-    city: str              # "Atlanta" 
+    city: str              # "Atlanta"
     nickname: str          # "Hawks"
-    
+
     # Variations
     common_variations: List[str]  # ["Hawks", "atlanta hawks", "ATL Hawks"]
-    
+
     # Geographic
     state: str             # "Georgia"
     division: str          # "Southeast"
@@ -104,7 +104,7 @@ class TeamInfo:
 class NBATeamMapper:
     """
     Comprehensive NBA team mapper combining robust matching + schedule integration.
-    
+
     Features:
     - Multiple tricode systems (NBA.com, Basketball Reference, ESPN)
     - Fuzzy string matching for typos/variations
@@ -112,11 +112,11 @@ class NBATeamMapper:
     - City/state/conference queries
     - Schedule-aware features (back-to-backs, rest days, game context)
     """
-    
+
     def __init__(self, use_database: bool = True):
         """
         Initialize team mapper with optional schedule integration.
-        
+
         Args:
             use_database: If True, use database-first mode for faster schedule queries
         """
@@ -125,7 +125,7 @@ class NBATeamMapper:
         self.nba_tricode_lookup = {}
         self.fuzzy_lookup_cache = {}
         self._build_lookup_indexes()
-        
+
         # Initialize schedule service for new features (if available)
         if SCHEDULE_AVAILABLE and NBAScheduleService is not None:
             self.schedule = NBAScheduleService(use_database=use_database)
@@ -134,9 +134,9 @@ class NBATeamMapper:
 
         # Cache for team schedules
         self._team_schedule_cache: Dict[Tuple[str, int], List] = {}
-        
+
         logger.info("NBATeamMapper initialized with %d teams", len(self.teams_data))
-    
+
     def _load_teams_data(self) -> List[TeamInfo]:
         """Load comprehensive team data for all 30 NBA teams."""
         return [
@@ -148,14 +148,14 @@ class NBATeamMapper:
                 state="Massachusetts", division="Atlantic", conference="Eastern"
             ),
             TeamInfo(
-                nba_tricode="BKN", br_tricode="BRK", espn_tricode="BKN", 
+                nba_tricode="BKN", br_tricode="BRK", espn_tricode="BKN",
                 full_name="Brooklyn Nets", city="Brooklyn", nickname="Nets",
                 common_variations=["nets", "brooklyn nets", "bkn nets", "brk nets"],
                 state="New York", division="Atlantic", conference="Eastern"
             ),
             TeamInfo(
                 nba_tricode="NYK", br_tricode="NYK", espn_tricode="NY",
-                full_name="New York Knicks", city="New York", nickname="Knicks", 
+                full_name="New York Knicks", city="New York", nickname="Knicks",
                 common_variations=["knicks", "new york knicks", "ny knicks"],
                 state="New York", division="Atlantic", conference="Eastern"
             ),
@@ -171,8 +171,8 @@ class NBATeamMapper:
                 common_variations=["raptors", "toronto raptors", "tor raptors"],
                 state="Ontario", division="Atlantic", conference="Eastern"
             ),
-            
-            # Eastern Conference - Central  
+
+            # Eastern Conference - Central
             TeamInfo(
                 nba_tricode="CHI", br_tricode="CHI", espn_tricode="CHI",
                 full_name="Chicago Bulls", city="Chicago", nickname="Bulls",
@@ -180,7 +180,7 @@ class NBATeamMapper:
                 state="Illinois", division="Central", conference="Eastern"
             ),
             TeamInfo(
-                nba_tricode="CLE", br_tricode="CLE", espn_tricode="CLE", 
+                nba_tricode="CLE", br_tricode="CLE", espn_tricode="CLE",
                 full_name="Cleveland Cavaliers", city="Cleveland", nickname="Cavaliers",
                 common_variations=["cavaliers", "cavs", "cleveland cavaliers", "cleveland cavs"],
                 state="Ohio", division="Central", conference="Eastern"
@@ -188,7 +188,7 @@ class NBATeamMapper:
             TeamInfo(
                 nba_tricode="DET", br_tricode="DET", espn_tricode="DET",
                 full_name="Detroit Pistons", city="Detroit", nickname="Pistons",
-                common_variations=["pistons", "detroit pistons", "det pistons"], 
+                common_variations=["pistons", "detroit pistons", "det pistons"],
                 state="Michigan", division="Central", conference="Eastern"
             ),
             TeamInfo(
@@ -203,7 +203,7 @@ class NBATeamMapper:
                 common_variations=["bucks", "milwaukee bucks", "mil bucks"],
                 state="Wisconsin", division="Central", conference="Eastern"
             ),
-            
+
             # Eastern Conference - Southeast
             TeamInfo(
                 nba_tricode="ATL", br_tricode="ATL", espn_tricode="ATL",
@@ -212,7 +212,7 @@ class NBATeamMapper:
                 state="Georgia", division="Southeast", conference="Eastern"
             ),
             TeamInfo(
-                nba_tricode="CHA", br_tricode="CHO", espn_tricode="CHA", 
+                nba_tricode="CHA", br_tricode="CHO", espn_tricode="CHA",
                 full_name="Charlotte Hornets", city="Charlotte", nickname="Hornets",
                 common_variations=["hornets", "charlotte hornets", "cha hornets", "cho hornets"],
                 state="North Carolina", division="Southeast", conference="Eastern"
@@ -235,7 +235,7 @@ class NBATeamMapper:
                 common_variations=["wizards", "washington wizards", "was wizards"],
                 state="District of Columbia", division="Southeast", conference="Eastern"
             ),
-            
+
             # Western Conference - Northwest
             TeamInfo(
                 nba_tricode="DEN", br_tricode="DEN", espn_tricode="DEN",
@@ -251,7 +251,7 @@ class NBATeamMapper:
             ),
             TeamInfo(
                 nba_tricode="OKC", br_tricode="OKC", espn_tricode="OKC",
-                full_name="Oklahoma City Thunder", city="Oklahoma City", nickname="Thunder", 
+                full_name="Oklahoma City Thunder", city="Oklahoma City", nickname="Thunder",
                 common_variations=["thunder", "oklahoma city thunder", "okc thunder"],
                 state="Oklahoma", division="Northwest", conference="Western"
             ),
@@ -267,10 +267,10 @@ class NBATeamMapper:
                 common_variations=["jazz", "utah jazz", "uta jazz"],
                 state="Utah", division="Northwest", conference="Western"
             ),
-            
+
             # Western Conference - Pacific
             TeamInfo(
-                nba_tricode="GSW", br_tricode="GSW", espn_tricode="GS", 
+                nba_tricode="GSW", br_tricode="GSW", espn_tricode="GS",
                 full_name="Golden State Warriors", city="Golden State", nickname="Warriors",
                 common_variations=["warriors", "golden state warriors", "gsw warriors", "gs warriors", "dubs"],
                 state="California", division="Pacific", conference="Western"
@@ -283,7 +283,7 @@ class NBATeamMapper:
             ),
             TeamInfo(
                 nba_tricode="LAL", br_tricode="LAL", espn_tricode="LAL",
-                full_name="Los Angeles Lakers", city="Los Angeles", nickname="Lakers", 
+                full_name="Los Angeles Lakers", city="Los Angeles", nickname="Lakers",
                 common_variations=["lakers", "los angeles lakers", "la lakers", "lal lakers"],
                 state="California", division="Pacific", conference="Western"
             ),
@@ -299,7 +299,7 @@ class NBATeamMapper:
                 common_variations=["kings", "sacramento kings", "sac kings"],
                 state="California", division="Pacific", conference="Western"
             ),
-            
+
             # Western Conference - Southwest
             TeamInfo(
                 nba_tricode="DAL", br_tricode="DAL", espn_tricode="DAL",
@@ -326,13 +326,13 @@ class NBATeamMapper:
                 state="Louisiana", division="Southwest", conference="Western"
             ),
             TeamInfo(
-                nba_tricode="SAS", br_tricode="SAS", espn_tricode="SA", 
+                nba_tricode="SAS", br_tricode="SAS", espn_tricode="SA",
                 full_name="San Antonio Spurs", city="San Antonio", nickname="Spurs",
                 common_variations=["spurs", "san antonio spurs", "sas spurs", "sa spurs"],
                 state="Texas", division="Southwest", conference="Western"
             ),
         ]
-    
+
     def _build_lookup_indexes(self):
         """Build fast lookup indexes for all team identifiers."""
         for team in self.teams_data:
@@ -340,92 +340,92 @@ class NBATeamMapper:
             identifiers = [
                 # Official tricodes
                 team.nba_tricode.lower(),
-                team.br_tricode.lower(), 
+                team.br_tricode.lower(),
                 team.espn_tricode.lower(),
-                
+
                 # Names
                 team.full_name.lower(),
                 team.nickname.lower(),
                 team.city.lower(),
-                
+
                 # Common variations
                 *[var.lower() for var in team.common_variations],
-                
+
                 # Normalized versions (remove spaces, punctuation)
                 self._normalize_string(team.full_name),
                 self._normalize_string(team.nickname),
                 self._normalize_string(team.city)
             ]
-            
+
             # Remove duplicates and empty strings
             identifiers = list(set(filter(None, identifiers)))
-            
+
             # Map all identifiers to this team
             for identifier in identifiers:
                 self.nba_tricode_lookup[identifier] = team.nba_tricode
-    
+
     def _normalize_string(self, text: str) -> str:
         """Normalize string for matching (remove spaces, punctuation, lowercase)."""
         if not text:
             return ""
         return re.sub(r'[^a-z0-9]', '', text.lower())
-    
+
     # ========================================================================
     # ORIGINAL MAPPING FEATURES (Backward Compatible)
     # ========================================================================
-    
+
     def get_nba_tricode(self, team_identifier: str) -> Optional[str]:
         """
         Get NBA tricode from any team identifier.
-        
+
         Args:
             team_identifier: Team name, nickname, city, or abbreviation
-            
+
         Returns:
             NBA tricode (e.g. "ATL") or None if not found
         """
         if not team_identifier:
             return None
-            
+
         # Try exact lookup first (fast)
         normalized = team_identifier.lower().strip()
         result = self.nba_tricode_lookup.get(normalized)
         if result:
             return result
-        
+
         # Try normalized lookup
         normalized = self._normalize_string(team_identifier)
         return self.nba_tricode_lookup.get(normalized)
-    
+
     def get_nba_tricode_fuzzy(self, team_identifier: str, min_confidence: int = 80) -> Optional[str]:
         """
         Get NBA tricode using fuzzy string matching.
-        
+
         Args:
             team_identifier: Team identifier that might have typos/variations
             min_confidence: Minimum fuzzy match confidence (0-100)
-            
+
         Returns:
             NBA tricode or None if no confident match found
         """
         if not team_identifier:
             return None
-        
+
         # Try exact match first
         exact_match = self.get_nba_tricode(team_identifier)
         if exact_match:
             return exact_match
-        
+
         # Fuzzy matching requires fuzzywuzzy
         if not FUZZY_AVAILABLE:
             logger.warning("Fuzzy matching not available - fuzzywuzzy not installed")
             return None
-        
+
         # Check cache
         cache_key = (team_identifier.lower(), min_confidence)
         if cache_key in self.fuzzy_lookup_cache:
             return self.fuzzy_lookup_cache[cache_key]
-        
+
         # Fuzzy match against all team full names
         team_names = [team.full_name for team in self.teams_data]
         match_result = process.extractOne(
@@ -434,7 +434,7 @@ class NBATeamMapper:
             scorer=fuzz.partial_ratio,
             score_cutoff=min_confidence
         )
-        
+
         result = None
         if match_result:
             matched_name, confidence = match_result
@@ -447,118 +447,118 @@ class NBATeamMapper:
                         team_identifier, matched_name, result, confidence
                     )
                     break
-        
+
         # Cache result
         self.fuzzy_lookup_cache[cache_key] = result
         return result
-    
+
     def get_team_info(self, team_identifier: str) -> Optional[TeamInfo]:
         """Get complete team information."""
         tricode = self.get_nba_tricode(team_identifier)
         if not tricode:
             return None
-        
+
         for team in self.teams_data:
             if team.nba_tricode == tricode:
                 return team
         return None
-    
+
     def get_team_full_name(self, team_code: str) -> Optional[str]:
         """
         Get full team name from code (alias for compatibility).
-        
+
         Args:
             team_code: Team code (e.g., 'LAL')
-            
+
         Returns:
             Full team name (e.g., 'Los Angeles Lakers') or None
         """
         team_info = self.get_team_info(team_code)
         return team_info.full_name if team_info else None
-    
+
     def get_team_code(self, team_name: str) -> Optional[str]:
         """
         Get team code from full name (alias for get_nba_tricode).
-        
+
         Args:
             team_name: Full or partial team name
-            
+
         Returns:
             Team code or None
         """
         return self.get_nba_tricode(team_name)
-    
+
     def get_br_tricode(self, team_identifier: str) -> Optional[str]:
         """Get Basketball Reference tricode."""
         team_info = self.get_team_info(team_identifier)
         return team_info.br_tricode if team_info else None
-    
+
     def get_espn_tricode(self, team_identifier: str) -> Optional[str]:
-        """Get ESPN tricode.""" 
+        """Get ESPN tricode."""
         team_info = self.get_team_info(team_identifier)
         return team_info.espn_tricode if team_info else None
-    
+
     def find_teams_by_city(self, city: str) -> List[TeamInfo]:
         """Find all teams in a city (e.g., Los Angeles has Lakers and Clippers)."""
         normalized_city = city.lower().strip()
         return [team for team in self.teams_data if team.city.lower() == normalized_city]
-    
+
     def find_teams_by_state(self, state: str) -> List[TeamInfo]:
         """Find all teams in a state."""
         normalized_state = state.lower().strip()
         return [team for team in self.teams_data if team.state.lower() == normalized_state]
-    
+
     def get_all_nba_tricodes(self) -> List[str]:
         """Get list of all NBA tricodes."""
         return [team.nba_tricode for team in self.teams_data]
-    
+
     def get_all_team_codes(self) -> List[str]:
         """Get list of all valid NBA team codes (alias)."""
         return self.get_all_nba_tricodes()
-    
+
     def is_valid_team(self, team_code: str) -> bool:
         """
         Check if team code is valid.
-        
+
         Args:
             team_code: Team code to validate
-            
+
         Returns:
             True if valid NBA team code
         """
         return self.get_nba_tricode(team_code) is not None
-    
+
     def validate_team_identifier(
-        self, 
-        team_identifier: str, 
+        self,
+        team_identifier: str,
         fuzzy: bool = True
     ) -> Tuple[bool, Optional[str], Optional[str]]:
         """
         Validate and normalize a team identifier.
-        
+
         Returns:
             (is_valid, normalized_tricode, resolution_method)
         """
         if not team_identifier:
             return False, None, None
-        
+
         # Try exact match
         exact_match = self.get_nba_tricode(team_identifier)
         if exact_match:
             return True, exact_match, "exact"
-        
+
         # Try fuzzy match if enabled
         if fuzzy and FUZZY_AVAILABLE:
             fuzzy_match = self.get_nba_tricode_fuzzy(team_identifier)
             if fuzzy_match:
                 return True, fuzzy_match, "fuzzy"
-        
+
         return False, None, None
-    
+
     # ========================================================================
     # NEW: Schedule-Aware Features
     # ========================================================================
-    
+
     def get_team_schedule(
         self,
         team_code: str,
@@ -567,12 +567,12 @@ class NBATeamMapper:
     ) -> List:
         """
         Get all games for a team in a season.
-        
+
         Args:
             team_code: Team code (e.g., 'LAL')
             season: Season year (e.g., 2024 for 2024-25)
             game_type: Type of games to include
-            
+
         Returns:
             List of NBAGame objects for this team, sorted by date
         """
@@ -580,69 +580,69 @@ class NBATeamMapper:
         team_code = self.get_nba_tricode(team_code)
         if not team_code:
             return []
-        
+
         # Check cache
         cache_key = (team_code, season)
         if cache_key in self._team_schedule_cache:
             return self._team_schedule_cache[cache_key]
-        
+
         # Get all games for season
         all_dates = self.schedule.get_all_game_dates(seasons=[season], game_type=game_type)
-        
+
         # Filter to team's games
         team_games = []
         for date_info in all_dates:
             for game in date_info['games']:
                 if game.away_team == team_code or game.home_team == team_code:
                     team_games.append(game)
-        
+
         # Sort by date
         team_games.sort(key=lambda g: g.game_date)
-        
+
         # Cache result
         self._team_schedule_cache[cache_key] = team_games
-        
+
         logger.debug("Found %d games for %s in season %d", len(team_games), team_code, season)
         return team_games
-    
+
     def get_back_to_back_games(self, team_code: str, season: int) -> List[Tuple]:
         """
         Find back-to-back games for a team.
-        
+
         Useful for:
         - Rest analysis
         - Player load management
         - Betting props adjustments
-        
+
         Args:
             team_code: Team code
             season: Season year
-            
+
         Returns:
             List of (game1, game2) tuples for consecutive game dates
         """
         team_schedule = self.get_team_schedule(team_code, season)
-        
+
         back_to_backs = []
         for i in range(len(team_schedule) - 1):
             date1 = datetime.strptime(team_schedule[i].game_date, '%Y-%m-%d').date()
             date2 = datetime.strptime(team_schedule[i+1].game_date, '%Y-%m-%d').date()
-            
+
             if (date2 - date1).days == 1:
                 back_to_backs.append((team_schedule[i], team_schedule[i+1]))
-        
+
         logger.debug("Found %d back-to-back sets for %s", len(back_to_backs), team_code)
         return back_to_backs
-    
+
     def get_rest_days(self, team_code: str, game_date: str, season: Optional[int] = None) -> int:
         """
         Calculate rest days before a game.
-        
+
         Args:
             team_code: Team code
             game_date: Game date (YYYY-MM-DD)
             season: Season year (auto-detected if not provided)
-            
+
         Returns:
             Number of rest days (0 = back-to-back, 1 = one day rest, etc.)
         """
@@ -650,39 +650,39 @@ class NBATeamMapper:
         team_code = self.get_nba_tricode(team_code)
         if not team_code:
             return 99
-        
+
         if not season:
             date_obj = datetime.strptime(game_date, '%Y-%m-%d').date()
             season = date_obj.year if date_obj.month >= 10 else date_obj.year - 1
-        
+
         team_schedule = self.get_team_schedule(team_code, season)
-        
+
         # Find this game and previous game
         current_game_idx = None
         for i, game in enumerate(team_schedule):
             if game.game_date == game_date:
                 current_game_idx = i
                 break
-        
+
         if current_game_idx is None or current_game_idx == 0:
             return 99  # First game of season or not found
-        
+
         prev_game = team_schedule[current_game_idx - 1]
         curr_date = datetime.strptime(game_date, '%Y-%m-%d').date()
         prev_date = datetime.strptime(prev_game.game_date, '%Y-%m-%d').date()
-        
+
         rest_days = (curr_date - prev_date).days - 1
         return rest_days
-    
+
     def is_home_game(self, team_code: str, game_date: str, season: Optional[int] = None) -> bool:
         """
         Check if team is playing at home on a specific date.
-        
+
         Args:
             team_code: Team code
             game_date: Game date (YYYY-MM-DD)
             season: Season year (auto-detected if not provided)
-            
+
         Returns:
             True if home game, False if away
         """
@@ -690,30 +690,30 @@ class NBATeamMapper:
         team_code = self.get_nba_tricode(team_code)
         if not team_code:
             return False
-        
+
         if not season:
             date_obj = datetime.strptime(game_date, '%Y-%m-%d').date()
             season = date_obj.year if date_obj.month >= 10 else date_obj.year - 1
-        
+
         games = self.schedule.get_games_for_date(game_date)
-        
+
         for game in games:
             if game.away_team == team_code:
                 return False
             elif game.home_team == team_code:
                 return True
-        
+
         return False
-    
+
     def get_opponent(self, team_code: str, game_date: str, season: Optional[int] = None) -> Optional[str]:
         """
         Get opponent team code for a game.
-        
+
         Args:
             team_code: Team code
             game_date: Game date (YYYY-MM-DD)
             season: Season year (auto-detected if not provided)
-            
+
         Returns:
             Opponent team code or None
         """
@@ -721,57 +721,57 @@ class NBATeamMapper:
         team_code = self.get_nba_tricode(team_code)
         if not team_code:
             return None
-        
+
         if not season:
             date_obj = datetime.strptime(game_date, '%Y-%m-%d').date()
             season = date_obj.year if date_obj.month >= 10 else date_obj.year - 1
-        
+
         games = self.schedule.get_games_for_date(game_date)
-        
+
         for game in games:
             if game.away_team == team_code:
                 return game.home_team
             elif game.home_team == team_code:
                 return game.away_team
-        
+
         return None
-    
+
     def get_home_away_splits(self, team_code: str, season: int) -> Dict[str, int]:
         """
         Get home/away game counts for a team.
-        
+
         Args:
             team_code: Team code
             season: Season year
-            
+
         Returns:
             Dictionary with 'home' and 'away' counts
         """
         team_schedule = self.get_team_schedule(team_code, season)
-        
+
         # Normalize team code for comparison
         team_code = self.get_nba_tricode(team_code)
-        
+
         home_count = sum(1 for game in team_schedule if game.home_team == team_code)
         away_count = sum(1 for game in team_schedule if game.away_team == team_code)
-        
+
         return {
             'home': home_count,
             'away': away_count,
             'total': len(team_schedule)
         }
-    
+
     def get_game_context(self, team_code: str, game_date: str, season: Optional[int] = None) -> Dict:
         """
         Get comprehensive game context for a team.
-        
+
         Useful for player props analysis - provides all relevant context in one call.
-        
+
         Args:
             team_code: Team code
             game_date: Game date (YYYY-MM-DD)
             season: Season year (auto-detected if not provided)
-            
+
         Returns:
             Dictionary with game context:
             - opponent: Opponent team code
@@ -785,15 +785,15 @@ class NBATeamMapper:
         team_code = self.get_nba_tricode(team_code)
         if not team_code:
             return {}
-        
+
         if not season:
             date_obj = datetime.strptime(game_date, '%Y-%m-%d').date()
             season = date_obj.year if date_obj.month >= 10 else date_obj.year - 1
-        
+
         opponent = self.get_opponent(team_code, game_date, season)
         is_home = self.is_home_game(team_code, game_date, season)
         rest_days = self.get_rest_days(team_code, game_date, season)
-        
+
         context = {
             'team': team_code,
             'team_full_name': self.get_team_full_name(team_code),
@@ -806,9 +806,9 @@ class NBATeamMapper:
             'is_back_to_back': rest_days == 0,
             'matchup': f"{team_code}@{opponent}" if not is_home else f"{opponent}@{team_code}"
         }
-        
+
         return context
-    
+
     def clear_cache(self):
         """Clear all caches (fuzzy lookup + team schedule)."""
         self.fuzzy_lookup_cache.clear()

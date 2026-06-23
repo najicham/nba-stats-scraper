@@ -57,19 +57,19 @@ error() {
 
 test_health_check() {
     log "Testing health check endpoint..."
-    
+
     SERVICE_URL=$(gcloud run services describe "$SERVICE_NAME" \
         --project "$PROJECT_ID" \
         --region "$REGION" \
         --format "value(status.url)")
-    
+
     # Get ID token for authenticated request
     TOKEN=$(gcloud auth print-identity-token)
-    
+
     RESPONSE=$(curl -s -w "\n%{http_code}" -H "Authorization: Bearer $TOKEN" "${SERVICE_URL}/health")
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
     BODY=$(echo "$RESPONSE" | head -n-1)
-    
+
     if [ "$HTTP_CODE" = "200" ]; then
         log "✓ Health check passed"
         log "  Response: $BODY"
@@ -80,7 +80,7 @@ test_health_check() {
 
 test_prediction_request() {
     log "Testing prediction via Pub/Sub..."
-    
+
     # Test message for LeBron James
     TEST_MESSAGE='{
         "player_lookup": "lebron-james",
@@ -88,24 +88,24 @@ test_prediction_request() {
         "game_id": "20251108_LAL_GSW",
         "line_values": [25.5]
     }'
-    
+
     log "Publishing test message to $PUBSUB_TOPIC..."
-    
+
     MESSAGE_ID=$(gcloud pubsub topics publish "$PUBSUB_TOPIC" \
         --project "$PROJECT_ID" \
         --message "$TEST_MESSAGE" \
         --format "value(messageIds[0])")
-    
+
     log "✓ Message published: $MESSAGE_ID"
     log "  Waiting for processing (10 seconds)..."
-    
+
     sleep 10
-    
+
     # Check if prediction was written to BigQuery
     log "Checking BigQuery for prediction..."
-    
+
     QUERY="
-    SELECT 
+    SELECT
         prediction_id,
         system_id,
         predicted_points,
@@ -119,9 +119,9 @@ test_prediction_request() {
     ORDER BY created_at DESC
     LIMIT 10
     "
-    
+
     RESULTS=$(bq query --project_id="$PROJECT_ID" --use_legacy_sql=false --format=prettyjson "$QUERY")
-    
+
     if [ "$RESULTS" != "[]" ]; then
         log "✓ Predictions found in BigQuery"
         echo "$RESULTS" | jq -r '.[] | "  - \(.system_id): \(.predicted_points) pts (conf: \(.confidence_score)%, rec: \(.recommendation))"'
@@ -132,7 +132,7 @@ test_prediction_request() {
 
 check_cloud_run_logs() {
     log "Checking recent Cloud Run logs..."
-    
+
     gcloud run services logs read "$SERVICE_NAME" \
         --project "$PROJECT_ID" \
         --region "$REGION" \
@@ -142,13 +142,13 @@ check_cloud_run_logs() {
 
 show_metrics() {
     log "Recent metrics..."
-    
+
     # Get service details
     SERVICE_INFO=$(gcloud run services describe "$SERVICE_NAME" \
         --project "$PROJECT_ID" \
         --region "$REGION" \
         --format json)
-    
+
     echo "$SERVICE_INFO" | jq -r '
         "Status: " + .status.conditions[0].status,
         "URL: " + .status.url,
@@ -163,18 +163,18 @@ show_metrics() {
 
 main() {
     log "Testing prediction worker in environment: $ENVIRONMENT"
-    
+
     test_health_check
     echo ""
-    
+
     test_prediction_request
     echo ""
-    
+
     check_cloud_run_logs
     echo ""
-    
+
     show_metrics
-    
+
     log "Testing complete! ✓"
     log ""
     log "Next steps:"

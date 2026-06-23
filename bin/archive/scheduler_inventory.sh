@@ -80,7 +80,7 @@ ANALYTICAL_SCRAPERS=(
 extract_scraper_from_job() {
     local job_name="$1"
     local job_name_lower=$(echo "$job_name" | tr '[:upper:]' '[:lower:]')
-    
+
     # Comprehensive mapping based on job naming patterns
     case "$job_name_lower" in
         # Odds API
@@ -89,14 +89,14 @@ extract_scraper_from_job() {
         *"odds-team-players"*) echo "GetOddsApiTeamPlayers" ;;
         *"odds-historical-events"*) echo "GetOddsApiHistoricalEvents" ;;
         *"odds-historical-props"*) echo "GetOddsApiHistoricalEventOdds" ;;
-        
+
         # Ball Don't Lie
         *"bdl-active-players"*|*"active-players"*) echo "BdlActivePlayersScraper" ;;
         *"bdl-games"*) echo "BdlGamesScraper" ;;
         *"bdl-player-box-scores"*|*"bdl-player-boxscores"*) echo "BdlPlayerBoxScoresScraper" ;;
         *"bdl-box-scores"*|*"bdl-boxscores"*) echo "BdlBoxScoresScraper" ;;
         *"bdl-injuries"*) echo "BdlInjuriesScraper" ;;
-        
+
         # NBA.com
         *"nba-player-list"*|*"player-list"*) echo "GetNbaComPlayerList" ;;
         *"nba-injury-report"*|*"injury-report"*) echo "GetNbaComInjuryReport" ;;
@@ -107,15 +107,15 @@ extract_scraper_from_job() {
         *"nba-player-boxscore"*) echo "GetNbaComPlayerBoxscore" ;;
         *"nba-roster"*|*"roster"*) echo "GetNbaTeamRoster" ;;
         *"nba-player-movement"*) echo "GetNbaComPlayerMovement" ;;
-        
+
         # ESPN
         *"espn-roster"*) echo "GetEspnTeamRosterAPI" ;;
         *"espn-scoreboard"*) echo "GetEspnScoreboard" ;;
         *"espn-boxscore"*) echo "GetEspnBoxscore" ;;
-        
+
         # Big Data Ball
         *"big-data-ball"*|*"bigdataball"*) echo "BigDataBallPlayByPlay" ;;
-        
+
         # Default
         *) echo "UNKNOWN" ;;
     esac
@@ -144,20 +144,20 @@ else
     echo "Raw scheduler jobs:"
     gcloud scheduler jobs list --location="$REGION" --quiet
     echo ""
-    
+
     scheduled_scrapers=""
     unknown_jobs=""
     total_jobs=0
-    
+
     echo "Job to Scraper Mapping:"
     echo "======================="
-    
+
     while IFS= read -r job_name; do
         [[ -z "$job_name" ]] && continue
         ((total_jobs++))
-        
+
         scraper=$(extract_scraper_from_job "$job_name")
-        
+
         if [[ "$scraper" != "UNKNOWN" ]]; then
             echo -e "  ✅ ${BLUE}$job_name${NC} → ${GREEN}$scraper${NC}"
             scheduled_scrapers="$scheduled_scrapers $scraper"
@@ -165,9 +165,9 @@ else
             echo -e "  ⚠️  ${BLUE}$job_name${NC} → ${YELLOW}UNKNOWN${NC}"
             unknown_jobs="$unknown_jobs $job_name"
         fi
-        
+
     done <<< "$job_names"
-    
+
     echo ""
     echo "Total scheduler jobs found: $total_jobs"
 fi
@@ -186,7 +186,7 @@ critical_total=${#CRITICAL_SCRAPERS[@]}
 for scraper_entry in "${CRITICAL_SCRAPERS[@]}"; do
     scraper_name="${scraper_entry%%:*}"
     scraper_desc="${scraper_entry##*:}"
-    
+
     if is_scraper_scheduled "$scraper_name" "$scheduled_scrapers"; then
         echo -e "  ✅ $scraper_name - ${GREEN}SCHEDULED${NC}"
         echo -e "     └─ $scraper_desc"
@@ -207,7 +207,7 @@ high_total=${#HIGH_PRIORITY_SCRAPERS[@]}
 for scraper_entry in "${HIGH_PRIORITY_SCRAPERS[@]}"; do
     scraper_name="${scraper_entry%%:*}"
     scraper_desc="${scraper_entry##*:}"
-    
+
     if is_scraper_scheduled "$scraper_name" "$scheduled_scrapers"; then
         echo -e "  ✅ $scraper_name - ${GREEN}SCHEDULED${NC}"
         echo -e "     └─ $scraper_desc"
@@ -228,7 +228,7 @@ standard_total=${#STANDARD_SCRAPERS[@]}
 for scraper_entry in "${STANDARD_SCRAPERS[@]}"; do
     scraper_name="${scraper_entry%%:*}"
     scraper_desc="${scraper_entry##*:}"
-    
+
     if is_scraper_scheduled "$scraper_name" "$scheduled_scrapers"; then
         echo -e "  ✅ $scraper_name - ${GREEN}SCHEDULED${NC}"
         echo -e "     └─ $scraper_desc"
@@ -249,7 +249,7 @@ analytical_total=${#ANALYTICAL_SCRAPERS[@]}
 for scraper_entry in "${ANALYTICAL_SCRAPERS[@]}"; do
     scraper_name="${scraper_entry%%:*}"
     scraper_desc="${scraper_entry##*:}"
-    
+
     if is_scraper_scheduled "$scraper_name" "$scheduled_scrapers"; then
         echo -e "  ✅ $scraper_name - ${GREEN}SCHEDULED${NC}"
         echo -e "     └─ $scraper_desc"
@@ -271,7 +271,7 @@ total_all_scheduled=$((critical_scheduled + high_scheduled + standard_scheduled 
 echo -e "${PURPLE}📈 Comprehensive Coverage Statistics${NC}"
 echo "===================================="
 echo "🔴 Critical: $critical_scheduled / $critical_total scheduled"
-echo "🟡 High Priority: $high_scheduled / $high_total scheduled"  
+echo "🟡 High Priority: $high_scheduled / $high_total scheduled"
 echo "🟢 Standard: $standard_scheduled / $standard_total scheduled"
 echo "🔵 Analytical: $analytical_scheduled / $analytical_total scheduled"
 echo ""
@@ -349,7 +349,7 @@ missing_standard=$((standard_total - standard_scheduled))
 if [[ $missing_critical -gt 0 ]]; then
     echo -e "${RED}🚨 URGENT: $missing_critical critical scrapers missing${NC}"
     echo "   These must be added first (business blocking):"
-    
+
     for scraper_entry in "${CRITICAL_SCRAPERS[@]}"; do
         scraper_name="${scraper_entry%%:*}"
         if ! is_scraper_scheduled "$scraper_name" "$scheduled_scrapers"; then
@@ -362,7 +362,7 @@ fi
 if [[ $missing_high -gt 0 ]]; then
     echo -e "${YELLOW}⚠️  HIGH PRIORITY: $missing_high high-priority scrapers missing${NC}"
     echo "   These significantly improve data quality:"
-    
+
     for scraper_entry in "${HIGH_PRIORITY_SCRAPERS[@]}"; do
         scraper_name="${scraper_entry%%:*}"
         if ! is_scraper_scheduled "$scraper_name" "$scheduled_scrapers"; then
@@ -385,7 +385,7 @@ echo "==============================="
 if [[ $missing_critical -gt 0 ]]; then
     echo "🎯 FOCUSED APPROACH (Recommended):"
     echo "   1. Add $missing_critical critical scrapers first"
-    echo "   2. Validate business functionality"  
+    echo "   2. Validate business functionality"
     echo "   3. Then expand to high-priority and standard scrapers"
     echo ""
     echo "🎯 COMPREHENSIVE APPROACH (Alternative):"

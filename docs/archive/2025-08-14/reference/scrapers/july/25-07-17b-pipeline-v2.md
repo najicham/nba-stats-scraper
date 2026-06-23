@@ -41,7 +41,7 @@ All scraped data follows a consistent structure in Google Cloud Storage:
 - **File**: `scrapers/balldontlie/bdl_player_box_scores.py`
 - **Class**: `BdlPlayerBoxScoresScraper`
 - **Parameters**: start_date, end_date OR game_id
-- **Output Path**: 
+- **Output Path**:
   - By date: `/raw-data/ball-dont-lie/player-box-scores/{date}/{timestamp}.json`
   - By game: `/raw-data/ball-dont-lie/player-box-scores/{date}/game_{id}/{timestamp}.json`
 - **Description**: Individual player statistics for games
@@ -386,7 +386,7 @@ All scraped data follows a consistent structure in Google Cloud Storage:
 {
   "file_path": "/raw-data/odds-api/player-props/2025-07-15/event_242c77a8d5890e18/20250715_143000.json",
   "data_source": "odds-api",
-  "data_type": "player-props", 
+  "data_type": "player-props",
   "scraper_class": "GetOddsApiCurrentEventOdds",
   "status": "success",
   "timestamp": "2025-07-15T14:30:00Z",
@@ -420,7 +420,7 @@ All scraped data follows a consistent structure in Google Cloud Storage:
 
 #### **Critical Metrics**
 - **Player Match Rate**: >95% successful cross-references
-- **Game Linking Rate**: >98% successful game ID mapping  
+- **Game Linking Rate**: >98% successful game ID mapping
 - **Prop Coverage**: % of games with available betting lines
 - **Data Freshness**: <30 minutes from scrape to processor completion
 
@@ -455,7 +455,7 @@ All scraped data follows a consistent structure in Google Cloud Storage:
 - Establish cross-reference system
 - Validate core data relationships
 
-### **Week 3-4: Betting Pipeline** 
+### **Week 3-4: Betting Pipeline**
 - Deploy events-processor (betting events)
 - Deploy props-processor (**PRIMARY BUSINESS VALUE**)
 - Implement odds tracking and validation
@@ -480,7 +480,7 @@ All scraped data follows a consistent structure in Google Cloud Storage:
 - **System Uptime**: 99.5% availability during NBA season
 - **Error Rate**: <1% processing failures
 
-### **Business KPIs** 
+### **Business KPIs**
 - **Prop Coverage**: Track % of games with complete prop data
 - **Prediction Accuracy**: Baseline statistical model performance
 - **User Engagement**: Website usage and analysis adoption

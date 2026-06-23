@@ -64,7 +64,7 @@ data_validation AS (
     COUNT(CASE WHEN last_seen_date < DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY) THEN 1 END) as very_old_dates,
     COUNT(CASE WHEN processed_at > CURRENT_TIMESTAMP() THEN 1 END) as future_timestamps,
     -- Validation consistency check
-    COUNT(CASE 
+    COUNT(CASE
       WHEN has_validation_issues = FALSE AND validation_status != 'validated' THEN 1
       WHEN has_validation_issues = TRUE AND validation_status = 'validated' THEN 1
     END) as validation_logic_mismatch
@@ -305,13 +305,13 @@ SELECT
   '' as check_name,
   '' as issues_found,
   CASE
-    WHEN duplicate_player_lookup_count > 0 
+    WHEN duplicate_player_lookup_count > 0
       OR duplicate_bdl_id_count > 0
-      OR null_player_lookup > 0 
+      OR null_player_lookup > 0
       OR null_bdl_player_id > 0
       OR null_has_issues > 0
       OR null_validation_status > 0
-      OR invalid_team_abbr > 0 
+      OR invalid_team_abbr > 0
       OR invalid_validation_status > 0
       OR future_dates > 0
       OR future_timestamps > 0

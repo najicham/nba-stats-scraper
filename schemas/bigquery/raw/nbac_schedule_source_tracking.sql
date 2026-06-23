@@ -23,31 +23,31 @@ CREATE TABLE IF NOT EXISTS `nba_raw.nbac_schedule_source_history` (
   season STRING NOT NULL,
   season_nba_format STRING NOT NULL,
   processing_date DATE NOT NULL,
-  
+
   -- Source information
   data_source STRING NOT NULL,              -- "api_stats" or "cdn_static"
   is_fallback BOOLEAN DEFAULT FALSE,        -- Was this a fallback run?
   primary_source_failed BOOLEAN DEFAULT FALSE,  -- Did primary source fail?
-  
+
   -- Processing stats
   games_processed INT64,
   games_inserted INT64,
   games_updated INT64,
   games_skipped INT64,
-  
+
   -- Timing
   processing_duration_seconds INT64,
   started_at TIMESTAMP NOT NULL,
   completed_at TIMESTAMP NOT NULL,
-  
+
   -- File information
   source_file_path STRING,
   file_size_bytes INT64,
-  
+
   -- Error tracking
   had_errors BOOLEAN DEFAULT FALSE,
   error_message STRING,
-  
+
   -- Metadata
   processor_version STRING,
   notes STRING
@@ -65,7 +65,7 @@ OPTIONS (
 
 -- View: Current source usage by season
 CREATE OR REPLACE VIEW `nba_raw.nbac_schedule_source_usage` AS
-SELECT 
+SELECT
   season_nba_format,
   data_source,
   COUNT(*) as game_count,
@@ -82,7 +82,7 @@ ORDER BY season_nba_format DESC, data_source;
 
 -- View: Daily source health check
 CREATE OR REPLACE VIEW `nba_raw.nbac_schedule_source_daily` AS
-SELECT 
+SELECT
   game_date,
   data_source,
   COUNT(*) as games,
@@ -96,7 +96,7 @@ ORDER BY game_date DESC, data_source;
 
 -- View: Fallback frequency tracking
 CREATE OR REPLACE VIEW `nba_raw.nbac_schedule_fallback_stats` AS
-SELECT 
+SELECT
   DATE_TRUNC(processing_date, MONTH) as month,
   COUNT(*) as total_runs,
   COUNT(CASE WHEN is_fallback THEN 1 END) as fallback_runs,
@@ -110,7 +110,7 @@ ORDER BY month DESC;
 
 -- View: Data quality by source
 CREATE OR REPLACE VIEW `nba_raw.nbac_schedule_source_quality` AS
-SELECT 
+SELECT
   data_source,
   season_nba_format,
   COUNT(*) as total_games,
@@ -127,7 +127,7 @@ ORDER BY season_nba_format DESC, data_source;
 -- View: Games that switched sources
 CREATE OR REPLACE VIEW `nba_raw.nbac_schedule_source_changes` AS
 WITH source_changes AS (
-  SELECT 
+  SELECT
     game_id,
     game_date,
     home_team_tricode,
@@ -148,7 +148,7 @@ ORDER BY source_updated_at DESC;
 
 -- View: Which source are we using today?
 CREATE OR REPLACE VIEW `nba_raw.nbac_schedule_today_source` AS
-SELECT 
+SELECT
   data_source,
   COUNT(*) as games_today,
   MAX(source_updated_at) as last_update,
@@ -160,7 +160,7 @@ GROUP BY data_source;
 
 -- View: Source reliability over last 30 days
 CREATE OR REPLACE VIEW `nba_raw.nbac_schedule_source_reliability` AS
-SELECT 
+SELECT
   processing_date,
   data_source,
   is_fallback,
@@ -177,7 +177,7 @@ ORDER BY processing_date DESC, data_source;
 
 -- Check if we're using API or CDN for current season
 /*
-SELECT 
+SELECT
   data_source,
   COUNT(*) as games,
   COUNT(CASE WHEN game_date >= CURRENT_DATE() THEN 1 END) as upcoming_games,
@@ -191,7 +191,7 @@ GROUP BY data_source;
 
 -- Find games where we fell back to CDN
 /*
-SELECT 
+SELECT
   game_date,
   home_team_tricode,
   away_team_tricode,
@@ -205,7 +205,7 @@ ORDER BY game_date DESC;
 
 -- Check fallback frequency this month
 /*
-SELECT 
+SELECT
   COUNT(*) as total_runs,
   COUNT(CASE WHEN is_fallback THEN 1 END) as fallback_runs,
   ROUND(COUNT(CASE WHEN is_fallback THEN 1 END) * 100.0 / COUNT(*), 1) as fallback_pct
@@ -216,7 +216,7 @@ WHERE processing_date >= DATE_TRUNC(CURRENT_DATE(), MONTH)
 
 -- Compare data quality between sources
 /*
-SELECT 
+SELECT
   data_source,
   COUNT(*) as games,
   COUNT(CASE WHEN primary_network IS NOT NULL THEN 1 END) as with_network,
@@ -231,7 +231,7 @@ GROUP BY data_source;
 
 -- Alert: High fallback rate
 /*
-SELECT 
+SELECT
   'ALERT: High fallback rate' as alert_type,
   COUNT(CASE WHEN is_fallback THEN 1 END) as fallback_count,
   COUNT(*) as total_runs,
@@ -244,7 +244,7 @@ HAVING fallback_pct > 10;  -- Alert if >10% fallback rate
 
 -- Today's processing run
 /*
-SELECT 
+SELECT
   processing_id,
   data_source,
   is_fallback,

@@ -17,18 +17,18 @@ else
     PROJECT_ID="nba-props-platform"
     REGION="us-west2"
     SERVICE_NAME="nba-orchestration-service"
-    
+
     SERVICE_URL=$(gcloud run services describe ${SERVICE_NAME} \
         --platform=managed \
         --region=${REGION} \
         --format="value(status.url)" \
         --project=${PROJECT_ID} 2>/dev/null)
-    
+
     if [[ -z "$SERVICE_URL" ]]; then
         echo "❌ Cloud Run service not found. Deploy first or use --local flag."
         exit 1
     fi
-    
+
     AUTH_TOKEN=$(gcloud auth print-identity-token)
     AUTH_HEADER="Authorization: Bearer ${AUTH_TOKEN}"
     echo "🧪 Testing CLOUD RUN orchestration service"
@@ -42,12 +42,12 @@ run_test() {
     local name=$1
     local endpoint=$2
     local method=${3:-GET}
-    
+
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "Test: ${name}"
     echo "Endpoint: ${method} ${endpoint}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    
+
     if [[ "$method" == "POST" ]]; then
         if [[ -n "$AUTH_HEADER" ]]; then
             curl -s -X POST \
@@ -68,7 +68,7 @@ run_test() {
             curl -s "${SERVICE_URL}${endpoint}" | jq '.'
         fi
     fi
-    
+
     local exit_code=$?
     if [[ $exit_code -eq 0 ]]; then
         echo "✅ PASS"

@@ -28,18 +28,18 @@ print_header() {
 # Download a sample file for analysis
 get_sample_file() {
     local temp_file="/tmp/nba_sample_$(date +%s).json"
-    
+
     # Get the most recent file
     local recent_file=$(gcloud storage ls --recursive "$BUCKET/$JSON_PATH/" --long --format="value(name,timeCreated)" 2>/dev/null | \
         grep "\.json" | sort -k2 -r | head -1 | awk '{print $1}' | sed "s|^|gs://nba-scraped-data/|")
-    
+
     if [[ -z "$recent_file" ]]; then
         echo "No files found"
         return 1
     fi
-    
+
     echo "Using sample file: $(basename "$recent_file")"
-    
+
     if gcloud storage cp "$recent_file" "$temp_file" >/dev/null 2>&1; then
         echo "$temp_file"
     else
@@ -52,28 +52,28 @@ cmd_structure() {
     print_header
     echo -e "${BLUE}🏗️  JSON Structure Analysis:${NC}"
     echo ""
-    
+
     local sample_file=$(get_sample_file)
     if [[ -z "$sample_file" ]]; then
         echo "Could not download sample file"
         return 1
     fi
-    
+
     echo -e "${GREEN}Top-level keys:${NC}"
     jq -r 'keys[]' "$sample_file" | sed 's/^/  /'
-    
+
     echo ""
     echo -e "${GREEN}Game info structure:${NC}"
     jq -r '.game_info | keys[]' "$sample_file" 2>/dev/null | sed 's/^/  /' || echo "  No game_info found"
-    
+
     echo ""
     echo -e "${GREEN}Player object structure (first player):${NC}"
     jq -r '.players[0] | keys[]' "$sample_file" 2>/dev/null | sed 's/^/  /' || echo "  No players found"
-    
+
     echo ""
     echo -e "${GREEN}Sample player data:${NC}"
     jq -r '.players[0]' "$sample_file" 2>/dev/null | head -10 | sed 's/^/  /'
-    
+
     rm -f "$sample_file"
 }
 
@@ -82,16 +82,16 @@ cmd_player_stats() {
     print_header
     echo -e "${BLUE}👥 Player Statistics Analysis:${NC}"
     echo ""
-    
+
     local sample_file=$(get_sample_file)
     if [[ -z "$sample_file" ]]; then
         echo "Could not download sample file"
         return 1
     fi
-    
+
     echo -e "${GREEN}Player status distribution:${NC}"
     jq -r '.players | group_by(.status) | map({status: .[0].status, count: length}) | .[] | "  \(.status): \(.count) players"' "$sample_file"
-    
+
     echo ""
     echo -e "${GREEN}Players with stats (pts, min, reb, ast):${NC}"
     jq -r '
@@ -100,19 +100,19 @@ cmd_player_stats() {
         .players | map(select(.reb != null and .reb != "")) | length as $with_reb |
         .players | map(select(.ast != null and .ast != "")) | length as $with_ast |
         "  Points: \($with_pts)",
-        "  Minutes: \($with_min)", 
+        "  Minutes: \($with_min)",
         "  Rebounds: \($with_reb)",
         "  Assists: \($with_ast)"
     ' "$sample_file"
-    
+
     echo ""
     echo -e "${GREEN}Top 5 scorers (if available):${NC}"
     jq -r '.players | map(select(.pts != null and .pts != "")) | sort_by(.pts | tonumber) | reverse | .[:5][] | "  \(.player_name): \(.pts) pts"' "$sample_file" 2>/dev/null || echo "  No scoring data available"
-    
+
     echo ""
     echo -e "${GREEN}DNP reasons (if available):${NC}"
     jq -r '.players | map(select(.status == "DNP" and .dnp_reason != null)) | group_by(.dnp_reason) | map({reason: .[0].dnp_reason, count: length}) | .[] | "  \(.reason): \(.count) players"' "$sample_file" 2>/dev/null || echo "  No DNP reason data available"
-    
+
     rm -f "$sample_file"
 }
 
@@ -121,15 +121,15 @@ cmd_game_info() {
     print_header
     echo -e "${BLUE}🏀 Game Information Analysis:${NC}"
     echo ""
-    
+
     local sample_file=$(get_sample_file)
     if [[ -z "$sample_file" ]]; then
         echo "Could not download sample file"
         return 1
     fi
-    
+
     echo -e "${GREEN}Basic game info:${NC}"
-    jq -r '.game_info | 
+    jq -r '.game_info |
         "  Date: \(.date // "Unknown")",
         "  Arena: \(.arena // "Unknown")",
         "  Attendance: \(.attendance // "Unknown")",
@@ -137,23 +137,23 @@ cmd_game_info() {
         "  Away Team: \(.away_team // "Unknown")",
         "  Officials: \(.officials // "Unknown")"
     ' "$sample_file"
-    
+
     echo ""
     echo -e "${GREEN}Score information (if available):${NC}"
-    jq -r '.game_info | 
+    jq -r '.game_info |
         if .home_score and .away_score then
             "  Final Score: \(.away_team) \(.away_score) - \(.home_team) \(.home_score)"
         else
             "  Score data not available"
         end
     ' "$sample_file"
-    
+
     echo ""
     echo -e "${GREEN}Team rosters:${NC}"
     jq -r '
         .players | group_by(.team) | map({team: .[0].team, count: length}) | .[] | "  \(.team): \(.count) players"
     ' "$sample_file" 2>/dev/null || echo "  Team information not available"
-    
+
     rm -f "$sample_file"
 }
 
@@ -162,13 +162,13 @@ cmd_quality() {
     print_header
     echo -e "${BLUE}✅ Data Quality Analysis:${NC}"
     echo ""
-    
+
     local sample_file=$(get_sample_file)
     if [[ -z "$sample_file" ]]; then
         echo "Could not download sample file"
         return 1
     fi
-    
+
     echo -e "${GREEN}Data completeness:${NC}"
     jq -r '
         .players | length as $total |
@@ -182,7 +182,7 @@ cmd_quality() {
         "  With team: \($with_team) (\(($with_team * 100 / $total) | floor)%)",
         "  With position: \($with_pos) (\(($with_pos * 100 / $total) | floor)%)"
     ' "$sample_file"
-    
+
     echo ""
     echo -e "${GREEN}Statistical data availability:${NC}"
     jq -r '
@@ -198,7 +198,7 @@ cmd_quality() {
         "  Three pointers: \($three) (\(($three * 100 / $total) | floor)%)",
         "  Free throws: \($ft) (\(($ft * 100 / $total) | floor)%)"
     ' "$sample_file"
-    
+
     echo ""
     echo -e "${GREEN}Data anomalies:${NC}"
     jq -r '
@@ -209,7 +209,7 @@ cmd_quality() {
         if $missing_status > 0 then "  ⚠️  \($missing_status) players missing status" else "  ✅ All players have status" end,
         if $missing_team > 0 then "  ⚠️  \($missing_team) players missing team" else "  ✅ All players have team" end
     ' "$sample_file"
-    
+
     rm -f "$sample_file"
 }
 
@@ -218,21 +218,21 @@ cmd_advanced() {
     print_header
     echo -e "${BLUE}📊 Advanced Statistical Analysis:${NC}"
     echo ""
-    
+
     local sample_file=$(get_sample_file)
     if [[ -z "$sample_file" ]]; then
         echo "Could not download sample file"
         return 1
     fi
-    
+
     echo -e "${GREEN}Position distribution:${NC}"
     jq -r '.players | map(select(.position != null and .position != "")) | group_by(.position) | map({pos: .[0].position, count: length}) | sort_by(.count) | reverse | .[] | "  \(.pos): \(.count) players"' "$sample_file" 2>/dev/null || echo "  Position data not available"
-    
+
     echo ""
     echo -e "${GREEN}Minutes played distribution (active players):${NC}"
     jq -r '
-        .players | map(select(.status == "ACTIVE" and .min != null and .min != "")) | 
-        map(.min | tonumber) | sort | 
+        .players | map(select(.status == "ACTIVE" and .min != null and .min != "")) |
+        map(.min | tonumber) | sort |
         length as $count |
         if $count > 0 then
             (add / length) as $avg |
@@ -245,7 +245,7 @@ cmd_advanced() {
             "  No minutes data available"
         end
     ' "$sample_file" 2>/dev/null || echo "  Minutes data not available"
-    
+
     echo ""
     echo -e "${GREEN}Scoring distribution (players with stats):${NC}"
     jq -r '
@@ -262,14 +262,14 @@ cmd_advanced() {
             "  No scoring data available"
         end
     ' "$sample_file" 2>/dev/null || echo "  Scoring data not available"
-    
+
     rm -f "$sample_file"
 }
 
 # Custom jq query interface
 cmd_custom() {
     local query="$1"
-    
+
     if [[ -z "$query" ]]; then
         echo "Usage: $0 custom 'jq_query'"
         echo ""
@@ -279,18 +279,18 @@ cmd_custom() {
         echo "  $0 custom '.game_info.arena'"
         return 1
     fi
-    
+
     print_header
     echo -e "${BLUE}🔧 Custom JQ Query:${NC}"
     echo -e "Query: ${YELLOW}$query${NC}"
     echo ""
-    
+
     local sample_file=$(get_sample_file)
     if [[ -z "$sample_file" ]]; then
         echo "Could not download sample file"
         return 1
     fi
-    
+
     echo -e "${GREEN}Result:${NC}"
     if jq -r "$query" "$sample_file" 2>/dev/null; then
         echo ""
@@ -298,47 +298,47 @@ cmd_custom() {
     else
         echo -e "${RED}❌ Query failed - check syntax${NC}"
     fi
-    
+
     rm -f "$sample_file"
 }
 
 # Multi-file analysis (downloads multiple files)
 cmd_multi() {
     local count=${1:-5}
-    
+
     print_header
     echo -e "${BLUE}📁 Multi-file Analysis ($count files):${NC}"
     echo ""
-    
+
     # Get recent files
     local files=$(gcloud storage ls --recursive "$BUCKET/$JSON_PATH/" --long --format="value(name,timeCreated)" 2>/dev/null | \
         grep "\.json" | sort -k2 -r | head -$count | awk '{print $1}' | sed "s|^|gs://nba-scraped-data/|")
-    
+
     if [[ -z "$files" ]]; then
         echo "No files found"
         return 1
     fi
-    
+
     local temp_dir="/tmp/nba_multi_$(date +%s)"
     mkdir -p "$temp_dir"
-    
+
     echo "Downloading $count files for analysis..."
-    
+
     local file_count=0
     while IFS= read -r file_path; do
         if [[ -n "$file_path" ]]; then
             file_count=$((file_count + 1))
             local temp_file="$temp_dir/game_${file_count}.json"
-            
+
             if gcloud storage cp "$file_path" "$temp_file" >/dev/null 2>&1; then
                 echo "  Downloaded file $file_count"
             fi
         fi
     done <<< "$files"
-    
+
     echo ""
     echo -e "${GREEN}Cross-game analysis:${NC}"
-    
+
     # Combine all files into a single analysis
     jq -s '
         map(.players | length) as $player_counts |
@@ -358,7 +358,7 @@ cmd_multi() {
         "  Unique arenas: \(.unique_arenas)",
         "  Arenas: \(.arena_list | join(", "))"
     '
-    
+
     # Clean up
     rm -rf "$temp_dir"
 }

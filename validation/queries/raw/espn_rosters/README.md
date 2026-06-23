@@ -4,11 +4,11 @@
 
 ## Data Source Overview
 
-**Table:** `nba-props-platform.nba_raw.espn_team_rosters`  
-**Purpose:** Backup validation source for player roster data  
-**Coverage:** Limited (2 dates as of Oct 2025)  
-**Update Frequency:** Daily at 8 AM PT  
-**Business Role:** Backup when NBA.com or Ball Don't Lie unavailable  
+**Table:** `nba-props-platform.nba_raw.espn_team_rosters`
+**Purpose:** Backup validation source for player roster data
+**Coverage:** Limited (2 dates as of Oct 2025)
+**Update Frequency:** Daily at 8 AM PT
+**Business Role:** Backup when NBA.com or Ball Don't Lie unavailable
 **⚠️ PARTITION REQUIRED:** All queries must include `roster_date >= 'YYYY-MM-DD'` filter
 
 ## Actual Coverage
@@ -136,17 +136,17 @@ The following discovery queries were run to understand the data:
 
 ```sql
 -- 1. Actual date range
-SELECT MIN(roster_date), MAX(roster_date), COUNT(*) 
+SELECT MIN(roster_date), MAX(roster_date), COUNT(*)
 FROM nba_raw.espn_team_rosters;
 
 -- 2. Team coverage
-SELECT team_abbr, COUNT(*) 
-FROM nba_raw.espn_team_rosters 
+SELECT team_abbr, COUNT(*)
+FROM nba_raw.espn_team_rosters
 GROUP BY team_abbr;
 
 -- 3. Scrape hour patterns
-SELECT scrape_hour, COUNT(*) 
-FROM nba_raw.espn_team_rosters 
+SELECT scrape_hour, COUNT(*)
+FROM nba_raw.espn_team_rosters
 GROUP BY scrape_hour;
 ```
 
@@ -159,6 +159,6 @@ When ESPN rosters become a more comprehensive source:
 
 ---
 
-**Last Updated:** October 13, 2025  
-**Pattern:** Time-Series (Current State Only)  
+**Last Updated:** October 13, 2025
+**Pattern:** Time-Series (Current State Only)
 **Status:** Production Ready - Backup Source

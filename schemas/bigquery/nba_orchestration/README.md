@@ -45,7 +45,7 @@ The core innovation in Phase 1 orchestration is the **3-status system** for scra
 # Controller evaluates injury_discovery workflow every hour:
 
 11:00 AM → status='no_data' → Try again at 12:00 PM
-12:00 PM → status='no_data' → Try again at 1:00 PM  
+12:00 PM → status='no_data' → Try again at 1:00 PM
 1:00 PM → status='success', record_count=12 → ✅ STOP! Data found!
 2:00 PM → Check scraper_execution_log → Already success today → SKIP
 ```
@@ -83,7 +83,7 @@ python -m scrapers.nbacom.nbac_injury_report \
 
 # Check log
 bq query "
-SELECT 
+SELECT
   scraper_name,
   status,
   source,
@@ -99,7 +99,7 @@ LIMIT 1
 ### Discovery Mode: Check if Data Found Today
 
 ```sql
-SELECT 
+SELECT
   status,
   JSON_VALUE(data_summary, '$.record_count') as records,
   triggered_at,
@@ -118,7 +118,7 @@ LIMIT 1;
 ### Count Discovery Attempts Today
 
 ```sql
-SELECT 
+SELECT
   COUNT(*) as attempts_today,
   COUNTIF(status = 'success' AND CAST(JSON_VALUE(data_summary, '$.record_count') AS INT64) > 0) as found_data,
   COUNTIF(status = 'no_data') as no_data_yet,
@@ -131,7 +131,7 @@ WHERE scraper_name = 'nbac_injury_report'
 ### Success Rates by Scraper (Last 7 Days)
 
 ```sql
-SELECT 
+SELECT
   scraper_name,
   COUNT(*) as total_runs,
   COUNTIF(status = 'success') as success_count,
@@ -147,7 +147,7 @@ ORDER BY success_rate_pct ASC;
 
 ```sql
 WITH expected AS (
-  SELECT 
+  SELECT
     workflow_name,
     expected_run_time,
     reason as expected_reason
@@ -155,7 +155,7 @@ WITH expected AS (
   WHERE date = CURRENT_DATE('America/New_York')
 ),
 actual AS (
-  SELECT 
+  SELECT
     workflow_name,
     decision_time as actual_run_time,
     action,
@@ -164,11 +164,11 @@ actual AS (
   WHERE DATE(decision_time, 'America/New_York') = CURRENT_DATE('America/New_York')
     AND action = 'RUN'
 )
-SELECT 
+SELECT
   expected.workflow_name,
   FORMAT_TIMESTAMP('%H:%M', expected.expected_run_time, 'America/New_York') as expected_time,
   FORMAT_TIMESTAMP('%H:%M', actual.actual_run_time, 'America/New_York') as actual_time,
-  CASE 
+  CASE
     WHEN actual.workflow_name IS NULL THEN '🔴 MISSING'
     WHEN TIMESTAMP_DIFF(actual.actual_run_time, expected.expected_run_time, MINUTE) > 30 THEN '🟡 LATE'
     ELSE '✅ ON TIME'
@@ -176,7 +176,7 @@ SELECT
   expected.expected_reason,
   actual.actual_reason
 FROM expected
-LEFT JOIN actual 
+LEFT JOIN actual
   ON expected.workflow_name = actual.workflow_name
   AND TIMESTAMP_DIFF(actual.actual_run_time, expected.expected_run_time, MINUTE) < 60
 ORDER BY expected.expected_run_time;
@@ -186,19 +186,19 @@ ORDER BY expected.expected_run_time;
 
 ```sql
 WITH latest_cleanup AS (
-  SELECT 
+  SELECT
     cleanup_time,
     missing_files
   FROM `nba-props-platform.nba_orchestration.cleanup_operations`
   ORDER BY cleanup_time DESC
   LIMIT 1
 )
-SELECT 
+SELECT
   mf.scraper_name,
   mf.gcs_path,
   mf.age_minutes,
   mf.republished,
-  CASE 
+  CASE
     WHEN mf.age_minutes > 240 THEN '🔴 CRITICAL (>4h)'
     WHEN mf.age_minutes > 120 THEN '🟡 WARNING (>2h)'
     ELSE '🟠 RECENT (<2h)'
@@ -224,7 +224,7 @@ Every scraper execution tracks where it came from:
 ### Cost Analysis by Source
 
 ```sql
-SELECT 
+SELECT
   source,
   environment,
   COUNT(*) as executions,
@@ -253,7 +253,7 @@ ORDER BY executions DESC;
 
 **Alert: Critical Workflow Not Run**
 ```sql
-SELECT 
+SELECT
   'workflow_decisions' as alert_source,
   workflow_name,
   MAX(decision_time) as last_evaluation,
@@ -267,7 +267,7 @@ HAVING TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), MAX(decision_time), HOUR) > 2;
 
 **Alert: High Failure Rate**
 ```sql
-SELECT 
+SELECT
   scraper_name,
   COUNT(*) as total_runs,
   COUNTIF(status = 'failed') as failures,
@@ -316,7 +316,7 @@ WHERE DATE(triggered_at) = '2025-01-15'
 def _log_execution_to_bigquery(self):
     """Log execution to nba_orchestration.scraper_execution_log"""
     source, environment, triggered_by = self._determine_execution_source()
-    
+
     # Determine status (3-status system)
     if isinstance(self.data, dict):
         record_count = len(self.data.get('records', []))
@@ -328,7 +328,7 @@ def _log_execution_to_bigquery(self):
     else:
         record_count = 0
         status = 'no_data'
-    
+
     record = {
         'execution_id': self.run_id,
         'scraper_name': self._get_scraper_name(),
@@ -349,7 +349,7 @@ def _log_execution_to_bigquery(self):
         'run_id': self.run_id,
         'opts': {k: v for k, v in self.opts.items() if k not in ['password', 'api_key']}
     }
-    
+
     from shared.utils.bigquery_utils import insert_bigquery_rows
     insert_bigquery_rows('nba_orchestration', 'scraper_execution_log', [record])
     logger.info(f"✅ Logged execution: {status} from {source}")
@@ -378,7 +378,7 @@ def log_workflow_decision(self, workflow_name: str, action: str, reason: str, co
         'environment': self.environment,
         'triggered_by': 'cloud-scheduler'
     }
-    
+
     insert_bigquery_rows('nba_orchestration', 'workflow_decisions', [record])
     logger.info(f"📋 Logged decision: {workflow_name} → {action}")
 ```
@@ -410,7 +410,7 @@ bq extract \
 **Solution:**
 ```sql
 -- Check if field exists
-SELECT 
+SELECT
   data_summary,
   JSON_VALUE(data_summary, '$.record_count') as records
 FROM scraper_execution_log
@@ -418,7 +418,7 @@ WHERE scraper_name = 'nbac_injury_report'
 LIMIT 5;
 
 -- Verify JSON structure
-SELECT 
+SELECT
   scraper_name,
   JSON_EXTRACT(data_summary, '$') as full_json
 FROM scraper_execution_log
@@ -435,7 +435,7 @@ LIMIT 1;
 SELECT * FROM scraper_execution_log
 WHERE scraper_name = 'nbac_injury_report';
 
--- ✅ GOOD  
+-- ✅ GOOD
 SELECT * FROM scraper_execution_log
 WHERE DATE(triggered_at) >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
   AND scraper_name = 'nbac_injury_report';
@@ -453,7 +453,7 @@ WHERE DATE(triggered_at) >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
 
 ```sql
 -- Check why workflow was skipped
-SELECT 
+SELECT
   decision_time,
   action,
   reason,
@@ -498,7 +498,7 @@ FROM scraper_execution_log;
 ```sql
 -- Create view for frequently used query
 CREATE OR REPLACE VIEW v_todays_scraper_summary AS
-SELECT 
+SELECT
   scraper_name,
   COUNT(*) as runs,
   COUNTIF(status = 'success') as successes

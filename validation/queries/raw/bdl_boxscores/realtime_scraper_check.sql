@@ -56,33 +56,33 @@ SELECT
     WHEN s.game_state = 'completed' AND b.total_players >= 20 THEN '✅ Data captured'
     WHEN s.game_state = 'completed' AND b.total_players > 0 AND b.total_players < 20 THEN '⚠️ Incomplete data'
     WHEN s.game_state = 'completed' AND b.total_players IS NULL THEN '❌ CRITICAL: Missing data'
-    
+
     -- In-progress games
     WHEN s.game_state = 'in_progress' AND b.total_players > 0 THEN '🔵 Live data available'
     WHEN s.game_state = 'in_progress' THEN '⚪ In progress (no data yet - normal)'
-    
+
     -- Scheduled games
     WHEN s.game_state = 'scheduled' AND b.total_players > 0 THEN '⚠️ Unexpected: Data before game'
     WHEN s.game_state = 'scheduled' THEN '⚪ Scheduled (no data - normal)'
-    
+
     ELSE '⚠️ Unknown state'
   END as status,
-  
+
   -- Recommendations
   CASE
-    WHEN s.game_state = 'completed' AND b.total_players IS NULL 
+    WHEN s.game_state = 'completed' AND b.total_players IS NULL
     THEN 'Run scraper for this game immediately'
-    WHEN s.game_state = 'completed' AND b.total_players < 20 
+    WHEN s.game_state = 'completed' AND b.total_players < 20
     THEN 'Check scraper logs - incomplete data'
-    WHEN s.game_state = 'in_progress' AND b.total_players > 0 
+    WHEN s.game_state = 'in_progress' AND b.total_players > 0
     THEN 'Live data detected - scraper working'
     ELSE 'No action needed'
   END as recommendation
 
 FROM todays_schedule s
 LEFT JOIN todays_boxscores b ON s.game_id = b.game_id
-ORDER BY 
-  CASE 
+ORDER BY
+  CASE
     WHEN s.game_state = 'completed' THEN 1
     WHEN s.game_state = 'in_progress' THEN 2
     WHEN s.game_state = 'scheduled' THEN 3

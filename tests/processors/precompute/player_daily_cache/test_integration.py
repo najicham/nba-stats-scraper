@@ -30,16 +30,16 @@ from data_processors.precompute.player_daily_cache.player_daily_cache_processor 
 
 class TestEndToEndFlow:
     """Test complete processor workflow from extract to save."""
-    
+
     @pytest.fixture
     def mock_bq_client(self):
         """Create mocked BigQuery client with realistic responses."""
         client = Mock()
-        
+
         # Mock query responses
         def mock_query(sql, **kwargs):
             result = Mock()
-            
+
             # Determine which query based on SQL content
             if 'player_game_summary' in sql:
                 # Return player game history
@@ -100,14 +100,14 @@ class TestEndToEndFlow:
             else:
                 # Empty result for unknown queries
                 result.to_dataframe.return_value = pd.DataFrame()
-            
+
             return result
-        
+
         client.query = mock_query
         client.project = 'test-project'
-        
+
         return client
-    
+
     @pytest.fixture
     def processor(self, mock_bq_client):
         """Create processor with mocked BigQuery client and bypassed dependency checking."""
@@ -115,43 +115,43 @@ class TestEndToEndFlow:
             proc = PlayerDailyCacheProcessor()
             proc.bq_client = mock_bq_client
             proc.project_id = 'test-project'
-            
+
             # Set options
             proc.opts = {
                 'analysis_date': date(2025, 1, 21),
                 'season_year': 2024
             }
-            
+
             # Mock source tracking (normally set by track_source_usage)
             proc.source_player_game_last_updated = datetime(2025, 1, 21, 2, 15, tzinfo=timezone.utc)
             proc.source_player_game_rows_found = 10
             proc.source_player_game_completeness_pct = 100.0
-            
+
             proc.source_team_offense_last_updated = datetime(2025, 1, 21, 2, 20, tzinfo=timezone.utc)
             proc.source_team_offense_rows_found = 10
             proc.source_team_offense_completeness_pct = 100.0
-            
+
             proc.source_upcoming_context_last_updated = datetime(2025, 1, 20, 23, 45, tzinfo=timezone.utc)
             proc.source_upcoming_context_rows_found = 1
             proc.source_upcoming_context_completeness_pct = 100.0
-            
+
             proc.source_shot_zone_last_updated = datetime(2025, 1, 21, 0, 5, tzinfo=timezone.utc)
             proc.source_shot_zone_rows_found = 1
             proc.source_shot_zone_completeness_pct = 100.0
-            
+
             return proc
-    
+
     def test_full_workflow_extract_calculate(self, processor, mock_bq_client):
         """Test workflow: extract → calculate (skip dependency check)."""
         # Manually call extraction methods (bypass check_dependencies)
         analysis_date = processor.opts['analysis_date']
         season_year = processor.opts.get('season_year', 2024)
-        
+
         processor._extract_player_game_data(analysis_date, season_year)
         processor._extract_team_offense_data(analysis_date)
         processor._extract_upcoming_context_data(analysis_date)
         processor._extract_shot_zone_data(analysis_date)
-        
+
         # Verify data was extracted
         assert processor.player_game_data is not None
         assert len(processor.player_game_data) == 10
@@ -161,20 +161,20 @@ class TestEndToEndFlow:
         assert len(processor.upcoming_context_data) == 1
         assert processor.shot_zone_data is not None
         assert len(processor.shot_zone_data) == 1
-        
+
         # Calculate cache
         processor.calculate_precompute()
-        
+
         # Verify calculations
         assert processor.transformed_data is not None
         assert len(processor.transformed_data) == 1
-        
+
         cache_record = processor.transformed_data[0]
         assert cache_record['player_lookup'] == 'lebronjames'
         assert cache_record['cache_date'] == '2025-01-21'
         assert cache_record['points_avg_last_10'] is not None
         assert cache_record['games_played_season'] == 10
-    
+
     def test_extract_handles_empty_upcoming_context(self, processor, mock_bq_client):
         """Test extract when no players have games today."""
         # Mock empty upcoming context
@@ -188,24 +188,24 @@ class TestEndToEndFlow:
                     {'player_lookup': 'dummy', 'points': 20}
                 ] * 10)
             return result
-        
+
         mock_bq_client.query = mock_empty_query
-        
+
         # Extract data manually
         analysis_date = processor.opts['analysis_date']
         season_year = processor.opts.get('season_year', 2024)
-        
+
         processor._extract_player_game_data(analysis_date, season_year)
         processor._extract_team_offense_data(analysis_date)
         processor._extract_upcoming_context_data(analysis_date)
         processor._extract_shot_zone_data(analysis_date)
-        
+
         # Should have empty context
         assert len(processor.upcoming_context_data) == 0
-        
+
         # Calculate should handle gracefully
         processor.calculate_precompute()
-        
+
         # Should have no records and no failures (no players to process)
         assert len(processor.transformed_data) == 0
         assert len(processor.failed_entities) == 0  # ✅ FIXED: No players = no failures
@@ -216,12 +216,12 @@ class TestEndToEndFlow:
         # Extract data manually
         analysis_date = processor.opts['analysis_date']
         season_year = processor.opts.get('season_year', 2024)
-        
+
         processor._extract_player_game_data(analysis_date, season_year)
         processor._extract_team_offense_data(analysis_date)
         processor._extract_upcoming_context_data(analysis_date)
         processor._extract_shot_zone_data(analysis_date)
-        
+
         # Mock player_game_data to have only 4 games
         processor.player_game_data = pd.DataFrame([
             {
@@ -239,27 +239,27 @@ class TestEndToEndFlow:
             }
             for i in range(4)  # Only 4 games
         ])
-        
+
         # Calculate
         processor.calculate_precompute()
-        
+
         # Should skip this player
         assert len(processor.transformed_data) == 0
         assert len(processor.failed_entities) == 1
         assert processor.failed_entities[0]['entity_id'] == 'lebronjames'
         assert 'Only 4 games' in processor.failed_entities[0]['reason']
-    
+
     def test_calculate_sets_early_season_flag(self, processor, mock_bq_client):
         """Test that early_season_flag is set for players with 5-9 games."""
         # Extract data manually
         analysis_date = processor.opts['analysis_date']
         season_year = processor.opts.get('season_year', 2024)
-        
+
         processor._extract_player_game_data(analysis_date, season_year)
         processor._extract_team_offense_data(analysis_date)
         processor._extract_upcoming_context_data(analysis_date)
         processor._extract_shot_zone_data(analysis_date)
-        
+
         # Mock player_game_data to have 7 games
         processor.player_game_data = pd.DataFrame([
             {
@@ -277,14 +277,14 @@ class TestEndToEndFlow:
             }
             for i in range(7)  # 7 games
         ])
-        
+
         # Calculate
         processor.calculate_precompute()
-        
+
         # Should write record with early_season_flag
         assert len(processor.transformed_data) == 1
         cache_record = processor.transformed_data[0]
-        
+
         assert cache_record['early_season_flag'] is True
         assert cache_record['insufficient_data_reason'] is not None
         assert '7 games' in cache_record['insufficient_data_reason']
@@ -295,25 +295,25 @@ class TestEndToEndFlow:
         # Extract data manually
         analysis_date = processor.opts['analysis_date']
         season_year = processor.opts.get('season_year', 2024)
-        
+
         processor._extract_player_game_data(analysis_date, season_year)
         processor._extract_team_offense_data(analysis_date)
         processor._extract_upcoming_context_data(analysis_date)
         processor._extract_shot_zone_data(analysis_date)
-        
+
         # ✅ FIXED: Mock empty shot zone data with proper DataFrame structure
         processor.shot_zone_data = pd.DataFrame(columns=[
-            'player_lookup', 
-            'universal_player_id', 
+            'player_lookup',
+            'universal_player_id',
             'analysis_date',
-            'primary_scoring_zone', 
-            'paint_rate_last_10', 
+            'primary_scoring_zone',
+            'paint_rate_last_10',
             'three_pt_rate_last_10'
         ])
-        
+
         # Calculate
         processor.calculate_precompute()
-        
+
         # Should fail this player
         assert len(processor.transformed_data) == 0
         assert len(processor.failed_entities) == 1
@@ -323,32 +323,32 @@ class TestEndToEndFlow:
 
 class TestDependencyChecking:
     """Test dependency validation configuration."""
-    
+
     @pytest.fixture
     def processor(self):
         """Create processor with mocked BigQuery."""
         mock_client = Mock()
         mock_client.project = 'test-project'
-        
+
         with patch('data_processors.precompute.player_daily_cache.player_daily_cache_processor.bigquery.Client', return_value=mock_client):
             proc = PlayerDailyCacheProcessor()
             proc.bq_client = mock_client
             proc.project_id = 'test-project'
-            
+
             proc.opts = {
                 'analysis_date': date(2025, 1, 21),
                 'season_year': 2024
             }
-            
+
             return proc
-    
+
     def test_get_dependencies_returns_correct_config(self, processor):
         """Test that dependencies are correctly configured."""
         deps = processor.get_dependencies()
-        
+
         # Should have 4 dependencies
         assert len(deps) == 4
-        
+
         # Check each dependency
         expected_tables = [
             'nba_analytics.player_game_summary',
@@ -356,7 +356,7 @@ class TestDependencyChecking:
             'nba_analytics.upcoming_player_game_context',
             'nba_precompute.player_shot_zone_analysis'
         ]
-        
+
         # Critical sources
         critical_tables = [
             'nba_analytics.player_game_summary',
@@ -377,40 +377,40 @@ class TestDependencyChecking:
 
 class TestErrorHandling:
     """Test error handling and edge cases."""
-    
+
     @pytest.fixture
     def processor(self):
         """Create processor with mocked BigQuery."""
         mock_client = Mock()
         mock_client.project = 'test-project'
-        
+
         with patch('data_processors.precompute.player_daily_cache.player_daily_cache_processor.bigquery.Client', return_value=mock_client):
             proc = PlayerDailyCacheProcessor()
             proc.bq_client = mock_client
             proc.project_id = 'test-project'
-            
+
             proc.opts = {
                 'analysis_date': date(2025, 1, 21),
                 'season_year': 2024
             }
-            
+
             # Mock source tracking
             proc.source_player_game_last_updated = datetime(2025, 1, 21, 2, 15, tzinfo=timezone.utc)
             proc.source_player_game_rows_found = 10
             proc.source_player_game_completeness_pct = 100.0
-            
+
             proc.source_team_offense_last_updated = datetime(2025, 1, 21, 2, 20, tzinfo=timezone.utc)
             proc.source_team_offense_rows_found = 10
             proc.source_team_offense_completeness_pct = 100.0
-            
+
             proc.source_upcoming_context_last_updated = datetime(2025, 1, 20, 23, 45, tzinfo=timezone.utc)
             proc.source_upcoming_context_rows_found = 1
             proc.source_upcoming_context_completeness_pct = 100.0
-            
+
             proc.source_shot_zone_last_updated = datetime(2025, 1, 21, 0, 5, tzinfo=timezone.utc)
             proc.source_shot_zone_rows_found = 1
             proc.source_shot_zone_completeness_pct = 100.0
-            
+
             return proc
 
     @pytest.mark.skip(reason="Error handling changed - failures saved differently now")
@@ -431,30 +431,30 @@ class TestErrorHandling:
             'fourth_quarter_minutes_last_7': 25,
             'player_age': 25
         }])
-        
+
         # Mock player_game_data with sufficient games
         processor.player_game_data = pd.DataFrame([
             {'player_lookup': 'testplayer', 'points': 20, 'minutes_played': 30,
              'usage_rate': 25.0, 'ts_pct': 0.550, 'fg_makes': 8, 'assisted_fg_makes': 5}
             for _ in range(10)
         ])
-        
+
         processor.team_offense_data = pd.DataFrame([
             {'team_abbr': 'LAL', 'pace': 102.0, 'offensive_rating': 115.0}
             for _ in range(10)
         ])
-        
+
         processor.shot_zone_data = pd.DataFrame([{
             'player_lookup': 'testplayer',
             'primary_scoring_zone': 'paint',
             'paint_rate_last_10': 45.0,
             'three_pt_rate_last_10': 35.0
         }])
-        
+
         # Patch _calculate_player_cache to raise an error
         with patch.object(processor, '_calculate_player_cache', side_effect=Exception("Test error")):
             processor.calculate_precompute()
-        
+
         # Should have failed entity
         assert len(processor.failed_entities) == 1
         assert processor.failed_entities[0]['entity_id'] == 'testplayer'
@@ -495,7 +495,7 @@ class TestErrorHandling:
                 'player_age': 25
             }
         ])
-        
+
         # Player 1: 10 games (should succeed)
         # Player 2: 3 games (should fail - below minimum)
         processor.player_game_data = pd.DataFrame(
@@ -506,7 +506,7 @@ class TestErrorHandling:
               'usage_rate': 22.0, 'ts_pct': 0.520, 'fg_makes': 6, 'assisted_fg_makes': 4}
              for _ in range(3)]
         )
-        
+
         processor.team_offense_data = pd.DataFrame([
             {'team_abbr': 'LAL', 'pace': 102.0, 'offensive_rating': 115.0}
             for _ in range(10)
@@ -514,7 +514,7 @@ class TestErrorHandling:
             {'team_abbr': 'BOS', 'pace': 98.0, 'offensive_rating': 112.0}
             for _ in range(10)
         ])
-        
+
         processor.shot_zone_data = pd.DataFrame([
             {
                 'player_lookup': 'player1',
@@ -529,14 +529,14 @@ class TestErrorHandling:
                 'three_pt_rate_last_10': 65.0
             }
         ])
-        
+
         # Calculate
         processor.calculate_precompute()
-        
+
         # Player 1 should succeed, Player 2 should fail
         assert len(processor.transformed_data) == 1
         assert processor.transformed_data[0]['player_lookup'] == 'player1'
-        
+
         assert len(processor.failed_entities) == 1
         assert processor.failed_entities[0]['entity_id'] == 'player2'
 

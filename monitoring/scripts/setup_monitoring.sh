@@ -39,7 +39,7 @@ gcloud monitoring metrics-descriptors create \
   --value-type=DOUBLE \
   --labels="scraper:Name of the scraper,status:Success or failure status"
 
-# Processor metrics  
+# Processor metrics
 gcloud monitoring metrics-descriptors create \
   --type="custom.googleapis.com/nba/processor_records_processed" \
   --description="Number of records processed by NBA processors" \

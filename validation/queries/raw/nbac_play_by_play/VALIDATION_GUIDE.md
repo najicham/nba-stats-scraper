@@ -3,17 +3,17 @@
 
 ## Overview
 
-**Data Source**: NBA.com Official Play-by-Play  
-**Table**: `nba_raw.nbac_play_by_play`  
-**Pattern**: Pattern 3 (Single Event per Unique Key)  
-**Current Coverage**: 2 games (LAL vs TOR, PHI vs NYK)  
-**Future Potential**: 5,400+ games available for backfill  
+**Data Source**: NBA.com Official Play-by-Play
+**Table**: `nba_raw.nbac_play_by_play`
+**Pattern**: Pattern 3 (Single Event per Unique Key)
+**Current Coverage**: 2 games (LAL vs TOR, PHI vs NYK)
+**Future Potential**: 5,400+ games available for backfill
 
 ## Current Status
 
-**Production Ready**: ✅ YES (100% processing success)  
-**Revenue Impact**: HIGH (Official NBA play-by-play for advanced prop analysis)  
-**Data Quality**: Excellent event detail with player-team resolution  
+**Production Ready**: ✅ YES (100% processing success)
+**Revenue Impact**: HIGH (Official NBA play-by-play for advanced prop analysis)
+**Data Quality**: Excellent event detail with player-team resolution
 
 ### Coverage Stats
 - **Games Processed**: 2 complete games
@@ -43,7 +43,7 @@
 -- ============================================================================
 
 WITH game_summary AS (
-  SELECT 
+  SELECT
     game_date,
     game_id,
     nba_game_id,
@@ -66,7 +66,7 @@ WITH game_summary AS (
   GROUP BY game_date, game_id, nba_game_id, home_team_abbr, away_team_abbr
 )
 
-SELECT 
+SELECT
   game_date,
   game_id,
   home_team_abbr || ' vs ' || away_team_abbr as matchup,
@@ -79,13 +79,13 @@ SELECT
   final_away_score,
   shot_events,
   -- Validation flags
-  CASE 
+  CASE
     WHEN total_events < 400 THEN '🔴 CRITICAL: Too few events (<400)'
     WHEN total_events < 450 THEN '⚠️ WARNING: Low event count (<450)'
     WHEN total_events > 700 THEN '⚠️ WARNING: High event count (>700, verify OT)'
     ELSE '✅ Good'
   END as event_count_status,
-  CASE 
+  CASE
     WHEN unique_players < 15 THEN '🔴 CRITICAL: Too few players (<15)'
     WHEN unique_players < 16 THEN '⚠️ WARNING: Low player count (<16)'
     WHEN unique_players > 25 THEN '⚠️ INFO: Many players (>25, lots of rotation)'
@@ -152,7 +152,7 @@ pbp_games AS (
   GROUP BY game_date, game_id, home_team_abbr, away_team_abbr
 )
 
-SELECT 
+SELECT
   s.game_date,
   FORMAT_DATE('%A', s.game_date) as day_of_week,
   s.schedule_game_id,
@@ -189,7 +189,7 @@ LIMIT 100;  -- Show most recent 100 missing games
 -- ============================================================================
 
 WITH event_stats AS (
-  SELECT 
+  SELECT
     game_date,
     game_id,
     event_type,
@@ -203,7 +203,7 @@ WITH event_stats AS (
   GROUP BY game_date, game_id, event_type, event_action_type
 )
 
-SELECT 
+SELECT
   event_type,
   event_action_type,
   SUM(event_count) as total_events,
@@ -213,8 +213,8 @@ SELECT
   SUM(shots_made) as total_made,
   SUM(shots_missed) as total_missed,
   -- Calculate shooting percentage for shot events
-  CASE 
-    WHEN event_type IN ('2pt', '3pt', 'freethrow') AND (SUM(shots_made) + SUM(shots_missed)) > 0 
+  CASE
+    WHEN event_type IN ('2pt', '3pt', 'freethrow') AND (SUM(shots_made) + SUM(shots_missed)) > 0
     THEN ROUND(100.0 * SUM(shots_made) / (SUM(shots_made) + SUM(shots_missed)), 1)
     ELSE NULL
   END as shot_pct
@@ -274,14 +274,14 @@ boxscore_players AS (
   WHERE b.game_date >= '2024-01-01'
 )
 
-SELECT 
+SELECT
   b.game_date,
   b.game_id,
   b.team_abbr,
   b.player_lookup,
   b.actual_points,
   p.pbp_events,
-  CASE 
+  CASE
     WHEN p.player_1_lookup IS NULL THEN '🔴 MISSING: No play-by-play events'
     WHEN p.pbp_events < 5 THEN '⚠️ WARNING: Very few events (<5)'
     WHEN p.pbp_events < 10 THEN '⚪ Low events (bench player likely)'
@@ -318,7 +318,7 @@ ORDER BY b.game_date DESC, b.team_abbr, b.actual_points DESC;
 -- ============================================================================
 
 WITH score_progression AS (
-  SELECT 
+  SELECT
     game_date,
     game_id,
     event_sequence,
@@ -332,7 +332,7 @@ WITH score_progression AS (
 ),
 
 score_issues AS (
-  SELECT 
+  SELECT
     game_date,
     game_id,
     event_sequence,
@@ -341,7 +341,7 @@ score_issues AS (
     score_away,
     prev_home_score,
     prev_away_score,
-    CASE 
+    CASE
       WHEN score_home < prev_home_score THEN '🔴 Home score decreased'
       WHEN score_away < prev_away_score THEN '🔴 Away score decreased'
       WHEN (score_home - prev_home_score) > 3 THEN '⚠️ Home score jumped >3'
@@ -353,7 +353,7 @@ score_issues AS (
 ),
 
 final_scores AS (
-  SELECT 
+  SELECT
     p.game_date,
     p.game_id,
     p.home_team_abbr,
@@ -367,12 +367,12 @@ final_scores AS (
     ON p.game_id = b.game_id
     AND p.game_date = b.game_date
   WHERE p.game_date >= '2024-01-01'
-  GROUP BY p.game_date, p.game_id, p.home_team_abbr, p.away_team_abbr, 
+  GROUP BY p.game_date, p.game_id, p.home_team_abbr, p.away_team_abbr,
            b.home_team_score, b.away_team_score
 )
 
 -- Report score progression issues
-SELECT 
+SELECT
   'SCORE ANOMALIES' as report_type,
   game_date,
   game_id,
@@ -387,7 +387,7 @@ WHERE issue IS NOT NULL
 UNION ALL
 
 -- Report final score mismatches
-SELECT 
+SELECT
   'FINAL SCORE VALIDATION' as report_type,
   game_date,
   game_id,
@@ -395,9 +395,9 @@ SELECT
   NULL as period,
   pbp_final_home as score_home,
   pbp_final_away as score_away,
-  CASE 
+  CASE
     WHEN box_final_home IS NULL THEN '⚪ No box score to compare'
-    WHEN pbp_final_home != box_final_home OR pbp_final_away != box_final_away 
+    WHEN pbp_final_home != box_final_home OR pbp_final_away != box_final_away
     THEN '🔴 CRITICAL: Final scores do not match box scores'
     ELSE '✅ Final scores match'
   END as issue
@@ -427,7 +427,7 @@ ORDER BY report_type, game_date DESC, event_sequence;
 -- ============================================================================
 
 WITH yesterday_schedule AS (
-  SELECT 
+  SELECT
     COUNT(*) as scheduled_games
   FROM `nba-props-platform.nba_raw.nbac_schedule`
   WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
@@ -436,12 +436,12 @@ WITH yesterday_schedule AS (
 ),
 
 yesterday_pbp AS (
-  SELECT 
+  SELECT
     COUNT(DISTINCT game_id) as processed_games,
     SUM(CASE WHEN total_events >= 450 THEN 1 ELSE 0 END) as games_with_good_count,
     SUM(CASE WHEN unique_players >= 15 THEN 1 ELSE 0 END) as games_with_good_coverage
   FROM (
-    SELECT 
+    SELECT
       game_id,
       COUNT(*) as total_events,
       COUNT(DISTINCT player_1_id) as unique_players
@@ -451,7 +451,7 @@ yesterday_pbp AS (
   )
 )
 
-SELECT 
+SELECT
   DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY) as check_date,
   s.scheduled_games,
   COALESCE(p.processed_games, 0) as processed_games,
@@ -488,7 +488,7 @@ CROSS JOIN yesterday_pbp p;
 -- Tracks daily collection consistency and identifies gaps
 -- ============================================================================
 
-SELECT 
+SELECT
   game_date,
   FORMAT_DATE('%A', game_date) as day_of_week,
   COUNT(DISTINCT game_id) as games_collected,
@@ -497,7 +497,7 @@ SELECT
   ROUND(AVG(unique_players), 1) as avg_players_per_game,
   ROUND(AVG(shot_events), 0) as avg_shots_per_game
 FROM (
-  SELECT 
+  SELECT
     game_date,
     game_id,
     COUNT(*) as event_count,
@@ -561,12 +561,12 @@ print_error() {
 run_query() {
     local query_file=$1
     local output_format=${2:-"pretty"}
-    
+
     if [ ! -f "$QUERIES_DIR/$query_file" ]; then
         print_error "Query file not found: $query_file"
         exit 1
     fi
-    
+
     if [ "$output_format" = "csv" ]; then
         bq query --use_legacy_sql=false --format=csv < "$QUERIES_DIR/$query_file"
     else
@@ -579,15 +579,15 @@ save_to_table() {
     local dest_table=$2
     local timestamp=$(date +%Y%m%d_%H%M%S)
     local table_name="${dest_table}_${timestamp}"
-    
+
     print_header "Saving results to: ${PROJECT_ID}.nba_validation.${table_name}"
-    
+
     bq query \
         --use_legacy_sql=false \
         --destination_table="${PROJECT_ID}.nba_validation.${table_name}" \
         --replace \
         < "$QUERIES_DIR/$query_file"
-    
+
     print_success "Results saved to nba_validation.${table_name}"
 }
 
@@ -630,7 +630,7 @@ cmd_week() {
 cmd_all() {
     print_header "NBA.com Play-by-Play: Running All Validation Checks"
     echo ""
-    
+
     cmd_games
     echo ""
     cmd_missing
@@ -644,7 +644,7 @@ cmd_all() {
     cmd_yesterday
     echo ""
     cmd_week
-    
+
     print_success "All validation checks complete!"
 }
 
@@ -673,13 +673,13 @@ OPTIONS:
 EXAMPLES:
     # Check game completeness
     validate-nbac-pbp games
-    
+
     # Find missing games in CSV format
     validate-nbac-pbp missing --csv
-    
+
     # Save yesterday's validation to table
     validate-nbac-pbp yesterday --table
-    
+
     # Run all checks
     validate-nbac-pbp all
 
@@ -703,7 +703,7 @@ case "${1:-help}" in
     week)       cmd_week "$2" ;;
     all)        cmd_all "$2" ;;
     help|--help|-h) show_help ;;
-    *)          
+    *)
         print_error "Unknown command: $1"
         echo ""
         show_help
@@ -766,7 +766,7 @@ chmod +x scripts/validate-nbac-pbp
 
 **High Value** (5,400+ games available):
 1. Current season (2024-25): ~1,200 games
-2. Recent historical (2022-24): ~3,200 games  
+2. Recent historical (2022-24): ~3,200 games
 3. Earlier seasons (2021-22): ~1,000 games
 
 ### Enhanced Validations
@@ -799,26 +799,26 @@ When more data available:
 ## Troubleshooting
 
 ### Issue: No data in play-by-play table
-**Cause**: Scraper only runs during Late Night Recovery + Early Morning Final Check workflows  
+**Cause**: Scraper only runs during Late Night Recovery + Early Morning Final Check workflows
 **Solution**: Run scraper during NBA season or wait for scheduled workflows
 
 ### Issue: Home/away teams seem swapped
-**Cause**: game_id format is YYYYMMDD_AWAY_HOME (away team first)  
+**Cause**: game_id format is YYYYMMDD_AWAY_HOME (away team first)
 **Solution**: Verify against schedule table - schedule has definitive home_team_tricode
 
 ### Issue: Player missing from play-by-play but in box scores
-**Cause**: Player was inactive or DNP  
+**Cause**: Player was inactive or DNP
 **Solution**: Expected - only active players appear in play-by-play
 
 ### Issue: Score progression shows decrease
-**Cause**: Data corruption or period boundary event  
+**Cause**: Data corruption or period boundary event
 **Solution**: Investigate event_sequence around the issue, verify period transitions
 
 ---
 
 ## Last Updated
-**Date**: October 13, 2025  
-**Version**: 1.0  
-**Status**: Production Ready  
-**Coverage**: 2 games (LAL vs TOR, PHI vs NYK)  
+**Date**: October 13, 2025
+**Version**: 1.0
+**Status**: Production Ready
+**Coverage**: 2 games (LAL vs TOR, PHI vs NYK)
 **Pattern**: Pattern 3 (Single Event)

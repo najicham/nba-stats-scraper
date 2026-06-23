@@ -25,7 +25,7 @@ GROUP BY game_date, game_id, away_team_abbr, home_team_abbr
 
 # Verify which teams' players are in ESPN data
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   team_abbr,
   COUNT(*) as player_count,
   STRING_AGG(player_full_name ORDER BY points DESC LIMIT 3) as top_players
@@ -38,7 +38,7 @@ ORDER BY team_abbr
 # Check if game exists in schedule
 bq query --use_legacy_sql=false "
 SELECT
-  CASE 
+  CASE
     WHEN COUNT(*) > 0 THEN '✅ HOU @ PHI in schedule'
     ELSE '🔴 HOU @ PHI NOT in schedule'
   END as schedule_status,
@@ -79,7 +79,7 @@ WHERE game_date = '2025-01-15'
 bq query --use_legacy_sql=false "
 SELECT
   COUNT(*) as remaining_espn_games,
-  CASE 
+  CASE
     WHEN COUNT(*) = 0 THEN '✅ Phantom game successfully deleted'
     ELSE '🔴 ERROR: Records still exist'
   END as status
@@ -110,7 +110,7 @@ bdl_games AS (
 SELECT
   'ESPN Only' as source,
   COUNT(*) as game_count,
-  CASE 
+  CASE
     WHEN COUNT(*) = 0 THEN '✅ No phantom games'
     ELSE '⚠️ ESPN has games BDL does not'
   END as status
@@ -133,7 +133,7 @@ UNION ALL
 SELECT
   'Both Sources' as source,
   COUNT(*) as game_count,
-  CASE 
+  CASE
     WHEN COUNT(*) > 0 THEN '✅ Can validate'
     ELSE '⚪ No overlap'
   END as status
@@ -147,7 +147,7 @@ INNER JOIN bdl_games b ON e.game_id = b.game_id
 
 # Daily check: Any new ESPN data?
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   game_date,
   COUNT(DISTINCT game_id) as games,
   STRING_AGG(CONCAT(away_team_abbr, '@', home_team_abbr), ', ') as matchups
@@ -160,11 +160,11 @@ ORDER BY game_date DESC
 # Check for ESP-only games (should be 0)
 bq query --use_legacy_sql=false "
 WITH espn_only AS (
-  SELECT 
+  SELECT
     e.game_date,
     e.game_id,
     CONCAT(e.away_team_abbr, ' @ ', e.home_team_abbr) as matchup
-  FROM (SELECT DISTINCT game_date, game_id, away_team_abbr, home_team_abbr 
+  FROM (SELECT DISTINCT game_date, game_id, away_team_abbr, home_team_abbr
         FROM \`nba-props-platform.nba_raw.espn_boxscores\`) e
   LEFT JOIN (SELECT DISTINCT game_id FROM \`nba-props-platform.nba_raw.bdl_player_boxscores\`
              WHERE game_date >= '2020-01-01') b
@@ -172,7 +172,7 @@ WITH espn_only AS (
   WHERE b.game_id IS NULL
 )
 SELECT
-  CASE 
+  CASE
     WHEN COUNT(*) = 0 THEN '✅ No phantom games detected'
     ELSE CONCAT('⚠️ ', CAST(COUNT(*) AS STRING), ' potential phantom games')
   END as alert,

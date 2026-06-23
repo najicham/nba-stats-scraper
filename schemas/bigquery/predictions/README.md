@@ -1,7 +1,7 @@
 # Phase 5 Prediction Tables - Schema Reference
 
-**Dataset:** `nba-props-platform.nba_predictions`  
-**Purpose:** Multi-system prediction framework with ML integration  
+**Dataset:** `nba-props-platform.nba_predictions`
+**Purpose:** Multi-system prediction framework with ML integration
 **Update Schedule:** Daily (6-8 AM) + real-time when lines change
 
 ---
@@ -36,9 +36,9 @@
 
 ## ⚠️ CRITICAL: ml_feature_store_v2 Ownership
 
-**Table:** `nba_predictions.ml_feature_store_v2`  
-**Schema File:** `04_ml_feature_store_v2.sql` (in this directory)  
-**Written By:** **Phase 4 Precompute Processor** (5th processor, runs 12:00 AM)  
+**Table:** `nba_predictions.ml_feature_store_v2`
+**Schema File:** `04_ml_feature_store_v2.sql` (in this directory)
+**Written By:** **Phase 4 Precompute Processor** (5th processor, runs 12:00 AM)
 **Read By:** **Phase 5 Prediction Systems** (all 5 systems, 6:00 AM+)
 
 ### Why It's in This Dataset
@@ -167,8 +167,8 @@ bq ls nba-props-platform:nba_predictions
 
 ### ml_feature_store_v2 ⚠️ Written by Phase 4
 
-**Purpose:** Cache 25-feature vectors for fast prediction generation  
-**Written By:** Phase 4 Precompute Processor (5th processor)  
+**Purpose:** Cache 25-feature vectors for fast prediction generation
+**Written By:** Phase 4 Precompute Processor (5th processor)
 **Read By:** All Phase 5 prediction systems
 
 **Key Fields:**
@@ -177,22 +177,22 @@ CREATE TABLE ml_feature_store_v2 (
   player_lookup STRING NOT NULL,
   game_date DATE NOT NULL,
   game_id STRING NOT NULL,
-  
+
   -- Feature data
   features ARRAY<FLOAT64> NOT NULL,        -- [f0, f1, ..., f24] (25 features)
   feature_names ARRAY<STRING> NOT NULL,    -- ['points_avg_last_5', ...]
   feature_count INT64 NOT NULL,            -- 25
   feature_version STRING NOT NULL,         -- 'v1_baseline_25'
-  
+
   -- Quality tracking
   feature_quality_score NUMERIC(5,2),      -- 0-100 quality metric
   data_source STRING NOT NULL,             -- 'phase4' (confirms Phase 4 origin)
-  
+
   -- Context
   opponent_team_abbr STRING,
   is_home BOOLEAN,
   days_rest INT64,
-  
+
   -- Metadata
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
   updated_at TIMESTAMP
@@ -207,16 +207,16 @@ CLUSTER BY player_lookup, feature_version, game_date;
 def predict(player_lookup, game_date, prop_line):
     # Read cached features (NO generation)
     features = read_from_feature_store(player_lookup, game_date)
-    
+
     # Use system-specific prediction logic
     prediction = self.calculate_prediction(features, prop_line)
-    
+
     return prediction
 
 def read_from_feature_store(player_lookup, game_date):
     """Read pre-computed features from Phase 4"""
     query = """
-    SELECT 
+    SELECT
         features,  -- Already computed by Phase 4
         feature_names,
         opponent_team_abbr,
@@ -226,7 +226,7 @@ def read_from_feature_store(player_lookup, game_date):
       AND game_date = @game_date
       AND feature_version = 'v1_baseline_25'
     """
-    
+
     result = bq_client.query(query, params={...}).result()
     return next(result)
 ```
@@ -234,7 +234,7 @@ def read_from_feature_store(player_lookup, game_date):
 **Sample Query:**
 ```sql
 -- Get today's cached features
-SELECT 
+SELECT
   player_lookup,
   game_date,
   features[OFFSET(0)] as points_avg_last_5,
@@ -252,8 +252,8 @@ ORDER BY player_lookup;
 
 ### feature_versions
 
-**Purpose:** Define feature sets and versions  
-**Written By:** Phase 4 (populated on first run)  
+**Purpose:** Define feature sets and versions
+**Written By:** Phase 4 (populated on first run)
 **Read By:** Phase 4 (validation), Phase 5 (reference)
 
 **Key Fields:**
@@ -267,8 +267,8 @@ ORDER BY player_lookup;
 
 ### prediction_systems
 
-**Purpose:** Registry of all prediction systems  
-**Written By:** Phase 5 (during deployment)  
+**Purpose:** Registry of all prediction systems
+**Written By:** Phase 5 (during deployment)
 **Read By:** Phase 5 (routing predictions)
 
 **Key Fields:**
@@ -282,8 +282,8 @@ ORDER BY player_lookup;
 
 ### player_prop_predictions ⭐ CRITICAL TABLE
 
-**Purpose:** All predictions from all systems  
-**Written By:** Phase 5 (all 5 systems write here)  
+**Purpose:** All predictions from all systems
+**Written By:** Phase 5 (all 5 systems write here)
 **Read By:** Phase 6 (publishing), Website (display)
 
 **Key Fields:**
@@ -299,7 +299,7 @@ ORDER BY player_lookup;
 **Multi-System Architecture:**
 ```sql
 -- One player, one game, FIVE predictions
-SELECT 
+SELECT
   player_lookup,
   system_id,
   predicted_points,
@@ -354,7 +354,7 @@ WHERE player_lookup = 'lebron-james'
 ### Check Feature Generation (Phase 4)
 ```sql
 -- Verify Phase 4 generated features for today
-SELECT 
+SELECT
   COUNT(DISTINCT player_lookup) as players_with_features,
   AVG(feature_quality_score) as avg_quality,
   MIN(created_at) as first_generated,
@@ -373,7 +373,7 @@ WHERE game_date = CURRENT_DATE()
 ### Check Predictions (Phase 5)
 ```sql
 -- Verify Phase 5 generated predictions for today
-SELECT 
+SELECT
   system_id,
   COUNT(DISTINCT player_lookup) as players,
   AVG(confidence_score) as avg_confidence
@@ -402,11 +402,11 @@ prediction_check AS (
   FROM `nba-props-platform.nba_predictions.player_prop_predictions`
   WHERE game_date = CURRENT_DATE()
 )
-SELECT 
+SELECT
   (SELECT COUNT(*) FROM feature_check) as players_with_features,
   (SELECT COUNT(*) FROM prediction_check) as players_with_predictions,
   -- Should be equal (both ~450)
-  CASE 
+  CASE
     WHEN (SELECT COUNT(*) FROM feature_check) = (SELECT COUNT(*) FROM prediction_check)
     THEN '✅ MATCH'
     ELSE '❌ MISMATCH'
@@ -425,8 +425,8 @@ WHERE game_date = CURRENT_DATE();
 -- If 0: Phase 4 processor didn't run
 ```
 
-**Impact:** Phase 5 CANNOT run without features  
-**Severity:** 🔴 CRITICAL  
+**Impact:** Phase 5 CANNOT run without features
+**Severity:** 🔴 CRITICAL
 **Action:** Check Phase 4 processor logs, re-run manually
 
 ### Issue: Features exist but no predictions (Phase 5 failed)
@@ -440,8 +440,8 @@ SELECT COUNT(*) FROM player_prop_predictions WHERE game_date = CURRENT_DATE();
 -- Returns: 0
 ```
 
-**Impact:** Website has no predictions to show  
-**Severity:** 🔴 CRITICAL  
+**Impact:** Website has no predictions to show
+**Severity:** 🔴 CRITICAL
 **Action:** Check Phase 5 coordinator logs, re-run manually
 
 ### Issue: Only some systems have predictions
@@ -503,8 +503,8 @@ INSERT INTO ml_feature_store_v2 (
 ```python
 # Read new feature version
 features = read_from_feature_store(
-    player_lookup, 
-    game_date, 
+    player_lookup,
+    game_date,
     feature_version='v2_expanded_47'  # Changed
 )
 
@@ -516,7 +516,7 @@ features = read_from_feature_store(
 1. Register in `prediction_systems`:
 ```sql
 INSERT INTO prediction_systems (
-  system_id, 
+  system_id,
   system_type,
   is_active,
   description

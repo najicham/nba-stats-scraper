@@ -52,24 +52,24 @@ comparison AS (
     COALESCE(b.player_lookup, g.player_lookup) as player_lookup,
     COALESCE(b.player_full_name, g.player_name) as player_name,
     COALESCE(b.team_abbr, g.team_abbr) as team_abbr,
-    
+
     -- BDL stats
     b.points as bdl_points,
     b.assists as bdl_assists,
     b.total_rebounds as bdl_rebounds,
-    
+
     -- Gamebook stats
     g.points as gamebook_points,
     g.assists as gamebook_assists,
     g.total_rebounds as gamebook_rebounds,
-    
+
     -- Presence flags
     CASE
       WHEN b.player_lookup IS NOT NULL AND g.player_lookup IS NOT NULL THEN 'in_both'
       WHEN b.player_lookup IS NOT NULL THEN 'bdl_only'
       WHEN g.player_lookup IS NOT NULL THEN 'gamebook_only'
     END as presence_status
-    
+
   FROM bdl_stats b
   FULL OUTER JOIN gamebook_stats g
     ON b.game_date = g.game_date
@@ -91,21 +91,21 @@ SELECT
   bdl_rebounds,
   gamebook_rebounds,
   ABS(COALESCE(bdl_rebounds, 0) - COALESCE(gamebook_rebounds, 0)) as rebound_diff,
-  
+
   -- Issue severity
   CASE
     -- Critical issues (affect prop settlement)
     WHEN presence_status = 'gamebook_only' THEN '🔴 CRITICAL: Missing from BDL'
     WHEN presence_status = 'bdl_only' THEN '🟡 WARNING: Missing from Gamebook'
-    WHEN ABS(COALESCE(bdl_points, 0) - COALESCE(gamebook_points, 0)) > 2 
+    WHEN ABS(COALESCE(bdl_points, 0) - COALESCE(gamebook_points, 0)) > 2
       THEN '🔴 CRITICAL: Point discrepancy'
-    
+
     -- Moderate issues
-    WHEN ABS(COALESCE(bdl_assists, 0) - COALESCE(gamebook_assists, 0)) > 2 
+    WHEN ABS(COALESCE(bdl_assists, 0) - COALESCE(gamebook_assists, 0)) > 2
       THEN '🟡 WARNING: Assist discrepancy'
-    WHEN ABS(COALESCE(bdl_rebounds, 0) - COALESCE(gamebook_rebounds, 0)) > 2 
+    WHEN ABS(COALESCE(bdl_rebounds, 0) - COALESCE(gamebook_rebounds, 0)) > 2
       THEN '🟡 WARNING: Rebound discrepancy'
-    
+
     -- All stats match
     ELSE '✅ Match'
   END as issue_severity

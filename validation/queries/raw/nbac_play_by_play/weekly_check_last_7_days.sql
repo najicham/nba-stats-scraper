@@ -5,7 +5,7 @@
 -- Tracks daily collection consistency and identifies gaps
 -- ============================================================================
 
-SELECT 
+SELECT
   game_date,
   FORMAT_DATE('%A', game_date) as day_of_week,
   COUNT(DISTINCT game_id) as games_collected,
@@ -14,7 +14,7 @@ SELECT
   ROUND(AVG(unique_players), 1) as avg_players_per_game,
   ROUND(AVG(shot_events), 0) as avg_shots_per_game
 FROM (
-  SELECT 
+  SELECT
     game_date,
     game_id,
     COUNT(*) as event_count,

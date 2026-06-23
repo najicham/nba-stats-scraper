@@ -7,7 +7,7 @@ How to monitor the pipeline and what alerts exist.
 ### 1. Schedule Data Freshness
 ```sql
 -- Should show games updated within last 2 hours during game days
-SELECT game_date, 
+SELECT game_date,
        MAX(created_at) as last_update,
        TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), MAX(created_at), MINUTE) as mins_stale
 FROM nba_raw.nbac_schedule
@@ -19,7 +19,7 @@ ORDER BY 1;
 ### 2. Scraper Execution Status
 ```sql
 -- Recent scraper runs
-SELECT scraper_name, status, 
+SELECT scraper_name, status,
        FORMAT_TIMESTAMP('%H:%M ET', created_at, 'America/New_York') as run_time,
        CASE WHEN gcs_path IS NULL THEN 'NULL' ELSE 'SET' END as gcs_path_status
 FROM nba_orchestration.scraper_execution_log

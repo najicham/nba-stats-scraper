@@ -1,9 +1,9 @@
 # NBA.com Team Boxscore Processor - Test Suite
 
-**Path:** `tests/processors/raw/nbacom/nbac_team_boxscore/`  
-**Processor:** `NbacTeamBoxscoreProcessor`  
-**Coverage:** ~95%  
-**Total Tests:** 56 unit tests  
+**Path:** `tests/processors/raw/nbacom/nbac_team_boxscore/`
+**Processor:** `NbacTeamBoxscoreProcessor`
+**Coverage:** ~95%
+**Total Tests:** 56 unit tests
 
 ## Quick Start
 
@@ -413,6 +413,6 @@ Refer to:
 
 ---
 
-**Test Suite Version:** 1.0  
-**Last Updated:** November 1, 2025  
+**Test Suite Version:** 1.0
+**Last Updated:** November 1, 2025
 **Status:** ✅ Ready to Use

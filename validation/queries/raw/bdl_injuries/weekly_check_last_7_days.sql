@@ -55,7 +55,7 @@ complete_week AS (
     COALESCE(s.status_doubtful, 0) as status_doubtful,
     COALESCE(s.records_with_flags, 0) as records_with_flags,
     -- Season context
-    CASE 
+    CASE
       WHEN EXTRACT(MONTH FROM d.check_date) IN (7, 8, 9) THEN FALSE
       ELSE TRUE
     END as is_season_active
@@ -79,16 +79,16 @@ SELECT
   CASE
     -- Off-season
     WHEN NOT is_season_active AND injury_count = 0 THEN '⚪ Off-season'
-    
+
     -- Season active - issues
     WHEN is_season_active AND injury_count = 0 THEN '🔴 CRITICAL: No data'
     WHEN is_season_active AND injury_count < 10 THEN '🔴 CRITICAL: Very low'
     WHEN is_season_active AND unique_teams < 10 THEN '⚠️  WARNING: Low teams'
     WHEN is_season_active AND avg_confidence < 0.9 THEN '⚠️  WARNING: Low confidence'
-    
+
     -- Season active - success
     WHEN is_season_active AND injury_count >= 10 THEN '✅ Complete'
-    
+
     ELSE '📊 Review'
   END as status
 FROM complete_week

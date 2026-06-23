@@ -30,7 +30,7 @@ OPTIONS:
 CATEGORIES:
     operational    Production workflows (5 workflows, 12 daily executions)
     backfill       Historical data collection workflows
-    admin          System maintenance and utility workflows  
+    admin          System maintenance and utility workflows
     all            Deploy all categories
 
 EXAMPLES:
@@ -96,7 +96,7 @@ echo ""
 # Function to get workflow configurations for a category
 get_workflows_for_category() {
     local category="$1"
-    
+
     case "$category" in
         "operational")
             cat << EOF
@@ -125,50 +125,50 @@ EOF
 # Validation function
 validate_workflows() {
     echo "📋 Step 1: Validating workflow files for category: $CATEGORY"
-    
+
     local workflows_dir="$PROJECT_ROOT/workflows"
     local categories_to_check=()
-    
+
     # Determine which categories to validate
     if [[ "$CATEGORY" == "all" ]]; then
         categories_to_check=("operational" "backfill" "admin")
     else
         categories_to_check=("$CATEGORY")
     fi
-    
+
     local total_expected=0
     local total_found=0
     local missing_files=()
-    
+
     for cat in "${categories_to_check[@]}"; do
         local cat_dir="$workflows_dir/$cat"
-        
+
         if [[ ! -d "$cat_dir" ]]; then
             echo "❌ Category directory not found: $cat_dir"
             exit 1
         fi
-        
+
         echo ""
         echo "🔍 Checking $cat category..."
-        
+
         # Get workflows for this category
         local workflows_config
         workflows_config=$(get_workflows_for_category "$cat")
-        
+
         if [[ -z "$workflows_config" ]]; then
             echo "⚠️  No workflows defined for $cat category"
             continue
         fi
-        
+
         # Parse workflow configurations
         while IFS= read -r line; do
             [[ -z "$line" ]] && continue
-            
+
             local workflow_name="${line%%:*}"
             local workflow_file="$cat_dir/$workflow_name.yaml"
-            
+
             total_expected=$((total_expected + 1))
-            
+
             if [[ -f "$workflow_file" ]]; then
                 echo "✅ Found: $cat/$workflow_name.yaml"
                 total_found=$((total_found + 1))
@@ -178,10 +178,10 @@ validate_workflows() {
             fi
         done <<< "$workflows_config"
     done
-    
+
     echo ""
     echo "📊 Validation Summary: $total_found/$total_expected workflow files found"
-    
+
     if [[ ${#missing_files[@]} -gt 0 ]]; then
         echo ""
         echo "❌ Missing workflow files:"
@@ -190,7 +190,7 @@ validate_workflows() {
         done
         exit 1
     fi
-    
+
     echo "✅ All required workflow files found"
 }
 
@@ -198,46 +198,46 @@ validate_workflows() {
 deploy_workflows() {
     echo ""
     echo "🚀 Step 2: Deploying workflows for category: $CATEGORY"
-    
+
     local workflows_dir="$PROJECT_ROOT/workflows"
     local categories_to_deploy=()
-    
+
     # Determine which categories to deploy
     if [[ "$CATEGORY" == "all" ]]; then
         categories_to_deploy=("operational" "backfill" "admin")
     else
         categories_to_deploy=("$CATEGORY")
     fi
-    
+
     local total_deployed=0
     local total_failed=0
     local failed_workflows=()
-    
+
     for cat in "${categories_to_deploy[@]}"; do
         echo ""
         echo "📂 Deploying $cat workflows..."
-        
+
         # Get workflows for this category
         local workflows_config
         workflows_config=$(get_workflows_for_category "$cat")
-        
+
         if [[ -z "$workflows_config" ]]; then
             echo "⚠️  No workflows to deploy for $cat category"
             continue
         fi
-        
+
         # Deploy each workflow in the category
         while IFS= read -r line; do
             [[ -z "$line" ]] && continue
-            
+
             IFS=':' read -r workflow_name description <<< "$line"
             local workflow_file="$workflows_dir/$cat/$workflow_name.yaml"
-            
+
             echo ""
             echo "📦 Deploying $workflow_name ($cat)..."
             [[ "$VERBOSE" == true ]] && echo "   File: $workflow_file"
             echo "   Description: $description"
-            
+
             if [[ "$DRY_RUN" == true ]]; then
                 echo "🔍 DRY RUN: Would deploy with command:"
                 echo "   gcloud workflows deploy $workflow_name --source='$workflow_file' --location=$REGION"
@@ -259,12 +259,12 @@ deploy_workflows() {
             fi
         done <<< "$workflows_config"
     done
-    
+
     echo ""
     echo "📊 Deployment Summary:"
     echo "✅ Successfully deployed: $total_deployed workflows"
     [[ $total_failed -gt 0 ]] && echo "❌ Failed to deploy: $total_failed workflows"
-    
+
     if [[ ${#failed_workflows[@]} -gt 0 ]]; then
         echo ""
         echo "❌ Failed workflows:"
@@ -280,31 +280,31 @@ test_critical_workflow() {
     if [[ "$CATEGORY" != "operational" && "$CATEGORY" != "all" ]]; then
         return
     fi
-    
+
     if [[ "$DRY_RUN" == true ]]; then
         echo ""
         echo "🧪 DRY RUN: Would test real-time-business workflow"
         return
     fi
-    
+
     echo ""
     echo "🧪 Step 3: Testing CRITICAL workflow (real-time-business)..."
-    
+
     echo "Testing real-time-business workflow (revenue critical Events→Props)..."
-    
+
     local execution_id
     execution_id=$(gcloud workflows run real-time-business --location=$REGION --format="value(name)" 2>/dev/null)
-    
+
     if [[ -n "$execution_id" ]]; then
         echo "✅ Test execution started: $execution_id"
         echo "⏳ Waiting 45 seconds for completion..."
         sleep 45
-        
+
         local status
         status=$(gcloud workflows executions describe "$execution_id" --location=$REGION --workflow=real-time-business --format="value(state)" 2>/dev/null)
-        
+
         echo "📊 Execution status: $status"
-        
+
         case "$status" in
             "SUCCEEDED")
                 echo "🎉 CRITICAL workflow test PASSED!"
@@ -313,7 +313,7 @@ test_critical_workflow() {
             "FAILED")
                 echo "🔴 CRITICAL workflow test FAILED!"
                 echo "❌ Events→Props revenue chain BROKEN"
-                
+
                 # Get error details
                 local error_msg
                 error_msg=$(gcloud workflows executions describe "$execution_id" --location=$REGION --workflow=real-time-business --format="value(error.context)" 2>/dev/null)
@@ -341,22 +341,22 @@ show_deployment_status() {
         echo "🔍 DRY RUN Complete - No actual deployments performed"
         return
     fi
-    
+
     echo ""
     echo "📊 Step 4: Deployment Status & Next Steps"
     echo "========================================"
-    
+
     echo ""
     echo "🚀 Currently Deployed Workflows:"
     gcloud workflows list --location=$REGION --format="table(name.basename(),state,revisionCreateTime)" 2>/dev/null
-    
+
     # Category-specific next steps
     case "$CATEGORY" in
         "operational")
             echo ""
             echo "⏰ Current Workflow Schedulers:"
             gcloud scheduler jobs list --location=$REGION --filter="name ~ .*trigger" --format="table(name,schedule,state)" 2>/dev/null
-            
+
             echo ""
             echo "🎯 CRITICAL Next Steps for operational workflows:"
             echo "1. 🔄 Update schedulers for 5-workflow system:"
@@ -400,7 +400,7 @@ echo "Starting deployment for category: $CATEGORY..."
 
 validate_workflows
 deploy_workflows
-test_critical_workflow  
+test_critical_workflow
 show_deployment_status
 
 echo ""
@@ -409,14 +409,14 @@ if [[ "$DRY_RUN" == true ]]; then
     echo "Run without --dry-run to perform actual deployment"
 else
     echo "🎉 Deployment complete for category: $CATEGORY!"
-    
+
     # Category-specific success messages
     case "$CATEGORY" in
         "operational")
             echo ""
             echo "📈 Your operational system provides:"
             echo "• 🌅 Early Morning Final Check (6AM) - Last chance recovery"
-            echo "• 🌄 Morning Operations (8AM) - Daily setup + Enhanced PBP recovery"  
+            echo "• 🌄 Morning Operations (8AM) - Daily setup + Enhanced PBP recovery"
             echo "• 💼 Real-Time Business (Every 2h) - CRITICAL Events→Props revenue"
             echo "• 🏀 Post-Game Collection (8PM & 11PM) - Core game data"
             echo "• 🌙 Late Night Recovery (2AM) - Enhanced PBP + comprehensive retry"

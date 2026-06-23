@@ -11,7 +11,7 @@ Usage:
     python run_tests.py --coverage     # Run with coverage report
     python run_tests.py --quick        # Run fast tests (unit only for now)
     python run_tests.py --verbose      # Run with verbose output
-    
+
 Examples:
     python run_tests.py unit --coverage
     python run_tests.py --quick --verbose
@@ -26,7 +26,7 @@ from pathlib import Path
 def run_tests(test_type='all', coverage=False, verbose=False):
     """Run tests with specified options."""
     cmd = ['pytest']
-    
+
     # Test selection
     if test_type == 'unit':
         cmd.append('test_unit.py')
@@ -39,22 +39,22 @@ def run_tests(test_type='all', coverage=False, verbose=False):
         print("⚡ Running Quick Tests (Unit)...")
     else:
         print("🚀 Running All Tests...")
-    
+
     # Options
     if verbose:
         cmd.append('-vv')
     else:
         cmd.append('-v')
-    
+
     if coverage:
         cmd.extend([
             '--cov=data_processors.raw.nbacom.nbac_team_boxscore_processor',
             '--cov-report=html',
             '--cov-report=term'
         ])
-    
+
     cmd.extend(['--tb=short', '--color=yes'])
-    
+
     result = subprocess.run(cmd)
     return result.returncode
 
@@ -62,15 +62,15 @@ def run_tests(test_type='all', coverage=False, verbose=False):
 def main():
     """Main entry point."""
     args = sys.argv[1:]
-    
+
     test_type = 'all'
     coverage = False
     verbose = False
-    
+
     if '-h' in args or '--help' in args:
         print(__doc__)
         return 0
-    
+
     for arg in args:
         if arg in ['unit', 'integration', 'quick']:
             test_type = arg
@@ -78,7 +78,7 @@ def main():
             coverage = True
         elif arg in ['--verbose', '-v']:
             verbose = True
-    
+
     return run_tests(test_type, coverage, verbose)
 
 

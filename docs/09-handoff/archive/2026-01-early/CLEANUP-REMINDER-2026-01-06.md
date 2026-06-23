@@ -41,7 +41,7 @@ if self.processing_strategy == 'MERGE_UPDATE':
 DELETE FROM table WHERE game_date BETWEEN 'start_date' AND 'end_date'
 ```
 
-**Problem**: 
+**Problem**:
 - Streaming buffer prevents DELETE → exception caught
 - Code continues anyway → INSERT runs → duplicates
 
@@ -66,7 +66,7 @@ bq query --use_legacy_sql=false "
 -- Create temp table with duplicates to remove (keeps best record)
 CREATE OR REPLACE TABLE \`nba-props-platform.nba_analytics.tmp_duplicates_to_remove\` AS
 WITH duplicates AS (
-  SELECT 
+  SELECT
     game_id, game_date, player_lookup,
     COUNT(*) as dup_count
   FROM \`nba-props-platform.nba_analytics.player_game_summary\`
@@ -75,11 +75,11 @@ WITH duplicates AS (
   HAVING COUNT(*) > 1
 ),
 ranked AS (
-  SELECT 
+  SELECT
     pgs.game_id, pgs.game_date, pgs.player_lookup,
     ROW_NUMBER() OVER (
-      PARTITION BY pgs.game_id, pgs.game_date, pgs.player_lookup 
-      ORDER BY 
+      PARTITION BY pgs.game_id, pgs.game_date, pgs.player_lookup
+      ORDER BY
         CASE WHEN pgs.minutes_played IS NOT NULL THEN 1 ELSE 0 END DESC,
         pgs.minutes_played DESC NULLS LAST,
         (CAST(pgs.points IS NOT NULL AS INT64) +
@@ -87,9 +87,9 @@ ranked AS (
          CAST(pgs.fg_attempts IS NOT NULL AS INT64)) DESC
     ) as row_rank
   FROM \`nba-props-platform.nba_analytics.player_game_summary\` pgs
-  INNER JOIN duplicates d 
-    ON pgs.game_id = d.game_id 
-    AND pgs.game_date = d.game_date 
+  INNER JOIN duplicates d
+    ON pgs.game_id = d.game_id
+    AND pgs.game_date = d.game_date
     AND pgs.player_lookup = d.player_lookup
 )
 SELECT game_date, game_id, player_lookup
@@ -108,7 +108,7 @@ WHERE (game_date, game_id, player_lookup) IN (
 
 # 4. Verify cleanup
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   COUNTIF(cnt > 1) as duplicate_groups
 FROM (
   SELECT COUNT(*) as cnt
@@ -154,7 +154,7 @@ INSERT INTO table VALUES (...)
 # Use:
 MERGE table AS target
 USING new_data AS source
-ON target.game_id = source.game_id 
+ON target.game_id = source.game_id
    AND target.player_lookup = source.player_lookup
 WHEN MATCHED THEN UPDATE SET ...
 WHEN NOT MATCHED THEN INSERT ...

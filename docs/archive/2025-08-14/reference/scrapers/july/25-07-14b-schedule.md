@@ -21,7 +21,7 @@ This document outlines when each scraper runs throughout the day and what data i
 - **Frequency**: 2-3 runs during this window
 - **Output**: Current roster snapshots only
 
-#### Injury Status (Multiple runs)  
+#### Injury Status (Multiple runs)
 - **Ball Don't Lie Injuries** (`BdlInjuriesScraper`) - All current injuries
 - **NBA.com Injury Report** (`GetNbaComInjuryReport`) - Official reports
 - **Purpose**: Latest injury designations before games
@@ -123,7 +123,7 @@ This document outlines when each scraper runs throughout the day and what data i
 - **Frequency**: Check for new files
 - **Output**: Enhanced game analytics
 
-#### Next Day Preparation  
+#### Next Day Preparation
 - **Odds API Events** (`GetOddsApiEvents`) - Tomorrow's games if available
 - **Odds API Player Props** (`GetOddsApiCurrentEventOdds`) - Early lines
 - **Purpose**: Get head start on next day's betting data

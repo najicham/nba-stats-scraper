@@ -144,15 +144,15 @@ class BigDataBallDiscoveryScraper(ScraperBase, ScraperFlaskMixin):
         """Initialize Google Drive API service"""
         try:
             service_account_key_path = (
-                self.opts.get("service_account_key_path") or 
+                self.opts.get("service_account_key_path") or
                 os.getenv("BIGDATABALL_SERVICE_ACCOUNT_KEY_PATH") or
                 os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
             )
-            
+
             if service_account_key_path and os.path.exists(service_account_key_path):
                 # Use explicit key file if provided
                 credentials = service_account.Credentials.from_service_account_file(
-                    service_account_key_path, 
+                    service_account_key_path,
                     scopes=self.SCOPES
                 )
                 self.step_info("drive_init", f"Using service account key: {service_account_key_path}")
@@ -161,13 +161,13 @@ class BigDataBallDiscoveryScraper(ScraperBase, ScraperFlaskMixin):
                 from google.auth import default
                 credentials, _ = default(scopes=self.SCOPES)
                 self.step_info("drive_init", "Using default credentials (Cloud Run service account)")
-            
+
             self.drive_service = build('drive', 'v3', credentials=credentials)
             self.step_info("drive_init", "Successfully initialized Google Drive service")
-            
+
         except Exception as e:
             logger.error(f"Failed to initialize Google Drive service: {e}")
-            
+
             # Send error notification
             try:
                 notify_error(
@@ -182,7 +182,7 @@ class BigDataBallDiscoveryScraper(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise
 
     # ------------------------------------------------------------------ #
@@ -193,15 +193,15 @@ class BigDataBallDiscoveryScraper(ScraperBase, ScraperFlaskMixin):
         try:
             date_str = self.opts["date"]
             self.step_info("discovery_start", f"Starting game ID discovery for {date_str}")
-            
+
             # Simple date-based discovery only
             files = self._discover_games_by_date(date_str)
-            
+
             # Check if any games were found
             if not files:
                 warning_msg = f"No games found for date {date_str}"
                 logger.warning(warning_msg)
-                
+
                 # Send warning notification
                 try:
                     notify_warning(
@@ -216,27 +216,27 @@ class BigDataBallDiscoveryScraper(ScraperBase, ScraperFlaskMixin):
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             # Process into simple game ID list
             discovery_results = self._process_game_files(files)
-            
+
             # Store in decoded_data (standard scraper pattern)
             self.decoded_data = discovery_results
-            
+
             # Create mock response for compatibility with base class
             class MockResponse:
                 def __init__(self):
                     self.content = b'{"discovery": "completed"}'
                     self.status_code = 200
-            
+
             self.raw_response = MockResponse()
-            
-            self.step_info("discovery_complete", f"Discovery completed", 
+
+            self.step_info("discovery_complete", f"Discovery completed",
                           extra={"game_count": discovery_results.get("count", 0)})
-            
+
         except Exception as e:
             logger.error(f"Error in BigDataBall discovery: {e}")
-            
+
             # Send error notification
             try:
                 notify_error(
@@ -252,31 +252,31 @@ class BigDataBallDiscoveryScraper(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise
 
     def _discover_games_by_date(self, date_str: str) -> List[Dict]:
         """Discover individual game files for a specific date"""
         # Focus only on individual games (not combined files)
         query = f"name contains '[{date_str}]' and not name contains 'combined-stats'"
-        
-        self.step_info("discovery_search", f"Searching for individual games on {date_str}", 
+
+        self.step_info("discovery_search", f"Searching for individual games on {date_str}",
                       extra={"query": query})
-        
+
         return self._search_drive_files(query)
 
     def _search_drive_files(self, query: str, max_results_per_page: int = 100) -> List[Dict]:
         """
         Search for files in the shared BigDataBall folder with pagination support.
-        
-        CRITICAL FIX (2025-10-15): Removed orderBy parameter that was causing the 
-        date filter to be ignored. The Google Drive API was returning the 20 most 
+
+        CRITICAL FIX (2025-10-15): Removed orderBy parameter that was causing the
+        date filter to be ignored. The Google Drive API was returning the 20 most
         recently modified files regardless of the date filter when orderBy was present.
-        
+
         Args:
             query: Drive API query string (e.g., "name contains '[2024-11-11]'")
             max_results_per_page: Results per page (max 100, default 100)
-            
+
         Returns:
             List of all files matching the query across all pages
         """
@@ -310,45 +310,45 @@ class BigDataBallDiscoveryScraper(ScraperBase, ScraperFlaskMixin):
                     # When orderBy="modifiedTime desc" was present, the API returned
                     # recently modified files from ANY date instead of filtering by date.
                 }
-                
+
                 # Add page token if we're paginating
                 if page_token:
                     request_params['pageToken'] = page_token
-                
+
                 # Execute search
                 results = self.drive_service.files().list(**request_params).execute()
-                
+
                 # Get files from this page
                 page_files = results.get('files', [])
                 all_files.extend(page_files)
-                
+
                 self.step_info(
-                    "drive_search_page", 
+                    "drive_search_page",
                     f"Page {page_num}: Found {len(page_files)} files",
                     extra={
-                        "query": query, 
-                        "page": page_num, 
+                        "query": query,
+                        "page": page_num,
                         "page_count": len(page_files),
                         "total_so_far": len(all_files)
                     }
                 )
-                
+
                 # Check if there are more pages
                 page_token = results.get('nextPageToken')
                 if not page_token:
                     break  # No more pages
-                    
+
             self.step_info(
-                "drive_search_complete", 
+                "drive_search_complete",
                 f"Found {len(all_files)} total files across {page_num} page(s)",
                 extra={"query": query, "total_files": len(all_files), "pages": page_num}
             )
-            
+
             return all_files
-            
+
         except Exception as e:
             logger.error(f"Error searching Drive files: {e}")
-            
+
             # Send error notification
             try:
                 notify_error(
@@ -366,17 +366,17 @@ class BigDataBallDiscoveryScraper(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise
 
     def _process_game_files(self, files: List[Dict]) -> Dict:
         """Process files into simple game ID format"""
         games = []
         requested_date = self.opts["date"]
-        
+
         for file in files:
             name = file['name']
-            
+
             # Extract game metadata from filename
             game_info = self._extract_game_info(name)
             if game_info:
@@ -385,13 +385,13 @@ class BigDataBallDiscoveryScraper(ScraperBase, ScraperFlaskMixin):
                 # We must filter to exact date match in Python
                 if game_info.get('date') != requested_date:
                     continue
-                
+
                 # Apply team filter if provided
                 if self.opts.get("teams"):
                     team_filter = self.opts["teams"].upper()
                     if team_filter not in game_info.get("teams", "").upper():
                         continue
-                
+
                 games.append({
                     'file_id': file['id'],
                     'file_name': name,
@@ -399,10 +399,10 @@ class BigDataBallDiscoveryScraper(ScraperBase, ScraperFlaskMixin):
                     'modified': file.get('modifiedTime'),
                     **game_info
                 })
-        
+
         # Sort games by date, then by game_id
         games.sort(key=lambda x: (x.get('date', ''), x.get('game_id', '')))
-        
+
         return {
             'date': requested_date,
             'teams_filter': self.opts.get("teams"),
@@ -422,22 +422,22 @@ class BigDataBallDiscoveryScraper(ScraperBase, ScraperFlaskMixin):
                 date_end = filename.find(']')
                 if date_start >= 0 and date_end > date_start:
                     date_part = filename[date_start + 1:date_end]  # "2024-11-11"
-                    
+
                     # Extract game_id and teams
                     after_date = filename[date_end + 2:]  # Skip "]-"
                     if after_date.endswith('.csv'):
                         after_date = after_date[:-4]  # Remove ".csv"
-                    
+
                     # Split on last dash to get game_id and teams
                     last_dash = after_date.rfind('-')
                     if last_dash > 0:
                         game_id = after_date[:last_dash]
                         teams = after_date[last_dash + 1:]
-                        
+
                         # Split teams into away/home
                         if '@' in teams:
                             away_team, home_team = teams.split('@')
-                            
+
                             return {
                                 'game_id': game_id,
                                 'date': date_part,
@@ -447,7 +447,7 @@ class BigDataBallDiscoveryScraper(ScraperBase, ScraperFlaskMixin):
                             }
         except Exception as e:
             logger.warning(f"Could not extract game info from {filename}: {e}")
-        
+
         return None
 
     # ------------------------------------------------------------------ #
@@ -458,12 +458,12 @@ class BigDataBallDiscoveryScraper(ScraperBase, ScraperFlaskMixin):
         try:
             if not isinstance(self.decoded_data, dict):
                 raise ValueError("Discovery failed: missing results data")
-            
+
             if "count" not in self.decoded_data:
                 raise ValueError("Discovery failed: missing count data")
         except Exception as e:
             logger.error(f"Validation failed: {e}")
-            
+
             # Send error notification
             try:
                 notify_error(
@@ -479,7 +479,7 @@ class BigDataBallDiscoveryScraper(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise
 
     # ------------------------------------------------------------------ #
@@ -488,7 +488,7 @@ class BigDataBallDiscoveryScraper(ScraperBase, ScraperFlaskMixin):
     def transform_data(self) -> None:
         """Transform discovery results into final format"""
         discovery_results = self.decoded_data
-        
+
         self.data = {
             "date": self.opts["date"],
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -496,10 +496,10 @@ class BigDataBallDiscoveryScraper(ScraperBase, ScraperFlaskMixin):
             "mode": "discovery",
             "results": discovery_results
         }
-        
+
         total_games = discovery_results.get("count", 0)
         logger.info("Discovery transformation complete: %d games catalogued", total_games)
-        
+
         # Send success notification
         try:
             notify_info(
@@ -522,7 +522,7 @@ class BigDataBallDiscoveryScraper(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     def get_scraper_stats(self) -> dict:
         results = self.data.get("results", {})
-        
+
         return {
             "mode": "discovery",
             "totalGames": results.get("count", 0),

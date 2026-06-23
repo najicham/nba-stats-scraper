@@ -99,8 +99,8 @@ SELECT
   'match' as match_status,
   CAST(COUNT(*) AS STRING) as count,
   CONCAT(
-    CAST(ROUND(100.0 * COUNT(*) / 
-      (SELECT COUNT(*) FROM comparison WHERE match_status IN ('match', 'espn_only', 'nba_only', 'team_mismatch')), 1) 
+    CAST(ROUND(100.0 * COUNT(*) /
+      (SELECT COUNT(*) FROM comparison WHERE match_status IN ('match', 'espn_only', 'nba_only', 'team_mismatch')), 1)
     AS STRING), '%'
   ) as percentage,
   '✅' as notes
@@ -114,8 +114,8 @@ SELECT
   'team_mismatch' as match_status,
   CAST(COUNT(*) AS STRING) as count,
   CONCAT(
-    CAST(ROUND(100.0 * COUNT(*) / 
-      (SELECT COUNT(*) FROM comparison WHERE match_status IN ('match', 'espn_only', 'nba_only', 'team_mismatch')), 1) 
+    CAST(ROUND(100.0 * COUNT(*) /
+      (SELECT COUNT(*) FROM comparison WHERE match_status IN ('match', 'espn_only', 'nba_only', 'team_mismatch')), 1)
     AS STRING), '%'
   ) as percentage,
   '⚠️  Check trades' as notes
@@ -129,8 +129,8 @@ SELECT
   'espn_only' as match_status,
   CAST(COUNT(*) AS STRING) as count,
   CONCAT(
-    CAST(ROUND(100.0 * COUNT(*) / 
-      (SELECT COUNT(*) FROM comparison WHERE match_status IN ('match', 'espn_only', 'nba_only', 'team_mismatch')), 1) 
+    CAST(ROUND(100.0 * COUNT(*) /
+      (SELECT COUNT(*) FROM comparison WHERE match_status IN ('match', 'espn_only', 'nba_only', 'team_mismatch')), 1)
     AS STRING), '%'
   ) as percentage,
   '🔍 Review' as notes
@@ -144,8 +144,8 @@ SELECT
   'nba_only' as match_status,
   CAST(COUNT(*) AS STRING) as count,
   CONCAT(
-    CAST(ROUND(100.0 * COUNT(*) / 
-      (SELECT COUNT(*) FROM comparison WHERE match_status IN ('match', 'espn_only', 'nba_only', 'team_mismatch')), 1) 
+    CAST(ROUND(100.0 * COUNT(*) /
+      (SELECT COUNT(*) FROM comparison WHERE match_status IN ('match', 'espn_only', 'nba_only', 'team_mismatch')), 1)
     AS STRING), '%'
   ) as percentage,
   '📊 Normal variance' as notes

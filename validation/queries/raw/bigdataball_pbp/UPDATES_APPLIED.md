@@ -9,8 +9,8 @@
 ## 🔧 Files Updated
 
 ### 1. season_completeness_check.sql ✅
-**Issue:** Only counting HOME games (37-38 per team)  
-**Fix:** Now counts BOTH home AND away games using UNION ALL  
+**Issue:** Only counting HOME games (37-38 per team)
+**Fix:** Now counts BOTH home AND away games using UNION ALL
 **Result:** Teams now show 73-76 games (correct based on 19 missing dates)
 
 **Key Change:**
@@ -31,7 +31,7 @@ GROUP BY season, team_abbr, is_playoffs
 ---
 
 ### 2. find_missing_games.sql ✅
-**Issue 1:** Showing 1,003 "missing" games (including future 2025-26 season)  
+**Issue 1:** Showing 1,003 "missing" games (including future 2025-26 season)
 **Issue 2:** Threshold too strict (400 events flagging normal games)
 
 **Fixes:**
@@ -81,7 +81,7 @@ WHEN shots_with_coords * 100.0 / NULLIF(shot_events, 0) < 50 THEN '⚠️ WARNIN
 ---
 
 ### 4. discovery_query_3_missing_games.sql ✅
-**Issue:** Also showed future 2025-26 games as "missing"  
+**Issue:** Also showed future 2025-26 games as "missing"
 **Fix:** Updated to match actual season dates (2024-10-22 to 2025-06-22)
 
 ---
@@ -168,7 +168,7 @@ cd ~/code/nba-stats-scraper/validation/queries/raw/bigdataball_pbp
 
 # Copy from artifacts (all updated above):
 # - season_completeness_check.sql
-# - find_missing_games.sql  
+# - find_missing_games.sql
 # - event_quality_checks.sql
 # - discovery/discovery_query_3_missing_games.sql
 ```
@@ -221,14 +221,14 @@ After these fixes, the remaining issues are **REAL data problems**:
 ### 1. Missing Dates (19 total)
 **Dates:** Nov 11,12,14,15,19,22,26,29; Dec 03,10,11,12,14; Jan 01; Feb 02,14,16; Mar 03; Apr 04
 
-**Status:** ⚠️ Data not collected by scraper  
+**Status:** ⚠️ Data not collected by scraper
 **Action:** Investigate scraper logs, consider backfill
 
 ### 2. Shot Coordinate Coverage (7 games)
-**Games:** Playoff games Apr 15-18, 2025  
-**Issue:** 0% shot coordinates in BigDataBall data  
-**Status:** 🔴 BigDataBall data quality issue (their side)  
-**Impact:** Can't use these games for shot analysis  
+**Games:** Playoff games Apr 15-18, 2025
+**Issue:** 0% shot coordinates in BigDataBall data
+**Status:** 🔴 BigDataBall data quality issue (their side)
+**Impact:** Can't use these games for shot analysis
 **Action:** Monitor if future playoff games have same issue
 
 ---
@@ -255,6 +255,6 @@ After applying these updates:
 
 ---
 
-**Updated:** October 13, 2025  
-**Version:** v2 (Post-Discovery Fixes)  
+**Updated:** October 13, 2025
+**Version:** v2 (Post-Discovery Fixes)
 **Status:** Production Ready

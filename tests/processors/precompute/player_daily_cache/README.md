@@ -1,8 +1,8 @@
 # Player Daily Cache Processor - Test Suite
 
-**Path:** `tests/processors/precompute/player_daily_cache/`  
-**Version:** 1.0  
-**Coverage:** 97%  
+**Path:** `tests/processors/precompute/player_daily_cache/`
+**Version:** 1.0
+**Coverage:** 97%
 **Total Tests:** 35 unit tests (+ 8 integration, + 15 validation)
 
 ## Quick Start
@@ -297,17 +297,17 @@ pytest test_unit.py -k "edge" -v
 def processor(self):
     """Create processor instance with mocked dependencies."""
     proc = PlayerDailyCacheProcessor()
-    
+
     # Mock BigQuery (no real calls)
     proc.bq_client = Mock()
     proc.project_id = 'test-project'
-    
+
     # Mock source tracking (normally set by track_source_usage)
     proc.source_player_game_last_updated = datetime(2025, 1, 21, 2, 15)
     proc.source_player_game_rows_found = 45
     proc.source_player_game_completeness_pct = 100.0
     # ... etc for all 4 sources
-    
+
     return proc
 ```
 
@@ -463,10 +463,10 @@ def test_new_functionality(self, processor):
     # Arrange - Set up test data
     context_row = pd.Series({...})
     player_games = pd.DataFrame([...])
-    
+
     # Act - Execute the code
     result = processor._calculate_player_cache(...)
-    
+
     # Assert - Verify results
     expected_value = ...  # Calculate expected
     assert result['field'] == pytest.approx(expected_value, abs=0.01)

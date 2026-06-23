@@ -51,8 +51,8 @@
 **1. Batch Loading Success:**
 ```bash
 gcloud logging read \
-  'resource.labels.service_name="prediction-coordinator" AND 
-   jsonPayload.message:"Batch loaded" AND 
+  'resource.labels.service_name="prediction-coordinator" AND
+   jsonPayload.message:"Batch loaded" AND
    timestamp>="2026-01-18T23:00:00Z"' \
   --limit=5
 ```
@@ -65,7 +65,7 @@ gcloud logging read \
 **2. Performance Metrics:**
 ```bash
 gcloud logging read \
-  'resource.labels.service_name="prediction-coordinator" AND 
+  'resource.labels.service_name="prediction-coordinator" AND
    jsonPayload.batch_load_time!=null' \
   --limit=10 --format=json | \
   jq -r '.[] | [.timestamp, .jsonPayload.batch_load_time, .jsonPayload.player_count, .jsonPayload.games_loaded] | @tsv'
@@ -74,8 +74,8 @@ gcloud logging read \
 **3. Check for Timeout Errors:**
 ```bash
 gcloud logging read \
-  'resource.labels.service_name="prediction-coordinator" AND 
-   severity>=ERROR AND 
+  'resource.labels.service_name="prediction-coordinator" AND
+   severity>=ERROR AND
    timestamp>="2026-01-18T23:00:00Z"' \
   --limit=20
 ```

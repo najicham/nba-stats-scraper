@@ -107,7 +107,7 @@ Tests `_calculate_zone_defense()` method.
 ```python
 def test_calculate_zone_defense_basic(self, processor, sample_team_data):
     result = processor._calculate_zone_defense(sample_team_data, games_count=15)
-    
+
     # Paint defense
     assert result['paint_pct'] == pytest.approx(0.571, abs=0.001)
     assert result['paint_vs_league'] == pytest.approx(-0.9, abs=0.1)
@@ -172,11 +172,11 @@ Tests complete end-to-end processing.
 def test_successful_processing(self, processor, mock_team_defense_data):
     # Setup mocks
     processor.opts = {'analysis_date': date(2025, 1, 27), ...}
-    
+
     # Execute
     processor.extract_raw_data()
     processor.calculate_precompute()
-    
+
     # Verify
     assert len(processor.transformed_data) == 5
     assert processor.transformed_data[0]['games_in_sample'] == 15
@@ -294,28 +294,28 @@ on: [push, pull_request]
 jobs:
   test:
     runs-on: ubuntu-latest
-    
+
     steps:
     - uses: actions/checkout@v2
-    
+
     - name: Set up Python
       uses: actions/setup-python@v2
       with:
         python-version: '3.9'
-    
+
     - name: Install dependencies
       run: |
         pip install -r requirements.txt
         pip install pytest pytest-cov pytest-mock
-    
+
     - name: Run unit tests
       run: |
         pytest tests/precompute/test_team_defense_unit.py -v --cov
-    
+
     - name: Run integration tests
       run: |
         pytest tests/precompute/test_team_defense_integration.py -v
-    
+
     - name: Upload coverage
       uses: codecov/codecov-action@v2
 ```
@@ -331,7 +331,7 @@ steps:
       - 'tests/precompute/test_team_defense_unit.py'
       - '-v'
       - '--junitxml=test-results.xml'
-  
+
   # Run validation tests (requires BigQuery)
   - name: 'python:3.9'
     entrypoint: 'pytest'
@@ -449,7 +449,7 @@ open htmlcov/index.html
 # Unit tests
 def test_<method>_<scenario>_<expected_result>
 
-# Integration tests  
+# Integration tests
 def test_<feature>_<scenario>
 
 # Validation tests
@@ -478,26 +478,26 @@ def test_<assertion>_<condition>
 
 ## ❓ FAQ
 
-**Q: Why do unit tests run so fast?**  
+**Q: Why do unit tests run so fast?**
 A: They mock all external dependencies (BigQuery, notifications), so no network calls.
 
-**Q: Why do validation tests require --bigquery flag?**  
+**Q: Why do validation tests require --bigquery flag?**
 A: They query actual BigQuery tables, so we skip them by default to avoid costs/auth issues.
 
-**Q: What happens if Phase 3 dependency doesn't exist yet?**  
+**Q: What happens if Phase 3 dependency doesn't exist yet?**
 A: Integration tests use mocks, so they pass. Validation tests will skip. Real processor will fail gracefully.
 
-**Q: How do I test early season behavior?**  
+**Q: How do I test early season behavior?**
 A: Use integration test `test_early_season_placeholder_flow` or run validation tests against early season dates.
 
-**Q: Can I run tests locally without BigQuery?**  
+**Q: Can I run tests locally without BigQuery?**
 A: Yes! Unit and integration tests work without BigQuery. Only validation tests require it.
 
-**Q: How often should validation tests run?**  
+**Q: How often should validation tests run?**
 A: Nightly after processor completes. They validate production data quality.
 
 ---
 
-**Last Updated:** January 2025  
-**Test Coverage:** 48 tests (25 unit + 8 integration + 15 validation)  
+**Last Updated:** January 2025
+**Test Coverage:** 48 tests (25 unit + 8 integration + 15 validation)
 **Status:** ✅ Ready for use

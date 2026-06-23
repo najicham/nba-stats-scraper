@@ -95,7 +95,7 @@ class DownloadDataException(Exception):
 
 class DatesToProcessException(Exception):
     """
-    Possibly unused. 
+    Possibly unused.
     """
 
 

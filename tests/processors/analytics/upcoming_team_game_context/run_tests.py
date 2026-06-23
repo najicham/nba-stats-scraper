@@ -12,7 +12,7 @@ Usage:
     python run_tests.py --coverage     # Run with coverage report
     python run_tests.py --quick        # Run fast tests (unit + integration)
     python run_tests.py --verbose      # Run with verbose output
-    
+
 Examples:
     python run_tests.py unit --coverage
     python run_tests.py quick --verbose
@@ -27,7 +27,7 @@ from pathlib import Path
 def run_tests(test_type='all', coverage=False, verbose=False):
     """Run tests with specified options."""
     cmd = ['pytest']
-    
+
     # Test selection
     if test_type == 'unit':
         cmd.append('test_unit.py')
@@ -43,13 +43,13 @@ def run_tests(test_type='all', coverage=False, verbose=False):
         print("⚡ Running Quick Tests (Unit + Integration)...")
     else:
         print("🚀 Running All Tests...")
-    
+
     # Options
     if verbose:
         cmd.append('-vv')
     else:
         cmd.append('-v')
-    
+
     if coverage:
         cmd.extend([
             '--cov=data_processors.analytics.upcoming_team_game_context',
@@ -57,18 +57,18 @@ def run_tests(test_type='all', coverage=False, verbose=False):
             '--cov-report=term-missing'
         ])
         print("📊 Coverage report will be generated")
-    
+
     # Additional pytest options
     cmd.extend([
         '--tb=short',           # Short traceback format
         '--color=yes',          # Colored output
         '-ra'                   # Show summary of all test outcomes
     ])
-    
+
     print(f"\n{'='*80}")
     print(f"Command: {' '.join(cmd)}")
     print(f"{'='*80}\n")
-    
+
     result = subprocess.run(cmd)
     return result.returncode
 
@@ -91,16 +91,16 @@ def print_help():
 def main():
     """Main entry point."""
     args = sys.argv[1:]
-    
+
     test_type = 'all'
     coverage = False
     verbose = False
-    
+
     # Parse arguments
     if '-h' in args or '--help' in args:
         print_help()
         return 0
-    
+
     for arg in args:
         if arg in ['unit', 'integration', 'validation', 'quick', 'all']:
             test_type = arg
@@ -112,10 +112,10 @@ def main():
             print(f"⚠️  Unknown argument: {arg}")
             print("Use --help for usage information")
             return 1
-    
+
     # Run tests
     exit_code = run_tests(test_type, coverage, verbose)
-    
+
     # Print summary
     print(f"\n{'='*80}")
     if exit_code == 0:
@@ -123,7 +123,7 @@ def main():
     else:
         print("❌ Some tests failed")
     print(f"{'='*80}\n")
-    
+
     return exit_code
 
 

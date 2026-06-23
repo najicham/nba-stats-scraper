@@ -47,7 +47,7 @@ INSERT INTO `nba-props-platform.nba_reference.unresolved_player_names` VALUES
 -- =============================================================================
 
 -- Test alias resolution (uncomment to run)
--- SELECT 
+-- SELECT
 --     alias_display,
 --     nba_canonical_display,
 --     alias_type,
@@ -58,7 +58,7 @@ INSERT INTO `nba-props-platform.nba_reference.unresolved_player_names` VALUES
 -- ORDER BY alias_type, alias_source, alias_display;
 
 -- Test historical name change alias specifically
--- SELECT 
+-- SELECT
 --     alias_display as 'BR Name',
 --     nba_canonical_display as 'NBA Gamebook Name',
 --     notes
@@ -66,7 +66,7 @@ INSERT INTO `nba-props-platform.nba_reference.unresolved_player_names` VALUES
 -- WHERE alias_type = 'historical_name_change';
 
 -- Test unresolved queue
--- SELECT 
+-- SELECT
 --     source,
 --     original_name,
 --     team_abbr,
@@ -85,7 +85,7 @@ INSERT INTO `nba-props-platform.nba_reference.unresolved_player_names` VALUES
 -- =============================================================================
 
 -- Add these manually based on your actual data analysis:
--- 
+--
 -- Other players who may have changed names:
 -- ('newname', 'oldname', 'New Name', 'Old Name', 'historical_name_change', 'name_change_between_seasons', TRUE, 'Player changed name between YYYY-YY seasons', 'manual_setup', CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()),
 --
@@ -100,7 +100,7 @@ INSERT INTO `nba-props-platform.nba_reference.unresolved_player_names` VALUES
 -- DELETE FROM `nba-props-platform.nba_reference.unresolved_player_names` WHERE original_name IN ('Test Player', 'Unknown Rookie', 'Practice Squad Player');
 
 -- Deactivate old aliases instead of deleting them:
--- UPDATE `nba-props-platform.nba_reference.player_aliases` 
+-- UPDATE `nba-props-platform.nba_reference.player_aliases`
 -- SET is_active = FALSE, processed_at = CURRENT_TIMESTAMP()
 -- WHERE alias_display = 'Old Player Name';
 
@@ -120,7 +120,7 @@ INSERT INTO `nba-props-platform.nba_reference.unresolved_player_names` VALUES
 -- 5. Successfully enhance the registry record with BR roster data
 
 -- Validation query to confirm this works:
--- SELECT 
+-- SELECT
 --     r.player_name,
 --     r.player_lookup,
 --     r.team_abbr,

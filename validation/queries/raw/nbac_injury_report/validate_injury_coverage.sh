@@ -44,7 +44,7 @@ injury_report_dates AS (
   SELECT DISTINCT report_date
   FROM \`nba-props-platform.nba_raw.nbac_injury_report\`
 )
-SELECT 
+SELECT
   asg.game_date,
   asg.game_count as games_scheduled
 FROM all_scheduled_game_dates asg
@@ -60,7 +60,7 @@ echo ""
 echo "Coverage summary by season..."
 bq query --use_legacy_sql=false "
 WITH scheduled_days AS (
-  SELECT 
+  SELECT
     season_year,
     COUNT(DISTINCT game_date) as total_game_days
   FROM \`nba-props-platform.nba_raw.nbac_schedule\`
@@ -69,9 +69,9 @@ WITH scheduled_days AS (
   GROUP BY season_year
 ),
 covered_days AS (
-  SELECT 
-    CASE 
-      WHEN EXTRACT(MONTH FROM report_date) >= 10 
+  SELECT
+    CASE
+      WHEN EXTRACT(MONTH FROM report_date) >= 10
         THEN EXTRACT(YEAR FROM report_date)
       ELSE EXTRACT(YEAR FROM report_date) - 1
     END as season_year,
@@ -80,7 +80,7 @@ covered_days AS (
   WHERE report_date BETWEEN '2021-10-01' AND '2025-06-30'
   GROUP BY season_year
 )
-SELECT 
+SELECT
   s.season_year,
   s.total_game_days,
   COALESCE(c.covered_days, 0) as covered_days,
@@ -97,7 +97,7 @@ ORDER BY s.season_year;
 echo ""
 echo "Total records summary..."
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   COUNT(*) as total_records,
   COUNT(DISTINCT report_date) as unique_dates,
   MIN(report_date) as earliest_date,
@@ -114,9 +114,9 @@ echo ""
 echo "Regular season vs playoffs breakdown..."
 bq query --use_legacy_sql=false "
 WITH schedule_with_type AS (
-  SELECT 
+  SELECT
     game_date,
-    CASE 
+    CASE
       WHEN is_playoffs THEN 'Playoffs'
       ELSE 'Regular Season'
     END as season_type
@@ -125,7 +125,7 @@ WITH schedule_with_type AS (
     AND is_all_star = FALSE
 ),
 injury_by_type AS (
-  SELECT 
+  SELECT
     ir.report_date,
     s.season_type,
     COUNT(*) as injury_count
@@ -134,7 +134,7 @@ injury_by_type AS (
   WHERE ir.report_date BETWEEN '2021-10-01' AND '2025-06-30'
   GROUP BY ir.report_date, s.season_type
 )
-SELECT 
+SELECT
   season_type,
   COUNT(DISTINCT report_date) as game_days,
   SUM(injury_count) as total_injury_records,
@@ -150,7 +150,7 @@ ORDER BY season_type;
 echo ""
 echo "Confirming All-Star games are excluded from validation..."
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   game_date,
   COUNT(*) as allstar_games,
   STRING_AGG(CONCAT(away_team_tricode, '@', home_team_tricode), ', ') as matchups
@@ -175,7 +175,7 @@ WITH game_days AS (
   GROUP BY game_date
 ),
 injury_counts AS (
-  SELECT 
+  SELECT
     report_date,
     COUNT(DISTINCT player_lookup) as unique_players,
     COUNT(*) as total_records
@@ -183,7 +183,7 @@ injury_counts AS (
   WHERE report_date BETWEEN '2021-10-01' AND '2025-06-30'
   GROUP BY report_date
 )
-SELECT 
+SELECT
   g.game_date,
   g.scheduled_games,
   COALESCE(i.unique_players, 0) as players_on_report,

@@ -13,7 +13,7 @@ The **box score is the central data structure** for both historical analysis and
 - Extract player results (points scored, full stats)
 - Extract game status (who played, who was DNP, injury reasons)
 
-**Key Insight**: 
+**Key Insight**:
 - ✅ **Box score contains everything we need**
 - ✅ **No separate roster or injury scraping required**
 - ✅ **One comprehensive data source**
@@ -23,7 +23,7 @@ The **box score is the central data structure** for both historical analysis and
 
 **Process**:
 - Scrape injury reports (who's hurt today)
-- Scrape daily rosters (who's available today)  
+- Scrape daily rosters (who's available today)
 - Use historical patterns to forecast future box score
 - Predict player performance (expected points)
 - Predict player status (who will play/sit)
@@ -41,7 +41,7 @@ NBA Gamebook PDF → Extract → Historical Box Score Data
 ```
 *Everything we need is already in the completed box score*
 
-### Daily = Forecast Box Score  
+### Daily = Forecast Box Score
 ```
 Injury Reports + Rosters + Historical Patterns → Predict → Future Box Score Data
 ```
@@ -56,7 +56,7 @@ Injury Reports + Rosters + Historical Patterns → Predict → Future Box Score 
 
 ## Summary
 
-**Backward Looking**: Box score already exists → extract it  
+**Backward Looking**: Box score already exists → extract it
 **Forward Looking**: Box score doesn't exist yet → forecast it
 
 The box score is always the target - we just get there differently depending on timing.

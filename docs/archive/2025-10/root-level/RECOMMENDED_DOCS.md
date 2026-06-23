@@ -5,8 +5,8 @@ Based on your NBA Props Platform, here are suggested documents to create next.
 ## Priority 1: Essential Operations (Create Now)
 
 ### 1. BACKFILL_GUIDE.md
-**Why:** You run backfills frequently and they cause email floods  
-**Location:** `docs/BACKFILL_GUIDE.md`  
+**Why:** You run backfills frequently and they cause email floods
+**Location:** `docs/BACKFILL_GUIDE.md`
 **Should cover:**
 - How to safely run a backfill
 - Using alert batching
@@ -16,8 +16,8 @@ Based on your NBA Props Platform, here are suggested documents to create next.
 - Best practices (run during low-traffic times)
 
 ### 2. DEPLOYMENT.md
-**Why:** Consolidates all deployment procedures  
-**Location:** `docs/DEPLOYMENT.md`  
+**Why:** Consolidates all deployment procedures
+**Location:** `docs/DEPLOYMENT.md`
 **Should cover:**
 - Pre-deployment checklist
 - How to deploy each service (scrapers, processors, workflows)
@@ -26,8 +26,8 @@ Based on your NBA Props Platform, here are suggested documents to create next.
 - Deployment schedule recommendations
 
 ### 3. DATA_MODELS.md
-**Why:** Everyone needs to understand the data structure  
-**Location:** `docs/DATA_MODELS.md`  
+**Why:** Everyone needs to understand the data structure
+**Location:** `docs/DATA_MODELS.md`
 **Should cover:**
 - BigQuery table schemas
 - GCS file formats
@@ -38,8 +38,8 @@ Based on your NBA Props Platform, here are suggested documents to create next.
 ## Priority 2: Developer Productivity (Create Soon)
 
 ### 4. PROCESSOR_DEVELOPMENT.md
-**Why:** Make it easy to add new processors  
-**Location:** `docs/development/PROCESSOR_DEVELOPMENT.md`  
+**Why:** Make it easy to add new processors
+**Location:** `docs/development/PROCESSOR_DEVELOPMENT.md`
 **Should cover:**
 - Processor template
 - How to read from GCS
@@ -49,8 +49,8 @@ Based on your NBA Props Platform, here are suggested documents to create next.
 - Deployment
 
 ### 5. SCRAPER_DEVELOPMENT.md
-**Why:** Standardize scraper patterns  
-**Location:** `docs/development/SCRAPER_DEVELOPMENT.md`  
+**Why:** Standardize scraper patterns
+**Location:** `docs/development/SCRAPER_DEVELOPMENT.md`
 **Should cover:**
 - Scraper base class usage
 - Proxy configuration
@@ -60,8 +60,8 @@ Based on your NBA Props Platform, here are suggested documents to create next.
 - Deployment
 
 ### 6. TESTING_GUIDE.md
-**Why:** Prevent bugs from reaching production  
-**Location:** `docs/development/TESTING_GUIDE.md`  
+**Why:** Prevent bugs from reaching production
+**Location:** `docs/development/TESTING_GUIDE.md`
 **Should cover:**
 - Local testing setup
 - Unit tests
@@ -72,8 +72,8 @@ Based on your NBA Props Platform, here are suggested documents to create next.
 ## Priority 3: Team Collaboration (Create When Team Grows)
 
 ### 7. ONBOARDING.md
-**Why:** Help new team members get productive quickly  
-**Location:** `docs/ONBOARDING.md`  
+**Why:** Help new team members get productive quickly
+**Location:** `docs/ONBOARDING.md`
 **Should cover:**
 - Week 1: Setup and access
 - Week 2: First contributions
@@ -81,8 +81,8 @@ Based on your NBA Props Platform, here are suggested documents to create next.
 - Resources and contacts
 
 ### 8. INCIDENT_RESPONSE.md
-**Why:** Clear procedures during emergencies  
-**Location:** `docs/INCIDENT_RESPONSE.md`  
+**Why:** Clear procedures during emergencies
+**Location:** `docs/INCIDENT_RESPONSE.md`
 **Should cover:**
 - Severity definitions
 - Response procedures
@@ -90,8 +90,8 @@ Based on your NBA Props Platform, here are suggested documents to create next.
 - Post-mortem template
 
 ### 9. API_REFERENCE.md
-**Why:** Document your internal APIs  
-**Location:** `docs/API_REFERENCE.md`  
+**Why:** Document your internal APIs
+**Location:** `docs/API_REFERENCE.md`
 **Should cover:**
 - Cloud Run service endpoints
 - Request/response formats
@@ -102,8 +102,8 @@ Based on your NBA Props Platform, here are suggested documents to create next.
 ## Priority 4: Advanced Topics (Create As Needed)
 
 ### 10. PERFORMANCE_OPTIMIZATION.md
-**Why:** When things get slow  
-**Location:** `docs/PERFORMANCE_OPTIMIZATION.md`  
+**Why:** When things get slow
+**Location:** `docs/PERFORMANCE_OPTIMIZATION.md`
 **Should cover:**
 - Profiling techniques
 - BigQuery optimization
@@ -112,8 +112,8 @@ Based on your NBA Props Platform, here are suggested documents to create next.
 - Parallel processing
 
 ### 11. SECURITY.md
-**Why:** Protect sensitive data  
-**Location:** `docs/SECURITY.md`  
+**Why:** Protect sensitive data
+**Location:** `docs/SECURITY.md`
 **Should cover:**
 - Secret management
 - IAM best practices
@@ -122,8 +122,8 @@ Based on your NBA Props Platform, here are suggested documents to create next.
 - Audit logging
 
 ### 12. COST_OPTIMIZATION.md
-**Why:** Keep GCP costs under control  
-**Location:** `docs/COST_OPTIMIZATION.md`  
+**Why:** Keep GCP costs under control
+**Location:** `docs/COST_OPTIMIZATION.md`
 **Should cover:**
 - Current cost breakdown
 - Cost monitoring
@@ -133,15 +133,15 @@ Based on your NBA Props Platform, here are suggested documents to create next.
 ## Quick Wins (Templates You Can Use)
 
 ### 13. RUNBOOK_TEMPLATE.md
-**Why:** Standardize operational procedures  
+**Why:** Standardize operational procedures
 **Location:** `docs/templates/RUNBOOK_TEMPLATE.md`
 
 ### 14. ADR_TEMPLATE.md
-**Why:** Document architectural decisions  
+**Why:** Document architectural decisions
 **Location:** `docs/decisions/template.md` (already created!)
 
 ### 15. INVESTIGATION_TEMPLATE.md
-**Why:** Standardize debugging notes  
+**Why:** Standardize debugging notes
 **Location:** `docs/investigations/template.md`
 
 ---

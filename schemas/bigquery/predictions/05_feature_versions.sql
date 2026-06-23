@@ -29,7 +29,7 @@ VALUES (
     'points_avg_season',           -- Feature 2
     'points_std_last_10',          -- Feature 3
     'games_played_last_7_days',    -- Feature 4
-    
+
     -- Composite Factors (8 features: 5-12)
     'fatigue_score',               -- Feature 5: 0-100 (higher = more tired)
     'shot_zone_mismatch_score',    -- Feature 6: -10 to +10 (matchup quality)
@@ -39,20 +39,20 @@ VALUES (
     'injury_risk',                 -- Feature 10: 0-3 (health status)
     'recent_trend',                -- Feature 11: -2 to +2 (hot/cold streak)
     'minutes_change',              -- Feature 12: -2 to +2 (playing time change)
-    
+
     -- Matchup Context (5 features: 13-17)
     'opponent_def_rating',         -- Feature 13: Opponent defensive rating
     'opponent_pace',               -- Feature 14: Opponent pace factor
     'home_away',                   -- Feature 15: 1=home, 0=away
     'back_to_back',                -- Feature 16: 1=B2B, 0=normal rest
     'playoff_game',                -- Feature 17: 1=playoff, 0=regular
-    
+
     -- Shot Zones (4 features: 18-21)
     'pct_paint',                   -- Feature 18: % shots in paint
     'pct_mid_range',               -- Feature 19: % shots mid-range
     'pct_three',                   -- Feature 20: % shots from 3
     'pct_free_throw',              -- Feature 21: % shots at FT line
-    
+
     -- Team Context (3 features: 22-24)
     'team_pace',                   -- Feature 22: Team pace factor
     'team_off_rating',             -- Feature 23: Team offensive rating
@@ -91,7 +91,7 @@ ON CONFLICT (feature_version) DO NOTHING;
 -- WHERE active = TRUE;
 
 -- List all feature versions
--- SELECT 
+-- SELECT
 --   feature_version,
 --   feature_count,
 --   active,
@@ -101,7 +101,7 @@ ON CONFLICT (feature_version) DO NOTHING;
 -- ORDER BY created_at DESC;
 
 -- Get feature names for v1
--- SELECT 
+-- SELECT
 --   feature_version,
 --   feature_names,
 --   ARRAY_LENGTH(feature_names) as total_features
@@ -109,7 +109,7 @@ ON CONFLICT (feature_version) DO NOTHING;
 -- WHERE feature_version = 'v1_baseline_25';
 
 -- Validate feature count matches
--- SELECT 
+-- SELECT
 --   fv.feature_version,
 --   fv.feature_count as expected_count,
 --   AVG(fs.feature_count) as actual_avg_count,

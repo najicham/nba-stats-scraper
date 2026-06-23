@@ -17,7 +17,7 @@ from .nbac_schedule_processor import NbacScheduleProcessor
 
 __all__ = [
     'NbacGamebookProcessor',
-    'NbacPlayerListProcessor', 
+    'NbacPlayerListProcessor',
     'NbacInjuryReportProcessor',
     'NbacPlayerMovementProcessor',
     'NbacScoreboardV2Processor',

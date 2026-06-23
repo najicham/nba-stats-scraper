@@ -28,11 +28,11 @@ yesterday_refs AS (
     COUNT(DISTINCT game_id) as games_with_refs,
     COUNT(DISTINCT official_code) as unique_officials,
     COUNT(*) as total_assignments,
-    MIN(CASE 
+    MIN(CASE
       WHEN game_date < '2024-04-13' THEN 3  -- Regular season expects 3
       ELSE 4  -- Playoffs expect 4
     END) as min_officials_per_game,
-    MAX(CASE 
+    MAX(CASE
       WHEN game_date < '2024-04-13' THEN 3
       ELSE 4
     END) as max_officials_per_game
@@ -62,7 +62,7 @@ SELECT
   (SELECT COUNT(*) FROM wrong_counts) as games_with_wrong_count,
   CASE
     WHEN s.scheduled_games = 0 THEN '✅ No games scheduled'
-    WHEN r.games_with_refs = s.scheduled_games 
+    WHEN r.games_with_refs = s.scheduled_games
      AND (SELECT COUNT(*) FROM wrong_counts) = 0 THEN '✅ Complete'
     WHEN r.games_with_refs = 0 THEN '❌ CRITICAL: No referee data'
     WHEN (SELECT COUNT(*) FROM wrong_counts) > 0 THEN '⚠️ WARNING: Some games have wrong official count'

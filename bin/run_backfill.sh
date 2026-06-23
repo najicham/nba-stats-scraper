@@ -14,7 +14,7 @@ NC='\033[0m' # No Color
 # Function to list all available backfill jobs
 list_jobs() {
     echo -e "${BLUE}Available backfill jobs:${NC}\n"
-    
+
     for phase in scrapers raw analytics precompute prediction publishing reference; do
         phase_dir="backfill_jobs/$phase"
         if [ -d "$phase_dir" ]; then
@@ -34,7 +34,7 @@ if [ -z "$1" ] || [ "$1" == "--list" ] || [ "$1" == "-l" ]; then
         list_jobs
         exit 0
     fi
-    
+
     echo -e "${YELLOW}Usage:${NC} ./bin/run_backfill.sh <phase/job_name> [args...]"
     echo ""
     echo -e "${YELLOW}Examples:${NC}"
@@ -73,10 +73,10 @@ case "$PHASE" in
     prediction) SUFFIX="prediction" ;;
     publishing) SUFFIX="publishing" ;;
     reference)  SUFFIX="reference" ;;
-    *)          
+    *)
         echo -e "${RED}Error:${NC} Unknown phase: $PHASE"
         echo "Valid phases: scrapers, raw, analytics, precompute, prediction, publishing, reference"
-        exit 1 
+        exit 1
         ;;
 esac
 

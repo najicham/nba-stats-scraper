@@ -25,7 +25,7 @@ COPY shared/ /app/shared/
 # Set Python path to include shared modules
 ENV PYTHONPATH=/app:/app/shared
 
-# Security: switch to non-root user  
+# Security: switch to non-root user
 USER appuser
 
 # Health check base (PORT will be set by each service)

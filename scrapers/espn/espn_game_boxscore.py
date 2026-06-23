@@ -10,8 +10,8 @@ Scraper to extract NBA boxscore from ESPN game page.
    - Left table (names) with Right table (stats).
    - Produces the same 14-stat arrays ESPN typically shows in the boxscore.
 
-If ESPN includes multiple "Boxscore flex flex-column" blocks for the same 
-team (responsive duplicates), we skip the duplicates based on matching 
+If ESPN includes multiple "Boxscore flex flex-column" blocks for the same
+team (responsive duplicates), we skip the duplicates based on matching
 player IDs.
 
 Usage examples:
@@ -61,7 +61,7 @@ except ImportError:
 #      "Oklahoma City Thunder": "OKC",
 #      ...
 #    }
-#  So that alt="Indiana Pacers" => "IND" 
+#  So that alt="Indiana Pacers" => "IND"
 # ---------------------------------------------------------------------------
 try:
     from shared.config.espn_nba_team_abbr import TEAM_ABBR_MAP
@@ -103,8 +103,8 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
        - Left table (names) with Right table (stats).
        - Produces the same 14-stat arrays ESPN typically shows in the boxscore.
 
-    If ESPN includes multiple "Boxscore flex flex-column" blocks for the same 
-    team (responsive duplicates), we skip the duplicates based on matching 
+    If ESPN includes multiple "Boxscore flex flex-column" blocks for the same
+    team (responsive duplicates), we skip the duplicates based on matching
     player IDs.
     """
 
@@ -170,7 +170,7 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
     def validate_download_data(self):
         if not self.decoded_data:
             error_msg = "No HTML returned from ESPN boxscore page."
-            
+
             # Send error notification
             try:
                 notify_error(
@@ -186,7 +186,7 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise DownloadDataException(error_msg)
 
     # In scrapers/espn/espn_game_boxscore.py
@@ -207,7 +207,7 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
             team_data = self.parse_boxscore_json(embedded_data)
         else:
             logger.warning("No embedded JSON found (or skipJson=1). Falling back to HTML.")
-            
+
             # Notify about JSON parsing fallback (only if not intentionally skipped)
             if not self.skip_json:
                 try:
@@ -223,22 +223,22 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             team_data = self.scrape_html_boxscore(html)
 
         # Convert team-based structure to player-based structure
         player_structure = self._convert_to_player_structure(team_data)
-        
+
         # BETTER: Build final structure with metadata first
         self.data = {
             # Metadata/identifiers first (best practice)
             "game_id": self.opts["game_id"],
             "gamedate": self.opts["gamedate"],
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            
+
             # Main data content
             "teams": player_structure["teams"],
-            "playerCount": player_structure["playerCount"], 
+            "playerCount": player_structure["playerCount"],
             "players": player_structure["players"]  # Large array last
         }
 
@@ -264,19 +264,19 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
         players = []
         teams = {}
         total_players = 0  # Simple counter instead of complex object
-        
+
         # Get team list for home/away assignment (first team = away, second = home by convention)
         team_list = list(team_data.keys())
-        
+
         for idx, (team_abbr, team_players) in enumerate(team_data.items()):
             # Skip non-team keys
             if not isinstance(team_players, list):
                 continue
-                
+
             # Assign home/away (ESPN convention: first team = away, second = home)
             team_type = "away" if idx == 0 else "home"
             teams[team_type] = team_abbr
-            
+
             for player in team_players:
                 # Add team information to each player
                 player_with_team = {
@@ -286,7 +286,7 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
                 }
                 players.append(player_with_team)
                 total_players += 1  # Just increment the simple counter
-        
+
         return {
             "players": players,
             "teams": teams,
@@ -308,7 +308,7 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
                 return json.loads(match.group(1))
         except Exception as e:
             logger.exception("Error extracting 'bxscr' embedded JSON.")
-            
+
             # Notify about JSON extraction failure
             try:
                 notify_warning(
@@ -324,7 +324,7 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-        
+
         return None
 
     def parse_boxscore_json(self, bxscr_list):
@@ -348,7 +348,7 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
                 ath      = a.get("athlt", {})
                 p_id     = ath.get("id", "0")
                 p_name = ath.get("dspNm") or ath.get("shrtNm") or "Unknown"   # ← full name
-                jersey = ath.get("jersey") or ""                     
+                jersey = ath.get("jersey") or ""
                 stats    = a.get("stats", [])
 
                 # --- DNP handling -------------------------------------------------------
@@ -375,7 +375,7 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
           result[abbr] = players
 
       return result
-    
+
 
     # -------------------------------------------------------------------------
     # 2) Fallback: HTML-based approach
@@ -400,7 +400,7 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
         if not sections:
             error_msg = "No boxscore sections found in HTML"
             logger.error(error_msg)
-            
+
             try:
                 notify_error(
                     title="ESPN Boxscore: No Data Found",
@@ -432,7 +432,7 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
             if len(all_tables) < 2:
                 warning_msg = f"Boxscore section for {abbr} has <2 tables. Found {len(all_tables)}."
                 logger.warning(f"{warning_msg} Skipping.")
-                
+
                 # Notify about incomplete data
                 try:
                     notify_warning(
@@ -449,7 +449,7 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-                
+
                 continue
 
             left_table = all_tables[0]   # The 'fixed/left' table (names)
@@ -555,7 +555,7 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
                 long_elt  = link.select_one(".Boxscore__AthleteName--long")
                 p_name = (long_elt.get_text(strip=True) if long_elt
                           else link.get_text(strip=True))
-                
+
                 jersey_span = tr.select_one("span.playerJersey")
                 jersey = re.sub(r"[^\d]", "", jersey_span.get_text()) if jersey_span else ""
 
@@ -663,7 +663,7 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
             total_players = self.data["playerCount"]  # Now it's just a number
         else:
             total_players = 0
-            
+
         return {
             "game_id": self.opts["game_id"],
             "gamedate": self.opts.get("gamedate"),

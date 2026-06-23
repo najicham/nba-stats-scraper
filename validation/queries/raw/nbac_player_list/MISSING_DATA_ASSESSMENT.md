@@ -2,8 +2,8 @@
 
 **File:** `validation/queries/raw/nbac_player_list/MISSING_DATA_ASSESSMENT.md`
 
-**Date:** October 13, 2025  
-**Assessment By:** Discovery Query Results  
+**Date:** October 13, 2025
+**Assessment By:** Discovery Query Results
 **Table:** `nba_raw.nbac_player_list_current`
 
 ---
@@ -57,8 +57,8 @@ Range:               18-21 players (normal preseason rosters)
 
 ## ⚠️ Data Freshness Issue (Not Missing Data)
 
-**Last Update:** October 3, 2025 (10 days ago)  
-**Expected:** Daily updates during season  
+**Last Update:** October 3, 2025 (10 days ago)
+**Expected:** Daily updates during season
 **Status:** ⚠️ **STALE** (not missing, just not recent)
 
 **Impact:**
@@ -280,6 +280,6 @@ Duplicates found: 0
 
 ---
 
-**Last Updated:** October 13, 2025  
-**Next Review:** October 22, 2025 (season opener)  
+**Last Updated:** October 13, 2025
+**Next Review:** October 22, 2025 (season opener)
 **Status:** ✅ Complete, ⚠️ Needs freshness monitoring

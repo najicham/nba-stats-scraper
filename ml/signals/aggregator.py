@@ -40,6 +40,7 @@ Prior history (Sessions 259-298):
 """
 
 import logging
+import os
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -164,16 +165,45 @@ UNDER_EDGE_TIEBREAKER = 0.1  # Edge as minor tiebreaker for UNDER
 # Session 437 P4: Rescue signal priority weights for rescue_cap sorting.
 # When rescue_cap trims excess rescues, drop lowest-priority first.
 # Priority based on validated BB HR — higher = more likely to keep.
-# Old behavior: sorted by edge ascending (dropped HSE 100% HR while keeping
+# Old behavior: sorted by edge ascending (dropped HSE while keeping
 # combo_he_ms 40% HR because HSE had lower edge).
 RESCUE_SIGNAL_PRIORITY: Dict[str, int] = {
-    'high_scoring_environment_over': 3,  # 100% BB HR (3-0) — only OVER rescue
+    # INC-4 (2026-06-20): the "100% (3-0)" HSE belief is an N=3 artifact — at
+    # N=133 the ungated HSE rescue lane is ~55% (~breakeven), dominated by
+    # low-line edge<2 OVERs. See HSE_RESCUE_* floor below + STEP5 RESULT doc.
+    'high_scoring_environment_over': 3,  # INC-4: ~55% (N=133), NOT 100% — gated by HSE floor
     'hot_3pt_under': 3,                  # Session 466: 62.5% HR 5-season
     'line_drifted_down_under': 2,        # Session 466: 59.8% HR 5-season
     # home_under removed Session 483: demoted to BASE_SIGNALS
     'combo_3way': 1,                     # UNDER only (COLD for OVER)
     'combo_he_ms': 1,                    # UNDER only
 }
+
+# STEP 3 (2026-06-21): HSE OVER-rescue floor. The HSE rescue exemption lets a
+# `high_scoring_environment_over` pick bypass BOTH the 6.0 OVER edge floor AND
+# the bench/role OVER archetype blocks. INC-4's leak-clean walk-forward refuted
+# the "100% (3-0)" carve-out: at N=133 the lane is ~55% (~real breakeven 53.5%),
+# and it is dominated by low-line (5.5-13.5) edge<2 OVERs — exactly the
+# bench/role spots the archetype block exists to kill. Floor: HSE may bypass
+# ONLY for genuine starter+ scoring spots (line >= 18) with real edge (>= 4.0).
+# Three-state mode (HSE_RESCUE_FLOOR_MODE), DEFAULT 'off' → zero behavior change:
+#   'off'     — no-op (production today).
+#   'observe' — record the would-block under 'hse_rescue_floor' (feeds
+#               best_bets_filtered_picks → filter_counterfactual CF HR) but do
+#               NOT block. SHADOW state: accrue CF HR with no output change, like
+#               bias_regime_over_obs / home_over_obs.
+#   'active'  — record AND block (revoke the HSE exemption → pick falls through
+#               to the 6.0 floor + bench/role blocks).
+# Promotion path (needs sign-off): off → observe (collect) → active only once the
+# 'hse_rescue_floor' CF HR ≤ 45% at N ≥ 30 (blocked picks confirmed losers).
+# Back-compat: HSE_RESCUE_FLOOR_ENABLED=true forces 'active'. MIN_EDGE (3.0) and
+# the 6.0 OVER floor are unchanged. See docs/09-handoff/2026-06-21-STEP4-gated-rerun-RESULT.md.
+HSE_RESCUE_FLOOR_MODE = os.getenv('HSE_RESCUE_FLOOR_MODE', 'off').lower()
+if os.getenv('HSE_RESCUE_FLOOR_ENABLED', 'false').lower() == 'true':
+    HSE_RESCUE_FLOOR_MODE = 'active'
+HSE_RESCUE_FLOOR_ENABLED = HSE_RESCUE_FLOOR_MODE == 'active'  # back-compat readers
+HSE_RESCUE_MIN_LINE = float(os.getenv('HSE_RESCUE_MIN_LINE', '18.0'))  # starters+ (bench<12, role<17.5 excluded)
+HSE_RESCUE_MIN_EDGE = float(os.getenv('HSE_RESCUE_MIN_EDGE', '4.0'))   # kills edge<2 lane; still bypasses 6.0 floor at 4-6
 
 # Session 437 P5: Minimum 7d HR for a signal to qualify as rescue.
 # Read from signal_health_daily at runtime. Signals below this threshold
@@ -193,7 +223,7 @@ OVER_SIGNAL_WEIGHTS: Dict[str, float] = {
     'book_disagree_over': 3.0,              # Session 469: 79.6% HR (N=211, 5-season) — strongest directional signal
     'combo_3way': 2.5,                      # 95.5% season signal HR
     'fast_pace_over': 2.5,                  # 81.5% signal HR
-    'high_scoring_environment_over': 2.0,   # 100% BB HR (3-0)
+    'high_scoring_environment_over': 2.0,   # INC-4: ~55% BB HR (N=133), NOT 100% (3-0)
     'book_disagreement': 2.0,               # 93.0% signal HR (direction-neutral, kept for backward compat)
     # rest_advantage_2d weight removed P2-1 (2026-05-19): the signal is
     # unregistered (registry.py — register() commented out, disabled Session 396)
@@ -535,7 +565,7 @@ class BestBetsAggregator:
                 # - home_under: 75.0% HR at edge 0-3 (N=8)
                 # - low_line_over: 66.7% HR at edge 0-3 (N=6)
                 # - volatile_scoring_over: 66.7% HR at edge 0-3 (N=6)
-                # - high_scoring_environment_over: 100% HR at edge 3-5 (N=7)
+                # - high_scoring_environment_over: INC-4 ~55% at N=133 (was "100%, N=7")
                 # - sharp_book_lean_over: 70.3% HR (N=508, Session 399)
                 # - sharp_book_lean_under: 84.7% HR (N=202, Session 399)
                 # Session 415: Removed low_line_over (0% HR in rescued BB).
@@ -544,14 +574,18 @@ class BestBetsAggregator:
                 # OVER pipeline (0 OVER picks at edge 5+ on Mar 6).
                 # Session 466: OVER rescue restricted to HSE only.
                 # March 2026: 18 rescued OVER at avg edge 3.9, combo_he_ms 40% HR,
-                # signal_stack 33% HR, volatile_scoring 0% HR. Only HSE works (3-0).
+                # signal_stack 33% HR, volatile_scoring 0% HR. HSE was the least-bad
+                # of the OVER rescues, NOT "100%" — INC-4 (2026-06-20) measured the
+                # full HSE lane at ~55% (N=133) on the leak-clean walk-forward; the
+                # "3-0" was an N=3 small-sample artifact. STEP 3 floor (above) gates
+                # this lane to line>=18 & edge>=4 when HSE_RESCUE_FLOOR_ENABLED.
                 # Session 494: Removed combo_3way/combo_he_ms from UNDER rescue_tags.
                 # Both signals have OVER-only gates (combo_3way.py:46, combo_he_ms.py:39)
                 # — they return no-qualify for UNDER predictions, so they were dead code
                 # here. No UNDER picks were ever rescued by them.
                 if pred.get('recommendation') == 'OVER':
                     rescue_tags = {
-                        'high_scoring_environment_over',  # 100% BB HR (3-0), only validated OVER rescue
+                        'high_scoring_environment_over',  # INC-4: ~55% BB HR (N=133), gated by HSE floor (STEP 3)
                     }
                 else:
                     rescue_tags = {
@@ -628,7 +662,8 @@ class BestBetsAggregator:
             # Session 435: BB OVER edge 3-4 = 33.3% HR (4-12). 4.0+ = 68.3%.
             # Session 436: Apply floor to rescued OVER too — rescued OVER = 50% HR
             # vs non-rescued 66.7%. combo_he_ms rescue at edge <4 = 40% HR (2-3).
-            # Exempt HSE rescue (3-0, 100% HR) — HSE identifies genuine scoring env.
+            # Exempt HSE rescue — HSE identifies a genuine scoring env (gated by
+            # the STEP 3 HSE floor; INC-4 refuted the old "3-0, 100% HR" basis → ~55% N=133).
             # Session 468: Raised from 4.0 to 5.0. 5-season discovery analysis (79K
             # predictions) shows OVER at edge 3-5 is net-negative in 4/5 seasons:
             #   2021-22: 43%, 2022-23: 45%, 2023-24: 49%, 2024-25: 50%.
@@ -651,6 +686,21 @@ class BestBetsAggregator:
             # models that produce edge 6+ picks. Edge 6-8 = 61.4% HR consistent all 5 seasons.
             over_floor = 6.0 + self._regime_context.get('over_edge_floor_delta', 0)
             hse_rescued = signal_rescued and rescue_signal == 'high_scoring_environment_over'
+            # STEP 3: gate the HSE bypass to genuine starter+ scoring spots only.
+            # An HSE pick at a low-line or low-edge spot is the ~55% lane INC-4
+            # measured. 'observe' records it under 'hse_rescue_floor' (CF data)
+            # without blocking; 'active' revokes the exemption so it falls through
+            # to the 6.0 OVER floor + bench/role blocks below.
+            if (HSE_RESCUE_FLOOR_MODE in ('observe', 'active') and hse_rescued
+                    and ((pred.get('line_value') or 0) < HSE_RESCUE_MIN_LINE
+                         or pred_edge < HSE_RESCUE_MIN_EDGE)):
+                filter_counts.setdefault('hse_rescue_floor', 0)
+                filter_counts['hse_rescue_floor'] += 1
+                _record_filtered(pred, 'hse_rescue_floor', pred_edge,
+                                 sig_count=pred.get('signal_count', 0) or 0,
+                                 sig_tags=pred.get('signal_tags'))
+                if HSE_RESCUE_FLOOR_MODE == 'active':
+                    hse_rescued = False  # block: fall through to 6.0 floor + bench/role
             if (pred.get('recommendation') == 'OVER'
                     and pred_edge < over_floor
                     and not hse_rescued):
@@ -891,11 +941,12 @@ class BestBetsAggregator:
                     else:
                         _gd = None
                     if _gd and _gd.weekday() == 4:  # 4 = Friday
-                        # Path B Week 2 — HSE rescue carve-out. High-scoring-
-                        # environment OVER is 100% BB HR (N=3, MEMORY.md);
-                        # friday_over_block was blocking every Friday HSE OVER
-                        # candidate. Carve out: edge >= 7.0 + HSE tag bypasses.
-                        # Edge floor prevents marginal-edge bypass abuse.
+                        # Path B Week 2 — HSE rescue carve-out. friday_over_block
+                        # was blocking every Friday HSE OVER candidate. Carve out:
+                        # edge >= 7.0 + HSE tag bypasses. (The old "100% BB HR, N=3"
+                        # basis was refuted by INC-4 — full HSE lane ~55% at N=133 —
+                        # but this carve-out requires edge>=7.0, stricter than the
+                        # STEP 3 HSE floor, so it is unaffected.)
                         pred_tags = set(pred.get('signal_tags', []) or [])
                         if (
                             'high_scoring_environment_over' in pred_tags
@@ -1819,7 +1870,9 @@ class BestBetsAggregator:
                 if len(rescued_picks) > max_rescue:
                     # Session 437 P4: Sort by (priority, edge) ascending — drop
                     # lowest-priority rescues first. Old sort was edge-only, which
-                    # dropped HSE (100% HR, 3-0) in favor of combo_he_ms (40% HR).
+                    # dropped HSE in favor of combo_he_ms (40% HR). (HSE's old "100%
+                    # 3-0" basis was refuted by INC-4 → ~55% N=133, but it still
+                    # outranks combo_he_ms here.)
                     rescued_picks.sort(key=lambda x: (
                         RESCUE_SIGNAL_PRIORITY.get(x.get('rescue_signal', ''), 0),
                         x.get('edge', 0),

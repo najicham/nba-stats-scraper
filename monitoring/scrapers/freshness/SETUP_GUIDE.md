@@ -157,7 +157,7 @@ gcloud logging read \
 
 **Cause:** GCS path pattern doesn't match actual files
 
-**Fix:** 
+**Fix:**
 1. Check your GCS bucket structure
 2. Update `path_pattern` in `monitoring_config.yaml`
 3. Verify date formatting in paths
@@ -318,10 +318,10 @@ After setup is complete:
 
 ## Success Criteria
 
-✅ Cloud Run job runs successfully  
-✅ Alerts arrive in Slack/Email  
-✅ No false positives for 3 days  
-✅ All critical scrapers monitored  
-✅ Proper alerts for actual issues  
+✅ Cloud Run job runs successfully
+✅ Alerts arrive in Slack/Email
+✅ No false positives for 3 days
+✅ All critical scrapers monitored
+✅ Proper alerts for actual issues
 
 Congratulations! Your freshness monitoring is now live. 🎉

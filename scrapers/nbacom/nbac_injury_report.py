@@ -247,7 +247,7 @@ class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
         FIXED: Allow saving empty reports.
         Empty PDFs are valid during All-Star weekend, off-days, etc.
         """
-        return (isinstance(self.data, dict) and 
+        return (isinstance(self.data, dict) and
                 isinstance(self.data.get('records'), list))
         # OLD CODE REMOVED: len(self.data.get('records', [])) > 0
 
@@ -273,7 +273,7 @@ class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
             raise InvalidRegionDecodeException("PDF blocked in this region.")
-            
+
         if b"%PDF" not in content[:1024]:
             logger.error("Response is not a PDF for gamedate %s", self.opts["gamedate"])
             try:
@@ -312,9 +312,9 @@ class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
                     )
                     if page_text:
                         full_text += page_text + "\n"
-                
+
                 logger.info(f"Extracted text: {len(full_text)} characters")
-                
+
                 # Use the validated parser module
                 records = self.injury_parser.parse_text_content(full_text)
                 logger.info("Parsing complete: %d records found", len(records))
@@ -346,35 +346,35 @@ class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
         try:
             with open(debug_file, 'w', encoding='utf-8') as f:
                 f.write(full_text)
-                
+
                 # Add parser statistics
                 parser_stats = self.injury_parser.get_parsing_stats()
                 f.write(f"\n\n=== PARSING STATISTICS ===\n")
                 f.write(f"Total lines processed: {parser_stats['parsing_stats']['total_lines']}\n")
-                f.write(f"Player lines found: {parser_stats['parsing_stats']['player_lines']}\n") 
+                f.write(f"Player lines found: {parser_stats['parsing_stats']['player_lines']}\n")
                 f.write(f"Multi-line injuries merged: {parser_stats['parsing_stats']['merged_multiline']}\n")
                 f.write(f"Unparsed lines: {parser_stats['parsing_stats']['unparsed_count']}\n")
-                
+
                 f.write(f"\n=== PARSED RECORDS ({len(records)}) ===\n")
                 for i, record in enumerate(records):
                     confidence = record.get('confidence', 'N/A')
                     f.write(f"{i+1}. {record['player']} ({record['team']}) {record['matchup']} - {record['reason']} (conf: {confidence})\n")
-                
+
                 # Show unparsed lines for monitoring
                 if parser_stats.get('unparsed_lines_sample'):
                     f.write(f"\n=== UNPARSED LINES SAMPLE ===\n")
                     for i, line in enumerate(parser_stats['unparsed_lines_sample']):
                         f.write(f"{i+1}. {line}\n")
-                        
+
             logger.info("Enhanced debug output saved to: %s", debug_file)
         except Exception as e:
             logger.warning("Failed to save debug text: %s", e)
 
         # FIXED: Handle empty PDFs gracefully
         if not records:
-            logger.warning("Parsed 0 records from PDF for gamedate %s - PDF may be empty (All-Star weekend, off-day, or no injuries)", 
+            logger.warning("Parsed 0 records from PDF for gamedate %s - PDF may be empty (All-Star weekend, off-day, or no injuries)",
                           self.opts["gamedate"])
-            
+
             # Create valid empty report structure
             enhanced_output = {
                 "metadata": {
@@ -396,29 +396,29 @@ class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
                 },
                 "records": []
             }
-            
+
             self.data = enhanced_output
             self.decoded_data = enhanced_output
-            
+
             # INFO level logging instead of ERROR - this is expected
             logger.info("Successfully processed empty injury report (no players listed) - valid for All-Star weekend or off-days")
-            
+
             # Don't send critical error notification for empty PDFs
             # This is expected behavior during All-Star weekend, off-days, etc.
             return  # Don't raise exception - empty reports are valid
-        
+
         # Calculate additional useful stats from records (non-empty reports)
         status_counts = {
             status: sum(1 for r in records if r.get('status') == status)
             for status in ['Out', 'Questionable', 'Doubtful', 'Probable', 'Available']
         }
-        
+
         confidence_distribution = {}
         for record in records:
             conf = record.get('confidence', 0.0)
             bucket = f"{int(conf * 10) * 10}%"
             confidence_distribution[bucket] = confidence_distribution.get(bucket, 0) + 1
-        
+
         # Create enhanced output with metadata and parsing stats
         enhanced_output = {
             "metadata": {
@@ -440,14 +440,14 @@ class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
             },
             "records": records
         }
-        
+
         self.data = enhanced_output
         self.decoded_data = enhanced_output
-        
+
         # Check parsing quality and send notifications if needed
         overall_confidence = enhanced_output['parsing_stats']['overall_confidence']
         parser_stats = self.injury_parser.get_parsing_stats()
-        
+
         # Warning for low overall confidence
         confidence_threshold = float(os.environ.get('INJURY_REPORT_CONFIDENCE_THRESHOLD', '0.6'))
         if overall_confidence < confidence_threshold:
@@ -470,7 +470,7 @@ class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-        
+
         # Warning for high unparsed line count
         unparsed_threshold = int(os.environ.get('INJURY_REPORT_UNPARSED_THRESHOLD', '20'))
         unparsed_count = parser_stats['parsing_stats']['unparsed_count']
@@ -494,49 +494,49 @@ class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-        
+
         logger.info("Successfully parsed %d injury records with enhanced metadata", len(records))
 
     def _calculate_overall_confidence_for_records(self, records: List[Dict]) -> float:
         """Calculate overall confidence for a list of records (used during parsing)."""
         if not records:
             return 1.0  # FIXED: Empty reports have high confidence (genuinely empty)
-        
+
         # Start with average individual confidence
         avg_confidence = sum(r.get('confidence', 0.0) for r in records) / len(records)
-        
+
         # Get parser statistics
         parser_stats = self.injury_parser.get_parsing_stats()
         parsing_stats = parser_stats['parsing_stats']
-        
+
         # Apply penalties and bonuses
         overall = avg_confidence
-        
+
         # Penalize high unparsed count (potential missed players)
         if parsing_stats['player_lines'] > 0:
             unparsed_ratio = parsing_stats['unparsed_count'] / parsing_stats['player_lines']
             penalty = min(0.3, unparsed_ratio * 0.5)
             overall -= penalty
-        
+
         # Penalize high percentage of low-confidence records
         low_conf_count = sum(1 for r in records if r.get('confidence', 1.0) < 0.7)
         if len(records) > 0:
             low_conf_ratio = low_conf_count / len(records)
             penalty = min(0.2, low_conf_ratio * 0.3)
             overall -= penalty
-        
+
         # Small bonus for successful multi-line merges
         if parsing_stats['merged_multiline'] > 0:
             bonus = min(0.1, parsing_stats['merged_multiline'] * 0.02)
             overall += bonus
-        
+
         # Penalize if too many empty reasons
         empty_reasons = sum(1 for r in records if not r.get('reason', '').strip())
         if len(records) > 0:
             empty_ratio = empty_reasons / len(records)
             penalty = min(0.4, empty_ratio * 0.6)
             overall -= penalty
-        
+
         final_confidence = max(0.0, min(1.0, overall))
         return round(final_confidence, 3)
 
@@ -556,19 +556,19 @@ class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
                 "period": self.opts.get("period", ""),
                 "records": len(records),
             }
-        
+
         if records:
             empty_reasons = [r for r in records if not r.get('reason')]
             low_confidence = [r for r in records if r.get('confidence', 1.0) < 0.7]
             high_confidence = [r for r in records if r.get('confidence', 1.0) >= 0.9]
-            
+
             # Calculate confidence distribution
             confidence_distribution = {}
             for record in records:
                 conf = record.get('confidence', 0.0)
                 bucket = f"{int(conf * 10) * 10}%"
                 confidence_distribution[bucket] = confidence_distribution.get(bucket, 0) + 1
-            
+
             base_stats.update({
                 "unique_teams": len(set(r.get('team', '') for r in records)),
                 "unique_matchups": len(set(r.get('matchup', '') for r in records)),
@@ -584,7 +584,7 @@ class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
                 "players_with_low_confidence": [f"{r['player']} ({r.get('confidence', 0):.3f})" for r in low_confidence],
                 "confidence_distribution": confidence_distribution
             })
-        
+
         return base_stats
 
     def validate_injury_data(self) -> None:
@@ -598,7 +598,7 @@ class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
         else:
             records = self.data if isinstance(self.data, list) else []
             is_empty_report = False
-        
+
         if not isinstance(records, list):
             error_msg = "Records should be a list of injury records"
             logger.error(error_msg)
@@ -617,7 +617,7 @@ class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
             raise DownloadDataException(error_msg)
-        
+
         # FIXED: Allow empty reports - they're valid for All-Star weekend, off-days
         if len(records) == 0:
             if is_empty_report:
@@ -627,7 +627,7 @@ class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
                 # This shouldn't happen - if we have 0 records, is_empty_report should be True
                 logger.warning("Empty report without is_empty_report flag - treating as valid")
                 return
-        
+
         record_count = len(records)
         if record_count > 1000:
             error_msg = f"Suspiciously high record count: {record_count}"
@@ -647,39 +647,39 @@ class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
             raise DownloadDataException(error_msg)
-        
+
         # Validate key fields
         valid_records = []
         for i, record in enumerate(records):
             required_fields = ['date', 'gametime', 'matchup', 'team', 'player', 'status', 'reason', 'confidence']
-            
+
             if all(field in record for field in required_fields):
                 if len(record['player']) >= 3:
                     valid_records.append(record)
                 else:
-                    logger.warning("Skipping record %d with suspicious player name: %s", 
+                    logger.warning("Skipping record %d with suspicious player name: %s",
                                  i, record.get('player'))
-        
+
         # Update records in data structure
         if isinstance(self.data, dict):
             self.data['records'] = valid_records
             self.data['parsing_stats']['total_records'] = len(valid_records)
         else:
             self.data = valid_records
-        
+
         # Enhanced validation logging
         stats = self.get_scraper_stats()
         overall_confidence = stats.get('overall_confidence', 0.0)
-        
+
         logger.info("Enhanced validation passed: %d valid records", len(valid_records))
         logger.info(f"Overall session confidence: {overall_confidence:.3f}")
         logger.info(f"Average individual confidence: {stats.get('average_confidence', 0):.3f}")
-        
+
         # Check if we have parsing stats
         if 'parsing_stats' in stats:
             logger.info(f"Multi-line injuries merged: {stats['parsing_stats'].get('merged_multiline', 0)}")
             logger.info(f"Unparsed lines detected: {stats['parsing_stats'].get('unparsed_count', 0)}")
-        
+
         # Alert-level logging based on overall confidence
         if overall_confidence < 0.4:
             logger.error(f"CRITICAL: Overall confidence extremely low ({overall_confidence:.3f}) - parsing may have failed")
@@ -687,13 +687,13 @@ class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
             logger.warning(f"WARNING: Overall confidence low ({overall_confidence:.3f}) - check parsing quality")
         elif overall_confidence < 0.8:
             logger.info(f"NOTICE: Overall confidence moderate ({overall_confidence:.3f}) - minor parsing issues detected")
-        
+
         if stats.get('empty_reasons_count', 0) > 0:
             logger.warning("%d players have empty reasons", stats['empty_reasons_count'])
-        
+
         if stats.get('low_confidence_count', 0) > 0:
             logger.warning("%d players have low confidence scores", stats['low_confidence_count'])
-        
+
         # Log confidence distribution
         conf_dist = stats.get('confidence_distribution', {})
         if conf_dist:

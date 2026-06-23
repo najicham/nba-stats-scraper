@@ -22,7 +22,7 @@ usage() {
     echo ""
     echo "Commands:"
     echo "  quick       Show current job status and latest logs"
-    echo "  logs        Show recent logs from latest execution"  
+    echo "  logs        Show recent logs from latest execution"
     echo "  status      Show detailed job status"
     echo "  executions  Show recent job executions"
     echo ""
@@ -44,26 +44,26 @@ get_latest_execution() {
 show_quick_status() {
     echo -e "${BLUE}🔍 NBA Gamebook Reparse Job - Quick Status${NC}"
     echo "=========================================="
-    
+
     # Get latest execution
     latest_execution=$(get_latest_execution)
-    
+
     if [[ -z "$latest_execution" ]]; then
         echo -e "${YELLOW}⚠️  No executions found${NC}"
         return 1
     fi
-    
+
     echo -e "${GREEN}📊 Latest Execution:${NC} $latest_execution"
-    
+
     # Get execution status
     status=$(gcloud run jobs executions describe "$latest_execution" \
         --region="$REGION" \
         --format="value(status.conditions[0].type,status.conditions[0].status)" \
         --quiet 2>/dev/null || echo "Unknown Unknown")
-    
+
     condition_type=$(echo "$status" | cut -d' ' -f1)
     condition_status=$(echo "$status" | cut -d' ' -f2)
-    
+
     if [[ "$condition_type" == "Completed" && "$condition_status" == "True" ]]; then
         echo -e "${GREEN}✅ Status: Completed Successfully${NC}"
     elif [[ "$condition_type" == "Running" ]]; then
@@ -71,7 +71,7 @@ show_quick_status() {
     else
         echo -e "${RED}❌ Status: Failed or Unknown${NC}"
     fi
-    
+
     # Show recent progress logs
     echo ""
     echo -e "${BLUE}📝 Recent Progress Logs:${NC}"
@@ -80,7 +80,7 @@ show_quick_status() {
         --limit=10 \
         --order="desc" \
         --quiet 2>/dev/null | grep -E "(Progress:|Successfully|Failed|Complete)" | head -5 || echo "No progress logs found"
-    
+
     echo ""
     echo -e "${BLUE}💡 Next Steps:${NC}"
     echo "  Monitor logs: $0 logs"
@@ -90,17 +90,17 @@ show_quick_status() {
 show_logs() {
     echo -e "${BLUE}📝 NBA Gamebook Reparse Job - Recent Logs${NC}"
     echo "=========================================="
-    
+
     latest_execution=$(get_latest_execution)
-    
+
     if [[ -z "$latest_execution" ]]; then
         echo -e "${YELLOW}⚠️  No executions found${NC}"
         return 1
     fi
-    
+
     echo -e "${GREEN}Showing logs for:${NC} $latest_execution"
     echo ""
-    
+
     gcloud logging read "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$JOB_NAME\" AND labels.\"run.googleapis.com/execution_name\"=\"$latest_execution\"" \
         --format="value(textPayload)" \
         --limit=20 \
@@ -111,16 +111,16 @@ show_logs() {
 show_status() {
     echo -e "${BLUE}📊 NBA Gamebook Reparse Job - Detailed Status${NC}"
     echo "=============================================="
-    
+
     # Job configuration
     echo -e "${GREEN}Job Configuration:${NC}"
     gcloud run jobs describe "$JOB_NAME" \
         --region="$REGION" \
         --format="table(metadata.name,spec.template.spec.template.spec.containers[0].image,spec.template.spec.template.spec.containers[0].resources.limits.memory,spec.template.spec.timeoutSeconds)" \
         --quiet 2>/dev/null || echo "Could not get job details"
-    
+
     echo ""
-    
+
     # Latest execution details
     latest_execution=$(get_latest_execution)
     if [[ -n "$latest_execution" ]]; then
@@ -135,7 +135,7 @@ show_status() {
 show_executions() {
     echo -e "${BLUE}🏃 NBA Gamebook Reparse Job - Recent Executions${NC}"
     echo "=============================================="
-    
+
     gcloud run jobs executions list \
         --job="$JOB_NAME" \
         --region="$REGION" \

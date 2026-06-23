@@ -11,14 +11,14 @@ echo ""
 
 # Check for RUN decisions without executions
 bq query --use_legacy_sql=false --format=pretty "
-SELECT 
+SELECT
   d.decision_id,
   FORMAT_TIMESTAMP('%Y-%m-%d %H:%M:%S %Z', d.decision_time, 'America/New_York') as decision_time_et,
   d.workflow_name,
   ARRAY_LENGTH(d.scrapers_triggered) as scrapers_requested,
   TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), d.decision_time, MINUTE) as minutes_ago,
-  CASE 
-    WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), d.decision_time, MINUTE) < 10 
+  CASE
+    WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), d.decision_time, MINUTE) < 10
     THEN 'ℹ️  RECENT (may still execute)'
     WHEN TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), d.decision_time, MINUTE) < 30
     THEN '⚠️  DELAYED (should have executed)'
@@ -84,7 +84,7 @@ echo ""
 # Check recent executions to see if job is running
 echo "⏱️  Recent workflow executions (last 2 hours):"
 bq query --use_legacy_sql=false --format=pretty "
-SELECT 
+SELECT
   FORMAT_TIMESTAMP('%H:%M:%S %Z', execution_time, 'America/New_York') as time_et,
   workflow_name,
   status,

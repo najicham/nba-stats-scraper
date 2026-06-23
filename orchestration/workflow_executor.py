@@ -79,7 +79,7 @@ class WorkflowExecution:
     scraper_executions: List[ScraperExecution]
     duration_seconds: Optional[float] = None
     error_message: Optional[str] = None
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for BigQuery insertion."""
         return {
@@ -101,14 +101,14 @@ class WorkflowExecution:
 class WorkflowExecutor:
     """
     Executes workflows by calling scraper service endpoints via HTTP.
-    
+
     Architecture:
         1. Read RUN decisions from workflow_decisions table
         2. For each decision, resolve parameters for each scraper
         3. Call scraper service via POST /scrape
         4. Track execution status
         5. Log to workflow_executions table
-    
+
     Design Principles:
         - HTTP-based (not direct Python imports)
         - Synchronous execution for Phase 1 (async in Phase 3)
@@ -116,7 +116,7 @@ class WorkflowExecutor:
         - Comprehensive logging for debugging
         - Deduplication: Skip decisions that were already executed
     """
-    
+
     # Service URL for calling scrapers
     # Default to localhost for same-service calls, override via env var
     SERVICE_URL = os.getenv("SERVICE_URL", "http://localhost:8080")
@@ -233,22 +233,22 @@ class WorkflowExecutor:
     def execute_pending_workflows(self) -> Dict[str, Any]:
         """
         Main entry point: Execute all pending RUN decisions.
-        
+
         Reads workflow_decisions table for unexecuted RUN decisions,
         executes each workflow, and returns summary.
-        
+
         CRITICAL: Uses LEFT JOIN to skip decisions that already have executions.
         This prevents duplicate execution when called multiple times.
-        
+
         Returns:
             Dict with execution summary
         """
         logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         logger.info("🚀 Workflow Executor: Executing pending workflows")
         logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        
+
         start_time = datetime.now(timezone.utc)
-        
+
         # Query for unexecuted RUN decisions from the last hour
         # CRITICAL: LEFT JOIN prevents duplicate executions
         # Week 1: Added DATE() filter for partition pruning (cost optimization)
@@ -268,10 +268,10 @@ class WorkflowExecutor:
               AND e.execution_id IS NULL
             ORDER BY d.decision_time DESC
         """
-        
+
         try:
             decisions = execute_bigquery(query)
-            
+
             if not decisions:
                 logger.info("📭 No pending workflows to execute")
                 return {
@@ -279,19 +279,19 @@ class WorkflowExecutor:
                     'workflows_executed': 0,
                     'duration_seconds': 0
                 }
-            
+
             logger.info(f"📋 Found {len(decisions)} workflow(s) to execute")
-            
+
             executions = []
-            
+
             for decision in decisions:
                 workflow_name = decision['workflow_name']
                 scrapers = decision['scrapers_triggered'] or []
                 target_games = decision.get('target_games', [])
                 decision_id = decision['decision_id']
-                
+
                 logger.info(f"\n▶️  Executing: {workflow_name} ({len(scrapers)} scrapers)")
-                
+
                 try:
                     execution = self.execute_workflow(
                         workflow_name=workflow_name,
@@ -300,7 +300,7 @@ class WorkflowExecutor:
                         target_games=target_games
                     )
                     executions.append(execution)
-                    
+
                 except (RequestException, GoogleAPIError, CircuitBreakerOpenError, ValueError) as e:
                     logger.error(f"❌ Workflow {workflow_name} failed: {e}", exc_info=True)
                     # Log failed execution
@@ -319,13 +319,13 @@ class WorkflowExecutor:
                     )
                     executions.append(failed_execution)
                     self._log_workflow_execution(failed_execution)
-            
+
             duration = (datetime.now(timezone.utc) - start_time).total_seconds()
-            
+
             # Summary
             total_succeeded = sum(1 for e in executions if e.status == 'completed')
             total_failed = sum(1 for e in executions if e.status == 'failed')
-            
+
             logger.info("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
             logger.info(f"✅ Execution Complete")
             logger.info(f"   Workflows: {len(executions)}")
@@ -333,7 +333,7 @@ class WorkflowExecutor:
             logger.info(f"   Failed: {total_failed}")
             logger.info(f"   Duration: {duration:.1f}s")
             logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-            
+
             return {
                 'status': 'success',
                 'workflows_executed': len(executions),
@@ -342,7 +342,7 @@ class WorkflowExecutor:
                 'duration_seconds': duration,
                 'executions': [e.to_dict() for e in executions]
             }
-            
+
         except Exception as e:
             logger.error(f"Failed to execute pending workflows: {e}", exc_info=True)
             return {
@@ -350,7 +350,7 @@ class WorkflowExecutor:
                 'error': str(e),
                 'workflows_executed': 0
             }
-    
+
     def _execute_single_scraper(
         self,
         scraper_name: str,
@@ -609,7 +609,7 @@ class WorkflowExecutor:
                         status='failed',
                         error_message=str(e)
                 ))
-        
+
         # Calculate statistics
         duration = (datetime.now(timezone.utc) - start_time).total_seconds()
         succeeded = sum(1 for s in scraper_executions if s.status in ['success', 'no_data'])
@@ -649,19 +649,19 @@ class WorkflowExecutor:
             duration_seconds=duration,
             error_message=workflow_error_message
         )
-        
+
         # Log to BigQuery
         self._log_workflow_execution(workflow_execution)
-        
+
         logger.info(f"\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         logger.info(f"✅ Workflow Complete: {workflow_name}")
         logger.info(f"   Duration: {duration:.1f}s")
         logger.info(f"   Success: {succeeded}/{len(scrapers)}")
         logger.info(f"   Failed: {failed}/{len(scrapers)}")
         logger.info(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-        
+
         return workflow_execution
-    
+
     def _call_scraper(
         self,
         scraper_name: str,

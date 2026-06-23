@@ -16,8 +16,8 @@ WHERE home_team_abbr = 'LAL'
 ```
 
 ```
-Error: Cannot query over table 'nba_raw.espn_scoreboard' 
-without a filter over column(s) 'game_date' that can be used 
+Error: Cannot query over table 'nba_raw.espn_scoreboard'
+without a filter over column(s) 'game_date' that can be used
 for partition elimination
 ```
 
@@ -98,8 +98,8 @@ safe_query = handler.ensure_partition_filter(
 )
 
 # Result:
-# SELECT * FROM `nba_raw.espn_scoreboard` 
-# WHERE game_date >= '2024-11-01' AND game_date <= '2024-11-30' 
+# SELECT * FROM `nba_raw.espn_scoreboard`
+# WHERE game_date >= '2024-11-01' AND game_date <= '2024-11-30'
 # AND home_team_abbr = 'LAL'
 ```
 
@@ -112,7 +112,7 @@ class BaseValidator:
     def __init__(self, config_path):
         # ...
         self.partition_handler = self._init_partition_handler()
-    
+
     def _execute_query(self, query, start_date, end_date):
         """Execute query with automatic partition filtering"""
         if self.partition_handler:
@@ -169,7 +169,7 @@ def _check_completeness(self, config, start_date, end_date):
     FROM `nba_raw.espn_scoreboard`
     WHERE is_completed = TRUE
     """
-    
+
     # ✅ Use _execute_query - it adds partition filter automatically
     result = self._execute_query(query, start_date, end_date)
 ```
@@ -203,7 +203,7 @@ class EspnScoreboardValidator(BaseValidator):
         WHERE is_completed = TRUE
         GROUP BY home_team_abbr
         """
-        
+
         # ✅ Use inherited _execute_query method
         result = self._execute_query(query, start_date, end_date)
 ```
@@ -267,7 +267,7 @@ def _check_data_freshness(self, config):
     SELECT MAX(processed_at) as last_processed
     FROM `nba_raw.espn_scoreboard`
     """
-    
+
     # ✅ Use direct client - freshness check is special case
     result = self.bq_client.query(query).result()
 ```
@@ -289,17 +289,17 @@ def test_partition_filter_injection():
         partition_field='game_date',
         required=True
     )
-    
+
     # Test 1: Query without WHERE
     query1 = "SELECT * FROM `nba_raw.espn_scoreboard`"
     result1 = handler.ensure_partition_filter(
-        query1, 
+        query1,
         start_date='2024-11-01',
         end_date='2024-11-30'
     )
     assert 'game_date >=' in result1
     assert '2024-11-01' in result1
-    
+
     # Test 2: Query with WHERE but no partition filter
     query2 = """
     SELECT * FROM `nba_raw.espn_scoreboard`
@@ -312,7 +312,7 @@ def test_partition_filter_injection():
     )
     assert 'game_date >=' in result2
     assert 'AND home_team_abbr' in result2
-    
+
     # Test 3: Query already has partition filter
     query3 = """
     SELECT * FROM `nba_raw.espn_scoreboard`
@@ -326,7 +326,7 @@ def test_partition_filter_injection():
     )
     # Should be unchanged
     assert result3 == query3.strip()
-    
+
     print("✅ All partition filter tests passed!")
 
 if __name__ == '__main__':

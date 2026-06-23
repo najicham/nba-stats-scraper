@@ -10,25 +10,25 @@ When working with AI assistants (Claude, ChatGPT, etc.) on your codebase, provid
 1. **Architecture Overview**
    - `docs/ARCHITECTURE.md` - System overview
    - `docs/DATA_MODELS.md` - Data structures (create this!)
-   
+
 2. **The Processor Code**
    - File: `data_processors/raw/{source}/{processor_name}.py`
    - Example: `data_processors/raw/balldontlie/bdl_box_scores.py`
-   
+
 3. **Related Scraper Code**
    - File: `scrapers/{source}/{scraper_name}.py`
    - Shows what data format to expect
-   
+
 4. **Sample Data**
    ```bash
    # Get sample input file
    gsutil cat gs://nba-props-platform-raw/bdl_box_scores/2025/10/14/data.json
    ```
-   
+
 5. **BigQuery Schema**
    - File: `schemas/bigquery/raw/{table_name}.sql`
    - Shows expected output format
-   
+
 6. **Error Patterns**
    ```bash
    # Recent errors from this processor
@@ -72,18 +72,18 @@ TASK: [Describe what you want to do]
 **Essential Context:**
 1. **Backfill Guide** (create this!)
    - `docs/BACKFILL_GUIDE.md`
-   
+
 2. **The Backfill Script**
    - File: `backfill_jobs/raw/{source}/{script_name}/backfill.py`
-   
+
 3. **Alert System Doc**
    - `docs/ALERT_SYSTEM.md` - How to prevent email floods
-   
+
 4. **Date Range & Scope**
    - Start date, end date
    - Expected number of items
    - Estimated runtime
-   
+
 5. **Dependencies**
    - Which scrapers must run first?
    - Which processors depend on this?
@@ -119,26 +119,26 @@ TASK: Help me make this backfill production-ready
 **Essential Context:**
 1. **Scraper Development Guide** (create this!)
    - `docs/development/SCRAPER_DEVELOPMENT.md`
-   
+
 2. **Scraper Base Class**
    - File: `scrapers/scraper_base.py`
    - Shows available utilities
-   
+
 3. **API Documentation**
    - Ball Don't Lie API docs
    - The Odds API docs
    - NBA.com API patterns
-   
+
 4. **Sample API Response**
    ```bash
    # Capture actual API response
    curl "https://api.example.com/endpoint" | jq . > sample_response.json
    ```
-   
+
 5. **GCS Output Path**
    - Where should it save data?
    - File naming convention?
-   
+
 6. **Existing Similar Scraper**
    - For reference/patterns
 
@@ -171,20 +171,20 @@ TASK: Build the scraper class
 **Essential Context:**
 1. **Workflow Monitoring Guide**
    - `docs/WORKFLOW_MONITORING.md`
-   
+
 2. **Existing Workflow**
    - File: `workflows/operational/{workflow_name}.yaml`
-   
+
 3. **Cloud Run Services**
    - List of available scrapers/processors
    ```bash
    gcloud run services list --region=us-west2
    ```
-   
+
 4. **Dependencies**
    - Which scrapers run first?
    - Which processors depend on scrapers?
-   
+
 5. **Schedule Requirements**
    - When should it run?
    - How long should it take?
@@ -218,24 +218,24 @@ TASK: {create new workflow / add scraper / fix error handling}
    ```bash
    # Get recent errors
    python monitoring/scripts/nba-monitor errors 24
-   
+
    # Get specific workflow errors
    gcloud workflows executions describe {execution_id} \
      --workflow={workflow_name} --location=us-west2
    ```
-   
+
 2. **Troubleshooting Guide**
    - `docs/TROUBLESHOOTING.md`
-   
+
 3. **The Failing Code**
    - Processor, scraper, or workflow causing the error
-   
+
 4. **Recent Changes**
    ```bash
    # What changed recently?
    git log --oneline --since="3 days ago" -- path/to/file
    ```
-   
+
 5. **Expected vs Actual**
    - What should happen?
    - What's actually happening?
@@ -269,18 +269,18 @@ TASK: Help me identify and fix the root cause
 ## General Best Practices
 
 ### DO Provide:
-✅ **Specific error messages** (full stack trace)  
-✅ **Sample data** (actual JSON, not just schema)  
-✅ **Recent changes** (git log)  
-✅ **Context about scale** (100 records or 100,000?)  
-✅ **Time constraints** (needs to run in < 5 minutes)  
+✅ **Specific error messages** (full stack trace)
+✅ **Sample data** (actual JSON, not just schema)
+✅ **Recent changes** (git log)
+✅ **Context about scale** (100 records or 100,000?)
+✅ **Time constraints** (needs to run in < 5 minutes)
 ✅ **Related code** (dependencies, similar implementations)
 
 ### DON'T Provide:
-❌ **Entire codebase** (too much, AI gets confused)  
-❌ **Sensitive data** (API keys, credentials, PII)  
-❌ **Irrelevant files** (unrelated modules)  
-❌ **Vague descriptions** ("it doesn't work")  
+❌ **Entire codebase** (too much, AI gets confused)
+❌ **Sensitive data** (API keys, credentials, PII)
+❌ **Irrelevant files** (unrelated modules)
+❌ **Vague descriptions** ("it doesn't work")
 ❌ **Multiple unrelated questions** (focus on one thing)
 
 ---
@@ -400,7 +400,7 @@ This gives the AI everything it needs and nothing it doesn't!
 
 ## Summary
 
-**The Golden Rule:**  
+**The Golden Rule:**
 > Provide just enough context for the AI to understand the problem and the constraints, but not so much that it gets lost in details.
 
 **Quick Checklist:**

@@ -57,6 +57,6 @@ def test_validate_with_high_points_passes(mock_processor):
 def test_validate_normal_points_pass(mock_processor, sample_raw_extracted_data):
     """Test validation passes for normal point totals."""
     mock_processor.raw_data = sample_raw_extracted_data
-    
+
     # Should not raise
     mock_processor.validate_extracted_data()

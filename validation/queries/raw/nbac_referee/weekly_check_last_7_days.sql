@@ -44,7 +44,7 @@ SELECT
   CASE
     WHEN s.scheduled_count IS NULL THEN '⚪ Future date'
     WHEN s.scheduled_count = 0 THEN '⚪ No games scheduled'
-    WHEN r.games_with_refs = s.scheduled_count 
+    WHEN r.games_with_refs = s.scheduled_count
      AND r.avg_officials_per_game IN (3.0, 4.0) THEN '✅ Complete'
     WHEN r.games_with_refs IS NULL THEN '❌ No referee data'
     WHEN r.avg_officials_per_game NOT IN (3.0, 4.0) THEN '⚠️ Wrong official count'

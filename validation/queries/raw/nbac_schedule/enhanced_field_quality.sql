@@ -38,8 +38,8 @@ all_games AS (
   WHERE game_date BETWEEN '2024-10-22' AND '2025-06-20'  -- UPDATE: Current season
     AND game_date >= '2024-10-22'  -- Partition filter
     -- Exclude special event games (All-Star, exhibitions)
-    AND home_team_tricode NOT IN ('BAR', 'DRT', 'IAH', 'LBN', 'PAY', 'WOR', 
-                                   'DRN', 'GNS', 'JAS', 'JKM', 'PAU', 
+    AND home_team_tricode NOT IN ('BAR', 'DRT', 'IAH', 'LBN', 'PAY', 'WOR',
+                                   'DRN', 'GNS', 'JAS', 'JKM', 'PAU',
                                    'DLF', 'EST')
     AND away_team_tricode NOT IN ('BAR', 'DRT', 'IAH', 'LBN', 'PAY', 'WOR',
                                    'DRN', 'GNS', 'JAS', 'JKM', 'PAU',

@@ -1,6 +1,6 @@
 #!/bin/bash
 # bin/orchestration/deploy.sh
-# 
+#
 # Deploy NBA Props Platform - Phase 1 Orchestration to Cloud Run
 # Version: 1.0 - November 11, 2025
 #
@@ -53,17 +53,17 @@ create_or_update_scheduler_job() {
     local schedule=$2
     local uri=$3
     local timeout=$4
-    
+
     echo ""
     echo "📅 Setting up scheduler job: ${job_name}"
     echo "   Schedule: ${schedule}"
     echo "   Endpoint: ${uri}"
-    
+
     # Try to create
     if gcloud scheduler jobs describe ${job_name} \
         --location=${REGION} \
         --project=${PROJECT_ID} &>/dev/null; then
-        
+
         echo "   Job exists, updating..."
         gcloud scheduler jobs update http ${job_name} \
             --location=${REGION} \
@@ -77,7 +77,7 @@ create_or_update_scheduler_job() {
             --attempt-deadline=${timeout}s \
             --project=${PROJECT_ID} \
             --quiet
-        
+
         echo "   ✅ Updated: ${job_name}"
     else
         echo "   Creating new job..."
@@ -93,7 +93,7 @@ create_or_update_scheduler_job() {
             --attempt-deadline=${timeout}s \
             --project=${PROJECT_ID} \
             --quiet
-        
+
         echo "   ✅ Created: ${job_name}"
     fi
 }
@@ -101,14 +101,14 @@ create_or_update_scheduler_job() {
 # If update only, skip to scheduler jobs
 if [[ "$UPDATE_ONLY" == true ]]; then
     echo "Skipping Cloud Run deployment (update mode)"
-    
+
     # Get existing service URL
     SERVICE_URL=$(gcloud run services describe ${SERVICE_NAME} \
         --platform=managed \
         --region=${REGION} \
         --format="value(status.url)" \
         --project=${PROJECT_ID} 2>/dev/null)
-    
+
     if [[ -z "$SERVICE_URL" ]]; then
         echo "❌ Error: Cloud Run service not found. Run without --update flag first."
         exit 1
@@ -119,21 +119,21 @@ else
     echo "Step 1: Building Docker Image"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
-    
+
     # Build and push Docker image
     gcloud builds submit \
         --config=cloudbuild_orchestration.yaml \
         --project=${PROJECT_ID}
-    
+
     echo ""
     echo "✅ Docker image built successfully"
-    
+
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "Step 2: Deploying Cloud Run Service"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
-    
+
     gcloud run deploy ${SERVICE_NAME} \
         --image=gcr.io/${PROJECT_ID}/nba-orchestration:latest \
         --platform=managed \
@@ -148,14 +148,14 @@ else
         --no-allow-unauthenticated \
         --update-env-vars="GCP_PROJECT_ID=${PROJECT_ID}" \
         --project=${PROJECT_ID}
-    
+
     # Get service URL
     SERVICE_URL=$(gcloud run services describe ${SERVICE_NAME} \
         --platform=managed \
         --region=${REGION} \
         --format="value(status.url)" \
         --project=${PROJECT_ID})
-    
+
     echo ""
     echo "✅ Cloud Run service deployed"
     echo "   URL: ${SERVICE_URL}"
@@ -170,19 +170,19 @@ echo ""
 # Create service account for Cloud Scheduler if it doesn't exist
 if ! gcloud iam service-accounts describe scheduler-orchestration@${PROJECT_ID}.iam.gserviceaccount.com \
     --project=${PROJECT_ID} &>/dev/null; then
-    
+
     echo "Creating scheduler service account..."
     gcloud iam service-accounts create scheduler-orchestration \
         --display-name="Cloud Scheduler - Orchestration Jobs" \
         --project=${PROJECT_ID}
-    
+
     # Grant permission to invoke Cloud Run
     gcloud run services add-iam-policy-binding ${SERVICE_NAME} \
         --member="serviceAccount:scheduler-orchestration@${PROJECT_ID}.iam.gserviceaccount.com" \
         --role="roles/run.invoker" \
         --region=${REGION} \
         --project=${PROJECT_ID}
-    
+
     echo "✅ Service account created"
 fi
 
@@ -216,17 +216,17 @@ if [[ "$UPDATE_ONLY" == false ]]; then
     echo "Step 4: Testing Endpoints"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
-    
+
     # Get auth token
     echo "Getting authentication token..."
     AUTH_TOKEN=$(gcloud auth print-identity-token)
-    
+
     # Test health check
     echo ""
     echo "Testing health check..."
     curl -s -H "Authorization: Bearer ${AUTH_TOKEN}" \
         "${SERVICE_URL}/health" | jq '.'
-    
+
     echo ""
     echo "✅ Service is healthy"
 fi

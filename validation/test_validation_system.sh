@@ -95,20 +95,20 @@ WARNED_TESTS=0
 run_validator() {
     local validator_name=$1
     local validator_script=$2
-    
+
     TOTAL_TESTS=$((TOTAL_TESTS + 1))
-    
+
     echo ""
     echo -e "${BLUE}Testing: ${validator_name}${NC}"
     echo "Script: $validator_script"
     echo "----------------------------------------"
-    
+
     # Build command
     local cmd="python $validator_script --last-days $TEST_DAYS --no-notify"
     if [ "$VERBOSE" = true ]; then
         cmd="$cmd --verbose"
     fi
-    
+
     # Run validator
     local exit_code=0
     if [ "$VERBOSE" = true ]; then
@@ -116,7 +116,7 @@ run_validator() {
     else
         $cmd > /tmp/validation_output.txt 2>&1 || exit_code=$?
     fi
-    
+
     # Check result
     if [ $exit_code -eq 0 ]; then
         echo -e "${GREEN}✅ PASSED${NC}"
@@ -167,13 +167,13 @@ else
     # Test all processors
     for processor in "${!VALIDATORS[@]}"; do
         script="${VALIDATORS[$processor]}"
-        
+
         # Check if validator script exists
         if [ ! -f "$script" ]; then
             echo -e "${YELLOW}⚠️  Skipping $processor (script not found: $script)${NC}"
             continue
         fi
-        
+
         run_validator "$processor" "$script"
     done
 fi
@@ -202,7 +202,7 @@ echo -e "${BLUE}Recent Validation Results (BigQuery)${NC}"
 echo -e "${BLUE}================================================${NC}"
 
 bq query --use_legacy_sql=false --format=pretty "
-SELECT 
+SELECT
   validation_timestamp,
   processor_name,
   overall_status,

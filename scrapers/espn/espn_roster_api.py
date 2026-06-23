@@ -72,16 +72,16 @@ logger = logging.getLogger("scraper_base")
 ESPN_TEAM_IDS = {
     # ESPN Code: Team ID
     "ATL": 1,   "BOS": 2,   "BKN": 17,  "CHA": 30,  "CHI": 4,
-    "CLE": 5,   "DAL": 6,   "DEN": 7,   "DET": 8,   
+    "CLE": 5,   "DAL": 6,   "DEN": 7,   "DET": 8,
     "GS": 9,    # ✅ ESPN code (was GSW)
     "HOU": 10,  "IND": 11,  "LAC": 12,  "LAL": 13,  "MEM": 29,
-    "MIA": 14,  "MIL": 15,  "MIN": 16,  
+    "MIA": 14,  "MIL": 15,  "MIN": 16,
     "NO": 3,    # ✅ ESPN code (was NOP)
     "NY": 18,   # ✅ ESPN code (was NYK)
     "OKC": 25,  "ORL": 19,  "PHI": 20,  "PHX": 21,  "POR": 22,
-    "SAC": 23,  
+    "SAC": 23,
     "SA": 24,   # ✅ ESPN code (was SAS)
-    "TOR": 28,  
+    "TOR": 28,
     "UTAH": 26, # ✅ ESPN code (was UTA)
     "WAS": 27
 }
@@ -163,10 +163,10 @@ class GetEspnTeamRosterAPI(ScraperBase, ScraperFlaskMixin):
     def set_url(self) -> None:
         team_abbr = self.opts['team_abbr']
         team_id = ESPN_TEAM_IDS.get(team_abbr)
-        
+
         if not team_id:
             error_msg = f"Unknown team abbreviation: {team_abbr}"
-            
+
             # Send error notification
             try:
                 notify_error(
@@ -182,10 +182,10 @@ class GetEspnTeamRosterAPI(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise ValueError(f"{error_msg}. "
                            f"Valid abbreviations: {', '.join(sorted(ESPN_TEAM_IDS.keys()))}")
-        
+
         base = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams"
         self.url = f"{base}/{team_id}?enable=roster"
         logger.info("Resolved ESPN roster API URL for %s (teamId %s): %s", team_abbr, team_id, self.url)
@@ -195,10 +195,10 @@ class GetEspnTeamRosterAPI(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     def validate_download_data(self) -> None:
         root = self.decoded_data
-        
+
         if not isinstance(root, dict):
             error_msg = "Roster response is not JSON dict."
-            
+
             # Send error notification
             try:
                 notify_error(
@@ -215,12 +215,12 @@ class GetEspnTeamRosterAPI(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise ValueError(error_msg)
-            
+
         if "team" not in root or "athletes" not in root["team"]:
             error_msg = "'team.athletes' missing in JSON."
-            
+
             # Send error notification
             try:
                 notify_error(
@@ -238,7 +238,7 @@ class GetEspnTeamRosterAPI(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise ValueError(error_msg)
 
     # ------------------------------------------------------------------ #
@@ -296,10 +296,10 @@ class GetEspnTeamRosterAPI(ScraperBase, ScraperFlaskMixin):
 
         # Get ESPN team code from opts
         espn_team_abbr = self.opts["team_abbr"]  # e.g., "GS"
-        
+
         # Convert to NBA.com standard code
         nba_team_abbr = ESPN_TO_NBA_TRICODE.get(espn_team_abbr, espn_team_abbr)  # e.g., "GSW"
-        
+
         # Get ESPN team ID for API call
         team_id = ESPN_TEAM_IDS.get(espn_team_abbr)
 
@@ -338,7 +338,7 @@ class GetEspnTeamRosterAPI(ScraperBase, ScraperFlaskMixin):
 
         if not team_id:
             error_msg = f"Unknown ESPN team abbreviation: {espn_team_abbr}"
-            
+
             # Send error notification
             try:
                 notify_error(
@@ -361,7 +361,7 @@ class GetEspnTeamRosterAPI(ScraperBase, ScraperFlaskMixin):
         nba_team_abbr = ESPN_TO_NBA_TRICODE.get(espn_team_abbr, espn_team_abbr)
         base = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams"
         self.url = f"{base}/{team_id}?enable=roster"
-        logger.info("Resolved ESPN roster API URL for %s (ESPN: %s, NBA.com: %s, teamId %s): %s", 
+        logger.info("Resolved ESPN roster API URL for %s (ESPN: %s, NBA.com: %s, teamId %s): %s",
                 espn_team_abbr, nba_team_abbr, team_id, self.url)
 
 
@@ -370,7 +370,7 @@ class GetEspnTeamRosterAPI(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     def get_scraper_stats(self) -> dict:
         return {
-            "team_abbr": self.opts["team_abbr"], 
+            "team_abbr": self.opts["team_abbr"],
             "espn_team_id": ESPN_TEAM_IDS.get(self.opts["team_abbr"]),
             "playerCount": self.data.get("playerCount", 0)
         }

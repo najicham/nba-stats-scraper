@@ -362,15 +362,15 @@ pytest test_unit.py --durations=10
 def test_feature_name_scenario(self, calculator):
     """
     Test what the function does in this scenario.
-    
+
     Explain why this test is important.
     """
     # Arrange
     input_data = {'key': 'value'}
-    
+
     # Act
     result = calculator.some_method(input_data)
-    
+
     # Assert
     assert result == expected, "Error message explaining what should happen"
 ```
@@ -380,15 +380,15 @@ def test_feature_name_scenario(self, calculator):
 def test_end_to_end_flow(self, mock_processor):
     """
     Test complete flow from input to output.
-    
+
     Verifies all components work together correctly.
     """
     # Setup
     mock_processor.feature_extractor.extract_phase4_data.return_value = phase4_data
-    
+
     # Execute
     result = mock_processor.calculate_precompute()
-    
+
     # Verify
     assert len(mock_processor.transformed_data) == expected_count
 ```
@@ -398,13 +398,13 @@ def test_end_to_end_flow(self, mock_processor):
 def test_real_data_quality(self, bq_client, validation_date):
     """
     Test quality against real production data.
-    
+
     Validates data meets quality standards.
     """
     # Query real data
     query = f"SELECT * FROM table WHERE date = '{validation_date}'"
     result = bq_client.query(query).to_dataframe()
-    
+
     # Validate
     assert result['quality_score'].mean() >= 75.0
 ```
@@ -425,10 +425,10 @@ def test_new_feature(self, fixture):
     """Clear description of what is being tested."""
     # Arrange
     input_data = create_test_data()
-    
+
     # Act
     result = method_under_test(input_data)
-    
+
     # Assert
     assert result == expected
 ```
@@ -510,6 +510,6 @@ If tests fail or you need help:
 
 ---
 
-**Last Updated**: November 2025  
-**Test Suite Version**: 2.0  
+**Last Updated**: November 2025
+**Test Suite Version**: 2.0
 **Total Tests**: 121 (85 unit, 6 integration, 13 validation, 17 performance)

@@ -75,11 +75,11 @@ run_query() {
             ;;
         *)
             bq query --use_legacy_sql=false --format=prettyjson < "$QUERIES_DIR/$query_file" | \
-                jq -r '.[] | 
+                jq -r '.[] |
                     [
-                        (.section // "" | tostring), 
-                        (.metric // .count // .team // .category // "" | tostring), 
-                        (.value // .count // "" | tostring), 
+                        (.section // "" | tostring),
+                        (.metric // .count // .team // .category // "" | tostring),
+                        (.value // .count // "" | tostring),
                         (.status // .percentage // .details // "" | tostring)
                     ] | @tsv' | \
                 while IFS=$'\t' read -r section metric value status; do

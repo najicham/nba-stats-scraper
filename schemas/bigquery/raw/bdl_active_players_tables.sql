@@ -59,7 +59,7 @@ OPTIONS(
 
 -- Validation summary view for monitoring data quality
 CREATE OR REPLACE VIEW `nba-props-platform.nba_raw.bdl_active_players_validation_summary` AS
-SELECT 
+SELECT
   validation_status,
   COUNT(*) as player_count,
   ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 2) as percentage
@@ -69,7 +69,7 @@ ORDER BY player_count DESC;
 
 -- Team comparison view for identifying discrepancies
 CREATE OR REPLACE VIEW `nba-props-platform.nba_raw.bdl_nba_team_comparison` AS
-SELECT 
+SELECT
   b.player_full_name,
   b.team_abbr as bdl_team,
   b.nba_com_team_abbr as nba_team,
@@ -82,7 +82,7 @@ ORDER BY b.validation_status, b.player_full_name;
 
 -- Props players validation view - critical for business operations
 CREATE OR REPLACE VIEW `nba-props-platform.nba_raw.props_players_validation_status` AS
-SELECT 
+SELECT
   o.player_name as props_player_name,
   o.game_date,
   b.player_full_name as bdl_player_name,
@@ -90,13 +90,13 @@ SELECT
   b.nba_com_team_abbr as nba_team,
   b.has_validation_issues,
   b.validation_status,
-  CASE 
+  CASE
     WHEN b.player_lookup IS NULL THEN 'MISSING_FROM_BDL'
     WHEN b.has_validation_issues THEN 'NEEDS_REVIEW'
     ELSE 'VALIDATED'
   END as props_validation_status
 FROM `nba-props-platform.nba_raw.odds_api_player_points_props` o
-LEFT JOIN `nba-props-platform.nba_raw.bdl_active_players_current` b 
+LEFT JOIN `nba-props-platform.nba_raw.bdl_active_players_current` b
   ON o.player_lookup = b.player_lookup
 WHERE o.game_date >= CURRENT_DATE() - 7  -- Last 7 days of props
 ORDER BY o.game_date DESC, props_validation_status DESC;
@@ -114,13 +114,13 @@ Business Impact: CRITICAL - Ensures prop betting player data accuracy
 
 Key Features:
 - Real-time validation against NBA.com official data
-- Confidence scoring for data quality monitoring  
+- Confidence scoring for data quality monitoring
 - Team assignment verification for prop betting
 - Issue tracking with detailed JSON for analyst review
 
 Usage Examples:
 1. Find validation issues: WHERE has_validation_issues = TRUE
-2. Team mismatches: WHERE validation_status = 'team_mismatch' 
+2. Team mismatches: WHERE validation_status = 'team_mismatch'
 3. Props validation: JOIN with odds_api_player_points_props
 
 Update Frequency: Daily + Real-time (every 2 hours during season)

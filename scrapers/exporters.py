@@ -45,7 +45,7 @@ class GCSExporter(BaseExporter):
 
         # 3) Prepare data (preserves binary, serializes JSON)
         payload, is_binary = _prepare_data_for_export(data, config)
-        
+
         # 4) Set appropriate content type with smart detection
         if is_binary and gcs_path.endswith('.pdf'):
             content_type = "application/pdf"
@@ -61,7 +61,7 @@ class GCSExporter(BaseExporter):
         client = self._create_gcs_client()
         bucket = client.bucket(bucket_name)
         blob = bucket.blob(gcs_path)
-        
+
         if is_binary:
             # Upload binary data directly
             blob.upload_from_string(payload, content_type=content_type)
@@ -88,7 +88,7 @@ class GCSExporter(BaseExporter):
     def _create_gcs_client(self):
         """
         Create GCS client with robust authentication handling.
-        
+
         Priority order:
         1. GOOGLE_APPLICATION_CREDENTIALS environment variable (service account)
         2. Application Default Credentials (gcloud auth application-default login)
@@ -104,15 +104,15 @@ class GCSExporter(BaseExporter):
             else:
                 # Service account path is set, use it
                 return storage.Client()
-                
+
         except DefaultCredentialsError:
             # Try 2: Look for service account file in current directory
             service_account_files = [
                 "./service-account-dev.json",
-                "./service-account-prod.json", 
+                "./service-account-prod.json",
                 "./service-account.json"
             ]
-            
+
             for sa_file in service_account_files:
                 if os.path.exists(sa_file):
                     logger.info(f"[GCS Exporter] Using service account: {sa_file}")
@@ -124,7 +124,7 @@ class GCSExporter(BaseExporter):
                 logger.info(f"[GCS Exporter] Using application default credentials: {adc_path}")
                 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = adc_path
                 return storage.Client()
-            
+
             # All methods failed
             raise Exception(
                 "GCS authentication failed. Please run one of:\n"
@@ -165,7 +165,7 @@ class PrintExporter(BaseExporter):
     """
     def run(self, data, config, opts):
         payload, is_binary = _prepare_data_for_export(data, config)
-        
+
         if is_binary:
             print(f"[Binary data: {len(payload)} bytes]")
         else:

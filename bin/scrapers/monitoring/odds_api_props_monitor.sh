@@ -58,12 +58,12 @@ get_execution_status() {
         --limit=1 \
         --format="value(metadata.name,status.runningCount,status.succeededCount)" \
         2>/dev/null || echo "")
-    
+
     if [[ -n "$exec_data" ]]; then
         local exec_name=$(echo "$exec_data" | cut -f1)
         local running_count=$(echo "$exec_data" | cut -f2)
         local succeeded_count=$(echo "$exec_data" | cut -f3)
-        
+
         if [[ "$running_count" -gt 0 ]]; then
             printf "${GREEN}RUNNING${NC} ($exec_name)"
         elif [[ "$succeeded_count" -gt 0 ]]; then
@@ -86,11 +86,11 @@ get_progress_info() {
     local current_count="$1"
     local new_dirs=$((current_count - BASELINE_DIRS))
     local progress_percent=0
-    
+
     if [[ $new_dirs -gt 0 ]]; then
         progress_percent=$((new_dirs * 100 / TARGET_DIRS))
     fi
-    
+
     echo "$new_dirs:$progress_percent"
 }
 
@@ -108,22 +108,22 @@ cmd_quick() {
     printf "Status: "
     get_execution_status
     printf "\n"
-    
+
     local dir_count
     dir_count=$(get_directory_count)
     printf "Directory Count: ${GREEN}$dir_count${NC} (baseline: $BASELINE_DIRS)\n"
-    
+
     local progress_info
     progress_info=$(get_progress_info "$dir_count")
     local new_dirs=$(echo "$progress_info" | cut -d: -f1)
     local progress_percent=$(echo "$progress_info" | cut -d: -f2)
-    
+
     if [[ $new_dirs -gt 0 ]]; then
         printf "✅ Progress: ${GREEN}+$new_dirs${NC} new directories (${PURPLE}$progress_percent%%${NC} of target)\n"
     else
         printf "⚠️  No new directories yet\n"
     fi
-    
+
     local latest_activity
     latest_activity=$(get_latest_activity)
     if [[ -n "$latest_activity" ]]; then
@@ -133,26 +133,26 @@ cmd_quick() {
 
 cmd_status() {
     print_header
-    
+
     printf "${BOLD}📊 EXECUTION STATUS:${NC}\n"
     printf "Status: "
     get_execution_status
     printf "\n\n"
-    
+
     printf "${BOLD}📁 PROGRESS:${NC}\n"
     local dir_count
     dir_count=$(get_directory_count)
     printf "Total Directories: ${GREEN}$dir_count${NC}\n"
     printf "Baseline: ${CYAN}$BASELINE_DIRS${NC}\n"
-    
+
     local progress_info
     progress_info=$(get_progress_info "$dir_count")
     local new_dirs=$(echo "$progress_info" | cut -d: -f1)
     local progress_percent=$(echo "$progress_info" | cut -d: -f2)
-    
+
     printf "New Collections: ${GREEN}+$new_dirs${NC}\n"
     printf "Progress: ${PURPLE}$progress_percent%%${NC} of target ($TARGET_DIRS dates)\n\n"
-    
+
     printf "${BOLD}📄 RECENT ACTIVITY:${NC}\n"
     local recent_logs
     recent_logs=$(gcloud logging read \
@@ -161,7 +161,7 @@ cmd_status() {
         --format="value(textPayload)" \
         --project="$PROJECT" \
         --freshness=2h 2>/dev/null || echo "")
-    
+
     if [[ -n "$recent_logs" ]]; then
         echo "$recent_logs" | sed 's/^/  /'
     else
@@ -173,40 +173,40 @@ cmd_watch() {
     printf "${GREEN}Starting continuous monitoring (Ctrl+C to stop)${NC}\n"
     printf "${CYAN}Refresh: 15 seconds${NC}\n"
     printf "${YELLOW}Press Ctrl+C to stop...${NC}\n\n"
-    
+
     # Give user a moment to read the startup message
     sleep 2
-    
+
     local update_count=0
-    
+
     while true; do
         update_count=$((update_count + 1))
-        
+
         if [[ $update_count -gt 1 ]]; then
             # Move cursor to top and show refresh indicator
             printf "\033[H"
             printf "${YELLOW}${BOLD}🔄 Refreshing data...${NC}$(printf '%*s' 50 '')\n"
             sleep 0.5
-            
+
             # Move cursor back to top for actual content
             printf "\033[H"
         else
             clear
         fi
-        
+
         # Show header with update info
         printf "${CYAN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
         printf "${CYAN}${BOLD}🎯 NBA ODDS API LIVE MONITOR${NC}\n"
         printf "${CYAN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
         printf "${BLUE}Update #$update_count - $(date)${NC}\n"
         printf "${BLUE}Job: $JOB_NAME${NC}\n\n"
-        
+
         # Show current status
         cmd_quick
-        
+
         # Clear any remaining lines from previous output
         printf "\033[K\n\033[K\n\033[K\n"
-        
+
         printf "${YELLOW}⏱️  Next update in 15 seconds... (Ctrl+C to stop)${NC}\n"
         sleep 15
     done
@@ -215,7 +215,7 @@ cmd_watch() {
 cmd_logs() {
     local count=${1:-10}
     print_header
-    
+
     printf "${BOLD}📄 RECENT LOGS (last $count):${NC}\n\n"
     local logs
     logs=$(gcloud logging read \
@@ -224,7 +224,7 @@ cmd_logs() {
         --format="value(timestamp,textPayload)" \
         --project="$PROJECT" \
         --freshness=4h 2>/dev/null || echo "")
-    
+
     if [[ -n "$logs" ]]; then
         echo "$logs" | sed 's/^/  /'
     else
@@ -234,34 +234,34 @@ cmd_logs() {
 
 cmd_progress() {
     print_header
-    
+
     printf "${BOLD}📊 DETAILED PROGRESS ANALYSIS:${NC}\n\n"
-    
+
     local dir_count
     dir_count=$(get_directory_count)
     printf "📁 Total Directories: ${GREEN}$dir_count${NC}\n"
     printf "📅 Baseline: ${CYAN}$BASELINE_DIRS${NC}\n"
     printf "🎯 Target: ${PURPLE}$TARGET_DIRS${NC} (full 2023 season)\n\n"
-    
+
     local progress_info
     progress_info=$(get_progress_info "$dir_count")
     local new_dirs=$(echo "$progress_info" | cut -d: -f1)
     local progress_percent=$(echo "$progress_info" | cut -d: -f2)
-    
+
     if [[ $new_dirs -gt 0 ]]; then
         printf "🆕 New Collections: ${GREEN}+$new_dirs${NC} dates\n"
         printf "📈 Progress Rate: ${PURPLE}$progress_percent%%${NC}\n"
-        
+
         local remaining_dirs=$((TARGET_DIRS - new_dirs))
         printf "📅 Estimated Remaining: ${YELLOW}~$remaining_dirs${NC} dates\n\n"
     else
         printf "🚨 No new data collected yet\n\n"
     fi
-    
+
     printf "${BOLD}📂 RECENT DIRECTORIES:${NC}\n"
     local recent_dirs
     recent_dirs=$(gcloud storage ls "$GCS_PATH/" 2>/dev/null | sort | tail -10 || echo "")
-    
+
     if [[ -n "$recent_dirs" ]]; then
         echo "$recent_dirs" | while read -r dir; do
             # Extract just the date from the path like: 2024-01-05

@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.player_game_summary
   team_abbr STRING NOT NULL,                        -- Player's team abbreviation
   opponent_team_abbr STRING NOT NULL,               -- Opposing team abbreviation
   season_year INT64 NOT NULL,                       -- Season year (2024 for 2024-25 season)
-  
+
   -- ============================================================================
   -- BASIC PERFORMANCE STATS (16 fields)
   -- From NBA.com Gamebook (primary) or BDL Boxscores (fallback)
@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.player_game_summary
   ft_makes INT64,                                   -- Free throw makes
   plus_minus INT64,                                 -- Plus/minus (NBA.com only)
   personal_fouls INT64,                             -- Personal fouls committed
-  
+
   -- ============================================================================
   -- SHOT ZONE PERFORMANCE (11 fields)
   -- From Big Ball Data (preferred) → NBA.com PBP (backup) → Estimation (fallback)
@@ -79,14 +79,14 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.player_game_summary
   mid_range_blocks INT64,                           -- Blocks on mid-range shots (Big Ball Data only)
   three_pt_blocks INT64,                            -- Blocks on three-point shots (Big Ball Data only)
   and1_count INT64,                                 -- Made FG + shooting foul drawn (Big Ball Data only)
-  
+
   -- ============================================================================
   -- SHOT CREATION ANALYSIS (2 fields)
   -- From Big Ball Data play-by-play (when available)
   -- ============================================================================
   assisted_fg_makes INT64,                          -- Made FGs that were assisted
   unassisted_fg_makes INT64,                        -- Made FGs unassisted (shot creation)
-  
+
   -- ============================================================================
   -- ADVANCED EFFICIENCY (5 fields)
   -- Calculated from basic stats
@@ -96,7 +96,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.player_game_summary
   efg_pct NUMERIC(5,3),                             -- Effective Field Goal percentage
   starter_flag BOOLEAN NOT NULL,                    -- Whether player started (minutes > 20)
   win_flag BOOLEAN NOT NULL,                        -- Whether player's team won
-  
+
   -- ============================================================================
   -- PROP BETTING RESULTS (7 fields)
   -- From Odds API (primary) or BettingPros (backup)
@@ -108,19 +108,19 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.player_game_summary
   line_movement NUMERIC(4,1),                       -- Line movement (closing - opening)
   points_line_source STRING,                        -- Source of closing line (e.g., 'draftkings')
   opening_line_source STRING,                       -- Source of opening line
-  
+
   -- ============================================================================
   -- PLAYER AVAILABILITY (2 fields)
   -- From NBA.com Gamebook or BDL Boxscores
   -- ============================================================================
   is_active BOOLEAN NOT NULL,                       -- Whether player played
   player_status STRING,                             -- 'active', 'inactive', 'dnp', etc.
-  
+
   -- ============================================================================
   -- PHASE 2 SOURCE TRACKING (24 fields = 6 sources × 4 fields each)
   -- Per dependency tracking guide v4.0 + Smart Idempotency (Pattern #14)
   -- ============================================================================
-  
+
   -- SOURCE 1: NBA.com Gamebook Player Stats (PRIMARY - Critical)
   -- nba_raw.nbac_gamebook_player_stats
   source_nbac_last_updated TIMESTAMP,               -- When NBA.com gamebook was last processed
@@ -411,7 +411,7 @@ OPTIONS(
 
 -- Get player's recent games with shot zone breakdown
 /*
-SELECT 
+SELECT
   game_date,
   opponent_team_abbr,
   points,
@@ -438,7 +438,7 @@ ORDER BY game_date DESC;
 
 -- Players with the most efficient shot selection (last 10 games)
 /*
-SELECT 
+SELECT
   player_lookup,
   universal_player_id,
   COUNT(*) as games,
@@ -463,7 +463,7 @@ LIMIT 20;
 
 -- Prop betting analysis: Best over performers
 /*
-SELECT 
+SELECT
   player_lookup,
   team_abbr,
   COUNT(*) as games_with_props,
@@ -484,7 +484,7 @@ LIMIT 20;
 
 -- Shot zone trends by home/away
 /*
-SELECT 
+SELECT
   player_lookup,
   CASE WHEN team_abbr = SPLIT(game_id, '_')[OFFSET(2)] THEN 'home' ELSE 'away' END as location,
   COUNT(*) as games,
@@ -505,7 +505,7 @@ ORDER BY location;
 
 -- Games with significant line movement
 /*
-SELECT 
+SELECT
   game_date,
   player_lookup,
   team_abbr,
@@ -527,7 +527,7 @@ ORDER BY ABS(line_movement) DESC;
 
 -- Plus/minus leaders (NBA.com data only)
 /*
-SELECT 
+SELECT
   player_lookup,
   player_full_name,
   team_abbr,
@@ -552,7 +552,7 @@ LIMIT 20;
 
 -- Check source freshness for recent games (calculate age on-demand)
 /*
-SELECT 
+SELECT
   game_date,
   COUNT(*) as total_players,
   -- Calculate source age in hours
@@ -578,7 +578,7 @@ ORDER BY game_date DESC;
 
 -- Identify games missing Big Ball Data (should have it by now)
 /*
-SELECT 
+SELECT
   game_date,
   game_id,
   COUNT(*) as players,
@@ -597,7 +597,7 @@ ORDER BY game_date DESC;
 
 -- Check for processing issues
 /*
-SELECT 
+SELECT
   game_date,
   COUNT(*) as total_players,
   SUM(CASE WHEN processed_with_issues = TRUE THEN 1 ELSE 0 END) as players_with_issues,
@@ -614,7 +614,7 @@ ORDER BY game_date DESC;
 
 -- Multi-source coverage analysis
 /*
-SELECT 
+SELECT
   game_date,
   -- Core stats coverage
   SUM(CASE WHEN source_nbac_completeness_pct >= 85 THEN 1 ELSE 0 END) as nbac_good,
@@ -679,8 +679,8 @@ WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
 SELECT game_date, player_lookup, team_abbr, points, minutes_played, fg_attempts
 FROM `nba-props-platform.nba_analytics.player_game_summary`
 WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
-  AND (points > 100 
-       OR minutes_played > 60 
+  AND (points > 100
+       OR minutes_played > 60
        OR fg_attempts > 50);
 */
 
@@ -690,7 +690,7 @@ WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
 
 -- Alert: Stale NBA.com data (>48 hours old)
 /*
-SELECT 
+SELECT
   'player_game_summary' as processor,
   game_date,
   COUNT(*) as affected_players,
@@ -703,11 +703,11 @@ HAVING MAX(TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), source_nbac_last_updated, HOUR)) 
 
 -- Alert: Low completeness (<85%)
 /*
-SELECT 
+SELECT
   'player_game_summary' as processor,
   game_date,
   -- Find bottleneck source
-  CASE 
+  CASE
     WHEN AVG(source_nbac_completeness_pct) < 85 THEN 'nbac'
     WHEN AVG(source_bdl_completeness_pct) < 85 THEN 'bdl'
     WHEN AVG(source_bbd_completeness_pct) < 85 THEN 'bbd'
@@ -726,7 +726,7 @@ HAVING AVG(source_nbac_completeness_pct) < 85
 
 -- Alert: High percentage of low quality data
 /*
-SELECT 
+SELECT
   'player_game_summary' as processor,
   game_date,
   COUNT(*) as total_players,
@@ -740,7 +740,7 @@ HAVING low_quality_pct > 30;  -- Alert if >30% low quality
 
 -- Alert: Missing shot zones for old games
 /*
-SELECT 
+SELECT
   'player_game_summary' as processor,
   game_date,
   game_id,
@@ -759,7 +759,7 @@ HAVING players_with_estimated_zones >= 8;  -- At least one full team
 
 -- Get table statistics
 /*
-SELECT 
+SELECT
   COUNT(*) as total_rows,
   COUNT(DISTINCT player_lookup) as unique_players,
   COUNT(DISTINCT universal_player_id) as unique_universal_ids,
@@ -781,7 +781,7 @@ WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY);
 
 -- Check partition health
 /*
-SELECT 
+SELECT
   game_date,
   COUNT(*) as rows_per_partition,
   COUNT(DISTINCT game_id) as games_per_partition,
@@ -820,7 +820,7 @@ ADD COLUMN IF NOT EXISTS source_bp_completeness_pct NUMERIC(5,2);
 -- v5.0 (+Full Sources): Added source_nbac_pbp_* and source_bp_* (18 fields, 6 sources)
 --                       Updated to match v2.0 data mapping specification
 --                       Added comprehensive documentation and monitoring queries
--- 
+--
 -- Last Updated: November 2025
 -- Status: Production Ready - Matches v2.0 Data Mapping Document
 -- Next: Implement multi-pass processing in processor

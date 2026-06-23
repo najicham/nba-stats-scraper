@@ -134,10 +134,10 @@ class PlayerGameSummaryProcessor:
             source_name='player_game_summary',
             cache_ttl_seconds=300
         )
-    
+
     def process_games(self, games, season):
         self.registry.set_default_context(season=season)
-        
+
         for game in games:
             for player in game.players:
                 # Lenient mode - returns None if not found
@@ -146,12 +146,12 @@ class PlayerGameSummaryProcessor:
                     required=False,  # Don't fail
                     context={'game_id': game.id}
                 )
-                
+
                 if uid is None:
                     continue  # Skip missing player
-                
+
                 self._process_player(uid, player, game)
-        
+
         self.registry.flush_unresolved_players()
 ```
 
@@ -166,7 +166,7 @@ class PropBetProcessor:
             source_name='prop_bet_processor',
             cache_ttl_seconds=300
         )
-    
+
     def process_prop_bet(self, prop_bet):
         try:
             # Strict mode - raises exception if not found
@@ -174,7 +174,7 @@ class PropBetProcessor:
                 prop_bet.player_lookup,
                 required=True  # Must exist
             )
-            
+
             # Validate player-team combo
             if not self.registry.validate_player_team(
                 prop_bet.player_lookup,
@@ -182,9 +182,9 @@ class PropBetProcessor:
                 '2024-25'
             ):
                 raise ValueError("Invalid player-team combination")
-            
+
             self._create_prop_bet_record(uid, prop_bet)
-            
+
         except PlayerNotFoundError as e:
             logger.error(f"Cannot process prop bet: {e}")
             # Don't create record for unknown player
@@ -197,7 +197,7 @@ More efficient for multiple players:
 ```python
 # Get all unique players
 unique_players = list(set(
-    player.lookup for game in games 
+    player.lookup for game in games
     for player in game.players
 ))
 
@@ -222,7 +222,7 @@ with RegistryReader(
     auto_flush=True
 ) as registry:
     registry.set_default_context(season='2024-25')
-    
+
     for player in players:
         uid = registry.get_universal_id(player, required=False)
         if uid:
@@ -292,10 +292,10 @@ def test_my_processor(mock_client_class):
     mock_query_job = Mock()
     mock_query_job.to_dataframe.return_value = mock_df
     mock_client.query.return_value = mock_query_job
-    
+
     registry = RegistryReader(bq_client=mock_client, source_name='test')
     uid = registry.get_universal_id('testplayer')
-    
+
     assert uid == 'test_001'
 ```
 
@@ -304,7 +304,7 @@ def test_my_processor(mock_client_class):
 ### Check Unresolved Players
 
 ```sql
-SELECT 
+SELECT
     source,
     normalized_lookup,
     team_abbr,

@@ -11,7 +11,7 @@
 -- Check 1: Verify Coverage by Season and Priority Level
 -- ============================================================================
 WITH expected_games AS (
-  SELECT 
+  SELECT
     CASE
       WHEN game_date >= '2024-10-01' THEN '2024-25'
       WHEN game_date >= '2023-10-01' THEN '2023-24'
@@ -38,7 +38,7 @@ actual_games AS (
     MIN(player_count) as min_players,
     MAX(player_count) as max_players
   FROM (
-    SELECT 
+    SELECT
       game_date,
       game_id,
       COUNT(DISTINCT player_name) as player_count
@@ -74,7 +74,7 @@ ORDER BY e.season DESC;
 -- ============================================================================
 WITH critical_teams AS (
   SELECT DISTINCT
-    CASE 
+    CASE
       WHEN game_date >= '2024-04-12' THEN '2023-24'
       ELSE '2024-25'
     END as season,
@@ -85,21 +85,21 @@ WITH critical_teams AS (
   FROM (
     SELECT game_date, home_team_tricode as team
     FROM `nba-props-platform.nba_raw.nbac_schedule`
-    WHERE is_playoffs = TRUE 
+    WHERE is_playoffs = TRUE
       AND game_date >= '2024-04-12'
       AND home_team_tricode IN ('PHX', 'LAC', 'DAL')
     UNION ALL
     SELECT game_date, away_team_tricode as team
     FROM `nba-props-platform.nba_raw.nbac_schedule`
-    WHERE is_playoffs = TRUE 
+    WHERE is_playoffs = TRUE
       AND game_date >= '2024-04-12'
       AND away_team_tricode IN ('PHX', 'LAC', 'DAL')
   )
   GROUP BY season, team
 ),
 props_coverage AS (
-  SELECT 
-    CASE 
+  SELECT
+    CASE
       WHEN game_date >= '2024-04-12' THEN '2023-24'
       ELSE '2024-25'
     END as season,
@@ -108,7 +108,7 @@ props_coverage AS (
     ROUND(AVG(players), 1) as avg_players,
     MIN(players) as min_players
   FROM (
-    SELECT 
+    SELECT
       game_date,
       home_team_abbr as team,
       COUNT(DISTINCT player_name) as players
@@ -117,7 +117,7 @@ props_coverage AS (
       AND home_team_abbr IN ('PHX', 'LAC', 'DAL')
     GROUP BY game_date, home_team_abbr
     UNION ALL
-    SELECT 
+    SELECT
       game_date,
       away_team_abbr as team,
       COUNT(DISTINCT player_name) as players
@@ -137,21 +137,21 @@ SELECT
   ROUND(COALESCE(p.games_with_props, 0) * 100.0 / t.playoff_games, 1) as coverage_pct,
   COALESCE(p.avg_players, 0) as avg_players,
   CASE
-    WHEN COALESCE(p.games_with_props, 0) = t.playoff_games AND COALESCE(p.avg_players, 0) >= 12 
+    WHEN COALESCE(p.games_with_props, 0) = t.playoff_games AND COALESCE(p.avg_players, 0) >= 12
       THEN '✅ Complete & High Quality'
-    WHEN COALESCE(p.games_with_props, 0) = t.playoff_games 
+    WHEN COALESCE(p.games_with_props, 0) = t.playoff_games
       THEN '✅ Complete'
-    WHEN COALESCE(p.games_with_props, 0) = 0 
+    WHEN COALESCE(p.games_with_props, 0) = 0
       THEN '❌ No Props Data'
-    WHEN COALESCE(p.games_with_props, 0) < t.playoff_games * 0.5 
+    WHEN COALESCE(p.games_with_props, 0) < t.playoff_games * 0.5
       THEN '🔴 <50% Coverage'
     ELSE '🟡 Partial Coverage'
   END as status,
   t.first_game,
   t.last_game
 FROM critical_teams t
-LEFT JOIN props_coverage p 
-  ON t.season = p.season 
+LEFT JOIN props_coverage p
+  ON t.season = p.season
   AND t.team_code = p.team_code
 ORDER BY t.season DESC, t.team_code;
 
@@ -159,7 +159,7 @@ ORDER BY t.season DESC, t.team_code;
 -- Check 3: Verify Specific Backfilled Dates
 -- ============================================================================
 -- Phase 1A: 2024-25 DEN vs LAC
-SELECT 
+SELECT
   'Phase 1A: 2024-25 DEN-LAC' as phase,
   game_date,
   home_team_abbr,
@@ -184,7 +184,7 @@ GROUP BY game_date, home_team_abbr, away_team_abbr
 ORDER BY game_date;
 
 -- Phase 1B: 2023-24 PHX-MIN and LAC-DAL
-SELECT 
+SELECT
   'Phase 1B: 2023-24 Playoffs' as phase,
   game_date,
   home_team_abbr,
@@ -212,7 +212,7 @@ ORDER BY game_date;
 -- Check 4: Player Coverage Quality Check
 -- ============================================================================
 -- Check if any backfilled games have suspiciously low player counts
-SELECT 
+SELECT
   game_date,
   game_id,
   home_team_abbr,
@@ -231,7 +231,7 @@ ORDER BY unique_players ASC, game_date;
 -- ============================================================================
 -- Check 5: Verify No Duplicate Records Were Created
 -- ============================================================================
-SELECT 
+SELECT
   game_date,
   home_team_abbr,
   away_team_abbr,
@@ -296,6 +296,6 @@ ORDER BY b.season DESC;
 -- ============================================================================
 -- Summary Report
 -- ============================================================================
-SELECT 
+SELECT
   '=== BACKFILL VALIDATION SUMMARY ===' as report_section,
   CURRENT_TIMESTAMP() as validation_time;

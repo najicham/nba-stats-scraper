@@ -9,10 +9,10 @@
 --   - Useful for risk management and prop adjustments
 -- ============================================================================
 
-WITH 
+WITH
 -- Get all status reports for players on a given date
 player_daily_statuses AS (
-  SELECT 
+  SELECT
     report_date,
     player_lookup,
     player_full_name,
@@ -30,7 +30,7 @@ player_daily_statuses AS (
 
 -- Find status changes within same day
 status_changes AS (
-  SELECT 
+  SELECT
     report_date,
     player_lookup,
     player_full_name,
@@ -54,31 +54,31 @@ status_changes AS (
 
 -- Categorize by impact
 with_impact AS (
-  SELECT 
+  SELECT
     *,
     CASE
       -- High impact: Availability changed
-      WHEN first_status = 'out' AND last_status IN ('questionable', 'probable', 'available') 
+      WHEN first_status = 'out' AND last_status IN ('questionable', 'probable', 'available')
         THEN '🔴 HIGH: Out → Available (late game-time decision)'
-      WHEN first_status IN ('questionable', 'probable') AND last_status = 'out' 
+      WHEN first_status IN ('questionable', 'probable') AND last_status = 'out'
         THEN '🔴 HIGH: Available → Out (late scratch)'
-      
+
       -- Medium impact: Uncertainty changed
-      WHEN first_status = 'questionable' AND last_status = 'probable' 
+      WHEN first_status = 'questionable' AND last_status = 'probable'
         THEN '🟡 MEDIUM: Questionable → Probable'
-      WHEN first_status = 'probable' AND last_status = 'questionable' 
+      WHEN first_status = 'probable' AND last_status = 'questionable'
         THEN '🟡 MEDIUM: Probable → Questionable'
-      
+
       -- Low impact: Status refinement
-      WHEN first_status = 'doubtful' AND last_status = 'out' 
+      WHEN first_status = 'doubtful' AND last_status = 'out'
         THEN '⚪ LOW: Doubtful → Out (expected)'
-      
+
       ELSE '📊 OTHER: Status changed'
     END as impact_level
   FROM status_changes
 )
 
-SELECT 
+SELECT
   report_date,
   player_full_name,
   team,
@@ -91,9 +91,9 @@ SELECT
   impact_level,
   reasons
 FROM with_impact
-ORDER BY 
+ORDER BY
   report_date DESC,
-  CASE 
+  CASE
     WHEN impact_level LIKE '%HIGH%' THEN 1
     WHEN impact_level LIKE '%MEDIUM%' THEN 2
     ELSE 3

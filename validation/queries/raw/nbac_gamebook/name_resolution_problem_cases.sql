@@ -29,9 +29,9 @@ SELECT
   END as issue_description,
   -- Context for investigation
   CONCAT(
-    'Game: ', 
-    CAST(game_date AS STRING), 
-    ' | Team: ', 
+    'Game: ',
+    CAST(game_date AS STRING),
+    ' | Team: ',
     team_abbr,
     ' | DNP Reason: ',
     COALESCE(dnp_reason, 'None')
@@ -44,7 +44,7 @@ WHERE player_status = 'inactive'
     OR requires_manual_review = TRUE
   )
   AND game_date BETWEEN '2021-10-19' AND '2025-06-20'
-ORDER BY 
+ORDER BY
   name_resolution_confidence ASC NULLS FIRST,
   game_date DESC
 LIMIT 200;

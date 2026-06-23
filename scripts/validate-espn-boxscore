@@ -41,12 +41,12 @@ run_query() {
     local query_file=$1
     local output_format=${2:-prettyjson}
     local output_table=$3
-    
+
     if [ ! -f "$query_file" ]; then
         print_color "$RED" "Error: Query file not found: $query_file"
         exit 1
     fi
-    
+
     if [ -n "$output_table" ]; then
         print_color "$YELLOW" "Running query and saving to table: $output_table"
         bq query \
@@ -104,12 +104,12 @@ EXAMPLES:
 
 UNDERSTANDING ESPN BOXSCORE DATA:
     ESPN is an EXTREMELY SPARSE backup data source. Key points:
-    
+
     - ⚪ Most days have NO data (this is NORMAL)
     - ✅ Only 1 game in current dataset (expected for backup)
     - 🎯 Collected during Early Morning Final Check failures
     - ⚠️ DO NOT alert on "no data" - this is expected behavior
-    
+
     Focus on QUALITY when data exists, not COMPLETENESS.
 
 NOTES:
@@ -162,7 +162,7 @@ case $COMMAND in
         print_color "$GREEN" "✓ Existence check complete"
         print_color "$YELLOW" "ℹ Expected: 1 game (Oct 2025), sparse coverage NORMAL"
         ;;
-        
+
     cross-validate|cross)
         print_header "ESPN BOXSCORE: Cross-Validation with BDL"
         print_color "$YELLOW" "Comparing ESPN backup data against BDL primary source..."
@@ -173,7 +173,7 @@ case $COMMAND in
         print_color "$GREEN" "✓ Cross-validation complete"
         print_color "$YELLOW" "ℹ Expected: No overlap currently (1 ESPN-only, 227 BDL-only)"
         ;;
-        
+
     yesterday)
         print_header "ESPN BOXSCORE: Yesterday's Data Check"
         print_color "$YELLOW" "Checking if ESPN backup collection ran yesterday..."
@@ -184,7 +184,7 @@ case $COMMAND in
         print_color "$GREEN" "✓ Yesterday check complete"
         print_color "$YELLOW" "ℹ Status '⚪ NO ESPN DATA' = NORMAL (backup source)"
         ;;
-        
+
     quality)
         print_header "ESPN BOXSCORE: Data Quality Checks"
         print_color "$YELLOW" "Running quality checks on ESPN data..."
@@ -194,7 +194,7 @@ case $COMMAND in
         echo ""
         print_color "$GREEN" "✓ Quality checks complete"
         ;;
-        
+
     stats-compare|stats)
         print_header "ESPN BOXSCORE: Player Stats Comparison"
         print_color "$YELLOW" "Detailed player stats comparison between ESPN and BDL..."
@@ -205,32 +205,32 @@ case $COMMAND in
         print_color "$GREEN" "✓ Stats comparison complete"
         print_color "$YELLOW" "ℹ Expected: N/A (no overlapping games currently)"
         ;;
-        
+
     all)
         print_header "ESPN BOXSCORE: Running All Validation Checks"
         print_color "$YELLOW" "Note: ESPN is sparse backup - minimal data is NORMAL"
-        
+
         # Run each check
         echo ""
         print_color "$BLUE" "1/5: Existence Check"
         run_query "$QUERIES_DIR/data_existence_check.sql" "$OUTPUT_FORMAT"
-        
+
         echo ""
         print_color "$BLUE" "2/5: Cross-Validation with BDL"
         run_query "$QUERIES_DIR/cross_validate_with_bdl.sql" "$OUTPUT_FORMAT"
-        
+
         echo ""
         print_color "$BLUE" "3/5: Yesterday's Data"
         run_query "$QUERIES_DIR/daily_check_yesterday.sql" "$OUTPUT_FORMAT"
-        
+
         echo ""
         print_color "$BLUE" "4/5: Quality Checks"
         run_query "$QUERIES_DIR/data_quality_checks.sql" "$OUTPUT_FORMAT"
-        
+
         echo ""
         print_color "$BLUE" "5/5: Stats Comparison"
         run_query "$QUERIES_DIR/player_stats_comparison.sql" "$OUTPUT_FORMAT"
-        
+
         echo ""
         print_header "ESPN BOXSCORE: All Validation Checks Complete"
         print_color "$GREEN" "✓ All checks completed successfully"
@@ -239,11 +239,11 @@ case $COMMAND in
         print_color "$YELLOW" "  - 0% schedule coverage = EXPECTED"
         print_color "$YELLOW" "  - No overlap with BDL = CURRENT STATE"
         ;;
-        
+
     help|--help|-h)
         show_help
         ;;
-        
+
     *)
         print_color "$RED" "Unknown command: $COMMAND"
         echo ""

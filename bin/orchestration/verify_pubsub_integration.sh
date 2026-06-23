@@ -20,7 +20,7 @@ echo ""
 # 2. Check recent scraper activity
 echo "2️⃣ Recent Scraper Activity (Last Hour):"
 bq query --use_legacy_sql=false --format=pretty "
-SELECT 
+SELECT
   triggered_at,
   scraper_name,
   status,
@@ -119,7 +119,7 @@ for table in "${TABLES[@]}"; do
     "SELECT COUNT(*) as count
      FROM \`nba-props-platform.nba_raw.${table}\`
      WHERE processed_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 1 HOUR)" 2>/dev/null | tail -1)
-  
+
   if [ -n "$COUNT" ] && [ "$COUNT" != "count" ]; then
     echo "   - ${table}: ${COUNT} records"
   fi

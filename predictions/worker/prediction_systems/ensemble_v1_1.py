@@ -100,7 +100,7 @@ class EnsembleV1_1:
 
         logger.info(f"Initialized {self.system_name} (v{self.version}) with 5 systems")
         logger.info(f"System weights: {self.system_weights}")
-    
+
     def predict(
         self,
         features: Dict[str, float],
@@ -128,7 +128,7 @@ class EnsembleV1_1:
         """
         # Collect predictions from all systems
         predictions = []
-        
+
         # System 1: Moving Average
         try:
             ma_pred, ma_conf, ma_rec = self.moving_average.predict(
@@ -143,7 +143,7 @@ class EnsembleV1_1:
         except Exception as e:
             logger.warning(f"Moving Average failed: {e}")
             predictions.append(None)
-        
+
         # System 2: Zone Matchup
         try:
             zm_pred, zm_conf, zm_rec = self.zone_matchup.predict(
@@ -158,7 +158,7 @@ class EnsembleV1_1:
         except Exception as e:
             logger.warning(f"Zone Matchup failed: {e}")
             predictions.append(None)
-        
+
         # System 3: Similarity
         try:
             if historical_games is None:
@@ -172,7 +172,7 @@ class EnsembleV1_1:
                     historical_games=historical_games,
                     betting_line=prop_line
                 )
-                
+
                 if sim_result['predicted_points'] is not None:
                     predictions.append({
                         'system': 'similarity',
@@ -185,7 +185,7 @@ class EnsembleV1_1:
         except Exception as e:
             logger.warning(f"Similarity failed: {e}")
             predictions.append(None)
-        
+
         # System 4: XGBoost
         try:
             xgb_result = self.xgboost.predict(
@@ -230,7 +230,7 @@ class EnsembleV1_1:
 
         # Filter out None predictions
         valid_predictions = [p for p in predictions if p is not None]
-        
+
         # Check if we have enough predictions
         if len(valid_predictions) < 2:
             logger.warning(f"Insufficient valid predictions ({len(valid_predictions)}/5)")
@@ -239,16 +239,16 @@ class EnsembleV1_1:
                 'valid_systems': len(valid_predictions),
                 'predictions': predictions
             })
-        
+
         # Calculate weighted average prediction
         ensemble_pred = self._calculate_weighted_prediction(valid_predictions)
-        
+
         # Ensure prediction is reasonable
         ensemble_pred = max(0.0, min(60.0, ensemble_pred))
-        
+
         # Calculate ensemble confidence
         ensemble_conf = self._calculate_ensemble_confidence(valid_predictions)
-        
+
         # Determine ensemble recommendation
         if prop_line is not None:
             ensemble_rec = self._determine_ensemble_recommendation(
@@ -259,10 +259,10 @@ class EnsembleV1_1:
             )
         else:
             ensemble_rec = 'PASS'
-        
+
         # Calculate agreement metrics
         agreement_metrics = self._calculate_agreement_metrics(valid_predictions)
-        
+
         # Build metadata
         metadata = {
             'systems_used': len(valid_predictions),
@@ -278,7 +278,7 @@ class EnsembleV1_1:
                 'recommendation': ensemble_rec
             }
         }
-        
+
         logger.debug(
             f"{player_lookup} ensemble: {ensemble_pred:.1f} "
             f"({len(valid_predictions)} systems, "
@@ -286,9 +286,9 @@ class EnsembleV1_1:
             f"variance={agreement_metrics['variance']:.2f}, "
             f"conf={ensemble_conf:.1f})"
         )
-        
+
         return (ensemble_pred, ensemble_conf / 100.0, ensemble_rec, metadata)
-    
+
     def _calculate_weighted_prediction(self, predictions: List[Dict]) -> float:
         """
         Calculate weighted average using FIXED performance-based weights
@@ -314,7 +314,7 @@ class EnsembleV1_1:
                 total_weight += weight
 
         return weighted_sum / total_weight if total_weight > 0 else 0.0
-    
+
     def _calculate_ensemble_confidence(self, predictions: List[Dict]) -> float:
         """
         Calculate ensemble confidence (0-100)
@@ -361,7 +361,7 @@ class EnsembleV1_1:
 
         # Clamp to reasonable range
         return max(20.0, min(95.0, confidence))
-    
+
     def _determine_ensemble_recommendation(
         self,
         ensemble_pred: float,
@@ -371,68 +371,68 @@ class EnsembleV1_1:
     ) -> str:
         """
         Determine ensemble recommendation
-        
+
         Logic:
         1. Check if we have sufficient confidence
         2. Calculate edge (prediction vs line)
         3. Check if edge meets threshold
         4. Consider system agreement on recommendations
-        
+
         Args:
             ensemble_pred: Ensemble prediction
             prop_line: Betting line
             ensemble_conf: Ensemble confidence (0-100)
             predictions: List of valid predictions
-        
+
         Returns:
             'OVER' | 'UNDER' | 'PASS'
         """
         # Check confidence threshold
         if ensemble_conf < self.confidence_threshold:
             return 'PASS'
-        
+
         # Calculate edge
         edge = abs(ensemble_pred - prop_line)
-        
+
         # Check edge threshold
         if edge < self.edge_threshold:
             return 'PASS'
-        
+
         # Count system recommendations
         rec_counts = {'OVER': 0, 'UNDER': 0, 'PASS': 0}
         for pred in predictions:
             rec = pred.get('recommendation', 'PASS')
             rec_counts[rec] += 1
-        
+
         # If majority agrees on direction, use it
         if rec_counts['OVER'] > len(predictions) / 2:
             return 'OVER'
         elif rec_counts['UNDER'] > len(predictions) / 2:
             return 'UNDER'
-        
+
         # Otherwise, use ensemble prediction
         if ensemble_pred > prop_line:
             return 'OVER'
         else:
             return 'UNDER'
-    
+
     def _calculate_agreement_metrics(self, predictions: List[Dict]) -> Dict:
         """
         Calculate agreement metrics across all systems
-        
+
         Args:
             predictions: List of valid predictions
-        
+
         Returns:
             Dict with agreement type, variance, range, etc.
         """
         pred_values = [p['prediction'] for p in predictions]
-        
+
         # Calculate statistics
         mean_pred = np.mean(pred_values)
         variance = np.std(pred_values)
         pred_range = max(pred_values) - min(pred_values)
-        
+
         # Determine agreement type
         if variance < self.high_agreement_threshold:
             agreement_type = 'high'
@@ -446,7 +446,7 @@ class EnsembleV1_1:
         else:
             agreement_type = 'low'
             agreement_pct = max(50.0, 100.0 - (variance * 5))
-        
+
         return {
             'type': agreement_type,
             'agreement_percentage': agreement_pct,
@@ -456,7 +456,7 @@ class EnsembleV1_1:
             'min': min(pred_values),
             'max': max(pred_values)
         }
-    
+
     def analyze_predictions(
         self,
         features: Dict[str, float],
@@ -466,15 +466,15 @@ class EnsembleV1_1:
     ) -> Dict[str, any]:
         """
         Analyze predictions from all systems without making recommendation
-        
+
         Useful for understanding why systems agree or disagree
-        
+
         Args:
             features: Feature dictionary
             player_lookup: Player identifier
             game_date: Game date
             historical_games: Optional historical games for similarity
-        
+
         Returns:
             Dict with detailed analysis
         """
@@ -485,14 +485,14 @@ class EnsembleV1_1:
             prop_line=None,
             historical_games=historical_games
         )
-        
+
         # Extract key factors
         points_last_5 = features.get('points_avg_last_5', 0)
         points_season = features.get('points_avg_season', 0)
         zone_mismatch = features.get('shot_zone_mismatch_score', 0)
         fatigue = features.get('fatigue_score', 70)
         opponent_def = features.get('opponent_def_rating_last_15', 112)
-        
+
         # Analyze key differences
         analysis = {
             'metadata': metadata,
@@ -509,27 +509,27 @@ class EnsembleV1_1:
                 'xgboost': 'Learns complex interactions from training data'
             }
         }
-        
+
         return analysis
-    
+
     def get_system_weights(self, predictions: List[Dict]) -> Dict[str, float]:
         """
         Get normalized weights for each system
-        
+
         Args:
             predictions: List of valid predictions
-        
+
         Returns:
             Dict mapping system name to normalized weight
         """
         total_conf = sum(p['confidence'] for p in predictions)
-        
+
         weights = {}
         for pred in predictions:
             weights[pred['system']] = pred['confidence'] / total_conf
-        
+
         return weights
-    
+
     def __str__(self) -> str:
         return f"{self.system_name} (v{self.version}) - 5 Systems"
 

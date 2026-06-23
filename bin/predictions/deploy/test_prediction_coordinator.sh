@@ -51,18 +51,18 @@ error() {
 
 test_health_check() {
     log "Testing health check endpoint..."
-    
+
     SERVICE_URL=$(gcloud run services describe "$SERVICE_NAME" \
         --project "$PROJECT_ID" \
         --region "$REGION" \
         --format "value(status.url)")
-    
+
     TOKEN=$(gcloud auth print-identity-token)
-    
+
     RESPONSE=$(curl -s -w "\n%{http_code}" -H "Authorization: Bearer $TOKEN" "${SERVICE_URL}/health")
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
     BODY=$(echo "$RESPONSE" | head -n-1)
-    
+
     if [ "$HTTP_CODE" = "200" ]; then
         log "✓ Health check passed"
         log "  Response: $BODY"
@@ -73,14 +73,14 @@ test_health_check() {
 
 test_start_batch() {
     log "Testing batch start..."
-    
+
     SERVICE_URL=$(gcloud run services describe "$SERVICE_NAME" \
         --project "$PROJECT_ID" \
         --region "$REGION" \
         --format "value(status.url)")
-    
+
     TOKEN=$(gcloud auth print-identity-token)
-    
+
     # Start a prediction batch for today
     RESPONSE=$(curl -s -w "\n%{http_code}" \
         -H "Authorization: Bearer $TOKEN" \
@@ -91,17 +91,17 @@ test_start_batch() {
             "use_multiple_lines": false
         }' \
         "${SERVICE_URL}/start")
-    
+
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
     BODY=$(echo "$RESPONSE" | head -n-1)
-    
+
     if [ "$HTTP_CODE" = "202" ] || [ "$HTTP_CODE" = "409" ]; then
         log "✓ Batch start successful"
         echo "$BODY" | jq .
-        
+
         # Extract batch_id for monitoring
         BATCH_ID=$(echo "$BODY" | jq -r '.batch_id // empty')
-        
+
         if [ -n "$BATCH_ID" ]; then
             log "Batch ID: $BATCH_ID"
             echo "$BATCH_ID" > /tmp/last_batch_id.txt
@@ -114,14 +114,14 @@ test_start_batch() {
 
 test_status_check() {
     log "Testing status endpoint..."
-    
+
     SERVICE_URL=$(gcloud run services describe "$SERVICE_NAME" \
         --project "$PROJECT_ID" \
         --region "$REGION" \
         --format "value(status.url)")
-    
+
     TOKEN=$(gcloud auth print-identity-token)
-    
+
     # Check if we have a batch_id from previous test
     if [ -f /tmp/last_batch_id.txt ]; then
         BATCH_ID=$(cat /tmp/last_batch_id.txt)
@@ -129,14 +129,14 @@ test_status_check() {
     else
         STATUS_URL="${SERVICE_URL}/status"
     fi
-    
+
     RESPONSE=$(curl -s -w "\n%{http_code}" \
         -H "Authorization: Bearer $TOKEN" \
         "$STATUS_URL")
-    
+
     HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
     BODY=$(echo "$RESPONSE" | head -n-1)
-    
+
     if [ "$HTTP_CODE" = "200" ]; then
         log "✓ Status check successful"
         echo "$BODY" | jq .
@@ -147,40 +147,40 @@ test_status_check() {
 
 monitor_progress() {
     log "Monitoring batch progress (30 seconds)..."
-    
+
     SERVICE_URL=$(gcloud run services describe "$SERVICE_NAME" \
         --project "$PROJECT_ID" \
         --region "$REGION" \
         --format "value(status.url)")
-    
+
     TOKEN=$(gcloud auth print-identity-token)
-    
+
     for i in {1..6}; do
         RESPONSE=$(curl -s -H "Authorization: Bearer $TOKEN" "${SERVICE_URL}/status")
-        
+
         COMPLETED=$(echo "$RESPONSE" | jq -r '.progress.completed // 0')
         EXPECTED=$(echo "$RESPONSE" | jq -r '.progress.expected // 0')
         IS_COMPLETE=$(echo "$RESPONSE" | jq -r '.status == "complete"')
-        
+
         log "Progress: $COMPLETED/$EXPECTED players"
-        
+
         if [ "$IS_COMPLETE" = "true" ]; then
             log "✓ Batch complete!"
             echo "$RESPONSE" | jq '.summary'
             return 0
         fi
-        
+
         sleep 5
     done
-    
+
     log "⏳ Batch still in progress (check status endpoint for updates)"
 }
 
 check_bigquery_predictions() {
     log "Checking BigQuery for predictions..."
-    
+
     QUERY="
-    SELECT 
+    SELECT
         system_id,
         COUNT(*) as predictions,
         COUNT(DISTINCT player_lookup) as unique_players,
@@ -191,9 +191,9 @@ check_bigquery_predictions() {
     GROUP BY system_id
     ORDER BY system_id
     "
-    
+
     RESULTS=$(bq query --project_id="$PROJECT_ID" --use_legacy_sql=false --format=prettyjson "$QUERY")
-    
+
     if [ "$RESULTS" != "[]" ]; then
         log "✓ Predictions found in BigQuery"
         echo "$RESULTS" | jq -r '.[] | "  - \(.system_id): \(.predictions) predictions for \(.unique_players) players (avg conf: \(.avg_confidence)%)"'
@@ -204,7 +204,7 @@ check_bigquery_predictions() {
 
 check_cloud_run_logs() {
     log "Checking recent Cloud Run logs..."
-    
+
     gcloud run services logs read "$SERVICE_NAME" \
         --project "$PROJECT_ID" \
         --region "$REGION" \
@@ -218,24 +218,24 @@ check_cloud_run_logs() {
 
 main() {
     log "Testing prediction coordinator in environment: $ENVIRONMENT"
-    
+
     test_health_check
     echo ""
-    
+
     test_start_batch
     echo ""
-    
+
     test_status_check
     echo ""
-    
+
     monitor_progress
     echo ""
-    
+
     check_bigquery_predictions
     echo ""
-    
+
     check_cloud_run_logs
-    
+
     log "Testing complete! ✓"
     log ""
     log "Next steps:"

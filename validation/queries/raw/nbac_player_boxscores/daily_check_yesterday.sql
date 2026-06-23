@@ -74,11 +74,11 @@ SELECT
   b.avg_starters_per_game,
   b.min_players_per_game,
   b.max_players_per_game,
-  
+
   -- BDL comparison
   c.bdl_games,
   c.bdl_total_records,
-  
+
   -- Primary status
   CASE
     WHEN s.scheduled_games = 0 THEN '✅ No games scheduled'
@@ -88,24 +88,24 @@ SELECT
     THEN '✅ Complete'
     WHEN b.games_with_data = 0 THEN '❌ CRITICAL: No box score data'
     WHEN b.min_players_per_game < 20 THEN '⚠️ WARNING: Suspiciously low player count'
-    WHEN b.avg_starters_per_game < 4 OR b.avg_starters_per_game > 6 
+    WHEN b.avg_starters_per_game < 4 OR b.avg_starters_per_game > 6
       THEN '⚠️ WARNING: Unusual starter count'
     ELSE CONCAT('⚠️ WARNING: ', CAST(s.scheduled_games - b.games_with_data AS STRING), ' games missing')
   END as status,
-  
+
   -- BDL consistency check
   CASE
-    WHEN ABS(COALESCE(b.games_with_data, 0) - COALESCE(c.bdl_games, 0)) = 0 
+    WHEN ABS(COALESCE(b.games_with_data, 0) - COALESCE(c.bdl_games, 0)) = 0
       THEN '✅ Matches BDL'
-    WHEN ABS(COALESCE(b.games_with_data, 0) - COALESCE(c.bdl_games, 0)) <= 2 
+    WHEN ABS(COALESCE(b.games_with_data, 0) - COALESCE(c.bdl_games, 0)) <= 2
       THEN '⚠️ Minor discrepancy vs BDL'
     ELSE '❌ Major discrepancy vs BDL'
   END as bdl_consistency,
-  
+
   -- Additional notes
   CASE
-    WHEN b.unique_nba_player_ids < b.unique_players 
-      THEN CONCAT('⚠️ Missing NBA player IDs: ', 
+    WHEN b.unique_nba_player_ids < b.unique_players
+      THEN CONCAT('⚠️ Missing NBA player IDs: ',
            CAST(b.unique_players - b.unique_nba_player_ids AS STRING), ' players')
     WHEN b.games_with_data = 0 AND s.scheduled_games > 0
       THEN '❌ Check scraper and processor logs immediately'

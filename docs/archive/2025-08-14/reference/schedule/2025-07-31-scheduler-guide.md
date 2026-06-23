@@ -2,7 +2,7 @@
 
 **Document Purpose**: Comprehensive guide for managing NBA scraper schedules, monitoring operations, and maintaining schedule consistency across the system.
 
-**Last Updated**: July 31, 2025  
+**Last Updated**: July 31, 2025
 **Current Status**: 17/17 Operational Scrapers Scheduled (100% Coverage)
 
 ---
@@ -25,7 +25,7 @@
 #### **Daily Morning Operations (8:00-8:15 AM PT)**
 ```bash
 8:00 AM  - nba-player-movement     (GetNbaComPlayerMovement)
-8:00 AM  - nba-season-schedule     (GetDataNbaSeasonSchedule)  
+8:00 AM  - nba-season-schedule     (GetDataNbaSeasonSchedule)
 8:00 AM  - nba-odds-team-players   (GetOddsApiTeamPlayers)
 8:10 AM  - nba-espn-gsw-roster     (GetEspnTeamRosterAPI)
 8:15 AM  - nba-team-roster         (GetNbaTeamRoster)
@@ -282,7 +282,7 @@ This document should contain:
 ### **Schedule Change Workflow**
 ```
 1. Update docs/scrapers/operational-schedule.md
-2. Update bin/monitoring/nba_monitor_scheduler.sh  
+2. Update bin/monitoring/nba_monitor_scheduler.sh
 3. Test changes in development
 4. Deploy to production
 5. Verify with monitoring script
@@ -406,7 +406,7 @@ gcloud scheduler jobs describe nba-odds-events --location=us-west2
 
 # Ensure Events runs at :00 and Props at :30
 # Current schedule should show:
-# Events: "0 8-20/2 * * *"  
+# Events: "0 8-20/2 * * *"
 # Props:  "30 8-20/2 * * *"
 ```
 
@@ -476,7 +476,7 @@ gcloud logging read "resource.type=cloud_scheduler_job AND (severity=ERROR OR te
 
 This schedule management system provides:
 - **Centralized source of truth** in documentation
-- **Automated monitoring and scheduling** via shell script  
+- **Automated monitoring and scheduling** via shell script
 - **Complete operational coverage** of all business-critical scrapers
 - **Maintainable process** for schedule changes and updates
 

@@ -303,8 +303,8 @@ class BdlPlayersScraper(ScraperBase, ScraperFlaskMixin):
                 "playerCount": len(players),
                 "players": players,
             }
-            
-            logger.info("Fetched %d players (%s) across %d pages", 
+
+            logger.info("Fetched %d players (%s) across %d pages",
                        len(players), self.opts["ident"], pages_fetched)
 
             # Success notification

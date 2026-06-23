@@ -4,10 +4,10 @@
 
 Validation queries for NBA.com Player Movement transactions (signings, waives, trades, contract conversions).
 
-**Data Source:** NBA.com Player Movement API  
-**Table:** `nba-props-platform.nba_raw.nbac_player_movement`  
-**Coverage:** January 2021 - Present (4,457+ transactions)  
-**Update Frequency:** Daily (cumulative file with 10 years of data)  
+**Data Source:** NBA.com Player Movement API
+**Table:** `nba-props-platform.nba_raw.nbac_player_movement`
+**Coverage:** January 2021 - Present (4,457+ transactions)
+**Update Frequency:** Daily (cumulative file with 10 years of data)
 **Processing Strategy:** INSERT_NEW_ONLY (only new transactions inserted)
 
 ### Data Characteristics
@@ -63,8 +63,8 @@ bq query --use_legacy_sql=false < validation/queries/raw/nbac_player_movement/tr
 ## Query Descriptions
 
 ### 1. season_completeness_check.sql
-**Purpose:** Season-by-season validation of transaction volumes by team  
-**When to run:** After backfills or monthly  
+**Purpose:** Season-by-season validation of transaction volumes by team
+**When to run:** After backfills or monthly
 **Expected results:**
 - DIAGNOSTICS row shows 0 for null_season, null_team
 - Each season: 600-1,100 total transactions
@@ -78,8 +78,8 @@ bq query --use_legacy_sql=false < validation/queries/raw/nbac_player_movement/tr
 - ❌ No transactions (team missing)
 
 ### 2. trade_validation.sql
-**Purpose:** Validate multi-part trades are complete (no orphaned trade parts)  
-**When to run:** After backfills or when investigating data quality  
+**Purpose:** Validate multi-part trades are complete (no orphaned trade parts)
+**When to run:** After backfills or when investigating data quality
 **Expected results:**
 - All trades have 2+ teams involved
 - Most trades are 2-team (simple trades)
@@ -97,8 +97,8 @@ bq query --use_legacy_sql=false < validation/queries/raw/nbac_player_movement/tr
 - 4+ teams: ~5% of trades (blockbuster trades)
 
 ### 3. team_activity_check.sql
-**Purpose:** Verify all 30 teams have reasonable transaction activity  
-**When to run:** Monthly or when investigating specific teams  
+**Purpose:** Verify all 30 teams have reasonable transaction activity
+**When to run:** Monthly or when investigating specific teams
 **Expected results:**
 - All 30 teams present in current season
 - Most teams: 10-40 transactions per season
@@ -116,8 +116,8 @@ bq query --use_legacy_sql=false < validation/queries/raw/nbac_player_movement/tr
 - 180+ days old: Normal during off-season
 
 ### 4. data_quality_checks.sql
-**Purpose:** Comprehensive data quality validation  
-**When to run:** After backfills or when investigating data issues  
+**Purpose:** Comprehensive data quality validation
+**When to run:** After backfills or when investigating data issues
 **Checks performed:**
 1. **NULL Values:** Required fields should never be NULL
 2. **Duplicates:** Primary key uniqueness (INSERT_NEW_ONLY should prevent)
@@ -131,8 +131,8 @@ bq query --use_legacy_sql=false < validation/queries/raw/nbac_player_movement/tr
 - ✅ Recent activity (context-dependent)
 
 ### 5. recent_activity_check.sql
-**Purpose:** View transaction activity in last 30 days  
-**When to run:** Weekly or when monitoring current season  
+**Purpose:** View transaction activity in last 30 days
+**When to run:** Weekly or when monitoring current season
 **Seasonal context:**
 - **Free Agency (July-August):** Expect daily activity, many signings
 - **Trade Deadline (February):** Expect frequent updates, many trades
@@ -145,8 +145,8 @@ bq query --use_legacy_sql=false < validation/queries/raw/nbac_player_movement/tr
 3. **TEAMS:** Team-by-team activity summary
 
 ### 6. scraper_freshness_check.sql ⭐ CRITICAL
-**Purpose:** Monitor scraper health with seasonal awareness  
-**When to run:** Daily (automated monitoring)  
+**Purpose:** Monitor scraper health with seasonal awareness
+**When to run:** Daily (automated monitoring)
 **Unique challenge:** Cumulative source means "no new records" can be normal
 
 **Freshness indicators tracked:**
@@ -169,8 +169,8 @@ bq query --use_legacy_sql=false < validation/queries/raw/nbac_player_movement/tr
 - Other periods: Alert if >30 days old
 
 ### 7. transaction_type_distribution.sql
-**Purpose:** Verify transaction type ratios match expectations  
-**When to run:** Monthly to detect data quality issues  
+**Purpose:** Verify transaction type ratios match expectations
+**When to run:** Monthly to detect data quality issues
 **Expected distribution:**
 - Signing: 47.5% (most common)
 - Waive: 30.6% (releases)
@@ -350,6 +350,6 @@ validate-player-movement teams
 
 For questions about validation queries or data quality issues, see the validation master guide or check existing processor documentation.
 
-**Last Updated:** October 13, 2025  
-**Pattern:** Pattern 3 (Single Event per Key) with unique trade grouping  
+**Last Updated:** October 13, 2025
+**Pattern:** Pattern 3 (Single Event per Key) with unique trade grouping
 **Status:** Production Ready

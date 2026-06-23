@@ -11,7 +11,7 @@
 -- ============================================================================
 
 WITH daily_stats AS (
-  SELECT 
+  SELECT
     game_date,
     COUNT(DISTINCT game_id) as games,
     COUNT(*) as total_events,
@@ -24,7 +24,7 @@ WITH daily_stats AS (
   WHERE game_date >= '2024-01-01'  -- Adjust based on Discovery Query 1 results
   GROUP BY game_date
 )
-SELECT 
+SELECT
   game_date,
   day_of_week,
   games,

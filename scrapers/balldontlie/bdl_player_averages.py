@@ -166,7 +166,7 @@ class BdlPlayerAveragesScraper(ScraperBase, ScraperFlaskMixin):
                     msg = self.raw_response.json().get("message", "")
                 except ValueError:
                     pass
-            
+
             # Send error notification for 503
             try:
                 notify_error(
@@ -185,7 +185,7 @@ class BdlPlayerAveragesScraper(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send 503 error notification: {notify_ex}")
-            
+
             raise InvalidHttpStatusCodeException(
                 f"503 Service Unavailable - {msg or 'see BallDontLie docs'}"
             )
@@ -231,7 +231,7 @@ class BdlPlayerAveragesScraper(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     def set_additional_opts(self) -> None:
         super().set_additional_opts()
-        
+
         try:
             # 1. required route & query params with defaults
             self.opts["category"] = (self.opts.get("category") or "general").lower()
@@ -281,7 +281,7 @@ class BdlPlayerAveragesScraper(ScraperBase, ScraperFlaskMixin):
                 f"{self.opts['seasonType']}_{self.opts['statType']}_"
                 f"{len(self._player_ids)}p_{sample_ids}{suffix}"
             )
-        
+
         except Exception as e:
             # Send error notification for parameter validation failure
             try:
@@ -446,7 +446,7 @@ class BdlPlayerAveragesScraper(ScraperBase, ScraperFlaskMixin):
                 "rowCount": len(rows),
                 "playerAverages": rows,
             }
-            
+
             logger.info(
                 "Fetched %d rows (%s/%s/%s season %s) across %d chunks",
                 len(rows),

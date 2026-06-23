@@ -112,7 +112,7 @@ seasonal_context AS (
     3 as sort_order
   FROM team_activity
 )
-ORDER BY 
+ORDER BY
   sort_order,
   CASE WHEN section = 'DAILY' THEN info1 ELSE '' END DESC,
   CASE WHEN section = 'TEAMS' THEN CAST(info2 AS INT64) ELSE 0 END DESC

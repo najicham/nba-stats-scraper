@@ -9,10 +9,10 @@
 --   - status = "🔴 CRITICAL" means scraper likely failed
 -- ============================================================================
 
-WITH 
+WITH
 -- Get all dates in range and count hourly snapshots
 daily_snapshot_counts AS (
-  SELECT 
+  SELECT
     report_date,
     COUNT(DISTINCT report_hour) as unique_hours,
     COUNT(*) as total_player_records,
@@ -42,7 +42,7 @@ schedule_context AS (
 
 -- Combine and categorize
 daily_summary AS (
-  SELECT 
+  SELECT
     d.report_date,
     d.unique_hours,
     d.total_player_records,
@@ -57,30 +57,30 @@ daily_summary AS (
       -- Game day with zero reports = CRITICAL
       WHEN COALESCE(s.games_scheduled, 0) > 0 AND d.unique_hours IS NULL THEN '🔴 CRITICAL: Game day - no reports'
       WHEN COALESCE(s.games_scheduled, 0) > 0 AND d.unique_hours <= 2 THEN '🔴 CRITICAL: Game day - very few snapshots'
-      
+
       -- Game day missing peak hours = ERROR
       WHEN COALESCE(s.games_scheduled, 0) > 0 AND d.has_5pm_report = 0 THEN '🟡 ERROR: Game day missing 5 PM report'
       WHEN COALESCE(s.games_scheduled, 0) > 0 AND d.has_8pm_report = 0 THEN '🟡 ERROR: Game day missing 8 PM report'
-      
+
       -- Game day with good coverage = COMPLETE
       WHEN COALESCE(s.games_scheduled, 0) > 0 AND d.unique_hours >= 5 THEN '✅ Complete: Game day'
-      
+
       -- Off day with no reports = EXPECTED
       WHEN COALESCE(s.games_scheduled, 0) = 0 AND d.unique_hours IS NULL THEN '⚪ Expected: Off day - no reports'
       WHEN COALESCE(s.games_scheduled, 0) = 0 AND d.unique_hours <= 3 THEN '⚪ Expected: Off day - sparse reports'
-      
+
       -- Moderate coverage
       WHEN d.unique_hours BETWEEN 3 AND 4 THEN '⚠️  WARNING: Moderate coverage'
-      
+
       ELSE '✅ Complete'
     END as status
   FROM daily_snapshot_counts d
   LEFT JOIN schedule_context s ON d.report_date = s.game_date
-  
+
   UNION ALL
-  
+
   -- Include dates with games but NO injury reports (complete failure)
-  SELECT 
+  SELECT
     s.game_date as report_date,
     0 as unique_hours,
     0 as total_player_records,
@@ -94,13 +94,13 @@ daily_summary AS (
     '🔴 CRITICAL: Game day - no reports' as status
   FROM schedule_context s
   WHERE NOT EXISTS (
-    SELECT 1 
-    FROM daily_snapshot_counts d 
+    SELECT 1
+    FROM daily_snapshot_counts d
     WHERE d.report_date = s.game_date
   )
 )
 
-SELECT 
+SELECT
   report_date,
   FORMAT_DATE('%A', report_date) as day_of_week,
   games_scheduled,
@@ -112,9 +112,9 @@ SELECT
   ROUND(avg_confidence, 3) as avg_confidence,
   status
 FROM daily_summary
-ORDER BY 
+ORDER BY
   -- Sort critical issues first
-  CASE 
+  CASE
     WHEN status LIKE '%CRITICAL%' THEN 1
     WHEN status LIKE '%ERROR%' THEN 2
     WHEN status LIKE '%WARNING%' THEN 3

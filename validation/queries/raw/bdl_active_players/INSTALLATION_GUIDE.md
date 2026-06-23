@@ -228,7 +228,7 @@ SELECT * FROM \`nba-props-platform.nba_processing.bdl_daily_status\`
 # File: scripts/check_bdl_and_alert.sh
 
 RESULT=$(bq query --use_legacy_sql=false --format=csv "
-SELECT overall_status 
+SELECT overall_status
 FROM \`nba-props-platform.nba_processing.bdl_daily_status\`
 ")
 

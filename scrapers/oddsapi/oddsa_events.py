@@ -153,26 +153,26 @@ class GetOddsApiEvents(ScraperBase, ScraperFlaskMixin):
         """
         # Call base class first for standard processing
         super().set_additional_opts()  # Base class handles game_date → date conversion
-        
+
         # Calculate commence time boundaries (Eastern day → UTC)
         import pytz
-        
+
         eastern = pytz.timezone('America/New_York')
         game_date_str = self.opts["game_date"]
-        
+
         # Parse the game date (YYYY-MM-DD)
         game_date = datetime.strptime(game_date_str, "%Y-%m-%d").date()
-        
+
         # Create Eastern timezone boundaries for the day
         day_start = eastern.localize(datetime.combine(game_date, time.min))  # 00:00:00 ET
         day_end = eastern.localize(datetime.combine(game_date, time.max))    # 23:59:59.999999 ET
-        
+
         # Convert to UTC for API (only if not already set by user)
         if not self.opts.get("commenceTimeFrom"):
             self.opts["commenceTimeFrom"] = day_start.astimezone(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         if not self.opts.get("commenceTimeTo"):
             self.opts["commenceTimeTo"] = day_end.astimezone(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        
+
         logger.info(
             "Game date %s → commence times: %s to %s (ET day → UTC)",
             game_date_str,
@@ -193,7 +193,7 @@ class GetOddsApiEvents(ScraperBase, ScraperFlaskMixin):
         )
         if not api_key:
             error_msg = "Missing api_key and env var ODDS_API_KEY not set."
-            
+
             # Send critical notification - API key missing prevents all scraping
             try:
                 notify_error(
@@ -209,7 +209,7 @@ class GetOddsApiEvents(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise DownloadDataException(error_msg)
 
         base = self._API_ROOT_TMPL.format(sport=self.opts["sport"])
@@ -235,7 +235,7 @@ class GetOddsApiEvents(ScraperBase, ScraperFlaskMixin):
         """Handle HTTP errors with notifications."""
         if self.raw_response.status_code == 200:
             return
-        
+
         # Non-success status code - send error notification
         status_code = self.raw_response.status_code
         try:
@@ -255,7 +255,7 @@ class GetOddsApiEvents(ScraperBase, ScraperFlaskMixin):
             )
         except Exception as notify_ex:
             logger.warning(f"Failed to send notification: {notify_ex}")
-        
+
         super().check_download_status()
 
     # ------------------------------------------------------------------ #
@@ -267,7 +267,7 @@ class GetOddsApiEvents(ScraperBase, ScraperFlaskMixin):
         """
         if isinstance(self.decoded_data, dict) and "message" in self.decoded_data:
             error_msg = self.decoded_data['message']
-            
+
             # API returned an error message
             try:
                 notify_error(
@@ -283,7 +283,7 @@ class GetOddsApiEvents(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise DownloadDataException(f"API error: {error_msg}")
 
         if not isinstance(self.decoded_data, list):
@@ -303,7 +303,7 @@ class GetOddsApiEvents(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise DownloadDataException("Expected a list of events.")
 
     # ------------------------------------------------------------------ #
@@ -319,7 +319,7 @@ class GetOddsApiEvents(ScraperBase, ScraperFlaskMixin):
             "rowCount": len(events),
             "events": events,
         }
-        
+
         # Check for no events — only warn if regular-season games were expected (Session 299)
         if len(events) == 0:
             game_date_str = self.opts.get('game_date', 'unknown')
@@ -350,7 +350,7 @@ class GetOddsApiEvents(ScraperBase, ScraperFlaskMixin):
                 # Extract earliest and latest commence times for context
                 earliest_time = events[0].get("commence_time", "unknown") if events else "unknown"
                 latest_time = events[-1].get("commence_time", "unknown") if events else "unknown"
-                
+
                 notify_info(
                     title="Events Scraped Successfully",
                     message=f"Retrieved {len(events)} events from Odds API",
@@ -368,7 +368,7 @@ class GetOddsApiEvents(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-        
+
         logger.info("Fetched %d events for %s", len(events), self.opts["sport"])
 
     # ------------------------------------------------------------------ #

@@ -180,7 +180,7 @@ gsutil ls gs://nba-scraped-data/odds-api/player-props-history/2024-04-23/
 ```bash
 # Verify critical teams now have data
 bq query --use_legacy_sql=false '
-SELECT 
+SELECT
   game_date,
   CONCAT(away_team_abbr, " @ ", home_team_abbr) as matchup,
   COUNT(DISTINCT player_name) as players,
@@ -188,7 +188,7 @@ SELECT
   COUNT(*) as total_records
 FROM `nba-props-platform.nba_raw.odds_api_player_points_props`
 WHERE game_date BETWEEN "2024-04-20" AND "2024-05-03"
-  AND (home_team_abbr IN ("PHX","LAC","DAL") 
+  AND (home_team_abbr IN ("PHX","LAC","DAL")
    OR away_team_abbr IN ("PHX","LAC","DAL"))
 GROUP BY game_date, matchup
 ORDER BY game_date'
@@ -372,7 +372,7 @@ jq '.data.bookmakers[].markets[] | select(.key=="player_points")' file.json
 **Solution:**
 ```sql
 -- Find duplicates
-SELECT 
+SELECT
   game_date, player_name, bookmaker, snapshot_timestamp,
   COUNT(*) as count
 FROM `nba-props-platform.nba_raw.odds_api_player_points_props`
@@ -482,7 +482,7 @@ bq query --use_legacy_sql=false < validate_backfill_results.sql
 
 ---
 
-**Last Updated:** October 2025  
-**Status:** Ready for execution  
-**Estimated Total Time:** 1-2 hours for high-priority backfill  
+**Last Updated:** October 2025
+**Status:** Ready for execution
+**Estimated Total Time:** 1-2 hours for high-priority backfill
 **Estimated Total Cost:** $0.50-2.00

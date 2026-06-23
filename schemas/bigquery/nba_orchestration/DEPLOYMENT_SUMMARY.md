@@ -1,7 +1,7 @@
 # NBA Orchestration Dataset - Deployment Summary
 
-**File:** `schemas/bigquery/nba_orchestration/DEPLOYMENT_SUMMARY.md`  
-**Date:** November 10, 2025  
+**File:** `schemas/bigquery/nba_orchestration/DEPLOYMENT_SUMMARY.md`
+**Date:** November 10, 2025
 **Status:** ✅ Ready for Deployment
 
 ## What Was Created
@@ -58,7 +58,7 @@ bq ls nba-props-platform:nba_orchestration
 
 # Test query
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   table_name,
   table_type
 FROM \`nba-props-platform.nba_orchestration.INFORMATION_SCHEMA.TABLES\`
@@ -79,7 +79,7 @@ python -m scrapers.nbacom.nbac_injury_report \
 
 # Check log
 bq query --use_legacy_sql=false "
-SELECT 
+SELECT
   scraper_name,
   status,
   source,
@@ -148,8 +148,8 @@ Cleanup processor checks for missing files every 30 minutes:
 
 ### scraper_execution_log
 
-**Partitioning:** Daily on `triggered_at`  
-**Clustering:** `scraper_name, workflow, status, source`  
+**Partitioning:** Daily on `triggered_at`
+**Clustering:** `scraper_name, workflow, status, source`
 **Retention:** 90 days
 
 **Sample Query:**
@@ -165,14 +165,14 @@ LIMIT 1;
 
 ### workflow_decisions
 
-**Partitioning:** Daily on `decision_time`  
-**Clustering:** `workflow_name, action, alert_level`  
+**Partitioning:** Daily on `decision_time`
+**Clustering:** `workflow_name, action, alert_level`
 **Retention:** 90 days
 
 **Sample Query:**
 ```sql
 -- Today's workflow summary
-SELECT 
+SELECT
   workflow_name,
   action,
   COUNT(*) as decisions,
@@ -184,14 +184,14 @@ GROUP BY workflow_name, action;
 
 ### daily_expected_schedule
 
-**Partitioning:** Daily on `date`  
-**Clustering:** `workflow_name, expected_run_time`  
+**Partitioning:** Daily on `date`
+**Clustering:** `workflow_name, expected_run_time`
 **Retention:** 90 days
 
 **Sample Query:**
 ```sql
 -- Today's expected schedule
-SELECT 
+SELECT
   workflow_name,
   FORMAT_TIMESTAMP('%H:%M', expected_run_time, 'America/New_York') as time_et,
   reason,
@@ -203,14 +203,14 @@ ORDER BY expected_run_time;
 
 ### cleanup_operations
 
-**Partitioning:** Daily on `cleanup_time`  
-**Clustering:** `missing_files_found, republished_count`  
+**Partitioning:** Daily on `cleanup_time`
+**Clustering:** `missing_files_found, republished_count`
 **Retention:** 90 days
 
 **Sample Query:**
 ```sql
 -- Recent cleanup activity
-SELECT 
+SELECT
   cleanup_time,
   files_checked,
   missing_files_found,
@@ -230,7 +230,7 @@ LIMIT 20;
 ./schemas/bigquery/nba_orchestration/deploy_tables.sh
 ```
 
-**Time:** 5 minutes  
+**Time:** 5 minutes
 **Result:** All 4 tables created and verified
 
 ### Priority 2: Add Logging to Scraper Base (Next)
@@ -244,7 +244,7 @@ Add these methods:
 
 **Integration point:** Call from `run()` method before returning
 
-**Time:** 2-3 hours  
+**Time:** 2-3 hours
 **Result:** Every scraper automatically logs to BigQuery
 
 ### Priority 3: Create Config File (Next)
@@ -269,7 +269,7 @@ workflows:
         - nbac_player_list
 ```
 
-**Time:** 2-3 hours  
+**Time:** 2-3 hours
 **Result:** Declarative workflow configuration
 
 ### Priority 4: Implement Master Controller (Week 2)
@@ -283,7 +283,7 @@ Core logic:
 4. Trigger scrapers if action='RUN'
 5. Generate daily_expected_schedule at 5 AM ET
 
-**Time:** 1-2 days  
+**Time:** 1-2 days
 **Result:** Automated workflow orchestration
 
 ## Testing Checklist

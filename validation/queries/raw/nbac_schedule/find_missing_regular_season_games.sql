@@ -36,9 +36,9 @@ regular_season_games AS (
 team_games AS (
   SELECT game_date, home_team_tricode as team, home_team_name as team_name, game_id
   FROM regular_season_games
-  
+
   UNION ALL
-  
+
   SELECT game_date, away_team_tricode as team, away_team_name as team_name, game_id
   FROM regular_season_games
 ),
@@ -142,7 +142,7 @@ SELECT
   team as section,
   team_name as detail1,
   CONCAT('Games: ', CAST(games AS STRING), ' (avg: ', CAST(ROUND(avg_games, 1) AS STRING), ')') as detail2,
-  CONCAT('Diff: ', 
+  CONCAT('Diff: ',
     CASE WHEN games_diff > 0 THEN '+' ELSE '' END,
     CAST(ROUND(games_diff, 1) AS STRING)
   ) as detail3,

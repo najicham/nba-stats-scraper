@@ -225,7 +225,7 @@ The 19 missing regular season dates represent only 9% of the season and don't im
 
 ---
 
-**Validated By:** Discovery Phase Queries  
-**Date:** October 13, 2025  
-**Coverage:** 2024-25 NBA Season (Oct 2024 - Jun 2025)  
+**Validated By:** Discovery Phase Queries
+**Date:** October 13, 2025
+**Coverage:** 2024-25 NBA Season (Oct 2024 - Jun 2025)
 **Status:** Production Ready with Known Gaps

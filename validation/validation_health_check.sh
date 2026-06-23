@@ -21,19 +21,19 @@ echo -e "${CYAN}📊 Current Processor Status:${NC}"
 echo ""
 
 bq query --use_legacy_sql=false --format=pretty "
-SELECT 
+SELECT
   processor_name,
   health_status,
   overall_status,
   CONCAT(passed_checks, '/', total_checks) as checks,
   CONCAT(ROUND(pass_rate, 1), '%') as pass_rate,
   CONCAT(hours_since_validation, 'h ago') as last_validated,
-  CASE 
+  CASE
     WHEN remediation_available THEN CONCAT('✅ ', CAST(remediation_commands_count AS STRING), ' commands')
     ELSE '❌ None'
   END as remediation
 FROM \`nba-props-platform.nba_processing.processor_status_current\`
-ORDER BY 
+ORDER BY
   CASE health_status
     WHEN '🔴 FAILING' THEN 1
     WHEN '🟡 WARNING' THEN 2
@@ -61,7 +61,7 @@ else
     echo -e "${YELLOW}Found $FAILURES failures:${NC}"
     echo ""
     bq query --use_legacy_sql=false --format=pretty "
-    SELECT 
+    SELECT
       DATE(validation_timestamp) as date,
       processor_name,
       check_name,
@@ -82,11 +82,11 @@ echo -e "${CYAN}📈 Data Quality Trends (Last 4 Weeks):${NC}"
 echo ""
 
 bq query --use_legacy_sql=false --format=pretty "
-SELECT 
+SELECT
   processor_name,
   week_start,
   CONCAT(ROUND(pass_rate, 1), '%') as pass_rate,
-  CASE 
+  CASE
     WHEN pass_rate_change > 0 THEN CONCAT('📈 +', CAST(ROUND(pass_rate_change, 1) AS STRING), '%')
     WHEN pass_rate_change < 0 THEN CONCAT('📉 ', CAST(ROUND(pass_rate_change, 1) AS STRING), '%')
     ELSE '➡️ 0%'
@@ -105,13 +105,13 @@ echo -e "${CYAN}📋 Validation Coverage:${NC}"
 echo ""
 
 bq query --use_legacy_sql=false --format=pretty "
-SELECT 
+SELECT
   validation_status,
   COUNT(*) as processor_count,
   STRING_AGG(processor_name, ', ') as processors
 FROM \`nba-props-platform.nba_processing.validation_coverage\`
 GROUP BY validation_status
-ORDER BY 
+ORDER BY
   CASE validation_status
     WHEN '✅ Active (7d)' THEN 1
     WHEN '⚠️ Inactive (7d)' THEN 2
@@ -145,10 +145,10 @@ echo ""
 
 echo "Overall Pass Rate (Last 30 Days):"
 bq query --use_legacy_sql=false --format=csv "
-SELECT 
+SELECT
   CONCAT(
     ROUND(
-      SUM(passed_checks) * 100.0 / SUM(total_checks), 
+      SUM(passed_checks) * 100.0 / SUM(total_checks),
       2
     ),
     '%'

@@ -143,7 +143,7 @@ python -c "from data_processors.analytics.analytics_base import AnalyticsProcess
 python -c "
 from data_processors.analytics.analytics_base import AnalyticsProcessorBase
 p = AnalyticsProcessorBase()
-methods = ['save_analytics', 'check_dependencies', 'track_source_usage', 
+methods = ['save_analytics', 'check_dependencies', 'track_source_usage',
            'log_quality_issue', 'record_failure']
 assert all(hasattr(p, m) for m in methods)
 print('✅ All methods accessible')

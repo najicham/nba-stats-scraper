@@ -1,7 +1,7 @@
 # Odds API Game Lines Validator - Testing Guide
 
-**Status:** ✅ Validator Complete - Ready for Testing  
-**Created:** 2025-10-11  
+**Status:** ✅ Validator Complete - Ready for Testing
+**Created:** 2025-10-11
 **Data Quality Target:** 99.16% (5,216 of 5,260 games complete)
 
 ---
@@ -18,7 +18,7 @@ python -m validation.validators.raw.odds_game_lines_validator \
   --verbose
 ```
 
-**Expected:** ~3-5 games per day × 8 rows each = 168-280 rows  
+**Expected:** ~3-5 games per day × 8 rows each = 168-280 rows
 **Runtime:** ~15-30 seconds
 
 ---
@@ -58,7 +58,7 @@ python -m validation.validators.raw.odds_game_lines_validator \
 - ✅ Known incomplete games (if any in January 2024)
 - ✅ Bookmaker and market coverage
 
-**Expected Result:** 15-16/16 checks passing  
+**Expected Result:** 15-16/16 checks passing
 **Runtime:** ~1-2 minutes
 
 ---
@@ -79,7 +79,7 @@ python -m validation.validators.raw.odds_game_lines_validator \
 - ✅ All data quality rules
 - ✅ Known issues (Thanksgiving 2023, April 2024)
 
-**Expected Result:** 14-16/16 checks passing (2 warnings for known incomplete games)  
+**Expected Result:** 14-16/16 checks passing (2 warnings for known incomplete games)
 **Runtime:** ~3-5 minutes
 
 ---
@@ -100,7 +100,7 @@ python -m validation.validators.raw.odds_game_lines_validator \
 - ✅ All known issues documented
 - ✅ Cross-season consistency
 
-**Expected Result:** 14-16/16 checks passing (2 warnings for 44 known incomplete games)  
+**Expected Result:** 14-16/16 checks passing (2 warnings for 44 known incomplete games)
 **Runtime:** ~5-10 minutes
 
 ---
@@ -120,7 +120,7 @@ python -m validation.validators.raw.odds_game_lines_validator \
 - ✅ Proper warning severity (not error)
 - ✅ Affected games listed
 
-**Expected Result:** 13-14/16 checks passing (2-3 warnings for incomplete games)  
+**Expected Result:** 13-14/16 checks passing (2-3 warnings for incomplete games)
 **Expected Warnings:**
 - "Found 5 incomplete games"
 - "Found 3 games with < 2 bookmakers"
@@ -188,9 +188,9 @@ Checks: 14/16 passed
 ## 🔍 What Each Validation Checks
 
 ### 1. Game Completeness Check
-**Query:** Counts rows per game, expects 8  
-**Logic:** 2 bookmakers × 2 markets × 2 outcomes = 8 rows  
-**Pass Criteria:** < 1% of games incomplete  
+**Query:** Counts rows per game, expects 8
+**Logic:** 2 bookmakers × 2 markets × 2 outcomes = 8 rows
+**Pass Criteria:** < 1% of games incomplete
 **Expected:** 5,216/5,260 games = 99.16% ✅
 
 **Sample Output:**
@@ -200,8 +200,8 @@ Checks: 14/16 passed
 ```
 
 ### 2. Bookmaker Coverage Check
-**Query:** Counts distinct bookmakers per game  
-**Pass Criteria:** < 0.5% missing a bookmaker  
+**Query:** Counts distinct bookmakers per game
+**Pass Criteria:** < 0.5% missing a bookmaker
 **Expected:** Most games have both DraftKings + FanDuel
 
 **Sample Output:**
@@ -211,8 +211,8 @@ Checks: 14/16 passed
 ```
 
 ### 3. Market Coverage Check
-**Query:** Checks for spreads AND totals per game  
-**Pass Criteria:** 100% have both markets  
+**Query:** Checks for spreads AND totals per game
+**Pass Criteria:** 100% have both markets
 **Expected:** All games have both
 
 **Sample Output:**
@@ -221,8 +221,8 @@ Checks: 14/16 passed
 ```
 
 ### 4. Spread Range Validation
-**Query:** Finds spreads outside -25 to +25  
-**Pass Criteria:** 0 spreads outside range  
+**Query:** Finds spreads outside -25 to +25
+**Pass Criteria:** 0 spreads outside range
 **Expected:** All spreads reasonable
 
 **Sample Output:**
@@ -231,8 +231,8 @@ Checks: 14/16 passed
 ```
 
 ### 5. Totals Range Validation
-**Query:** Finds totals outside 180-260  
-**Pass Criteria:** 0 totals outside range  
+**Query:** Finds totals outside 180-260
+**Pass Criteria:** 0 totals outside range
 **Expected:** All totals reasonable (avg ~225)
 
 **Sample Output:**
@@ -242,8 +242,8 @@ Checks: 14/16 passed
 ```
 
 ### 6. Team Name Validation
-**Query:** Checks team names against valid NBA teams  
-**Pass Criteria:** 100% valid team names  
+**Query:** Checks team names against valid NBA teams
+**Pass Criteria:** 100% valid team names
 **Expected:** All names valid (30 teams)
 
 **Sample Output:**
@@ -252,8 +252,8 @@ Checks: 14/16 passed
 ```
 
 ### 7. Odds Timing Validation
-**Query:** Verifies snapshot_timestamp < commence_time  
-**Pass Criteria:** 100% snapshots before game  
+**Query:** Verifies snapshot_timestamp < commence_time
+**Pass Criteria:** 100% snapshots before game
 **Expected:** All snapshots at ~18:55:00 UTC (1-2 hours before tip)
 
 **Sample Output:**
@@ -263,8 +263,8 @@ Checks: 14/16 passed
 ```
 
 ### 8. Schedule Cross-Validation
-**Query:** Matches games with ESPN scoreboard  
-**Pass Criteria:** Informational only  
+**Query:** Matches games with ESPN scoreboard
+**Pass Criteria:** Informational only
 **Expected:** Some mismatches due to team name differences
 
 **Sample Output:**
@@ -280,7 +280,7 @@ Checks: 14/16 passed
 ### If Game Completeness Fails:
 ```sql
 -- Find incomplete games
-SELECT 
+SELECT
   game_date,
   game_id,
   home_team,
@@ -299,7 +299,7 @@ ORDER BY game_date, game_id;
 ### If Spread Range Fails:
 ```sql
 -- Find unusual spreads
-SELECT 
+SELECT
   game_date,
   home_team,
   away_team,
@@ -317,7 +317,7 @@ ORDER BY ABS(outcome_point) DESC;
 ### If Team Names Fail:
 ```sql
 -- Find invalid team names
-SELECT DISTINCT 
+SELECT DISTINCT
   home_team,
   COUNT(*) as games
 FROM `nba-props-platform.nba_raw.odds_api_game_lines`
@@ -405,7 +405,7 @@ ORDER BY home_team;
 
 ---
 
-**Validator Version:** 1.0  
-**Last Updated:** 2025-10-11  
-**Data Coverage:** 2021-10-19 to 2025-03-31  
+**Validator Version:** 1.0
+**Last Updated:** 2025-10-11
+**Data Coverage:** 2021-10-19 to 2025-03-31
 **Total Checks:** 16 (14 core + 2 informational)

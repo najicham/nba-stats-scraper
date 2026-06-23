@@ -54,7 +54,7 @@
 
 **Cannot backfill (scripts don't exist):**
 3. ✗ team_defense_game_summary
-4. ✗ team_offense_game_summary  
+4. ✗ team_offense_game_summary
 5. ✗ upcoming_player_game_context
 
 ### For Full 4-Year Backfill

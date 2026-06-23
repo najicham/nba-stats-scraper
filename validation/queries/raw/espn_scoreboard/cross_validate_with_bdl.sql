@@ -9,10 +9,10 @@
 --   - Report games in ESPN but missing from BDL (and vice versa)
 -- ============================================================================
 
-WITH 
+WITH
 -- ESPN scores
 espn_scores AS (
-  SELECT 
+  SELECT
     game_id,
     game_date,
     home_team_abbr,
@@ -27,7 +27,7 @@ espn_scores AS (
 
 -- BDL scores (aggregate from player box scores)
 bdl_scores AS (
-  SELECT 
+  SELECT
     game_id,
     game_date,
     home_team_abbr,
@@ -36,13 +36,13 @@ bdl_scores AS (
     away_team_score as bdl_away_score
   FROM `nba-props-platform.nba_raw.bdl_player_boxscores`
   WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
-  GROUP BY game_id, game_date, home_team_abbr, away_team_abbr, 
+  GROUP BY game_id, game_date, home_team_abbr, away_team_abbr,
            home_team_score, away_team_score
 ),
 
 -- Full outer join to find all games
 comparison AS (
-  SELECT 
+  SELECT
     COALESCE(e.game_id, b.game_id) as game_id,
     COALESCE(e.game_date, b.game_date) as game_date,
     COALESCE(e.home_team_abbr, b.home_team_abbr) as home_team,
@@ -78,7 +78,7 @@ summary AS (
 
 -- Output: Combined results with proper BigQuery syntax
 (
-  SELECT 
+  SELECT
     '📊 SUMMARY (Last 30 Days)' as section,
     CAST(total_games AS STRING) as col1,
     CAST(both_sources AS STRING) as col2,
@@ -99,7 +99,7 @@ summary AS (
   UNION ALL
 
   -- Output: Score mismatches (any difference)
-  SELECT 
+  SELECT
     '⚠️ SCORE DIFFERENCES' as section,
     game_id as col1,
     CONCAT(away_team, ' @ ', home_team) as col2,

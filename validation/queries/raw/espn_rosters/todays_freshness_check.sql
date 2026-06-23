@@ -34,8 +34,8 @@ SELECT
   COALESCE(t.teams_with_data, 0) as teams_with_data,
   COALESCE(t.unique_players, 0) as unique_players,
   COALESCE(t.total_records, 0) as total_records,
-  CASE 
-    WHEN t.min_scrape_hour IS NOT NULL 
+  CASE
+    WHEN t.min_scrape_hour IS NOT NULL
     THEN CONCAT('✓ Hour ', CAST(t.min_scrape_hour AS STRING))
     ELSE '✗ No scrape time'
   END as scrape_time,

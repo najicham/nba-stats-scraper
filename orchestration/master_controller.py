@@ -62,7 +62,7 @@ class WorkflowDecision:
     action: DecisionAction
     reason: str
     workflow_name: str
-    
+
     # Optional fields
     scrapers: List[str] = None
     context: Dict[str, Any] = None
@@ -70,14 +70,14 @@ class WorkflowDecision:
     priority: str = "MEDIUM"
     alert_level: AlertLevel = AlertLevel.NONE
     target_games: List[str] = None
-    
+
     def __post_init__(self):
         """Convert enums to strings if needed."""
         if isinstance(self.action, str):
             self.action = DecisionAction(self.action)
         if isinstance(self.alert_level, str):
             self.alert_level = AlertLevel(self.alert_level)
-        
+
         # Initialize empty lists
         if self.scrapers is None:
             self.scrapers = []
@@ -85,7 +85,7 @@ class WorkflowDecision:
             self.target_games = []
         if self.context is None:
             self.context = {}
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         data = asdict(self)
@@ -99,17 +99,17 @@ class WorkflowDecision:
 class MasterWorkflowController:
     """
     Main controller that evaluates all workflows hourly.
-    
+
     Makes intelligent decisions about what should run based on:
     - Game schedules
     - Workflow history
     - Time windows
     - Discovery mode state
     """
-    
+
     # Controller version for tracking
     VERSION = "1.0"
-    
+
     def __init__(self, config_path: str = "config/workflows.yaml"):
         """Initialize controller with config and services."""
         self.config = WorkflowConfig(config_path)
@@ -129,7 +129,7 @@ class MasterWorkflowController:
         else:
             self.lock = None
             logger.warning("⚠️  Distributed lock DISABLED - race conditions possible!")
-    
+
     def evaluate_all_workflows(self, current_time: Optional[datetime] = None) -> List[WorkflowDecision]:
         """
         Main entry point: Evaluate ALL workflows and decide RUN/SKIP/ABORT.
@@ -189,47 +189,47 @@ class MasterWorkflowController:
         logger.info("🎯 Master Controller: Evaluating all workflows")
         logger.info(f"   Time: {current_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
         logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        
+
         decisions = []
-        
+
         # STEP 1: Ensure schedule current (CRITICAL FOUNDATION)
         schedule_decision = self._ensure_schedule_current(current_time)
-        
+
         if schedule_decision.action == DecisionAction.ABORT:
             # Schedule scraper failed - cannot proceed
             logger.error("❌ ABORT: Schedule check failed, cannot evaluate game-aware workflows")
             decisions.append(schedule_decision)
             self._log_decisions(decisions)
             return decisions
-        
+
         if schedule_decision.action == DecisionAction.RUN:
             decisions.append(schedule_decision)
             logger.info("📋 Schedule needs refresh, will be included in workflow execution")
-        
+
         # STEP 2: Load today's schedule for game-aware decisions
         today = current_time.date().strftime('%Y-%m-%d')
         games_today = self.schedule_service.get_games_for_date(today)
-        
+
         logger.info(f"📅 Games today: {len(games_today)}")
-        
+
         # STEP 3: Evaluate each enabled workflow
         enabled_workflows = self.config.get_enabled_workflows()
         logger.info(f"🔍 Evaluating {len(enabled_workflows)} enabled workflows")
-        
+
         for workflow_name in enabled_workflows:
             try:
                 workflow_config = self.config.get_workflow_config(workflow_name)
                 decision_type = workflow_config['decision_type']
-                
+
                 logger.info(f"\n📊 Evaluating: {workflow_name} (type: {decision_type})")
-                
+
                 # Route to appropriate evaluator
                 if decision_type == "self_aware":
                     decision = self._evaluate_self_aware(workflow_name, workflow_config, current_time)
-                
+
                 elif decision_type == "game_aware":
                     decision = self._evaluate_game_aware(workflow_name, workflow_config, current_time, games_today)
-                
+
                 elif decision_type == "game_aware_yesterday":
                     yesterday = (current_time.date() - timedelta(days=1)).strftime('%Y-%m-%d')
                     games_yesterday = self.schedule_service.get_games_for_date(yesterday)
@@ -249,13 +249,13 @@ class MasterWorkflowController:
                 else:
                     logger.warning(f"Unknown decision_type: {decision_type}, skipping")
                     continue
-                
+
                 decisions.append(decision)
-                
+
                 # Log decision
                 icon = "🟢" if decision.action == DecisionAction.RUN else "⏭️"
                 logger.info(f"{icon} Decision: {decision.action.value} - {decision.reason}")
-                
+
             except Exception as e:
                 logger.error(f"Error evaluating {workflow_name}: {e}", exc_info=True)
                 # Create ABORT decision for this workflow
@@ -265,21 +265,21 @@ class MasterWorkflowController:
                     workflow_name=workflow_name,
                     alert_level=AlertLevel.CRITICAL
                 ))
-        
+
         # STEP 4: Log all decisions to BigQuery
         self._log_decisions(decisions)
-        
+
         # STEP 5: Summary
         run_count = sum(1 for d in decisions if d.action == DecisionAction.RUN)
         skip_count = sum(1 for d in decisions if d.action == DecisionAction.SKIP)
         abort_count = sum(1 for d in decisions if d.action == DecisionAction.ABORT)
-        
+
         logger.info("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         logger.info(f"📊 Summary: {run_count} RUN, {skip_count} SKIP, {abort_count} ABORT")
         logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-        
+
         return decisions
-    
+
     def _ensure_schedule_current(self, current_time: datetime) -> WorkflowDecision:
         """
         Ensure we have current schedule before evaluating game-aware workflows.
@@ -343,11 +343,11 @@ class MasterWorkflowController:
                 workflow_name="schedule_dependency",
                 alert_level=AlertLevel.CRITICAL
             )
-    
+
     def _evaluate_self_aware(self, workflow_name: str, config: Dict, current_time: datetime) -> WorkflowDecision:
         """
         Evaluate self-aware workflow (e.g., morning_operations).
-        
+
         Logic:
         1. Check if already run successfully today
         2. Check if in ideal time window
@@ -356,7 +356,7 @@ class MasterWorkflowController:
         schedule = config['schedule']
         ideal_start = schedule['ideal_window']['start_hour']
         ideal_end = schedule['ideal_window']['end_hour']
-        
+
         # Check if already run today
         query = f"""
             SELECT MAX(triggered_at) as last_run
@@ -365,10 +365,10 @@ class MasterWorkflowController:
               AND status = 'success'
               AND DATE(triggered_at) = CURRENT_DATE()
         """
-        
+
         result = execute_bigquery(query)
         last_run = result[0]['last_run'] if result and result[0]['last_run'] else None
-        
+
         if last_run:
             return WorkflowDecision(
                 action=DecisionAction.SKIP,
@@ -378,7 +378,7 @@ class MasterWorkflowController:
                 context={'last_run': last_run.isoformat()},
                 next_check_time=current_time + timedelta(days=1)
             )
-        
+
         # Check timing
         current_hour = current_time.hour
 
@@ -404,10 +404,10 @@ class MasterWorkflowController:
 
         # Extract scrapers from execution plan
         scrapers = self._extract_scrapers_from_plan(config['execution_plan'])
-        
+
         # Decide RUN
         alert_level = AlertLevel.WARNING if current_hour > ideal_end else AlertLevel.NONE
-        
+
         return WorkflowDecision(
             action=DecisionAction.RUN,
             reason=f"Ready to run (ideal window: {ideal_start}-{ideal_end} ET)",
@@ -420,11 +420,11 @@ class MasterWorkflowController:
                 'ideal_window': f"{ideal_start}-{ideal_end}"
             }
         )
-    
+
     def _evaluate_game_aware(self, workflow_name: str, config: Dict, current_time: datetime, games_today: list) -> WorkflowDecision:
         """
         Evaluate game-aware workflow (e.g., betting_lines).
-        
+
         Logic:
         1. Check if games today
         2. Check if within optimal window before games
@@ -433,7 +433,7 @@ class MasterWorkflowController:
         5. Decide RUN or SKIP
         """
         schedule = config['schedule']
-        
+
         # Check 1: Games today?
         if not games_today:
             return WorkflowDecision(
@@ -444,13 +444,13 @@ class MasterWorkflowController:
                 context={'games_today': 0},
                 next_check_time=current_time + timedelta(hours=6)
             )
-        
+
         # Check 2: Within window before first game?
         first_game = min(games_today, key=lambda g: g.commence_time)
         commence_dt = datetime.fromisoformat(first_game.commence_time.replace("Z", "+00:00"))
         hours_until_game = (commence_dt - current_time).total_seconds() / 3600
         window_hours = schedule.get('window_before_game_hours', 6)
-        
+
         if hours_until_game > window_hours:
             return WorkflowDecision(
                 action=DecisionAction.SKIP,
@@ -464,16 +464,16 @@ class MasterWorkflowController:
                 },
                 next_check_time=commence_dt - timedelta(hours=window_hours)
             )
-        
+
         # Check 3: Business hours?
         business_start = schedule.get('business_hours', {}).get('start', 8)
         business_end = schedule.get('business_hours', {}).get('end', 20)
-        
+
         if current_time.hour < business_start or current_time.hour >= business_end:
             next_check = current_time.replace(hour=business_start, minute=0, second=0)
             if current_time.hour >= business_end:
                 next_check += timedelta(days=1)
-            
+
             return WorkflowDecision(
                 action=DecisionAction.SKIP,
                 reason=f"Outside business hours ({business_start}-{business_end} ET)",
@@ -481,23 +481,23 @@ class MasterWorkflowController:
                 priority=config['priority'],
                 next_check_time=next_check
             )
-        
+
         # Check 4: Run frequency
         frequency_hours = schedule.get('frequency_hours', 2)
-        
+
         query = f"""
             SELECT MAX(triggered_at) as last_run
             FROM `nba-props-platform.nba_orchestration.scraper_execution_log`
             WHERE workflow = '{workflow_name}'
               AND DATE(triggered_at) = CURRENT_DATE()
         """
-        
+
         result = execute_bigquery(query)
         last_run = result[0]['last_run'] if result and result[0]['last_run'] else None
-        
+
         if last_run:
             hours_since = (current_time - last_run).total_seconds() / 3600
-            
+
             if hours_since < frequency_hours:
                 return WorkflowDecision(
                     action=DecisionAction.SKIP,
@@ -507,10 +507,10 @@ class MasterWorkflowController:
                     next_check_time=last_run + timedelta(hours=frequency_hours),
                     context={'hours_since_last_run': round(hours_since, 1)}
                 )
-        
+
         # All checks passed - RUN
         scrapers = self._extract_scrapers_from_plan(config['execution_plan'])
-        
+
         return WorkflowDecision(
             action=DecisionAction.RUN,
             reason=f"Ready: {len(games_today)} games today, {hours_until_game:.1f}h until first game",
@@ -523,11 +523,11 @@ class MasterWorkflowController:
                 'hours_until_game': round(hours_until_game, 1)
             }
         )
-    
+
     def _evaluate_post_game(self, workflow_name: str, config: Dict, current_time: datetime, games_yesterday: list) -> WorkflowDecision:
         """
         Evaluate post-game collection workflow.
-        
+
         Logic:
         1. Check if games yesterday
         2. Check if in time window for this collection
@@ -535,7 +535,7 @@ class MasterWorkflowController:
         4. Decide RUN or SKIP
         """
         schedule = config['schedule']
-        
+
         # Check 1: Games yesterday?
         if not games_yesterday:
             return WorkflowDecision(
@@ -546,7 +546,7 @@ class MasterWorkflowController:
                 context={'games_yesterday': 0},
                 next_check_time=current_time + timedelta(hours=6)
             )
-        
+
         # Check 2: Time window
         fixed_time_str = schedule.get('fixed_time')  # e.g., "22:00"
         tolerance_minutes = schedule.get('tolerance_minutes', 30)
@@ -593,23 +593,23 @@ class MasterWorkflowController:
                     next_check_time=window_time,
                     context={'time_diff_minutes': int(time_diff_minutes)}
                 )
-        
+
         # Check 3: Which games need collection?
         yesterday = (current_time.date() - timedelta(days=1)).strftime('%Y-%m-%d')
-        
+
         # Get games already collected (have box scores in BigQuery)
         query = f"""
             SELECT DISTINCT game_id
             FROM `nba-props-platform.nba_raw.bdl_player_boxscores`
             WHERE game_date = '{yesterday}'
         """
-        
+
         try:
             collected = execute_bigquery(query)
             collected_game_ids = {row['game_id'] for row in collected}
-            
+
             missing_games = [g for g in games_yesterday if g.game_id not in collected_game_ids]
-            
+
             if not missing_games:
                 return WorkflowDecision(
                     action=DecisionAction.SKIP,
@@ -623,17 +623,17 @@ class MasterWorkflowController:
                     },
                     next_check_time=current_time + timedelta(days=1)
                 )
-            
+
             # Determine alert level based on window
             alert_level = AlertLevel.NONE
             if "window_3" in workflow_name and missing_games:
                 alert_level = AlertLevel.CRITICAL  # Should have all by window 3
             elif "window_2" in workflow_name and len(missing_games) > len(games_yesterday) * 0.2:
                 alert_level = AlertLevel.WARNING  # >20% missing in window 2
-            
+
             # RUN
             scrapers = self._extract_scrapers_from_plan(config['execution_plan'])
-            
+
             return WorkflowDecision(
                 action=DecisionAction.RUN,
                 reason=f"{len(missing_games)} games need collection (window: {fixed_time_str})",
@@ -648,7 +648,7 @@ class MasterWorkflowController:
                     'missing': len(missing_games)
                 }
             )
-            
+
         except GoogleAPIError as e:
             logger.error(f"Error checking collected games: {e}", exc_info=True)
             # Assume need to collect, better to retry than skip
@@ -841,7 +841,7 @@ class MasterWorkflowController:
     def _evaluate_discovery(self, workflow_name: str, config: Dict, current_time: datetime, games_today: list) -> WorkflowDecision:
         """
         Evaluate discovery mode workflow.
-        
+
         Logic:
         1. Check if already succeeded today
         2. Check if game day required
@@ -852,7 +852,7 @@ class MasterWorkflowController:
         """
         schedule = config['schedule']
         scraper_name = config['execution_plan']['scraper']
-        
+
         # Check 1: Already succeeded today?
         # CRITICAL FIX: Check game_date (data date) not triggered_at (execution date)
         # Prevents false positive where scraper runs on Jan 2 but finds Jan 1 data
@@ -884,7 +884,7 @@ class MasterWorkflowController:
                 },
                 next_check_time=current_time + timedelta(days=1)
             )
-        
+
         # Check 2: Game day required?
         if schedule.get('requires_game_day', False) and not games_today:
             return WorkflowDecision(
@@ -895,23 +895,23 @@ class MasterWorkflowController:
                 context={'games_today': 0},
                 next_check_time=current_time + timedelta(hours=6)
             )
-        
+
         # Check 3: Recent attempt?
         retry_interval = schedule.get('retry_interval_hours', 1)
-        
+
         query = f"""
             SELECT MAX(triggered_at) as last_attempt
             FROM `nba-props-platform.nba_orchestration.scraper_execution_log`
             WHERE scraper_name = '{scraper_name}'
               AND DATE(triggered_at) = CURRENT_DATE()
         """
-        
+
         result = execute_bigquery(query)
         last_attempt = result[0]['last_attempt'] if result and result[0]['last_attempt'] else None
-        
+
         if last_attempt:
             hours_since = (current_time - last_attempt).total_seconds() / 3600
-            
+
             if hours_since < retry_interval:
                 return WorkflowDecision(
                     action=DecisionAction.SKIP,
@@ -921,20 +921,20 @@ class MasterWorkflowController:
                     next_check_time=last_attempt + timedelta(hours=retry_interval),
                     context={'hours_since_last_attempt': round(hours_since, 1)}
                 )
-        
+
         # Check 4: Max attempts today?
         max_attempts = schedule.get('max_attempts_per_day', 12)
-        
+
         query = f"""
             SELECT COUNT(*) as attempts_today
             FROM `nba-props-platform.nba_orchestration.scraper_execution_log`
             WHERE scraper_name = '{scraper_name}'
               AND DATE(triggered_at) = CURRENT_DATE()
         """
-        
+
         result = execute_bigquery(query)
         attempts_today = result[0]['attempts_today'] if result else 0
-        
+
         if attempts_today >= max_attempts:
             return WorkflowDecision(
                 action=DecisionAction.SKIP,
@@ -945,7 +945,7 @@ class MasterWorkflowController:
                 context={'attempts_today': attempts_today, 'max_attempts': max_attempts},
                 next_check_time=current_time + timedelta(days=1)
             )
-        
+
         # All checks passed - RUN
         return WorkflowDecision(
             action=DecisionAction.RUN,
@@ -959,7 +959,7 @@ class MasterWorkflowController:
                 'games_today': len(games_today) if games_today else 0
             }
         )
-    
+
     def _evaluate_bdl_catchup(self, workflow_name: str, config: Dict, current_time: datetime) -> WorkflowDecision:
         """
         Evaluate BDL catch-up workflow.
@@ -1093,15 +1093,15 @@ class MasterWorkflowController:
         - Multi-step: {"step_1": {...}, "step_2": {...}}
         """
         scrapers = []
-        
+
         # Simple case
         if 'scrapers' in execution_plan:
             scrapers.extend(execution_plan['scrapers'])
-        
+
         # Single scraper
         if 'scraper' in execution_plan:
             scrapers.append(execution_plan['scraper'])
-        
+
         # Multi-step
         for key, value in execution_plan.items():
             if isinstance(value, dict):
@@ -1109,16 +1109,16 @@ class MasterWorkflowController:
                     scrapers.extend(value['scrapers'])
                 if 'scraper' in value:
                     scrapers.append(value['scraper'])
-        
+
         return scrapers
-    
+
     def _log_decisions(self, decisions: List[WorkflowDecision]) -> None:
         """Log all decisions to BigQuery."""
         if not decisions:
             return
-        
+
         records = []
-        
+
         for decision in decisions:
             record = {
                 'decision_id': str(uuid.uuid4()),
@@ -1136,9 +1136,9 @@ class MasterWorkflowController:
                 'environment': self.config.get_settings().get('environment', 'unknown'),
                 'triggered_by': 'master_controller'
             }
-            
+
             records.append(record)
-        
+
         try:
             insert_bigquery_rows('nba_orchestration.workflow_decisions', records)
             logger.info(f"✅ Logged {len(records)} workflow decisions to BigQuery")

@@ -1,4 +1,4 @@
-#!/bin/bash  
+#!/bin/bash
 # File: bin/analytics/deploy/deploy_analytics_processor_backfill.sh
 # Deploy analytics processor backfill job
 
@@ -15,7 +15,7 @@ if [[ -z "$1" ]]; then
     echo ""
     echo "Examples:"
     echo "  $0 player_game_summary     # Deploy player game summary analytics"
-    echo "  $0 team_offense_game_log   # Deploy team offense analytics"  
+    echo "  $0 team_offense_game_log   # Deploy team offense analytics"
     echo "  $0 team_defense_game_log   # Deploy team defense analytics"
     echo ""
     echo "Available analytics jobs:"

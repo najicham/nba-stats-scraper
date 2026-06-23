@@ -14,7 +14,7 @@ resource "google_artifact_registry_repository" "pipeline" {
 
   labels = {
     environment = "production"
-    team        = "nba-analytics" 
+    team        = "nba-analytics"
     purpose     = "container-images"
   }
 }
@@ -27,11 +27,11 @@ resource "google_artifact_registry_repository_iam_member" "cloud_build_writer" {
   member     = "serviceAccount:${data.google_project.project.number}@cloudbuild.gserviceaccount.com"
 }
 
-# IAM permissions for Cloud Run to pull images  
+# IAM permissions for Cloud Run to pull images
 resource "google_artifact_registry_repository_iam_member" "cloud_run_reader" {
   location   = google_artifact_registry_repository.pipeline.location
   repository = google_artifact_registry_repository.pipeline.name
-  role       = "roles/artifactregistry.reader" 
+  role       = "roles/artifactregistry.reader"
   member     = "serviceAccount:${data.google_project.project.number}-compute@developer.gserviceaccount.com"
 }
 

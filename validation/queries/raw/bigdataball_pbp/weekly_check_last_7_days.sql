@@ -66,7 +66,7 @@ SELECT
   COALESCE(b.pct_coords, 0) as pct_shots_with_coords,
   CASE
     WHEN COALESCE(s.scheduled_games, 0) = 0 THEN '⚪ No games'
-    WHEN COALESCE(b.games_with_data, 0) = COALESCE(s.scheduled_games, 0) 
+    WHEN COALESCE(b.games_with_data, 0) = COALESCE(s.scheduled_games, 0)
      AND COALESCE(b.min_events_per_game, 0) >= 400
      AND COALESCE(b.pct_coords, 0) >= 70
     THEN '✅ Complete'

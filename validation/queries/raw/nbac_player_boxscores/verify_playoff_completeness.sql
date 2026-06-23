@@ -142,29 +142,29 @@ SELECT
     -- Check game completeness
     WHEN tps.actual_games < et.expected_games THEN
       CONCAT('❌ Missing ', CAST(et.expected_games - tps.actual_games AS STRING), ' games')
-    
+
     -- Check player counts
-    WHEN tps.min_players_per_game < 20 THEN 
+    WHEN tps.min_players_per_game < 20 THEN
       '⚠️ Low player count detected'
-    
+
     -- Check starter counts
     WHEN tps.avg_starters_per_game < 9.5 OR tps.avg_starters_per_game > 10.5 THEN
       CONCAT('⚠️ Unusual starter count: ', CAST(tps.avg_starters_per_game AS STRING))
-    
+
     -- Check BDL consistency
-    WHEN bdl.bdl_playoff_games IS NOT NULL 
+    WHEN bdl.bdl_playoff_games IS NOT NULL
      AND ABS(tps.actual_games - bdl.bdl_playoff_games) > 0 THEN
       CONCAT('⚠️ Discrepancy vs BDL: ', CAST(bdl.bdl_playoff_games AS STRING), ' games')
-    
+
     -- All checks passed
     WHEN tps.actual_games = et.expected_games
       AND tps.min_players_per_game >= 20
       AND tps.avg_starters_per_game BETWEEN 9.5 AND 10.5
     THEN '✅ Complete'
-    
+
     ELSE '⚠️ Data quality issue'
   END as status
-  
+
 FROM team_playoff_stats tps
 INNER JOIN expected_totals et
   ON tps.team_abbr = et.team_abbr
@@ -176,7 +176,7 @@ CROSS JOIN data_check
 WHERE data_check.total_records > 0
 
 ORDER BY
-  CASE 
+  CASE
     WHEN team = '⚪ No Data' THEN 0
     ELSE 1
   END,

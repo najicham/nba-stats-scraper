@@ -27,7 +27,7 @@ from data_processors.analytics.team_offense_game_summary.team_offense_game_summa
 
 class TestFullProcessorFlow:
     """Test complete processor flow from extraction to save."""
-    
+
     @pytest.fixture
     def sample_team_boxscore_data(self):
         """Create sample team boxscore data."""
@@ -99,7 +99,7 @@ class TestFullProcessorFlow:
                 'processed_at': datetime(2025, 1, 15, 10, 0, 0)
             }
         ])
-    
+
     @pytest.fixture
     def shot_zone_data(self):
         """Create sample shot zone data."""
@@ -127,7 +127,7 @@ class TestFullProcessorFlow:
                 'three_makes_pbp': 15
             }
         ])
-    
+
     @patch('shared.clients.bigquery_pool.get_bigquery_client')
     def test_successful_processing_with_shot_zones(
         self,
@@ -238,7 +238,7 @@ class TestFullProcessorFlow:
         assert lal_record['offensive_rating'] is not None, "Offensive rating should be calculated"
         assert lal_record['pace'] is not None, "Pace should be calculated"
         assert lal_record['ts_pct'] is not None, "True shooting % should be calculated"
-    
+
     @patch('shared.clients.bigquery_pool.get_bigquery_client')
     def test_processing_without_shot_zones(
         self,
@@ -336,7 +336,7 @@ class TestFullProcessorFlow:
         assert lal_record['team_paint_makes'] is None, "Paint makes should be None without shot zones"
         # Quality tier is 'bronze' when shot zones are missing (not 'high' or 'medium')
         assert lal_record['data_quality_tier'] in ['medium', 'bronze'], f"Expected 'medium' or 'bronze' quality tier, got {lal_record['data_quality_tier']}"
-    
+
     @patch('shared.clients.bigquery_pool.get_bigquery_client')
     def test_missing_critical_dependency_fails(
         self,
@@ -397,7 +397,7 @@ class TestFullProcessorFlow:
 
 class TestOvertimeGamesProcessing:
     """Test processing games with overtime periods."""
-    
+
     @pytest.fixture
     def overtime_game_data(self):
         """Create sample overtime game data."""
@@ -455,12 +455,12 @@ class TestOvertimeGamesProcessing:
                 'processed_at': datetime(2025, 1, 20, 12, 0, 0)
             }
         ])
-    
+
     def test_overtime_period_detection(self, overtime_game_data):
         """Test that overtime periods are detected correctly."""
         processor = TeamOffenseGameSummaryProcessor()
         processor.raw_data = overtime_game_data
-        
+
         # Set source tracking attributes
         processor.source_nbac_boxscore_last_updated = '2025-01-20T12:00:00Z'
         processor.source_nbac_boxscore_rows_found = 2
@@ -469,22 +469,22 @@ class TestOvertimeGamesProcessing:
         processor.source_play_by_play_rows_found = 0
         processor.source_play_by_play_completeness_pct = None
         processor.shot_zones_available = False
-        
+
         # Calculate analytics
         processor.calculate_analytics()
-        
+
         # Verify OT periods detected
         gsw_record = [r for r in processor.transformed_data if r['team_abbr'] == 'GSW'][0]
         assert gsw_record['overtime_periods'] == 1, f"Expected 1 OT period, got {gsw_record['overtime_periods']}"
-        
+
         phx_record = [r for r in processor.transformed_data if r['team_abbr'] == 'PHX'][0]
         assert phx_record['overtime_periods'] == 1, f"Expected 1 OT period, got {phx_record['overtime_periods']}"
-    
+
     def test_pace_calculation_adjusted_for_ot(self, overtime_game_data):
         """Test that pace calculation uses actual minutes (265 for OT)."""
         processor = TeamOffenseGameSummaryProcessor()
         processor.raw_data = overtime_game_data
-        
+
         # Set source tracking
         processor.source_nbac_boxscore_last_updated = '2025-01-20T12:00:00Z'
         processor.source_nbac_boxscore_rows_found = 2
@@ -493,13 +493,13 @@ class TestOvertimeGamesProcessing:
         processor.source_play_by_play_rows_found = 0
         processor.source_play_by_play_completeness_pct = None
         processor.shot_zones_available = False
-        
+
         processor.calculate_analytics()
-        
+
         # Pace should be normalized to 48 minutes
         # Possessions × (48 / actual_game_minutes)
         gsw_record = [r for r in processor.transformed_data if r['team_abbr'] == 'GSW'][0]
-        
+
         # Verify pace is calculated (should be lower than regulation pace for OT games)
         assert gsw_record['pace'] is not None, "Pace should be calculated"
         assert gsw_record['pace'] > 80, f"Pace seems too low: {gsw_record['pace']}"
@@ -508,12 +508,12 @@ class TestOvertimeGamesProcessing:
 
 class TestMultipleGamesProcessing:
     """Test processing multiple games in one run."""
-    
+
     @pytest.fixture
     def multiple_games_data(self):
         """Create data for multiple games."""
         games = []
-        
+
         # Game 1: LAL vs BOS
         games.extend([
             {'game_id': '20250115_LAL_BOS', 'team_abbr': 'LAL', 'opponent_team_abbr': 'BOS',
@@ -521,7 +521,7 @@ class TestMultipleGamesProcessing:
             {'game_id': '20250115_LAL_BOS', 'team_abbr': 'BOS', 'opponent_team_abbr': 'LAL',
              'points': 105, 'opponent_points': 110, 'is_home': True}
         ])
-        
+
         # Game 2: GSW vs PHX
         games.extend([
             {'game_id': '20250115_GSW_PHX', 'team_abbr': 'GSW', 'opponent_team_abbr': 'PHX',
@@ -529,7 +529,7 @@ class TestMultipleGamesProcessing:
             {'game_id': '20250115_GSW_PHX', 'team_abbr': 'PHX', 'opponent_team_abbr': 'GSW',
              'points': 115, 'opponent_points': 120, 'is_home': False}
         ])
-        
+
         # Game 3: MIA vs CHI
         games.extend([
             {'game_id': '20250115_MIA_CHI', 'team_abbr': 'MIA', 'opponent_team_abbr': 'CHI',
@@ -537,7 +537,7 @@ class TestMultipleGamesProcessing:
             {'game_id': '20250115_MIA_CHI', 'team_abbr': 'CHI', 'opponent_team_abbr': 'MIA',
              'points': 102, 'opponent_points': 98, 'is_home': True}
         ])
-        
+
         # Add required fields to all games
         for i, game in enumerate(games):
             game.update({
@@ -560,14 +560,14 @@ class TestMultipleGamesProcessing:
                 'minutes': '240:00',
                 'processed_at': datetime(2025, 1, 15, 10, 0, 0)
             })
-        
+
         return pd.DataFrame(games)
-    
+
     def test_processes_all_games(self, multiple_games_data):
         """Test that all games are processed correctly."""
         processor = TeamOffenseGameSummaryProcessor()
         processor.raw_data = multiple_games_data
-        
+
         # Set source tracking
         processor.source_nbac_boxscore_last_updated = '2025-01-15T10:00:00Z'
         processor.source_nbac_boxscore_rows_found = 6
@@ -576,25 +576,25 @@ class TestMultipleGamesProcessing:
         processor.source_play_by_play_rows_found = 0
         processor.source_play_by_play_completeness_pct = None
         processor.shot_zones_available = False
-        
+
         processor.calculate_analytics()
-        
+
         # Should have 6 team-game records (3 games × 2 teams)
         assert len(processor.transformed_data) == 6, f"Expected 6 records, got {len(processor.transformed_data)}"
-        
+
         # Verify unique game_ids
         game_ids = {r['game_id'] for r in processor.transformed_data}
         assert len(game_ids) == 3, f"Expected 3 unique games, got {len(game_ids)}"
-        
+
         # Verify unique teams
         teams = {r['team_abbr'] for r in processor.transformed_data}
         assert len(teams) == 6, f"Expected 6 unique teams, got {len(teams)}"
-    
+
     def test_win_loss_consistency_across_games(self, multiple_games_data):
         """Test that win/loss flags are consistent for each game."""
         processor = TeamOffenseGameSummaryProcessor()
         processor.raw_data = multiple_games_data
-        
+
         # Set source tracking
         processor.source_nbac_boxscore_last_updated = '2025-01-15T10:00:00Z'
         processor.source_nbac_boxscore_rows_found = 6
@@ -603,14 +603,14 @@ class TestMultipleGamesProcessing:
         processor.source_play_by_play_rows_found = 0
         processor.source_play_by_play_completeness_pct = None
         processor.shot_zones_available = False
-        
+
         processor.calculate_analytics()
-        
+
         # For each game, one team should win, one should lose
         for game_id in ['20250115_LAL_BOS', '20250115_GSW_PHX', '20250115_MIA_CHI']:
             game_records = [r for r in processor.transformed_data if r['game_id'] == game_id]
             assert len(game_records) == 2, f"Expected 2 records for {game_id}, got {len(game_records)}"
-            
+
             # One winner, one loser
             win_flags = [r['win_flag'] for r in game_records]
             assert True in win_flags, f"No winner in game {game_id}"
@@ -620,12 +620,12 @@ class TestMultipleGamesProcessing:
 
 class TestErrorHandling:
     """Test error handling and edge cases."""
-    
+
     def test_empty_dataset_handling(self):
         """Test handling of empty dataset."""
         processor = TeamOffenseGameSummaryProcessor()
         processor.raw_data = pd.DataFrame()  # Empty
-        
+
         # Set source tracking
         processor.source_nbac_boxscore_last_updated = '2025-01-15T10:00:00Z'
         processor.source_nbac_boxscore_rows_found = 0
@@ -634,24 +634,24 @@ class TestErrorHandling:
         processor.source_play_by_play_rows_found = 0
         processor.source_play_by_play_completeness_pct = None
         processor.shot_zones_available = False
-        
+
         # Should not crash
         processor.calculate_analytics()
-        
+
         # Should have empty transformed data
         assert len(processor.transformed_data) == 0
-    
+
     @patch('data_processors.analytics.team_offense_game_summary.team_offense_game_summary_processor.notify_warning')
     def test_high_processing_error_rate_notification(self, mock_notify_warning):
         """Test notification when processing error rate is high."""
         processor = TeamOffenseGameSummaryProcessor()
-        
+
         # Create data that will cause errors (missing required fields)
         processor.raw_data = pd.DataFrame([
             {'game_id': f'game_{i}', 'team_abbr': f'TEAM{i}'}
             for i in range(20)
         ])
-        
+
         # Set source tracking
         processor.source_nbac_boxscore_last_updated = '2025-01-15T10:00:00Z'
         processor.source_nbac_boxscore_rows_found = 20
@@ -660,10 +660,10 @@ class TestErrorHandling:
         processor.source_play_by_play_rows_found = 0
         processor.source_play_by_play_completeness_pct = None
         processor.shot_zones_available = False
-        
+
         # Process (will have errors due to missing fields)
         processor.calculate_analytics()
-        
+
         # Should send warning notification about high error rate
         assert mock_notify_warning.called, "Should send warning notification for high error rate"
 

@@ -148,7 +148,7 @@ The feature store includes metadata about upstream data sources. Analysis reveal
 ### Critical Features That Changed
 
 #### 1. Shot Zone Mismatch Score
-- **Healthy Period:** 
+- **Healthy Period:**
   - Average: 0.108
   - Non-zero values: 1,560 records (32.6%)
   - Zero values: 1,948 records (40.7%)

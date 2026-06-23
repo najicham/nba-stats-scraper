@@ -113,16 +113,16 @@ run_query() {
     local query_file=$1
     local output_format=$2
     local query_path="$QUERIES_DIR/$query_file"
-    
+
     if [ ! -f "$query_path" ]; then
         print_error "Query file not found: $query_file"
         echo "Run 'validate-schedule list' to see available queries"
         exit 1
     fi
-    
+
     print_header "Running: $query_file"
     echo ""
-    
+
     case $output_format in
         csv)
             local timestamp=$(date +%Y%m%d_%H%M%S)
@@ -151,7 +151,7 @@ run_query() {
 main() {
     local command=$1
     local output_format=""
-    
+
     # Parse options
     shift || true
     while [[ $# -gt 0 ]]; do
@@ -175,54 +175,54 @@ main() {
                 ;;
         esac
     done
-    
+
     # Handle commands
     case $command in
         # Show help
         help|--help|-h|"")
             show_help
             ;;
-        
+
         # List queries
         list|ls)
             list_queries
             ;;
-        
+
         # Historical validation
         completeness|complete|full|season)
             run_query "season_completeness_check.sql" "$output_format"
             ;;
-        
+
         missing|regular)
             run_query "find_missing_regular_season_games.sql" "$output_format"
             ;;
-        
+
         playoffs|playoff)
             run_query "verify_playoff_completeness.sql" "$output_format"
             ;;
-        
+
         balance|teams)
             run_query "team_balance_check.sql" "$output_format"
             ;;
-        
+
         gaps|schedule-gaps)
             run_query "team_schedule_gaps.sql" "$output_format"
             ;;
-        
+
         # Daily monitoring
         yesterday|daily|freshness)
             run_query "daily_freshness_check.sql" "$output_format"
             ;;
-        
+
         horizon|future|ahead)
             run_query "schedule_horizon_check.sql" "$output_format"
             ;;
-        
+
         # Data quality
         fields|enhanced|quality)
             run_query "enhanced_field_quality.sql" "$output_format"
             ;;
-        
+
         # Unknown command
         *)
             print_error "Unknown command: $command"

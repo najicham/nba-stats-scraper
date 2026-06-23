@@ -43,7 +43,7 @@ GROUP BY 1"
 # Check model attribution
 bq query --use_legacy_sql=false "
 SELECT model_file_name, COUNT(*) as cnt
-FROM nba_predictions.player_prop_predictions  
+FROM nba_predictions.player_prop_predictions
 WHERE game_date = CURRENT_DATE() AND system_id = 'catboost_v9'
 GROUP BY 1"
 ```

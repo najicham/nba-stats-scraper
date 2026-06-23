@@ -97,30 +97,30 @@ error() {
 
 check_prerequisites() {
     log "Checking prerequisites..."
-    
+
     # Check if gcloud is installed
     if ! command -v gcloud &> /dev/null; then
         error "gcloud CLI not found. Please install Google Cloud SDK."
     fi
-    
+
     # Check if docker is installed
     if ! command -v docker &> /dev/null; then
         error "docker not found. Please install Docker."
     fi
-    
+
     # Check if logged in to gcloud
     if ! gcloud auth list --filter=status:ACTIVE --format="value(account)" | grep -q .; then
         error "Not logged in to gcloud. Run: gcloud auth login"
     fi
-    
+
     log "Prerequisites OK"
 }
 
 build_and_push_image() {
     log "Building Docker image..."
-    
+
     cd "$PROJECT_ROOT"
-    
+
     # Build image (with --no-cache to ensure latest code is used)
     docker build \
         --no-cache \
@@ -128,16 +128,16 @@ build_and_push_image() {
         -t "$IMAGE_FULL" \
         -t "$IMAGE_LATEST" \
         .
-    
+
     log "Pushing Docker image to Artifact Registry..."
-    
+
     # Configure docker auth
     gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
-    
+
     # Push both tags
     docker push "$IMAGE_FULL"
     docker push "$IMAGE_LATEST"
-    
+
     log "Image pushed: $IMAGE_FULL"
 }
 
@@ -197,22 +197,22 @@ deploy_cloud_run() {
 
 configure_pubsub() {
     log "Configuring Pub/Sub subscription..."
-    
+
     # Get Cloud Run service URL
     SERVICE_URL=$(gcloud run services describe "$SERVICE_NAME" \
         --project "$PROJECT_ID" \
         --region "$REGION" \
         --format "value(status.url)")
-    
+
     log "Service URL: $SERVICE_URL"
-    
+
     # Create or update Pub/Sub push subscription
     PUSH_ENDPOINT="${SERVICE_URL}/predict"
-    
+
     # Check if subscription exists
     if gcloud pubsub subscriptions describe "$PUBSUB_SUBSCRIPTION" \
         --project "$PROJECT_ID" &> /dev/null; then
-        
+
         log "Updating existing subscription..."
         gcloud pubsub subscriptions update "$PUBSUB_SUBSCRIPTION" \
             --project "$PROJECT_ID" \
@@ -230,28 +230,28 @@ configure_pubsub() {
             --ack-deadline 300 \
             --quiet
     fi
-    
+
     log "Pub/Sub configuration complete"
 }
 
 verify_deployment() {
     log "Verifying deployment..."
-    
+
     # Get service URL
     SERVICE_URL=$(gcloud run services describe "$SERVICE_NAME" \
         --project "$PROJECT_ID" \
         --region "$REGION" \
         --format "value(status.url)")
-    
+
     log "Service deployed at: $SERVICE_URL"
-    
+
     # Check service status
     gcloud run services describe "$SERVICE_NAME" \
         --project "$PROJECT_ID" \
         --region "$REGION" \
         --format "value(status.conditions[0].status)" | grep -q "True" || \
         error "Service not ready"
-    
+
     log "Deployment verified successfully"
 }
 
@@ -382,7 +382,7 @@ show_deployment_info() {
 
 main() {
     log "Starting deployment for environment: $ENVIRONMENT"
-    
+
     check_prerequisites
     build_and_push_image
     deploy_cloud_run

@@ -28,7 +28,7 @@
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS `nba_analytics.upcoming_team_game_context` (
-  
+
   -- =========================================================================
   -- BUSINESS KEYS (4 fields)
   -- =========================================================================
@@ -36,8 +36,8 @@ CREATE TABLE IF NOT EXISTS `nba_analytics.upcoming_team_game_context` (
   game_id STRING NOT NULL,  -- NBA.com game ID (e.g., '0022400123')
   game_date DATE NOT NULL,  -- Eastern date of game (YYYY-MM-DD)
   season_year INT64 NOT NULL,  -- NBA season year (2024 = 2024-25 season)
-  
-  
+
+
   -- =========================================================================
   -- GAME CONTEXT (5 fields)
   -- =========================================================================
@@ -46,8 +46,8 @@ CREATE TABLE IF NOT EXISTS `nba_analytics.upcoming_team_game_context` (
   is_back_to_back BOOLEAN NOT NULL,  -- TRUE if game is on consecutive days
   days_since_last_game INT64,  -- Number of days since team's previous game (NULL if first game)
   game_number_in_season INT64,  -- Sequential game number for this team (1, 2, 3, ...)
-  
-  
+
+
   -- =========================================================================
   -- FATIGUE METRICS (4 fields)
   -- =========================================================================
@@ -55,8 +55,8 @@ CREATE TABLE IF NOT EXISTS `nba_analytics.upcoming_team_game_context` (
   team_back_to_back BOOLEAN NOT NULL,  -- TRUE if this is 2nd game of back-to-back for team
   games_in_last_7_days INT64 NOT NULL,  -- Number of games played in previous 7 days
   games_in_last_14_days INT64 NOT NULL,  -- Number of games played in previous 14 days
-  
-  
+
+
   -- =========================================================================
   -- BETTING CONTEXT (7 fields)
   -- =========================================================================
@@ -67,15 +67,15 @@ CREATE TABLE IF NOT EXISTS `nba_analytics.upcoming_team_game_context` (
   spread_movement NUMERIC(5,2),  -- Line movement from opening to current (positive = moved toward team, NULL if unavailable)
   total_movement NUMERIC(5,1),  -- Total movement from opening to current (positive = moved higher, NULL if unavailable)
   betting_lines_updated_at TIMESTAMP,  -- When betting lines were last updated (NULL if no lines available)
-  
-  
+
+
   -- =========================================================================
   -- PERSONNEL CONTEXT (2 fields)
   -- =========================================================================
   starters_out_count INT64 NOT NULL,  -- Number of expected starters with status='out' (processor defaults to 0)
   questionable_players_count INT64 NOT NULL,  -- Number of players with status='questionable' or 'doubtful' (processor defaults to 0)
-  
-  
+
+
   -- =========================================================================
   -- RECENT PERFORMANCE / MOMENTUM (4 fields)
   -- =========================================================================
@@ -83,14 +83,14 @@ CREATE TABLE IF NOT EXISTS `nba_analytics.upcoming_team_game_context` (
   team_loss_streak_entering INT64 NOT NULL,  -- Current losing streak (0 if not on streak) (processor defaults to 0)
   last_game_margin INT64,  -- Point differential in team's last game (positive = win margin, negative = loss margin, NULL if first game)
   last_game_result STRING,  -- Result of team's last game ('W', 'L', NULL if first game)
-  
-  
+
+
   -- =========================================================================
   -- TRAVEL CONTEXT (1 field)
   -- =========================================================================
   travel_miles INT64 NOT NULL,  -- Miles traveled to this game from last game location (processor defaults to 0 for home games)
-  
-  
+
+
   -- =========================================================================
   -- SOURCE TRACKING: nba_raw.nbac_schedule (4 fields) - CRITICAL
   -- =========================================================================
@@ -116,8 +116,8 @@ CREATE TABLE IF NOT EXISTS `nba_analytics.upcoming_team_game_context` (
   source_injury_report_rows_found INT64,  -- Number of injury records found (NULL if no injury data, 0 if table empty)
   source_injury_report_completeness_pct NUMERIC(5,2),  -- Percentage of expected injury records found (0-100, NULL if no injury data)
   source_injury_report_hash STRING,  -- Smart Idempotency: data_hash from nbac_injury_report
-  
-  
+
+
   -- =========================================================================
   -- OPTIONAL TRACKING: Early Season Handling (2 fields)
   -- =========================================================================
@@ -251,7 +251,7 @@ CLUSTER BY game_date, team_abbr, game_id;
 -- ============================================================================
 
 -- Example 1: Get today's games with full context
--- SELECT 
+-- SELECT
 --   team_abbr,
 --   opponent_team_abbr,
 --   home_game,
@@ -267,7 +267,7 @@ CLUSTER BY game_date, team_abbr, game_id;
 -- ORDER BY game_date, game_id, home_game DESC;
 
 -- Example 2: Check data quality for recent games
--- SELECT 
+-- SELECT
 --   game_date,
 --   COUNT(*) as total_records,
 --   AVG(source_nbac_schedule_completeness_pct) as avg_schedule_completeness,
@@ -281,7 +281,7 @@ CLUSTER BY game_date, team_abbr, game_id;
 -- ORDER BY game_date DESC;
 
 -- Example 3: Find games with stale data
--- SELECT 
+-- SELECT
 --   game_date,
 --   team_abbr,
 --   TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), source_nbac_schedule_last_updated, HOUR) as schedule_age_hours,
@@ -297,7 +297,7 @@ CLUSTER BY game_date, team_abbr, game_id;
 -- ORDER BY schedule_age_hours DESC;
 
 -- Example 4: Identify data quality bottlenecks
--- SELECT 
+-- SELECT
 --   game_date,
 --   team_abbr,
 --   CASE

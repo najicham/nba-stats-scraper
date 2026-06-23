@@ -6,7 +6,7 @@
 -- ============================================================================
 
 WITH yesterday_schedule AS (
-  SELECT 
+  SELECT
     COUNT(*) as scheduled_games
   FROM `nba-props-platform.nba_raw.nbac_schedule`
   WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
@@ -15,12 +15,12 @@ WITH yesterday_schedule AS (
 ),
 
 yesterday_pbp AS (
-  SELECT 
+  SELECT
     COUNT(DISTINCT game_id) as processed_games,
     SUM(CASE WHEN total_events >= 450 THEN 1 ELSE 0 END) as games_with_good_count,
     SUM(CASE WHEN unique_players >= 15 THEN 1 ELSE 0 END) as games_with_good_coverage
   FROM (
-    SELECT 
+    SELECT
       game_id,
       COUNT(*) as total_events,
       COUNT(DISTINCT player_1_id) as unique_players
@@ -30,7 +30,7 @@ yesterday_pbp AS (
   )
 )
 
-SELECT 
+SELECT
   DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY) as check_date,
   s.scheduled_games,
   COALESCE(p.processed_games, 0) as processed_games,

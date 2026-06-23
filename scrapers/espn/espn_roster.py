@@ -180,7 +180,7 @@ class GetEspnTeamRoster(ScraperBase, ScraperFlaskMixin):
     def validate_download_data(self) -> None:
         if not isinstance(self.decoded_data, str) or "<html" not in self.decoded_data.lower():
             error_msg = "Roster page did not return HTML."
-            
+
             # Send error notification
             try:
                 notify_error(
@@ -198,7 +198,7 @@ class GetEspnTeamRoster(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            
+
             raise ValueError(error_msg)
 
     # ------------------------------------------------------------------ #
@@ -227,7 +227,7 @@ class GetEspnTeamRoster(ScraperBase, ScraperFlaskMixin):
 
         players: List[Dict[str, str]] = []
         unparsed_rows = []  # Track rows with all IDs missing
-        
+
         for tr in rows:
             tds = tr.find_all("td")
             if len(tds) < 6:
@@ -273,9 +273,9 @@ class GetEspnTeamRoster(ScraperBase, ScraperFlaskMixin):
                 "height": height,
                 "weight": weight,
             }
-            
+
             players.append(player_data)
-            
+
             # Track completely unparsed rows
             missing = [k for k in ("name", "slug", "playerId") if not player_data.get(k)]
             if len(missing) == 3:  # all missing -> definitely broken row
@@ -286,7 +286,7 @@ class GetEspnTeamRoster(ScraperBase, ScraperFlaskMixin):
             logger.warning("ESPN roster: %d rows missing all IDs", len(unparsed_rows))
             for p in unparsed_rows:
                 sentry_sdk.capture_message(f"[ESPN Roster] Unparsed row: {p}", level="warning")
-            
+
             try:
                 notify_warning(
                     title="ESPN Roster: Unparsed Rows",

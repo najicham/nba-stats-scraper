@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.upcoming_player_gam
   line_movement NUMERIC(4,1),                       -- Current line - opening line
   current_points_line_source STRING,                -- Source of current line (bookmaker(s))
   opening_points_line_source STRING,                -- Source of opening line (bookmaker(s))
-  
+
   -- ============================================================================
   -- GAME SPREAD CONTEXT (5 fields)
   -- From nba_raw.odds_api_game_lines (market_key='spreads')
@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.upcoming_player_gam
   spread_movement NUMERIC(4,1),                     -- Current spread - opening spread
   game_spread_source STRING,                        -- Source of current spread (bookmaker(s))
   spread_public_betting_pct NUMERIC(5,2),           -- % of public bets on favorite (future)
-  
+
   -- ============================================================================
   -- GAME TOTAL CONTEXT (5 fields)
   -- From nba_raw.odds_api_game_lines (market_key='totals')
@@ -74,7 +74,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.upcoming_player_gam
   total_movement NUMERIC(4,1),                      -- Current total - opening total
   game_total_source STRING,                         -- Source of current total (bookmaker(s))
   total_public_betting_pct NUMERIC(5,2),            -- % of public bets on OVER (future)
-  
+
   -- ============================================================================
   -- PRE-GAME CONTEXT (8 fields)
   -- Calculated from schedule and historical data
@@ -87,7 +87,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.upcoming_player_gam
   back_to_back BOOLEAN,                             -- Back-to-back flag
   season_phase STRING,                              -- 'early', 'mid', 'late', 'playoffs'
   projected_usage_rate NUMERIC(5,2),                -- Expected usage based on available players (future)
-  
+
   -- ============================================================================
   -- PLAYER FATIGUE ANALYSIS (12 fields)
   -- Calculated from nba_raw.bdl_player_boxscores + schedule
@@ -104,7 +104,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.upcoming_player_gam
   avg_usage_rate_last_7_games NUMERIC(5,2),         -- Usage intensity (future)
   fourth_quarter_minutes_last_7 INT64,              -- Crunch time load (future)
   clutch_minutes_last_7_games INT64,                -- High-stress minutes (future)
-  
+
   -- ============================================================================
   -- TRAVEL CONTEXT (5 fields)
   -- Calculated from schedule (future implementation)
@@ -114,13 +114,13 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.upcoming_player_gam
   consecutive_road_games INT64,                     -- Road trip length (future)
   miles_traveled_last_14_days INT64,                -- Cumulative travel (future)
   time_zones_crossed_last_14_days INT64,            -- Jet lag factor (future)
-  
+
   -- ============================================================================
   -- PLAYER CHARACTERISTICS (1 field)
   -- From nba_raw.espn_team_rosters (optional)
   -- ============================================================================
   player_age INT64,                                 -- Current age for fatigue analysis
-  
+
   -- ============================================================================
   -- RECENT PERFORMANCE CONTEXT (8 fields)
   -- Calculated from nba_raw.bdl_player_boxscores
@@ -133,7 +133,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.upcoming_player_gam
   opponent_def_rating_last_10 NUMERIC(6,2),         -- Opponent defense (future)
   shooting_pct_decline_last_5 NUMERIC(5,3),         -- Performance decline signal (future)
   fourth_quarter_production_last_7 NUMERIC(5,1),    -- Late-game energy (future)
-  
+
   -- ============================================================================
   -- FORWARD-LOOKING SCHEDULE CONTEXT (4 fields)
   -- TODO: Returns 0/NULL for now, implement in future iteration
@@ -142,7 +142,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.upcoming_player_gam
   games_in_next_7_days INT64,                       -- Player's upcoming game density
   next_opponent_win_pct NUMERIC(5,3),               -- Win percentage of player's next opponent
   next_game_is_primetime BOOLEAN,                   -- Whether player's next game is nationally televised
-  
+
   -- ============================================================================
   -- OPPONENT ASYMMETRY CONTEXT (3 fields)
   -- TODO: Implement fully after team context processor is stable
@@ -150,7 +150,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.upcoming_player_gam
   opponent_days_rest INT64,                         -- Current opponent's rest before this game
   opponent_games_in_next_7_days INT64,              -- Current opponent's upcoming schedule density
   opponent_next_game_days_rest INT64,               -- Current opponent's rest after this game
-  
+
   -- ============================================================================
   -- REAL-TIME UPDATES (4 fields)
   -- From nba_raw.nbac_injury_report (optional)
@@ -159,7 +159,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.upcoming_player_gam
   injury_report STRING,                             -- Detailed injury info
   questionable_teammates INT64,                     -- Questionable players on team
   probable_teammates INT64,                         -- Probable players on team
-  
+
   -- ============================================================================
   -- SOURCE TRACKING (16 fields = 4 sources × 4 fields)
   -- Per dependency tracking guide v4.0 + Smart Idempotency (Pattern #14)
@@ -192,14 +192,14 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.upcoming_player_gam
   source_game_lines_rows_found INT64,               -- How many line records found
   source_game_lines_completeness_pct NUMERIC(5,2),  -- % of expected lines found
   source_game_lines_hash STRING,                    -- Smart Idempotency: data_hash from odds_api_game_lines
-  
+
   -- ============================================================================
   -- DATA QUALITY TRACKING (3 fields)
   -- ============================================================================
   data_quality_tier STRING,                         -- 'high', 'medium', 'low' based on sample size
   primary_source_used STRING,                       -- Which boxscore source: 'bdl_player_boxscores', 'nbac_player_boxscores', 'nbac_gamebook'
   processed_with_issues BOOLEAN,                    -- Issues flag (missing lines, <3 bookmakers, etc.)
-  
+
   -- ============================================================================
   -- COMPLETENESS CHECKING METADATA (25 fields) - Added Week 5
   -- ============================================================================
@@ -287,7 +287,7 @@ OPTIONS(
 -- v1.1 (+source_track): Added 4 Phase 2 sources × 3 fields = 12 tracking fields
 -- v1.2 (+docs):         Added comprehensive documentation and example queries
 -- v1.3 (data_type):     Changed game_start_time_local from TIME to STRING
--- 
+--
 -- Last Updated: November 2025
 -- Status: Production Ready
 -- ============================================================================
@@ -433,7 +433,7 @@ OPTIONS(
 --   AND game_date = CURRENT_DATE();
 
 -- Get all players with props for today
--- SELECT 
+-- SELECT
 --   player_lookup,
 --   universal_player_id,
 --   team_abbr,
@@ -451,7 +451,7 @@ OPTIONS(
 -- ORDER BY current_points_line DESC;
 
 -- Players with significant line movement today
--- SELECT 
+-- SELECT
 --   player_lookup,
 --   team_abbr,
 --   current_points_line,
@@ -466,7 +466,7 @@ OPTIONS(
 -- ORDER BY ABS(line_movement) DESC;
 
 -- Fatigued players (back-to-back or heavy minutes)
--- SELECT 
+-- SELECT
 --   player_lookup,
 --   team_abbr,
 --   opponent_team_abbr,
@@ -479,13 +479,13 @@ OPTIONS(
 --   current_points_line
 -- FROM `nba_analytics.upcoming_player_game_context`
 -- WHERE game_date = CURRENT_DATE()
---   AND (back_to_back = TRUE 
+--   AND (back_to_back = TRUE
 --        OR games_in_last_7_days >= 4
 --        OR minutes_in_last_7_days >= 140)
 -- ORDER BY minutes_in_last_7_days DESC;
 
 -- Players with limited data (rookies, injuries)
--- SELECT 
+-- SELECT
 --   player_lookup,
 --   team_abbr,
 --   data_quality_tier,
@@ -499,7 +499,7 @@ OPTIONS(
 -- ORDER BY source_boxscore_rows_found ASC;
 
 -- Game situation analysis
--- SELECT 
+-- SELECT
 --   player_lookup,
 --   team_abbr,
 --   opponent_team_abbr,
@@ -508,7 +508,7 @@ OPTIONS(
 --   game_total,
 --   home_game,
 --   -- Expected competitiveness
---   CASE 
+--   CASE
 --     WHEN ABS(game_spread) <= 3 THEN 'close'
 --     WHEN ABS(game_spread) <= 7 THEN 'moderate'
 --     ELSE 'blowout_risk'
@@ -524,7 +524,7 @@ OPTIONS(
 -- ORDER BY game_total DESC;
 
 -- Recent performance trends
--- SELECT 
+-- SELECT
 --   player_lookup,
 --   team_abbr,
 --   current_points_line,
@@ -549,7 +549,7 @@ OPTIONS(
 -- ============================================================================
 
 -- Check source freshness (calculate age on-demand)
--- SELECT 
+-- SELECT
 --   game_date,
 --   player_lookup,
 --   -- Calculate source age in hours
@@ -571,7 +571,7 @@ OPTIONS(
 -- ORDER BY source_boxscore_completeness_pct ASC;
 
 -- Overall data quality summary by date
--- SELECT 
+-- SELECT
 --   game_date,
 --   COUNT(*) as total_players,
 --   -- Source completeness
@@ -591,7 +591,7 @@ OPTIONS(
 -- ORDER BY game_date DESC;
 
 -- Missing or incomplete data
--- SELECT 
+-- SELECT
 --   game_date,
 --   player_lookup,
 --   team_abbr,
@@ -634,8 +634,8 @@ OPTIONS(
 --        current_points_line, game_id
 -- FROM `nba_analytics.upcoming_player_game_context`
 -- WHERE game_date >= CURRENT_DATE()
---   AND (player_lookup IS NULL 
---        OR team_abbr IS NULL 
+--   AND (player_lookup IS NULL
+--        OR team_abbr IS NULL
 --        OR game_id IS NULL);
 
 -- Validation 4: Check extreme line movements
@@ -650,7 +650,7 @@ OPTIONS(
 -- ============================================================================
 
 -- Alert: Stale props data (>24 hours old)
--- SELECT 
+-- SELECT
 --   'upcoming_player_game_context' as processor,
 --   game_date,
 --   COUNT(*) as affected_players,
@@ -661,7 +661,7 @@ OPTIONS(
 -- HAVING MAX(TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), source_props_last_updated, HOUR)) > 24;
 
 -- Alert: Low completeness (<85%)
--- SELECT 
+-- SELECT
 --   'upcoming_player_game_context' as processor,
 --   game_date,
 --   AVG(source_boxscore_completeness_pct) as avg_completeness,
@@ -673,7 +673,7 @@ OPTIONS(
 -- HAVING MIN(source_boxscore_completeness_pct) < 85;
 
 -- Alert: High percentage of low quality data
--- SELECT 
+-- SELECT
 --   game_date,
 --   COUNT(*) as total_players,
 --   SUM(CASE WHEN data_quality_tier = 'low' THEN 1 ELSE 0 END) as low_quality_count,`
@@ -688,7 +688,7 @@ OPTIONS(
 -- ============================================================================
 
 -- Get table statistics
--- SELECT 
+-- SELECT
 --   COUNT(*) as total_rows,
 --   COUNT(DISTINCT player_lookup) as unique_players,
 --   COUNT(DISTINCT game_id) as unique_games,

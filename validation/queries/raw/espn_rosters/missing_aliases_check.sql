@@ -50,7 +50,7 @@ potential_matches AS (
     REGEXP_REPLACE(LOWER(n.nbac_lookup), r'(jr|ii|iii|iv|sr)$', '') as nbac_base
   FROM espn_players e
   CROSS JOIN nbac_players n
-  WHERE REGEXP_REPLACE(LOWER(e.espn_lookup), r'(jr|ii|iii|iv|sr)$', '') = 
+  WHERE REGEXP_REPLACE(LOWER(e.espn_lookup), r'(jr|ii|iii|iv|sr)$', '') =
         REGEXP_REPLACE(LOWER(n.nbac_lookup), r'(jr|ii|iii|iv|sr)$', '')
     AND e.team_abbr = n.team_abbr
     AND e.espn_lookup != n.nbac_lookup  -- Different lookups (needs alias)

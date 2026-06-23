@@ -67,20 +67,20 @@ SELECT
   latest_scrape_timestamp,
   CASE
     WHEN total_scheduled_games = 0 THEN '⚪ No games today'
-    WHEN games_with_props = 0 AND EXTRACT(HOUR FROM CURRENT_TIMESTAMP()) < 10 
+    WHEN games_with_props = 0 AND EXTRACT(HOUR FROM CURRENT_TIMESTAMP()) < 10
     THEN '⏳ Scraper not started yet (normal)'
-    WHEN games_with_props = 0 
+    WHEN games_with_props = 0
     THEN '❌ CRITICAL: Scraper not running'
-    WHEN games_with_props < total_scheduled_games 
-    THEN CONCAT('🔄 In Progress (', CAST(games_with_props AS STRING), '/', 
+    WHEN games_with_props < total_scheduled_games
+    THEN CONCAT('🔄 In Progress (', CAST(games_with_props AS STRING), '/',
                 CAST(total_scheduled_games AS STRING), ' games)')
     WHEN avg_players_per_game < 6.0
     THEN '🟡 Low coverage detected'
     ELSE '✅ All games scraped'
   END as status,
   CASE
-    WHEN latest_scrape_timestamp IS NOT NULL 
-    THEN CONCAT('Last scraped ', 
+    WHEN latest_scrape_timestamp IS NOT NULL
+    THEN CONCAT('Last scraped ',
                 CAST(TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), latest_scrape_timestamp, MINUTE) AS STRING),
                 ' minutes ago')
     ELSE 'No data yet'
@@ -101,7 +101,7 @@ SELECT
   NULL as latest_scrape_timestamp,
   CONCAT(
     s.matchup, ' - ',
-    CASE 
+    CASE
       WHEN p.game_id IS NULL THEN '⏳ Not scraped yet'
       WHEN p.unique_players < 6 THEN CONCAT('🟡 Low (', CAST(p.unique_players AS STRING), ' players)')
       ELSE CONCAT('✅ ', CAST(p.unique_players AS STRING), ' players')

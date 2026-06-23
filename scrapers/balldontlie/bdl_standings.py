@@ -232,7 +232,7 @@ class BdlStandingsScraper(ScraperBase, ScraperFlaskMixin):
                 "teamCount": len(rows),
                 "standings": rows,
             }
-            
+
             logger.info("Fetched standings for %d teams (season %s) across %d pages",
                        len(rows), self.opts["season"], pages_fetched)
 

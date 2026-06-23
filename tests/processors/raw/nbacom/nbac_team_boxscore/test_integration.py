@@ -37,7 +37,7 @@ class TestLoadData:
         proc.bq_client = Mock(spec=bigquery.Client)
         proc.project_id = 'test-project'
         return proc
-    
+
     @pytest.fixture
     def sample_rows(self):
         """Create sample transformed rows ready for BigQuery (v2.0 format)."""
@@ -111,117 +111,117 @@ class TestLoadData:
                 'processed_at': '2025-01-15T12:00:00'
             }
         ]
-    
+
     def test_load_data_executes_delete_query(self, processor, sample_rows):
         """Test that load_data deletes existing records before inserting (v2.0 uses new game_id)."""
         # Mock delete query success
         mock_query_job = Mock()
         mock_query_job.result.return_value = None
         processor.bq_client.query.return_value = mock_query_job
-        
+
         # Mock insert success
         processor.bq_client.insert_rows_json.return_value = []
-        
+
         # Execute
         result = processor.load_data(sample_rows)
-        
+
         # Verify delete query was called
         assert processor.bq_client.query.called
         delete_call = processor.bq_client.query.call_args
-        
+
         # Check delete query contains correct game_id
         assert 'DELETE FROM' in delete_call[0][0]
         assert 'WHERE game_id = @game_id' in delete_call[0][0]
-        
+
         # Check query parameter uses standardized game_id (v2.0)
         job_config = delete_call[1]['job_config']
         assert len(job_config.query_parameters) == 1
         assert job_config.query_parameters[0].value == '20250115_LAL_PHI'  # v2.0 format
-    
+
     def test_load_data_inserts_rows_after_delete(self, processor, sample_rows):
         """Test that load_data inserts rows after successful delete."""
         # Mock delete query success
         mock_query_job = Mock()
         mock_query_job.result.return_value = None
         processor.bq_client.query.return_value = mock_query_job
-        
+
         # Mock insert success
         processor.bq_client.insert_rows_json.return_value = []
-        
+
         # Execute
         result = processor.load_data(sample_rows)
-        
+
         # Verify insert was called with correct data
         assert processor.bq_client.insert_rows_json.called
         insert_call = processor.bq_client.insert_rows_json.call_args
-        
+
         # Check table ID
         assert 'test-project.nba_raw.nbac_team_boxscore' in insert_call[0][0]
-        
+
         # Check rows were passed
         assert insert_call[0][1] == sample_rows
-        
+
         # Check result
         assert result['rows_processed'] == 2
         assert result['errors'] == []
-    
+
     def test_load_data_handles_insert_errors(self, processor, sample_rows):
         """Test load_data handles BigQuery insert errors gracefully."""
         # Mock delete success
         mock_query_job = Mock()
         mock_query_job.result.return_value = None
         processor.bq_client.query.return_value = mock_query_job
-        
+
         # Mock insert with errors
         processor.bq_client.insert_rows_json.return_value = [
             {'index': 0, 'errors': [{'message': 'Field too large'}]},
             {'index': 1, 'errors': [{'message': 'Invalid data'}]}
         ]
-        
+
         # Execute
         result = processor.load_data(sample_rows)
-        
+
         # Verify errors are captured
         assert result['rows_processed'] == 0
         assert len(result['errors']) == 2
         assert 'Field too large' in str(result['errors'][0])
         assert 'Invalid data' in str(result['errors'][1])
-    
+
     def test_load_data_dry_run_mode(self, processor, sample_rows):
         """Test load_data dry run mode doesn't execute queries."""
         # Execute in dry run mode
         result = processor.load_data(sample_rows, dry_run=True)
-        
+
         # Verify no actual queries were executed
         assert not processor.bq_client.query.called
         assert not processor.bq_client.insert_rows_json.called
-        
+
         # But result shows would-be success
         assert result['rows_processed'] == 2
         assert result['errors'] == []
-    
+
     def test_load_data_with_empty_rows(self, processor):
         """Test load_data handles empty rows list gracefully."""
         result = processor.load_data([])
-        
+
         # Should not attempt any operations
         assert not processor.bq_client.query.called
         assert not processor.bq_client.insert_rows_json.called
-        
+
         # Result shows no processing
         assert result['rows_processed'] == 0
         assert result['errors'] == []
-    
+
     def test_load_data_handles_delete_failure(self, processor, sample_rows):
         """Test load_data handles delete query failures."""
         # Mock delete query failure
         mock_query_job = Mock()
         mock_query_job.result.side_effect = Exception("BigQuery delete failed")
         processor.bq_client.query.return_value = mock_query_job
-        
+
         # Execute
         result = processor.load_data(sample_rows)
-        
+
         # Verify error is captured
         assert result['rows_processed'] == 0
         assert len(result['errors']) > 0
@@ -239,7 +239,7 @@ class TestProcessFile:
         proc.bq_client = Mock(spec=bigquery.Client)
         proc.project_id = 'test-project'
         return proc
-    
+
     @pytest.fixture
     def valid_json_data(self):
         """Create valid JSON data as would be in GCS file (v2.0 with homeAway)."""
@@ -287,54 +287,54 @@ class TestProcessFile:
                 }
             ]
         }
-    
+
     def test_process_file_success_flow(self, processor, valid_json_data):
         """Test successful end-to-end file processing."""
         # Mock file content retrieval (inherited from ProcessorBase)
         processor.get_file_content = Mock(return_value=valid_json_data)
-        
+
         # Mock BigQuery operations
         mock_query_job = Mock()
         mock_query_job.result.return_value = None
         processor.bq_client.query.return_value = mock_query_job
         processor.bq_client.insert_rows_json.return_value = []
-        
+
         # Execute
         file_path = 'gs://test-bucket/nba-com/team-boxscore/20250115/0022400561/test.json'
         result = processor.process_file(file_path)
-        
+
         # Verify result
         assert result['status'] == 'success'
         assert result['rows_processed'] == 2
         assert result['file_path'] == file_path
         assert result.get('errors', []) == []
-        
+
         # Verify file was read
         processor.get_file_content.assert_called_once_with(file_path)
-        
+
         # Verify BigQuery operations
         assert processor.bq_client.query.called  # Delete
         assert processor.bq_client.insert_rows_json.called  # Insert
-    
+
     def test_process_file_generates_correct_game_id(self, processor, valid_json_data):
         """Test that process_file generates standardized game_id (v2.0)."""
         # Mock file content
         processor.get_file_content = Mock(return_value=valid_json_data)
-        
+
         # Mock BigQuery operations
         mock_query_job = Mock()
         mock_query_job.result.return_value = None
         processor.bq_client.query.return_value = mock_query_job
         processor.bq_client.insert_rows_json.return_value = []
-        
+
         # Execute
         result = processor.process_file('gs://test-bucket/test.json')
-        
+
         # Verify the delete query used standardized game_id
         delete_call = processor.bq_client.query.call_args
         job_config = delete_call[1]['job_config']
         assert job_config.query_parameters[0].value == '20250115_LAL_PHI'
-        
+
         # Verify the inserted rows have both game IDs
         insert_call = processor.bq_client.insert_rows_json.call_args
         inserted_rows = insert_call[0][1]
@@ -342,33 +342,33 @@ class TestProcessFile:
         assert inserted_rows[0]['nba_game_id'] == '0022400561'
         assert inserted_rows[0]['is_home'] is False  # LAL away
         assert inserted_rows[1]['is_home'] is True   # PHI home
-    
+
     def test_process_file_without_homeaway_field(self, processor, valid_json_data):
         """Test process_file works without explicit homeAway field (v2.0 fallback)."""
         # Remove homeAway fields - should use array order
         del valid_json_data['teams'][0]['homeAway']
         del valid_json_data['teams'][1]['homeAway']
-        
+
         processor.get_file_content = Mock(return_value=valid_json_data)
-        
+
         # Mock BigQuery operations
         mock_query_job = Mock()
         mock_query_job.result.return_value = None
         processor.bq_client.query.return_value = mock_query_job
         processor.bq_client.insert_rows_json.return_value = []
-        
+
         # Execute
         result = processor.process_file('gs://test-bucket/test.json')
-        
+
         # Should succeed using array order fallback
         assert result['status'] == 'success'
-        
+
         # Verify is_home assignment
         insert_call = processor.bq_client.insert_rows_json.call_args
         inserted_rows = insert_call[0][1]
         assert inserted_rows[0]['is_home'] is False  # teams[0] = away
         assert inserted_rows[1]['is_home'] is True   # teams[1] = home
-    
+
     def test_process_file_validation_failure(self, processor):
         """Test process_file handles validation errors."""
         # Invalid data - missing required field
@@ -378,20 +378,20 @@ class TestProcessFile:
             'teams': []
         }
         processor.get_file_content = Mock(return_value=invalid_data)
-        
+
         # Execute
         result = processor.process_file('gs://test-bucket/test.json')
-        
+
         # Verify validation failure
         assert result['status'] == 'validation_failed'
         assert result['rows_processed'] == 0
         assert len(result['errors']) > 0
         assert any('gameDate' in err for err in result['errors'])
-        
+
         # Verify BigQuery was NOT called
         assert not processor.bq_client.query.called
         assert not processor.bq_client.insert_rows_json.called
-    
+
     def test_process_file_with_no_teams(self, processor):
         """Test process_file handles empty teams list."""
         # Data with no teams
@@ -401,39 +401,39 @@ class TestProcessFile:
             'teams': []
         }
         processor.get_file_content = Mock(return_value=data)
-        
+
         # Execute
         result = processor.process_file('gs://test-bucket/test.json')
-        
+
         # Should fail validation (need exactly 2 teams)
         assert result['status'] in ['validation_failed', 'no_data']
         assert result['rows_processed'] == 0
-    
+
     def test_process_file_handles_file_read_error(self, processor):
         """Test process_file handles file read errors."""
         # Mock file read failure
         processor.get_file_content = Mock(side_effect=Exception("File not found in GCS"))
-        
+
         # Execute
         result = processor.process_file('gs://test-bucket/missing.json')
-        
+
         # Verify error is captured
         assert result['status'] == 'error'
         assert result['rows_processed'] == 0
         assert 'File not found in GCS' in result['error']
-    
+
     def test_process_file_dry_run_mode(self, processor, valid_json_data):
         """Test process_file in dry run mode."""
         # Mock file content
         processor.get_file_content = Mock(return_value=valid_json_data)
-        
+
         # Execute in dry run mode
         result = processor.process_file('gs://test-bucket/test.json', dry_run=True)
-        
+
         # Verify success without actual BigQuery operations
         assert result['status'] == 'success'
         assert result['rows_processed'] == 2
-        
+
         # Verify BigQuery was NOT called
         assert not processor.bq_client.query.called
         assert not processor.bq_client.insert_rows_json.called
@@ -450,7 +450,7 @@ class TestMergeUpdateStrategy:
         proc.bq_client = Mock(spec=bigquery.Client)
         proc.project_id = 'test-project'
         return proc
-    
+
     def test_merge_update_deletes_old_records(self, processor):
         """Test that MERGE_UPDATE strategy deletes old records first (v2.0 uses standardized game_id)."""
         rows = [
@@ -466,32 +466,32 @@ class TestMergeUpdateStrategy:
                 'processed_at': '2025-01-15T12:00:00'
             }
         ]
-        
+
         # Mock successful delete and insert
         mock_query_job = Mock()
         mock_query_job.result.return_value = None
         processor.bq_client.query.return_value = mock_query_job
         processor.bq_client.insert_rows_json.return_value = []
-        
+
         # Execute
         processor.load_data(rows)
-        
+
         # Verify delete was called with correct game_id
         assert processor.bq_client.query.called
         delete_call_args = processor.bq_client.query.call_args
-        
+
         # Check the DELETE query
         query = delete_call_args[0][0]
         assert 'DELETE FROM' in query
         assert 'nba_raw.nbac_team_boxscore' in query
         assert 'WHERE game_id = @game_id' in query
-        
+
         # Check the query parameter uses standardized game_id (v2.0)
         job_config = delete_call_args[1]['job_config']
         param = job_config.query_parameters[0]
         assert param.name == 'game_id'
         assert param.value == '20250115_LAL_PHI'  # v2.0 format
-    
+
     def test_merge_update_inserts_new_records(self, processor):
         """Test that MERGE_UPDATE inserts new records after delete."""
         rows = [
@@ -510,29 +510,29 @@ class TestMergeUpdateStrategy:
                 'points': 110
             }
         ]
-        
+
         # Mock successful operations
         mock_query_job = Mock()
         mock_query_job.result.return_value = None
         processor.bq_client.query.return_value = mock_query_job
         processor.bq_client.insert_rows_json.return_value = []
-        
+
         # Execute
         result = processor.load_data(rows)
-        
+
         # Verify insert was called after delete
         assert processor.bq_client.insert_rows_json.called
         insert_call_args = processor.bq_client.insert_rows_json.call_args
-        
+
         # Check table
         table_id = insert_call_args[0][0]
         assert 'nba_raw.nbac_team_boxscore' in table_id
-        
+
         # Check rows
         inserted_rows = insert_call_args[0][1]
         assert len(inserted_rows) == 2
         assert inserted_rows == rows
-        
+
         # Verify result
         assert result['rows_processed'] == 2
         assert result['errors'] == []
