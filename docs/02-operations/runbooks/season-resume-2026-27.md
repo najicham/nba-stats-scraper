@@ -55,6 +55,22 @@ through November 2026.
       reconciliation, rescue-cap behavior) NOW — at season resume, where live filter/halt traffic can validate
       them. Do not merge these during the shutdown window (unvalidatable redeploy).
 
+## ⚠️ OVER is a normal-season liability — UNDER-dominant posture (2026-06-23 finding)
+**"edge5+ is the money zone" is OVER-FALSE.** 5-season walk-forward: high-edge OVER has NO cross-season edge —
+edge≥6 OVER (the floor-allowed band) hit **38.9% in the prior 4 seasons** (below breakeven in all four), and
+only worked in 2025-26 (92.6%) because of that season's scoring-environment anomaly. UNDER edge≥6 is durable
+(61% cross-season). **This is the true root of the Jan→Mar collapse: an OVER book reverting to its real ~39%.**
+Detail: `docs/09-handoff/2026-06-23-edge-calibration-RESULT.md`.
+
+**2026-27 implication:** if the scoring environment is normal, every edge≥6 OVER pick is expected to LOSE.
+- [ ] **Treat OVER as UNPROVEN at season open.** Do NOT assume the 2025-26 OVER performance recurs. Add an
+      early-season scoring-environment check (is the league scoring *above* line/model expectation, like
+      2025-26? — `league_macro_daily.pred_bias`, `league_avg_ppg_7d` vs prior). Only lean into OVER once that
+      anomaly is confirmed present in 2026-27. Otherwise expect OVER ≈ breakeven-or-below and rely on UNDER.
+- [ ] **Concentrate EV on UNDER + edge.** UNDER edge≥6 (61% cross-season) is the most reliable lane; UNDER
+      edge≥3 (56%+) the durable base. The high OVER floor (6.0) is correct but only throttles volume — it does
+      not make OVER profitable.
+
 ## Early-season sequence (opening night → ~late Nov 2026)
 
 1. **Expect ZERO or very few picks initially.** The auto-halt holds output until edge recovers; models are
