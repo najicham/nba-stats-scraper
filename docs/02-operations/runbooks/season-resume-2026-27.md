@@ -83,13 +83,18 @@ through November 2026.
       dead pre-2025), so `over_line_rose_heavy` / `book_disagree_over` are genuinely cross-season testable.
 - [ ] **Validated cheap signal to consider:** low-line + low-variance UNDER (62% HR, N=819, 4/4 seasons,
       strictly pre-game) — higher-certainty than the deferred non-tree diversity build.
-- [ ] **OVER-signal decay watch (2026-06-23 finding):** `line_rising_over` (weight 3.0, rescue) and
-      `book_disagree_over` (weight 3.0) are **2025-26-only artifacts** — breakeven in all 4 prior seasons,
-      strong only in 2025-26 (`line_rising_over` 2025-26 vs prior Fisher p=0.001; `book_disagree_over` no edge
-      any era). Re-grade both by ~Dec 2026; if 2026-27 HR < 58% at N≥30, demote weight. They are prime
-      Jan→Mar decay candidates — this is mechanically why OVER collapsed last season. Do NOT delete pre-season.
-      `line_drifted_down_under` (UNDER) is the more defensible cross-book signal; keep ACTIVE. Detail:
-      `docs/09-handoff/2026-06-23-crossbook-OVER-multiseason-RESULT.md`.
+- [ ] **OVER-signal decay watch (2026-06-23 trust-map — HIGH PRIORITY):** the OVER signal layer is pervasively
+      2025-26-overfit. Put ALL of these on a re-validation watch (re-grade by ~Dec 2026; if 2026-27 HR not
+      clearly above breakeven at N≥30, demote weight / move to shadow):
+      - `fast_pace_over` (ACTIVE) — 58/47/49/59/**78** by season, prior 52.4% vs 2025-26 78.1%, **p<0.001**.
+      - `cold_3pt_over` (ACTIVE w2.0) — **sub-breakeven in 4/5 seasons** (34/46/42/46/**72**), p<0.001.
+        WORST offender; strongest candidate for proactive demotion to shadow at season open.
+      - `line_rising_over` (ACTIVE w3.0) — no durable edge (breakeven all prior seasons; 2025-26 only).
+      - `book_disagree_over` (ACTIVE w3.0) — no edge any era.
+      This is mechanically why OVER collapsed Jan(80%)→Mar(47%) 2026: overfit signals reverting. Enforce the
+      discovery gate (≥3/5 seasons above breakeven) before re-trusting any OVER signal. Do NOT delete
+      pre-season. UNDER signals are healthier — `home_under` durable (56-60% 4/5 yrs); keep ACTIVE. Detail:
+      `docs/09-handoff/2026-06-23-signal-trustmap-RESULT.md` + `2026-06-23-crossbook-OVER-multiseason-RESULT.md`.
 
 ## DON'Ts (carry-forward)
 - Don't relax/remove `cap_to_pre_late_season`; don't lower auto-halt thresholds to force picks; don't flip
