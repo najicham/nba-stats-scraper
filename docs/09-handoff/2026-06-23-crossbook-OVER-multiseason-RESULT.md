@@ -48,6 +48,20 @@ the most cross-season-stable of the three, consistent with its ACTIVE status.
   OVER side's strength is a regime-recency artifact — which is mechanically why OVER collapsed Jan→Mar 2026.
 - **The system's posture is correct:** high OVER floor (6.0), edge-based auto-halt, no chasing OVER signals.
 
+## Companion check — UNDER side (same population)
+- **UNDER edge≥3 is the durable edge: 57.3% pooled (N=981), cross-season stable** (2021-22 52.9%, 2022-23
+  50.0%, 2023-24 58.7%, 2024-25 52.5%, 2025-26 64.9%). Contrast OVER edge≥3 = 54.1% with refinements that are
+  2025-26-only. The OVER/UNDER asymmetry the system already encodes (signal-first UNDER ranking, high OVER
+  floor) is reconfirmed on clean 5-season walk-forward.
+- **The "low-line + low-variance UNDER" archetype (Session-468 claim: 62% HR, N=819, 4/4 seasons) does NOT
+  reproduce here:** low-line (≤15) + low-variance (std ≤ median 7.5) UNDER = **50.0% (N=88), BELOW the 57.3%
+  UNDER baseline**, inconsistent across seasons (40-60%), 2025-26 vs prior p=0.446. CAVEAT: population differs
+  — this is edge≥3 deduped walk-forward (N=88 in cell) vs the Session-468 N=819 (broader/different edge). NOT a
+  clean refutation, but it means **do NOT build the archetype as a signal without first reconciling the exact
+  population/threshold definition that produced 62%** — on the BB-relevant edge≥3 set it adds nothing over
+  plain UNDER. The honest improvement here is "UNDER edge≥3 is already good; refinements need to clear 57.3%,
+  not 51.5%."
+
 ## Action: flag for season-resume re-validation (NOT a deploy change now)
 `line_rising_over` (weight 3.0, rescue) and `book_disagree_over` (weight 3.0) are over-weighted on one-season
 evidence. When 2026-27 opens they are prime decay candidates. Do NOT delete (off-season, no live data), but:
