@@ -33,6 +33,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 from shared.config.model_selection import get_best_bets_model_id
+from ml.signals.supplemental_data import _season_start_for
 
 PROJECT_ID = 'nba-props-platform'
 SYSTEM_ID = get_best_bets_model_id()
@@ -166,7 +167,7 @@ def check_signal_firing_canary(
             ) AS _rn
             FROM `{PROJECT_ID}.nba_predictions.pick_signal_tags`
             WHERE game_date > DATE_SUB(@target_date, INTERVAL 30 DAY)
-              AND game_date <= @target_date
+              AND game_date <= @target_date  -- <= correct: health computed as-of target_date inclusive
         )
         WHERE _rn = 1
     ),
@@ -175,7 +176,7 @@ def check_signal_firing_canary(
         SELECT
             signal_tag,
             COUNTIF(game_date > DATE_SUB(@target_date, INTERVAL 7 DAY)
-                    AND game_date <= @target_date) AS fires_7d,
+                    AND game_date <= @target_date) AS fires_7d,  -- <= correct: as-of-date inclusive
             COUNTIF(game_date > DATE_SUB(@target_date, INTERVAL 30 DAY)
                     AND game_date <= DATE_SUB(@target_date, INTERVAL 7 DAY)) AS fires_prior_23d
         FROM deduped_pst
@@ -328,7 +329,7 @@ def check_signal_rescue_performance(
         AND pa.recommendation = bb.recommendation
         AND pa.line_value = bb.line_value
     WHERE bb.game_date > DATE_SUB(@target_date, INTERVAL 14 DAY)
-      AND bb.game_date <= @target_date
+      AND bb.game_date <= @target_date  -- <= correct: as-of-date inclusive
     """
     job_config = bigquery.QueryJobConfig(
         query_parameters=[
@@ -408,8 +409,8 @@ def compute_signal_health(
               graded_at DESC
           ) AS rn
         FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy`
-        WHERE game_date >= '2025-10-22'
-          AND game_date <= @target_date
+        WHERE game_date >= @season_start
+          AND game_date <= @target_date  -- <= correct: as-of-date inclusive
       ) WHERE rn = 1
     ),
     deduped_pst AS (
@@ -419,8 +420,8 @@ def compute_signal_health(
           ORDER BY evaluated_at DESC
         ) AS _rn
         FROM `{PROJECT_ID}.nba_predictions.pick_signal_tags`
-        WHERE game_date >= '2025-10-22'
-          AND game_date <= @target_date
+        WHERE game_date >= @season_start
+          AND game_date <= @target_date  -- <= correct: as-of-date inclusive
       )
       WHERE _rn = 1
     ),
@@ -514,6 +515,7 @@ def compute_signal_health(
     job_config = bigquery.QueryJobConfig(
         query_parameters=[
             bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+            bigquery.ScalarQueryParameter('season_start', 'DATE', _season_start_for(target_date)),
             bigquery.ArrayQueryParameter('active_signals', 'STRING', sorted(ACTIVE_SIGNALS)),
         ]
     )

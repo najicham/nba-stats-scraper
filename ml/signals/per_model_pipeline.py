@@ -34,6 +34,7 @@ from ml.signals.regime_context import get_regime_context, get_market_compression
 from ml.signals.registry import SignalRegistry, build_default_registry
 from ml.signals.signal_health import get_signal_health_summary
 from ml.signals.supplemental_data import (
+    _season_start_for,
     query_games_vs_opponent,
     query_model_health,
 )
@@ -298,7 +299,7 @@ def _query_all_model_predictions(
         LAG(CASE WHEN plus_minus < 0 THEN 1 ELSE 0 END, 3)
           OVER (PARTITION BY player_lookup ORDER BY game_date) AS neg_pm_3
       FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
-      WHERE game_date >= '2025-10-22'
+      WHERE game_date >= @season_start
         AND minutes_played > 0
     ),
 
@@ -342,7 +343,7 @@ def _query_all_model_predictions(
         SELECT pa.*
         FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy` pa
         CROSS JOIN streak_source ss
-        WHERE pa.game_date >= '2025-10-22'
+        WHERE pa.game_date >= @season_start
           AND pa.system_id = ss.system_id
           AND pa.prediction_correct IS NOT NULL
           AND pa.is_voided IS NOT TRUE
@@ -557,9 +558,16 @@ def _query_all_model_predictions(
     ORDER BY p.system_id, p.player_lookup
     """
 
+    # Current-season opening-night floor for all season-bounded windows below.
+    # Replaces hardcoded '2025-10-22' literals so season aggregates / streak
+    # windows bind to the CORRECT season (latent 2026-27 prod fix). One shared
+    # @season_start param covers the main query + every satellite (BigQuery
+    # ignores the unused param on satellites that don't reference it).
+    season_start = _season_start_for(target_date)
     job_config = bigquery.QueryJobConfig(
         query_parameters=[
             bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+            bigquery.ScalarQueryParameter('season_start', 'DATE', season_start),
         ]
     )
 
@@ -576,7 +584,7 @@ def _query_all_model_predictions(
     INNER JOIN (
       SELECT player_lookup, team_abbr
       FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
-      WHERE game_date >= '2025-10-22' AND game_date < @target_date
+      WHERE game_date >= @season_start AND game_date < @target_date
       GROUP BY player_lookup, team_abbr
       HAVING AVG(points) >= 18 OR AVG(minutes_played) >= 28
     ) stars ON ir.player_lookup = stars.player_lookup AND ir.team = stars.team_abbr
@@ -601,7 +609,7 @@ def _query_all_model_predictions(
           PARTITION BY player_lookup ORDER BY game_date DESC
         ) AS rn
       FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
-      WHERE game_date >= '2025-10-22'
+      WHERE game_date >= @season_start
         AND game_date < @target_date
         AND minutes_played > 0
     )
@@ -631,7 +639,7 @@ def _query_all_model_predictions(
           SUM(points_scored)
         ) as q4_ratio
       FROM `{PROJECT_ID}.nba_raw.bigdataball_play_by_play`
-      WHERE game_date >= '2025-10-01'
+      WHERE game_date >= @season_start
         AND game_date < @target_date
         AND event_type IN ('shot', 'free throw') AND points_scored > 0
       GROUP BY 1, 2
@@ -702,7 +710,7 @@ def _query_all_model_predictions(
     FROM `{PROJECT_ID}.nba_raw.teamrankings_team_stats`
     WHERE game_date = (
       SELECT MAX(game_date) FROM `{PROJECT_ID}.nba_raw.teamrankings_team_stats`
-      WHERE game_date <= @target_date
+      WHERE game_date <= @target_date  -- <= correct: latest pace snapshot as-of target_date
     )
     AND pace IS NOT NULL
     """
@@ -720,7 +728,7 @@ def _query_all_model_predictions(
       FROM `{PROJECT_ID}.nba_raw.hashtagbasketball_dvp`
       WHERE game_date = (
         SELECT MAX(game_date) FROM `{PROJECT_ID}.nba_raw.hashtagbasketball_dvp`
-        WHERE game_date <= @target_date
+        WHERE game_date <= @target_date  -- <= correct: latest DvP snapshot as-of target_date
       )
       AND points_allowed IS NOT NULL
       AND position = 'ALL'
