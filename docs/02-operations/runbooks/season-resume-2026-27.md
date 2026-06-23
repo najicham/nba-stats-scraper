@@ -83,6 +83,13 @@ through November 2026.
       dead pre-2025), so `over_line_rose_heavy` / `book_disagree_over` are genuinely cross-season testable.
 - [ ] **Validated cheap signal to consider:** low-line + low-variance UNDER (62% HR, N=819, 4/4 seasons,
       strictly pre-game) — higher-certainty than the deferred non-tree diversity build.
+- [ ] **OVER-signal decay watch (2026-06-23 finding):** `line_rising_over` (weight 3.0, rescue) and
+      `book_disagree_over` (weight 3.0) are **2025-26-only artifacts** — breakeven in all 4 prior seasons,
+      strong only in 2025-26 (`line_rising_over` 2025-26 vs prior Fisher p=0.001; `book_disagree_over` no edge
+      any era). Re-grade both by ~Dec 2026; if 2026-27 HR < 58% at N≥30, demote weight. They are prime
+      Jan→Mar decay candidates — this is mechanically why OVER collapsed last season. Do NOT delete pre-season.
+      `line_drifted_down_under` (UNDER) is the more defensible cross-book signal; keep ACTIVE. Detail:
+      `docs/09-handoff/2026-06-23-crossbook-OVER-multiseason-RESULT.md`.
 
 ## DON'Ts (carry-forward)
 - Don't relax/remove `cap_to_pre_late_season`; don't lower auto-halt thresholds to force picks; don't flip
