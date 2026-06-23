@@ -69,6 +69,38 @@ points-locked. Keep the REB/AST data clock as a cheap option only. Refs:
   raise the OVER floor, push volume into edge 3-5, demote filters on thin CF HR, enable the HSE floor blind.
 - Real breakeven ≈ 53.5% (real odds, not 52.4%). edge5+ is the money zone both directions.
 
+## ADDENDUM 2026-06-22 — 24-agent review corrections + residual bug fix
+A 24-agent adversarial review re-audited this engagement. Posture is sound; four headline framings overreach.
+Full detail: `memory/offseason-review-corrections-2026-06.md`. Restate as:
+1. **Staleness:** "raw staleness alone doesn't reproduce the collapse; true freeze is worst" HOLDS — but **DO NOT
+   relax `cap_to_pre_late_season`**: "cap REFUTED" is ~1.6 SE single-season and ignores edge AVAILABILITY.
+2. **Cadence:** edge3+ HR-equivalent (well-powered); **edge5+ INCONCLUSIVE** (guard fired, CI −12.1…+15.5pp).
+   14d adopt-eligible on COST only; needs a season-start A/B. Not "HR-equivalent."
+3. **Filter lift:** neither +13.7pp nor +6.7pp is robust; **gated production-faithful = 47.4% (N=57)**.
+   Cross-book OVER feeds DO have full pre-2025 coverage → a cross-season test was left on the table.
+4. **Fleet diversity:** decision (no non-tree build now) HOLDS on ROI; reason is wrong — **`combo_3way` is
+   single-MODEL** (`combo_3way.py:42-86`), not cross-model. Lean on `book_disagreement` (cross-BOOK).
+5. **STEP 6** should read "diagnosed/deferred," not "closed."
+
+**Residual prod bug FIXED (this review):** the season-start fix had only covered `supplemental_data.py`. Six
+hardcoded floors remained in the PRODUCTION path — `per_model_pipeline.py` (×5: lines ~301/345/579/604/634) and
+`signal_health.py` (×2: ~411/422) — which would blend 2025-26+2026-27 rows into season aggregates / streak /
+signal-health windows in 2026-27. All now parameterized to `@season_start` via `_season_start_for`. Verified:
+compiles, imports, resolves (2026-01-15→2025-10-21, 2025-26 behavior preserved; 2027→2026-10-22 default, never
+blends). **Residual:** add 2026 to `FALLBACK_SEASON_START_DATES` once the schedule publishes (~Aug-Sep 2026).
+
+**Season-resume runbook authored:** `docs/02-operations/runbooks/season-resume-2026-27.md` — opening-night
+operating posture (auto-halt + training-anchor + HSE-observe-flip sequencing). The only item addressing the
+diagnosed collapse.
+
+**Three phase6-path items confirmed real, STAGED for season resume (not shipped — can't validate offline):**
+(a) `pipeline_merger.RESCUE_SIGNAL_PRIORITY` is documented to trim by priority but code trims by composite_score
+(constant used only in a log) — decide priority-vs-composite. (b) Auto-halt edge query lacks
+`current_points_line IS NOT NULL`/`has_prop_line` → NULL-line rows dilute `pct_edge_5plus` (biases toward
+over-halt; safe direction but inaccurate). (c) `filters.yaml` drifted from `aggregator.py` tag names
+(`high_book_std_under`→`_block`, `line_jumped_under`→`_obs`, `hse_rescue_floor` unregistered) → can break
+`filter_audit` joins.
+
 ## Env gotchas (updated)
 - **gcloud works** this env (the earlier "gcloud hangs" was intermittent); `scheduler/builds list` are
   slow (~1-2 min) — use `timeout` + per-job `describe`/`resume`. Always `--project=nba-props-platform`.
