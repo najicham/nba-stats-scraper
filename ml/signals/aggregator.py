@@ -125,6 +125,11 @@ SHADOW_SIGNALS = frozenset({
     # book_disagree_under: direction-specific validation. Gets UNDER_SIGNAL_WEIGHTS but excluded from real_sc
     'book_disagree_under',
     'extended_rest_under',   # Session 513: 28.6% season HR (N=7), 25% 7d HR — inflating real_sc on bad UNDER picks
+    # b2b_fatigue_under REINSTATED 2026-06-23 in SHADOW (zero pick impact). 5-season b2b UNDER =
+    # 63.2%, above breakeven 5/5 seasons, passes formal discovery gate (BH-FDR p=0.0035). Wrongly
+    # disabled S373 on Feb-2026-only data + the is_b2b feature (populated only in 2025-26). Promote
+    # to UNDER_SIGNAL_WEIGHTS at season open after live N>=30 at HR>=58%.
+    'b2b_fatigue_under',
     # Session 522: Quantile floor OVER — p25 > line → shadow (N=1 in first test, insufficient to validate)
     # Only fires for MultiQuantile models. Graduate when N >= 30 at BB level with HR >= 60%.
     'quantile_floor_over',
