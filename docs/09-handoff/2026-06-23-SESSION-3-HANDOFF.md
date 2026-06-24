@@ -35,9 +35,20 @@ prod effect.)
 | Signal | Evidence | Action at open |
 |---|---|---|
 | `b2b_fatigue_under` | 63.2%, 5/5 seasons, formal gate | shadow→active, weight ~2.0 |
-| `slow_pace_under` (opp_pace≤99) | 58.7%, 4/4, BH-FDR adj_p=0.039 (NEW this session) | shadow→active, weight ~1.5–2.0 |
+| `slow_pace_under` (opp_pace≤99) | 58.7%, 4/4, BH-FDR adj_p=0.039 | shadow→active, weight ~1.5–2.0 |
+| `downtrend_under` (slope −1.5..−0.5) | 58.5%, 3/4, adj_p=0.037 — prod predicate MATCHES; removed S471 on N=6 (b2b mistake again) | shadow→active, weight ~1.5 |
+| `ft_anomaly_under` (FTA volatility) | 59.9%, 3/3, adj_p=0.037; prod predicate matches | shadow→active, weight ~1.5 |
+| `book_disagree_under` | 59.2%, 4/4, adj_p=0.012 — but prod uses `multi_book_line_std` (2023-26 only); my `line_std` is a proxy | verify on multi_book_line_std, then promote |
 | `high_line_under` (line≥25) | 59.9% but ⅓ orthogonal; marginal-ROI CI includes 0 | add at **1.0 PAIRING** (not 1.5, not rescue) |
 | `under_low_rsc≥2` gate | rsc≥2 robust 5/5; rsc=1 is a 2-season mirage | **KEEP — do not relax** |
+
+*Slate finalized via the shadow-backlog formal gate (`scripts/nba/training/discovery/shadow_backlog_gate.py`,
+2026-06-24): of the cache-testable shadow signals, 3 NEW pass (downtrend/ft_anomaly/book_disagree_under),
+2 marginal (over_streak_reversion_under, over_trend_over), 4 fail (extended_rest/usage_surge/minutes_load,
+mean_reversion). Recurring pattern: the system keeps killing durable UNDER signals on tiny live samples
+(b2b_under, now downtrend_under removed on N=6 → actually 58.5% over 5 seasons). The testable boundary
+(`coverage_audit.py`): 62/72 cols cross-season; 6 trap cols (game_total/implied_team_total/spread/
+star_teammates_out + the all-constant-pre-2025 back_to_back/is_b2b/dnp_rate).*
 
 ## Key corrections to carry forward (from the 34-agent review)
 - **UNDER-only "+9.4% ROI" → quote as +4.9% ex-2025-26.** Don't let the anomaly carry the narrative.
