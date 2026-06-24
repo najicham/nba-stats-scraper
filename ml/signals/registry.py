@@ -162,11 +162,16 @@ def build_default_registry() -> SignalRegistry:
 
     # Prototype signals - Batch 1
     # HotStreak3Signal, ColdContinuation2Signal removed (Session 275)
-    # B2BFatigueUnderSignal DISABLED (Session 373) — boosts a losing pattern (39.5% Feb HR, N=410).
-    # Fires only 3 times in best bets total (2-1). Signal is philosophically backwards:
-    # encourages B2B UNDER but B2B UNDER collapsed from 66.7% (Dec) to 39.5% (Feb).
-    # B2BBoostOverSignal (Session 396) — B2B is BULLISH for OVER (64.3% raw, 69.2% toxic window)
+    # B2BFatigueUnderSignal REINSTATED 2026-06-23 in SHADOW (excluded from real_sc → zero pick
+    # impact). The Session-373 disablement was a small-sample error: it was judged on Feb-2026 only
+    # (39.5%) and on the `is_b2b` feature, which is populated ONLY in 2025-26 (b2b UNDER's weakest
+    # season). 5-season walk-forward (via days_rest=1) = 63.2%, above breakeven 5/5 seasons, passes
+    # the formal discovery gate (BH-FDR p=0.0035, bootstrap [56.7,70.0]). Promote at season open.
+    # B2BBoostOverSignal (Session 396) — claims B2B is BULLISH for OVER (64.3% raw). NOTE 2026-06-23:
+    # that was 2025-26-era; 5-season b2b OVER is 44/53/47/62/70 (2/5 above breakeven) → another OVER
+    # artifact; flag b2b_boost_over for the OVER decay watch.
     registry.register(B2BBoostOverSignal())
+    registry.register(B2BFatigueUnderSignal())
     # RestAdvantage2DSignal DISABLED (Session 396) — 25% 30d HR (N=4), collapsed from
     # 80.6% Jan to 57.1% Feb. Post-ASB fewer rest differentials. Re-enable next October.
     # registry.register(RestAdvantage2DSignal())

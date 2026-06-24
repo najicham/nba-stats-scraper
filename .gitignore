@@ -213,3 +213,6 @@ ml/experiments/results/
 results/nba_walkforward*/
 results/bb_simulator/
 results/signal_discovery/
+results/nba_staleness/
+results/mlb_season_replay_*/
+results/mlb_walkforward_*/
