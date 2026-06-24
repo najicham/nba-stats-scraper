@@ -78,9 +78,40 @@ gate. Removes an action item rather than adding one.
 ---
 
 ## Net effect on the 2026-27 action list
-- **`high_line_under`:** promote from "consider" → **approved-to-add at weight ~1.5 (sign-off
-  at season open).** Overlap checked: ~⅓ orthogonal, durable.
+- **`high_line_under`:** **add at weight 1.0 as a PAIRING signal (NOT 1.5, NOT solo-rescue)**
+  — see the post-review correction below.
 - **OVER scoring-env gate:** **struck from the list** — backtested and refuted. OVER stays
   unproven behind the edge floor; no gate to build.
 - Reinforces the core thesis: UNDER + edge is the durable engine; OVER has no
   forward-detectable profitable regime.
+
+---
+
+## POST-REVIEW CORRECTION (34-agent review + 2 RUN_NOW audits, same day)
+
+A 34-agent adversarial review audited every 2026-06 result. It flagged the "add at 1.5"
+recommendation above as OVERSTATED (live `star_line_under` is 35.3% HR, N=17 this season,
+already flagged "do NOT graduate"). Two cheap offline RUN_NOW audits followed
+(`scripts/nba/training/discovery/runnow_under_audits.py`):
+
+**Audit 1 — `under_low_rsc>=2` gate: KEEP, do not relax.** Reconstructed real_sc on the
+5-season cache. Pooled `rsc=1` (60.2% HR, ROI +15%, boot CI excludes 0) is a TWO-SEASON
+mirage — only **2/5 seasons above breakeven** (52/42/64/51/75). `rsc>=2` is the robust
+bucket: **5/5 seasons** (58.8% HR, ROI +12.2%). `rsc=1` at edge3-5 (the band the gate
+blocks) is only 3/5. The much-thrashed gate is correctly calibrated; relaxing it imports
+single-season losers. **Resolved: keep `under_low_rsc` at >=2.**
+
+**Audit 2 — `high_line_under` marginal P/L → add at 1.0 as a PAIRING signal.** The orthogonal
+subset's marginal ROI is +10.5% but **bootstrap CI [-4.0%, +24.4%] includes zero**, weakest
+in 2025-26 (51%, N=41). The orthogonal edge3-5 picks (N=126) do NOT become best bets alone —
+they're blocked by the (now-confirmed) `rsc>=2` gate. So high_line_under's real value is as
+the SECOND signal that lifts an existing `rsc=1` star-UNDER into the robust `rsc=2` bucket —
+which justifies a modest **weight 1.0, kept OUT of RESCUE_SIGNAL_PRIORITY** (its solo edge5+
+lane is thin/inconsistent: N=33, 45% in 2025-26). Not 1.5, not a rescue tier.
+
+**Headline-number caveats the review surfaced (carry forward):** UNDER-only "+9.4% ROI" is
++4.9% ex-2025-26; OVER edge>=6 "38.9%" is direction-robust but magnitude-fragile (N=18) — say
+"unproven, not proven-bad"; the "58% UNDER / 73% OVER March WF" figure (broad-research doc +
+memory) could NOT be verified in any source — drop it; 14d cadence edge5+ mixed OVER+UNDER and
+needs a direction-split before adoption. Features: **add none** (no new data source is in the
+cache; diversity levers dead). Full review output retained in the session transcript.
