@@ -1,6 +1,42 @@
 # CLV validation — build scope
 
-**Status:** SCOPED, not started. **Owner:** next session. **Created:** 2026-06-23 (session 4).
+> ## PHASE 0 RESULT (2026-06-24) — CONDITIONAL GO (3 seasons, not 5)
+> Feasibility check complete. Findings:
+> - **`odds_api_player_points_props` is richer than feared:** 22.5M rows, has a `player_lookup`
+>   column (direct join to `prediction_accuracy`, no name-mapping) and `minutes_before_tipoff`
+>   (closing line = smallest positive value — no timestamp math). Reconstruction is easy.
+> - **Coverage (graded pick → pre-tip snapshot):** 2023-24 **77%**, 2024-25 **77%**, 2025-26 **88%**
+>   — all clear the 70% gate. **2021-22 absent; 2022-23 only 2.9% → EXCLUDED.** 5-season CLV is OUT.
+> - **Granularity caveat:** pre-2025-26 has ~1 snapshot/game at **~T-2.2hr** (a near-close proxy that
+>   misses the final ~2hr of movement); **only 2025-26 has to-the-tip granularity** (12 books, snaps
+>   to/after tip). Pre-2025-26 CLV is therefore conservative.
+> - **CLV is mechanically measurable:** pick-line vs close differs for **47-61%** of picks (mean move
+>   0.41-0.70 pts, ~36% move ≥0.5) — if they'd been ~identical, CLV would be dead. They're not.
+> - **Why it's still worth it:** the 3 usable seasons include **two NON-anomaly seasons** (2023-24,
+>   2024-25), so we can test "do UNDER picks beat the close in *normal* seasons" — the exact
+>   real-edge-vs-2025-26-noise question. **→ Proceed to Phase 1.** Validated recipe + first cut:
+>   `scripts/nba/training/discovery/clv_validation.py`.
+
+> ## PHASE 1 FIRST-CUT RESULT (2026-06-24) — CLV independently confirms the thesis
+> edge3+ graded picks, median near-close line, by direction × season:
+>
+> | dir | 2023-24 | 2024-25 | 2025-26 |
+> |---|---|---|---|
+> | **UNDER mean CLV** | **+0.257** | **+0.199** | +0.632 |
+> | **OVER mean CLV**  | **−0.087** | **−0.055** | +0.743 |
+>
+> - **UNDER beats the close in ALL THREE seasons (positive CLV incl. both NON-anomaly seasons)** ⇒
+>   the UNDER edge is real, independently confirmed by a lower-variance lens — NOT a 2025-26 artifact.
+> - **OVER gets a WORSE number than the close in both normal seasons (negative CLV), positive ONLY in
+>   2025-26** ⇒ OVER-fragility independently re-confirmed via CLV (not HR). Same conclusion, new lens.
+> - **CAVEAT — CLV is NOT yet a usable per-pick GATE:** within-direction, HR|+CLV ≈ HR|−CLV pre-2025-26
+>   (sometimes inverted), because the pre-2025-26 "close" is a T-2.2hr proxy + a selection confound
+>   (the model already picked high-HR spots). CLV validates the THESIS, not (yet) per-pick quality.
+> - **Phase 2 (next session):** (1) true-close cut on 2025-26 ONLY (`minutes_before_tipoff <= 15`) to
+>   test CLV-as-gate without the proxy; (2) CLV on actual best-bets picks (`signal_best_bets_picks`) by
+>   signal tag — does each UNDER signal (b2b/slow_pace/downtrend/...) carry positive CLV?
+
+**Status:** PHASE 0 + Phase 1 first-cut DONE. **Owner:** next session (Phase 2). **Created:** 2026-06-23 (session 4).
 **Origin:** the one genuinely-unexplored high-value lever from the off-season research arc
 (see `docs/09-handoff/2026-06-23-SESSION-4-frame-breaking-RESULT.md`). Everything else converged.
 
