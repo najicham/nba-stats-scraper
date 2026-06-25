@@ -36,7 +36,56 @@
 >   test CLV-as-gate without the proxy; (2) CLV on actual best-bets picks (`signal_best_bets_picks`) by
 >   signal tag — does each UNDER signal (b2b/slow_pace/downtrend/...) carry positive CLV?
 
-**Status:** PHASE 0 + Phase 1 first-cut DONE. **Owner:** next session (Phase 2). **Created:** 2026-06-23 (session 4).
+> ## PHASE 2 RESULT (2026-06-25) — CLV is a usable per-pick gate on a REAL close; 4 UNDER signals independently trust-validated
+> Extended `clv_validation.py`. Architecture: ONE 22M-row odds scan (`--build-cache`, background)
+> materialises per-(game_date,player_lookup) median close at BOTH 0–180min (near) and 0–15min (true)
+> to a local parquet; all reports join cheaply against it. 44,021 player-games cached; 2,828 have a
+> true-close snapshot (effectively 2025-26 only — the lone to-the-tip season).
+>
+> **TASK 1 — true-close gate (2025-26, `minutes_before_tipoff ≤ 15`, N=1,155 edge3+ w/ true close):**
+> With a REAL close (no T-2.2hr proxy) CLV *separates* — it is a usable per-pick screen:
+>
+> | dir / band | HR\|+CLV | HR\|−CLV | gap |
+> |---|---|---|---|
+> | UNDER edge3+ | **63.4%** (N=238) | **49.5%** (N=101) | **+14pp** |
+> | UNDER edge5+ | 63.8% (N=130) | 55.6% (N=45) | +8pp |
+> | OVER edge3+ | 66.9% (N=130) | 52.7% (N=93) | +14pp |
+>
+> UNDER CLV calibration (true close): `clv≤−0.5` → **43.9%** HR (N=82); `clv=0` → 60.0% (N=418);
+> `clv>0.5` → 63.4% (N=202). **The value is the NEGATIVE tail:** a pick whose line moved against it
+> by ≥0.5 pts by tip is a ~44% loser. ⇒ a live de-risk rule (drop/flag a pick if by tip the close has
+> moved ≥0.5 against it) is supported. **This FLIPS the Phase-1 "not yet a gate" caveat — the proxy WAS
+> hiding it; on a real close +CLV clearly beats −CLV.** CAVEAT: only demonstrable in 2025-26 (no
+> true-close pre-2025-26); cross-season confirmation needs live 2026-27 true-close data. OVER's gate
+> "works" too but only inside 2025-26 where OVER won — do NOT read it as OVER rehabilitation.
+>
+> **TASK 2b — candidate UNDER slate via CLV, reconstructed cross-season (near-close proxy, 3 seasons):**
+>
+> | signal | 2023-24 | 2024-25 | 2025-26 | verdict |
+> |---|---|---|---|---|
+> | `slow_pace_under` | +0.49 / 60.0% | +0.38 / 58.6% | +0.43 / 56.8% | **+CLV both normal seasons → TRUST** |
+> | `ft_anomaly_under` | +0.34 / 58.8% | +0.23 / 56.8% | +0.32 / 63.2% | **TRUST** |
+> | `downtrend_under` | +0.39 / 55.6% | +0.29 / 58.3% | +0.38 / 53.1% | **TRUST** (HR modest, CLV consistent) |
+> | `high_line_under` | +0.36 / 59.3% | +0.24 / 59.3% | +0.32 / 61.7% | **TRUST** (consistent +CLV; magnitude modest) |
+> | `b2b_fatigue_under` | n/a | n/a | +0.20 / 48.0% | **INCONCLUSIVE** — `back_to_back` unpopulated pre-2025 in cache; weak in its lone (known-weakest) testable season, N=25 |
+> | `book_disagree_under` | N=0 | N=1 | +1.13 / 68.8% | **UNDERPOWERED** — prod predicate `multi_book_line_std≥1.0` is rare (N=17 total); +CLV where present |
+>
+> (cells = mean CLV pts / HR. Predicates mirror `shadow_backlog_gate.py`.) **4 of 6 slate signals carry
+> positive CLV in BOTH non-anomaly seasons + positive HR → independent low-variance confirmation of the
+> season-open UNDER slate.** b2b can't be CLV-tested from this cache (data gap, NOT a kill — keep the
+> shadow→active plan, gate on live N≥30). book_disagree needs the multi-book feed live.
+>
+> **TASK 2a — CLV on actually-fired tags** (pick_signal_tags, exists 2026-02+ only → 2025-26-partial,
+> the Mar-collapse window): every UNDER tag shows POSITIVE mean CLV (book_disagreement +3.41,
+> ft_anomaly +0.58, slow_pace +0.57, downtrend +0.49) even as HR sagged (40–54%) — i.e. the picks kept
+> beating the close while losing outright, consistent with the production-side (not model) March
+> collapse. Directional only; do NOT demote on this N.
+>
+> **NET:** CLV independently (a) re-confirms the UNDER-edge thesis a 4th time, (b) trust-validates 4 of
+> the 6 season-open UNDER signals cross-season, and (c) yields a NEW live tool — a negative-CLV de-risk
+> screen — once 2026-27 supplies to-the-tip closes. Research arc is complete; rest is season-open exec.
+
+**Status:** PHASE 0 + 1 + 2 DONE (2026-06-25). Off-season CLV research complete. **Created:** 2026-06-23 (session 4).
 **Origin:** the one genuinely-unexplored high-value lever from the off-season research arc
 (see `docs/09-handoff/2026-06-23-SESSION-4-frame-breaking-RESULT.md`). Everything else converged.
 
