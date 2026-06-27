@@ -117,7 +117,7 @@ nba-stats-scraper/
 - V12_NOVEG is the strongest base feature set. Adding features consistently hurts.
 - Optimal vegas weight: 0.15-0.25x. 56-day training window is sweet spot.
 - **Raw model HR is ~53% at edge 3+.** The BB pipeline (signals+filters) is where the value lives: 60%+ overall, 65%+ at edge 5+.
-- **Edge 5+ is the money zone.** Edge 3-5 picks are net-negative (36-44% HR). Only edge 5+ should be in best bets.
+- **Edge 5+ is the money zone — for UNDER.** UNDER edge≥6 is durable (~61% cross-season), UNDER edge≥3 ~56%+. High-edge OVER has NO cross-season edge: edge≥6 OVER ≈ 39% HR in the 4 prior seasons; the 2025-26 OVER boom was a scoring-environment anomaly. The OVER edge-6.0 floor throttles volume but does NOT make OVER profitable. Edge 3-5 picks are net-negative. (2026-06 5-season recalibration.)
 
 ### Retraining (Session 458)
 
@@ -127,7 +127,7 @@ nba-stats-scraper/
 - **Top combos: 74-83% HR** — edge 5+ with combo_3way, rest_advantage, or book_disagreement.
 - **`weekly-retrain` CF fires every Monday 5 AM ET** — auto-retrains all enabled families, 56-day rolling window, governance gates enforced
 - **`./bin/retrain.sh --all --enable`** — manual equivalent for ad-hoc retraining
-- ~~`retrain-reminder` CF~~ — NOT DEPLOYED (orphan source dir; cleanup pending in Task #35)
+- ~~`retrain-reminder` CF~~ — removed (orphan source dir cleaned up; Task #35 done 2026-06)
 - Stale models (10+ days) become confidently wrong: high edge but low HR
 - Walk-forward details: `docs/08-projects/current/model-management/MONTHLY-RETRAINING.md`
 
@@ -167,7 +167,7 @@ nba-stats-scraper/
 
 **Cloud Functions (auto-deploy via `cloudbuild-functions.yaml`):** phase5b-grading, phase6-export, grading-gap-detector, phase3/4/5-to-next orchestrators, enrichment-trigger, daily-health-check, transition-monitor, pipeline-health-summary, nba-grading-alerts, live-freshness-monitor, self-heal-predictions, grading-readiness-monitor, post-grading-export, decay-detection (11 AM ET), weekly-retrain (Mon 5 AM ET, 4GiB/1800s), validation-runner, filter-counterfactual-evaluator (11:30 AM ET), morning-deployment-check (6 AM ET)
 
-**Orphan source dirs (NOT deployed, cleanup pending Task #35):** `retrain_reminder/`, `monthly_retrain/`, `phase4_failure_alert/`, `box_score_completeness_alert/`, `prediction_monitoring/`, `zero_workflow_monitor/`, `system_performance_alert/`, `upcoming_tables_cleanup/`, `firestore_cleanup/`, `mlb_pitcher_watchlist/`, `mlb_phase3_to_phase4/`, `mlb_phase4_to_phase5/`, `mlb_phase5_to_phase6/`
+**Orphan source dirs:** cleaned up — Task #35 DONE (verified 2026-06; the previously-listed orphan dirs `retrain_reminder/`, `monthly_retrain/`, `phase4_failure_alert/`, `box_score_completeness_alert/`, `prediction_monitoring/`, `zero_workflow_monitor/`, `system_performance_alert/`, `upcoming_tables_cleanup/`, `firestore_cleanup/`, `mlb_pitcher_watchlist/`, `mlb_phase{3,4,5}_to_phase{4,5,6}/` are no longer in the repo).
 
 **NOT auto-deployed (manual only):** auto-retry-processor, mlb-phase1-scrapers (use `./bin/scrapers/deploy/mlb/deploy_mlb_scrapers.sh`)
 
@@ -274,7 +274,7 @@ WHERE game_date >= CURRENT_DATE() - 7 ORDER BY game_date DESC;
 | **TIGHT market auto-gates (Session 483)** | When `vegas_mae_7d < 4.5`, `regime_context.py` auto-raises OVER floor 5→6 and disables OVER rescue. `signal_decay_monitor.py` alerts `#nba-betting-signals` after 2+ consecutive TIGHT days. March 8 was MAE 4.40. |
 | **Retrain gate backwards (Session 483)** | FIXED Session 486: `cap_to_last_loose_market_date()` auto-caps `train_end` when recent TIGHT days (vegas_mae_7d < 4.5) are within 7 days. CF always runs; no manual scheduler pause needed. Override with `?train_end=YYYY-MM-DD` query param. Session 507: lookback query extended to `date.today()` (was `train_end`) to close 15-day eval-window blind spot. |
 | **MLB schedulers were April-only** | ALL MLB monitoring/validator schedules were `4-10` (April-October). Fixed to `3-10` (March-October) — MLB Opening Day is late March. If season start shifts, update `deployment/scheduler/mlb/validator-schedules.yaml`, `monitoring-schedules.yaml`, and `deployment/scripts/deploy-mlb-monitoring.sh`. |
-| **`quick_retrain.py` eval hardcoded to `catboost_v9`** | `load_eval_data_from_production()` has `system_id='catboost_v9'` hardcoded at line 569. When catboost_v9 is INSUFFICIENT_DATA, eval returns ~39 rows → "ERROR: Not enough data". **Workaround: always use `--no-production-lines`** for retrains until fixed. Uses DK lines from feature store, governance still valid. (Session 483) |
+| ~~`quick_retrain.py` eval hardcoded to `catboost_v9`~~ | RESOLVED — `load_eval_data_from_production(..., system_id=None)` is now parameterized with a smart fallback. The old `--no-production-lines` workaround is no longer required. |
 | Cloud Function env vars | Use `gcloud functions describe FUNC`, not `gcloud run services describe`. CFs are NOT Cloud Run services. |
 | **Phase 6 trigger message format** | Use `{"export_types": ["signal-best-bets"], "target_date": "2026-02-24"}` — NOT `game_date`. See `phase6_export/main.py`. |
 | **Worker requirements-lock.txt** | Worker Dockerfile uses `requirements-lock.txt`, NOT `requirements.txt`. Always update the lock file for dependency changes. |
@@ -282,7 +282,7 @@ WHERE game_date >= CURRENT_DATE() - 7 ORDER BY game_date DESC;
 | **Signal silently dead** | Signals can die when dependencies change. Check `signal_health_daily` for missing signals. Common: wrong threshold scale (raw vs 0-1), dead champion dependency. |
 | **Disabled model still in best bets** | Use `python bin/deactivate_model.py MODEL_ID` — cascades through all systems. |
 | **Auto-deploy cascade** | Push to main deploys ALL services from HEAD — keep code deployable. Session 388: docs commit deployed untested feature code. |
-| **Quality scorer FEATURE_COUNT mismatch** | `quality_scorer.py` FEATURE_COUNT=54, `ml_feature_store_processor.py` FEATURE_COUNT=60. Truncate feature_sources before scoring. |
+| ~~Quality scorer FEATURE_COUNT mismatch~~ | RESOLVED — both `quality_scorer.py` and `ml_feature_store_processor.py` are FEATURE_COUNT=60. |
 | **Scraper date=TODAY literal** | Session 402: ConfigMixin resolved `TODAY` to literal string, not actual date. Fixed: `resolve_today()` in scraper opts. |
 | **NumberFire → FanDuel redirect** | Domain acquired by FanDuel. Scraper uses GraphQL API at `fdresearch-api.fanduel.com/graphql`. |
 | **VSiN AJAX-loaded data** | VSiN data is server-rendered at `data.vsin.com`, not AJAX. Direct HTML parsing works. |
