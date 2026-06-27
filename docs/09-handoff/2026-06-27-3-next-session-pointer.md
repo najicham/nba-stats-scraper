@@ -4,21 +4,23 @@
 `2026-06-27-2-mlb-full-review-FINDINGS.md`). NBA off-season research is **converged — "do little,
 add no features."** Nothing here is urgent.
 
-## The one open decision (5-min, decision-driven — not research)
+## The one open decision — RESOLVED 2026-06-27 (merged)
 
-**Merge the `offseason-eval-foundation-2026-06` branch to `main`, or leave it parked until 2026-27 open?**
+**`offseason-eval-foundation-2026-06` is MERGED to `main` and pushed** (merge commit `14c01583`;
+`origin/main` == local `main` == `4ab89d5f`). Verified `git merge-base --is-ancestor` — the branch
+head is a full ancestor of main; commit `99941b41` is present in main. Nothing left to merge.
 
-That branch carries committed-not-pushed-to-main work, all inert/reversible:
-- **Staged OVER-layer demotion** (commit `99941b41`): `fast_pace_over`, `cold_3pt_over`,
-  `line_rising_over`, `book_disagree_over`, `b2b_boost_over` → `SHADOW_SIGNALS`. Weights retained as
-  restore targets. 5-season WF re-grade: all 5 FAIL the ≥3/5-season breakeven gate (edge was the
-  2025-26 anomaly). Each must EARN weight back on live 2026-27 (N≥30 HR≥58%) via `over_decay_watch.py`.
-- **`b2b_fatigue_under` reinstated in SHADOW** (excluded from real_sc, not in `UNDER_SIGNAL_WEIGHTS`):
-  ZERO pick impact until promoted at season open after live N≥30 HR≥58%.
+What landed (all inert/reversible, zero live impact while the off-season halt is active):
+- **Staged OVER-layer demotion** (commit `99941b41`, in `ml/signals/aggregator.py` `SHADOW_SIGNALS`):
+  `fast_pace_over`, `cold_3pt_over`, `line_rising_over`, `book_disagree_over`, `b2b_boost_over`.
+  Weights retained as restore targets. 5-season WF re-grade: all 5 FAIL the ≥3/5-season breakeven gate
+  (edge was the 2025-26 anomaly). Each must EARN weight back on live 2026-27 (N≥30 HR≥58%) via
+  `over_decay_watch.py`.
+- **`b2b_fatigue_under` reinstated in SHADOW** (`aggregator.py:132`; excluded from real_sc, NOT in
+  `UNDER_SIGNAL_WEIGHTS`): ZERO pick impact until promoted at season open after live N≥30 HR≥58%.
 
-Both are off-season-safe to merge (inert until season open). The only reason to wait is if you want a
-final eyeball before it's on `main`. Recommendation: merge when ready — it just stages the changes; it
-changes nothing live (no NBA picks generated in the off-season).
+No further action — the merge stages these changes; it changes nothing live (no NBA picks generated in
+the off-season). The remaining sign-off items are the season-open *promotions* below, not the merge.
 
 ## Everything else = season-open exec (do NOT pre-run)
 
