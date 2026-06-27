@@ -17,7 +17,11 @@ through November 2026.
 ## State at off-season end (carry-in)
 - All 7 NBA models BLOCKED; **edge-based auto-halt ACTIVE** (7d avg edge ~1.45 ≪ 5.0); **0 picks since ~Mar 28**.
 - This is CORRECT. Do not force picks. The halt recovers **automatically** once fresh models produce edge.
-- 73 Cloud Scheduler jobs were paused for the off-season; 4 REB/AST data-clock jobs are intentionally ENABLED.
+- ~67 NBA Cloud Scheduler jobs paused for the off-season (verified 2026-06-27: 67 PAUSED / 72 ENABLED);
+  the 4 REB/AST data-clock jobs (`nba-{assists,rebounds}-props-{morning,pregame}`) are intentionally ENABLED
+  (confirmed). `weekly-retrain-trigger` is among the PAUSED set — its cron is correct (`0 5 * * 1`, year-round);
+  it just needs RESUMING pre-opener (forgetting it was the 2025-26 root cause). All MLB betting-path jobs are
+  also paused (MLB betting concluded/mothballed 2026-06-26 — leave paused).
 
 ## How the two safety mechanisms work (do not disable)
 1. **Edge-based auto-halt** (`ml/signals/regime_context.py`, Session 515). Halts ALL best-bets output when
@@ -113,25 +117,30 @@ Detail: `docs/09-handoff/2026-06-23-edge-calibration-RESULT.md`.
       may already be partially captured. Detail: `docs/09-handoff/2026-06-23-broad-research-findings.md`.
 - [ ] ~~`rested_under_block`~~ — FAILS the formal gate (p=0.88, noise); dropped. ~~low-line+low-var UNDER
       archetype~~ — does not reproduce (50%). Prefer b2b_fatigue_under + high_line_under above.
-- [ ] **OVER-signal decay watch (2026-06-23 trust-map — HIGH PRIORITY):** the OVER signal layer is pervasively
-      2025-26-overfit. Put ALL of these on a re-validation watch (re-grade by ~Dec 2026; if 2026-27 HR not
-      clearly above breakeven at N≥30, demote weight / move to shadow):
-      - `fast_pace_over` (ACTIVE) — 58/47/49/59/**78** by season, prior 52.4% vs 2025-26 78.1%, **p<0.001**.
-      - `cold_3pt_over` (ACTIVE w2.0) — **sub-breakeven in 4/5 seasons** (34/46/42/46/**72**), p<0.001.
-        WORST offender; strongest candidate for proactive demotion to shadow at season open.
-      - `line_rising_over` (ACTIVE w3.0) — no durable edge (breakeven all prior seasons; 2025-26 only).
-      - `book_disagree_over` (ACTIVE w3.0) — no edge any era.
-      This is mechanically why OVER collapsed Jan(80%)→Mar(47%) 2026: overfit signals reverting. Enforce the
-      discovery gate (≥3/5 seasons above breakeven) before re-trusting any OVER signal. Do NOT delete
-      pre-season. UNDER signals are healthier — `home_under` durable (56-60% 4/5 yrs); keep ACTIVE. Detail:
-      `docs/09-handoff/2026-06-23-signal-trustmap-RESULT.md` + `2026-06-23-crossbook-OVER-multiseason-RESULT.md`.
+- [ ] **OVER-signal RESTORE watch (the 5 fragile OVER signals were PRE-DEMOTED 2026-06-26):** a 5-season
+      walk-forward re-grade (independently reproduced; matches the `over_decay_watch.py` baselines) confirmed
+      the OVER signal layer is 2025-26-overfit, so the five were moved to `SHADOW_SIGNALS` for season open
+      (commit `99941b41`, merged to main — zero weight + excluded from `real_sc`; their `OVER_SIGNAL_WEIGHTS`
+      entries are retained as the RESTORE target). The decay-watch's job in 2026-27 therefore FLIPS from
+      "demote if they fail" to **"restore only if they EARN it"** — each stays in shadow until it clears ≥58%
+      at N≥30 on live 2026-27 data, then (with sign-off) is removed from `SHADOW_SIGNALS`:
+      - `fast_pace_over` (now SHADOW) — sub-BE 4/4 prior seasons (N=622), 71.5% 2025-26 only (p<0.001).
+      - `cold_3pt_over` (now SHADOW) — sub-BE 4/5 (prior pooled 40%), 74.1% 2025-26 (p=0.007). Worst offender.
+      - `line_rising_over` (now SHADOW) — pooled 53.6% (~breakeven); the "96.6%" was one Jan-Feb 2026 window.
+      - `book_disagree_over` (now SHADOW) — N=18 total cross-season (UNPROVEN); the "79.6% N=211" does not reproduce.
+      - `b2b_boost_over` (now SHADOW) — sub-BE 3/5 (p=0.071); the b2b pair was backwards (favor `b2b_under`).
+      This is mechanically why OVER collapsed Jan(80%)→Mar(47%) 2026: overfit signals reverting. UNDER signals
+      are healthier — `home_under` durable (56-60% 4/5 yrs); keep ACTIVE. Detail:
+      `docs/09-handoff/2026-06-23-signal-trustmap-RESULT.md`, `2026-06-23-crossbook-OVER-multiseason-RESULT.md`,
+      `2026-06-26-offseason-priorities.md`.
       **TOOL: run `PYTHONPATH=. python bin/monitoring/over_decay_watch.py` from ~Dec 2026 — it re-grades all
-      five OVER signals + the raw high-edge OVER band on live data (presumed-fragile: each must clear ≥58% at
-      N≥30 to KEEP, else DEMOTE-to-shadow verdict). Read-only. The RAW high-edge band is the high-N early
-      signal (per-signal counts accrue slowly); if edge6+ OVER reverts toward the prior-4-season 38.9%, that is
-      the demote trigger. Validated via `--smoke-test` (reproduces the 2025-26 edge6+ OVER inflation = 63.1%).**
+      five (now-shadow) OVER signals + the raw high-edge OVER band on live data (presumed-fragile: each must
+      clear ≥58% at N≥30 for a KEEP/restore verdict). Read-only; validated via `--smoke-test`. The RAW high-edge
+      band is the high-N early signal — if edge6+ OVER stays near the prior-4-season 38.9%, the shadow demotion
+      is vindicated; if it climbs above ≥58% durably, that's the restore trigger.**
 
 ## DON'Ts (carry-forward)
 - Don't relax/remove `cap_to_pre_late_season`; don't lower auto-halt thresholds to force picks; don't flip
   cadence or enable HSE 'active' on thin data; don't `--set-env-vars`; don't project the 63.8% BB record
-  forward as a stable expectation (real breakeven ≈ 53.5%; edge5+ is the money zone both directions).
+  forward as a stable expectation (real breakeven ≈ 53.5%); don't call edge5+ "the money zone" for OVER —
+  it's UNDER-only (high-edge OVER is sub-breakeven in normal seasons; see the OVER-liability section above).
