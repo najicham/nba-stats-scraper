@@ -38,6 +38,9 @@ DOC_PATTERNS = [
 ALLOWLIST_FILES: Set[str] = {
     'docs/02-operations/session-learnings.md',
     'docs/06-reference/model-dead-ends.md',
+    # Forward-looking season-resume plan: discusses candidate signals not yet in
+    # the registry (high_line_under) and evaluated-then-rejected ones (rested_under_block).
+    'docs/02-operations/runbooks/season-resume-2026-27.md',
 }
 
 # Directory prefixes whose contents are exempt (handoffs are immutable historical

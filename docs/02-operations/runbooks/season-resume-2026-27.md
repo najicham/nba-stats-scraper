@@ -125,6 +125,11 @@ Detail: `docs/09-handoff/2026-06-23-edge-calibration-RESULT.md`.
       discovery gate (≥3/5 seasons above breakeven) before re-trusting any OVER signal. Do NOT delete
       pre-season. UNDER signals are healthier — `home_under` durable (56-60% 4/5 yrs); keep ACTIVE. Detail:
       `docs/09-handoff/2026-06-23-signal-trustmap-RESULT.md` + `2026-06-23-crossbook-OVER-multiseason-RESULT.md`.
+      **TOOL: run `PYTHONPATH=. python bin/monitoring/over_decay_watch.py` from ~Dec 2026 — it re-grades all
+      five OVER signals + the raw high-edge OVER band on live data (presumed-fragile: each must clear ≥58% at
+      N≥30 to KEEP, else DEMOTE-to-shadow verdict). Read-only. The RAW high-edge band is the high-N early
+      signal (per-signal counts accrue slowly); if edge6+ OVER reverts toward the prior-4-season 38.9%, that is
+      the demote trigger. Validated via `--smoke-test` (reproduces the 2025-26 edge6+ OVER inflation = 63.1%).**
 
 ## DON'Ts (carry-forward)
 - Don't relax/remove `cap_to_pre_late_season`; don't lower auto-halt thresholds to force picks; don't flip

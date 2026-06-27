@@ -109,6 +109,26 @@ the SECOND signal that lifts an existing `rsc=1` star-UNDER into the robust `rsc
 which justifies a modest **weight 1.0, kept OUT of RESCUE_SIGNAL_PRIORITY** (its solo edge5+
 lane is thin/inconsistent: N=33, 45% in 2025-26). Not 1.5, not a rescue tier.
 
+## POST-REVIEW WORTH_TRYING tests (formal gate) — one new validated signal
+
+Ran the review's cross-season-validatable WORTH_TRYING candidates through the mandatory gate
+(`scripts/nba/training/discovery/runnow_worth_trying.py`):
+
+- **`slow_pace_under` (opponent_pace<=99 raw, UNDER, edge3+) → PASSES THE GATE.** N=218,
+  **58.7% HR (+7.2pp)**, p=0.019, bootstrap CI [0.523,0.654] excludes baseline, cross-season
+  **4/4 above baseline, CV=0.037** (58/61/56/62), **BH-FDR adj_p=0.039 significant**. Strict
+  <=98 variant FAILS (N=116, 55.2%, CI includes baseline) — the edge sits at the <=99 line.
+  **Recommendation: promote shadow→active at 2026-27 open (sign-off), weight ~1.5–2.0,** pending
+  live N>=30. A genuine new durable UNDER signal. (Aside: combo_tester's `fast_pace_over` proxy
+  uses `opponent_pace>=0.75` but pace is RAW 91–111 here, so that OVER proxy never fires — a
+  latent combo-tester bug, not in this UNDER test.)
+- **`b2b x high_line x home` 3-way → INSUFFICIENT (N=46 < 100).** As predicted: individuals all
+  strong (b2b 63.2%, high_line 59.9%, home 58.5%) but rarely co-occur. No validatable synergy;
+  individuals already capture the edge separately. No combo to add.
+- **`stars_out>=2 UNDER` → DROPPED.** `star_teammates_out` is 0% populated 2021-25, 100% only
+  2025-26 — the SAME single-season coverage artifact as `is_b2b`. Cannot be cross-season
+  validated (the review's "data_confirmed" was wrong; confirmed here).
+
 **Headline-number caveats the review surfaced (carry forward):** UNDER-only "+9.4% ROI" is
 +4.9% ex-2025-26; OVER edge>=6 "38.9%" is direction-robust but magnitude-fragile (N=18) — say
 "unproven, not proven-bad"; the "58% UNDER / 73% OVER March WF" figure (broad-research doc +
