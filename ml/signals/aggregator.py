@@ -133,6 +133,21 @@ SHADOW_SIGNALS = frozenset({
     # Session 522: Quantile floor OVER — p25 > line → shadow (N=1 in first test, insufficient to validate)
     # Only fires for MultiQuantile models. Graduate when N >= 30 at BB level with HR >= 60%.
     'quantile_floor_over',
+    # ── 2026-06-26 STAGED for 2026-27 open: demote the fragile OVER signal layer ──
+    # A 5-season walk-forward re-grade (independently reproduced AND matching the
+    # over_decay_watch.py baselines) shows these 5 derive ~all their apparent edge from
+    # the 2025-26 scoring anomaly and FAIL the >=3/5-season breakeven gate. Their live
+    # OVER_SIGNAL_WEIGHTS justifications ("96.6%", "79.6% N=211", "81.5%") do NOT
+    # reproduce cross-season. Posture matches the harness: OVER is presumed FRAGILE —
+    # each must EARN its weight back on live 2026-27 data (N>=30, HR>=58% via
+    # over_decay_watch.py) before removal from SHADOW. NOT YET MERGED TO MAIN — needs
+    # sign-off. Evidence: docs/09-handoff/2026-06-26-offseason-priorities.md +
+    # 2026-06-23-signal-trustmap-RESULT.md / -crossbook-OVER-multiseason-RESULT.md.
+    'fast_pace_over',       # sub-BE 4/4 prior seasons (N=622), 71.5% 2025-26 only (p<0.001) — proven fragile
+    'cold_3pt_over',        # sub-BE 4/5 (prior pooled 40%), 74.1% 2025-26 (p=0.007) — proven fragile
+    'line_rising_over',     # pooled 53.6% (~breakeven); the "96.6%" was a single Jan-Feb 2026 window
+    'book_disagree_over',   # N=18 total cross-season (UNPROVEN); the "79.6% N=211" does not reproduce
+    'b2b_boost_over',       # sub-BE 3/5 (p=0.071); the b2b pair was backwards (the durable side is b2b_under)
 })
 
 # Session 400: UNDER signal quality weights for signal-first ranking.
