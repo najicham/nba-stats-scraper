@@ -32,6 +32,27 @@ don't expand** ([[expand-vs-improve-2026-06]]).
       pushes to main = auto-deploy; the new MLB CF dirs would redeploy (no-op, schedulers paused).
       Low risk but a conscious step — left for owner go-ahead.
 
+## EXECUTED 2026-06-26 — OVER-layer test + staged demotion
+
+Ran the highest-value off-season test (it cleared the "not sunk-cost" bar: it validates the
+season-open safety net and resolves a live config contradiction):
+
+1. **Validated the live decay-watch harness** (`over_decay_watch.py --smoke-test`) — runs clean,
+   correct production grading join, sensible verdicts. The season-open guardrail works.
+2. **Cross-season re-grade of the 5 high-weight OVER signals** (5-season WF, independently
+   reproduced, matches the harness baselines). Result: all 5 FAIL the ≥3/5-season breakeven gate;
+   their edge is the 2025-26 anomaly; the aggregator's "96.6% / 79.6% N=211 / 81.5%" justifications
+   do NOT reproduce cross-season (`book_disagree_over` fires only N=18 across 5 seasons).
+3. **STAGED the demotion** (commit `99941b41`, branch only — inert, no live picks now):
+   `fast_pace_over`, `cold_3pt_over`, `line_rising_over`, `book_disagree_over`, `b2b_boost_over`
+   → SHADOW_SIGNALS (zero weight + excluded from real_sc; weights retained as restore target).
+   **NOT merged to main — needs sign-off.** Posture: OVER presumed fragile; each must EARN its
+   weight back on live 2026-27 data (N≥30, HR≥58%) via the now-validated decay-watch.
+
+This pre-positions the "watch live, demote by Dec" plan so the season STARTS protected rather
+than bleeding on fragile OVER signals until the watch fires. fast_pace_over (sub-BE 4/4 normal
+seasons, well-powered) was the most indefensible to carry at weight 2.5.
+
 ## TIER 2 — Off-season prep (stage now; flip at open; needs sign-off)
 
 | Item | What | Effort | When |
