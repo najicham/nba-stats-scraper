@@ -163,6 +163,12 @@ SHADOW_SIGNALS = frozenset({
     # after live N>=30 at HR>=62%; OVER needs N>=50 at HR>=70% given weaker BB-level evidence.
     # Pre-registration: docs/08-projects/current/whole-line-precision/00-PREREGISTRATION.md
     'whole_line_precision',
+    # 2026-06-29: CLV live gate — UNDER + DK intraday line rose ≥ 0.5 (market converging with UNDER).
+    # Validated: UNDER agree 62.4% vs disagree 46.6% (p=5e-26, T-3h, 2025-26 N=1155).
+    # Single-season only — cross-season validation needed in 2026-27 (N≥30, HR≥60%).
+    # Counterpart block `clv_diverge_under_block` is wired as an active inline filter below.
+    # For T-3h precision: Phase 6 best-bets export should be re-triggered at ~4:30 PM ET.
+    'line_converging_under',
 })
 
 # Session 400: UNDER signal quality weights for signal-first ranking.
@@ -904,6 +910,20 @@ class BestBetsAggregator:
                 filter_counts['line_dropped_under'] += 1
                 _record_filtered(pred, 'line_dropped_under', pred_edge)
                 if 'line_dropped_under' not in self._runtime_demoted:
+                    continue
+
+            # CLV diverge UNDER block (2026-06-29): DK intraday line dropped >= 0.5 on an
+            # UNDER pick = market making UNDER harder to hit = disagree direction.
+            # Validated: UNDER disagree HR = 46.6% (well below breakeven) vs 62.4% agree
+            # (p=5e-26, T-3h, 2025-26, N=1155). Single-season validation — monitor CF HR.
+            # For T-3h precision: add 4:30 PM ET Cloud Scheduler job to re-trigger Phase 6.
+            dk_move = pred.get('dk_line_move_direction')
+            if (dk_move is not None
+                    and float(dk_move) <= -0.5
+                    and pred.get('recommendation') == 'UNDER'):
+                filter_counts['clv_diverge_under_block'] += 1
+                _record_filtered(pred, 'clv_diverge_under_block', pred_edge)
+                if 'clv_diverge_under_block' not in self._runtime_demoted:
                     continue
 
             # line_dropped_over_obs REMOVED 2026-03-26: CF HR = 60.0% (N=477) — blocking winners.

@@ -324,6 +324,11 @@ signals:
     direction: both
     description: "Whole-number prop line — book set line at integer (no .5), model accuracy +10-20pp (76% vs 63% raw 5-season, shadow, 2026-06-29)"
 
+  - tag: line_converging_under
+    status: shadow
+    direction: under
+    description: "DK intraday line rose ≥ 0.5 + model UNDER — market converging with UNDER thesis (62.4% agree vs 46.6% disagree, T-3h, 2025-26, shadow, 2026-06-29)"
+
   - tag: negative_clv_filter
     status: shadow
     direction: both

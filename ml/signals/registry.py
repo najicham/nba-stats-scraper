@@ -123,6 +123,7 @@ def build_default_registry() -> SignalRegistry:
         PositiveCLVUnderSignal,
         NegativeCLVFilter,
     )
+    from ml.signals.line_converging_under import LineConvergingUnderSignal
 
     # Session 404 signals — VSiN sharp money + RotoWire minutes projection
     from ml.signals.sharp_money import (
@@ -246,6 +247,9 @@ def build_default_registry() -> SignalRegistry:
     registry.register(PositiveCLVUnderSignal())
     # NegativeCLVFilter — register but NOT used as negative filter yet.
     registry.register(NegativeCLVFilter())
+    # 2026-06-29: CLV live gate — SHADOW positive signal (line_converging_under).
+    # Block direction is wired as inline filter `clv_diverge_under_block` in aggregator.py.
+    registry.register(LineConvergingUnderSignal())
 
     # Session 404: VSiN sharp money signals (shadow mode — not in aggregator yet)
     registry.register(SharpMoneyOverSignal())
