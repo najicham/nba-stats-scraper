@@ -314,6 +314,11 @@ signals:
     direction: over
     description: "minutes_surge_over — removed Session 514: structurally dead — no RotoWire minutes data"
 
+  - tag: national_tv_under
+    status: shadow
+    direction: under
+    description: "National-TV/primetime high-line UNDER — featured scorers underperform inflated marquee-game lines (54.7% 5-season, shadow, 2026-06-28)"
+
   - tag: negative_clv_filter
     status: shadow
     direction: both

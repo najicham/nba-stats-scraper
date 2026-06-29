@@ -1024,6 +1024,27 @@ def query_predictions_with_supplements(
     except Exception as e:
         logger.warning(f"Failed to query VSiN betting splits: {e}")
 
+    # 2026-06-28: Schedule broadcast flags for national_tv_under signal (shadow). Keyed by
+    # (away_team, home_team) like vsin_map — nbac_schedule uses the 10-digit official game_id,
+    # so we join on tricodes parsed from the prediction game_id instead.
+    schedule_tv_query = f"""
+    SELECT away_team_tricode AS away_team, home_team_tricode AS home_team,
+           has_national_tv, is_primetime
+    FROM `{PROJECT_ID}.nba_raw.nbac_schedule`
+    WHERE game_date = @target_date
+    """
+    schedule_tv_map = {}  # {(away, home): {has_national_tv, is_primetime}}
+    try:
+        tv_rows = bq_client.query(schedule_tv_query, job_config=job_config).result(timeout=30)
+        for row in tv_rows:
+            schedule_tv_map[(row['away_team'], row['home_team'])] = {
+                'has_national_tv': bool(row['has_national_tv']),
+                'is_primetime': bool(row['is_primetime']),
+            }
+        logger.info(f"Loaded schedule broadcast flags for {len(schedule_tv_map)} games")
+    except Exception as e:
+        logger.warning(f"Failed to query schedule broadcast flags: {e}")
+
     # Session 404: RotoWire projected minutes for minutes_surge_over signal.
     # Session 405: Normalize player_lookup (remove hyphens) to match prediction format.
     rotowire_query = f"""
@@ -1433,6 +1454,19 @@ def query_predictions_with_supplements(
                 pred['vsin_over_money_pct'] = None
         else:
             pred['vsin_over_money_pct'] = None
+
+        # 2026-06-28: Schedule broadcast flags for national_tv_under signal (shadow).
+        if len(parts) >= 3:
+            tv_data = schedule_tv_map.get((parts[1], parts[2]))
+            if tv_data:
+                pred['has_national_tv'] = tv_data['has_national_tv']
+                pred['is_primetime'] = tv_data['is_primetime']
+            else:
+                pred['has_national_tv'] = False
+                pred['is_primetime'] = False
+        else:
+            pred['has_national_tv'] = False
+            pred['is_primetime'] = False
 
         # Session 404: RotoWire projected minutes for minutes_surge_over signal.
         rw_minutes = rotowire_minutes_map.get(row_dict['player_lookup'])

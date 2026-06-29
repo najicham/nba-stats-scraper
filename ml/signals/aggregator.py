@@ -148,6 +148,13 @@ SHADOW_SIGNALS = frozenset({
     'line_rising_over',     # pooled 53.6% (~breakeven); the "96.6%" was a single Jan-Feb 2026 window
     'book_disagree_over',   # N=18 total cross-season (UNPROVEN); the "79.6% N=211" does not reproduce
     'b2b_boost_over',       # sub-BE 3/5 (p=0.071); the b2b pair was backwards (the durable side is b2b_under)
+    # 2026-06-28: National-TV/primetime high-line UNDER (narrative-proxies Phase 1). Pre-registered as
+    # a national-TV OVER trigger, FAILED (45.4%), inverted to a durable UNDER edge: (national_tv OR
+    # primetime) AND line>=22 → 54.7% 5-season, above breakeven 5/5, additive over the high-line
+    # baseline (52.0%). Post-hoc directional flip → SHADOW (zero pick impact). Promote to
+    # UNDER_SIGNAL_WEIGHTS at season open after live N>=30 at HR>=55%; check overlap with
+    # star_line_under first. Detail: docs/08-projects/current/narrative-proxies-discovery/01-FINDINGS.md.
+    'national_tv_under',
 })
 
 # Session 400: UNDER signal quality weights for signal-first ranking.
