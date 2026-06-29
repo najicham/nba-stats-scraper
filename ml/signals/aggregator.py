@@ -178,6 +178,24 @@ SHADOW_SIGNALS = frozenset({
     # (35.3% HR N=17); watch high_line_under live HR carefully — same thesis, broader population.
     # Intended replacement for star_line_under at graduation. Promote to weight 1.0 after N≥30 HR≥58%.
     'high_line_under',
+    # 2026-06-29: Referee crew UNDER tendency — crew avg over_pct < 0.48.
+    # covers_referee_stats was broken before 2026-27 — data accumulates from that season.
+    # SHADOW pending multi-season validation. Promote after live N>=30 at HR>=58% AND
+    # covers_referee_stats has at least 2 full seasons of data for reliable averages.
+    'ref_crew_under_tendency',
+    # 2026-06-29: Dense schedule grind UNDER — player has played 4+ games in the last 7 days.
+    # Cumulative weekly fatigue suppresses scoring in compressed stretches (Feb+ grind).
+    # Distinct from b2b_fatigue_under (single B2B); this fires on weekly load regardless of B2B.
+    # SHADOW → zero pick impact. Promote to UNDER_SIGNAL_WEIGHTS after live N>=30 at HR>=58%.
+    # Before promoting, confirm additive value beyond b2b_fatigue_under for 4-in-7 stretches.
+    'dense_schedule_grind_under',
+    # 2026-06-29: Long road trip UNDER — away team on 3rd+ consecutive road game.
+    # Literature (JCSM 2021): B2B with travel = −2.33 team margin vs +0.6 without travel.
+    # Distinct from b2b_fatigue_under (which fires on rest_days==1 regardless of location).
+    # This fires on cumulative road-trip fatigue (3+ away games in a row) regardless of rest.
+    # The 5th away game is where win-rate collapse is documented in the literature.
+    # SHADOW → zero pick impact. Promote to UNDER_SIGNAL_WEIGHTS after live N>=30 at HR>=58%.
+    'long_road_trip_under',
 })
 
 # Session 400: UNDER signal quality weights for signal-first ranking.

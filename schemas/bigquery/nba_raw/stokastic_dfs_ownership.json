@@ -1,0 +1,116 @@
+[
+  {
+    "name": "player_name",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Full player name as returned by Stokastic (e.g. LeBron James)"
+  },
+  {
+    "name": "player_team",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Team abbreviation (e.g. LAL, BOS)"
+  },
+  {
+    "name": "opponent",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Opposing team abbreviation for this game"
+  },
+  {
+    "name": "position",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "DFS roster position slot (PG, SG, SF, PF, C, G, F, UTIL, etc.)"
+  },
+  {
+    "name": "game_date",
+    "type": "DATE",
+    "mode": "REQUIRED",
+    "description": "Date of the DraftKings slate (partition key)"
+  },
+  {
+    "name": "game_time",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Game start time as UTC ISO string (YYYY-MM-DDTHH:MM:SS)"
+  },
+  {
+    "name": "contest_type",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "DFS site: DK = DraftKings, FD = FanDuel"
+  },
+  {
+    "name": "slate_id",
+    "type": "INT64",
+    "mode": "NULLABLE",
+    "description": "Stokastic internal slate ID for this contest"
+  },
+  {
+    "name": "projected_ownership_pct",
+    "type": "FLOAT64",
+    "mode": "NULLABLE",
+    "description": "Projected DFS contest ownership percentage (0-100). High values (30%+) indicate popular/recreational targets — signal hypothesis: correlated with over-inflated prop lines (UNDER value)."
+  },
+  {
+    "name": "projected_salary",
+    "type": "INT64",
+    "mode": "NULLABLE",
+    "description": "DraftKings player salary in dollars for this slate"
+  },
+  {
+    "name": "projected_points",
+    "type": "FLOAT64",
+    "mode": "NULLABLE",
+    "description": "Stokastic projected DraftKings fantasy point total"
+  },
+  {
+    "name": "projection_std_dev",
+    "type": "FLOAT64",
+    "mode": "NULLABLE",
+    "description": "Standard deviation of projected DK points (higher = boom/bust player)"
+  },
+  {
+    "name": "dk_value",
+    "type": "FLOAT64",
+    "mode": "NULLABLE",
+    "description": "DK value = projected_points / salary * 1000 (higher = better salary efficiency)"
+  },
+  {
+    "name": "injury_status",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Injury designation at scrape time: Unknown, Questionable, Out, etc."
+  },
+  {
+    "name": "confirmed_lineup",
+    "type": "BOOL",
+    "mode": "NULLABLE",
+    "description": "True if the player's lineup/starting status has been confirmed by tip-off"
+  },
+  {
+    "name": "dk_player_id",
+    "type": "INT64",
+    "mode": "NULLABLE",
+    "description": "DraftKings player ID (extracted from Stokastic nameAndId field)"
+  },
+  {
+    "name": "stokastic_player_id",
+    "type": "INT64",
+    "mode": "NULLABLE",
+    "description": "Stokastic internal player ID"
+  },
+  {
+    "name": "scraped_at",
+    "type": "TIMESTAMP",
+    "mode": "NULLABLE",
+    "description": "UTC timestamp when this record was collected by the scraper"
+  },
+  {
+    "name": "source_file_path",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "GCS path of the source JSON file written by the scraper"
+  }
+]

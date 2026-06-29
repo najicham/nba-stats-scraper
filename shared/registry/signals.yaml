@@ -261,6 +261,12 @@ signals:
     direction: under
     description: Day Of Week Under signal (auto-generated stub — verify)
 
+  - tag: dense_schedule_grind_under
+    status: shadow
+    direction: under
+    promotion_gate: "N>=30 at HR>=58% live 2026-27. Check overlap with b2b_fatigue_under first — some 4-in-7 stretches include a B2B; confirm signal adds value beyond the B2B component before adding to UNDER_SIGNAL_WEIGHTS."
+    description: "Dense schedule grind UNDER — 4+ games in the last 7 days, cumulative weekly fatigue suppresses scoring in compressed stretches (shadow, 2026-06-29)"
+
   - tag: denver_visitor_over
     status: shadow
     direction: over
@@ -470,3 +476,17 @@ signals:
     deprecated_session: 514
     direction: over
     description: "volatile_scoring_over — removed Session 514: 14.3% BB HR (1-6)"
+
+  - tag: ref_crew_under_tendency
+    status: shadow
+    weight: 0.0
+    direction: under
+    promotion_gate: "N>=30 live 2026-27 at HR>=58% AND covers_referee_stats has 2+ full seasons of data. covers_referee_stats was broken before 2026-27 — data accumulates from that season only. DO NOT promote until Covers data coverage is sufficient for reliable crew averages."
+    description: "Referee crew UNDER tendency — crew avg over_pct < 0.48, UNDER reversion (shadow, 2026-06-29, Covers data accumulates from 2026-27)"
+
+  - tag: long_road_trip_under
+    status: shadow
+    weight: 0.0
+    direction: under
+    promotion_gate: "N>=30 live 2026-27 at HR>=58%. Check overlap with b2b_fatigue_under first — some road trips include B2B nights; confirm long_road_trip_under adds value beyond the B2B component before adding to UNDER_SIGNAL_WEIGHTS."
+    description: "Long road trip UNDER — away team on 3rd+ consecutive road game, cumulative travel fatigue suppresses scoring (shadow, 2026-06-29; literature: JCSM 2021 B2B+travel = -2.33 margin)"

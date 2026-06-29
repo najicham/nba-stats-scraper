@@ -367,4 +367,25 @@ def build_default_registry() -> SignalRegistry:
     from ml.signals.whole_line_precision import WholeLinePrecisionSignal
     registry.register(WholeLinePrecisionSignal())
 
+    # 2026-06-29: Referee crew UNDER tendency (shadow — Covers data accumulates from 2026-27).
+    # Fires when crew avg over_pct < 0.48 + recommendation == UNDER. Zero pick impact.
+    # Data flows from nbac_referee_game_pivot (game assignments) + covers_referee_stats (O/U record).
+    # Promote after live N>=30 at HR>=58% with 2+ seasons of Covers data.
+    from ml.signals.ref_crew_under_tendency import RefCrewUnderTendencySignal
+    registry.register(RefCrewUnderTendencySignal())
+
+    # 2026-06-29: Dense schedule grind UNDER (shadow). Player has played 4+ games in the last 7
+    # days — cumulative weekly fatigue suppresses scoring in compressed stretches. Distinct from
+    # b2b_fatigue_under. SHADOW → zero pick impact. Promote after live N>=30 at HR>=58%.
+    from ml.signals.dense_schedule_grind import DenseScheduleGrindUnderSignal
+    registry.register(DenseScheduleGrindUnderSignal())
+
+    # 2026-06-29: Long road trip UNDER (shadow). Away team on 3rd+ consecutive road game —
+    # cumulative travel fatigue (sleep disruption, time zones, no home-court prep) suppresses
+    # scoring. Literature: JCSM 2021 B2B+travel = −2.33 margin vs +0.6 without travel; win rate
+    # collapses at 5th away game. Distinct from b2b_fatigue_under (fires on rest_days==1 only).
+    # SHADOW → zero pick impact. Promote after live N>=30 at HR>=58%.
+    from ml.signals.long_road_trip_under import LongRoadTripUnderSignal
+    registry.register(LongRoadTripUnderSignal())
+
     return registry

@@ -53,3 +53,10 @@ google-cloud-secret-manager==2.16.0
 
 # MLB Statcast data (Baseball Savant)
 pybaseball>=2.2.7
+
+# NBA injury report PDF parser (narrative forward-collection scraper)
+# Requires Java (tabula-py dependency) — pre-installed in scraper Docker image
+nbainjuries>=1.1.1
+
+# Bluesky AT Protocol SDK (Jetstream WebSocket listener + handle resolution)
+atproto>=0.0.50

@@ -447,3 +447,8 @@ filters:
     blocks_direction: under
     description: REMOVED Session 494
     deprecated_session: 494
+
+  - tag: clv_diverge_under_block
+    status: active
+    blocks_direction: under
+    description: "Active block filter (2026-06-29): UNDER + DK intraday line dropped >= 0.5 (closing < opening). Blocks picks where closing-line movement disagrees with our UNDER direction. Validated T-3h: UNDER where line dropped HR=46.6% vs line rose 62.4%. CF HR target: demote if rises above 55%."

@@ -412,7 +412,8 @@ def _query_all_model_predictions(
         feature_57_value AS blowout_risk,
         feature_41_value AS spread_magnitude,
         feature_53_value AS prop_over_streak,
-        feature_55_value AS over_rate_last_10
+        feature_55_value AS over_rate_last_10,
+        feature_4_value AS games_in_last_7_days
       FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2`
       WHERE game_date = @target_date
     ),
@@ -541,6 +542,7 @@ def _query_all_model_predictions(
       bs.spread_magnitude,
       bs.prop_over_streak,
       bs.over_rate_last_10,
+      bs.games_in_last_7_days,
       dlm.dk_line_move_direction,
       pgc.prev_game_points,
       pgc.prev_game_line,

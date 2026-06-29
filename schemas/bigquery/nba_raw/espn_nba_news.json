@@ -1,0 +1,92 @@
+[
+  {
+    "name": "article_id",
+    "type": "INT64",
+    "mode": "REQUIRED",
+    "description": "ESPN numeric article ID — primary deduplication key"
+  },
+  {
+    "name": "game_date",
+    "type": "DATE",
+    "mode": "REQUIRED",
+    "description": "Date the scraper ran (partition key); articles published on this date"
+  },
+  {
+    "name": "headline",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Article headline text"
+  },
+  {
+    "name": "description",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Lede / blurb — 1-2 sentence article summary from ESPN"
+  },
+  {
+    "name": "published_at",
+    "type": "TIMESTAMP",
+    "mode": "NULLABLE",
+    "description": "UTC timestamp when the article was first published on ESPN"
+  },
+  {
+    "name": "last_modified",
+    "type": "TIMESTAMP",
+    "mode": "NULLABLE",
+    "description": "UTC timestamp of the most recent article update on ESPN"
+  },
+  {
+    "name": "article_type",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "ESPN content type (e.g. HeadlineNews, Story)"
+  },
+  {
+    "name": "web_url",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Full espn.com URL to the article"
+  },
+  {
+    "name": "byline",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Reporter or author byline"
+  },
+  {
+    "name": "is_premium",
+    "type": "BOOL",
+    "mode": "NULLABLE",
+    "description": "True if the article is behind the ESPN+ paywall"
+  },
+  {
+    "name": "athlete_ids",
+    "type": "INT64",
+    "mode": "REPEATED",
+    "description": "ESPN athlete IDs tagged in this article's categories"
+  },
+  {
+    "name": "athlete_names",
+    "type": "STRING",
+    "mode": "REPEATED",
+    "description": "Display names of athletes tagged in this article"
+  },
+  {
+    "name": "topic_tags",
+    "type": "STRING",
+    "mode": "REPEATED",
+    "description": "ESPN topic/category labels (e.g. news, injury, trade)"
+  },
+  {
+    "name": "scraped_at",
+    "type": "TIMESTAMP",
+    "mode": "NULLABLE",
+    "description": "UTC timestamp when this article was collected by the scraper"
+  },
+  {
+    "name": "source_file_path",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "GCS path of the source JSON file written by the scraper"
+  }
+]

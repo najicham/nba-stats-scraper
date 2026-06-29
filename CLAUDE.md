@@ -171,6 +171,8 @@ nba-stats-scraper/
 
 **NOT auto-deployed (manual only):** auto-retry-processor, mlb-phase1-scrapers (use `./bin/scrapers/deploy/mlb/deploy_mlb_scrapers.sh`)
 
+**Phase 6 Cloud Scheduler jobs** (topic `nba-phase6-export-trigger`, deploy via `bin/deploy/deploy_phase6_scheduler.sh`): phase6-daily-results (5 AM ET), phase6-tonight-picks (1 PM ET), phase6-player-profiles (6 AM ET Sun), phase6-hourly-trends (6 AM–11 PM ET hourly), phase6-season-game-counts (6 AM ET), **phase6-clv-reexport (4:30 PM ET)** — re-exports signal-best-bets with T-3h intraday line snapshots for `line_converging_under` / `clv_diverge_under_block` precision.
+
 ### CRITICAL: Always deploy from repo root
 ```bash
 ./bin/deploy-service.sh SERVICE           # Standard (8-10 min)

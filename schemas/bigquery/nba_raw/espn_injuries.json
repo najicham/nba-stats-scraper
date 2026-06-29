@@ -1,0 +1,92 @@
+[
+  {
+    "name": "espn_injury_id",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "ESPN injury record ID — primary deduplication key per snapshot (may be negative string)"
+  },
+  {
+    "name": "game_date",
+    "type": "DATE",
+    "mode": "REQUIRED",
+    "description": "Date the scraper ran (partition key); used to scope status-change queries to a single game day"
+  },
+  {
+    "name": "scraped_at",
+    "type": "TIMESTAMP",
+    "mode": "REQUIRED",
+    "description": "UTC timestamp when this snapshot was collected — together with espn_injury_id enables GTD→Out change detection across hourly runs"
+  },
+  {
+    "name": "player_name",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Player full display name from ESPN athlete.displayName"
+  },
+  {
+    "name": "team_name",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Team display name from the top-level injury object (e.g. 'Atlanta Hawks')"
+  },
+  {
+    "name": "status",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "ESPN injury status string (e.g. 'Day-To-Day', 'Out', 'Questionable')"
+  },
+  {
+    "name": "fantasy_status",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Fantasy abbreviation from details.fantasyStatus.abbreviation — key field for status-change detection (GTD, OUT, O, Q, IR, etc.)"
+  },
+  {
+    "name": "injury_type",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Injury category from details.type (e.g. 'Ankle', 'Knee', 'Back')"
+  },
+  {
+    "name": "injury_detail",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Injury specificity from details.detail (e.g. 'Sprain', 'Soreness', 'Contusion')"
+  },
+  {
+    "name": "injury_side",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Affected body side from details.side (e.g. 'Right', 'Left')"
+  },
+  {
+    "name": "short_comment",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Short narrative snippet about the injury (1-2 sentences)"
+  },
+  {
+    "name": "long_comment",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Full narrative text for the injury report"
+  },
+  {
+    "name": "reported_at",
+    "type": "TIMESTAMP",
+    "mode": "NULLABLE",
+    "description": "UTC timestamp when ESPN originally published this injury report entry (from injury object date field)"
+  },
+  {
+    "name": "return_date",
+    "type": "DATE",
+    "mode": "NULLABLE",
+    "description": "Projected return date from details.returnDate, if present (YYYY-MM-DD)"
+  },
+  {
+    "name": "source_file_path",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "GCS path of the source JSON file written by the scraper"
+  }
+]

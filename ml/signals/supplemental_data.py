@@ -1024,6 +1024,65 @@ def query_predictions_with_supplements(
     except Exception as e:
         logger.warning(f"Failed to query VSiN betting splits: {e}")
 
+    # 2026-06-29: Referee crew O/U tendency for ref_crew_under_tendency signal (shadow).
+    # Keyed by (away_team_abbr, home_team_abbr) — same pattern as vsin_map.
+    # nbac_referee_game_pivot uses the NBA.com 10-digit game_id, which does NOT match the
+    # prediction game_id (YYYYMMDD_AWAY_HOME), so we join on game_date + team abbreviations.
+    # covers_referee_stats has referee_name + over_percentage (0.0-1.0).
+    # covers_referee_stats was broken before 2026-27 — data will accumulate from that season.
+    # Requires at least 2 of 3 crew members to have Covers data (crew_under_data_available=TRUE).
+    referee_crew_query = f"""
+    WITH crew AS (
+      SELECT
+        away_team_abbr,
+        home_team_abbr,
+        chief_referee,
+        crew_referee_1,
+        crew_referee_2
+      FROM `{PROJECT_ID}.nba_raw.nbac_referee_game_pivot`
+      WHERE game_date = @target_date
+    ),
+    covers_refs AS (
+      SELECT referee_name, over_percentage
+      FROM (
+        SELECT referee_name, over_percentage,
+          ROW_NUMBER() OVER (PARTITION BY referee_name ORDER BY scraped_at DESC) AS rn
+        FROM `{PROJECT_ID}.nba_raw.covers_referee_stats`
+        WHERE over_percentage IS NOT NULL
+          AND referee_name IS NOT NULL
+      )
+      WHERE rn = 1
+    )
+    SELECT
+      c.away_team_abbr,
+      c.home_team_abbr,
+      -- Average over_percentage for crew members that have Covers data
+      AVG(cr.over_percentage) AS crew_avg_over_pct,
+      -- Count of crew members with Covers data (chief + 2 crew = max 3)
+      COUNT(cr.referee_name) AS crew_data_count
+    FROM crew c
+    LEFT JOIN covers_refs cr
+      ON cr.referee_name IN (c.chief_referee, c.crew_referee_1, c.crew_referee_2)
+    GROUP BY c.away_team_abbr, c.home_team_abbr
+    """
+    referee_crew_map = {}  # {(away_team, home_team): {crew_avg_over_pct, crew_under_data_available}}
+    try:
+        ref_rows = bq_client.query(referee_crew_query, job_config=job_config).result(timeout=30)
+        for row in ref_rows:
+            away = row['away_team_abbr']
+            home = row['home_team_abbr']
+            if away and home:
+                crew_avg = row['crew_avg_over_pct']
+                crew_count = row['crew_data_count'] or 0
+                referee_crew_map[(away, home)] = {
+                    'crew_avg_over_pct': float(crew_avg) if crew_avg is not None else None,
+                    # At least 2 crew members must have Covers data for reliable average
+                    'crew_under_data_available': crew_count >= 2,
+                }
+        logger.info(f"Loaded referee crew tendency for {len(referee_crew_map)} games")
+    except Exception as e:
+        logger.warning(f"Failed to query referee crew tendency: {e}")
+
     # 2026-06-28: Schedule broadcast flags for national_tv_under signal (shadow). Keyed by
     # (away_team, home_team) like vsin_map — nbac_schedule uses the 10-digit official game_id,
     # so we join on tricodes parsed from the prediction game_id instead.
@@ -1064,6 +1123,93 @@ def query_predictions_with_supplements(
         logger.info(f"Loaded RotoWire minutes for {len(rotowire_minutes_map)} players")
     except Exception as e:
         logger.warning(f"Failed to query RotoWire minutes: {e}")
+
+    # 2026-06-29: Consecutive road games for long_road_trip_under signal (shadow).
+    # Keyed by away_team_tricode (tonight's away teams). For each team playing away tonight,
+    # counts how many consecutive away games they played immediately before tonight.
+    # The count resets whenever the team played a home game — we look back through their
+    # schedule in reverse date order and stop at the first home game.
+    #
+    # SQL approach: for each team's last N games (before tonight), number them in reverse
+    # order, find the minimum row-number where game_type='home'. Consecutive away games =
+    # that row-number - 1. If no recent home game found in the lookback window (team has been
+    # away for the entire window), cap at the window size.
+    #
+    # We only compute this for teams that are the AWAY team tonight (home teams' players
+    # will get is_home=True and the signal will gate them out anyway).
+    road_trip_query = f"""
+    WITH tonight_away AS (
+      -- Only the teams playing AWAY tonight
+      SELECT DISTINCT away_team_tricode AS team
+      FROM `{PROJECT_ID}.nba_raw.nbac_schedule`
+      WHERE game_date = @target_date
+    ),
+
+    team_schedule AS (
+      -- All final games (home or away) for those teams in the last 30 days
+      SELECT
+        away_team_tricode AS team,
+        game_date,
+        'away' AS game_type
+      FROM `{PROJECT_ID}.nba_raw.nbac_schedule`
+      WHERE game_status = 3
+        AND game_date < @target_date
+        AND game_date >= DATE_SUB(@target_date, INTERVAL 30 DAY)
+
+      UNION ALL
+
+      SELECT
+        home_team_tricode AS team,
+        game_date,
+        'home' AS game_type
+      FROM `{PROJECT_ID}.nba_raw.nbac_schedule`
+      WHERE game_status = 3
+        AND game_date < @target_date
+        AND game_date >= DATE_SUB(@target_date, INTERVAL 30 DAY)
+    ),
+
+    -- For each away team tonight, rank their recent games newest-first
+    ranked AS (
+      SELECT
+        ts.team,
+        ts.game_date,
+        ts.game_type,
+        ROW_NUMBER() OVER (PARTITION BY ts.team ORDER BY ts.game_date DESC) AS rn
+      FROM team_schedule ts
+      INNER JOIN tonight_away ta ON ts.team = ta.team
+    ),
+
+    -- Find the position of the most recent HOME game (boundary that resets the streak)
+    home_boundary AS (
+      SELECT team, MIN(rn) AS first_home_rn
+      FROM ranked
+      WHERE game_type = 'home'
+      GROUP BY team
+    )
+
+    -- consecutive_road_games = number of away games since the last home game.
+    -- If there's been no home game in the lookback window, use the total game count
+    -- (capped at 30 days of games, which is at most ~15 games).
+    SELECT
+      ta.team,
+      COALESCE(
+        -- rows before first_home_rn are all away games
+        hb.first_home_rn - 1,
+        -- no home game found: count all recent games as consecutive away
+        (SELECT COUNT(*) FROM ranked r2 WHERE r2.team = ta.team)
+      ) AS consecutive_road_games
+    FROM tonight_away ta
+    LEFT JOIN home_boundary hb ON hb.team = ta.team
+    """
+    # Keyed by away_team_tricode -> consecutive_road_games (int)
+    road_trip_map: Dict[str, int] = {}
+    try:
+        rt_rows = bq_client.query(road_trip_query, job_config=job_config).result(timeout=30)
+        for row in rt_rows:
+            road_trip_map[row['team']] = int(row['consecutive_road_games'])
+        logger.info(f"Loaded consecutive road games for {len(road_trip_map)} away teams")
+    except Exception as e:
+        logger.warning(f"Failed to query consecutive road games: {e}")
 
     predictions = []
     supplemental_map: Dict[str, Dict] = {}
@@ -1467,6 +1613,30 @@ def query_predictions_with_supplements(
         else:
             pred['has_national_tv'] = False
             pred['is_primetime'] = False
+
+        # 2026-06-29: Referee crew O/U tendency for ref_crew_under_tendency signal (shadow).
+        # Keyed by (away_team, home_team) — same game-level lookup pattern as vsin/tv maps.
+        if len(parts) >= 3:
+            ref_crew_data = referee_crew_map.get((parts[1], parts[2]))
+            if ref_crew_data:
+                pred['crew_avg_over_pct'] = ref_crew_data['crew_avg_over_pct']
+                pred['crew_under_data_available'] = ref_crew_data['crew_under_data_available']
+            else:
+                pred['crew_avg_over_pct'] = None
+                pred['crew_under_data_available'] = False
+        else:
+            pred['crew_avg_over_pct'] = None
+            pred['crew_under_data_available'] = False
+
+        # 2026-06-29: Consecutive road games for long_road_trip_under signal (shadow).
+        # road_trip_map is keyed by the away_team_tricode for tonight's game.
+        # Only players on the away team get a value; home-team players get None
+        # (the signal gates on is_home=False anyway).
+        if len(parts) >= 3:
+            away_team = parts[1]
+            pred['consecutive_road_games'] = road_trip_map.get(away_team)
+        else:
+            pred['consecutive_road_games'] = None
 
         # Session 404: RotoWire projected minutes for minutes_surge_over signal.
         rw_minutes = rotowire_minutes_map.get(row_dict['player_lookup'])

@@ -228,6 +228,18 @@ NBA_SCRAPER_REGISTRY: Dict[str, Tuple[str, str]] = {
         "scrapers.external.vsin_betting_splits",
         "VSiNBettingSplitsScraper"
     ),
+    "espn_nba_news": (
+        "scrapers.external.espn_nba_news",
+        "ESPNNBANewsScraper"
+    ),
+    "espn_injuries": (
+        "scrapers.external.espn_injuries",
+        "ESPNInjuriesScraper"
+    ),
+    "rotowire_nba_news": (
+        "scrapers.external.rotowire_nba_news",
+        "RotoWireNBANewsScraper"
+    ),
 
     # ========================================================================
     # ESPN Scrapers (3 total)
@@ -508,6 +520,9 @@ SCRAPER_GROUPS = {
         "covers_referee_stats",
         "nba_tracking_stats",
         "vsin_betting_splits",
+        "espn_nba_news",
+        "espn_injuries",
+        "rotowire_nba_news",
     ]
 }
 

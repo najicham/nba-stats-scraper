@@ -79,3 +79,25 @@ uritemplate==4.2.0
 urllib3==2.6.3
 Werkzeug==3.1.5
 zipp==3.23.0
+# nbainjuries and its dependencies (NBA injury report PDF parser)
+nbainjuries==1.1.1
+tabula-py==2.10.0
+JPype1==1.5.2
+PyPDF2==3.0.1
+aiohappyeyeballs==2.6.2
+aiohttp==3.14.1
+aiosignal==1.4.0
+frozenlist==1.8.0
+multidict==6.7.1
+propcache==0.5.2
+yarl==1.24.2
+# atproto SDK and its dependencies (Bluesky Jetstream listener + handle resolution)
+atproto==0.0.69
+atproto_client==0.0.69
+atproto_core==0.0.69
+atproto_crypto==0.0.69
+atproto_firehose==0.0.69
+atproto_identity==0.0.69
+atproto_lexicon==0.0.69
+atproto_server==0.0.69
+websockets>=12.0

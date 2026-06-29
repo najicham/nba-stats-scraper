@@ -1,0 +1,74 @@
+[
+  {
+    "name": "post_uri",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "AT-URI of the Bluesky post (e.g. at://did:plc:xxx/app.bsky.feed.post/yyy) — primary deduplication key"
+  },
+  {
+    "name": "game_date",
+    "type": "DATE",
+    "mode": "REQUIRED",
+    "description": "Date the listener ran (partition key); posts captured on this game day"
+  },
+  {
+    "name": "did",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Bluesky DID of the post author (e.g. did:plc:dw45eosoi7tiq3cjqyxx6tvn)"
+  },
+  {
+    "name": "handle",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Bluesky handle of the post author (e.g. chrisbhaynes.bsky.social)"
+  },
+  {
+    "name": "author_name",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Human-readable display name of the beat writer (e.g. Chris Haynes)"
+  },
+  {
+    "name": "post_text",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Full text content of the Bluesky post"
+  },
+  {
+    "name": "created_at",
+    "type": "TIMESTAMP",
+    "mode": "NULLABLE",
+    "description": "UTC timestamp when the post was created on Bluesky (from the post record)"
+  },
+  {
+    "name": "keywords_matched",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Comma-joined list of signal keywords found in the post text (e.g. 'questionable,GTD')"
+  },
+  {
+    "name": "keyword_count",
+    "type": "INT64",
+    "mode": "NULLABLE",
+    "description": "Number of distinct signal keywords matched in this post"
+  },
+  {
+    "name": "rkey",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Record key component of the AT-URI (the post ID within the author's repo)"
+  },
+  {
+    "name": "scraped_at",
+    "type": "TIMESTAMP",
+    "mode": "NULLABLE",
+    "description": "UTC timestamp when this post was captured by the Jetstream listener"
+  },
+  {
+    "name": "source_file_path",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "GCS path of the source JSON file written by the scraper"
+  }
+]

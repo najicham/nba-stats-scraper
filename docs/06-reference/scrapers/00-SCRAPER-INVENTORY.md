@@ -1,6 +1,6 @@
 # Phase 1 Scraper Inventory
 
-**Last Updated:** 2026-03-07 (Session 430 — BDL retired, projections status updated)
+**Last Updated:** 2026-06-29 (Session — bluesky_nba_news Jetstream listener added)
 
 Complete catalog of all 40+ production scrapers organized by data type and source.
 
@@ -18,6 +18,18 @@ Complete catalog of all 40+ production scrapers organized by data type and sourc
 - **Status:** ✅ Production (v16 - 2025-10-15)
 - **Use Case:** PRIMARY source for injury data
 - **Note:** Requires PDF parsing with pdfplumber
+
+### nba_injury_snapshots (nbainjuries) — NARRATIVE COLLECTION
+- **Source:** NBA.com official injury report PDFs (same source as nbac_injury_report)
+- **URL:** `https://ak-static.cms.nba.com/referee/injury/`
+- **Coverage:** Daily snapshot — one scrape per game day (~5 PM ET pre-game report)
+- **BigQuery Table:** `nba_raw.nba_injury_snapshots`
+- **File:** `scrapers/external/nba_injury_snapshots.py`
+- **Schema:** `schemas/nba_injury_snapshots.json`
+- **Status:** Shadow/forward-collection (2026-06-29)
+- **Use Case:** Narrative forward-collection for backtesting. Captures who is Out/Questionable/Doubtful pre-game. NOT a Phase 5 signal source — accumulates data for future analysis of injury context vs prop outcomes.
+- **Package:** `nbainjuries` (pip install nbainjuries) — parses PDF via tabula/Java
+- **Note:** Off-season returns 0 players (403 from NBA.com). Default report time is 17:00 ET; override with --hour/--minute for different snapshots.
 
 ### ~~bdl_injuries (Ball Don't Lie)~~ — RETIRED
 - **Status:** ❌ RETIRED (Session 430, 2026-03-07)
@@ -200,6 +212,86 @@ Complete catalog of all 40+ production scrapers organized by data type and sourc
 - **Use Case:** Public betting percentages for sharp money signal
 - **SPOF Warning:** Only public betting % source — no backup
 
+### espn_nba_news (ESPN) — FORWARD COLLECTION
+- **Source:** ESPN public JSON API
+- **URL:** `https://site.api.espn.com/apis/site/v2/sports/basketball/nba/news?limit=100`
+- **BigQuery Table:** `nba_raw.espn_nba_news`
+- **File:** `scrapers/external/espn_nba_news.py`
+- **Schema:** `schemas/bigquery/nba_raw/espn_nba_news.json`
+- **Schedule:** Daily 8:00 AM ET (to be configured) — recommend once/day pre-game
+- **Status:** ✅ Built (2026-06-29) — forward collection only, no live signals yet
+- **Use Case:** Capture news headlines/blurbs mentioning players pre-game for future narrative signals (bounce-back, revenge games, milestone proximity, coach rest quotes). Per article: headline, description, published_at, athlete_ids, athlete_names, topic_tags.
+- **API Notes:** Public endpoint, no auth. `?dates=YYYYMMDD` filters to a calendar date. Returns 20-30 articles/day during the season. Athlete associations extracted from ESPN `categories` array (type=athlete entries include `athleteId` + name). Player-specific `/athletes/{id}/news` endpoint works but returns empty for historical dates — bulk endpoint is the right choice.
+
+### espn_injuries (ESPN) — FORWARD COLLECTION / GAME-DAY HOURLY
+- **Source:** ESPN public JSON API
+- **URL:** `https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries`
+- **BigQuery Table:** `nba_raw.espn_injuries`
+- **File:** `scrapers/external/espn_injuries.py`
+- **Schema:** `schemas/bigquery/nba_raw/espn_injuries.json`
+- **Schedule:** Hourly on game days (to be configured) — critical window 90-30 min before tip-off
+- **Status:** ✅ Built (2026-06-29) — forward collection only, no live signal yet
+- **Use Case:** Capture timestamped injury status snapshots to detect GTD→Out flips before tip-off. Each hourly run appends a new snapshot row (timestamped GCS path). Downstream query compares `fantasy_status` across hourly `scraped_at` values to find same-day status changes. Foundation for future "teammate OVER when star just went GTD→Out" signal.
+- **Key Fields:** `fantasy_status` (GTD/OUT/O/Q), `status` (Day-To-Day/Out/Questionable), `reported_at` (ESPN timestamp), `scraped_at` (collection timestamp), `return_date`.
+- **API Notes:** Public endpoint, no auth. Returns all currently reported injuries across all NBA teams. Off-season returns 0 entries (expected). Each run's output is a full snapshot — use `scraped_at` + `espn_injury_id` to reconstruct status timeline.
+
+### bluesky_nba_news (Bluesky Jetstream) — REAL-TIME FORWARD COLLECTION
+- **Source:** Bluesky Jetstream WebSocket API (no auth required for public posts)
+- **WebSocket:** `wss://jetstream1.us-east.bsky.network/subscribe?wantedCollections=app.bsky.feed.post&wantedDids=...`
+- **Handle Resolution:** `https://public.api.bsky.app/xrpc/com.atproto.identity.resolveHandle`
+- **BigQuery Table:** `nba_raw.bluesky_nba_news`
+- **File:** `scrapers/external/bluesky_nba_news.py`
+- **Schema:** `schemas/bigquery/nba_raw/bluesky_nba_news.json`
+- **Schedule:** Cloud Run Job — launch at noon ET on game days, run 6 hours. NOT a Cloud Scheduler HTTP scraper. Must be triggered as a long-lived container job.
+- **Status:** ✅ Built (2026-06-29) — forward collection only, no live signal yet
+- **Use Case:** Real-time capture of beat writer posts about player injury/status changes.
+  Captures practice participation language ("limited in practice", "game-time decision",
+  "won't play tonight") before official NBA reports propagate. Foundation for future
+  "cascade reprice" signal: star player out → teammate OVER opportunity (book repricing
+  takes 30-90 min after Bluesky post).
+- **Beat Writers Monitored (10):**
+  Chris Haynes (ESPN), Marc Stein (Independent), Zach Lowe (ESPN),
+  Sam Amick (The Athletic), Jake Fischer (Yahoo), Anthony Slater (ESPN Warriors),
+  Dan Woike (The Athletic Lakers), Fred Katz (The Athletic Knicks),
+  Jon Krawczynski (The Athletic Wolves), Tim Reynolds (AP)
+- **Signal Keywords:** `questionable`, `limited`, `scratch`, `GTD`, `game-time`, `won't play`,
+  `out tonight`, `ruled out`, `reduced minutes`, `bounce back`, `called out`,
+  `won't start`, `coming off bench`
+- **Key Fields:** `post_uri` (dedup key), `did`, `handle`, `author_name`, `post_text`,
+  `created_at`, `keywords_matched`, `keyword_count`, `rkey`
+- **Package:** `atproto>=0.0.50` (pip) + `websockets>=12.0` — for Jetstream WebSocket
+- **Design Notes:** Standalone script (NOT a ScraperBase subclass). Buffers matching posts in
+  memory and flushes to GCS + BQ every 5 minutes. SIGTERM triggers graceful drain + final
+  flush. Handles WebSocket reconnection with exponential backoff.
+
+### stokastic_dfs_ownership (Stokastic.com) — FORWARD COLLECTION
+- **Source:** Stokastic.com DFS ownership projections (unauthenticated Azure backend API)
+- **API:** `https://app-api-dfs-prod-main.azurewebsites.net/api/slatedata/projections?SlateId={id}`
+- **BigQuery Table:** `nba_raw.stokastic_dfs_ownership`
+- **File:** `scrapers/external/stokastic_dfs_ownership.py`
+- **Schema:** `schemas/bigquery/nba_raw/stokastic_dfs_ownership.json`
+- **Schedule:** Daily 2:00 PM ET (after early lineup news), optional 5 PM ET re-scrape after confirmed lineups
+- **Status:** ✅ Built (2026-06-29) — forward collection only, backtest in early 2027 once a season of data accumulates
+- **Signal Hypothesis:** High DFS ownership (top-10% of slate, typically 30%+) = public/recreational attention → sportsbooks shade prop lines upward to balance action → UNDER value. Backtest query: for players in top-10% ownership on their game date, what is the UNDER hit rate vs the rest of the slate?
+- **Two-Phase Scrape:**
+  1. GET `/api/contests/getPreContestSlateInfo?app=DATAHUB&sport=NBA` → find today's DK Main slate ID
+  2. GET `/api/slatedata/projections?SlateId={id}` → per-player ownership, salary, projections
+- **API Notes:** No authentication required. `ownership` field is decimal 0.0–1.0 (converted to 0–100 pct in BQ). Off-season returns no NBA slates (expected). API is shared with tools.stokastic.com (Stokastic's lineup optimizer SPA), Azure backend `app-api-dfs-prod-main.azurewebsites.net`.
+- **Key Fields:** `projected_ownership_pct` (0-100), `projected_salary`, `projected_points`, `projection_std_dev`, `dk_value`, `injury_status`, `confirmed_lineup`, `contest_type` (DK/FD), `slate_id`
+- **Pairing with prop lines:** Join on `player_name` + `game_date` to `nba_raw.odds_api_player_points_props` to test ownership vs prop line relationship.
+
+### rotowire_nba_news (RotoWire) — FORWARD COLLECTION
+- **Source:** RotoWire public RSS 2.0 feed
+- **URL:** `https://www.rotowire.com/rss/news.php?sport=NBA`
+- **BigQuery Table:** `nba_raw.rotowire_nba_news`
+- **File:** `scrapers/external/rotowire_nba_news.py`
+- **Schema:** `schemas/bigquery/nba_raw/rotowire_nba_news.json`
+- **Schedule:** Daily 8:00 AM ET (to be configured) — or more frequently during the season to avoid missing items that rotate off the feed
+- **Status:** ✅ Built (2026-06-29) — forward collection only, no live signals yet
+- **Use Case:** Capture beat-writer reports, injury updates, practice notes, and transaction news from RotoWire for future narrative signals. Complements `espn_nba_news` with a different editorial voice. Per item: player name, action headline, description blurb, published timestamp, RotoWire player ID.
+- **Feed Notes:** Public RSS, no auth. Feed returns the ~5-20 most recent items (rotating window — run at least daily to avoid gaps). Title format is reliably `"Player Name: Action"` — player name extraction from the colon separator is consistent. No team abbreviation in the feed; player-to-team mapping requires joining on player name or RotoWire player ID. `<link>` points to the player profile page, not a standalone article.
+- **Key Fields:** `player_name` (from title before `:`), `action_text` (title after `:`), `description` (blurb, footer stripped), `published_at` (UTC), `rotowire_player_id` (from URL path).
+
 ---
 
 ## Table Naming Conventions
@@ -218,10 +310,13 @@ Complete catalog of all 40+ production scrapers organized by data type and sourc
 | `dimers_*` | Dimers | `dimers_projections` |
 | `teamrankings_*` | TeamRankings | `teamrankings_pace` |
 | `hashtagbasketball_*` | Hashtag Basketball | `hashtagbasketball_dvp` |
-| `rotowire_*` | RotoWire | `rotowire_lineups` |
+| `rotowire_*` | RotoWire | `rotowire_lineups`, `rotowire_nba_news` |
 | `covers_*` | Covers | `covers_referee_stats` |
 | `nba_tracking_*` | NBA.com Tracking | `nba_tracking_stats` |
 | `vsin_*` | VSiN | `vsin_betting_splits` |
+| `espn_nba_*` | ESPN (news/narrative) | `espn_nba_news` |
+| `bluesky_*` | Bluesky Jetstream (beat writers) | `bluesky_nba_news` |
+| `stokastic_*` | Stokastic.com (DFS ownership) | `stokastic_dfs_ownership` |
 
 ---
 

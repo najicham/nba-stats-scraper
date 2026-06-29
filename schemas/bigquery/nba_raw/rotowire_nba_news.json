@@ -1,0 +1,68 @@
+[
+  {
+    "name": "article_id",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "RotoWire numeric article ID extracted from <guid> (e.g. '531201') — primary deduplication key"
+  },
+  {
+    "name": "game_date",
+    "type": "DATE",
+    "mode": "REQUIRED",
+    "description": "Date the scraper ran (partition key); use to group items collected on the same day"
+  },
+  {
+    "name": "headline",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Full <title> text from the RSS item (e.g. 'Andrew Wiggins: To sign three-year extension')"
+  },
+  {
+    "name": "player_name",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Player name extracted from headline before the first colon (e.g. 'Andrew Wiggins'). NULL if title format is unexpected."
+  },
+  {
+    "name": "action_text",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Action/event text extracted from headline after the first colon (e.g. 'To sign three-year extension'). NULL if title format is unexpected."
+  },
+  {
+    "name": "description",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "News blurb body from <description>, with RotoWire boilerplate footer stripped. Plain text, no HTML tags."
+  },
+  {
+    "name": "published_at",
+    "type": "TIMESTAMP",
+    "mode": "NULLABLE",
+    "description": "UTC timestamp parsed from RSS <pubDate> (RFC 2822 format with named timezone)"
+  },
+  {
+    "name": "article_url",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "RotoWire player page URL from <link> (points to the player profile, not a standalone article page)"
+  },
+  {
+    "name": "rotowire_player_id",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "RotoWire numeric player ID extracted from the URL path (e.g. '3571' from '.../andrew-wiggins-3571'). NULL if URL format is unexpected."
+  },
+  {
+    "name": "scraped_at",
+    "type": "TIMESTAMP",
+    "mode": "NULLABLE",
+    "description": "UTC timestamp when this item was collected by the scraper"
+  },
+  {
+    "name": "source_file_path",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "GCS path of the source JSON file written by the scraper"
+  }
+]

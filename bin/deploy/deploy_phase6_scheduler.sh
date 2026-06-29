@@ -144,6 +144,7 @@ if $DELETE; then
     delete_job "phase6-player-profiles"
     delete_job "phase6-hourly-trends"
     delete_job "phase6-season-game-counts"
+    delete_job "phase6-clv-reexport"
     echo ""
     echo "Done! All Phase 6 scheduler jobs deleted."
     exit 0
@@ -193,6 +194,17 @@ create_job "phase6-season-game-counts" \
     '{"export_types": ["season-game-counts"]}' \
     "Export full season game counts for calendar widget (6 AM ET daily)"
 
+# Job 6: CLV T-3h Re-export
+# Runs at 4:30 PM ET (20:30 UTC) — after intraday line snapshots settle at T-3h.
+# Refreshes signal-best-bets so line_converging_under / clv_diverge_under_block
+# use the sharpest available DK line movement direction (62.4% vs 46.6% agree/disagree HR).
+# Without this re-export the signal uses morning-to-noon drift (weaker but still directional).
+# Discovery: 2026-06-27 CLV Phase 2 research. Signal wired: 2026-06-29.
+create_job "phase6-clv-reexport" \
+    "30 16 * * *" \
+    '{"export_types": ["signal-best-bets"], "target_date": "today"}' \
+    "CLV T-3h re-export: refresh best-bets with afternoon line snapshots (4:30 PM ET)"
+
 echo ""
 echo "============================================"
 echo "Deployment Complete!"
@@ -204,6 +216,7 @@ echo "  - phase6-tonight-picks        (1 PM ET daily)"
 echo "  - phase6-player-profiles      (6 AM ET Sundays)"
 echo "  - phase6-hourly-trends        (6 AM - 11 PM ET hourly)"
 echo "  - phase6-season-game-counts   (6 AM ET daily)"
+echo "  - phase6-clv-reexport         (4:30 PM ET daily)"
 echo ""
 echo "To test manually:"
 echo "  gcloud scheduler jobs run phase6-daily-results --location=$REGION"

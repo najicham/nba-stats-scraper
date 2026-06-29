@@ -50,6 +50,8 @@ RUN apt-get update && apt-get install -y \
     libasound2 \
     fonts-liberation \
     fonts-unifont \
+    # Java runtime required by tabula-py (used by nbainjuries injury report scraper)
+    default-jre-headless \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy ONLY requirements first (cached layer - deps rarely change)

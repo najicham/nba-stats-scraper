@@ -1,0 +1,56 @@
+[
+  {
+    "name": "game_date",
+    "type": "DATE",
+    "mode": "REQUIRED",
+    "description": "The game date this injury status applies to (YYYY-MM-DD)"
+  },
+  {
+    "name": "player_name",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Full player name as printed in the official NBA injury report"
+  },
+  {
+    "name": "team",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "NBA team name (as printed in report — e.g. 'Atlanta Hawks')"
+  },
+  {
+    "name": "matchup",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Matchup string from the report (e.g. 'ATL @ BOS')"
+  },
+  {
+    "name": "game_time",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Scheduled game time from the report (e.g. '7:30 pm ET')"
+  },
+  {
+    "name": "status",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Player injury status: Out | Doubtful | Questionable | Probable | Available"
+  },
+  {
+    "name": "reason",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Injury reason text from the report (e.g. 'Knee - Left; Soreness')"
+  },
+  {
+    "name": "report_timestamp",
+    "type": "TIMESTAMP",
+    "mode": "NULLABLE",
+    "description": "The report publication timestamp used to fetch this snapshot (ET)"
+  },
+  {
+    "name": "scraped_at",
+    "type": "TIMESTAMP",
+    "mode": "NULLABLE",
+    "description": "UTC timestamp when this record was scraped"
+  }
+]

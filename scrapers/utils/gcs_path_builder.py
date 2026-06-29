@@ -11,7 +11,7 @@ Usage:
     # In scraper class:
     exporters = [
         {
-            "type": "gcs", 
+            "type": "gcs",
             "key": GCSPathBuilder.get_path("odds_api_events"),
             "export_mode": ExportMode.RAW,
             "groups": ["prod", "gcs"],
@@ -29,11 +29,11 @@ logger = logging.getLogger(__name__)
 class GCSPathBuilder:
     """
     Centralized path builder for GCS storage following operational reference standards.
-    
+
     All paths follow the pattern: /{source}/{type}/{date}/{subdir}/{timestamp}.{ext}
     where subdir and other components vary by scraper type.
     """
-    
+
     # Path templates using Python string formatting (compatible with existing exporter system)
     PATH_TEMPLATES = {
         # Ball Don't Lie API Scrapers
@@ -53,18 +53,18 @@ class GCSPathBuilder:
 
         # Odds API Scrapers
         "odds_api_events": "odds-api/events/%(date)s/%(timestamp)s.json",
-        "odds_api_events_history": "odds-api/events-history/%(date)s/%(timestamp)s.json", 
+        "odds_api_events_history": "odds-api/events-history/%(date)s/%(timestamp)s.json",
         "odds_api_player_props": "odds-api/player-props/%(date)s/%(event_id)s-%(teams)s/%(timestamp)s-snap-%(snap)s.json",
         "odds_api_player_props_history": "odds-api/player-props-history/%(date)s/%(event_id)s-%(teams)s/%(timestamp)s-snap-%(snap)s.json",
         "odds_api_game_lines": "odds-api/game-lines/%(date)s/%(event_id)s-%(teams)s/%(timestamp)s-snap-%(snap)s.json",
         "odds_api_game_lines_history": "odds-api/game-lines-history/%(date)s/%(event_id)s-%(teams)s/%(timestamp)s-snap-%(snap)s.json",
         "odds_api_team_players": "odds-api/players/%(date)s/%(timestamp)s.json",
-        
+
         # ESPN Scrapers
         "espn_team_roster": "espn/rosters/%(date)s/team_%(team_abbr)s/%(timestamp)s.json",
-        "espn_scoreboard": "espn/scoreboard/%(date)s/%(timestamp)s.json", 
+        "espn_scoreboard": "espn/scoreboard/%(date)s/%(timestamp)s.json",
         "espn_boxscore": "espn/boxscores/%(date)s/game-%(game_id)s/%(timestamp)s.json",
-        
+
         # NBA.com Scrapers
         "nba_com_player_list": "nba-com/player-list/%(date)s/%(timestamp)s.json",
         "nba_com_schedule": "nba-com/schedule/%(actual_season_nba_format)s/%(timestamp)s.json",
@@ -74,9 +74,9 @@ class GCSPathBuilder:
         "nba_com_play_by_play": "nba-com/play-by-play/%(date)s/game-%(game_id)s/%(timestamp)s.json",
         "nba_com_player_boxscore": "nba-com/player-boxscores/%(date)s/%(timestamp)s.json",
         "nba_com_team_boxscore": "nba-com/team-boxscore/%(game_date)s/%(game_id)s/%(timestamp)s.json",
-        "nba_com_team_roster": "nba-com/rosters/%(date)s/team_%(team_abbr)s/%(timestamp)s.json", 
+        "nba_com_team_roster": "nba-com/rosters/%(date)s/team_%(team_abbr)s/%(timestamp)s.json",
         "nba_com_player_movement": "nba-com/player-movement/%(date)s/%(timestamp)s.json",
-        
+
         "nba_com_schedule": "nba-com/schedule/%(actual_season_nba_format)s/%(timestamp)s.json",
         "nba_com_schedule_metadata": "nba-com/schedule-metadata/%(actual_season_nba_format)s/%(timestamp)s.json",
         "nba_com_schedule_cdn": "nba-com/schedule-cdn/%(actual_season_nba_format)s/%(timestamp)s.json",
@@ -85,14 +85,14 @@ class GCSPathBuilder:
         # NBA.com Injury Reports (Phase 2 - dual storage)
         "nba_com_injury_report_pdf_raw": "nba-com/injury-report-pdf/%(date)s/%(hour24)s/%(timestamp)s.pdf",
         "nba_com_injury_report_data": "nba-com/injury-report-data/%(date)s/%(hour24)s/%(timestamp)s.json",
-        
+
         # NBA.com Gamebooks (Phase 2)
         "nba_com_gamebooks_pdf_raw": "nba-com/gamebooks-pdf/%(date)s/%(clean_game_code_dashes)s/%(timestamp)s.pdf",
         "nba_com_gamebooks_pdf_data": "nba-com/gamebooks-data/%(date)s/%(clean_game_code_dashes)s/%(timestamp)s.json",
 
         # Basketball Reference
         "br_season_roster": "basketball-ref/season-rosters/%(season)s/%(teamAbbr)s.json",
-        
+
         # BettingPros Scrapers
         "bettingpros_events": "bettingpros/events/%(date)s/%(timestamp)s.json",
         "bettingpros_player_props": "bettingpros/player-props/%(market_type)s/%(date)s/%(timestamp)s.json",
@@ -118,6 +118,12 @@ class GCSPathBuilder:
         "covers_referee_stats": "external/covers/referee-stats/%(season)s/%(timestamp)s.json",
         "nba_tracking_stats": "external/nba-tracking/%(date)s/%(timestamp)s.json",
         "vsin_betting_splits": "external/vsin/betting-splits/%(date)s/%(timestamp)s.json",
+        "nba_injury_snapshots": "external/nba-injury-snapshots/%(date)s/%(timestamp)s.json",
+        "espn_nba_news": "external/espn/nba-news/%(date)s/%(timestamp)s.json",
+        "espn_injuries": "external/espn/injuries/%(date)s/%(timestamp)s.json",
+        "rotowire_nba_news": "external/rotowire/nba-news/%(date)s/%(timestamp)s.json",
+        "bluesky_nba_news": "external/bluesky/nba-news/%(date)s/%(timestamp)s.json",
+        "stokastic_dfs_ownership": "external/stokastic/dfs-ownership/%(date)s/%(timestamp)s.json",
 
         # Big Data Ball
         # "big_data_ball_play_by_play": "big-data-ball/play-by-play/%(date)s/game_%(game_id)s/%(timestamp)s.csv",
@@ -169,109 +175,109 @@ class GCSPathBuilder:
         "mlb_odds_api_pitcher_props_history": "mlb-odds-api/pitcher-props-history/%(date)s/%(event_id)s-%(teams)s/%(timestamp)s-snap-%(snap)s.json",
         "mlb_odds_api_batter_props_history": "mlb-odds-api/batter-props-history/%(date)s/%(event_id)s-%(teams)s/%(timestamp)s-snap-%(snap)s.json",
     }
-    
-    
+
+
     @classmethod
     def get_path(cls, template_key: str, **kwargs) -> str:
         """
         Get a GCS path template for the given template key.
-        
+
         Args:
-            template_key: Key from PATH_TEMPLATES 
+            template_key: Key from PATH_TEMPLATES
             **kwargs: Additional path customizations
-            
+
         Returns:
             Path template string compatible with current exporter system
-            
+
         Example:
             path = GCSPathBuilder.get_path("odds_api_events")
             # Returns: "odds-api/events/%(date)s/%(timestamp)s.json"
         """
         if template_key not in cls.PATH_TEMPLATES:
             raise ValueError(f"Unknown path template key: {template_key}")
-            
+
         return cls.PATH_TEMPLATES[template_key]
-    
+
     @classmethod
     def add_timestamp_if_missing(cls, opts: Dict) -> Dict:
         """
         Add timestamp if not present (for unique filenames).
-        
+
         Args:
             opts: Existing options dictionary
-            
+
         Returns:
             Updated options dictionary with timestamp if missing
         """
         updated_opts = opts.copy()
-        
+
         # Add timestamp if not present (you already have run_id, but timestamp is more readable)
         if "timestamp" not in updated_opts:
             updated_opts["timestamp"] = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-            
+
         return updated_opts
-    
+
     @classmethod
     def validate_path_opts(cls, template_key: str, opts: Dict) -> None:
         """
         Validate that all required variables for a path template are present in opts.
-        
+
         Args:
             template_key: Key from PATH_TEMPLATES
             opts: Options dictionary with variables for formatting
-            
+
         Raises:
             ValueError: If required variables are missing
         """
         if template_key not in cls.PATH_TEMPLATES:
             raise ValueError(f"Unknown path template key: {template_key}")
-            
+
         template = cls.PATH_TEMPLATES[template_key]
-        
+
         # Extract variable names from template (e.g., %(date)s -> date)
         import re
         variables = re.findall(r'%\((\w+)\)s', template)
-        
+
         missing_vars = [var for var in variables if var not in opts]
         if missing_vars:
             raise ValueError(f"Missing required variables for {template_key}: {missing_vars}")
-    
-    @classmethod 
+
+    @classmethod
     def preview_path(cls, template_key: str, **sample_opts) -> str:
         """
         Preview what a path will look like with sample options.
-        
+
         Args:
             template_key: Key from PATH_TEMPLATES
             **sample_opts: Sample values for path variables
-            
+
         Returns:
             Formatted path with sample values
-            
+
         Example:
             path = GCSPathBuilder.preview_path(
-                "odds_api_events", 
-                date="2025-07-21", 
+                "odds_api_events",
+                date="2025-07-21",
                 timestamp="20250721_140000"
             )
             # Returns: "odds-api/events/2025-07-21/20250721_140000.json"
         """
         template = cls.get_path(template_key)
-        
+
         # Add standard defaults if missing
         defaults = {
             "date": "2025-07-21",
-            "timestamp": "20250721_140000", 
+            "timestamp": "20250721_140000",
             "game_id": "12345",
             "event_id": "67890",
             "team_abbr": "LAL",
             "hour": "5",
             "period": "PM"
         }
-        
+
         # Merge sample_opts with defaults
         merged_opts = {**defaults, **sample_opts}
-        
+
         try:
             return template % merged_opts
         except KeyError as e:
@@ -317,4 +323,3 @@ if __name__ == "__main__":
     logger.info("=== All Available Templates ===")
     for key in sorted(GCSPathBuilder.PATH_TEMPLATES.keys()):
         logger.debug(f"{key}: {GCSPathBuilder.PATH_TEMPLATES[key]}")
-        
