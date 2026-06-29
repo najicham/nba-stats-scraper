@@ -732,8 +732,8 @@ Examples:
     )
     parser.add_argument(
         "--date",
-        required=True,
-        help="Game date (YYYY-MM-DD) — used as partition key in GCS/BQ",
+        default=None,
+        help="Game date (YYYY-MM-DD, default: today)",
     )
     parser.add_argument(
         "--duration",
@@ -768,6 +768,8 @@ Examples:
         datefmt="%Y-%m-%dT%H:%M:%SZ",
     )
 
+    game_date = args.date or datetime.now(timezone.utc).strftime('%Y-%m-%d')
+
     dry_run = args.group != "prod"
     if dry_run:
         logger.info(
@@ -779,7 +781,7 @@ Examples:
     extra_handles = [h.strip() for h in args.handles.split(",") if h.strip()]
 
     listener = BlueSkyNBAListener(
-        game_date=args.date,
+        game_date=game_date,
         duration_minutes=args.duration,
         dry_run=dry_run,
         extra_handles=extra_handles,
@@ -792,7 +794,7 @@ Examples:
 
     logger.info(
         "Starting Bluesky NBA News listener for %s (duration: %d min, group: %s)",
-        args.date,
+        game_date,
         args.duration,
         args.group,
     )
@@ -823,7 +825,7 @@ Examples:
     print("\n" + "=" * 60, flush=True)
     print("Bluesky NBA News Listener — Run Summary", flush=True)
     print("=" * 60, flush=True)
-    print(f"  Date:             {args.date}", flush=True)
+    print(f"  Date:             {game_date}", flush=True)
     print(f"  Duration:         {elapsed_secs // 60}m {elapsed_secs % 60}s", flush=True)
     print(f"  Posts seen:       {stats['posts_seen']:,}", flush=True)
     print(f"  Posts matched:    {stats['posts_matched']:,}", flush=True)

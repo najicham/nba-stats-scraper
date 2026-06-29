@@ -240,6 +240,14 @@ NBA_SCRAPER_REGISTRY: Dict[str, Tuple[str, str]] = {
         "scrapers.external.rotowire_nba_news",
         "RotoWireNBANewsScraper"
     ),
+    "stokastic_dfs_ownership": (
+        "scrapers.external.stokastic_dfs_ownership",
+        "StokasticDFSOwnershipScraper"
+    ),
+    "nba_injury_snapshots": (
+        "scrapers.external.nba_injury_snapshots",
+        "NBAInjurySnapshotsScraper"
+    ),
 
     # ========================================================================
     # ESPN Scrapers (3 total)
@@ -523,6 +531,8 @@ SCRAPER_GROUPS = {
         "espn_nba_news",
         "espn_injuries",
         "rotowire_nba_news",
+        "stokastic_dfs_ownership",
+        "nba_injury_snapshots",
     ]
 }
 

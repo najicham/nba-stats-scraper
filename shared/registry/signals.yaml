@@ -490,3 +490,10 @@ signals:
     direction: under
     promotion_gate: "N>=30 live 2026-27 at HR>=58%. Check overlap with b2b_fatigue_under first — some road trips include B2B nights; confirm long_road_trip_under adds value beyond the B2B component before adding to UNDER_SIGNAL_WEIGHTS."
     description: "Long road trip UNDER — away team on 3rd+ consecutive road game, cumulative travel fatigue suppresses scoring (shadow, 2026-06-29; literature: JCSM 2021 B2B+travel = -2.33 margin)"
+
+  - tag: rotowire_bench_under
+    status: shadow
+    weight: 0.0
+    direction: under
+    promotion_gate: "N>=30 live picks at HR>=65%; confirm additive beyond bench_under once lineup data flows; requires rotowire_lineups.is_starter to be populated"
+    description: "Pre-game RotoWire bench designation + UNDER — clean (no look-ahead) proxy for bench_under; bench_under reads post-game starter_flag (look-ahead bias), this reads pre-game is_starter from rotowire_lineups (shadow, 2026-06-29)"

@@ -196,6 +196,11 @@ SHADOW_SIGNALS = frozenset({
     # The 5th away game is where win-rate collapse is documented in the literature.
     # SHADOW → zero pick impact. Promote to UNDER_SIGNAL_WEIGHTS after live N>=30 at HR>=58%.
     'long_road_trip_under',
+    # 2026-06-29: Pre-game RotoWire bench status + UNDER. Clean proxy for bench_under
+    # (which reads post-game starter_flag = look-ahead bias). 5-season bench_under baseline:
+    # 76.6% UNDER rate. This shadow tracks whether pre-game lineup data predicts the same.
+    # Promote after live N>=30 at HR>=65%; requires rotowire_lineups to be populating is_starter.
+    'rotowire_bench_under',
 })
 
 # Session 400: UNDER signal quality weights for signal-first ranking.

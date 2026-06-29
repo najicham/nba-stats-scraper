@@ -42,6 +42,8 @@ from shared.utils.notification_system import notify_warning, notify_info
 
 logger = logging.getLogger("scraper_base")
 
+ROTOWIRE_MINUTES_URL = "https://www.rotowire.com/basketball/projected-minutes.php"
+
 # Position abbreviations
 VALID_POSITIONS = {"PG", "SG", "SF", "PF", "C", "G", "F", "G/F", "F/C"}
 
@@ -133,6 +135,97 @@ class RotoWireLineupsScraper(ScraperBase, ScraperFlaskMixin):
         if "<html" not in html_lower:
             raise ValueError("Response doesn't appear to be HTML")
 
+    def _fetch_projected_minutes(self) -> Dict[str, float]:
+        """Fetch projected minutes from the RotoWire projected-minutes page.
+
+        Returns dict mapping normalized player_lookup -> projected_minutes (float).
+        Returns empty dict on any failure (lineup data still returned).
+        """
+        import urllib.request
+        import urllib.error
+
+        minutes_by_player: Dict[str, float] = {}
+        try:
+            req = urllib.request.Request(
+                ROTOWIRE_MINUTES_URL,
+                headers={
+                    'User-Agent': (
+                        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                        'AppleWebKit/537.36 (KHTML, like Gecko) '
+                        'Chrome/120.0.0.0 Safari/537.36'
+                    )
+                }
+            )
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                html = resp.read().decode('utf-8', errors='replace')
+
+            soup = BeautifulSoup(html, 'html.parser')
+
+            # RotoWire projected-minutes page structure (verified season-start):
+            # Table rows with: player name link, team, position, projected minutes
+            # Look for tables or lists with numeric minute projections (15-40 range)
+
+            # Strategy 1: find table rows with a player link + a numeric minutes cell
+            for row in soup.find_all('tr'):
+                cells = row.find_all('td')
+                if len(cells) < 3:
+                    continue
+
+                player_link = None
+                minutes_val = None
+
+                for cell in cells:
+                    # Player link — href contains /basketball/player/
+                    link = cell.find('a', href=lambda h: h and '/basketball/player/' in h)
+                    if link:
+                        player_link = link.get_text(strip=True)
+                        continue
+
+                    # Numeric minutes cell — look for values 10-45
+                    text = cell.get_text(strip=True)
+                    try:
+                        val = float(text)
+                        if 8.0 <= val <= 48.0:
+                            minutes_val = val
+                    except (ValueError, TypeError):
+                        pass
+
+                if player_link and minutes_val is not None:
+                    lookup = normalize_player_name(player_link)
+                    minutes_by_player[lookup] = minutes_val
+
+            # Strategy 2: if table approach found nothing, try list items
+            if not minutes_by_player:
+                for item in soup.find_all(['li', 'div'], class_=re.compile(r'player|row')):
+                    link = item.find('a', href=lambda h: h and '/basketball/player/' in h)
+                    if not link:
+                        continue
+                    player_name_text = link.get_text(strip=True)
+
+                    # Find a sibling or child with a numeric value
+                    text = item.get_text(separator=' ', strip=True)
+                    nums = re.findall(r'\b(\d{1,2}(?:\.\d)?)\b', text)
+                    for n in nums:
+                        val = float(n)
+                        if 8.0 <= val <= 48.0:
+                            lookup = normalize_player_name(player_name_text)
+                            minutes_by_player[lookup] = val
+                            break
+
+            logger.info(
+                "RotoWire projected minutes: %d players parsed from %s",
+                len(minutes_by_player), ROTOWIRE_MINUTES_URL
+            )
+
+        except Exception as e:
+            logger.warning(
+                "Failed to fetch RotoWire projected minutes (%s): %s — "
+                "lineup data will have projected_minutes=None",
+                ROTOWIRE_MINUTES_URL, e
+            )
+
+        return minutes_by_player
+
     def transform_data(self) -> None:
         """Parse RotoWire lineups page and extract game + player data."""
         soup = BeautifulSoup(self.decoded_data, "html.parser")
@@ -155,6 +248,16 @@ class RotoWireLineupsScraper(ScraperBase, ScraperFlaskMixin):
                     games.append(game_data)
 
         total_players = sum(len(g.get("away_players", [])) + len(g.get("home_players", [])) for g in games)
+
+        # Fetch projected minutes from separate RotoWire page and merge into player records
+        projected_minutes_map = self._fetch_projected_minutes()
+        if projected_minutes_map:
+            for game in games:
+                for player_list_key in ('away_players', 'home_players'):
+                    for player in game.get(player_list_key, []):
+                        lookup = player.get('player_lookup', '')
+                        if lookup and player.get('projected_minutes') is None:
+                            player['projected_minutes'] = projected_minutes_map.get(lookup)
 
         self.data = {
             "source": "rotowire",

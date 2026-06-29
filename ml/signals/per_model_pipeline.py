@@ -930,21 +930,23 @@ def _query_all_model_predictions(
 
     # RotoWire projected minutes
     rotowire_query = f"""
-    SELECT REPLACE(player_lookup, '-', '') AS player_lookup, projected_minutes
+    SELECT REPLACE(player_lookup, '-', '') AS player_lookup, projected_minutes, is_starter
     FROM `{PROJECT_ID}.nba_raw.rotowire_lineups`
     WHERE game_date = @target_date
-      AND projected_minutes IS NOT NULL
       AND player_lookup IS NOT NULL
     """
     rotowire_minutes_map = {}
+    rotowire_lineup_map: Dict[str, Dict] = {}
     try:
         rw_rows = bq_client.query(rotowire_query, job_config=job_config).result(timeout=30)
-        rotowire_minutes_map = {
-            row['player_lookup']: float(row['projected_minutes'])
-            for row in rw_rows if row['projected_minutes']
-        }
+        for row in rw_rows:
+            pl = row['player_lookup']
+            if row['projected_minutes']:
+                rotowire_minutes_map[pl] = float(row['projected_minutes'])
+            if row.get('is_starter') is not None:
+                rotowire_lineup_map[pl] = {'is_starter': bool(row['is_starter'])}
     except Exception as e:
-        logger.warning(f"Failed to query RotoWire minutes: {e}")
+        logger.warning(f"Failed to query RotoWire minutes/lineup: {e}")
 
     # --- Parse main query rows and build predictions + supplemental ---
     predictions_by_model: Dict[str, List[Dict]] = defaultdict(list)
@@ -1318,6 +1320,11 @@ def _query_all_model_predictions(
                 pred['minutes_projection_delta'] = rw_mins - season_minutes
             else:
                 pred['minutes_projection_delta'] = None
+
+            # RotoWire pre-game lineup status (is_starter) — for rotowire_bench_under signal
+            rw_lineup = rotowire_lineup_map.get(row_dict['player_lookup'])
+            if rw_lineup:
+                supp['rotowire_lineup'] = rw_lineup
 
             supplemental_map[player_key] = supp
 
