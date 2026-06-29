@@ -105,9 +105,13 @@ SHADOW_SIGNALS = frozenset({
     'over_streak_reversion_under', # 51.6% HR 5-season — harmful, kept for tracking
     'star_favorite_under',         # +0.7pp = noise (Session 427)
     'starter_away_overtrend_under',  # Session 462: 48.2% HR 5-season — harmful, demoted from weights
-    'mean_reversion_under',  # Session 451: decayed to 53% vs 54.3% baseline, removed from weights/rescue Session 429. Stop real_sc inflation.
+    'mean_reversion_under',  # Session 451: decayed to 53% vs 54.3% baseline, removed from weights/rescue Session 429.
+    # ⚠️  REGIME-GATED (2026-06-29): DO NOT PROMOTE without LOOSE market (vegas_mae_7d >= 4.5).
+    # Went 0.0% HR (0-8) in March 2026 TIGHT conditions. See signals.yaml promotion_gate field.
     'sharp_book_lean_over',  # Session 462: 41.7% HR 5-season — harmful, demoted from weights/rescue
-    'downtrend_under',       # Session 471: 16.7% HR 7d (N=6) — catastrophic, demoted from UNDER_SIGNAL_WEIGHTS
+    'downtrend_under',       # Session 471: 16.7% HR 7d (N=6) — catastrophic, demoted from UNDER_SIGNAL_WEIGHTS.
+    # ⚠️  REGIME-GATED (2026-06-29): DO NOT PROMOTE without LOOSE market (vegas_mae_7d >= 4.5).
+    # Went 11.1% HR (2-18) in March 2026 TIGHT conditions. See signals.yaml promotion_gate field.
     # Session 462→466: hot_3pt_under, cold_3pt_over, line_drifted_down_under PROMOTED to active
     # (62.5%, 60.2%, 59.8% HR, 5-season cross-validated, pre-game clean)
     # Session 463: P0 simulator experiment validated signals

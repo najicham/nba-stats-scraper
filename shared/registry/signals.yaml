@@ -269,7 +269,8 @@ signals:
   - tag: downtrend_under
     status: shadow
     direction: under
-    description: Downtrend Under signal (auto-generated stub — verify)
+    promotion_gate: "LOOSE market only (vegas_mae_7d >= 4.5). DO NOT PROMOTE in TIGHT market — went 11.1% HR (2/18) in March 2026 TIGHT conditions. Requires N>=30 at HR>=58% AND market_regime=LOOSE before adding to UNDER_SIGNAL_WEIGHTS."
+    description: "UNDER signal when player is on scoring downtrend — shadow, regime-gated (2026-06-29 gate added after March 2026 catastrophic performance)"
 
   - tag: dvp_favorable_over
     status: shadow
@@ -301,7 +302,8 @@ signals:
   - tag: mean_reversion_under
     status: shadow
     direction: under
-    description: Mean Reversion Under signal (auto-generated stub — verify)
+    promotion_gate: "LOOSE market only (vegas_mae_7d >= 4.5). DO NOT PROMOTE in TIGHT market — went 0.0% HR (0/8) in March 2026 TIGHT conditions. Requires N>=30 at HR>=55% AND market_regime=LOOSE before adding to UNDER_SIGNAL_WEIGHTS."
+    description: "UNDER signal for mean-reversion after scoring deviation — shadow, regime-gated (2026-06-29 gate added after March 2026 catastrophic performance)"
 
   - tag: minutes_load_over
     status: shadow
