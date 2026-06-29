@@ -9,6 +9,14 @@ Edge 7+ drops to 50% (model overconfidence), so this signal gates at edge < 7.
   - Per-season: 54.4%, 55.2%, 59.8%, 56.6%, 62.3% — all above 54%
   - Mechanism: market anchors to star reputation → systematic overpricing
 
+⚠️  2025-26 DECAY: 35.3% HR (N=17) this season — the line >= 25 UNDER thesis is
+stressed. DO NOT GRADUATE until live recovery confirmed at N >= 30 and HR >= 58%.
+
+Overlap (2026-06-29): high_line_under (ml/signals/high_line_under.py) is the
+edge-ungated superset of this signal (line >= 25, no edge band). high_line_under
+is intended as the eventual replacement — if it graduates, retire this signal.
+Note: the name "star" is misleading; there is NO usage/player-tier criterion here.
+
 Created: Session 463 (P1 simulator experiments)
 """
 

@@ -326,6 +326,12 @@ signals:
     direction: both
     description: "Whole-number prop line — book set line at integer (no .5), model accuracy +10-20pp (76% vs 63% raw 5-season, shadow, 2026-06-29)"
 
+  - tag: high_line_under
+    status: shadow
+    direction: under
+    promotion_gate: "N>=30 at HR>=58% live 2026-27. Stratify by edge band before graduating. Intended replacement for star_line_under (which is a strict subset). DO NOT co-promote both."
+    description: "UNDER with line >= 25 — market systematically overprices high-line stars (59.9% HR 5-season, edge-ungated superset of star_line_under, shadow, 2026-06-29)"
+
   - tag: line_converging_under
     status: shadow
     direction: under

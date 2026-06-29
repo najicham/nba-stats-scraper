@@ -173,6 +173,11 @@ SHADOW_SIGNALS = frozenset({
     # Counterpart block `clv_diverge_under_block` is wired as an active inline filter below.
     # For T-3h precision: Phase 6 best-bets export should be re-triggered at ~4:30 PM ET.
     'line_converging_under',
+    # 2026-06-29: High-line UNDER — edge-ungated superset of star_line_under. Passed formal
+    # discovery gate (59.9% HR, 5/5 seasons, p=0.0007). star_line_under is DECAYING in 2025-26
+    # (35.3% HR N=17); watch high_line_under live HR carefully — same thesis, broader population.
+    # Intended replacement for star_line_under at graduation. Promote to weight 1.0 after N≥30 HR≥58%.
+    'high_line_under',
 })
 
 # Session 400: UNDER signal quality weights for signal-first ranking.

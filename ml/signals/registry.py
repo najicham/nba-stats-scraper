@@ -324,8 +324,12 @@ def build_default_registry() -> SignalRegistry:
 
     # Session 463: P1 simulator experiment — star overpricing
     # star_line_under: 57.6% HR (N=1,018), 5-season cross-validated. Line >= 25, edge 3-7
+    # ⚠️  2025-26: 35.3% HR (N=17) — decaying. high_line_under is the intended replacement.
     from ml.signals.star_line_under import StarLineUnderSignal
     registry.register(StarLineUnderSignal())
+    # 2026-06-29: high_line_under — edge-ungated superset of star_line_under. 59.9% HR 5/5 seasons.
+    from ml.signals.high_line_under import HighLineUnderSignal
+    registry.register(HighLineUnderSignal())
 
     # Session 463: Sharp book disaggregation experiment
     # sharp_consensus_under: 69.3% HR (N=205), 5-season consistent. Line dropped + high book std
