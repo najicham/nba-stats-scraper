@@ -352,4 +352,11 @@ def build_default_registry() -> SignalRegistry:
     from ml.signals.national_tv_under import NationalTvUnderSignal
     registry.register(NationalTvUnderSignal())
 
+    # 2026-06-29: Whole-number prop line precision signal (shadow). Raw model 5-season: +10-20pp HR
+    # on integer lines (no .5) vs half-lines — holds across ALL 5 seasons and ALL line buckets.
+    # BB-context UNDER 2026: 70.6% vs 58.3%. SHADOW → zero pick impact.
+    # Promote after live N>=30 at HR>=62% (UNDER) / N>=50 at HR>=70% (OVER).
+    from ml.signals.whole_line_precision import WholeLinePrecisionSignal
+    registry.register(WholeLinePrecisionSignal())
+
     return registry

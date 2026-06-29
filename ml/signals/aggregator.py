@@ -155,6 +155,14 @@ SHADOW_SIGNALS = frozenset({
     # UNDER_SIGNAL_WEIGHTS at season open after live N>=30 at HR>=55%; check overlap with
     # star_line_under first. Detail: docs/08-projects/current/narrative-proxies-discovery/01-FINDINGS.md.
     'national_tv_under',
+    # 2026-06-29: Whole-number prop line precision signal. Raw model 5-season: +10-20pp HR advantage
+    # on whole-number lines (integer, no .5) vs half-lines — consistent across all 5 seasons and all
+    # line buckets (8-30+). BB-context UNDER 2026: 70.6% vs 58.3% (+12pp). OVER: 68.5% vs 66.5% (+2pp,
+    # not significant at BB level). Mechanism: book sets whole-number line when it has less conviction →
+    # model edge more reliable. Post-hoc discovery → SHADOW. Promote UNDER to UNDER_SIGNAL_WEIGHTS
+    # after live N>=30 at HR>=62%; OVER needs N>=50 at HR>=70% given weaker BB-level evidence.
+    # Pre-registration: docs/08-projects/current/whole-line-precision/00-PREREGISTRATION.md
+    'whole_line_precision',
 })
 
 # Session 400: UNDER signal quality weights for signal-first ranking.
