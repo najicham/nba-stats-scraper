@@ -345,4 +345,11 @@ def build_default_registry() -> SignalRegistry:
     registry.register(QuantileCeilingUnderSignal())
     registry.register(QuantileFloorOverSignal())
 
+    # 2026-06-28: National-TV/primetime high-line UNDER (shadow). Discovered in the narrative-proxies
+    # Phase 1 wave: pre-registered as a national-TV OVER trigger, FAILED (45.4%), inverted cleanly into
+    # a durable UNDER edge (54.7% 5-season, above breakeven 5/5, additive over the high-line baseline).
+    # In SHADOW_SIGNALS → zero pick impact. Promote at season open after live N>=30 at HR>=55%.
+    from ml.signals.national_tv_under import NationalTvUnderSignal
+    registry.register(NationalTvUnderSignal())
+
     return registry
