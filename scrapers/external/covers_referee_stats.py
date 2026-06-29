@@ -1,10 +1,11 @@
 # File: scrapers/external/covers_referee_stats.py
 """
-Covers.com NBA Referee Statistics Scraper                       v1.0 - 2026-03-04
+Covers.com NBA Referee Statistics Scraper                       v1.1 - 2026-06-29
 ----------------------------------------------------------------------------------
 Scrapes referee O/U tendency statistics from Covers.com.
 
-URL: https://www.covers.com/sport/basketball/nba/referees/statistics/{season}
+URL: https://www.covers.com/sport/basketball/nba/referee-stats
+    (v1.0 used /referees/statistics/{season} — wrong URL, returned empty tables)
 Data: Per-referee O/U tendency, total games officiated, O/U record.
 Access: Free, clean HTML tables.
 Timing: Updates after each game day.
@@ -14,7 +15,7 @@ assigned crew), this creates a ref_crew_over_tendency signal: crew with 58%+
 OVER rate + model says OVER.
 
 Usage:
-  python scrapers/external/covers_referee_stats.py --season 2025-2026 --date 2026-03-04 --debug
+  python scrapers/external/covers_referee_stats.py --date 2026-03-04 --debug
 """
 
 from __future__ import annotations
@@ -91,8 +92,9 @@ class CoversRefereeStatsScraper(ScraperBase, ScraperFlaskMixin):
                 self.opts["season"] = "2025-2026"
 
     def set_url(self) -> None:
-        season = self.opts.get("season", "2025-2026")
-        self.url = f"https://www.covers.com/sport/basketball/nba/referees/statistics/{season}"
+        # Correct URL (no season in path — covers.com shows current season automatically)
+        # v1.0 used /referees/statistics/{season} which returned 404/wrong layout.
+        self.url = "https://www.covers.com/sport/basketball/nba/referee-stats"
         logger.info("Covers.com referee stats URL: %s", self.url)
 
     def set_headers(self) -> None:
