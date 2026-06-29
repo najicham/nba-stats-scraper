@@ -335,6 +335,7 @@ python bin/monitoring/pipeline_canary_queries.py     # Pipeline canaries (auto: 
 python bin/monitoring/analyze_healing_patterns.py    # Self-healing audit (auto: every 15min)
 python bin/monitoring/grading_gap_detector.py        # Grading gaps (auto: daily 9 AM ET)
 python bin/monitoring/signal_decay_monitor.py        # Signal decay/recovery (Session 411)
+PYTHONPATH=. python bin/monitoring/over_decay_watch.py  # OVER signal re-grade (run from ~Dec 2026; manual)
 PYTHONPATH=. python ml/analysis/league_macro.py      # League macro trends (auto: post-grading)
 ```
 
@@ -347,6 +348,7 @@ PYTHONPATH=. python ml/analysis/league_macro.py      # League macro trends (auto
 - Workflow health: `python bin/validation/validate_workflow_dependencies.py` — detects workflows monitoring disabled scrapers
 - **Brier score calibration** (Session 399): `model_performance_daily` has `brier_score_7d/14d/30d`. Lower = better calibrated. Backfill: `PYTHONPATH=. python ml/analysis/model_performance.py --backfill --start 2025-11-02`
 - **Filter auto-demote** (Session 432): `filter-counterfactual-evaluator` CF daily 11:30 AM ET. Computes CF HR per filter, auto-demotes to observation if CF HR >= 55% for 7 consecutive days (N >= 20). Max 2/run. Core filters excluded. Demotions in `filter_overrides` table, read by aggregator at export.
+- **OVER decay-watch** (2026-06-26): `bin/monitoring/over_decay_watch.py` — manual re-grade of 5 demoted OVER signals (fast_pace_over, cold_3pt_over, line_rising_over, book_disagree_over, b2b_boost_over) against live 2026-27 picks. Run from ~Dec 2026 once N≥30 accrues. Each signal must clear 58% HR at N≥30 to earn removal from SHADOW. Read-only (prints report, writes nothing).
 
 **Analysis tools:**
 ```bash
