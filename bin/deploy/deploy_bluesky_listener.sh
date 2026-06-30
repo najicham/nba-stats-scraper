@@ -72,8 +72,7 @@ if [[ "$SCHEDULER_ONLY" != "true" ]]; then
             --memory=512Mi \
             --cpu=1 \
             --command="python" \
-            --args="-m,scrapers.external.bluesky_nba_news,--duration,480,--group,prod" \
-            --description="Bluesky NBA beat-writer WebSocket listener (noon–8 PM ET game days)"
+            --args="-m,scrapers.external.bluesky_nba_news,--duration,480,--group,prod"
 
         # Env vars: use update-env-vars (safe: additive, never wipes existing vars)
         gcloud run jobs update "$JOB_NAME" \
