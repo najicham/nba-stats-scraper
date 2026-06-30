@@ -388,4 +388,29 @@ def build_default_registry() -> SignalRegistry:
     from ml.signals.long_road_trip_under import LongRoadTripUnderSignal
     registry.register(LongRoadTripUnderSignal())
 
+    # 2026-06-30: Tight consensus UNDER (shadow). 6+ distinct bookmakers posting prop lines today
+    # = liquid market with firm consensus on the number. Model edge against a firm price is more
+    # reliable than against a soft/stale line. Cannot backtest — book_count never stored in the
+    # feature store. Promote after live N>=30 at HR>=58%.
+    from ml.signals.tight_consensus_under import TightConsensusUnderSignal
+    registry.register(TightConsensusUnderSignal())
+
+    # 2026-06-30: Westward road trip UNDER (shadow). Away team traveling west tonight — body clock
+    # runs ahead of local time (harder adaptation for evening games than eastward travel).
+    # travel_direction from nba_static.travel_distances. Promote after live N>=30 at HR>=58%.
+    from ml.signals.westward_road_trip_under import WestwardRoadTripUnderSignal
+    registry.register(WestwardRoadTripUnderSignal())
+
+    # 2026-06-30: B2B + long haul UNDER (shadow). Back-to-back (rest_days==1) AND 1000+ miles
+    # traveled. Combines validated b2b fatigue (63.2% 5-season) with long-distance travel stress.
+    # Higher bar than b2b alone (N>=30 HR>=62%) since additive thesis is untested live.
+    from ml.signals.b2b_long_haul_under import B2BLongHaulUnderSignal
+    registry.register(B2BLongHaulUnderSignal())
+
+    # 2026-06-30: Multi-book convergence UNDER (shadow). 3+ distinct bookmakers all lowered their
+    # prop line intraday. Coordinated downward movement across independent books = market-wide
+    # consensus that the number is too high. Promote after live N>=30 at HR>=58%.
+    from ml.signals.multi_book_convergence_under import MultiBookConvergenceUnderSignal
+    registry.register(MultiBookConvergenceUnderSignal())
+
     return registry

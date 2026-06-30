@@ -201,6 +201,23 @@ SHADOW_SIGNALS = frozenset({
     # 76.6% UNDER rate. This shadow tracks whether pre-game lineup data predicts the same.
     # Promote after live N>=30 at HR>=65%; requires rotowire_lineups to be populating is_starter.
     'rotowire_bench_under',
+    # 2026-06-30: Tight consensus UNDER — 6+ distinct bookmakers posting prop lines today.
+    # High book count = liquid market; model edge against a firm price is more reliable.
+    # Cannot backtest (book_count never stored in feature store). Promote after live N>=30 HR>=58%.
+    'tight_consensus_under',
+    # 2026-06-30: Westward road trip UNDER — away team traveling west tonight.
+    # Westward travel places body clock ahead of local time → greater fatigue for evening games.
+    # travel_direction from nba_static.travel_distances ('west'/'east'/'neutral').
+    # Promote after live N>=30 HR>=58%.
+    'westward_road_trip_under',
+    # 2026-06-30: B2B + long haul UNDER — back-to-back (rest_days==1) AND 1000+ miles traveled.
+    # Combines the validated b2b_fatigue_under (63.2% 5-season) with long-distance travel stress.
+    # Higher promotion bar (N>=30 HR>=62%) than b2b alone — additive thesis untested.
+    'b2b_long_haul_under',
+    # 2026-06-30: Multi-book convergence UNDER — 3+ bookmakers all lowered their line today.
+    # Coordinated intraday downward movement across independent books = strong market signal.
+    # Promote after live N>=30 HR>=58%; verify intraday snapshot cadence is adequate.
+    'multi_book_convergence_under',
 })
 
 # Session 400: UNDER signal quality weights for signal-first ranking.

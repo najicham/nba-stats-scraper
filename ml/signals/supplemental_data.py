@@ -1211,6 +1211,158 @@ def query_predictions_with_supplements(
     except Exception as e:
         logger.warning(f"Failed to query consecutive road games: {e}")
 
+    # 2026-06-30: Book count per player (distinct bookmakers posting lines today).
+    # Used by tight_consensus_under signal (shadow). Raw integer count of distinct books.
+    # Queries odds_api_player_points_props directly (not the feature store — book_count
+    # is computed in feature_extractor but never stored as a feature column).
+    book_count_query = f"""
+    SELECT
+      player_lookup,
+      COUNT(DISTINCT bookmaker) AS book_count
+    FROM `{PROJECT_ID}.nba_raw.odds_api_player_points_props`
+    WHERE game_date = @target_date
+      AND minutes_before_tipoff >= 0
+    GROUP BY player_lookup
+    HAVING COUNT(DISTINCT bookmaker) >= 2
+    """
+    # Keyed by player_lookup -> book_count (int)
+    book_count_map: Dict[str, int] = {}
+    try:
+        bc_rows = bq_client.query(book_count_query, job_config=job_config).result(timeout=30)
+        for row in bc_rows:
+            book_count_map[row['player_lookup']] = int(row['book_count'])
+        logger.info(f"Loaded book counts for {len(book_count_map)} players")
+    except Exception as e:
+        logger.warning(f"Failed to query book counts: {e}")
+
+    # 2026-06-30: Tonight's away team travel direction and distance from last game location.
+    # Used by westward_road_trip_under and b2b_long_haul_under signals (both shadow).
+    # Logic mirrors TravelCalculator.calculate_travel_context():
+    #   from_team = last game's home_team (if away was there) OR away_team itself (if was home).
+    #   to_team = tonight's home_team (the arena the away team is traveling to).
+    # Joins to nba_static.travel_distances which has from_team, to_team, distance_miles,
+    # travel_direction ('east'/'west'/'neutral'), time_zones_crossed.
+    travel_context_query = f"""
+    WITH tonight_away AS (
+      SELECT
+        away_team_tricode AS away_team,
+        home_team_tricode AS tonight_home
+      FROM `{PROJECT_ID}.nba_raw.nbac_schedule`
+      WHERE game_date = @target_date
+    ),
+
+    last_game AS (
+      SELECT
+        ta.away_team,
+        ta.tonight_home,
+        s.home_team_tricode AS last_home_team,
+        s.away_team_tricode AS last_away_team,
+        ROW_NUMBER() OVER (
+          PARTITION BY ta.away_team
+          ORDER BY s.game_date DESC, s.game_id DESC
+        ) AS rn
+      FROM tonight_away ta
+      JOIN `{PROJECT_ID}.nba_raw.nbac_schedule` s
+        ON (s.home_team_tricode = ta.away_team OR s.away_team_tricode = ta.away_team)
+        AND s.game_status = 3
+        AND s.game_date < @target_date
+        AND s.game_date >= DATE_SUB(@target_date, INTERVAL 14 DAY)
+    ),
+
+    last_location AS (
+      SELECT
+        away_team,
+        tonight_home,
+        CASE
+          WHEN last_home_team = away_team THEN away_team
+          ELSE last_home_team
+        END AS from_team
+      FROM last_game
+      WHERE rn = 1
+    )
+
+    SELECT
+      ll.away_team,
+      td.distance_miles,
+      td.travel_direction,
+      td.time_zones_crossed
+    FROM last_location ll
+    LEFT JOIN `{PROJECT_ID}.nba_static.travel_distances` td
+      ON td.from_team = ll.from_team
+      AND td.to_team = ll.tonight_home
+    """
+    # Keyed by away_team_tricode -> travel context dict
+    travel_context_map: Dict[str, Dict] = {}
+    try:
+        tc_rows = bq_client.query(travel_context_query, job_config=job_config).result(timeout=30)
+        for row in tc_rows:
+            travel_context_map[row['away_team']] = {
+                'distance_miles': int(row['distance_miles']) if row['distance_miles'] is not None else None,
+                'travel_direction': row['travel_direction'],
+                'time_zones_crossed': int(row['time_zones_crossed']) if row['time_zones_crossed'] is not None else None,
+            }
+        logger.info(f"Loaded travel context for {len(travel_context_map)} away teams")
+    except Exception as e:
+        logger.warning(f"Failed to query travel context: {e}")
+
+    # 2026-06-30: Per-book line movement today (first vs last snapshot per bookmaker).
+    # Used by multi_book_convergence_under signal (shadow).
+    # books_converging_down = count of distinct bookmakers that lowered their line today
+    # (snap_count >= 2 ensures at least one intraday movement exists).
+    book_convergence_query = f"""
+    WITH ordered AS (
+      SELECT
+        player_lookup,
+        bookmaker,
+        points_line,
+        ROW_NUMBER() OVER (
+          PARTITION BY player_lookup, bookmaker
+          ORDER BY snapshot_timestamp ASC
+        ) AS rn_asc,
+        ROW_NUMBER() OVER (
+          PARTITION BY player_lookup, bookmaker
+          ORDER BY snapshot_timestamp DESC
+        ) AS rn_desc,
+        COUNT(*) OVER (PARTITION BY player_lookup, bookmaker) AS snap_count
+      FROM `{PROJECT_ID}.nba_raw.odds_api_player_points_props`
+      WHERE game_date = @target_date
+        AND minutes_before_tipoff >= 0
+    ),
+
+    book_edges AS (
+      SELECT
+        player_lookup,
+        bookmaker,
+        MAX(CASE WHEN rn_asc = 1 THEN points_line END) AS opening_line,
+        MAX(CASE WHEN rn_desc = 1 THEN points_line END) AS closing_line,
+        MAX(snap_count) AS snap_count
+      FROM ordered
+      GROUP BY player_lookup, bookmaker
+    )
+
+    SELECT
+      player_lookup,
+      COUNT(DISTINCT bookmaker) AS total_books,
+      COUNTIF(snap_count >= 2 AND closing_line < opening_line) AS books_converging_down,
+      COUNTIF(snap_count >= 2 AND closing_line > opening_line) AS books_converging_up
+    FROM book_edges
+    GROUP BY player_lookup
+    HAVING COUNT(DISTINCT bookmaker) >= 3
+    """
+    # Keyed by player_lookup -> convergence stats dict
+    book_convergence_map: Dict[str, Dict] = {}
+    try:
+        bcv_rows = bq_client.query(book_convergence_query, job_config=job_config).result(timeout=30)
+        for row in bcv_rows:
+            book_convergence_map[row['player_lookup']] = {
+                'total_books': int(row['total_books']),
+                'books_converging_down': int(row['books_converging_down']),
+                'books_converging_up': int(row['books_converging_up']),
+            }
+        logger.info(f"Loaded book convergence for {len(book_convergence_map)} players")
+    except Exception as e:
+        logger.warning(f"Failed to query book convergence: {e}")
+
     predictions = []
     supplemental_map: Dict[str, Dict] = {}
 
@@ -1637,6 +1789,29 @@ def query_predictions_with_supplements(
             pred['consecutive_road_games'] = road_trip_map.get(away_team)
         else:
             pred['consecutive_road_games'] = None
+
+        # 2026-06-30: Book count (distinct bookmakers today) for tight_consensus_under.
+        pred['book_count_current'] = book_count_map.get(row_dict.get('player_lookup'))
+
+        # 2026-06-30: Travel context for tonight's away team (westward_road_trip_under,
+        # b2b_long_haul_under). Only players on the away team get values; home-team
+        # players get None (both signals gate on is_home=False anyway).
+        if len(parts) >= 3:
+            away_team = parts[1]
+            tc = travel_context_map.get(away_team) or {}
+            pred['away_travel_direction'] = tc.get('travel_direction')
+            pred['away_travel_miles'] = tc.get('distance_miles')
+            pred['away_travel_tz_crossed'] = tc.get('time_zones_crossed')
+        else:
+            pred['away_travel_direction'] = None
+            pred['away_travel_miles'] = None
+            pred['away_travel_tz_crossed'] = None
+
+        # 2026-06-30: Per-book convergence stats for multi_book_convergence_under.
+        bcv = book_convergence_map.get(row_dict.get('player_lookup')) or {}
+        pred['books_converging_down'] = bcv.get('books_converging_down')
+        pred['books_converging_up'] = bcv.get('books_converging_up')
+        pred['convergence_total_books'] = bcv.get('total_books')
 
         # Session 404: RotoWire projected minutes for minutes_surge_over signal.
         rw_minutes = rotowire_minutes_map.get(row_dict['player_lookup'])

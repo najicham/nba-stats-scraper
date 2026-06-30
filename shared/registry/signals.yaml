@@ -497,3 +497,31 @@ signals:
     direction: under
     promotion_gate: "N>=30 live picks at HR>=65%; confirm additive beyond bench_under once lineup data flows; requires rotowire_lineups.is_starter to be populated"
     description: "Pre-game RotoWire bench designation + UNDER — clean (no look-ahead) proxy for bench_under; bench_under reads post-game starter_flag (look-ahead bias), this reads pre-game is_starter from rotowire_lineups (shadow, 2026-06-29)"
+
+  - tag: tight_consensus_under
+    status: shadow
+    weight: 0.0
+    direction: under
+    promotion_gate: "N>=30 live 2026-27 at HR>=58%. Check overlap with sharp_consensus_under — both fire on multi-book markets. Confirm book_count_current threshold (>=6) is well-calibrated to the 12-book Odds API regime before promoting."
+    description: "Tight consensus UNDER — 6+ distinct bookmakers posting prop lines today indicates a liquid, high-consensus market; model edge against a firm price is more reliable (shadow, 2026-06-30)"
+
+  - tag: westward_road_trip_under
+    status: shadow
+    weight: 0.0
+    direction: under
+    promotion_gate: "N>=30 live 2026-27 at HR>=58%. Check overlap with long_road_trip_under — westward trips often overlap with extended road trips. Confirm travel_direction from nba_static.travel_distances is populated correctly at season open."
+    description: "Westward road trip UNDER — away team traveling west (body clock ahead of local time = greater fatigue for evening games); JCSM 2021 westward > eastward fatigue effect (shadow, 2026-06-30)"
+
+  - tag: b2b_long_haul_under
+    status: shadow
+    weight: 0.0
+    direction: under
+    promotion_gate: "N>=30 live 2026-27 at HR>=62% (higher bar than b2b_fatigue_under because the long-haul thesis is an untested additive claim). Confirm away_travel_miles threshold (>=1000 miles) is separating meaningful travel from short hops."
+    description: "B2B + long haul UNDER — back-to-back (rest_days==1) AND traveling 1000+ miles; combines b2b fatigue (63.2% validated) with long-distance travel stress for a compound fatigue effect (shadow, 2026-06-30)"
+
+  - tag: multi_book_convergence_under
+    status: shadow
+    weight: 0.0
+    direction: under
+    promotion_gate: "N>=30 live 2026-27 at HR>=58%. Confirm that books_converging_down >= 3 threshold is calibrated correctly — check that the average fire rate is at least 5-10 picks/week during the season. Verify intraday snapshot cadence is sufficient (odds_api scraper runs every 10 min)."
+    description: "Multi-book convergence UNDER — 3+ distinct bookmakers all lowered their prop line today; coordinated intraday line movement toward UNDER indicates market-wide pressure on the number (shadow, 2026-06-30)"
