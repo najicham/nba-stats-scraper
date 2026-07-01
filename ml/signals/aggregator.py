@@ -1137,6 +1137,25 @@ class BestBetsAggregator:
                 if 'under_after_bad_miss' not in self._runtime_demoted:
                     continue
 
+            # Low variance UNDER block — OBSERVATION MODE (2026-07-01, pre-registered Wave 1).
+            # When a player has low scoring variance (points_std_last_10 < 4.5) and the pick
+            # is in the 3-5 edge band, the UNDER is risky: consistent scorers are accurately
+            # priced — low-σ edge at 3-5 is not real model edge but noise. 4/5 seasons this
+            # correctly blocked losers (+11pp) but 2025-26 inverted to 61.9% winners blocked
+            # → must be validated live (ρ unknown, single-season inversion could be regime).
+            # OBSERVATION: records for CF grading but does NOT block picks.
+            # Promote to active if live CF HR <= 48% at N>=30 (graded at BB level).
+            pts_std = pred.get('points_std_last_10') or 0
+            if (pred.get('recommendation') == 'UNDER'
+                    and pts_std > 0  # 0 means data missing — never block on absent data
+                    and pts_std < 4.5
+                    and 3.0 <= pred_edge <= 5.0):
+                filter_counts['low_variance_under_block'] += 1
+                _record_filtered(pred, 'low_variance_under_block', pred_edge)
+                # OBSERVATION MODE — do not block until live CF HR validates
+                # if 'low_variance_under_block' not in self._runtime_demoted:
+                #     continue
+
             # Blowout risk UNDER block (Session 423→434→436→514): blowout_risk >= 0.40 + UNDER
             # Session 434: Promoted to active. Session 436: Demoted back to observation.
             # Session 514: Promoted to active — CF HR 37.5% (N=72), saving 20.4u.

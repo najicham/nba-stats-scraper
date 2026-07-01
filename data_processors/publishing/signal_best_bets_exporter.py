@@ -422,6 +422,9 @@ class SignalBestBetsExporter(BaseExporter):
                 'compression_scaled_edge': pick.get('compression_scaled_edge'),
                 'actual': None,
                 'result': None,
+                # 2026-07-01: Kelly haircut for co-directional same-team pairs (Wave 1).
+                # 1.0 = full unit; 0.67 = ⅓ haircut on 2nd co-dir pick (ρ=+0.272).
+                'bet_size_units': pick.get('bet_size_units', 1.0),
             }
 
             # Game time from schedule (Session 328)
@@ -913,6 +916,8 @@ class SignalBestBetsExporter(BaseExporter):
                 'capped_composite_score': pick.get('capped_composite_score'),
                 'compression_ratio': pick.get('compression_ratio'),
                 'compression_scaled_edge': pick.get('compression_scaled_edge'),
+                # 2026-07-01: Kelly haircut for co-directional same-team pairs.
+                'bet_size_units': pick.get('bet_size_units', 1.0),
                 'created_at': datetime.now(timezone.utc).isoformat(),
             })
 

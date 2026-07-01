@@ -332,6 +332,39 @@ def merge_model_pipelines(
                     f"selected picks ({pct:.0%}) — fleet diversity at risk"
                 )
 
+    # 2026-07-01: Same-team co-directional Kelly haircut.
+    # Wave 1 walk-forward: same-team same-direction picks have ρ=+0.272 (p=0.014, N=38 real
+    # BB pairs). Two UNDER picks on the same team win/lose together — correlated exposure.
+    # A ~⅓ haircut (×0.67) on the 2nd co-directional same-team pick reduces correlation risk
+    # without dropping coverage. All picks default to 1.0 unit; haircutted picks get 0.67.
+    # The bet_size_units column exists in signal_best_bets_picks but was unset until now.
+    # Groups by (game_id, team_abbr, recommendation) — order within group follows composite_score
+    # DESC (pool was already sorted that way, and selected preserves that order).
+    for pick in selected:
+        pick['bet_size_units'] = 1.0
+
+    team_dir_groups: Dict[tuple, List[Dict]] = defaultdict(list)
+    for pick in selected:
+        key = (
+            pick.get('game_id', ''),
+            pick.get('team_abbr', ''),
+            pick.get('recommendation', ''),
+        )
+        team_dir_groups[key].append(pick)
+
+    haircut_count = 0
+    for group_picks in team_dir_groups.values():
+        if len(group_picks) >= 2:
+            for pick in group_picks[1:]:
+                pick['bet_size_units'] = 0.67
+                haircut_count += 1
+
+    if haircut_count:
+        logger.info(
+            f"Kelly haircut: ×0.67 on {haircut_count} co-directional same-team pick(s) "
+            f"(ρ=+0.272 Wave 1 finding — correlated exposure reduction)"
+        )
+
     return selected, summary
 
 

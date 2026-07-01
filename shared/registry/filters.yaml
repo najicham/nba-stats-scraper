@@ -452,3 +452,8 @@ filters:
     status: active
     blocks_direction: under
     description: "Active block filter (2026-06-29): UNDER + DK intraday line dropped >= 0.5 (closing < opening). Blocks picks where closing-line movement disagrees with our UNDER direction. Validated T-3h: UNDER where line dropped HR=46.6% vs line rose 62.4%. CF HR target: demote if rises above 55%."
+
+  - tag: low_variance_under_block
+    status: observation
+    blocks_direction: under
+    description: "OBSERVATION (2026-07-01, pre-registered Wave 1): UNDER edge[3,5] + points_std_last_10 < 4.5. Low-σ scorers are priced accurately — low-edge UNDER against them is noise, not model edge. 4/5 backtest seasons blocked losers (+11pp) but 2025-26 inverted to 61.9% winners blocked (inversion may be scoring-anomaly regime). Records for CF grading only; does NOT block picks. Promote to active block if live CF HR <= 48% at N>=30 BB-level graded picks."
