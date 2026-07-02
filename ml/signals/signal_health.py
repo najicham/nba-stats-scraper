@@ -149,6 +149,18 @@ ACTIVE_SIGNALS = frozenset({
     'westward_road_trip_under',    # 2026-06-30: away team traveling west (body clock ahead)
     'b2b_long_haul_under',         # 2026-06-30: B2B + 1000+ miles traveled
     'multi_book_convergence_under', # 2026-06-30: 3+ books all lowered line intraday
+    # 2026-07-01: Feature-scanner validated UNDER signals + new signal classes
+    'high_minutes_under',           # season avg >= 34.5 mpg (5/5 seasons, 61.3% HR)
+    'high_3pt_season_under',        # season 3PT% >= 40.2% (3/3 seasons, 65.2% HR)
+    'high_3pt_recent_under',        # last-3 3PT% >= 45.5% (3/3 seasons, 62.9% HR)
+    'steep_downtrend_under',        # scoring slope <= -0.82 (3/3 seasons, 62.4% HR)
+    'elite_line_under',             # line >= 28 (4/5 seasons, 61.3% HR)
+    'low_var_mid_line_under',       # std <4.5, line 15-25 (pre-registered, no backtest)
+    'star_out_rescue',              # lead scorer OUT → rank 2-7 OVER (79.4% HR N=509)
+    'drive_volume_under',           # drives/game >= 7 (shadow, no backtest)
+    'season_breakout_over',         # +3 PPG vs last season OVER (pre-registered)
+    'season_breakout_under',        # -3 PPG vs last season UNDER (pre-registered)
+    'career_matchup_under',         # career avg vs opp (3yr) < line by 2+ pts
 })
 
 # Regime thresholds (Session 257 analysis)

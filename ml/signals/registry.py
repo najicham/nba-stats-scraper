@@ -413,4 +413,39 @@ def build_default_registry() -> SignalRegistry:
     from ml.signals.multi_book_convergence_under import MultiBookConvergenceUnderSignal
     registry.register(MultiBookConvergenceUnderSignal())
 
+    # 2026-07-01: Feature-scanner validated UNDER signals (shadow — accumulate live data)
+    from ml.signals.high_minutes_under import HighMinutesUnderSignal
+    registry.register(HighMinutesUnderSignal())
+    from ml.signals.high_3pt_season_under import High3ptSeasonUnderSignal
+    registry.register(High3ptSeasonUnderSignal())
+    from ml.signals.high_3pt_recent_under import High3ptRecentUnderSignal
+    registry.register(High3ptRecentUnderSignal())
+    from ml.signals.steep_downtrend_under import SteepDowntrendUnderSignal
+    registry.register(SteepDowntrendUnderSignal())
+    from ml.signals.elite_line_under import EliteLineUnderSignal
+    registry.register(EliteLineUnderSignal())
+
+    # 2026-07-01: Archetype grid completion (shadow, pre-registered, no backtest)
+    from ml.signals.low_var_mid_line_under import LowVarMidLineUnderSignal
+    registry.register(LowVarMidLineUnderSignal())
+
+    # 2026-07-01: Star-OUT vacated-touches OVER (shadow accumulation only; 79.4% HR N=509)
+    # Activate (add to rescue_tags + OVER_SIGNAL_WEIGHTS) only after N>=30 HR>=65% + sign-off
+    from ml.signals.star_out_rescue import StarOutRescueSignal
+    registry.register(StarOutRescueSignal())
+
+    # 2026-07-01: NBA tracking drives (shadow, no backtest; data from 2026-27 open)
+    from ml.signals.drive_volume_under import DriveVolumeUnderSignal
+    registry.register(DriveVolumeUnderSignal())
+
+    # 2026-07-01: Cross-season trajectory signals (shadow, pre-registered, no backtest)
+    from ml.signals.season_breakout_over import SeasonBreakoutOverSignal
+    registry.register(SeasonBreakoutOverSignal())
+    from ml.signals.season_breakout_under import SeasonBreakoutUnderSignal
+    registry.register(SeasonBreakoutUnderSignal())
+
+    # 2026-07-01: Career matchup UNDER 3-year window (shadow, companion to career_matchup_over)
+    from ml.signals.career_matchup_under import CareerMatchupUnderSignal
+    registry.register(CareerMatchupUnderSignal())
+
     return registry

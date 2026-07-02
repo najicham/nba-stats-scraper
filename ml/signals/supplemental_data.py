@@ -1364,6 +1364,187 @@ def query_predictions_with_supplements(
     except Exception as e:
         logger.warning(f"Failed to query book convergence: {e}")
 
+    # 2026-07-01: NBA tracking stats — drives/game season average (drive_volume_under signal).
+    # nba_raw.nba_tracking_stats stores season-to-date per-game averages from NBA.com.
+    # We take the most recent scrape before target_date (one row per scrape day per player).
+    # Named drives_avg_season (not _last_10) because it's a cumulative season average.
+    drives_avg_query = f"""
+    SELECT player_lookup, drives AS drives_avg_season
+    FROM (
+      SELECT player_lookup, drives,
+        ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY game_date DESC) AS rn
+      FROM `{PROJECT_ID}.nba_raw.nba_tracking_stats`
+      WHERE game_date < @target_date
+        AND drives IS NOT NULL AND player_lookup IS NOT NULL
+    ) WHERE rn = 1
+    """
+    drives_avg_map: Dict[str, float] = {}
+    try:
+        drv_rows = bq_client.query(drives_avg_query, job_config=job_config).result(timeout=30)
+        drives_avg_map = {
+            row['player_lookup']: float(row['drives_avg_season'])
+            for row in drv_rows if row['drives_avg_season'] is not None
+        }
+        logger.info(f"Loaded drives avg (season) for {len(drives_avg_map)} players")
+    except Exception as e:
+        logger.warning(f"Failed to query drives avg from nba_tracking_stats: {e}")
+
+    # 2026-07-01: Cross-season scoring trajectory (season_breakout_over/under signals).
+    # Compares pts avg through first-N current-season games vs first-N prior-season games,
+    # where N = games played so far this season. Requires >= 20 games in both seasons.
+    # Rookies and long-term absentees return NULL → signals gate out cleanly.
+    from datetime import date as _date_cls
+    _td = _date_cls.fromisoformat(target_date) if isinstance(target_date, str) else target_date
+    _cur_season_year = get_season_year_from_date(_td)
+    _prior_season_year = _cur_season_year - 1
+    _prior_season_start = get_season_start_date(_prior_season_year, use_schedule_service=False).isoformat()
+    cross_season_query = f"""
+    WITH season_ranked AS (
+      SELECT player_lookup, season_year, points,
+        ROW_NUMBER() OVER (
+          PARTITION BY player_lookup, season_year ORDER BY game_date ASC
+        ) AS season_game_num
+      FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
+      WHERE game_date >= '{_prior_season_start}'
+        AND game_date < @target_date
+        AND minutes_played > 0
+        AND (is_dnp IS NULL OR is_dnp = FALSE)
+        AND season_year IN ({_cur_season_year}, {_prior_season_year})
+    ),
+    current_stats AS (
+      SELECT player_lookup, COUNT(*) AS n,
+        AVG(CAST(points AS FLOAT64)) AS pts_avg_current
+      FROM season_ranked WHERE season_year = {_cur_season_year}
+      GROUP BY player_lookup HAVING COUNT(*) >= 20
+    ),
+    prior_stats AS (
+      SELECT r.player_lookup,
+        AVG(CAST(r.points AS FLOAT64)) AS pts_avg_prior
+      FROM season_ranked r
+      INNER JOIN current_stats c ON r.player_lookup = c.player_lookup
+      WHERE r.season_year = {_prior_season_year} AND r.season_game_num <= c.n
+      GROUP BY r.player_lookup HAVING COUNT(*) >= 20
+    )
+    SELECT c.player_lookup, c.n AS games_played,
+      ROUND(c.pts_avg_current, 2) AS pts_current,
+      ROUND(p.pts_avg_prior, 2) AS pts_prior,
+      ROUND(c.pts_avg_current - p.pts_avg_prior, 2) AS season_delta
+    FROM current_stats c INNER JOIN prior_stats p ON p.player_lookup = c.player_lookup
+    """
+    cross_season_map: Dict[str, Dict] = {}
+    try:
+        cs_rows = bq_client.query(cross_season_query, job_config=job_config).result(timeout=30)
+        for row in cs_rows:
+            cross_season_map[row['player_lookup']] = {
+                'pts_current': float(row['pts_current']),
+                'pts_prior': float(row['pts_prior']),
+                'season_delta': float(row['season_delta']),
+                'games_played': int(row['games_played']),
+            }
+        logger.info(f"Loaded cross-season trajectory for {len(cross_season_map)} players")
+    except Exception as e:
+        logger.warning(f"Failed to query cross-season trajectory: {e}")
+
+    # 2026-07-01: Star-OUT vacated-touches context (star_out_rescue signal).
+    # Identifies players whose team lead scorer (>=18 ppg trailing 30d) is OUT today,
+    # and assigns scorer rank (2-7) to eligible teammates.
+    star_out_query = f"""
+    WITH trailing_ppg AS (
+      SELECT player_lookup, team_abbr,
+        AVG(points) AS trailing_ppg_30d, COUNT(*) AS games_on_team
+      FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
+      WHERE game_date >= DATE_SUB(@target_date, INTERVAL 30 DAY)
+        AND game_date < @target_date AND minutes_played > 0
+      GROUP BY player_lookup, team_abbr HAVING COUNT(*) >= 5
+    ),
+    team_lead AS (
+      SELECT team_abbr, player_lookup AS lead_lookup
+      FROM (
+        SELECT team_abbr, player_lookup,
+          RANK() OVER (PARTITION BY team_abbr ORDER BY trailing_ppg_30d DESC) AS rk
+        FROM trailing_ppg WHERE trailing_ppg_30d >= 18
+      ) WHERE rk = 1
+    ),
+    lead_out AS (
+      SELECT tl.team_abbr, tl.lead_lookup
+      FROM team_lead tl
+      INNER JOIN (
+        SELECT player_lookup, team
+        FROM (
+          SELECT player_lookup, team,
+            ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY report_hour DESC) AS rn
+          FROM `{PROJECT_ID}.nba_raw.nbac_injury_report`
+          WHERE game_date = @target_date AND LOWER(injury_status) = 'out'
+        ) WHERE rn = 1
+      ) ir ON ir.player_lookup = tl.lead_lookup AND ir.team = tl.team_abbr
+    ),
+    teammate_ranks AS (
+      SELECT tp.player_lookup, tp.team_abbr,
+        RANK() OVER (PARTITION BY tp.team_abbr ORDER BY tp.trailing_ppg_30d DESC) AS scorer_rank
+      FROM trailing_ppg tp INNER JOIN lead_out lo ON lo.team_abbr = tp.team_abbr
+    )
+    SELECT player_lookup, scorer_rank
+    FROM teammate_ranks WHERE scorer_rank BETWEEN 2 AND 7
+    """
+    star_out_map: Dict[str, int] = {}
+    try:
+        so_rows = bq_client.query(star_out_query, job_config=job_config).result(timeout=30)
+        for row in so_rows:
+            star_out_map[row['player_lookup']] = int(row['scorer_rank'])
+        logger.info(f"Star-OUT context: {len(star_out_map)} players with lead scorer OUT today")
+    except Exception as e:
+        logger.warning(f"Failed to query star-out context: {e}")
+
+    # 2026-07-01: Career matchup 3-year lookback (career_matchup_under signal).
+    # Feature store uses 1-year window (Session 143 perf tradeoff). This extends
+    # to 3 years at prediction time for each (player, tonight_opponent) pair.
+    # Approach: get tonight's game pairs from schedule, then compute 3yr avg for
+    # each player vs their opponent. Works independently of predictions subquery.
+    matchup_3yr_query = f"""
+    WITH tonight_games AS (
+      SELECT away_team_tricode AS away_team, home_team_tricode AS home_team
+      FROM `{PROJECT_ID}.nba_raw.nbac_schedule`
+      WHERE game_date = @target_date
+    ),
+    -- Recent players for each team (active roster proxy)
+    recent_players AS (
+      SELECT DISTINCT g.player_lookup, g.team_abbr
+      FROM `{PROJECT_ID}.nba_analytics.player_game_summary` g
+      WHERE g.game_date >= DATE_SUB(@target_date, INTERVAL 14 DAY)
+        AND g.game_date < @target_date AND g.minutes_played > 0
+    ),
+    -- Player → opponent pairs for tonight
+    player_opp_tonight AS (
+      SELECT rp.player_lookup,
+        CASE WHEN rp.team_abbr = t.away_team THEN t.home_team ELSE t.away_team END AS opp_team
+      FROM recent_players rp
+      JOIN tonight_games t ON rp.team_abbr IN (t.away_team, t.home_team)
+    )
+    SELECT pot.player_lookup,
+      COUNT(g.game_date) AS career_games_3yr,
+      AVG(CAST(g.points AS FLOAT64)) AS career_avg_3yr
+    FROM player_opp_tonight pot
+    LEFT JOIN `{PROJECT_ID}.nba_analytics.player_game_summary` g
+      ON g.player_lookup = pot.player_lookup
+      AND g.opponent_team_abbr = pot.opp_team
+      AND g.game_date < @target_date
+      AND g.game_date >= DATE_SUB(@target_date, INTERVAL 3 YEAR)
+      AND g.minutes_played > 0 AND (g.is_dnp IS NULL OR g.is_dnp = FALSE)
+    GROUP BY pot.player_lookup HAVING COUNT(g.game_date) >= 3
+    """
+    matchup_3yr_map: Dict[str, Dict] = {}
+    try:
+        m3_rows = bq_client.query(matchup_3yr_query, job_config=job_config).result(timeout=30)
+        for row in m3_rows:
+            if row['career_avg_3yr'] is not None:
+                matchup_3yr_map[row['player_lookup']] = {
+                    'career_avg_vs_opp_3yr': float(row['career_avg_3yr']),
+                    'career_games_vs_opp_3yr': int(row['career_games_3yr']),
+                }
+        logger.info(f"Loaded 3yr matchup history for {len(matchup_3yr_map)} players")
+    except Exception as e:
+        logger.warning(f"Failed to query 3yr matchup history: {e}")
+
     predictions = []
     supplemental_map: Dict[str, Dict] = {}
 
@@ -1823,6 +2004,34 @@ def query_predictions_with_supplements(
             pred['minutes_projection_delta'] = rw_minutes - season_minutes
         else:
             pred['minutes_projection_delta'] = None
+
+        # 2026-07-01: New signal context fields.
+        # drives_avg_season (drive_volume_under)
+        drv = drives_avg_map.get(row_dict['player_lookup'])
+        pred['drives_avg_season'] = float(drv) if drv is not None else None
+
+        # Cross-season trajectory (season_breakout_over/under)
+        cs = cross_season_map.get(row_dict['player_lookup'])
+        if cs:
+            pred['pts_current_season_first_N'] = cs['pts_current']
+            pred['pts_prior_season_first_N'] = cs['pts_prior']
+            pred['season_scoring_delta'] = cs['season_delta']
+            pred['cross_season_games'] = cs['games_played']
+        else:
+            pred['pts_current_season_first_N'] = None
+            pred['pts_prior_season_first_N'] = None
+            pred['season_scoring_delta'] = None
+            pred['cross_season_games'] = None
+
+        # Star-OUT context (star_out_rescue)
+        scorer_rank = star_out_map.get(row_dict['player_lookup'])
+        pred['is_star_teammate_out'] = scorer_rank is not None
+        pred['target_team_scorer_rank'] = scorer_rank
+
+        # Career matchup 3yr (career_matchup_under) — goes into supplemental dict
+        m3 = matchup_3yr_map.get(row_dict['player_lookup'])
+        if m3:
+            supp['career_matchup_3yr'] = m3
 
         supplemental_map[row_dict['player_lookup']] = supp
 

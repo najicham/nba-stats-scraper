@@ -218,6 +218,27 @@ SHADOW_SIGNALS = frozenset({
     # Coordinated intraday downward movement across independent books = strong market signal.
     # Promote after live N>=30 HR>=58%; verify intraday snapshot cadence is adequate.
     'multi_book_convergence_under',
+    # 2026-07-01: Feature-scanner validated UNDER signals (61 found; 5 highest-confidence).
+    # Scanner: feature_scan_results.csv, BH-FDR corrected, cross-season validation.
+    'high_minutes_under',       # 61.3% HR (N=362, 5/5 seasons) — season avg >=34.5 mpg
+    'high_3pt_season_under',    # 65.2% HR (N=230, 3/3 seasons) — season 3PT% >=40.2%
+    'high_3pt_recent_under',    # 62.9% HR (N=197, 3/3 seasons) — last-3 3PT% >=45.5%
+    'steep_downtrend_under',    # 62.4% HR (N=213, 3/3 seasons) — slope <=-0.82 (steeper than downtrend_under band)
+    'elite_line_under',         # 61.3% HR (N=349, 4/5 seasons) — line >=28 (stricter than high_line_under's >=25)
+    # 2026-07-01: Archetype grid completion (Wave 1 — pre-registered, no backtest).
+    'low_var_mid_line_under',   # std <4.5, line 15-25 UNDER — completes 3x3 grid; low_line cell = 62% HR (4/4)
+    # 2026-07-01: Star-OUT vacated-touches OVER (shadow accumulation only).
+    # 79.4% HR (N=509, 4-season), 71.7% incremental (N=357). Bypasses OVER floor on activation.
+    # TO ACTIVATE: add to rescue_tags + OVER_SIGNAL_WEIGHTS + remove from SHADOW_SIGNALS.
+    # Requires: N>=30 at HR>=65% live + explicit user sign-off. See star_out_rescue.py.
+    'star_out_rescue',
+    # 2026-07-01: NBA tracking drives signal (shadow, data from 2026-27 season open only).
+    'drive_volume_under',       # drives_avg_season >=7 UNDER — market overpriced drive-inflated scoring
+    # 2026-07-01: Cross-season trajectory signals (shadow, pre-registered, no backtest).
+    'season_breakout_over',     # +3 PPG vs same point last season + model OVER
+    'season_breakout_under',    # -3 PPG vs same point last season + model UNDER
+    # 2026-07-01: Career matchup UNDER 3-year window (shadow, companion to career_matchup_over).
+    'career_matchup_under',     # career avg vs opp (3yr) < line by >=2 pts
 })
 
 # Session 400: UNDER signal quality weights for signal-first ranking.

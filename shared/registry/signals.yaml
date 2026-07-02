@@ -525,3 +525,81 @@ signals:
     direction: under
     promotion_gate: "N>=30 live 2026-27 at HR>=58%. Confirm that books_converging_down >= 3 threshold is calibrated correctly — check that the average fire rate is at least 5-10 picks/week during the season. Verify intraday snapshot cadence is sufficient (odds_api scraper runs every 2 hours via betting_lines workflow)."
     description: "Multi-book convergence UNDER — 3+ distinct bookmakers all lowered their prop line today; coordinated intraday line movement toward UNDER indicates market-wide pressure on the number (shadow, 2026-06-30)"
+
+  # 2026-07-01: Feature-scanner validated UNDER signals + new signal classes
+  - tag: high_minutes_under
+    status: shadow
+    weight: 0.0
+    direction: under
+    promotion_gate: "N>=30 BB-level at HR>=58% live 2026-27. Confirm overlap with b2b_fatigue_under (B2B players likely in the 34.5+ mpg population). Check additive lift before adding to UNDER_SIGNAL_WEIGHTS."
+    description: "Heavy-minute player (season avg >= 34.5 mpg) UNDER — 5/5 seasons, 61.3% HR (N=362). Scanner: minutes_avg_season_gte_p75_UNDER (2026-07-01)"
+
+  - tag: high_3pt_season_under
+    status: shadow
+    weight: 0.0
+    direction: under
+    promotion_gate: "N>=30 BB-level at HR>=60% live 2026-27. Check overlap with hot_3pt_under (different population but same direction) — confirm these fire independently before co-promoting."
+    description: "Elite season 3PT% (>= 40.2%) UNDER — market overprices consistent shooters, 65.2% HR (N=230), 3/3 seasons. Scanner: three_pct_season_gte_p75_UNDER (2026-07-01)"
+
+  - tag: high_3pt_recent_under
+    status: shadow
+    weight: 0.0
+    direction: under
+    promotion_gate: "N>=30 BB-level at HR>=60% live 2026-27. Quantify overlap with hot_3pt_under — if >60% of fires are shared at similar HR, retire in favor of hot_3pt_under."
+    description: "Absolute recent 3PT% (last 3g >= 45.5%) UNDER — extreme shooting regresses, 62.9% HR (N=197), 3/3 seasons. Scanner: three_pct_last_3_gte_p75_UNDER (2026-07-01)"
+
+  - tag: steep_downtrend_under
+    status: shadow
+    weight: 0.0
+    direction: under
+    promotion_gate: "N>=30 BB-level at HR>=58% live 2026-27. Compare with downtrend_under (which uses -1.5 to -0.5 band) — this fires at slope <= -0.82 with no lower cap. Quantify incremental picks not covered by downtrend_under."
+    description: "OLS scoring slope last 7g <= -0.82 pts/g/g (p25) UNDER — rapid decline beyond downtrend_under band, 62.4% HR (N=213), 3/3 seasons. Scanner: scoring_trend_slope_lte_p25_UNDER (2026-07-01)"
+
+  - tag: elite_line_under
+    status: shadow
+    weight: 0.0
+    direction: under
+    promotion_gate: "N>=30 BB-level at HR>=58% live 2026-27. Compare with high_line_under (>= 25) — this is the stricter >= 28 subset. Confirm incremental HR lift vs high_line_under before co-promoting."
+    description: "Prop line >= 28 UNDER — very high lines systematically overpriced, 61.3% HR (N=349), 4/5 seasons. Scanner: elite_line_UNDER (2026-07-01)"
+
+  - tag: low_var_mid_line_under
+    status: shadow
+    weight: 0.0
+    direction: under
+    promotion_gate: "N>=30 BB-level at HR>=60% live 2026-27. Pre-registered (no backtest). Verify orthogonality with low_variance_under_block filter. Do NOT co-promote with high_line+low_var until both cells have live data."
+    description: "Low-variance mid-line UNDER (std < 4.5, line 15-25) — archetype grid Wave 1 completion; low_line cell = 62% HR 4/4 seasons (pre-registered, shadow, 2026-07-01)"
+
+  - tag: star_out_rescue
+    status: shadow
+    weight: 0.0
+    direction: over
+    promotion_gate: "N>=30 BB-level at HR>=65% live 2026-27. Run simulation via bin/simulate_best_bets.py before activation. Activation requires: (1) adding to rescue_tags in aggregator.py, (2) adding to OVER_SIGNAL_WEIGHTS at weight 2.5, (3) removing from SHADOW_SIGNALS, (4) explicit user sign-off. See star_out_rescue.py and PRODUCTION-PLAN.md."
+    description: "Lead scorer (>=18 ppg trailing 30d) OUT — rank 2-7 teammate OVER; 79.4% HR (N=509, 4-season), 71.7% incremental (N=357). Shadow accumulation only. Bypasses OVER floor on activation (2026-07-01)"
+
+  - tag: drive_volume_under
+    status: shadow
+    weight: 0.0
+    direction: under
+    promotion_gate: "N>=30 BB-level at HR>=58% live 2026-27. No prior backtest (nba_tracking_stats data from 2026-03-04 only). Verify threshold=7.0 fires at 5-10 picks/week. Check overlap with high_line_under."
+    description: "Season avg drives/game >= 7 + model UNDER — market overpriced drive-inflated scoring; shadow, no backtest; data accumulates from 2026-27 season open (nba_tracking_stats, 2026-07-01)"
+
+  - tag: season_breakout_over
+    status: shadow
+    weight: 0.0
+    direction: over
+    promotion_gate: "N>=30 BB-level at HR>=60% live 2026-27. No backtest (pre-registered). Requires >= 20 games into the season and >= 20 games in prior season for the comparison to be meaningful. Watch for false positives from players on new teams with different roles."
+    description: "Player averaging 3+ PPG more through same games vs last season + model OVER — breakout trajectory; shadow, no backtest, accumulates from 2026-27 season game 20 onward (2026-07-01)"
+
+  - tag: season_breakout_under
+    status: shadow
+    weight: 0.0
+    direction: under
+    promotion_gate: "N>=30 BB-level at HR>=60% live 2026-27. No backtest (pre-registered). Same data requirements as season_breakout_over. Stratify by delta magnitude (3-5 PPG vs 5+ PPG) before promoting."
+    description: "Player averaging 3+ PPG less through same games vs last season + model UNDER — regression trajectory; shadow, no backtest, accumulates from 2026-27 season game 20 onward (2026-07-01)"
+
+  - tag: career_matchup_under
+    status: shadow
+    weight: 0.0
+    direction: under
+    promotion_gate: "N>=30 BB-level at HR>=60% live 2026-27. Compare against career_matchup_over live HR — both are unvalidated. Stratify by career_games bucket (3-5 vs 6+). Validate MARGIN_THRESHOLD=2.0 is not too loose."
+    description: "Career avg vs opponent (3-year window) < current line by 2+ pts, 3+ career games — matchup suppressor UNDER; shadow, companion to career_matchup_over (2026-07-01)"
