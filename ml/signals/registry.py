@@ -420,14 +420,10 @@ def build_default_registry() -> SignalRegistry:
     registry.register(High3ptSeasonUnderSignal())
     from ml.signals.high_3pt_recent_under import High3ptRecentUnderSignal
     registry.register(High3ptRecentUnderSignal())
-    from ml.signals.steep_downtrend_under import SteepDowntrendUnderSignal
-    registry.register(SteepDowntrendUnderSignal())
+    # steep_downtrend_under REMOVED 2026-07-01 (backtest +0.2pp noise, dead end)
+    # low_var_mid_line_under REMOVED 2026-07-01 (backtest -0.1pp, mid-line archetype refuted)
     from ml.signals.elite_line_under import EliteLineUnderSignal
     registry.register(EliteLineUnderSignal())
-
-    # 2026-07-01: Archetype grid completion (shadow, pre-registered, no backtest)
-    from ml.signals.low_var_mid_line_under import LowVarMidLineUnderSignal
-    registry.register(LowVarMidLineUnderSignal())
 
     # 2026-07-01: Star-OUT vacated-touches OVER (shadow accumulation only; 79.4% HR N=509)
     # Activate (add to rescue_tags + OVER_SIGNAL_WEIGHTS) only after N>=30 HR>=65% + sign-off
@@ -438,15 +434,11 @@ def build_default_registry() -> SignalRegistry:
     from ml.signals.drive_volume_under import DriveVolumeUnderSignal
     registry.register(DriveVolumeUnderSignal())
 
-    # 2026-07-01: Cross-season trajectory signals (shadow, pre-registered, no backtest)
-    from ml.signals.season_breakout_over import SeasonBreakoutOverSignal
-    registry.register(SeasonBreakoutOverSignal())
+    # 2026-07-01: Cross-season trajectory (UNDER only — OVER removed: -0.2pp, 2/4 seasons)
+    # season_breakout_over REMOVED 2026-07-01 (backtest -0.2pp, scoring-env artifact)
+    # career_matchup_under REMOVED 2026-07-01 (backtest +0.2pp, 1/5 seasons; inverse outperforms)
     from ml.signals.season_breakout_under import SeasonBreakoutUnderSignal
     registry.register(SeasonBreakoutUnderSignal())
-
-    # 2026-07-01: Career matchup UNDER 3-year window (shadow, companion to career_matchup_over)
-    from ml.signals.career_matchup_under import CareerMatchupUnderSignal
-    registry.register(CareerMatchupUnderSignal())
 
     # 2026-07-01: FTA high CV UNDER (shadow — 61-64% HR 4/4 pre-anomaly seasons).
     # Fields already in pred dict from Session 451 fta_variance CTE. No new query needed.

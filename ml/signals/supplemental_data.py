@@ -1495,55 +1495,8 @@ def query_predictions_with_supplements(
     except Exception as e:
         logger.warning(f"Failed to query star-out context: {e}")
 
-    # 2026-07-01: Career matchup 3-year lookback (career_matchup_under signal).
-    # Feature store uses 1-year window (Session 143 perf tradeoff). This extends
-    # to 3 years at prediction time for each (player, tonight_opponent) pair.
-    # Approach: get tonight's game pairs from schedule, then compute 3yr avg for
-    # each player vs their opponent. Works independently of predictions subquery.
-    matchup_3yr_query = f"""
-    WITH tonight_games AS (
-      SELECT away_team_tricode AS away_team, home_team_tricode AS home_team
-      FROM `{PROJECT_ID}.nba_raw.nbac_schedule`
-      WHERE game_date = @target_date
-    ),
-    -- Recent players for each team (active roster proxy)
-    recent_players AS (
-      SELECT DISTINCT g.player_lookup, g.team_abbr
-      FROM `{PROJECT_ID}.nba_analytics.player_game_summary` g
-      WHERE g.game_date >= DATE_SUB(@target_date, INTERVAL 14 DAY)
-        AND g.game_date < @target_date AND g.minutes_played > 0
-    ),
-    -- Player → opponent pairs for tonight
-    player_opp_tonight AS (
-      SELECT rp.player_lookup,
-        CASE WHEN rp.team_abbr = t.away_team THEN t.home_team ELSE t.away_team END AS opp_team
-      FROM recent_players rp
-      JOIN tonight_games t ON rp.team_abbr IN (t.away_team, t.home_team)
-    )
-    SELECT pot.player_lookup,
-      COUNT(g.game_date) AS career_games_3yr,
-      AVG(CAST(g.points AS FLOAT64)) AS career_avg_3yr
-    FROM player_opp_tonight pot
-    LEFT JOIN `{PROJECT_ID}.nba_analytics.player_game_summary` g
-      ON g.player_lookup = pot.player_lookup
-      AND g.opponent_team_abbr = pot.opp_team
-      AND g.game_date < @target_date
-      AND g.game_date >= DATE_SUB(@target_date, INTERVAL 3 YEAR)
-      AND g.minutes_played > 0 AND (g.is_dnp IS NULL OR g.is_dnp = FALSE)
-    GROUP BY pot.player_lookup HAVING COUNT(g.game_date) >= 3
-    """
-    matchup_3yr_map: Dict[str, Dict] = {}
-    try:
-        m3_rows = bq_client.query(matchup_3yr_query, job_config=job_config).result(timeout=30)
-        for row in m3_rows:
-            if row['career_avg_3yr'] is not None:
-                matchup_3yr_map[row['player_lookup']] = {
-                    'career_avg_vs_opp_3yr': float(row['career_avg_3yr']),
-                    'career_games_vs_opp_3yr': int(row['career_games_3yr']),
-                }
-        logger.info(f"Loaded 3yr matchup history for {len(matchup_3yr_map)} players")
-    except Exception as e:
-        logger.warning(f"Failed to query 3yr matchup history: {e}")
+    # career_matchup_under REMOVED 2026-07-01 (backtest +0.2pp, 1/5 seasons; signal unregistered)
+    # matchup_3yr_query removed — no signal consumes supp['career_matchup_3yr']
 
     predictions = []
     supplemental_map: Dict[str, Dict] = {}
@@ -2027,11 +1980,6 @@ def query_predictions_with_supplements(
         scorer_rank = star_out_map.get(row_dict['player_lookup'])
         pred['is_star_teammate_out'] = scorer_rank is not None
         pred['target_team_scorer_rank'] = scorer_rank
-
-        # Career matchup 3yr (career_matchup_under) — goes into supplemental dict
-        m3 = matchup_3yr_map.get(row_dict['player_lookup'])
-        if m3:
-            supp['career_matchup_3yr'] = m3
 
         supplemental_map[row_dict['player_lookup']] = supp
 
