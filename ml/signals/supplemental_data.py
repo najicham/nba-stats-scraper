@@ -1240,7 +1240,7 @@ def query_predictions_with_supplements(
     # Logic mirrors TravelCalculator.calculate_travel_context():
     #   from_team = last game's home_team (if away was there) OR away_team itself (if was home).
     #   to_team = tonight's home_team (the arena the away team is traveling to).
-    # Joins to nba_static.travel_distances which has from_team, to_team, distance_miles,
+    # Joins to nba_enriched.travel_distances which has from_team, to_team, distance_miles,
     # travel_direction ('east'/'west'/'neutral'), time_zones_crossed.
     travel_context_query = f"""
     WITH tonight_away AS (
@@ -1287,7 +1287,7 @@ def query_predictions_with_supplements(
       td.travel_direction,
       td.time_zones_crossed
     FROM last_location ll
-    LEFT JOIN `{PROJECT_ID}.nba_static.travel_distances` td
+    LEFT JOIN `{PROJECT_ID}.nba_enriched.travel_distances` td
       ON td.from_team = ll.from_team
       AND td.to_team = ll.tonight_home
     """

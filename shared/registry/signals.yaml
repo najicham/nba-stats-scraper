@@ -523,5 +523,5 @@ signals:
     status: shadow
     weight: 0.0
     direction: under
-    promotion_gate: "N>=30 live 2026-27 at HR>=58%. Confirm that books_converging_down >= 3 threshold is calibrated correctly — check that the average fire rate is at least 5-10 picks/week during the season. Verify intraday snapshot cadence is sufficient (odds_api scraper runs every 10 min)."
+    promotion_gate: "N>=30 live 2026-27 at HR>=58%. Confirm that books_converging_down >= 3 threshold is calibrated correctly — check that the average fire rate is at least 5-10 picks/week during the season. Verify intraday snapshot cadence is sufficient (odds_api scraper runs every 2 hours via betting_lines workflow)."
     description: "Multi-book convergence UNDER — 3+ distinct bookmakers all lowered their prop line today; coordinated intraday line movement toward UNDER indicates market-wide pressure on the number (shadow, 2026-06-30)"

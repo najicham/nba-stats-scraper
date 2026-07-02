@@ -134,6 +134,21 @@ ACTIVE_SIGNALS = frozenset({
     'projection_disagreement',  # Session 401: registered filter-type signal
     'negative_clv_filter',      # Session 401: registered filter-type signal
     'public_fade_filter',       # Session 404: registered filter-type signal
+    # 2026-07-01: Shadow signals added 2026-06-23 to 2026-06-30 — were missing from
+    # ACTIVE_SIGNALS so the canary could never surface them as NEVER_FIRED.
+    'b2b_fatigue_under',           # 2026-06-23: reinstated shadow (63.2% 5-season UNDER)
+    'national_tv_under',           # 2026-06-28: primetime + line>=22 UNDER
+    'whole_line_precision',        # 2026-06-29: whole-number line = higher HR
+    'line_converging_under',       # 2026-06-29: CLV gate — line drifted against pick by tip
+    'high_line_under',             # 2026-06-29: line>=25 UNDER (59.9% 5-season)
+    'ref_crew_under_tendency',     # 2026-06-29: crew O/U tendency (data-gated)
+    'dense_schedule_grind_under',  # 2026-06-29: 4+ games in 7 days UNDER
+    'long_road_trip_under',        # 2026-06-29: 3+ consecutive away games UNDER
+    'rotowire_bench_under',        # 2026-06-29: pre-game bench designation UNDER
+    'tight_consensus_under',       # 2026-06-30: 6+ books posting prop today
+    'westward_road_trip_under',    # 2026-06-30: away team traveling west (body clock ahead)
+    'b2b_long_haul_under',         # 2026-06-30: B2B + 1000+ miles traveled
+    'multi_book_convergence_under', # 2026-06-30: 3+ books all lowered line intraday
 })
 
 # Regime thresholds (Session 257 analysis)
