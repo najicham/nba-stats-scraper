@@ -245,18 +245,22 @@ ORDER BY game_date DESC;
 -- Expected: units_by_rank = '1.0,0.67' (or '1.0,0.67,0.67' for 3 picks)
 ```
 
-### All 13 new shadow signals — fire rate monitor
+### All 20 shadow signals — fire rate monitor
 
 Run weekly from opening night to confirm none are NEVER_FIRED when they should be firing:
 
 ```sql
 WITH shadow_signals AS (
   SELECT signal_tag FROM UNNEST([
+    -- 2026-06-23 to 2026-06-30 additions
     'b2b_fatigue_under', 'national_tv_under', 'whole_line_precision',
     'line_converging_under', 'high_line_under', 'ref_crew_under_tendency',
     'dense_schedule_grind_under', 'long_road_trip_under', 'rotowire_bench_under',
     'tight_consensus_under', 'westward_road_trip_under', 'b2b_long_haul_under',
-    'multi_book_convergence_under'
+    'multi_book_convergence_under',
+    -- 2026-07-01 additions
+    'high_minutes_under', 'high_3pt_season_under', 'high_3pt_recent_under',
+    'star_out_rescue', 'drive_volume_under', 'season_breakout_under', 'fta_high_cv_under'
   ]) AS signal_tag
 ),
 fire_counts AS (
@@ -287,6 +291,9 @@ ORDER BY total_fires ASC, signal_tag;
 
 *`ref_crew_under_tendency` is expected NEVER_FIRED until Covers accumulates 2 referees per crew (mid-season).*
 *`rotowire_bench_under` will be NEVER_FIRED if the RotoWire parser breaks — check `/projected-minutes.php` HTML.*
+*`drive_volume_under` requires nba_tracking_stats to populate; scraper bug fixed 2026-07-01 (PlayerOrTeam=Player). Should fire from opening night once drives_avg_season >= 7.*
+*`season_breakout_under` won't fire until players have ≥20 games in the current season (roughly game 25+ of the season, late November).*
+*`high_3pt_season_under`, `high_3pt_recent_under`: check overlap with `hot_3pt_under` at game 30+ to quantify redundancy.*
 
 ### Stokastic DFS scraper
 
