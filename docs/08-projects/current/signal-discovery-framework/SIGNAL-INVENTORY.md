@@ -122,7 +122,7 @@ All shadow signals are registered and firing but NOT wired into aggregator rescu
 | `public_fade_filter` | OVER | VSiN betting splits | 80%+ public tickets on OVER — negative filter (not active) |
 | `minutes_surge_over` | OVER | RotoWire lineups | Projected minutes >= season avg + 3 |
 
-**Data status (Mar 4):** VSiN table empty (scraper deployed, not yet triggered). RotoWire `projected_minutes` is null for all rows (scraper captures lineups but not minutes). 7 of 10 scrapers have data. NumberFire/VSiN/NBA Tracking need first trigger.
+**Data status (2026-07-02):** VSiN paywalled ~2026-03-28 — `nba_raw.vsin_betting_splits` has no data after 2026-03-28. `sharp_money_over/under` and `public_fade_filter` are shadow signals with NO live data source. They will not fire in 2026-27 unless a replacement source is found. See SCRAPER-INVENTORY.md → vsin_betting_splits.
 
 ### Session 410 — Derived Feature Signals (experiment dead ends → contextual signals)
 
