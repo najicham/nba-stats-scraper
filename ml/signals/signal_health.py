@@ -159,7 +159,7 @@ ACTIVE_SIGNALS = frozenset({
     # season_breakout_over REMOVED: -0.2pp, 2/4 seasons, no edge
     # career_matchup_under REMOVED: +0.2pp, 1/5 seasons, inverse outperforms
     'star_out_rescue',              # shadow: incremental zone 66% pooled / 54% in 2025-26. Needs live N>=30 at HR>=65% before rescue activation.
-    'drive_volume_under',           # shadow: BROKEN — tracking columns all 0.0 (scraper bug). Never fires until fixed.
+    'drive_volume_under',           # shadow: scraper bug FIXED 2026-07-01 (PlayerOrTeam=Player). Will fire when 2026-27 data accumulates.
     'season_breakout_under',        # shadow: 73.0% HR (N=407, 4/4 seasons) at threshold -7.0 (tightened from -5.0)
     'fta_high_cv_under',            # shadow: 61-64% HR 4/4 pre-anomaly seasons; fta_avg>=5, fta_cv>=0.4
 })
