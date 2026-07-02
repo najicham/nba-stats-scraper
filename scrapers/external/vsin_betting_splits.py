@@ -12,13 +12,14 @@ Timing: Available throughout the day, scrape ~2 PM ET for pre-game data.
 v2.0: Data is server-side rendered at data.vsin.com — no Playwright needed.
       Rewrote parser to match actual freezetable HTML structure.
 
-STATUS (2026-06-29 audit): Scraper code looks correct (Session 406 fix in place).
-Data stopped after 2026-03-28. Root cause: scheduler gap OR VSiN HTML class change.
-At 2026-27 season open (October):
-  1. Verify the Cloud Run scheduler for this scraper is still enabled
-  2. Run manually: python scrapers/external/vsin_betting_splits.py --date <today> --debug
-  3. If 0 games parsed, run with --group capture to inspect live HTML and check
-     whether txt-color-vsinred link class or freezetable structure has changed
+STATUS (2026-07-02 diagnostic): PAYWALLED — DEFUNCT.
+VSiN moved NBA betting splits behind a Piano subscription paywall sometime around 2026-03-28.
+data.vsin.com/nba/betting-splits/ now redirects to /betting-splits/?source=DK&sport=NBA
+which serves #inline-lock + Piano auth — data table (txt-color-vsinred, freezetable) is absent.
+Scraper cannot work without VSiN subscriber credentials. Options:
+  1. Subscribe to VSiN and add session cookie / credentials to scraper
+  2. Find an alternative public betting splits source (Covers.com, ActionNetwork, etc.)
+  3. Accept the loss — vsin_betting_splits feature is unavailable until a replacement is found
 
 Usage:
   python scrapers/external/vsin_betting_splits.py --date 2026-03-04 --debug
@@ -353,8 +354,7 @@ if __name__ == "__main__":
         app.run(host="0.0.0.0", port=8080, debug=True)
     else:
         scraper = VSiNBettingSplitsScraper()
-        groups = ["dev", "test"] if args.local else ["prod", "gcs"]
-        scraper.run(
-            opts={"date": args.date},
-            groups=groups,
-        )
+        opts = {"date": args.date}
+        if args.local:
+            opts["group"] = "dev"
+        scraper.run(opts=opts)

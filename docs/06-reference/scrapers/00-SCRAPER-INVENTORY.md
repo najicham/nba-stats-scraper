@@ -202,15 +202,15 @@ Complete catalog of all 40+ production scrapers organized by data type and sourc
 - **Status:** ❌ FAILING — `nba_api` not in requirements, HTTP fallback times out (cloud IP blocked)
 - **Use Case:** Touch-based usage data (drives, catch-and-shoot, paint touches)
 
-### vsin_betting_splits (VSiN) — WORKING
+### vsin_betting_splits (VSiN) — PAYWALLED / DEFUNCT
 - **Source:** VSiN.com public betting splits (DraftKings-sourced)
-- **URL:** `https://data.vsin.com/nba/betting-splits/`
+- **URL:** `https://data.vsin.com/nba/betting-splits/` → redirects to Piano-paywalled page
 - **BigQuery Table:** `nba_raw.vsin_betting_splits`
 - **File:** `scrapers/external/vsin_betting_splits.py`
-- **Schedule:** Daily 2:00 PM ET (`nba-vsin-betting-splits`)
-- **Status:** ✅ Production — data is server-rendered at data.vsin.com (not AJAX)
-- **Use Case:** Public betting percentages for sharp money signal
-- **SPOF Warning:** Only public betting % source — no backup
+- **Schedule:** Daily 2:00 PM ET (`nba-vsin-betting-splits`) — still running but producing 0 records
+- **Status:** ❌ DEFUNCT — VSiN moved betting splits behind Piano subscription paywall ~2026-03-28. Data table no longer served without credentials. Last data in BQ: 2026-03-28.
+- **Use Case:** Public betting percentages for sharp money signal (`sharp_money_over/under` — both shadow)
+- **Options:** (1) VSiN subscription + session cookie auth, (2) alternative source (Covers.com, ActionNetwork), (3) accept loss until replacement found
 
 ### espn_nba_news (ESPN) — FORWARD COLLECTION
 - **Source:** ESPN public JSON API
