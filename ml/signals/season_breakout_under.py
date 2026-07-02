@@ -5,8 +5,8 @@ age-related decline being priced in slowly, and return-from-injury diminishment.
 Books anchor on prior-season reputation; this signal fires when the model also
 recommends UNDER, amplifying confidence.
 
-Threshold: season_scoring_delta <= -3.0 PPG (current season avg through first-N games
-vs prior season avg through first-N games).
+Threshold: season_scoring_delta <= -7.0 PPG (tightened 2026-07-01; -7.0 = 73.0% HR N=407
+4/4 seasons; -3.0 was too loose).
 
 Data source: pred['season_scoring_delta'], pred['cross_season_games'] —
 same cross_season_map supplemental query as season_breakout_over.
@@ -25,8 +25,8 @@ from ml.signals.base_signal import BaseSignal, SignalResult
 class SeasonBreakoutUnderSignal(BaseSignal):
     tag = "season_breakout_under"
     description = (
-        "3+ PPG less vs same point last season + model UNDER — regression trajectory "
-        "(shadow, no backtest; accumulates from 2026-27)"
+        "7+ PPG less vs same point last season + model UNDER — regression trajectory "
+        "(shadow, threshold -7.0; accumulates from 2026-27)"
     )
 
     MAX_DELTA = -7.0    # tightened 2026-07-01 (verified): -7.0 = 73.0% HR (N=407, 4/4 seasons); -5.0 = 65.7% (N=1,478); -3.0 = 63.7% (too loose, 2022-23 negative)
