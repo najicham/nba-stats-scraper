@@ -210,7 +210,7 @@ Complete catalog of all 40+ production scrapers organized by data type and sourc
 - **Schedule:** Daily 2:00 PM ET (`nba-vsin-betting-splits`) — still running but producing 0 records
 - **Status:** ❌ DEFUNCT — VSiN moved betting splits behind Piano subscription paywall ~2026-03-28. Data table no longer served without credentials. Last data in BQ: 2026-03-28.
 - **Use Case:** Public betting percentages for sharp money signal (`sharp_money_over/under` — both shadow)
-- **Options:** (1) VSiN subscription + session cookie auth, (2) alternative source (Covers.com, ActionNetwork), (3) accept loss until replacement found
+- **Replacement research (2026-07-02, 5-agent sweep):** No free drop-in replacement exists. All viable sources require JS rendering (Playwright) or paid subscriptions. DRF.com = horse racing only. ActionNetwork has game-level splits but is a Next.js SPA ($20/mo PRO). BetQL/Pregame/Covers all bot-block or paywall. No free source for player-prop-level splits exists anywhere. **Decision: skip for now — zero production impact (all dependent signals are shadow/removed). Revisit at 2026-27 open: (1) verify DraftKings Network free player-prop claim with real browser, (2) ActionNetwork via Playwright as fallback.**
 
 ### espn_nba_news (ESPN) — FORWARD COLLECTION
 - **Source:** ESPN public JSON API
