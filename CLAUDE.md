@@ -91,7 +91,7 @@ nba-stats-scraper/
 | Betting Lines | `odds_api_*` | `nba_raw.odds_api_*` |
 | Play-by-Play | `nbac_play_by_play` | `nba_raw.nbac_play_by_play` |
 | Projections | `numberfire_projections`, `fantasypros_projections`, `dailyfantasyfuel_projections`, `dimers_projections` | `nba_raw.numberfire_projections`, etc. |
-| External Analytics | `teamrankings_pace`, `hashtagbasketball_dvp`, `rotowire_lineups`, `covers_referee_stats`, `nba_tracking_stats`, `vsin_betting_splits` | `nba_raw.teamrankings_pace`, etc. |
+| External Analytics | `teamrankings_team_stats`, `hashtagbasketball_dvp`, `rotowire_lineups`, `covers_referee_stats`, `nba_tracking_stats`, `vsin_betting_splits` | `nba_raw.teamrankings_team_stats`, etc. |
 
 **Naming:** `nbac_*` = NBA.com, `bdl_*` = Ball Don't Lie (disabled), `odds_api_*` = The Odds API, `bettingpros_*` = BettingPros, `numberfire_*`/`fantasypros_*`/`dailyfantasyfuel_*`/`dimers_*` = Projection sources, `teamrankings_*`/`hashtagbasketball_*`/`rotowire_*`/`covers_*`/`vsin_*`/`nba_tracking_*` = External analytics
 
@@ -198,7 +198,7 @@ nba-stats-scraper/
 | `nba_raw.fantasypros_projections` | FantasyPros consensus projections |
 | `nba_raw.dailyfantasyfuel_projections` | DailyFantasyFuel projections |
 | `nba_raw.dimers_projections` | Dimers projected points |
-| `nba_raw.teamrankings_pace` | TeamRankings team pace ratings |
+| `nba_raw.teamrankings_team_stats` | TeamRankings team pace + efficiency ratings |
 | `nba_raw.hashtagbasketball_dvp` | Hashtag Basketball defense-vs-position |
 | `nba_raw.rotowire_lineups` | RotoWire expected lineups + minutes |
 | `nba_raw.covers_referee_stats` | Covers referee O/U tendency stats |

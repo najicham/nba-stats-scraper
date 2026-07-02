@@ -157,13 +157,13 @@ Complete catalog of all 40+ production scrapers organized by data type and sourc
 
 ## External Analytics Sources (Session 401)
 
-### teamrankings_pace (TeamRankings) — WORKING
-- **Source:** TeamRankings.com team pace ratings
-- **URL:** `https://www.teamrankings.com/nba/stat/possessions-per-game`
-- **BigQuery Table:** `nba_raw.teamrankings_pace`
-- **File:** `scrapers/external/teamrankings_pace.py`
+### teamrankings_team_stats (TeamRankings) — WORKING
+- **Source:** TeamRankings.com team stats (pace, offensive/defensive efficiency)
+- **URLs:** possessions-per-game, offensive-efficiency, defensive-efficiency
+- **BigQuery Table:** `nba_raw.teamrankings_team_stats`
+- **File:** `scrapers/external/teamrankings_stats.py`
 - **Schedule:** Daily 10:35 AM ET (`nba-teamrankings-pace`)
-- **Status:** ✅ Production (30 records)
+- **Status:** ✅ Production — runs through off-season (930 rows in last 30d, last date 2026-07-02)
 - **Use Case:** Team pace data for `predicted_pace_over` signal
 
 ### hashtagbasketball_dvp (Hashtag Basketball) — WORKING
@@ -210,7 +210,12 @@ Complete catalog of all 40+ production scrapers organized by data type and sourc
 - **Schedule:** Daily 2:00 PM ET (`nba-vsin-betting-splits`) — still running but producing 0 records
 - **Status:** ❌ DEFUNCT — VSiN moved betting splits behind Piano subscription paywall ~2026-03-28. Data table no longer served without credentials. Last data in BQ: 2026-03-28.
 - **Use Case:** Public betting percentages for sharp money signal (`sharp_money_over/under` — both shadow)
-- **Replacement research (2026-07-02, 5-agent sweep):** No free drop-in replacement exists. All viable sources require JS rendering (Playwright) or paid subscriptions. DRF.com = horse racing only. ActionNetwork has game-level splits but is a Next.js SPA ($20/mo PRO). BetQL/Pregame/Covers all bot-block or paywall. No free source for player-prop-level splits exists anywhere. **Decision: skip for now — zero production impact (all dependent signals are shadow/removed). Revisit at 2026-27 open: (1) verify DraftKings Network free player-prop claim with real browser, (2) ActionNetwork via Playwright as fallback.**
+- **Replacement research (2026-07-02, 5-agent sweep):** Zero production impact (all dependent signals shadow/removed). Decision: skip for now. Best candidates at 2026-27 open:
+  - **DraftKings Network** (`dknetwork.draftkings.com/draftkings-sportsbook-betting-splits/`) — FREE, server-rendered HTML (easy BS4 scrape), DK-sourced, game-level only. Best game-level drop-in.
+  - **PlayerProps.ai** (`playerprops.ai/trends`) — possibly the only free player-prop-level ticket%/handle% source. JS-rendered, needs Playwright + DevTools inspection to find XHR endpoints.
+  - **SportsDataIO** — paid API with documented `BetPercentage`/`MoneyPercentage` fields for player prop markets. Free trial, no credit card. Only confirmed API option for prop-level splits.
+  - **ActionNetwork** — CONFIRMED NOT VIABLE: DataDome bot protection blocks cloud IPs; game-level only at any tier; $29.99/mo PRO; AJAX-loaded live data.
+  - **DRF.com** — horse racing only. Dead end.
 
 ### espn_nba_news (ESPN) — FORWARD COLLECTION
 - **Source:** ESPN public JSON API
@@ -308,7 +313,7 @@ Complete catalog of all 40+ production scrapers organized by data type and sourc
 | `fantasypros_*` | FantasyPros | `fantasypros_projections` |
 | `dailyfantasyfuel_*` | DailyFantasyFuel | `dailyfantasyfuel_projections` |
 | `dimers_*` | Dimers | `dimers_projections` |
-| `teamrankings_*` | TeamRankings | `teamrankings_pace` |
+| `teamrankings_*` | TeamRankings | `teamrankings_team_stats` |
 | `hashtagbasketball_*` | Hashtag Basketball | `hashtagbasketball_dvp` |
 | `rotowire_*` | RotoWire | `rotowire_lineups`, `rotowire_nba_news` |
 | `covers_*` | Covers | `covers_referee_stats` |
