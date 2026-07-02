@@ -220,25 +220,25 @@ SHADOW_SIGNALS = frozenset({
     'multi_book_convergence_under',
     # 2026-07-01: Feature-scanner validated UNDER signals (61 found; 5 highest-confidence).
     # Scanner: feature_scan_results.csv, BH-FDR corrected, cross-season validation.
-    'high_minutes_under',       # 61.3% HR (N=362, 5/5 seasons) — season avg >=34.5 mpg
-    'high_3pt_season_under',    # 65.2% HR (N=230, 3/3 seasons) — season 3PT% >=40.2%
-    'high_3pt_recent_under',    # 62.9% HR (N=197, 3/3 seasons) — last-3 3PT% >=45.5%
-    'steep_downtrend_under',    # 62.4% HR (N=213, 3/3 seasons) — slope <=-0.82 (steeper than downtrend_under band)
-    'elite_line_under',         # 61.3% HR (N=349, 4/5 seasons) — line >=28 (stricter than high_line_under's >=25)
-    # 2026-07-01: Archetype grid completion (Wave 1 — pre-registered, no backtest).
-    'low_var_mid_line_under',   # std <4.5, line 15-25 UNDER — completes 3x3 grid; low_line cell = 62% HR (4/4)
+    'high_minutes_under',       # backtest: 63.0% HR (N=10K, live) but only 3/5 seasons; threshold from 2025-26 only
+    'high_3pt_season_under',    # backtest: 60.4% HR (N=9.6K, 5/5 seasons) — thin +1.0pp margin; huge N signals threshold too loose
+    'high_3pt_recent_under',    # backtest: 60.2% HR (N=8.9K, 4/5 seasons) — thin +0.8pp; 2021-22 flat at -0.1pp
+    # elite_line_under PROMOTED to active (see UNDER_SIGNAL_WEIGHTS below): 63.2% HR (N=1,679, 4/5 seasons, +3.8pp)
+    # low_var_mid_line_under REMOVED 2026-07-01: backtest -0.1pp, 3/5 seasons, mid-line archetype hypothesis REFUTED
+    # steep_downtrend_under REMOVED 2026-07-01: backtest +0.2pp (noise); dead end at baseline across 5 seasons
+    # season_breakout_over REMOVED 2026-07-01: backtest -0.2pp, 2/4 seasons; scoring-env artifact not signal
+    # career_matchup_under REMOVED 2026-07-01: backtest +0.2pp, 1/5 seasons; inverse (career>line) outperforms at 63.3%
     # 2026-07-01: Star-OUT vacated-touches OVER (shadow accumulation only).
-    # 79.4% HR (N=509, 4-season), 71.7% incremental (N=357). Bypasses OVER floor on activation.
-    # TO ACTIVATE: add to rescue_tags + OVER_SIGNAL_WEIGHTS + remove from SHADOW_SIGNALS.
-    # Requires: N>=30 at HR>=65% live + explicit user sign-off. See star_out_rescue.py.
+    # Backtest: 74.3% HR (N=1,797, 4/5 seasons). 2025-26 weak (57.6%). Edge 5+ = 83.5%.
+    # TO ACTIVATE as rescue: add to rescue_tags + OVER_SIGNAL_WEIGHTS + remove from SHADOW_SIGNALS.
+    # Requires explicit user sign-off. See star_out_rescue.py for activation checklist.
     'star_out_rescue',
     # 2026-07-01: NBA tracking drives signal (shadow, data from 2026-27 season open only).
-    'drive_volume_under',       # drives_avg_season >=7 UNDER — market overpriced drive-inflated scoring
-    # 2026-07-01: Cross-season trajectory signals (shadow, pre-registered, no backtest).
-    'season_breakout_over',     # +3 PPG vs same point last season + model OVER
-    'season_breakout_under',    # -3 PPG vs same point last season + model UNDER
-    # 2026-07-01: Career matchup UNDER 3-year window (shadow, companion to career_matchup_over).
-    'career_matchup_under',     # career avg vs opp (3yr) < line by >=2 pts
+    'drive_volume_under',       # drives_avg_season >=7 UNDER — no backtest; data from 2026-03-04 only
+    # 2026-07-01: Cross-season trajectory (UNDER only; OVER removed — backtest -0.2pp, 2/4 seasons).
+    # season_breakout_under: backtest +2.5pp (3/4 seasons) but threshold -3.0 too loose.
+    # Real edge at delta <=-5.0 (64.9% HR, N=1,509). Threshold tightened in signal file.
+    'season_breakout_under',
 })
 
 # Session 400: UNDER signal quality weights for signal-first ranking.
@@ -270,6 +270,9 @@ UNDER_SIGNAL_WEIGHTS: Dict[str, float] = {
     # Session 522: Quantile ceiling UNDER — 90.0% HR (N=10 first test). Only fires for MultiQuantile models.
     # Weight 3.0 to match combo_3way (both are rare, high-conviction signals).
     'quantile_ceiling_under': 3.0,
+    # 2026-07-01: Promoted from shadow after backtest: 63.2% HR (N=1,679, 4/5 seasons, +3.8pp).
+    # Consistent across ALL season segments (no late-season collapse). Line >=28 = top ~10 scorers.
+    'elite_line_under': 1.5,
 }
 UNDER_EDGE_TIEBREAKER = 0.1  # Edge as minor tiebreaker for UNDER
 

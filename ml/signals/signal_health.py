@@ -149,18 +149,18 @@ ACTIVE_SIGNALS = frozenset({
     'westward_road_trip_under',    # 2026-06-30: away team traveling west (body clock ahead)
     'b2b_long_haul_under',         # 2026-06-30: B2B + 1000+ miles traveled
     'multi_book_convergence_under', # 2026-06-30: 3+ books all lowered line intraday
-    # 2026-07-01: Feature-scanner validated UNDER signals + new signal classes
-    'high_minutes_under',           # season avg >= 34.5 mpg (5/5 seasons, 61.3% HR)
-    'high_3pt_season_under',        # season 3PT% >= 40.2% (3/3 seasons, 65.2% HR)
-    'high_3pt_recent_under',        # last-3 3PT% >= 45.5% (3/3 seasons, 62.9% HR)
-    'steep_downtrend_under',        # scoring slope <= -0.82 (3/3 seasons, 62.4% HR)
-    'elite_line_under',             # line >= 28 (4/5 seasons, 61.3% HR)
-    'low_var_mid_line_under',       # std <4.5, line 15-25 (pre-registered, no backtest)
-    'star_out_rescue',              # lead scorer OUT → rank 2-7 OVER (79.4% HR N=509)
-    'drive_volume_under',           # drives/game >= 7 (shadow, no backtest)
-    'season_breakout_over',         # +3 PPG vs last season OVER (pre-registered)
-    'season_breakout_under',        # -3 PPG vs last season UNDER (pre-registered)
-    'career_matchup_under',         # career avg vs opp (3yr) < line by 2+ pts
+    # 2026-07-01: Feature-scanner and new signals — active after backtest
+    'elite_line_under',             # ACTIVE: line >= 28 (63.2% HR N=1,679, 4/5 seasons, +3.8pp) weight=1.5
+    'high_minutes_under',           # shadow: 63.0% HR but only 3/5 seasons; threshold from 2025-26 only
+    'high_3pt_season_under',        # shadow: 60.4% HR (N=9.6K), thin +1.0pp — huge N, threshold too loose
+    'high_3pt_recent_under',        # shadow: 60.2% HR (N=8.9K), thin +0.8pp
+    # steep_downtrend_under REMOVED: +0.2pp, dead end
+    # low_var_mid_line_under REMOVED: -0.1pp, mid-line archetype refuted
+    # season_breakout_over REMOVED: -0.2pp, 2/4 seasons, no edge
+    # career_matchup_under REMOVED: +0.2pp, 1/5 seasons, inverse outperforms
+    'star_out_rescue',              # shadow: backtest 74.3% HR (N=1,797, 4/5). Activation needs sign-off.
+    'drive_volume_under',           # shadow: no backtest (data from 2026-03-04 only)
+    'season_breakout_under',        # shadow: +2.5pp (3/4 seasons); threshold tightened to -5.0
 })
 
 # Regime thresholds (Session 257 analysis)
