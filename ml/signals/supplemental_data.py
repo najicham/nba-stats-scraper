@@ -1262,7 +1262,7 @@ def query_predictions_with_supplements(
           ORDER BY s.game_date DESC, s.game_id DESC
         ) AS rn
       FROM tonight_away ta
-      JOIN `{PROJECT_ID}.nba_raw.nbac_schedule` s
+      LEFT JOIN `{PROJECT_ID}.nba_raw.nbac_schedule` s
         ON (s.home_team_tricode = ta.away_team OR s.away_team_tricode = ta.away_team)
         AND s.game_status = 3
         AND s.game_date < @target_date
@@ -1274,6 +1274,7 @@ def query_predictions_with_supplements(
         away_team,
         tonight_home,
         CASE
+          WHEN last_home_team IS NULL THEN away_team  -- no prior game in window (season open) → depart from home arena
           WHEN last_home_team = away_team THEN away_team
           ELSE last_home_team
         END AS from_team

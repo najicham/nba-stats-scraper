@@ -139,6 +139,190 @@ Detail: `docs/09-handoff/2026-06-23-edge-calibration-RESULT.md`.
       band is the high-N early signal — if edge6+ OVER stays near the prior-4-season 38.9%, the shadow demotion
       is vindicated; if it climbs above ≥58% durably, that's the restore trigger.**
 
+## New shadow signals — first-week verification (2026-07-01 additions)
+
+*13 signals added 2026-06-23 to 2026-06-30. All are in `SHADOW_SIGNALS` (zero pick impact) and now tracked
+by the firing canary (`ACTIVE_SIGNALS` in `signal_health.py`). Run these spot-checks on the first game day
+or two to confirm the data pipelines feeding them are working.*
+
+### Travel signals (`westward_road_trip_under`, `b2b_long_haul_under`)
+
+Confirm `nba_enriched.travel_distances` feeds travel context correctly:
+
+```sql
+-- 1. Confirm row count (should be 1710, including global-game cities)
+SELECT COUNT(*) FROM `nba-props-platform.nba_enriched.travel_distances`;
+
+-- 2. Spot-check a known westward trip (GSW @ BOS = 2691 mi, direction='west', 3 TZ)
+SELECT * FROM `nba-props-platform.nba_enriched.travel_distances`
+WHERE from_team = 'GSW' AND to_team = 'BOS';
+
+-- 3. Verify travel context was loaded on a real game date
+-- Replace date with first week game date; NULL distance_miles = join failed
+WITH tonight_away AS (
+  SELECT away_team_tricode AS away_team, home_team_tricode AS tonight_home
+  FROM `nba-props-platform.nba_raw.nbac_schedule`
+  WHERE game_date = '2026-10-22'  -- first game date
+),
+last_game AS (
+  SELECT ta.away_team, ta.tonight_home,
+    s.home_team_tricode AS last_home_team,
+    ROW_NUMBER() OVER (PARTITION BY ta.away_team ORDER BY s.game_date DESC) AS rn
+  FROM tonight_away ta
+  LEFT JOIN `nba-props-platform.nba_raw.nbac_schedule` s
+    ON (s.home_team_tricode = ta.away_team OR s.away_team_tricode = ta.away_team)
+    AND s.game_status = 3 AND s.game_date < '2026-10-22'
+    AND s.game_date >= DATE_SUB('2026-10-22', INTERVAL 14 DAY)
+),
+last_location AS (
+  SELECT away_team, tonight_home,
+    CASE WHEN last_home_team IS NULL THEN away_team
+         WHEN last_home_team = away_team THEN away_team
+         ELSE last_home_team END AS from_team
+  FROM last_game WHERE rn = 1
+)
+SELECT ll.away_team, ll.tonight_home, ll.from_team,
+       td.distance_miles, td.travel_direction, td.time_zones_crossed
+FROM last_location ll
+LEFT JOIN `nba-props-platform.nba_enriched.travel_distances` td
+  ON td.from_team = ll.from_team AND td.to_team = ll.tonight_home
+ORDER BY ll.away_team;
+```
+
+*Expected: NULL `distance_miles` only for same-city matchups (LAL@LAC) or if pre-season opener lacks a prior
+game (fixed by the LEFT JOIN fallback added 2026-07-01 — first-game teams default to departing from home arena).*
+
+### Book-count signals (`tight_consensus_under`, `multi_book_convergence_under`)
+
+```sql
+-- Diagnostic 1: basic row count — if 0, scraper never ran
+SELECT COUNT(*) AS rows, COUNT(DISTINCT bookmaker) AS books,
+       COUNT(DISTINCT snapshot_tag) AS snaps
+FROM `nba-props-platform.nba_raw.odds_api_player_points_props`
+WHERE game_date = '2026-10-22';
+
+-- Diagnostic 2: tight_consensus_under fire rate (expect book_count >= 6 for ~10-15% of players)
+SELECT book_count, COUNT(*) AS players,
+       ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER(), 1) AS pct
+FROM (
+  SELECT player_lookup, COUNT(DISTINCT bookmaker) AS book_count
+  FROM `nba-props-platform.nba_raw.odds_api_player_points_props`
+  WHERE game_date = '2026-10-22' AND minutes_before_tipoff >= 0
+  GROUP BY player_lookup
+)
+GROUP BY book_count ORDER BY book_count;
+
+-- Diagnostic 3: multi_book_convergence_under — need avg_snaps_per_player > 1
+SELECT bookmaker, COUNT(DISTINCT player_lookup) AS players,
+       AVG(snap_count) AS avg_snaps,
+       COUNTIF(snap_count >= 2) AS players_with_2plus_snaps
+FROM (
+  SELECT player_lookup, bookmaker,
+         COUNT(DISTINCT snapshot_timestamp) AS snap_count
+  FROM `nba-props-platform.nba_raw.odds_api_player_points_props`
+  WHERE game_date = '2026-10-22' AND minutes_before_tipoff >= 0
+  GROUP BY player_lookup, bookmaker
+)
+GROUP BY bookmaker ORDER BY bookmaker;
+```
+
+*If `avg_snaps = 1.0` everywhere: best-bets export ran before afternoon scraper runs landed —
+`books_converging_down` will always be 0. This is a timing issue, not a bug.*
+
+### Kelly haircut (`bet_size_units`)
+
+```sql
+-- On first game day with >=2 same-team UNDER picks, verify 1.0/0.67 split
+SELECT game_date, game_id, team_abbr, recommendation,
+       COUNT(*) AS picks_in_group,
+       STRING_AGG(player_lookup ORDER BY composite_score DESC) AS players,
+       STRING_AGG(CAST(bet_size_units AS STRING) ORDER BY composite_score DESC) AS units_by_rank
+FROM `nba-props-platform.nba_predictions.signal_best_bets_picks`
+WHERE game_date >= '2026-10-01'
+GROUP BY game_date, game_id, team_abbr, recommendation
+HAVING COUNT(*) >= 2
+ORDER BY game_date DESC;
+-- Expected: units_by_rank = '1.0,0.67' (or '1.0,0.67,0.67' for 3 picks)
+```
+
+### All 13 new shadow signals — fire rate monitor
+
+Run weekly from opening night to confirm none are NEVER_FIRED when they should be firing:
+
+```sql
+WITH shadow_signals AS (
+  SELECT signal_tag FROM UNNEST([
+    'b2b_fatigue_under', 'national_tv_under', 'whole_line_precision',
+    'line_converging_under', 'high_line_under', 'ref_crew_under_tendency',
+    'dense_schedule_grind_under', 'long_road_trip_under', 'rotowire_bench_under',
+    'tight_consensus_under', 'westward_road_trip_under', 'b2b_long_haul_under',
+    'multi_book_convergence_under'
+  ]) AS signal_tag
+),
+fire_counts AS (
+  SELECT signal_tag, COUNT(*) AS total_fires, COUNT(DISTINCT game_date) AS days_fired,
+         MAX(game_date) AS last_fire
+  FROM (
+    SELECT *, ROW_NUMBER() OVER (
+      PARTITION BY game_date, player_lookup, system_id ORDER BY evaluated_at DESC
+    ) AS _rn
+    FROM `nba-props-platform.nba_predictions.pick_signal_tags`
+    WHERE game_date >= '2026-10-01'
+  ) WHERE _rn = 1
+  CROSS JOIN UNNEST(signal_tags) AS signal_tag
+  WHERE signal_tag IN (SELECT signal_tag FROM shadow_signals)
+  GROUP BY signal_tag
+)
+SELECT s.signal_tag,
+       COALESCE(f.total_fires, 0) AS total_fires,
+       COALESCE(f.days_fired, 0) AS days_fired,
+       f.last_fire,
+       CASE WHEN COALESCE(f.total_fires, 0) = 0 THEN 'NEVER_FIRED'
+            WHEN f.last_fire < DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY) THEN 'STALE'
+            ELSE 'FIRING' END AS status
+FROM shadow_signals s
+LEFT JOIN fire_counts f USING (signal_tag)
+ORDER BY total_fires ASC, signal_tag;
+```
+
+*`ref_crew_under_tendency` is expected NEVER_FIRED until Covers accumulates 2 referees per crew (mid-season).*
+*`rotowire_bench_under` will be NEVER_FIRED if the RotoWire parser breaks — check `/projected-minutes.php` HTML.*
+
+### Stokastic DFS scraper
+
+Check on first game day after 1 PM ET:
+
+```bash
+# Confirm scraper finds a DK Main NBA slate and returns players
+PYTHONPATH=. .venv/bin/python3 scrapers/external/stokastic_dfs_ownership.py --date $(date +%Y-%m-%d) --debug
+# Expected log: "found DK Main slate id=XXXXX ... N players"
+```
+
+### Bluesky handles (already checked 2026-07-01 — all 10 valid)
+
+Re-run at season open if more than 2-3 months have passed:
+
+```bash
+python3 -c "
+import urllib.request, json, concurrent.futures
+handles = ['chrisbhaynes.bsky.social','thesteinline.bsky.social','zachlowenba.bsky.social',
+  'samamick.bsky.social','jakelfischer.bsky.social','anthonyvslater.bsky.social',
+  'danwoikesports.bsky.social','fredkatz.bsky.social','jonkrawczynski.bsky.social',
+  'bytimreynolds.bsky.social']
+def resolve(h):
+    try:
+        with urllib.request.urlopen(f'https://public.api.bsky.app/xrpc/com.atproto.identity.resolveHandle?handle={h}', timeout=10) as r:
+            return h, json.loads(r.read()).get('did','NOT FOUND')
+    except Exception as e: return h, f'ERROR: {e}'
+with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex:
+    [print(f'{h} → {d}') for h,d in ex.map(lambda h: resolve(h), handles)]
+"
+# If any returns NOT FOUND: find new handle, update BEAT_WRITERS list in
+# scrapers/external/bluesky_nba_news.py lines 189-200
+```
+
+---
+
 ## DON'Ts (carry-forward)
 - Don't relax/remove `cap_to_pre_late_season`; don't lower auto-halt thresholds to force picks; don't flip
   cadence or enable HSE 'active' on thin data; don't `--set-env-vars`; don't project the 63.8% BB record
