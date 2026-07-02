@@ -158,9 +158,10 @@ ACTIVE_SIGNALS = frozenset({
     # low_var_mid_line_under REMOVED: -0.1pp, mid-line archetype refuted
     # season_breakout_over REMOVED: -0.2pp, 2/4 seasons, no edge
     # career_matchup_under REMOVED: +0.2pp, 1/5 seasons, inverse outperforms
-    'star_out_rescue',              # shadow: backtest 74.3% HR (N=1,797, 4/5). Activation needs sign-off.
-    'drive_volume_under',           # shadow: no backtest (data from 2026-03-04 only)
-    'season_breakout_under',        # shadow: +2.5pp (3/4 seasons); threshold tightened to -5.0
+    'star_out_rescue',              # shadow: incremental zone 66% pooled / 54% in 2025-26. Needs live N>=30 at HR>=65% before rescue activation.
+    'drive_volume_under',           # shadow: BROKEN — tracking columns all 0.0 (scraper bug). Never fires until fixed.
+    'season_breakout_under',        # shadow: 73.0% HR (N=407, 4/4 seasons) at threshold -7.0 (tightened from -5.0)
+    'fta_high_cv_under',            # shadow: 61-64% HR 4/4 pre-anomaly seasons; fta_avg>=5, fta_cv>=0.4
 })
 
 # Regime thresholds (Session 257 analysis)

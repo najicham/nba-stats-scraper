@@ -236,9 +236,14 @@ SHADOW_SIGNALS = frozenset({
     # 2026-07-01: NBA tracking drives signal (shadow, data from 2026-27 season open only).
     'drive_volume_under',       # drives_avg_season >=7 UNDER — no backtest; data from 2026-03-04 only
     # 2026-07-01: Cross-season trajectory (UNDER only; OVER removed — backtest -0.2pp, 2/4 seasons).
-    # season_breakout_under: backtest +2.5pp (3/4 seasons) but threshold -3.0 too loose.
-    # Real edge at delta <=-5.0 (64.9% HR, N=1,509). Threshold tightened in signal file.
+    # season_breakout_under: threshold tightened to -7.0 (73.0% HR N=407, 4/4 seasons; -5.0=65.7%; -3.0 too loose).
     'season_breakout_under',
+    # 2026-07-01: FTA high CV UNDER — volatile foul-drawers regress (61-64% HR 4/4 pre-anomaly seasons).
+    # Same 2025-26 anomaly collapse pattern as b2b_fatigue_under. Real structural mechanism.
+    # fta_avg_last_10 >= 5 AND fta_cv_last_10 >= 0.4. Fields already in pred dict (Session 451 fta_variance CTE).
+    'fta_high_cv_under',
+    # drive_volume_under NOTE: nba_tracking_stats drives/touches columns are all 0.0 (scraper bug —
+    # never populated). Signal will never fire until scraper is fixed. TODO: fix nba_tracking_stats scraper.
 })
 
 # Session 400: UNDER signal quality weights for signal-first ranking.

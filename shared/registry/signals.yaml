@@ -594,8 +594,15 @@ signals:
     status: shadow
     weight: 0.0
     direction: under
-    promotion_gate: "N>=30 BB-level at HR>=62% live 2026-27. Threshold tightened to delta<=-5.0 (from -3.0): real edge at N=1,509 HR=64.9% vs +2.5pp pooled at -3.0. 3/4 seasons above baseline. Requires >= 20 games in both current and prior season."
-    description: "5+ PPG less vs same games last season + model UNDER — trajectory regression; threshold -5.0 (tightened 2026-07-01 backtest); shadow, accumulates from 2026-27 game 20 onward"
+    promotion_gate: "N>=30 BB-level at HR>=68% live 2026-27. Threshold tightened to -7.0 (2026-07-01 verified: 73.0% HR N=407, 4/4 seasons). -5.0 was 65.7% (N=1,478); -3.0 too loose (2022-23 negative). Requires >= 20 games in both current and prior season."
+    description: "7+ PPG less vs same games last season + model UNDER — trajectory regression; threshold -7.0 (tightened 2026-07-01; 73.0% HR N=407 4/4 seasons); shadow, accumulates from 2026-27 game 20 onward"
+
+  - tag: fta_high_cv_under
+    status: shadow
+    weight: 0.0
+    direction: under
+    promotion_gate: "N>=30 BB-level at HR>=58% live 2026-27. Same 2025-26 anomaly collapse pattern as b2b_fatigue_under (50.9% in 2025-26 vs 61-64% in 4 prior seasons). Fields already in pred dict (fta_variance CTE, Session 451). Do NOT use 2025-26 data in promotion gate."
+    description: "FTA avg >= 5/game AND FTA CV >= 0.4 UNDER — volatile foul-drawers regress; 61.4/62.3/63.2/63.9% HR (4 pre-anomaly seasons). Structural: inconsistent FTA → inconsistent scoring. Shadow, 2026-07-01."
 
   - tag: career_matchup_under
     status: removed

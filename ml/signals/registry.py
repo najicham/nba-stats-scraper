@@ -448,4 +448,10 @@ def build_default_registry() -> SignalRegistry:
     from ml.signals.career_matchup_under import CareerMatchupUnderSignal
     registry.register(CareerMatchupUnderSignal())
 
+    # 2026-07-01: FTA high CV UNDER (shadow — 61-64% HR 4/4 pre-anomaly seasons).
+    # Fields already in pred dict from Session 451 fta_variance CTE. No new query needed.
+    # Promote after live 2026-27 N>=30 at HR>=58%.
+    from ml.signals.fta_high_cv_under import FtaHighCvUnderSignal
+    registry.register(FtaHighCvUnderSignal())
+
     return registry

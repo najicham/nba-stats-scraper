@@ -29,7 +29,7 @@ class SeasonBreakoutUnderSignal(BaseSignal):
         "(shadow, no backtest; accumulates from 2026-27)"
     )
 
-    MAX_DELTA = -5.0    # tightened 2026-07-01 backtest: real edge at delta<=-5.0 (64.9% HR N=1,509); -3.0 too loose (+2.5pp pooled but 2022-23 negative)
+    MAX_DELTA = -7.0    # tightened 2026-07-01 (verified): -7.0 = 73.0% HR (N=407, 4/4 seasons); -5.0 = 65.7% (N=1,478); -3.0 = 63.7% (too loose, 2022-23 negative)
     MIN_LINE = 10.0
     MIN_GAMES = 20
     CONFIDENCE_BASE = 0.72
