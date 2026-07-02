@@ -1,6 +1,6 @@
 # File: scrapers/external/nba_tracking_stats.py
 """
-NBA.com Player Tracking Stats Scraper                          v1.1 - 2026-06-29
+NBA.com Player Tracking Stats Scraper                          v1.2 - 2026-07-01
 ---------------------------------------------------------------------------------
 Scrapes player tracking stats from NBA.com via nba_api or direct HTTP.
 
@@ -218,6 +218,7 @@ class NBATrackingStatsScraper(ScraperBase, ScraperFlaskMixin):
             try:
                 kwargs = {
                     'pt_measure_type': pt_type,
+                    'player_or_team': 'Player',
                     'season': season,
                     'per_mode_simple': 'PerGame',
                     'timeout': 60,
@@ -271,6 +272,7 @@ class NBATrackingStatsScraper(ScraperBase, ScraperFlaskMixin):
             url = NBA_PT_STATS_URL
             params = {
                 'PtMeasureType': measure,
+                'PlayerOrTeam': 'Player',
                 'PerMode': 'PerGame',
                 'Season': season,
                 'SeasonType': 'Regular Season',
