@@ -97,6 +97,12 @@ Replaced the paywalled VSiN source with a free DraftKings Network scraper. Fully
 3. **Proxy fallback** — if smoke test returns 0 games / HTTP errors, GCP egress IPs may be blocked → flip `proxy_enabled=True`.
 4. **Signal wiring** — point `sharp_money_over/under` + `public_fade_filter` in `supplemental_data.py` at `dknetwork_betting_splits` (or UNION with vsin). All shadow, zero pick impact until promoted.
 
+## ⚠️ Side-discovery: nba-scrapers deploy was broken (FIXED)
+
+While deploying the DK Network scraper, found that **`deploy-nba-scrapers` had been failing on every push** — `requirements-lock.txt` pinned 7 phantom atproto submodules (`atproto_client`, `atproto_core`, `_crypto`, `_firehose`, `_identity`, `_lexicon`, `_server` `==0.0.69`) that are NOT separate PyPI distributions (they're bundled inside the single `atproto` wheel). pip errored with "No matching distribution found for atproto_client==0.0.69".
+
+**Impact:** any scraper code change pushed while these pins were present never actually deployed to nba-scrapers. Fixed in commit removing the phantom lines (verified `atproto==0.0.69` alone provides all submodules). Both `deploy-nba-scrapers` and `deploy-nba-phase2-raw-processors` now build SUCCESS. **Worth auditing whether other recent scraper changes silently failed to deploy during the broken window.**
+
 ## Other candidates (not pursued)
 - **PlayerProps.ai** (`playerprops.ai/trends`) — possibly the only free *player-prop-level* ticket%/handle% source. JS-rendered, needs Playwright + DevTools XHR inspection. Worth exploring if we ever want prop-level (not game-level) splits.
 - **SportsDataIO** — paid API, documented `BetPercentage`/`MoneyPercentage` for prop markets. Free trial.
