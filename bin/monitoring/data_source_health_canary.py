@@ -43,14 +43,14 @@ SOURCES = {
     },
     'teamrankings_team_stats': {
         'table': f'{PROJECT_ID}.nba_raw.teamrankings_team_stats',
-        'date_column': 'scrape_date',
+        'date_column': 'game_date',
         'min_rows': 10,
         'severity': 'WARNING',
         'description': 'Team pace/efficiency for shadow signals',
     },
     'hashtagbasketball_dvp': {
         'table': f'{PROJECT_ID}.nba_raw.hashtagbasketball_dvp',
-        'date_column': 'scrape_date',
+        'date_column': 'game_date',
         'min_rows': 10,
         'severity': 'WARNING',
         'description': 'Defense-vs-position for dvp_favorable signal',
@@ -67,18 +67,25 @@ SOURCES = {
         'date_column': 'game_date',
         'min_rows': 3,
         'severity': 'WARNING',
-        'description': 'Public betting percentages for sharp_money signal',
+        'description': 'Public betting percentages for sharp_money signal (PAYWALLED since 2026-03-28 — replaced by dknetwork_betting_splits)',
+    },
+    'dknetwork_betting_splits': {
+        'table': f'{PROJECT_ID}.nba_raw.dknetwork_betting_splits',
+        'date_column': 'game_date',
+        'min_rows': 3,
+        'severity': 'WARNING',
+        'description': 'DraftKings Network public betting percentages — free VSiN replacement for sharp_money signal',
     },
     'covers_referee_stats': {
         'table': f'{PROJECT_ID}.nba_raw.covers_referee_stats',
-        'date_column': 'scrape_date',
+        'date_column': 'game_date',
         'min_rows': 3,
         'severity': 'WARNING',
         'description': 'Referee O/U tendency stats',
     },
     'nba_tracking_stats': {
         'table': f'{PROJECT_ID}.nba_raw.nba_tracking_stats',
-        'date_column': 'scrape_date',
+        'date_column': 'game_date',
         'min_rows': 10,
         'severity': 'WARNING',
         'description': 'NBA.com player tracking/usage data',
@@ -114,11 +121,15 @@ DEGRADATION_THRESHOLD = 0.70
 
 
 def check_source(bq: bigquery.Client, source_name: str, config: Dict,
-                 target_date: str) -> Dict:
+                 target_date: str, games_today: bool = True) -> Dict:
     """Check a single data source's health.
 
     Returns dict with: source, status, today_rows, baseline_avg,
     consecutive_zero_days, severity, description.
+
+    `games_today` gates DEAD detection: a source is only DEAD if games are
+    actually scheduled, so the off-season (every source legitimately empty for
+    months) never produces false SCRAPER DEAD alerts.
     """
     table = config['table']
     date_col = config['date_column']
@@ -132,6 +143,8 @@ def check_source(bq: bigquery.Client, source_name: str, config: Dict,
         'today_rows': 0,
         'baseline_avg': 0,
         'consecutive_zero_days': 0,
+        'last_data_date': None,
+        'days_dark': None,
         'status': 'UNKNOWN',
     }
 
@@ -204,11 +217,33 @@ def check_source(bq: bigquery.Client, source_name: str, config: Dict,
                 break
         result['consecutive_zero_days'] = consecutive_zeros
 
+        # Last date with data (bounded 60-day lookback to keep the partition scan
+        # cheap) — powers the "N days dark, last seen X" line in the DEAD alert.
+        last_seen_query = f"""
+        SELECT MAX({date_col}) as last_date
+        FROM `{table}`
+        WHERE {date_col} BETWEEN DATE_SUB(@target_date, INTERVAL 60 DAY) AND @target_date
+        """
+        last_seen_rows = list(bq.query(
+            last_seen_query,
+            job_config=bigquery.QueryJobConfig(query_parameters=params),
+        ).result(timeout=30))
+        if last_seen_rows and last_seen_rows[0].last_date:
+            last_date = last_seen_rows[0].last_date
+            result['last_data_date'] = last_date.isoformat()
+            result['days_dark'] = (date.fromisoformat(target_date) - last_date).days
+
         # Classify status
         today_rows = result['today_rows']
         baseline_avg = result['baseline_avg']
 
-        if consecutive_zeros >= DEAD_THRESHOLD_DAYS and baseline_avg > 0:
+        # DEAD if it produced data recently (nonzero 7-day baseline, OR any data
+        # within the 60-day last-seen window) but has now gone quiet for 2+ days
+        # while games are being played. The 60-day fallback fixes the blind spot
+        # where a long-dead source's 7-day baseline decays to 0 and it wrongly
+        # reads HEALTHY again (exactly how VSiN went invisible for months).
+        had_data_recently = baseline_avg > 0 or result['days_dark'] is not None
+        if games_today and consecutive_zeros >= DEAD_THRESHOLD_DAYS and had_data_recently:
             result['status'] = 'DEAD'
         elif today_rows == 0 and baseline_avg > 0:
             result['status'] = 'MISSING_TODAY'
@@ -281,6 +316,33 @@ def format_alert(results: List[Dict], target_date: str) -> str:
     return '\n'.join(lines)
 
 
+def format_dead_alert(dead: List[Dict], target_date: str) -> str:
+    """Format the dedicated DEAD escalation for #nba-alerts.
+
+    Fires for ANY severity — a WARNING-severity source that has gone DEAD
+    (2+ consecutive zero-days on a game day) is exactly the silent-death case
+    that let VSiN sit dark for months as an ignored #canary-alerts line.
+    """
+    lines = [
+        f"💀 *SCRAPER DEAD — {target_date}*",
+        f"{len(dead)} source(s) have produced zero rows for "
+        f"{DEAD_THRESHOLD_DAYS}+ consecutive game days:",
+        "",
+    ]
+    for r in dead:
+        if r['days_dark'] is not None:
+            dark = f"{r['days_dark']} days dark, last seen {r['last_data_date']}"
+        else:
+            dark = "no data in the last 60 days"
+        lines.append(
+            f"• *{r['source']}* ({r['severity']}) — {dark}\n"
+            f"  {r['description']}"
+        )
+    lines.append("")
+    lines.append("Investigate: scraper broken, source paywalled, or genuinely off-season?")
+    return '\n'.join(lines)
+
+
 def print_table(results: List[Dict]):
     """Print formatted console table."""
     print(f"\n{'='*95}")
@@ -316,8 +378,12 @@ def main():
 
     bq = bigquery.Client(project=PROJECT_ID)
 
+    # Are games scheduled today? Drives both the no-game-day skip and the DEAD
+    # gate (so the off-season doesn't false-alarm every source as dead).
+    games_today = has_games_today(bq, target_date)
+
     # Skip on no-game days (most sources won't have data)
-    if not args.skip_game_check and not has_games_today(bq, target_date):
+    if not args.skip_game_check and not games_today:
         logger.info(f"No games on {target_date} — skipping health check")
         print(f"No games on {target_date} — data source check skipped")
         return 0
@@ -326,7 +392,7 @@ def main():
     results = []
     for source_name, config in SOURCES.items():
         logger.info(f"Checking {source_name}...")
-        result = check_source(bq, source_name, config, target_date)
+        result = check_source(bq, source_name, config, target_date, games_today=games_today)
         results.append(result)
         status_emoji = '✅' if result['status'] == 'HEALTHY' else '❌'
         logger.info(f"  {status_emoji} {result['status']} — {result['today_rows']} rows (baseline: {result['baseline_avg']})")
@@ -337,6 +403,9 @@ def main():
     # Alert if any unhealthy
     unhealthy = [r for r in results if r['status'] != 'HEALTHY']
     critical = [r for r in unhealthy if r['severity'] == 'CRITICAL']
+    # DEAD = silent death (2+ zero game-days). Escalated to #nba-alerts at ANY
+    # severity so a shadow source can't die quietly like VSiN did.
+    dead = [r for r in results if r['status'] == 'DEAD']
 
     if not unhealthy:
         logger.info("All data sources healthy — no alerts")
@@ -345,9 +414,21 @@ def main():
     if args.dry_run:
         print("[DRY RUN] Would send alert:")
         print(format_alert(results, target_date))
+        if dead:
+            print("\n[DRY RUN] Would send DEAD escalation to #nba-alerts:")
+            print(format_dead_alert(dead, target_date))
         return 0
 
     message = format_alert(results, target_date)
+
+    # DEAD escalation — dedicated, loud, #nba-alerts, independent of severity.
+    if dead:
+        send_slack_alert(
+            message=format_dead_alert(dead, target_date),
+            channel="#nba-alerts",
+            alert_type="SCRAPER_DEAD",
+        )
+        logger.info(f"Sent DEAD escalation for {len(dead)} source(s) to #nba-alerts")
 
     # Critical sources → #nba-alerts, warnings → #canary-alerts
     if critical:
