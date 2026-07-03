@@ -37,6 +37,8 @@ from data_processors.publishing.signal_subset_materializer import SignalSubsetMa
 from ml.signals.per_model_pipeline import run_all_model_pipelines
 from ml.signals.pipeline_merger import merge_model_pipelines, ALGORITHM_VERSION
 from shared.config.model_selection import get_best_bets_model_id
+# Shadow calibrated win-probability (informational only; does NOT affect ranking).
+from ml.calibration.win_prob_loader import attach_win_prob
 
 logger = logging.getLogger(__name__)
 
@@ -431,6 +433,18 @@ class SignalBestBetsExporter(BaseExporter):
             gt = game_times.get(game_id)
             pick_dict['game_time'] = gt if gt else None
 
+            # 2026-07-03: SHADOW calibrated win probability (informational only).
+            # edge -> P(win) isotonic curve, per (model_family, direction), retrained
+            # on clean seasons 2022-25. Falls back to _global for production families
+            # and returns None on any failure. Does NOT enter the BQ write and does
+            # NOT affect pick ordering/selection. See ml/calibration/win_prob_loader.py
+            # and docs/08-projects/current/calibration-wiring/RELIABILITY-REPORT.md.
+            pick_dict['win_prob'] = attach_win_prob(
+                pick_dict['edge'],
+                pick_dict.get('source_model_family'),
+                pick_dict['direction'],
+            )
+
             # Ultra data: always include for BQ write.
             # Public JSON visibility gated by show_ultra (stripped in export()).
             # Session 452: Derive ultra_tier from ultra_criteria presence to prevent
@@ -651,6 +665,10 @@ class SignalBestBetsExporter(BaseExporter):
         for pick in json_data.get('picks', []):
             pick.pop('_show_ultra_public', None)
             pick.pop('ultra_criteria', None)
+            # 2026-07-03: win_prob is a SHADOW field (informational, unvalidated
+            # on live data). Strip from public JSON so consumers don't read it as
+            # a betting signal; it remains in the internal pick_dict for admin use.
+            pick.pop('win_prob', None)
 
         # Path A — silent failures: validate content before publishing.
         # validate_content() (below) flags regression patterns (zero picks
