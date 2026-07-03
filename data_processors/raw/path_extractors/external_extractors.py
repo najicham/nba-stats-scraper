@@ -194,6 +194,28 @@ class VSiNBettingSplitsExtractor(PathExtractor):
         return {}
 
 
+class DKNetworkBettingSplitsExtractor(PathExtractor):
+    """Extract options from DraftKings Network betting splits paths."""
+
+    PATTERN = re.compile(r'external/dknetwork/betting-splits/')
+
+    def matches(self, path: str) -> bool:
+        return bool(self.PATTERN.search(path))
+
+    def extract(self, path: str) -> dict:
+        """
+        Extract from path: external/dknetwork/betting-splits/{date}/{timestamp}.json
+        """
+        parts = path.split('/')
+        try:
+            idx = parts.index('betting-splits')
+            if idx + 1 < len(parts):
+                return {'game_date': parts[idx + 1]}
+        except (ValueError, IndexError) as e:
+            logger.warning(f"Could not extract from DK Network path: {path}: {e}")
+        return {}
+
+
 class DailyFantasyFuelProjectionsExtractor(PathExtractor):
     """Extract options from DailyFantasyFuel projections paths."""
 

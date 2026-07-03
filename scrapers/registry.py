@@ -228,6 +228,10 @@ NBA_SCRAPER_REGISTRY: Dict[str, Tuple[str, str]] = {
         "scrapers.external.vsin_betting_splits",
         "VSiNBettingSplitsScraper"
     ),
+    "dknetwork_betting_splits": (
+        "scrapers.external.dknetwork_betting_splits",
+        "DKNetworkBettingSplitsScraper"
+    ),
     "espn_nba_news": (
         "scrapers.external.espn_nba_news",
         "ESPNNBANewsScraper"
@@ -528,6 +532,7 @@ SCRAPER_GROUPS = {
         "covers_referee_stats",
         "nba_tracking_stats",
         "vsin_betting_splits",
+        "dknetwork_betting_splits",
         "espn_nba_news",
         "espn_injuries",
         "rotowire_nba_news",

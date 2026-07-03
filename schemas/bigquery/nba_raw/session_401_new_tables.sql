@@ -212,3 +212,29 @@ CLUSTER BY home_team
 OPTIONS (
   description='VSiN public betting percentage splits for sharp money signal'
 );
+
+-- DraftKings Network betting splits (2026-07-02) — free replacement for the
+-- paywalled VSiN source. Same DraftKings-sourced game-total splits, plus DK
+-- event id and odds. Schema is VSiN-compatible so the sharp_money signals can
+-- consume it via the same field names.
+CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_raw.dknetwork_betting_splits` (
+  game_date DATE NOT NULL,
+  away_team STRING,
+  home_team STRING,
+  dk_event_id STRING,
+  total_line FLOAT64,
+  over_ticket_pct FLOAT64,
+  under_ticket_pct FLOAT64,
+  over_money_pct FLOAT64,
+  under_money_pct FLOAT64,
+  over_odds FLOAT64,
+  under_odds FLOAT64,
+  source_file_path STRING,
+  scraped_at TIMESTAMP,
+  processed_at TIMESTAMP
+)
+PARTITION BY game_date
+CLUSTER BY home_team
+OPTIONS (
+  description='DraftKings Network public betting splits — VSiN replacement (game totals)'
+);

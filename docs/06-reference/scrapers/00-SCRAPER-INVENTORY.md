@@ -210,12 +210,17 @@ Complete catalog of all 40+ production scrapers organized by data type and sourc
 - **Schedule:** Daily 2:00 PM ET (`nba-vsin-betting-splits`) — still running but producing 0 records
 - **Status:** ❌ DEFUNCT — VSiN moved betting splits behind Piano subscription paywall ~2026-03-28. Data table no longer served without credentials. Last data in BQ: 2026-03-28.
 - **Use Case:** Public betting percentages for sharp money signal (`sharp_money_over/under` — both shadow)
-- **Replacement research (2026-07-02, 5-agent sweep):** Zero production impact (all dependent signals shadow/removed). Decision: skip for now. Best candidates at 2026-27 open:
-  - **DraftKings Network** (`dknetwork.draftkings.com/draftkings-sportsbook-betting-splits/`) — FREE, server-rendered HTML (easy BS4 scrape), DK-sourced, game-level only. Best game-level drop-in.
-  - **PlayerProps.ai** (`playerprops.ai/trends`) — possibly the only free player-prop-level ticket%/handle% source. JS-rendered, needs Playwright + DevTools inspection to find XHR endpoints.
-  - **SportsDataIO** — paid API with documented `BetPercentage`/`MoneyPercentage` fields for player prop markets. Free trial, no credit card. Only confirmed API option for prop-level splits.
-  - **ActionNetwork** — CONFIRMED NOT VIABLE: DataDome bot protection blocks cloud IPs; game-level only at any tier; $29.99/mo PRO; AJAX-loaded live data.
-  - **DRF.com** — horse racing only. Dead end.
+- **REPLACED by `dknetwork_betting_splits` (2026-07-02)** — see below. VSiN scraper kept for reference but scheduler stays paused.
+- **Replacement research (2026-07-02, 5-agent sweep):** DK Network chosen and built. Other candidates for future player-prop-level splits: PlayerProps.ai (free, JS-rendered, needs Playwright), SportsDataIO (paid API, documented `BetPercentage`/`MoneyPercentage`). NOT viable: ActionNetwork (DataDome + game-level + $30/mo), DRF.com (horse racing).
+
+### dknetwork_betting_splits (DraftKings Network) — BUILT, awaiting season + scheduler
+- **Source:** DraftKings Network public betting splits (DraftKings-sourced) — FREE replacement for paywalled VSiN
+- **URL:** `https://dknetwork.draftkings.com/draftkings-sportsbook-betting-splits/?tb_eg=42648&tb_edate=today&tb_emt=Total`
+- **BigQuery Table:** `nba_raw.dknetwork_betting_splits` (created 2026-07-02, VSiN-compatible schema + dk_event_id/odds)
+- **Files:** `scrapers/external/dknetwork_betting_splits.py`, `data_processors/raw/external/dknetwork_betting_splits_processor.py`
+- **Status:** ✅ Phase 1 scraper + Phase 2 processor built, registered, and validated end-to-end (live fetch 1.5s, parse, BQ write all confirmed 2026-07-02 using in-season MLB as structural proxy). Server-rendered HTML, no auth, no bot protection. `proxy_enabled=False` (proven working from plain IP).
+- **Widget params:** `tb_eg` = event group (NBA 42648), `tb_edate` = today|tomorrow|n7days|n30days, `tb_emt` = Total|Spread|Moneyline
+- **Remaining (season-open, needs sign-off):** (1) create Cloud Scheduler job daily ~2 PM ET → nba-scrapers with `{"scraper":"dknetwork_betting_splits","date":"TODAY"}`; (2) first-game-day smoke test — verify non-zero games + NBA tricodes parse (matchup format assumed "LAL Lakers @ BOS Celtics"); (3) if 0 games / HTTP error, flip `proxy_enabled=True` (GCP egress may be blocked); (4) wire `sharp_money_over/under` + `public_fade_filter` in `supplemental_data.py` to read `dknetwork_betting_splits` (or UNION with vsin).
 
 ### espn_nba_news (ESPN) — FORWARD COLLECTION
 - **Source:** ESPN public JSON API

@@ -118,6 +118,7 @@ class GCSPathBuilder:
         "covers_referee_stats": "external/covers/referee-stats/%(season)s/%(timestamp)s.json",
         "nba_tracking_stats": "external/nba-tracking/%(date)s/%(timestamp)s.json",
         "vsin_betting_splits": "external/vsin/betting-splits/%(date)s/%(timestamp)s.json",
+        "dknetwork_betting_splits": "external/dknetwork/betting-splits/%(date)s/%(timestamp)s.json",
         "nba_injury_snapshots": "external/nba-injury-snapshots/%(date)s/%(timestamp)s.json",
         "espn_nba_news": "external/espn/nba-news/%(date)s/%(timestamp)s.json",
         "espn_injuries": "external/espn/injuries/%(date)s/%(timestamp)s.json",

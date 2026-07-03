@@ -51,6 +51,7 @@ from .external_extractors import (
     CoversRefereeStatsExtractor,
     NBATrackingStatsExtractor,
     VSiNBettingSplitsExtractor,
+    DKNetworkBettingSplitsExtractor,
     DailyFantasyFuelProjectionsExtractor,
     DimersProjectionsExtractor,
     ESPNProjectionsExtractor,
@@ -123,6 +124,7 @@ def create_registry() -> ExtractorRegistry:
     registry.register(NBATrackingStatsExtractor())
     # VSiN betting-splits MUST come before generic vsin due to substring matching
     registry.register(VSiNBettingSplitsExtractor())
+    registry.register(DKNetworkBettingSplitsExtractor())
     registry.register(DailyFantasyFuelProjectionsExtractor())
     registry.register(DimersProjectionsExtractor())
     registry.register(ESPNProjectionsExtractor())

@@ -6,6 +6,7 @@ from data_processors.raw.external.rotowire_lineups_processor import RotoWireLine
 from data_processors.raw.external.covers_referee_processor import CoversRefereeStatsProcessor
 from data_processors.raw.external.nba_tracking_processor import NBATrackingStatsProcessor
 from data_processors.raw.external.vsin_betting_splits_processor import VSiNBettingSplitsProcessor
+from data_processors.raw.external.dknetwork_betting_splits_processor import DKNetworkBettingSplitsProcessor
 
 __all__ = [
     'TeamRankingsStatsProcessor',
@@ -14,4 +15,5 @@ __all__ = [
     'CoversRefereeStatsProcessor',
     'NBATrackingStatsProcessor',
     'VSiNBettingSplitsProcessor',
+    'DKNetworkBettingSplitsProcessor',
 ]

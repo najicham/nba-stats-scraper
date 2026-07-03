@@ -102,6 +102,7 @@ from data_processors.raw.external.rotowire_lineups_processor import RotoWireLine
 from data_processors.raw.external.covers_referee_processor import CoversRefereeStatsProcessor
 from data_processors.raw.external.nba_tracking_processor import NBATrackingStatsProcessor
 from data_processors.raw.external.vsin_betting_splits_processor import VSiNBettingSplitsProcessor
+from data_processors.raw.external.dknetwork_betting_splits_processor import DKNetworkBettingSplitsProcessor
 from data_processors.raw.projections.dailyfantasyfuel_processor import DailyFantasyFuelProjectionsProcessor
 from data_processors.raw.projections.dimers_processor import DimersProjectionsProcessor
 from data_processors.raw.projections.espn_processor import ESPNProjectionsProcessor
@@ -187,6 +188,7 @@ PROCESSOR_REGISTRY = {
     'external/covers/referee-stats': CoversRefereeStatsProcessor,
     'external/nba-tracking': NBATrackingStatsProcessor,
     'external/vsin/betting-splits': VSiNBettingSplitsProcessor,
+    'external/dknetwork/betting-splits': DKNetworkBettingSplitsProcessor,
     'projections/dailyfantasyfuel': DailyFantasyFuelProjectionsProcessor,
     'projections/dimers': DimersProjectionsProcessor,
     'projections/espn': ESPNProjectionsProcessor,
