@@ -997,17 +997,35 @@ def query_predictions_with_supplements(
         logger.warning(f"Failed to query sharp book lean: {e}")
         sharp_lean_map = {}
 
-    # Session 404: VSiN sharp money data — handle% vs ticket% divergence.
+    # Session 404: sharp money data — handle% vs ticket% divergence.
     # When handle (money) diverges from tickets, sharp bettors are on the money side.
     # This is a game-level signal: over_money_pct vs over_ticket_pct.
+    # 2026-07-02: VSiN went behind a Piano paywall on 2026-03-28. DraftKings Network
+    # (dknetwork_betting_splits) is the free replacement with a VSiN-compatible schema.
+    # UNION both, preferring dknetwork per game; VSiN kept as a fallback in case it revives.
+    # Map/pred-key names stay `vsin_*` for backward-compat (sharp_money.py reads those keys).
     vsin_query = f"""
+    WITH combined AS (
+      SELECT away_team, home_team,
+        over_ticket_pct, under_ticket_pct, over_money_pct, under_money_pct,
+        1 AS src_priority
+      FROM `{PROJECT_ID}.nba_raw.dknetwork_betting_splits`
+      WHERE game_date = @target_date
+        AND over_money_pct IS NOT NULL AND over_ticket_pct IS NOT NULL
+      UNION ALL
+      SELECT away_team, home_team,
+        over_ticket_pct, under_ticket_pct, over_money_pct, under_money_pct,
+        2 AS src_priority
+      FROM `{PROJECT_ID}.nba_raw.vsin_betting_splits`
+      WHERE game_date = @target_date
+        AND over_money_pct IS NOT NULL AND over_ticket_pct IS NOT NULL
+    )
     SELECT away_team, home_team,
-      over_ticket_pct, under_ticket_pct,
-      over_money_pct, under_money_pct
-    FROM `{PROJECT_ID}.nba_raw.vsin_betting_splits`
-    WHERE game_date = @target_date
-      AND over_money_pct IS NOT NULL
-      AND over_ticket_pct IS NOT NULL
+      over_ticket_pct, under_ticket_pct, over_money_pct, under_money_pct
+    FROM combined
+    QUALIFY ROW_NUMBER() OVER (
+      PARTITION BY away_team, home_team ORDER BY src_priority
+    ) = 1
     """
     vsin_map = {}  # {(away, home): {over_money_pct, over_ticket_pct, ...}}
     try:
@@ -1020,9 +1038,9 @@ def query_predictions_with_supplements(
                 'over_ticket_pct': float(row['over_ticket_pct']),
                 'under_ticket_pct': float(row['under_ticket_pct']),
             }
-        logger.info(f"Loaded VSiN betting splits for {len(vsin_map)} games")
+        logger.info(f"Loaded betting splits (dknetwork+vsin) for {len(vsin_map)} games")
     except Exception as e:
-        logger.warning(f"Failed to query VSiN betting splits: {e}")
+        logger.warning(f"Failed to query betting splits (dknetwork/vsin): {e}")
 
     # 2026-06-29: Referee crew O/U tendency for ref_crew_under_tendency signal (shadow).
     # Keyed by (away_team_abbr, home_team_abbr) — same pattern as vsin_map.
