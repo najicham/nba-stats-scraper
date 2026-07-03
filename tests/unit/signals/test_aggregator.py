@@ -2072,15 +2072,18 @@ class TestMeanReversionUnderGuard:
         })
         assert result.qualifies
 
-    def test_fires_when_over_rate_missing(self):
+    def test_no_qualify_when_over_rate_missing(self):
+        # 2026-07-03: fail-closed guard. A missing over_rate_last_10 must NOT slip
+        # past the Session 451 high-scorer exclusion (previously `... or 0` coerced
+        # None→0 and let it qualify). Unknown over_rate → no_qualify.
         from ml.signals.mean_reversion_under import MeanReversionUnderSignal
         sig = MeanReversionUnderSignal()
         result = sig.evaluate({
             'recommendation': 'UNDER', 'line_value': 25.0,
             'trend_slope': 2.5, 'pts_avg_last3': 28.0,
-            # over_rate_last_10 missing → defaults to 0
+            # over_rate_last_10 missing → fail closed
         })
-        assert result.qualifies
+        assert not result.qualifies
 
 
 class TestMeanReversionInShadowSignals:

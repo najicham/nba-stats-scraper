@@ -367,10 +367,13 @@ OVER_QUALITY_WEIGHT = 0.3
 
 # Session 372: Teams with catastrophic UNDER HR (edge 3+, Dec 1+, N>=190).
 # High-variance offenses where scoring exceeds expectations.
-# Re-evaluate monthly as rosters change. Last validated: 2026-02-28.
-# MIN 43.8% (N=219), MEM 46.7% (N=197), MIL 48.7% (N=193).
-# Session 377: Added IND — 42.7% full-season HR (N=426), 18.9% Feb (N=185).
-UNDER_TOXIC_OPPONENTS = frozenset({'MIN', 'MEM', 'MIL', 'IND'})
+# 2026-07-03: BLANKED for 2026-27 season open. The {MIN,MEM,MIL,IND} set was a
+# 2025-26 roster property ("last validated 2026-02-28") that will misfire after
+# offseason trades change team scoring profiles. Recompute from ~1 month of
+# 2026-27 data (edge 3+, N>=190 per team) before re-populating. The only consumer
+# (opponent_under_block, ~line 1035) is already OBSERVATION-ONLY, so an empty set
+# simply disables that observation counter — zero pick impact either way.
+UNDER_TOXIC_OPPONENTS: frozenset = frozenset()
 
 # Signal health regime → weight multiplier (used for pick angles context)
 HEALTH_MULTIPLIERS = {
@@ -389,6 +392,31 @@ TIER_EDGE_CAPS = {
     'starter': None,   # line 18-24.5: uncapped (63.2% HR)
     'star': None,      # line 25+: uncapped
 }
+
+
+def _book_count_scaled_std_threshold(base_std: float, book_count: Optional[int]) -> float:
+    """Scale a cross-book std filter threshold by the number of posting books.
+
+    2026-07-03: The UNDER-blocking std filters (`high_book_std_under_block`,
+    `counter_market_under`) use FLAT thresholds calibrated in the 4-6 book Odds
+    API regime. In a 12+ book (BettingPros) regime the std distribution is wider,
+    so a flat threshold over-blocks (the code itself flags this as "noise" — see
+    the Session 522 note near the top of this file). This mirrors the signal-side
+    book-count scaling in sharp_consensus_under._get_min_std (4-6bk:1.0 /
+    7-11bk:1.5 / 12+bk:2.0) by RAISING the threshold as books increase, which
+    makes the filter block LESS in deep markets — never more.
+
+    Behavior-preserving when book_count is unknown (None): returns base_std
+    unchanged so no new over- or under-blocking is introduced.
+    """
+    if book_count is None:
+        return base_std           # unknown → preserve existing flat behavior
+    if book_count >= 12:
+        return base_std + 1.0     # BettingPros 12+ regime: std is noisy, require much more
+    if book_count >= 7:
+        return base_std + 0.5     # transition regime
+    return base_std               # 4-6 books: original Odds API calibration
+
 
 # =============================================================================
 # OBSERVATION FILTER AUDIT — 2026-05-15
@@ -1111,8 +1139,12 @@ class BestBetsAggregator:
             # means no consensus on the true line, killing UNDER edge.
             # Previous threshold was 1.0-1.5; broadened to >= 0.75.
             book_std = pred.get('multi_book_line_std') or 0
+            # 2026-07-03: book-count-aware threshold. Flat 0.75 is noise under 12-book
+            # markets; scale up in deep markets (no-op when book_count is unknown).
+            _hbs_threshold = _book_count_scaled_std_threshold(
+                0.75, pred.get('book_count'))
             if (pred.get('recommendation') == 'UNDER'
-                    and book_std >= 0.75):
+                    and book_std >= _hbs_threshold):
                 filter_counts['high_book_std_under_block'] += 1
                 # Use defaults for sig_count/sig_tags — `qualifying` and `tags` are
                 # only defined later (~line 1150), so referencing them here threw
@@ -1672,10 +1704,14 @@ class BestBetsAggregator:
             # direction and smart money — consistently loses.
             # 5-season cross-validated: blocked picks = 43.2% HR (N=447).
             _book_std = pred.get('multi_book_line_std') or 0
+            # 2026-07-03: book-count-aware threshold (flat 1.0 over-blocks under
+            # 12-book markets). No-op when book_count is unknown.
+            _cmu_threshold = _book_count_scaled_std_threshold(
+                1.0, pred.get('book_count'))
             if (pred.get('recommendation') == 'UNDER'
                     and bp_move is not None
                     and bp_move >= 0.5
-                    and _book_std >= 1.0):
+                    and _book_std >= _cmu_threshold):
                 filter_counts['counter_market_under'] += 1
                 _record_filtered(pred, 'counter_market_under', pred_edge, len(qualifying), tags)
                 if 'counter_market_under' not in self._runtime_demoted:

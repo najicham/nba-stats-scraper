@@ -1686,9 +1686,15 @@ def query_predictions_with_supplements(
 
         # Book disagreement stats (for book_disagreement signal, Session 303)
         if row_dict.get('multi_book_line_std') is not None:
+            # 2026-07-03: Plumb book_count (distinct bookmakers today) into book_stats.
+            # Previously NEVER populated here, so book_disagreement / book_disagree_over /
+            # book_disagree_under / sharp_consensus_under all read book_stats.get('book_count')
+            # as None and their book-count-aware / liquidity guards never fired. Source is
+            # the standalone book_count_map (feature store doesn't store book_count).
             supp['book_stats'] = {
                 'multi_book_line_std': float(row_dict['multi_book_line_std']),
                 'book_std_source': row_dict.get('book_std_source', ''),
+                'book_count': book_count_map.get(row_dict.get('player_lookup')),
             }
 
         # Prop line delta stats (for prop_line_drop_over signal, Session 294)

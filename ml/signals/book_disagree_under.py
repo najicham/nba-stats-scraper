@@ -43,7 +43,12 @@ class BookDisagreeUnderSignal(BaseSignal):
         if line_std is None or line_std < self.MIN_LINE_STD:
             return self._no_qualify()
 
-        if book_count is not None and book_count < 5:
+        # Fail CLOSED on liquidity: an unknown book_count (None) means we cannot
+        # confirm the market is deep enough for the cross-book std to be meaningful.
+        # Previously `book_count is not None and book_count < 5` SKIPPED the guard
+        # when book_count was missing, letting thin/unverified markets through.
+        # Treat unknown OR < 5 books as insufficient liquidity → no_qualify.
+        if book_count is None or book_count < 5:
             return self._no_qualify()
 
         confidence = min(0.90, self.CONFIDENCE + (line_std - self.MIN_LINE_STD) * 0.10)

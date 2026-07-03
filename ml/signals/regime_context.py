@@ -25,6 +25,45 @@ from typing import Any, Dict, Optional
 logger = logging.getLogger(__name__)
 
 
+def _apply_warmup_guard(result: Dict[str, Any]) -> Dict[str, Any]:
+    """Fail CLOSED to a conservative posture when trailing windows are empty.
+
+    2026-07-03: At 2026-27 season open the trailing edge/BB windows are empty,
+    so every regime lever (edge auto-halt, TIGHT-market OVER floor, cautious
+    regime) defaults to OFF/permissive. That is the WRONG default before we have
+    any live evidence. When the edge-halt window sampled < 3 days AND yesterday
+    produced no BB picks, treat it as warmup and adopt the TIGHT/cautious posture:
+      - raise the OVER edge floor to its TIGHT value (+1.0 → 6.0 base becomes 7.0)
+      - disable OVER signal rescue
+      - flag that UNDERs should require real_sc >= 2 (already the aggregator
+        default, surfaced here for the exporter/observability)
+
+    Behavior-preserving once >= 3 days of edge history exist (warmup=False) —
+    the normal regime logic then owns these fields.
+    """
+    days_sampled = result.get('edge_halt_days_sampled') or 0
+    yesterday_picks = result.get('yesterday_bb_picks') or 0
+
+    if days_sampled < 3 and yesterday_picks == 0:
+        result['warmup_conservative'] = True
+        # Raise OVER floor to TIGHT value and disable OVER rescue (fail closed).
+        result['over_edge_floor_delta'] = max(
+            result.get('over_edge_floor_delta', 0.0), 1.0)
+        result['disable_over_rescue'] = True
+        # Surface the UNDER real_sc>=2 requirement (aggregator already enforces
+        # this as its default UNDER floor; expose it so the exporter can report it).
+        result['under_min_real_sc'] = 2
+        logger.warning(
+            "Warmup guard ACTIVE (edge_halt_days_sampled=%s, yesterday_bb_picks=%s): "
+            "conservative posture — OVER floor +1.0, OVER rescue disabled, "
+            "UNDER real_sc>=2.", days_sampled, yesterday_picks
+        )
+    else:
+        result.setdefault('warmup_conservative', False)
+
+    return result
+
+
 def get_regime_context(bq_client, target_date: date) -> Dict[str, Any]:
     """Query yesterday's BB HR and classify the regime.
 
@@ -55,6 +94,9 @@ def get_regime_context(bq_client, target_date: date) -> Dict[str, Any]:
         'rolling_7d_avg_edge': None,
         'rolling_7d_pct_edge_5plus': None,
         'edge_halt_days_sampled': 0,
+        # 2026-07-03: warmup fail-closed posture (see _apply_warmup_guard)
+        'warmup_conservative': False,
+        'under_min_real_sc': None,
     }
 
     try:
@@ -111,8 +153,9 @@ def get_regime_context(bq_client, target_date: date) -> Dict[str, Any]:
             )
     except Exception as e:
         logger.warning(f"Regime context query failed (non-fatal): {e}")
-        # Default to 'normal' — no regime adjustments
-        return result
+        # Query failed → we have no trailing evidence. Fail CLOSED to the
+        # conservative warmup posture rather than the permissive 'normal' default.
+        return _apply_warmup_guard(result)
 
     # Apply regime effects
     if result['regime_state'] == 'cautious':
@@ -246,6 +289,12 @@ def get_regime_context(bq_client, target_date: date) -> Dict[str, Any]:
                 )
     except Exception as e:
         logger.warning(f"Edge-based halt query failed (non-fatal): {e}")
+
+    # 2026-07-03: Season-open fail-closed guard. When trailing windows are empty
+    # (edge_halt_days_sampled < 3 AND no BB picks yesterday), adopt the
+    # conservative posture instead of the permissive defaults. No-op once >= 3
+    # days of history exist.
+    result = _apply_warmup_guard(result)
 
     return result
 

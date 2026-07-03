@@ -14,6 +14,10 @@ logger = logging.getLogger(__name__)
 # Fallback season start dates (used if schedule service unavailable)
 # These are sourced from schedule database and updated periodically
 FALLBACK_SEASON_START_DATES = {
+    # 2026-07-03: Provisional 2026-27 opener. NBA regular season typically opens
+    # the third week of October (2025→Oct 21, 2024→Oct 22). CORRECT this once the
+    # official 2026-27 schedule publishes (~Aug-Sep 2026).
+    2026: date(2026, 10, 21),  # 2026-27 season (PROVISIONAL — verify vs official schedule)
     2025: date(2025, 10, 21),  # 2025-26 season (from schedule DB 2026-02-01)
     2024: date(2024, 10, 22),  # 2024-25 season (from schedule DB 2025-11-27)
     2023: date(2023, 10, 24),  # 2023-24 season (from schedule DB 2025-11-27)

@@ -49,8 +49,11 @@ class MeanReversionUnderSignal(BaseSignal):
         # Players with 60%+ season OVER rate have a structural trend, not a
         # statistical anomaly. Mean reversion assumes short-term hot streak —
         # breaks on Wemby/Herro (66.7% OVER rate). Uses feature 55 (0-1 scale).
-        over_rate = prediction.get('over_rate_last_10') or 0
-        if over_rate >= self.MAX_OVER_RATE:
+        # Fail CLOSED: a missing over_rate must NOT slip past the high-scorer
+        # exclusion. `... or 0` previously coerced None→0, defeating the guard
+        # for players whose over_rate_last_10 feature was unavailable.
+        over_rate = prediction.get('over_rate_last_10')
+        if over_rate is None or over_rate >= self.MAX_OVER_RATE:
             return self._no_qualify()
 
         slope = prediction.get('trend_slope') or 0

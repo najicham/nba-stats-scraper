@@ -61,6 +61,12 @@ class WholeLinePrecisionSignal(BaseSignal):
 
         line = float(line)
 
+        # Guard against a missing/zero line masquerading as a whole number:
+        # float(0.0).is_integer() is True, so a 0.0 line (no real prop line) would
+        # otherwise register as a "whole-number line" and fire the signal.
+        if line <= 0:
+            return self._no_qualify()
+
         # Whole-number gate: line must be an integer (no fractional part)
         if line != int(line):
             return self._no_qualify()
