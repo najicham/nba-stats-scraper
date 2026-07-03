@@ -80,13 +80,27 @@ VSiN scheduler: already PAUSED in GCP — no action needed.
 
 ---
 
-## Season-open checklist additions
+## DraftKings Network scraper — BUILT (2026-07-02)
 
-Add to the 2026-27 opening checklist:
-1. **DraftKings Network** (`dknetwork.draftkings.com/draftkings-sportsbook-betting-splits/`) — confirmed FREE, server-rendered HTML, game-level splits. Easy BS4 scrape — same pattern as original VSiN. Build this first if we want a game-level replacement.
-2. **PlayerProps.ai** (`playerprops.ai/trends`) — inspect in browser DevTools (Network tab → XHR), look for unauthenticated JSON endpoint for ticket%/handle% per player prop. If the endpoint is clean, this is the only free player-prop-level splits source.
-3. **SportsDataIO free trial** — validate NBA player prop splits coverage before committing to paid. Has documented `BetPercentage`/`MoneyPercentage` fields in their REST API schema.
-4. **Do NOT build ActionNetwork scraper** — DataDome blocks cloud IPs, game-level only, $29.99/mo PRO. Not worth it.
+Replaced the paywalled VSiN source with a free DraftKings Network scraper. Fully built, registered, and validated end-to-end (commit `17173267`).
+
+**What was built:**
+- **Phase 1 scraper** `scrapers/external/dknetwork_betting_splits.py` — parses `div.tb-se` game blocks → over/under ticket% (bets) + money% (handle), VSiN-compatible output + dk_event_id/odds. `proxy_enabled=False` (verified working from plain IP, 1.5s fetch). Registered in `scrapers/registry.py`.
+- **Phase 2 processor** `data_processors/raw/external/dknetwork_betting_splits_processor.py` → `nba_raw.dknetwork_betting_splits` (BQ table created, VSiN-compatible schema). Path extractor + processor routing wired.
+- **Validated** live fetch → parse → BQ write (3 rows, 0 failed) using in-season MLB as structural proxy (NBA is off-season, 0 games — expected).
+
+**Widget URL params (reverse-engineered):** `tb_eg=42648` (NBA), `tb_edate=today|tomorrow|n7days|n30days`, `tb_emt=Total|Spread|Moneyline`. Fully server-rendered HTML, no auth, no bot protection.
+
+**Remaining (season-open, needs sign-off):**
+1. **Scheduler** — create Cloud Scheduler job daily ~2 PM ET → nba-scrapers with `{"scraper":"dknetwork_betting_splits","date":"TODAY"}`.
+2. **First-game-day smoke test** — verify non-zero games + NBA tricodes parse correctly. NBA matchup format is *assumed* "LAL Lakers @ BOS Celtics" (validated MLB format "DET Tigers @ TEX Rangers"). If tricodes are wrong, adjust `resolve_team()`.
+3. **Proxy fallback** — if smoke test returns 0 games / HTTP errors, GCP egress IPs may be blocked → flip `proxy_enabled=True`.
+4. **Signal wiring** — point `sharp_money_over/under` + `public_fade_filter` in `supplemental_data.py` at `dknetwork_betting_splits` (or UNION with vsin). All shadow, zero pick impact until promoted.
+
+## Other candidates (not pursued)
+- **PlayerProps.ai** (`playerprops.ai/trends`) — possibly the only free *player-prop-level* ticket%/handle% source. JS-rendered, needs Playwright + DevTools XHR inspection. Worth exploring if we ever want prop-level (not game-level) splits.
+- **SportsDataIO** — paid API, documented `BetPercentage`/`MoneyPercentage` for prop markets. Free trial.
+- **ActionNetwork** — NOT viable (DataDome blocks cloud IPs, game-level only, $30/mo). **DRF.com** — horse racing only.
 
 ---
 
