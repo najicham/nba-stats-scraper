@@ -31,8 +31,8 @@ def _apply_warmup_guard(result: Dict[str, Any]) -> Dict[str, Any]:
     2026-07-03: At 2026-27 season open the trailing edge/BB windows are empty,
     so every regime lever (edge auto-halt, TIGHT-market OVER floor, cautious
     regime) defaults to OFF/permissive. That is the WRONG default before we have
-    any live evidence. When the edge-halt window sampled < 3 days AND yesterday
-    produced no BB picks, treat it as warmup and adopt the TIGHT/cautious posture:
+    any live evidence. When the edge-halt window has < 3 distinct prediction-days
+    sampled, treat it as warmup and adopt the TIGHT/cautious posture:
       - raise the OVER edge floor to its TIGHT value (+1.0 → 6.0 base becomes 7.0)
       - disable OVER signal rescue
       - flag that UNDERs should require real_sc >= 2 (already the aggregator
@@ -44,7 +44,14 @@ def _apply_warmup_guard(result: Dict[str, Any]) -> Dict[str, Any]:
     days_sampled = result.get('edge_halt_days_sampled') or 0
     yesterday_picks = result.get('yesterday_bb_picks') or 0
 
-    if days_sampled < 3 and yesterday_picks == 0:
+    # 2026-07-03 (revised): trigger on days_sampled < 3 ALONE. The earlier
+    # `AND yesterday_picks == 0` disarmed the guard on day 2 of the season (once
+    # day-1 picks graded), so it only protected opening day. days_sampled counts
+    # distinct prediction-days in the trailing 7d window; mid-season it is 5-7
+    # (predictions generate daily even under halt), so < 3 fires only at true
+    # season open or after a 5+ day prediction outage / All-Star break — where a
+    # conservative posture is desirable anyway.
+    if days_sampled < 3:
         result['warmup_conservative'] = True
         # Raise OVER floor to TIGHT value and disable OVER rescue (fail closed).
         result['over_edge_floor_delta'] = max(
@@ -153,9 +160,14 @@ def get_regime_context(bq_client, target_date: date) -> Dict[str, Any]:
             )
     except Exception as e:
         logger.warning(f"Regime context query failed (non-fatal): {e}")
-        # Query failed → we have no trailing evidence. Fail CLOSED to the
-        # conservative warmup posture rather than the permissive 'normal' default.
-        return _apply_warmup_guard(result)
+        # 2026-07-03 (revised): do NOT early-return here. The old early return
+        # skipped the TIGHT-market check AND the entire edge-based auto-halt
+        # evaluation below — so a transient failure of THIS (yesterday-HR) query
+        # would lift an active edge-collapse halt (fail OPEN). Instead fall
+        # through: regime_state stays 'normal' (a no-op below), while the macro
+        # and edge-halt queries still run under their own try/except, and the
+        # end-of-function warmup guard still applies the conservative posture
+        # when the trailing windows are empty.
 
     # Apply regime effects
     if result['regime_state'] == 'cautious':

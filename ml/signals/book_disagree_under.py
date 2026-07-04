@@ -43,12 +43,15 @@ class BookDisagreeUnderSignal(BaseSignal):
         if line_std is None or line_std < self.MIN_LINE_STD:
             return self._no_qualify()
 
-        # Fail CLOSED on liquidity: an unknown book_count (None) means we cannot
-        # confirm the market is deep enough for the cross-book std to be meaningful.
-        # Previously `book_count is not None and book_count < 5` SKIPPED the guard
-        # when book_count was missing, letting thin/unverified markets through.
-        # Treat unknown OR < 5 books as insufficient liquidity → no_qualify.
-        if book_count is None or book_count < 5:
+        # Liquidity guard: skip only when book_count is KNOWN to be thin (< 5).
+        # 2026-07-03: reverted a brief fail-closed change. In the production
+        # per_model_pipeline path book_count is not populated (None), and it would
+        # be cross-source anyway (Odds API distinct-book count vs the BettingPros
+        # 12-book std feeding line_std) — so failing closed on None silently
+        # zeroed this weighted UNDER-ranking signal in prod. Match the sibling
+        # book_disagreement guard (fail OPEN on unknown count) until book_count is
+        # plumbed same-source into the production path and backtested.
+        if book_count is not None and book_count < 5:
             return self._no_qualify()
 
         confidence = min(0.90, self.CONFIDENCE + (line_std - self.MIN_LINE_STD) * 0.10)

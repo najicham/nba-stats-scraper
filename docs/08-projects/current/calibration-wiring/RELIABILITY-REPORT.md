@@ -3,7 +3,28 @@
 **Date:** 2026-07-03
 **Author:** calibration-wiring session
 **Component:** `ml/calibration/edge_calibrator.py` (`EdgeCalibrator`, per-(family,direction) isotonic `edge → P(win)`)
-**Status:** Retrained, reliability-gated, wired as SHADOW `win_prob` (informational only; does NOT affect ranking/selection).
+**Status:** Wired as SHADOW `win_prob` (informational only; does NOT affect ranking/selection).
+
+---
+
+> ## ⚠️ DO NOT CONSUME — TRAINING DATA IS BACKFILL-LEAKED (added 2026-07-03, adversarial review)
+>
+> A follow-up adversarial review (BQ-verified) found this calibrator was fit on a **leaked** stratum
+> of `nba_predictions.prediction_accuracy`: **all ~94.8K training rows were graded in a single backfill
+> batch on 2026-01-10**, with impossible win rates (catboost_v8 74.4%, a moving-average baseline 62.8%
+> at edge≥1 — the Session 458 leakage signature). Against **live** v12-family rows (2026-01-09→present)
+> the true WR is ~45-55% across edges 3-8, while the served `_global` curve returns **61-68%** — an
+> over-promise of **6-20pp**. The ECE 0.0085 "pass" is circular (the holdout is the same contaminated
+> batch). The loader is also **direction-blind** (`fam = family if family else '_none'` never matches a
+> fit key → every pick routes to `_global`, which pools OVER+UNDER — the per-direction tables below are
+> never actually served).
+>
+> **Consequence:** re-running the Kelly sizing sim with this `win_prob` would flip Kelly from
+> falsely-negative to **falsely-POSITIVE** (bet large fractions on negative-EV picks). Do NOT ship the
+> pkls, do NOT consume `win_prob`, and do NOT re-run Kelly with it until the calibrator is **refit on
+> live-only rows or the clean walk-forward cache**, with a training-time assertion rejecting bulk-batch
+> `graded_at` dates, and the loader keying fixed. The reliability numbers below stand only as a record
+> of the (invalid) fit and MUST NOT be cited as evidence of calibration quality.
 
 ---
 
