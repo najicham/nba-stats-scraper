@@ -2,6 +2,16 @@
 
 **Date:** 2026-07-03
 **Script:** `scripts/nba/bankroll_simulation.py`
+
+> **Errata (2026-07-03 adversarial review):**
+> 1. The -115 break-even is **53.5%** (115/215), not 56.5% as originally written in the
+>    mechanism discussion below (corrected in place). The Kelly-declines-to-bet mechanism
+>    stands — the sized subset still realized only 50.5% HR, below the true break-even.
+> 2. **The `Ultra-Tier (2u)` arm was a silent no-op.** Its trigger requires
+>    `p_win >= 0.60` (`bankroll_simulation.py:231`), which no cache row satisfied
+>    (`row.get('p_win', 0)` defaults to 0), so every pick staked 1u and the arm's rows are
+>    byte-identical to Flat in every table. Do NOT cite them as evidence about ultra-tier
+>    staking — that arm has not actually been tested.
 **Data:** 5-season walk-forward backtest cache (`results/bb_simulator/`, loaded via
 `scripts/nba/training/discovery/data_loader.py`), 47.5K graded predictions.
 **Universe:** edge ≥ 3, OVER+UNDER, real odds.
@@ -101,7 +111,7 @@ vs 27.0%; P(positive) 12% vs 91%).
 Two mechanisms drive this:
 1. **The empirical-HR p_win proxy is not sharp enough to size on.** In the
    non-anomaly seasons, prior-season cell HRs frequently sat near or below the
-   -115 break-even (56.5%), so Kelly (a) declined to bet ~⅔ of the pool and
+   -115 break-even (53.5%), so Kelly (a) declined to bet ~⅔ of the pool and
    (b) the subset it *did* bet had lower realized HR (50.5% vs 56.3%). Kelly's
    "decline negative-EV bets" behavior became a **wrong-subset selection filter**
    given the noisy proxy — this conflates sizing with selection, and the noisy

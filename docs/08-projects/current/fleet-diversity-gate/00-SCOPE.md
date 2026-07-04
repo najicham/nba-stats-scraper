@@ -12,7 +12,7 @@ predictions, those signals silently produce **zero picks** — the fleet looks h
 whole class of high-HR signals is dead.
 
 This has happened: **Session 487** — all enabled models drifted to `r >= 0.95` LGBM clones,
-and `book_disagreement` / cross-model agreement collapsed for ~2 days before anyone noticed.
+and cross-model agreement collapsed for ~2 days before anyone noticed.
 
 Diversity was **monitored** but never **enforced at enable-time**:
 - `bin/analysis/model_correlation.py` — pairwise correlation report (manual, ad-hoc).
@@ -25,14 +25,28 @@ There was no pre-enable / CI gate. This project adds one.
 
 ## Which signals this protects (and which it does NOT)
 
-Protects the genuinely **cross-MODEL** consensus signals:
-- `book_disagreement` (best-bets rescue signal)
+Protects the genuinely **cross-MODEL** consensus subsets:
 - `xm_diverse_agreement`, `xm_consensus_3plus`, `xm_consensus_4plus`,
   `xm_quantile_agreement_under`, `xm_mae_plus_quantile_over`
-  (defined in `shared/config/cross_model_subsets.py` / `CrossModelScorer`)
+  (defined in `shared/config/cross_model_subsets.py`)
 
 These need multiple **decorrelated families / feature-sets** agreeing to fire.
 `xm_diverse_agreement` explicitly requires **two different feature-sets** to agree.
+
+**Caveat on the `xm_*` subsets (2026-07-03 adversarial review):** they are **tracking
+artifacts, not pick-affecting signals**. `CROSS_MODEL_SUBSETS` is consumed only by
+`data_processors/publishing/cross_model_subset_materializer.py` (subset-performance
+tracking), and the aggregator reads xm cross-model factors "for annotation, not scoring"
+(`ml/signals/aggregator.py` — `consensus_bonus` is computed but unused for ranking). So a
+diversity collapse silences the *tracking series*, not live picks. The gate is still worth
+running (the tracking series is how cross-model hypotheses get validated, and future
+promotion of any xm subset to a live signal depends on it), but do not describe it as
+protecting live pick output.
+
+**Does NOT protect `book_disagreement`** (2026-07-03 correction — it was wrongly listed
+here). `book_disagreement` fires on cross-**BOOK** line std (>1.5 across sportsbooks in
+`supplemental_data` `book_stats`, `ml/signals/book_disagreement.py`) — it has no dependency
+on fleet diversity. The Session 487 association was a co-occurrence, not a mechanism.
 
 **Does NOT protect `combo_3way`.** `combo_3way` is single-MODEL (verified in prior review)
 — fleet diversity is irrelevant to it. Do not justify this gate with `combo_3way`.
