@@ -1,4 +1,12 @@
-# Ignore build and deployment scripts
+# Ignore build and deployment scripts.
+# NOTE: this excludes bin/ from `gcloud builds submit` / `gcloud run deploy
+# --source` uploads. A `!bin/monitoring/` negation does NOT work here: gcloud's
+# git-mode file enumeration silently drops `!` re-includes under an excluded
+# dir (verified 2026-07-04 via `gcloud meta list-files-for-upload`). The
+# monitoring Cloud Run job images (pipeline-canary, drift-alerter, auto-cleanup)
+# COPY bin/monitoring/, so they MUST be built with a LOCAL `docker build`
+# (reads the real filesystem, ignores this file), NOT `gcloud builds submit`.
+# See bin/monitoring/rebuild_canary_image.sh.
 bin/
 docs/
 .git/
