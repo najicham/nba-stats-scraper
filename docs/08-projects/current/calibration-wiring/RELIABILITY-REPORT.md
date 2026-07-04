@@ -1,9 +1,16 @@
 # Edge Calibrator — Retrain + Reliability Report
 
-**Date:** 2026-07-03
+**Date:** 2026-07-03 (v2 refit: 2026-07-03, P1.1)
 **Author:** calibration-wiring session
 **Component:** `ml/calibration/edge_calibrator.py` (`EdgeCalibrator`, per-(family,direction) isotonic `edge → P(win)`)
 **Status:** Wired as SHADOW `win_prob` (informational only; does NOT affect ranking/selection).
+
+> **✅ RESOLVED — superseded by the clean refit `v2026-07-04-live` (see §7, added for P1.1).**
+> The loader now points at `models/edge_calibrators/v2026-07-04-live`, which was fit on
+> provenance-verified live-only rows, passed the reliability gate on a live regime-shifted
+> holdout (UNDER ECE 0.0022, monotone), and fixed the direction-blind keying. The warning
+> below stands as the record of why `v2026-07-03` is quarantined — never point back at it,
+> and never train on the 2022-25 `prediction_accuracy` strata.
 
 ---
 
@@ -151,3 +158,84 @@ accrues).
 2. Re-fit once production-family (v12_noveg / v9_mae) graded volume is cross-season, so per-family
    curves replace the `_global` fallback.
 3. Only after live validation: let sizing consume `win_prob` (handled elsewhere, `pipeline_merger`).
+
+---
+
+## 7. v2 CLEAN REFIT — `v2026-07-04-live` (P1.1, done 2026-07-03)
+
+### 7.1 The provenance discovery (what "live-only" actually requires)
+
+`graded_at` alone does NOT separate clean from leaked rows. BQ-verified:
+
+- Bulk grading batches exist on **2026-01-10** (123.8K rows, game_dates 2021→2025 — the fully
+  leaked strata), **2026-01-25** (8.2K rows) and **2026-02-22** (19K rows, game_dates
+  Dec 20→Feb 21). The later batches **MIX** two populations: predictions **created pre-game and
+  graded late** (legitimate; ~8K rows since 2025-12-20) and predictions **created 24h+ after the
+  game** (backfilled/leaked; ~18.8K rows).
+- The correct discriminator is **`player_prop_predictions.created_at` before the end of the game
+  day** — prediction creation time, not grading time. Since 2026-01-09, only 6,043 rows were
+  promptly graded but **9,998 rows (from 2026-01-04) are provenance-verified live**.
+
+Implemented as `load_live_verified_data()` (pre-game `created_at` join) plus a training-time
+guard `validate_training_provenance()` that **refuses to fit** on (a) any unverified frame where
+one `graded_at` day holds >30% of rows spanning >14d of game_dates (the bulk-batch signature) or
+(b) unverified rows graded >10d late. Both loaders in `edge_calibrator.py` now pass through the
+guard; regression tests in `tests/unit/ml/test_edge_calibrator.py` (12 tests).
+
+### 7.2 Fit + keying fixes
+
+- **Train:** provenance-verified live rows 2026-01-04 → 2026-02-28 (N=6,800).
+- **Holdout:** 2026-03-01 → 2026-06-30 (N=2,726) — deliberately the **regime-shifted**
+  (TIGHT-market / March-collapse) window; season effectively ends early April.
+- **Pooled-only ship** (`--pooled-only`): per-family isotonic curves at N=300-650 saturate at
+  0/100% in sparse tails (e.g. `v12_mae_UNDER` served 100% at edge 9 — the exact over-promise
+  failure mode being purged). Shipped keys: `_pooled_OVER`, `_pooled_UNDER`, `_global` only;
+  per-family curves return once cross-season live volume accrues (~1K+/key).
+- **Direction-blind loader bug FIXED:** `EdgeCalibrator.predict_win_prob` now falls back
+  `(family, direction)` → `_pooled_{direction}` → `_global`, and `win_prob_loader` passes the
+  production family through unmangled (the old `'_none'` substitution never matched any key, so
+  every pick had routed to the direction-pooled `_global`).
+
+Shipped curves (honest and humble — this is what live raw-stream edge is actually worth):
+
+```
+Group            N      WR   | E2  E3  E4  E5  E6  E7  E8  E9  E10
+_pooled_OVER    1853   49.3% | 49% 49% 51% 51% 51% 51% 51% 51% 51%
+_pooled_UNDER   4947   51.0% | 50% 51% 51% 51% 51% 53% 54% 54% 54%
+_global         6800   50.5% | 50% 51% 51% 51% 51% 53% 53% 53% 53%
+```
+
+### 7.3 Gate results (live holdout Mar 1 – Jun 30, N=2,726; `ml/calibration/evaluate_reliability.py`)
+
+| Calibrator | UNDER ECE | UNDER Brier | Monotone | Gate |
+|---|---|---|---|---|
+| **`v2026-07-04-live`** (ship) | **0.0022** | 0.2500 | Yes | **PASS** |
+| `v2026-07-03` (leaked, quarantined) | 0.1213 | 0.2662 | NO | FAIL |
+| WF-cache fit (Arm B, non-anomaly 5-season, N=15.9K) | 0.0545 | 0.2613 | NO | FAIL |
+
+- The leaked calibrator's failure on live data (predicted 59.8/62.2/66.6% vs observed
+  48.9/53.9/48.8%) **independently confirms the adversarial review's 6-20pp over-promise**.
+- The WF-cache fit also fails: the cross-season durable curve (UNDER 55-57% at edge 3-6) does
+  **not** transfer to the live 2026 raw stream — regime + fleet differ. Live-fit wins on both
+  honesty and ECE.
+
+### 7.4 Interpretation & consequences for Phase 2 (sizing)
+
+- The passing curve is **nearly flat at ~50-51%**: on the LIVE raw prediction stream, edge buys
+  almost no win-probability (live UNDER edge→WR is actually *inverted*: 60.9% at edge 1-2 down
+  to ~44-47% at edge 5-8; monotone isotonic honestly flattens it). The BB pipeline's selection
+  lift (+7-12pp) is NOT modeled by this calibrator, so `win_prob` on exported BB picks
+  **understates** their true win rate — the conservative direction for any future sizing use.
+- **A raw-stream p_win near breakeven means Kelly-on-raw would bet ~nothing** — consistent with
+  the narrowed Kelly verdict. The P2 sizing-only re-run must therefore size on the **BB stream's**
+  empirical win rate, and note: **only 175 graded live BB picks exist (102 OVER / 73 UNDER)**,
+  below the N≥300 the gameplan assumed. P2 is data-blocked until 2026-27 live picks accrue;
+  the earliest honest sizing decision is mid-season 2026-27.
+- ⚠️ These curves are fit on the 2025-26 anomaly season's live window (the only clean live data
+  that exists). Re-fit + re-gate on 2026-27 live data once N accrues (P4 promotion-tracker item).
+
+### 7.5 Remaining to ship (P3, unchanged)
+
+Ship `models/edge_calibrators/v2026-07-04-live/*.pkl` to the deployed runtime (GCS or image),
+add scikit-learn/joblib to `phase6_export/requirements-lock.txt`, make `CALIBRATOR_DIR`
+absolute, and verify `win_prob` populates in the preseason dress rehearsal.

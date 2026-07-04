@@ -3,11 +3,13 @@
 Wraps `EdgeCalibrator` with graceful failure so the best-bets exporter can
 attach an informational `win_prob` to each pick without any risk of crashing.
 
-- Loads the versioned clean-season calibrator from CALIBRATOR_DIR once and caches it.
+- Loads the versioned calibrator from CALIBRATOR_DIR once and caches it.
 - `attach_win_prob(edge, family, direction)` returns a float in [0,1] or None.
 - Never raises: any load/predict failure -> None (win_prob simply absent).
 
-Retrained 2026-07-03 on clean seasons 2022-23..2024-25 (excludes 2025-26 anomaly).
+v2026-07-04-live: refit on provenance-verified LIVE rows only (prediction
+created pre-game; the 2022-25 `prediction_accuracy` strata are backfill-leaked
+and must never be trained on — see edge_calibrator.validate_training_provenance).
 Reliability: see docs/08-projects/current/calibration-wiring/RELIABILITY-REPORT.md
 SHADOW ONLY: this value is informational and must NOT gate selection/ranking.
 """
@@ -18,8 +20,9 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# Versioned clean-season calibrators (does NOT use the stale March pkls).
-CALIBRATOR_DIR = Path('models/edge_calibrators/v2026-07-03')
+# Versioned live-verified calibrators. The v2026-07-03 dir is QUARANTINED
+# (backfill-leaked training data — do not point back at it).
+CALIBRATOR_DIR = Path('models/edge_calibrators/v2026-07-04-live')
 
 _calibrator = None            # cached EdgeCalibrator instance
 _load_attempted = False       # so we only try (and log) once
@@ -59,9 +62,11 @@ def attach_win_prob(edge, family, direction) -> Optional[float]:
     """Return calibrated P(win) in [0,1], or None if unavailable.
 
     Graceful: missing pkl, unknown (family, direction), or bad inputs -> None.
-    The underlying EdgeCalibrator falls back to its _global curve when a
-    (family, direction) key is absent (production families are not fit on the
-    clean-season legacy data, so this fallback is the normal path).
+    The family is passed through as-is (production `source_model_family`, e.g.
+    'v12_noveg_mae'); EdgeCalibrator's fallback chain is (family, direction)
+    → _pooled_{direction} → _global. The old `'_none'` substitution was the
+    direction-blind bug: it never matched a fitted key, so every pick routed
+    to _global, which pools OVER+UNDER.
     """
     cal = _get_calibrator()
     if cal is None:
@@ -70,8 +75,7 @@ def attach_win_prob(edge, family, direction) -> Optional[float]:
         e = float(edge)
         if direction not in ('OVER', 'UNDER'):
             return None
-        fam = family if family else '_none'
-        p = cal.predict_win_prob(e, fam, direction)
+        p = cal.predict_win_prob(e, family or None, direction)
         if p is None:
             return None
         p = float(p)
