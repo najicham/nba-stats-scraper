@@ -268,5 +268,17 @@
     "mode": "NULLABLE",
     "name": "created_at",
     "type": "TIMESTAMP"
+  },
+  {
+    "name": "export_run_at",
+    "type": "TIMESTAMP",
+    "mode": "NULLABLE",
+    "description": "When the export run that produced this candidate row started (scoped-upsert stamp)."
+  },
+  {
+    "name": "book_count",
+    "type": "INTEGER",
+    "mode": "NULLABLE",
+    "description": "Number of sportsbooks offering a line for this player (P1.4 book_count decision, Dec 2026)."
   }
 ]

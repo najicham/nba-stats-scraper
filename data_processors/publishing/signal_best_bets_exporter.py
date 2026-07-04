@@ -609,6 +609,14 @@ class SignalBestBetsExporter(BaseExporter):
                     f"before export (BQ + GCS consistent)"
                 )
 
+        # Session 443 (moved 2026-07-04): Write ALL model candidates to model_bb_candidates
+        # BEFORE the started-games early return below. Otherwise a candidate-starved re-export
+        # after tip-off returns early and never records provenance for that run. The scoped
+        # (system_id, player_lookup) upsert makes this safe on re-export.
+        model_bb_candidates = json_data.pop('_model_bb_candidates', [])
+        if model_bb_candidates:
+            self._write_model_bb_candidates(target_date, model_bb_candidates)
+
         # Safety guard: don't overwrite existing JSON with 0 picks on re-export
         # of past dates (all games finished → all predictions filtered out).
         if not json_data['picks'] and json_data.get('started_games_filtered'):
@@ -639,12 +647,6 @@ class SignalBestBetsExporter(BaseExporter):
                 target_date, json_data['picks'],
                 filter_summary=json_data.get('filter_summary'),
             )
-
-        # Session 443: Write ALL model candidates to model_bb_candidates BQ table
-        # for historical analysis and pipeline-level HR computation.
-        model_bb_candidates = json_data.pop('_model_bb_candidates', [])
-        if model_bb_candidates:
-            self._write_model_bb_candidates(target_date, model_bb_candidates)
 
         # Session 391: Write filter summary audit trail for historical analysis.
         # Persists rejection counts so we can retroactively detect patterns like
@@ -1414,9 +1416,38 @@ class SignalBestBetsExporter(BaseExporter):
         Returns:
             Flat list of candidate dicts ready for BQ batch write.
         """
+        # One timestamp per export run (scoped-upsert stamp; distinguishes intraday re-exports).
+        run_ts = datetime.now(timezone.utc).isoformat()
+
+        def _json_or_none(val):
+            # STRING columns (qualifying_subsets, filters_passed/failed, observation_flags):
+            # a Python list here fails the whole load job. Serialize non-empty lists to JSON
+            # text; emit None for empty/missing so the column is a clean NULL.
+            if val is None:
+                return None
+            if isinstance(val, (list, tuple, dict)):
+                return json.dumps(val, default=str) if len(val) else None
+            return val
+
+        def _int_or_none(val):
+            # star_teammates_out is INTEGER in BQ but the pipeline emits float().
+            if val is None:
+                return None
+            try:
+                return int(round(float(val)))
+            except (TypeError, ValueError):
+                return None
+
         all_candidates = []
         for system_id, result in pipeline_results.items():
             for candidate in result.candidates:
+                # Key-name mismatches: the pipeline sets is_home / rest_days, but the schema
+                # columns are home_away (STRING) and is_back_to_back (BOOLEAN). Map them so the
+                # columns stop being silently NULL. B2B convention = 0 days rest (nba_team_mapper).
+                _is_home = candidate.get('is_home')
+                _home_away = (None if _is_home is None else ('home' if _is_home else 'away'))
+                _rest_days = candidate.get('rest_days')
+                _is_b2b = (None if _rest_days is None else (_rest_days == 0))
                 all_candidates.append({
                     'game_date': target_date,
                     'player_lookup': candidate.get('player_lookup', ''),
@@ -1446,26 +1477,31 @@ class SignalBestBetsExporter(BaseExporter):
                     'combo_classification': candidate.get('combo_classification'),
                     'combo_hit_rate': candidate.get('combo_hit_rate'),
                     'rank_in_pipeline': candidate.get('rank_in_pipeline'),
-                    'qualifying_subsets': candidate.get('qualifying_subsets', []),
-                    'filters_passed': candidate.get('filters_passed', []),
-                    'filters_failed': candidate.get('filters_failed', []),
-                    'observation_flags': candidate.get('observation_flags', []),
-                    # Player/game context (often available in candidate)
+                    # STRING columns — serialize lists to JSON text (list -> STRING fails the load).
+                    'qualifying_subsets': _json_or_none(candidate.get('qualifying_subsets')),
+                    'filters_passed': _json_or_none(candidate.get('filters_passed')),
+                    'filters_failed': _json_or_none(candidate.get('filters_failed')),
+                    'observation_flags': _json_or_none(candidate.get('observation_flags')),
+                    # Player/game context (mapped from pipeline key names; some stay NULL until sourced)
                     'player_line_tier': candidate.get('player_line_tier'),
-                    'home_away': candidate.get('home_away'),
+                    'home_away': _home_away,
                     'spread': candidate.get('spread'),
                     'over_rate_last_10': candidate.get('over_rate_last_10'),
-                    'is_back_to_back': candidate.get('is_back_to_back'),
-                    'star_teammates_out': candidate.get('star_teammates_out'),
+                    'is_back_to_back': _is_b2b,
+                    'star_teammates_out': _int_or_none(candidate.get('star_teammates_out')),
+                    # P1.4: persist book_count now so December's decision is a query, not a rebuild.
+                    'book_count': _int_or_none(candidate.get('book_count')),
                     # Merge metadata (set by pipeline_merger._tag_candidate)
                     'was_selected': candidate.get('was_selected', False),
                     'selection_reason': candidate.get('selection_reason', ''),
                     'merge_rank': candidate.get('merge_rank'),
                     'pipeline_agreement_count': candidate.get('pipeline_agreement_count', 0),
-                    'pipeline_agreement_models': candidate.get('pipeline_agreement_models', []),
+                    # STRING column — serialize to JSON here so collected rows are load-ready.
+                    'pipeline_agreement_models': _json_or_none(candidate.get('pipeline_agreement_models')),
                     'direction_conflict_count': candidate.get('direction_conflict_count', 0),
                     'algorithm_version': candidate.get('algorithm_version', ALGORITHM_VERSION),
                     'created_at': datetime.now(timezone.utc).isoformat(),
+                    'export_run_at': run_ts,
                 })
         return all_candidates
 
@@ -1480,42 +1516,64 @@ class SignalBestBetsExporter(BaseExporter):
         whether selected or not. Enables post-hoc analysis of why picks were
         made, which models contributed, and merge decisions.
 
-        Uses DELETE+APPEND pattern for re-export safety.
+        Uses a SCOPED (system_id, player_lookup) upsert: DELETE only the rows for the
+        (system_id, player_lookup) pairs present in THIS run, then APPEND. A thin intraday
+        re-export (candidate-starved, post-tip) therefore refreshes only its own players
+        and cannot wipe the fuller morning set (the old full-date DELETE was last-writer-wins
+        lossy — e.g. 2026-03-10 ended with 2 rows vs 7 published picks). APPEND is aborted if
+        the DELETE fails, so a transient DELETE error cannot stack duplicate rows.
         """
         table_ref = f'{PROJECT_ID}.nba_predictions.model_bb_candidates'
 
         if not candidates:
             return
 
+        # Scoped delete keys: CONCAT(system_id,'|',player_lookup) for exactly this run's rows.
+        scope_keys = sorted({
+            f"{c.get('system_id', '')}|{c.get('player_lookup', '')}" for c in candidates
+        })
+
+        delete_ok = False
         try:
-            # Delete existing rows for this game_date (re-export safe)
             delete_query = f"""
             DELETE FROM `{table_ref}`
             WHERE game_date = @target_date
+              AND CONCAT(system_id, '|', player_lookup) IN UNNEST(@scope_keys)
             """
             job_config = bigquery.QueryJobConfig(
                 query_parameters=[
                     bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+                    bigquery.ArrayQueryParameter('scope_keys', 'STRING', scope_keys),
                 ]
             )
             self.bq_client.query(delete_query, job_config=job_config).result(timeout=30)
+            delete_ok = True
         except Exception as e:
-            logger.warning(
-                f"Failed to delete existing model_bb_candidates for {target_date} "
-                f"(will append anyway): {e}"
+            logger.error(
+                f"model_bb_candidates scoped DELETE failed for {target_date}; "
+                f"aborting APPEND to prevent duplicate rows: {e}",
+                exc_info=True,
             )
 
+        if not delete_ok:
+            logger.warning(
+                f"Skipping model_bb_candidates APPEND for {target_date}: "
+                f"scoped DELETE did not complete successfully."
+            )
+            return
+
         try:
-            # Convert pipeline_agreement_models list to JSON string for BQ
+            # Rows are already load-ready from _collect_all_model_candidates (STRING columns
+            # JSON-serialized, ints coerced); signal_tags stays a list for the REPEATED column.
+            # Defensive belt-and-suspenders: JSON-serialize any list that leaked into a
+            # non-REPEATED STRING column so one stray value can't fail the whole load.
             rows_to_insert = []
             for c in candidates:
                 row = dict(c)
-                if isinstance(row.get('pipeline_agreement_models'), list):
-                    row['pipeline_agreement_models'] = json.dumps(
-                        row['pipeline_agreement_models']
-                    )
-                if isinstance(row.get('signal_tags'), list):
-                    row['signal_tags'] = row['signal_tags']  # BQ REPEATED field
+                for col in ('pipeline_agreement_models', 'qualifying_subsets',
+                            'filters_passed', 'filters_failed', 'observation_flags'):
+                    if isinstance(row.get(col), (list, tuple, dict)):
+                        row[col] = json.dumps(row[col], default=str) if len(row[col]) else None
                 rows_to_insert.append(row)
 
             load_config = bigquery.LoadJobConfig(

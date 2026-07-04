@@ -1641,6 +1641,14 @@ def run_single_model_pipeline(
 
     candidates, filter_summary = aggregator.aggregate(predictions, signal_results_map)
 
+    # Provenance: rank each candidate within this model's pipeline by composite_score DESC
+    # (1-based). Persisted to model_bb_candidates.rank_in_pipeline for post-hoc analysis.
+    for _rank, _cand in enumerate(
+        sorted(candidates, key=lambda c: (c.get('composite_score') or 0.0), reverse=True),
+        start=1,
+    ):
+        _cand['rank_in_pipeline'] = _rank
+
     logger.info(
         f"Pipeline {system_id}: {len(predictions)} predictions -> "
         f"{len(candidates)} candidates (filtered {filter_summary.get('total_rejected', 0)})"
