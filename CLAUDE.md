@@ -125,8 +125,8 @@ nba-stats-scraper/
 - **Raw model: 53.4% HR at edge 3+** (2 seasons, N=2,193). Previous 85% was data leakage.
 - **BB pipeline: 60-66% HR** — signals/filters add +7-12pp above raw model.
 - **Top combos: 74-83% HR** — edge 5+ with combo_3way, rest_advantage, or book_disagreement.
-- **`weekly-retrain` CF fires every Monday 5 AM ET** — auto-retrains all enabled families, 56-day rolling window, governance gates enforced
-- **`./bin/retrain.sh --all --enable`** — manual equivalent for ad-hoc retraining
+- ⚠️ **WEEKLY RETRAINING IS SILENTLY DEAD (verified 2026-07-04).** The `weekly-retrain-trigger` scheduler was DELETED in the 94-job off-season purge; the `weekly-retrain` CF is HTTP-only (`eventTrigger: None`) with no invoker, so it fires NEVER. It must be RE-CREATED pre-opener (Wave C in `docs/02-operations/scheduler-restore-manifest-2026.md`). When restored it will fire Mon 5 AM ET — auto-retrains all enabled families, 56-day rolling window, governance gates enforced.
+- **`./bin/retrain.sh --all --enable`** — manual equivalent for ad-hoc retraining (**the ONLY working path until the trigger is restored**)
 - ~~`retrain-reminder` CF~~ — removed (orphan source dir cleaned up; Task #35 done 2026-06)
 - Stale models (10+ days) become confidently wrong: high edge but low HR
 - Walk-forward details: `docs/08-projects/current/model-management/MONTHLY-RETRAINING.md`
@@ -165,7 +165,7 @@ nba-stats-scraper/
 
 **Cloud Run Services:** prediction-coordinator, prediction-worker, nba-phase3-analytics-processors, nba-phase4-precompute-processors, nba-phase2-raw-processors, nba-scrapers, nba-grading-service
 
-**Cloud Functions (auto-deploy via `cloudbuild-functions.yaml`):** phase5b-grading, phase6-export, grading-gap-detector, phase3/4/5-to-next orchestrators, enrichment-trigger, daily-health-check, transition-monitor, pipeline-health-summary, nba-grading-alerts, live-freshness-monitor, self-heal-predictions, grading-readiness-monitor, post-grading-export, decay-detection (11 AM ET), weekly-retrain (Mon 5 AM ET, 4GiB/1800s), validation-runner, filter-counterfactual-evaluator (11:30 AM ET), morning-deployment-check (6 AM ET)
+**Cloud Functions (auto-deploy via `cloudbuild-functions.yaml`):** phase5b-grading, phase6-export, grading-gap-detector, phase3/4/5-to-next orchestrators, enrichment-trigger, daily-health-check, transition-monitor, pipeline-health-summary, nba-grading-alerts, live-freshness-monitor, self-heal-predictions, grading-readiness-monitor, post-grading-export, decay-detection (11 AM ET), validation-runner, filter-counterfactual-evaluator (11:30 AM ET), morning-deployment-check (6 AM ET). ⚠️ **`weekly-retrain` (Mon 5 AM ET, 4GiB/1800s) is NOT in `cloudbuild-functions.yaml`** — it does NOT auto-deploy; code changes reach it only incidentally via `shared/` redeploys or a manual deploy. Its scheduler `weekly-retrain-trigger` is currently DELETED (see the Model section) so it fires never.
 
 **Orphan source dirs:** cleaned up — Task #35 DONE (verified 2026-06; the previously-listed orphan dirs `retrain_reminder/`, `monthly_retrain/`, `phase4_failure_alert/`, `box_score_completeness_alert/`, `prediction_monitoring/`, `zero_workflow_monitor/`, `system_performance_alert/`, `upcoming_tables_cleanup/`, `firestore_cleanup/`, `mlb_pitcher_watchlist/`, `mlb_phase{3,4,5}_to_phase{4,5,6}/` are no longer in the repo).
 

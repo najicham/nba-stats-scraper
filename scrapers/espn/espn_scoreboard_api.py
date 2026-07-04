@@ -73,11 +73,9 @@ except ImportError:
     # Fallback if notification system not available
     def notify_error(*args, **kwargs):
         pass
-    def notify_warning(*args, **kwargs): pass  #
-    ):
+    def notify_warning(*args, **kwargs):
         pass
-    def notify_info(*args, **kwargs): pass  #
-    ):
+    def notify_info(*args, **kwargs):
         pass
 
 # Schedule service for season type detection

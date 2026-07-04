@@ -66,11 +66,9 @@ except ImportError:
     # Fallback if notification system not available
     def notify_error(*args, **kwargs):
         pass
-    def notify_warning(*args, **kwargs): pass  #
-    ):
+    def notify_warning(*args, **kwargs):
         pass
-    def notify_info(*args, **kwargs): pass  #
-    ):
+    def notify_info(*args, **kwargs):
         pass
 
 # Pub/Sub imports for publishing completion messages (added after Jan 23 incident)

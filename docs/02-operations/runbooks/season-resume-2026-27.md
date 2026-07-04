@@ -17,11 +17,17 @@ through November 2026.
 ## State at off-season end (carry-in)
 - All 7 NBA models BLOCKED; **edge-based auto-halt ACTIVE** (7d avg edge ~1.45 ≪ 5.0); **0 picks since ~Mar 28**.
 - This is CORRECT. Do not force picks. The halt recovers **automatically** once fresh models produce edge.
-- ~67 NBA Cloud Scheduler jobs paused for the off-season (verified 2026-06-27: 67 PAUSED / 72 ENABLED);
-  the 4 REB/AST data-clock jobs (`nba-{assists,rebounds}-props-{morning,pregame}`) are intentionally ENABLED
-  (confirmed). `weekly-retrain-trigger` is among the PAUSED set — its cron is correct (`0 5 * * 1`, year-round);
-  it just needs RESUMING pre-opener (forgetting it was the 2025-26 root cause). All MLB betting-path jobs are
-  also paused (MLB betting concluded/mothballed 2026-06-26 — leave paused).
+- ⚠️ **CORRECTION (2026-07-04, verified live):** many of the off-season NBA jobs were **DELETED**, not
+  paused — the 94-job purge removed them from Cloud Scheduler entirely. They must be **RE-CREATED** (not
+  resumed); `gcloud scheduler jobs resume` will fail on a deleted job. The authoritative restore list is
+  `docs/02-operations/scheduler-restore-manifest-2026.md` (65 deleted NBA jobs, waves A/B/C). The 4 REB/AST
+  data-clock jobs (`nba-{assists,rebounds}-props-{morning,pregame}`) are intentionally ENABLED (confirmed).
+- ⚠️ **`weekly-retrain-trigger` was DELETED, not paused — WEEKLY RETRAINING IS SILENTLY DEAD.** The
+  `weekly-retrain` CF is HTTP-only (`eventTrigger: None`) with no scheduler invoking it, so it fires never.
+  Verified 2026-07-04: `gcloud scheduler jobs list` shows no such job. It must be **RE-CREATED** pre-opener
+  (Wave C in the restore manifest; its correct cron was `0 5 * * 1` year-round). Forgetting weekly retraining
+  was the 2025-26 root cause — do NOT rely on a "resume" step. All MLB betting-path jobs are also gone/paused
+  (MLB betting concluded/mothballed 2026-06-26 — leave off).
 
 ## How the two safety mechanisms work (do not disable)
 1. **Edge-based auto-halt** (`ml/signals/regime_context.py`, Session 515). Halts ALL best-bets output when
@@ -42,8 +48,10 @@ through November 2026.
       schedule is published. Until then the season-start helper falls to the Oct-22 *default* (safe — never
       blends seasons — but ~1-day imprecise). Verify: `get_season_start_date(2026, use_schedule_service=False)`
       returns the true opener. (Closes the residual of the season-start bug fixed 2026-06-22.)
-- [ ] **Resume the paused schedulers.** Confirm the daily pipeline schedulers (phase scrapers, orchestrators,
-      monitoring) are ENABLED. `gcloud scheduler jobs list` HANGS in this env — verify per-job:
+- [ ] **RE-CREATE the deleted schedulers** (they were DELETED in the 94-job purge, not paused — see carry-in
+      correction above). Run `scripts/nba_offseason_restore_jobs.sh` against `scheduler-restore-manifest-2026.md`
+      (Aug deliverable); creates paused in Sept, resume in waves pre-opener. **`weekly-retrain-trigger` MUST be
+      among them (Wave C)** — its absence = silent dead retraining. Verify per-job (list HANGS in this env):
       `gcloud scheduler jobs describe JOB --location=us-west2 --project=nba-props-platform --format='value(state,schedule)'`.
 - [ ] **Verify REB/AST data clock is still ENABLED** (4 jobs: `nba-{assists,rebounds}-props-{morning,pregame}`)
       and that `market_type IN ('assists','rebounds')` rows actually land on the first NBA game days. Keep
@@ -79,8 +87,10 @@ Detail: `docs/09-handoff/2026-06-23-edge-calibration-RESULT.md`.
 
 1. **Expect ZERO or very few picks initially.** The auto-halt holds output until edge recovers; models are
    stale-to-the-new-season and the fleet is BLOCKED. This is the system working as designed.
-2. **Retrain the fleet on 2026-27 data as soon as governance N is reachable.** `weekly-retrain` CF fires Mon
-   5 AM ET (`orchestration/cloud_functions/weekly_retrain/`). Governance gates (HR≥53% edge3+, N≥15 graded,
+2. **Retrain the fleet on 2026-27 data as soon as governance N is reachable.** ⚠️ `weekly-retrain` CF will
+   fire Mon 5 AM ET ONLY AFTER `weekly-retrain-trigger` is re-created (it is currently DELETED — the CF is
+   HTTP-only with no invoker). Until then, retrain manually via `./bin/retrain.sh --all --enable`.
+   (`orchestration/cloud_functions/weekly_retrain/`.) Governance gates (HR≥53% edge3+, N≥15 graded,
    Vegas bias ±1.5, no tier bias >±5) will block models until enough new-season graded data exists — typically
    2-3 weeks in. Manual ad-hoc: `./bin/retrain.sh --all --enable` (use `--no-production-lines`, see CLAUDE.md).
 3. **Watch the scoring-regime shift.** The 2025-26 break correlated with `avg_actual` rising ~1K/player between

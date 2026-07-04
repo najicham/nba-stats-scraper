@@ -184,7 +184,7 @@ repos:
         entry: python .pre-commit-hooks/validate_python_syntax.py
         language: python
         pass_filenames: false
-        files: ^(bin/|shared/|data_processors/|predictions/|backfill_jobs/).*\.py$
+        files: ^(bin/|shared/|data_processors/|predictions/|backfill_jobs/|scrapers/|orchestration/).*\.py$
         verbose: true
 
       - id: validate-deploy-safety

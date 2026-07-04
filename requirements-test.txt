@@ -1,0 +1,14 @@
+# Test-only dependencies (not shipped to any runtime image).
+# Install:  .venv/bin/pip install -r requirements-test.txt
+#
+# Created 2026-07-04: bare `pytest` could not collect because these were missing
+# (pytest-cov aborted arg-parse via pytest.ini addopts; hypothesis/psutil/responses/
+# python-dotenv caused import-time collection errors). See docs handoff 2026-07-03-5.
+
+pytest>=7.4
+pytest-cov>=4.1        # optional coverage; NOT in pytest.ini addopts anymore
+pytest-html>=4.0       # optional --html report
+hypothesis>=6.90       # property-based tests (tests/**/test_*_properties.py etc.)
+psutil>=5.9            # perf/benchmark + resource tests
+responses>=0.24        # HTTP mocking for scraper tests
+python-dotenv>=1.0     # env loading in a few test helpers

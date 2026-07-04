@@ -12,8 +12,12 @@ import py_compile
 import sys
 import os
 
-# Directories included in Cloud Function deploy packages
-DEPLOY_DIRS = ['bin/monitoring', 'bin', 'shared', 'data_processors', 'predictions', 'backfill_jobs']
+# Directories included in Cloud Function / Cloud Run deploy packages.
+# 2026-07-04: added 'scrapers' and 'orchestration' — 3 SyntaxErrors in scrapers/espn/*.py
+# reached main because the scope excluded scrapers/ (orchestration/ was in the docstring but
+# never actually in this list).
+DEPLOY_DIRS = ['bin', 'shared', 'data_processors', 'predictions', 'backfill_jobs',
+               'scrapers', 'orchestration']
 
 def main():
     print("Checking Python syntax in deploy-critical directories...")
@@ -28,11 +32,19 @@ def main():
                 if not f.endswith('.py'):
                     continue
                 filepath = os.path.join(root, f)
+                # Skip symlinks: orchestration/ CF dirs symlink into shared/, and the real
+                # targets are already validated under the 'shared' walk. A dangling symlink
+                # would otherwise raise FileNotFoundError and crash the whole hook.
+                if os.path.islink(filepath):
+                    continue
                 checked += 1
                 try:
                     py_compile.compile(filepath, doraise=True)
                 except py_compile.PyCompileError as e:
                     errors.append(str(e))
+                except (OSError, ValueError) as e:
+                    # Unreadable file (e.g. broken path) — report, don't crash the hook.
+                    errors.append(f"{filepath}: {e}")
 
     if errors:
         print(f"\n{'='*60}")
