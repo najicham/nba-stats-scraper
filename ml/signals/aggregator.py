@@ -592,7 +592,22 @@ class BestBetsAggregator:
                              pred_edge_val: float = 0.0,
                              sig_count: int = 0,
                              sig_tags: Optional[List[str]] = None) -> None:
-            """Record a filtered-out pick for counterfactual analysis."""
+            """Record a filtered-out pick for counterfactual analysis.
+
+            Measurement-infra C1 (2026-07): when a caller passes no sig_tags
+            (the ~40 pre-signal-stage call sites), fall back to the FULL
+            qualifying-signal tag list already computed in signal_results for
+            this candidate. Previously only the post-signal-stage sites passed
+            tags, so ~68% of filtered rows lost their shadow tags — starving
+            the two-tier promotion stream (v_bb_candidate_signal_stream). This
+            is metadata only: it does not change which picks are selected.
+            """
+            if sig_tags is None:
+                _tags_key = (f"{pred_dict.get('player_lookup', '')}::"
+                             f"{pred_dict.get('game_id', '')}")
+                sig_tags = [r.source_tag
+                            for r in signal_results.get(_tags_key, [])
+                            if r.qualifies]
             filtered_picks.append({
                 'player_lookup': pred_dict.get('player_lookup', ''),
                 'game_id': pred_dict.get('game_id', ''),
