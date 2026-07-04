@@ -1882,10 +1882,15 @@ class TestAlgorithmVersion:
     """Session 452+: Algorithm version + single source of truth."""
 
     def test_algorithm_version_current(self):
-        """ALGORITHM_VERSION should start with 'v47'."""
+        """ALGORITHM_VERSION should be a versioned 'v<N>_...' string.
+
+        Don't pin a specific version — it bumps every algorithm change and the
+        exact value carries no test-worthy invariant. Assert the shape instead.
+        """
+        import re
         from ml.signals.aggregator import ALGORITHM_VERSION
-        assert ALGORITHM_VERSION.startswith('v47'), (
-            f"Expected ALGORITHM_VERSION to start with 'v47', got '{ALGORITHM_VERSION}'"
+        assert re.match(r'^v\d+', ALGORITHM_VERSION), (
+            f"Expected a 'v<N>...' version string, got '{ALGORITHM_VERSION}'"
         )
 
     def test_aggregator_and_merger_versions_match(self):

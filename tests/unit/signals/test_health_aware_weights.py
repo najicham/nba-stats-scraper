@@ -60,22 +60,24 @@ class TestOverLineRoseHeavyFilter:
             'opponent_team_abbr': 'BOS',
             'recommendation': 'OVER',
             'edge': 6.0,
-            'predicted_points': 25.0,
-            'line_value': 19.0,
-            'current_points_line': 19.0,
+            'predicted_points': 33.0,
+            'line_value': 26.0,  # star tier: avoids starter_over_sc_floor + bench/role blocks
+            'current_points_line': 26.0,
             'confidence_score': 0.7,
             'feature_quality_score': 95,
             'bp_line_movement': 1.5,  # Line rose >= 1.0 → should block
-            'points_avg_season': 20.0,
+            'points_avg_season': 27.0,
         }]
         from ml.signals.base_signal import SignalResult
-        # Provide enough signals to pass SC gate
+        # Include a real (non-base, non-shadow) signal so real_sc > 0 and the
+        # pick clears sc3_over_block to reach over_line_rose_heavy. (line_rising_over
+        # was demoted to SHADOW in Session 494 and no longer counts toward real_sc.)
         signal_results = {
             'test_player::g1': [
                 SignalResult(qualifies=True, confidence=0.9, source_tag='model_health'),
                 SignalResult(qualifies=True, confidence=0.9, source_tag='high_edge'),
                 SignalResult(qualifies=True, confidence=0.9, source_tag='edge_spread_optimal'),
-                SignalResult(qualifies=True, confidence=0.9, source_tag='line_rising_over'),
+                SignalResult(qualifies=True, confidence=0.9, source_tag='rest_advantage_2d'),
             ]
         }
         picks, summary = agg.aggregate(predictions, signal_results)

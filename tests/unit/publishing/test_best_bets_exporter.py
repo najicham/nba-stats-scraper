@@ -54,22 +54,24 @@ class TestTierConfiguration:
         assert 'strong' in TIER_CONFIG
         assert 'value' in TIER_CONFIG
 
+        # TIER_CONFIG is edge-based (refactored from the old confidence-based
+        # schema): each tier carries min_edge, max_picks and a target_hit_rate.
         for tier_name, config in TIER_CONFIG.items():
-            assert 'min_confidence' in config
             assert 'min_edge' in config
-            assert 'max_predicted_points' in config
             assert 'max_picks' in config
+            assert 'target_hit_rate' in config
 
     def test_premium_tier_criteria(self):
-        """Test premium tier has strictest criteria"""
+        """Test premium tier has the strictest (highest) edge floor + tightest cap."""
         premium = TIER_CONFIG['premium']
-        assert premium['min_confidence'] >= 0.90
         assert premium['min_edge'] >= 5.0
-        assert premium['max_predicted_points'] <= 18
+        assert premium['max_picks'] == 5
+        # Premium edge floor is at least as strict as strong's.
+        assert premium['min_edge'] >= TIER_CONFIG['strong']['min_edge']
 
     def test_avoid_criteria_structure(self):
-        """Test avoid criteria has expected fields"""
-        assert 'over_recommendation' in AVOID_CRITERIA
+        """Test avoid criteria has expected fields (current edge-based schema)."""
+        assert 'non_catboost_systems' in AVOID_CRITERIA
         assert 'min_edge_threshold' in AVOID_CRITERIA
         assert 'max_predicted_points' in AVOID_CRITERIA
         assert 'exclude_confidence_range' in AVOID_CRITERIA
@@ -570,32 +572,29 @@ class TestBuildRationale:
 
 
 class TestSafeFloat:
-    """Test suite for _safe_float utility method"""
+    """Test suite for the safe_float utility.
+
+    The exporter's private _safe_float was extracted to the module-level
+    safe_float in exporter_utils (default precision=2); the exporter imports and
+    uses it. Tests exercise that shared function directly.
+    """
 
     def test_safe_float_valid(self):
-        """Test valid float conversion"""
-        with patch('data_processors.publishing.best_bets_exporter.bigquery.Client'):
-            with patch('data_processors.publishing.base_exporter.storage.Client'):
-                exporter = BestBetsExporter()
-
-                assert exporter._safe_float(25.5678) == 25.568
-                assert exporter._safe_float(10) == 10.0
+        """Valid float conversion rounds to the default precision (2)."""
+        from data_processors.publishing.exporter_utils import safe_float
+        assert safe_float(25.5678) == 25.57
+        assert safe_float(10) == 10.0
+        assert safe_float(25.5678, precision=3) == 25.568
 
     def test_safe_float_none(self):
-        """Test None handling"""
-        with patch('data_processors.publishing.best_bets_exporter.bigquery.Client'):
-            with patch('data_processors.publishing.base_exporter.storage.Client'):
-                exporter = BestBetsExporter()
-
-                assert exporter._safe_float(None) is None
+        """None passes through as None."""
+        from data_processors.publishing.exporter_utils import safe_float
+        assert safe_float(None) is None
 
     def test_safe_float_nan(self):
-        """Test NaN handling"""
-        with patch('data_processors.publishing.best_bets_exporter.bigquery.Client'):
-            with patch('data_processors.publishing.base_exporter.storage.Client'):
-                exporter = BestBetsExporter()
-
-                assert exporter._safe_float(float('nan')) is None
+        """NaN is coerced to None."""
+        from data_processors.publishing.exporter_utils import safe_float
+        assert safe_float(float('nan')) is None
 
 
 class TestEmptyResponse:

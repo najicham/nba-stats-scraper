@@ -222,23 +222,31 @@ class TestAggregatorBlacklistIntegration:
     """Test that the aggregator respects player_blacklist."""
 
     def _make_prediction(self, player_lookup, game_id='game1', edge=5.0):
+        # UNDER + star line (26) + home: passes the current filter stack (the
+        # OVER edge floor rose to 6.0 in Session 522 and starter/mid-line OVER
+        # archetype blocks were added, so the old OVER/edge-5/line-20 fixture is
+        # now correctly rejected — irrelevant to what these blacklist tests check).
         return {
             'player_lookup': player_lookup,
             'game_id': game_id,
             'player_name': player_lookup.replace('_', ' ').title(),
             'team_abbr': 'LAL',
             'opponent_team_abbr': 'BOS',
-            'predicted_points': 25.0,
-            'line_value': 20.0,
-            'current_points_line': 20.0,
-            'recommendation': 'OVER',
+            'predicted_points': 15.0,
+            'line_value': 26.0,
+            'current_points_line': 26.0,
+            'recommendation': 'UNDER',
             'edge': edge,
             'confidence_score': 0.95,
             'feature_quality_score': 95,
+            'is_home': True,
+            'trend_slope': 2.0,  # outside flat_trend_under range (-0.5..0.5)
         }
 
-    def _make_qualifying_signals(self, source_tag1='model_health', source_tag2='high_edge',
+    def _make_qualifying_signals(self, source_tag1='model_health', source_tag2='home_under',
                                     source_tag3='rest_advantage_2d'):
+        # Two non-base signals (home_under, rest_advantage_2d) → real_sc=2, which
+        # clears the UNDER under_low_rsc (>=2) gate. model_health is a base signal.
         return [
             SignalResult(qualifies=True, confidence=0.8, source_tag=source_tag1),
             SignalResult(qualifies=True, confidence=0.9, source_tag=source_tag2),
@@ -301,8 +309,9 @@ class TestAggregatorBlacklistIntegration:
         assert len(picks) == 1
 
     def test_algorithm_version_updated(self):
-        """ALGORITHM_VERSION should reflect the latest session update."""
-        assert ALGORITHM_VERSION.startswith('v4')
+        """ALGORITHM_VERSION should be a versioned 'v<N>_...' string (not pinned)."""
+        import re
+        assert re.match(r'^v\d+', ALGORITHM_VERSION)
 
 
 # ============================================================================
@@ -310,36 +319,46 @@ class TestAggregatorBlacklistIntegration:
 # ============================================================================
 
 class TestAvoidFamiliarFilter:
-    """Test that the aggregator skips players with 6+ games vs opponent."""
+    """The familiar_matchup filter (6+ games vs opponent) was REMOVED in
+    Session 494 — games_vs_opponent must no longer exclude a pick. The old
+    observation-counter tests were deleted (the familiar_matchup counter no
+    longer exists); what remains asserts that games_vs_opponent is inert.
+    """
 
     def _make_prediction(self, player_lookup, game_id='game1', edge=5.0,
                          games_vs_opponent=0):
+        # UNDER + star line (26) + home + non-flat trend: passes the current
+        # filter stack (the old OVER/edge-5/line-20 fixture is now correctly
+        # rejected by the 6.0 OVER floor + archetype blocks).
         return {
             'player_lookup': player_lookup,
             'game_id': game_id,
             'player_name': player_lookup.replace('_', ' ').title(),
             'team_abbr': 'LAL',
             'opponent_team_abbr': 'BOS',
-            'predicted_points': 25.0,
-            'line_value': 20.0,
-            'current_points_line': 20.0,
-            'recommendation': 'OVER',
+            'predicted_points': 15.0,
+            'line_value': 26.0,
+            'current_points_line': 26.0,
+            'recommendation': 'UNDER',
             'edge': edge,
             'confidence_score': 0.95,
             'feature_quality_score': 95,
+            'is_home': True,
+            'trend_slope': 2.0,
             'games_vs_opponent': games_vs_opponent,
         }
 
     def _make_qualifying_signals(self):
+        # Two non-base signals → real_sc=2 (clears the UNDER under_low_rsc gate).
         return [
             SignalResult(qualifies=True, confidence=0.8, source_tag='model_health'),
-            SignalResult(qualifies=True, confidence=0.9, source_tag='high_edge'),
+            SignalResult(qualifies=True, confidence=0.9, source_tag='home_under'),
             SignalResult(qualifies=True, confidence=0.7, source_tag='rest_advantage_2d'),
         ]
 
     @patch('ml.signals.aggregator.load_combo_registry', return_value={})
-    def test_familiar_player_observation(self, mock_registry):
-        """Session 462: Familiar matchup is now observation — player passes through."""
+    def test_many_games_vs_opponent_not_excluded(self, mock_registry):
+        """7 games vs opponent no longer excludes (familiar_matchup removed S494)."""
         predictions = [
             self._make_prediction('familiar_player', games_vs_opponent=7),
             self._make_prediction('fresh_player', games_vs_opponent=2),
@@ -352,32 +371,15 @@ class TestAvoidFamiliarFilter:
         aggregator = BestBetsAggregator(combo_registry={})
         picks, summary = aggregator.aggregate(predictions, signal_results)
 
-        # Both pass through (familiar_matchup is observation only)
         player_lookups = [p['player_lookup'] for p in picks]
         assert 'familiar_player' in player_lookups
         assert 'fresh_player' in player_lookups
-        # Counter still tracks
-        assert summary['rejected']['familiar_matchup'] == 1
-
-    @patch('ml.signals.aggregator.load_combo_registry', return_value={})
-    def test_exactly_6_games_observation(self, mock_registry):
-        """Session 462: Exactly 6 games = observation (counted but not blocked)."""
-        predictions = [
-            self._make_prediction('border_player', games_vs_opponent=6),
-        ]
-        signal_results = {
-            'border_player::game1': self._make_qualifying_signals(),
-        }
-
-        aggregator = BestBetsAggregator(combo_registry={})
-        picks, summary = aggregator.aggregate(predictions, signal_results)
-
-        assert len(picks) == 1  # Passes through (observation mode)
-        assert summary['rejected']['familiar_matchup'] == 1
+        # The filter is gone — its counter key must not exist.
+        assert 'familiar_matchup' not in summary['rejected']
 
     @patch('ml.signals.aggregator.load_combo_registry', return_value={})
     def test_5_games_not_excluded(self, mock_registry):
-        """5 games vs opponent = NOT excluded (below threshold)."""
+        """5 games vs opponent = NOT excluded."""
         predictions = [
             self._make_prediction('ok_player', games_vs_opponent=5),
         ]
@@ -392,7 +394,7 @@ class TestAvoidFamiliarFilter:
 
     @patch('ml.signals.aggregator.load_combo_registry', return_value={})
     def test_missing_games_vs_opponent_not_excluded(self, mock_registry):
-        """Missing games_vs_opponent field should not trigger filter."""
+        """Missing games_vs_opponent field is inert."""
         pred = self._make_prediction('new_player')
         del pred['games_vs_opponent']  # field not present
         predictions = [pred]
@@ -418,7 +420,9 @@ class TestRelEdgeFilterRemoved:
         """Pick with |edge|/line >= 30% should NOT be blocked anymore.
 
         Previously this was blocked (49.7% HR), but replay showed it
-        blocks 62.8% combined HR picks (above breakeven).
+        blocks 62.8% combined HR picks (above breakeven). Uses UNDER so the
+        high rel_edge is isolated from the OVER-side archetype/floor blocks
+        (line 14, edge 5 -> rel_edge ~36%).
         """
         pred = {
             'player_lookup': 'big_edge_player',
@@ -426,17 +430,19 @@ class TestRelEdgeFilterRemoved:
             'player_name': 'Big Edge Player',
             'team_abbr': 'LAL',
             'opponent_team_abbr': 'BOS',
-            'predicted_points': 18.0,
-            'line_value': 12.0,  # edge=6, line=12, rel_edge=50%
-            'current_points_line': 12.0,
-            'recommendation': 'OVER',
-            'edge': 6.0,
+            'predicted_points': 9.0,
+            'line_value': 14.0,  # edge=5, line=14, rel_edge~36%
+            'current_points_line': 14.0,
+            'recommendation': 'UNDER',
+            'edge': 5.0,
             'confidence_score': 0.95,
             'feature_quality_score': 95,
+            'is_home': True,
+            'trend_slope': 2.0,
         }
         signals = [
             SignalResult(qualifies=True, confidence=0.8, source_tag='model_health'),
-            SignalResult(qualifies=True, confidence=0.9, source_tag='high_edge'),
+            SignalResult(qualifies=True, confidence=0.9, source_tag='home_under'),
             SignalResult(qualifies=True, confidence=0.7, source_tag='rest_advantage_2d'),
         ]
 
