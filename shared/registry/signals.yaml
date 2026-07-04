@@ -218,6 +218,20 @@ signals:
     status: shadow
     direction: under
     description: B2B Fatigue Under signal (auto-generated stub — verify)
+    # C3 pre-registered two-tier promotion gate (measurement-infra 2026-07-04).
+    # Authoritative record: docs/.../measurement-infrastructure/PREREG-promotion-gates-2026-27.md
+    promotion:
+      prereg_doc: PREREG-promotion-gates-2026-27.md
+      prereg_date: "2026-07-04"
+      stream: v_bb_candidate_signal_stream
+      side: under
+      precondition: "rest_days non-NULL on >= 90% of the UNDER stream (the S494 removal was a data bug)"
+      tier1: {population: "published+retracted+classA_blocked+merge_rejected", min_n: 100, min_hr: 0.58, min_wilson_lcb90: 0.524, on_pass: "eligible → UNDER_SIGNAL_WEIGHTS ~2.0 (non-rescue); user sign-off required"}
+      tier2_veto: {min_n: 15, veto_if_published_hr_below: 0.50}
+      kill: {min_n: 100, hr_below: 0.524}
+      fallback_path: "registry published N>=30 gate remains valid"
+      cannot_license: [rescue_activation, over_promotion]
+      clock: "~Feb 2027"
 
   - tag: bench_under
     status: active
@@ -326,11 +340,31 @@ signals:
     status: shadow
     direction: under
     description: "National-TV/primetime high-line UNDER — featured scorers underperform inflated marquee-game lines (54.7% 5-season, shadow, 2026-06-28)"
+    promotion:
+      prereg_doc: PREREG-promotion-gates-2026-27.md
+      prereg_date: "2026-07-04"
+      stream: v_bb_candidate_signal_stream
+      side: under
+      resolvable_this_season: false  # +1.2pp claimed effect needs N ~1,900 — not reachable in 2026-27
+      harm_gate: {min_n: 100, remove_if_hr_below: 0.50}
+      hold_else: "pool with 2027-28"
+      pairing_path: {stratum: "line >= 22", additive_min_delta_pp: 4.0, min_n_per_cell: 60}
+      cannot_license: [rescue_activation, over_promotion, standalone_weight_this_season]
+      clock: "UNRESOLVABLE 2026-27 (harm gate only)"
 
   - tag: whole_line_precision
     status: shadow
     direction: both
     description: "Whole-number prop line — book set line at integer (no .5), model accuracy +10-20pp (76% vs 63% raw 5-season, shadow, 2026-06-29)"
+    promotion:
+      prereg_doc: PREREG-promotion-gates-2026-27.md
+      prereg_date: "2026-07-04"
+      stream: v_bb_candidate_signal_stream
+      side: under  # UNDER only — OVER is frozen (see cannot_license)
+      tier1: {population: "published+retracted+classA_blocked+merge_rejected", min_n: 100, min_hr: 0.60, min_wilson_lcb90: 0.535, on_pass: "eligible → UNDER_SIGNAL_WEIGHTS 1.0-1.5; user sign-off required"}
+      kill: {min_n: 100, hr_below: 0.55}
+      cannot_license: [rescue_activation, over_promotion]
+      clock: "~Jan 2027"
 
   - tag: high_line_under
     status: shadow
@@ -342,6 +376,17 @@ signals:
     status: shadow
     direction: under
     description: "DK intraday line rose ≥ 0.5 + model UNDER — market converging with UNDER thesis (62.4% agree vs 46.6% disagree, T-3h, 2025-26, shadow, 2026-06-29)"
+    promotion:
+      prereg_doc: PREREG-promotion-gates-2026-27.md
+      prereg_date: "2026-07-04"
+      stream: v_bb_candidate_signal_stream
+      side: under
+      data_gated_on: [phase6-clv-reexport, intraday-odds-snapshots]  # gate cannot resolve without these
+      tier1: {population: "published+retracted+classA_blocked+merge_rejected", min_n: 100, min_hr: 0.58, min_wilson_lcb90: 0.524, on_pass: "eligible → UNDER_SIGNAL_WEIGHTS ~1.5 (non-rescue); user sign-off required"}
+      tier2_veto: {min_n: 15, veto_if_published_hr_below: 0.50}
+      kill: {min_n: 100, hr_below: 0.524}
+      cannot_license: [rescue_activation, over_promotion]
+      clock: "~mid-Dec 2026"
 
   - tag: negative_clv_filter
     status: shadow

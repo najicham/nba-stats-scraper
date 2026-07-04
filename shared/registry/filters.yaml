@@ -451,9 +451,75 @@ filters:
   - tag: clv_diverge_under_block
     status: active
     blocks_direction: under
+    block_class: B  # outcome-correlated (line-move) — EXCLUDED from Tier-1 stream
     description: "Active block filter (2026-06-29): UNDER + DK intraday line dropped >= 0.5 (closing < opening). Blocks picks where closing-line movement disagrees with our UNDER direction. Validated T-3h: UNDER where line dropped HR=46.6% vs line rose 62.4%. CF HR target: demote if rises above 55%."
+    # C3 pre-registered filter gate (measurement-infra 2026-07-04). Uses CF HR
+    # (hit rate of the BLOCKED picks): low CF HR = correctly blocking losers.
+    promotion:
+      prereg_doc: PREREG-promotion-gates-2026-27.md
+      prereg_date: "2026-07-04"
+      kind: filter_cf_hr
+      keep_if: {cf_hr_at_or_below: 0.50, min_n: 30, by: "~2027-01-15"}
+      demote_to_observation_if: {cf_hr_at_or_above: 0.55, min_n: 30, action: "add to ELIGIBLE_FOR_AUTO_DEMOTE min_picks=30"}
+      recheck_if: {cf_hr_between: [0.50, 0.55], at_min_n: 60}
+      note: "retracted_clv lane measured separately in the stream"
 
   - tag: low_variance_under_block
     status: observation
     blocks_direction: under
+    block_class: B  # outcome-correlated (variance/context) — EXCLUDED from Tier-1 stream
     description: "OBSERVATION (2026-07-01, pre-registered Wave 1): UNDER edge[3,5] + points_std_last_10 < 4.5. Low-σ scorers are priced accurately — low-edge UNDER against them is noise, not model edge. 4/5 backtest seasons blocked losers (+11pp) but 2025-26 inverted to 61.9% winners blocked (inversion may be scoring-anomaly regime). Records for CF grading only; does NOT block picks. Promote to active block if live CF HR <= 48% at N>=30 BB-level graded picks."
+    # C3 pre-registered filter gate (measurement-infra 2026-07-04).
+    promotion:
+      prereg_doc: PREREG-promotion-gates-2026-27.md
+      prereg_date: "2026-07-04"
+      kind: filter_cf_hr
+      activate_if: {cf_hr_at_or_below: 0.48, min_n: 30}
+      delete_if: {cf_hr_at_or_above: 0.58, min_n: 30}  # 2025-26-style inversion → filter blocks winners
+      hold_else: true
+
+# ============================================================================
+# C3 two-tier promotion-stream block-class classification (2026-07-04).
+# Read by the C4 promotion tracker to build the Tier-1 population from
+# v_bb_candidate_signal_stream. Authoritative rationale + full reasoning:
+# docs/08-projects/current/measurement-infrastructure/PREREG-promotion-gates-2026-27.md
+#
+# Tier-1 = published + retracted + merge_rejected + CLASS-A-blocked candidates.
+# Class A = selection-orthogonal (blocking is independent of any shadow signal's
+#           mechanism → including these does NOT bias the shadow-signal HR).
+# Class B = outcome-correlated (shooting/line-move/blowout/opponent/sanity/regime
+#           context) → EXCLUDED from Tier-1, diagnostic only. DEFAULT is B: any
+#           active/observation filter not listed here is Class B.
+# ============================================================================
+stream_block_class:
+  default: B
+  class_a:
+    # SC / real-signal-count gates (shadow tags are excluded from real_sc BY
+    # CONSTRUCTION — the cleanest orthogonality argument).
+    - signal_count
+    - signal_density
+    - sc3_over_block
+    - starter_over_sc_floor
+    - under_low_rsc
+    - over_low_rsc_obs
+    - zero_signal_extreme_underprediction
+    - signal_stack_2plus_obs
+    # Quality / confidence floors.
+    - quality_floor
+    - confidence
+    # Merge caps (team / volume / rescue / dedup).
+    - team_cap
+    - rescue_cap
+    - regime_rescue_blocked
+    # Blacklist.
+    - blacklist
+    - legacy_block
+    # Model-sanity.
+    - model_direction_affinity
+    - model_profile_would_block
+    # Edge floors.
+    - edge_floor
+    - over_edge_floor
+    - under_edge_7plus
+    - regime_over_floor
+    - anti_pattern
