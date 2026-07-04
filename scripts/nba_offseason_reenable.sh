@@ -31,6 +31,19 @@ gcloud scheduler jobs update http news-fetcher \
 echo "news-fetcher now covers nba+mlb"
 
 echo
+echo "== CLV closing-line capture (P1.2, 2026-07-03) — CREATE these before opening night =="
+echo "1. T-30 closing-line sweep (cannot be backfilled — every missed night is lost CLV data):"
+echo "   ./bin/deploy/deploy_closing_lines_scheduler.sh"
+echo "2. Late-slate CLV re-export (7:30 PM ET) — created by the phase6 scheduler deploy:"
+echo "   ./bin/deploy/deploy_phase6_scheduler.sh   # includes phase6-clv-reexport-late"
+echo "3. Restore the DELETED 'execute-workflows' job (workflow engine executor — betting_lines"
+echo "   and every other workflow is dark without it). Pull config from the backup JSON:"
+echo "   gs://nba-bigquery-backups/scheduler-jobs-backup/scheduler_jobs_backup_2026-07-03.json"
+echo "   (POST {nba-scrapers}/execute-workflows at '5 6-23 * * *' ET, OIDC auth; its twin"
+echo "   master-controller-hourly is still ENABLED — decisions get written but nothing"
+echo "   executes them until this job is restored.)"
+
+echo
 echo "== Pre-season fixes required (from the 2026-07-03 ten-agent review) =="
 echo "1. nba-pipeline-canary job is BROKEN: every execution fails with"
 echo "   \"can't open file '/app/bin/monitoring/pipeline_canary_queries.py'\"."

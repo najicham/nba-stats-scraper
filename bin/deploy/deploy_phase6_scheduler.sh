@@ -205,6 +205,18 @@ create_job "phase6-clv-reexport" \
     '{"export_types": ["signal-best-bets"], "target_date": "today"}' \
     "CLV T-3h re-export: refresh best-bets with afternoon line snapshots (4:30 PM ET)"
 
+# Job 7: CLV Late-Slate Re-export (2026-07-03, P1.2)
+# Runs at 7:30 PM ET, ~25 min after the 7 PM betting_lines run — gives the
+# late slate (9-10:30 PM tips) a T-1.5h-3h line read instead of the 4:30 PM
+# one. Safe for started early games: the exporter's scoped DELETE excludes
+# game_status >= 2 and the all-exporter freezes started picks. This is also
+# the run where clv_diverge_under_block retractions (signal_status=
+# 'retracted_clv') fire with the freshest pre-tip lines for the late slate.
+create_job "phase6-clv-reexport-late" \
+    "30 19 * * *" \
+    '{"export_types": ["signal-best-bets"], "target_date": "today"}' \
+    "CLV late-slate re-export: refresh best-bets with evening line snapshots (7:30 PM ET)"
+
 echo ""
 echo "============================================"
 echo "Deployment Complete!"
@@ -217,6 +229,7 @@ echo "  - phase6-player-profiles      (6 AM ET Sundays)"
 echo "  - phase6-hourly-trends        (6 AM - 11 PM ET hourly)"
 echo "  - phase6-season-game-counts   (6 AM ET daily)"
 echo "  - phase6-clv-reexport         (4:30 PM ET daily)"
+echo "  - phase6-clv-reexport-late    (7:30 PM ET daily)"
 echo ""
 echo "To test manually:"
 echo "  gcloud scheduler jobs run phase6-daily-results --location=$REGION"

@@ -883,9 +883,17 @@ def query_predictions_with_supplements(
     # snapshot_tag, picking snap-0006 (midnight) and snap-2201 (sparse late).
     # Now uses first snapshot >= 0600 (morning market open) and last <= 2200
     # (evening pre-game). Produces 5x more CLV-qualified players (10 vs 2).
+    # 2026-07-03 (P1.2): CANONICAL CLOSE = last snapshot with
+    # minutes_before_tipoff in [0, 45] (produced per-game by the T-30
+    # closing-line sweep; see scrapers/routes/closing_lines.py). Falls back
+    # per player to the Session 427 latest-snapshot heuristic when no [0,45]
+    # snapshot exists — which is the normal case INTRADAY (exports at 1 PM /
+    # 4:30 PM run before the sweep), so intraday behavior is unchanged;
+    # post-game consumers get the true close.
     clv_query = f"""
     WITH tagged AS (
-      SELECT player_lookup, points_line, snapshot_tag,
+      SELECT player_lookup, points_line, snapshot_tag, snapshot_timestamp,
+        minutes_before_tipoff,
         CAST(SUBSTR(snapshot_tag, 6) AS INT64) AS snap_time
       FROM `{PROJECT_ID}.nba_raw.odds_api_player_points_props`
       WHERE game_date = @target_date
@@ -905,16 +913,38 @@ def query_predictions_with_supplements(
       WHERE t.snapshot_tag = sb.earliest_snap
       GROUP BY 1
     ),
-    closing AS (
+    -- Canonical close: last pre-tip snapshot in the [0,45]-minute window.
+    true_close AS (
+      SELECT player_lookup, AVG(points_line) AS closing_line
+      FROM (
+        SELECT player_lookup, points_line, snapshot_timestamp,
+               MAX(snapshot_timestamp) OVER (PARTITION BY player_lookup) AS last_ts
+        FROM tagged
+        WHERE minutes_before_tipoff BETWEEN 0 AND 45
+      )
+      WHERE snapshot_timestamp = last_ts
+      GROUP BY 1
+    ),
+    legacy_closing AS (
       SELECT t.player_lookup, AVG(t.points_line) as closing_line
       FROM tagged t, snap_bounds sb
       WHERE t.snapshot_tag = sb.latest_snap
       GROUP BY 1
+    ),
+    closing AS (
+      SELECT
+        COALESCE(tc.player_lookup, lc.player_lookup) AS player_lookup,
+        COALESCE(tc.closing_line, lc.closing_line) AS closing_line,
+        tc.player_lookup IS NOT NULL AS is_true_close
+      FROM true_close tc
+      FULL OUTER JOIN legacy_closing lc
+        ON tc.player_lookup = lc.player_lookup
     )
     SELECT
       o.player_lookup,
       o.opening_line,
       c.closing_line,
+      c.is_true_close,
       o.opening_line - c.closing_line AS clv
     FROM opening o
     JOIN closing c ON o.player_lookup = c.player_lookup
@@ -928,6 +958,8 @@ def query_predictions_with_supplements(
                 'opening_line': float(row['opening_line']),
                 'closing_line': float(row['closing_line']),
                 'clv': float(row['clv']),
+                # True [0,45]-min-pre-tip close vs latest-snapshot fallback
+                'is_true_close': bool(row['is_true_close']),
             }
         logger.info(f"Loaded CLV data for {len(clv_map)} players")
     except Exception as e:

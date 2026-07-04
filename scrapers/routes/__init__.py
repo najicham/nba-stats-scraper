@@ -11,6 +11,7 @@ from .orchestration import orchestration
 from .cleanup import cleanup_bp
 from .catchup import catchup
 from .schedule_fix import schedule_fix
+from .closing_lines import closing_lines
 
 __all__ = [
     "health",
@@ -19,4 +20,5 @@ __all__ = [
     "cleanup_bp",
     "catchup",
     "schedule_fix",
+    "closing_lines",
 ]

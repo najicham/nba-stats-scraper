@@ -219,6 +219,16 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
         Treat 200 and 204 as success (204 => no markets yet).
         """
         if self.raw_response.status_code in (200, 204):
+            # 2026-07-03 (P1.2): surface Odds API quota consumption. The
+            # workflows.yaml quota_warning_pct has no in-repo denominator;
+            # these response headers are the ground truth for plan headroom.
+            remaining = self.raw_response.headers.get('x-requests-remaining')
+            used = self.raw_response.headers.get('x-requests-used')
+            if remaining is not None:
+                logger.info(
+                    "Odds API quota: %s requests remaining (%s used)",
+                    remaining, used,
+                )
             return
 
         # Non-success status code - send error notification

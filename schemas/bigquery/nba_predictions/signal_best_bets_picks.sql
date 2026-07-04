@@ -100,6 +100,16 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.signal_best_bets_
   is_voided BOOLEAN,
   void_reason STRING,
 
+  -- Retraction lifecycle (2026-07-03, CLV split-brain fix).
+  -- 'active' (default) | 'retracted_clv' — set when an intraday re-export's
+  -- clv_diverge_under_block drops a previously published pick (DK line moved
+  -- >= 0.5 against an UNDER). Retracted rows are STILL GRADED (needed to
+  -- measure the de-risk rule: HR(retracted) vs HR(active)) but are excluded
+  -- from the "in signal" set by the all-exporter merge and from the
+  -- JSON-vs-store canary's active count. NULL (legacy rows) means active.
+  signal_status STRING,
+  retracted_at TIMESTAMP,
+
   -- Metadata
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
 )

@@ -391,6 +391,7 @@ class BestBetsAllExporter(BaseExporter):
             b.pick_angles,
             b.ultra_tier,
             b.system_id,
+            b.signal_status,
             COALESCE(pa.prediction_correct, b.prediction_correct) AS prediction_correct,
             COALESCE(pa.actual_points, b.actual_points) AS actual_points,
             COALESCE(pa.is_voided, b.is_voided, FALSE) AS is_voided,
@@ -403,7 +404,7 @@ class BestBetsAllExporter(BaseExporter):
             AND pa.recommendation = b.recommendation
             AND pa.line_value = b.line_value
           WHERE b.game_date >= @season_start
-            AND b.game_date <= @target_date
+            AND b.game_date <= @target_date  -- <= correct: today's picks feed the today/history split
         ),
         -- Fallback: published picks for player-dates MISSING from signal_best_bets_picks.
         -- These are picks that were shown to users but lost from the signal table.
@@ -430,6 +431,7 @@ class BestBetsAllExporter(BaseExporter):
             CASE WHEN pp.ultra_tier IS NOT NULL AND pp.ultra_tier != ''
               THEN TRUE ELSE FALSE END AS ultra_tier,
             pp.system_id,
+            pp.signal_status,
             pa.prediction_correct,
             pa.actual_points,
             COALESCE(pa.is_voided, FALSE) AS is_voided,
@@ -442,7 +444,7 @@ class BestBetsAllExporter(BaseExporter):
             AND pa.recommendation = pp.recommendation
             AND pa.line_value = pp.line_value
           WHERE pp.game_date >= @season_start
-            AND pp.game_date <= @target_date
+            AND pp.game_date <= @target_date  -- <= correct: published fallback covers today too
             AND NOT EXISTS (
               SELECT 1 FROM signal_picks sp
               WHERE sp.player_lookup = pp.player_lookup
@@ -1116,11 +1118,19 @@ class BestBetsAllExporter(BaseExporter):
         started = started_game_ids or set()
         disabled = disabled_models or set()
 
-        # Index signal picks by player_lookup for fast lookup
+        # Index signal picks by player_lookup for fast lookup.
+        # 2026-07-03: rows marked retracted_clv in signal_best_bets_picks are
+        # NOT "in signal" — the intraday CLV re-export dropped them. Track
+        # them separately so the published row gets stamped (split-brain fix).
         signal_by_key = {}
+        retracted_by_key = {}
         for p in signal_picks:
             key = p.get('player_lookup', '')
-            if key:
+            if not key:
+                continue
+            if p.get('signal_status') == 'retracted_clv':
+                retracted_by_key[key] = p
+            else:
                 signal_by_key[key] = p
 
         # Index published picks by player_lookup
@@ -1185,9 +1195,24 @@ class BestBetsAllExporter(BaseExporter):
                 pick['_in_signal'] = False
                 pick['_locked'] = True
                 pick['_last_seen_in_signal'] = pub.get('last_seen_in_signal')
-                # Check if game has started (legitimate removal)
+                # 2026-07-03: CLV retraction sticks — once the intraday
+                # re-export retracted the pick (line moved >= 0.5 against an
+                # UNDER), it stays retracted, even past game start. Grading
+                # still happens; the status makes the de-risk rule measurable.
                 game_id = pick.get('game_id') or pub.get('game_id', '')
-                if game_id in started:
+                if key in retracted_by_key or pub.get('signal_status') == 'retracted_clv':
+                    pick['_signal_status'] = 'retracted_clv'
+                    # Refresh grading fields from the retained signal row.
+                    if key in retracted_by_key:
+                        ret = retracted_by_key[key]
+                        pick['prediction_correct'] = ret.get('prediction_correct')
+                        pick['actual_points'] = ret.get('actual_points')
+                        pick['is_voided'] = ret.get('is_voided')
+                        pick['void_reason'] = ret.get('void_reason')
+                    stats.setdefault('retracted_clv', 0)
+                    stats['retracted_clv'] += 1
+                # Check if game has started (legitimate removal)
+                elif game_id in started:
                     pick['_signal_status'] = 'game_started'
                 # Session 468: model_disabled no longer hides picks. Once
                 # published, a pick stays active on the site regardless of
@@ -1210,6 +1235,20 @@ class BestBetsAllExporter(BaseExporter):
             # even if a prior export stored them as 'algorithm'
             pick['_source'] = 'manual' if key in manual_by_key else pub.get('source', 'algorithm')
             merged[key] = pick
+
+        # Step 2b (2026-07-03): retracted picks that never made it into
+        # best_bets_published_picks (retracted between publishes). Keep them
+        # in the record as retracted — they were shown in the signal JSON.
+        for key, ret in retracted_by_key.items():
+            if key not in merged:
+                pick = dict(ret)
+                pick['_in_signal'] = False
+                pick['_locked'] = True
+                pick['_signal_status'] = 'retracted_clv'
+                pick['_source'] = 'algorithm'
+                merged[key] = pick
+                stats.setdefault('retracted_clv', 0)
+                stats['retracted_clv'] += 1
 
         # Step 3: Add signal picks not yet published (new picks)
         for key, sig in signal_by_key.items():
@@ -1318,7 +1357,11 @@ class BestBetsAllExporter(BaseExporter):
             # Session 412: True pick locking — published = active, always.
             # Session 468: model_disabled no longer a special status — once
             # published, picks stay active. Only game_started is legitimate.
-            if p.get('_signal_status') == 'game_started':
+            # 2026-07-03: retracted_clv added — intraday CLV retraction is
+            # a real lifecycle state (measurable de-risk rule), not a drop.
+            if p.get('_signal_status') == 'retracted_clv':
+                signal_status = 'retracted_clv'
+            elif p.get('_signal_status') == 'game_started':
                 signal_status = 'game_started'
             else:
                 signal_status = 'active'

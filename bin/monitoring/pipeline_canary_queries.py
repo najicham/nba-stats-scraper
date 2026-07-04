@@ -1594,7 +1594,7 @@ def check_published_vs_store_consistency(bq_client: bigquery.Client) -> Tuple[bo
         SELECT COUNT(*) AS active_picks
         FROM `{PROJECT_ID}.nba_predictions.signal_best_bets_picks`
         WHERE game_date = CURRENT_DATE()
-          AND signal_status = 'active'
+          AND COALESCE(signal_status, 'active') = 'active'
         """
         store_result = list(bq_client.query(store_query).result(timeout=30))[0]
         store_pick_count = store_result.active_picks or 0
@@ -1623,6 +1623,72 @@ def check_published_vs_store_consistency(bq_client: bigquery.Client) -> Tuple[bo
     except Exception as e:
         logger.error(f"Error in published vs store consistency check: {e}")
         return False, {}, f"published vs store consistency check error: {e}"
+
+
+def check_closing_line_capture(
+    bq_client: bigquery.Client,
+    min_coverage_pct: float = 90.0,
+) -> Tuple[bool, Dict, Optional[str]]:
+    """2026-07-03 (P1.2): Alert when yesterday's games lack true closing lines.
+
+    The CLV UNDER edge (+15.8pp, p=5e-26) was validated on to-the-tip
+    snapshots; the canonical close is the last odds snapshot with
+    minutes_before_tipoff in [0, 45], produced per-game by the T-30
+    closing-line sweep (nba-closing-lines-sweep -> /closing-line-sweep).
+    Before that sweep existed only ~34% of games had one. If coverage drops,
+    the sweep is broken (scheduler paused, endpoint failing, Odds API quota)
+    and closes CANNOT be backfilled — every missed night is lost CLV data.
+
+    Pass: >= min_coverage_pct of yesterday's FINAL games have >= 1 snapshot
+    in the closing window. Skips when yesterday had no games (off-season).
+    """
+    try:
+        query = f"""
+        WITH games AS (
+          SELECT game_id
+          FROM `{PROJECT_ID}.nba_raw.nbac_schedule`
+          WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+            AND game_status = 3
+        ),
+        covered AS (
+          SELECT DISTINCT game_id
+          FROM `{PROJECT_ID}.nba_raw.odds_api_player_points_props`
+          WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+            AND minutes_before_tipoff BETWEEN 0 AND 45
+        )
+        SELECT
+          (SELECT COUNT(*) FROM games) AS games_final,
+          (SELECT COUNT(*) FROM games g
+            WHERE EXISTS (SELECT 1 FROM covered c WHERE c.game_id = g.game_id)
+          ) AS games_with_close
+        """
+        row = list(bq_client.query(query).result(timeout=30))[0]
+        games_final = int(row.games_final or 0)
+        games_with_close = int(row.games_with_close or 0)
+
+        if games_final == 0:
+            return True, {'skipped': True, 'reason': 'no final games yesterday'}, None
+
+        coverage_pct = round(100.0 * games_with_close / games_final, 1)
+        metrics = {
+            'games_final': games_final,
+            'games_with_close': games_with_close,
+            'coverage_pct': coverage_pct,
+        }
+        if coverage_pct < min_coverage_pct:
+            return False, metrics, (
+                f"CLOSING-LINE CAPTURE GAP: only {games_with_close}/{games_final} "
+                f"({coverage_pct}%) of yesterday's games have a snapshot at "
+                f"minutes_before_tipoff in [0,45] (threshold {min_coverage_pct}%). "
+                f"Check the nba-closing-lines-sweep scheduler job, the "
+                f"/closing-line-sweep endpoint on nba-scrapers, and Odds API "
+                f"quota. Closes cannot be backfilled — this is lost CLV data."
+            )
+        return True, metrics, None
+
+    except Exception as e:
+        logger.error(f"Error in closing line capture check: {e}")
+        return False, {}, f"closing line capture check error: {e}"
 
 
 def check_fleet_diversity(bq_client: bigquery.Client) -> Tuple[bool, Dict, Optional[str]]:
@@ -2133,6 +2199,31 @@ def main():
         results.append((published_vs_store_check, pvs_passed, pvs_metrics, pvs_error))
     elif is_nba_offseason:
         logger.info("NBA offseason/playoffs — skipping published vs store consistency check")
+
+    # 2026-07-03 (P1.2): Closing-line capture — yesterday's games must have a
+    # [0,45]-min pre-tip snapshot (the T-30 sweep output). Not backfillable.
+    if _should_run("closing_line_capture") and not is_nba_offseason:
+        closing_capture_check = CanaryCheck(
+            name="Closing-Line Capture",
+            phase="closing_line_capture",
+            query="",  # custom check function
+            thresholds={},
+            description="Alerts when yesterday's games lack a true closing snapshot (minutes_before_tipoff in [0,45]) — the T-30 sweep is broken and CLV data is being lost"
+        )
+        clc_passed, clc_metrics, clc_error = check_closing_line_capture(client)
+        clc_status = "✅ PASS" if clc_passed else "❌ FAIL"
+        if clc_metrics.get('skipped'):
+            logger.info(f"Closing-Line Capture: ⏭️  SKIPPED ({clc_metrics.get('reason')})")
+        else:
+            logger.info(
+                f"Closing-Line Capture: {clc_status} "
+                f"({clc_metrics.get('games_with_close', '?')}/"
+                f"{clc_metrics.get('games_final', '?')} games, "
+                f"{clc_metrics.get('coverage_pct', '?')}%)"
+            )
+            if not clc_passed:
+                logger.warning(f"  Error: {clc_error}")
+        results.append((closing_capture_check, clc_passed, clc_metrics, clc_error))
 
     # Session 487: Fleet diversity check — all enabled models same family kills combo signals
     if _should_run("fleet_diversity"):

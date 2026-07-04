@@ -28,7 +28,10 @@ except ImportError:
     logging.warning("startup_verification not available - running without verification")
 
 # Import blueprints
-from .routes import health, scraper, orchestration, cleanup_bp, catchup, schedule_fix
+from .routes import (
+    health, scraper, orchestration, cleanup_bp, catchup, schedule_fix,
+    closing_lines,
+)
 
 
 def create_app():
@@ -48,6 +51,7 @@ def create_app():
     app.register_blueprint(cleanup_bp)
     app.register_blueprint(catchup)
     app.register_blueprint(schedule_fix)
+    app.register_blueprint(closing_lines)
 
     return app
 

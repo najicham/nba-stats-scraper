@@ -58,6 +58,26 @@ Notable deleted NBA-season jobs you may want back in October:
 - Artifact Registry cleanup policies added (keep 5 recent, delete >30d) — permanent, no action needed
 - Logging exclusion `exclude-bq-audit-noise` added — permanent, no action needed
 
+## CLV closing-line capture (P1.2) — jobs to CREATE before opening night
+
+These did not exist at shutdown; they ship with the 2026-07-03 P1.2 work and are
+**season-open-BLOCKING** (closing lines cannot be backfilled):
+
+1. **`nba-closing-lines-sweep`** — per-game T-30 odds snapshot. Create with
+   `./bin/deploy/deploy_closing_lines_scheduler.sh` (add `--paused` if creating
+   before the nba-scrapers deploy that ships `/closing-line-sweep`). Verify in
+   preseason: every final game gets a snapshot with `minutes_before_tipoff IN [0,45]`
+   (`snapshot_type='closing'`); the `closing_line_capture` canary alerts below 90%.
+2. **`phase6-clv-reexport-late`** — 7:30 PM ET signal-best-bets re-export for the
+   late slate. Created by `./bin/deploy/deploy_phase6_scheduler.sh`.
+3. **Restore `execute-workflows`** (deleted in the 94-job purge) — the workflow
+   executor; `betting_lines` produces zero snapshots without it. Config in the
+   backup JSON (`scheduler_jobs_backup_2026-07-03.json`): POST
+   `{nba-scrapers}/execute-workflows`, `5 6-23 * * *` ET, OIDC. Its twin
+   `master-controller-hourly` (`/evaluate`) is still ENABLED (`0 * * * *`,
+   verified 2026-07-03) — decisions are being written but nothing executes them
+   until `execute-workflows` is restored.
+
 ## Pre-season fixes required (found by the 2026-07-03 ten-agent review)
 
 1. **`nba-pipeline-canary` job is broken** — every execution fails:

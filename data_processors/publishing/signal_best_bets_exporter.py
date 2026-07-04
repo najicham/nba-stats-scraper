@@ -659,6 +659,19 @@ class SignalBestBetsExporter(BaseExporter):
         if filtered_picks:
             self._write_filtered_picks(target_date, filtered_picks)
 
+        # 2026-07-03: CLV retraction (split-brain fix). If an intraday re-export
+        # blocked a previously published pick via clv_diverge_under_block, the
+        # scoped DELETE above cannot touch it (the player is absent from the new
+        # pick set), so the morning row would silently stay 'active' and grade
+        # as taken while the SAME pick grades as blocked in filtered_picks.
+        # Mark it retracted instead — still graded, but separable, which makes
+        # the "drop if close moved >= 0.5 against it" rule measurable.
+        self._mark_clv_retractions(
+            target_date,
+            filtered_picks,
+            current_players={p['player_lookup'] for p in json_data.get('picks', [])},
+        )
+
         # Strip internal-only fields from public JSON.
         # BQ write above gets full ultra_tier + ultra_criteria.
         # Public JSON shows ultra_tier (bool) but not ultra_criteria (internal detail).
@@ -936,6 +949,8 @@ class SignalBestBetsExporter(BaseExporter):
                 'compression_scaled_edge': pick.get('compression_scaled_edge'),
                 # 2026-07-01: Kelly haircut for co-directional same-team pairs.
                 'bet_size_units': pick.get('bet_size_units', 1.0),
+                # 2026-07-03: retraction lifecycle (CLV split-brain fix).
+                'signal_status': 'active',
                 'created_at': datetime.now(timezone.utc).isoformat(),
             })
 
@@ -1041,6 +1056,83 @@ class SignalBestBetsExporter(BaseExporter):
         except Exception as e:
             # Non-fatal — don't fail export if audit write fails
             logger.warning(f"Failed to write filter audit for {target_date}: {e}")
+
+    def _mark_clv_retractions(
+        self,
+        target_date: str,
+        filtered_picks: list,
+        current_players: set,
+    ) -> None:
+        """Mark previously published picks blocked by clv_diverge_under_block
+        as retracted (2026-07-03 split-brain fix).
+
+        A pick published in the morning and then blocked by the CLV filter at
+        an intraday re-export is absent from the new pick set, so the scoped
+        DELETE preserves its row. Without this marker it stays 'active' and
+        grades as taken while best_bets_filtered_picks grades the same pick
+        as blocked. Marking it 'retracted_clv' keeps it graded (we need
+        HR(retracted) to measure the de-risk rule) but separable.
+
+        Skips players still in the current pick set (blocked for one model
+        but selected via another) and started games. If the player was never
+        published, the UPDATE matches zero rows — harmless no-op.
+        """
+        clv_players = sorted({
+            p.get('player_lookup') for p in filtered_picks
+            if p.get('filter_reason') == 'clv_diverge_under_block'
+            and p.get('player_lookup')
+            and p.get('player_lookup') not in current_players
+        })
+        if not clv_players:
+            return
+
+        table_ref = f'{PROJECT_ID}.nba_predictions.signal_best_bets_picks'
+        update_query = f"""
+        UPDATE `{table_ref}`
+        SET signal_status = 'retracted_clv',
+            retracted_at = CURRENT_TIMESTAMP()
+        WHERE game_date = @target_date
+          AND player_lookup IN UNNEST(@player_lookups)
+          AND (signal_status IS NULL OR signal_status = 'active')
+          AND game_id NOT IN (
+            SELECT CONCAT(
+              REPLACE(CAST(game_date AS STRING), '-', ''), '_',
+              away_team_tricode, '_', home_team_tricode
+            )
+            FROM `{PROJECT_ID}.nba_raw.nbac_schedule`
+            WHERE game_date = @target_date
+              AND game_status >= 2
+          )
+        """
+        try:
+            job = self.bq_client.query(
+                update_query,
+                job_config=bigquery.QueryJobConfig(
+                    query_parameters=[
+                        bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+                        bigquery.ArrayQueryParameter('player_lookups', 'STRING', clv_players),
+                    ]
+                ),
+            )
+            job.result(timeout=30)
+            retracted = job.num_dml_affected_rows or 0
+            if retracted:
+                logger.info(
+                    f"CLV retraction: marked {retracted} previously published "
+                    f"pick(s) retracted_clv for {target_date} "
+                    f"(candidates: {clv_players})"
+                )
+                try:
+                    from shared.observability.metrics import emit_metric
+                    emit_metric(
+                        'clv_retraction',
+                        float(retracted),
+                        labels={'sport': 'nba', 'target_date': target_date},
+                    )
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.warning(f"CLV retraction UPDATE failed (non-fatal): {e}")
 
     def _write_filtered_picks(self, target_date: str, filtered_picks: list) -> None:
         """Session 393: Write filtered-out picks for counterfactual grading.
