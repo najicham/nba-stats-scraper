@@ -10,11 +10,16 @@ Executed **next-worklist item #1** from the Session 2 handoff: finish the stale-
 (`tests/unit/publishing` + `tests/unit/signals`). Continues
 `docs/09-handoff/2026-07-04-SESSION-2-HANDOFF.md`.
 
-## Commit shipped (1, on `main`, pushed)
+## Commits shipped (4, on `main`, pushed)
 
 | Commit | What |
 |--------|------|
 | `f190baae` | Green the publishing + signals stale-test tail (~78 failures) + conftest storage-pool cache reset |
+| `372bd11d` | **fix (serve):** `DistributedLock.acquire` honors `max_wait_seconds` < retry delay |
+| `d6b3160b` | Green isolated stale tests in ml/shared/orchestration/data_processors/utils (~46) |
+
+Then continued into **broader-suite triage** (below the publishing+signals tail) at the user's
+request — 3 more parallel agents over the next-biggest isolated clusters.
 
 ## Result
 
@@ -57,12 +62,44 @@ cleared first — the same stale-client cross-test pollution the BQ-pool fix alr
 **identical** results clean-vs-changed on storage-adjacent suites (24 failed / 36 passed both ways) →
 zero regression.
 
+## Broader-suite triage (second half of session)
+
+**Key reframe: the full-run "~149 failures" is heavily inflated by cross-suite pollution.** Run each
+directory IN ISOLATION and the real failing set is far smaller (e.g. `prediction_tests` = 0 failures
+in isolation; those 60 were pollution). Always triage per-directory with `-p no:cacheprovider`.
+
+Fixed the tractable isolated clusters via 3 agents (all test-only except the one real bug below).
+After this, `tests/unit/{ml,shared,orchestration,data_processors,utils}` = **920 passed, 2 skipped, 0
+failed** (run together).
+
+- **ml (14):** deleted ~14 tests importing `ml.experiment_runner` (archived S157, `e49f00ac`).
+- **shared (8):** `MODEL_FAMILIES` 9→23, `classify_system_id` noveg distinction, 2 BQ-seam moves to
+  `insert_bigquery_rows`.
+- **orchestration (5):** BDL tables removed + NBA.com tables renamed; `TRACKABLE_SCRAPERS` =
+  `{'nbac_schedule_api'}`.
+- **data_processors (8):** `stats` seeded via `add_version_to_stats()`; run-logging → `get_batch_writer()`;
+  QualityScorer 5+ required-defaults cap = 49.0.
+- **utils (24):** `test_distributed_lock` 20 stale patch targets (`orchestration.shared...` → `shared...`
+  after `eb058e72`); `test_completion_tracker` 3 BQ-seam moves.
+
+### ⚠️ Real serve-code bug found + fixed (`372bd11d`)
+`shared/utils/distributed_lock.py` `acquire()` slept `RETRY_DELAY_SECONDS` (5s) **unconditionally**
+after each failed attempt, re-checking the deadline only afterward — so any `max_wait_seconds < 5`
+overshot to ~5s and the lock ignored its own timeout budget. **Latent** (the timeout test had never run
+due to the stale patch target). Fixed: cap the backoff to the remaining budget, break when exhausted.
+Default callers (`max_wait = MAX_ACQUIRE_ATTEMPTS * RETRY_DELAY_SECONDS`) are unaffected. This is the
+only serve-path change this session; it auto-deploys via `shared/` on push.
+
 ## What is NOT done (correctly deferred / out of scope)
 
-- **The broader `tests/unit` suite still has ~149 failures + 4 collection-error files** across
-  `prediction_tests` (60), `utils` (24), `ml` (14), `shared`, `data_processors`, `orchestration`, etc.
-  **All pre-existing on `main`** (confirmed by clean-tree diff — none introduced this session). Per the
-  plan, a full-suite green is explicitly NOT a gate; these are the never-tracked long tail.
+- **Remaining `tests/unit` failures** after this session: the big isolated clusters are now green.
+  What's left is (a) **cross-suite pollution** — many tests fail only in the full run, pass in
+  isolation (e.g. the `prediction_tests` "60"); needs a per-module state-isolation pass, not fixture
+  edits; and (b) **collection-order errors** in 4 files (`prediction_tests/coordinator/test_quality_*`,
+  `test_stale_prediction_sql.py`) that collect fine alone — a sys.path/module-name-collision issue the
+  conftest already partially addresses. Per the plan a full-suite green is explicitly NOT a gate; these
+  are the never-tracked long tail. Triage per-directory with `-p no:cacheprovider` before assuming a
+  test is "really" failing.
 - **C4 (promotion tracker) + C5 (paper-stakes)** — Sept slack; on the "Do NOT front-load" list.
 - **October dress-rehearsal checks** — can't run until the pipeline produces picks (off-season).
 
