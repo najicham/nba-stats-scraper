@@ -252,12 +252,19 @@ class DistributedLock:
             acquired = self._try_acquire(lock_key, operation_id, holder_id)
 
             if not acquired:
+                # Cap the backoff to the remaining wait budget so acquire() honors
+                # max_wait_seconds precisely instead of overshooting by up to a full
+                # RETRY_DELAY_SECONDS (matters when max_wait < RETRY_DELAY_SECONDS).
+                remaining = max_wait - (time.time() - start_time)
+                if remaining <= 0:
+                    break
                 elapsed = int(time.time() - start_time)
+                sleep_for = min(RETRY_DELAY_SECONDS, remaining)
                 logger.info(
                     f"Lock acquisition attempt {attempts} failed, "
-                    f"retrying in {RETRY_DELAY_SECONDS}s (elapsed={elapsed}s, max_wait={max_wait}s)"
+                    f"retrying in {sleep_for:.1f}s (elapsed={elapsed}s, max_wait={max_wait}s)"
                 )
-                time.sleep(RETRY_DELAY_SECONDS)
+                time.sleep(sleep_for)
 
         if not acquired:
             elapsed = int(time.time() - start_time)

@@ -38,7 +38,7 @@ class TestDistributedLockBasics:
 
     def test_lock_initialization(self, mock_firestore_client):
         """Test distributed lock initialization."""
-        with patch('orchestration.shared.utils.distributed_lock._get_firestore_client'):
+        with patch('shared.utils.distributed_lock._get_firestore_client'):
             from shared.utils.distributed_lock import DistributedLock
 
             with patch('shared.clients.get_firestore_client', return_value=mock_firestore_client):
@@ -51,7 +51,7 @@ class TestDistributedLockBasics:
 
     def test_lock_initialization_with_grading_type(self, mock_firestore_client):
         """Test distributed lock initialization with grading lock type."""
-        with patch('orchestration.shared.utils.distributed_lock._get_firestore_client'):
+        with patch('shared.utils.distributed_lock._get_firestore_client'):
             from shared.utils.distributed_lock import DistributedLock
 
             with patch('shared.clients.get_firestore_client', return_value=mock_firestore_client):
@@ -62,7 +62,7 @@ class TestDistributedLockBasics:
 
     def test_generate_lock_key(self, mock_firestore_client):
         """Test lock key generation."""
-        with patch('orchestration.shared.utils.distributed_lock._get_firestore_client'):
+        with patch('shared.utils.distributed_lock._get_firestore_client'):
             from shared.utils.distributed_lock import DistributedLock
 
             with patch('shared.clients.get_firestore_client', return_value=mock_firestore_client):
@@ -74,7 +74,7 @@ class TestDistributedLockBasics:
 
     def test_generate_lock_key_grading(self, mock_firestore_client):
         """Test lock key generation for grading lock."""
-        with patch('orchestration.shared.utils.distributed_lock._get_firestore_client'):
+        with patch('shared.utils.distributed_lock._get_firestore_client'):
             from shared.utils.distributed_lock import DistributedLock
 
             with patch('shared.clients.get_firestore_client', return_value=mock_firestore_client):
@@ -108,7 +108,7 @@ class TestDistributedLockAcquisition:
 
     def test_acquire_lock_success(self, mock_firestore_client):
         """Test successful lock acquisition."""
-        with patch('orchestration.shared.utils.distributed_lock._get_firestore_client'):
+        with patch('shared.utils.distributed_lock._get_firestore_client'):
             from shared.utils.distributed_lock import DistributedLock
 
             with patch('shared.clients.get_firestore_client', return_value=mock_firestore_client):
@@ -122,7 +122,7 @@ class TestDistributedLockAcquisition:
 
     def test_acquire_lock_releases_on_exit(self, mock_firestore_client):
         """Test that lock is released when context manager exits."""
-        with patch('orchestration.shared.utils.distributed_lock._get_firestore_client'):
+        with patch('shared.utils.distributed_lock._get_firestore_client'):
             from shared.utils.distributed_lock import DistributedLock
 
             with patch('shared.clients.get_firestore_client', return_value=mock_firestore_client):
@@ -142,7 +142,7 @@ class TestDistributedLockAcquisition:
 
     def test_acquire_lock_releases_on_exception(self, mock_firestore_client):
         """Test that lock is released even when exception occurs."""
-        with patch('orchestration.shared.utils.distributed_lock._get_firestore_client'):
+        with patch('shared.utils.distributed_lock._get_firestore_client'):
             from shared.utils.distributed_lock import DistributedLock
 
             with patch('shared.clients.get_firestore_client', return_value=mock_firestore_client):
@@ -165,7 +165,7 @@ class TestDistributedLockAcquisition:
 
     def test_try_acquire_lock_not_exists(self, mock_firestore_client):
         """Test acquiring lock when it doesn't exist."""
-        with patch('orchestration.shared.utils.distributed_lock._get_firestore_client') as mock_fs_module:
+        with patch('shared.utils.distributed_lock._get_firestore_client') as mock_fs_module:
             from shared.utils.distributed_lock import DistributedLock
 
             # Mock SERVER_TIMESTAMP
@@ -192,7 +192,7 @@ class TestDistributedLockAcquisition:
 
     def test_try_acquire_lock_expired(self, mock_firestore_client):
         """Test acquiring lock when existing lock has expired."""
-        with patch('orchestration.shared.utils.distributed_lock._get_firestore_client') as mock_fs_module:
+        with patch('shared.utils.distributed_lock._get_firestore_client') as mock_fs_module:
             from shared.utils.distributed_lock import DistributedLock
 
             mock_fs_module.return_value.SERVER_TIMESTAMP = "SERVER_TIMESTAMP"
@@ -215,7 +215,7 @@ class TestDistributedLockAcquisition:
 
     def test_try_acquire_lock_held_by_another(self, mock_firestore_client):
         """Test acquiring lock when held by another operation."""
-        with patch('orchestration.shared.utils.distributed_lock._get_firestore_client'):
+        with patch('shared.utils.distributed_lock._get_firestore_client'):
             from shared.utils.distributed_lock import DistributedLock
 
             with patch('shared.clients.get_firestore_client', return_value=mock_firestore_client):
@@ -251,7 +251,7 @@ class TestDistributedLockTimeout:
 
     def test_acquire_lock_timeout(self, mock_firestore_client):
         """Test that lock acquisition times out if unable to acquire."""
-        with patch('orchestration.shared.utils.distributed_lock._get_firestore_client'):
+        with patch('shared.utils.distributed_lock._get_firestore_client'):
             from shared.utils.distributed_lock import DistributedLock, LockAcquisitionError
 
             with patch('shared.clients.get_firestore_client', return_value=mock_firestore_client):
@@ -269,7 +269,7 @@ class TestDistributedLockTimeout:
 
     def test_acquire_lock_retry_success(self, mock_firestore_client):
         """Test that lock acquisition retries and eventually succeeds."""
-        with patch('orchestration.shared.utils.distributed_lock._get_firestore_client'):
+        with patch('shared.utils.distributed_lock._get_firestore_client'):
             from shared.utils.distributed_lock import DistributedLock
 
             with patch('shared.clients.get_firestore_client', return_value=mock_firestore_client):
@@ -283,7 +283,7 @@ class TestDistributedLockTimeout:
                     return attempt_count["count"] >= 3
 
                 with patch.object(lock, '_try_acquire', side_effect=mock_try_acquire):
-                    with patch('orchestration.shared.utils.distributed_lock.RETRY_DELAY_SECONDS', 0.1):
+                    with patch('shared.utils.distributed_lock.RETRY_DELAY_SECONDS', 0.1):
                         with lock.acquire(
                             game_date="2026-01-23",
                             operation_id="op-123",
@@ -311,7 +311,7 @@ class TestDistributedLockRelease:
 
     def test_release_lock_success(self, mock_firestore_client):
         """Test successful lock release."""
-        with patch('orchestration.shared.utils.distributed_lock._get_firestore_client'):
+        with patch('shared.utils.distributed_lock._get_firestore_client'):
             from shared.utils.distributed_lock import DistributedLock
 
             with patch('shared.clients.get_firestore_client', return_value=mock_firestore_client):
@@ -328,7 +328,7 @@ class TestDistributedLockRelease:
 
     def test_release_lock_not_found(self, mock_firestore_client):
         """Test releasing lock that doesn't exist (already released)."""
-        with patch('orchestration.shared.utils.distributed_lock._get_firestore_client'):
+        with patch('shared.utils.distributed_lock._get_firestore_client'):
             from shared.utils.distributed_lock import DistributedLock
 
             with patch('shared.clients.get_firestore_client', return_value=mock_firestore_client):
@@ -345,7 +345,7 @@ class TestDistributedLockRelease:
 
     def test_release_lock_error(self, mock_firestore_client):
         """Test that errors during release are logged but not raised."""
-        with patch('orchestration.shared.utils.distributed_lock._get_firestore_client'):
+        with patch('shared.utils.distributed_lock._get_firestore_client'):
             from shared.utils.distributed_lock import DistributedLock
 
             with patch('shared.clients.get_firestore_client', return_value=mock_firestore_client):
@@ -360,7 +360,7 @@ class TestDistributedLockRelease:
 
     def test_release_lock_no_reference(self, mock_firestore_client):
         """Test releasing when no lock reference exists."""
-        with patch('orchestration.shared.utils.distributed_lock._get_firestore_client'):
+        with patch('shared.utils.distributed_lock._get_firestore_client'):
             from shared.utils.distributed_lock import DistributedLock
 
             with patch('shared.clients.get_firestore_client', return_value=mock_firestore_client):
@@ -387,7 +387,7 @@ class TestDistributedLockForceRelease:
 
     def test_force_release_success(self, mock_firestore_client):
         """Test force releasing a lock."""
-        with patch('orchestration.shared.utils.distributed_lock._get_firestore_client'):
+        with patch('shared.utils.distributed_lock._get_firestore_client'):
             from shared.utils.distributed_lock import DistributedLock
 
             with patch('shared.clients.get_firestore_client', return_value=mock_firestore_client):
@@ -403,7 +403,7 @@ class TestDistributedLockForceRelease:
 
     def test_force_release_not_found(self, mock_firestore_client):
         """Test force releasing a lock that doesn't exist."""
-        with patch('orchestration.shared.utils.distributed_lock._get_firestore_client'):
+        with patch('shared.utils.distributed_lock._get_firestore_client'):
             from shared.utils.distributed_lock import DistributedLock
 
             with patch('shared.clients.get_firestore_client', return_value=mock_firestore_client):
@@ -418,7 +418,7 @@ class TestDistributedLockForceRelease:
 
     def test_force_release_error_raised(self, mock_firestore_client):
         """Test that errors during force release are raised."""
-        with patch('orchestration.shared.utils.distributed_lock._get_firestore_client'):
+        with patch('shared.utils.distributed_lock._get_firestore_client'):
             from shared.utils.distributed_lock import DistributedLock
 
             with patch('shared.clients.get_firestore_client', return_value=mock_firestore_client):
@@ -437,7 +437,7 @@ class TestDistributedLockDeadlockPrevention:
 
     def test_lock_timeout_prevents_deadlock(self):
         """Test that lock timeout prevents indefinite waiting."""
-        with patch('orchestration.shared.utils.distributed_lock._get_firestore_client'):
+        with patch('shared.utils.distributed_lock._get_firestore_client'):
             from shared.utils.distributed_lock import DistributedLock, LockAcquisitionError
 
             mock_firestore_client = Mock()
@@ -467,7 +467,7 @@ class TestDistributedLockThreadSafety:
 
     def test_concurrent_lock_acquisition_single_winner(self):
         """Test that only one thread can acquire lock at a time."""
-        with patch('orchestration.shared.utils.distributed_lock._get_firestore_client'):
+        with patch('shared.utils.distributed_lock._get_firestore_client'):
             from shared.utils.distributed_lock import DistributedLock
 
             mock_firestore_client = Mock()
