@@ -41,9 +41,33 @@ class TestQualityScorer:
         score = scorer.calculate_quality_score(sources)
         assert score == 40.0
 
-    def test_quality_score_mixed_sources(self, scorer):
-        """Mixed sources should give weighted average."""
-        # 10 phase4 (100), 10 phase3 (87), 5 default (40)
+    def test_quality_score_mixed_sources_no_defaults(self, scorer):
+        """Mixed phase4/phase3 sources (no required defaults) give a weighted average.
+
+        Session 157 added a default-penalty cap: any required (non-optional)
+        default caps the score. To exercise the raw weighted-average path, use
+        only phase4/phase3 sources so no cap applies.
+        """
+        # 15 phase4 (100), 10 phase3 (87), no defaults
+        sources = {}
+        for i in range(15):
+            sources[i] = 'phase4'
+        for i in range(15, 25):
+            sources[i] = 'phase3'
+
+        expected = (15 * 100 + 10 * 87) / 25  # = 94.8
+        score = scorer.calculate_quality_score(sources)
+        assert score == pytest.approx(expected, rel=0.01)
+
+    def test_quality_score_capped_by_required_defaults(self, scorer):
+        """Session 157: 5+ required defaults cap the score at the critical tier (49).
+
+        Even though 20 good features would carry the weighted average high, the
+        presence of 5 required (non-optional) defaults caps the honest score at
+        49.0 so contaminated records are visibly degraded.
+        """
+        # 10 phase4 (100), 10 phase3 (87), 5 required defaults (indices 20-24
+        # are NOT in OPTIONAL_FEATURES)
         sources = {}
         for i in range(10):
             sources[i] = 'phase4'
@@ -52,9 +76,9 @@ class TestQualityScorer:
         for i in range(20, 25):
             sources[i] = 'default'
 
-        expected = (10 * 100 + 10 * 87 + 5 * 40) / 25
         score = scorer.calculate_quality_score(sources)
-        assert score == pytest.approx(expected, rel=0.01)
+        # 5 required defaults => capped at 49.0 (critical tier)
+        assert score == 49.0
 
     def test_quality_score_empty_sources(self, scorer):
         """Empty sources should return 0."""

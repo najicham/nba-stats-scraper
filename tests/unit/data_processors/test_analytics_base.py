@@ -80,7 +80,12 @@ class TestAnalyticsInitialization:
         assert processor.project_id == 'test-project'
         assert processor.dataset_id == 'analytics_dataset'
         assert processor.run_id is not None
-        assert processor.stats == {'run_id': processor.run_id}
+        # stats is seeded with run_id plus version-tracking metadata
+        # (add_version_to_stats() in TransformProcessorBase.__init__).
+        assert processor.stats['run_id'] == processor.run_id
+        assert processor.stats['processor_name'] == 'ConcreteAnalyticsProcessor'
+        assert 'processed_at' in processor.stats
+        assert 'deployment_type' in processor.stats
         assert processor.raw_data is None  # ✅ Initialized as None
         assert processor.validated_data == {}
         assert processor.transformed_data == {}  # ✅ Dict, not list
@@ -773,24 +778,22 @@ class TestPostProcessing:
 class TestLogProcessingRun:
     """Test suite for log_processing_run method"""
 
+    @patch('shared.utils.bigquery_batch_writer.get_batch_writer')
     @patch('data_processors.analytics.analytics_base.get_bigquery_client')
     @patch('data_processors.analytics.analytics_base.get_analytics_dataset')
-    def test_log_processing_run_success(self, mock_dataset, mock_bq):
-        """Test log_processing_run with successful run"""
-        mock_dataset.return_value = 'analytics_dataset'
+    def test_log_processing_run_success(self, mock_dataset, mock_bq, mock_get_writer):
+        """Test log_processing_run queues a run record via the batch writer.
 
-        # Mock BigQuery client and table operations
-        mock_bq_client = Mock()
-        mock_table_ref = Mock()
-        mock_table_ref.schema = []
-        mock_bq_client.get_table.return_value = mock_table_ref
-        mock_load_job = Mock()
-        mock_load_job.result.return_value = None
-        mock_bq_client.load_table_from_json.return_value = mock_load_job
-        mock_bq.return_value = mock_bq_client
+        log_processing_run now uses shared.utils.bigquery_batch_writer.get_batch_writer
+        (batched load jobs, 100x fewer BQ jobs) instead of a direct
+        bq_client.get_table / load_table_from_json call.
+        """
+        mock_dataset.return_value = 'analytics_dataset'
+        mock_bq.return_value = Mock()
+        mock_writer = Mock()
+        mock_get_writer.return_value = mock_writer
 
         processor = ConcreteAnalyticsProcessor()
-        processor.bq_client = mock_bq_client  # Override with our mock
         processor.set_opts({
             'start_date': date(2024, 1, 1),
             'end_date': date(2024, 1, 31)
@@ -799,28 +802,24 @@ class TestLogProcessingRun:
         # Call log_processing_run
         processor.log_processing_run(success=True)
 
-        # Verify BigQuery operations were called
-        assert mock_bq_client.get_table.called
-        assert mock_bq_client.load_table_from_json.called
+        # Verify a run record was queued to the batch writer
+        assert mock_get_writer.called
+        assert mock_writer.add_record.called
+        record = mock_writer.add_record.call_args[0][0]
+        assert record['success'] is True
+        assert record['processor_name'] == 'ConcreteAnalyticsProcessor'
 
+    @patch('shared.utils.bigquery_batch_writer.get_batch_writer')
     @patch('data_processors.analytics.analytics_base.get_bigquery_client')
     @patch('data_processors.analytics.analytics_base.get_analytics_dataset')
-    def test_log_processing_run_with_error(self, mock_dataset, mock_bq):
-        """Test log_processing_run with error"""
+    def test_log_processing_run_with_error(self, mock_dataset, mock_bq, mock_get_writer):
+        """Test log_processing_run queues a failed-run record with the error."""
         mock_dataset.return_value = 'analytics_dataset'
-
-        # Mock BigQuery client and table operations
-        mock_bq_client = Mock()
-        mock_table_ref = Mock()
-        mock_table_ref.schema = []
-        mock_bq_client.get_table.return_value = mock_table_ref
-        mock_load_job = Mock()
-        mock_load_job.result.return_value = None
-        mock_bq_client.load_table_from_json.return_value = mock_load_job
-        mock_bq.return_value = mock_bq_client
+        mock_bq.return_value = Mock()
+        mock_writer = Mock()
+        mock_get_writer.return_value = mock_writer
 
         processor = ConcreteAnalyticsProcessor()
-        processor.bq_client = mock_bq_client  # Override with our mock
         processor.set_opts({
             'start_date': date(2024, 1, 1),
             'end_date': date(2024, 1, 31)
@@ -829,8 +828,11 @@ class TestLogProcessingRun:
         # Call log_processing_run with error
         processor.log_processing_run(success=False, error="Test error")
 
-        # Verify BigQuery operations were called
-        assert mock_bq_client.load_table_from_json.called
+        # Verify a failed-run record was queued to the batch writer
+        assert mock_writer.add_record.called
+        record = mock_writer.add_record.call_args[0][0]
+        assert record['success'] is False
+        assert "Test error" in record['errors_json']
 
     @patch('data_processors.analytics.analytics_base.get_bigquery_client')
     @patch('data_processors.analytics.analytics_base.get_analytics_dataset')

@@ -200,9 +200,15 @@ class TestClassifyV12Mae:
         """Bare 'catboost_v12' matches v12_mae catch-all."""
         assert classify_system_id('catboost_v12') == 'v12_mae'
 
-    def test_v12_noveg_train_matches_v12_mae(self):
-        """catboost_v12_noveg_train* (no quantile) matches v12_mae."""
-        assert classify_system_id('catboost_v12_noveg_train20251102_20260131') == 'v12_mae'
+    def test_v12_noveg_train_matches_v12_noveg_mae(self):
+        """catboost_v12_noveg_train* (no quantile) matches v12_noveg_mae.
+
+        Session 383 added the 'catboost_v12_noveg_' pattern (family
+        'v12_noveg_mae') BEFORE the broad 'catboost_v12' catch-all so noveg
+        MAE models get the correct feature-set affinity. Previously these
+        fell through to v12_mae.
+        """
+        assert classify_system_id('catboost_v12_noveg_train20251102_20260131') == 'v12_noveg_mae'
 
     def test_v12_train_matches_v12_mae(self):
         """catboost_v12_train* (V12+vegas MAE) matches v12_mae."""
@@ -277,18 +283,35 @@ class TestClassifyNoAmbiguity:
 
     KNOWN_PRODUCTION_MODELS = {
         # (system_id, expected_family)
+        # One representative per family in MODEL_FAMILIES. This dict must cover
+        # ALL families (test_all_families_have_at_least_one_match). Families were
+        # added over Sessions 324-383 (quantile variants, tier models, LGBM/XGB,
+        # v13/v15/v16, and the v12_noveg_mae catch-all).
         'catboost_v9': 'v9_mae',
         'catboost_v9_q43_train1102_0131': 'v9_q43',
         'catboost_v9_q45_train1102_0131': 'v9_q45',
         'catboost_v9_low_vegas_train1102_0131': 'v9_low_vegas',
         'catboost_v12_noveg_q43_train1102_0131': 'v12_q43',
         'catboost_v12_noveg_q45_train1102_0131': 'v12_q45',
+        'catboost_v12_noveg_q55_tw_train1102_0131': 'v12_noveg_q55_tw',
+        'catboost_v12_noveg_q55_train1102_0131': 'v12_noveg_q55',
+        'catboost_v12_noveg_q57_train1102_0131': 'v12_noveg_q57',
         'catboost_v12_q43_train1102_0131': 'v12_vegas_q43',
         'catboost_v12_vegas_q43_train0104_0215': 'v12_vegas_q43',
         'catboost_v12_q45_train1102_0131': 'v12_vegas_q45',
         'catboost_v12_vegas_q45_train0104_0215': 'v12_vegas_q45',
+        'catboost_v12_noveg_classify_train1102_0131': 'v12_noveg_classify',
+        'lgbm_v12_noveg_train1102_0131': 'lgbm_v12_noveg_mae',
+        'xgb_v12_noveg_train1102_0131': 'xgb_v12_noveg_mae',
+        'catboost_v12_noveg_star_train1102_0131': 'v12_noveg_star',
+        'catboost_v12_noveg_starter_train1102_0131': 'v12_noveg_starter',
+        'catboost_v12_noveg_role_train1102_0131': 'v12_noveg_role',
+        'catboost_v13_train1102_0131': 'v13_mae',
+        'catboost_v15_train1102_0131': 'v15_noveg_mae',
+        'catboost_v16_noveg_rec14_train1102_0131': 'v16_noveg_rec14_mae',
+        'catboost_v16_noveg_train1102_0131': 'v16_noveg_mae',
+        'catboost_v12_noveg_train20251102_20260131': 'v12_noveg_mae',
         'catboost_v12_50f_huber_rsm50_train20251102-20260131_20260213_213149': 'v12_mae',
-        'catboost_v12_noveg_train20251102_20260131': 'v12_mae',
         'catboost_v12_train20251102_20260131': 'v12_mae',
     }
 
@@ -413,13 +436,19 @@ class TestBuildSqlFilterWithAlias:
         assert "predictions.system_id LIKE 'catboost_v12%'" in result
 
     def test_clause_count_matches_family_count(self):
-        """Number of clauses should match families + alt patterns."""
+        """Number of clauses should match families + alt patterns + V9 catch-all.
+
+        build_system_id_sql_filter() appends one extra 'catboost_v9_%' LIKE
+        clause (mirrors the classify_system_id V9 fallback) beyond the per-family
+        and per-alt_pattern clauses.
+        """
         result = build_system_id_sql_filter(alias='t')
         # Count expected clauses: one per family + one per alt_pattern
         expected_clauses = len(MODEL_FAMILIES)
         for info in MODEL_FAMILIES.values():
             if 'alt_pattern' in info:
                 expected_clauses += 1
+        expected_clauses += 1  # trailing 'catboost_v9_%' catch-all clause
         actual_clauses = result.count(' OR ') + 1
         assert actual_clauses == expected_clauses
 
@@ -452,13 +481,18 @@ class TestModelFamiliesStructure:
         """Every family must have a 'loss' type."""
         for key, info in MODEL_FAMILIES.items():
             assert 'loss' in info, f"Family '{key}' missing 'loss'"
-            assert info['loss'] in ('mae', 'quantile'), (
+            assert info['loss'] in ('mae', 'quantile', 'classify'), (
                 f"Family '{key}' has unknown loss '{info['loss']}'"
             )
 
     def test_family_count(self):
-        """Sanity check: expect 9 families (update if families added/removed)."""
-        assert len(MODEL_FAMILIES) == 9
+        """Sanity check: expect 23 families (update if families added/removed).
+
+        Grew from 9 as quantile variants (q55/q57/tw), tier models
+        (star/starter/role), LGBM/XGB, v13/v15/v16, classify, and the
+        v12_noveg_mae catch-all were added through Session 383.
+        """
+        assert len(MODEL_FAMILIES) == 23
 
 
 # ============================================================================

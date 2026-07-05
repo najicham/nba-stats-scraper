@@ -224,12 +224,14 @@ class TestBdlAvailabilityLogger:
 
     # ========== BigQuery Write Tests ==========
 
-    @patch('google.cloud.bigquery.Client')
-    def test_log_bdl_game_availability_writes_to_bigquery(self, mock_bq_client):
+    # NOTE (2026-07): _write_to_bigquery() now goes through the shared batch
+    # helper shared.utils.bigquery_utils.insert_bigquery_rows(table_id, rows)
+    # instead of calling bigquery.Client().insert_rows_json directly (batch load
+    # to avoid the 90-min streaming-buffer lock). Patch that seam.
+    @patch('shared.utils.bigquery_utils.insert_bigquery_rows')
+    def test_log_bdl_game_availability_writes_to_bigquery(self, mock_insert_rows):
         """Test that availability logging writes to BigQuery"""
-        mock_client_instance = Mock()
-        mock_bq_client.return_value = mock_client_instance
-        mock_client_instance.insert_rows_json.return_value = []
+        mock_insert_rows.return_value = True
 
         logger = BdlAvailabilityLogger(
             game_date="2026-01-21",
@@ -255,10 +257,10 @@ class TestBdlAvailabilityLogger:
         records = logger.log_availability(games, dry_run=False)
 
         # Verify BigQuery write was called
-        mock_client_instance.insert_rows_json.assert_called_once()
+        mock_insert_rows.assert_called_once()
 
-        # Verify call arguments
-        call_args = mock_client_instance.insert_rows_json.call_args
+        # Verify call arguments: insert_bigquery_rows(table_id, rows)
+        call_args = mock_insert_rows.call_args
         table_id = call_args[0][0]
         rows = call_args[0][1]
 

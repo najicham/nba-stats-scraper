@@ -57,16 +57,19 @@ class TestCompletionTracker:
 
     def test_record_completion_success(self, tracker, mock_firestore_client, mock_bq_client):
         """Test recording completion writes to both stores."""
-        fs_success, bq_success = tracker.record_completion(
-            phase="phase3",
-            game_date="2026-01-23",
-            processor_name="player_game_summary",
-            completion_data={
-                "status": "success",
-                "record_count": 450,
-                "correlation_id": "abc-123"
-            }
-        )
+        # Serve path writes to BigQuery via shared.utils.bigquery_utils.insert_bigquery_rows
+        # (batch loading, not streaming inserts), so patch that function.
+        with patch('shared.utils.bigquery_utils.insert_bigquery_rows', return_value=True) as mock_insert:
+            fs_success, bq_success = tracker.record_completion(
+                phase="phase3",
+                game_date="2026-01-23",
+                processor_name="player_game_summary",
+                completion_data={
+                    "status": "success",
+                    "record_count": 450,
+                    "correlation_id": "abc-123"
+                }
+            )
 
         # Both should succeed with mocked clients
         assert fs_success is True
@@ -76,26 +79,29 @@ class TestCompletionTracker:
         mock_firestore_client.collection.assert_called_with("phase3_completion")
 
         # Verify BigQuery was called
-        mock_bq_client.insert_rows_json.assert_called_once()
+        mock_insert.assert_called_once()
 
     def test_record_completion_bigquery_row_format(self, tracker, mock_bq_client):
         """Test that BigQuery row has correct format."""
-        tracker.record_completion(
-            phase="phase3",
-            game_date="2026-01-23",
-            processor_name="player_game_summary",
-            completion_data={
-                "status": "success",
-                "record_count": 450,
-                "correlation_id": "abc-123",
-                "execution_id": "exec-456",
-                "is_incremental": True,
-                "entities_changed": ["player-1", "player-2"]
-            }
-        )
+        with patch('shared.utils.bigquery_utils.insert_bigquery_rows', return_value=True) as mock_insert:
+            tracker.record_completion(
+                phase="phase3",
+                game_date="2026-01-23",
+                processor_name="player_game_summary",
+                completion_data={
+                    "status": "success",
+                    "record_count": 450,
+                    "correlation_id": "abc-123",
+                    "execution_id": "exec-456",
+                    "is_incremental": True,
+                    "entities_changed": ["player-1", "player-2"]
+                }
+            )
 
-        # Get the row that was inserted
-        call_args = mock_bq_client.insert_rows_json.call_args
+        # Get the row that was inserted.
+        # Serve calls insert_bigquery_rows(short_table_id, [row], project_id=...),
+        # so rows are the 2nd positional arg.
+        call_args = mock_insert.call_args
         rows = call_args[0][1]
         assert len(rows) == 1
 
@@ -115,27 +121,27 @@ class TestCompletionTracker:
         # Make Firestore fail
         mock_firestore_client.collection.side_effect = Exception("Firestore unavailable")
 
-        fs_success, bq_success = tracker.record_completion(
-            phase="phase3",
-            game_date="2026-01-23",
-            processor_name="player_game_summary",
-            completion_data={"status": "success"}
-        )
+        with patch('shared.utils.bigquery_utils.insert_bigquery_rows', return_value=True):
+            fs_success, bq_success = tracker.record_completion(
+                phase="phase3",
+                game_date="2026-01-23",
+                processor_name="player_game_summary",
+                completion_data={"status": "success"}
+            )
 
         assert fs_success is False
         assert bq_success is True  # BigQuery should still succeed
 
     def test_record_completion_bigquery_failure(self, tracker, mock_firestore_client, mock_bq_client):
         """Test that Firestore succeeds even if BigQuery fails."""
-        # Make BigQuery fail
-        mock_bq_client.insert_rows_json.return_value = [{"errors": ["test error"]}]
-
-        fs_success, bq_success = tracker.record_completion(
-            phase="phase3",
-            game_date="2026-01-23",
-            processor_name="player_game_summary",
-            completion_data={"status": "success"}
-        )
+        # Make BigQuery fail: serve path returns False from insert_bigquery_rows on error.
+        with patch('shared.utils.bigquery_utils.insert_bigquery_rows', return_value=False):
+            fs_success, bq_success = tracker.record_completion(
+                phase="phase3",
+                game_date="2026-01-23",
+                processor_name="player_game_summary",
+                completion_data={"status": "success"}
+            )
 
         assert fs_success is True  # Firestore should still succeed
         assert bq_success is False

@@ -33,18 +33,25 @@ class TestCleanupProcessor:
 
     @pytest.fixture
     def sample_scraper_files(self):
-        """Sample scraper execution log entries"""
+        """Sample scraper execution log entries.
+
+        Only nbac_schedule_api is in TRACKABLE_SCRAPERS (the sole Phase 2 table
+        with reliable source_file_path values). All other scrapers write
+        source_file_path='unknown' and are intentionally skipped by
+        _find_missing_files. Both sample files use nbac_schedule_api so they are
+        actually checked; file1 is the "missing" (unprocessed) one.
+        """
         return [
             {
                 'execution_id': 'exec-001',
-                'scraper_name': 'bdl_box_scores',
-                'gcs_path': 'gs://bucket/bdl_box_scores/2026-01-21/file1.json',
+                'scraper_name': 'nbac_schedule_api',
+                'gcs_path': 'gs://bucket/nbac_schedule/2026-01-21/file1.json',
                 'triggered_at': datetime.now(timezone.utc) - timedelta(minutes=45),
                 'age_minutes': 45
             },
             {
                 'execution_id': 'exec-002',
-                'scraper_name': 'nbac_schedule',
+                'scraper_name': 'nbac_schedule_api',
                 'gcs_path': 'gs://bucket/nbac_schedule/2026-01-21/file2.json',
                 'triggered_at': datetime.now(timezone.utc) - timedelta(minutes=40),
                 'age_minutes': 40
@@ -79,7 +86,12 @@ class TestCleanupProcessor:
 
     @patch('orchestration.cleanup_processor.execute_bigquery')
     def test_cleanup_processor_uses_correct_table_name(self, mock_execute_bq, processor):
-        """Test that cleanup processor queries bdl_player_boxscores (not bdl_box_scores)"""
+        """Test that cleanup processor uses the corrected Phase 2 table names.
+
+        BDL tables are intentionally disabled/removed from phase2_tables (Ball
+        Don't Lie is disabled project-wide). The query now uses the corrected
+        NBA.com table names (e.g. nbac_gamebook_player_stats, not nbac_gamebook_pdf).
+        """
         mock_execute_bq.return_value = []
 
         processor._get_processed_files()
@@ -90,11 +102,14 @@ class TestCleanupProcessor:
         # Get the query that was executed
         query = mock_execute_bq.call_args[0][0]
 
-        # Should reference bdl_player_boxscores
-        assert "bdl_player_boxscores" in query.lower()
+        # Should reference the corrected NBA.com table names
+        assert "nbac_gamebook_player_stats" in query.lower()
 
-        # Should NOT reference incorrect table name
-        assert "bdl_box_scores" not in query.lower()
+        # Should NOT reference the old/incorrect table names
+        assert "nbac_gamebook_pdf" not in query.lower()
+
+        # BDL tables are intentionally excluded (BDL disabled)
+        assert "bdl_" not in query.lower()
 
     # ========== Query Execution Tests ==========
 
@@ -163,12 +178,14 @@ class TestCleanupProcessor:
         # Get the query
         query = mock_execute_bq.call_args[0][0]
 
-        # Should query all Phase 2 tables
+        # Should query the current Phase 2 tables (corrected table names).
+        # nbac_player_list, odds_events, odds_player_props, and bdl_* tables
+        # were removed from phase2_tables (renamed or intentionally disabled).
         assert "nbac_schedule" in query
-        assert "nbac_player_list" in query
-        assert "odds_events" in query
-        assert "odds_player_props" in query
-        assert "bdl_player_boxscores" in query
+        assert "nbac_gamebook_player_stats" in query
+        assert "odds_api_game_lines" in query
+        assert "odds_api_player_points_props" in query
+        assert "bettingpros_player_points_props" in query
 
         # Should use UNION ALL
         assert "UNION ALL" in query
@@ -195,14 +212,14 @@ class TestCleanupProcessor:
 
         # Should find 1 missing file (file1.json)
         assert len(missing) == 1
-        assert missing[0]['gcs_path'] == 'gs://bucket/bdl_box_scores/2026-01-21/file1.json'
-        assert missing[0]['scraper_name'] == 'bdl_box_scores'
+        assert missing[0]['gcs_path'] == 'gs://bucket/nbac_schedule/2026-01-21/file1.json'
+        assert missing[0]['scraper_name'] == 'nbac_schedule_api'
 
     def test_find_missing_files_no_gaps(self, processor, sample_scraper_files):
         """Test that _find_missing_files returns empty list when all files processed"""
         # All files are processed
         processed_files = {
-            'gs://bucket/bdl_box_scores/2026-01-21/file1.json',
+            'gs://bucket/nbac_schedule/2026-01-21/file1.json',
             'gs://bucket/nbac_schedule/2026-01-21/file2.json'
         }
 
@@ -327,11 +344,11 @@ class TestCleanupProcessor:
         """Test complete cleanup workflow when files are missing"""
         # Mock BigQuery responses
         mock_execute_bq.side_effect = [
-            # Scraper files
+            # Scraper files (nbac_schedule_api is the only TRACKABLE scraper)
             [
                 {
                     'execution_id': 'exec-001',
-                    'scraper_name': 'bdl_box_scores',
+                    'scraper_name': 'nbac_schedule_api',
                     'gcs_path': 'gs://bucket/file1.json',
                     'triggered_at': datetime.now(timezone.utc) - timedelta(minutes=45),
                     'age_minutes': 45

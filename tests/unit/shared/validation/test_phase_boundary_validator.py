@@ -653,10 +653,15 @@ class TestRunValidation:
 class TestLogValidationToBigQuery:
     """Test BigQuery logging functionality"""
 
-    def test_log_validation_to_bigquery_success(self):
+    # NOTE (2026-07): log_validation_to_bigquery() now writes via the shared batch
+    # helper shared.utils.bigquery_utils.insert_bigquery_rows(table_id, rows)
+    # (batch load, not the injected client's insert_rows_json) to avoid the
+    # streaming buffer. Patch that seam instead of the bq_client mock.
+    @patch('shared.utils.bigquery_utils.insert_bigquery_rows')
+    def test_log_validation_to_bigquery_success(self, mock_insert_rows):
         """Test logging validation results to BigQuery"""
+        mock_insert_rows.return_value = True
         bq_client = Mock()
-        bq_client.insert_rows_json.return_value = []
 
         validator = PhaseBoundaryValidator(
             bq_client=bq_client,
@@ -681,11 +686,11 @@ class TestLogValidationToBigQuery:
 
         validator.log_validation_to_bigquery(result)
 
-        # Verify BigQuery insert was called
-        bq_client.insert_rows_json.assert_called_once()
+        # Verify BigQuery insert was called via the batch helper
+        mock_insert_rows.assert_called_once()
 
-        # Verify correct table
-        call_args = bq_client.insert_rows_json.call_args
+        # Verify correct table: insert_bigquery_rows(table_id, rows)
+        call_args = mock_insert_rows.call_args
         table_id = call_args[0][0]
         assert 'nba_monitoring.phase_boundary_validations' in table_id
 
