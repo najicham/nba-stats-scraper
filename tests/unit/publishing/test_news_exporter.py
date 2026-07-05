@@ -262,24 +262,21 @@ class TestTonightSummary:
 
 
 class TestSafeFloat:
-    """Test suite for safe float conversion"""
+    """Test suite for the safe_float utility.
+
+    The exporter's private _safe_float was extracted to the module-level
+    safe_float in exporter_utils (default precision=2, default=None); the
+    exporter imports and calls it directly. Tests exercise the shared function.
+    """
 
     def test_safe_float_with_valid_number(self):
         """Test safe float with valid number"""
-        with patch('google.cloud.bigquery.Client'):
-            with patch('data_processors.publishing.base_exporter.storage.Client'):
-                from data_processors.publishing.news_exporter import NewsExporter
-                exporter = NewsExporter(sport='nba')
-
-                assert exporter._safe_float(5.5) == 5.5
-                assert exporter._safe_float(10) == 10.0
+        from data_processors.publishing.exporter_utils import safe_float
+        assert safe_float(5.5) == 5.5
+        assert safe_float(10) == 10.0
 
     def test_safe_float_with_none(self):
-        """Test safe float with None returns default"""
-        with patch('google.cloud.bigquery.Client'):
-            with patch('data_processors.publishing.base_exporter.storage.Client'):
-                from data_processors.publishing.news_exporter import NewsExporter
-                exporter = NewsExporter(sport='nba')
-
-                assert exporter._safe_float(None) == 0.0
-                assert exporter._safe_float(None, 5.0) == 5.0
+        """None passes through as the supplied default (None by default)."""
+        from data_processors.publishing.exporter_utils import safe_float
+        assert safe_float(None) is None
+        assert safe_float(None, 5.0) == 5.0

@@ -36,8 +36,8 @@ class TestSystemMetadata:
         """Test that system metadata has required structure"""
         from data_processors.publishing.system_performance_exporter import SYSTEM_METADATA
 
-        assert 'catboost_v8' in SYSTEM_METADATA
-        assert SYSTEM_METADATA['catboost_v8']['is_primary'] is True
+        assert 'catboost_v12' in SYSTEM_METADATA
+        assert SYSTEM_METADATA['catboost_v12']['is_primary'] is True
 
         for system_id, meta in SYSTEM_METADATA.items():
             assert 'display_name' in meta
@@ -46,12 +46,12 @@ class TestSystemMetadata:
             assert 'ranking' in meta
 
     def test_catboost_is_primary(self):
-        """Test that CatBoost V8 is marked as primary"""
+        """Test that CatBoost V12 is marked as primary"""
         from data_processors.publishing.system_performance_exporter import SYSTEM_METADATA
 
         primary_systems = [s for s, m in SYSTEM_METADATA.items() if m['is_primary']]
         assert len(primary_systems) == 1
-        assert 'catboost_v8' in primary_systems
+        assert 'catboost_v12' in primary_systems
 
 
 class TestJsonGeneration:
@@ -111,7 +111,7 @@ class TestSystemsArrayBuilding:
                 exporter = SystemPerformanceExporter()
 
                 windows_by_system = {
-                    'catboost_v8': {
+                    'catboost_v12': {
                         'last_7_days': {'total': 100, 'win_rate': 0.72, 'mae': 4.5},
                         'last_30_days': {'total': 400, 'win_rate': 0.70, 'mae': 4.7},
                         'season': {'total': 1000, 'win_rate': 0.68, 'mae': 4.8}
@@ -124,9 +124,9 @@ class TestSystemsArrayBuilding:
                 assert len(systems) >= 1
 
                 # Find catboost
-                catboost = next((s for s in systems if s['system_id'] == 'catboost_v8'), None)
+                catboost = next((s for s in systems if s['system_id'] == 'catboost_v12'), None)
                 if catboost:
-                    assert catboost['display_name'] == SYSTEM_METADATA['catboost_v8']['display_name']
+                    assert catboost['display_name'] == SYSTEM_METADATA['catboost_v12']['display_name']
                     assert catboost['is_primary'] is True
 
 

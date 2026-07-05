@@ -187,11 +187,9 @@ class TestFilterTracking:
         _, summary = agg.aggregate([pred], {})
         assert summary['rejected']['under_edge_7plus'] == 0
 
-    def test_familiar_matchup_tracked(self):
-        pred = _make_prediction(games_vs_opponent=7)
-        agg = BestBetsAggregator()
-        _, summary = agg.aggregate([pred], {})
-        assert summary['rejected']['familiar_matchup'] == 1
+    # test_familiar_matchup_tracked DELETED: familiar_matchup filter was REMOVED
+    # 2026-03-26 (5-season CF HR = 54.4% — blocking winners). See aggregator.py:950.
+    # No `familiar_matchup` key exists in the filter summary anymore.
 
     def test_quality_floor_tracked(self):
         pred = _make_prediction(feature_quality_score=50)
@@ -223,27 +221,15 @@ class TestFilterTracking:
         _, summary = agg.aggregate([pred], {})
         assert summary['rejected']['line_dropped_under'] == 1
 
-    def test_neg_pm_streak_tracked(self):
-        pred = _make_prediction(recommendation='UNDER', neg_pm_streak=4)
-        agg = BestBetsAggregator()
-        _, summary = agg.aggregate([pred], {})
-        assert summary['rejected']['neg_pm_streak'] == 1
+    # test_neg_pm_streak_tracked DELETED: neg_pm_streak filter was REMOVED
+    # 2026-03-26 (CF HR = 64.5%, N=758 — highest CF HR of any filter, blocking
+    # the most profitable UNDER picks). See aggregator.py:1070. Key no longer exists.
 
-    def test_b2b_under_block_tracked(self):
-        """B2B UNDER = 30.8% HR — should be blocked."""
-        pred = _make_prediction(recommendation='UNDER', line_value=20.0)
-        pred['rest_days'] = 1  # B2B
-        agg = BestBetsAggregator()
-        _, summary = agg.aggregate([pred], {})
-        assert summary['rejected']['b2b_under_block'] == 1
-
-    def test_b2b_over_not_blocked(self):
-        """B2B OVER should NOT be blocked by b2b_under_block."""
-        pred = _make_prediction(recommendation='OVER')
-        pred['rest_days'] = 1
-        agg = BestBetsAggregator()
-        _, summary = agg.aggregate([pred], {})
-        assert summary['rejected']['b2b_under_block'] == 0
+    # test_b2b_under_block_tracked / test_b2b_over_not_blocked DELETED:
+    # b2b_under_block filter was REMOVED 2026-03-26 (5-season CF HR = 54.0% —
+    # blocking winners). See aggregator.py:1003. No `b2b_under_block` key in
+    # the filter summary anymore, so both the block and the not-blocked cases
+    # are moot.
 
     def test_signal_count_tracked(self):
         """Prediction passes all negative filters but has 0 qualifying signals."""
@@ -688,22 +674,27 @@ class TestStarterV12UnderBlock:
 # ============================================================================
 
 class TestPremiumSignalEdgeFloorBypass:
-    """Test that combo_3way and combo_he_ms bypass the edge floor (Session 355).
+    """Test that validated high-HR UNDER rescue signals bypass the edge floor.
 
-    These signals have 95%+ HR, so filtering them by edge floor wastes profit.
-    Uses UNDER to avoid OVER edge 5+ floor (Session 378).
+    Session 494 removed combo_3way/combo_he_ms from the UNDER rescue_tags (they
+    have OVER-only gates and never actually rescued UNDER). The current UNDER
+    rescue signals are hot_3pt_under (62.5% HR) and line_drifted_down_under
+    (59.8% HR) — see RESCUE_SIGNAL_PRIORITY. These bypass the edge floor.
+    Uses UNDER to avoid the OVER edge floor.
     """
 
     def test_premium_signal_bypasses_edge_floor(self):
-        """Pick with edge=2.0 UNDER + combo_3way signal bypasses edge floor."""
+        """Pick with edge=2.0 UNDER + hot_3pt_under rescue signal bypasses edge floor."""
         pred = _make_prediction(edge=2.0, recommendation='UNDER', line_value=26.0)
         key = f"{pred['player_lookup']}::{pred['game_id']}"
+        # hot_3pt_under rescues; home_under + volatile_starter_under provide
+        # real_sc >= 2 so the pick also clears the under_low_rsc gate.
         signals = {key: [
             _make_signal_result('model_health'),
-            _make_signal_result('combo_3way'),
+            _make_signal_result('hot_3pt_under'),
             _make_signal_result('high_edge'),
-            _make_signal_result('rest_advantage_2d'),
             _make_signal_result('home_under'),
+            _make_signal_result('volatile_starter_under'),
         ]}
         agg = BestBetsAggregator()
         picks, summary = agg.aggregate([pred], signals)
@@ -711,15 +702,15 @@ class TestPremiumSignalEdgeFloorBypass:
         assert summary['rejected']['edge_floor'] == 0
 
     def test_premium_combo_he_ms_bypasses_edge_floor(self):
-        """Pick with edge=2.0 UNDER + combo_he_ms signal bypasses edge floor."""
+        """Pick with edge=2.0 UNDER + line_drifted_down_under rescue bypasses edge floor."""
         pred = _make_prediction(edge=2.0, recommendation='UNDER', line_value=26.0)
         key = f"{pred['player_lookup']}::{pred['game_id']}"
         signals = {key: [
             _make_signal_result('model_health'),
-            _make_signal_result('combo_he_ms'),
+            _make_signal_result('line_drifted_down_under'),
             _make_signal_result('edge_spread_optimal'),
-            _make_signal_result('rest_advantage_2d'),
             _make_signal_result('home_under'),
+            _make_signal_result('volatile_starter_under'),
         ]}
         agg = BestBetsAggregator()
         picks, summary = agg.aggregate([pred], signals)
@@ -1136,17 +1127,9 @@ class TestRuntimeDemotion:
         # edge_floor is NOT gated by runtime_demoted — always blocks
         assert len(picks) == 0
 
-    def test_b2b_under_observation(self):
-        """Session 462: B2B UNDER is now observation mode — always passes through."""
-        pred = _make_prediction(recommendation='UNDER', edge=4.0)
-        pred['rest_days'] = 1  # B2B
-        signals = self._make_signal_results_for(pred)
-
-        # Session 462: b2b_under_block is now observation — counts but does NOT block
-        agg = BestBetsAggregator()
-        picks, summary = agg.aggregate([pred], signals)
-        assert summary['rejected']['b2b_under_block'] == 1
-        assert len(picks) == 1  # Passes through (observation mode)
+    # test_b2b_under_observation DELETED: b2b_under_block filter was fully
+    # REMOVED 2026-03-26 (5-season CF HR = 54.0% — blocking winners). It is no
+    # longer even an observation counter. See aggregator.py:1003.
 
     def test_empty_demotion_set_no_effect(self):
         """Empty runtime_demoted_filters set has no effect on behavior."""
@@ -1179,12 +1162,17 @@ class TestRescueCapPrioritySort:
         assert RESCUE_SIGNAL_PRIORITY['high_scoring_environment_over'] > RESCUE_SIGNAL_PRIORITY.get('combo_he_ms', 0)
 
     def test_rescue_priority_ordering(self):
-        """Priority map has HSE > home_under > combo signals."""
+        """Priority map: HSE/hot_3pt_under (3) > line_drifted_down_under (2) > combos (1)."""
         from ml.signals.aggregator import RESCUE_SIGNAL_PRIORITY
         assert RESCUE_SIGNAL_PRIORITY['high_scoring_environment_over'] == 3
         # sharp_book_lean_over removed Session 462 (41.7% HR 5-season)
         assert 'sharp_book_lean_over' not in RESCUE_SIGNAL_PRIORITY
-        assert RESCUE_SIGNAL_PRIORITY['home_under'] == 2
+        # home_under removed from rescue map Session 483 (demoted to BASE_SIGNALS,
+        # later restored only to UNDER_SIGNAL_WEIGHTS, NOT to rescue).
+        assert 'home_under' not in RESCUE_SIGNAL_PRIORITY
+        # Session 466: promoted UNDER rescue signals.
+        assert RESCUE_SIGNAL_PRIORITY['hot_3pt_under'] == 3
+        assert RESCUE_SIGNAL_PRIORITY['line_drifted_down_under'] == 2
         assert RESCUE_SIGNAL_PRIORITY['combo_he_ms'] == 1
 
 
@@ -1212,23 +1200,13 @@ class TestComboHeMsOverRescueRemoval:
         assert len(picks) == 0
         assert summary['rejected']['edge_floor'] > 0
 
-    def test_combo_he_ms_still_rescues_under(self):
-        """UNDER pick below edge floor SHOULD be rescued by combo_he_ms."""
-        pred = _make_prediction(
-            recommendation='UNDER',
-            edge=2.5,  # Below edge floor of 3.0
-            line_value=27.0,
-            trend_slope=2.0,
-        )
-        tags = ['model_health', 'high_edge', 'edge_spread_optimal',
-                'combo_he_ms', 'rest_advantage_2d']
-        signals = self._make_signal_results_for(pred, tags)
-        agg = BestBetsAggregator()
-        picks, summary = agg.aggregate([pred], signals)
-        # combo_he_ms should rescue UNDER
-        assert len(picks) == 1
-        assert picks[0].get('signal_rescued') is True
-        assert picks[0].get('rescue_signal') == 'combo_he_ms'
+    # test_combo_he_ms_still_rescues_under DELETED: Session 494 removed
+    # combo_he_ms (and combo_3way) from the UNDER rescue_tags entirely — both
+    # signals have OVER-only gates (they return no-qualify for UNDER), so they
+    # never actually rescued UNDER picks. combo_he_ms no longer rescues in
+    # either direction. See aggregator.py:743-756. UNDER rescue is now covered
+    # by hot_3pt_under / line_drifted_down_under (see
+    # TestPremiumSignalEdgeFloorBypass and TestRescueHealthGate).
 
 
 class TestRescueHealthGate:
@@ -1247,14 +1225,17 @@ class TestRescueHealthGate:
             line_value=27.0,
             trend_slope=2.0,
         )
+        # home_under is no longer a rescue signal (Session 483/494); use the
+        # current UNDER rescue signal hot_3pt_under. rest_advantage_2d adds a
+        # second real signal so the pick clears under_low_rsc when it IS rescued.
         tags = ['model_health', 'high_edge', 'edge_spread_optimal',
-                'home_under', 'rest_advantage_2d']
+                'hot_3pt_under', 'rest_advantage_2d']
         signals = self._make_signal_results_for(pred, tags)
-        # home_under at 45% HR = below 60% threshold
-        health = {'home_under': {'hr_7d': 45.0, 'regime': 'COLD', 'status': 'DEGRADING'}}
+        # hot_3pt_under at 45% HR = below 60% threshold
+        health = {'hot_3pt_under': {'hr_7d': 45.0, 'regime': 'COLD', 'status': 'DEGRADING'}}
         agg = BestBetsAggregator(signal_health=health)
         picks, summary = agg.aggregate([pred], signals)
-        # home_under should lose rescue eligibility — pick filtered
+        # hot_3pt_under should lose rescue eligibility — pick filtered
         assert len(picks) == 0
 
     def test_healthy_signal_keeps_rescue(self):
@@ -1266,14 +1247,14 @@ class TestRescueHealthGate:
             trend_slope=2.0,
         )
         tags = ['model_health', 'high_edge', 'edge_spread_optimal',
-                'home_under', 'rest_advantage_2d']
+                'hot_3pt_under', 'rest_advantage_2d']
         signals = self._make_signal_results_for(pred, tags)
-        # home_under at 75% HR = above threshold
-        health = {'home_under': {'hr_7d': 75.0, 'regime': 'HOT', 'status': 'HEALTHY'}}
+        # hot_3pt_under at 75% HR = above threshold
+        health = {'hot_3pt_under': {'hr_7d': 75.0, 'regime': 'HOT', 'status': 'HEALTHY'}}
         agg = BestBetsAggregator(signal_health=health)
         picks, summary = agg.aggregate([pred], signals)
         assert len(picks) == 1
-        assert picks[0].get('rescue_signal') == 'home_under'
+        assert picks[0].get('rescue_signal') == 'hot_3pt_under'
 
     def test_no_health_data_fails_open(self):
         """Without signal_health data, all signals keep rescue eligibility."""
@@ -1284,13 +1265,13 @@ class TestRescueHealthGate:
             trend_slope=2.0,
         )
         tags = ['model_health', 'high_edge', 'edge_spread_optimal',
-                'home_under', 'rest_advantage_2d']
+                'hot_3pt_under', 'rest_advantage_2d']
         signals = self._make_signal_results_for(pred, tags)
         # No signal_health — fail open
         agg = BestBetsAggregator(signal_health={})
         picks, summary = agg.aggregate([pred], signals)
         assert len(picks) == 1
-        assert picks[0].get('rescue_signal') == 'home_under'
+        assert picks[0].get('rescue_signal') == 'hot_3pt_under'
 
 
 class TestOverSignalQualityScoring:
@@ -1308,8 +1289,11 @@ class TestOverSignalQualityScoring:
             edge=6.0,
             line_value=27.0,
         )
+        # fast_pace_over / line_rising_over are now SHADOW_SIGNALS (2026-06-26
+        # OVER-layer demotion) and contribute 0 to over_signal_quality.
+        # Use validated (non-shadow) OVER signals so quality is non-zero.
         tags = ['model_health', 'high_edge', 'edge_spread_optimal',
-                'fast_pace_over', 'line_rising_over']
+                'combo_3way', 'book_disagreement']
         signals = self._make_signal_results_for(pred, tags)
         agg = BestBetsAggregator()
         picks, _ = agg.aggregate([pred], signals)
@@ -1322,22 +1306,25 @@ class TestOverSignalQualityScoring:
         pred_a = _make_prediction(
             player_lookup='player_a',
             recommendation='OVER',
-            edge=5.0,
+            edge=6.0,  # Session 522: OVER floor is 6.0
             line_value=27.0,
         )
         pred_b = _make_prediction(
             player_lookup='player_b',
             game_id='20260220_BOS_MIA',
             recommendation='OVER',
-            edge=5.0,
+            edge=6.0,
             line_value=27.0,
         )
-        # Player A has high-value signals
+        # Player A has high-value validated OVER signals (combo_3way 2.5 +
+        # book_disagreement 2.0). Player B has one low-weight validated signal
+        # (combo_he_ms 1.0). fast_pace_over/line_rising_over/b2b_boost_over are
+        # now SHADOW_SIGNALS and would score 0, so they can't drive ranking.
         tags_a = ['model_health', 'high_edge', 'edge_spread_optimal',
-                  'fast_pace_over', 'line_rising_over', 'combo_3way']
-        # Player B has only base signals + one low-weight
+                  'combo_3way', 'book_disagreement']
+        # Player B has only base signals + one low-weight validated signal
         tags_b = ['model_health', 'high_edge', 'edge_spread_optimal',
-                  'b2b_boost_over']
+                  'combo_he_ms']
         signals = {}
         signals.update(self._make_signal_results_for(pred_a, tags_a))
         signals.update(self._make_signal_results_for(pred_b, tags_b))
@@ -1404,7 +1391,9 @@ class TestPredictionSanityFilter:
         """Sanity filter should BLOCK picks with pred > 2x avg on low-line players."""
         pred = _make_prediction(
             edge=6.0,
-            line_value=15.0,         # role player (< 18 threshold for sanity)
+            line_value=17.5,         # < 18 (sanity threshold) but == role_over_block
+                                     # upper bound (block is line < 17.5) so the
+                                     # archetype block is skipped and sanity is isolated
             points_avg_season=8.0,   # 8 pts avg
             is_home=False,           # avoid home_over_obs
         )
@@ -1421,7 +1410,7 @@ class TestPredictionSanityFilter:
     def test_sanity_not_triggered_for_stars(self):
         """Sanity check should NOT trigger for star players (line >= 18)."""
         pred = _make_prediction(
-            edge=5.0,
+            edge=6.0,                # Session 522: OVER floor is 6.0
             line_value=25.0,         # star — above 18 threshold
             points_avg_season=12.0,
         )
@@ -1436,8 +1425,9 @@ class TestPredictionSanityFilter:
     def test_sanity_not_triggered_when_pred_below_2x(self):
         """Sanity should NOT trigger when predicted < 2x season avg."""
         pred = _make_prediction(
-            edge=5.0,               # Session 468: OVER floor raised to 5.0
-            line_value=12.0,         # role player
+            edge=8.0,                # edge >= 7.5 bypasses the role_over_block
+                                     # (line 12-17.5) so we isolate the sanity path
+            line_value=12.0,         # role player (< 18 sanity threshold)
             points_avg_season=10.0,  # 10 pts avg
             is_home=False,
         )
@@ -1452,8 +1442,8 @@ class TestPredictionSanityFilter:
     def test_sanity_boundary_line_exactly_18(self):
         """Line exactly 18 should NOT trigger (condition is < 18, not <=)."""
         pred = _make_prediction(
-            edge=5.0,
-            line_value=18.0,         # boundary — exactly 18
+            edge=6.0,                # Session 522: OVER floor is 6.0
+            line_value=18.0,         # boundary — exactly 18 (starter tier)
             points_avg_season=8.0,
             is_home=False,
         )
@@ -1495,13 +1485,13 @@ class TestEdgeZscore:
 
     def test_high_variance_low_zscore(self):
         """High variance player should have low z-score despite decent edge."""
-        pred = _make_prediction(edge=5.0, line_value=27.0)  # Session 468: OVER floor raised to 5.0
-        pred['points_std_last_10'] = 8.0  # z = 5.0 / 8.0 = 0.625
+        pred = _make_prediction(edge=6.0, line_value=27.0)  # Session 522: OVER floor is 6.0
+        pred['points_std_last_10'] = 8.0  # z = 6.0 / 8.0 = 0.75
         signals = self._make_signals_for(pred)
         agg = BestBetsAggregator()
         picks, _ = agg.aggregate([pred], signals)
         assert len(picks) == 1
-        assert picks[0]['edge_zscore'] == 0.625
+        assert picks[0]['edge_zscore'] == 0.75
 
 
 class TestDepletedStarsOverObservation:
@@ -1519,7 +1509,9 @@ class TestDepletedStarsOverObservation:
 
     def test_depleted_stars_over_does_not_block(self):
         """Observation mode: pick with 3+ stars out should still pass (not blocked)."""
-        pred = _make_prediction(edge=6.0, recommendation='OVER', line_value=15.0)
+        # line=27.0 (star tier) avoids the Session 522 bench/role OVER archetype
+        # blocks; depleted_stars_over_obs is line-independent (OVER + stars>=3).
+        pred = _make_prediction(edge=6.0, recommendation='OVER', line_value=27.0)
         pred['star_teammates_out'] = 3
         signals = self._make_signals_for(pred)
         agg = BestBetsAggregator()
@@ -1529,7 +1521,7 @@ class TestDepletedStarsOverObservation:
 
     def test_depleted_stars_over_not_triggered_at_two(self):
         """stars_out=2 should NOT trigger the observation (threshold is 3)."""
-        pred = _make_prediction(edge=6.0, recommendation='OVER', line_value=15.0)
+        pred = _make_prediction(edge=6.0, recommendation='OVER', line_value=27.0)
         pred['star_teammates_out'] = 2
         signals = self._make_signals_for(pred)
         agg = BestBetsAggregator()
@@ -1548,14 +1540,16 @@ class TestDepletedStarsOverObservation:
 
 
 class TestHotShootingReversionObservation:
-    """Session 441: Hot shooting reversion UNDER observation.
+    """Session 441 → 494: Hot shooting reversion OVER block — PROMOTED to active.
 
-    After 70%+ FG games with real minutes, UNDER HR = 59.2% (N=250).
-    Observation mode — tracks OVER picks after hot shooting but doesn't block.
+    After 70%+ FG games (with real minutes >= 20), OVER HR = 40.8% (CF HR,
+    N=250) — efficiency mean-reverts at the extreme. Session 494 promoted this
+    from observation to an active block (see aggregator.py:1337). The counter
+    name is preserved as `hot_shooting_reversion_obs` for CF history continuity.
     """
 
-    def test_hot_shooting_obs_does_not_block(self):
-        """OVER after 70%+ FG should be tagged but NOT blocked."""
+    def test_hot_shooting_obs_blocks(self):
+        """OVER after 70%+ FG with real minutes is now BLOCKED (Session 494)."""
         pred = _make_prediction(edge=6.0, recommendation='OVER', is_home=False)
         pred['prev_game_fg_pct'] = 0.75  # 75% FG last game
         pred['prev_game_minutes'] = 32   # Real minutes
@@ -1563,7 +1557,7 @@ class TestHotShootingReversionObservation:
         signals = {key: [_make_signal_result(f'sig_{i}') for i in range(5)]}
         agg = BestBetsAggregator()
         picks, summary = agg.aggregate([pred], signals)
-        assert len(picks) == 1  # NOT blocked
+        assert len(picks) == 0  # Active block since Session 494
         assert summary['rejected']['hot_shooting_reversion_obs'] == 1
 
     def test_hot_shooting_not_triggered_at_65pct(self):
@@ -1599,7 +1593,9 @@ class TestTeamCap:
     def test_third_pick_from_same_team_dropped(self):
         """3rd pick from same team should be dropped (cap=2)."""
         preds = []
-        for i, edge in enumerate([8.0, 6.0, 5.0]):  # Session 468: OVER floor raised to 5.0
+        # Session 522: OVER floor is 6.0 — all three edges must clear it so the
+        # drop is attributable to team_cap, not over_edge_floor.
+        for i, edge in enumerate([8.0, 7.0, 6.0]):
             p = _make_prediction(
                 player_lookup=f'player_{i}',
                 game_id='20260307_UTA_MIL',
@@ -1618,12 +1614,13 @@ class TestTeamCap:
         assert summary['rejected']['team_cap'] == 1
         # Highest edge picks should be kept
         kept_edges = sorted([p['edge'] for p in picks], reverse=True)
-        assert kept_edges == [8.0, 6.0]  # 5.0-edge pick dropped by team_cap
+        assert kept_edges == [8.0, 7.0]  # 6.0-edge pick dropped by team_cap
 
     def test_two_picks_from_same_team_allowed(self):
         """2 picks from same team is within cap — both should pass."""
         preds = []
-        for i, edge in enumerate([7.0, 5.0]):
+        # Session 522: OVER floor is 6.0 — both edges must clear it.
+        for i, edge in enumerate([7.0, 6.0]):
             p = _make_prediction(
                 player_lookup=f'player_{i}',
                 game_id='20260307_UTA_MIL',
@@ -1650,7 +1647,7 @@ class TestTeamCap:
             p = _make_prediction(
                 player_lookup=f'player_{i}',
                 game_id=game,
-                edge=5.0,
+                edge=6.0,  # Session 522: OVER floor is 6.0
                 is_home=False,
             )
             p['team_abbr'] = team
@@ -1704,10 +1701,12 @@ class TestOverLowRscObservation:
             edge=6.0,
             line_value=27.0,
         )
-        # 3 base + 4 real = real_sc=4, above threshold
+        # 3 base + 4 real = real_sc=4, above threshold. fast_pace_over and
+        # line_rising_over are SHADOW_SIGNALS now (don't count toward real_sc),
+        # so use validated OVER signals to reach real_sc=4.
         tags = ['model_health', 'high_edge', 'edge_spread_optimal',
-                'fast_pace_over', 'book_disagreement', 'combo_3way',
-                'line_rising_over']
+                'book_disagreement', 'combo_3way', 'q4_scorer_over',
+                'self_creation_over']
         signals = self._make_signal_results_for(pred, tags)
         agg = BestBetsAggregator()
         picks, summary = agg.aggregate([pred], signals)
@@ -1809,13 +1808,18 @@ class TestThinSlateObservation:
 
 
 class TestRestAdvantage2dWeight:
-    """Session 442: rest_advantage_2d added to OVER_SIGNAL_WEIGHTS."""
+    """rest_advantage_2d OVER weight was REMOVED (P2-1, 2026-05-19).
 
-    def test_rest_advantage_2d_weight(self):
-        """rest_advantage_2d should be in OVER_SIGNAL_WEIGHTS with value 2.0."""
+    The signal is unregistered (registry register() commented out, disabled
+    Session 396), so its OVER_SIGNAL_WEIGHTS entry was dropped. See
+    aggregator.py:346. The original test asserting the 2.0 weight is deleted
+    below; this test now confirms the weight is gone.
+    """
+
+    def test_rest_advantage_2d_weight_removed(self):
+        """rest_advantage_2d should NOT be in OVER_SIGNAL_WEIGHTS (removed P2-1)."""
         from ml.signals.aggregator import OVER_SIGNAL_WEIGHTS
-        assert 'rest_advantage_2d' in OVER_SIGNAL_WEIGHTS
-        assert OVER_SIGNAL_WEIGHTS['rest_advantage_2d'] == 2.0
+        assert 'rest_advantage_2d' not in OVER_SIGNAL_WEIGHTS
 
 
 class TestSoloGamePickObservation:
@@ -1832,10 +1836,12 @@ class TestSoloGamePickObservation:
 
     def test_solo_game_pick_observation(self):
         """A single pick from a game should be tagged as solo."""
+        # line=27.0 (star tier) avoids the Session 522 bench/role OVER blocks.
+        # book_disagreement is a validated real signal (fast_pace_over is shadow).
         pred = _make_prediction(
             recommendation='OVER',
             edge=6.0,
-            line_value=12.0,
+            line_value=27.0,
             game_id='20260310_LAL_BOS',
         )
         tags = ['model_health', 'high_edge', 'edge_spread_optimal',
@@ -1852,7 +1858,7 @@ class TestSoloGamePickObservation:
         pred1 = _make_prediction(
             recommendation='OVER',
             edge=6.0,
-            line_value=12.0,
+            line_value=27.0,  # star tier — avoids bench/role OVER blocks (S522)
             game_id='20260310_LAL_BOS',
             player_lookup='player_a',
         )
@@ -1863,13 +1869,17 @@ class TestSoloGamePickObservation:
             game_id='20260310_LAL_BOS',
             player_lookup='player_b',
         )
-        tags = ['model_health', 'high_edge', 'edge_spread_optimal',
-                'fast_pace_over', 'book_disagreement']
+        # OVER pred needs a validated OVER signal; UNDER pred needs real_sc >= 2
+        # (home_under + volatile_starter_under) to clear the under_low_rsc gate.
+        tags_over = ['model_health', 'high_edge', 'edge_spread_optimal',
+                     'combo_3way', 'book_disagreement']
+        tags_under = ['model_health', 'high_edge', 'edge_spread_optimal',
+                      'home_under', 'volatile_starter_under']
         key1 = f"player_a::20260310_LAL_BOS"
         key2 = f"player_b::20260310_LAL_BOS"
         signals = {
-            key1: [_make_signal_result(t) for t in tags],
-            key2: [_make_signal_result(t) for t in tags],
+            key1: [_make_signal_result(t) for t in tags_over],
+            key2: [_make_signal_result(t) for t in tags_under],
         }
         agg = BestBetsAggregator()
         picks, summary = agg.aggregate([pred1, pred2], signals)
@@ -1916,7 +1926,9 @@ class TestPerModelMode:
     def test_per_model_mode_skips_team_cap(self):
         """3 picks from same team should all survive in per_model mode."""
         preds = []
-        for i, edge in enumerate([8.0, 6.0, 5.0]):  # Session 468: OVER floor raised to 5.0
+        # Session 522: OVER floor is 6.0 (applies in per_model mode too — only
+        # team_cap/rescue_cap/solo obs are skipped). All edges must clear 6.0.
+        for i, edge in enumerate([8.0, 7.0, 6.0]):
             p = _make_prediction(
                 player_lookup=f'player_{i}',
                 game_id='20260307_LAL_MIL',
@@ -1972,10 +1984,14 @@ class TestLineAnomalyExtremeDropFilter:
         return {key: [_make_signal_result(f'sig_{i}') for i in range(n)]}
 
     def test_blocks_40pct_drop_over(self):
-        """OVER with 50% line drop should be blocked."""
+        """OVER with 40% line drop should be blocked.
+
+        Uses a starter-tier line (18.0) so the Session 522 bench/role OVER
+        archetype blocks (line < 17.5) don't pre-empt line_anomaly_extreme_drop.
+        """
         pred = _make_prediction(
-            edge=7.0, recommendation='OVER', line_value=8.5,
-            prop_line_delta=-8.0,  # current 8.5, prev was 16.5 => delta = -8.0
+            edge=7.0, recommendation='OVER', line_value=18.0,
+            prop_line_delta=-12.0,  # current 18, prev was 30 => 40% drop
         )
         agg = BestBetsAggregator()
         picks, summary = agg.aggregate([pred], self._make_signals(pred))
@@ -1985,8 +2001,8 @@ class TestLineAnomalyExtremeDropFilter:
     def test_blocks_6pt_abs_drop_over(self):
         """OVER with 6+ point absolute drop should be blocked."""
         pred = _make_prediction(
-            edge=6.0, recommendation='OVER', line_value=14.0,
-            prop_line_delta=-7.0,  # current 14, prev was 21 => delta = -7.0
+            edge=6.0, recommendation='OVER', line_value=18.0,
+            prop_line_delta=-7.0,  # current 18, prev was 25 => 7pt abs drop
         )
         agg = BestBetsAggregator()
         picks, summary = agg.aggregate([pred], self._make_signals(pred))
@@ -2100,23 +2116,20 @@ class TestMeanReversionInShadowSignals:
 
 
 class TestFtVarianceUnder:
-    """Session 452: FT variance ACTIVE filter blocks high-FTA + high-CV UNDER picks."""
+    """ft_variance_under filter was REMOVED 2026-03-26 (5-season CF HR = 56.0% —
+    blocking winners; see aggregator.py:1637). No `ft_variance_under` key exists
+    in the filter summary anymore, so a high-FTA/high-CV UNDER pick is never
+    blocked or tracked on that account. These tests confirm such picks pass
+    through untouched.
+    """
 
     def _make_signals(self, pred, n=5):
         key = f"{pred['player_lookup']}::{pred['game_id']}"
         return {key: [_make_signal_result(f'sig_{i}') for i in range(n)]}
 
-    def test_tracks_high_fta_high_cv_observation(self):
-        """Session 462: ft_variance_under is now observation mode — counts but does NOT block."""
-        pred = _make_prediction(
-            edge=5.0, recommendation='UNDER', trend_slope=2.0,
-        )
-        pred['fta_avg_last_10'] = 6.0
-        pred['fta_cv_last_10'] = 0.55
-        agg = BestBetsAggregator()
-        picks, summary = agg.aggregate([pred], self._make_signals(pred))
-        assert summary['rejected']['ft_variance_under'] == 1
-        assert len(picks) == 1  # Session 462: observation mode — passes through
+    # test_tracks_high_fta_high_cv_observation DELETED: ft_variance_under is fully
+    # removed (not even an observation counter). A high-FTA + high-CV UNDER pick
+    # now passes through with no ft_variance tracking.
 
     def test_does_not_block_low_fta(self):
         pred = _make_prediction(

@@ -18,6 +18,20 @@ from datetime import date
 from data_processors.publishing.streaks_exporter import StreaksExporter
 
 
+def _seed_champion_cache(model_id='catboost_v12'):
+    """Pre-seed the champion-model cache so get_champion_model_id() does not
+    issue its own BigQuery query (which would consume a queued mock result).
+
+    The autouse conftest fixture resets this cache before each test, so seeding
+    happens inside the test body after that reset.
+    """
+    import time
+    from shared.config import model_selection
+    model_selection._champion_cache.update(
+        {'model_id': model_id, 'expires': time.time() + 3600}
+    )
+
+
 class MockBigQueryClient:
     """Mock BigQuery client for testing"""
 
@@ -111,6 +125,12 @@ class TestGenerateJson:
                     ]
                 )
                 mock_bq.return_value = mock_client
+
+                # _query_prediction_streaks now resolves the champion model id.
+                # get_champion_model_id() issues its own BigQuery query, which
+                # would otherwise steal a queued mock result. Pre-seed the
+                # champion cache so no BQ query fires for it.
+                _seed_champion_cache()
 
                 exporter = StreaksExporter()
                 result = exporter.generate_json('2024-12-15')
@@ -350,6 +370,7 @@ class TestSummaryStatistics:
                     ]
                 )
                 mock_bq.return_value = mock_client
+                _seed_champion_cache()
 
                 exporter = StreaksExporter()
                 result = exporter.generate_json('2024-12-15')
@@ -379,6 +400,7 @@ class TestSummaryStatistics:
                     ]
                 )
                 mock_bq.return_value = mock_client
+                _seed_champion_cache()
 
                 exporter = StreaksExporter()
                 result = exporter.generate_json('2024-12-15')
@@ -389,33 +411,30 @@ class TestSummaryStatistics:
 
 
 class TestSafeFloat:
-    """Test suite for _safe_float utility method"""
+    """Test suite for the safe_float utility.
+
+    The exporter's private _safe_float was extracted to the module-level
+    safe_float in exporter_utils (default precision=2, default=None); the
+    streaks exporter imports and uses it. Tests exercise that shared function
+    directly.
+    """
 
     def test_safe_float_valid(self):
-        """Test valid float conversion"""
-        with patch('data_processors.publishing.streaks_exporter.bigquery.Client'):
-            with patch('data_processors.publishing.base_exporter.storage.Client'):
-                exporter = StreaksExporter()
-
-                assert exporter._safe_float(25.567) == 25.57
-                assert exporter._safe_float(10) == 10.0
-                assert exporter._safe_float(-3.456) == -3.46
+        """Valid float conversion rounds to the default precision (2)."""
+        from data_processors.publishing.exporter_utils import safe_float
+        assert safe_float(25.567) == 25.57
+        assert safe_float(10) == 10.0
+        assert safe_float(-3.456) == -3.46
 
     def test_safe_float_none(self):
-        """Test None handling"""
-        with patch('data_processors.publishing.streaks_exporter.bigquery.Client'):
-            with patch('data_processors.publishing.base_exporter.storage.Client'):
-                exporter = StreaksExporter()
-
-                assert exporter._safe_float(None) is None
+        """None passes through as None (exporter uses the default default)."""
+        from data_processors.publishing.exporter_utils import safe_float
+        assert safe_float(None) is None
 
     def test_safe_float_nan(self):
-        """Test NaN handling"""
-        with patch('data_processors.publishing.streaks_exporter.bigquery.Client'):
-            with patch('data_processors.publishing.base_exporter.storage.Client'):
-                exporter = StreaksExporter()
-
-                assert exporter._safe_float(float('nan')) is None
+        """NaN is coerced to None."""
+        from data_processors.publishing.exporter_utils import safe_float
+        assert safe_float(float('nan')) is None
 
 
 class TestMinStreakLength:
@@ -440,17 +459,22 @@ class TestExport:
 
     def test_export_uses_today_path(self):
         """Test that export uploads to streaks/today.json"""
+        # BaseExporter now obtains its GCS client via the pooled
+        # shared.clients.get_storage_client() (cached per-project, and NOT
+        # cleared by the conftest reset), so patch that factory directly to
+        # guarantee the mock bucket is the one used.
+        mock_bucket = Mock()
+        mock_blob = Mock()
+        mock_bucket.blob.return_value = mock_blob
+        mock_gcs_client = Mock()
+        mock_gcs_client.bucket.return_value = mock_bucket
+
         with patch('data_processors.publishing.streaks_exporter.bigquery.Client') as mock_bq:
-            with patch('data_processors.publishing.base_exporter.storage.Client') as mock_gcs:
+            with patch('shared.clients.get_storage_client', return_value=mock_gcs_client):
                 mock_bq_client = MockBigQueryClient()
                 mock_bq_client.queue_results([], [], [])
                 mock_bq.return_value = mock_bq_client
-
-                # Mock GCS
-                mock_bucket = Mock()
-                mock_blob = Mock()
-                mock_bucket.blob.return_value = mock_blob
-                mock_gcs.return_value.bucket.return_value = mock_bucket
+                _seed_champion_cache()
 
                 exporter = StreaksExporter()
                 exporter.export('2024-12-15')

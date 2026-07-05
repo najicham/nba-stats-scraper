@@ -461,24 +461,23 @@ class TestGenerateJson:
 
 
 class TestSafeFloat:
-    """Test suite for _safe_float utility method"""
+    """Test suite for the safe_float utility.
+
+    The exporter's private _safe_float was extracted to the module-level
+    safe_float in exporter_utils (default precision=2, default=None); the
+    exporter imports and calls it directly. Tests exercise the shared function.
+    """
 
     def test_safe_float_rounding(self):
         """Test float rounding to 2 decimal places"""
-        with patch('data_processors.publishing.team_tendencies_exporter.bigquery.Client'):
-            with patch('data_processors.publishing.base_exporter.storage.Client'):
-                exporter = TeamTendenciesExporter()
-
-                assert exporter._safe_float(104.567) == 104.57
-                assert exporter._safe_float(98.123) == 98.12
+        from data_processors.publishing.exporter_utils import safe_float
+        assert safe_float(104.567) == 104.57
+        assert safe_float(98.123) == 98.12
 
     def test_safe_float_none(self):
-        """Test None handling"""
-        with patch('data_processors.publishing.team_tendencies_exporter.bigquery.Client'):
-            with patch('data_processors.publishing.base_exporter.storage.Client'):
-                exporter = TeamTendenciesExporter()
-
-                assert exporter._safe_float(None) is None
+        """Test None handling (default is None)."""
+        from data_processors.publishing.exporter_utils import safe_float
+        assert safe_float(None) is None
 
 
 if __name__ == '__main__':

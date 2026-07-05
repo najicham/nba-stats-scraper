@@ -80,7 +80,8 @@ class TestBounceBackRateCalculation:
                 result = exporter._query_bounce_back_candidates('2024-12-15', 10)
 
                 assert len(result) == 1
-                assert result[0]['bounce_back_rate'] == 0.786
+                # safe_float rounds to default precision=2 (0.786 -> 0.79)
+                assert result[0]['bounce_back_rate'] == 0.79
                 assert result[0]['bounce_back_sample'] == 14
                 assert result[0]['significance'] == 'high'
 
@@ -293,7 +294,8 @@ class TestLeagueBaseline:
 
                 result = exporter._query_league_baseline('2024-12-15', 10)
 
-                assert result['avg_bounce_back_rate'] == 0.624
+                # safe_float rounds to default precision=2 (0.624 -> 0.62)
+                assert result['avg_bounce_back_rate'] == 0.62
                 assert result['sample_size'] == 1234
 
     def test_league_baseline_empty_data(self):
@@ -465,24 +467,26 @@ class TestLastGameStructure:
 
 
 class TestSafeFloat:
-    """Test suite for _safe_float utility method"""
+    """Test suite for the safe_float utility.
+
+    The exporter's private _safe_float was extracted to the module-level
+    safe_float in exporter_utils (default precision=2); the exporter imports and
+    uses it. Tests exercise that shared function directly.
+    """
 
     def test_safe_float_valid(self):
-        """Test valid float conversion"""
-        with patch('data_processors.publishing.bounce_back_exporter.bigquery.Client'):
-            with patch('data_processors.publishing.base_exporter.storage.Client'):
-                exporter = BounceBackExporter()
-
-                assert exporter._safe_float(0.12345) == 0.123
-                assert exporter._safe_float(25.5) == 25.5
+        """Test valid float conversion (rounds to precision)."""
+        from data_processors.publishing.exporter_utils import safe_float
+        # Default precision is 2
+        assert safe_float(0.12345) == 0.12
+        # Explicit precision honored
+        assert safe_float(0.12345, precision=3) == 0.123
+        assert safe_float(25.5) == 25.5
 
     def test_safe_float_none(self):
         """Test None handling"""
-        with patch('data_processors.publishing.bounce_back_exporter.bigquery.Client'):
-            with patch('data_processors.publishing.base_exporter.storage.Client'):
-                exporter = BounceBackExporter()
-
-                assert exporter._safe_float(None) is None
+        from data_processors.publishing.exporter_utils import safe_float
+        assert safe_float(None) is None
 
 
 class TestTonightGameEnrichment:

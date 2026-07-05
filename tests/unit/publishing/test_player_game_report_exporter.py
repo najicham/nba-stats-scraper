@@ -462,37 +462,30 @@ class TestEmptyResponse:
 
 
 class TestSafeFloat:
-    """Test suite for safe float conversion"""
+    """Test suite for the safe_float utility.
+
+    The exporter's private _safe_float was extracted to the module-level
+    safe_float in exporter_utils (default precision=2); the exporter imports and
+    uses it. Tests exercise that shared function directly.
+    """
 
     def test_safe_float_normal(self):
         """Test normal float conversion"""
-        with patch('data_processors.publishing.player_game_report_exporter.bigquery.Client'):
-            with patch('data_processors.publishing.base_exporter.storage.Client'):
-                exporter = PlayerGameReportExporter()
-
-                assert exporter._safe_float(26.5) == 26.5
-                assert exporter._safe_float('26.5') == 26.5
+        from data_processors.publishing.exporter_utils import safe_float
+        assert safe_float(26.5) == 26.5
+        assert safe_float('26.5') == 26.5
 
     def test_safe_float_none(self):
         """Test None handling"""
-        with patch('data_processors.publishing.player_game_report_exporter.bigquery.Client'):
-            with patch('data_processors.publishing.base_exporter.storage.Client'):
-                exporter = PlayerGameReportExporter()
-
-                assert exporter._safe_float(None) is None
+        from data_processors.publishing.exporter_utils import safe_float
+        assert safe_float(None) is None
 
     def test_safe_float_nan(self):
         """Test NaN handling"""
-        with patch('data_processors.publishing.player_game_report_exporter.bigquery.Client'):
-            with patch('data_processors.publishing.base_exporter.storage.Client'):
-                exporter = PlayerGameReportExporter()
-
-                assert exporter._safe_float(float('nan')) is None
+        from data_processors.publishing.exporter_utils import safe_float
+        assert safe_float(float('nan')) is None
 
     def test_safe_float_invalid(self):
         """Test invalid value handling"""
-        with patch('data_processors.publishing.player_game_report_exporter.bigquery.Client'):
-            with patch('data_processors.publishing.base_exporter.storage.Client'):
-                exporter = PlayerGameReportExporter()
-
-                assert exporter._safe_float('not a number') is None
+        from data_processors.publishing.exporter_utils import safe_float
+        assert safe_float('not a number') is None

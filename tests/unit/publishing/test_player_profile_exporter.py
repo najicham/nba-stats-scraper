@@ -221,32 +221,25 @@ class TestInterpretationBuilding:
 
 
 class TestSafeFloat:
-    """Test suite for safe float conversion"""
+    """Test suite for the safe_float utility.
+
+    The exporter's private _safe_float was extracted to the module-level
+    safe_float in exporter_utils (default precision=2); the exporter imports and
+    uses it. Tests exercise that shared function directly.
+    """
 
     def test_safe_float_with_valid_number(self):
-        """Test safe float with valid number"""
-        with patch('google.cloud.bigquery.Client'):
-            with patch('data_processors.publishing.base_exporter.storage.Client'):
-                from data_processors.publishing.player_profile_exporter import PlayerProfileExporter
-                exporter = PlayerProfileExporter()
-
-                assert exporter._safe_float(5.123456) == 0.123
-                assert exporter._safe_float(10.0) == 10.0
+        """Test safe float with valid number (rounds to default precision=2)."""
+        from data_processors.publishing.exporter_utils import safe_float
+        assert safe_float(5.123456) == 5.12
+        assert safe_float(10.0) == 10.0
 
     def test_safe_float_with_none(self):
         """Test safe float with None"""
-        with patch('google.cloud.bigquery.Client'):
-            with patch('data_processors.publishing.base_exporter.storage.Client'):
-                from data_processors.publishing.player_profile_exporter import PlayerProfileExporter
-                exporter = PlayerProfileExporter()
-
-                assert exporter._safe_float(None) is None
+        from data_processors.publishing.exporter_utils import safe_float
+        assert safe_float(None) is None
 
     def test_safe_float_with_nan(self):
         """Test safe float with NaN"""
-        with patch('google.cloud.bigquery.Client'):
-            with patch('data_processors.publishing.base_exporter.storage.Client'):
-                from data_processors.publishing.player_profile_exporter import PlayerProfileExporter
-                exporter = PlayerProfileExporter()
-
-                assert exporter._safe_float(float('nan')) is None
+        from data_processors.publishing.exporter_utils import safe_float
+        assert safe_float(float('nan')) is None

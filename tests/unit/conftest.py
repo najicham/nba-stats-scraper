@@ -40,6 +40,14 @@ def _reset_global_caches():
     except Exception:
         pass
     try:
+        # Same rationale as the BigQuery pool: BaseExporter now pulls its GCS
+        # client from this process-global pool, so a test's patched
+        # `storage.Client` only takes effect if the pool cache is cleared first.
+        from shared.clients import storage_pool
+        storage_pool._client_cache.clear()
+    except Exception:
+        pass
+    try:
         from shared.config import model_selection
         model_selection._champion_cache.update({'model_id': None, 'expires': 0})
     except Exception:

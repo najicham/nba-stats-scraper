@@ -413,36 +413,34 @@ class TestEmptyResponse:
 
 
 class TestSafeFloat:
-    """Test suite for safe float conversion"""
+    """Test suite for the safe_float utility.
+
+    The exporter's private _safe_float was extracted to the module-level
+    safe_float in exporter_utils. The refactor changed the old magnitude-based
+    rounding (2 decimals if abs<1 else 1 decimal) to a flat default precision=2;
+    the exporter imports and uses the shared function. Tests exercise it directly.
+    """
 
     def test_safe_float_normal(self):
         """Test normal float conversion"""
-        with patch('data_processors.publishing.player_season_exporter.bigquery.Client'):
-            with patch('data_processors.publishing.base_exporter.storage.Client'):
-                exporter = PlayerSeasonExporter()
-
-                assert exporter._safe_float(26.5) == 26.5
-                assert exporter._safe_float('26.5') == 26.5
+        from data_processors.publishing.exporter_utils import safe_float
+        assert safe_float(26.5) == 26.5
+        assert safe_float('26.5') == 26.5
 
     def test_safe_float_none(self):
         """Test None handling"""
-        with patch('data_processors.publishing.player_season_exporter.bigquery.Client'):
-            with patch('data_processors.publishing.base_exporter.storage.Client'):
-                exporter = PlayerSeasonExporter()
-
-                assert exporter._safe_float(None) is None
+        from data_processors.publishing.exporter_utils import safe_float
+        assert safe_float(None) is None
 
     def test_safe_float_rounding(self):
-        """Test proper rounding behavior"""
-        with patch('data_processors.publishing.player_season_exporter.bigquery.Client'):
-            with patch('data_processors.publishing.base_exporter.storage.Client'):
-                exporter = PlayerSeasonExporter()
+        """Test proper rounding behavior (flat precision=2)."""
+        from data_processors.publishing.exporter_utils import safe_float
 
-                # Small values rounded to 2 decimals
-                assert exporter._safe_float(0.4567) == 0.46
+        # Small values rounded to 2 decimals
+        assert safe_float(0.4567) == 0.46
 
-                # Large values rounded to 1 decimal
-                assert exporter._safe_float(26.567) == 26.6
+        # Large values also rounded to 2 decimals (was 1 decimal pre-refactor)
+        assert safe_float(26.567) == 26.57
 
 
 class TestMonthly:

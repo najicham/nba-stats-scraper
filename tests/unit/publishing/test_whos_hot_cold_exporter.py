@@ -88,7 +88,9 @@ class TestHeatScoreCalculation:
                 result = exporter._query_heat_scores('2024-12-15', 5, 30)
 
                 assert len(result) == 1
-                assert result[0]['heat_score'] == 0.725
+                # heat_score is now passed through the shared safe_float
+                # (default precision=2), so the computed 0.725 rounds to 0.72.
+                assert result[0]['heat_score'] == 0.72
                 assert result[0]['hit_rate'] == 0.800
                 assert result[0]['current_streak'] == 5
                 assert result[0]['avg_margin'] == 6.0
@@ -436,41 +438,38 @@ class TestFormatGameTime:
 
 
 class TestSafeFloat:
-    """Test suite for _safe_float utility method"""
+    """Test suite for the safe_float utility.
+
+    The exporter's private _safe_float was extracted to the module-level
+    safe_float in exporter_utils (default precision=2, default=None); the
+    whos-hot-cold exporter imports and uses it with the default precision.
+    Tests exercise that shared function directly.
+    """
 
     def test_safe_float_valid_number(self):
-        """Test conversion of valid numbers"""
-        with patch('data_processors.publishing.whos_hot_cold_exporter.bigquery.Client'):
-            with patch('data_processors.publishing.base_exporter.storage.Client'):
-                exporter = WhosHotColdExporter()
-
-                assert exporter._safe_float(0.12345) == 0.123
-                assert exporter._safe_float(1.9999) == 2.0
-                assert exporter._safe_float(0) == 0.0
+        """Valid numbers round to the default precision (2); precision is
+        overridable via the keyword (preserves the original intent that the
+        function rounds to N places)."""
+        from data_processors.publishing.exporter_utils import safe_float
+        assert safe_float(0.12345) == 0.12
+        assert safe_float(0.12345, precision=3) == 0.123
+        assert safe_float(1.9999) == 2.0
+        assert safe_float(0) == 0.0
 
     def test_safe_float_none(self):
-        """Test that None returns None"""
-        with patch('data_processors.publishing.whos_hot_cold_exporter.bigquery.Client'):
-            with patch('data_processors.publishing.base_exporter.storage.Client'):
-                exporter = WhosHotColdExporter()
-
-                assert exporter._safe_float(None) is None
+        """None returns None."""
+        from data_processors.publishing.exporter_utils import safe_float
+        assert safe_float(None) is None
 
     def test_safe_float_nan(self):
-        """Test that NaN returns None"""
-        with patch('data_processors.publishing.whos_hot_cold_exporter.bigquery.Client'):
-            with patch('data_processors.publishing.base_exporter.storage.Client'):
-                exporter = WhosHotColdExporter()
-
-                assert exporter._safe_float(float('nan')) is None
+        """NaN returns None."""
+        from data_processors.publishing.exporter_utils import safe_float
+        assert safe_float(float('nan')) is None
 
     def test_safe_float_invalid_string(self):
-        """Test that invalid strings return None"""
-        with patch('data_processors.publishing.whos_hot_cold_exporter.bigquery.Client'):
-            with patch('data_processors.publishing.base_exporter.storage.Client'):
-                exporter = WhosHotColdExporter()
-
-                assert exporter._safe_float('invalid') is None
+        """Invalid strings return None."""
+        from data_processors.publishing.exporter_utils import safe_float
+        assert safe_float('invalid') is None
 
 
 if __name__ == '__main__':

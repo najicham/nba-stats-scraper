@@ -261,69 +261,61 @@ class TestRecommendationBreakdown:
 
 
 class TestEdgeCalculation:
-    """Test suite for edge calculation"""
+    """Test suite for edge calculation.
+
+    The exporter's private _calc_edge was replaced by the module-level
+    calculate_edge(predicted, line) in exporter_utils, called as
+    calculate_edge(pred.get('predicted_points'), pred.get('line_value')).
+    Tests exercise that shared function directly.
+    """
 
     def test_calc_edge_positive(self):
         """Test positive edge calculation (predicted > line)"""
-        with patch('data_processors.publishing.predictions_exporter.bigquery.Client'):
-            with patch('data_processors.publishing.base_exporter.storage.Client'):
-                exporter = PredictionsExporter()
-
-                pred = {'predicted_points': 28.5, 'line_value': 25.5}
-                edge = exporter._calc_edge(pred)
-
-                assert edge == 3.0
+        from data_processors.publishing.exporter_utils import calculate_edge
+        pred = {'predicted_points': 28.5, 'line_value': 25.5}
+        edge = calculate_edge(pred.get('predicted_points'), pred.get('line_value'))
+        assert edge == 3.0
 
     def test_calc_edge_negative(self):
         """Test negative edge calculation (predicted < line)"""
-        with patch('data_processors.publishing.predictions_exporter.bigquery.Client'):
-            with patch('data_processors.publishing.base_exporter.storage.Client'):
-                exporter = PredictionsExporter()
-
-                pred = {'predicted_points': 22.0, 'line_value': 25.5}
-                edge = exporter._calc_edge(pred)
-
-                assert edge == -3.5
+        from data_processors.publishing.exporter_utils import calculate_edge
+        pred = {'predicted_points': 22.0, 'line_value': 25.5}
+        edge = calculate_edge(pred.get('predicted_points'), pred.get('line_value'))
+        assert edge == -3.5
 
     def test_calc_edge_none_values(self):
         """Test edge calculation with None values"""
-        with patch('data_processors.publishing.predictions_exporter.bigquery.Client'):
-            with patch('data_processors.publishing.base_exporter.storage.Client'):
-                exporter = PredictionsExporter()
-
-                assert exporter._calc_edge({'predicted_points': None, 'line_value': 25.5}) is None
-                assert exporter._calc_edge({'predicted_points': 28.0, 'line_value': None}) is None
-                assert exporter._calc_edge({'predicted_points': None, 'line_value': None}) is None
+        from data_processors.publishing.exporter_utils import calculate_edge
+        assert calculate_edge(None, 25.5) is None
+        assert calculate_edge(28.0, None) is None
+        assert calculate_edge(None, None) is None
 
 
 class TestSafeFloat:
-    """Test suite for _safe_float utility method"""
+    """Test suite for the safe_float utility.
+
+    The exporter's private _safe_float was extracted to the module-level
+    safe_float in exporter_utils (default precision=2, default=None); the
+    predictions exporter imports and uses it. Tests exercise that shared
+    function directly.
+    """
 
     def test_safe_float_valid(self):
-        """Test valid float conversion"""
-        with patch('data_processors.publishing.predictions_exporter.bigquery.Client'):
-            with patch('data_processors.publishing.base_exporter.storage.Client'):
-                exporter = PredictionsExporter()
-
-                assert exporter._safe_float(25.567) == 25.57
-                assert exporter._safe_float(10) == 10.0
-                assert exporter._safe_float(0.789) == 0.79
+        """Valid float conversion rounds to the default precision (2)."""
+        from data_processors.publishing.exporter_utils import safe_float
+        assert safe_float(25.567) == 25.57
+        assert safe_float(10) == 10.0
+        assert safe_float(0.789) == 0.79
 
     def test_safe_float_none(self):
-        """Test None handling"""
-        with patch('data_processors.publishing.predictions_exporter.bigquery.Client'):
-            with patch('data_processors.publishing.base_exporter.storage.Client'):
-                exporter = PredictionsExporter()
-
-                assert exporter._safe_float(None) is None
+        """None passes through as None."""
+        from data_processors.publishing.exporter_utils import safe_float
+        assert safe_float(None) is None
 
     def test_safe_float_nan(self):
-        """Test NaN handling"""
-        with patch('data_processors.publishing.predictions_exporter.bigquery.Client'):
-            with patch('data_processors.publishing.base_exporter.storage.Client'):
-                exporter = PredictionsExporter()
-
-                assert exporter._safe_float(float('nan')) is None
+        """NaN is coerced to None."""
+        from data_processors.publishing.exporter_utils import safe_float
+        assert safe_float(float('nan')) is None
 
 
 class TestPredictionFormatting:
