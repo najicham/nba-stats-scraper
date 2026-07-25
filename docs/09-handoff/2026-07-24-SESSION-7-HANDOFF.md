@@ -54,16 +54,17 @@ Real 10-agent fan-out against `06-PLAN.md` + `07-PLAN-REVIEW-2026-07-24.md`. Age
 
 ## 3. New / sharpened findings folded into the plan
 
-1. 🔴 **`prediction-request-dev` topic missing (verified live).** `gcloud pubsub topics list` → only `prediction-request-prod` and `prediction-request-dlq`. **Prerequisite for §4.9.** Recreate before the smoke test: `gcloud pubsub topics create prediction-request-dev` (one command, mutation → needs go). `bin/predictions/deploy/test_prediction_worker.sh:25` still references it. Folded into `06-PLAN §4.9`.
-2. **§4.6:** the Cloud Build reversion vector is trigger config, not a repo file (review was right). Additionally `detect_config_drift.py` pins only the **3 orchestrators** to `min=1`; `prediction-coordinator` is expected `min=0` there, so a coordinator drop to 0 is reverted **only** by `deploy-service.sh:51-62`, and the drift detector won't flag it. Folded into `06-PLAN §4.6`.
-3. **§4.9 ordering:** run it **after** §4.6 sets `min=0`, else it exercises a warm worker. Folded into `06-PLAN §4.9`.
+1. 🔴 **§4.9's whole sandbox is gone — not just a topic.** Verified live: the **`nba-props-platform-dev` project does not exist** (`gcloud projects list` → only `nba-props-platform`). The dev environment `test_prediction_worker.sh:19-25` / README `:80-175` references (dev project, `prediction-request-dev` topic, `prediction-worker-dev`, dev sub) is entirely absent. So the plan's "publish via `prediction-request-dev`" is **not runnable** — recreating just the topic is insufficient (it belongs to a non-existent project). **Redesign:** one synthetic message on `prediction-request-prod` for a throwaway player/game → confirm it traverses to a staging write → delete the row; run **after** §4.6 sets min=0. Details in `08-AUGUST-EXECUTION-PREP.md §4.9`; `06-PLAN §4.9` note corrected.
+2. **§4.6 — all reversion vectors enumerated (live).** Four build triggers carry `_MIN_INSTANCES=1`: the 3 orchestrators **and `deploy-prediction-coordinator`** (repo defaults to 0; the `=1` is per-trigger GCP config). `detect_config_drift.py` pins only the **3 orchestrators** (coordinator expected 0 there). So the coordinator has **two** reversion vectors (deploy-service.sh + trigger) with **no drift-detector coverage**; the orchestrators have three. Folded into `06-PLAN §4.6` + prep doc.
+3. **§4.7 blast radius MEASURED (resolves §8 uncertainty #5):** ~1.5% of feature-store rows (2,223/147,340), all seasons, small — no backtest-revalidation emergency. Features `[18,19,20]`.
+4. **All §4 code fixes are now turnkey diffs** in **`08-AUGUST-EXECUTION-PREP.md`** — exact before/after for §4.1/4.3/4.4/4.5/4.10, caller audits (§4.1 11 readers, §4.4 17 callers — none dangerous), deploy paths (§4.5 is a `shared/` push, NOT gated on the manual-deploy CF), and the §4.6/§4.7/§4.9 open decisions. Nothing applied.
 
 ---
 
 ## 4. Do next — in order
 
 1. **Item 3 (OWNER ONLY):** Console → Billing → Credits on `012771-2FDDA2-05C7DB` and `017067-5DE13C-479720`. `jett-prod` runs the `minScale=1` + `cpu-throttling:false` config that cost $321/mo on InfiniteCase, on an account with no export/budget. Possible trial cliff. CLI cannot see trial-credit state.
-2. **August safety work** (`06-PLAN §4`, ~2-3 days): 4.1 zero-tolerance fail-open (`data_loaders.py:1042` is the real one), 4.2 make-halts-halt (+ `base_exporter.py` fail-closed), 4.3 the `type(e,...)` typo, 4.4 batch-writer ordering, 4.5 retry recycle, 4.6 min-instances→0 (with the §4.6 refinements above), 4.7 shot-zone 100× bug, **4.9 smoke test** (recreate the dev topic first; run after 4.6), **4.10 feature_version ORDER BY**.
+2. **August safety work** (`06-PLAN §4`, ~2-3 days) — **turnkey diffs ready in `08-AUGUST-EXECUTION-PREP.md`.** Apply order: (a) trivial batch on push — §4.3 typo, §4.10 ORDER BY, §4.1 fail-open (3 sites, NULL-trap handled), §4.5 retry recycle, §4.4 batch-writer (+ add a failure-path unit test); (b) §4.6 min-instances→0 as a coordinated commit + 4 `gcloud builds triggers update` + Eventarc `--retry` first; (c) §4.7 once fix approach chosen (normalize fallback); (d) §4.9 redesigned (prod synthetic message, after §4.6). §4.2 make-halts-halt is not yet diffed (do it in the August pass). Run per-dir tests first (`-p no:cacheprovider`).
 3. **September** (`06-PLAN §5`): monitors with inputs today.
 4. **October restore** (`06-PLAN §9`): per manifest with corrections.
 
@@ -82,8 +83,9 @@ Real 10-agent fan-out against `06-PLAN.md` + `07-PLAN-REVIEW-2026-07-24.md`. Age
 
 | File | What |
 |---|---|
-| `docs/08-projects/current/gcp-cost-audit-2026-07/06-PLAN.md` | Living plan. §3 item 2 → DONE; §4.6/§4.9 refined; dev-topic prerequisite added. **Start here.** |
+| `docs/08-projects/current/gcp-cost-audit-2026-07/06-PLAN.md` | Living plan. §3 item 2 → DONE; §4.6/§4.7/§4.9 refined; §8 #5 resolved. **Start here.** |
 | `.../07-PLAN-REVIEW-2026-07-24.md` | Now has a **Session 7 addendum** documenting the real 10-agent re-run. |
+| `.../08-AUGUST-EXECUTION-PREP.md` | **NEW — turnkey §4 diffs.** Exact before/after for every August fix + caller audits + deploy paths + open decisions. |
 | `docs/09-handoff/2026-07-24-SESSION-6-HANDOFF.md` | Predecessor (item 1). |
 
 ---

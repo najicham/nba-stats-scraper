@@ -4,7 +4,7 @@
 **Status:** Proposed. Nothing applied.
 **Supersedes** the sequencing in `02-DECISION-RECORD.md` where they conflict.
 
-Companions: `00-FULL-ANALYSIS.md` (billing), `01-WAVE-2-PIPELINE-EFFICIENCY.md` (pipeline), `02-DECISION-RECORD.md` (tradeoffs), `04-ROBUSTNESS-ASSESSMENT.md` (safety layer).
+Companions: `00-FULL-ANALYSIS.md` (billing), `01-WAVE-2-PIPELINE-EFFICIENCY.md` (pipeline), `02-DECISION-RECORD.md` (tradeoffs), `04-ROBUSTNESS-ASSESSMENT.md` (safety layer), `07-PLAN-REVIEW-2026-07-24.md` (solidity review + Session-7 addendum), **`08-AUGUST-EXECUTION-PREP.md` (turnkey §4 diffs)**.
 
 ---
 
@@ -154,6 +154,8 @@ Three reversion vectors must change in the same commit or it silently reverts:
 
 `player_shot_zone_analysis` stores percentages (0–100); the inline fallback `feature_extractor.py:880-888` computes ratios (0–1); `ml_feature_store_processor.py:1852-1854` divides by 100 unconditionally. Confirmed at source level. **Open question: how many historical rows are affected** — the fallback fires only on cache miss (`feature_extractor.py:1941-1949`). Measure before fixing; if historical features are wrong, backtests built on them need revalidation.
 
+> **✅ Session 7 — MEASURED (resolves §8 uncertainty #5).** No per-row flag records fallback-vs-cache, so measured via a value-range proxy (shot-zone features in `(0, 0.01)`). Feature 19 (mid_range, the reliable tell) = **2,223 of 147,340 rows ≈ 1.5%**, present all seasons (this season ~0.3-0.4%). **Small blast radius** → fix is worth doing but backtests are only marginally contaminated (no revalidation emergency). Affected features `[18,19,20]`. Exact mechanism, real file paths (`data_processors/precompute/ml_feature_store/…`), the proxy query, and the recommended fix (normalize the fallback to 0-100 before the divide) are in **`08-AUGUST-EXECUTION-PREP.md §4.7`**.
+
 ### ❌ 4.8 Do NOT flip the grading dedup — the audit's recommendation was wrong
 
 `04-ROBUSTNESS-ASSESSMENT.md` §9 item 4 recommends flipping `prediction_accuracy_processor.py:573` from `ORDER BY created_at DESC` to prefer the earliest pre-game row. **Do not do this.**
@@ -173,9 +175,9 @@ The genuine narrower risk is a *post-tip* row winning the dedup, which the conso
 
 Item 1 recreated the fan-out plumbing, but its first real exercise would otherwise be opening night, against a `min-instances=0` worker taking a cold-start burst. Before Oct 21: publish **one synthetic message via `prediction-request-dev`** (NOT prod — publishing to prod triggers a real prediction) and confirm it reaches a staging write. Converts "item 1 should work" into "a message was seen traversing it." The coordinator already paces publishes at ~50/sec for cold start (`coordinator.py:3608`), so the path should absorb the opener burst — but verify, don't assume. Highest-regret gap otherwise.
 
-> **⚠️ Session 7 PREREQUISITE (verified live 2026-07-24):** the **`prediction-request-dev` topic no longer exists.** `gcloud pubsub topics list` shows only `prediction-request-prod` and `prediction-request-dlq` — the same off-season purge that removed the prod subscription (item 1) also took the dev topic. **§4.9 cannot run until the dev topic is recreated** (`gcloud pubsub topics create prediction-request-dev`, one command, mutation → needs go). `bin/predictions/deploy/test_prediction_worker.sh:25` still references it, so recreating it also restores that test script.
+> **⚠️ Session 7 — the premise needs REDESIGN (verified live 2026-07-24). Supersedes the "recreate the dev topic" note.** The `prediction-request-dev` topic is gone AND so is its whole sandbox: the **`nba-props-platform-dev` project does not exist** (`gcloud projects list` → only `nba-props-platform`; describing the dev project errors "not found"). The dev environment `test_prediction_worker.sh:19-25` / README `:80-175` reference — dev project, dev topic, `prediction-worker-dev`, dev subscription — is entirely absent. So there is **no dev sandbox to smoke-test against**; recreating just the topic is insufficient (it would belong to a non-existent project).
 >
-> **Ordering:** §4.9 must run **after §4.6** sets `min-instances=0`, or it exercises a warm worker and proves nothing about cold-start. Sequence: §4.6 → recreate dev topic → §4.9.
+> **Redesign (recommended):** publish **one synthetic message to `prediction-request-prod`** for a throwaway player/game, confirm topic → sub → cold worker → staging write, then **delete the row**. This exercises the real opener path; off-season + halted makes a lone synthetic prediction low-harm. **Run AFTER §4.6** sets min=0 (else it tests a warm worker). Full options + rationale in **`08-AUGUST-EXECUTION-PREP.md §4.9`**.
 
 ### 4.10 Fix `feature_version` non-determinism — ~15 min, NEW (Session 6), pulled forward from §7
 
@@ -243,7 +245,7 @@ Real, understood, deliberately parked.
 2. **The phase4 retry loop's July 4 stop was never explained.** Its $30/mo is measured; whether the fix holds is not.
 3. **`nba-bigquery-backups` is undiagnosed** — ~$31/mo that appeared in April.
 4. **~35 publishing exporters, Phase 4 internals, and `ml/signals/aggregator.py` remain unread.** Given a $0.73 marginal slate, none can hide meaningful *cost* — but the aggregator is where the entire betting edge lives, and nobody has read it for defects.
-5. **The 100× shot-zone bug's historical blast radius is unmeasured.**
+5. ~~**The 100× shot-zone bug's historical blast radius is unmeasured.**~~ **RESOLVED Session 7: ~1.5% of feature-store rows (2,223/147,340), small.** See §4.7 / `08-AUGUST-EXECUTION-PREP.md`.
 6. **This document's own history.** The in-season figure has been revised $880 → $650 → $424 → $150 → $200–250 as measurement replaced inference. Treat the current number as the best available, not as settled.
 
 ---
@@ -253,7 +255,7 @@ Real, understood, deliberately parked.
 | When | What |
 |---|---|
 | **This week** | §3 items 1–4 |
-| **August** | §4.1–4.7 (~2–3 days) |
+| **August** | §4.1–4.10 (~2–3 days) — **turnkey diffs ready in `08-AUGUST-EXECUTION-PREP.md`.** Apply order: trivial batch (§4.3/4.10/4.1/4.5/4.4) → §4.6 coordinated → §4.7 (fix approach chosen) → §4.9 redesigned |
 | **September** | §5 monitors |
 | **October** | Restore per manifest with corrections: strike the 3 dead scrapers, hold the canary until its image fix is verified deployed, fix the `expected_by` anchor, fix the `feature_version` non-determinism |
 
