@@ -7,6 +7,8 @@
 
 **Readiness legend:** 🟢 turnkey (exact diff, low risk) · 🟡 turnkey but coordinated (multi-file, order matters) · 🟠 needs one more decision/fix before apply.
 
+> **Reviewed by 2 Fable agents (Session 7, 2026-07-24) — this doc reflects their corrections.** They caught **two real regressions** in the first-pass diffs, both verified from source: §4.4 would have introduced a **poison-pill** (retaining schema-invalid rows blocks a table's writes) — now conditional retention; §4.5 would have **halved the retry budget** by double-incrementing a counter the auto-retry CF already owns — now no increment in `queue_for_retry`. Plus: §4.10 version premise stale (current is `v2_54features`); §4.1 has two sibling fail-opens (`quality_gate.py:216`, `training_data_loader.py:47`); §4.2's "port from MLB" premise is stale (source file gone, exporters already call `halt_envelope`); §4.9 needs a cleanup checklist. **Do NOT apply the pre-correction diffs.** Adversarial review before applying is exactly why these are still docs, not commits.
+
 ---
 
 ## §4.3 — worker logging typo 🟢 (15 min, zero behavioral risk)
@@ -52,6 +54,8 @@
         LIMIT 1
 ```
 **Deploy:** `prediction-worker` (auto-deploy).
+
+> **Caveat (Fable review):** the current write value is actually **`v2_54features`** (`ml_feature_store_processor.py:93 FEATURE_VERSION`), so the docstring's "v2_39features/v2_37features" is itself stale (there is a newer version). Lexical `DESC` still ranks `54 > 39 > 37` correctly **today**, but it is fragile to digit-width: a future `v2_9features` or `v2_100features` would mis-sort lexically. Add a commit-message caveat; if versions ever vary in width, switch to a numeric parse. Not a blocker now.
 
 ---
 
@@ -115,8 +119,23 @@ Three coordinated edits. The subtlety: naïvely dropping `or 0` turns a silent f
             filter_reason = 'has_default_features'
 ```
 
-**Readers audited (11 sites):** only `worker.py:2077` would have raised on `None`; it is fixed above. `quality_gate.py:369` has the same latent `.get` shape but reads its own BQ-sourced dict (int-coerced at `:216`), so it's insulated. All other readers assign-only or guard with `pd.notna`/`fillna`/truthy checks. **No additional edits required.** Measured exposure: 44 NULL rows / 40,564 (0.1%).
+**Readers audited (11 sites):** only `worker.py:2077` would have raised on `None`; it is fixed above. `quality_gate.py:369` has the same latent `.get` shape but reads its own BQ-sourced dict (int-coerced at `:216`), so it won't crash. All other readers assign-only or guard with `pd.notna`/`fillna`/truthy checks. Measured exposure: 44 NULL rows / 40,564 (0.1%).
+
+> **Caveats (Fable review) — two related fail-opens the core diff does NOT close, worth folding in:**
+> - **`quality_gate.py:216` also fail-opens on NULL:** it coerces `required_default_count` NULL → `default_feature_count or 0`, so the *quality gate itself* passes a NULL-count player. After this fix the **worker backstop (c) is the SOLE NULL blocker** — so (c) is load-bearing, and hardening `quality_gate.py:216` to treat NULL as blocking is a sensible companion edit (defense-in-depth, matching the zero-tolerance stance).
+> - **`shared/ml/training_data_loader.py:47` admits NULL-count rows into TRAINING:** `COALESCE(required_default_count, 0) = 0` lets a row with unknown quality into the training set. Outside the runtime-serving fix, but a real training-data-quality gap — record it as a sibling item.
 **Deploy:** `prediction-coordinator` + `prediction-worker` (both auto-deploy).
+
+---
+
+## §4.2 — make halts halt 🟠 (premise PARTLY STALE — re-verify; residual is one fail-closed fix)
+
+Flagged by the Fable strategy review as missing from this doc. On inline check (Session 7) the plan's §4.2 framing has **moved**:
+- **The cited source file is gone.** `data_processors/publishing/mlb_best_bets_exporter.py` does not exist — the "port the 8-line MLB `halt_envelope()` block" premise can't be executed as written.
+- **Both NBA targets already call `halt_envelope`.** `signal_best_bets_exporter.py` (`:119, :164, :474, :797`) and `best_bets_all_exporter.py` (`:214`) already look up the halt envelope — the "advisory-only, never applied" framing is likely outdated. **Verify** whether they also *empty the `best_bets` array / suppress picks* when `halt_active` (e.g. the zero-pick path at signal `:797`), which is the behavior that actually matters.
+- **The genuine residual (matches the plan's second half):** `base_exporter.py`'s query-error `except` path (~`:394-399`) sets `halt_reason='unknown_state'` but **does NOT set `halt_active=True`** — so a halt_state **query failure fail-OPENS**, while the adjacent missing-row path (`:407-413`) correctly fail-CLOSES (`halt_active=True` for dates ≤7 days old). Make the except path match: set `halt_active=True` for recent dates on query error.
+
+**Action:** don't port a nonexistent file. Do a focused read of the two exporters' halt-application logic (confirm picks are suppressed on `halt_active`), then apply the one-spot `base_exporter.py` fail-closed fix. Re-scope §4.2 in `06-PLAN` accordingly. 🟠 because the exporter-suppression verification is still open.
 
 ---
 
@@ -124,7 +143,11 @@ Three coordinated edits. The subtlety: naïvely dropping `or 0` turns a silent f
 
 `shared/utils/pipeline_logger.py` `queue_for_retry()`. The dedup lookup (`:579-586`) matches only `status IN ('pending','retrying')`, so a `failed_permanent` row re-mints a fresh `retry_count=0` row on the next transient failure → infinite recycle. The UPDATE branch (`:603-611`) reads `existing_retry_count` (`:599`) but never uses it and hard-sets `status='pending'` without touching `retry_count`.
 
-**Fix (replaces `:579-621`):** broaden dedup to `IN ('pending','retrying','failed_permanent')` + `ORDER BY updated_at DESC`; increment `retry_count = existing+1`; once `>= max_retries` (the existing `max_retries=3` param at `:539`, no new constant) pin the row to `failed_permanent` with `next_retry_at=NULL` so `auto_retry_processor` (which only picks up `status='pending'`) never re-queues it. Full diff in the agent transcript / reproduce from the description above.
+**Fix (replaces `:579-621`):** broaden the dedup to `IN ('pending','retrying','failed_permanent')` + `ORDER BY updated_at DESC LIMIT 1` so a terminal row is FOUND (not re-minted as a fresh `retry_count=0` row).
+
+> **⚠️ CORRECTION (Fable adversarial review, verified from source).** Do **NOT** increment `retry_count` inside `queue_for_retry`. `auto_retry_processor/main.py:407` **already** does `retry_count=retry_count + 1` when it flips a row to `'retrying'` (comment `:404`: "will be set back to pending by processor if it fails again"), and its cap at `:367-371` is exact. The lifecycle is: processor-fail → `queue_for_retry` (pending) → CF (retrying, +1) → processor-fail → `queue_for_retry` (pending) → CF (retrying, +1)… **The CF owns the counter.** Adding a second increment in `queue_for_retry` (which dedup-matches the CF's `'retrying'` rows) double-counts → the budget pins after **2** executed retries, not 3.
+>
+> **Corrected fix:** in the UPDATE branch, leave `retry_count` untouched. If the found row is already `'failed_permanent'` OR `existing_retry_count >= max_retries`: keep it `failed_permanent` with `next_retry_at=NULL` (just refresh `error_message`/`updated_at`) — this stops the recycle at the source. Otherwise set `status='pending'` for the CF to pick up. (Reusing a terminal row is the intended tradeoff: a months-later transient failure on the same key won't auto-retry — acceptable.)
 
 **Deploy path (clarified):** the bug is in `shared/`, reached by `data_processors/{raw,analytics,precompute}/*_base.py` + `scrapers/scraper_base.py`. A normal push to main redeploys **nba-phase2-raw-processors, nba-phase3-analytics-processors, nba-phase4-precompute-processors, nba-scrapers** (their triggers watch `shared/`). **NOT gated on the manual-deploy `auto_retry_processor` CF** — that CF already caps correctly on its own path. The plan's line-138 warning is moot for this fix.
 
@@ -134,7 +157,13 @@ Three coordinated edits. The subtlety: naïvely dropping `or 0` turns a silent f
 
 `shared/utils/bigquery_batch_writer.py` `_flush_internal()` clears the buffer (`:259`) *before* `insert_rows_json()`, so a failed flush loses the records and every caller discards the `False`. **The "clear to release lock faster" comment is false** — all three entry points (`add_record`, `_periodic_flush`, `flush`) hold `self.lock` across the I/O, so clearing early releases nothing.
 
-**Fix:** snapshot `records_to_flush = self.buffer[:batch_size]`, remove them (`del self.buffer[:batch_size]`) **only on confirmed success**; on failure retain them for the next flush, bounded by a new `MAX_BUFFER_RECORDS` cap (drops oldest, counted in `total_records_dropped`); wire the existing `total_flush_failures` counter to `shared.observability.metrics.emit_metric` (fail-open). Index math is race-free because the lock is held for the whole flush. Full diff in the agent transcript.
+**Fix:** snapshot `records_to_flush = self.buffer[:batch_size]`, remove them (`del self.buffer[:batch_size]`) **only on confirmed success**; wire the existing `total_flush_failures` counter to `shared.observability.metrics.emit_metric` (fail-open). Index math is race-free because the lock is held for the whole flush.
+
+> **⚠️ CORRECTION (Fable adversarial review, verified from source).** `insert_rows_json` is called with **`skip_invalid_rows=False`** (`bigquery_batch_writer.py:293`), so there are TWO distinct failure paths and they must be treated DIFFERENTLY:
+> - **`if errors:` path (`:302`)** = row-level rejection (a schema-invalid record rejects the whole request). This is **permanent** — retaining the batch would poison the buffer and **block ALL future writes to that table** until cap-eviction reaches the bad row (indefinitely on low-traffic tables). **Keep the current behavior here: DROP the records** (log them / consider a DLQ later), do NOT retain.
+> - **`except Exception:` path (`:318`)** = transient (network/timeout/quota). **Retain here only** — bounded by `MAX_BUFFER_RECORDS` (drops oldest, counted in `total_records_dropped`).
+>
+> So the fix is **conditional retention: retain on transient exception, drop on row-level `errors`.** The original "retain unconditionally" diff introduced a poison-pill regression. Secondary caveat: retrying a timed-out-but-actually-committed insert re-sends with fresh insertIds → possible duplicate rows (tolerable for the monitoring/audit tables that use this writer, but the writer is therefore "safer for transient loss," not "strictly safer").
 
 **Caller audit (17 real callers):** none loops on `flush()`; none depends on buffer-cleared-on-failure; the only return-value consumer (`ml/signals/claude_pick_reviewer.py:585-640`) merely logs the bool. **The change is strictly safer for every caller.** **No `_flush_internal` failure-path unit test exists — add one** (buffer non-empty + `total_flush_failures==1` after `insert_rows_json` errors; empty after a later success). Existing tests `@patch` `get_batch_writer`, so they won't break.
 **Deploy:** all `shared/`-watching services (phase2/3/4, scrapers, etc.) on push.
@@ -179,13 +208,21 @@ Three coordinated edits. The subtlety: naïvely dropping `or 0` turns a silent f
 
 **Recommendation:** adopt option 1, and update `06-PLAN §4.9` + `test_prediction_worker.sh` accordingly. The earlier Session-7 note ("recreate the dev topic") is superseded by this — the topic alone is insufficient because it belongs to a non-existent project.
 
+> **⚠️ Safety hardening (Fable strategy review) — a prod synthetic message has a bigger blast surface than "it's halted" implies.** Halt gates Phase 6 *export*, but NOT these, which all still run off-season and would ingest a synthetic `player_prop_predictions` row:
+> - **The edge-based auto-halt query** averages `ABS(predicted_points - current_points_line)` over `game_date >= CURRENT_DATE()-7`. On an empty off-season slate, **one synthetic row IS the 7-day average** — it could flip `halt_active` state.
+> - **`halt_state_writer`** runs daily **5 AM ET** — if cleanup slips past it, halt_state is computed on fabricated data.
+> - **Canaries (every 30 min)** and **`expected_outputs` reconciliation** would also see the row.
+>
+> **Required cleanup checklist for option 1:** (a) use an obviously-synthetic `player_lookup` (e.g. `smoke-test-synthetic`) and a clearly-fake `game_id`; (b) delete from **both** the staging table **and** `player_prop_predictions` in the **same session**, immediately after confirming the write; (c) run the whole test **outside** the 5 AM ET `halt_state_writer` window and verify the next writer cycle computed clean; (d) confirm no canary/edge-halt alert fired. If this cleanup discipline feels too tight, that itself argues for a heavier but isolated approach (recreate a dev topic + subscription → prod worker, message flagged synthetic) — but option 1 with the checklist is the pragmatic choice.
+
 ---
 
 ## Suggested apply order (when approved / in August)
 
-1. 🟢 **Trivial, isolated, deploy on push:** §4.3, §4.10 (worker), §4.1 (coordinator+worker), §4.5 (shared/), §4.4 (shared/ + new test). Each is a clean diff verified above; batch into one or two commits, let auto-deploy carry them (off-season = safe window). Run the per-dir test suite first (`-p no:cacheprovider`, per the cross-suite-pollution lesson).
-2. 🟡 **§4.6** as its own coordinated commit + the four `gcloud builds triggers update` calls + Eventarc `--retry` first. Do not fold into the trivial batch.
-3. 🟠 **§4.7** once the fix approach is chosen (normalize fallback) — small backfill optional.
-4. 🟠 **§4.9** redesigned to option 1, run **after** §4.6, before the Oct 21 opener.
+1. 🟢 **Trivial, isolated, deploy on push:** §4.3, §4.10 (worker), §4.1 (coordinator+worker, **corrected** None-branch), §4.5 (shared/, **corrected** no-increment), §4.4 (shared/, **corrected** conditional-retention + new test). Each is a clean diff **as corrected above**; batch into one or two commits, let auto-deploy carry them (off-season = safe window). Run the per-dir test suite first (`-p no:cacheprovider`, per the cross-suite-pollution lesson).
+2. 🟠 **§4.2** — verify the two exporters suppress picks on `halt_active`, then apply the one-spot `base_exporter.py` query-error fail-closed fix. Can ride with the trivial batch once verified.
+3. 🟡 **§4.6** as its own coordinated commit + the four `gcloud builds triggers update` calls + Eventarc `--retry` first. Do not fold into the trivial batch. **(Config-only for the trigger/Eventarc parts — candidate to do NOW for the ~$79/mo it burns off-season; see handoff.)**
+4. 🟠 **§4.7** once the fix approach is chosen (normalize fallback) — small backfill optional.
+5. 🟠 **§4.9** redesigned to option 1 **+ the cleanup checklist above**, run **after** §4.6, before the Oct 21 opener.
 
 *Prep 2026-07-24 (Session 7). All diffs verified from source; nothing applied. See `07-PLAN-REVIEW-2026-07-24.md` Session-7 addendum and `2026-07-24-SESSION-7-HANDOFF.md`.*
