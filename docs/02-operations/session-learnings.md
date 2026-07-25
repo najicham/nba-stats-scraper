@@ -1082,6 +1082,26 @@ validate_feature_distributions(df_eval, "evaluation")
 
 ---
 
+### Retain-on-failure without permanent/transient split = poison pill (GCP audit, Session 7)
+
+**Symptom**: A "safer" batch-writer fix that keeps records in the buffer on flush failure (instead of dropping them) can *block all future writes to that table*.
+
+**Cause**: `bigquery.Client.insert_rows_json(..., skip_invalid_rows=False)` has TWO failure modes: (1) row-level `errors` returned = a schema-invalid record rejects the whole request — **permanent**; (2) a raised exception = network/timeout/quota — **transient**. Retaining on *both* means a permanently-invalid ("poison") row is re-sent forever, blocking the buffer until a size cap evicts it (indefinitely on low-traffic tables).
+
+**Rule**: retain **only** on the transient exception path; keep dropping (log / DLQ) on the row-level `errors` path. See `bigquery_batch_writer.py` and `docs/08-projects/current/gcp-cost-audit-2026-07/08-AUGUST-EXECUTION-PREP.md §4.4`.
+
+### Two code paths owning one counter = double-increment (GCP audit, Session 7)
+
+**Symptom**: A proposed retry-recycle fix would silently halve the retry budget (pin to `failed_permanent` after 2 attempts instead of 3).
+
+**Cause**: `retry_count` was already incremented by `auto_retry_processor/main.py:407` when it flips a row to `'retrying'`. Adding a second increment in `shared/utils/pipeline_logger.py::queue_for_retry` (which dedup-matches those same `'retrying'` rows) double-counts each failure cycle.
+
+**Rule**: when a shared helper and a CF/consumer both touch a mutable counter, **exactly one owns it** — grep every writer of the field before adding an increment. Fix the recycle by broadening the dedup and keeping terminal rows terminal, not by incrementing in a second place.
+
+**Meta-lesson (both above)**: these were caught by an *adversarial* subagent review of diffs that already looked "turnkey." Turnkey ≠ correct — adversarially review prepared diffs against source before applying.
+
+---
+
 ## Established Patterns
 
 Proven patterns that worked well and should be repeated.
