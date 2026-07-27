@@ -1,3 +1,5 @@
+> **⚠️ SUPERSEDED by `2026-07-27-SESSION-7-CLOSEOUT-HANDOFF.md`** — read that first (clean, self-contained entry point). This doc is kept for detail (per-lens findings, the applied-item narrative).
+
 # Session Handoff — 2026-07-24 (Session 7, off-season)
 
 **Branch:** `main`, clean except audit docs + handoffs. **System state:** OFF-SEASON, halted; opener ~Oct 21 2026.

@@ -31,7 +31,7 @@ This folder is 7 numbered docs (00, 01, 02, 04, 06, 07, 08 — 03/05 were never 
 | `01-WAVE-2-PIPELINE-EFFICIENCY.md` | Pipeline efficiency wave. |
 | `02-DECISION-RECORD.md` | Tradeoffs (superseded by 06 where they conflict). |
 | `04-ROBUSTNESS-ASSESSMENT.md` | Original safety wave. **Contains 2 KNOWN-WRONG findings** (grading-dedup flip, zero-tolerance severity) — see 06 §4.8/§5. |
-| Handoffs | `docs/09-handoff/2026-07-{21,24}-SESSION-{5,6,7}-HANDOFF.md` (Session 7 is current). |
+| Handoffs | **Current: `docs/09-handoff/2026-07-27-SESSION-7-CLOSEOUT-HANDOFF.md`** (self-contained entry point). Prior detail: `2026-07-{21,24}-SESSION-{5,6,7}-HANDOFF.md`. |
 
 ## Do-not-reopen (06 §6) — permanent
 
