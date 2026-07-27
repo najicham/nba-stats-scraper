@@ -55,7 +55,7 @@ What sits in a zero-game day:
 | **`nba-bigquery-backups`** | 1.04 | 31 |
 | Scheduler + BQ + remainder | 3.38 | 101 |
 
-> **New finding:** `nba-bigquery-backups` went from **$0.01/day in March to $1.04/day in April** — ~$31/mo that appeared and was never investigated by any agent. See §7.
+> **~~New finding: `nba-bigquery-backups` … ~$31/mo~~ — REFUTED (Session 6, §3 item 4): PHANTOM, no such line item. The $1.04 was a single zero-game-day attribution, not a sustained SKU. Ignore this row.**
 
 ### Caveat on the measurement
 
@@ -69,7 +69,7 @@ April is not a fully clean window. The edge-based auto-halt had been active sinc
 | − min-instances (coordinator + 3 orchestrators) | −79 |
 | − phase4 retry loop | −30 |
 | − broken canary | −20 |
-| − `nba-bigquery-backups` (pending diagnosis) | −31? |
+| ~~− `nba-bigquery-backups` (pending diagnosis)~~ | ~~−31?~~ **STRIKE — PHANTOM (§3 item 4)** |
 | + full pick publishing, denser schedule | +? |
 | **In-season 2026-27 estimate** | **~$200–250/mo** |
 
@@ -116,6 +116,8 @@ The `or 0` converts NULL → 0 → clean. The worker's backstop at `worker.py:20
 `mlb_best_bets_exporter.py:92-105` is 8 self-contained lines using `self.halt_envelope()`, already on the base class. Its own comment records the rationale: *"Without this, halt_state was advisory only — picks shipped with a halt flag."* Port to `signal_best_bets_exporter.py` and `best_bets_all_exporter.py`. Also make `base_exporter.py:394-399` fail closed on query error, matching its own missing-row behavior at `:401-414`.
 
 The frontend contract was already solved for MLB — the exporter still emits the stable schema with an empty `best_bets` array.
+
+> **⚠️ Session 7 — premise PARTLY STALE (verified). See `08-AUGUST-EXECUTION-PREP.md §4.2`.** `mlb_best_bets_exporter.py` **no longer exists** (can't port from it), and **both NBA exporters already call `halt_envelope`** (`signal_best_bets_exporter.py:119/164/474/797`, `best_bets_all_exporter.py:214`) — the "advisory-only" framing is outdated. The genuine residual is the second half only: `base_exporter.py`'s query-error `except` path (~`:394-399`) sets `halt_reason` but **not** `halt_active=True`, so a halt_state query failure fail-*opens* (the adjacent missing-row path `:407-413` correctly fail-closes). Action: verify the two exporters suppress picks on `halt_active`, then apply the one-spot `base_exporter.py` fail-closed fix.
 
 ### 4.3 The worker logging typo — 15 minutes, genuine one-liner
 
@@ -198,6 +200,7 @@ Build only what has inputs today:
 | Budget restructure + BigQuery quota override | Per-project budgets with forecast thresholds → Slack. Kill the $40 always-firing budget |
 | `shared/registry/monitors.yaml` + heartbeat meta-check | Makes silent monitor death and silent scheduler purges structurally impossible |
 | DDL dry-run pre-commit hook | Would have caught `CLUSTER BY ... confidence_score DESC` the day it was committed |
+| **Read `ml/signals/aggregator.py` for defects** (pulled from §8 #4) | Only Lens 8 *scanned* it (found no broad excepts / no stale allowlist). It's where the entire betting edge lives and September is the last quiet window to read it fully before game-day load returns. |
 
 **Defer to October** (needs game-day data): pipeline SLOs, the pick-distribution monitor, live invariant checks.
 
@@ -227,6 +230,7 @@ Real, understood, deliberately parked.
 | Finding | Why parked |
 |---|---|
 | `OddsGameLinesProcessor` — 720,630 runs, 0 successes since Apr 19, still failing daily | Costs ~nothing; fix or delete during October restore |
+| **`nbac_play_by_play` + `nbac_injury_report` mint ~12 `failed_permanent`/day since 2026-07-04** (measured Session 7 in `nba_orchestration.failed_processor_queue`; 141 rows each over 24 dates) | Terminal, not the runaway recycle (0 fresh re-mints — the §4.5 recycle is confirmed STOPPED). Trivial cost. Likely benign off-season (no games), but these are **core in-season sources** — **MUST verify green at October restore.** Also: `succeeded` rows in this ledger stopped exactly 2026-07-04, partly explaining §8 #2's unexplained stop. |
 | ~99% `model_bb_candidates` provenance loss (33 rows all-time) | Writer fixed in `8449f4e3`; verify at season open rather than backfill |
 | Live look-ahead leak — `team_defense_zone_analysis_processor.py:478` inclusive `BETWEEN ... AND analysis_date` | **Real and should be fixed**, but needs measurement of backfill impact first. Add a BETWEEN rule to `check_date_comparisons.py` |
 | `best_bets_published_picks` is `WRITE_TRUNCATE`, not the append-only ledger its docstring claims; holds 89 rows vs 203 picks | Affects history reconstruction, not live picks |
@@ -242,8 +246,8 @@ Real, understood, deliberately parked.
 ## 8. What we're uncertain about
 
 1. **The in-season estimate ($200–250/mo) rests on April data taken during an active halt.** No fully clean in-season measurement exists, and none will until November.
-2. **The phase4 retry loop's July 4 stop was never explained.** Its $30/mo is measured; whether the fix holds is not.
-3. **`nba-bigquery-backups` is undiagnosed** — ~$31/mo that appeared in April.
+2. **The phase4 retry loop's July 4 stop was never explained.** Its $30/mo is measured; whether the fix holds is not. **Session 7 partial:** the runaway recycle is confirmed STOPPED (0 fresh `retry_count=0` re-mints since 07-04 in `failed_processor_queue`), and `succeeded` rows in that ledger also stopped exactly 2026-07-04 — so *something* changed globally on 07-04. What remains is a benign ~12/day terminal-failure floor from two scrapers (§7). The recycle cost is gone; the trigger of the 07-04 change is still unexplained.
+3. ~~**`nba-bigquery-backups` is undiagnosed** — ~$31/mo that appeared in April.~~ **RESOLVED Session 6: PHANTOM — no such line item (§3 item 4). Not an uncertainty.**
 4. **~35 publishing exporters, Phase 4 internals, and `ml/signals/aggregator.py` remain unread.** Given a $0.73 marginal slate, none can hide meaningful *cost* — but the aggregator is where the entire betting edge lives, and nobody has read it for defects.
 5. ~~**The 100× shot-zone bug's historical blast radius is unmeasured.**~~ **RESOLVED Session 7: ~1.5% of feature-store rows (2,223/147,340), small.** See §4.7 / `08-AUGUST-EXECUTION-PREP.md`.
 6. **This document's own history.** The in-season figure has been revised $880 → $650 → $424 → $150 → $200–250 as measurement replaced inference. Treat the current number as the best available, not as settled.

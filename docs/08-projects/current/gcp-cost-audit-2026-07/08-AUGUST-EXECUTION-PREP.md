@@ -148,6 +148,8 @@ Flagged by the Fable strategy review as missing from this doc. On inline check (
 > **⚠️ CORRECTION (Fable adversarial review, verified from source).** Do **NOT** increment `retry_count` inside `queue_for_retry`. `auto_retry_processor/main.py:407` **already** does `retry_count=retry_count + 1` when it flips a row to `'retrying'` (comment `:404`: "will be set back to pending by processor if it fails again"), and its cap at `:367-371` is exact. The lifecycle is: processor-fail → `queue_for_retry` (pending) → CF (retrying, +1) → processor-fail → `queue_for_retry` (pending) → CF (retrying, +1)… **The CF owns the counter.** Adding a second increment in `queue_for_retry` (which dedup-matches the CF's `'retrying'` rows) double-counts → the budget pins after **2** executed retries, not 3.
 >
 > **Corrected fix:** in the UPDATE branch, leave `retry_count` untouched. If the found row is already `'failed_permanent'` OR `existing_retry_count >= max_retries`: keep it `failed_permanent` with `next_retry_at=NULL` (just refresh `error_message`/`updated_at`) — this stops the recycle at the source. Otherwise set `status='pending'` for the CF to pick up. (Reusing a terminal row is the intended tradeoff: a months-later transient failure on the same key won't auto-retry — acceptable.)
+>
+> **At apply time:** write the exact AFTER against current source (the full UPDATE branch at `:603-611`, param list included) — the ONLY writer of `retry_count` here must remain the auto-retry CF (`main.py:407`). This is the second spot that regressed in review; verify no other caller increments the field, and confirm with a test that N transient failures pin at exactly `max_retries`, not `max_retries/2`.
 
 **Deploy path (clarified):** the bug is in `shared/`, reached by `data_processors/{raw,analytics,precompute}/*_base.py` + `scrapers/scraper_base.py`. A normal push to main redeploys **nba-phase2-raw-processors, nba-phase3-analytics-processors, nba-phase4-precompute-processors, nba-scrapers** (their triggers watch `shared/`). **NOT gated on the manual-deploy `auto_retry_processor` CF** — that CF already caps correctly on its own path. The plan's line-138 warning is moot for this fix.
 
@@ -164,6 +166,8 @@ Flagged by the Fable strategy review as missing from this doc. On inline check (
 > - **`except Exception:` path (`:318`)** = transient (network/timeout/quota). **Retain here only** — bounded by `MAX_BUFFER_RECORDS` (drops oldest, counted in `total_records_dropped`).
 >
 > So the fix is **conditional retention: retain on transient exception, drop on row-level `errors`.** The original "retain unconditionally" diff introduced a poison-pill regression. Secondary caveat: retrying a timed-out-but-actually-committed insert re-sends with fresh insertIds → possible duplicate rows (tolerable for the monitoring/audit tables that use this writer, but the writer is therefore "safer for transient loss," not "strictly safer").
+>
+> **At apply time:** write the exact AFTER against current source — mind the `records_to_flush` → `filtered_records` intermediate between the snapshot and the `insert_rows_json` call — and cover it with the new failure-path unit test (buffer non-empty after an exception, empty after a later success, buffer NOT retained after row-level `errors`). This is one of the two spots that regressed in review; do not paste a pre-written block blind.
 
 **Caller audit (17 real callers):** none loops on `flush()`; none depends on buffer-cleared-on-failure; the only return-value consumer (`ml/signals/claude_pick_reviewer.py:585-640`) merely logs the bool. **The change is strictly safer for every caller.** **No `_flush_internal` failure-path unit test exists — add one** (buffer non-empty + `total_flush_failures==1` after `insert_rows_json` errors; empty after a later success). Existing tests `@patch` `get_batch_writer`, so they won't break.
 **Deploy:** all `shared/`-watching services (phase2/3/4, scrapers, etc.) on push.
@@ -189,7 +193,19 @@ Flagged by the Fable strategy review as missing from this doc. On inline check (
 
 **Mechanism (confirmed):** `player_shot_zone_analysis` stores percentages 0-100 (`…/player_shot_zone_analysis_processor.py:133`). The cached path in `data_processors/precompute/ml_feature_store/ml_feature_store_processor.py:1852-1854` divides by 100 → correct 0-1. The **fallback** path (`feature_extractor.py:885-888`, fires only on daily-cache miss at `:1944-1948`) already computes ratios 0-1, then hits the same unconditional `/100` → **0-0.01, a 100× under-scale.** Affected features: `FEATURES_SHOT_ZONE = [18,19,20]` (`shared/ml/feature_contract.py:778`) = pct_paint, pct_mid_range, pct_three. Feature 19 (mid_range) is the reliable tell — the shot_zone_lookup overlay (`:1955`) re-supplies only 18 & 20, never 19.
 
-**Blast radius (MEASURED this session — resolves plan uncertainty #5):** no per-row flag records cache-hit vs fallback, so measured via the value-range proxy (features in `(0, 0.01)`). Feature-19 count = **2,223 of 147,340 rows ≈ 1.5%**, present across all seasons (this season's rate is lower, ~0.3-0.4%). **Small blast radius** → the fix is worth doing, but historical backtests are only marginally contaminated (not a revalidation emergency). Query: `docs/08-projects/current/gcp-cost-audit-2026-07/` proxy in the Session-7 transcript (`ml_feature_store_v2`, `COUNTIF(feature_19_value > 0 AND feature_19_value < 0.01)` grouped by month).
+**Blast radius (MEASURED this session — resolves plan uncertainty #5):** no per-row flag records cache-hit vs fallback, so measured via the value-range proxy (features in `(0, 0.01)`). Feature-19 count = **2,223 of 147,340 rows ≈ 1.5%**, present across all seasons (this season's rate is lower, ~0.3-0.4%). **Small blast radius** → the fix is worth doing, but historical backtests are only marginally contaminated (not a revalidation emergency). Exact proxy query (verified, run from repo `.venv` + `google.cloud.bigquery`):
+
+```sql
+SELECT
+  FORMAT_DATE('%Y-%m', game_date) AS ym,
+  COUNTIF(feature_18_value > 0 AND feature_18_value < 0.01) AS paint18,
+  COUNTIF(feature_19_value > 0 AND feature_19_value < 0.01) AS mid19,   -- reliable tell
+  COUNTIF(feature_20_value > 0 AND feature_20_value < 0.01) AS three20,
+  COUNT(*) AS total_rows
+FROM `nba-props-platform.nba_predictions.ml_feature_store_v2`
+GROUP BY ym ORDER BY ym;
+```
+(paint18/three20 over-count — a spot-up shooter or non-shooter legitimately has ~0 paint/three share; **mid19 is the cleanest tell**. Table is UNPARTITIONED, so this full-scans — cheap but not free.)
 
 **Still to decide before apply:** the fix itself — make the `/100` in `ml_feature_store_processor.py:1852-1854` conditional on the source scale, OR normalize the fallback in `feature_extractor.py:885-888` to 0-100 before it reaches the divide. Prefer normalizing the fallback (one site, keeps the processor's divide uniform). Then decide whether to backfill the ~1.5% of affected historical rows (low value given the small radius).
 

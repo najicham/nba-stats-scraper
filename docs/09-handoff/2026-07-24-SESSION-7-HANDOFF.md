@@ -11,7 +11,7 @@ Predecessor: `docs/09-handoff/2026-07-24-SESSION-6-HANDOFF.md` (Session 6 applie
 
 1. **Item 2 (`infinitecase-db` backups) is APPLIED and verified.** `enabled=True`, `startTime=09:00`, `retainedBackups=7`, instance stayed `RUNNABLE` (online, no restart). §3 of `06-PLAN.md` is now closed except item 3 (owner-only).
 2. **The 10-agent review runs fine on this host.** The Session-6 stalls were WSL-local. 9/10 agents succeeded; lens 6 stalled once and was finished in the main loop. **The plan re-confirmed solid** — no lens overturned anything.
-3. 🔴 **NEW finding: the `prediction-request-dev` topic is gone.** Verified live. It is a **prerequisite for §4.9** (the pre-season fan-out smoke test) — recreate it before the smoke test. Folded into `06-PLAN.md §4.9`.
+3. 🔴 **NEW finding: §4.9's whole dev sandbox is gone — not just a topic.** Verified live: the **`nba-props-platform-dev` project does not exist**, so "publish via `prediction-request-dev`" is not runnable and recreating just the topic is insufficient. **§4.9 needs a redesign** (one synthetic message on `prediction-request-prod` + cleanup, run after §4.6). See §3 below + `08 §4.9`. Folded into `06-PLAN.md §4.9`.
 4. **Two §4.6/§4.9 refinements folded in** (drift detector doesn't pin the coordinator; §4.9 must run after §4.6 sets min=0).
 5. **Item 3 (Credits pages) remains owner-only** — unchanged, the only item with an external clock.
 
@@ -65,6 +65,16 @@ Real 10-agent fan-out against `06-PLAN.md` + `07-PLAN-REVIEW-2026-07-24.md`. Age
    - **Strategy-review open recommendation:** §4.6 is largely **config-only** and burns **~$79/mo off-season** — candidate to apply NOW (Eventarc `--retry` + 4 trigger substitutions + deploy-service.sh) rather than defer. Owner decision. **Verified:** docs-only pushes do NOT trigger Cloud Build (last build 07-05), so the "defer deploys" stance holds for the code items.
 
 ---
+
+## 3b. Close-out behavior verifications (Fable "should-we-end-here" review)
+
+Before stopping, a review flagged that items 1 & 2 were verified as *config*, not *behavior*. Three read-only checks (all clean):
+
+1. **Item 2 backups actually RUN** — `gcloud sql backups list --instance=infinitecase-db --project=infinite-case` → 3 `SUCCESSFUL AUTOMATED` backups (07-25/26/27, 09:00). Not just `enabled=True`. ✅
+2. **DLQ is not decorative** — `gcloud pubsub topics list-subscriptions prediction-request-dlq` → `prediction-request-dlq-sub` exists. Dead-lettered messages are retained/observable, not discarded. ✅
+3. **Retry recycle (§4.5) is confirmed STOPPED** — `nba_orchestration.failed_processor_queue` has **0 fresh `retry_count=0` re-mints since 2026-07-04** (the runaway signature is absent; the $30/mo recycle is gone). BUT a steady **~12 `failed_permanent`/day** floor remains: **`nbac_play_by_play` + `nbac_injury_report`** (both phase_2, core in-season sources) failing daily since 07-04. Trivial cost, terminal not looping, likely benign off-season (no games) — **parked in §7 with a MUST-verify-at-October-restore flag.** `succeeded` rows in that ledger also stopped exactly 07-04 (partial explanation for §8 #2).
+
+**Net: END HERE is correct** — the hold posture survived scrutiny; the only surfaced item is a benign parked scraper floor, not a reason to keep working.
 
 ## 4. Do next — in order
 

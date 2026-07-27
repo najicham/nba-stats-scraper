@@ -2,7 +2,7 @@
 
 **Status as of 2026-07-24 (Session 7):** cost question settled; this-week actions closed except one owner-only item; August safety fixes captured as reviewed turnkey diffs. **Nothing further is blocking off-season.**
 
-This folder is 8 numbered docs + handoffs. Read them in this order; don't re-derive.
+This folder is 7 numbered docs (00, 01, 02, 04, 06, 07, 08 — 03/05 were never used) + this README + handoffs. Read them in this order; don't re-derive.
 
 ## Bottom line
 
@@ -13,8 +13,8 @@ This folder is 8 numbered docs + handoffs. Read them in this order; don't re-der
 
 | Item | State |
 |---|---|
-| §3.1 prediction-request-prod sub (fan-out) | ✅ applied Session 6, verified |
-| §3.2 infinitecase-db backups | ✅ applied Session 7, verified (`enabled=True`, online) |
+| §3.1 prediction-request-prod sub (fan-out) | ✅ applied Session 6; **behavior-verified S7** — DLQ topic has `prediction-request-dlq-sub` (dead-letters are retained, not discarded) |
+| §3.2 infinitecase-db backups | ✅ applied Session 7; **behavior-verified S7** — 3 `SUCCESSFUL AUTOMATED` backups (07-25/26/27), not just `enabled=True` |
 | §3.3 Credits pages (2 billing accts) | ⏳ **OWNER-ONLY** — CLI can't see trial-credit state |
 | §3.4 nba-bigquery-backups "$31/mo" | ❌ PHANTOM — no such line item |
 | §4 August safety fixes | 📋 turnkey diffs in `08`, **reviewed** (2 regressions caught + fixed); nothing applied |
