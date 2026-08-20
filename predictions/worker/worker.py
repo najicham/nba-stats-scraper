@@ -1995,57 +1995,45 @@ def format_prediction_for_bigquery(
             is_actionable = False
             filter_reason = 'low_edge'
 
-        # Session 211: Champion UNDER dampening — stale model UNDER collapse
-        # Champion UNDER edge 3-5 collapsed to 27.5% HR (Feb 1 week)
-        # Raises effective UNDER threshold to 5 for champion only
-        # Does NOT affect Q43/Q45 (different system_ids) or OVER picks
-        if is_actionable and system_id == CATBOOST_SYSTEM_ID and recommendation == 'UNDER' and edge < 5:
-            is_actionable = False
-            filter_reason = 'stale_model_under_dampening'
-            logger.info(
-                f"Filtered champion UNDER for {player_lookup}: "
-                f"edge={edge:.1f} < 5 (champion UNDER dampening)"
-            )
-
-        # Star UNDER bias filter: Model under-predicts stars by ~9 pts
-        # High-edge UNDERs on stars are systematically wrong (Feb 2: 0/7)
-        # Session 476: Exempt v9_low_vegas — specifically calibrated with low vegas weight
-        # to avoid star underprediction bias. 57.3% UNDER HR at edge 3+ in March 2026.
-        season_avg = features.get('points_avg_season', 0)
-        if (season_avg >= 25 and recommendation == 'UNDER' and edge >= 5
-                and '_q4' not in system_id
-                and 'v9_low_vegas' not in system_id):
-            is_actionable = False
-            filter_reason = 'star_under_bias_suspect'
-            logger.info(
-                f"Filtered star UNDER for {player_lookup}: season_avg={season_avg:.1f}, "
-                f"predicted={predicted_points:.1f}, line={current_points_line}, edge={edge:.1f}"
-            )
-
-        # Session 125: Role player UNDER filter
-        # Role player UNDERs with edge < 5 have 42-45% hit rate (losing money)
-        # Edge 5+ has 55-67% hit rate - only keep high-conviction UNDERs
-        if is_actionable and recommendation == 'UNDER':
-            if 8 <= season_avg <= 16 and edge < 5:
-                is_actionable = False
-                filter_reason = 'role_player_under_low_edge'
-                logger.info(
-                    f"Filtered role player UNDER for {player_lookup}: season_avg={season_avg:.1f}, "
-                    f"edge={edge:.1f} < 5 (requires high conviction for role player UNDERs)"
-                )
-
-        # Session 125: Hot streak UNDER filter
-        # Players on hot streaks (L5 > season + 3) have only 14.3% UNDER hit rate
-        # They are likely to continue their hot streak, making UNDER very risky
-        l5_avg = features.get('points_avg_last_5', 0)
-        if is_actionable and recommendation == 'UNDER':
-            if l5_avg - season_avg > 3:
-                is_actionable = False
-                filter_reason = 'hot_streak_under_risk'
-                logger.info(
-                    f"Filtered hot streak UNDER for {player_lookup}: L5={l5_avg:.1f}, "
-                    f"season={season_avg:.1f}, diff={l5_avg - season_avg:.1f} (hot streak continuation risk)"
-                )
+        # 2026-08-19: FOUR panic-era UNDER filters removed from here.
+        #
+        # stale_model_under_dampening (Session 211, added 2026-02-11)
+        # star_under_bias_suspect     (Session 102, added 2026-02-03)
+        # role_player_under_low_edge  (Session 125, added 2026-02-04)
+        # hot_streak_under_risk       (Session 125, added 2026-02-04)
+        #
+        # The session numbers made these look like long-standing, established
+        # filters. They are not: all four landed inside the nine-day drawdown
+        # panic of 3-11 Feb 2026, and there are zero blocked rows before
+        # 2026-02-01 despite the season having run since October. Each was
+        # justified by a days-scale sample -- one commit message cites
+        # "Feb 2 went 0/7".
+        #
+        # Realized hit rate of what each actually blocked (deduped to distinct
+        # player-game-line, graded against player_game_summary; break-even 52.4%):
+        #
+        #   role_player_under_low_edge   52.4%  (N=635)  exactly break-even
+        #   hot_streak_under_risk        50.3%  (N=338)  refutes its own 14.3% premise
+        #   star_under_bias_suspect      43.7%  (N=126)  but see below
+        #   stale_model_under_dampening  66.7%  (N=18)   blocked winners; also dead code
+        #                                               (gated on catboost_v9, which is
+        #                                                not in the enabled fleet)
+        #
+        # star_under_bias_suspect was the only one whose blocked pool genuinely
+        # lost. It moves to ml/signals/aggregator.py as an OBSERVATION filter
+        # rather than being deleted -- but note its premise does not survive
+        # clean multi-season data. On the leak-free walk-forward cache, UNDER at
+        # edge >= 5 on players averaging 25+ hit 60.0 / 50.0 / 62.9 / 83.3 /
+        # 65.6% across 2021-22 -> 2025-26: profitable in 4 of 5 seasons, and
+        # better than non-star UNDER in 3 of 5. The 43.7% is a stale-champion
+        # artifact of the same window that produced the filter, which is why it
+        # needed two ad-hoc model exemptions to keep working.
+        #
+        # STRUCTURAL RULE: no betting-selectivity logic in the worker. Only
+        # data-quality gates belong here. Selectivity sits upstream of all
+        # observability -- picks blocked at this layer never reach
+        # best_bets_filtered_picks and never enter the counterfactual system, so
+        # a filter placed here cannot be measured, demoted, or disproven.
 
         # Session 125/139: Data quality filter (upgraded to use is_quality_ready)
         # Uses new quality visibility fields when available, falls back to score-based

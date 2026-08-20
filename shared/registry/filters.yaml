@@ -183,6 +183,18 @@ filters:
     description: OVER + line rose >= 1.0 (promoted Session 469)
     introduced_session: 469
 
+  - tag: star_under_bias_suspect_obs
+    status: observation
+    blocks_direction: under
+    description: >-
+      UNDER + season avg >= 25 + edge >= 5. Moved out of worker is_actionable()
+      2026-08-19, where it blocked with no counterfactual visibility. Observation
+      because evidence conflicts: live 2026-02/04 blocked pool 43.7% (N=126), but
+      leak-free walk-forward has this slice profitable in 4 of 5 seasons
+      (60.0/50.0/62.9/83.3/65.6%). Promote to active only at CF HR <= 50%, N >= 40,
+      spanning >= 10 calendar weeks; delete if CF HR >= 55% at N >= 40.
+    introduced_session: 2026-08-19
+
   # =========================================================================
   # ACTIVE BLOCKING FILTERS — registry drift reconciliation 2026-05-19.
   # Added in code Sessions 415-522 but never registered in this file.

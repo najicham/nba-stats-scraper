@@ -1753,6 +1753,39 @@ class BestBetsAggregator:
                 if 'cold_fg_under' not in self._runtime_demoted:
                     continue
 
+            # star_under_bias_suspect — OBSERVATION. Moved out of the worker's
+            # is_actionable() 2026-08-19, where it had blocked UNDER picks on
+            # players averaging 25+ at edge >= 5 since 2026-02-03 with no
+            # counterfactual visibility at all.
+            #
+            # It lands as observation, not active, because the evidence is
+            # genuinely contested:
+            #   FOR  — in the live 2026-02 -> 2026-04 window its blocked pool
+            #          realized 43.7% (N=126), well under break-even.
+            #   AGAINST — on the leak-free walk-forward cache the same slice hit
+            #          60.0 / 50.0 / 62.9 / 83.3 / 65.6% across the five seasons:
+            #          profitable in 4 of 5, and better than non-star UNDER in 3
+            #          of 5. It also cuts directly into UNDER at high edge, the
+            #          most durable part of the whole edge (~61% cross-season).
+            #
+            # The likely resolution is that it detected a stale champion
+            # underpredicting stars, not anything about stars — which is why it
+            # needed two ad-hoc per-model exemptions to keep working. Those
+            # exemptions ('_q4', 'v9_low_vegas') are dropped here; neither model
+            # is in the enabled fleet, so both were already inert.
+            #
+            # PROMOTION GATE (pre-registered): promote to active only if CF HR
+            # <= 50% over N >= 40 BB-level blocked picks spanning >= 10 calendar
+            # weeks. If CF HR >= 55% at N >= 40, delete it.
+            _star_season_avg = pred.get('points_avg_season') or 0
+            if (pred.get('recommendation') == 'UNDER'
+                    and _star_season_avg >= 25
+                    and pred_edge >= 5.0):
+                filter_counts['star_under_bias_suspect_obs'] += 1
+                _record_filtered(pred, 'star_under_bias_suspect_obs', pred_edge,
+                                 len(qualifying), tags)
+                # Observation only — deliberately does NOT continue.
+
             # Session 462→463: Cold 3PT UNDER — ACTIVE filter. Block UNDER when
             # 3PT% last_3 is 10%+ below season avg. Same bounce-back mechanism.
             # 5-season cross-validated: blocked picks = 45.6% HR (N=735).
