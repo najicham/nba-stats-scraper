@@ -121,24 +121,51 @@ steps:
   # Step 4: Deploy to Cloud Run
   # Session 338: Added --min-instances to prevent cold-start drift on redeploy.
   # Override per-trigger via _MIN_INSTANCES substitution (default: 0).
+  #
+  # 2026-08-20: wrapped in a quota-aware retry. A push touching shared/config/**
+  # fans out to ~20 concurrent builds against 93 services already in us-west2,
+  # and the region's "total allowable CPU" ceiling is reached partway through --
+  # nba-grading-service and nba-phase2-raw-processors both failed this way that
+  # day. It is transient (every manual retry succeeded), so retry rather than
+  # hand the failure to a human. Retry ONLY on quota: any other failure is real
+  # and must surface immediately.
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-    entrypoint: gcloud
+    entrypoint: bash
     args:
-      - 'run'
-      - 'deploy'
-      - '${_SERVICE}'
-      - '--image'
-      - 'us-west2-docker.pkg.dev/nba-props-platform/nba-props/${_SERVICE}:latest'
-      - '--region'
-      - 'us-west2'
-      - '--project'
-      - 'nba-props-platform'
-      - '--update-env-vars'
-      - 'BUILD_COMMIT=${SHORT_SHA},BUILD_TIMESTAMP=${_BUILD_TIMESTAMP}'
-      - '--update-labels'
-      - 'commit-sha=${SHORT_SHA}'
-      - '--min-instances'
-      - '${_MIN_INSTANCES}'
+      - '-c'
+      - |
+        deploy_service() {
+          gcloud run deploy ${_SERVICE} \
+            --image us-west2-docker.pkg.dev/nba-props-platform/nba-props/${_SERVICE}:latest \
+            --region us-west2 \
+            --project nba-props-platform \
+            --update-env-vars "BUILD_COMMIT=${SHORT_SHA},BUILD_TIMESTAMP=${_BUILD_TIMESTAMP}" \
+            --update-labels "commit-sha=${SHORT_SHA}" \
+            --min-instances ${_MIN_INSTANCES}
+        }
+
+        ATTEMPT=1
+        MAX_ATTEMPTS=3
+        while true; do
+          OUT=$$(deploy_service 2>&1)
+          RC=$$?
+          echo "$$OUT"
+          if [ $$RC -eq 0 ]; then
+            break
+          fi
+          if ! echo "$$OUT" | grep -qi "Quota exceeded"; then
+            echo "ERROR: deploy failed for a non-quota reason - not retrying."
+            exit $$RC
+          fi
+          if [ $$ATTEMPT -ge $$MAX_ATTEMPTS ]; then
+            echo "ERROR: still quota-blocked after $$ATTEMPT attempts."
+            exit $$RC
+          fi
+          BACKOFF=$$((ATTEMPT * 90))
+          echo "Quota-blocked (attempt $$ATTEMPT/$$MAX_ATTEMPTS); retrying in $$BACKOFF s..."
+          sleep $$BACKOFF
+          ATTEMPT=$$((ATTEMPT + 1))
+        done
 
   # Step 5: Route traffic to latest revision (Session 516)
   # Cloud Run may not auto-route traffic to new revisions on redeploy.
@@ -154,6 +181,35 @@ steps:
           --project nba-props-platform \
           --quiet
         echo "Traffic routed to latest revision for ${_SERVICE}"
+
+        # 2026-08-20: assert the service actually SERVES the new revision.
+        # Symmetric with the check in cloudbuild-functions.yaml. A revision that
+        # is created but never becomes ready leaves the service on old code; on
+        # 2026-08-20 that happened to six Cloud Functions while their builds went
+        # green. Cloud Run deploys fail louder than that, but the assertion costs
+        # seconds and removes the assumption.
+        echo "Verifying ${_SERVICE} serves its newest revision..."
+        CONVERGED=false
+        for i in 1 2 3 4 5 6; do
+          READY=$$(gcloud run services describe ${_SERVICE} \
+            --region us-west2 --project nba-props-platform \
+            --format='value(status.latestReadyRevisionName)' 2>/dev/null)
+          CREATED=$$(gcloud run services describe ${_SERVICE} \
+            --region us-west2 --project nba-props-platform \
+            --format='value(status.latestCreatedRevisionName)' 2>/dev/null)
+          if [ -n "$$READY" ] && [ "$$READY" = "$$CREATED" ]; then
+            CONVERGED=true
+            break
+          fi
+          echo "  not converged (ready=$$READY created=$$CREATED); waiting 20s..."
+          sleep 20
+        done
+        if [ "$$CONVERGED" != "true" ]; then
+          echo "ERROR: ${_SERVICE} created revision $$CREATED but it never became"
+          echo "ready. The service is still serving $$READY (OLD CODE)."
+          exit 1
+        fi
+        echo "OK: ${_SERVICE} serving $$READY"
 
 images:
   - 'us-west2-docker.pkg.dev/nba-props-platform/nba-props/${_SERVICE}:latest'

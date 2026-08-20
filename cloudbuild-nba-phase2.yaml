@@ -62,22 +62,36 @@ steps:
 
   # Step 2: Deploy NBA Phase 2 raw processors
   # CRITICAL: Uses --update-env-vars (NOT --set-env-vars) to preserve existing env vars
+  # Quota-aware retry — see cloudbuild.yaml for the full rationale. This service
+  # was one of the two that failed on 2026-08-20's fan-out.
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-    entrypoint: gcloud
+    entrypoint: bash
     args:
-      - 'run'
-      - 'deploy'
-      - 'nba-phase2-raw-processors'
-      - '--image'
-      - 'us-west2-docker.pkg.dev/nba-props-platform/nba-props/nba-phase2-raw-processors:latest'
-      - '--region'
-      - 'us-west2'
-      - '--project'
-      - 'nba-props-platform'
-      - '--update-env-vars'
-      - 'BUILD_COMMIT=${SHORT_SHA}'
-      - '--update-labels'
-      - 'commit-sha=${SHORT_SHA}'
+      - '-c'
+      - |
+        deploy_service() {
+          gcloud run deploy nba-phase2-raw-processors \
+            --image us-west2-docker.pkg.dev/nba-props-platform/nba-props/nba-phase2-raw-processors:latest \
+            --region us-west2 \
+            --project nba-props-platform \
+            --update-env-vars "BUILD_COMMIT=${SHORT_SHA}" \
+            --update-labels "commit-sha=${SHORT_SHA}"
+        }
+        ATTEMPT=1
+        while true; do
+          OUT=$$(deploy_service 2>&1); RC=$$?
+          echo "$$OUT"
+          [ $$RC -eq 0 ] && break
+          if ! echo "$$OUT" | grep -qi "Quota exceeded"; then
+            echo "ERROR: deploy failed for a non-quota reason - not retrying."; exit $$RC
+          fi
+          if [ $$ATTEMPT -ge 3 ]; then
+            echo "ERROR: still quota-blocked after $$ATTEMPT attempts."; exit $$RC
+          fi
+          BACKOFF=$$((ATTEMPT * 90))
+          echo "Quota-blocked (attempt $$ATTEMPT/3); retrying in $$BACKOFF s..."
+          sleep $$BACKOFF; ATTEMPT=$$((ATTEMPT + 1))
+        done
 
   # Step 3: Route NBA Phase 2 traffic to latest revision (Session 516)
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
@@ -91,6 +105,27 @@ steps:
           --project nba-props-platform \
           --quiet
         echo "Traffic routed to latest revision for nba-phase2-raw-processors"
+
+        # Assert the service actually serves the new revision — see
+        # cloudbuild-functions.yaml for why a green build is not proof.
+        CONVERGED=false
+        for i in 1 2 3 4 5 6; do
+          READY=$$(gcloud run services describe nba-phase2-raw-processors \
+            --region us-west2 --project nba-props-platform \
+            --format='value(status.latestReadyRevisionName)' 2>/dev/null)
+          CREATED=$$(gcloud run services describe nba-phase2-raw-processors \
+            --region us-west2 --project nba-props-platform \
+            --format='value(status.latestCreatedRevisionName)' 2>/dev/null)
+          if [ -n "$$READY" ] && [ "$$READY" = "$$CREATED" ]; then CONVERGED=true; break; fi
+          echo "  not converged (ready=$$READY created=$$CREATED); waiting 20s..."
+          sleep 20
+        done
+        if [ "$$CONVERGED" != "true" ]; then
+          echo "ERROR: nba-phase2-raw-processors created $$CREATED but it never became"
+          echo "ready. Still serving $$READY (OLD CODE)."
+          exit 1
+        fi
+        echo "OK: nba-phase2-raw-processors serving $$READY"
 
   # Step 4: Deploy MLB Phase 2 raw processors (same image — no separate build needed)
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'

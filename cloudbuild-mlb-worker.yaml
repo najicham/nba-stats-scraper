@@ -13,6 +13,31 @@
 #     --project="nba-props-platform"
 
 steps:
+  # PRE-DEPLOY TEST GATE — see cloudbuild.yaml for the rationale.
+  # Added 2026-08-20: this config watches ml/**, so a change to ml/signals
+  # reached the MLB services with no test coverage at all while the four NBA
+  # configs were gated. Same gate, same cost (~2s).
+  - name: 'python:3.11-slim'
+    id: 'test-gate'
+    entrypoint: bash
+    args:
+      - '-c'
+      - |
+        set -e
+        pip install --no-cache-dir -q -r requirements-test-gate.txt
+        export PYTHONPATH=/workspace
+        echo "--- import check: modules every service embeds ---"
+        python -c "
+        import shared.config.edge_halt
+        import shared.config.breakeven
+        import shared.registry
+        import ml.signals.aggregator
+        import ml.signals.regime_context
+        import ml.signals.pipeline_merger
+        print('imports OK')
+        "
+        echo "--- unit tests: signals ---"
+        python -m pytest tests/unit/signals -q -p no:cacheprovider
   # Step 0: Build the Docker image
   # --no-cache ensures fresh source code is always picked up
   - name: 'gcr.io/cloud-builders/docker'

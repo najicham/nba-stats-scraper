@@ -165,7 +165,33 @@ nba-stats-scraper/
 
 **Cloud Run Services:** prediction-coordinator, prediction-worker, nba-phase3-analytics-processors, nba-phase4-precompute-processors, nba-phase2-raw-processors, nba-scrapers, nba-grading-service
 
-**Cloud Functions (auto-deploy via `cloudbuild-functions.yaml`):** phase5b-grading, phase6-export, grading-gap-detector, phase3/4/5-to-next orchestrators, enrichment-trigger, daily-health-check, transition-monitor, pipeline-health-summary, nba-grading-alerts, live-freshness-monitor, self-heal-predictions, grading-readiness-monitor, post-grading-export, decay-detection (11 AM ET), validation-runner, filter-counterfactual-evaluator (11:30 AM ET), morning-deployment-check (6 AM ET). ⚠️ **`weekly-retrain` (Mon 5 AM ET, 4GiB/1800s) is NOT in `cloudbuild-functions.yaml`** — it does NOT auto-deploy; code changes reach it only incidentally via `shared/` redeploys or a manual deploy. Its scheduler `weekly-retrain-trigger` is currently DELETED (see the Model section) so it fires never.
+**Cloud Functions (auto-deploy via `cloudbuild-functions.yaml`):** phase5b-grading, phase6-export, grading-gap-detector, phase3/4/5-to-next orchestrators, enrichment-trigger, daily-health-check, transition-monitor, pipeline-health-summary, nba-grading-alerts, live-freshness-monitor, self-heal-predictions, grading-readiness-monitor, post-grading-export, decay-detection (11 AM ET), validation-runner, filter-counterfactual-evaluator (11:30 AM ET), morning-deployment-check (6 AM ET), **weekly-retrain** (Mon 5 AM ET, 4GiB/1800s).
+
+**Correction (verified 2026-08-20 against all 36 live triggers):** `weekly-retrain`
+**DOES** auto-deploy. Trigger `deploy-weekly-retrain` watches
+`orchestration/cloud_functions/weekly_retrain/**,shared/**` and builds with
+`cloudbuild-functions.yaml`; the 2026-08-20 push deployed it (`BUILD_COMMIT=2b19078`).
+The previous claim here that it does not auto-deploy was wrong. Its scheduler
+`weekly-retrain-trigger` **is** still deleted (absent from all 110 jobs in
+`ops/scheduler-snapshots/`), so the function is current but fires never.
+
+⚠️ **These four have NO Cloud Build trigger — manual deploy only:**
+`halt-state-writer`, `expected-outputs-planner`, `phase-completion-reconciler`,
+`gap-detector`. A push does NOT deploy them. All four are now registered in
+`bin/deploy-function.sh`, so use `./bin/deploy-function.sh <name>` (it carries their
+dedicated per-function service accounts). This gap is how `halt-state-writer` ran the
+old, always-firing edge-halt logic for a day after the fix was merged.
+
+⚠️ **A green build is NOT proof of deployment.** `gcloud functions deploy` can exit 0
+while the revision it created never becomes ready — on 2026-08-20 six functions
+reported success and kept serving old code after their revisions hit a Cloud Run CPU
+quota. The build configs now assert `latestReady == latestCreated`; to check by hand:
+`gcloud run services list --region=us-west2 --format="value(metadata.name,status.latestReadyRevisionName,status.latestCreatedRevisionName)"`
+and compare the last two columns. Known permanent strays: `analytics-processor`,
+`nba-reference-service`, `prediction-coordinator-dev`.
+
+⚠️ **`cloudbuild-precompute.yaml` is orphaned** — no trigger references it
+(`deploy-nba-phase4-precompute-processors` builds with `cloudbuild.yaml`).
 
 **Orphan source dirs:** cleaned up — Task #35 DONE (verified 2026-06; the previously-listed orphan dirs `retrain_reminder/`, `monthly_retrain/`, `phase4_failure_alert/`, `box_score_completeness_alert/`, `prediction_monitoring/`, `zero_workflow_monitor/`, `system_performance_alert/`, `upcoming_tables_cleanup/`, `firestore_cleanup/`, `mlb_pitcher_watchlist/`, `mlb_phase{3,4,5}_to_phase{4,5,6}/` are no longer in the repo).
 

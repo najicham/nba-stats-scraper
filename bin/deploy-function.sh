@@ -76,6 +76,12 @@ get_function_config() {
     FUNC_TRIGGER_TYPE=""
     FUNC_TRIGGER_TOPIC=""
     FUNC_NEEDS_SHARED="false"
+    # Per-function overrides. Empty means "use the DEFAULT_* constant".
+    # Needed because the pipeline-state functions each run under their own
+    # dedicated service account, not the shared processor-sa.
+    FUNC_SERVICE_ACCOUNT=""
+    FUNC_MEMORY=""
+    FUNC_TIMEOUT=""
 
     case "$func_name" in
         # --- Orchestrators (Pub/Sub triggered) ---
@@ -180,6 +186,52 @@ get_function_config() {
             FUNC_ENTRY_POINT="monthly_retrain"
             FUNC_TRIGGER_TYPE="http"
             FUNC_NEEDS_SHARED="false"
+            ;;
+
+        # --- Pipeline-state functions (HTTP, scheduler-invoked) ---
+        #
+        # These four have NO Cloud Build trigger — verified 2026-08-20 against
+        # all 36 triggers. A push to main does NOT deploy them; they are
+        # manual-only and were absent from this registry, which is precisely how
+        # halt-state-writer came to be running the old edge-halt logic for a day
+        # after the fix was merged. Registered here so the standard path works.
+        #
+        # Each runs under its own dedicated service account.
+        halt-state-writer)
+            FUNC_SOURCE_DIR="orchestration/cloud_functions/halt_state_writer"
+            FUNC_ENTRY_POINT="main"
+            FUNC_TRIGGER_TYPE="http"
+            FUNC_NEEDS_SHARED="true"
+            FUNC_SERVICE_ACCOUNT="halt-state-writer@nba-props-platform.iam.gserviceaccount.com"
+            FUNC_MEMORY="512Mi"
+            FUNC_TIMEOUT="300s"
+            ;;
+        expected-outputs-planner)
+            FUNC_SOURCE_DIR="orchestration/cloud_functions/expected_outputs_planner"
+            FUNC_ENTRY_POINT="main"
+            FUNC_TRIGGER_TYPE="http"
+            FUNC_NEEDS_SHARED="true"
+            FUNC_SERVICE_ACCOUNT="expected-outputs-planner@nba-props-platform.iam.gserviceaccount.com"
+            FUNC_MEMORY="512Mi"
+            FUNC_TIMEOUT="540s"
+            ;;
+        phase-completion-reconciler)
+            FUNC_SOURCE_DIR="orchestration/cloud_functions/phase_completion_reconciler"
+            FUNC_ENTRY_POINT="main"
+            FUNC_TRIGGER_TYPE="http"
+            FUNC_NEEDS_SHARED="true"
+            FUNC_SERVICE_ACCOUNT="phase-completion-reconciler@nba-props-platform.iam.gserviceaccount.com"
+            FUNC_MEMORY="1Gi"
+            FUNC_TIMEOUT="540s"
+            ;;
+        gap-detector)
+            FUNC_SOURCE_DIR="orchestration/cloud_functions/gap_detector"
+            FUNC_ENTRY_POINT="main"
+            FUNC_TRIGGER_TYPE="http"
+            FUNC_NEEDS_SHARED="true"
+            FUNC_SERVICE_ACCOUNT="gap-detector@nba-props-platform.iam.gserviceaccount.com"
+            FUNC_MEMORY="512Mi"
+            FUNC_TIMEOUT="300s"
             ;;
 
         *)
@@ -324,10 +376,13 @@ if ! get_function_config "$FUNCTION_NAME"; then
 fi
 
 # Apply overrides
+# Precedence: explicit CLI flag > per-function registry value > global default.
+# Without the middle term a registered function silently deploys under
+# processor-sa and loses whatever IAM its own SA carries.
 ENTRY_POINT="${OPT_ENTRY_POINT:-$FUNC_ENTRY_POINT}"
-TIMEOUT="${OPT_TIMEOUT:-$DEFAULT_TIMEOUT}"
-MEMORY="${OPT_MEMORY:-$DEFAULT_MEMORY}"
-SERVICE_ACCOUNT="${OPT_SERVICE_ACCOUNT:-$DEFAULT_SERVICE_ACCOUNT}"
+TIMEOUT="${OPT_TIMEOUT:-${FUNC_TIMEOUT:-$DEFAULT_TIMEOUT}}"
+MEMORY="${OPT_MEMORY:-${FUNC_MEMORY:-$DEFAULT_MEMORY}}"
+SERVICE_ACCOUNT="${OPT_SERVICE_ACCOUNT:-${FUNC_SERVICE_ACCOUNT:-$DEFAULT_SERVICE_ACCOUNT}}"
 
 # Determine trigger type (CLI overrides take precedence)
 if [ "$OPT_TRIGGER_HTTP" = true ]; then

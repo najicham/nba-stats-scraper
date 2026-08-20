@@ -138,22 +138,62 @@ steps:
             ;;
         esac
 
-        gcloud functions deploy ${_FUNCTION_NAME} \
-          --gen2 \
-          --runtime python311 \
-          --region us-west2 \
-          --source /workspace/deploy_pkg \
-          --entry-point ${_ENTRY_POINT} \
-          $$TRIGGER_ARGS \
-          $$SECRETS_ARGS \
-          --service-account=${_SERVICE_ACCOUNT} \
-          --update-env-vars "GCP_PROJECT=nba-props-platform,BUILD_COMMIT=${SHORT_SHA},BUILD_TIMESTAMP=${_BUILD_TIMESTAMP}" \
-          --update-labels "commit-sha=${SHORT_SHA}" \
-          --memory ${_MEMORY} \
-          --timeout ${_TIMEOUT} \
-          --max-instances 3 \
-          --min-instances ${_MIN_INSTANCES} \
-          --project nba-props-platform
+        deploy_function() {
+          gcloud functions deploy ${_FUNCTION_NAME} \
+            --gen2 \
+            --runtime python311 \
+            --region us-west2 \
+            --source /workspace/deploy_pkg \
+            --entry-point ${_ENTRY_POINT} \
+            $$TRIGGER_ARGS \
+            $$SECRETS_ARGS \
+            --service-account=${_SERVICE_ACCOUNT} \
+            --update-env-vars "GCP_PROJECT=nba-props-platform,BUILD_COMMIT=${SHORT_SHA},BUILD_TIMESTAMP=${_BUILD_TIMESTAMP}" \
+            --update-labels "commit-sha=${SHORT_SHA}" \
+            --memory ${_MEMORY} \
+            --timeout ${_TIMEOUT} \
+            --max-instances 3 \
+            --min-instances ${_MIN_INSTANCES} \
+            --project nba-props-platform
+        }
+
+        # 2026-08-20: quota-aware retry.
+        #
+        # A push touching shared/config/** matches the includedFiles of ~20 of
+        # the 36 triggers, so they all build and create Cloud Run revisions at
+        # once, against 93 services already in us-west2. The region's
+        # "total allowable CPU" ceiling is hit partway through: on 2026-08-20,
+        # 8 of ~20 deploys failed with `Quota exceeded for total allowable CPU
+        # per project per region`.
+        #
+        # The condition is transient -- the herd's revisions settle within a
+        # couple of minutes, and every manual retry that day succeeded. So a
+        # bounded retry turns a red build into a slightly slower green one.
+        #
+        # Retry ONLY on quota. Anything else is a real failure and must fail
+        # immediately rather than burn three attempts hiding a code error.
+        ATTEMPT=1
+        MAX_ATTEMPTS=3
+        while true; do
+          OUT=$$(deploy_function 2>&1)
+          RC=$$?
+          echo "$$OUT"
+          if [ $$RC -eq 0 ]; then
+            break
+          fi
+          if ! echo "$$OUT" | grep -qi "Quota exceeded"; then
+            echo "ERROR: deploy failed for a non-quota reason - not retrying."
+            exit $$RC
+          fi
+          if [ $$ATTEMPT -ge $$MAX_ATTEMPTS ]; then
+            echo "ERROR: still quota-blocked after $$ATTEMPT attempts."
+            exit $$RC
+          fi
+          BACKOFF=$$((ATTEMPT * 90))
+          echo "Quota-blocked (attempt $$ATTEMPT/$$MAX_ATTEMPTS); retrying in $$BACKOFF s..."
+          sleep $$BACKOFF
+          ATTEMPT=$$((ATTEMPT + 1))
+        done
 
         # Session 516: Route traffic to latest revision.
         # Gen2 Cloud Functions are backed by Cloud Run services that may not
@@ -164,6 +204,40 @@ steps:
           --region us-west2 \
           --project nba-props-platform \
           --quiet || echo "WARN: Traffic routing failed (non-fatal for new functions)"
+
+        # 2026-08-20: assert the function is actually SERVING the new revision.
+        #
+        # `gcloud functions deploy` can exit 0 while the revision it created
+        # never becomes ready. On 2026-08-20 six functions -- bias-decay-monitor,
+        # daily-health-check, live-export, phase6-export, pipeline-health-summary
+        # and self-heal-predictions -- reported a green build and went on serving
+        # their OLD code, because the new revision died with
+        # "HealthCheckContainerError: Quota exceeded for total allowable CPU".
+        #
+        # A green build that deployed nothing is worse than a red one: nobody
+        # investigates it. This is the check that would have caught it.
+        echo "Verifying ${_FUNCTION_NAME} serves its newest revision..."
+        CONVERGED=false
+        for i in 1 2 3 4 5 6; do
+          READY=$$(gcloud run services describe ${_FUNCTION_NAME} \
+            --region us-west2 --project nba-props-platform \
+            --format='value(status.latestReadyRevisionName)' 2>/dev/null)
+          CREATED=$$(gcloud run services describe ${_FUNCTION_NAME} \
+            --region us-west2 --project nba-props-platform \
+            --format='value(status.latestCreatedRevisionName)' 2>/dev/null)
+          if [ -n "$$READY" ] && [ "$$READY" = "$$CREATED" ]; then
+            CONVERGED=true
+            break
+          fi
+          echo "  not converged (ready=$$READY created=$$CREATED); waiting 20s..."
+          sleep 20
+        done
+        if [ "$$CONVERGED" != "true" ]; then
+          echo "ERROR: ${_FUNCTION_NAME} created revision $$CREATED but it never"
+          echo "became ready. The function is still serving $$READY (OLD CODE)."
+          exit 1
+        fi
+        echo "OK: ${_FUNCTION_NAME} serving $$READY"
 
   # Step 3: Set IAM permissions for Pub/Sub invocation (Session 205/206 - CRITICAL)
   # Without this, Pub/Sub cannot deliver messages to the Cloud Function.
