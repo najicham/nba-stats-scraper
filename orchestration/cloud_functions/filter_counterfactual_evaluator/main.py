@@ -138,7 +138,34 @@ def compute_daily_cf_hr(bq: bigquery.Client, target_date: str) -> List[Dict]:
     Queries best_bets_filtered_picks (which has actuals filled by post_grading_export)
     and groups by filter_reason.
     """
+    # 2026-08-19: de-duplicate to one row per distinct blocked PICK before aggregating.
+    #
+    # The aggregator runs once per enabled model (36 distinct system_ids to date) and each
+    # run records the same blocked player under the same filter_reason, so the previous
+    # COUNT(*) counted rows rather than picks. Measured inflation is 1.43x overall and up to
+    # 2.4x for individual filters — and because the duplicates are perfectly correlated they
+    # add no information, they just shrink the apparent confidence interval.
+    #
+    # This matters because auto-demote fires at CF HR >= 55% with N >= 20. De-duplicating
+    # moves CF HR by up to ±12pp on real data (signal_density 43.1% -> 54.1%,
+    # neg_pm_streak_obs 50.0% -> 62.5%, opponent_depleted_under 45.5% -> 36.4%) — i.e. it
+    # can flip a filter across the demote threshold in BOTH directions.
+    #
+    # Key includes recommendation + line_value because two models CAN take opposite sides of
+    # the same player-game; those are genuinely distinct picks with distinct outcomes.
+    # Verified on the full table: zero key-groups contain conflicting prediction_correct
+    # values, so ANY_VALUE is a safe collapse.
     query = f"""
+    WITH deduped AS (
+      SELECT
+        filter_reason,
+        ANY_VALUE(prediction_correct) AS prediction_correct
+      FROM `{PROJECT_ID}.nba_predictions.best_bets_filtered_picks`
+      WHERE game_date = @target_date
+        AND prediction_correct IS NOT NULL
+      GROUP BY
+        game_date, player_lookup, game_id, filter_reason, recommendation, line_value
+    )
     SELECT
       filter_reason AS filter_name,
       COUNT(*) AS blocked_count,
@@ -150,9 +177,7 @@ def compute_daily_cf_hr(bq: bigquery.Client, target_date: str) -> List[Dict]:
         / NULLIF(COUNTIF(prediction_correct IS NOT NULL), 0),
         1
       ) AS counterfactual_hr
-    FROM `{PROJECT_ID}.nba_predictions.best_bets_filtered_picks`
-    WHERE game_date = @target_date
-      AND prediction_correct IS NOT NULL
+    FROM deduped
     GROUP BY filter_reason
     HAVING COUNT(*) > 0
     ORDER BY blocked_count DESC
