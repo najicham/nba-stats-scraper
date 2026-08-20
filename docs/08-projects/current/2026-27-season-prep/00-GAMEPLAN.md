@@ -29,19 +29,22 @@ edge. It is stopping the leaks around one that already exists.**
 
 ---
 
-## STATUS — updated 2026-08-19 (evening session)
+## STATUS — updated 2026-08-20
 
 Owner decisions 1, 2, 3 and 5 are made. §2.1 auto-halt, §2.3 worker filters and
-§2.4 deploy gate are **DONE**. §2.2 health multipliers and the P1 list are open.
+§2.4 deploy gate are **DONE** and now **PUSHED AND DEPLOYED** (2026-08-20).
+§2.2 health multipliers is **MEASURED but not decided**. The P1 list is open.
 
 | § | Item | Status |
 |---|---|---|
 | 2.1 | Auto-halt recalibration | **DONE** — median variant + hysteresis, `shared/config/edge_halt.py` |
-| 2.2 | Health multipliers never apply | **OPEN** — still needs the measure-first decision |
+| 2.2 | Health multipliers never apply | **MEASURED 2026-08-20** — confirmed inert: **0 of 3,855** `signal_health_daily` rows exist on their own game_date (min lag 1d), so the read returns empty every time and `_health_multiplier` always returns 1.0. Fork still undecided — the lag-1 predictiveness test is the remaining work |
 | 2.3 | Panic-era worker filters | **DONE** — 3 deleted, `star_under_bias_suspect` moved to observation |
 | 2.4 | Deploy test gate + build timeout | **DONE** — gate is step 0 of all four NBA build configs |
 | 2.2b | Scheduler restore script | **DONE** — but the backup it was meant to replay was deleted; see below |
 | 4.2 | Break-even (four majors, 52.4) | **DONE** — production and discovery scripts now share one constant |
+| NEW | Deploy integrity | **DONE 2026-08-20** (`13cc1c3d`) — six CFs were found serving old code behind green builds. Both build paths now assert `latestReady == latestCreated`, deploys retry on CPU quota, and the two MLB configs gained the test gate |
+| NEW | `halt-state-writer` deployed | **DONE 2026-08-20** — it has no build trigger and was still running the old always-firing halt logic. Now deployed, verified, and registered in `bin/deploy-function.sh` along with the other three pipeline-state CFs |
 
 **New P0 discovered:** the GCS scheduler backup named as the restore plan's source
 of truth was deleted by a 30-day bucket lifecycle rule around 2026-08-02. The 59
