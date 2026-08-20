@@ -46,6 +46,8 @@ import numpy as np
 import pandas as pd
 from google.cloud import bigquery, storage
 
+from shared.config.edge_halt import query_halt_state
+
 # Lazy imports for ML libraries (large, ~100MB each)
 cb = None
 lgb_module = None
@@ -114,7 +116,7 @@ GOVERNANCE = {
 }
 
 # Session 522: Loosened governance for season-restart mode.
-# Applied when auto-halt is detected (avg_edge < 5.0 OR all models BLOCKED).
+# Applied when the edge-collapse halt is active OR all models are BLOCKED.
 # Late-season eval data has compressed edge from TIGHT markets → UNDER HR degrades
 # to ~51% on tiny eval samples, causing false governance failures.
 # Only directional balance is loosened — overall HR, sample size, vegas bias,
@@ -971,7 +973,7 @@ def weekly_retrain(request):
         family_filter = request.args.get('family')
         train_end_override = request.args.get('train_end')
         # Session 522: explicit season-restart override via URL param.
-        # Also auto-detected below when all models are BLOCKED or avg_edge < 5.0.
+        # Also auto-detected below when all models are BLOCKED or the halt is active.
         season_restart_override = request.args.get('season_restart', 'false').lower() == 'true'
 
         # Compute dates
@@ -1018,26 +1020,21 @@ def weekly_retrain(request):
         families = get_enabled_families(client)
 
         # Session 522: Auto-detect season-restart condition.
-        # When avg_edge < 5.0 (auto-halt active) OR all enabled models are BLOCKED,
-        # loosen governance gates to prevent false failures from compressed eval windows.
-        # Explicit ?season_restart=true URL param takes precedence.
+        # When the edge-collapse halt is active OR all enabled models are BLOCKED,
+        # loosen governance gates to prevent false failures from compressed eval
+        # windows. Explicit ?season_restart=true URL param takes precedence.
+        #
+        # 2026-08-19: this used the same broken `avg_edge_7d < 5.0` test as the
+        # auto-halt. That value has never once exceeded 4.41 in five seasons, so
+        # the condition was ALWAYS true — every retrain would have run with
+        # loosened governance gates, on a market that was perfectly healthy.
+        # It never bit only because weekly-retrain-trigger is currently deleted.
+        # Now reads the real halt state from shared/config/edge_halt.py.
         season_restart = season_restart_override
         if not season_restart and not family_filter:
             try:
-                halt_q = f"""
-                SELECT
-                  ROUND(AVG(avg_e), 2) AS avg_edge_7d,
-                  SUM(IF(avg_e >= 5.0, 1, 0)) AS days_above_5
-                FROM (
-                  SELECT game_date, AVG(ABS(predicted_points - current_points_line)) AS avg_e
-                  FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
-                  WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
-                    AND is_active = TRUE
-                  GROUP BY game_date
-                )
-                """
-                halt_rows = list(client.query(halt_q).result())
-                avg_edge_7d = float(halt_rows[0].avg_edge_7d or 0) if halt_rows else 0.0
+                halt_state = query_halt_state(client, date.today(), project_id=PROJECT_ID)
+                edge_collapsed = bool(halt_state and halt_state['halt_active'])
                 blocked_q = f"""
                 SELECT
                   COUNTIF(status NOT IN ('blocked','disabled','deprecated')) AS active_count,
@@ -1049,12 +1046,11 @@ def weekly_retrain(request):
                 active_count = int(blocked_rows[0].active_count or 0) if blocked_rows else 1
                 all_blocked = active_count == 0
 
-                if avg_edge_7d < 5.0 or all_blocked:
+                if edge_collapsed or all_blocked:
                     season_restart = True
                     logger.warning(
-                        f"AUTO-DETECT season-restart: avg_edge_7d={avg_edge_7d:.2f} "
-                        f"(threshold 5.0), all_blocked={all_blocked}. "
-                        f"Applying loosened governance gates."
+                        f"AUTO-DETECT season-restart: edge_collapse_halt={edge_collapsed}, "
+                        f"all_blocked={all_blocked}. Applying loosened governance gates."
                     )
             except Exception as e:
                 logger.warning(f"Season-restart auto-detection failed (non-fatal): {e}")

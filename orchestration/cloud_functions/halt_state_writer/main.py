@@ -43,6 +43,15 @@ import functions_framework
 from flask import Request
 from google.cloud import bigquery
 
+from shared.config.edge_halt import (
+    HALT_EDGE_MEDIAN,
+    HALT_PCT_EDGE_3PLUS,
+    MIN_DAYS_SAMPLED,
+    RELEASE_CONSECUTIVE_DAYS,
+    RELEASE_EDGE_MEDIAN,
+    query_halt_state,
+)
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -199,54 +208,40 @@ def _has_recent_games(bq: bigquery.Client, today: date, sport: str) -> Tuple[boo
 
 
 def _nba_edge_collapse(bq: bigquery.Client, today: date) -> Optional[Dict[str, Any]]:
-    """Mirrors the Session 515 edge-based auto-halt logic from regime_context.
+    """Edge-collapse auto-halt, shared with regime_context via shared/config.
 
-    Inlined here so this CF doesn't import the full ml/signals stack.
+    This used to inline its own copy of the halt query "so this CF doesn't import
+    the full ml/signals stack". The copy drifted into being a second place the
+    same bug had to be fixed, and let the halt_state row disagree with what the
+    exporter computed. The logic now lives in shared/config/edge_halt.py, which
+    is a leaf module with no ml/signals dependency and is already copied into the
+    CF bundle alongside the rest of shared/.
+
     Returns dict with halt context if collapse detected, else None.
     """
-    query = f"""
-        WITH daily_edges AS (
-          SELECT
-            game_date,
-            AVG(ABS(predicted_points - current_points_line)) AS avg_edge,
-            COUNTIF(ABS(predicted_points - current_points_line) >= 5.0) AS edge_5plus,
-            COUNT(*) AS total
-          FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
-          WHERE game_date >= DATE_SUB(@today, INTERVAL 7 DAY)
-            AND game_date < @today
-          GROUP BY game_date
-        )
-        SELECT
-          ROUND(AVG(avg_edge), 2) AS rolling_7d_avg_edge,
-          ROUND(100.0 * SUM(edge_5plus) / NULLIF(SUM(total), 0), 1) AS rolling_7d_pct_edge_5plus,
-          COUNT(*) AS days_sampled
-        FROM daily_edges
-    """
-    job_config = bigquery.QueryJobConfig(
-        query_parameters=[bigquery.ScalarQueryParameter('today', 'DATE', today)]
-    )
-    try:
-        rows = list(bq.query(query, job_config=job_config).result(timeout=60))
-    except Exception as e:
-        logger.warning(f"Edge collapse query failed: {e}")
+    state = query_halt_state(bq, today, project_id=PROJECT_ID, timeout=60)
+    if state is None:
         return None
-
-    if not rows or rows[0].rolling_7d_avg_edge is None:
-        return None
-
-    row = rows[0]
-    avg_edge = float(row.rolling_7d_avg_edge)
-    pct_5plus = float(row.rolling_7d_pct_edge_5plus or 0.0)
-    days_sampled = int(row.days_sampled)
 
     metrics = {
-        'rolling_7d_avg_edge': avg_edge,
-        'rolling_7d_pct_edge_5plus': pct_5plus,
-        'edge_halt_days_sampled': days_sampled,
+        'rolling_7d_edge_median': state['edge_med_7d'],
+        'rolling_7d_pct_edge_3plus': state['pct_e3_7d'],
+        'edge_halt_days_sampled': state['days_sampled'],
+        'edge_halt_release_streak': state['release_streak'],
+        # Back-compat: readers of halt_metrics still look for these names.
+        'rolling_7d_avg_edge': state['edge_med_7d'],
+        'rolling_7d_pct_edge_5plus': state['pct_e3_7d'],
     }
-
-    if avg_edge < 5.0 and pct_5plus < 50.0 and days_sampled >= 3:
-        metrics['halt_threshold'] = 'avg_edge<5.0 AND pct_5plus<50.0 AND days>=3'
+    if state['days_sampled'] < MIN_DAYS_SAMPLED:
+        return None
+    if state['halt_active']:
+        metrics['halt_threshold'] = (
+            f'edge_median<{HALT_EDGE_MEDIAN} AND pct_e3<{HALT_PCT_EDGE_3PLUS} '
+            f'(release: >={RELEASE_EDGE_MEDIAN} x {RELEASE_CONSECUTIVE_DAYS}d)'
+        )
+        metrics['halt_started'] = (
+            state['halt_started'].isoformat() if state['halt_started'] else None
+        )
         return metrics
     return None
 

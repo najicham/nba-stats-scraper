@@ -11,16 +11,26 @@ Regime classification:
   - normal: 50-74% or insufficient data → no changes
   - confident: 75%+ → no changes (don't loosen)
 
-Session 515: Edge-based auto-halt.
-  - Trigger: 7d avg edge < 5.0 AND edge-5+ pick rate < 50%
+Edge-collapse auto-halt (Session 515, rewritten 2026-08-19):
+  - Trigger: 7d MEDIAN-per-player-game edge < 1.4 AND edge-3+ share < 10%
+  - Release: median >= 1.6 for 3 consecutive days (hysteresis)
   - Effect: Zero picks exported (halt before merge)
-  - In normal seasons: never fires. In 2025-26: fires late Feb.
-  - 2025-26 P/L impact: stopping Feb 28 = +31.07u vs +23.10u (34.5% better)
+  - Thresholds and validation live in shared/config/edge_halt.py.
+
+  The Session 515 version halted on 865 of 865 prediction-days across all five
+  seasons and could never release. It is not tuning history worth preserving —
+  see the WHY THIS WAS REWRITTEN section in shared/config/edge_halt.py.
 """
 
 import logging
 from datetime import date, timedelta
 from typing import Any, Dict, Optional
+
+from shared.config.edge_halt import (
+    HALT_EDGE_MEDIAN,
+    HALT_PCT_EDGE_3PLUS,
+    query_halt_state,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -95,12 +105,16 @@ def get_regime_context(bq_client, target_date: date) -> Dict[str, Any]:
         'mae_gap_7d': None,
         'vegas_mae_7d': None,
         'num_games_on_slate': None,
-        # Session 515: Edge-based auto-halt
+        # Edge-collapse auto-halt (see shared/config/edge_halt.py)
         'bb_auto_halt_active': False,
         'bb_auto_halt_reason': '',
+        'rolling_7d_edge_median': None,
+        'rolling_7d_pct_edge_3plus': None,
+        'edge_halt_days_sampled': 0,
+        'edge_halt_release_streak': 0,
+        # Back-compat aliases for existing exporter/halt_state diagnostics.
         'rolling_7d_avg_edge': None,
         'rolling_7d_pct_edge_5plus': None,
-        'edge_halt_days_sampled': 0,
         # 2026-07-03: warmup fail-closed posture (see _apply_warmup_guard)
         'warmup_conservative': False,
         'under_min_real_sc': None,
@@ -240,67 +254,35 @@ def get_regime_context(bq_client, target_date: date) -> Dict[str, Any]:
     except Exception as e:
         logger.warning(f"Slate size query failed (non-fatal): {e}")
 
-    # Session 515: Edge-based auto-halt
-    # When 7d avg edge < 5.0 AND edge-5+ pick rate < 50%, the market is too
-    # compressed for profitable picking. Halt all BB picks.
-    # Walk-forward validated: in 2025-26, fires late Feb → saves +8 units.
-    # In normal seasons (2021-2025): never fires (edge stays 4.0+ through April).
-    try:
-        from google.cloud.bigquery import QueryJobConfig, ScalarQueryParameter
-        edge_halt_query = """
-            WITH daily_edges AS (
-              SELECT
-                game_date,
-                AVG(ABS(predicted_points - current_points_line)) as avg_edge,
-                COUNTIF(ABS(predicted_points - current_points_line) >= 5.0) as edge_5plus,
-                COUNT(*) as total
-              FROM `nba-props-platform.nba_predictions.player_prop_predictions`
-              WHERE game_date >= DATE_SUB(@target_date, INTERVAL 7 DAY)
-                AND game_date < @target_date
-              GROUP BY game_date
+    # Edge-collapse auto-halt. Rewritten 2026-08-19: the original fired on every
+    # day of every season and had an unreachable release condition. Logic, SQL and
+    # thresholds now live in shared/config/edge_halt.py, shared with the
+    # halt_state_writer CF so the two cannot disagree.
+    halt = query_halt_state(bq_client, target_date)
+    if halt is not None:
+        result['rolling_7d_edge_median'] = halt['edge_med_7d']
+        result['rolling_7d_pct_edge_3plus'] = halt['pct_e3_7d']
+        result['edge_halt_days_sampled'] = halt['days_sampled']
+        result['edge_halt_release_streak'] = halt['release_streak']
+        # Back-compat aliases: the exporter and halt_state JSON still publish
+        # these key names as diagnostics.
+        result['rolling_7d_avg_edge'] = halt['edge_med_7d']
+        result['rolling_7d_pct_edge_5plus'] = halt['pct_e3_7d']
+
+        if halt['halt_active']:
+            result['bb_auto_halt_active'] = True
+            result['bb_auto_halt_reason'] = halt['reason']
+            logger.warning(halt['reason'])
+        else:
+            logger.info(
+                "Edge metrics 7d: median=%s, pct_e3=%s%%, days=%s "
+                "(halt threshold: median<%s AND pct_e3<%s%%)",
+                halt['edge_med_7d'], halt['pct_e3_7d'], halt['days_sampled'],
+                HALT_EDGE_MEDIAN, HALT_PCT_EDGE_3PLUS,
             )
-            SELECT
-              ROUND(AVG(avg_edge), 2) as rolling_7d_avg_edge,
-              ROUND(100.0 * SUM(edge_5plus) / NULLIF(SUM(total), 0), 1) as rolling_7d_pct_edge_5plus,
-              COUNT(*) as days_sampled
-            FROM daily_edges
-        """
-        edge_config = QueryJobConfig(
-            query_parameters=[
-                ScalarQueryParameter('target_date', 'DATE', target_date),
-            ]
-        )
-        edge_rows = list(bq_client.query(edge_halt_query, job_config=edge_config).result())
-
-        if edge_rows and edge_rows[0].rolling_7d_avg_edge is not None:
-            row = edge_rows[0]
-            avg_edge = float(row.rolling_7d_avg_edge)
-            pct_5plus = float(row.rolling_7d_pct_edge_5plus) if row.rolling_7d_pct_edge_5plus else 0.0
-            days_sampled = int(row.days_sampled)
-
-            result['rolling_7d_avg_edge'] = avg_edge
-            result['rolling_7d_pct_edge_5plus'] = pct_5plus
-            result['edge_halt_days_sampled'] = days_sampled
-
-            edge_threshold = 5.0
-            pick_rate_threshold = 50.0
-
-            if avg_edge < edge_threshold and pct_5plus < pick_rate_threshold and days_sampled >= 3:
-                result['bb_auto_halt_active'] = True
-                result['bb_auto_halt_reason'] = (
-                    f"Edge-based auto-halt: 7d avg edge {avg_edge:.2f} < {edge_threshold} "
-                    f"AND {pct_5plus:.1f}% edge-5+ picks < {pick_rate_threshold}% "
-                    f"(N={days_sampled} days)"
-                )
-                logger.warning(result['bb_auto_halt_reason'])
-            else:
-                logger.info(
-                    f"Edge metrics 7d: avg={avg_edge:.2f}, pct_5plus={pct_5plus:.1f}%, "
-                    f"days={days_sampled} "
-                    f"(halt threshold: avg<{edge_threshold} AND pct<{pick_rate_threshold}%)"
-                )
-    except Exception as e:
-        logger.warning(f"Edge-based halt query failed (non-fatal): {e}")
+    # halt is None => the query failed. Leave bb_auto_halt_active at its default
+    # False but do NOT treat that as evidence of health; the warmup guard below
+    # still applies the conservative posture when the window is thin.
 
     # 2026-07-03: Season-open fail-closed guard. When trailing windows are empty
     # (edge_halt_days_sampled < 3 AND no BB picks yesterday), adopt the
