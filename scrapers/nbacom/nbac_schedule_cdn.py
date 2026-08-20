@@ -89,8 +89,21 @@ class GetNbaComScheduleCdn(ScraperBase, ScraperFlaskMixin):
     required_opts = []  # No parameters needed for CDN static files
     download_type = DownloadType.JSON
     decode_download_data = True
-    header_profile = None  # CDN doesn't need special headers
-    proxy_enabled = False  # CDN is typically accessible
+    # 2026-08-19: was `header_profile = None  # CDN doesn't need special headers`.
+    # No longer true — cdn.nba.com now rejects header-less requests with 403, and this
+    # scraper was dying with DownloadDecodeMaxRetryException after 8 retries. Since
+    # `nbac_schedule` is the registered production schedule path (CLAUDE.md), this was a
+    # silently broken core source that would have surfaced during the October restore.
+    #
+    # Isolated by bisection against the live endpoint:
+    #   no headers                       -> 403
+    #   User-Agent only                  -> 403   (so it is NOT a plain UA check)
+    #   UA + Origin + Referer (nbacdn)   -> 200   seasonYear=2026-27, 1271 games
+    # Routing through the Decodo proxy pool made no difference (403 on all 3 ports), so
+    # this is header-gating, not IP-blocking — proxies stay off to avoid the added cost
+    # and latency on a static CDN asset.
+    header_profile = "nbacdn"  # sets UA + Origin + Referer; see nba_header_utils.cdn_nba_headers
+    proxy_enabled = False  # header-gated, not IP-gated — proxy does not help here
 
     # Primary CDN URL (using _1 version)
     PRIMARY_URL = "https://cdn.nba.com/static/json/staticData/scheduleLeagueV2_1.json"
