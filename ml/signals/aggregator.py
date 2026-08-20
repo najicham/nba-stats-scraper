@@ -243,7 +243,98 @@ SHADOW_SIGNALS = frozenset({
     # fta_avg_last_10 >= 5 AND fta_cv_last_10 >= 0.4. Fields already in pred dict (Session 451 fta_variance CTE).
     'fta_high_cv_under',
 
+    # ── 2026-08-19 REGISTRY-DRIFT REPAIR ──────────────────────────────────────
+    # These 13 are declared `removed` or `shadow` in shared/registry/signals.yaml but
+    # were still counting toward real_sc, because dropping a tag from SHADOW_SIGNALS
+    # without ALSO unregistering it in registry.py silently PROMOTES it to a full real
+    # signal. real_sc is the gate the whole selection pipeline rests on, so each of
+    # these was a free pass through the sc3_over_block / starter_over_sc_floor /
+    # under_low_rsc floors. Measured BB hit rates quoted below are this file's own.
+    # Guarded against recurrence by validate_signal_registry_consistency() (see below).
+    'projection_consensus_over',  # yaml=removed — 10% BB HR (1-9)
+    'volatile_scoring_over',      # yaml=removed — 14.3% BB HR (1-6)
+    'sharp_money_over',           # yaml=removed — 15.4% BB HR
+    'scoring_momentum_over',      # yaml=removed — 25.0% BB HR
+    'hot_form_over',              # yaml=removed — 28.6% BB HR
+    'bounce_back_over',           # yaml=removed — 0% BB HR
+    'positive_clv_under',         # yaml=removed — 41.4% BB HR
+    'positive_clv_over',          # yaml=removed — 50% BB HR
+    'minutes_surge_over',         # yaml=removed — structurally dead
+    'sharp_book_lean_under',      # yaml=removed
+    '3pt_bounce',                 # yaml=shadow
+    'denver_visitor_over',        # yaml=shadow
+    'ft_rate_bench_over',         # yaml=shadow
 })
+
+# 2026-08-19: Signals whose `qualifies=True` means "this pick is BAD".
+#
+# NegativeCLVFilter, ProjectionDisagreementFilter and PublicFadeFilter are negative
+# indicators registered in registry.py under comments reading "register but NOT used as
+# negative filter yet" — the intent was that they be inert. They were not: because they
+# were absent from both BASE_SIGNALS and SHADOW_SIGNALS, real_sc counted them as
+# SUPPORTING evidence and both ranking branches gave them positive weight.
+#
+# Net effect: a pick could clear the under_low_rsc floor *because the closing line moved
+# against it*, or clear sc3_over_block / starter_over_sc_floor on the strength of the four
+# projection sources all disagreeing with it. Folded into SHADOW_SIGNALS below so every
+# existing exclusion site (real_sc + both ranking branches) picks them up.
+#
+# If these are ever wired as real negative filters, they belong as inline blocks in the
+# filter section — NOT as positive registry signals.
+NEGATIVE_SEMANTIC_SIGNALS = frozenset({
+    'negative_clv_filter',      # closing line moved AGAINST the pick
+    'projection_disagreement',  # external projections disagree with the pick
+    'public_fade_filter',       # public money is on the pick's side
+})
+
+# Single exclusion surface: everything that must not count toward real_sc or contribute
+# ranking weight. Unioned here so a new exclusion class only has to be added in one place.
+SHADOW_SIGNALS = SHADOW_SIGNALS | NEGATIVE_SEMANTIC_SIGNALS
+
+
+def validate_signal_registry_consistency(raise_on_drift: bool = False) -> list:
+    """Assert every registered signal's yaml status matches its exclusion-set membership.
+
+    Guards the 2026-08-19 drift class: a tag removed from SHADOW_SIGNALS but left
+    registered is silently promoted into real_sc. Returns a list of
+    (tag, yaml_status) pairs that count toward real_sc despite not being `active`.
+
+    Args:
+        raise_on_drift: raise ValueError instead of returning the drift list.
+    """
+    import yaml as _yaml
+    from pathlib import Path
+
+    from ml.signals.registry import build_default_registry
+
+    yaml_path = Path(__file__).resolve().parents[2] / 'shared' / 'registry' / 'signals.yaml'
+    if not yaml_path.exists():
+        logger.warning("signals.yaml not found at %s — skipping consistency check", yaml_path)
+        return []
+
+    # signals.yaml stores a list of {tag, status, weight, direction, description} entries.
+    declared = {
+        e['tag']: e.get('status')
+        for e in (_yaml.safe_load(yaml_path.read_text()).get('signals') or [])
+        if isinstance(e, dict) and e.get('tag')
+    }
+
+    drift = []
+    for tag in build_default_registry().tags():
+        if tag in BASE_SIGNALS or tag in SHADOW_SIGNALS:
+            continue  # excluded from real_sc — status is irrelevant
+        status = declared.get(tag)
+        if status != 'active':
+            drift.append((tag, status if status is not None else 'ABSENT'))
+
+    if drift and raise_on_drift:
+        raise ValueError(
+            f"Signal registry drift — {len(drift)} signal(s) count toward real_sc but are not "
+            f"'active' in signals.yaml: {drift}. Either add them to SHADOW_SIGNALS or mark them "
+            f"active."
+        )
+    return drift
+
 
 # Session 400: UNDER signal quality weights for signal-first ranking.
 # UNDER edge is flat at 52-53% across all buckets — signals are the quality
@@ -1501,12 +1592,24 @@ class BestBetsAggregator:
             under_signal_quality = None
             over_signal_quality = None
             if pred.get('recommendation') == 'UNDER':
-                real_signal_tags = [t for t in tags if t not in BASE_SIGNALS]
+                # 2026-08-19: SHADOW exclusion added to mirror the OVER branch below.
+                # This branch previously excluded only BASE_SIGNALS, so every shadow tag
+                # contributed to under_signal_quality — which IS the UNDER composite score
+                # (composite = quality + 0.1*edge). With 45 of 85 registered signals in
+                # SHADOW_SIGNALS and 44 of them absent from UNDER_SIGNAL_WEIGHTS, each one
+                # silently added the .get() default, letting shadow-rich picks outrank picks
+                # carrying the highest-conviction validated UNDER signals. Every shadow
+                # signal's docstring claims "zero pick impact"; on UNDER that was false.
+                real_signal_tags = [t for t in tags
+                                    if t not in BASE_SIGNALS and t not in SHADOW_SIGNALS]
                 # Session 469: Health-aware signal weighting. COLD signals get
                 # reduced weight (0.5x behavioral, 0.0x model-dependent) so that
                 # temporarily struggling signals don't boost bad UNDER picks.
+                # 2026-08-19: default 1.0 -> 0.0. An unweighted tag must not silently
+                # outrank a deliberately weighted one (mirrors OVER's 0.5 default being
+                # applied only to tags that survived the shadow filter).
                 under_signal_quality = sum(
-                    UNDER_SIGNAL_WEIGHTS.get(t, 1.0) * self._health_multiplier(t)
+                    UNDER_SIGNAL_WEIGHTS.get(t, 0.0) * self._health_multiplier(t)
                     for t in real_signal_tags
                 )
                 composite_score = round(under_signal_quality + pred_edge * UNDER_EDGE_TIEBREAKER, 4)

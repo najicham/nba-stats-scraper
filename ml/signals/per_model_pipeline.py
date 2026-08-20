@@ -868,6 +868,42 @@ def _query_all_model_predictions(
     except Exception as e:
         logger.warning(f"Failed to query BettingPros line movement: {e}")
 
+    # 2026-08-19: Posting-book count per player.
+    #
+    # aggregator._book_count_scaled_std_threshold() has existed since 2026-07-03 to stop the
+    # cross-book std UNDER filters over-blocking in deep markets, but it is behavior-preserving
+    # when book_count is None — and NOTHING ever set book_count on the prediction dict, so the
+    # whole fix was inert. Measured blast radius: in the 12+ book BettingPros era 10.4% of
+    # player-games carry multi_book_line_std >= 0.75 versus 0.63% in the 4-6 book Odds API era
+    # (16x). At a flat 0.75 threshold `high_book_std_under_block` was on track to block ~1 in 10
+    # UNDER candidates for regime reasons alone — a credible season-open UNDER drought mechanism.
+    #
+    # NOTE: deliberately no `is_best_line` filter — that collapses to one row per player and
+    # would always yield a count of 1.
+    bp_book_count_query = f"""
+    SELECT player_lookup, COUNT(DISTINCT bookmaker) AS book_count
+    FROM `{PROJECT_ID}.nba_raw.bettingpros_player_points_props`
+    WHERE game_date = @target_date
+      AND market_type = 'points'
+      AND bookmaker IS NOT NULL
+      AND player_lookup IS NOT NULL
+    GROUP BY player_lookup
+    """
+    book_count_map = {}
+    try:
+        bc_rows = bq_client.query(bp_book_count_query, job_config=job_config).result(timeout=30)
+        book_count_map = {
+            row['player_lookup']: int(row['book_count'])
+            for row in bc_rows if row['book_count'] is not None
+        }
+        logger.info("Book counts loaded for %d players", len(book_count_map))
+    except Exception as e:
+        # Fail-open: book_count stays None and the std thresholds keep their flat
+        # (pre-2026-07-03) behavior. Loud, because a silent None is what made the
+        # original fix dead code for six weeks.
+        logger.warning("Failed to query BettingPros book counts — std thresholds fall back "
+                       "to flat 4-6 book calibration: %s", e)
+
     # Sharp book lean
     sharp_lean_query = f"""
     WITH latest_lines AS (
@@ -1143,6 +1179,13 @@ def _query_all_model_predictions(
         # Session 462: BettingPros line movement
         bp_lm = bp_line_movement_map.get(row_dict['player_lookup'])
         pred['bp_line_movement'] = float(bp_lm) if bp_lm is not None else None
+
+        # 2026-08-19: posting-book count — consumed by
+        # aggregator._book_count_scaled_std_threshold() to widen the cross-book std
+        # UNDER filters in deep markets. None (player absent from BettingPros) keeps
+        # the original flat threshold, so this can only ever block LESS, never more.
+        _bc = book_count_map.get(row_dict['player_lookup'])
+        pred['book_count'] = int(_bc) if _bc is not None else None
 
         # Session 462: Copy shooting stats to pred dict for new signals/observation filters
         pred['fg_pct_last_3'] = float(row_dict['fg_pct_last_3']) if row_dict.get('fg_pct_last_3') is not None else None
