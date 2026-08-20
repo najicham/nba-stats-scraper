@@ -29,10 +29,11 @@ BB_TABLE = f'{PROJECT_ID}.mlb_predictions.signal_best_bets_picks'
 # MLB uses a single model currently
 DEFAULT_MODELS = ['catboost_v2_regressor']
 
+from shared.config.breakeven import DEFAULT_BREAKEVEN_HR
 # Decay thresholds (same as NBA)
 WATCH_THRESHOLD = 58.0
 ALERT_THRESHOLD = 55.0
-BLOCK_THRESHOLD = 52.4
+BLOCK_THRESHOLD = DEFAULT_BREAKEVEN_HR  # break-even; see shared/config/breakeven.py
 
 
 def compute_for_date(

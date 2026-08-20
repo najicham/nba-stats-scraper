@@ -25,8 +25,9 @@ from scripts.nba.training.discovery.stats_utils import (
     BASELINE_HR, compute_hypothesis_stats, benjamini_hochberg,
 )
 
+from shared.config.breakeven import DEFAULT_BREAKEVEN_HR
 logging.basicConfig(level=logging.WARNING, format='%(message)s')
-NOMINAL_BE, REAL_BE = 0.524, 0.535
+NOMINAL_BE = REAL_BE = DEFAULT_BREAKEVEN_HR / 100.0  # see shared/config/breakeven.py
 
 
 def show(name, sub, family):

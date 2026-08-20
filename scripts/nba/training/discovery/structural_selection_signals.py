@@ -27,8 +27,10 @@ from scipy import stats
 
 from scripts.nba.training.discovery.data_loader import DiscoveryDataset
 
+from shared.config.breakeven import BREAKEVEN_HR_WIDE, DEFAULT_BREAKEVEN_HR
 logging.basicConfig(level=logging.WARNING, format='%(message)s')
-NOMINAL_BE, REAL_BE, BASE = 0.524, 0.535, 0.515
+NOMINAL_BE = REAL_BE = DEFAULT_BREAKEVEN_HR / 100.0  # see shared/config/breakeven.py
+BASE = BREAKEVEN_HR_WIDE / 100.0
 
 
 def wilson(w, n, z=1.96):
@@ -69,7 +71,7 @@ def main():
     O = df['direction'] == 'OVER'
 
     print("=" * 88)
-    print("STRUCTURAL SELECTION SIGNALS (edge3+, 5 seasons) — breakeven 52.4% / real 53.5%")
+    print(f"STRUCTURAL SELECTION SIGNALS (edge3+, 5 seasons) — breakeven {REAL_BE*100:.1f}%")
     print("=" * 88)
 
     # ---- A. No-vig / over-price juice ----
@@ -112,7 +114,7 @@ def main():
     print(line('OVER  | line moved against (down)', df[O & (mv < 0)]))
 
     print("\n" + "=" * 88)
-    print("READ: a signal is real only if HR>53.5%, CI excludes baseline, AND >=3/5 seasons>BE.")
+    print(f"READ: a signal is real only if HR>{REAL_BE*100:.1f}%, CI excludes baseline, AND >=3/5 seasons>BE.")
     print("DROPPED (not cross-season testable): line-vs-game-total — implied_team_total/")
     print("game_total are 0% populated pre-2025 (only 2025-26). True CLV needs production")
     print("closing lines (separate BQ pull); line_movement here is a pick-time proxy.")

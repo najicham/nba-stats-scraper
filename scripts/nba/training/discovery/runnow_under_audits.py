@@ -26,8 +26,9 @@ from scripts.nba.training.discovery.combo_tester import define_signal_conditions
 
 logging.basicConfig(level=logging.WARNING, format='%(message)s')
 
+from shared.config.breakeven import DEFAULT_BREAKEVEN_HR
 NOMINAL_BE = 0.524
-REAL_BE = 0.535
+REAL_BE = DEFAULT_BREAKEVEN_HR / 100.0  # see shared/config/breakeven.py
 WIN, LOSS = 0.909, -1.0  # -110 unit P/L
 
 # Real (non-base, non-shadow) UNDER signal proxies — identical to the overlap analysis.

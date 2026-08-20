@@ -9,7 +9,7 @@ mis-scaled for this cache: opponent_pace>=0.75 vs raw 91-111, slope -0.03..-0.01
 line_std>=1.0 vs max 0.58). BH-FDR across the family.
 
 GATE = BH-FDR significant AND cross-season pass (>=3/5 seasons above baseline, CV<0.15)
-       AND pooled HR > real breakeven (53.5%).
+       AND pooled HR > break-even (from shared/config/breakeven.py).
 
 NOT testable on the cache (need prod feeds / single-season-only) → reported, not gated:
   projection_consensus_under, sharp_money_under, dvp_favorable_over, quantile_floor_over,
@@ -29,8 +29,9 @@ from scripts.nba.training.discovery.stats_utils import (
     BASELINE_HR, compute_hypothesis_stats, benjamini_hochberg,
 )
 
+from shared.config.breakeven import DEFAULT_BREAKEVEN_HR
 logging.basicConfig(level=logging.WARNING, format='%(message)s')
-REAL_BE = 0.535
+REAL_BE = DEFAULT_BREAKEVEN_HR / 100.0  # see shared/config/breakeven.py
 
 
 def predicates(df):
@@ -102,7 +103,7 @@ def main():
     if passes:
         print(f"  PASS (promote-candidates, need live N>=30 + sign-off): {passes}")
     else:
-        print("  No NEW shadow signal clears the full gate (FDR-sig + 3/5 cross-season + HR>53.5%).")
+        print(f"  No NEW shadow signal clears the full gate (FDR-sig + 3/5 cross-season + HR>{REAL_BE*100:.1f}%).")
     print("  NOT testable on cache (prod feeds / single-season): projection_consensus_under,")
     print("  sharp_money_under, dvp_favorable_over, quantile_floor_over, sharp_book_lean_over,")
     print("  sharp_consensus_under, starter_away_overtrend_under, star_favorite_under, day_of_week_under.")

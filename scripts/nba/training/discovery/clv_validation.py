@@ -63,7 +63,8 @@ _SCRATCH = os.environ.get(
 )
 CACHE_PATH = os.path.join(_SCRATCH, 'clv_closing_lines.parquet')
 
-REAL_BE = 53.5  # vig-realistic breakeven HR (%)
+from shared.config.breakeven import DEFAULT_BREAKEVEN_HR
+REAL_BE = DEFAULT_BREAKEVEN_HR  # break-even HR (%); see shared/config/breakeven.py
 
 
 def _season(d: pd.Series) -> pd.Series:

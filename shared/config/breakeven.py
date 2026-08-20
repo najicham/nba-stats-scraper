@@ -22,11 +22,19 @@ Bet at a single book and the true bar is a full point higher; shop ten books and
 a point lower. Reporting ROI at a flat -110 overstates realized ROI by 3.1-4.5 pp,
 worst on high-edge UNDER.
 
+OWNER DECISION 2026-08-19: execution is **best of the four majors**, so
+``DEFAULT_BREAKEVEN_HR`` is 52.4 and stays there.
+
+That settles a real disagreement. Production modules used 52.4 while the
+discovery scripts under ``scripts/nba/training/discovery/`` independently used
+0.535, so any signal or model sitting in the 52.4-53.5 band was scored profitable
+by one half of the system and unprofitable by the other. Both now import from
+here. If the execution assumption changes, change it in this file only.
+
 IMPORTANT — changing ``DEFAULT`` changes gating behavior everywhere (signal decay,
-model health, promotion gates, drift detection). It is deliberately left at the
-historical 52.4 so this module is a pure refactor. Raising it to 53.5 is a STRATEGY
-decision that needs owner sign-off: it is the honest bar for single-book execution,
-but it will reclassify signals and models sitting in the 52.4-53.5 band as unprofitable.
+model health, promotion gates, drift detection). Raising it to 53.5 is the honest
+bar if you stop shopping the majors, but it will reclassify everything in that
+band as unprofitable.
 
 Override without a code change via ``NBA_BREAKEVEN_HR`` (percent, e.g. "53.5").
 """

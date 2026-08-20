@@ -22,10 +22,11 @@ from google.cloud import bigquery
 
 logger = logging.getLogger(__name__)
 
+from shared.config.breakeven import DEFAULT_BREAKEVEN_HR
 # Decay state thresholds
 WATCH_THRESHOLD = 58.0
 ALERT_THRESHOLD = 55.0
-BLOCK_THRESHOLD = 52.4
+BLOCK_THRESHOLD = DEFAULT_BREAKEVEN_HR  # break-even; see shared/config/breakeven.py
 
 # Fallback active models — used only if discovery query fails
 _FALLBACK_ACTIVE_MODELS = [

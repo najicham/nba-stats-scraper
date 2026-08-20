@@ -31,8 +31,9 @@ from scripts.nba.training.discovery.stats_utils import (
 
 logging.basicConfig(level=logging.WARNING, format='%(message)s')
 
+from shared.config.breakeven import DEFAULT_BREAKEVEN_HR
 # Real-breakeven at -110 (~53.5%); nominal is 52.4%. Use nominal for "above BE".
-BREAKEVEN = 0.524
+BREAKEVEN = DEFAULT_BREAKEVEN_HR / 100.0  # see shared/config/breakeven.py
 
 # Existing ACTIVE UNDER signals (UNDER_SIGNAL_WEIGHTS, non-shadow) that have a
 # column proxy in define_signal_conditions(). These are what would already give a

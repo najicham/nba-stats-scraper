@@ -33,8 +33,8 @@ from scripts.nba.training.discovery.data_loader import DiscoveryDataset
 
 logging.basicConfig(level=logging.WARNING, format='%(message)s')
 
-BREAKEVEN = 0.524        # nominal -110
-REAL_BREAKEVEN = 0.535   # with vig realism
+from shared.config.breakeven import DEFAULT_BREAKEVEN_HR
+BREAKEVEN = REAL_BREAKEVEN = DEFAULT_BREAKEVEN_HR / 100.0  # see shared/config/breakeven.py
 TRAIL_DAYS = 10          # trailing game-days for the env metric
 
 

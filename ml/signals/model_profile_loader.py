@@ -17,7 +17,8 @@ from google.cloud import bigquery
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_HR = 52.4  # Breakeven at -110 odds
+from shared.config.breakeven import DEFAULT_BREAKEVEN_HR
+DEFAULT_HR = DEFAULT_BREAKEVEN_HR  # break-even; see shared/config/breakeven.py
 
 
 class ModelProfileStore:

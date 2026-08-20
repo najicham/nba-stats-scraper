@@ -49,10 +49,11 @@ def _get_bq_client():
 SLACK_WEBHOOK_URL = os.environ.get('SLACK_WEBHOOK_URL_ALERTS')
 PROJECT_ID = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
 
+from shared.config.breakeven import DEFAULT_BREAKEVEN_HR
 # State thresholds
 WATCH_THRESHOLD = 58.0
 ALERT_THRESHOLD = 55.0
-BLOCK_THRESHOLD = 52.4
+BLOCK_THRESHOLD = DEFAULT_BREAKEVEN_HR  # break-even; see shared/config/breakeven.py
 
 # Front-load detection thresholds (Session 363)
 FRONT_LOAD_HR_GAP = 5.0    # 7d HR must be this much below 14d HR
@@ -1156,7 +1157,9 @@ def detect_front_loading(game_date) -> Tuple[List[Dict], Optional[Dict]]:
       state
     FROM `{PROJECT_ID}.nba_predictions.model_performance_daily`
     WHERE game_date >= DATE_SUB(DATE('{game_date}'), INTERVAL 7 DAY)
-      AND game_date <= '{game_date}'
+      -- model_performance_daily holds rolling HR for COMPLETED, graded days and
+      -- this runs the morning after, so there is no current-day row to leak.
+      AND game_date <= '{game_date}'  -- <= is correct for a range end
       AND rolling_hr_7d IS NOT NULL
       AND rolling_hr_14d IS NOT NULL
       AND rolling_n_7d >= {FRONT_LOAD_MIN_N}
