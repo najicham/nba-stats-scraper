@@ -65,13 +65,35 @@ thresholds at once**, and the closest day (2023-05-13) is 28.8% clear on its
 binding condition. The rejected mean-based variant had 26 such days and only
 9.9% margin on its closest — which is why the median variant was chosen.
 
-HONEST LIMITS
--------------
-The zero-false-positive figure rests on 931 healthy days, but collapse detection
-is a **single episode (N=1)**. Thresholds were placed off healthy-day floors with
-margin, not fitted to the collapse. Treat this as a coarse circuit breaker, not a
-calibrated instrument, and do not tune it mid-season on a bad week — that is the
-exact panic-deploy failure mode this system has already paid for.
+HONEST LIMITS — read before trusting the margin above
+-----------------------------------------------------
+Two caveats materially weaken the comfortable-looking numbers.
+
+**1. The four prior seasons are backfills, and they look too good.** Their rows
+in ``player_prop_predictions`` carry the same leak contamination already
+documented for ``prediction_accuracy``: graded on that table, UNDER at edge >= 5
+shows 72-86% hit rates against a clean walk-forward figure of 50-66%. Whatever
+inflates hit rate plausibly also inflates edge, and their edge floors do run
+25-40% above the live season's. So "0 of 843 prior-season days within 25% of both
+thresholds" should be read as an upper bound on comfort, not a measurement.
+
+**2. On the one clean season, the margin is 2.4%, not 28.8%.** Restricted to
+2025-26 before the anomaly window — live predictions, no backfill — the halt
+condition still fires on 0 of 88 days, but the closest day (2026-02-15) clears
+its binding condition by only 2.4%, with the median falling 1.360 -> 1.300 ->
+1.233 over the three days before the halt engages on 02-22. Those days are
+arguably already the collapse onset rather than healthy days, and firing a week
+earlier would have been no disaster. But the thresholds sit closer to live
+healthy behavior than the five-season view implies.
+
+**3. Collapse detection is a single episode (N=1).** Thresholds were placed off
+healthy-day floors with margin, not fitted to the collapse.
+
+Consequences: do not tighten these thresholds further on the strength of the
+prior-season margin — it is the least trustworthy number here. Treat this as a
+coarse circuit breaker, not a calibrated instrument, and do not tune it
+mid-season on a bad week; that is the exact panic-deploy failure mode this
+system has already paid for.
 
 Owner-approved 2026-08-19 (median variant + hysteresis).
 """
