@@ -1,0 +1,12 @@
+# Minimal dependency set for the Cloud Build pre-deploy test gate.
+#
+# Deliberately small: the gate runs on every build of every service, so it must
+# install in seconds. These three are all `tests/unit/signals` actually needs --
+# verified empirically, 295 tests pass with nothing else installed.
+#
+# Pinned to match predictions/worker/requirements-lock.txt so the gate exercises
+# the same library versions production runs. If a bump here starts failing the
+# gate, that is the gate working: production would have hit the same break.
+pytest==7.4.3
+PyYAML==6.0.2
+google-cloud-bigquery==3.13.0

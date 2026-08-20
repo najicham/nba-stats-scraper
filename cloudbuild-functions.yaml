@@ -21,6 +21,30 @@
 #   _TIMEOUT: Function timeout (default: 300s)
 
 steps:
+  # PRE-DEPLOY TEST GATE — see cloudbuild.yaml for the rationale.
+  # Runs before anything is built or deployed; a failure costs seconds.
+  - name: 'python:3.11-slim'
+    id: 'test-gate'
+    entrypoint: bash
+    args:
+      - '-c'
+      - |
+        set -e
+        pip install --no-cache-dir -q -r requirements-test-gate.txt
+        export PYTHONPATH=/workspace
+        echo "--- import check: modules every service embeds ---"
+        python -c "
+        import shared.config.edge_halt
+        import shared.config.breakeven
+        import shared.registry
+        import ml.signals.aggregator
+        import ml.signals.regime_context
+        import ml.signals.pipeline_merger
+        print('imports OK')
+        "
+        echo "--- unit tests: signals ---"
+        python -m pytest tests/unit/signals -q -p no:cacheprovider
+
   # Step 0: Prepare deployment package
   # Cloud Functions need all dependencies in a flat directory
   - name: 'gcr.io/cloud-builders/gsutil'
@@ -191,7 +215,13 @@ substitutions:
   _BUILD_TIMESTAMP: '${BUILD_TIMESTAMP:-unknown}'  # Set by Cloud Build trigger
   _SERVICE_ACCOUNT: '756957797294-compute@developer.gserviceaccount.com'
 
-timeout: 600s
+# 2026-08-19: raised 600s -> 1800s. `transition-monitor` and `nba-grading-alerts`
+# reported TIMEOUT on the 600s limit while their Cloud Function deploy completed
+# server-side seconds later -- a permanently red build for a deploy that
+# succeeded. Always-red builds train you to stop reading build status, which is
+# how a real failure gets missed. The gcloud functions deploy step is the slow
+# one and it is not made faster by failing the build around it.
+timeout: 1800s
 
 options:
   logging: CLOUD_LOGGING_ONLY

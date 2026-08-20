@@ -8,6 +8,30 @@
 # (Sessions 516/520 traffic routing fix).
 
 steps:
+  # PRE-DEPLOY TEST GATE — see cloudbuild.yaml for the rationale.
+  # Runs before anything is built or deployed; a failure costs seconds.
+  - name: 'python:3.11-slim'
+    id: 'test-gate'
+    entrypoint: bash
+    args:
+      - '-c'
+      - |
+        set -e
+        pip install --no-cache-dir -q -r requirements-test-gate.txt
+        export PYTHONPATH=/workspace
+        echo "--- import check: modules every service embeds ---"
+        python -c "
+        import shared.config.edge_halt
+        import shared.config.breakeven
+        import shared.registry
+        import ml.signals.aggregator
+        import ml.signals.regime_context
+        import ml.signals.pipeline_merger
+        print('imports OK')
+        "
+        echo "--- unit tests: signals ---"
+        python -m pytest tests/unit/signals -q -p no:cacheprovider
+
   # Step 0: Build the Docker image
   - name: 'gcr.io/cloud-builders/docker'
     args:

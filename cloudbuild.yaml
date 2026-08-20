@@ -11,7 +11,42 @@
 #     --project nba-props-platform
 
 steps:
-  # Step 0: Download production model from GCS (only for prediction-worker)
+  # Step 0: PRE-DEPLOY TEST GATE
+  #
+  # Until 2026-08-19 nothing ran tests before shipping: Cloud Build built the
+  # image and deployed it, so a broken HEAD reached production and was found
+  # there. A push touching shared/config/** fans out to ~20 builds, which means
+  # one bad commit shipped to twenty services simultaneously.
+  #
+  # This runs BEFORE the image is built, so a failure costs seconds and nothing
+  # is pushed or deployed. Scope is deliberately narrow -- an import check over
+  # the modules every service embeds, plus the signals unit suite -- to keep it
+  # fast and to keep it from going red for reasons unrelated to deployability.
+  # Cross-suite pollution makes a full-repo run unreliable here; triage the rest
+  # per-directory locally.
+  - name: 'python:3.11-slim'
+    id: 'test-gate'
+    entrypoint: bash
+    args:
+      - '-c'
+      - |
+        set -e
+        pip install --no-cache-dir -q -r requirements-test-gate.txt
+        export PYTHONPATH=/workspace
+        echo "--- import check: modules every service embeds ---"
+        python -c "
+        import shared.config.edge_halt
+        import shared.config.breakeven
+        import shared.registry
+        import ml.signals.aggregator
+        import ml.signals.regime_context
+        import ml.signals.pipeline_merger
+        print('imports OK')
+        "
+        echo "--- unit tests: signals ---"
+        python -m pytest tests/unit/signals -q -p no:cacheprovider
+
+  # Step 1: Download production model from GCS (only for prediction-worker)
   # Reads manifest.json to find the production model dynamically.
   # Session 166: Fixed to download production model instead of monthly/*.cbm
   # Session 167: Reads from manifest.json so model promotions don't require
@@ -50,7 +85,7 @@ steps:
           mkdir -p models
         fi
 
-  # Step 1: Build the Docker image
+  # Step 2: Build the Docker image
   # --no-cache ensures fresh source code is always picked up (Session 217/218 fix)
   - name: 'gcr.io/cloud-builders/docker'
     args:
@@ -68,7 +103,7 @@ steps:
       - 'BUILD_TIMESTAMP=${_BUILD_TIMESTAMP}'
       - '.'
 
-  # Step 2: Push the image BEFORE deploying
+  # Step 3: Push the image BEFORE deploying
   # Session 352: The `images:` section pushes AFTER all steps complete, but
   # `gcloud run deploy --image` pulls from the registry. Without this push,
   # the deploy step would pull the PREVIOUS :latest tag, deploying stale code
@@ -83,7 +118,7 @@ steps:
       - 'push'
       - 'us-west2-docker.pkg.dev/nba-props-platform/nba-props/${_SERVICE}:${SHORT_SHA}'
 
-  # Step 3: Deploy to Cloud Run
+  # Step 4: Deploy to Cloud Run
   # Session 338: Added --min-instances to prevent cold-start drift on redeploy.
   # Override per-trigger via _MIN_INSTANCES substitution (default: 0).
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
@@ -105,7 +140,7 @@ steps:
       - '--min-instances'
       - '${_MIN_INSTANCES}'
 
-  # Step 4: Route traffic to latest revision (Session 516)
+  # Step 5: Route traffic to latest revision (Session 516)
   # Cloud Run may not auto-route traffic to new revisions on redeploy.
   # Session 516 discovered ALL 21 services stuck on stale revisions.
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
