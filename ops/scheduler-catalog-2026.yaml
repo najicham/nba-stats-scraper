@@ -1,0 +1,768 @@
+# Restore catalog for the scheduler jobs deleted on 2026-07-03.
+#
+# COUNT CORRECTION: the manifest's summary line says "RESTORE 58 (waves A=19,
+# B=18, C=21)". Its Wave B table actually has 19 rows, so the real total is 59.
+# Counting the tables: A=19 (one row covers player-movement-registry-morning AND
+# -afternoon), B=19, C=21. This catalog has 59.
+#
+# READ THIS FIRST
+# ---------------
+# The manifest (docs/02-operations/scheduler-restore-manifest-2026.md) named a
+# GCS backup as the source of truth for these configs. That backup is GONE --
+# the bucket has a 30-day delete lifecycle rule and the file aged out around
+# 2026-08-02. GCP-side recovery was attempted and failed:
+#
+#   - gs://nba-bigquery-backups/scheduler-jobs-backup/  : no objects
+#   - no copy in any other project bucket or in the repo
+#   - Cloud Scheduler admin audit logs go back to 2025-07-21 (400d retention) and
+#     DO carry schedule / timeZone / retryConfig for some jobs, but GCP redacts
+#     httpTarget and pubsubTarget entirely, so URI, headers, body and OIDC are
+#     not recoverable from logs for any job.
+#
+# So this file is a RECONSTRUCTION, not a backup replay. Every entry carries a
+# `provenance` field saying where its definition came from, and `verified` says
+# whether the definition is known-good or needs a human to confirm it before the
+# job is resumed:
+#
+#   repo_script   exact `gcloud scheduler jobs create` command exists in the repo
+#   live_pattern  target/body copied from an equivalent job still live today
+#   manifest      schedule + target from the manifest; body inferred from the
+#                 service's documented route contract
+#   needs_input   cannot be reconstructed confidently -- a human must supply it
+#
+# Jobs with `verified: false` are created PAUSED like all the others, but
+# scripts/nba_offseason_restore_jobs.py refuses to create `needs_input` entries
+# unless you pass --allow-unverified, so a guess never reaches production silently.
+#
+# Shared defaults (measured across the 110 jobs still live on 2026-08-20):
+#   service account   756957797294-compute@developer.gserviceaccount.com  (71/84)
+#   oidc audience     equal to the target URI without query string        (56/84)
+#   headers           Content-Type: application/json
+#   retryConfig       minBackoff 5s, maxBackoff 3600s, maxDoublings 5
+#
+# Timezone note: three jobs are America/Los_Angeles. Do NOT normalize them to ET.
+
+defaults:
+  service_account: 756957797294-compute@developer.gserviceaccount.com
+  headers:
+    Content-Type: application/json
+  retry:
+    minBackoffDuration: 5s
+    maxBackoffDuration: 3600s
+    maxDoublings: 5
+  attempt_deadline: 180s
+  create_paused: true
+
+services:
+  scrapers:     https://nba-scrapers-f7p3g7f6ya-wl.a.run.app
+  phase2:       https://nba-phase2-raw-processors-f7p3g7f6ya-wl.a.run.app
+  phase3:       https://nba-phase3-analytics-processors-f7p3g7f6ya-wl.a.run.app
+  phase4:       https://nba-phase4-precompute-processors-f7p3g7f6ya-wl.a.run.app
+  coordinator:  https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app
+
+jobs:
+
+# =============================================================================
+# WAVE A — resume T-14 to T-10. Data collection; warms feature history.
+# =============================================================================
+
+- name: execute-workflows
+  wave: A
+  schedule: "5 0-23 * * *"
+  timezone: America/New_York
+  method: POST
+  uri: "{scrapers}/execute-workflows"
+  body: {}
+  provenance: manifest
+  verified: true
+  notes: >-
+    Route verified at scrapers/routes/orchestration.py:149. Top-3 critical: without
+    it most Phase-1 scraping silently never runs. RESUME PAIRED with the live
+    master-controller-hourly, which is currently ENABLED and writing decisions
+    that nothing executes -- pause it now, resume both together.
+
+- name: nba-props-morning
+  wave: A
+  schedule: "0 7 * * *"
+  timezone: UTC
+  method: POST
+  uri: "{scrapers}/execute-workflow"
+  body: {workflow: betting_lines}
+  provenance: manifest
+  verified: false
+  notes: CLV baseline freshness math assumes these four kicks. Confirm body key name.
+
+- name: nba-props-midday
+  wave: A
+  schedule: "0 12 * * *"
+  timezone: UTC
+  method: POST
+  uri: "{scrapers}/execute-workflow"
+  body: {workflow: betting_lines}
+  provenance: manifest
+  verified: false
+
+- name: nba-props-pregame
+  wave: A
+  schedule: "0 16 * * *"
+  timezone: UTC
+  method: POST
+  uri: "{scrapers}/execute-workflow"
+  body: {workflow: betting_lines}
+  provenance: manifest
+  verified: false
+
+- name: nba-props-evening-closing
+  wave: A
+  schedule: "0 22 * * *"
+  timezone: UTC
+  method: POST
+  uri: "{scrapers}/execute-workflow"
+  body: {workflow: betting_lines, snapshot_type: closing}
+  provenance: manifest
+  verified: false
+  notes: >-
+    Complementary to, NOT replaced by, the new nba-closing-lines-sweep T-30 job.
+    That one is not in any backup -- create it separately with
+    bin/deploy/deploy_closing_lines_scheduler.sh --paused.
+    Closing lines are un-backfillable; a miss here is permanent.
+
+- name: rotowire-lineups-daily
+  wave: A
+  schedule: "0 21 * * *"
+  timezone: UTC
+  method: POST
+  uri: "{scrapers}/scrape"
+  body: {scraper: rotowire_lineups, date: TODAY}
+  provenance: live_pattern
+  verified: true
+
+- name: nba-tracking-stats-daily
+  wave: A
+  schedule: "0 10 * * *"
+  timezone: UTC
+  method: POST
+  uri: "{scrapers}/scrape"
+  body: {scraper: nba_tracking_stats, date: TODAY}
+  provenance: live_pattern
+  verified: true
+  notes: >-
+    Resume ONLY after confirming the drives-zero fix (commit 7d1a3f9b) is deployed,
+    then check the first run's drive values are not 0.0. The tracking drives columns
+    were all 0.0 for a full season because of a scraper bug.
+
+- name: hashtagbasketball-dvp-daily
+  wave: A
+  schedule: "0 9 * * *"
+  timezone: UTC
+  method: POST
+  uri: "{scrapers}/scrape"
+  body: {scraper: hashtagbasketball_dvp, date: TODAY}
+  provenance: live_pattern
+  verified: true
+
+- name: vsin-betting-splits-daily
+  wave: A
+  schedule: "0 18 * * *"
+  timezone: UTC
+  method: POST
+  uri: "{scrapers}/scrape"
+  body: {scraper: vsin_betting_splits, date: TODAY}
+  provenance: live_pattern
+  verified: true
+
+- name: numberfire-projections-daily
+  wave: A
+  schedule: "30 14 * * *"
+  timezone: UTC
+  method: POST
+  uri: "{scrapers}/scrape"
+  body: {scraper: numberfire_projections, date: TODAY}
+  provenance: live_pattern
+  verified: true
+
+- name: fantasypros-projections-daily
+  wave: A
+  schedule: "30 14 * * *"
+  timezone: UTC
+  method: POST
+  uri: "{scrapers}/scrape"
+  body: {scraper: fantasypros_projections, date: TODAY}
+  provenance: live_pattern
+  verified: true
+
+- name: dailyfantasyfuel-projections-daily
+  wave: A
+  schedule: "30 14 * * *"
+  timezone: UTC
+  method: POST
+  uri: "{scrapers}/scrape"
+  body: {scraper: dailyfantasyfuel_projections, date: TODAY}
+  provenance: live_pattern
+  verified: true
+
+- name: dimers-projections-daily
+  wave: A
+  schedule: "45 14 * * *"
+  timezone: UTC
+  method: POST
+  uri: "{scrapers}/scrape"
+  body: {scraper: dimers_projections, date: TODAY}
+  provenance: live_pattern
+  verified: true
+
+- name: espn-projections-daily
+  wave: A
+  schedule: "45 14 * * *"
+  timezone: UTC
+  method: POST
+  uri: "{scrapers}/scrape"
+  body: {scraper: espn_projections, date: TODAY}
+  provenance: live_pattern
+  verified: true
+  notes: Consumed by supplemental_data + per_model_pipeline projection consensus.
+
+- name: covers-referee-stats-weekly
+  wave: A
+  schedule: "0 10 * * 1"
+  timezone: UTC
+  method: POST
+  uri: "{scrapers}/scrape"
+  body: {scraper: covers_referee_stats, date: TODAY}
+  provenance: live_pattern
+  verified: true
+
+- name: nbac-player-movement-daily
+  wave: A
+  schedule: "0 8,14 * * *"
+  timezone: America/New_York
+  method: POST
+  uri: "{scrapers}/scrape"
+  body: {scraper: nbac_player_movement, year: "2026"}
+  provenance: manifest
+  verified: false
+  notes: >-
+    The original body hardcoded "year":"2026". Confirm the year-param semantics
+    before resuming -- for the 2026-27 season this may need to be 2026 (season
+    start year) or 2027. Do not blindly replay across a year boundary.
+
+- name: player-movement-registry-morning
+  wave: A
+  schedule: "10 13 * * *"
+  timezone: UTC
+  method: POST
+  uri: "https://us-west2-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/nba-props-platform/jobs/player-movement-registry-job:run"
+  body: null
+  oauth: true
+  provenance: manifest
+  verified: true
+  notes: >-
+    Cloud Run JOB execution via the Admin API uses OAuth, not OIDC. The
+    player-movement-registry-job Cloud Run job exists.
+
+- name: player-movement-registry-afternoon
+  wave: A
+  schedule: "10 19 * * *"
+  timezone: UTC
+  method: POST
+  uri: "https://us-west2-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/nba-props-platform/jobs/player-movement-registry-job:run"
+  body: null
+  oauth: true
+  provenance: manifest
+  verified: true
+
+- name: odds-sweep-nightly
+  wave: A
+  schedule: "0 6 * * *"
+  timezone: UTC
+  method: POST
+  uri: "{phase2}/sweep-odds"
+  body: {}
+  provenance: manifest
+  verified: true
+  notes: Route verified at main_processor_service.py:236.
+
+# =============================================================================
+# WAVE B — resume T-7. Pipeline backstops + feature store.
+# =============================================================================
+
+- name: overnight-analytics-6am-et
+  wave: B
+  schedule: "0 6 * * *"
+  timezone: America/New_York
+  method: POST
+  uri: "{phase3}/process-date-range"
+  body: {start_date: YESTERDAY, end_date: YESTERDAY, processors: NEEDS_INPUT, backfill_mode: true}
+  provenance: needs_input
+  verified: false
+  notes: >-
+    Manifest says "5 processors" but does not name them, and audit logs do not
+    carry bodies. Phase 3 registers PlayerGameSummaryProcessor,
+    TeamOffenseGameSummaryProcessor, TeamDefenseGameSummaryProcessor,
+    UpcomingPlayerGameContextProcessor, UpcomingTeamGameContextProcessor
+    (main_analytics_service.py:1259-1261) -- almost certainly that set, but
+    confirm before creating. Grading-data backstop.
+
+- name: evening-analytics-6pm-et
+  wave: B
+  schedule: "0 18 * * 0,6"
+  timezone: America/New_York
+  method: POST
+  uri: "{phase3}/process-date-range"
+  body: {start_date: TODAY, end_date: TODAY, processors: [PlayerGameSummaryProcessor], backfill_mode: true}
+  provenance: repo_script
+  verified: true
+  notes: bin/orchestrators/setup_evening_analytics_schedulers.sh. Weekend matinee catch.
+
+- name: evening-analytics-10pm-et
+  wave: B
+  schedule: "0 22 * * *"
+  timezone: America/New_York
+  method: POST
+  uri: "{phase3}/process-date-range"
+  body: {start_date: TODAY, end_date: TODAY, processors: [PlayerGameSummaryProcessor], backfill_mode: true}
+  provenance: repo_script
+  verified: true
+  notes: Catches 7 PM games.
+
+- name: overnight-phase4
+  wave: B
+  schedule: "0 6 * * *"
+  timezone: America/New_York
+  method: POST
+  uri: "{phase4}/process-date"
+  body: {analysis_date: TODAY, processors: NEEDS_INPUT, backfill_mode: false, strict_mode: false, skip_dependency_check: true}
+  provenance: needs_input
+  verified: false
+  notes: >-
+    "5 processors" unnamed. Phase 4 known processors: MLFeatureStoreProcessor,
+    PlayerCompositeFactorsProcessor, PlayerDailyCacheProcessor,
+    ShotZoneAnalyticsProcessor, TeamDefenseZoneAnalysisProcessor. Confirm.
+    Also confirm the 6 AM TODAY run is not redundant with
+    player-composite-factors-upcoming (5 AM) plus orchestrator-driven Phase 4.
+
+- name: overnight-phase4-7am-et
+  wave: B
+  schedule: "0 7 * * *"
+  timezone: America/New_York
+  method: POST
+  uri: "{phase4}/process-date"
+  body: {analysis_date: YESTERDAY, processors: NEEDS_INPUT, backfill_mode: false, strict_mode: false, skip_dependency_check: true}
+  provenance: needs_input
+  verified: false
+  notes: Same processor list as overnight-phase4, different date. Not a duplicate.
+
+- name: ml-feature-store-daily
+  wave: B
+  schedule: "30 23 * * *"
+  timezone: America/Los_Angeles
+  method: POST
+  uri: "{phase4}/process-date"
+  body: {analysis_date: AUTO, processors: [MLFeatureStoreProcessor], backfill_mode: false, strict_mode: false, skip_dependency_check: true}
+  provenance: repo_script
+  verified: true
+  notes: PACIFIC time zone -- do NOT normalize to ET.
+
+- name: ml-feature-store-7am-et
+  wave: B
+  schedule: "0 7 * * *"
+  timezone: America/New_York
+  method: POST
+  uri: "{phase4}/process-date"
+  body: {analysis_date: TODAY, processors: [MLFeatureStoreProcessor], backfill_mode: false, strict_mode: false, skip_dependency_check: true}
+  provenance: repo_script
+  verified: true
+
+- name: ml-feature-store-10am-et
+  wave: B
+  schedule: "0 10 * * *"
+  timezone: America/New_York
+  method: POST
+  uri: "{phase4}/process-date"
+  body: {analysis_date: TODAY, processors: [MLFeatureStoreProcessor], backfill_mode: false, strict_mode: false, skip_dependency_check: true}
+  provenance: repo_script
+  verified: true
+
+- name: ml-feature-store-1pm-et
+  wave: B
+  schedule: "0 13 * * *"
+  timezone: America/New_York
+  method: POST
+  uri: "{phase4}/process-date"
+  body: {analysis_date: TODAY, processors: [MLFeatureStoreProcessor], backfill_mode: false, strict_mode: false, skip_dependency_check: true}
+  provenance: repo_script
+  verified: true
+
+- name: player-composite-factors-daily
+  wave: B
+  schedule: "0 23 * * *"
+  timezone: America/Los_Angeles
+  method: POST
+  uri: "{phase4}/process-date"
+  body: {analysis_date: AUTO, processors: [PlayerCompositeFactorsProcessor], backfill_mode: false, strict_mode: false, skip_dependency_check: true}
+  provenance: manifest
+  verified: true
+  notes: PACIFIC time zone -- do NOT normalize.
+
+- name: player-composite-factors-upcoming
+  wave: B
+  schedule: "0 5 * * *"
+  timezone: America/New_York
+  method: POST
+  uri: "{phase4}/process-date"
+  body: {analysis_date: TODAY, processors: [PlayerCompositeFactorsProcessor], backfill_mode: false, strict_mode: false, skip_dependency_check: true}
+  provenance: manifest
+  verified: true
+
+- name: player-daily-cache-daily
+  wave: B
+  schedule: "15 23 * * *"
+  timezone: America/Los_Angeles
+  method: POST
+  uri: "{phase4}/process-date"
+  body: {analysis_date: AUTO, processors: [PlayerDailyCacheProcessor], backfill_mode: false, strict_mode: false, skip_dependency_check: true}
+  provenance: manifest
+  verified: true
+  notes: PACIFIC time zone -- do NOT normalize. Third and last PT job.
+
+- name: same-day-phase4
+  wave: B
+  schedule: "0 11 * * *"
+  timezone: America/New_York
+  method: POST
+  uri: "{phase4}/process-date"
+  body: {analysis_date: TODAY, processors: [MLFeatureStoreProcessor], backfill_mode: false, strict_mode: false, skip_dependency_check: true}
+  provenance: repo_script
+  verified: true
+  notes: >-
+    The same-day chain is currently decapitated: live same-day-phase3 fires into
+    nothing because this job was deleted.
+
+- name: same-day-predictions
+  wave: B
+  schedule: "0 11 * * *"
+  timezone: America/New_York
+  method: POST
+  uri: "{coordinator}/start"
+  body: {run_mode: RETRY}
+  provenance: repo_script
+  verified: false
+  notes: Confirm the body key is run_mode (bin/orchestrators/setup_line_check_scheduler.sh).
+
+- name: same-day-phase3-tomorrow
+  wave: B
+  schedule: "0 17 * * *"
+  timezone: America/New_York
+  method: POST
+  uri: "{phase3}/process-date-range"
+  body: {start_date: TOMORROW, end_date: TOMORROW, processors: [UpcomingPlayerGameContextProcessor, UpcomingTeamGameContextProcessor], backfill_mode: true}
+  provenance: live_pattern
+  verified: true
+  notes: Body mirrors the live same-day-phase3 job exactly, with TOMORROW dates.
+
+- name: same-day-phase4-tomorrow
+  wave: B
+  schedule: "30 17 * * *"
+  timezone: America/New_York
+  method: POST
+  uri: "{phase4}/process-date"
+  body: {analysis_date: TOMORROW, processors: [MLFeatureStoreProcessor], backfill_mode: false, strict_mode: false, skip_dependency_check: true}
+  provenance: repo_script
+  verified: true
+
+- name: same-day-predictions-tomorrow
+  wave: B
+  schedule: "0 20 * * *"
+  timezone: America/New_York
+  method: POST
+  uri: "{coordinator}/start"
+  body: {run_mode: PRE_GAME, target: TOMORROW}
+  provenance: manifest
+  verified: false
+  notes: Confirm body keys against the coordinator /start contract.
+
+- name: boxscore-completeness-check
+  wave: B
+  schedule: "0 6 * * *"
+  timezone: America/New_York
+  method: POST
+  uri: "{phase2}/monitoring/boxscore-completeness"
+  body: {}
+  provenance: manifest
+  verified: true
+  notes: >-
+    Route verified at main_processor_service.py:319. Distinct from the removed
+    box_score_completeness_alert orphan CF.
+
+- name: phase4-timeout-check-job
+  wave: B
+  schedule: "*/15 * * * *"
+  timezone: America/New_York
+  method: POST
+  uri: "https://phase4-timeout-check-f7p3g7f6ya-wl.a.run.app/"
+  body: {}
+  provenance: repo_script
+  verified: true
+  notes: bin/orchestrators/deploy_phase4_timeout_check.sh
+
+# =============================================================================
+# WAVE C — resume T-3 to opening night. Prediction engine, exports, model ops.
+# =============================================================================
+
+- name: weekly-retrain-trigger
+  wave: C
+  schedule: "0 5 * * 1"
+  timezone: America/New_York
+  method: POST
+  uri: "https://weekly-retrain-f7p3g7f6ya-wl.a.run.app/"
+  body: {}
+  provenance: manifest
+  verified: true
+  notes: >-
+    #1 CRITICAL. The weekly-retrain CF is HTTP-only (eventTrigger: None) with no
+    other invoker, so without this job weekly retraining fires NEVER -- that was
+    the 2025-26 root cause and CLAUDE.md's "fires every Monday" is currently false.
+    The CF is also NOT in cloudbuild-functions.yaml, so it does not auto-deploy;
+    deploy it manually before resuming this trigger.
+
+- name: decay-detection-daily
+  wave: C
+  schedule: "0 16 * * *"
+  timezone: UTC
+  method: POST
+  uri: "https://decay-detection-f7p3g7f6ya-wl.a.run.app/"
+  body: {}
+  provenance: manifest
+  verified: true
+  notes: >-
+    #2 CRITICAL. HTTP-only CF. Without it there is no HEALTHY->WATCH->DEGRADING->
+    BLOCKED state machine and no auto-disable, so a decayed model pollutes best
+    bets silently.
+
+- name: overnight-predictions
+  wave: C
+  schedule: "0 8 * * *"
+  timezone: America/New_York
+  method: POST
+  uri: "{coordinator}/start"
+  body: {run_mode: FIRST}
+  provenance: repo_script
+  verified: false
+  notes: Confirm body key against the coordinator /start contract.
+
+- name: predictions-9am
+  wave: C
+  schedule: "0 9 * * *"
+  timezone: America/New_York
+  method: POST
+  uri: "{coordinator}/start"
+  body: {run_mode: RETRY}
+  provenance: manifest
+  verified: false
+
+- name: predictions-12pm
+  wave: C
+  schedule: "0 12 * * *"
+  timezone: America/New_York
+  method: POST
+  uri: "{coordinator}/start"
+  body: {run_mode: RETRY}
+  provenance: manifest
+  verified: false
+
+- name: morning-predictions
+  wave: C
+  schedule: "0 10 * * *"
+  timezone: America/New_York
+  method: POST
+  uri: "{coordinator}/start"
+  body: {run_mode: RETRY}
+  provenance: manifest
+  verified: false
+
+- name: predictions-final-retry
+  wave: C
+  schedule: "0 13 * * *"
+  timezone: America/New_York
+  method: POST
+  uri: "{coordinator}/start"
+  body: {run_mode: FINAL_RETRY}
+  provenance: manifest
+  verified: false
+  notes: 80% quality threshold.
+
+- name: predictions-last-call
+  wave: C
+  schedule: "0 16 * * *"
+  timezone: America/New_York
+  method: POST
+  uri: "{coordinator}/start"
+  body: {run_mode: LAST_CALL}
+  provenance: manifest
+  verified: false
+  notes: >-
+    The old backup description was stale -- Session 139 made LAST_CALL a 70%
+    threshold (quality_gate.py:48). The mode is legitimate; restore it.
+
+- name: self-heal-predictions
+  wave: C
+  schedule: "45 12 * * *"
+  timezone: America/New_York
+  method: POST
+  uri: "https://self-heal-predictions-f7p3g7f6ya-wl.a.run.app/"
+  body: {}
+  provenance: repo_script
+  verified: true
+
+- name: missing-prediction-check
+  wave: C
+  schedule: "0 19 * * *"
+  timezone: America/New_York
+  method: POST
+  uri: "https://check-missing-f7p3g7f6ya-wl.a.run.app/"
+  body: {target: TOMORROW}
+  provenance: manifest
+  verified: false
+
+- name: phase6-tonight-picks-morning
+  wave: C
+  schedule: "0 11 * * *"
+  timezone: America/New_York
+  target_type: pubsub
+  topic: nba-phase6-export-trigger
+  body: {export_types: [tonight-picks], target_date: TODAY}
+  provenance: manifest
+  verified: true
+  notes: >-
+    Message format matters: export_types + target_date, NOT game_date. The live
+    1 PM job covers midday only.
+
+- name: phase6-tonight-picks-pregame
+  wave: C
+  schedule: "0 17 * * *"
+  timezone: America/New_York
+  target_type: pubsub
+  topic: nba-phase6-export-trigger
+  body: {export_types: [tonight-picks, signal-best-bets], target_date: TODAY}
+  provenance: manifest
+  verified: true
+  notes: >-
+    NEVER point a signal-best-bets export at a historical date -- it deletes picks.
+
+- name: live-export-evening
+  wave: C
+  schedule: "*/3 16-23 * * *"
+  timezone: America/New_York
+  method: POST
+  uri: "https://live-export-f7p3g7f6ya-wl.a.run.app/"
+  body: {}
+  provenance: repo_script
+  verified: true
+  notes: bin/deploy/deploy_live_export.sh. In-game scores.
+
+- name: live-export-late-night
+  wave: C
+  schedule: "*/3 0-1 * * *"
+  timezone: America/New_York
+  method: POST
+  uri: "https://live-export-f7p3g7f6ya-wl.a.run.app/"
+  body: {}
+  provenance: repo_script
+  verified: true
+
+- name: grading-readiness-check
+  wave: C
+  schedule: "*/15 22-23,0-2 * * *"
+  timezone: America/New_York
+  method: POST
+  uri: "https://grading-readiness-monitor-f7p3g7f6ya-wl.a.run.app/"
+  body: {}
+  provenance: manifest
+  verified: true
+  notes: >-
+    One of the two backstops that make skipping grading-morning/daily/latenight
+    safe. If this is not restored, revisit that skip decision.
+
+- name: nba-grading-gap-detector
+  wave: C
+  schedule: "0 9 * * *"
+  timezone: America/New_York
+  method: POST
+  uri: "https://grading-gap-detector-f7p3g7f6ya-wl.a.run.app/"
+  body: {days: 14}
+  provenance: manifest
+  verified: true
+  notes: Second of the two grading backstops.
+
+- name: bias-decay-monitor-daily
+  wave: C
+  schedule: "30 11 * * *"
+  timezone: America/New_York
+  method: POST
+  uri: "https://bias-decay-monitor-f7p3g7f6ya-wl.a.run.app/"
+  body: {}
+  provenance: manifest
+  verified: true
+  notes: LOST_EDGE / LOSING_BAD alerts.
+
+- name: signal-weight-report-weekly
+  wave: C
+  schedule: "0 10 * * 1"
+  timezone: America/New_York
+  method: POST
+  uri: "https://signal-weight-report-f7p3g7f6ya-wl.a.run.app/"
+  body: {}
+  provenance: manifest
+  verified: true
+  notes: The promotion tracker's only delivery vehicle.
+
+- name: validation-post-overnight
+  wave: C
+  schedule: "0 6 * * *"
+  timezone: America/New_York
+  method: GET
+  uri: "https://validation-runner-f7p3g7f6ya-wl.a.run.app/?schedule=post_overnight"
+  body: null
+  provenance: repo_script
+  verified: true
+  notes: bin/deploy/deploy_validation_runner.sh
+
+- name: validation-pre-game-prep
+  wave: C
+  schedule: "0 8 * * *"
+  timezone: America/New_York
+  method: GET
+  uri: "https://validation-runner-f7p3g7f6ya-wl.a.run.app/?schedule=pre_game_prep"
+  body: null
+  provenance: repo_script
+  verified: true
+
+- name: validation-pre-game-final
+  wave: C
+  schedule: "0 18 * * *"
+  timezone: America/New_York
+  method: GET
+  uri: "https://validation-runner-f7p3g7f6ya-wl.a.run.app/?schedule=pre_game_final"
+  body: null
+  provenance: repo_script
+  verified: true
+
+# =============================================================================
+# NOT IN THIS CATALOG -- deliberately
+# =============================================================================
+#
+# SKIP-SUPERSEDED (3): grading-morning, grading-daily, grading-latenight.
+#   Completion-driven grading already covers these via phase3-to-grading ->
+#   nba-grading-trigger -> phase5b-grading. Restoring them risks double-grading
+#   races. Safe to skip ONLY because grading-readiness-check and
+#   nba-grading-gap-detector are both in this catalog.
+#
+# SKIP-OBSOLETE (2): nba-playoffs-shadow-activate, nba-playoffs-shadow-review.
+#   One-shot reminders whose dates (2026-04-14, 2026-05-01) have passed.
+#
+# DECIDE (1): kalshi-props-scraper. Scraper and processor exist end to end but
+#   there are zero consumers in ml/, shared/, precompute or publishing -- raw
+#   ingestion only. Add it here if you want unbroken Kalshi history.
+#
+# NOT IN ANY BACKUP: nba-closing-lines-sweep (T-30 closing capture). Create with
+#   bin/deploy/deploy_closing_lines_scheduler.sh --paused.
