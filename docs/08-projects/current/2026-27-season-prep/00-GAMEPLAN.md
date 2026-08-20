@@ -29,6 +29,32 @@ edge. It is stopping the leaks around one that already exists.**
 
 ---
 
+## STATUS — updated 2026-08-19 (evening session)
+
+Owner decisions 1, 2, 3 and 5 are made. §2.1 auto-halt, §2.3 worker filters and
+§2.4 deploy gate are **DONE**. §2.2 health multipliers and the P1 list are open.
+
+| § | Item | Status |
+|---|---|---|
+| 2.1 | Auto-halt recalibration | **DONE** — median variant + hysteresis, `shared/config/edge_halt.py` |
+| 2.2 | Health multipliers never apply | **OPEN** — still needs the measure-first decision |
+| 2.3 | Panic-era worker filters | **DONE** — 3 deleted, `star_under_bias_suspect` moved to observation |
+| 2.4 | Deploy test gate + build timeout | **DONE** — gate is step 0 of all four NBA build configs |
+| 2.2b | Scheduler restore script | **DONE** — but the backup it was meant to replay was deleted; see below |
+| 4.2 | Break-even (four majors, 52.4) | **DONE** — production and discovery scripts now share one constant |
+
+**New P0 discovered:** the GCS scheduler backup named as the restore plan's source
+of truth was deleted by a 30-day bucket lifecycle rule around 2026-08-02. The 59
+jobs have been reconstructed into `ops/scheduler-catalog-2026.yaml` (42 of 59
+verified, 3 refused pending input), and snapshots now live in git. **17 jobs need a
+human to confirm a body or parameter before their wave is resumed.**
+
+Also corrected: the auto-halt fires on **865 of 865** prediction-days, not 91.9%,
+and its threshold margin rests on leak-contaminated prior seasons — on the one
+clean season the binding margin is 2.4%, not 28.8%.
+
+---
+
 ## 2. P0 — must land before opening night
 
 ### 2.1 The auto-halt would publish nothing (BUG, not tuning)

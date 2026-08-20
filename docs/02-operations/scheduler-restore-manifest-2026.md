@@ -1,9 +1,38 @@
 # Scheduler-Job Restore Manifest — 2026-07-03 deletion event
 
-**Produced by the 4-fable-agent path-forward review (2026-07-03). This is the curated
-input for `scripts/nba_offseason_restore_jobs.sh` (to be built — spec at bottom).**
+**Produced by the 4-fable-agent path-forward review (2026-07-03). Curated input for
+`scripts/nba_offseason_restore_jobs.py` — BUILT 2026-08-19, along with
+`ops/scheduler-catalog-2026.yaml`. Spec at bottom; read the warning below first.**
 
-**Source of truth:** `gs://nba-bigquery-backups/scheduler-jobs-backup/scheduler_jobs_backup_2026-07-03.json`
+> ## ⚠️ 2026-08-19 — THE BACKUP THIS DOCUMENT DEPENDS ON IS GONE
+>
+> `gs://nba-bigquery-backups/scheduler-jobs-backup/scheduler_jobs_backup_2026-07-03.json`
+> **no longer exists.** That bucket carries a lifecycle rule deleting objects at
+> age 30 days (`{"action":{"type":"Delete"},"condition":{"age":30}}`), so the file
+> aged out around 2026-08-02. The oldest surviving object in the bucket is dated
+> 2026-07-21, exactly consistent with a 30-day TTL. No copy exists in any other
+> project bucket or in the repo.
+>
+> Recovery from Cloud Scheduler audit logs was attempted and **partially failed**:
+> admin logs reach back to 2025-07-21 (400-day retention) and do carry
+> `schedule`, `timeZone` and `retryConfig` for some jobs, but **GCP redacts
+> `httpTarget` and `pubsubTarget` entirely** — 315 job payloads across 110 job
+> names, none with a target. URI, headers, body and OIDC are unrecoverable.
+>
+> **The tables below are now the primary source**, and the jobs have been
+> reconstructed from them into `ops/scheduler-catalog-2026.yaml`, which tags every
+> entry with its provenance and whether it is verified. Restore with
+> `scripts/nba_offseason_restore_jobs.py`. 42 of 59 definitions are verified;
+> 3 are refused outright pending human input.
+>
+> **Count correction:** the summary below says RESTORE 58 (A=19, B=18, C=21), but
+> the Wave B table has 19 rows. The true total is **59**.
+>
+> Snapshots now live in git (`ops/scheduler-snapshots/`, written by
+> `bin/scheduler/backup_scheduler_jobs.sh`) because git has no lifecycle rule.
+
+**Source of truth (HISTORICAL — file deleted, see the warning above):**
+`gs://nba-bigquery-backups/scheduler-jobs-backup/scheduler_jobs_backup_2026-07-03.json`
 (204 jobs, full configs incl. OIDC, headers, bodies, retryConfig, timeZone).
 **Diff vs live at curation time:** 110 live, **94 deleted** — **65 non-MLB** (curated below),
 29 MLB-prefixed (all pre-PAUSED; noted at bottom, not curated).
