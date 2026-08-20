@@ -1,0 +1,3249 @@
+[
+  {
+    "attemptDeadline": "540s",
+    "description": "Triggers mlb-self-heal CF at 12:45 PM ET, March-October only. Mirrors NBA self-heal-predictions.",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://mlb-self-heal-f7p3g7f6ya-wl.a.run.app",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://mlb-self-heal-f7p3g7f6ya-wl.a.run.app/"
+    },
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/mlb-self-heal-trigger",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "45 12 * 3-10 *",
+    "state": "PAUSED",
+    "status": {
+      "code": -1
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-08-19T23:49:42.621529Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Monitor live data freshness and trigger self-healing (4 PM - 1 AM ET)",
+    "httpTarget": {
+      "body": "e30=",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://us-west2-nba-props-platform.cloudfunctions.net/live-freshness-monitor",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://live-freshness-monitor-f7p3g7f6ya-wl.a.run.app/"
+    },
+    "lastAttemptTime": "2026-08-20T04:30:00.253777Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/live-freshness-monitor",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "*/5 16-23,0-1 * * *",
+    "scheduleTime": "2026-08-20T04:35:00.037380Z",
+    "state": "ENABLED",
+    "status": {},
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-06-05T21:35:59.462618Z"
+  },
+  {
+    "attemptDeadline": "60s",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://us-west2-nba-props-platform.cloudfunctions.net/source-block-alert",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://source-block-alert-f7p3g7f6ya-wl.a.run.app/"
+    },
+    "lastAttemptTime": "2026-08-20T04:00:01.143651Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/source-block-alert-scheduler",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 */6 * * *",
+    "scheduleTime": "2026-08-20T10:00:01.032372Z",
+    "state": "ENABLED",
+    "status": {},
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-06-05T21:36:12.580189Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Home plate umpire assignments for K predictions",
+    "httpTarget": {
+      "body": "eyJzY3JhcGVyIjogIm1sYl91bXBpcmVfYXNzaWdubWVudHMiLCAiZGF0ZSI6ICJUT0RBWSJ9",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape"
+    },
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/mlb-umpire-assignments",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "30 16 * 3-10 *",
+    "state": "PAUSED",
+    "status": {
+      "code": -1
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-08-19T23:49:44.417018Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Daily filter counterfactual HR evaluation at 11:30 AM ET",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://filter-counterfactual-evaluator-f7p3g7f6ya-wl.a.run.app/",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://filter-counterfactual-evaluator-f7p3g7f6ya-wl.a.run.app/"
+    },
+    "lastAttemptTime": "2026-08-19T15:30:01.791626Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/filter-counterfactual-evaluator-daily",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "30 11 * * *",
+    "scheduleTime": "2026-08-20T15:30:00.983193Z",
+    "state": "ENABLED",
+    "status": {
+      "code": 13
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-05-29T23:22:46.466761Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Publishes backfill messages for stale EXPECTED rows. Phase E.",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "GET",
+      "oidcToken": {
+        "audience": "https://gap-detector-f7p3g7f6ya-wl.a.run.app/",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://gap-detector-f7p3g7f6ya-wl.a.run.app/"
+    },
+    "lastAttemptTime": "2026-08-20T04:15:00.347850Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/gap-detector-30min",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "15,45 * * * *",
+    "scheduleTime": "2026-08-20T04:45:00.176469Z",
+    "state": "ENABLED",
+    "status": {},
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-05-11T17:09:52.531788Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oauthToken": {
+        "scope": "https://www.googleapis.com/auth/cloud-platform",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://us-west2-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/nba-props-platform/jobs/nba-deployment-drift-alerter:run"
+    },
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/nba-deployment-drift-alerter-trigger",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 */2 * * *",
+    "state": "PAUSED",
+    "status": {
+      "code": -1
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-07-03T22:46:50.653220Z"
+  },
+  {
+    "attemptDeadline": "300s",
+    "description": "Fetch sports news from RSS feeds and generate AI summaries",
+    "httpTarget": {
+      "body": "eyJzcG9ydHMiOiBbIm5iYSIsICJtbGIiXSwgImdlbmVyYXRlX3N1bW1hcmllcyI6IHRydWUsICJtYXhfYXJ0aWNsZXMiOiA1MH0=",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://us-west2-nba-props-platform.cloudfunctions.net/news-fetcher",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://us-west2-nba-props-platform.cloudfunctions.net/news-fetcher"
+    },
+    "lastAttemptTime": "2026-08-20T04:30:00.499640Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/news-fetcher",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "*/15 * * * *",
+    "scheduleTime": "2026-08-20T04:45:00.311960Z",
+    "state": "ENABLED",
+    "status": {},
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-07-03T23:55:17.800677Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Fetch MLB event IDs from Odds API (must run before pitcher props)",
+    "httpTarget": {
+      "body": "eyJzY3JhcGVyIjogIm1sYl9ldmVudHMiLCAiZ2FtZV9kYXRlIjogIlRPREFZIn0=",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape"
+    },
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/mlb-events-morning",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "15 10 * 3-10 *",
+    "state": "PAUSED",
+    "status": {
+      "code": -1
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-08-19T23:49:45.918210Z"
+  },
+  {
+    "description": "MLB pitcher leaderboard + profiles export (1 PM ET, pregame)",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/mlb-pitcher-export-pregame",
+    "pubsubTarget": {
+      "data": "eyJzcG9ydCI6Im1sYiIsImV4cG9ydF90eXBlcyI6WyJwaXRjaGVycyIsImJlc3QtYmV0cyJdLCJ0YXJnZXRfZGF0ZSI6InRvZGF5In0=",
+      "topicName": "projects/nba-props-platform/topics/nba-phase6-export-trigger"
+    },
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 13 * 3-10 *",
+    "state": "PAUSED",
+    "status": {
+      "code": -1
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-08-19T23:49:47.191858Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://us-west2-nba-props-platform.cloudfunctions.net/pipeline-health-summary",
+        "serviceAccountEmail": "scheduler-orchestration@nba-props-platform.iam.gserviceaccount.com"
+      },
+      "uri": "https://pipeline-health-summary-f7p3g7f6ya-wl.a.run.app/"
+    },
+    "lastAttemptTime": "2026-08-19T13:00:02.745187Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/daily-pipeline-health-summary",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 6 * * *",
+    "scheduleTime": "2026-08-20T13:00:01.973791Z",
+    "state": "ENABLED",
+    "status": {
+      "code": 13
+    },
+    "timeZone": "America/Los_Angeles",
+    "userUpdateTime": "2026-06-05T21:35:54.410039Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "GET",
+      "oidcToken": {
+        "audience": "https://pipeline-reconciliation-f7p3g7f6ya-wl.a.run.app/",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://pipeline-reconciliation-f7p3g7f6ya-wl.a.run.app/"
+    },
+    "lastAttemptTime": "2026-08-19T10:00:02.813499Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/pipeline-reconciliation-job",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 6 * * *",
+    "scheduleTime": "2026-08-20T10:00:02.646632Z",
+    "state": "ENABLED",
+    "status": {
+      "code": 13
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-04-19T04:36:53.135590Z"
+  },
+  {
+    "attemptDeadline": "300s",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "GET",
+      "oidcToken": {
+        "audience": "https://enrichment-trigger-f7p3g7f6ya-wl.a.run.app/",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://enrichment-trigger-f7p3g7f6ya-wl.a.run.app/"
+    },
+    "lastAttemptTime": "2026-08-19T18:40:01.176032Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/enrichment-daily",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "40 18 * * *",
+    "scheduleTime": "2026-08-20T18:40:01.014020Z",
+    "state": "ENABLED",
+    "status": {
+      "code": 13
+    },
+    "timeZone": "UTC",
+    "userUpdateTime": "2026-04-19T04:36:34.580924Z"
+  },
+  {
+    "description": "Weekly refresh of player profiles (Sundays 6 AM ET)",
+    "lastAttemptTime": "2026-08-16T10:00:04.449446Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/phase6-player-profiles",
+    "pubsubTarget": {
+      "data": "eyJwbGF5ZXJzIjogdHJ1ZSwgIm1pbl9nYW1lcyI6IDV9",
+      "topicName": "projects/nba-props-platform/topics/nba-phase6-export-trigger"
+    },
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 6 * * 0",
+    "scheduleTime": "2026-08-23T10:00:03.729863Z",
+    "state": "ENABLED",
+    "status": {},
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-06-29T23:15:48.618577Z"
+  },
+  {
+    "description": "Export yesterday's prediction results to GCS (5 AM ET)",
+    "lastAttemptTime": "2026-08-19T09:00:03.034295Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/phase6-daily-results",
+    "pubsubTarget": {
+      "data": "eyJleHBvcnRfdHlwZXMiOiBbInJlc3VsdHMiLCAicGVyZm9ybWFuY2UiLCAiYmVzdC1iZXRzIiwgInByZWRpY3Rpb25zIiwgImFkbWluLWRhc2hib2FyZCIsICJhZG1pbi1waWNrcyJdLCAidGFyZ2V0X2RhdGUiOiAieWVzdGVyZGF5IiwgInVwZGF0ZV9sYXRlc3QiOiB0cnVlfQ==",
+      "topicName": "projects/nba-props-platform/topics/nba-phase6-export-trigger"
+    },
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 5 * * *",
+    "scheduleTime": "2026-08-20T09:00:02.438404Z",
+    "state": "ENABLED",
+    "status": {},
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-06-29T23:15:40.899354Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Reddit MLB discussion and sentiment",
+    "httpTarget": {
+      "body": "eyJzY3JhcGVyIjogIm1sYl9yZWRkaXRfZGlzY3Vzc2lvbiIsICJkYXRlIjogIlRPREFZIn0=",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape"
+    },
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/mlb-reddit-discussion",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "5 11 * 3-10 *",
+    "state": "PAUSED",
+    "status": {
+      "code": -1
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-08-19T23:49:48.523779Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Clean up old prediction staging tables",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app/cleanup-staging"
+    },
+    "lastAttemptTime": "2026-08-19T12:00:02.978935Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/nba-staging-cleanup",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 8 * * *",
+    "scheduleTime": "2026-08-20T12:00:02.187540Z",
+    "state": "ENABLED",
+    "status": {
+      "code": 13
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-02-03T01:14:30Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "httpTarget": {
+      "body": "eyJzY3JhcGVyIjogIm1sYl9ib3hfc2NvcmVzX21sYmFwaSIsICJkYXRlIjogIllFU1RFUkRBWSJ9",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape"
+    },
+    "lastAttemptTime": "2026-08-19T12:00:01.974021Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/mlb-box-scores-daily",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 8 * 3-10 *",
+    "scheduleTime": "2026-08-20T12:00:01.317489Z",
+    "state": "ENABLED",
+    "status": {
+      "code": 13
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-06-03T20:54:53.370865Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "BettingPros player rebounds prop lines - morning",
+    "httpTarget": {
+      "body": "eyJzY3JhcGVyIjogImJwX3BsYXllcl9wcm9wcyIsICJtYXJrZXRfdHlwZSI6ICJyZWJvdW5kcyIsICJkYXRlIjogIlRPREFZIn0=",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://nba-scrapers-f7p3g7f6ya-wl.a.run.app/scrape",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://nba-scrapers-f7p3g7f6ya-wl.a.run.app/scrape"
+    },
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/nba-rebounds-props-morning",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 10 * * *",
+    "scheduleTime": "2026-08-20T14:00:00Z",
+    "state": "ENABLED",
+    "status": {
+      "code": -1
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-08-19T23:50:34.748478Z"
+  },
+  {
+    "attemptDeadline": "60s",
+    "description": "RotoWire NBA news scraper — daily noon ET during off-season (May-Sep)",
+    "httpTarget": {
+      "body": "eyJzY3JhcGVyIjogInJvdG93aXJlX25iYV9uZXdzIiwgImRhdGUiOiAiVE9EQVkifQ==",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://nba-scrapers-f7p3g7f6ya-wl.a.run.app/scrape",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://nba-scrapers-f7p3g7f6ya-wl.a.run.app/scrape"
+    },
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/rotowire-nba-news-daily",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 12 * 5-9 *",
+    "state": "PAUSED",
+    "status": {
+      "code": -1
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-07-03T22:46:53.130016Z"
+  },
+  {
+    "attemptDeadline": "300s",
+    "description": "Fix stale schedule data - marks old in-progress games as Final (every 4 hours)",
+    "httpTarget": {
+      "body": "e30=",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://nba-scrapers-f7p3g7f6ya-wl.a.run.app",
+        "serviceAccountEmail": "scheduler-orchestration@nba-props-platform.iam.gserviceaccount.com"
+      },
+      "uri": "https://nba-scrapers-f7p3g7f6ya-wl.a.run.app/fix-stale-schedule"
+    },
+    "lastAttemptTime": "2026-08-20T04:00:01.810293Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/fix-stale-schedule",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 */4 * * *",
+    "scheduleTime": "2026-08-20T08:00:01.644864Z",
+    "state": "ENABLED",
+    "status": {},
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-01-24T00:32:41Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Check prediction coverage 2 hours before games - alerts on low coverage",
+    "httpTarget": {
+      "body": "e30=",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://us-west2-nba-props-platform.cloudfunctions.net/game-coverage-alert",
+        "serviceAccountEmail": "scheduler-orchestration@nba-props-platform.iam.gserviceaccount.com"
+      },
+      "uri": "https://game-coverage-alert-f7p3g7f6ya-wl.a.run.app/"
+    },
+    "lastAttemptTime": "2026-08-19T21:00:00.872750Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/game-coverage-alert",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 17 * * *",
+    "scheduleTime": "2026-08-20T21:00:00.778603Z",
+    "state": "ENABLED",
+    "status": {
+      "code": 13
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-06-05T21:36:15.088233Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "httpTarget": {
+      "body": "eyJzY3JhcGVyIjogIm1sYl9zY2hlZHVsZSIsICJkYXRlIjogIllFU1RFUkRBWSJ9",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape"
+    },
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/mlb-schedule-yesterday",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "3 8 * 3-10 *",
+    "state": "PAUSED",
+    "status": {
+      "code": -1
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-08-19T23:49:49.929731Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oauthToken": {
+        "scope": "https://www.googleapis.com/auth/cloud-platform",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://us-west2-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/nba-props-platform/jobs/mlb-stall-detector:run"
+    },
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/mlb-stall-detector-hourly",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 * * 3-10 *",
+    "state": "PAUSED",
+    "status": {
+      "code": -1
+    },
+    "timeZone": "UTC",
+    "userUpdateTime": "2026-08-19T23:49:51.100092Z"
+  },
+  {
+    "description": "CLV T-3h re-export: refresh best-bets with afternoon line snapshots (4:30 PM ET)",
+    "lastAttemptTime": "2026-08-19T20:30:00.957024Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/phase6-clv-reexport",
+    "pubsubTarget": {
+      "data": "eyJleHBvcnRfdHlwZXMiOiBbInNpZ25hbC1iZXN0LWJldHMiXSwgInRhcmdldF9kYXRlIjogInRvZGF5In0=",
+      "topicName": "projects/nba-props-platform/topics/nba-phase6-export-trigger"
+    },
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "30 16 * * *",
+    "scheduleTime": "2026-08-20T20:30:00.298291Z",
+    "state": "ENABLED",
+    "status": {},
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-06-29T23:15:58.582983Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Daily 6 AM ET check for stale Cloud Run deployments",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://morning-deployment-check-f7p3g7f6ya-wl.a.run.app/",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://morning-deployment-check-f7p3g7f6ya-wl.a.run.app/"
+    },
+    "lastAttemptTime": "2026-08-19T11:00:03.733275Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/morning-deployment-check",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 11 * * *",
+    "scheduleTime": "2026-08-20T11:00:03.584026Z",
+    "state": "ENABLED",
+    "status": {
+      "code": 13
+    },
+    "timeZone": "UTC",
+    "userUpdateTime": "2026-03-09T02:35:13.835860Z"
+  },
+  {
+    "attemptDeadline": "1800s",
+    "description": "Daily BigQuery table backups to GCS",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://bigquery-backup-f7p3g7f6ya-wl.a.run.app/?type=daily",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://bigquery-backup-f7p3g7f6ya-wl.a.run.app/?type=daily"
+    },
+    "lastAttemptTime": "2026-08-19T09:00:01.482905Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/bigquery-daily-backup",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 2 * * *",
+    "scheduleTime": "2026-08-20T09:00:00.710497Z",
+    "state": "ENABLED",
+    "status": {
+      "code": 13
+    },
+    "timeZone": "America/Los_Angeles",
+    "userUpdateTime": "2026-04-19T04:36:24.304806Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Weekly cleanup of old Firestore orchestration documents",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://transition-monitor-f7p3g7f6ya-wl.a.run.app/cleanup",
+        "serviceAccountEmail": "scheduler-orchestration@nba-props-platform.iam.gserviceaccount.com"
+      },
+      "uri": "https://transition-monitor-f7p3g7f6ya-wl.a.run.app/cleanup"
+    },
+    "lastAttemptTime": "2026-08-16T10:00:03.717454Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/firestore-state-cleanup",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 3 * * 0",
+    "scheduleTime": "2026-08-23T10:00:03.557412Z",
+    "state": "ENABLED",
+    "status": {
+      "code": 13
+    },
+    "timeZone": "America/Los_Angeles",
+    "userUpdateTime": "2026-01-22T03:18:04Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Daily scraper availability check - 8 AM ET",
+    "httpTarget": {
+      "body": "e30=",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://scraper-availability-monitor-f7p3g7f6ya-wl.a.run.app",
+        "serviceAccountEmail": "scheduler-orchestration@nba-props-platform.iam.gserviceaccount.com"
+      },
+      "uri": "https://scraper-availability-monitor-f7p3g7f6ya-wl.a.run.app/"
+    },
+    "lastAttemptTime": "2026-08-19T13:00:04.956295Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/scraper-availability-daily",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 13 * * *",
+    "scheduleTime": "2026-08-20T13:00:04.757220Z",
+    "state": "ENABLED",
+    "status": {
+      "code": 13
+    },
+    "timeZone": "UTC",
+    "userUpdateTime": "2026-01-22T01:49:01Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Refresh starting lineups (pregame)",
+    "httpTarget": {
+      "body": "eyJzY3JhcGVyIjogIm1sYl9saW5ldXBzIiwgImRhdGUiOiAiVE9EQVkifQ==",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape"
+    },
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/mlb-lineups-pregame",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 13 * 3-10 *",
+    "state": "PAUSED",
+    "status": {
+      "code": -1
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-08-19T23:49:52.277082Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Daily data quality checks for NBA predictions pipeline",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "GET",
+      "oidcToken": {
+        "audience": "https://data-quality-alerts-f7p3g7f6ya-wl.a.run.app/",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://data-quality-alerts-f7p3g7f6ya-wl.a.run.app/"
+    },
+    "lastAttemptTime": "2026-08-19T23:00:00.760992Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/data-quality-alerts-job",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 19 * * *",
+    "scheduleTime": "2026-08-20T23:00:00.023313Z",
+    "state": "ENABLED",
+    "status": {
+      "code": 13
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-04-19T04:36:29.441636Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Monitor CatBoost V8 system health (every 4 hours)",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://nba-monitoring-alerts-f7p3g7f6ya-wl.a.run.app/",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://nba-monitoring-alerts-f7p3g7f6ya-wl.a.run.app/"
+    },
+    "lastAttemptTime": "2026-08-20T03:00:04.731603Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/nba-monitoring-alerts",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 */4 * * *",
+    "scheduleTime": "2026-08-20T07:00:04.580910Z",
+    "state": "ENABLED",
+    "status": {},
+    "timeZone": "America/Los_Angeles",
+    "userUpdateTime": "2026-04-19T04:36:45.290074Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Check for extreme prediction signals and alert if RED",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app/check-signal"
+    },
+    "lastAttemptTime": "2026-08-19T17:00:01.502808Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/nba-signal-anomaly-check",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 13 * * *",
+    "scheduleTime": "2026-08-20T17:00:00.709132Z",
+    "state": "ENABLED",
+    "status": {
+      "code": 13
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-02-03T01:14:27Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "GET",
+      "oidcToken": {
+        "audience": "https://daily-health-summary-f7p3g7f6ya-wl.a.run.app/",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://daily-health-summary-f7p3g7f6ya-wl.a.run.app/"
+    },
+    "lastAttemptTime": "2026-08-19T11:00:02.284629Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/daily-health-summary-job",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 7 * * *",
+    "scheduleTime": "2026-08-20T11:00:02.156250Z",
+    "state": "ENABLED",
+    "status": {
+      "code": 13
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-04-19T04:36:26.882114Z"
+  },
+  {
+    "attemptDeadline": "60s",
+    "description": "RotoWire NBA news scraper — every 10 min, 10 AM-10 PM ET (year-round; off-season returns empty)",
+    "httpTarget": {
+      "body": "eyJzY3JhcGVyIjogInJvdG93aXJlX25iYV9uZXdzIiwgImRhdGUiOiAiVE9EQVkifQ==",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://nba-scrapers-f7p3g7f6ya-wl.a.run.app/scrape",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://nba-scrapers-f7p3g7f6ya-wl.a.run.app/scrape"
+    },
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/rotowire-nba-news-frequent",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "*/10 10-22 * * *",
+    "state": "PAUSED",
+    "status": {
+      "code": -1
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-07-03T23:44:56.849740Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "GET",
+      "oidcToken": {
+        "audience": "https://us-west2-nba-props-platform.cloudfunctions.net/scraper-gap-backfiller",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://scraper-gap-backfiller-f7p3g7f6ya-wl.a.run.app/"
+    },
+    "lastAttemptTime": "2026-08-20T04:00:01.947841Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/scraper-gap-backfiller-schedule",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 */4 * * *",
+    "scheduleTime": "2026-08-20T08:00:01.160323Z",
+    "state": "ENABLED",
+    "status": {},
+    "timeZone": "Etc/UTC",
+    "userUpdateTime": "2026-06-05T21:35:28.742493Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oauthToken": {
+        "scope": "https://www.googleapis.com/auth/cloud-platform",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://us-west2-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/nba-props-platform/jobs/nba-monitor-confidence-drift:run"
+    },
+    "lastAttemptTime": "2026-08-20T03:00:03.922414Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/nba-confidence-drift-monitor",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 */2 * * *",
+    "scheduleTime": "2026-08-20T05:00:03.183111Z",
+    "state": "ENABLED",
+    "status": {},
+    "timeZone": "America/Los_Angeles",
+    "userUpdateTime": "2026-06-17T04:23:48.859464Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Detects placeholder predictions and triggers regeneration when real lines become available",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://us-west2-nba-props-platform.cloudfunctions.net/line-quality-self-heal",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://line-quality-self-heal-f7p3g7f6ya-wl.a.run.app/"
+    },
+    "lastAttemptTime": "2026-08-20T00:00:03.838832Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/line-quality-self-heal-job",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 8-20/2 * * *",
+    "scheduleTime": "2026-08-20T12:00:03.725816Z",
+    "state": "ENABLED",
+    "status": {},
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-06-05T21:35:31.488739Z"
+  },
+  {
+    "lastAttemptTime": "2026-08-20T04:30:00.689250Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/auto-retry-processor-trigger",
+    "pubsubTarget": {
+      "data": "eyJhY3Rpb24iOiJyZXRyeSJ9",
+      "topicName": "projects/nba-props-platform/topics/auto-retry-trigger"
+    },
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "*/15 * * * *",
+    "scheduleTime": "2026-08-20T04:45:00.030476Z",
+    "state": "ENABLED",
+    "status": {},
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-01-25T00:57:02Z"
+  },
+  {
+    "description": "Hourly trends refresh for Trends page (6 AM - 11 PM ET)",
+    "lastAttemptTime": "2026-08-20T03:00:03.599575Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/phase6-hourly-trends",
+    "pubsubTarget": {
+      "data": "eyJleHBvcnRfdHlwZXMiOiBbInRyZW5kcy1ob3QtY29sZCIsICJ0cmVuZHMtYm91bmNlLWJhY2siLCAidG9uaWdodC10cmVuZC1wbGF5cyJdLCAidGFyZ2V0X2RhdGUiOiAidG9kYXkifQ==",
+      "topicName": "projects/nba-props-platform/topics/nba-phase6-export-trigger"
+    },
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 6-23 * * *",
+    "scheduleTime": "2026-08-20T10:00:03.531535Z",
+    "state": "ENABLED",
+    "status": {},
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-06-29T23:15:52.329234Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oauthToken": {
+        "scope": "https://www.googleapis.com/auth/cloud-platform",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://us-west2-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/nba-props-platform/jobs/nba-q43-performance-monitor:run"
+    },
+    "lastAttemptTime": "2026-08-19T12:00:02.241522Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/nba-q43-performance-monitor-trigger",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 8 * * *",
+    "scheduleTime": "2026-08-20T12:00:01.512712Z",
+    "state": "ENABLED",
+    "status": {},
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-06-17T04:23:59.372470Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "httpTarget": {
+      "body": "eyJzY3JhcGVyIjogIm1sYl9waXRjaGVyX3Byb3BzIiwgImdhbWVfZGF0ZSI6ICJUT0RBWSJ9",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape"
+    },
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/mlb-oddsa-pitcher-props-morning",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "30 10 * 3-10 *",
+    "state": "PAUSED",
+    "status": {
+      "code": -1
+    },
+    "timeZone": "UTC",
+    "userUpdateTime": "2026-08-19T23:49:53.436774Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oauthToken": {
+        "scope": "https://www.googleapis.com/auth/cloud-platform",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://us-west2-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/nba-props-platform/jobs/mlb-gap-detection:run"
+    },
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/mlb-gap-detection-daily",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 13 * 3-10 *",
+    "state": "PAUSED",
+    "status": {
+      "code": -1
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-08-19T23:49:54.731205Z"
+  },
+  {
+    "lastAttemptTime": "2026-08-20T03:00:01.294661Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/deployment-drift-schedule",
+    "pubsubTarget": {
+      "data": "eyJ0cmlnZ2VyIjoic2NoZWR1bGVkIn0=",
+      "topicName": "projects/nba-props-platform/topics/deployment-drift-check"
+    },
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 8-20/2 * * *",
+    "scheduleTime": "2026-08-20T15:00:00.602205Z",
+    "state": "ENABLED",
+    "status": {},
+    "timeZone": "America/Los_Angeles",
+    "userUpdateTime": "2026-02-05T17:36:43Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Clean up duplicate predictions (runs 2.5h after prediction generation)",
+    "httpTarget": {
+      "body": "eyJnYW1lX2RhdGUiOiAiWUVTVEVSREFZIiwgImRyeV9ydW4iOiBmYWxzZX0=",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app/cleanup-duplicates",
+        "serviceAccountEmail": "nba-props-platform@appspot.gserviceaccount.com"
+      },
+      "uri": "https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app/cleanup-duplicates"
+    },
+    "lastAttemptTime": "2026-08-19T15:30:01.829021Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/prediction-duplicate-cleanup",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "30 15 * * *",
+    "scheduleTime": "2026-08-20T15:30:01.706995Z",
+    "state": "ENABLED",
+    "status": {
+      "code": 13
+    },
+    "timeZone": "UTC",
+    "userUpdateTime": "2026-03-25T20:19:51.922769Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Fetch pitcher strikeout lines (morning, auto-discovers events)",
+    "httpTarget": {
+      "body": "eyJzY3JhcGVyIjogIm1sYl9waXRjaGVyX3Byb3BzIiwgImdhbWVfZGF0ZSI6ICJUT0RBWSJ9",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape"
+    },
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/mlb-props-morning",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "30 10 * 3-10 *",
+    "state": "PAUSED",
+    "status": {
+      "code": -1
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-08-19T23:49:57.145395Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Check for orphaned files and republish every 15 minutes",
+    "httpTarget": {
+      "body": "e30=",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://nba-scrapers-f7p3g7f6ya-wl.a.run.app",
+        "serviceAccountEmail": "scheduler-orchestration@nba-props-platform.iam.gserviceaccount.com"
+      },
+      "uri": "https://nba-scrapers-f7p3g7f6ya-wl.a.run.app/cleanup"
+    },
+    "lastAttemptTime": "2026-08-20T04:30:02.465839Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/cleanup-processor",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "*/15 * * * *",
+    "scheduleTime": "2026-08-20T04:45:02.293830Z",
+    "state": "ENABLED",
+    "status": {},
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-01-23T04:29:52Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oauthToken": {
+        "scope": "https://www.googleapis.com/auth/cloud-platform",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://us-west2-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/nba-props-platform/jobs/nba-auto-batch-cleanup:run"
+    },
+    "lastAttemptTime": "2026-08-20T04:30:01.988049Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/nba-auto-batch-cleanup-trigger",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "*/15 * * * *",
+    "scheduleTime": "2026-08-20T04:45:01.236561Z",
+    "state": "ENABLED",
+    "status": {},
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-06-17T04:23:47.312Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://scraper-gap-backfiller-f7p3g7f6ya-wl.a.run.app/",
+        "serviceAccountEmail": "nba-props-platform@appspot.gserviceaccount.com"
+      },
+      "uri": "https://scraper-gap-backfiller-f7p3g7f6ya-wl.a.run.app/"
+    },
+    "lastAttemptTime": "2026-08-20T04:00:01.827878Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/scraper-gap-backfiller-trigger",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 */4 * * *",
+    "scheduleTime": "2026-08-20T08:00:01.662909Z",
+    "state": "ENABLED",
+    "status": {},
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-04-10T17:42:41.879385Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Generate pitcher strikeout predictions",
+    "httpTarget": {
+      "body": "eyJnYW1lX2RhdGUiOiAiVE9EQVkiLCAid3JpdGVfdG9fYmlncXVlcnkiOiB0cnVlfQ==",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://mlb-prediction-worker-f7p3g7f6ya-wl.a.run.app",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://mlb-prediction-worker-f7p3g7f6ya-wl.a.run.app/predict-batch"
+    },
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/mlb-predictions-generate",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 13 * 3-10 *",
+    "state": "PAUSED",
+    "status": {
+      "code": -1
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-08-19T23:49:58.281178Z"
+  },
+  {
+    "attemptDeadline": "540s",
+    "description": "Full end-to-end pipeline reconciliation (9:00 AM ET)",
+    "httpTarget": {
+      "body": "eyJnYW1lX2RhdGUiOiJUT0RBWSJ9",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://reconcile-f7p3g7f6ya-wl.a.run.app/",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://reconcile-f7p3g7f6ya-wl.a.run.app/"
+    },
+    "lastAttemptTime": "2026-08-19T13:00:04.847778Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/daily-reconciliation",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 9 * * *",
+    "scheduleTime": "2026-08-20T13:00:04.109405Z",
+    "state": "ENABLED",
+    "status": {
+      "code": 13
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-02-19T16:10:45.599786Z"
+  },
+  {
+    "attemptDeadline": "540s",
+    "description": "Validate data freshness before tomorrow's predictions run (5:45 PM ET)",
+    "httpTarget": {
+      "body": "eyJnYW1lX2RhdGUiOiJUT01PUlJPVyIsIm1heF9hZ2VfaG91cnMiOjI0fQ==",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://validate-freshness-f7p3g7f6ya-wl.a.run.app/",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://validate-freshness-f7p3g7f6ya-wl.a.run.app/"
+    },
+    "lastAttemptTime": "2026-08-19T21:45:04.672022Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/validate-freshness-check",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "45 17 * * *",
+    "scheduleTime": "2026-08-20T21:45:04.547693Z",
+    "state": "ENABLED",
+    "status": {
+      "code": 13
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-02-19T16:10:48.221599Z"
+  },
+  {
+    "attemptDeadline": "300s",
+    "httpTarget": {
+      "body": "eyJzdGFsbF90aHJlc2hvbGRfbWludXRlcyI6MTAsIm1pbl9jb21wbGV0aW9uX3BjdCI6OTB9",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler",
+        "X-API-Key": "e33a696a31b90784cecd163163ff378a"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app/check-stalled",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app/check-stalled"
+    },
+    "lastAttemptTime": "2026-08-20T04:30:03.534606Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/stalled-batch-cleanup",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "*/15 * * * *",
+    "scheduleTime": "2026-08-20T04:45:03.346084Z",
+    "state": "ENABLED",
+    "status": {},
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-04-19T04:36:58.177045Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Pipeline canary queries (Session 199: increased from 30-min to 15-min)",
+    "httpTarget": {
+      "body": "eyJvdmVycmlkZXMiOnsiY29udGFpbmVyT3ZlcnJpZGVzIjpbeyJlbnYiOlt7Im5hbWUiOiJDQU5BUllfVElFUiIsInZhbHVlIjoiY3JpdGljYWwifV19XX19",
+      "headers": {
+        "Content-Type": "application/octet-stream",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oauthToken": {
+        "scope": "https://www.googleapis.com/auth/cloud-platform",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://us-west2-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/nba-props-platform/jobs/nba-pipeline-canary:run"
+    },
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/nba-pipeline-canary-trigger",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "*/15 * * * *",
+    "state": "PAUSED",
+    "status": {
+      "code": -1
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-07-03T22:46:48.089701Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oauthToken": {
+        "scope": "https://www.googleapis.com/auth/cloud-platform",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://us-west2-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/nba-props-platform/jobs/mlb-schedule-validator:run"
+    },
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/mlb-schedule-validator-daily",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 11 * 3-10 *",
+    "state": "PAUSED",
+    "status": {
+      "code": -1
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-08-19T23:49:59.473555Z"
+  },
+  {
+    "attemptDeadline": "600s",
+    "description": "TeamRankings team stats scraper (5:00 AM ET = 9:00 UTC)",
+    "httpTarget": {
+      "body": "eyJzY3JhcGVyIjoidGVhbXJhbmtpbmdzX3N0YXRzIiwiZGF0ZSI6IlRPREFZIiwiZ3JvdXAiOiJwcm9kIn0=",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://nba-scrapers-f7p3g7f6ya-wl.a.run.app/scrape",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://nba-scrapers-f7p3g7f6ya-wl.a.run.app/scrape"
+    },
+    "lastAttemptTime": "2026-08-19T09:00:02.810709Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/teamrankings-stats-daily",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 9 * * *",
+    "scheduleTime": "2026-08-20T09:00:02.658069Z",
+    "state": "ENABLED",
+    "status": {
+      "code": 14
+    },
+    "timeZone": "UTC",
+    "userUpdateTime": "2026-03-09T02:33:28.288956Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Triggers unified health check every 6 hours",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oauthToken": {
+        "scope": "https://www.googleapis.com/auth/cloud-platform",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://us-west2-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/nba-props-platform/jobs/unified-health-check:run"
+    },
+    "lastAttemptTime": "2026-08-20T01:00:00.193936Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/trigger-health-check",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 */6 * * *",
+    "scheduleTime": "2026-08-20T07:00:00.020581Z",
+    "state": "ENABLED",
+    "status": {},
+    "timeZone": "America/Los_Angeles",
+    "userUpdateTime": "2026-06-17T04:24:00.909665Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Generate daily expected workflow schedule at 5 AM ET",
+    "httpTarget": {
+      "body": "e30=",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://nba-scrapers-f7p3g7f6ya-wl.a.run.app",
+        "serviceAccountEmail": "scheduler-orchestration@nba-props-platform.iam.gserviceaccount.com"
+      },
+      "uri": "https://nba-scrapers-f7p3g7f6ya-wl.a.run.app/generate-daily-schedule"
+    },
+    "lastAttemptTime": "2026-08-19T14:00:03.043933Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/daily-schedule-locker",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 10 * * *",
+    "scheduleTime": "2026-08-20T14:00:02.301252Z",
+    "state": "ENABLED",
+    "status": {
+      "code": 14
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-01-23T04:29:55Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Check for stalled prediction batches every 15 minutes during game hours",
+    "httpTarget": {
+      "body": "eyJzdGFsbF90aHJlc2hvbGRfbWludXRlcyI6IDEwLCAibWluX2NvbXBsZXRpb25fcGN0IjogOTUuMH0=",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app/check-stalled"
+    },
+    "lastAttemptTime": "2026-08-20T04:30:01.318360Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/prediction-stall-check",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "*/15 18-23,0-2 * * *",
+    "scheduleTime": "2026-08-20T04:45:00.511791Z",
+    "state": "ENABLED",
+    "status": {},
+    "timeZone": "America/Los_Angeles",
+    "userUpdateTime": "2026-01-18T02:10:14Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Daily health check of NBA pipeline - runs at 8 AM ET",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "GET",
+      "oidcToken": {
+        "audience": "https://us-west2-nba-props-platform.cloudfunctions.net/daily-health-check",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://daily-health-check-f7p3g7f6ya-wl.a.run.app/"
+    },
+    "lastAttemptTime": "2026-08-19T12:00:01.590864Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/daily-health-check-8am-et",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 8 * * *",
+    "scheduleTime": "2026-08-20T12:00:01.436489Z",
+    "state": "ENABLED",
+    "status": {
+      "code": 13
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-06-05T21:36:10.062962Z"
+  },
+  {
+    "description": "Trigger BDB retry processor every 6 hours",
+    "lastAttemptTime": "2026-08-20T04:00:01.076713Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/bdb-retry-hourly",
+    "pubsubTarget": {
+      "data": "eyJhY3Rpb24iOiJyZXRyeSIsIm1heF9hZ2VfZGF5cyI6MjAwfQ==",
+      "topicName": "projects/nba-props-platform/topics/bdb-retry-trigger"
+    },
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 */6 * * *",
+    "scheduleTime": "2026-08-20T10:00:00.348332Z",
+    "state": "ENABLED",
+    "status": {},
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-05-29T01:20:00.738654Z"
+  },
+  {
+    "attemptDeadline": "540s",
+    "description": "Daily NBA BQ snapshot — pick tables to nba_predictions_backups",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://nba-snapshot-daily-f7p3g7f6ya-wl.a.run.app",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://nba-snapshot-daily-f7p3g7f6ya-wl.a.run.app/"
+    },
+    "lastAttemptTime": "2026-08-19T15:00:01.641707Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/nba-snapshot-daily",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 11 * * *",
+    "scheduleTime": "2026-08-20T15:00:01.478623Z",
+    "state": "ENABLED",
+    "status": {
+      "code": 13
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-05-15T00:13:33.290202Z"
+  },
+  {
+    "attemptDeadline": "300s",
+    "description": "ESPN NBA injuries hourly snapshot (10 AM – 8 PM ET) for GTD→Out detection",
+    "httpTarget": {
+      "body": "eyJzY3JhcGVyIjogImVzcG5faW5qdXJpZXMiLCAiZGF0ZSI6ICJUT0RBWSJ9",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://nba-scrapers-f7p3g7f6ya-wl.a.run.app/scrape",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://nba-scrapers-f7p3g7f6ya-wl.a.run.app/scrape"
+    },
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/espn-injuries-hourly",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 10-20 * * *",
+    "state": "PAUSED",
+    "status": {
+      "code": -1
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-07-03T23:44:58.044211Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "GET",
+      "oidcToken": {
+        "audience": "https://us-west2-nba-props-platform.cloudfunctions.net/shadow-performance-report",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://shadow-performance-report-f7p3g7f6ya-wl.a.run.app/"
+    },
+    "lastAttemptTime": "2026-08-17T13:00:01.961191Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/shadow-performance-report-job",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 9 * * 1",
+    "scheduleTime": "2026-08-24T13:00:01.835520Z",
+    "state": "ENABLED",
+    "status": {
+      "code": 13
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-06-05T21:35:34.204655Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://nba-daily-summary-prod-f7p3g7f6ya-wl.a.run.app/",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://nba-daily-summary-prod-f7p3g7f6ya-wl.a.run.app/"
+    },
+    "lastAttemptTime": "2026-08-19T13:00:02.404975Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/nba-daily-summary-prod",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 9 * * *",
+    "scheduleTime": "2026-08-20T13:00:02.218727Z",
+    "state": "ENABLED",
+    "status": {
+      "code": 13
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-04-19T04:36:40.028999Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Daily NBA grading health check and Slack alerts",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://nba-grading-alerts-f7p3g7f6ya-wl.a.run.app/",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://nba-grading-alerts-f7p3g7f6ya-wl.a.run.app/"
+    },
+    "lastAttemptTime": "2026-08-20T03:30:04.470681Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/nba-grading-alerts-daily",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "30 20 * * *",
+    "scheduleTime": "2026-08-21T03:30:04.351568Z",
+    "state": "ENABLED",
+    "status": {},
+    "timeZone": "America/Los_Angeles",
+    "userUpdateTime": "2026-04-19T04:36:42.776535Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "BettingPros player assists prop lines - pregame",
+    "httpTarget": {
+      "body": "eyJzY3JhcGVyIjogImJwX3BsYXllcl9wcm9wcyIsICJtYXJrZXRfdHlwZSI6ICJhc3Npc3RzIiwgImRhdGUiOiAiVE9EQVkifQ==",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://nba-scrapers-f7p3g7f6ya-wl.a.run.app/scrape",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://nba-scrapers-f7p3g7f6ya-wl.a.run.app/scrape"
+    },
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/nba-assists-props-pregame",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 16 * * *",
+    "scheduleTime": "2026-08-20T20:00:00Z",
+    "state": "ENABLED",
+    "status": {
+      "code": -1
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-08-19T23:50:38.916241Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Fetch MLB schedule and probable pitchers",
+    "httpTarget": {
+      "body": "eyJzY3JhcGVyIjogIm1sYl9zY2hlZHVsZSJ9",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape"
+    },
+    "lastAttemptTime": "2026-08-19T14:00:01.917821Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/mlb-schedule-daily",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 10 * 3-10 *",
+    "scheduleTime": "2026-08-20T14:00:01.773117Z",
+    "state": "ENABLED",
+    "status": {
+      "code": 13
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-06-03T20:54:24.710972Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "BettingPros MLB pitcher strikeout props (morning)",
+    "httpTarget": {
+      "body": "eyJzY3JhcGVyIjogImJwX21sYl9wbGF5ZXJfcHJvcHMiLCAiZGF0ZSI6ICJUT0RBWSIsICJtYXJrZXRfdHlwZSI6ICJwaXRjaGVyX3N0cmlrZW91dHMifQ==",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape"
+    },
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/mlb-bp-props-morning",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "45 10 * 3-10 *",
+    "state": "PAUSED",
+    "status": {
+      "code": -1
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-08-19T23:50:00.624260Z"
+  },
+  {
+    "attemptDeadline": "120s",
+    "description": "Real-time pipeline health monitoring during game hours (5 PM - 1 AM ET)",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "GET",
+      "oidcToken": {
+        "audience": "https://pipeline-health-monitor-f7p3g7f6ya-wl.a.run.app/",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://pipeline-health-monitor-f7p3g7f6ya-wl.a.run.app/"
+    },
+    "lastAttemptTime": "2026-08-20T04:30:00.363863Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/pipeline-health-monitor-job",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "*/30 22-23,0-6 * * *",
+    "scheduleTime": "2026-08-20T05:00:00.171658Z",
+    "state": "ENABLED",
+    "status": {},
+    "timeZone": "UTC",
+    "userUpdateTime": "2026-04-19T04:36:50.465148Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Refresh pitcher strikeout lines (pregame, auto-discovers events)",
+    "httpTarget": {
+      "body": "eyJzY3JhcGVyIjogIm1sYl9waXRjaGVyX3Byb3BzIiwgImdhbWVfZGF0ZSI6ICJUT0RBWSJ9",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape"
+    },
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/mlb-props-pregame",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "30 12 * 3-10 *",
+    "state": "PAUSED",
+    "status": {
+      "code": -1
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-08-19T23:50:01.800812Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Hourly routine canary — non-critical phase checks (Session 510 tiered canary)",
+    "httpTarget": {
+      "body": "eyJvdmVycmlkZXMiOnsiY29udGFpbmVyT3ZlcnJpZGVzIjpbeyJlbnYiOlt7Im5hbWUiOiJDQU5BUllfVElFUiIsInZhbHVlIjoicm91dGluZSJ9XX1dfX0=",
+      "headers": {
+        "Content-Type": "application/octet-stream",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oauthToken": {
+        "scope": "https://www.googleapis.com/auth/cloud-platform",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://us-west2-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/nba-props-platform/jobs/nba-pipeline-canary:run"
+    },
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/nba-pipeline-canary-routine-trigger",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 * * * *",
+    "state": "PAUSED",
+    "status": {
+      "code": -1
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-07-03T22:46:49.444910Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "GET",
+      "oidcToken": {
+        "audience": "https://dlq-monitor-f7p3g7f6ya-wl.a.run.app/",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://dlq-monitor-f7p3g7f6ya-wl.a.run.app/"
+    },
+    "lastAttemptTime": "2026-08-20T04:30:02.995872Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/dlq-monitor-job",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "*/15 * * * *",
+    "scheduleTime": "2026-08-20T04:45:02.849796Z",
+    "state": "ENABLED",
+    "status": {},
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-04-19T04:36:32.002020Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Reconciles EXPECTED rows in expected_outputs every 30 min. Phase D.",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "GET",
+      "oidcToken": {
+        "audience": "https://phase-completion-reconciler-f7p3g7f6ya-wl.a.run.app/",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://phase-completion-reconciler-f7p3g7f6ya-wl.a.run.app/"
+    },
+    "lastAttemptTime": "2026-08-20T04:30:04.572582Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/phase-completion-reconciler-30min",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "*/30 * * * *",
+    "scheduleTime": "2026-08-20T05:00:04.435953Z",
+    "state": "ENABLED",
+    "status": {},
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-05-10T06:39:56.934760Z"
+  },
+  {
+    "attemptDeadline": "600s",
+    "description": "Morning Phase 3 for today's games - UpcomingPlayerGameContext (runs after betting props)",
+    "httpTarget": {
+      "body": "eyJzdGFydF9kYXRlIjogIlRPREFZIiwgImVuZF9kYXRlIjogIlRPREFZIiwgInByb2Nlc3NvcnMiOiBbIlVwY29taW5nUGxheWVyR2FtZUNvbnRleHRQcm9jZXNzb3IiLCAiVXBjb21pbmdUZWFtR2FtZUNvbnRleHRQcm9jZXNzb3IiXSwgImJhY2tmaWxsX21vZGUiOiB0cnVlfQ==",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://nba-phase3-analytics-processors-f7p3g7f6ya-wl.a.run.app",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://nba-phase3-analytics-processors-f7p3g7f6ya-wl.a.run.app/process-date-range"
+    },
+    "lastAttemptTime": "2026-08-19T14:39:12.398364Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/same-day-phase3",
+    "retryConfig": {
+      "maxBackoffDuration": "120s",
+      "maxDoublings": 3,
+      "maxRetryDuration": "600s",
+      "minBackoffDuration": "30s"
+    },
+    "schedule": "30 10 * * *",
+    "scheduleTime": "2026-08-20T14:30:00.981536Z",
+    "state": "ENABLED",
+    "status": {
+      "code": 13
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-05-03T23:21:53.822012Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oauthToken": {
+        "scope": "https://www.googleapis.com/auth/cloud-platform",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://us-west2-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/nba-props-platform/jobs/nba-monitor-feature-staleness:run"
+    },
+    "lastAttemptTime": "2026-08-20T04:00:01.338275Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/nba-feature-staleness-monitor",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 * * * *",
+    "scheduleTime": "2026-08-20T05:00:01.164369Z",
+    "state": "ENABLED",
+    "status": {},
+    "timeZone": "America/Los_Angeles",
+    "userUpdateTime": "2026-06-17T04:23:52.472324Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Afternoon MLB lineup scrape (4pm ET) - catches night-game confirmed lineups for the 4:30pm late best-bets export",
+    "httpTarget": {
+      "body": "eyJzY3JhcGVyIjogIm1sYl9saW5ldXBzIiwgImRhdGUiOiAiVE9EQVkifQ==",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape"
+    },
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/mlb-lineups-afternoon",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 16 * 3-10 *",
+    "state": "PAUSED",
+    "status": {
+      "code": -1
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-08-19T23:50:07.699598Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oauthToken": {
+        "scope": "https://www.googleapis.com/auth/cloud-platform",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://us-west2-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/nba-props-platform/jobs/mlb-freshness-checker:run"
+    },
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/mlb-freshness-checker-hourly",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 */2 * 3-10 *",
+    "state": "PAUSED",
+    "status": {
+      "code": -1
+    },
+    "timeZone": "UTC",
+    "userUpdateTime": "2026-08-19T23:50:09.242306Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Check prediction health daily at 7PM ET",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "GET",
+      "oidcToken": {
+        "audience": "https://us-west2-nba-props-platform.cloudfunctions.net/prediction-health-alert",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://prediction-health-alert-f7p3g7f6ya-wl.a.run.app/"
+    },
+    "lastAttemptTime": "2026-08-19T23:00:03.610671Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/prediction-health-alert-job",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 19 * * *",
+    "scheduleTime": "2026-08-20T23:00:03.531841Z",
+    "state": "ENABLED",
+    "status": {
+      "code": 13
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-06-05T21:35:56.945316Z"
+  },
+  {
+    "description": "Export tonight's players and predictions (1 PM ET)",
+    "lastAttemptTime": "2026-08-19T17:00:04.124787Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/phase6-tonight-picks",
+    "pubsubTarget": {
+      "data": "eyJleHBvcnRfdHlwZXMiOiBbInRvbmlnaHQiLCAidG9uaWdodC1wbGF5ZXJzIiwgImJlc3QtYmV0cy1hbGwiLCAiYmVzdC1iZXRzLXRvZGF5Il0sICJ0YXJnZXRfZGF0ZSI6ICJ0b2RheSJ9",
+      "topicName": "projects/nba-props-platform/topics/nba-phase6-export-trigger"
+    },
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 13 * * *",
+    "scheduleTime": "2026-08-20T17:00:03.353906Z",
+    "state": "ENABLED",
+    "status": {},
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-06-29T23:15:44.871430Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://us-west2-nba-props-platform.cloudfunctions.net/gcs-freshness-monitor",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://gcs-freshness-monitor-f7p3g7f6ya-wl.a.run.app/"
+    },
+    "lastAttemptTime": "2026-08-20T04:00:00.769912Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/gcs-freshness-monitor",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 6,12,18,0 * * *",
+    "scheduleTime": "2026-08-20T10:00:00.641236Z",
+    "state": "ENABLED",
+    "status": {},
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-06-05T21:35:39.455877Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "GET",
+      "oidcToken": {
+        "audience": "https://us-west2-nba-props-platform.cloudfunctions.net/grading-delay-alert",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://grading-delay-alert-f7p3g7f6ya-wl.a.run.app/"
+    },
+    "lastAttemptTime": "2026-08-19T14:00:03.731884Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/grading-delay-alert-job",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 10 * * *",
+    "scheduleTime": "2026-08-20T14:00:03.583456Z",
+    "state": "ENABLED",
+    "status": {
+      "code": 13
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-06-05T21:35:49.346711Z"
+  },
+  {
+    "attemptDeadline": "540s",
+    "description": "Daily MLB BQ snapshot — pick tables to mlb_predictions_backups",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://mlb-snapshot-daily-f7p3g7f6ya-wl.a.run.app",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://mlb-snapshot-daily-f7p3g7f6ya-wl.a.run.app/"
+    },
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/mlb-snapshot-daily",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 11 * 3-10 *",
+    "state": "PAUSED",
+    "status": {
+      "code": -1
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-08-19T23:50:10.729433Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Refresh MLB event IDs (pregame, before pitcher props refresh)",
+    "httpTarget": {
+      "body": "eyJzY3JhcGVyIjogIm1sYl9ldmVudHMiLCAiZ2FtZV9kYXRlIjogIlRPREFZIn0=",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape"
+    },
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/mlb-events-pregame",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "15 12 * 3-10 *",
+    "state": "PAUSED",
+    "status": {
+      "code": -1
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-08-19T23:50:11.999337Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Daily signal decay/recovery check at 12 PM ET",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://us-west2-nba-props-platform.cloudfunctions.net/signal-decay-monitor",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://signal-decay-monitor-f7p3g7f6ya-wl.a.run.app/"
+    },
+    "lastAttemptTime": "2026-08-19T16:00:01.752387Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/signal-decay-monitor-daily",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 12 * * *",
+    "scheduleTime": "2026-08-20T16:00:00.964959Z",
+    "state": "ENABLED",
+    "status": {
+      "code": 13
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-06-05T21:35:36.766651Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Weekly AR cleanup — deletes old image tags from nba-props repo (Sundays 3 AM ET)",
+    "httpTarget": {
+      "body": "e30=",
+      "headers": {
+        "Content-Type": "application/octet-stream",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oauthToken": {
+        "scope": "https://www.googleapis.com/auth/cloud-platform",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://run.googleapis.com/v2/projects/nba-props-platform/locations/us-west2/jobs/ar-weekly-cleanup:run"
+    },
+    "lastAttemptTime": "2026-08-16T07:00:04.627009Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/ar-weekly-cleanup",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 3 * * 0",
+    "scheduleTime": "2026-08-23T07:00:04.486092Z",
+    "state": "ENABLED",
+    "status": {},
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-06-17T04:23:22.380648Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "BettingPros MLB pitcher strikeout props (pregame refresh)",
+    "httpTarget": {
+      "body": "eyJzY3JhcGVyIjogImJwX21sYl9wbGF5ZXJfcHJvcHMiLCAiZGF0ZSI6ICJUT0RBWSIsICJtYXJrZXRfdHlwZSI6ICJwaXRjaGVyX3N0cmlrZW91dHMifQ==",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape"
+    },
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/mlb-bp-props-pregame",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "45 12 * 3-10 *",
+    "state": "PAUSED",
+    "status": {
+      "code": -1
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-08-19T23:50:13.376250Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Plans 14d of expected_outputs nightly. Pipeline-state-redesign Phase C.",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "GET",
+      "oidcToken": {
+        "audience": "https://expected-outputs-planner-f7p3g7f6ya-wl.a.run.app/",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://expected-outputs-planner-f7p3g7f6ya-wl.a.run.app/?lookahead_days=14&sport=all"
+    },
+    "lastAttemptTime": "2026-08-19T08:00:00.869612Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/expected-outputs-planner-nightly",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 4 * * *",
+    "scheduleTime": "2026-08-20T08:00:00.175212Z",
+    "state": "ENABLED",
+    "status": {
+      "code": 13
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-06-17T02:19:28.451686Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Daily check for missing game data (9 AM ET = 14:00 UTC)",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://us-west2-nba-props-platform.cloudfunctions.net/data-completeness-checker",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://data-completeness-checker-f7p3g7f6ya-wl.a.run.app/"
+    },
+    "lastAttemptTime": "2026-08-19T14:00:01.552223Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/daily-data-completeness-check",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 14 * * *",
+    "scheduleTime": "2026-08-20T14:00:00.684086Z",
+    "state": "ENABLED",
+    "status": {
+      "code": 13
+    },
+    "timeZone": "UTC",
+    "userUpdateTime": "2026-06-05T21:35:46.805552Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Fetch pregame weather forecasts (activates cold-weather UNDER signals)",
+    "httpTarget": {
+      "body": "eyJzY3JhcGVyIjogIm1sYl93ZWF0aGVyIiwgImRhdGUiOiAiVE9EQVkifQ==",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "uri": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape"
+    },
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/mlb-weather-pregame",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "30 11 * 3-10 *",
+    "state": "PAUSED",
+    "status": {
+      "code": -1
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-08-19T23:50:14.640841Z"
+  },
+  {
+    "attemptDeadline": "30s",
+    "description": "Trigger Bluesky NBA listener daily at noon ET (runs 8h, game days)",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oauthToken": {
+        "scope": "https://www.googleapis.com/auth/cloud-platform",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://us-west2-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/nba-props-platform/jobs/bluesky-nba-listener:run"
+    },
+    "lastAttemptTime": "2026-08-19T16:00:04.035339Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/nba-bluesky-listener-daily",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 12 * * *",
+    "scheduleTime": "2026-08-20T16:00:03.896797Z",
+    "state": "ENABLED",
+    "status": {},
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-06-30T01:15:44.172329Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Daily 7:30 AM ET analytics quality check before predictions",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://us-west2-nba-props-platform.cloudfunctions.net/analytics-quality-check",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://analytics-quality-check-f7p3g7f6ya-wl.a.run.app/"
+    },
+    "lastAttemptTime": "2026-08-19T12:30:02.002698Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/analytics-quality-check-morning",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "30 12 * * *",
+    "scheduleTime": "2026-08-20T12:30:01.778788Z",
+    "state": "ENABLED",
+    "status": {
+      "code": 13
+    },
+    "timeZone": "UTC",
+    "userUpdateTime": "2026-06-05T21:35:51.849049Z"
+  },
+  {
+    "description": "MLB pitcher leaderboard + profiles export (10:45 AM ET, post-grading refresh for track records)",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/mlb-pitcher-export-morning",
+    "pubsubTarget": {
+      "data": "eyJzcG9ydCI6Im1sYiIsImV4cG9ydF90eXBlcyI6WyJwaXRjaGVycyIsImJlc3QtYmV0cyJdLCJ0YXJnZXRfZGF0ZSI6InRvZGF5In0=",
+      "topicName": "projects/nba-props-platform/topics/nba-phase6-export-trigger"
+    },
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "45 10 * 3-10 *",
+    "state": "PAUSED",
+    "status": {
+      "code": -1
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-08-19T23:50:15.872021Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Fix stale schedule data hourly overnight (1-6 AM ET)",
+    "httpTarget": {
+      "body": "e30=",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://nba-scrapers-f7p3g7f6ya-wl.a.run.app",
+        "serviceAccountEmail": "scheduler-orchestration@nba-props-platform.iam.gserviceaccount.com"
+      },
+      "uri": "https://nba-scrapers-f7p3g7f6ya-wl.a.run.app/fix-stale-schedule"
+    },
+    "lastAttemptTime": "2026-08-19T10:00:05.037738Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/fix-stale-schedule-late-night",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 1-6 * * *",
+    "scheduleTime": "2026-08-20T05:00:04.370445Z",
+    "state": "ENABLED",
+    "status": {
+      "code": 14
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-02-03T04:24:57Z"
+  },
+  {
+    "attemptDeadline": "300s",
+    "httpTarget": {
+      "body": "eyJzY3JhcGVyIjogIm1sYl9nYW1lX2xpbmVzIiwgImdhbWVfZGF0ZSI6ICJUT0RBWSJ9",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape"
+    },
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/mlb-game-lines-morning",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "30 10 * 3-10 *",
+    "state": "PAUSED",
+    "status": {
+      "code": -1
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-08-19T23:50:22.474768Z"
+  },
+  {
+    "description": "Export full season game counts for calendar widget (6 AM ET daily)",
+    "lastAttemptTime": "2026-08-19T10:00:01.677623Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/phase6-season-game-counts",
+    "pubsubTarget": {
+      "data": "eyJleHBvcnRfdHlwZXMiOiBbInNlYXNvbi1nYW1lLWNvdW50cyJdfQ==",
+      "topicName": "projects/nba-props-platform/topics/nba-phase6-export-trigger"
+    },
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 6 * * *",
+    "scheduleTime": "2026-08-20T10:00:00.996138Z",
+    "state": "ENABLED",
+    "status": {},
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-06-29T23:15:56.119664Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Check for stale processors every 5 minutes - auto-recovers dead processors",
+    "httpTarget": {
+      "body": "eyJjbGVhbnVwIjogZmFsc2V9",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://us-west2-nba-props-platform.cloudfunctions.net/stale-processor-monitor",
+        "serviceAccountEmail": "scheduler-orchestration@nba-props-platform.iam.gserviceaccount.com"
+      },
+      "uri": "https://stale-processor-monitor-f7p3g7f6ya-wl.a.run.app/"
+    },
+    "lastAttemptTime": "2026-08-20T04:30:03.300710Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/stale-processor-monitor",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "*/5 * * * *",
+    "scheduleTime": "2026-08-20T04:35:03.194752Z",
+    "state": "ENABLED",
+    "status": {},
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-06-05T21:36:04.797339Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "GET",
+      "oidcToken": {
+        "audience": "https://stale-running-cleanup-f7p3g7f6ya-wl.a.run.app/",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://stale-running-cleanup-f7p3g7f6ya-wl.a.run.app/"
+    },
+    "lastAttemptTime": "2026-08-20T04:30:01.221746Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/stale-running-cleanup-job",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "*/30 * * * *",
+    "scheduleTime": "2026-08-20T05:00:00.485967Z",
+    "state": "ENABLED",
+    "status": {},
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-04-19T04:36:55.667990Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Master Controller - Every hour (24/7 for post-game windows at 1 AM and 4 AM)",
+    "httpTarget": {
+      "body": "e30=",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://nba-scrapers-f7p3g7f6ya-wl.a.run.app",
+        "serviceAccountEmail": "scheduler-orchestration@nba-props-platform.iam.gserviceaccount.com"
+      },
+      "uri": "https://nba-scrapers-f7p3g7f6ya-wl.a.run.app/evaluate"
+    },
+    "lastAttemptTime": "2026-08-20T04:00:05.039418Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/master-controller-hourly",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 * * * *",
+    "scheduleTime": "2026-08-20T05:00:04.049711Z",
+    "state": "ENABLED",
+    "status": {
+      "code": 13
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-01-23T03:37:12Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Final box scores for yesterday (MLB Stats API)",
+    "httpTarget": {
+      "body": "eyJzY3JhcGVyIjogIm1sYl9ib3hfc2NvcmVzX21sYmFwaSIsICJkYXRlIjogIllFU1RFUkRBWSJ9",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape"
+    },
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/mlb-overnight-results",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 2 * 3-10 *",
+    "state": "PAUSED",
+    "status": {
+      "code": -1
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-08-19T23:50:23.643408Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Daily halt_state writer for NBA + MLB. Pipeline-state-redesign Phase B.",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "GET",
+      "oidcToken": {
+        "audience": "https://halt-state-writer-f7p3g7f6ya-wl.a.run.app/",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://halt-state-writer-f7p3g7f6ya-wl.a.run.app/?sport=all"
+    },
+    "lastAttemptTime": "2026-08-19T09:00:00.934065Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/halt-state-writer-daily",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 5 * * *",
+    "scheduleTime": "2026-08-20T09:00:00.821315Z",
+    "state": "ENABLED",
+    "status": {
+      "code": 13
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-05-10T06:39:48.869612Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "BettingPros player rebounds prop lines - pregame",
+    "httpTarget": {
+      "body": "eyJzY3JhcGVyIjogImJwX3BsYXllcl9wcm9wcyIsICJtYXJrZXRfdHlwZSI6ICJyZWJvdW5kcyIsICJkYXRlIjogIlRPREFZIn0=",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://nba-scrapers-f7p3g7f6ya-wl.a.run.app/scrape",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://nba-scrapers-f7p3g7f6ya-wl.a.run.app/scrape"
+    },
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/nba-rebounds-props-pregame",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 16 * * *",
+    "scheduleTime": "2026-08-20T20:00:00Z",
+    "state": "ENABLED",
+    "status": {
+      "code": -1
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-08-19T23:50:36.132730Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Statcast pitcher metrics (SwStr%, velocity, spin)",
+    "httpTarget": {
+      "body": "eyJzY3JhcGVyIjogIm1sYl9zdGF0Y2FzdF9kYWlseSIsICJkYXRlIjogIllFU1RFUkRBWSJ9",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape"
+    },
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/mlb-statcast-daily",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "5 8 * 3-10 *",
+    "state": "PAUSED",
+    "status": {
+      "code": -1
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-08-19T23:50:24.823855Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "httpTarget": {
+      "body": "eyJzY3JhcGVyIjogIm1sYl9waXRjaGVyX3Byb3BzIiwgImdhbWVfZGF0ZSI6ICJUT0RBWSJ9",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape"
+    },
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/mlb-oddsa-pitcher-props-pregame",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "30 12 * 3-10 *",
+    "state": "PAUSED",
+    "status": {
+      "code": -1
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-08-19T23:50:26.025275Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "BettingPros player assists prop lines - morning",
+    "httpTarget": {
+      "body": "eyJzY3JhcGVyIjogImJwX3BsYXllcl9wcm9wcyIsICJtYXJrZXRfdHlwZSI6ICJhc3Npc3RzIiwgImRhdGUiOiAiVE9EQVkifQ==",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://nba-scrapers-f7p3g7f6ya-wl.a.run.app/scrape",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://nba-scrapers-f7p3g7f6ya-wl.a.run.app/scrape"
+    },
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/nba-assists-props-morning",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 10 * * *",
+    "scheduleTime": "2026-08-20T14:00:00Z",
+    "state": "ENABLED",
+    "status": {
+      "code": -1
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-08-19T23:50:37.522542Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Overnight MLB lineup catch-up (3am ET) - re-scrapes prior days completed games for 100% confirmed-lineup coverage",
+    "httpTarget": {
+      "body": "eyJzY3JhcGVyIjogIm1sYl9saW5ldXBzIiwgImRhdGUiOiAiWUVTVEVSREFZIn0=",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape"
+    },
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/mlb-lineups-overnight",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 3 * 3-10 *",
+    "state": "PAUSED",
+    "status": {
+      "code": -1
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-08-19T23:50:27.212716Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Fetch starting lineups (morning)",
+    "httpTarget": {
+      "body": "eyJzY3JhcGVyIjogIm1sYl9saW5ldXBzIiwgImRhdGUiOiAiVE9EQVkifQ==",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape"
+    },
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/mlb-lineups-morning",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 11 * 3-10 *",
+    "state": "PAUSED",
+    "status": {
+      "code": -1
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-08-19T23:50:28.425156Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Daily data source freshness check at 7 AM ET",
+    "httpTarget": {
+      "headers": {
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://us-west2-nba-props-platform.cloudfunctions.net/data-source-health-canary",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://data-source-health-canary-f7p3g7f6ya-wl.a.run.app/"
+    },
+    "lastAttemptTime": "2026-08-19T11:00:04.142803Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/data-source-health-canary-daily",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "0 7 * * *",
+    "scheduleTime": "2026-08-20T11:00:03.489312Z",
+    "state": "ENABLED",
+    "status": {
+      "code": 13
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-06-05T21:35:41.779537Z"
+  },
+  {
+    "attemptDeadline": "180s",
+    "description": "Per-pitch data from MLB Stats API game feeds (for arsenal analytics)",
+    "httpTarget": {
+      "body": "eyJzY3JhcGVyIjogIm1sYl9nYW1lX2ZlZWRfZGFpbHkiLCAiZGF0ZSI6ICJZRVNURVJEQVkifQ==",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape",
+        "serviceAccountEmail": "756957797294-compute@developer.gserviceaccount.com"
+      },
+      "uri": "https://mlb-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape"
+    },
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/mlb-game-feed-daily",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "15 3 * 3-10 *",
+    "state": "PAUSED",
+    "status": {
+      "code": -1
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-08-19T23:50:29.595745Z"
+  },
+  {
+    "attemptDeadline": "600s",
+    "description": "Nightly AI resolution of pending player names (4:30 AM ET)",
+    "httpTarget": {
+      "body": "e30=",
+      "headers": {
+        "Content-Type": "application/json",
+        "User-Agent": "Google-Cloud-Scheduler"
+      },
+      "httpMethod": "POST",
+      "oidcToken": {
+        "audience": "https://nba-reference-service-f7p3g7f6ya-wl.a.run.app",
+        "serviceAccountEmail": "scheduler-orchestration@nba-props-platform.iam.gserviceaccount.com"
+      },
+      "uri": "https://nba-reference-service-f7p3g7f6ya-wl.a.run.app/resolve-pending"
+    },
+    "lastAttemptTime": "2026-08-19T08:30:02.001434Z",
+    "name": "projects/nba-props-platform/locations/us-west2/jobs/registry-ai-resolution",
+    "retryConfig": {
+      "maxBackoffDuration": "3600s",
+      "maxDoublings": 5,
+      "maxRetryDuration": "0s",
+      "minBackoffDuration": "5s"
+    },
+    "schedule": "30 4 * * *",
+    "scheduleTime": "2026-08-20T08:30:01.823346Z",
+    "state": "ENABLED",
+    "status": {
+      "code": 13
+    },
+    "timeZone": "America/New_York",
+    "userUpdateTime": "2026-01-12T15:25:55Z"
+  }
+]
