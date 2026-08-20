@@ -13,8 +13,22 @@ from typing import Dict, Optional
 from ml.signals.base_signal import BaseSignal, SignalResult
 
 
-# Breakeven HR at -110 odds: need to win 52.4% of bets
-BREAKEVEN_HR = 52.4
+# 2026-08-19: single source of truth moved to shared/config/breakeven.py.
+#
+# Break-even is a function of EXECUTION, not a constant. Measured mean payout per book
+# across 5 seasons is 0.870 -> a TRUE break-even of 53.5% if you bet one book. The
+# long-assumed 52.4% ("-110") is only correct if you shop DK/FD/MGM/Caesars; shopping
+# ~10 books lowers it to 51.5%. The discovery scripts under scripts/nba/training/
+# discovery/ have independently hardcoded REAL_BE = 0.535 for some time — this module
+# and those scripts silently disagreed, so a signal at 53.0% was scored profitable by
+# production monitoring and unprofitable by research.
+#
+# Value is UNCHANGED (52.4) so this is a pure refactor: raising it is a strategy call
+# that needs sign-off, since it reclassifies everything in the 52.4-53.5 band.
+# Override via the NBA_BREAKEVEN_HR env var.
+#
+# Re-exported here because 6 modules already import BREAKEVEN_HR from this file.
+from shared.config.breakeven import DEFAULT_BREAKEVEN_HR as BREAKEVEN_HR  # noqa: E402
 
 # Warning zone: model is working but may be declining
 WARNING_HR = 58.0
