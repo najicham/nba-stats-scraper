@@ -693,8 +693,24 @@ def main(cloud_event):
                             losses += 1
 
                 # Add BQ picks missing from JSON (e.g. manual_override added after export)
+                #
+                # NOT when the file says the date was halted. A halt zeroes GCS
+                # but leaves any rows an earlier (pre-halt) export already wrote
+                # to signal_best_bets_picks with signal_status='active'. Without
+                # this guard the next morning's patch re-adds every one of them
+                # into the halted JSON, publishing a full graded slate under
+                # halt_active: true and silently undoing the suppression in the
+                # public record. Added 2026-08-21, when halt_state began
+                # actually gating NBA picks.
+                halted = bool(bb_data.get('halt_active'))
+                if halted:
+                    logger.warning(
+                        f"[{correlation_id}] {target_date} is halted "
+                        f"(reason={bb_data.get('halt_reason')}) — not re-adding "
+                        f"{len(all_bq_picks)} BQ pick(s) into the halted JSON."
+                    )
                 for lookup, bq_pick in all_bq_picks.items():
-                    if lookup not in existing_lookups:
+                    if not halted and lookup not in existing_lookups:
                         new_pick = {
                             'player_lookup': bq_pick['player_lookup'],
                             'player': bq_pick['player_name'],

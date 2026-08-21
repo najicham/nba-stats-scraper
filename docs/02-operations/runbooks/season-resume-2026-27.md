@@ -16,7 +16,9 @@ through November 2026.
 
 ## State at off-season end (carry-in)
 - All 7 NBA models BLOCKED; **edge-based auto-halt ACTIVE** (7d avg edge ~1.45 ≪ 5.0); **0 picks since ~Mar 28**.
-- This is CORRECT. Do not force picks. The halt recovers **automatically** once fresh models produce edge.
+- ⚠️ **Re-read 2026-08-21:** that halt was firing on a metric that tracked fleet composition, and it would have
+  fired on every day of every season. It was not evidence that the market was unbeatable. `fleet_blocked` was
+  the load-bearing reason here, not `edge_collapse`.
 - ⚠️ **CORRECTION (2026-07-04, verified live):** many of the off-season NBA jobs were **DELETED**, not
   paused — the 94-job purge removed them from Cloud Scheduler entirely. They must be **RE-CREATED** (not
   resumed); `gcloud scheduler jobs resume` will fail on a deleted job. The authoritative restore list is
@@ -30,8 +32,16 @@ through November 2026.
   (MLB betting concluded/mothballed 2026-06-26 — leave off).
 
 ## How the two safety mechanisms work (do not disable)
-1. **Edge-based auto-halt** (`ml/signals/regime_context.py`, Session 515). Halts ALL best-bets output when
-   `7d avg edge < 5.0 AND edge-5+ rate < 50%`. Never fired in normal seasons (2021-2025); fired late Feb 2026.
+1. ~~**Edge-based auto-halt**~~ **SUPERSEDED TWICE — do not rely on this line.** The Session 515 rule
+   (`7d avg edge < 5.0 AND edge-5+ rate < 50%`) fired on 865 of 865 prediction-days and could never release;
+   the 2026-08-19 median rewrite fixed that but was calibrated on a fleet-composition artifact. As of
+   2026-08-21 it is a **degeneracy guard**, not a collapse detector: 7d median-across-models edge < 0.35 AND
+   edge-3+ share < 0.30%, with a 14-day automatic lifetime. It is expected NEVER to fire in a normal season,
+   and it will NOT gate a drawdown — that is decision 4's drawdown halt.
+   **Opener note:** the guard is dormant for roughly the first 7 game-days (warm-up basis empty), and
+   `halt_state` now GATES publishing, so the halt reason that actually matters on opening night is
+   `predictions_inactive`, not `edge_collapse`. See `halt-mode-operations.md`.
+   *(historic:)* Never fired in normal seasons (2021-2025); fired late Feb 2026 — on a fleet swap, not a market.
    It is the primary opening-night guardrail — it suppresses picks until the retrained fleet is genuinely
    confident, then releases automatically. **Leave it on.**
 2. **Training anchor caps** (`orchestration/cloud_functions/weekly_retrain/main.py`):

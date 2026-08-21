@@ -331,6 +331,11 @@ class BaseExporter(ABC):
         """Get current UTC timestamp in ISO format."""
         return datetime.now(timezone.utc).isoformat()
 
+    #: How far back halt_envelope may carry a halt_state row forward before
+    #: falling back to the fail-closed default. Matches
+    #: shared.config.edge_halt.FALLBACK_MAX_AGE_DAYS.
+    HALT_CARRY_FORWARD_DAYS = 3
+
     def halt_envelope(
         self,
         sport: str,
@@ -352,12 +357,19 @@ class BaseExporter(ABC):
           - BQ unreachable / transient error → fail-open envelope:
             halt_active=False, halt_reason='unknown_state'. Telemetry
             failure should not block publishing.
-          - No row exists for target_date AND target_date is recent (within
+          - No row for target_date, but a row exists within the previous
+            CARRY_FORWARD_DAYS → carry it forward. `halt_state` has had
+            multi-day write gaps (2026-08-16..19, never backfilled), and
+            since 2026-08-21 this envelope GATES pick publishing, so a
+            single missed write would otherwise cost a slate. A one-day-old
+            answer beats a coin flip, and it matches the precedence
+            `shared.config.edge_halt.resolve_halt_state` already uses.
+          - No row within that window AND target_date is recent (within
             last 7 days) → fail-CLOSED envelope: halt_active=True,
             halt_reason='unknown_state'. A missing recent row strongly
             suggests halt_state_writer is broken; safer to halt than to
             publish picks during a real halt the writer would have flagged.
-          - No row exists for an older / future date → fail-open
+          - No row within that window for an older / future date → fail-open
             (halt_active=False, halt_reason='unknown_state'). Historical
             re-exports shouldn't be blocked.
 
@@ -380,14 +392,18 @@ class BaseExporter(ABC):
         }
 
         query = f"""
-            SELECT halt_active, halt_reason, halt_since
+            SELECT effective_date, halt_active, halt_reason, halt_since
             FROM `{self.project_id}.nba_orchestration.halt_state`
-            WHERE effective_date = @target_date AND sport = @sport
+            WHERE sport = @sport
+              AND effective_date <= @target_date
+              AND effective_date >= DATE_SUB(@target_date, INTERVAL @carry DAY)
+            ORDER BY effective_date DESC
             LIMIT 1
         """
         params = [
             bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
             bigquery.ScalarQueryParameter('sport', 'STRING', sport),
+            bigquery.ScalarQueryParameter('carry', 'INT64', self.HALT_CARRY_FORWARD_DAYS),
         ]
         try:
             rows = self.query_to_list(query, params=params)
@@ -399,11 +415,11 @@ class BaseExporter(ABC):
             return envelope
 
         if not rows:
-            # No row written yet for this date. Distinguish two cases:
+            # Nothing within the carry-forward window either. Distinguish:
             #   - target_date is in the recent past (≤7 days): writer likely
             #     broken. Fail-closed: halt_active=True so we don't publish
             #     picks while halt_state is silent. The halt_state_stale
-            #     alert (>36h) will catch the writer-side failure.
+            #     alert will catch the writer-side failure.
             #   - target_date is older or future: historical re-export or
             #     forward seed. Fail-open.
             today = datetime.now(timezone.utc).date()
@@ -420,6 +436,16 @@ class BaseExporter(ABC):
         envelope['halt_since'] = (
             halt_since.isoformat() if hasattr(halt_since, 'isoformat') else halt_since
         )
+        row_date = row.get('effective_date')
+        if row_date is not None and row_date != target_date:
+            envelope['halt_carried_forward_from'] = (
+                row_date.isoformat() if hasattr(row_date, 'isoformat') else str(row_date)
+            )
+            logger.warning(
+                "halt_envelope: no halt_state row for %s; carried forward %s "
+                "(halt_active=%s, reason=%s)",
+                target_date, row_date, envelope['halt_active'], envelope['halt_reason'],
+            )
         return envelope
 
     def validate_content(self, json_data: Dict[str, Any]) -> Optional[str]:

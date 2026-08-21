@@ -1,25 +1,76 @@
 # Halt-Mode Operations Runbook
 
-**Audience:** on-call. **Last updated:** 2026-05-09 (pipeline-state-redesign Phase B).
+**Audience:** on-call. **Last updated:** 2026-08-21 (halt_state became the publish gate).
 
-## Overview
+## Overview — read this first, it changed
 
-`nba_orchestration.halt_state` is the single source of truth for "is the system producing picks today?" One row per `(effective_date, sport)`. Every Phase 6 exporter reads from it via `BaseExporter.halt_envelope()`. When the row is missing or stale, exporters emit `halt_reason='unknown_state'`.
+`nba_orchestration.halt_state` is the single source of truth for "is the system producing
+picks today?" One row per `(effective_date, sport)`.
+
+**Since 2026-08-21 it is also the GATE, not just a label.** An active NBA row makes
+`signal_best_bets_exporter.generate_json` return zero picks at Step 0, before the
+per-model pipelines even run. MLB has gated on it since 2026-05. Before that change the
+NBA exporter only *stamped* the envelope onto the payload — a `manual` or `fleet_blocked`
+row published a full slate under `halt_active: true`.
+
+Two consequences on-call must internalise:
+
+- **A missing row costs a slate.** `BaseExporter.halt_envelope` looks for today's row,
+  then carries forward any row from the previous 3 days, and if it finds neither for a
+  recent date it fails **CLOSED** (`halt_active=true`, `halt_reason='unknown_state'`).
+  That is deliberate — publishing through a real halt is the worse error — but it means
+  a dead writer is now a pick outage. See "Writer not writing" below.
+- **`unknown_state` is not a legitimate zero.** The content guard deliberately does NOT
+  excuse it, so a fail-closed export writes a `status="degraded"` sentinel and a CRITICAL
+  log rather than quietly replacing a good file with an empty one.
 
 ## How it gets set
 
-`halt_state_writer` Cloud Function runs daily at 5 AM ET (scheduler `halt-state-writer-daily`). For each sport (NBA + MLB) it walks this decision tree and returns at the first match:
+`halt_state_writer` runs daily at 5 AM ET (scheduler `halt-state-writer-daily`). For each
+sport it walks this decision tree and stops at the first match:
 
-1. **Schedule presence** — any games in `nba_reference.nba_schedule` / `mlb_raw.mlb_schedule` within ±21 days of today? If not → `halt_reason='off_season'`.
-2. **Calendar window** — is today within the sport's regular season + playoffs window (NBA Oct 1 – Jun 30; MLB Mar 1 – Nov 15)? If not → `halt_reason='off_season'`.
-3. **Between rounds** — in-season but no games scheduled in the next 14 days (e.g. NBA between playoff rounds) → `halt_reason='between_rounds'`. Auto-clears when next round's schedule lands.
-4. **NBA edge collapse** (Session 515) — 7d avg edge < 5.0 AND edge-5+ pick rate < 50% AND days_sampled ≥ 3 → `halt_reason='edge_collapse'`.
-5. **NBA fleet blocked** — all enabled NBA models in `model_performance_daily` state='BLOCKED' → `halt_reason='fleet_blocked'`.
-6. **Predictions inactive** — games scheduled but zero predictions in last 3 days → `halt_reason='predictions_inactive'`. Catches operator-paused schedulers, prediction worker crashes, and the season-restart cold-start state.
+1. **Schedule presence** — any games within ±21 days? If not → `off_season`.
+2. **Calendar window** — NBA Oct 1 – Jun 30, MLB Mar 1 – Nov 15. Outside → `off_season`.
+3. **Between rounds** — in-season, no games in the next 14 days → `between_rounds`.
+   Auto-clears when the next round's schedule lands.
+4. **NBA edge degeneracy guard** — `shared/config/edge_halt.py`. 7d median-across-models
+   edge < **0.35** AND edge-3+ share < **0.30%** → `edge_collapse`. If the state cannot be
+   resolved at all → `edge_state_unknown` (fail-closed). Details below.
+5. **NBA/MLB fleet blocked** — all enabled models BLOCKED, with a 5-day
+   fleet-in-transition grace → `fleet_blocked`.
+6. **Predictions inactive** — games scheduled, zero predictions in 3 days, **and at least
+   one past day in that window actually had games** → `predictions_inactive`.
+7. **MLB pick drought** — predictions flowing but 2+ days of zero picks → `pick_drought`.
+8. **Operator override** — an active row in `nba_orchestration.halt_overrides` → its
+   reason (usually `manual`). Applied LAST and **add-only**: an override can force a halt
+   but can never resume the system.
 
-NBA can fall through 1 → 2 → 3 → 4 → 5 → 6. MLB only checks 1 + 2 + 3 today (no edge/fleet/predictions logic). Reserved-but-not-emitted: `tight_market` (when vegas_mae_7d < 4.5 — to be wired up).
+`tight_market` is a valid reason string but the tree never emits it; it is reachable only
+through `halt_overrides`.
 
-## How to inspect today's halt state
+### The edge degeneracy guard (step 4)
+
+**It is a pathology detector, not a market circuit breaker.** Read the module docstring in
+`shared/config/edge_halt.py` before acting on it or changing any number — the thresholds
+were deliberately loosened from the old 1.4 / 10%, which measured fleet composition rather
+than the market. Behaviour on-call needs:
+
+- **Basis:** per-model medians aggregated across models, restricted to model *families*
+  with 7+ prediction-days. Keyed on family, not `system_id`, because the weekly retrainer
+  mints a new train-stamped id every generation.
+- **Release:** either condition recovering past a 10% band for 2 consecutive evaluable
+  days, **or** the halt hitting its **14-day automatic lifetime**, whichever comes first.
+- **After an auto-release the guard will not re-fire on the same episode.** It re-arms
+  only after a sustained recovery. If the halt was real, that is your cue: write a
+  `halt_overrides` row.
+- **Dormancy is normal early season.** The basis is empty for roughly the first 7
+  game-days, so the guard simply does not evaluate. `edge_halt_dormant` in `halt_metrics`
+  and `models_7d` tell you whether it looked at anything.
+- **Known blind spot:** this guard only catches edges collapsing toward zero. A frozen
+  line feed or a constant-serving model produces *large* edges and reads as healthier.
+  See the docstring's coverage note.
+
+## Inspect today's state
 
 ```sql
 SELECT * FROM `nba-props-platform.nba_orchestration.halt_state`
@@ -27,48 +78,38 @@ WHERE effective_date = CURRENT_DATE()
 ORDER BY sport
 ```
 
-Expected: 2 rows (one nba, one mlb) with `written_at` < 12 hours ago.
-
-## How to inspect history
+Expected: 2 rows (nba, mlb), `written_at` < 12 hours ago. History:
 
 ```sql
-SELECT effective_date, sport, halt_active, halt_reason, halt_since
+SELECT effective_date, sport, halt_active, halt_reason, halt_since,
+       JSON_VALUE(halt_metrics, '$.edge_halt_source')   AS edge_source,
+       JSON_VALUE(halt_metrics, '$.edge_halt_models_7d') AS models_7d
 FROM `nba-props-platform.nba_orchestration.halt_state`
 WHERE effective_date >= CURRENT_DATE() - 14
 ORDER BY effective_date DESC, sport
 ```
 
-`halt_since` is preserved across rows — if NBA halted on 2026-04-19 and stayed halted, every row from then on shows `halt_since='2026-04-19'`.
+`halt_since` is preserved across rows: if NBA halted on 2026-04-19 and stayed halted,
+every row from then on shows `halt_since='2026-04-19'`.
 
-## Manual override
+## Operator halt — `halt_overrides`, not a manual MERGE
 
-If the auto-halt logic gets it wrong (rare), write a row manually:
+**Do not hand-write rows into `halt_state`.** The writer overwrites them at 5 AM. The
+implemented mechanism is `nba_orchestration.halt_overrides`:
 
 ```sql
-MERGE `nba-props-platform.nba_orchestration.halt_state` T
-USING (
-  SELECT
-    CURRENT_DATE() AS effective_date,
-    'nba' AS sport,
-    TRUE AS halt_active,
-    'manual' AS halt_reason,
-    DATE '2026-05-09' AS halt_since,
-    PARSE_JSON('{"reason": "operator override during incident"}') AS halt_metrics,
-    'manual_override' AS source,
-    CURRENT_TIMESTAMP() AS written_at,
-    'on-call' AS actor
-) S
-ON T.effective_date = S.effective_date AND T.sport = S.sport
-WHEN MATCHED THEN UPDATE SET
-  halt_active = S.halt_active, halt_reason = S.halt_reason,
-  halt_since = S.halt_since, halt_metrics = S.halt_metrics,
-  source = S.source, written_at = S.written_at, actor = S.actor
-WHEN NOT MATCHED THEN INSERT VALUES (...);
+INSERT INTO `nba-props-platform.nba_orchestration.halt_overrides`
+  (sport, halt_reason, start_date, end_date, active, note, created_by, created_at)
+VALUES ('nba', 'manual', CURRENT_DATE(), NULL, TRUE,
+        '<ticket / one-line why>', '<your name>', CURRENT_TIMESTAMP());
 ```
 
-Set `actor` to your name + ticket so the audit trail makes sense.
+`end_date = NULL` means open-ended. To end an operator halt, set `active = FALSE` before
+the next 5 AM run.
 
-The next halt_state_writer run will overwrite your manual row at 5 AM ET, so for sustained overrides set `actor='manual_override'` and skip the daily — the writer will detect that source and respect the manual entry (TODO: implement in writer; today, manual overrides last only until the next 5 AM run).
+**Overrides can only ADD a halt.** There is no operator "resume" — that is the design, so
+a forgotten override can never publish picks during a real off-season. To end an automatic
+halt you either fix the underlying metric or wait out the 14-day lifetime.
 
 ## Manually trigger the writer
 
@@ -81,41 +122,46 @@ curl -H "Authorization: Bearer $(gcloud auth print-identity-token --audiences=${
   "${CF_URL}/?sport=all"
 ```
 
-Optional query params:
-- `target_date=2026-05-09` — backfill for a specific date.
-- `sport=nba` — single sport.
-- `actor=on_call_<name>` — audit trail.
+Params: `target_date=YYYY-MM-DD` (backfill one date), `sport=nba`, `actor=on_call_<name>`.
 
-## What if halt_state is stale?
+## Writer not writing — now a Critical
 
-Symptom: alert `halt-state-stale` fires. `written_at` for today's row is > 36h ago.
+Symptom: alert **"halt_state_writer not writing"** (absence-based; fires after 30h with no
+`halt_state_age_hours` metric). The metric is emitted only on a successful write, so a
+dead writer emits nothing — that is why the condition is absence, not a threshold.
 
-Diagnosis:
-1. Scheduler paused / failed: `gcloud scheduler jobs describe halt-state-writer-daily --location=us-west2 --project=nba-props-platform`. State should be `ENABLED`. `lastAttemptTime` should be recent.
-2. CF crashing: `gcloud functions logs read halt-state-writer --gen2 --region=us-west2 --limit=50`.
-3. BQ unavailable: less likely — check Cloud Monitoring "BigQuery Query Errors".
+Impact: **picks stop publishing** once the 3-day carry-forward window is exhausted.
 
-Recovery: manual trigger above. Once the row updates, downstream exporters will pick up the correct state on their next run.
+1. Scheduler: `gcloud scheduler jobs describe halt-state-writer-daily --location=us-west2
+   --project=nba-props-platform`. Should be `ENABLED` with a recent `lastAttemptTime`.
+2. CF logs: `gcloud functions logs read halt-state-writer --gen2 --region=us-west2 --limit=50`.
+3. Trigger manually (above), then **backfill every missed date** with `target_date=` —
+   nothing does this automatically. The 2026-08-16..19 gap was four consecutive days and
+   was never backfilled.
 
-## Frontend impact when halt_state is unknown
+`halt-state-writer` has **no Cloud Build trigger**. Redeploy with
+`./bin/deploy-function.sh halt-state-writer`, and verify by comparing the deployed
+`BUILD_COMMIT` to the commit SHA — never by revision equality.
 
-`BaseExporter.halt_envelope` is fail-open. If it can't read halt_state, it returns:
-```json
-{"halt_active": false, "halt_reason": "unknown_state", "halt_since": null, ...}
-```
-
-Frontend treats `unknown_state` as "system uncertain — show available data; render a discreet warning."
-
-This is intentional — we'd rather publish picks with an uncertainty label than block all publishing on a telemetry failure.
-
-## Verifying that exporters see the right state
-
-After a halt_state change, the next Phase 6 export run will pick it up. To verify:
+## Verify what the exporter actually saw
 
 ```bash
-# Latest signal-best-bets JSON for today
 gcloud storage cat gs://nba-props-platform-api/v1/signal-best-bets/$(date +%Y-%m-%d).json | \
-  python3 -c "import json,sys; d=json.load(sys.stdin); print({k: d.get(k) for k in ['halt_active','halt_reason','halt_since']})"
+  python3 -c "import json,sys; d=json.load(sys.stdin); \
+    print({k: d.get(k) for k in ['halt_active','halt_reason','halt_since','total_picks','status']})"
 ```
 
-Expected output reflects what's in halt_state.
+`halt_metrics.halt_source` distinguishes which gate fired: `halt_state` (Step 0),
+`exporter_recompute` (the exporter's own same-day edge check — the backstop for a day the
+writer failed to write), or a `carried_forward_from` date.
+
+If the file shows `status: "degraded"`, the content guard refused to publish — that is the
+`unknown_state` path, and the fix is to repair the writer and re-export, not to re-run the
+exporter and hope.
+
+## Related
+
+- `shared/config/edge_halt.py` — the guard, its calibration and its honest limits.
+- `docs/09-handoff/2026-08-21-SESSION-4-AUTO-HALT-REBUILD.md` — why it was demoted.
+- `docs/02-operations/runbooks/halt-mode-frontend-impact.md` — frontend checklist.
+- `docs/02-operations/runbooks/season-resume-2026-27.md` — opener sequence.

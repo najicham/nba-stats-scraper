@@ -300,12 +300,14 @@ class BestBetsAllExporter(BaseExporter):
         weeks = json_data.get('weeks') or []
         halt_active = bool(json_data.get('halt_active'))
 
-        # Halt mode: legitimate zero ONLY for the canonical "no picks today"
-        # reasons. `manual` and `unknown_state` are operator/system events that
-        # don't excuse a payload regression, so they still go through the floors.
+        # Halt mode excuses Floor 1 ONLY. all.json carries season HISTORY, not
+        # just today, so a halt can legitimately explain "no picks today" but
+        # never explains history disappearing — which is exactly what Floor 2
+        # exists to catch ("a silent zero-pick write here destroys visible
+        # history without backup", above). The old blanket `return None` on
+        # off_season meant the history guard has been OFF every day since May.
         halt_reason = json_data.get('halt_reason')
-        if halt_active and halt_reason in {'off_season', 'edge_collapse', 'fleet_blocked'}:
-            return None
+        halt_excuses_floor_1 = halt_active and halt_reason not in {None, 'unknown_state'}
 
         # Floor 1: in-season absolute thresholds. NBA season starts ~Nov 1; the
         # 14-day window means floors only apply from mid-November onward.
@@ -321,7 +323,7 @@ class BestBetsAllExporter(BaseExporter):
         except (TypeError, ValueError):
             days_into_season = None
 
-        if days_into_season is not None and days_into_season >= 14:
+        if days_into_season is not None and days_into_season >= 14 and not halt_excuses_floor_1:
             if total_picks < self.ALL_JSON_MIN_TOTAL_PICKS:
                 return (
                     f"total_picks={total_picks} below floor "

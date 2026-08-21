@@ -123,9 +123,21 @@ class SignalBestBetsExporter(BaseExporter):
                 f"HALT STATE ACTIVE for {target_date}: reason={halt_s['halt_reason']} "
                 f"since={halt_s.get('halt_since')} — publishing zero picks."
             )
+            try:
+                from shared.observability.metrics import emit_metric
+                emit_metric(
+                    'exporter_halt_suppressed', 1.0,
+                    labels={'sport': 'nba',
+                            'halt_reason': str(halt_s['halt_reason'] or 'unknown')},
+                )
+            except Exception as exc:  # pragma: no cover — observability path
+                logger.warning(f"halt metric emit failed (non-fatal): {exc}")
             return self._halt_payload(
                 target_date, target_d, halt_s['halt_reason'], halt_s.get('halt_since'),
-                halt_metrics={'halt_source': 'halt_state'},
+                halt_metrics={
+                    'halt_source': 'halt_state',
+                    'carried_forward_from': halt_s.get('halt_carried_forward_from'),
+                },
             )
 
         # ── Step 1: Run all per-model pipelines (builds shared context internally) ──
@@ -177,7 +189,9 @@ class SignalBestBetsExporter(BaseExporter):
             halt_reason = regime_ctx.get('bb_auto_halt_reason', 'Unknown')
             logger.warning(f"BEST BETS AUTO-HALT ACTIVE for {target_date}: {halt_reason}")
             return self._halt_payload(
-                target_date, target_d, halt_reason, halt_s.get('halt_since'),
+                # Step 0 necessarily found halt_active=False to reach here, so
+                # halt_s carries no halt_since; this halt begins today.
+                target_date, target_d, halt_reason, target_date,
                 halt_metrics={
                     'halt_source': 'exporter_recompute',
                     'rolling_7d_avg_edge': regime_ctx.get('rolling_7d_avg_edge'),
@@ -592,8 +606,14 @@ class SignalBestBetsExporter(BaseExporter):
         # one, since it lands as a `manual`-class reason.
         halt_active = bool(json_data.get('halt_active'))
         halt_reason = json_data.get('halt_reason')
-        if halt_active:
+        if halt_active and halt_reason != 'unknown_state':
             return None
+        # `unknown_state` is the fail-closed default when halt_state has no
+        # recent row AND nothing within the carry-forward window — it means "we
+        # don't know", not "legitimately zero". Letting it through the floors
+        # keeps the CRITICAL content-guard log and the status="degraded"
+        # sentinel, which is the only thing standing between a writer outage
+        # and a silent multi-day pick drought that overwrites good files.
 
         total_picks = int(json_data.get('total_picks') or 0)
         picks = json_data.get('picks') or []

@@ -1,20 +1,37 @@
 # Cloud Monitoring Alert Policy — halt_state_writer is broken
 #
-# Fires when nba_orchestration.halt_state has no row written in the last 36h.
-# Since every Phase 6 exporter reads halt_state via BaseExporter.halt_envelope,
-# a stale halt_state silently returns 'unknown_state' to the frontend.
+# Fires when halt_state_writer stops emitting, i.e. no halt_state row is being
+# written. Since 2026-08-21 halt_state GATES pick publishing: a missing recent
+# row makes BaseExporter.halt_envelope fail CLOSED, so a dead writer produces
+# ZERO PICKS, not just cosmetic "unknown" branding. That is why this is
+# Critical and why the condition is absence-based.
 #
-# Pipeline-state-redesign Phase G.
+# The metric is emitted (value 0.0) only on a SUCCESSFUL write. A dead writer
+# emits nothing at all, so a threshold condition on the value can never fire —
+# there is no time series to evaluate. conditionAbsent is the only shape that
+# detects the failure this policy exists for.
+#
+# Pipeline-state-redesign Phase G; rewritten 2026-08-21.
 
-displayName: "[NBA Pipeline] halt_state_writer stale > 36h (Warning)"
+displayName: "[NBA Pipeline] halt_state_writer not writing (Critical)"
 documentation:
   content: |
-    ## halt_state Writer Stale
+    ## halt_state Writer Not Writing
 
-    **Severity:** Warning
-    **Impact:** Frontend may receive `halt_reason: 'unknown_state'` JSONs
-    until writer recovers. Picks would still publish; halt branding may
-    show "unknown" instead of "off-season"/"edge collapse".
+    **Severity:** Critical
+    **Impact:** **Picks stop publishing.** `halt_state` is the publish gate
+    (`signal_best_bets_exporter` Step 0). With no row for the date and none
+    within the 3-day carry-forward window, `halt_envelope` fails CLOSED —
+    `halt_active=true`, `halt_reason='unknown_state'` — and the exporter
+    ships zero picks. The 2026-08-16..19 gap was four consecutive days and
+    was never backfilled; in-season that would have been a silent drought.
+
+    Backfill any missed dates once the writer is healthy — nothing does it
+    automatically:
+    ```bash
+    curl "$(gcloud functions describe halt-state-writer --gen2 \
+      --region=us-west2 --format='value(serviceConfig.uri)')/?sport=all&target_date=YYYY-MM-DD"
+    ```
 
     ### What this means
     The halt_state_writer Cloud Function hasn't written today's row.
@@ -48,17 +65,18 @@ documentation:
   mimeType: text/markdown
 
 conditions:
-  - displayName: "Latest halt_state.written_at > 36h ago"
-    conditionThreshold:
+  - displayName: "No halt_state write in 30h"
+    # Absence, not threshold: the metric only exists when a write SUCCEEDS.
+    # Writer runs 05:00 ET daily; the signal-best-bets export runs ~13:00 ET.
+    # 30h fires before a second export can ship a fail-closed zero-pick file.
+    conditionAbsent:
       filter: |
         metric.type="custom.googleapis.com/nba_pipeline/halt_state_age_hours"
         resource.type="global"
       aggregations:
         - alignmentPeriod: 3600s   # 1 hour
           perSeriesAligner: ALIGN_MAX
-      comparison: COMPARISON_GT
-      thresholdValue: 36
-      duration: 3600s
+      duration: 108000s
 
 combiner: OR
 

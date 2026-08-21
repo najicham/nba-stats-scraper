@@ -250,10 +250,35 @@ def _nba_edge_degeneracy(bq: bigquery.Client, today: date) -> Tuple[Optional[str
         metrics['edge_halt_error'] = state.get('error_detail')
         return 'edge_state_unknown', metrics
 
+    if state['halt_source'] == 'halt_state_fallback':
+        # MUST be handled before the days_sampled gate below. Fallback results
+        # inherit days_sampled=0 from the error sentinel, so the thin-day guard
+        # would swallow a carried-forward halt and this writer would persist
+        # halt_active=False — overwriting a real halt with "healthy" in the row
+        # every other component reads. That defeats the entire point of the
+        # fallback at the one caller that persists the answer.
+        metrics['edge_halt_carried_forward_from'] = (
+            state['carried_forward_from'].isoformat()
+            if state.get('carried_forward_from') else None
+        )
+        if state['halt_active']:
+            return 'edge_collapse', metrics
+        return None, metrics
+
     # Defect (e): `days_sampled` now describes the TARGET date's window rather
     # than the last row that happened to be thick enough to evaluate, so this
     # guard can actually reject a thin target day.
     if state['days_sampled'] < MIN_DAYS_SAMPLED:
+        # Dormancy is a real operational state, not a non-event: keyed on
+        # system_id the guard measured 1.7 models in March 2026 and nobody at
+        # all in April. Record it so "the breaker never fired" can be
+        # distinguished from "the breaker was never able to look".
+        metrics['edge_halt_dormant'] = True
+        logger.info(
+            "[halt_state_writer] nba: edge guard dormant "
+            "(days_sampled=%s < %s, models_7d=%s)",
+            state['days_sampled'], MIN_DAYS_SAMPLED, state['models_7d'],
+        )
         return None, metrics
 
     if state['halt_active']:
@@ -271,12 +296,23 @@ def _nba_edge_degeneracy(bq: bigquery.Client, today: date) -> Tuple[Optional[str
 
 
 def _predictions_inactive(bq: bigquery.Client, sport: str, today: date) -> Optional[Dict[str, Any]]:
-    """Have predictions been silent for 3+ days while games are scheduled?
+    """Have predictions been silent across 3+ days that actually had games?
 
     Catches halts that don't fall into the off_season / edge_collapse /
     fleet_blocked buckets — e.g. operator-paused schedulers, prediction
     worker crashes, or the late-season dormancy that left the system
     silent for ~6 weeks of 2026-04 → 2026-05-09.
+
+    The `past_game_days` requirement (added 2026-08-21) is what keeps this from
+    zeroing opening night. This writer runs at 5 AM ET; the daily workflow
+    starts ~6 AM. On 2026-10-20 the lookback window contains no predictions
+    because the season has not started, so the plain "0 predictions in 3 days
+    AND games upcoming" test fires and — now that halt_state GATES publishing —
+    the row written at 5 AM suppresses the whole opening slate. The same trap
+    recurs on the first game day after any 3+ day league gap (All-Star break).
+    Requiring at least one PAST day that had games removes both cases without
+    weakening the real signal: a genuinely dead pipeline always has past game
+    days with no predictions.
 
     Returns a dict if predictions are inactive while games are scheduled.
     """
@@ -295,10 +331,17 @@ def _predictions_inactive(bq: bigquery.Client, sport: str, today: date) -> Optio
           SELECT COUNT(*) AS n_games
           FROM `{sched_cfg['table']}`
           WHERE {sched_cfg['date_col']} BETWEEN @today AND DATE_ADD(@today, INTERVAL 7 DAY)
+        ),
+        past_game_days AS (
+          SELECT COUNT(DISTINCT {sched_cfg['date_col']}) AS n_days
+          FROM `{sched_cfg['table']}`
+          WHERE {sched_cfg['date_col']}
+                BETWEEN DATE_SUB(@today, INTERVAL 3 DAY) AND DATE_SUB(@today, INTERVAL 1 DAY)
         )
         SELECT
           (SELECT n_preds FROM recent_preds) AS recent_preds,
-          (SELECT n_games FROM upcoming_games) AS upcoming_games
+          (SELECT n_games FROM upcoming_games) AS upcoming_games,
+          (SELECT n_days FROM past_game_days) AS past_game_days
     """
     job_config = bigquery.QueryJobConfig(
         query_parameters=[bigquery.ScalarQueryParameter('today', 'DATE', today)]
@@ -314,11 +357,13 @@ def _predictions_inactive(bq: bigquery.Client, sport: str, today: date) -> Optio
     row = rows[0]
     recent_preds = int(row.recent_preds or 0)
     upcoming_games = int(row.upcoming_games or 0)
+    past_game_days = int(row.past_game_days or 0)
 
-    if recent_preds == 0 and upcoming_games > 0:
+    if recent_preds == 0 and upcoming_games > 0 and past_game_days > 0:
         return {
             'recent_preds_3d': recent_preds,
             'upcoming_games_7d': upcoming_games,
+            'past_game_days_3d': past_game_days,
         }
     return None
 
@@ -935,15 +980,30 @@ def halt_state_writer(request: Request):
     try:
         from shared.observability.metrics import emit_metric, MetricKind
         for sport in sports:
-            if 'error' not in summary['results'].get(sport, {}):
-                emit_metric(
-                    metric_name='halt_state_age_hours',
-                    value=0.0,
-                    labels={'sport': sport},
-                    kind=MetricKind.GAUGE,
-                )
+            result = summary['results'].get(sport, {})
+            if 'error' in result:
+                continue
+            emit_metric(
+                metric_name='halt_state_age_hours',
+                value=0.0,
+                labels={'sport': sport},
+                kind=MetricKind.GAUGE,
+            )
+            # halt_active is the metric that matters now that halt_state GATES
+            # publishing. Before this, the only notification that a halt had
+            # fired was maybe_alert_on_change -> Slack, and the webhook env var
+            # is not set on the deployed function, so nothing surfaced at all.
+            emit_metric(
+                metric_name='halt_active',
+                value=1.0 if result.get('halt_active') else 0.0,
+                labels={
+                    'sport': sport,
+                    'halt_reason': str(result.get('halt_reason') or 'none'),
+                },
+                kind=MetricKind.GAUGE,
+            )
     except Exception as e:
-        logger.warning(f"emit halt_state_age_hours failed (non-fatal): {e}")
+        logger.warning(f"emit halt metrics failed (non-fatal): {e}")
 
     summary['written_at'] = datetime.now(timezone.utc).isoformat()
     return summary, 200

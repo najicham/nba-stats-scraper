@@ -179,4 +179,74 @@ cleared: `halt_state` gates picks, and `validate_content` no longer punishes a
 Verify by `BUILD_COMMIT == SHORT_SHA`, never by `latestReady == latestCreated`. Nothing
 was deployed in this session; the batch is committed and awaiting the owner's go.
 
+---
+
+## 7. Seven-agent review — what it changed
+
+Seven independent reviewers (fresh context) covered statistical validity, threshold
+red-team, state-machine logic, SQL, the halt-gate blast radius, caller integration, and
+operational readiness. **One BLOCKER and nine MAJORs were found and fixed.** The
+headline claims in §2 survived re-derivation; three of their supporting numbers did not
+and are corrected in the module docstring.
+
+### Fixed
+
+| Sev | Finding | Fix |
+|---|---|---|
+| BLOCKER | Reason string crashed on `f"{None:.3f}"` when a halt ran into a 7+ day dataless stretch — and `evaluate_halt_state` ran OUTSIDE `query_halt_state`'s try, so the crash escaped the fail-closed chain | None-safe formatting; evaluation moved inside the try |
+| MAJOR | Warm-up keyed on train-stamped `system_id`, which the weekly retrainer rotates faster than the quarantine clears. **80 of 102 ids never reached warm; the currently-enabled fleet had `warm_days = 0`; the guard averaged 1.7 warm models in March and 0.3 in April** | Keyed on model FAMILY. March 1.7 → **7.4** warm models, April 0.3 → 2.9; February still 1.17 / 12.4%, nowhere near firing |
+| MAJOR | Docstring claimed coverage of stale line feeds and constant-serving models. **Both produce LARGE edges — this guard reads them as healthier.** | Docstring corrected; the large-edge gap is now stated explicitly as OPEN and delegated to decision 4's volume guard |
+| MAJOR | `_nba_edge_degeneracy`'s `days_sampled` gate swallowed carried-forward halts (fallbacks inherit `days_sampled=0`), so the writer would persist `halt_active=False` — overwriting a real halt with "healthy" in the row everything else reads | Fallback verdict handled before the thin-day gate |
+| MAJOR | Fixing the above alone creates a permanent latch: the writer re-writes `halt_state` from its own fallback output, so rows are never "stale" and `MAX_HALT_DAYS` never applies (it lives in `evaluate_halt_state`, which the fallback never reaches) | Fallback now carries `halt_since` and enforces the lifetime itself; the fallback query excludes fallback-derived rows so the writer cannot launder stale into fresh |
+| MAJOR | `weekly_retrain` loosened **model governance gates** whenever `halt_active` was true — including on fail-closed. "BigQuery was down" is exactly when gates should tighten | Gated on `halt_source == 'computed'` |
+| MAJOR | `halt_envelope` had no carry-forward: one missed write = zero picks. `halt_state` has a real 4-day gap (2026-08-16..19), never backfilled | 3-day carry-forward before fail-closed, matching `resolve_halt_state` |
+| MAJOR | `unknown_state` zero-publishes were silent — the blanket `validate_content` loosening lost the CRITICAL log and `degraded` sentinel, and the Step-0 return bypasses the started-games re-export guard, so a gap-date re-export would overwrite a good file with zeros | `unknown_state` excluded from the halt excusal; metric emitted on every halt suppression |
+| MAJOR | A mid-day halt left GCS zeroed and BQ rows active; `post_grading_export` then **re-added every active pick into the halted JSON next morning**, silently undoing the suppression in the public record | Re-add skipped when the payload says `halt_active` |
+| MAJOR | `halt-state-stale` **could not fire**: a GT-36h threshold on a metric that only exists when a write succeeds. A dead writer emits nothing, so there is no series to evaluate — and a dead writer now means zero picks | Rewritten absence-based, Critical, 30h, with backfill instructions |
+| MAJOR | **Opening night would have been zeroed.** The writer runs 5 AM ET, the workflow starts ~6 AM, so on 2026-10-20 `_predictions_inactive` sees zero predictions and writes a halt that stands all day. Same trap after any 3+ day league gap | Requires at least one PAST day that actually had games |
+| MAJOR (pre-existing) | `all.json`'s guard returns early on `off_season`, so **Floor 2 — the history-collapse check its own docstring exists for — has been off every day since May** | A halt now excuses Floor 1 only; Floor 2 runs unconditionally |
+
+Plus minors: lifetime now ages through thin days; `lifetime_expired` clears on recovery;
+re-arm requires the same streak a normal release does; `RELEASE_BAND < 1.0` clamped;
+`history` CTE moved to `ROW_NUMBER` (verified 0 mismatches); `APPROX_QUANTILES` even-n
+lower-middle bias and the ~20% duplicate-row basis documented rather than silently
+"fixed"; dormancy recorded in `halt_metrics`; `halt_active` metric emitted.
+
+### Corrections to §2's supporting numbers
+
+- `catboost_v8` does not reproduce as "down" under any recipe tried — flat to slightly up.
+- `ensemble_v1_1` spans both months and fell **35%**; it was missing from the table.
+  Corrected tally ≈ 6 up, 3 down, 1 flat. Conclusion unchanged.
+- Feb-only `system_id`s: **42**, not "~20" (30 alive ≤5 days).
+- "The market did not compress" → **"never left its historical range."** 7d trailing MAE
+  did touch five-season lows (~4.48 on 02-20, 4.68-4.79 around Mar 7-8). Not a regime
+  break, and the tightest stretch preceded rather than caused the loss.
+- The `wf_sim` basis starts 56 days into each season, so it is a Dec-Apr claim only.
+
+### Still open — owner decisions, not defects
+
+1. **Large-edge degeneracy is unguarded.** A frozen line feed or a constant-serving model
+   is caught by nothing that halts: `EDGE_ABS_MAX = 20` only rejects absurd rows, the
+   >95% same-direction block misses a constant near the line median, the coordinator's
+   skew check only alerts, and both canaries are paused. No threshold on *this* metric is
+   defensible for it. Recommend it ride with decision 4's volume-anomaly guard.
+2. **`SLACK_WEBHOOK_URL_ALERTS` is unset on the deployed `halt-state-writer`**, so
+   `maybe_alert_on_change` — the only notification that a halt fired or released — is a
+   no-op. Set it at deploy time with `--update-env-vars` (never `--set-env-vars`).
+3. **The Step-0 halt payload omits `regime_context`**, which every previous halt file
+   carried. Run the `halt-mode-frontend-impact.md` checklist against props-web.
+
+## 8. Deploy order (nothing is deployed)
+
+1. `git push origin main` → auto-deploys **`phase6-export`** (the Step-0 gate),
+   **`post-grading-export`**, **`weekly-retrain`**, plus ~26 `shared/**` triggers.
+2. **Manual, required:** `./bin/deploy-function.sh halt-state-writer` — no build trigger.
+   It is currently serving `2b190789`, i.e. the pre-rebuild fail-open logic.
+3. Set `SLACK_WEBHOOK_URL_ALERTS` on the writer in the same deploy.
+4. Verify all four by `BUILD_COMMIT == SHORT_SHA`, never by revision equality.
+5. Apply the rewritten `halt-state-stale` policy.
+
+Old-writer + new-exporter coexistence is safe today (the row says `off_season` either
+way), but do steps 1 and 2 in the same session.
+
 *Session 2026-08-21.*

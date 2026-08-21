@@ -6,9 +6,30 @@ This module used to claim it was a market circuit breaker: "the market is too
 compressed to publish picks." **It cannot be that, and it never was.** The
 measurements behind that claim are in the next section. What it is now is a
 narrow pathology detector: it fires when the model fleet stops disagreeing with
-the line *at all* — a stale line feed, a model serving constants, a feature
-pipeline emitting the vegas line back as its own prediction. Those are real
-failure modes and they are worth halting on. A losing week is not one of them.
+the line *at all* — the shape of a feature pipeline emitting the vegas line back
+as its own prediction. That is a real failure mode and it is worth halting on.
+A losing week is not one of them.
+
+**Be precise about what this does NOT cover.** An earlier draft of this docstring
+claimed a stale line feed and a constant-serving model as covered. Both are
+wrong, and wrong in the dangerous direction: a frozen line feed with live
+predictions makes edges *grow*, and a model emitting a constant produces large
+edges too. This guard reads both as healthier. Neither is caught here, and the
+guards that would catch them are thin — `EDGE_ABS_MAX = 20` in
+`shared/validation/prediction_sanity.py` only rejects absurd single rows, the
+>95% same-direction block in `ml/signals/aggregator.py` misses a constant near
+the middle of the line distribution, the coordinator's recommendation-skew check
+only alerts, and both pipeline canaries are currently PAUSED. **Large-edge
+degeneracy is an open gap.** It is deliberately not patched here: no threshold on
+this metric is defensible for it (a frozen line feed moves edges by roughly a
+day of line movement, ~1-2 points, which is squarely inside the normal range),
+and the natural owner is the pick-volume anomaly guard that ships with the
+drawdown halt — inflated edges show up as a volume spike, which is exactly what
+2026-03-04..08 looked like.
+
+Note also that the basis is the median ACROSS models, so a single broken model
+among three cannot move it. This guard only ever fires on degeneracy shared
+across the fleet, which makes the per-model guards above load-bearing.
 
 Real collapse detection lives elsewhere, because the evidence says it has to:
 realized drawdown and pick-volume anomaly are the only measured quantities that
@@ -27,21 +48,44 @@ edge for the models present in BOTH January and February:
     ensemble_v1             2.036 -> 2.695   (up)
     similarity_balanced_v1  2.189 -> 2.719   (up)
     moving_average          1.944 -> 2.750   (up)
-    catboost_v8             2.290 -> 2.053
-    catboost_v9             1.222 -> 1.190
     zone_matchup_v1         3.021 -> 2.592
+    catboost_v9             1.222 -> 1.190   (flat)
+    catboost_v8             2.290 -> 2.053   (see caveat)
+    ensemble_v1_1           2.16  -> 1.39    (down 35%)
 
-The fleet-wide reading fell 1.9 -> 1.3 because roughly twenty new line-hugging
-`system_id`s appeared, most of which lived 1-5 days. They are one-off experiment
-runs writing into `player_prop_predictions`, and they moved the circuit breaker.
+Two caveats an independent re-derivation raised, recorded so nobody later reads
+this table as fitted. `catboost_v8`'s February figure does not reproduce under
+several reasonable recipes (approximate vs exact percentile, dedup-per-player,
+`is_active`, Feb capped at 02-21) — those read it flat to slightly UP.
+`ensemble_v1_1` genuinely spans both months and genuinely fell 35%; it was
+missing from the original table. With both corrections the tally is roughly
+6 up, 3 down, 1 flat. The conclusion is unchanged, and the count was never the
+argument — claim 2 below is.
+
+Within-month detail the averages hide: `moving_average` and `zone_matchup_v1`
+stopped predicting on 2026-02-12, so two of the "up" models only cover early
+February, and over Feb 15-28 `catboost_v9` fell 1.62 -> 0.62 while `ensemble_v1`
+rose 2.29 -> 4.37. Late February on the fixed set is mixed, not uniformly
+healthy — but nothing that reads as a coherent collapse.
+
+The fleet-wide reading fell 1.9 -> 1.5 (pooled daily median; 1.9 -> 1.3 on the
+old 7d metric) because **42** new line-hugging `system_id`s appeared, 30 of them
+alive five days or less, with a median-of-medians edge of 1.00. They are one-off
+experiment runs writing into `player_prop_predictions`, and they moved the
+circuit breaker.
 
 **2. On a fixed procedure, no season collapses.** `walkforward_sim_predictions`
 (`wf_sim_v12noveg`, leak-free, walk-forward retrained, five seasons) monthly
 median edge:
 
-    2021-22  0.745 - 0.874        2024-25  0.783 - 0.923
+    2021-22  0.738 - 0.874        2024-25  0.783 - 0.923
     2022-23  0.728 - 0.919        2025-26  0.799 - 0.880
     2023-24  0.823 - 0.999            Feb .799  Mar .839  Apr .880
+
+Daily granularity around the damage window shows no dip either: 2026-03-04..08
+read 1.08 / 0.89 / 0.84 / 0.93 / 0.82, at or above the series mean. The basis
+starts 56 days into each season (walk-forward warm-up), so this is a Dec-Apr
+claim; it says nothing about October or November.
 
 March 2026 (0.839) reads ABOVE 2022-03 (0.738), 2023-01 (0.728) and 2025-01
 (0.783). The quantity does not move. Note also that this basis would sit at
@@ -49,11 +93,19 @@ March 2026 (0.839) reads ABOVE 2022-03 (0.738), 2023-01 (0.728) and 2025-01
 There is no threshold on median edge that separates healthy from collapsed,
 because on an invariant basis the metric is flat.
 
-**3. The market did not compress.** Vegas MAE (closing line vs actual points —
-model-free, so immune to the prediction-side leak contamination) by month runs
-4.64-5.38 across five seasons. Feb-2026 5.054, Mar-2026 5.044, Apr-2026 5.391:
-normal to loose. The tightest recent month was Jan-2026 (4.719), which was the
-system's best month (73.1% BB hit rate).
+**3. The market never left its historical range.** Vegas MAE (closing line vs
+actual points — model-free, so immune to the prediction-side leak contamination)
+by month runs 4.64-5.38 across five seasons. Feb-2026 5.054, Mar-2026 5.044,
+Apr-2026 5.391: normal to loose. The tightest recent month was Jan-2026 (4.719),
+which was the system's best month (73.1% BB hit rate).
+
+Stated honestly at daily resolution rather than monthly: the 7d trailing MAE did
+touch five-season lows in this window — about 4.48 on 2026-02-20 and 4.68-4.79
+around Mar 7-8 — so the Session-483 "March 8 was 4.40, TIGHT" reading was the
+tight end of normal, not fiction. What it was not is a regime break, and the
+tightest stretch (late February) *preceded* rather than caused the loss. Note
+too that Dec-2025 was the loosest month in five seasons, so the within-season
+move was loose -> normal, not normal -> tight.
 
 **4. March 2026 was over-publishing, not a drought.** Picks per day ran ~3 in
 January and ~2 in February, then 2026-03-04 through 03-08 produced 9, 13, 1, 10
@@ -121,6 +173,17 @@ HONEST LIMITS
 * Early season the warm-up basis is empty for roughly the first 7 game-days, so
   the guard is dormant by construction. That is intended: do not run a circuit
   breaker you cannot calibrate.
+* The basis can get thin exactly when it matters. Keyed on `system_id` it
+  averaged **1.7 warm models in March 2026 and 0.3 in April** — the weekly
+  retrainer mints a new train-stamped `system_id` per generation, so 80 of the
+  102 `system_id`s ever seen never reached warm at all, and the guard finished
+  the season measuring nobody. That is why the warm-up is keyed on model
+  FAMILY (see the SQL). Family keying restores 5.7 warm models in March and 2.9
+  in April, and February still reads 1.52 / 19.9% — nowhere near firing.
+  `models_7d` is returned so a thin basis is visible rather than implicit.
+* `MIN_MODEL_ROWS_PER_DAY` makes 1-2 game slates unevaluable, which is common in
+  April. The guard carries state rather than judging on those days — the safe
+  direction, but it means late-season coverage is patchier than mid-season.
 
 Owner-approved 2026-08-21 (demote to degeneracy guard; bounded halt lifetime;
 fail-closed with fallback; halt_state gates NBA picks).
@@ -135,9 +198,18 @@ logger = logging.getLogger(__name__)
 
 # --- Basis -------------------------------------------------------------------
 
-#: A model joins the halt basis only after this many distinct prediction-days.
-#: Keeps 1-5 day experiment runs from moving the circuit breaker (defect a).
+#: A model FAMILY joins the halt basis only after this many distinct
+#: prediction-days. Keeps 1-5 day experiment runs from moving the circuit
+#: breaker (defect a) without going dormant every time the weekly retrainer
+#: mints a new train-stamped system_id (see MODEL_FAMILY_PATTERN).
 MIN_MODEL_HISTORY_DAYS = int(os.environ.get('NBA_HALT_MIN_MODEL_DAYS', '7'))
+
+#: Strips the `_train{MMDD}_{MMDD}` suffix weekly_retrain appends, so
+#: `catboost_v12_noveg_train0206_0402` inherits the history of every earlier
+#: `catboost_v12_noveg_*` generation. Without this the quarantine never clears:
+#: each generation is warm for 0-2 days of its life, and the freshest models —
+#: the ones most likely to ship a broken artifact — are the ones never measured.
+MODEL_FAMILY_PATTERN = r'_train[0-9]{4}[-_]?[0-9]{0,4}.*$'
 
 #: ...and only on days where it produced at least this many predictions.
 MIN_MODEL_ROWS_PER_DAY = int(os.environ.get('NBA_HALT_MIN_MODEL_ROWS', '20'))
@@ -241,6 +313,7 @@ def build_daily_edge_query(project_id: str = 'nba-props-platform') -> str:
           SELECT
             game_date,
             system_id,
+            REGEXP_REPLACE(system_id, r'{MODEL_FAMILY_PATTERN}', '') AS family,
             ABS(predicted_points - current_points_line) AS edge
           FROM `{project_id}.nba_predictions.player_prop_predictions`
           -- Scan back past @series_start so warm-up history is established for
@@ -255,26 +328,28 @@ def build_daily_edge_query(project_id: str = 'nba-props-platform') -> str:
             AND current_points_line IS NOT NULL
             AND predicted_points IS NOT NULL
         ),
-        model_days AS (
-          SELECT system_id, game_date FROM base GROUP BY system_id, game_date
+        family_days AS (
+          SELECT family, game_date FROM base GROUP BY family, game_date
         ),
         history AS (
-          -- Distinct prediction-days each model has accumulated strictly before
-          -- this date. The warm-up quarantine (defect a): a model that has only
-          -- existed for a few days is an experiment run, not the fleet.
-          -- `model_days` is one row per (system_id, game_date), so the ordinal
-          -- IS the count of strictly-earlier days. Verified equivalent to the
-          -- correlated-subquery form this replaced: 820 rows, 0 mismatches.
+          -- Distinct prediction-days each FAMILY has accumulated strictly
+          -- before this date. The warm-up quarantine (defect a): a family that
+          -- has only existed for a few days is an experiment run, not the
+          -- fleet. `family_days` is one row per (family, game_date), so the
+          -- ordinal IS the count of strictly-earlier days.
           SELECT
-            system_id,
+            family,
             game_date,
-            ROW_NUMBER() OVER (PARTITION BY system_id ORDER BY game_date) - 1 AS prior_days
-          FROM model_days
+            ROW_NUMBER() OVER (PARTITION BY family ORDER BY game_date) - 1 AS prior_days
+          FROM family_days
         ),
         per_model_day AS (
+          -- Still one row per SERVING model per day: family only decides
+          -- eligibility, it does not pool distinct models into one number.
           SELECT
             game_date,
             system_id,
+            ANY_VALUE(family) AS family,
             APPROX_QUANTILES(edge, 100)[OFFSET(50)] AS model_edge_med,
             100.0 * COUNTIF(edge >= {EDGE_3PLUS}) / NULLIF(COUNT(*), 0) AS model_pct_e3,
             COUNT(*) AS n_rows
@@ -284,7 +359,7 @@ def build_daily_edge_query(project_id: str = 'nba-props-platform') -> str:
         warm AS (
           SELECT p.*
           FROM per_model_day p
-          JOIN history h USING (system_id, game_date)
+          JOIN history h ON h.family = p.family AND h.game_date = p.game_date
           WHERE h.prior_days >= {MIN_MODEL_HISTORY_DAYS}
             AND p.n_rows >= {MIN_MODEL_ROWS_PER_DAY}
         ),
@@ -479,6 +554,7 @@ def evaluate_halt_state(rows: Sequence[Any]) -> Dict[str, Any]:
         'days_sampled': int(getattr(target_row, 'days_sampled', 0) or 0) if target_row is not None else 0,
         'days_evaluated': evaluated,
         'halt_started': halt_started,
+        'carried_forward_from': None,
         'release_streak': release_streak,
         'lifetime_expired': lifetime_expired,
         'lifetime_spent': lifetime_spent,
@@ -528,6 +604,7 @@ def _error_state(detail: str) -> Dict[str, Any]:
         'days_sampled': 0,
         'days_evaluated': 0,
         'halt_started': None,
+        'carried_forward_from': None,
         'release_streak': 0,
         'lifetime_expired': False,
         'lifetime_spent': False,
@@ -564,15 +641,25 @@ def query_halt_state(bq_client, target_date: date,
 
 def _last_known_halt_row(bq_client, target_date: date, sport: str,
                          project_id: str, timeout: Optional[float]) -> Optional[Dict[str, Any]]:
-    """Most recent `halt_state` row for `sport` within FALLBACK_MAX_AGE_DAYS."""
+    """Most recent GENUINELY COMPUTED `halt_state` row within FALLBACK_MAX_AGE_DAYS.
+
+    The `edge_halt_source` filter is load-bearing. `halt_state_writer` re-writes
+    this table daily *from this function's own output*, so without it every row
+    is at most one day old even when the last real computation was weeks ago —
+    the writer would launder stale into fresh and FALLBACK_MAX_AGE_DAYS would
+    never engage during a sustained edge-query outage. Rows written before this
+    key existed have a NULL source and are still eligible.
+    """
     from google.cloud.bigquery import QueryJobConfig, ScalarQueryParameter
 
     query = f"""
-        SELECT effective_date, halt_active, halt_reason
+        SELECT effective_date, halt_active, halt_reason, halt_since
         FROM `{project_id}.nba_orchestration.halt_state`
         WHERE sport = @sport
           AND effective_date <= @target_date
           AND effective_date >= DATE_SUB(@target_date, INTERVAL @max_age DAY)
+          AND IFNULL(JSON_VALUE(halt_metrics, '$.edge_halt_source'), 'computed')
+              NOT IN ('halt_state_fallback', 'fail_closed', 'error')
         ORDER BY effective_date DESC
         LIMIT 1
     """
@@ -594,6 +681,7 @@ def _last_known_halt_row(bq_client, target_date: date, sport: str,
         'effective_date': r.effective_date,
         'halt_active': bool(r.halt_active),
         'halt_reason': r.halt_reason,
+        'halt_since': r.halt_since,
     }
 
 
@@ -622,6 +710,30 @@ def resolve_halt_state(bq_client, target_date: date, sport: str = 'nba',
         state = dict(state)
         state['halt_active'] = fallback['halt_active']
         state['halt_source'] = 'halt_state_fallback'
+        state['halt_started'] = fallback.get('halt_since')
+        state['carried_forward_from'] = fallback['effective_date']
+
+        # The MAX_HALT_DAYS lifetime lives in evaluate_halt_state, which this
+        # path never reaches. Enforce it here too, or a carried-forward halt is
+        # a halt with no expiry — the permanent trap this rewrite exists to
+        # remove, reintroduced through the back door.
+        started = fallback.get('halt_since')
+        if (
+            state['halt_active']
+            and started is not None
+            and (target_date - started).days >= MAX_HALT_DAYS
+        ):
+            state['halt_active'] = False
+            state['lifetime_expired'] = True
+            state['lifetime_spent'] = True
+            state['reason'] = ''
+            logger.warning(
+                "Carried-forward halt began %s, past its %s-day lifetime — releasing. "
+                "If the halt is real, an operator must write a halt_overrides row.",
+                started, MAX_HALT_DAYS,
+            )
+            return state
+
         state['reason'] = (
             f"Edge query unavailable; carrying forward halt_state from "
             f"{fallback['effective_date']} (halt_active={fallback['halt_active']}, "

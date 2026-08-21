@@ -241,7 +241,8 @@ class TestFailClosed:
 
     def test_resolve_falls_back_to_the_last_halt_state_row(self):
         client = _ScriptedClient([SimpleNamespace(
-            effective_date=dt.date(2026, 2, 28), halt_active=True, halt_reason='manual')])
+            effective_date=dt.date(2026, 2, 28), halt_active=True,
+            halt_reason='manual', halt_since=dt.date(2026, 2, 28))])
         out = eh.resolve_halt_state(client, dt.date(2026, 3, 1))
         assert out['halt_active'] is True
         assert out['halt_source'] == 'halt_state_fallback'
@@ -249,10 +250,36 @@ class TestFailClosed:
 
     def test_fallback_carries_a_not_halted_row_forward_too(self):
         client = _ScriptedClient([SimpleNamespace(
-            effective_date=dt.date(2026, 2, 28), halt_active=False, halt_reason=None)])
+            effective_date=dt.date(2026, 2, 28), halt_active=False,
+            halt_reason=None, halt_since=None)])
         out = eh.resolve_halt_state(client, dt.date(2026, 3, 1))
         assert out['halt_active'] is False
         assert out['halt_source'] == 'halt_state_fallback'
+
+    def test_carried_forward_halt_still_expires(self):
+        """The MAX_HALT_DAYS lifetime lives in evaluate_halt_state, which the
+        fallback path never reaches. Without enforcing it here, a carried
+        halt is a halt with no expiry — the permanent trap this rewrite
+        exists to remove, reintroduced through the back door."""
+        started = dt.date(2026, 3, 1)
+        target = started + dt.timedelta(days=eh.MAX_HALT_DAYS)
+        client = _ScriptedClient([SimpleNamespace(
+            effective_date=target - dt.timedelta(days=1), halt_active=True,
+            halt_reason='edge_collapse', halt_since=started)])
+        out = eh.resolve_halt_state(client, target)
+        assert out['halt_active'] is False
+        assert out['lifetime_expired'] is True
+
+    def test_fallback_query_excludes_fallback_derived_rows(self):
+        """halt_state_writer re-writes this table from resolve_halt_state's own
+        output. Without the source filter, every row is <= 1 day old even when
+        the last real computation was weeks ago, and FALLBACK_MAX_AGE_DAYS
+        never engages."""
+        sql = eh._last_known_halt_row.__doc__ or ''
+        assert 'edge_halt_source' in sql
+        import inspect
+        src = inspect.getsource(eh._last_known_halt_row)
+        assert "'halt_state_fallback', 'fail_closed', 'error'" in src
 
     def test_no_fallback_available_fails_closed(self):
         out = eh.resolve_halt_state(_FailingClient(), dt.date(2026, 3, 1))

@@ -1041,7 +1041,24 @@ def weekly_retrain(request):
                 halt_state = resolve_halt_state(
                     client, date.today(), sport='nba', project_id=PROJECT_ID
                 )
-                edge_collapsed = bool(halt_state['halt_active'])
+                # Gate on halt_source. Publishing and governance have OPPOSITE
+                # safe directions: fail-closed for picks means halt, but
+                # fail-closed for governance gates must mean tighten. Reading
+                # halt_active alone inherited the picks-side convention, so
+                # "BigQuery was briefly down at 5 AM Monday" would loosen the
+                # gates for every family's retrain — and a carried-forward
+                # `manual` / `between_rounds` / `off_season` row would read as
+                # "edge collapsed" too. Only a computed edge halt qualifies;
+                # ?season_restart=true remains the explicit operator override.
+                edge_collapsed = (
+                    halt_state.get('halt_source') == 'computed'
+                    and bool(halt_state['halt_active'])
+                )
+                if halt_state.get('halt_source') != 'computed':
+                    logger.info(
+                        "Halt state not computed (source=%s); keeping normal "
+                        "governance gates.", halt_state.get('halt_source'),
+                    )
                 blocked_q = f"""
                 SELECT
                   COUNTIF(status NOT IN ('blocked','disabled','deprecated')) AS active_count,

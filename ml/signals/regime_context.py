@@ -74,10 +74,14 @@ def _apply_warmup_guard(result: Dict[str, Any]) -> Dict[str, Any]:
         # Surface the UNDER real_sc>=2 requirement (aggregator already enforces
         # this as its default UNDER floor; expose it so the exporter can report it).
         result['under_min_real_sc'] = 2
+        # halt_source matters for reading this log: days_sampled is 0 on the
+        # fallback and fail-closed paths too, so mid-season this line can mean
+        # "the edge query failed", not "the season just opened".
         logger.warning(
-            "Warmup guard ACTIVE (edge_halt_days_sampled=%s, yesterday_bb_picks=%s): "
-            "conservative posture — OVER floor +1.0, OVER rescue disabled, "
-            "UNDER real_sc>=2.", days_sampled, yesterday_picks
+            "Warmup guard ACTIVE (edge_halt_days_sampled=%s, yesterday_bb_picks=%s, "
+            "edge_halt_source=%s): conservative posture — OVER floor +1.0, "
+            "OVER rescue disabled, UNDER real_sc>=2.",
+            days_sampled, yesterday_picks, result.get('edge_halt_source', 'unknown'),
         )
     else:
         result.setdefault('warmup_conservative', False)
