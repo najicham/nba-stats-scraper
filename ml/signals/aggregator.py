@@ -739,6 +739,81 @@ class BestBetsAggregator:
                         f"Extreme direction imbalance suggests miscalibration."
                     )
 
+        # 2026-08-21: two more per-model sanity guards, closing the LARGE-edge
+        # degeneracy hole. The edge degeneracy guard in shared/config/edge_halt.py
+        # only fires when edges collapse toward ZERO; a wrong artifact, a stale
+        # model or a constant-serving model produces edges that are too BIG, and
+        # it reads those as healthier. Its basis is also the median ACROSS
+        # models, so one broken model among three cannot move it — which makes
+        # these per-model guards load-bearing rather than belt-and-braces.
+        #
+        # Both thresholds are placed off five seasons of measurement, not
+        # intuition. Every per-model-day at median edge >= 5.0 in five seasons
+        # belongs to one of four pathology episodes (a wrong-artifact model at
+        # 9.20 and 100% UNDER on its FIRST serving day; three panic-era
+        # ensemble_v1 spike days; 17 stale catboost_v8 days; and
+        # zone_matchup_v1, chronically miscalibrated for five seasons), while
+        # families that were ever well-calibrated top out at 4.52 and the
+        # current fleet runs 0.8-1.7.
+        #
+        # A self-baseline change detector was tested and REJECTED: in this
+        # system's history broken models were born broken or came back broken
+        # from the off-season — none ever drifted mid-stream, so there is no
+        # baseline at the moment one is needed.
+        #
+        # Honest cost, measured: MODEL_MAX_MEDIAN_EDGE would have blocked ~12
+        # stale catboost_v8 days that graded 64.6% during the 2025-26 scoring
+        # anomaly. That is the entire downside across five seasons, and it is
+        # what the "stale models become confidently wrong" rule asks for.
+        MODEL_SANITY_MIN_PREDS = 20
+        MODEL_MAX_MEDIAN_EDGE = 5.5          # healthy 5-season max 4.52
+        MODEL_MIN_PRED_STDDEV = 2.0          # healthy 5-season min 4.18
+
+        model_preds: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        for pred in predictions:
+            model_preds[pred.get('system_id', '')].append(pred)
+
+        for model_id, preds in model_preds.items():
+            if len(preds) < MODEL_SANITY_MIN_PREDS or model_id in blocked_models:
+                continue
+
+            edges = sorted(
+                abs(float(p['predicted_points']) - float(p.get('line_value') or p.get('current_points_line')))
+                for p in preds
+                if p.get('predicted_points') is not None
+                and (p.get('line_value') or p.get('current_points_line')) is not None
+            )
+            if len(edges) >= MODEL_SANITY_MIN_PREDS:
+                median_edge = edges[len(edges) // 2]
+                if median_edge > MODEL_MAX_MEDIAN_EDGE:
+                    blocked_models.add(model_id)
+                    logger.warning(
+                        f"Model sanity guard: blocking {model_id} — median edge "
+                        f"{median_edge:.2f} > {MODEL_MAX_MEDIAN_EDGE} over {len(edges)} "
+                        f"predictions. Healthy models have never exceeded 4.52 in five "
+                        f"seasons; this is the wrong-artifact / stale-model signature."
+                    )
+                    continue
+
+            # A model emitting a constant near the middle of the line
+            # distribution escapes BOTH the direction guard (its recommendations
+            # split ~50/50) and the median-edge cap (~4.5). Near-zero spread is
+            # what actually identifies it: the five-season minimum per-model
+            # daily stddev is 4.18, so 2.0 clears the floor by 52%.
+            values = [float(p['predicted_points']) for p in preds
+                      if p.get('predicted_points') is not None]
+            if len(values) >= MODEL_SANITY_MIN_PREDS:
+                mean_v = sum(values) / len(values)
+                stddev = (sum((v - mean_v) ** 2 for v in values) / len(values)) ** 0.5
+                if stddev < MODEL_MIN_PRED_STDDEV:
+                    blocked_models.add(model_id)
+                    logger.warning(
+                        f"Model sanity guard: blocking {model_id} — prediction stddev "
+                        f"{stddev:.2f} < {MODEL_MIN_PRED_STDDEV} over {len(values)} "
+                        f"predictions (mean {mean_v:.1f}). A near-constant model is "
+                        f"serving a broken artifact; five-season minimum is 4.18."
+                    )
+
         # Session 437 P8: Bias-regime detection for OVER volume gating.
         # When >70% of predictions are UNDER, the model is signaling low OVER
         # confidence. Track what WOULD be blocked (observation mode).

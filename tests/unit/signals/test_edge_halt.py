@@ -527,7 +527,7 @@ class TestPropertySimulation:
         'error', 'halt_active', 'halt_source', 'edge_med_7d', 'pct_e3_7d',
         'models_7d', 'days_sampled', 'days_evaluated', 'halt_started',
         'carried_forward_from', 'release_streak', 'lifetime_expired',
-        'lifetime_spent', 'reason',
+        'lifetime_spent', 'halt_direction', 'reason',
     }
 
     @staticmethod
@@ -673,3 +673,48 @@ class TestBigQueryClientContract:
             bigquery.ScalarQueryParameter('sport', 'STRING', 'nba'),
         ])
         assert len(cfg.query_parameters) == 3
+
+
+class TestInflationBound:
+    """The symmetric UPPER bound — the correlated large-edge direction.
+
+    The collapse conditions only fire when edges fall toward zero. A fleet-wide
+    feature-store regression, a mass wrong-artifact load or a unit mismatch
+    makes edges too BIG, and the collapse test reads that as healthier.
+    Five-season maximum on this basis is 3.224, so 4.5 clears it by 40%.
+    """
+
+    def test_five_season_maximum_does_not_halt(self):
+        assert not eh.evaluate_halt_state(series([(3.224, 40.0)] * 30))['halt_active']
+
+    def test_inflated_edges_halt(self):
+        out = eh.evaluate_halt_state(series([(9.2, 60.0)] * 5))
+        assert out['halt_active'] is True
+        assert out['halt_direction'] == 'inflated'
+        assert 'inflation' in out['reason'].lower()
+
+    def test_inflation_is_one_sided_high_pct_e3_does_not_excuse_it(self):
+        """Unlike the collapse test there is no second condition — a huge
+        pct_e3 accompanies inflated edges by construction, so requiring it to
+        also be low would make the bound unreachable."""
+        assert eh.evaluate_halt_state(series([(9.2, 99.0)] * 5))['halt_active'] is True
+
+    def test_inflated_halt_does_not_release_while_still_inflated(self):
+        """pct_e3 is ~100% during inflation, which would otherwise satisfy the
+        OR-shaped release on day one."""
+        s = series([(9.2, 99.0)] * 3 + [(8.0, 99.0)] * 10)
+        assert eh.evaluate_halt_state(s)['halt_active'] is True
+
+    def test_inflated_halt_releases_when_edges_normalise(self):
+        s = series([(9.2, 99.0)] * 3 + [(2.0, 30.0)] * eh.RELEASE_CONSECUTIVE_DAYS)
+        assert eh.evaluate_halt_state(s)['halt_active'] is False
+
+    def test_collapse_halt_still_reports_its_own_direction(self):
+        out = eh.evaluate_halt_state(series([DEGENERATE] * 5))
+        assert out['halt_direction'] == 'collapsed'
+
+    def test_healthy_series_has_no_direction(self):
+        assert eh.evaluate_halt_state(series([HEALTHY] * 5))['halt_direction'] is None
+
+    def test_bound_sits_above_every_observed_reading(self):
+        assert eh.HALT_EDGE_MEDIAN_MAX > 3.224 * 1.25

@@ -23,6 +23,13 @@ Halt reasons (canonical strings stored in halt_state.halt_reason):
                              circuit breaker — see shared/config/edge_halt.py.
     'edge_state_unknown'   — edge state could not be determined and no recent
                              halt_state row existed to carry forward. Fail-closed.
+    'unit_drawdown'        — NBA realized P&L fell >= 6u (soft) / 10u (hard)
+                             below the season peak. THE actual circuit breaker;
+                             see shared/config/drawdown_halt.py.
+    'volume_anomaly'       — NBA published an anomalous number of picks
+                             (>= max(10, 3x trailing median)). The cheap half:
+                             no grading dependency, and it is what recovers the
+                             2026-03 money in replay.
     'fleet_blocked'        — all enabled models in BLOCKED state per decay_detection
     'predictions_inactive' — predictions silent 3+ days while games scheduled
     'pick_drought'         — MLB: predictions flowing but 2+ days of zero picks
@@ -48,6 +55,17 @@ import functions_framework
 from flask import Request
 from google.cloud import bigquery
 
+from shared.config.drawdown_halt import (
+    DD_HARD_THRESHOLD,
+    DD_SOFT_THRESHOLD,
+    HALT_REASON_DRAWDOWN,
+    HALT_REASON_VOLUME,
+    build_daily_pnl_query,
+    build_daily_volume_query,
+    evaluate_drawdown,
+    evaluate_volume_anomaly,
+    season_start_for as dd_season_start_for,
+)
 from shared.config.edge_halt import (
     HALT_EDGE_MEDIAN,
     HALT_PCT_EDGE_3PLUS,
@@ -304,6 +322,57 @@ def _nba_edge_degeneracy(bq: bigquery.Client, today: date) -> Tuple[Optional[str
         )
         return None, metrics
 
+    return None, metrics
+
+
+def _dd_query(bq: bigquery.Client, sql: str, today: date, label: str) -> Optional[List[Any]]:
+    """Run a season-scoped drawdown/volume query. None means "could not tell"."""
+    job_config = bigquery.QueryJobConfig(query_parameters=[
+        bigquery.ScalarQueryParameter('season_start', 'DATE', dd_season_start_for(today)),
+        bigquery.ScalarQueryParameter('target_date', 'DATE', today),
+    ])
+    try:
+        return list(bq.query(sql, job_config=job_config).result(timeout=60))
+    except Exception as e:
+        logger.warning(f"{label} query failed: {e}")
+        return None
+
+
+def _nba_unit_drawdown(bq: bigquery.Client, today: date) -> Tuple[Optional[str], Dict[str, Any]]:
+    """Realized-P&L circuit breaker. See shared/config/drawdown_halt.py.
+
+    This is the guard that actually protects the season. The edge guard was
+    demoted after it turned out to be anti-correlated with the only collapse
+    this system has experienced.
+
+    Fails OPEN on a query error, deliberately: unlike the edge guard there is no
+    carry-forward row to fall back to, and halting the whole system because one
+    analytical query timed out is a worse failure than missing a day of drawdown
+    detection. The volume guard has no grading dependency and still runs.
+    """
+    rows = _dd_query(bq, build_daily_pnl_query(PROJECT_ID), today, 'Unit-drawdown')
+    if rows is None:
+        return None, {'dd_error': True}
+    state = evaluate_drawdown(rows, today)
+    metrics = {k: v for k, v in state.items() if k.startswith('dd_')}
+    metrics['dd_soft_threshold'] = DD_SOFT_THRESHOLD
+    metrics['dd_hard_threshold'] = DD_HARD_THRESHOLD
+    if state['halt_active']:
+        logger.warning(state['reason'])
+        return HALT_REASON_DRAWDOWN, metrics
+    return None, metrics
+
+
+def _nba_volume_anomaly(bq: bigquery.Client, today: date) -> Tuple[Optional[str], Dict[str, Any]]:
+    """Pick-volume anomaly. No grading dependency, so it survives grading lag."""
+    rows = _dd_query(bq, build_daily_volume_query(PROJECT_ID), today, 'Pick-volume')
+    if rows is None:
+        return None, {'vol_error': True}
+    state = evaluate_volume_anomaly(rows, today)
+    metrics = {k: v for k, v in state.items() if k.startswith('vol_')}
+    if state['halt_active']:
+        logger.warning(state['reason'])
+        return HALT_REASON_VOLUME, metrics
     return None, metrics
 
 
@@ -721,6 +790,25 @@ def evaluate_halt_state(
         if edge_reason is not None:
             halt_active = True
             halt_reason = edge_reason
+
+    # 2b/2c. NBA performance breakers, ordered before the infrastructure
+    #    reasons because "we are losing money" outranks "a component looks odd".
+    #    The volume guard is checked FIRST: it needs no grading, so it still
+    #    works on the days the drawdown guard is blind, and in replay it is the
+    #    guard that actually recovers the 2026-03 money.
+    if not halt_active and sport == 'nba':
+        vol_reason, vol_metrics = _nba_volume_anomaly(bq, today)
+        halt_metrics.update(vol_metrics)
+        if vol_reason is not None:
+            halt_active = True
+            halt_reason = vol_reason
+
+    if not halt_active and sport == 'nba':
+        dd_reason, dd_metrics = _nba_unit_drawdown(bq, today)
+        halt_metrics.update(dd_metrics)
+        if dd_reason is not None:
+            halt_active = True
+            halt_reason = dd_reason
 
     # 3. Fleet blocked — now sport-aware. Skip when the entire production fleet
     #    is mid-swap (fresh model with no MPD rows yet); otherwise the stale

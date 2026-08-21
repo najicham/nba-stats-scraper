@@ -292,6 +292,20 @@ RELEASE_CONSECUTIVE_DAYS = int(os.environ.get('NBA_HALT_RELEASE_DAYS', '2'))
 #: A false positive then costs two weeks, not a season.
 MAX_HALT_DAYS = int(os.environ.get('NBA_HALT_MAX_DAYS', '14'))
 
+#: Symmetric UPPER bound. The conditions above catch edges collapsing toward
+#: zero; this catches the correlated large-edge failure no per-model guard can —
+#: a fleet-wide feature-store regression, a mass wrong-artifact load, a unit
+#: mismatch. Five-season maximum on this basis is 3.224 (2023-04-12), so 4.5
+#: clears it by 40%, mirroring the convention used for the floors. Unlike the
+#: floors this fires on ONE condition: there is no second quantity that
+#: independently confirms "edges are impossibly large", and requiring one would
+#: make the bound unreachable.
+#:
+#: Per-model large-edge pathology is NOT this guard's job — the basis is a
+#: median across models, so one broken model cannot move it. That lives in
+#: ml/signals/aggregator.py (median-edge cap 5.5, prediction-spread floor 2.0).
+HALT_EDGE_MEDIAN_MAX = float(os.environ.get('NBA_HALT_EDGE_MEDIAN_MAX', '4.5'))
+
 #: Edge level whose prevalence forms the second halt condition.
 EDGE_3PLUS = 3.0
 
@@ -455,13 +469,26 @@ def build_daily_edge_query(project_id: str = 'nba-props-platform') -> str:
     """
 
 
+def _is_collapse(edge_med: float, pct_e3: float) -> bool:
+    """Edges have collapsed toward zero — both conditions, the AND is required."""
+    return edge_med < HALT_EDGE_MEDIAN and pct_e3 < HALT_PCT_EDGE_3PLUS
+
+
+def _is_inflated(edge_med: float) -> bool:
+    """Edges are impossibly large — the correlated-degeneracy direction."""
+    return edge_med > HALT_EDGE_MEDIAN_MAX
+
+
 def _is_release(edge_med: float, pct_e3: float) -> bool:
     """Release test — the mirror of the halt test, widened by RELEASE_BAND.
 
-    The halt requires BOTH conditions, so the release requires only ONE of them
-    to recover. Anything else reintroduces the asymmetry that turned a false
-    halt into a lost season.
+    The collapse halt requires BOTH conditions, so releasing it requires only
+    ONE to recover; anything else reintroduces the asymmetry that turned a false
+    halt into a lost season. The inflation halt is one-sided, so it releases when
+    the median comes back under the bound with the same band applied.
     """
+    if edge_med > HALT_EDGE_MEDIAN_MAX / RELEASE_BAND:
+        return False
     return edge_med >= RELEASE_EDGE_MEDIAN or pct_e3 >= RELEASE_PCT_EDGE_3PLUS
 
 
@@ -488,6 +515,7 @@ def evaluate_halt_state(rows: Sequence[Any]) -> Dict[str, Any]:
     #: the lifetime cap accomplishes nothing. Cleared only by a genuine recovery
     #: day, so the guard re-arms for the NEXT episode, not this one.
     lifetime_spent = False
+    halt_direction: Optional[str] = None
     #: Consecutive release-band days observed while NOT halted. Re-arming after a
     #: spent lifetime requires the same streak a normal release does — with a
     #: single day, a degenerate stretch oscillating around the band would re-arm
@@ -548,12 +576,11 @@ def evaluate_halt_state(rows: Sequence[Any]) -> Dict[str, Any]:
                     lifetime_expired = False
             else:
                 rearm_streak = 0
-            if (
-                not lifetime_spent
-                and edge_med < HALT_EDGE_MEDIAN
-                and pct_e3 < HALT_PCT_EDGE_3PLUS
+            if not lifetime_spent and (
+                _is_collapse(edge_med, pct_e3) or _is_inflated(edge_med)
             ):
                 halted = True
+                halt_direction = 'inflated' if _is_inflated(edge_med) else 'collapsed'
                 release_streak = 0
                 rearm_streak = 0
                 # A row with no game_date leaves halt_started None, which would
@@ -604,6 +631,7 @@ def evaluate_halt_state(rows: Sequence[Any]) -> Dict[str, Any]:
         'release_streak': release_streak,
         'lifetime_expired': lifetime_expired,
         'lifetime_spent': lifetime_spent,
+        'halt_direction': halt_direction if halted else None,
         'reason': '',
     }
 
@@ -620,6 +648,17 @@ def evaluate_halt_state(rows: Sequence[Any]) -> Dict[str, Any]:
             if halt_started is not None and getattr(target_row, 'game_date', None) is not None
             else 0
         )
+        if halt_direction == 'inflated':
+            result['reason'] = (
+                f"Edge inflation halt: 7d median-across-models edge "
+                f"{_fmt(result['edge_med_7d'], '.3f')} > {HALT_EDGE_MEDIAN_MAX} "
+                f"(five-season maximum on this basis is 3.224). This is the "
+                f"correlated large-edge signature — a feature-store regression, a "
+                f"mass wrong-artifact load or a unit mismatch. Halted since "
+                f"{halt_started}, day {held} of {MAX_HALT_DAYS}."
+            )
+            return result
+
         result['reason'] = (
             f"Edge degeneracy halt: 7d median-across-models edge "
             f"{_fmt(result['edge_med_7d'], '.3f')} < {HALT_EDGE_MEDIAN} AND "
@@ -654,6 +693,7 @@ def _error_state(detail: str) -> Dict[str, Any]:
         'release_streak': 0,
         'lifetime_expired': False,
         'lifetime_spent': False,
+        'halt_direction': None,
         'reason': '',
     }
 

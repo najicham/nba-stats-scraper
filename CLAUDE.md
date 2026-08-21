@@ -335,6 +335,9 @@ WHERE game_date >= CURRENT_DATE() - 7 ORDER BY game_date DESC;
 | **MLB predictions 100% BLOCKED** | Missing line features `f30_k_avg_vs_line`, `f32_line_level`, `f44_over_implied_prob`. Check: (1) `oddsa_pitcher_props` has data for today, (2) `BETTINGPROS_API_KEY` mounted on service, (3) events scraper ran. |
 | **Halt active / zero picks** | Read `halt_reason` from `nba_orchestration.halt_state` for today — that is the gate. `edge_collapse` = the degeneracy guard (`shared/config/edge_halt.py`, thresholds 0.35 / 0.30%); it self-releases after 14 days. `edge_state_unknown` = the edge query failed AND no recent halt_state row existed (fail-closed) — check BigQuery, not the models. `manual` = operator row in `halt_overrides`. |
 
+| **Halt reason `unit_drawdown` / `volume_anomaly`** | Working as designed — the system is down because it was losing money or published anomalously many picks. `halt_metrics` carries `dd_units`/`dd_peak_units`/`dd_tier` or `vol_trigger_picks`/`vol_trailing_median`. Soft drawdown releases in 3 days, hard in 7, both with a peak reset; volume in 3. Do NOT lower the thresholds during a drawdown — that is the documented panic-deploy failure mode. |
+| **Need to publish through a halt urgently** | `gcloud run services update phase6-export --region=us-west2 --update-env-vars=HALT_GATE_ENABLED=false` (**never** `--set-env-vars`). Emergency only; it logs ERROR and emits `halt_gate_overridden`. Unset it as soon as the halt is correct. |
+
 **Full troubleshooting:** `docs/02-operations/troubleshooting-matrix.md`, `docs/02-operations/session-learnings.md`
 
 ## Prevention Mechanisms
@@ -399,7 +402,26 @@ python bin/analysis/model_correlation.py         # Inter-model agreement
 **33 active signals + 50 shadow** (14 removed). **48 active filters + 20 observation** (6 removed). Counts verified against `shared/registry/{signals,filters}.yaml` on 2026-08-21; the previous numbers (28/32/25 and 25/11) were all wrong. ⚠️ **Six signals are `active` in the registry but listed in `aggregator.SHADOW_SIGNALS`, so the executing code excludes them from `real_sc`:** `b2b_boost_over`, `book_disagree_over`, `cold_3pt_over`, `extended_rest_under`, `fast_pace_over`, `line_rising_over`. The registry contradicts the code — trust the code.
 **Full inventory:** `docs/08-projects/current/signal-discovery-framework/SIGNAL-INVENTORY.md`
 
-**Best Bets Pipeline:** `halt_state gate → edge degeneracy guard → edge 3+ (or signal rescue) → OVER edge 5+ floor → negative filters → signal_count ≥ 3 → real_sc gate → rank by edge (OVER) or signal quality (UNDER)`
+**Best Bets Pipeline:** `halt_state gate (drawdown / volume-anomaly / degeneracy / infra) → edge 3+ (or signal rescue) → OVER edge 5+ floor → negative filters → signal_count ≥ 3 → real_sc gate → rank by edge (OVER) or signal quality (UNDER)`
+
+**Drawdown circuit breaker + volume-anomaly guard (2026-08-21, owner decision 4):**
+`shared/config/drawdown_halt.py`, evaluated in `halt_state_writer`. **These are the real
+collapse protection** — the edge guard below was demoted after proving anti-correlated with
+the only collapse this system has had. `unit_drawdown`: realized P&L ≥ **6.0u** (soft) /
+**10.0u** (hard) below the season-scoped peak → halt; releases after 3/7 days **with a peak
+reset** (without it the frozen curve re-halts forever), 21-day hard cap. `volume_anomaly`:
+a day published ≥ `max(10, 3× trailing-10-pick-day median)` → halt, 3-day window. Replayed
+over 2025-26 at true 5 AM cadence: **6-9 halt days in one episode, +14.27u of losses
+avoided against 2.45u forgone (net +11.82u), and max drawdown cut from 14.27u to 3.64u.**
+⚠️ Calibrated on ONE episode; the volume guard has no cross-season basis at all. Do not tune
+on a bad week. A daily-cadence guard cannot stop a one-slate blowup — catching day one needs
+an export-time cap in `pipeline_merger` (not built).
+
+**Guard-threshold safety check:** `PYTHONPATH=. python bin/validation/validate_guard_invariance.py
+--start YYYY-MM-DD --end YYYY-MM-DD`. Run it before changing ANY guard threshold. It measures
+whether a metric's level tracks fleet churn rather than the world, and whether the threshold
+sits far enough outside lived behaviour that churn cannot reach it. It condemns the retired
+1.4 bar and passes the shipped 0.35 one at 56% margin.
 
 **Edge degeneracy guard (rewritten 2026-08-21, was the "edge-based auto-halt"):** 7d median-across-models edge < 0.35 AND edge-3+ share < 0.30% → zero picks. `shared/config/edge_halt.py`, read by `regime_context.py`, `halt_state_writer` and `weekly_retrain`. **This is a pathology detector, not a market circuit breaker.** The Session 515 version fired on 865/865 prediction-days; the 2026-08-19 rewrite fixed that but was calibrated on a fleet-composition artifact — on a fixed model set the 2026 collapse does not appear at all, and Vegas MAE shows no market compression in Feb-Apr 2026 (5.05 / 5.04 / 5.39 against a five-season range of 4.64-5.38). Real collapse detection is drawdown-based. Properties: warm-up quarantine (a model joins the basis after 7 prediction-days, which is what stops one-off experiment `system_id`s moving the breaker), symmetric release (either condition recovering past a 10% band for 2 days), 14-day bounded automatic lifetime with a re-arm latch, season-scoped replay, and a fail-closed fallback chain (`resolve_halt_state`). Do NOT tighten the thresholds — see the module docstring.
 
