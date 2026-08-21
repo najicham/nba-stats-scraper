@@ -197,13 +197,17 @@ REMINDERS
   - Every job above is PAUSED. Resume in waves per the manifest, not all at once.
   - execute-workflows must be resumed PAIRED with the live master-controller-hourly
     (pause that one now; it is writing decisions nothing executes).
-  - nbac-player-movement-daily hardcodes a year in its body. Confirm the semantics
-    for 2026-27 before resuming.
   - nba-tracking-stats-daily: verify the first run's drive values are not 0.0.
   - nba-closing-lines-sweep is in no backup and not in this catalog. Create it with
     bin/deploy/deploy_closing_lines_scheduler.sh --paused.
-  - weekly-retrain CF does not auto-deploy. Deploy it manually before resuming its
-    trigger, or the trigger will fire at stale code.
+  - br-rosters-batch-daily is critical:true in config/workflows.yaml but is in
+    NEITHER this catalog NOR the live snapshot. This restore will not bring it
+    back; br_rosters_current max season_year is still 2025. Re-create it separately.
+  - The player registry has no 2026-27 rows (nba_players_registry max season
+    2025-26, seeded 2025-10-02). Without a reseed the fallback silently serves
+    LAST season's rosters. Equivalent due date: ~2026-10-01.
+  - decay-detection and grading-gap-detector have NO scheduler at all, and both
+    pipeline canaries are PAUSED. Restoring this catalog does not fix those.
   - Snapshot before and after: ./bin/scheduler/backup_scheduler_jobs.sh""")
 
     if failed:

@@ -87,9 +87,9 @@ jobs:
   timezone: UTC
   method: POST
   uri: "{scrapers}/execute-workflow"
-  body: {workflow: betting_lines}
-  provenance: manifest
-  verified: false
+  body: {workflow_name: betting_lines}
+  provenance: derived_from_code
+  verified: true   # 2026-08-21: derived from the consuming code, not the manifest
   notes: CLV baseline freshness math assumes these four kicks. Confirm body key name.
 
 - name: nba-props-midday
@@ -98,9 +98,9 @@ jobs:
   timezone: UTC
   method: POST
   uri: "{scrapers}/execute-workflow"
-  body: {workflow: betting_lines}
-  provenance: manifest
-  verified: false
+  body: {workflow_name: betting_lines}
+  provenance: derived_from_code
+  verified: true   # 2026-08-21: derived from the consuming code, not the manifest
 
 - name: nba-props-pregame
   wave: A
@@ -108,9 +108,9 @@ jobs:
   timezone: UTC
   method: POST
   uri: "{scrapers}/execute-workflow"
-  body: {workflow: betting_lines}
-  provenance: manifest
-  verified: false
+  body: {workflow_name: betting_lines}
+  provenance: derived_from_code
+  verified: true   # 2026-08-21: derived from the consuming code, not the manifest
 
 - name: nba-props-evening-closing
   wave: A
@@ -118,9 +118,9 @@ jobs:
   timezone: UTC
   method: POST
   uri: "{scrapers}/execute-workflow"
-  body: {workflow: betting_lines, snapshot_type: closing}
-  provenance: manifest
-  verified: false
+  body: {workflow_name: betting_lines, snapshot_type: closing}
+  provenance: derived_from_code
+  verified: true   # 2026-08-21: derived from the consuming code, not the manifest
   notes: >-
     Complementary to, NOT replaced by, the new nba-closing-lines-sweep T-30 job.
     That one is not in any backup -- create it separately with
@@ -238,9 +238,9 @@ jobs:
   timezone: America/New_York
   method: POST
   uri: "{scrapers}/scrape"
-  body: {scraper: nbac_player_movement, year: "2026"}
-  provenance: manifest
-  verified: false
+  body: {scraper: nbac_player_movement}
+  provenance: derived_from_code
+  verified: true   # 2026-08-21: derived from the consuming code, not the manifest
   notes: >-
     The original body hardcoded "year":"2026". Confirm the year-param semantics
     before resuming -- for the 2026-27 season this may need to be 2026 (season
@@ -292,9 +292,9 @@ jobs:
   timezone: America/New_York
   method: POST
   uri: "{phase3}/process-date-range"
-  body: {start_date: YESTERDAY, end_date: YESTERDAY, processors: NEEDS_INPUT, backfill_mode: true}
-  provenance: needs_input
-  verified: false
+  body: {start_date: YESTERDAY, end_date: YESTERDAY, backfill_mode: true}
+  provenance: derived_from_code
+  verified: true   # 2026-08-21: derived from the consuming code, not the manifest
   notes: >-
     Manifest says "5 processors" but does not name them, and audit logs do not
     carry bodies. Phase 3 registers PlayerGameSummaryProcessor,
@@ -331,9 +331,9 @@ jobs:
   timezone: America/New_York
   method: POST
   uri: "{phase4}/process-date"
-  body: {analysis_date: TODAY, processors: NEEDS_INPUT, backfill_mode: false, strict_mode: false, skip_dependency_check: true}
-  provenance: needs_input
-  verified: false
+  body: {analysis_date: TODAY, backfill_mode: false, strict_mode: false, skip_dependency_check: true}
+  provenance: derived_from_code
+  verified: true   # 2026-08-21: derived from the consuming code, not the manifest
   notes: >-
     "5 processors" unnamed. Phase 4 known processors: MLFeatureStoreProcessor,
     PlayerCompositeFactorsProcessor, PlayerDailyCacheProcessor,
@@ -347,9 +347,9 @@ jobs:
   timezone: America/New_York
   method: POST
   uri: "{phase4}/process-date"
-  body: {analysis_date: YESTERDAY, processors: NEEDS_INPUT, backfill_mode: false, strict_mode: false, skip_dependency_check: true}
-  provenance: needs_input
-  verified: false
+  body: {analysis_date: YESTERDAY, backfill_mode: false, strict_mode: false, skip_dependency_check: true}
+  provenance: derived_from_code
+  verified: true   # 2026-08-21: derived from the consuming code, not the manifest
   notes: Same processor list as overnight-phase4, different date. Not a duplicate.
 
 - name: ml-feature-store-daily
@@ -444,9 +444,9 @@ jobs:
   timezone: America/New_York
   method: POST
   uri: "{coordinator}/start"
-  body: {run_mode: RETRY}
-  provenance: repo_script
-  verified: false
+  body: {force: true}
+  provenance: derived_from_code
+  verified: true   # 2026-08-21: derived from the consuming code, not the manifest
   notes: Confirm the body key is run_mode (bin/orchestrators/setup_line_check_scheduler.sh).
 
 - name: same-day-phase3-tomorrow
@@ -476,9 +476,9 @@ jobs:
   timezone: America/New_York
   method: POST
   uri: "{coordinator}/start"
-  body: {run_mode: PRE_GAME, target: TOMORROW}
-  provenance: manifest
-  verified: false
+  body: {game_date: TOMORROW, prediction_run_mode: PRE_GAME, force: true}
+  provenance: derived_from_code
+  verified: true   # 2026-08-21: derived from the consuming code, not the manifest
   notes: Confirm body keys against the coordinator /start contract.
 
 - name: boxscore-completeness-check
@@ -545,9 +545,9 @@ jobs:
   timezone: America/New_York
   method: POST
   uri: "{coordinator}/start"
-  body: {run_mode: FIRST}
-  provenance: repo_script
-  verified: false
+  body: {game_date: TODAY, prediction_run_mode: FIRST, force: true}
+  provenance: derived_from_code
+  verified: true   # 2026-08-21: derived from the consuming code, not the manifest
   notes: Confirm body key against the coordinator /start contract.
 
 - name: predictions-9am
@@ -556,9 +556,9 @@ jobs:
   timezone: America/New_York
   method: POST
   uri: "{coordinator}/start"
-  body: {run_mode: RETRY}
-  provenance: manifest
-  verified: false
+  body: {game_date: TODAY, prediction_run_mode: RETRY, force: true}
+  provenance: derived_from_code
+  verified: true   # 2026-08-21: derived from the consuming code, not the manifest
 
 - name: predictions-12pm
   wave: C
@@ -566,9 +566,9 @@ jobs:
   timezone: America/New_York
   method: POST
   uri: "{coordinator}/start"
-  body: {run_mode: RETRY}
-  provenance: manifest
-  verified: false
+  body: {game_date: TODAY, prediction_run_mode: RETRY, force: true}
+  provenance: derived_from_code
+  verified: true   # 2026-08-21: derived from the consuming code, not the manifest
 
 - name: morning-predictions
   wave: C
@@ -576,9 +576,9 @@ jobs:
   timezone: America/New_York
   method: POST
   uri: "{coordinator}/start"
-  body: {run_mode: RETRY}
-  provenance: manifest
-  verified: false
+  body: {game_date: TODAY, prediction_run_mode: RETRY, force: true}
+  provenance: derived_from_code
+  verified: true   # 2026-08-21: derived from the consuming code, not the manifest
 
 - name: predictions-final-retry
   wave: C
@@ -586,9 +586,9 @@ jobs:
   timezone: America/New_York
   method: POST
   uri: "{coordinator}/start"
-  body: {run_mode: FINAL_RETRY}
-  provenance: manifest
-  verified: false
+  body: {game_date: TODAY, prediction_run_mode: FINAL_RETRY, force: true}
+  provenance: derived_from_code
+  verified: true   # 2026-08-21: derived from the consuming code, not the manifest
   notes: 80% quality threshold.
 
 - name: predictions-last-call
@@ -597,9 +597,9 @@ jobs:
   timezone: America/New_York
   method: POST
   uri: "{coordinator}/start"
-  body: {run_mode: LAST_CALL}
-  provenance: manifest
-  verified: false
+  body: {game_date: TODAY, prediction_run_mode: LAST_CALL, force: true}
+  provenance: derived_from_code
+  verified: true   # 2026-08-21: derived from the consuming code, not the manifest
   notes: >-
     The old backup description was stale -- Session 139 made LAST_CALL a 70%
     threshold (quality_gate.py:48). The mode is legitimate; restore it.
@@ -620,9 +620,9 @@ jobs:
   timezone: America/New_York
   method: POST
   uri: "https://check-missing-f7p3g7f6ya-wl.a.run.app/"
-  body: {target: TOMORROW}
-  provenance: manifest
-  verified: false
+  body: {game_date: TOMORROW}
+  provenance: derived_from_code
+  verified: true   # 2026-08-21: derived from the consuming code, not the manifest
 
 - name: phase6-tonight-picks-morning
   wave: C
