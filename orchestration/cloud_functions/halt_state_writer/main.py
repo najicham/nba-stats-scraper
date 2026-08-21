@@ -265,6 +265,29 @@ def _nba_edge_degeneracy(bq: bigquery.Client, today: date) -> Tuple[Optional[str
             return 'edge_collapse', metrics
         return None, metrics
 
+    # An ACTIVE halt outranks the dormancy gate. Same bug class as the fallback
+    # swallow above: `evaluate_halt_state` can legitimately return
+    # halt_active=True with days_sampled=0 when a halt was entered on evaluable
+    # days and then carried through a thin stretch (an All-Star break is exactly
+    # this shape). Gating on days_sampled first persisted halt_active=FALSE with
+    # edge_halt_source='computed' — a fallback-eligible "healthy" row laundering
+    # a live halt, and a three-way split where the exporter's recompute zeroed
+    # picks, weekly_retrain saw halted, and every halt_state reader saw healthy.
+    # The state machine already applies MIN_DAYS_SAMPLED internally when
+    # deciding to ENTER a halt, so this guard is only needed for the not-halted
+    # case it was written for.
+    if state['halt_active']:
+        metrics['halt_threshold'] = (
+            f'edge_median<{HALT_EDGE_MEDIAN} AND pct_e3<{HALT_PCT_EDGE_3PLUS} '
+            f'(release: median>={RELEASE_EDGE_MEDIAN:.3f} OR '
+            f'pct_e3>={RELEASE_PCT_EDGE_3PLUS:.2f} x {RELEASE_CONSECUTIVE_DAYS}d; '
+            f'auto-release after {MAX_HALT_DAYS}d)'
+        )
+        metrics['halt_started'] = (
+            state['halt_started'].isoformat() if state['halt_started'] else None
+        )
+        return 'edge_collapse', metrics
+
     # Defect (e): `days_sampled` now describes the TARGET date's window rather
     # than the last row that happened to be thick enough to evaluate, so this
     # guard can actually reject a thin target day.
@@ -281,17 +304,6 @@ def _nba_edge_degeneracy(bq: bigquery.Client, today: date) -> Tuple[Optional[str
         )
         return None, metrics
 
-    if state['halt_active']:
-        metrics['halt_threshold'] = (
-            f'edge_median<{HALT_EDGE_MEDIAN} AND pct_e3<{HALT_PCT_EDGE_3PLUS} '
-            f'(release: median>={RELEASE_EDGE_MEDIAN:.3f} OR '
-            f'pct_e3>={RELEASE_PCT_EDGE_3PLUS:.2f} x {RELEASE_CONSECUTIVE_DAYS}d; '
-            f'auto-release after {MAX_HALT_DAYS}d)'
-        )
-        metrics['halt_started'] = (
-            state['halt_started'].isoformat() if state['halt_started'] else None
-        )
-        return 'edge_collapse', metrics
     return None, metrics
 
 
@@ -975,7 +987,7 @@ def halt_state_writer(request: Request):
             summary['results'][sport] = {'error': str(e)}
 
     # Emit halt_state_age_hours metric (always 0 just after a successful
-    # write — that's the point; the alert fires when this grows >36h).
+    # write — that's the point; the absence-based alert fires after 30h).
     # Per-sport metric so the alert can distinguish NBA writer death from MLB.
     try:
         from shared.observability.metrics import emit_metric, MetricKind

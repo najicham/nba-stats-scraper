@@ -275,11 +275,21 @@ class TestFailClosed:
         output. Without the source filter, every row is <= 1 day old even when
         the last real computation was weeks ago, and FALLBACK_MAX_AGE_DAYS
         never engages."""
-        sql = eh._last_known_halt_row.__doc__ or ''
+        captured = []
+
+        class Capture:
+            def query(self, sql, job_config=None):
+                captured.append(sql)
+                return SimpleNamespace(result=lambda *a, **k: [])
+
+        eh._last_known_halt_row(Capture(), dt.date(2026, 3, 1), 'nba',
+                                'nba-props-platform', None)
+        assert len(captured) == 1
+        sql = captured[0]
+        # The filter must be in the SQL the client actually executes — not
+        # merely mentioned in a docstring or comment.
         assert 'edge_halt_source' in sql
-        import inspect
-        src = inspect.getsource(eh._last_known_halt_row)
-        assert "'halt_state_fallback', 'fail_closed', 'error'" in src
+        assert "'halt_state_fallback', 'fail_closed', 'error'" in sql
 
     def test_no_fallback_available_fails_closed(self):
         out = eh.resolve_halt_state(_FailingClient(), dt.date(2026, 3, 1))
@@ -446,3 +456,220 @@ class TestKeyParity:
         for k in ('models_7d', 'halt_source', 'lifetime_expired',
                   'days_sampled', 'halt_active', 'reason'):
             assert k in out, k
+
+
+# --- Reviewer 9 additions: property simulation + untested transitions --------
+
+
+class TestSecondEpisode:
+    """The lifetime clock across episodes. Every lifetime test above uses a
+    single halt episode, so nothing pinned that a SECOND halt gets its own
+    fresh MAX_HALT_DAYS rather than inheriting the first episode's clock —
+    the difference between a 14-day promise per episode and a guard that
+    expires instantly forever after its first firing."""
+
+    def test_second_halt_gets_a_fresh_lifetime_clock(self):
+        rel = eh.RELEASE_CONSECUTIVE_DAYS
+        s = series([DEGENERATE] * 5
+                   + [HEALTHY] * rel
+                   + [DEGENERATE] * (eh.MAX_HALT_DAYS - 1))
+        out = eh.evaluate_halt_state(s)
+        assert out['halt_active'] is True
+        assert out['lifetime_expired'] is False
+        # ...and the onset reported is the SECOND episode's first day.
+        assert out['halt_started'] == dt.date(2026, 1, 1) + dt.timedelta(days=5 + rel)
+
+    def test_second_halt_expires_on_its_own_schedule(self):
+        rel = eh.RELEASE_CONSECUTIVE_DAYS
+        s = series([DEGENERATE] * 5
+                   + [HEALTHY] * rel
+                   + [DEGENERATE] * (eh.MAX_HALT_DAYS + 1))
+        out = eh.evaluate_halt_state(s)
+        assert out['halt_active'] is False
+        assert out['lifetime_expired'] is True
+
+    def test_rearm_streak_survives_an_interleaved_thin_day(self):
+        """Parity with the release streak rule: a thin day neither credits nor
+        resets the RE-ARM streak, so healthy-thin-healthy after a spent
+        lifetime re-arms the guard and the next degenerate stretch halts."""
+        base = eh.MAX_HALT_DAYS + 2
+        s = (series([DEGENERATE] * base)
+             + [row(base, *HEALTHY)]
+             + [row(base + 1, None, None, days_sampled=0)]
+             + [row(base + 2, *HEALTHY)]
+             + [row(base + 3, *DEGENERATE), row(base + 4, *DEGENERATE)])
+        out = eh.evaluate_halt_state(s)
+        assert out['lifetime_spent'] is False
+        assert out['halt_active'] is True
+
+    def test_recovery_landing_on_the_lifetime_boundary_still_releases(self):
+        """Release streak day 2 coincides with the lifetime lapse. The lifetime
+        check runs first, so the machine labels this an expiry rather than a
+        streak release — an ordering choice, deliberately not pinned here.
+        What must hold either way: the halt lifts and nothing crashes."""
+        s = series([DEGENERATE] * (eh.MAX_HALT_DAYS - 1) + [HEALTHY] * 2)
+        out = eh.evaluate_halt_state(s)
+        assert out['halt_active'] is False
+
+
+class TestPropertySimulation:
+    """Randomized daily series against invariants that must hold for EVERY
+    series. Example-based tests pin one transition each; interaction bugs (the
+    f"{None:.3f}" crash lived at thin-days x halted) only fall out of walking
+    the whole reachable state space. Seed is FIXED — this repo's CI (and the
+    Cloud Build test gate) must be deterministic."""
+
+    SEED = 20260821
+    N_SERIES = 300
+    MAX_LEN = 45
+
+    EXPECTED_KEYS = {
+        'error', 'halt_active', 'halt_source', 'edge_med_7d', 'pct_e3_7d',
+        'models_7d', 'days_sampled', 'days_evaluated', 'halt_started',
+        'carried_forward_from', 'release_streak', 'lifetime_expired',
+        'lifetime_spent', 'reason',
+    }
+
+    @staticmethod
+    def _random_rows(rng):
+        n = rng.randint(1, TestPropertySimulation.MAX_LEN)
+        rows, day = [], 0
+        while len(rows) < n:
+            r = rng.random()
+            if r < 0.08:
+                # Long no-data gap: all-star break / pipeline outage, long
+                # enough to lap MAX_HALT_DAYS sometimes.
+                for _ in range(rng.randint(5, eh.MAX_HALT_DAYS + 6)):
+                    rows.append(row(day, None, None, days_sampled=0))
+                    day += 1
+                continue
+            if r < 0.30:      # degenerate: both strictly below the halt bar
+                e = rng.uniform(0.0, eh.HALT_EDGE_MEDIAN * 0.999)
+                p = rng.uniform(0.0, eh.HALT_PCT_EDGE_3PLUS * 0.999)
+            elif r < 0.50:    # healthy: at/above the release bar
+                e = rng.uniform(eh.RELEASE_EDGE_MEDIAN, 3.0)
+                p = rng.uniform(eh.RELEASE_PCT_EDGE_3PLUS, 25.0)
+            elif r < 0.60:    # dead band on both metrics
+                e = rng.uniform(eh.HALT_EDGE_MEDIAN, eh.RELEASE_EDGE_MEDIAN * 0.999)
+                p = rng.uniform(eh.HALT_PCT_EDGE_3PLUS, eh.RELEASE_PCT_EDGE_3PLUS * 0.999)
+            elif r < 0.70:    # one-sided: only one metric collapsed
+                if rng.random() < 0.5:
+                    e, p = rng.uniform(0.0, eh.HALT_EDGE_MEDIAN * 0.999), rng.uniform(eh.RELEASE_PCT_EDGE_3PLUS, 25.0)
+                else:
+                    e, p = rng.uniform(eh.RELEASE_EDGE_MEDIAN, 3.0), rng.uniform(0.0, eh.HALT_PCT_EDGE_3PLUS * 0.999)
+            elif r < 0.80:    # exact boundary values
+                e, p = rng.choice([
+                    (eh.HALT_EDGE_MEDIAN, eh.HALT_PCT_EDGE_3PLUS),
+                    (eh.RELEASE_EDGE_MEDIAN, 0.0),
+                    (0.0, eh.RELEASE_PCT_EDGE_3PLUS),
+                    (eh.HALT_EDGE_MEDIAN, 0.0),
+                    (0.0, eh.HALT_PCT_EDGE_3PLUS),
+                ])
+            elif r < 0.90:    # NULL metrics on a full-width window
+                e, p = None, None
+            else:             # edge present, pct NULL (code defaults pct to 0.0)
+                e, p = rng.uniform(0.0, 3.0), None
+            days_sampled = rng.choice([0, 1, 2, 3, 4, 7, 7, 7, 7])
+            models = rng.choice([None, 1.0, 2.9, 5.7])
+            rows.append(SimpleNamespace(
+                game_date=dt.date(2026, 1, 1) + dt.timedelta(days=day),
+                edge_med_7d=e, pct_e3_7d=p,
+                days_sampled=days_sampled, models_7d=models,
+            ))
+            day += 1
+        return rows
+
+    def _check_invariants(self, rows, out):
+        assert set(out) == self.EXPECTED_KEYS
+        assert out['error'] is False
+        assert out['halt_source'] == 'computed'
+        assert out['halt_active'] in (True, False)
+
+        if out['halt_active']:
+            # A live halt always knows when it started, started on a real
+            # row, and has NEVER held longer than the calendar-day promise.
+            assert out['halt_started'] is not None
+            assert out['halt_started'] in {r.game_date for r in rows}
+            held = (rows[-1].game_date - out['halt_started']).days
+            assert 0 <= held < eh.MAX_HALT_DAYS
+            assert out['lifetime_expired'] is False
+            assert out['reason']  # includes the None-metrics 'n/a' case
+        else:
+            assert out['halt_started'] is None
+            assert out['release_streak'] == 0
+            assert out['reason'] == ''
+
+        # The expiry flag is only ever raised by spending a lifetime.
+        if out['lifetime_expired']:
+            assert out['lifetime_spent'] is True
+
+        # A completed streak releases and resets, so the reported streak is
+        # always strictly below the release requirement.
+        assert 0 <= out['release_streak'] < eh.RELEASE_CONSECUTIVE_DAYS
+
+        # Independent re-derivation of what counts as an evaluable day.
+        expected_eval = sum(
+            1 for r in rows
+            if int(r.days_sampled or 0) >= eh.MIN_DAYS_SAMPLED
+            and r.edge_med_7d is not None)
+        assert out['days_evaluated'] == expected_eval
+
+        # Reporting describes the TARGET row (defect e), thin or not.
+        if rows:
+            assert out['days_sampled'] == int(rows[-1].days_sampled or 0)
+            em = rows[-1].edge_med_7d
+            assert out['edge_med_7d'] == (float(em) if em is not None else None)
+        else:
+            assert out['days_sampled'] == 0
+
+    def test_invariants_hold_for_every_random_series_at_every_prefix(self):
+        import random
+        rng = random.Random(self.SEED)
+        for _ in range(self.N_SERIES):
+            rows = self._random_rows(rng)
+            # Every prefix: the invariants must hold on every intermediate
+            # day the writer could have been invoked, not just the last.
+            for k in range(len(rows) + 1):
+                out = eh.evaluate_halt_state(rows[:k])
+                self._check_invariants(rows[:k], out)
+
+    def test_evaluation_is_deterministic_and_does_not_mutate_rows(self):
+        import copy
+        import random
+        rng = random.Random(self.SEED + 1)
+        for _ in range(20):
+            rows = self._random_rows(rng)
+            frozen = copy.deepcopy(rows)
+            first = eh.evaluate_halt_state(rows)
+            second = eh.evaluate_halt_state(rows)
+            assert first == second
+            assert [vars(r) for r in rows] == [vars(r) for r in frozen]
+
+
+class TestBigQueryClientContract:
+    """The stub clients above implement `query(sql, job_config=...)` returning
+    an object with `.result(timeout=...)`. Pin that shape against the REAL
+    google-cloud-bigquery client (installed both here and in the Cloud Build
+    test gate), so a library signature change breaks a test instead of
+    silently diverging from the stubs."""
+
+    def test_stub_shape_matches_real_client(self):
+        import inspect
+        from google.cloud import bigquery
+
+        query_params = inspect.signature(bigquery.Client.query).parameters
+        # edge_halt calls client.query(sql, job_config=...): SQL is the first
+        # positional after self, job_config passed by keyword.
+        assert list(query_params)[1] == 'query'
+        assert 'job_config' in query_params
+
+        result_params = inspect.signature(bigquery.job.QueryJob.result).parameters
+        assert 'timeout' in result_params
+
+        # The exact constructor calls edge_halt makes must build cleanly.
+        cfg = bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter('target_date', 'DATE', dt.date(2026, 3, 1)),
+            bigquery.ScalarQueryParameter('max_age', 'INT64', 3),
+            bigquery.ScalarQueryParameter('sport', 'STRING', 'nba'),
+        ])
+        assert len(cfg.query_parameters) == 3

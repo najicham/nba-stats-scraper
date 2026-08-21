@@ -23,6 +23,7 @@ Created: 2026-02-14 (Session 254)
 
 import json
 import logging
+import os
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -118,7 +119,37 @@ class SignalBestBetsExporter(BaseExporter):
             date.fromisoformat(target_date) if isinstance(target_date, str) else target_date
         )
         halt_s = self.halt_envelope(sport='nba', target_date=target_d)
-        if halt_s['halt_active']:
+
+        # Emergency kill switch. The halt path is deliberately one-way — an
+        # operator `halt_overrides` row can only ADD a halt, never resume the
+        # system — so without this the only way back from a false halt in
+        # production is pinning Cloud Run traffic to a previous revision. That
+        # is a slow, easy-to-forget action (a pinned service silently ignores
+        # later deploys), and it is the wrong tool for "the gate is wrong today".
+        #
+        # Mirrors the existing BB_ALL_GUARD_ENABLED / SBB_GUARD_ENABLED pattern:
+        # default ON, flipped without a redeploy via --update-env-vars. Setting
+        # it to false restores the pre-2026-08-21 behavior (envelope stamped,
+        # not enforced) — it does NOT disable the exporter's own same-day edge
+        # recompute below, which remains as the backstop.
+        gate_enabled = os.environ.get('HALT_GATE_ENABLED', 'true').lower() != 'false'
+        if halt_s['halt_active'] and not gate_enabled:
+            logger.error(
+                f"HALT GATE DISABLED via HALT_GATE_ENABLED=false — publishing through "
+                f"an active halt for {target_date} (reason={halt_s['halt_reason']}). "
+                f"This is an emergency override; unset it as soon as the halt is correct."
+            )
+            try:
+                from shared.observability.metrics import emit_metric
+                emit_metric(
+                    'halt_gate_overridden', 1.0,
+                    labels={'sport': 'nba',
+                            'halt_reason': str(halt_s['halt_reason'] or 'unknown')},
+                )
+            except Exception as exc:  # pragma: no cover — observability path
+                logger.warning(f"halt override metric emit failed (non-fatal): {exc}")
+
+        if halt_s['halt_active'] and gate_enabled:
             logger.warning(
                 f"HALT STATE ACTIVE for {target_date}: reason={halt_s['halt_reason']} "
                 f"since={halt_s.get('halt_since')} — publishing zero picks."

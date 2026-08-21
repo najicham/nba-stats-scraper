@@ -233,8 +233,34 @@ lower-middle bias and the ~20% duplicate-row basis documented rather than silent
 2. **`SLACK_WEBHOOK_URL_ALERTS` is unset on the deployed `halt-state-writer`**, so
    `maybe_alert_on_change` — the only notification that a halt fired or released — is a
    no-op. Set it at deploy time with `--update-env-vars` (never `--set-env-vars`).
-3. **The Step-0 halt payload omits `regime_context`**, which every previous halt file
-   carried. Run the `halt-mode-frontend-impact.md` checklist against props-web.
+3. **The Step-0 halt payload drops 14 top-level keys** relative to a normal payload, and
+   the frontend is the one consumer this repo cannot verify. Measured against the live
+   2026-03-08 file: missing `daily_pick_count`, `direction_health`, `edge_distribution`,
+   `filter_summary`, `graded_at`, `health_gate_active`, `low_conviction_day`,
+   `min_signal_count`, `model_direction_affinity`, `player_blacklist`, `regime_context`,
+   `signal_health`, `signals_evaluated`, `started_games_filtered`; `model_health` also
+   loses `graded_count` and gains a **new status enum value `'halted'`** that no
+   pre-existing consumer has seen. **Every in-repo reader was checked and is `.get()`
+   -defensive** (`post_grading_export`, `status_exporter`, the canary's
+   published-vs-store check, the freshness monitors, the reconciler). Run the
+   `halt-mode-frontend-impact.md` checklist against props-web before deploying.
+
+   Also noted while exercising the path live:
+   - **Fail-closed is time-relative.** 2026-08-19 (inside the write gap) fails CLOSED
+     today and will silently flip to fail-OPEN once it ages past 7 days. Intended —
+     historical re-exports must not be blocked — but it means a gap date re-exported next
+     month behaves differently from the same date re-exported today.
+   - **Carry-forward is symmetric.** A `halt_active=False` row carries forward too, so
+     in-season the writer must be dead **4+ days** before fail-closed engages. The
+     single-missed-write protection guards publishing as much as halting.
+   - `status_exporter` reports `status: healthy` with "0 NBA best bets available" on a
+     halted day and never surfaces `halt_reason`. Worth a look, not a blocker.
+
+   **Empirically confirmed** on 2026-08-21 against live BigQuery: the halt path returns
+   with `run_all_model_pipelines` call count **0** (the expensive scan really is skipped),
+   emits `exporter_halt_suppressed`, and `validate_content` excuses `manual` while
+   `unknown_state` falls through to the floors and trips the compare-to-last-good guard
+   against the real 16-pick blob. That pair is what makes the drawdown halt work.
 
 ## 8. Deploy order (nothing is deployed)
 

@@ -148,7 +148,7 @@ nba-stats-scraper/
 
 ### Cross-Model Monitoring
 
-10 layers prevent shadow models from silently failing. Key ones: model sanity guard (>95% same-direction blocked), disabled model filter in exporter, decay state machine (HEALTHY→WATCH→DEGRADING→BLOCKED), filter dominance warnings, registry consistency checks.
+10 layers were designed to prevent shadow models from silently failing. ⚠️ **At least three do not execute** (verified 2026-08-21): the decay state machine has no scheduler, both canaries are paused, and health-aware weighting is inert. Treat the count as an inventory, not a guarantee. Key ones: model sanity guard (>95% same-direction blocked), disabled model filter in exporter, decay state machine (HEALTHY→WATCH→DEGRADING→BLOCKED), filter dominance warnings, registry consistency checks.
 
 **Filter audit:** `SELECT * FROM best_bets_filter_audit WHERE game_date >= CURRENT_DATE() - 7`
 **Auto-disable:** BLOCKED models are auto-disabled by `decay_detection` CF (Session 389). Requires `AUTO_DISABLE_ENABLED=true` env var. Safety floor: 3+ models must remain enabled.
@@ -165,7 +165,7 @@ nba-stats-scraper/
 
 **Cloud Run Services:** prediction-coordinator, prediction-worker, nba-phase3-analytics-processors, nba-phase4-precompute-processors, nba-phase2-raw-processors, nba-scrapers, nba-grading-service
 
-**Cloud Functions (auto-deploy via `cloudbuild-functions.yaml`):** phase5b-grading, phase6-export, grading-gap-detector, phase3/4/5-to-next orchestrators, enrichment-trigger, daily-health-check, transition-monitor, pipeline-health-summary, nba-grading-alerts, live-freshness-monitor, self-heal-predictions, grading-readiness-monitor, post-grading-export, decay-detection (11 AM ET), validation-runner, filter-counterfactual-evaluator (11:30 AM ET), morning-deployment-check (6 AM ET), **weekly-retrain** (Mon 5 AM ET, 4GiB/1800s).
+**Cloud Functions (auto-deploy via `cloudbuild-functions.yaml`):** phase5b-grading, phase6-export, grading-gap-detector, phase3/4/5-to-next orchestrators, enrichment-trigger, daily-health-check, transition-monitor, pipeline-health-summary, nba-grading-alerts, live-freshness-monitor, self-heal-predictions, grading-readiness-monitor, post-grading-export, decay-detection (⚠️ NO scheduler — never fires), validation-runner (⚠️ NO scheduler, no caller), filter-counterfactual-evaluator (11:30 AM ET), morning-deployment-check (`0 11 * * *` UTC = 7 AM ET in DST), **weekly-retrain** (4GiB/1800s — ⚠️ `weekly-retrain-trigger` is DELETED, so it fires NEVER; "Mon 5 AM ET" is the intended, not live, schedule).
 
 **Correction (verified 2026-08-20 against all 36 live triggers):** `weekly-retrain`
 **DOES** auto-deploy. Trigger `deploy-weekly-retrain` watches
@@ -174,6 +174,13 @@ nba-stats-scraper/
 The previous claim here that it does not auto-deploy was wrong. Its scheduler
 `weekly-retrain-trigger` **is** still deleted (absent from all 110 jobs in
 `ops/scheduler-snapshots/`), so the function is current but fires never.
+
+⚠️ **Deployed-but-never-invoked (verified 2026-08-21 against the git scheduler snapshot):**
+`decay-detection`, `grading-gap-detector`, `validation-runner` and `grading-readiness-monitor`
+are deployed HTTP-only with no scheduler, no event trigger and no in-repo caller. The last two
+are newly identified — cost plus false confidence. Separately, `deploy-monthly-retrain` is a
+live Cloud Build trigger pointing at a directory deleted in the Task #35 cleanup, so it is
+permanently red; red noise trains people to ignore red.
 
 ⚠️ **These four have NO Cloud Build trigger — manual deploy only:**
 `halt-state-writer`, `expected-outputs-planner`, `phase-completion-reconciler`,
@@ -231,7 +238,7 @@ and compare the last two columns. Known permanent strays: `analytics-processor`,
 | `nba_raw.nba_tracking_stats` | NBA.com player tracking/usage data |
 | `nba_raw.vsin_betting_splits` | VSiN public betting percentages |
 | `league_macro_daily` | Daily league macro trends — Vegas MAE, scoring env, edge availability, BB HR |
-| `model_bb_candidates` | Per-model pipeline candidates. Schema has 45 cols but writer emits only 30 (15 silently NULL — see Task #39). Partitioned by game_date |
+| `model_bb_candidates` | Per-model pipeline candidates. Schema has 47 cols but writer emits only 30 (15 silently NULL — see Task #39). Partitioned by game_date |
 
 **Game Status:** 1=Scheduled, 2=In Progress, 3=Final
 
@@ -358,7 +365,7 @@ writer.add_record(record)  # Auto-batches
 ## Monitoring [Keyword: MONITOR]
 
 ```bash
-python bin/monitoring/deployment_drift_alerter.py   # Deployment drift (auto: every 2h)
+python bin/monitoring/deployment_drift_alerter.py   # Drift — ⚠️ job `nba-deployment-drift-alerter-trigger` is PAUSED; `deployment-drift-schedule` runs 8-20/2 PT only
 python bin/monitoring/pipeline_canary_queries.py     # Pipeline canaries (auto: every 30min)
 python bin/monitoring/analyze_healing_patterns.py    # Self-healing audit (auto: every 15min)
 python bin/monitoring/grading_gap_detector.py        # Grading gaps (auto: daily 9 AM ET)
@@ -389,7 +396,7 @@ python bin/analysis/model_correlation.py         # Inter-model agreement
 
 ## Signal System [Keyword: SIGNALS]
 
-**28 active signals + 32 shadow signals** (25 removed/disabled). **25 negative filters + 11 observation.**
+**33 active signals + 50 shadow** (14 removed). **48 active filters + 20 observation** (6 removed). Counts verified against `shared/registry/{signals,filters}.yaml` on 2026-08-21; the previous numbers (28/32/25 and 25/11) were all wrong. ⚠️ **Six signals are `active` in the registry but listed in `aggregator.SHADOW_SIGNALS`, so the executing code excludes them from `real_sc`:** `b2b_boost_over`, `book_disagree_over`, `cold_3pt_over`, `extended_rest_under`, `fast_pace_over`, `line_rising_over`. The registry contradicts the code — trust the code.
 **Full inventory:** `docs/08-projects/current/signal-discovery-framework/SIGNAL-INVENTORY.md`
 
 **Best Bets Pipeline:** `halt_state gate → edge degeneracy guard → edge 3+ (or signal rescue) → OVER edge 5+ floor → negative filters → signal_count ≥ 3 → real_sc gate → rank by edge (OVER) or signal quality (UNDER)`
@@ -465,7 +472,7 @@ High-confidence classification layer on best bets. Internal-only (stripped from 
 
 ## Per-Model Best Bets Pipelines [Keyword: PIPELINES]
 
-Per-model pipeline architecture (Session 445). Replaced winner-take-all with independent pipelines + pool-and-rank merge. Algorithm version: `v469_health_aware_weights_line_rose_block`.
+Per-model pipeline architecture (Session 445). Replaced winner-take-all with independent pipelines + pool-and-rank merge. Algorithm version: `v534_regime_oqw_contending_models` (`ml/signals/pipeline_merger.py`). ⚠️ This doc claimed `v469_...` until 2026-08-21 — 65 versions stale. Read the constant, never this line.
 
 **How it works:**
 1. Batch query ALL enabled models' predictions (1 BQ scan, no ROW_NUMBER dedup)

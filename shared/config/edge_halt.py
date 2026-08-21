@@ -20,12 +20,26 @@ guards that would catch them are thin — `EDGE_ABS_MAX = 20` in
 >95% same-direction block in `ml/signals/aggregator.py` misses a constant near
 the middle of the line distribution, the coordinator's recommendation-skew check
 only alerts, and both pipeline canaries are currently PAUSED. **Large-edge
-degeneracy is an open gap.** It is deliberately not patched here: no threshold on
-this metric is defensible for it (a frozen line feed moves edges by roughly a
-day of line movement, ~1-2 points, which is squarely inside the normal range),
-and the natural owner is the pick-volume anomaly guard that ships with the
-drawdown halt — inflated edges show up as a volume spike, which is exactly what
-2026-03-04..08 looked like.
+degeneracy was an open gap; it is now partly closable.** Measured across five
+seasons: every per-model-day with median edge >= 5.0 belongs to exactly four
+pathology episodes (a wrong-artifact model at 9.20 and 100% UNDER on its first
+serving day; three panic-era `ensemble_v1` spike days; 17 stale `catboost_v8`
+days; and `zone_matchup_v1`, chronically miscalibrated for five seasons), while
+model families that were ever well-calibrated top out at **4.52**. So level
+thresholds ARE defensible here — see the guards proposed in the 2026-08-21
+handoff (per-model median-edge cap 5.5 and a prediction-spread floor, both in
+`aggregator.py`, plus a symmetric fleet bound here at 4.5 against a five-season
+max of 3.224). Note a self-baseline change-detector does NOT work: in this
+system's history broken models were born broken or came back broken from the
+off-season — none drifted mid-stream, so there is no baseline at the moment it
+is needed.
+
+The **frozen line feed specifically** remains unresolvable at this layer, and
+that is measured, not assumed: line staleness accumulates only about **1 point
+over 2-7 days**, which is squarely inside the normal range at any aggregation.
+It belongs to feed-freshness monitoring, and to the pick-volume anomaly guard
+shipping with the drawdown halt — inflated edges surface as a volume spike,
+which is exactly what 2026-03-04..08 looked like.
 
 Note also that the basis is the median ACROSS models, so a single broken model
 among three cannot move it. This guard only ever fires on degeneracy shared
@@ -125,11 +139,38 @@ Two properties make this basis worth keeping even though the levels are still
 fleet-dependent:
 
 * **Warm-up quarantine.** A model contributes only after MIN_MODEL_HISTORY_DAYS
-  distinct prediction-days and only on days where it produced at least
-  MIN_MODEL_ROWS_PER_DAY rows. This is what removes the twenty transient
-  experiment models. Measured on 2025-26: February moves from 1.40 / 17.0%
-  (would halt) to 1.63 / 22.5% (healthy), and the first halt day moves from
-  2026-02-22 to 2026-03-04.
+  distinct prediction-days for its FAMILY, and only on days where it produced at
+  least MIN_MODEL_ROWS_PER_DAY rows.
+
+  ⚠️ **Read this before re-tightening anything.** Keyed on `system_id` the
+  quarantine did remove the transient experiment models (February 1.40 / 17.0%
+  -> 1.63 / 22.5%, first old-threshold breach moving 2026-02-22 -> 03-04). Keyed
+  on FAMILY — which it must be, see below — **45 system_ids become warm on their
+  first prediction day by inheritance, re-admitting 29 February experiment
+  model-days.** February reads 1.50 / 19.7%, and under the OLD 1.4 / 10%
+  thresholds the first breach would regress to **2026-02-25, three days earlier
+  than before the quarantine existed.**
+
+  So the quarantine is no longer what protects against the February episode —
+  **the loosened thresholds are, entirely.** That is a second, independent reason
+  never to move 0.35 / 0.30% back toward the old values: doing so reinstates the
+  false halt AND arrives at it sooner.
+
+  Family keying is still correct, because the alternative is a guard that is
+  structurally dead. `weekly_retrain` mints a new train-stamped `system_id` per
+  generation, so under the intended weekly cadence each generation lives ~7 days
+  and never clears a 7-day `system_id` quarantine: 80 of the 102 ids ever seen
+  never reached warm, the basis fell to **1.7 warm models in March 2026 and 0.3
+  in April**, and the entire currently-enabled fleet had `warm_days = 0`. Family
+  keying restores 5.7 and 2.9.
+
+  The obvious objection — that inheriting history hides a fresh line-hugging
+  generation — was measured and is false. Differencing each model-day against
+  its same-day family mates, a generation's day-1 delta is **-0.065 (median
+  0.00)**; the systematic drift runs the other way, with models aged 14+ days
+  sitting **+0.427** above their family. Stale models inflate; fresh ones do not
+  hug. Inheritance is what makes a broken fresh artifact visible on day one
+  instead of never.
 * **Median across models, not a mean over rows.** The fleet has ranged from 2.3
   to 16.8 models per player-game; a row-mean tracks fleet size directly.
 
@@ -143,12 +184,17 @@ THRESHOLD CALIBRATION
 Both thresholds were LOOSENED from the previous 1.4 / 10.0. They sit below every
 value observed on either basis in five seasons:
 
-    basis                              days   min edge_med_7d   min pct_e3_7d
-    production, warm-up applied        1663        0.871             6.72%
-    fixed procedure (wf_sim_v12noveg)   563        0.656             0.65%
+    basis                                    days   min edge_med_7d   min pct_e3_7d
+    production, family-keyed (as shipped)    1663        0.800             4.47%
+    production, system_id-keyed (historic)   1663        0.871             6.72%
+    fixed procedure (wf_sim_v12noveg)         563        0.656             0.65%
 
-0.35 clears the tighter of the two floors by 47%; 0.30% clears it by 54%. Zero
-days breach either on either basis. The fixed-procedure floor is the binding one
+The first row is the one that governs. The module's own rule — never change the
+basis without re-measuring the floors — was very nearly violated when the keying
+moved from `system_id` to family; the shipped floors are 0.800 / 4.47%, not the
+0.871 / 6.72% originally quoted. The fixed-procedure floor stays binding either
+way. 0.35 clears the tightest floor by 47%; 0.30% clears it by 54%. Zero days
+breach either bar on any of the three bases. The fixed-procedure floor is the binding one
 and it is the right one to respect: all three currently-enabled models are
 v12_noveg-family, so a future fleet may well read like `wf_sim_v12noveg`. Note
 `pct_e3_7d` dips below 1.0% on that basis in four of five seasons — which is why
