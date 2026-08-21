@@ -58,6 +58,44 @@ class SignalBestBetsExporter(BaseExporter):
     6. Export to GCS `v1/signal-best-bets/{date}.json`
     """
 
+    @staticmethod
+    def _season_label(target: date) -> str:
+        y = target.year if target.month >= 10 else target.year - 1
+        return f"{y}-{str(y + 1)[-2:]}"
+
+    def _halt_payload(
+        self,
+        target_date: str,
+        target: date,
+        halt_reason: Optional[str],
+        halt_since: Optional[str],
+        halt_metrics: Optional[Dict[str, Any]] = None,
+        record: Optional[Dict[str, Any]] = None,
+        hr_7d: Optional[float] = None,
+        regime_ctx: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Canonical zero-pick payload for a halted date.
+
+        Stable schema: readers get the same keys whether the halt came from
+        `halt_state` or from the exporter's own same-day recompute.
+        """
+        payload: Dict[str, Any] = {
+            'date': target_date,
+            'season': self._season_label(target),
+            'generated_at': self.get_generated_at(),
+            'halt_active': True,
+            'halt_reason': halt_reason,
+            'halt_since': halt_since,
+            'halt_metrics': halt_metrics or {},
+            'record': record if record is not None else self._get_best_bets_record(target_date),
+            'model_health': {'status': 'halted', 'hit_rate_7d': hr_7d},
+            'picks': [],
+            'total_picks': 0,
+        }
+        if regime_ctx is not None:
+            payload['regime_context'] = regime_ctx
+        return payload
+
     def generate_json(self, target_date: str, **kwargs) -> Dict[str, Any]:
         """Generate signal best bets JSON for a specific date.
 
@@ -65,6 +103,31 @@ class SignalBestBetsExporter(BaseExporter):
         Each model runs the full signal/filter stack independently, then a merge
         layer pools candidates and applies team cap, rescue cap, volume cap.
         """
+        # ── Step 0: halt_state gate ──
+        # 2026-08-21: until this existed, `nba_orchestration.halt_state` did NOT
+        # gate NBA picks at all. The only suppression path was the exporter's own
+        # `bb_auto_halt_active` recompute, so a `manual`, `fleet_blocked`,
+        # `off_season`, `between_rounds` or `predictions_inactive` row published
+        # a full slate of picks in a payload stamped `halt_active: true`. MLB has
+        # gated on the envelope since 2026-05; NBA never got wired to it.
+        #
+        # Checked BEFORE the per-model pipelines so a halted date also skips the
+        # expensive prediction scan. `halt_envelope` already fails CLOSED when a
+        # recent row is missing.
+        target_d = (
+            date.fromisoformat(target_date) if isinstance(target_date, str) else target_date
+        )
+        halt_s = self.halt_envelope(sport='nba', target_date=target_d)
+        if halt_s['halt_active']:
+            logger.warning(
+                f"HALT STATE ACTIVE for {target_date}: reason={halt_s['halt_reason']} "
+                f"since={halt_s.get('halt_since')} — publishing zero picks."
+            )
+            return self._halt_payload(
+                target_date, target_d, halt_s['halt_reason'], halt_s.get('halt_since'),
+                halt_metrics={'halt_source': 'halt_state'},
+            )
+
         # ── Step 1: Run all per-model pipelines (builds shared context internally) ──
         # This replaces the old steps 1-6 (model health, signal health, blacklist,
         # affinity, predictions, signals, cross-model scorer, aggregator).
@@ -107,37 +170,24 @@ class SignalBestBetsExporter(BaseExporter):
             f"edge_halt_days_sampled={regime_ctx.get('edge_halt_days_sampled')}"
         )
         if regime_ctx.get('bb_auto_halt_active', False):
+            # Same-day recompute of the edge degeneracy guard. Redundant with the
+            # Step 0 gate on a normal day (halt_state_writer runs the same check
+            # at 5 AM ET), and deliberately kept as the backstop for the day
+            # halt_state_writer fails to write.
             halt_reason = regime_ctx.get('bb_auto_halt_reason', 'Unknown')
             logger.warning(f"BEST BETS AUTO-HALT ACTIVE for {target_date}: {halt_reason}")
-            target_h = (
-                date.fromisoformat(target_date) if isinstance(target_date, str)
-                else target_date
-            )
-            season_start_year_h = target_h.year if target_h.month >= 10 else target_h.year - 1
-            season_label_h = f"{season_start_year_h}-{str(season_start_year_h + 1)[-2:]}"
-            # Augment halt envelope with halt_since from halt_state if available
-            halt_h = self.halt_envelope(sport='nba', target_date=target_h)
-            return {
-                'date': target_date,
-                'season': season_label_h,
-                'generated_at': self.get_generated_at(),
-                'halt_active': True,
-                'halt_reason': halt_reason,
-                'halt_since': halt_h.get('halt_since'),
-                'halt_metrics': {
+            return self._halt_payload(
+                target_date, target_d, halt_reason, halt_s.get('halt_since'),
+                halt_metrics={
+                    'halt_source': 'exporter_recompute',
                     'rolling_7d_avg_edge': regime_ctx.get('rolling_7d_avg_edge'),
                     'rolling_7d_pct_edge_5plus': regime_ctx.get('rolling_7d_pct_edge_5plus'),
+                    'edge_halt_models_7d': regime_ctx.get('edge_halt_models_7d'),
+                    'edge_halt_source': regime_ctx.get('edge_halt_source'),
                     'days_sampled': regime_ctx.get('edge_halt_days_sampled'),
                 },
-                'record': record,
-                'model_health': {
-                    'status': 'halted',
-                    'hit_rate_7d': hr_7d,
-                },
-                'regime_context': regime_ctx,
-                'picks': [],
-                'total_picks': 0,
-            }
+                record=record, hr_7d=hr_7d, regime_ctx=regime_ctx,
+            )
 
         # Cap player list in output to top 10 worst (avoid bloating JSON)
         blacklist_players_capped = [
@@ -161,7 +211,8 @@ class SignalBestBetsExporter(BaseExporter):
             season_label_0 = f"{season_start_year_0}-{str(season_start_year_0 + 1)[-2:]}"
             # Halt envelope — even on the no-predictions path, every JSON
             # carries halt_active/halt_reason/halt_since for stable schema.
-            halt_0 = self.halt_envelope(sport='nba', target_date=target_0)
+            # Reuses the Step 0 read; halt_active is necessarily False here.
+            halt_0 = halt_s
             return {
                 'date': target_date,
                 'season': season_label_0,
@@ -471,7 +522,8 @@ class SignalBestBetsExporter(BaseExporter):
         ]
 
         # Halt envelope — stable schema across halt + non-halt outputs.
-        halt_n = self.halt_envelope(sport='nba', target_date=target_date)
+        # Reuses the Step 0 read; halt_active is necessarily False here.
+        halt_n = halt_s
         return {
             'date': target_date,
             'season': season_label,
@@ -531,11 +583,16 @@ class SignalBestBetsExporter(BaseExporter):
         sentinel instead of an empty-shaped file (preserves the schema for
         readers but emits an explicit signal).
         """
-        # Halt mode: only canonical halt reasons legitimately produce zero picks.
-        # `manual` / `unknown_state` still go through floors.
+        # Halt mode: an active halt is THIS exporter refusing to publish, so a
+        # zero-pick payload is the intended output, not a regression. The old
+        # three-reason whitelist predates halt_state actually gating picks
+        # (2026-08-21) — under it a `manual` or `between_rounds` halt would have
+        # tripped the floors and written a status="degraded" sentinel instead of
+        # a clean halt payload. That would have broken the drawdown halt on day
+        # one, since it lands as a `manual`-class reason.
         halt_active = bool(json_data.get('halt_active'))
         halt_reason = json_data.get('halt_reason')
-        if halt_active and halt_reason in {'off_season', 'edge_collapse', 'fleet_blocked'}:
+        if halt_active:
             return None
 
         total_picks = int(json_data.get('total_picks') or 0)

@@ -11,15 +11,19 @@ Regime classification:
   - normal: 50-74% or insufficient data → no changes
   - confident: 75%+ → no changes (don't loosen)
 
-Edge-collapse auto-halt (Session 515, rewritten 2026-08-19):
-  - Trigger: 7d MEDIAN-per-player-game edge < 1.4 AND edge-3+ share < 10%
-  - Release: median >= 1.6 for 3 consecutive days (hysteresis)
+Edge degeneracy guard (rewritten 2026-08-21, was the "edge-collapse auto-halt"):
+  - Trigger: 7d median-across-models edge < 0.35 AND edge-3+ share < 0.30%
+  - Release: either condition recovers past a 10% band for 2 consecutive days,
+    or the halt hits its 14-day automatic lifetime
   - Effect: Zero picks exported (halt before merge)
-  - Thresholds and validation live in shared/config/edge_halt.py.
+  - Thresholds, basis and validation live in shared/config/edge_halt.py.
 
-  The Session 515 version halted on 865 of 865 prediction-days across all five
-  seasons and could never release. It is not tuning history worth preserving —
-  see the WHY THIS WAS REWRITTEN section in shared/config/edge_halt.py.
+  This is a pathology detector, not a market circuit breaker. The Session 515
+  version fired on 865 of 865 prediction-days; the 2026-08-19 rewrite fixed that
+  but was calibrated on a fleet-composition artifact — on a fixed model set the
+  2026 collapse does not appear at all. Read the WHY THE MARKET-BREAKER FRAMING
+  WAS RETIRED section in shared/config/edge_halt.py before touching the numbers.
+  Real collapse detection is drawdown-based and lives in halt_state.
 """
 
 import logging
@@ -29,7 +33,7 @@ from typing import Any, Dict, Optional
 from shared.config.edge_halt import (
     HALT_EDGE_MEDIAN,
     HALT_PCT_EDGE_3PLUS,
-    query_halt_state,
+    resolve_halt_state,
 )
 
 logger = logging.getLogger(__name__)
@@ -105,13 +109,15 @@ def get_regime_context(bq_client, target_date: date) -> Dict[str, Any]:
         'mae_gap_7d': None,
         'vegas_mae_7d': None,
         'num_games_on_slate': None,
-        # Edge-collapse auto-halt (see shared/config/edge_halt.py)
+        # Edge degeneracy guard (see shared/config/edge_halt.py)
         'bb_auto_halt_active': False,
         'bb_auto_halt_reason': '',
         'rolling_7d_edge_median': None,
         'rolling_7d_pct_edge_3plus': None,
         'edge_halt_days_sampled': 0,
         'edge_halt_release_streak': 0,
+        'edge_halt_models_7d': None,
+        'edge_halt_source': 'unknown',
         # Back-compat aliases for existing exporter/halt_state diagnostics.
         'rolling_7d_avg_edge': None,
         'rolling_7d_pct_edge_5plus': None,
@@ -254,35 +260,35 @@ def get_regime_context(bq_client, target_date: date) -> Dict[str, Any]:
     except Exception as e:
         logger.warning(f"Slate size query failed (non-fatal): {e}")
 
-    # Edge-collapse auto-halt. Rewritten 2026-08-19: the original fired on every
-    # day of every season and had an unreachable release condition. Logic, SQL and
-    # thresholds now live in shared/config/edge_halt.py, shared with the
-    # halt_state_writer CF so the two cannot disagree.
-    halt = query_halt_state(bq_client, target_date)
-    if halt is not None:
-        result['rolling_7d_edge_median'] = halt['edge_med_7d']
-        result['rolling_7d_pct_edge_3plus'] = halt['pct_e3_7d']
-        result['edge_halt_days_sampled'] = halt['days_sampled']
-        result['edge_halt_release_streak'] = halt['release_streak']
-        # Back-compat aliases: the exporter and halt_state JSON still publish
-        # these key names as diagnostics.
-        result['rolling_7d_avg_edge'] = halt['edge_med_7d']
-        result['rolling_7d_pct_edge_5plus'] = halt['pct_e3_7d']
+    # Edge degeneracy guard. `resolve_halt_state` never fails open: on a query
+    # error it carries forward the most recent halt_state row, and only halts
+    # outright when that is unavailable too. The previous `query_halt_state`
+    # returned a bare None on error and this block left bb_auto_halt_active at
+    # False — a transient BigQuery failure during a real halt published picks.
+    halt = resolve_halt_state(bq_client, target_date, sport='nba')
+    result['rolling_7d_edge_median'] = halt['edge_med_7d']
+    result['rolling_7d_pct_edge_3plus'] = halt['pct_e3_7d']
+    result['edge_halt_days_sampled'] = halt['days_sampled']
+    result['edge_halt_release_streak'] = halt['release_streak']
+    result['edge_halt_models_7d'] = halt['models_7d']
+    result['edge_halt_source'] = halt['halt_source']
+    # Back-compat aliases: the exporter and halt_state JSON still publish
+    # these key names as diagnostics.
+    result['rolling_7d_avg_edge'] = halt['edge_med_7d']
+    result['rolling_7d_pct_edge_5plus'] = halt['pct_e3_7d']
 
-        if halt['halt_active']:
-            result['bb_auto_halt_active'] = True
-            result['bb_auto_halt_reason'] = halt['reason']
-            logger.warning(halt['reason'])
-        else:
-            logger.info(
-                "Edge metrics 7d: median=%s, pct_e3=%s%%, days=%s "
-                "(halt threshold: median<%s AND pct_e3<%s%%)",
-                halt['edge_med_7d'], halt['pct_e3_7d'], halt['days_sampled'],
-                HALT_EDGE_MEDIAN, HALT_PCT_EDGE_3PLUS,
-            )
-    # halt is None => the query failed. Leave bb_auto_halt_active at its default
-    # False but do NOT treat that as evidence of health; the warmup guard below
-    # still applies the conservative posture when the window is thin.
+    if halt['halt_active']:
+        result['bb_auto_halt_active'] = True
+        result['bb_auto_halt_reason'] = halt['reason'] or 'edge degeneracy halt'
+        logger.warning(result['bb_auto_halt_reason'])
+    else:
+        logger.info(
+            "Edge metrics 7d: median=%s, pct_e3=%s%%, models=%s, days=%s, source=%s "
+            "(halt threshold: median<%s AND pct_e3<%s%%)",
+            halt['edge_med_7d'], halt['pct_e3_7d'], halt['models_7d'],
+            halt['days_sampled'], halt['halt_source'],
+            HALT_EDGE_MEDIAN, HALT_PCT_EDGE_3PLUS,
+        )
 
     # 2026-07-03: Season-open fail-closed guard. When trailing windows are empty
     # (edge_halt_days_sampled < 3 AND no BB picks yesterday), adopt the

@@ -46,7 +46,7 @@ import numpy as np
 import pandas as pd
 from google.cloud import bigquery, storage
 
-from shared.config.edge_halt import query_halt_state
+from shared.config.edge_halt import resolve_halt_state
 
 # Lazy imports for ML libraries (large, ~100MB each)
 cb = None
@@ -1033,8 +1033,15 @@ def weekly_retrain(request):
         season_restart = season_restart_override
         if not season_restart and not family_filter:
             try:
-                halt_state = query_halt_state(client, date.today(), project_id=PROJECT_ID)
-                edge_collapsed = bool(halt_state and halt_state['halt_active'])
+                # resolve_halt_state never returns "unknown": it falls back to
+                # the most recent halt_state row and, failing that, halts. Reading
+                # it as a plain bool is therefore safe here — unlike the old
+                # `query_halt_state(...) or None` shape, where a query failure
+                # silently meant "not collapsed".
+                halt_state = resolve_halt_state(
+                    client, date.today(), sport='nba', project_id=PROJECT_ID
+                )
+                edge_collapsed = bool(halt_state['halt_active'])
                 blocked_q = f"""
                 SELECT
                   COUNTIF(status NOT IN ('blocked','disabled','deprecated')) AS active_count,

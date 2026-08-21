@@ -29,7 +29,7 @@ edge. It is stopping the leaks around one that already exists.**
 
 ---
 
-## STATUS — updated 2026-08-20
+## STATUS — updated 2026-08-21
 
 Owner decisions 1, 2, 3 and 5 are made. §2.1 auto-halt, §2.3 worker filters and
 §2.4 deploy gate are **DONE** and now **PUSHED AND DEPLOYED** (2026-08-20).
@@ -37,7 +37,7 @@ Owner decisions 1, 2, 3 and 5 are made. §2.1 auto-halt, §2.3 worker filters an
 
 | § | Item | Status |
 |---|---|---|
-| 2.1 | Auto-halt recalibration | **DONE** — median variant + hysteresis, `shared/config/edge_halt.py` |
+| 2.1 | Auto-halt recalibration | **SUPERSEDED 2026-08-21 — see `docs/09-handoff/2026-08-21-SESSION-4-AUTO-HALT-REBUILD.md`.** The median variant was calibrated on a fleet-composition artifact: on a fixed model set February 2026 does not collapse, on a fixed procedure (`wf_sim_v12noveg`, 5 seasons) no season collapses, and Vegas MAE shows no market compression in Feb-Apr 2026. The halt is now a **degeneracy guard** (0.35 / 0.30%, warm-up quarantine, symmetric release, 14-day bounded lifetime, fail-closed). Real collapse detection moves to drawdown (decision 4). `halt_state` now actually gates NBA picks — it never did. |
 | 2.2 | Health multipliers never apply | **MEASURED 2026-08-20** — confirmed inert: **0 of 3,855** `signal_health_daily` rows exist on their own game_date (min lag 1d), so the read returns empty every time and `_health_multiplier` always returns 1.0. Fork still undecided — the lag-1 predictiveness test is the remaining work |
 | 2.3 | Panic-era worker filters | **DONE** — 3 deleted, `star_under_bias_suspect` moved to observation |
 | 2.4 | Deploy test gate + build timeout | **DONE** — gate is step 0 of all four NBA build configs |

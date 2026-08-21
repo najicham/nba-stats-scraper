@@ -17,7 +17,12 @@ Halt reasons (canonical strings stored in halt_state.halt_reason):
 
     'off_season'           — outside the sport's regular-season + playoffs window
     'between_rounds'       — in-window but no future games in next 14d
-    'edge_collapse'        — Session 515 edge-based auto-halt (NBA only)
+    'edge_collapse'        — edge degeneracy guard (NBA only). Despite the name
+                             this is a pathology detector (predictions stopped
+                             disagreeing with the line at all), NOT a market
+                             circuit breaker — see shared/config/edge_halt.py.
+    'edge_state_unknown'   — edge state could not be determined and no recent
+                             halt_state row existed to carry forward. Fail-closed.
     'fleet_blocked'        — all enabled models in BLOCKED state per decay_detection
     'predictions_inactive' — predictions silent 3+ days while games scheduled
     'pick_drought'         — MLB: predictions flowing but 2+ days of zero picks
@@ -46,10 +51,12 @@ from google.cloud import bigquery
 from shared.config.edge_halt import (
     HALT_EDGE_MEDIAN,
     HALT_PCT_EDGE_3PLUS,
+    MAX_HALT_DAYS,
     MIN_DAYS_SAMPLED,
     RELEASE_CONSECUTIVE_DAYS,
     RELEASE_EDGE_MEDIAN,
-    query_halt_state,
+    RELEASE_PCT_EDGE_3PLUS,
+    resolve_halt_state,
 )
 
 
@@ -207,8 +214,8 @@ def _has_recent_games(bq: bigquery.Client, today: date, sport: str) -> Tuple[boo
         return True, 0, True
 
 
-def _nba_edge_collapse(bq: bigquery.Client, today: date) -> Optional[Dict[str, Any]]:
-    """Edge-collapse auto-halt, shared with regime_context via shared/config.
+def _nba_edge_degeneracy(bq: bigquery.Client, today: date) -> Tuple[Optional[str], Dict[str, Any]]:
+    """Edge degeneracy guard, shared with regime_context via shared/config.
 
     This used to inline its own copy of the halt query "so this CF doesn't import
     the full ml/signals stack". The copy drifted into being a second place the
@@ -217,33 +224,50 @@ def _nba_edge_collapse(bq: bigquery.Client, today: date) -> Optional[Dict[str, A
     is a leaf module with no ml/signals dependency and is already copied into the
     CF bundle alongside the rest of shared/.
 
-    Returns dict with halt context if collapse detected, else None.
+    Returns (halt_reason_or_None, metrics). The reason is 'edge_collapse' when
+    the guard fires, 'edge_state_unknown' when the state could not be resolved
+    at all, and None when the guard is clear or the window is too thin to judge.
     """
-    state = query_halt_state(bq, today, project_id=PROJECT_ID, timeout=60)
-    if state is None:
-        return None
+    state = resolve_halt_state(bq, today, sport='nba', project_id=PROJECT_ID, timeout=60)
 
-    metrics = {
+    metrics: Dict[str, Any] = {
         'rolling_7d_edge_median': state['edge_med_7d'],
         'rolling_7d_pct_edge_3plus': state['pct_e3_7d'],
         'edge_halt_days_sampled': state['days_sampled'],
         'edge_halt_release_streak': state['release_streak'],
+        'edge_halt_models_7d': state['models_7d'],
+        'edge_halt_source': state['halt_source'],
+        'edge_halt_lifetime_expired': state['lifetime_expired'],
         # Back-compat: readers of halt_metrics still look for these names.
         'rolling_7d_avg_edge': state['edge_med_7d'],
         'rolling_7d_pct_edge_5plus': state['pct_e3_7d'],
     }
+
+    if state['halt_source'] == 'fail_closed':
+        # Could not compute AND no recent halt_state row to carry forward.
+        # Halting is the documented safe direction; `halt_state_stale` alerting
+        # is what surfaces the underlying breakage.
+        metrics['edge_halt_error'] = state.get('error_detail')
+        return 'edge_state_unknown', metrics
+
+    # Defect (e): `days_sampled` now describes the TARGET date's window rather
+    # than the last row that happened to be thick enough to evaluate, so this
+    # guard can actually reject a thin target day.
     if state['days_sampled'] < MIN_DAYS_SAMPLED:
-        return None
+        return None, metrics
+
     if state['halt_active']:
         metrics['halt_threshold'] = (
             f'edge_median<{HALT_EDGE_MEDIAN} AND pct_e3<{HALT_PCT_EDGE_3PLUS} '
-            f'(release: >={RELEASE_EDGE_MEDIAN} x {RELEASE_CONSECUTIVE_DAYS}d)'
+            f'(release: median>={RELEASE_EDGE_MEDIAN:.3f} OR '
+            f'pct_e3>={RELEASE_PCT_EDGE_3PLUS:.2f} x {RELEASE_CONSECUTIVE_DAYS}d; '
+            f'auto-release after {MAX_HALT_DAYS}d)'
         )
         metrics['halt_started'] = (
             state['halt_started'].isoformat() if state['halt_started'] else None
         )
-        return metrics
-    return None
+        return 'edge_collapse', metrics
+    return None, metrics
 
 
 def _predictions_inactive(bq: bigquery.Client, sport: str, today: date) -> Optional[Dict[str, Any]]:
@@ -635,11 +659,11 @@ def evaluate_halt_state(
     #    directly. Adding an MLB edge-collapse check requires N>=30 calibration
     #    data we don't have yet.
     if not halt_active and sport == 'nba':
-        edge_metrics = _nba_edge_collapse(bq, today)
-        if edge_metrics is not None:
+        edge_reason, edge_metrics = _nba_edge_degeneracy(bq, today)
+        halt_metrics.update(edge_metrics)
+        if edge_reason is not None:
             halt_active = True
-            halt_reason = 'edge_collapse'
-            halt_metrics.update(edge_metrics)
+            halt_reason = edge_reason
 
     # 3. Fleet blocked — now sport-aware. Skip when the entire production fleet
     #    is mid-swap (fresh model with no MPD rows yet); otherwise the stale
