@@ -137,8 +137,10 @@ class TestThinData:
         assert out['days_evaluated'] == 0
 
     def test_thin_days_do_not_advance_release_streak(self):
+        # Days stay inside MAX_HALT_DAYS so this measures the streak rule, not
+        # the lifetime cap (which now ages through thin days too).
         s = (series([DEGENERATE] * 5)
-             + [row(20 + i, *HEALTHY, days_sampled=1) for i in range(5)])
+             + [row(5 + i, *HEALTHY, days_sampled=1) for i in range(5)])
         assert eh.evaluate_halt_state(s)['halt_active']
 
     def test_null_median_skipped(self):
@@ -310,3 +312,110 @@ class TestLifetimeLatch:
         out = eh.evaluate_halt_state(s)
         assert out['halt_active'] is True
         assert out['lifetime_spent'] is False
+
+
+# --- Reviewer 3 additions: state-machine edge cases -------------------------
+
+MID_BAND = ((eh.HALT_EDGE_MEDIAN + eh.RELEASE_EDGE_MEDIAN) / 2,
+            (eh.HALT_PCT_EDGE_3PLUS + eh.RELEASE_PCT_EDGE_3PLUS) / 2)
+
+
+class TestLatchEdgeCases:
+    def test_dead_band_does_not_rearm_a_spent_latch(self):
+        """Dead-band days are neither release nor halt: the latch must stay set
+        through them, so a stretch that hovers between the bands after a spent
+        lifetime cannot silently re-halt."""
+        s = series([DEGENERATE] * (eh.MAX_HALT_DAYS + 2)
+                   + [MID_BAND] * 5
+                   + [DEGENERATE] * 5)
+        out = eh.evaluate_halt_state(s)
+        assert out['halt_active'] is False
+        assert out['lifetime_spent'] is True
+
+    def test_single_release_day_does_not_rearm_a_spent_latch(self):
+        """Re-arm requires the same streak a normal release does. With a single
+        day, a degenerate stretch oscillating around the band re-arms on one
+        noisy day and starts a fresh MAX_HALT_DAYS halt, repeatedly — spending
+        far more than the advertised two weeks."""
+        s = series([DEGENERATE] * (eh.MAX_HALT_DAYS + 2)
+                   + [HEALTHY]
+                   + [DEGENERATE] * 2)
+        out = eh.evaluate_halt_state(s)
+        assert out['halt_active'] is False
+        assert out['lifetime_spent'] is True
+
+    def test_sustained_recovery_rearms_the_latch(self):
+        s = series([DEGENERATE] * (eh.MAX_HALT_DAYS + 2)
+                   + [HEALTHY] * eh.RELEASE_CONSECUTIVE_DAYS
+                   + [DEGENERATE] * 2)
+        out = eh.evaluate_halt_state(s)
+        assert out['halt_active'] is True
+        assert out['lifetime_spent'] is False
+
+    def test_normal_streak_release_leaves_latch_unset(self):
+        """A halt that releases via the 2-day streak never touched the latch,
+        so the guard can fire again on the next episode."""
+        s = series([DEGENERATE] * 5
+                   + [HEALTHY] * eh.RELEASE_CONSECUTIVE_DAYS
+                   + [DEGENERATE] * 3)
+        out = eh.evaluate_halt_state(s)
+        assert out['halt_active'] is True
+        assert out['lifetime_spent'] is False
+
+    def test_lifetime_expired_clears_on_a_sustained_recovery(self):
+        """halt_state_writer exports this as `edge_halt_lifetime_expired`. If it
+        stayed True until the next halt began, alerting on it would fire
+        indefinitely on a months-old event."""
+        s = series([DEGENERATE] * (eh.MAX_HALT_DAYS + 2) + [HEALTHY] * 10)
+        out = eh.evaluate_halt_state(s)
+        assert out['lifetime_spent'] is False
+        assert out['lifetime_expired'] is False
+
+
+class TestThinInteractions:
+    def test_halted_with_null_target_metrics_does_not_crash(self):
+        """A halt carried into a thin stretch: the target row has NULL 7d
+        metrics (7+ dataless days). The reason string must not blow up
+        formatting None — a crash here bypasses the fail-closed chain because
+        evaluate_halt_state runs OUTSIDE query_halt_state's try/except."""
+        s = series([DEGENERATE] * 5) + [row(5, None, None, days_sampled=0)]
+        out = eh.evaluate_halt_state(s)
+        assert out['halt_active'] is True
+        assert out['edge_med_7d'] is None
+        assert out['days_sampled'] == 0
+
+    def test_release_streak_survives_an_interleaved_thin_day(self):
+        """'2 consecutive EVALUABLE days': a thin day neither credits nor
+        resets the streak, so healthy-thin-healthy releases."""
+        s = (series([DEGENERATE] * 5)
+             + [row(5, *HEALTHY)]
+             + [row(6, None, None, days_sampled=0)]
+             + [row(7, *HEALTHY)])
+        assert eh.evaluate_halt_state(s)['halt_active'] is False
+
+    def test_lifetime_expiry_fires_during_a_no_data_stretch(self):
+        """The lifetime is a calendar-day promise. A halt that lapses during an
+        all-star break or a pipeline gap must not stay live until games AND
+        data both come back."""
+        s = (series([DEGENERATE] * 5)
+             + [row(5 + i, None, None, days_sampled=0)
+                for i in range(eh.MAX_HALT_DAYS + 5)])
+        out = eh.evaluate_halt_state(s)
+        assert out['halt_active'] is False
+        assert out['lifetime_expired'] is True
+
+
+class TestKeyParity:
+    def test_error_state_carries_every_success_key(self):
+        """halt_state_writer hard-indexes models_7d / halt_source /
+        lifetime_expired; every branch must expose them."""
+        ok = eh.evaluate_halt_state(series([HEALTHY] * 5))
+        err = eh._error_state('x')
+        assert set(ok) - set(err) == set()
+        assert set(err) - set(ok) == {'error_detail'}  # only via .get()
+
+    def test_fail_closed_state_carries_writer_keys(self):
+        out = eh.resolve_halt_state(_FailingClient(), dt.date(2026, 3, 1))
+        for k in ('models_7d', 'halt_source', 'lifetime_expired',
+                  'days_sampled', 'halt_active', 'reason'):
+            assert k in out, k

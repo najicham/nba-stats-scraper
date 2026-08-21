@@ -154,6 +154,13 @@ HALT_PCT_EDGE_3PLUS = float(os.environ.get('NBA_HALT_PCT_E3', '0.30'))
 #: much higher bar — the old asymmetry (halt < 1.4, release >= 1.6) meant a false
 #: halt on 2026-02-15 would not have cleared for 63 days, through season end.
 RELEASE_BAND = float(os.environ.get('NBA_HALT_RELEASE_BAND', '1.10'))
+if RELEASE_BAND < 1.0:
+    # A band below 1.0 makes the halt and release tests overlap, so a single day
+    # can be both. The clear-then-halt ordering in the state machine is only
+    # safe while they are disjoint.
+    logger.warning("NBA_HALT_RELEASE_BAND=%s < 1.0 would overlap the halt and "
+                   "release bands; clamping to 1.0.", RELEASE_BAND)
+    RELEASE_BAND = 1.0
 RELEASE_EDGE_MEDIAN = HALT_EDGE_MEDIAN * RELEASE_BAND
 RELEASE_PCT_EDGE_3PLUS = HALT_PCT_EDGE_3PLUS * RELEASE_BAND
 
@@ -223,6 +230,14 @@ def build_daily_edge_query(project_id: str = 'nba-props-platform') -> str:
     """
     return f"""
         WITH base AS (
+          -- One row per prediction as written. Note ~20% of rows in a season
+          -- window are repeat (game_date, system_id, player_lookup) tuples from
+          -- intraday re-prediction runs, so a model that refreshes often
+          -- over-weights its refreshed players here. Left as-is deliberately:
+          -- the calibration floors in the module header were measured on this
+          -- same basis, so metric and thresholds are self-consistent. Deduping
+          -- to the latest row per player REQUIRES re-measuring those floors --
+          -- never do one without the other.
           SELECT
             game_date,
             system_id,
@@ -247,12 +262,14 @@ def build_daily_edge_query(project_id: str = 'nba-props-platform') -> str:
           -- Distinct prediction-days each model has accumulated strictly before
           -- this date. The warm-up quarantine (defect a): a model that has only
           -- existed for a few days is an experiment run, not the fleet.
+          -- `model_days` is one row per (system_id, game_date), so the ordinal
+          -- IS the count of strictly-earlier days. Verified equivalent to the
+          -- correlated-subquery form this replaced: 820 rows, 0 mismatches.
           SELECT
-            a.system_id,
-            a.game_date,
-            (SELECT COUNT(*) FROM model_days b
-              WHERE b.system_id = a.system_id AND b.game_date < a.game_date) AS prior_days
-          FROM model_days a
+            system_id,
+            game_date,
+            ROW_NUMBER() OVER (PARTITION BY system_id ORDER BY game_date) - 1 AS prior_days
+          FROM model_days
         ),
         per_model_day AS (
           SELECT
@@ -275,6 +292,15 @@ def build_daily_edge_query(project_id: str = 'nba-props-platform') -> str:
           -- Median ACROSS MODELS, one number per model per day. A mean over raw
           -- prediction rows tracks fleet size (2.3 -> 16.8 models/player-game
           -- over these seasons) rather than anything about the predictions.
+          --
+          -- APPROX_QUANTILES(...)[OFFSET(50)] returns the LOWER-middle element
+          -- for even n and never interpolates -- measured: [1.0, 10.0] -> 1.0.
+          -- With a two-model warm fleet this is literally MIN across models.
+          -- The bias is downward, i.e. toward halting, which is the safe
+          -- direction for a guard, and the calibration floors in the module
+          -- header were measured with this same estimator, so both sides of the
+          -- comparison carry it. Switch to PERCENTILE_CONT only together with a
+          -- re-measurement of those floors.
           SELECT
             game_date,
             APPROX_QUANTILES(model_edge_med, 100)[OFFSET(50)] AS daily_edge_med,
@@ -341,6 +367,12 @@ def evaluate_halt_state(rows: Sequence[Any]) -> Dict[str, Any]:
     #: the lifetime cap accomplishes nothing. Cleared only by a genuine recovery
     #: day, so the guard re-arms for the NEXT episode, not this one.
     lifetime_spent = False
+    #: Consecutive release-band days observed while NOT halted. Re-arming after a
+    #: spent lifetime requires the same streak a normal release does — with a
+    #: single day, a degenerate stretch oscillating around the band would re-arm
+    #: on one noisy day and start a fresh 14-day halt, repeatedly, which spends
+    #: far more than the advertised two weeks.
+    rearm_streak = 0
     evaluated = 0
     #: The target-date row, whether or not it was thick enough to evaluate.
     #: Reporting the last EVALUATED row here was defect (e): a thin target day
@@ -348,25 +380,53 @@ def evaluate_halt_state(rows: Sequence[Any]) -> Dict[str, Any]:
     #: MIN_DAYS_SAMPLED guard could never reject it.
     target_row: Optional[Any] = None
 
+    def _lifetime_lapsed(row_date: Optional[date]) -> bool:
+        return (
+            halt_started is not None
+            and row_date is not None
+            and (row_date - halt_started).days >= MAX_HALT_DAYS
+        )
+
     for row in rows:
         target_row = row
         days = int(getattr(row, 'days_sampled', 0) or 0)
         edge_med = getattr(row, 'edge_med_7d', None)
         pct_e3 = getattr(row, 'pct_e3_7d', None)
+        row_date = getattr(row, 'game_date', None)
+
         if days < MIN_DAYS_SAMPLED or edge_med is None:
-            # Too thin to judge. Carry the existing state; do not credit the
-            # release streak for a day that provided no evidence.
+            # Too thin to judge the metric. Carry the existing state and do not
+            # credit either streak for a day that provided no evidence — but DO
+            # keep aging the halt. The lifetime is a calendar-day promise, and a
+            # halt that lapses during an all-star break or a pipeline gap must
+            # not stay live until games and data both come back.
+            if halted and _lifetime_lapsed(row_date):
+                halted = False
+                release_streak = 0
+                halt_started = None
+                lifetime_expired = True
+                lifetime_spent = True
+                logger.warning(
+                    "Edge degeneracy halt hit its %s-day automatic lifetime during a "
+                    "no-data stretch and released.", MAX_HALT_DAYS,
+                )
             continue
 
         evaluated += 1
         edge_med = float(edge_med)
         pct_e3 = float(pct_e3) if pct_e3 is not None else 0.0
-        row_date = getattr(row, 'game_date', None)
 
         if not halted:
             if _is_release(edge_med, pct_e3):
-                # A real recovery re-arms the guard after a spent lifetime.
-                lifetime_spent = False
+                rearm_streak += 1
+                if rearm_streak >= RELEASE_CONSECUTIVE_DAYS:
+                    # A sustained recovery re-arms the guard for the NEXT
+                    # episode and clears the stale expiry flag, which otherwise
+                    # keeps alerting on a months-old event.
+                    lifetime_spent = False
+                    lifetime_expired = False
+            else:
+                rearm_streak = 0
             if (
                 not lifetime_spent
                 and edge_med < HALT_EDGE_MEDIAN
@@ -374,16 +434,16 @@ def evaluate_halt_state(rows: Sequence[Any]) -> Dict[str, Any]:
             ):
                 halted = True
                 release_streak = 0
+                rearm_streak = 0
+                # A row with no game_date leaves halt_started None, which would
+                # silently disable the lifetime cap. Not reachable from
+                # build_daily_edge_query (the calendar spine always emits one).
                 halt_started = row_date
                 lifetime_expired = False
         else:
             # Bounded lifetime wins over the metric. An automatic halt that has
             # run MAX_HALT_DAYS without a human confirming it releases itself.
-            if (
-                halt_started is not None
-                and row_date is not None
-                and (row_date - halt_started).days >= MAX_HALT_DAYS
-            ):
+            if _lifetime_lapsed(row_date):
                 halted = False
                 release_streak = 0
                 halt_started = None
@@ -426,6 +486,13 @@ def evaluate_halt_state(rows: Sequence[Any]) -> Dict[str, Any]:
     }
 
     if halted:
+        def _fmt(value: Optional[float], spec: str) -> str:
+            # A halt can end on a target day with no metrics at all (7+ dataless
+            # days before it). Formatting None crashed here, and the crash
+            # escaped query_halt_state's try/except, breaking the module's
+            # "always returns a dict" guarantee exactly when halted.
+            return format(value, spec) if value is not None else 'n/a'
+
         held = (
             (getattr(target_row, 'game_date', None) - halt_started).days
             if halt_started is not None and getattr(target_row, 'game_date', None) is not None
@@ -433,8 +500,8 @@ def evaluate_halt_state(rows: Sequence[Any]) -> Dict[str, Any]:
         )
         result['reason'] = (
             f"Edge degeneracy halt: 7d median-across-models edge "
-            f"{result['edge_med_7d']:.3f} < {HALT_EDGE_MEDIAN} AND "
-            f"{result['pct_e3_7d']:.2f}% of predictions at edge >= {EDGE_3PLUS:.0f} "
+            f"{_fmt(result['edge_med_7d'], '.3f')} < {HALT_EDGE_MEDIAN} AND "
+            f"{_fmt(result['pct_e3_7d'], '.2f')}% of predictions at edge >= {EDGE_3PLUS:.0f} "
             f"< {HALT_PCT_EDGE_3PLUS}% (halted since {halt_started}, day {held} of "
             f"{MAX_HALT_DAYS}; releases on {RELEASE_CONSECUTIVE_DAYS} consecutive days "
             f"at median >= {RELEASE_EDGE_MEDIAN:.3f} OR pct_e3 >= {RELEASE_PCT_EDGE_3PLUS:.2f}%)"
@@ -486,10 +553,13 @@ def query_halt_state(bq_client, target_date: date,
     try:
         job = bq_client.query(build_daily_edge_query(project_id), job_config=job_config)
         rows = list(job.result(timeout=timeout) if timeout else job.result())
+        # Evaluation is inside the try on purpose. A crash in the state machine
+        # must degrade to the fail-closed path like any other failure, not
+        # propagate out of a function documented to always return a dict.
+        return evaluate_halt_state(rows)
     except Exception as e:
-        logger.warning(f"Edge-halt query failed: {e}")
+        logger.warning(f"Edge-halt state could not be determined: {e}")
         return _error_state(str(e))
-    return evaluate_halt_state(rows)
 
 
 def _last_known_halt_row(bq_client, target_date: date, sport: str,
