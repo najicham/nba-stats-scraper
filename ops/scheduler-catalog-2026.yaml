@@ -476,7 +476,7 @@ jobs:
   timezone: America/New_York
   method: POST
   uri: "{coordinator}/start"
-  body: {game_date: TOMORROW, prediction_run_mode: PRE_GAME, force: true}
+  body: {game_date: TOMORROW, prediction_run_mode: PRE_GAME}
   provenance: derived_from_code
   verified: true   # 2026-08-21: derived from the consuming code, not the manifest
   notes: Confirm body keys against the coordinator /start contract.
@@ -545,7 +545,7 @@ jobs:
   timezone: America/New_York
   method: POST
   uri: "{coordinator}/start"
-  body: {game_date: TODAY, prediction_run_mode: FIRST, force: true}
+  body: {game_date: TODAY, prediction_run_mode: FIRST}
   provenance: derived_from_code
   verified: true   # 2026-08-21: derived from the consuming code, not the manifest
   notes: Confirm body key against the coordinator /start contract.
@@ -556,7 +556,7 @@ jobs:
   timezone: America/New_York
   method: POST
   uri: "{coordinator}/start"
-  body: {game_date: TODAY, prediction_run_mode: RETRY, force: true}
+  body: {game_date: TODAY, prediction_run_mode: RETRY}
   provenance: derived_from_code
   verified: true   # 2026-08-21: derived from the consuming code, not the manifest
 
@@ -566,7 +566,7 @@ jobs:
   timezone: America/New_York
   method: POST
   uri: "{coordinator}/start"
-  body: {game_date: TODAY, prediction_run_mode: RETRY, force: true}
+  body: {game_date: TODAY, prediction_run_mode: RETRY}
   provenance: derived_from_code
   verified: true   # 2026-08-21: derived from the consuming code, not the manifest
 
@@ -576,7 +576,7 @@ jobs:
   timezone: America/New_York
   method: POST
   uri: "{coordinator}/start"
-  body: {game_date: TODAY, prediction_run_mode: RETRY, force: true}
+  body: {game_date: TODAY, prediction_run_mode: RETRY}
   provenance: derived_from_code
   verified: true   # 2026-08-21: derived from the consuming code, not the manifest
 
@@ -586,7 +586,7 @@ jobs:
   timezone: America/New_York
   method: POST
   uri: "{coordinator}/start"
-  body: {game_date: TODAY, prediction_run_mode: FINAL_RETRY, force: true}
+  body: {game_date: TODAY, prediction_run_mode: FINAL_RETRY}
   provenance: derived_from_code
   verified: true   # 2026-08-21: derived from the consuming code, not the manifest
   notes: 80% quality threshold.
@@ -597,7 +597,7 @@ jobs:
   timezone: America/New_York
   method: POST
   uri: "{coordinator}/start"
-  body: {game_date: TODAY, prediction_run_mode: LAST_CALL, force: true}
+  body: {game_date: TODAY, prediction_run_mode: LAST_CALL}
   provenance: derived_from_code
   verified: true   # 2026-08-21: derived from the consuming code, not the manifest
   notes: >-

@@ -177,7 +177,7 @@ server-side seconds later. Always-red builds train you to ignore red. Raise the 
 | 1 | **Auto-halt variant + thresholds** | Without it the season publishes nothing |
 | 2 | **Where you actually bet** | Sets break-even at 53.5% (one book) / 52.4% (four majors) / 51.5% (ten). Gates model governance, signal promotion, filter demotion, decay alerts. `DEFAULT_BREAKEVEN_HR` is currently 52.4 pending this |
 | 3 | **REB/AST backfill go/no-go** | ~37,000 calls, ~14h across both markets. Validated and ready |
-| 4 | **Drawdown tolerance** | Flat 1u is near-optimal and ruin risk is negligible, but a 46.7% month costs ~6-7u |
+| 4 | ~~**Drawdown tolerance**~~ | **DECIDED 2026-08-21: halt at a fixed unit drawdown from peak.** Mechanical, not judgement — the March 2026 alternative was ten algorithm versions shipped during the drawdown. Implement as a `manual`-class reason in `nba_orchestration.halt_state` so it flows through the existing `halt_envelope()` path rather than becoming a second, parallel halt. **Open: the exact unit threshold.** For scale, March 2026 (46.7% HR) cost ~6-7u, so a −8u trigger would not have fired until the month was essentially over; −5u is the more protective end. Requires the §2 halt work first, since `halt_state` does not currently gate picks on its own. |
 | 5 | **Backend deploy gate** | Test gate only, or full branch protection? |
 
 ---
