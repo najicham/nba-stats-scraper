@@ -29,20 +29,27 @@ A full ~36-trigger fan-out from the session-5 push was already draining when thi
 started, at only 2 concurrent builds. It completed. Verified on the **traffic-bearing**
 revision with `./bin/verify-deploy.sh`:
 
-| Service | State |
-|---|---|
-| `weekly-retrain` | **OK** `3522c49` rev `-00049-luf` — the governance-gate change has landed; Wave C precondition met |
-| `nba-scrapers` | **OK** `3522c49` rev `-00378-hvh` — carries the `PlayerLinker` season fix |
-| `prediction-coordinator` | OK `3522c49` |
-| `decay-detection` | OK `3522c49` |
-| `mlb-prediction-worker` | OK `3522c49` |
-| `nba-grading-alerts` | was stale at `2b19078`; rebuild triggered, **re-verify** |
+All six quota casualties are resolved, and the session ended with **twelve services
+verified at HEAD `682fb8c2`** by `BUILD_COMMIT` on the traffic-bearing revision:
 
-⚠️ `halt-state-writer`, `phase6-export` and `post-grading-export` are all behind on
-**`9f665f90`** (the "decorator on the wrong function / fleet-wide block / disarmed bound"
-commit, which touched `shared/`). These are *not* the false-STALE the previous handoff
-warned about — the delta is real code. `halt-state-writer` has no build trigger, so use
-`./bin/deploy-function.sh halt-state-writer`.
+```
+OK  halt-state-writer            OK  nba-scrapers
+OK  phase6-export                OK  prediction-coordinator
+OK  post-grading-export          OK  decay-detection
+OK  live-export                  OK  nba-grading-alerts
+OK  weekly-retrain               OK  mlb-prediction-worker
+OK  prediction-worker            OK  nba-phase2-raw-processors
+```
+
+Two things beyond the six:
+
+- `halt-state-writer` was behind on `9f665f90` and has **no build trigger**. Deployed with
+  `./bin/deploy-function.sh halt-state-writer` (rev `-00011-bik`). The other three
+  trigger-less CFs — `expected-outputs-planner`, `phase-completion-reconciler`,
+  `gap-detector` — were not touched this session and are unchanged.
+- A push whose only changes are under `tests/` triggers **nothing**, because no trigger
+  watches that path. A fix committed there does not deploy the services it unblocks;
+  they have to be triggered by hand.
 
 ---
 
@@ -264,7 +271,16 @@ Three things worth knowing:
    residual inflation is priced into the calibration. **Do not "fix" that query** without
    re-measuring the thresholds.
 
-7. **`validation/configs/raw/br_rosters.yaml` targets `nba_raw.br_season_rosters`**, a
+7. **A Cloud Monitoring alert policy cannot reference a metric that has never been
+   emitted.** `gcloud alpha monitoring policies create` fails with "Cannot find metric(s)
+   that match type ...", and `emit_metric` only creates the descriptor on first write — so
+   a guard that emits *only* on a rare event can never have its alert created in advance.
+   Bootstrapped by POSTing the descriptor to
+   `monitoring.googleapis.com/v3/projects/nba-props-platform/metricDescriptors` first.
+   **Any future alert on a rare-event metric needs the same two-step.** This is a plausible
+   reason other "documented" alerts in this repo were never actually created.
+
+8. **`validation/configs/raw/br_rosters.yaml` targets `nba_raw.br_season_rosters`**, a
    table name that does not match the real `br_rosters_current`. Likely another silent
    no-op in the validation layer. Not investigated.
 
@@ -279,15 +295,16 @@ Three things worth knowing:
 | Scheduler jobs | **169 → 170.** ENABLED unchanged at 74. Every restored job still PAUSED |
 | Catalog | 60 entries (59 restored + `br-rosters-batch-daily`, which was never in the purge) |
 | Today's `halt_state` | NBA `off_season`, `halt_active=true` |
+| `model-sanity-fleet-wide-trip` alert | **CREATED, enabled**, channel attached (policy `7557628960555333168`) |
+| `model_sanity_fleet_wide_trip` metric | descriptor created explicitly — see §4.7 |
 
 ---
 
 ## 6. Ordered plan to 2026-11-15 (revised)
 
 **Now → Aug 29**
-1. Re-verify `nba-grading-alerts`; deploy `halt-state-writer` with
-   `./bin/deploy-function.sh` (no trigger) and confirm `phase6-export` /
-   `post-grading-export` land `9f665f90`.
+1. ~~Redeploy the quota casualties and the trigger-less `halt-state-writer`.~~ **DONE** —
+   twelve services verified at HEAD; see §1.
 2. Decide `missing-prediction-check` — its CF source directory was deleted from the repo,
    so it works today but cannot be redeployed or fixed. **Unchanged from session 5.**
 3. Create `nba-closing-lines-sweep` paused via `bin/deploy/deploy_closing_lines_scheduler.sh`.
@@ -325,6 +342,11 @@ season convention moved again.
 - **A refactor for testability is still a refactor.** Extracting a block above `main`
   moved a decorator onto the wrong function — the exact bug this repo fixed nine commits
   earlier.
+- **The deploy gate runs `tests/unit/signals` on a deliberately thin dependency set.** A
+  test placed there must import like a Cloud Function, not like a dev shell: one that
+  imported `SignalBestBetsExporter` (which pulls `google.cloud.storage`) turned three
+  service builds red. It also caught the problem before anything shipped, which is the
+  gate working — but a test asserting on source text should read the file, not import it.
 - **A mock that mocks nothing looks exactly like a mock.** `mock.patch.dict('sys.modules')`
   with no arguments snapshots and restores the module table and patches nothing. The tests
   passed, and executed the real `emit_metric` — harmless here only because
