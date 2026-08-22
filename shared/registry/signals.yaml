@@ -102,7 +102,8 @@ signals:
     status: active
     weight: 1.0
     direction: over
-    description: Fast-pace matchup — 81.5% HR historical
+    promotion_gate: "DATA CUTOVER 2026-08-22: all tag history before this date is VOID — the signal read feature_18 (pct_paint, 0-1) as opponent pace, so it was gating on 'are >=75% of shots in the paint', not on pace. Session 387 refitted the threshold (102 -> 0.75) to the wrong column rather than questioning the alias. Alias and threshold now corrected. NOTE: code has this tag in aggregator.SHADOW_SIGNALS (sub-breakeven 4/4 prior seasons, N=622), so status:active here is registry drift — the code is authoritative. Re-earn with N>=30 at HR>=58% live 2026-27 before removing from SHADOW_SIGNALS."
+    description: Fast-pace matchup (102+ possessions/game) — 81.5% HR historical
 
   - tag: hot_3pt_under
     status: active
@@ -504,7 +505,8 @@ signals:
   - tag: slow_pace_under
     status: shadow
     direction: under
-    description: Slow Pace Under signal (auto-generated stub — verify)
+    promotion_gate: "N>=30 at HR>=58% live 2026-27. DATA CUTOVER 2026-08-22: all tag history before this date is VOID — the signal read feature_18 (pct_paint, 0-1) as opponent pace, so the `opp_pace > 99.0` disqualifier could never fire and it tagged EVERY UNDER at a pinned 0.90 confidence. Its recorded 56.6% was the all-UNDER base rate, not a signal. Count N from the 2026-27 opener only."
+    description: Slow pace UNDER — opponent pace <= 99 possessions/game, fewer possessions favors UNDER
 
   - tag: star_favorite_under
     status: shadow

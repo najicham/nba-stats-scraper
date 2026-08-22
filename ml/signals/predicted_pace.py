@@ -3,7 +3,7 @@
 Session 401: Upgrades the existing fast_pace_over signal with TeamRankings
 predicted pace data for tonight's specific matchup instead of trailing averages.
 
-Our existing opponent_pace (feature 18) is a trailing average. TeamRankings
+Our existing opponent_pace (feature 14) is a trailing average. TeamRankings
 provides schedule-strength-weighted predicted pace per team. Combining both
 teams' pace gives a predicted game pace that's more accurate for tonight.
 

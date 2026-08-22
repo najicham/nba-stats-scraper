@@ -399,7 +399,7 @@ def _query_all_model_predictions(
         feature_37_value AS star_teammates_out,
         feature_52_value AS prop_under_streak,
         feature_42_value AS implied_team_total,
-        feature_18_value AS opponent_pace,
+        feature_14_value AS opponent_pace,
         feature_3_value AS points_std_last_10,
         feature_0_value AS points_avg_last_5,
         feature_1_value AS points_avg_last_10,
@@ -411,7 +411,7 @@ def _query_all_model_predictions(
         feature_48_value AS usage_rate_l5,
         feature_57_value AS blowout_risk,
         feature_41_value AS spread_magnitude,
-        feature_53_value AS prop_over_streak,
+        feature_51_value AS prop_over_streak,
         feature_55_value AS over_rate_last_10,
         feature_4_value AS games_in_last_7_days
       FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2`
