@@ -244,14 +244,53 @@ Found and fixed on the way (all pushed):
    machine. The Cloud Run job injects the var, so this only bites the local path, which is now
    the chosen path. Without it the run queries the wrong project and reports `blocked`.
 
+4. **`unresolved_player_names` was never written.** `df868509`. The date converter was an
+   *optional* parameter — `normalizer.py:579` passed it, `registry_ops.py:144` did not — so
+   raw `date` objects hit `load_table_from_json`, which failed, was logged, and was swallowed.
+   `_json_safe()` now runs unconditionally.
+5. **`--test-mode` wrote two tables straight to production.** `3fe0cfe8`, and the one with
+   real cost: **this rehearsal put 62 rows into the live
+   `nba_reference.unresolved_player_names`.** The base class computes all four table names
+   test-aware; `roster_registry_processor.py:130` then passed `self.table_name` (correct)
+   alongside hardcoded `"nba_reference.player_aliases"` and
+   `"nba_reference.unresolved_player_names"`. Three of four isolated.
+
+   Read the failure mode carefully, because it is the transferable part: the scratch table
+   stayed empty and *nothing errored*. That reads as "the write silently did nothing", not
+   "the write went somewhere else" — and it masked defect 4's fix, which had been working the
+   whole time. Run 4 inserted into production; run 5 found those rows via `existing_map` and
+   issued UPDATEs, so the scratch table read 0 twice, identically, with no error either time.
+   **A test mode that isolates most tables is more dangerous than none, because it gets
+   trusted.** Two sessions trusted this one.
+
+   Deliberate asymmetry retained and now pinned by a test:
+   `GamebookPrecedenceValidator` still reads production `processor_run_history` under test
+   mode. It only reads, the precedence check is meaningless against an empty table, and the
+   test-suffixed table is never created — pointing it at `self.run_history_table` would trip
+   its fail-closed path and block every rehearsal. **Rule: reads may cross into production,
+   writes may not.**
+
 Still open from the rehearsal:
 
-- **`unresolved_player_names` never gets written.** `registry_ops.py:299`
-  `load_table_from_json` is handed dicts containing `datetime.date` objects →
-  "Object of type date is not JSON serializable". Logged as ERROR, swallowed, does not affect
-  status. The table finished the run with 0 rows while the normalizer had reported 62
-  unresolved player-team combinations. Same code path in production, so the unresolved-player
-  signal is presumed lost there too. **Not fixed.**
+- **⚠️ 62 rows of test data sit in production `nba_reference.unresolved_player_names`.**
+  Written 2026-08-22 15:05:31, `source='espn'`, `season='2025-26'`,
+  `notes='Found in espn_rosters but not in NBA.com canonical set'`. It is a review queue, not
+  a pipeline input, so the harm is low — but they are spurious `pending` rows. **Not deleted;
+  needs a human call.** Do not confuse them with the 49 `source='player_game_summary'` rows
+  created the same day by a different processor, or the 17 older `espn` rows.
+- **The seed path's test coverage is a facade.** The 16 red tests in
+  `tests/processors/reference/player_reference/` are not broken code — they exercise
+  `_get_espn_roster_players_strict`, `_get_nba_official_players_strict` and
+  `_get_basketball_reference_players_strict`, **none of which exist in any production file**.
+  `45953cb6` ("Extract roster registry source handlers and operations", 2026-01-25) moved that
+  logic into `sources/*.py` with a new API and never updated the tests. **209 days red.**
+
+  So the three source handlers — the actual Oct 1-6 data path — have had zero executing
+  coverage for seven months, including `test_fallback_within_7_days`, the exact NBA.com window
+  Phase D depends on. Together with the `source_dates_used` fixture (which passed by repairing
+  the object under test), that is how six defects survived on a path that looks tested.
+  **Rewriting those three handlers' fallback-window tests against the real API is the
+  highest-value coverage work left before October.**
 - **29 teams, not 30**, and 522 rows against a 676-player source union. Largely an artifact of
   rehearsing a point-in-time process against `_current` snapshot tables: at 2025-10-20 only
   ESPN returned data (584 players, falling back to 2025-10-18). NBA.com had exactly one scrape
