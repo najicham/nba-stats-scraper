@@ -223,7 +223,23 @@ Three things worth knowing:
    `test_phase5_to_phase6_handler.py`). Confirmed pre-existing by stashing — not caused by
    this session. Untriaged.
 
-6. **`validation/configs/raw/br_rosters.yaml` targets `nba_raw.br_season_rosters`**, a
+6. **The "16 picks exceeded the 15/day merger cap" claim was wrong**, and it was in
+   `drawdown_halt.py`'s docstring where it would have sent someone hunting a cap bug.
+   `pipeline_merger` and `MAX_MERGED_PICKS_PER_DAY` did not exist until `bfac51f2` on
+   2026-03-08 itself; the March 4-8 picks carry `algorithm_version` v429 / v438 / v440,
+   the pre-merger path, and 03-08 alone spans three versions between 12:03 and 21:01 UTC.
+   Panic-deploy churn, not a breached cap. Corrected in place.
+
+   While checking it: the volume guard counts `DISTINCT (player_lookup, recommendation,
+   line_value)` from a table whose DELETE is scoped to refreshed players, so several
+   export runs a day accumulate rows and line movement between runs *could* double-count
+   a pick. Measured — **0 of 203 player-days in 2026 carry more than one `line_value`**,
+   and no day's distinct-triple count differs from its distinct (player, direction) count.
+   The basis is clean, and replay and the live guard call the same function, so any
+   residual inflation is priced into the calibration. **Do not "fix" that query** without
+   re-measuring the thresholds.
+
+7. **`validation/configs/raw/br_rosters.yaml` targets `nba_raw.br_season_rosters`**, a
    table name that does not match the real `br_rosters_current`. Likely another silent
    no-op in the validation layer. Not investigated.
 
@@ -257,6 +273,7 @@ Three things worth knowing:
 5. Export-time volume cap in `pipeline_merger` — still the only thing that can catch a
    volume spike on day one instead of the morning after.
 6. Triage the 27 `tests/cloud_functions` failures (§4.5).
+7. Decide on the eight remaining archived Dockerfiles (§4.2).
 
 **Oct 1-6 — the seed** (hard gate). Unchanged from session 5 §5 steps 7-9.
 

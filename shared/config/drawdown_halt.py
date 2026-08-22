@@ -55,8 +55,29 @@ false-positive rates are an UPPER bound; and the healthy production baseline
 THE VOLUME GUARD IS THE HALF THAT PAYS
 --------------------------------------
 Published picks per day ran a season median of 2, then 2026-03-04..08 produced
-**9, 13, 1, 10, 16** — the highest volume of the season, and 16 exceeds even the
-15/day merger cap. Replayed at 5 AM cadence the volume guard fires on one
+**9, 13, 1, 10, 16** — the highest volume of the season.
+
+⚠️ Corrected 2026-08-21: an earlier draft read "and 16 exceeds even the 15/day
+merger cap", which implies the cap leaked. It did not. `pipeline_merger` and
+`MAX_MERGED_PICKS_PER_DAY = 15` did not exist until `bfac51f2` on 2026-03-08
+itself; those picks carry `algorithm_version` v429 / v438 / v440, i.e. the
+pre-merger winner-take-all path, and 03-08 alone spans THREE versions between
+12:03 and 21:01 UTC — panic-deploy churn, not a breached cap. Do not go hunting
+for a cap bug on the strength of that sentence.
+
+Two properties of the basis, measured rather than assumed, because a volume
+guard is only as good as its count. `build_daily_volume_query` counts
+`DISTINCT (player_lookup, recommendation, line_value)` in
+`signal_best_bets_picks`, a table whose DELETE is scoped to refreshed players,
+so several export runs in one day accumulate rows. That could inflate the count
+if line movement between runs made the same pick look like two. Over all of
+2026, **0 of 203 player-days carry more than one line_value**, and no day's
+distinct-triple count differs from its distinct (player, direction) count. The
+basis is clean, and — the property that actually matters — the replay and the
+live guard call the same function, so any residual inflation is priced into the
+calibration. Changing this query means re-measuring the thresholds.
+
+Replayed at 5 AM cadence the volume guard fires on one
 non-March day and on 03-05 and 03-08, netting about +8u for the season against a
 single false-positive episode in 58 pick-days.
 
