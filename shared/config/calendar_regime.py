@@ -40,6 +40,28 @@ class SeasonCalendar:
 
 # Historical calendar data per season
 SEASON_CALENDARS = {
+    2026: SeasonCalendar(
+        # 2026-27. Break dates are AUTHORITATIVE — derived from the only 7-day
+        # gap in `nba_raw.nbac_schedule` between 2027-01-20 and 2027-03-05:
+        # the last game before the break is 2027-02-18 and play resumes
+        # 2027-02-25.
+        #
+        # ⚠️ `trade_deadline` is DERIVED, not confirmed: the NBA deadline is the
+        # Thursday ~8 days before All-Star Friday, which puts it at 2027-02-11.
+        # Confirm against the league announcement when it lands; being a few
+        # days out only shifts the toxic window, it does not break anything.
+        #
+        # toxic_start/toxic_end are deliberately left to the defaults
+        # (deadline - 7, games_resume + 6). The 2024 and 2025 entries override
+        # them with empirically validated windows; there is no 2026-27 evidence
+        # yet and inventing one would be exactly the single-episode calibration
+        # this project keeps paying for.
+        season_year=2026,
+        trade_deadline=date(2027, 2, 11),
+        asb_start=date(2027, 2, 19),
+        asb_end=date(2027, 2, 21),
+        games_resume=date(2027, 2, 25),
+    ),
     2025: SeasonCalendar(
         season_year=2025,
         trade_deadline=date(2026, 2, 6),

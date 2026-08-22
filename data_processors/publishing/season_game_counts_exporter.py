@@ -37,16 +37,34 @@ class SeasonGameCountsExporter(BaseExporter):
     }
     """
 
-    def generate_json(self, season_start: str = "2025-10-01") -> Dict[str, Any]:
+    def generate_json(self, season_start: Optional[str] = None) -> Dict[str, Any]:
         """
         Generate full season game counts.
 
         Args:
-            season_start: Season start date for filtering (default: 2025-10-01)
+            season_start: Season start date for filtering. Defaults to Oct 1 of
+                the CURRENT season.
+
+                Both this and the `season` label below used to be hardcoded to
+                2025-26. Its scheduler (`phase6-season-game-counts`) runs daily
+                at 6 AM ET, so from 2026-10-20 it would have published a
+                two-season blended calendar labelled with the finished season.
 
         Returns:
             Dictionary with season metadata and game counts
         """
+
+        from shared.utils.season_utils import get_current_season_year
+        season_year = get_current_season_year()
+        if season_start is None:
+            season_start = f"{season_year}-10-01"
+        else:
+            # An explicit override must also drive the label, or a backfill of
+            # last season publishes under this season's name.
+            season_year = int(season_start[:4]) if int(season_start[5:7]) >= 10 \
+                else int(season_start[:4]) - 1
+        season_label = f"{season_year}-{str(season_year + 1)[-2:]}"
+
         # Query all game dates and counts for the season
         query = """
         SELECT
@@ -84,19 +102,20 @@ class SeasonGameCountsExporter(BaseExporter):
                 break
 
         return {
-            'season': '2025-26',
+            'season': season_label,
             'updated_at': datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),
             'last_game_date': last_game_date,
             'next_game_date': next_game_date,
             'dates': dates
         }
 
-    def export(self, season_start: str = "2025-10-01") -> str:
+    def export(self, season_start: Optional[str] = None) -> str:
         """
         Generate and upload season game counts.
 
         Args:
-            season_start: Season start date for filtering
+            season_start: Season start date for filtering. Defaults to Oct 1
+                of the current season.
 
         Returns:
             GCS path of exported file

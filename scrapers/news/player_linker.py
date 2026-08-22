@@ -16,6 +16,13 @@ from fuzzywuzzy import fuzz
 
 logger = logging.getLogger(__name__)
 
+def _current_season_label(reference_date=None) -> str:
+    """Season label for today, e.g. '2026-27'. Oct 1 boundary."""
+    from shared.utils.season_utils import get_current_season_year
+    y = get_current_season_year(reference_date)
+    return f"{y}-{str(y + 1)[-2:]}"
+
+
 
 @dataclass
 class LinkedPlayer:
@@ -54,16 +61,23 @@ class PlayerLinker:
         linked = linker.link_player("LeBron James", team_context="LAL")
     """
 
-    def __init__(self, sport: str = 'nba', season: str = '2025-26'):
+    def __init__(self, sport: str = 'nba', season: Optional[str] = None):
         """
         Initialize player linker.
 
         Args:
             sport: 'nba' or 'mlb'
-            season: Current season for registry queries
+            season: Season label for registry lookups, e.g. '2026-27'. Defaults
+                to the CURRENT season, derived from today's date.
+
+                This used to default to the literal '2025-26'. Every registry
+                lookup filters on it, and the scheduler runs this every 15
+                minutes, so from 2026-10-20 onward every news-to-player link
+                would have resolved against last season's rosters — traded
+                players on the wrong team, rookies invisible.
         """
         self.sport = sport
-        self.season = season
+        self.season = season or _current_season_label()
         self._registry = None
         self._cache: Dict[str, LinkedPlayer] = {}
 
@@ -294,7 +308,7 @@ def test_linker():
     """Test the player linker."""
     logging.basicConfig(level=logging.INFO)
 
-    linker = PlayerLinker(sport='nba', season='2025-26')
+    linker = PlayerLinker(sport='nba')
 
     test_names = [
         ("LeBron James", "LAL"),

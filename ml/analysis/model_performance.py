@@ -29,6 +29,17 @@ ALERT_THRESHOLD = 55.0
 BLOCK_THRESHOLD = DEFAULT_BREAKEVEN_HR  # break-even; see shared/config/breakeven.py
 
 # Fallback active models — used only if discovery query fails
+# ⚠️ These four models no longer exist in the fleet. They are kept ONLY as the
+# last-resort answer when the discovery QUERY ITSELF fails (an infrastructure
+# problem), never as the answer to "the window is empty".
+#
+# That distinction matters at season open. `discover_active_models` looks back
+# 30 days in `prediction_accuracy`, which is empty every day from the opener
+# until roughly mid-November. Returning these IDs there meant every consumer —
+# model_performance_daily, the decay state machine, health reporting — spent the
+# season's highest-risk weeks reporting confidently on four models that were not
+# running. Blind monitoring that looks healthy is worse than monitoring that
+# says "I cannot see anything yet".
 _FALLBACK_ACTIVE_MODELS = [
     'catboost_v9',
     'catboost_v12',
@@ -86,8 +97,17 @@ def discover_active_models(bq_client: bigquery.Client,
         return _FALLBACK_ACTIVE_MODELS, dict(_FALLBACK_TRAINING_END_DATES)
 
     if not model_ids:
-        logger.warning(f"No models found in prediction_accuracy near {ref_date}, using fallback")
-        return _FALLBACK_ACTIVE_MODELS, dict(_FALLBACK_TRAINING_END_DATES)
+        # An empty window is a FACT, not an error: at season open there are
+        # simply no graded predictions yet. Say so and return nothing, rather
+        # than fabricating a fleet that stopped existing in February 2026.
+        logger.warning(
+            "No graded models in prediction_accuracy within 30 days of %s. "
+            "Returning an EMPTY fleet — downstream model-health and decay "
+            "reporting will correctly show nothing rather than reporting on "
+            "phantom models. This is expected from the opener until roughly "
+            "mid-November.", ref_date,
+        )
+        return [], {}
 
     logger.info(f"Discovered {len(model_ids)} runtime models from prediction_accuracy: {sorted(model_ids)}")
 
@@ -162,6 +182,15 @@ def compute_for_date(bq_client: bigquery.Client, target_date: date,
     """
     if active_models is None or training_end_dates is None:
         active_models, training_end_dates = discover_active_models(bq_client, target_date)
+
+    if not active_models:
+        # Empty fleet (season open, or a genuine gap). Skip the scan entirely
+        # and write nothing — `IN UNNEST([])` would return zero rows anyway, but
+        # being explicit keeps "we saw nothing" distinguishable from "we looked
+        # and everything was fine" in the logs.
+        logger.info("No active models for %s — writing no model_performance rows.",
+                    target_date)
+        return []
 
     # Query rolling metrics for all models on this date
     query = """
