@@ -88,6 +88,19 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
         # Set processor type for source tracking
         self.processor_type = 'roster'
 
+        # Provenance of the three roster sources for this run. MUST exist before
+        # get_current_roster_data(), which calls .update() on it unconditionally
+        # (see :183). gamebook_registry_processor initializes its own copy; this
+        # one never did, so every real run died with AttributeError before
+        # writing a single row — a THIRD independent blocker on the roster
+        # registry, found 2026-08-22 by running the seed rehearsal rather than
+        # reading the code.
+        #
+        # The test suite could not catch it: tests/processors/reference/
+        # player_reference/test_roster_registry.py injects `proc.source_dates_used
+        # = {}` in its fixture, creating the attribute production never made.
+        self.source_dates_used = {}
+
         # Initialize source handlers
         self.espn_handler = ESPNSourceHandler(self.bq_client, self.project_id)
         self.nba_handler = NBASourceHandler(self.bq_client, self.project_id)
