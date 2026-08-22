@@ -18,6 +18,24 @@ docs/
 # crashes on their dangling links (see .pre-commit-hooks/validate_cloud_function_symlinks.py).
 .claude/
 
+# CREDENTIALS — never upload these into a build context.
+# `keys/` is gitignored, which is NOT the same as gcloudignored: `gcloud builds
+# submit` uploads the working tree, not the git index. It holds a real service
+# account key AND `service-account-dev.json`, a symlink to the owner's live
+# ~/.config/gcloud/application_default_credentials.json.
+#
+# This was latent until 2026-08-21: root-level `gcloud builds submit` had been
+# CRASHING during file enumeration since May on a dangling symlink, so no upload
+# ever completed. Repairing that (a5992db7) un-masked the exposure, and the
+# twelve scraper-backfill Cloud Run jobs have no Cloud Build trigger, so a root
+# submit is exactly the path their rebuild instructions call for.
+keys/
+service-account*.json
+*-service-account.json
+application_default_credentials.json
+*.pem
+*.p12
+
 # Ignore Python artifacts
 __pycache__/
 *.py[cod]
