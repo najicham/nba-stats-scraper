@@ -75,8 +75,18 @@ def build_command(job, defaults, services):
     common.append(f'--description={desc}')
 
     if job.get('target_type') == 'pubsub':
+        # Fully qualify the topic. A bare topic name is resolved against the
+        # LOCAL gcloud default project, which on this machine has variously been
+        # jett-prod, dmhr-platform and urcwest — and Cloud Scheduler then refuses
+        # the create with "topic projects/<wrong>/topics/... must have
+        # nba-props-platform as project id". Two jobs failed exactly this way on
+        # 2026-08-22. --project on the command does NOT fix it; the topic path
+        # itself has to carry the project.
+        topic = job['topic']
+        if not topic.startswith('projects/'):
+            topic = f'projects/{PROJECT}/topics/{topic}'
         cmd = ['gcloud', 'scheduler', 'jobs', 'create', 'pubsub', name,
-               f"--topic={job['topic']}",
+               f'--topic={topic}',
                f"--message-body={json.dumps(job['body'], separators=(',', ':'))}"]
         return cmd + common
 
