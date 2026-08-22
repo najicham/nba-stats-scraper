@@ -401,7 +401,6 @@ def reconcile_batch(bq: bigquery.Client, gcs: storage.Client, batch_size: int) -
 # ---------------------------------------------------------------------------
 
 
-@functions_framework.http
 def _emit_halt_state_age(bq: bigquery.Client) -> Optional[float]:
     """Emit how stale `nba_orchestration.halt_state` is, per sport.
 
@@ -460,6 +459,7 @@ def _emit_halt_state_age(bq: bigquery.Client) -> Optional[float]:
     return worst
 
 
+@functions_framework.http
 def phase_completion_reconciler(request: Request):
     """Reconcile a batch of EXPECTED rows.
 

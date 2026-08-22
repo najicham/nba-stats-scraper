@@ -105,8 +105,15 @@ WIN_UNITS = float(os.environ.get('NBA_DD_WIN_UNITS', '0.909'))
 
 # --- Drawdown tiers ----------------------------------------------------------
 
-#: Soft halt. 65% above the observed healthy production maximum (3.64) and at or
-#: above every healthy proxy season (5.1-7.6) except one 6.37 touch.
+#: Soft halt. 65% above the observed healthy PRODUCTION maximum (3.64u).
+#:
+#: ⚠️ It sits BELOW the healthy-season maxima on the walk-forward proxy —
+#: independent replays put those at 6.55-8.37u depending on the pick rule — so
+#: **expect 1-2 soft halts in a healthy season**. That is an accepted cost, not
+#: a miscalibration: a soft halt is 3 days with a peak reset, i.e. cheap
+#: insurance. An earlier version of this comment claimed 6.0 was "at or above
+#: every healthy proxy season"; that was wrong, and the error mattered because
+#: it made the threshold look safer than it is.
 DD_SOFT_THRESHOLD = float(os.environ.get('NBA_DD_SOFT', '6.0'))
 
 #: Hard halt. Outside every healthy observation on every basis.
@@ -121,10 +128,20 @@ DD_SOFT_COOLDOWN_DAYS = int(os.environ.get('NBA_DD_SOFT_COOLDOWN', '3'))
 #: season's thesis is in question, not just a bad week.
 DD_HARD_COOLDOWN_DAYS = int(os.environ.get('NBA_DD_HARD_COOLDOWN', '7'))
 
-#: Absolute lifetime. A drawdown halt FREEZES the curve — no picks, no results,
-#: so the metric can never recover on its own. Without this the guard is the
-#: permanent trap the edge-halt rewrite exists to remove. Permanence requires an
-#: operator `halt_overrides` row.
+#: Absolute lifetime — a DEFENSIVE BACKSTOP that should never fire.
+#:
+#: A drawdown halt freezes the curve (no picks, no results), so the metric can
+#: never recover on its own; without a bounded release this guard would be the
+#: permanent trap the edge-halt rewrite exists to remove. But the release here
+#: is the COOLDOWN plus a peak reset, which is unconditional and always shorter
+#: than this cap — so in the current design this constant is unreachable, and
+#: `test_cooldown_release_always_beats_the_lifetime_cap` pins that.
+#:
+#: It is kept deliberately: if anyone ever makes the cooldown conditional (on a
+#: retrain, on an operator ack, on recovered hit rate — all reasonable ideas),
+#: this is what stops that change from reintroducing a permanent zero-pick trap.
+#: The ordering in `evaluate_drawdown` checks the cooldown FIRST so a halt that
+#: released normally is never mislabelled as having outlived its lifetime.
 DD_MAX_HALT_DAYS = int(os.environ.get('NBA_DD_MAX_HALT_DAYS', '21'))
 
 #: Escalate for operator review after this many soft halts in one season.
@@ -223,6 +240,10 @@ def build_daily_pnl_query(project_id: str = 'nba-props-platform') -> str:
           AND pa.has_prop_line = TRUE
           AND pa.recommendation IN ('OVER', 'UNDER')
           AND pa.prediction_correct IS NOT NULL
+          -- The picks side filters is_voided; filter it here too, or a voided
+          -- row carrying a non-null prediction_correct enters the unit curve.
+          -- (Measured 2026-08-22: no change on 2025-26 — 175 graded either way.)
+          AND IFNULL(pa.is_voided, FALSE) = FALSE
         GROUP BY p.game_date
         ORDER BY p.game_date
     """
@@ -282,7 +303,19 @@ def evaluate_drawdown(rows: Sequence[Any], target_date: date) -> Dict[str, Any]:
 
         if halted:
             elapsed = (day - halt_started).days if halt_started else 0
-            if elapsed >= DD_MAX_HALT_DAYS:
+            # Cooldown FIRST. Rows are pick-days, not calendar days, so the next
+            # row after a halt can land weeks later (all-star break, sparse late
+            # season, a grading outage). Checking the lifetime first meant such a
+            # halt — which had in fact released quietly on its 3-day cooldown —
+            # got reported as `lifetime_expired` forever, logging "an operator
+            # must write a halt_overrides row" about an episode that ended weeks
+            # earlier. Decisions were unaffected; the audit trail lied, which is
+            # how a spurious permanent manual halt gets created.
+            if elapsed >= _cooldown_for(tier):
+                halted, tier, halt_started = False, None, None
+                # Reset the baseline, or the frozen curve re-halts immediately.
+                peak = cum
+            elif elapsed >= DD_MAX_HALT_DAYS:
                 halted, tier, halt_started = False, None, None
                 lifetime_expired = True
                 peak = cum
@@ -291,10 +324,6 @@ def evaluate_drawdown(rows: Sequence[Any], target_date: date) -> Dict[str, Any]:
                     "drawdown is real, an operator must write a halt_overrides row.",
                     DD_MAX_HALT_DAYS,
                 )
-            elif elapsed >= _cooldown_for(tier):
-                halted, tier, halt_started = False, None, None
-                # Reset the baseline, or the frozen curve re-halts immediately.
-                peak = cum
             else:
                 # Halted: these results would not have existed. Skip them.
                 continue
@@ -316,11 +345,13 @@ def evaluate_drawdown(rows: Sequence[Any], target_date: date) -> Dict[str, Any]:
     # last graded day (a halt stops picks, so grading stops too).
     if halted and halt_started is not None:
         elapsed = (target_date - halt_started).days
-        if elapsed >= DD_MAX_HALT_DAYS:
-            halted, tier, lifetime_expired = False, None, True
-            peak = cum
-        elif elapsed >= _cooldown_for(tier):
+        # Same ordering as the in-loop path: cooldown first, lifetime only for a
+        # halt that genuinely outlived it.
+        if elapsed >= _cooldown_for(tier):
             halted, tier = False, None
+            peak = cum
+        elif elapsed >= DD_MAX_HALT_DAYS:
+            halted, tier, lifetime_expired = False, None, True
             peak = cum
 
     result: Dict[str, Any] = {

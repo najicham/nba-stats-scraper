@@ -96,12 +96,26 @@ class TestDrawdownRelease:
         target = day(20) + dt.timedelta(days=dd.DD_SOFT_COOLDOWN_DAYS)
         assert dd.evaluate_drawdown(rows, target)['halt_active'] is True
 
-    def test_absolute_lifetime_releases_even_a_hard_halt(self):
+    def test_cooldown_release_always_beats_the_lifetime_cap(self):
+        """The cooldown is unconditional and shorter than DD_MAX_HALT_DAYS, so
+        the lifetime cap is unreachable by design and a long-elapsed halt is
+        reported as a normal release — NOT as `lifetime_expired`.
+
+        Checking the lifetime first was a real bug: rows are pick-days, not
+        calendar days, so the next row after a halt can land weeks later (an
+        all-star break, a sparse late season, a grading outage). Such a halt had
+        in fact released on its 3-day cooldown, but every later morning reported
+        `lifetime_expired=True` and logged 'an operator must write a
+        halt_overrides row' about an episode that ended weeks earlier.
+
+        DD_MAX_HALT_DAYS is kept as a backstop for anyone who later makes the
+        cooldown conditional; see the constant's docstring."""
         rows = flat(20) + [pnl(20, 0, 12)]
         target = day(20) + dt.timedelta(days=dd.DD_MAX_HALT_DAYS)
         out = dd.evaluate_drawdown(rows, target)
         assert out['halt_active'] is False
-        assert out['dd_lifetime_expired'] is True
+        assert out['dd_lifetime_expired'] is False
+        assert out['dd_peak_units'] == pytest.approx(out['dd_cum_units'])
 
     def test_grading_lag_is_reported(self):
         out = dd.evaluate_drawdown(flat(20), day(25))

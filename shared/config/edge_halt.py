@@ -566,6 +566,27 @@ def evaluate_halt_state(rows: Sequence[Any]) -> Dict[str, Any]:
         pct_e3 = float(pct_e3) if pct_e3 is not None else 0.0
 
         if not halted:
+            # A spent lifetime latches against the SAME pathology. A stretch that
+            # flips to the OPPOSITE direction is a different failure — an artifact
+            # swap during an outage looks exactly like this — and must re-arm the
+            # guard immediately. Without this, a collapse halt that spent its
+            # 14-day lifetime leaves the inflation bound disarmed for as long as
+            # the inflation lasts, because inflated readings never satisfy
+            # `_is_release` and so never accrue the re-arm streak. That would
+            # disable HALT_EDGE_MEDIAN_MAX exactly when it is needed.
+            if lifetime_spent and halt_direction is not None:
+                now_inflated = _is_inflated(edge_med)
+                if (halt_direction == 'collapsed' and now_inflated) or \
+                        (halt_direction == 'inflated' and _is_collapse(edge_med, pct_e3)):
+                    logger.warning(
+                        "Degeneracy flipped direction (%s -> %s) after a spent "
+                        "lifetime; re-arming immediately — this is a new pathology, "
+                        "not a continuation.",
+                        halt_direction, 'inflated' if now_inflated else 'collapsed',
+                    )
+                    lifetime_spent = False
+                    lifetime_expired = False
+                    rearm_streak = 0
             if _is_release(edge_med, pct_e3):
                 rearm_streak += 1
                 if rearm_streak >= RELEASE_CONSECUTIVE_DAYS:

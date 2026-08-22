@@ -718,3 +718,38 @@ class TestInflationBound:
 
     def test_bound_sits_above_every_observed_reading(self):
         assert eh.HALT_EDGE_MEDIAN_MAX > 3.224 * 1.25
+
+
+class TestDirectionAwareLatch:
+    """A spent lifetime must not disarm the OPPOSITE-direction bound.
+
+    Found by review: after a collapse halt spends its 14-day lifetime, inflated
+    readings never satisfy `_is_release` (they are above the release band), so
+    `rearm_streak` never accrues and `lifetime_spent` never clears — leaving
+    HALT_EDGE_MEDIAN_MAX disarmed for as long as the inflation persists. That is
+    exactly the mass-wrong-artifact case the bound was added for.
+    """
+
+    def test_inflation_after_a_spent_collapse_lifetime_still_halts(self):
+        s = series([HEALTHY] * 3
+                   + [DEGENERATE] * (eh.MAX_HALT_DAYS + 2)
+                   + [(6.0, 95.0)] * 3)
+        out = eh.evaluate_halt_state(s)
+        assert out['halt_active'] is True
+        assert out['halt_direction'] == 'inflated'
+
+    def test_collapse_after_a_spent_inflation_lifetime_still_halts(self):
+        s = series([HEALTHY] * 3
+                   + [(9.0, 99.0)] * (eh.MAX_HALT_DAYS + 2)
+                   + [DEGENERATE] * 3)
+        out = eh.evaluate_halt_state(s)
+        assert out['halt_active'] is True
+        assert out['halt_direction'] == 'collapsed'
+
+    def test_same_direction_still_stays_latched(self):
+        """The latch must still do its original job: a continuing episode in the
+        SAME direction cannot re-halt on a spent lifetime."""
+        s = series([DEGENERATE] * (eh.MAX_HALT_DAYS + 30))
+        out = eh.evaluate_halt_state(s)
+        assert out['halt_active'] is False
+        assert out['lifetime_spent'] is True

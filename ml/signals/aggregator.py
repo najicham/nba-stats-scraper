@@ -769,6 +769,22 @@ class BestBetsAggregator:
         MODEL_MAX_MEDIAN_EDGE = 5.5          # healthy 5-season max 4.52
         MODEL_MIN_PRED_STDDEV = 2.0          # healthy 5-season min 4.18
 
+        #: Never let these guards block the WHOLE fleet. They are per-model by
+        #: construction, but the enabled fleet is three near-clones of one family
+        #: (r >= 0.95), so a correlated pathology — a scoring-regime shift, a
+        #: shared feature regression — trips all of them at once. That would
+        #: produce an indefinite zero-pick drought with `halt_active: false`, no
+        #: halt reason, and nothing to alert on: `pick_drought` is MLB-only,
+        #: `_predictions_inactive` sees predictions flowing, `fleet_blocked`
+        #: reads model_performance_daily (which grades predictions, not picks)
+        #: and stays healthy, and both pipeline canaries are paused.
+        #:
+        #: A fleet-wide trip is a HALT-class event, not a filter-class one. When
+        #: it happens, block nothing and say so loudly — let the halt system and
+        #: the model-health path handle it rather than silently emptying the
+        #: slate. Mirrors the decay auto-disable's 3-model safety floor.
+        MODEL_SANITY_MAX_BLOCK_FRACTION = 0.5
+
         model_preds: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         for pred in predictions:
             model_preds[pred.get('system_id', '')].append(pred)
@@ -813,6 +829,26 @@ class BestBetsAggregator:
                         f"predictions (mean {mean_v:.1f}). A near-constant model is "
                         f"serving a broken artifact; five-season minimum is 4.18."
                     )
+
+        # Fleet-wide safety floor — see MODEL_SANITY_MAX_BLOCK_FRACTION.
+        n_models = len(model_preds)
+        if n_models and len(blocked_models) > max(1, int(n_models * MODEL_SANITY_MAX_BLOCK_FRACTION)):
+            logger.error(
+                f"Model sanity guard would block {len(blocked_models)} of {n_models} "
+                f"models ({sorted(blocked_models)}) — that is a fleet-wide pathology, "
+                f"not a per-model one. BLOCKING NOTHING so this surfaces as a halt or "
+                f"model-health event instead of a silent zero-pick day. Investigate "
+                f"immediately: a correlated trip means a shared upstream cause."
+            )
+            try:
+                from shared.observability.metrics import emit_metric
+                emit_metric(
+                    'model_sanity_fleet_wide_trip', float(len(blocked_models)),
+                    labels={'sport': 'nba', 'n_models': str(n_models)},
+                )
+            except Exception as exc:  # pragma: no cover — observability path
+                logger.warning(f"fleet-wide trip metric emit failed (non-fatal): {exc}")
+            blocked_models = set()
 
         # Session 437 P8: Bias-regime detection for OVER volume gating.
         # When >70% of predictions are UNDER, the model is signaling low OVER
