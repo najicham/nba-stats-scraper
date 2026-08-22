@@ -316,10 +316,14 @@ def test_disarm_marker_reaches_the_merged_filter_summary():
     `model_sanity_block_disarmed` in `best_bets_filter_audit`. That is only true
     if the exporter's merge loop carries it — the per-pipeline summaries it reads
     are otherwise limited to total_candidates / passed_filters / rejected /
-    filtered_picks, so a top-level marker alone would be dropped silently."""
-    import inspect
-    from data_processors.publishing.signal_best_bets_exporter import (
-        SignalBestBetsExporter)
-    src = inspect.getsource(SignalBestBetsExporter)
+    filtered_picks, so a top-level marker alone would be dropped silently.
+
+    Reads the file rather than importing it: `data_processors.publishing.__init__`
+    pulls in `base_exporter`, which imports `google.cloud.storage`. That package
+    is absent from the Cloud Build test-gate image, so an import here fails the
+    deploy gate for three services — which is exactly what it did.
+    """
+    from pathlib import Path
+    src = Path('data_processors/publishing/signal_best_bets_exporter.py').read_text()
     assert "fs.get('model_sanity_fleet_wide_trip')" in src
     assert "merged_rejected['model_sanity_block_disarmed']" in src
