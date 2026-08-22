@@ -120,19 +120,41 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
         # normal, non-error result. That is a SECOND independent blocker on the
         # roster registry, distinct from the br_roster_batch_processor repair:
         # fixing that one alone would not have let the Oct 1-19 seed write.
+        #
+        # DELIBERATE ASYMMETRY: production even under --test-mode, unlike the
+        # registry_ops tables below. This validator only READS, and the check it
+        # performs — has a gamebook run already claimed this date — is only
+        # meaningful against real run history. self.run_history_table would point
+        # at processor_run_history_test_<suffix>, which nothing creates, so the
+        # validator's fail-CLOSED except would return ("blocked", "check_failed")
+        # and no rehearsal could ever run. Reads may cross into production here;
+        # writes may not.
         self.gamebook_validator = GamebookPrecedenceValidator(
             self.bq_client,
             self.project_id,
             "nba_reference.processor_run_history"
         )
 
-        # Initialize registry operations
+        # Initialize registry operations.
+        #
+        # These MUST come from the base class attributes, never string literals.
+        # Until 2026-08-22 the alias and unresolved table names were hardcoded to
+        # production here while `self.table_name` correctly honoured test mode, so
+        # `--test-mode` isolated the registry but silently wrote player_aliases and
+        # unresolved_player_names straight to production. The 2026-08-22 seed
+        # rehearsal put 62 rows into the live unresolved_player_names table before
+        # anyone noticed, and the symptom that exposed it was confusing rather than
+        # alarming: the scratch table stayed empty while no error was logged.
+        #
+        # A test mode that isolates three of four tables is worse than none, because
+        # it is trusted. Base class sets all four together — see
+        # registry_processor_base.py:182-195.
         self.registry_ops = RegistryOperations(
             self.bq_client,
             self.project_id,
             self.table_name,
-            "nba_reference.player_aliases",
-            "nba_reference.unresolved_player_names",
+            self.alias_table_name,
+            self.unresolved_table_name,
             self.calculate_season_string
         )
 
