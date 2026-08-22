@@ -77,8 +77,37 @@ Two candidate execution paths for Oct 1-6 step 9, with very different consequenc
 - **Executed as that Cloud Run job** — the fix does not reach production until the image is
   rebuilt, and there is no committed config to rebuild it with.
 
-**Establish which, before Oct 1.** If it is the job, budget the same treatment
-`br-rosters-backfill` got. Do not assume.
+**RESOLVED 2026-08-22 — run it locally. Do not use the Cloud Run job.** Three measurements:
+
+1. **No trigger watches it.** Checked against all live Cloud Build triggers: `phase2` watches
+   `data_processors/raw/**`, `phase3` `analytics/**`, `phase4` `precompute/**`. Nothing watches
+   `data_processors/reference/**`. The 2026-08-22 push confirmed it — `dd67633d` fired zero
+   builds. The fix does **not** auto-deploy, exactly as suspected.
+2. **The job cannot be rebuilt from the repo.** A deploy path does exist — the earlier claim
+   that nothing references the file was wrong: `bin/reference/deploy/deploy_reference_processor_backfill.sh`
+   names `roster_registry` in its own usage text. But it resolves config via
+   `discover_config_file`, and `backfill_jobs/reference/roster_registry/job-config.env` does not
+   exist — only `gamebook_registry` does. Nor is it recoverable: the pre-split directory
+   `backfill_jobs/reference/nba_players_registry/` only ever held `deploy.sh` and a backfill
+   script, never a `job-config.env`, in any commit. `704b28b8` ("gamebook and roster — name
+   registry processors", 2025-09-27) deleted that `deploy.sh` and created gamebook's
+   replacement without ever creating the roster equivalent — which is precisely why the live
+   image stops at 2025-09-26. Session 6's lesson again: *the config was never in the repo.*
+3. **Local execution works and is the intended path.**
+   `roster_registry_processor.py:684` has a `__main__` taking `--season-year`, `--date`,
+   `--allow-backfill`, `--allow-source-fallback`, `--test-mode` — exactly the flags the
+   session-5 seed plan uses. With `dd67633d` pushed, the fix is live for any local run.
+
+**So Oct 1-6 step 9 runs `PYTHONPATH=. python data_processors/reference/player_reference/roster_registry_processor.py --season-year 2026 ...` from the repo.** No image rebuild, no
+`br-rosters-backfill` treatment needed. This is the cheap resolution — it removes the gate on
+Phase C/D rather than adding work to it.
+
+Residual, P2: the live job `nba-players-registry-processor-backfill` still exists, still serves
+a Sept-2025 image, and still cannot be rebuilt. It is now a trap rather than a tool — anyone
+who runs it gets eleven-month-old code that predates both registry fixes. Either write the
+missing `job-config.env` (model it on `gamebook_registry`'s, `JOB_NAME` must stay
+`nba-players-registry-processor-backfill`) or delete the job. Do not leave it executable and
+stale.
 
 ### Deployed and verified at `d8360a97`
 
