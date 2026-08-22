@@ -102,7 +102,34 @@ looked.
 Latent, not new: root `gcloud builds submit` had been *crashing* since 2026-05-11 on a dangling
 symlink, which masked the exposure. Repairing that (`a5992db7`) un-masked it.
 
-**B. `opponent_pace` — accept the loss of accumulated shadow stats?** Verified directly:
+**B. `opponent_pace` — DECIDED AND FIXED 2026-08-22 (`02511358`).** The trade-off as
+originally framed was wrong in the owner's favour: there were no accumulated stats to lose,
+because they measured a different variable. Verified before acting — both signals sit in
+`aggregator.SHADOW_SIGNALS`, and `_score_candidate` (`aggregator.py:1764`) filters shadow tags
+out *before* weights apply, so `fast_pace_over`'s 2.5 in `OVER_SIGNAL_WEIGHTS` is unreachable.
+Zero money-path exposure either way. The reason to fix now was the promotion pathway: both
+carry live `N>=30 in 2026-27` gates, and promoting `slow_pace_under` would add +1 `real_sc` to
+**every** UNDER pick — recreating through a bug the exact SC inflation `real_sc` exists to
+prevent. Off-season was the last free moment.
+
+Shipped: aliases corrected in both live paths; `fast_pace_over` threshold restored to raw
+102.0 with a rescaled confidence curve; `slow_pace_under` threshold/curve were always correct
+for raw pace and are unchanged, plus a fail-closed `MIN_PLAUSIBLE_PACE=80.0` scale guard (which
+also fixes NULL pace — both query paths coerce it to 0.0, which previously qualified as "very
+slow" at maximum confidence). DATA CUTOVER recorded in `signals.yaml` `promotion_gate` for
+both. Prevention: `tests/unit/signals/test_feature_alias_contract.py`, whose hard rule carries
+no allowlist — *an alias must never be the canonical name of a different feature index*. Nine
+assertions, all mutation-checked.
+
+Same fix caught the sibling instance named below (`feature_53_value AS prop_over_streak` →
+f51). Five further near-misses outside the money path — four in
+`bin/backfill_experiment_features.py`, one in `ml_feature_store_validator.py` — are frozen in
+`QUARANTINED_NEAR_MISSES` as unverified rather than changed. **Still open, P2:** each of those
+five needs an intent call.
+
+Original finding, for reference:
+
+~~**B. `opponent_pace` — accept the loss of accumulated shadow stats?**~~ Verified directly:
 `ml/signals/supplemental_data.py:437` and `ml/signals/per_model_pipeline.py:402` both alias
 `feature_18_value AS opponent_pace`. The feature map is unambiguous —
 `14: (90, 115, 'opponent_pace')`, `18: (0, 1, 'pct_paint')` — and live March data confirms it
@@ -115,6 +142,9 @@ just the all-UNDER base rate. `fast_pace_over` gates on `>= 0.75` and is really 
 Fixing it invalidates both signals' accumulated shadow statistics. That is a call about
 promotion timelines, not a code question. Same latent class:
 `feature_53_value AS prop_over_streak` (the real streak is f51).
+
+*(Resolved above. The "invalidates accumulated statistics" framing did not survive checking:
+the statistics were already void, so the decision cost nothing.)*
 
 ---
 
@@ -160,7 +190,7 @@ Also in Phase C:
   **Oct 20-31 the public record blends ~650 stale 2025-26 picks under a `2026-27` label.**
 - `team_context.py:771,877,983` — three hardcoded `'2025-10-22'` season windows, live daily in
   Phase 3, feeding stars-out context into predictions.
-- `opponent_pace`, pending decision B.
+- ~~`opponent_pace`, pending decision B.~~ Done 2026-08-22 (`02511358`).
 - `fleet_blocked` reachability (§6) — decide before it becomes reachable in season week 2.
 - The export-time volume cap in `pipeline_merger` — still the only thing that can catch a
   one-slate blowup on day one; both breakers evaluate at 5 AM on yesterday's data.
@@ -220,7 +250,7 @@ agents produced a headline that did not survive checking.
 | Finding | Status |
 |---|---|
 | Registry queries `nba_raw.processor_run_history`; table does not exist (real one is `nba_reference`, 2.3M rows, identical schema). The validator's deliberate fail-CLOSED except returns `(True, "check_failed")`, so `build_registry_for_season` exits 'blocked' as a normal non-error result | **FIXED** `dd67633d` (unpushed) |
-| `opponent_pace` aliased to `feature_18_value` (pct_paint, 0-1) instead of `feature_14_value` (pace, 92-108) | Verified, NOT fixed — decision B |
+| `opponent_pace` aliased to `feature_18_value` (pct_paint, 0-1) instead of `feature_14_value` (pace, 92-108) | **FIXED** `02511358` (unpushed) — with `prop_over_streak` (f53→f51) and a contract test |
 | `keys/` in every manual build context; the bigdataball key reached the staging bucket; ADC stored as symlink so NOT exposed | Config **FIXED** `631e5139`; rotation pending |
 | `_fleet_blocked` has **never fired**: 0 all-BLOCKED days in 106, max blocked share 0.75. MPD is populated from `prediction_accuracy` over a trailing 30 days — every experiment run, not the enabled fleet — so the denominator was 24-58 models | Verified |
 | Replayed on the three actually-enabled clones, `_fleet_blocked` **fires 7 of 19 covered days (36.8%)**, including a 7-day consecutive run; analogue triples 13-26%. It is unreachable today only by accident of denominator pollution, and flips to firing in multi-day runs once the fleet is the intended three. Opening night is safe (three independent layers) | Verified; **decide before season week 2** |
