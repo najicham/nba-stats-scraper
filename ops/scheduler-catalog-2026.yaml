@@ -275,7 +275,14 @@ jobs:
     had to be fixed before this job was worth restoring. Cloud Run JOB execution
     via the Admin API uses OAuth, not OIDC; the v1 namespaces :run endpoint does
     accept overrides.containerOverrides[].args (verified against the live
-    discovery document, not assumed).
+    discovery document, not assumed). The br-rosters-backfill IMAGE was rebuilt
+    2026-08-21 and the job updated to it -- the previous image was from
+    2025-09-18 and would have exited 2 on the unknown flag while the scheduler
+    reported success, because :run only creates the execution. Proven live:
+    execution br-rosters-backfill-d8qbb logged "--current-season resolved to
+    ending year 2026 (season 2025-26)". If this job's script changes again, the
+    image must be rebuilt with bin/scrapers/deploy/deploy_scrapers_backfill_job.sh
+    -- there is no Cloud Build trigger for backfill jobs.
 
 - name: player-movement-registry-morning
   wave: A

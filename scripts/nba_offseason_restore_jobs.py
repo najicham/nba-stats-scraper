@@ -213,9 +213,11 @@ REMINDERS
   - br-rosters-batch-daily IS now in the catalog (added 2026-08-21, definition
     recovered from commit 19eda492). It was never part of the purge. Two bugs were
     fixed before restoring it: it asked for the WRONG SEASON (--seasons=2025 means
-    2024-25), and the processor it fed could not write at all. Do not resume it
-    until br_roster_batch_processor is DEPLOYED -- otherwise it re-creates a job
-    that fails silently every morning, which is what it did from January to July.
+    2024-25), and the processor it fed could not write at all. Its Cloud Run job
+    image was rebuilt 2026-08-21 (the old one predated --current-season). Before
+    resuming, confirm nba-phase2-raw-processors is serving the fixed
+    br_roster_batch_processor -- otherwise this re-creates a job that fails
+    silently every morning, which is what it did from January to July.
   - The player registry has no 2026-27 rows (nba_players_registry max season
     2025-26, seeded 2025-10-02). Without a reseed the fallback silently serves
     LAST season's rosters. Equivalent due date: ~2026-10-01.
