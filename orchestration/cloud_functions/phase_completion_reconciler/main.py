@@ -402,6 +402,64 @@ def reconcile_batch(bq: bigquery.Client, gcs: storage.Client, batch_size: int) -
 
 
 @functions_framework.http
+def _emit_halt_state_age(bq: bigquery.Client) -> Optional[float]:
+    """Emit how stale `nba_orchestration.halt_state` is, per sport.
+
+    WHY THIS LIVES HERE AND NOT IN THE WRITER
+    -----------------------------------------
+    `halt_state_writer` also emits this metric — but only on a SUCCESSFUL write,
+    once a day. That makes the metric unusable as a health signal in both
+    directions:
+
+      * A threshold condition can never fire, because a dead writer emits
+        nothing at all and there is no time series to evaluate.
+      * An absence condition can never be configured correctly either: Cloud
+        Monitoring caps `conditionAbsent.duration` at 23h30m, and a healthy
+        once-daily emitter has a ~24h gap between points, so any valid duration
+        false-fires every single day.
+
+    This reconciler runs every 30 minutes and is already ENABLED, so emitting
+    the age from here gives the metric a continuous series whose VALUE grows
+    when the writer dies. That makes an ordinary threshold alert work.
+
+    This matters more than it used to: since 2026-08-21 `halt_state` gates pick
+    publishing, so a writer outage past the 3-day carry-forward window means
+    zero picks. The alert guarding that failure had no way to fire.
+
+    Fail-open — telemetry must never break reconciliation.
+    """
+    try:
+        rows = list(bq.query(
+            f"""
+            SELECT sport,
+                   TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), MAX(written_at), MINUTE) / 60.0
+                       AS age_hours
+            FROM `{HALT_STATE_TABLE}`
+            WHERE effective_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+            GROUP BY sport
+            """
+        ).result(timeout=30))
+    except Exception as e:
+        logger.warning(f"halt_state age query failed (non-fatal): {e}")
+        return None
+
+    worst = None
+    try:
+        from shared.observability.metrics import emit_metric, MetricKind
+        for r in rows:
+            age = float(r.age_hours or 0.0)
+            worst = age if worst is None else max(worst, age)
+            emit_metric(
+                metric_name='halt_state_age_hours',
+                value=age,
+                labels={'sport': r.sport},
+                kind=MetricKind.GAUGE,
+            )
+    except Exception as e:
+        logger.warning(f"emit halt_state_age_hours failed (non-fatal): {e}")
+    return worst
+
+
 def phase_completion_reconciler(request: Request):
     """Reconcile a batch of EXPECTED rows.
 
@@ -415,6 +473,7 @@ def phase_completion_reconciler(request: Request):
     gcs = _get_gcs()
 
     counts = reconcile_batch(bq, gcs, batch_size)
+    counts['halt_state_age_hours'] = _emit_halt_state_age(bq)
     counts['written_at'] = datetime.now(timezone.utc).isoformat()
     logger.info(f"reconciler: {counts}")
     return counts, 200

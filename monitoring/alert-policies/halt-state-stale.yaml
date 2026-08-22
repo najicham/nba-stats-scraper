@@ -6,10 +6,17 @@
 # ZERO PICKS, not just cosmetic "unknown" branding. That is why this is
 # Critical and why the condition is absence-based.
 #
-# The metric is emitted (value 0.0) only on a SUCCESSFUL write. A dead writer
-# emits nothing at all, so a threshold condition on the value can never fire —
-# there is no time series to evaluate. conditionAbsent is the only shape that
-# detects the failure this policy exists for.
+# HOW THIS CAME TO BE ABLE TO FIRE AT ALL. The writer emits this metric only on
+# a SUCCESSFUL write, once a day, so:
+#   - a threshold condition could never fire (a dead writer emits nothing, so
+#     there is no series to evaluate), and
+#   - an absence condition could not be configured either: Cloud Monitoring
+#     rejects conditionAbsent.duration above 23h30m, and a healthy once-daily
+#     emitter has a ~24h gap, so every valid duration false-fires daily.
+# `phase-completion-reconciler` (ENABLED, every 30 min) therefore also emits
+# halt_state_age_hours, computed from the table. That gives the metric a
+# continuous series whose VALUE grows when the writer dies — so an ordinary
+# threshold works, and this policy can finally do its job.
 #
 # Pipeline-state-redesign Phase G; rewritten 2026-08-21.
 
@@ -65,18 +72,34 @@ documentation:
   mimeType: text/markdown
 
 conditions:
-  - displayName: "No halt_state write in 30h"
-    # Absence, not threshold: the metric only exists when a write SUCCEEDS.
-    # Writer runs 05:00 ET daily; the signal-best-bets export runs ~13:00 ET.
-    # 30h fires before a second export can ship a fail-closed zero-pick file.
+  - displayName: "halt_state has not been written in 30h"
+    # Threshold on the reconciler-emitted age (see header). Writer runs 05:00 ET
+    # daily and the signal-best-bets export runs ~13:00 ET, so 30h fires after
+    # one clearly-missed daily write and well before the 3-day carry-forward
+    # window is exhausted and picks start being suppressed.
+    conditionThreshold:
+      filter: |
+        metric.type="custom.googleapis.com/nba_pipeline/halt_state_age_hours"
+        resource.type="global"
+      aggregations:
+        - alignmentPeriod: 1800s   # 30 min, matching the reconciler cadence
+          perSeriesAligner: ALIGN_MAX
+      comparison: COMPARISON_GT
+      thresholdValue: 30
+      duration: 1800s
+
+  # Belt and braces: if BOTH emitters stop, there is no value to threshold on.
+  # 23h is inside Cloud Monitoring's 23h30m cap and far above the reconciler's
+  # 30-minute cadence, so it cannot false-fire on a healthy series.
+  - displayName: "halt_state_age_hours series absent for 23h"
     conditionAbsent:
       filter: |
         metric.type="custom.googleapis.com/nba_pipeline/halt_state_age_hours"
         resource.type="global"
       aggregations:
-        - alignmentPeriod: 3600s   # 1 hour
+        - alignmentPeriod: 1800s
           perSeriesAligner: ALIGN_MAX
-      duration: 108000s
+      duration: 82800s
 
 combiner: OR
 

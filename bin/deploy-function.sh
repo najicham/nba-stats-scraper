@@ -80,6 +80,12 @@ get_function_config() {
     # Needed because the pipeline-state functions each run under their own
     # dedicated service account, not the shared processor-sa.
     FUNC_SERVICE_ACCOUNT=""
+    # Secrets mounted as env vars, in --update-secrets syntax:
+    #   ENV_NAME=secret-name:version[,ENV_NAME2=...]
+    # Without this, a redeploy silently drops any secret bound out-of-band with
+    # `gcloud run services update`, which is how halt-state-writer ended up with
+    # SLACK_WEBHOOK_URL_ALERTS present but EMPTY — every halt alert a no-op.
+    FUNC_SECRETS=""
     FUNC_MEMORY=""
     FUNC_TIMEOUT=""
 
@@ -203,6 +209,10 @@ get_function_config() {
             FUNC_TRIGGER_TYPE="http"
             FUNC_NEEDS_SHARED="true"
             FUNC_SERVICE_ACCOUNT="halt-state-writer@nba-props-platform.iam.gserviceaccount.com"
+            # maybe_alert_on_change is the ONLY notification that a halt fired
+            # or released. The env var existed but was empty, so it never sent
+            # anything. Bound here so it survives every redeploy.
+            FUNC_SECRETS="SLACK_WEBHOOK_URL_ALERTS=slack-webhook-monitoring-warning:latest"
             FUNC_MEMORY="512Mi"
             FUNC_TIMEOUT="300s"
             ;;
@@ -383,6 +393,12 @@ ENTRY_POINT="${OPT_ENTRY_POINT:-$FUNC_ENTRY_POINT}"
 TIMEOUT="${OPT_TIMEOUT:-${FUNC_TIMEOUT:-$DEFAULT_TIMEOUT}}"
 MEMORY="${OPT_MEMORY:-${FUNC_MEMORY:-$DEFAULT_MEMORY}}"
 SERVICE_ACCOUNT="${OPT_SERVICE_ACCOUNT:-${FUNC_SERVICE_ACCOUNT:-$DEFAULT_SERVICE_ACCOUNT}}"
+SECRETS_ARGS=""
+if [ -n "${FUNC_SECRETS:-}" ]; then
+    # --update-secrets, never --set-secrets: the latter wipes every other
+    # binding, the same footgun as --set-env-vars.
+    SECRETS_ARGS="--update-secrets $FUNC_SECRETS"
+fi
 
 # Determine trigger type (CLI overrides take precedence)
 if [ "$OPT_TRIGGER_HTTP" = true ]; then
@@ -442,6 +458,7 @@ fi
 echo "  Memory:          $MEMORY"
 echo "  Timeout:         $TIMEOUT"
 echo "  Service account: $SERVICE_ACCOUNT"
+[ -n "${FUNC_SECRETS:-}" ] && echo "  Secrets:         $FUNC_SECRETS"
 echo "  Needs shared/:   $FUNC_NEEDS_SHARED"
 echo "  Region:          $REGION"
 echo "  Project:         $PROJECT"
@@ -602,6 +619,7 @@ DEPLOY_CMD="gcloud functions deploy $FUNCTION_NAME \
     $TRIGGER_ARGS \
     --service-account=$SERVICE_ACCOUNT \
     --update-env-vars GCP_PROJECT=$PROJECT,BUILD_COMMIT=$BUILD_COMMIT,BUILD_TIMESTAMP=$BUILD_TIMESTAMP \
+    $SECRETS_ARGS \
     --update-labels commit-sha=$BUILD_COMMIT \
     --memory $MEMORY \
     --timeout $TIMEOUT \
