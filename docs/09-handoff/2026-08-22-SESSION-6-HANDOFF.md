@@ -180,9 +180,12 @@ clones plus two legacy prediction sets gives `n=4`, both real models self-block,
 `2 <= max(1, 2)` holds, no trip — the exact zero-pick day the floor exists to stop.
 
 A fleet-wide trip stamps `model_sanity_block_disarmed` and
-`model_sanity_fleet_wide_trip` onto each re-run pipeline's filter summary, so the audit
-trail survives the replacement. Without it, a fleet-wide trip would be the one day whose
-`best_bets_filter_audit` shows nothing was ever blocked.
+`model_sanity_fleet_wide_trip` onto each re-run pipeline's filter summary, and the
+exporter's merge loop carries the count into `rejected` so it reaches
+`best_bets_filter_audit`. Both halves were needed: the merge reads only
+`total_candidates` / `passed_filters` / `rejected` / `filtered_picks` from each
+per-model summary, so a top-level marker alone would have been dropped silently — and
+the runbook would have sent the operator looking for a row that was never written.
 
 **And a new Critical alert policy ships with it.** The floor deliberately fails OPEN. That
 is only defensible if someone finds out, and nothing was listening —

@@ -309,3 +309,17 @@ def test_disable_flag_actually_disarms_the_guards():
 
     _, allowed = BestBetsAggregator(disable_model_sanity=True).aggregate(preds, sigs)
     assert allowed['rejected'].get('model_sanity_block', 0) == 0
+
+
+def test_disarm_marker_reaches_the_merged_filter_summary():
+    """The alert runbook tells the operator to look for
+    `model_sanity_block_disarmed` in `best_bets_filter_audit`. That is only true
+    if the exporter's merge loop carries it — the per-pipeline summaries it reads
+    are otherwise limited to total_candidates / passed_filters / rejected /
+    filtered_picks, so a top-level marker alone would be dropped silently."""
+    import inspect
+    from data_processors.publishing.signal_best_bets_exporter import (
+        SignalBestBetsExporter)
+    src = inspect.getsource(SignalBestBetsExporter)
+    assert "fs.get('model_sanity_fleet_wide_trip')" in src
+    assert "merged_rejected['model_sanity_block_disarmed']" in src

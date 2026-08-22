@@ -347,6 +347,17 @@ class SignalBestBetsExporter(BaseExporter):
                 merged_rejected[filter_name] = merged_rejected.get(filter_name, 0) + count
             merged_filtered_picks.extend(fs.get('filtered_picks', []))
 
+            # A fleet-wide model-sanity trip re-runs the affected pipelines with
+            # the guards OFF, so the replacement summary has no sanity counts by
+            # construction. `_apply_fleet_sanity_floor` stamps the pre-rerun
+            # count here; carry it into the merged view so the audit row for the
+            # one day that most needs one does not read "nothing was blocked".
+            if fs.get('model_sanity_fleet_wide_trip'):
+                merged_rejected['model_sanity_block_disarmed'] = (
+                    merged_rejected.get('model_sanity_block_disarmed', 0)
+                    + fs.get('model_sanity_block_disarmed', 0)
+                )
+
         filter_summary = {
             'total_candidates': total_candidates_all,
             'passed_filters': total_passed_all,
