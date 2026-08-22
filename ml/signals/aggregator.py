@@ -608,6 +608,7 @@ class BestBetsAggregator:
         regime_context: Optional[Dict[str, Any]] = None,
         runtime_demoted_filters: Optional[Set[str]] = None,
         mode: str = 'production',
+        disable_model_sanity: bool = False,
     ):
         if combo_registry is not None:
             self._registry = combo_registry
@@ -627,6 +628,11 @@ class BestBetsAggregator:
         # Filters in this set still record to filtered_picks but don't block.
         self._runtime_demoted = runtime_demoted_filters or set()
         self._mode = mode
+        # Set by run_all_model_pipelines on a fleet-wide re-run. See
+        # MODEL_SANITY_MAX_BLOCK_FRACTION in aggregate(): in per_model mode this
+        # class sees ONE model and cannot judge the fleet, so the safety floor
+        # has to be applied by the caller that can.
+        self._disable_model_sanity = disable_model_sanity
 
     def _health_multiplier(self, signal_tag: str) -> float:
         """Get health-aware weight multiplier for a signal.
@@ -726,7 +732,8 @@ class BestBetsAggregator:
             if rec in ('OVER', 'UNDER'):
                 model_direction_counts[pred.get('system_id', '')][rec] += 1
         blocked_models: Set[str] = set()
-        for model_id, counts in model_direction_counts.items():
+        for model_id, counts in ({} if self._disable_model_sanity
+                                 else model_direction_counts).items():
             total = counts['OVER'] + counts['UNDER']
             if total >= 20:  # Need enough predictions to judge
                 over_pct = counts['OVER'] / total
@@ -783,13 +790,25 @@ class BestBetsAggregator:
         #: it happens, block nothing and say so loudly — let the halt system and
         #: the model-health path handle it rather than silently emptying the
         #: slate. Mirrors the decay auto-disable's 3-model safety floor.
+        #:
+        #: ⚠️ THIS BLOCK CANNOT FIRE ON THE PRODUCTION PATH, BY CONSTRUCTION.
+        #: `run_single_model_pipeline` calls `aggregate()` once per model with
+        #: only that model's predictions, so `n_models` is always 1 and
+        #: `1 > max(1, 0)` is False. Between the guards shipping and 2026-08-21
+        #: the floor was therefore inert exactly where it mattered. The real
+        #: floor now lives in `run_all_model_pipelines`, which is the only
+        #: caller that can see the whole fleet; when it trips it re-runs the
+        #: affected pipelines with `disable_model_sanity=True`. What remains
+        #: here covers the default-mode callers (signal_annotator, the
+        #: backtest/replay/dry-run tools), which do pass a multi-model list.
         MODEL_SANITY_MAX_BLOCK_FRACTION = 0.5
 
         model_preds: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         for pred in predictions:
             model_preds[pred.get('system_id', '')].append(pred)
 
-        for model_id, preds in model_preds.items():
+        for model_id, preds in ({} if self._disable_model_sanity
+                                else model_preds).items():
             if len(preds) < MODEL_SANITY_MIN_PREDS or model_id in blocked_models:
                 continue
 

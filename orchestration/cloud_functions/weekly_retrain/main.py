@@ -146,6 +146,17 @@ def is_computed_edge_halt(halt_state: dict) -> bool:
     `between_rounds` or `off_season` row would read as "edge collapsed" too.
 
     `?season_restart=true` remains the explicit operator override.
+
+    Note this reads `halt_active` with `.get`, where the inline expression it
+    replaced used `[...]`. Unreachable today -- every dict `edge_halt` builds
+    with `halt_source == 'computed'` sets `halt_active` at construction, as do
+    both fallback paths -- but the difference is real: the old KeyError was
+    swallowed by the caller's `except Exception`, which ALSO skipped the
+    `all_blocked` registry query, so a contract violation used to force
+    `season_restart=False`. Now it only means "not a computed edge halt", and
+    `all_blocked` can still loosen the gates on its own merits. That is the
+    right split -- the two triggers are independent -- but do not read the
+    change as cosmetic.
     """
     return (halt_state.get('halt_source') == 'computed'
             and bool(halt_state.get('halt_active')))

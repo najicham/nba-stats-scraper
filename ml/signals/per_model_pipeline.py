@@ -1615,6 +1615,7 @@ def run_single_model_pipeline(
     system_id: str,
     shared_ctx: SharedContext,
     signal_registry: Optional[SignalRegistry] = None,
+    disable_model_sanity: bool = False,
 ) -> PipelineResult:
     """Run signals + aggregator for one model. Pure Python -- no BQ queries.
 
@@ -1622,6 +1623,9 @@ def run_single_model_pipeline(
         system_id: Model system_id to run pipeline for.
         shared_ctx: SharedContext built by build_shared_context().
         signal_registry: Optional pre-built registry (reuse across models).
+        disable_model_sanity: Skip the per-model sanity guards. Set ONLY by
+            run_all_model_pipelines on a fleet-wide re-run -- see
+            MODEL_SANITY_MAX_BLOCK_FRACTION there.
 
     Returns:
         PipelineResult with candidates, filter summary, and signal results.
@@ -1680,6 +1684,7 @@ def run_single_model_pipeline(
         regime_context=shared_ctx.regime_context,
         runtime_demoted_filters=shared_ctx.runtime_demoted_filters,
         mode='per_model',
+        disable_model_sanity=disable_model_sanity,
     )
 
     candidates, filter_summary = aggregator.aggregate(predictions, signal_results_map)
@@ -1710,6 +1715,67 @@ def run_single_model_pipeline(
 # Orchestrator: run all models
 # ---------------------------------------------------------------------------
 
+#: Fraction of the fleet above which a model-sanity trip stops being a
+#: per-model verdict and becomes a fleet-wide one. Mirrors the constant of the
+#: same name in `ml/signals/aggregator.py`; keep them equal.
+MODEL_SANITY_MAX_BLOCK_FRACTION = 0.5
+
+
+def _apply_fleet_sanity_floor(results, run_one) -> None:
+    """Undo the per-model sanity guards when they trip across the whole fleet.
+
+    WHY THIS LIVES HERE AND NOT IN THE AGGREGATOR
+    ---------------------------------------------
+    `aggregator.aggregate()` carries a floor with the same intent, and on the
+    production path it can never fire: `run_single_model_pipeline` calls it once
+    per model with only that model's predictions, so its `n_models` is always 1
+    and `1 > max(1, 0)` is False. From the guards shipping until 2026-08-21 the
+    floor was inert exactly where it mattered. This function is the same policy
+    applied by the only caller that can see the fleet.
+
+    WHY THE POLICY EXISTS
+    ---------------------
+    The guards are per-model by construction, but the enabled fleet is three
+    near-clones of one family (r >= 0.95). A correlated pathology -- a
+    scoring-regime shift, a shared feature regression -- trips all of them at
+    once. Left alone that produces an indefinite zero-pick drought with
+    `halt_active: false`, no halt reason, and nothing to alert on:
+    `pick_drought` is MLB-only, `_predictions_inactive` sees predictions
+    flowing, `fleet_blocked` reads model_performance_daily (which grades
+    predictions, not picks) and stays healthy, and both pipeline canaries are
+    paused. A fleet-wide trip is a HALT-class event, not a filter-class one:
+    block nothing, say so loudly, and let the halt system handle it.
+
+    Mutates `results` in place. Re-runs only the models that self-blocked.
+    """
+    self_blocked = sorted(
+        sid for sid, r in results.items()
+        if (r.filter_summary.get('rejected') or {}).get('model_sanity_block', 0) > 0
+    )
+    n_models = len(results)
+    if not n_models or len(self_blocked) <= max(1, int(n_models * MODEL_SANITY_MAX_BLOCK_FRACTION)):
+        return
+
+    logger.error(
+        f"Model sanity guards blocked {len(self_blocked)} of {n_models} models "
+        f"({self_blocked}) — that is a fleet-wide pathology, not a per-model one. "
+        f"RE-RUNNING those pipelines with the guards OFF so this surfaces as a halt "
+        f"or model-health event instead of a silent zero-pick day. Investigate "
+        f"immediately: a correlated trip means a shared upstream cause."
+    )
+    try:
+        from shared.observability.metrics import emit_metric
+        emit_metric(
+            'model_sanity_fleet_wide_trip', float(len(self_blocked)),
+            labels={'sport': 'nba', 'n_models': str(n_models)},
+        )
+    except Exception as exc:  # pragma: no cover — observability path
+        logger.warning(f"fleet-wide trip metric emit failed (non-fatal): {exc}")
+
+    for system_id in self_blocked:
+        results[system_id] = run_one(system_id, True)
+
+
 def run_all_model_pipelines(
     bq_client: bigquery.Client,
     target_date: str,
@@ -1737,25 +1803,29 @@ def run_all_model_pipelines(
     # Build signal registry once (stateless — safe to share across models)
     signal_registry = build_default_registry()
 
-    # Run each model through the pipeline
-    results: Dict[str, PipelineResult] = {}
-    for system_id in sorted(shared_ctx.all_predictions.keys()):
+    def _run_one(system_id: str, disable_sanity: bool) -> PipelineResult:
         try:
-            result = run_single_model_pipeline(
-                system_id, shared_ctx, signal_registry=signal_registry
+            return run_single_model_pipeline(
+                system_id, shared_ctx, signal_registry=signal_registry,
+                disable_model_sanity=disable_sanity,
             )
-            results[system_id] = result
         except Exception as e:
-            logger.error(
-                f"Pipeline failed for {system_id}: {e}", exc_info=True
-            )
-            results[system_id] = PipelineResult(
+            logger.error(f"Pipeline failed for {system_id}: {e}", exc_info=True)
+            return PipelineResult(
                 system_id=system_id,
                 candidates=[],
                 all_predictions=shared_ctx.all_predictions.get(system_id, []),
                 filter_summary={'total_candidates': 0, 'rejected': {}, 'error': str(e)},
                 signal_results={},
             )
+
+    # Run each model through the pipeline
+    results: Dict[str, PipelineResult] = {
+        system_id: _run_one(system_id, False)
+        for system_id in sorted(shared_ctx.all_predictions.keys())
+    }
+
+    _apply_fleet_sanity_floor(results, _run_one)
 
     # Summary
     total_candidates = sum(len(r.candidates) for r in results.values())

@@ -21,7 +21,19 @@ The guards are exercised through the public `aggregate()` entry point rather tha
 by reaching into internals, so a refactor that moves them cannot quietly make the
 tests vacuous: each test asserts on the counter AND on which models survive into
 `picks`.
+
+⚠️ SCOPE. The multi-model cases here — everything in `TestFleetWideSafetyFloor` —
+exercise DEFAULT mode, which production does not use. `run_single_model_pipeline`
+calls `aggregate()` once per model with only that model's predictions, so on the
+production path this class's `n_models` is always 1 and its fleet-wide floor
+cannot fire. Default mode is still real (signal_annotator, the backtest, replay
+and dry-run tools all pass a multi-model list), so these tests are not vacuous —
+but the floor that protects the LIVE slate is `_apply_fleet_sanity_floor` in
+`per_model_pipeline`, covered by `test_fleet_sanity_floor.py`. Read the two files
+together.
 """
+
+from unittest import mock
 
 import pytest
 
@@ -129,9 +141,14 @@ def _signals_for(preds, n_qualifying=5):
     return out
 
 
-def _run(preds):
-    agg = BestBetsAggregator()
-    picks, summary = agg.aggregate(preds, _signals_for(preds))
+def _run(preds, **agg_kwargs):
+    # The fleet-wide disarm path calls shared.observability.metrics.emit_metric.
+    # Unmocked, that is a live Cloud Monitoring write on any machine where
+    # google-cloud-monitoring is installed and ADC resolves — it happens to
+    # no-op here only because the package is absent.
+    agg = BestBetsAggregator(**agg_kwargs)
+    with mock.patch('shared.observability.metrics.emit_metric'):
+        picks, summary = agg.aggregate(preds, _signals_for(preds))
     return picks, summary
 
 
@@ -242,6 +259,8 @@ class TestPredictionSpreadFloor:
 # ---------------------------------------------------------------------------
 
 class TestFleetWideSafetyFloor:
+    """DEFAULT-mode only — see the scope note in the module docstring. The
+    production equivalent is `test_fleet_sanity_floor.py`."""
 
     def test_all_models_pathological_blocks_nothing(self):
         """Two of two models trip => disarm. A fleet-wide trip must surface as a

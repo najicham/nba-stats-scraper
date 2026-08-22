@@ -17,6 +17,15 @@ filters:
     description: Model in LEGACY_MODEL_BLOCKLIST
     introduced_session: 332
 
+  - tag: model_sanity_block
+    status: active
+    blocks_direction: both
+    description: >-
+      Model tripped a per-model sanity guard — >95% one-way direction, median
+      edge > 5.5, or prediction stddev < 2.0. Disarmed fleet-wide by
+      _apply_fleet_sanity_floor when it trips on more than half the fleet.
+    introduced_session: 2026-08-21
+
   - tag: blacklist
     status: active
     blocks_direction: both
@@ -527,6 +536,7 @@ stream_block_class:
     - blacklist
     - legacy_block
     # Model-sanity.
+    - model_sanity_block
     - model_direction_affinity
     - model_profile_would_block
     # Edge floors.
