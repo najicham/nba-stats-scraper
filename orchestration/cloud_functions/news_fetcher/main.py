@@ -203,7 +203,7 @@ def run_news_fetch(sports: list = None, generate_summaries: bool = True, max_art
                                 'sport': article.sport,
                                 'mention_role': 'primary' if i == 0 else 'mentioned',
                                 'link_confidence': link_result.confidence,
-                                'link_method': link_result.method,
+                                'link_method': link_result.link_method,
                                 'article_category': extraction.category.value,
                                 'article_published_at': article.published_at.isoformat() if article.published_at else None,
                             })

@@ -630,12 +630,21 @@ jobs:
   timezone: America/New_York
   target_type: pubsub
   topic: nba-phase6-export-trigger
-  body: {export_types: [tonight-picks], target_date: TODAY}
-  provenance: manifest
+  body: {export_types: [tonight, tonight-players], target_date: today}
+  provenance: derived_from_code
   verified: true
   notes: >-
     Message format matters: export_types + target_date, NOT game_date. The live
-    1 PM job covers midday only.
+    1 PM job covers midday only. CORRECTED 2026-08-22 -- the manifest body was
+    {export_types: [tonight-picks], target_date: TODAY} and was created that way
+    before being fixed. Both halves were wrong: 'tonight-picks' is a JOB name,
+    not an export type, and daily_export.export_date dispatches with
+    `if '<type>' in export_types` and NO unknown-type error, so it silently ran
+    zero work and returned success. And get_target_date (phase6_export/main.py)
+    resolves only lowercase 'today'/'yesterday'; 'TODAY' falls through as a
+    literal string into WHERE game_date = 'TODAY'. The live ENABLED
+    phase6-tonight-picks job is the reference: lowercase, [tonight,
+    tonight-players, ...].
 
 - name: phase6-tonight-picks-pregame
   wave: C
@@ -643,11 +652,20 @@ jobs:
   timezone: America/New_York
   target_type: pubsub
   topic: nba-phase6-export-trigger
-  body: {export_types: [tonight-picks, signal-best-bets], target_date: TODAY}
-  provenance: manifest
+  body: {export_types: [tonight, tonight-players], target_date: today}
+  provenance: derived_from_code
   verified: true
   notes: >-
     NEVER point a signal-best-bets export at a historical date -- it deletes picks.
+    CORRECTED 2026-08-22, two ways. (1) Same 'tonight-picks'/'TODAY' defects as
+    the morning job -- silent no-op plus a literal 'TODAY' reaching the DATE
+    queries. (2) signal-best-bets was DROPPED from this body: the ENABLED
+    phase6-clv-reexport already re-exports signal-best-bets at 4:30 PM ET
+    specifically for T-3h intraday line snapshots, and running it again at 5 PM
+    would re-decide the same day's picks 30 minutes later. Scoped DELETE
+    (Session 412) means no data loss, but it is a second run of a
+    delete-capable exporter for no benefit. If you ever want it back, move this
+    job EARLIER than 4:30 PM instead.
 
 - name: live-export-evening
   wave: C

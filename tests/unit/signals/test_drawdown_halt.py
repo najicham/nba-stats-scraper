@@ -173,3 +173,53 @@ class TestContract:
         for key in ('pa.game_date', 'pa.player_lookup', 'pa.system_id',
                     'pa.recommendation', 'pa.line_value'):
             assert key in sql, key
+
+
+class TestReviewFindings:
+    """Adversarial-review additions (2026-08-21, reviewer 3)."""
+
+    def test_volume_halt_releases_when_the_spike_leaves_the_window(self):
+        """A spike halts exactly VOL_COOLDOWN_DAYS mornings; on the next morning
+        the (suppressed, hence absent) window is empty and picks resume."""
+        rows = [vol(i, 2) for i in range(10)] + [vol(10, 16)]
+        # Halted mornings: spike is 1..3 days back.
+        for t in (11, 12, 13):
+            assert dd.evaluate_volume_anomaly(rows, day(t))['halt_active'] is True, t
+        # Morning 14: spike is 4 days back, suppressed days published nothing.
+        assert dd.evaluate_volume_anomaly(rows, day(14))['halt_active'] is False
+
+    def test_volume_guard_rearms_after_an_episode(self):
+        """A second spike after a suppressed window must halt again, and the
+        first spike must not have inflated the trailing median."""
+        rows = [vol(i, 2) for i in range(10)] + [vol(10, 16), vol(14, 2), vol(15, 16)]
+        out = dd.evaluate_volume_anomaly(rows, day(16))
+        assert out['halt_active'] is True
+        assert out['vol_trigger_date'] == day(15).isoformat()
+        assert out['vol_trailing_median'] == 2
+
+    def test_cooldown_release_across_a_row_gap_is_not_labeled_lifetime_expiry(self):
+        """REAL BUG (left failing, 2026-08-21 review): a soft halt that released
+        via its 3-day cooldown must not be re-labeled as a lifetime expiry just
+        because the NEXT pick-day row is >= DD_MAX_HALT_DAYS later (all-star
+        break, late-season sparsity, grading outage).
+
+        Timeline: halt trips on day 20; every morning from day 23 onward this
+        function correctly reports halt_active=False, dd_lifetime_expired=False
+        (aging path). But once a row appears at day 45, the in-loop replay hits
+        the `elapsed >= DD_MAX_HALT_DAYS` branch BEFORE the cooldown branch and
+        flips dd_lifetime_expired to True for every remaining morning of the
+        season — a permanently wrong 'operator must write a halt_overrides row'
+        audit flag (plus a daily WARNING log) for a halt that in fact released
+        quietly 22 days earlier. Decisions are unaffected; the telemetry lies.
+        """
+        rows = flat(20) + [pnl(20, 0, 7)]
+        # Before the gap-row exists the function itself says: released, no expiry.
+        pre = dd.evaluate_drawdown(rows, day(30))
+        assert pre['halt_active'] is False
+        assert pre['dd_lifetime_expired'] is False
+        # The same episode, seen after the next pick-day arrives 25 days later.
+        post = dd.evaluate_drawdown(rows + [pnl(45, 1, 1)], day(46))
+        assert post['halt_active'] is False
+        assert post['dd_lifetime_expired'] is False, (
+            "cooldown-released halt re-labeled as lifetime expiry after a row gap"
+        )
