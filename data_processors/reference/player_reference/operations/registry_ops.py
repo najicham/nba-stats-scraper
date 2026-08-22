@@ -18,6 +18,44 @@ from google.api_core.exceptions import GoogleAPIError
 
 from shared.utils.notification_system import notify_error
 
+
+def _json_safe(record: Dict) -> Dict:
+    """Make a record safe for load_table_from_json.
+
+    `datetime.date` and `datetime.datetime` are not JSON-serializable, and
+    load_table_from_json serializes the dicts it is handed. BigQuery accepts
+    ISO-8601 strings for DATE/DATETIME/TIMESTAMP columns, so isoformat() is the
+    correct wire representation.
+
+    This exists because insert_unresolved_names() took its converter as an
+    OPTIONAL parameter: normalizer.py:579 passed it, registry_ops.py:144 did
+    not, and the second path put raw date objects on the wire. The load then
+    failed with "Object of type date is not JSON serializable", was logged and
+    swallowed, and unresolved_player_names silently stayed empty — observed
+    2026-08-22 in the seed rehearsal, where the table finished a run with 0 rows
+    after the normalizer had reported 62 unresolved player-team combinations.
+
+    Correctness must not depend on every caller remembering an optional
+    argument, so this runs unconditionally, after any supplied converter. It is
+    idempotent: values already stringified are left alone.
+
+    NOTE: datetime is a subclass of date — check it first or datetimes lose
+    their time component.
+    """
+    out = {}
+    for key, value in record.items():
+        if isinstance(value, datetime):
+            out[key] = value.isoformat()
+        elif isinstance(value, date):
+            out[key] = value.isoformat()
+        elif isinstance(value, list):
+            out[key] = [
+                v.isoformat() if isinstance(v, (datetime, date)) else v for v in value
+            ]
+        else:
+            out[key] = value
+    return out
+
 logger = logging.getLogger(__name__)
 
 
@@ -141,6 +179,9 @@ class RegistryOperations:
 
         if unresolved_records:
             try:
+                # _json_safe() inside insert_unresolved_names covers the date
+                # types this call site creates above; no pandas/numpy values
+                # originate here, so no converter is needed.
                 self.insert_unresolved_names(unresolved_records)
                 logger.info(f"Created {len(unresolved_records)} unresolved records")
             except Exception as e:
@@ -272,6 +313,9 @@ class RegistryOperations:
                         converted = convert_pandas_types_fn(r)
                     else:
                         converted = r.copy()
+
+                    # Unconditional, after any supplied converter — see _json_safe.
+                    converted = _json_safe(converted)
 
                     if 'example_games' in converted:
                         eg = converted['example_games']
