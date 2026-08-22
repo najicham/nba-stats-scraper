@@ -13,6 +13,11 @@ docs/
 .github/
 *.md
 
+# Claude Code agent worktrees: full repo copies, untracked, and they carry stale
+# symlinks. Without this every manual `gcloud builds submit` uploads them AND
+# crashes on their dangling links (see .pre-commit-hooks/validate_cloud_function_symlinks.py).
+.claude/
+
 # Ignore Python artifacts
 __pycache__/
 *.py[cod]

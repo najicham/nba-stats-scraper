@@ -1,16 +1,33 @@
 #!/usr/bin/env python3
 """
-Pre-commit hook to validate Cloud Function symlinks are present.
+Pre-commit hook to validate Cloud Function symlinks.
 
-This prevents deployment failures caused by missing shared/ module symlinks.
-Added after Feb 1, 2026 incident where phase3_data_quality_check.py was missing.
+Two checks:
+
+1. REQUIRED symlinks are present. Prevents deployment failures caused by missing
+   shared/ module symlinks. Added after the Feb 1, 2026 incident where
+   phase3_data_quality_check.py was missing.
+
+2. No symlink anywhere in the repo DANGLES. Added 2026-08-21: `54d08d56` deleted
+   `shared/utils/bigquery_client.py` and left six vendored symlinks pointing at
+   it. Nothing imported the module, so nothing failed -- but a dangling symlink
+   makes gcloud's upload enumeration crash outright:
+
+       ERROR: gcloud crashed (FileNotFoundError): [Errno 2] No such file or
+       directory: './orchestration/cloud_functions/phase5_to_phase6/shared/
+       utils/bigquery_client.py'
+
+   That breaks every `gcloud builds submit` from the repo root -- which is the
+   ONLY build path for the twelve scraper-backfill Cloud Run jobs, since they
+   have no Cloud Build trigger. Cloud Build TRIGGERS check out from git and are
+   unaffected, so this stayed invisible for three months.
 
 Usage:
     python .pre-commit-hooks/validate_cloud_function_symlinks.py
 
 Exit Codes:
-    0 - All symlinks present
-    1 - Missing symlinks detected
+    0 - All symlinks present and resolvable
+    1 - Missing or dangling symlinks detected
 """
 
 import os
@@ -86,11 +103,37 @@ def check_symlinks() -> list:
 
     return missing
 
+# Directories that are not part of any upload context and are noisy to walk.
+DANGLING_SCAN_SKIP = {
+    '.git', '.venv', 'venv', 'env', 'ENV', '__pycache__', 'node_modules',
+    '.pytest_cache', '.mypy_cache', '.claude', 'models',
+}
+
+
+def check_dangling_symlinks() -> list:
+    """Every symlink in the repo must resolve. See the module docstring."""
+    repo_root = get_repo_root()
+    dangling = []
+
+    for dirpath, dirnames, filenames in os.walk(repo_root):
+        dirnames[:] = [d for d in dirnames if d not in DANGLING_SCAN_SKIP]
+        for name in dirnames + filenames:
+            p = Path(dirpath) / name
+            if p.is_symlink() and not p.exists():
+                dangling.append({
+                    'path': str(p.relative_to(repo_root)),
+                    'target': os.readlink(p),
+                })
+
+    return dangling
+
+
 def main():
     """Main entry point."""
     print("Checking Cloud Function symlinks...")
 
     missing = check_symlinks()
+    dangling = check_dangling_symlinks()
 
     if missing:
         print(f"\n{'='*60}")
@@ -114,7 +157,21 @@ def main():
 
         sys.exit(1)
 
-    print("All Cloud Function symlinks present")
+    if dangling:
+        print(f"\n{'='*60}")
+        print(f" DANGLING SYMLINKS DETECTED ({len(dangling)})")
+        print(f"{'='*60}\n")
+        print("A symlink whose target no longer exists makes")
+        print("`gcloud builds submit` crash during file enumeration, breaking")
+        print("every manual source upload. Delete the link or restore the target.\n")
+        for item in dangling:
+            print(f"  {item['path']}")
+            print(f"     -> {item['target']}  (missing)")
+            print(f"     fix: git rm {item['path']}")
+        print()
+        sys.exit(1)
+
+    print("All Cloud Function symlinks present and resolvable")
     sys.exit(0)
 
 if __name__ == '__main__':
