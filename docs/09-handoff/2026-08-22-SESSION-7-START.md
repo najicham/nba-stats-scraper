@@ -211,11 +211,53 @@ Session-5 plan steps 7-9, unchanged and code-verified by the October audit. Two 
 - Verify 600-750 rows for `season='2026-27'`; the first `br-rosters-batch-daily` run must
   write ~600 rows with `season_display='2026-27'` AND `season_year=2026`.
 
+**⚠️ Vendor gate — the BigDataBall NBA play-by-play season pass (added 2026-08-22).**
+Noticed while filtering the BigDataBall store to In-Season + Play-by-Play on 2026-08-22: NFL,
+WNBA and MLB season passes are listed, **NBA is not**. Almost certainly a calendar artifact —
+those are the leagues in or entering season, and the pricing agrees (MLB/WNBA at -80% is
+late-season pro-rating, NFL at -15% is pre-season). NBA plans should appear near full price
+closer to October.
+
+It is on the list anyway because it is a *supply* dependency on the critical path, not an
+enrichment feed. `nba_raw.bigdataball_play_by_play` is read by eleven processors, two of them
+load-bearing for predictions: `player_game_summary_processor` (via
+`sources/shot_zone_analyzer.py`) and `ml_feature_store_processor`. Without it feature 6
+`shot_zone_mismatch_score` falls back to its `0.0` default — the processor already alarms on
+this (Session 52, "all using defaults (indicates upstream issue)"). Feature 6 sits in the
+required 0-53 block, not the optional 54-59 set, so under `HARD_FLOOR_MAX_DEFAULTS = 0` a
+missing feed blocks **every player**.
+
+That is the trap: a lapsed pass produces zero predictions on exactly the schedule §1 says zero
+predictions are *expected*, and nothing pages you through it. It would surface around Nov 4,
+two weeks after the seed window closed, with a fortnight of feature-store rows already written
+against a defaulted feature 6.
+
+  - **Mid-September:** check the store again. That is roughly where NFL sits now relative to
+    its opener, so NBA plans should be listed by then. Two weeks of slack before Oct 1.
+  - **By Oct 1:** purchased AND delivery proven. BigDataBall drops to Drive;
+    `bigdataball-puller@nba-props-platform.iam.gserviceaccount.com` must be able to read the
+    folder. A purchase receipt is not evidence the puller can read anything — pull one file.
+  - **Still unlisted on Oct 1?** Stop waiting and email them. The seed window is running.
+  - **Sequence with owner decision A (§3).** Rotating the bigdataball key forces a
+    re-verification of this same delivery path. Rotate, renew, then run one end-to-end pull
+    test — strictly less work than doing them separately, and it collapses two open items into
+    one verification.
+
 ### Phase E — Oct 6-20: waves, and define "healthy" for the blind window
 Session-5 §6 gates all still apply. Add one deliverable: **write down what healthy looks like
 during Oct 20 → Nov 4** — box scores landing, `player_game_summary` growing, feature-store rows
 accumulating — and have something watch those specific quantities. Otherwise §1's blind window
-stays blind. Also: `weekly-retrain-trigger` fires Mondays only, so its sole pre-opener run is
+stays blind.
+
+**Put feature provenance in that definition, not just row counts.** During the blind window
+every player is blocked either way, so `default_feature_count > 0` cannot distinguish "warming
+up" from "an upstream feed is gone". What distinguishes them is *which* features are
+defaulting and *why*. Watch `feature_N_source` — specifically that features 5-8 report
+`phase4` rather than falling back to default — and alert on a feed that is absent rather than
+merely thin. Feature 6 is the BigDataBall canary described in Phase D; features 5, 7 and 8
+share the same Session-52 alarm and the same blocking consequence. A row count that keeps
+climbing while feature 6 is 100% defaulted is the exact failure this window would otherwise
+hide. Also: `weekly-retrain-trigger` fires Mondays only, so its sole pre-opener run is
 Mon Oct 19 — resume by Fri Oct 16 or the first retrain is Oct 26.
 
 ### Explicitly NOT in this plan
