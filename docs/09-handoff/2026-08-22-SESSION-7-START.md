@@ -38,14 +38,19 @@ reading.
 
 ## 2. State right now
 
-### ⚠️ Four commits are COMMITTED BUT NOT PUSHED
+### ⚠️ Six commits are COMMITTED BUT NOT PUSHED
 
 ```
-e50e5878  docs: session-7 start (this document)
+9cc1e6e8  docs: decision B resolved
+02511358  fix: two signal queries selected a feature other than the one they named
+4855644e  docs: session-7 start (this document)
 dd67633d  fix: a second, independent blocker on the roster registry
 631e5139  fix: keys/ was uploadable into every manual build context
 53265cf4  docs: an agent research playbook
 ```
+
+(The session-7 doc commit is `4855644e`; it was amended after the `e50e5878`
+hash was written into §8.)
 
 Left unpushed deliberately. Pushing and verifying belong together — splitting
 them across sessions is how "a green build is not a deployment" happens. Do both
@@ -157,8 +162,9 @@ instead of in production, (c) fix the few things that corrupt the money path or 
 record, and (d) leave the remainder documented and ranked.
 
 ### Phase A — now → Aug 29: land and decide
-1. Push the four commits; verify by `BUILD_COMMIT`. `dd67633d` is the only one
-   touching runtime code.
+1. Push the six commits; verify by `BUILD_COMMIT`. `dd67633d` and `02511358` are the
+   ones touching runtime code — `02511358` changes the best-bets query paths
+   (`ml/signals/`), so it deploys with the services that carry them.
 2. Resolve the registry deploy question (§2). This gates everything in Phase C/D.
 3. Owner decisions A and B (§3).
 4. Red-team the unverified findings — see §7. Do this **before** fixing, not after.
