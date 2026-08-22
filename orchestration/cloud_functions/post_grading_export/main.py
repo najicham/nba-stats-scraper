@@ -40,7 +40,7 @@ import logging
 import os
 import sys
 from datetime import datetime, timezone
-from typing import Dict
+from typing import Dict, Tuple
 
 # Ensure deployed package root is in Python path (Cloud Functions runtime fix)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -305,6 +305,108 @@ def parse_pubsub_message(cloud_event) -> Dict:
     except Exception as e:
         logger.error(f"Failed to parse Pub/Sub message: {e}", exc_info=True)
         return {}
+
+
+def patch_best_bets_json(
+    bb_data: Dict,
+    all_bq_picks: Dict,
+    target_date: str,
+    correlation_id: str = '-',
+) -> Tuple[int, int]:
+    """Merge graded actuals from BigQuery into an already-published day file.
+
+    Mutates `bb_data` in place and returns (wins, losses).
+
+    Extracted from main() 2026-08-21 so the halt guard below is reachable from a
+    test. Pure: no BigQuery, no GCS, no clock beyond `graded_at`.
+
+    THE HALT GUARD. A halt zeroes the published GCS file but leaves whatever rows
+    an earlier, pre-halt export already wrote to `signal_best_bets_picks` with
+    `signal_status='active'`. Without the guard, the next morning's patch treats
+    those rows as "missing from JSON" and re-adds every one of them into the
+    halted file -- publishing a full graded slate under `halt_active: true` and
+    silently undoing the suppression in the public record. Existing picks are
+    still patched with actuals; only the RE-ADD is suppressed.
+    """
+    wins, losses = 0, 0
+
+    # Patch existing picks with actuals
+    existing_lookups = set()
+    for pick in bb_data.get('picks', []):
+        lookup = pick.get('player_lookup')
+        existing_lookups.add(lookup)
+        if lookup in all_bq_picks and all_bq_picks[lookup]['actual'] is not None:
+            pick['actual'] = all_bq_picks[lookup]['actual']
+            pick['result'] = 'WIN' if all_bq_picks[lookup]['correct'] else 'LOSS'
+            if all_bq_picks[lookup]['correct']:
+                wins += 1
+            else:
+                losses += 1
+
+    # Add BQ picks missing from JSON (e.g. manual_override added after export)
+    #
+    # NOT when the file says the date was halted. A halt zeroes GCS
+    # but leaves any rows an earlier (pre-halt) export already wrote
+    # to signal_best_bets_picks with signal_status='active'. Without
+    # this guard the next morning's patch re-adds every one of them
+    # into the halted JSON, publishing a full graded slate under
+    # halt_active: true and silently undoing the suppression in the
+    # public record. Added 2026-08-21, when halt_state began
+    # actually gating NBA picks.
+    halted = bool(bb_data.get('halt_active'))
+    if halted:
+        logger.warning(
+            f"[{correlation_id}] {target_date} is halted "
+            f"(reason={bb_data.get('halt_reason')}) — not re-adding "
+            f"{len(all_bq_picks)} BQ pick(s) into the halted JSON."
+        )
+    for lookup, bq_pick in all_bq_picks.items():
+        if not halted and lookup not in existing_lookups:
+            new_pick = {
+                'player_lookup': bq_pick['player_lookup'],
+                'player': bq_pick['player_name'],
+                'team': bq_pick['team'],
+                'opponent': bq_pick['opponent'],
+                'direction': bq_pick['direction'],
+                'line': bq_pick['line'],
+                'prediction': bq_pick['prediction'],
+                'edge': bq_pick['edge'],
+                'confidence': bq_pick['confidence'],
+                'system_id': bq_pick['system_id'],
+                'signals': bq_pick['signals'],
+                'game_id': bq_pick['game_id'],
+            }
+            if bq_pick['actual'] is not None:
+                new_pick['actual'] = bq_pick['actual']
+                new_pick['result'] = 'WIN' if bq_pick['correct'] else 'LOSS'
+                if bq_pick['correct']:
+                    wins += 1
+                else:
+                    losses += 1
+            bb_data.get('picks', []).append(new_pick)
+            logger.info(
+                f"[{correlation_id}] Added missing pick {lookup} "
+                f"(system_id={bq_pick['system_id']}) to JSON"
+            )
+
+    bb_data['total_picks'] = len(bb_data.get('picks', []))
+
+    # Update record
+    total = wins + losses
+    bb_data['record'] = {
+        'season': bb_data.get('record', {}).get('season', {}),
+        'month': bb_data.get('record', {}).get('month', {}),
+        'week': bb_data.get('record', {}).get('week', {}),
+        'day': {
+            'wins': wins,
+            'losses': losses,
+            'pct': round(wins / total, 3) if total > 0 else 0.0,
+        },
+    }
+    bb_data['graded_at'] = datetime.now(timezone.utc).isoformat()
+
+
+    return wins, losses
 
 
 @functions_framework.cloud_event
@@ -677,83 +779,8 @@ def main(cloud_event):
 
             if blob.exists():
                 bb_data = json.loads(blob.download_as_text())
-                wins, losses = 0, 0
-
-                # Patch existing picks with actuals
-                existing_lookups = set()
-                for pick in bb_data.get('picks', []):
-                    lookup = pick.get('player_lookup')
-                    existing_lookups.add(lookup)
-                    if lookup in all_bq_picks and all_bq_picks[lookup]['actual'] is not None:
-                        pick['actual'] = all_bq_picks[lookup]['actual']
-                        pick['result'] = 'WIN' if all_bq_picks[lookup]['correct'] else 'LOSS'
-                        if all_bq_picks[lookup]['correct']:
-                            wins += 1
-                        else:
-                            losses += 1
-
-                # Add BQ picks missing from JSON (e.g. manual_override added after export)
-                #
-                # NOT when the file says the date was halted. A halt zeroes GCS
-                # but leaves any rows an earlier (pre-halt) export already wrote
-                # to signal_best_bets_picks with signal_status='active'. Without
-                # this guard the next morning's patch re-adds every one of them
-                # into the halted JSON, publishing a full graded slate under
-                # halt_active: true and silently undoing the suppression in the
-                # public record. Added 2026-08-21, when halt_state began
-                # actually gating NBA picks.
-                halted = bool(bb_data.get('halt_active'))
-                if halted:
-                    logger.warning(
-                        f"[{correlation_id}] {target_date} is halted "
-                        f"(reason={bb_data.get('halt_reason')}) — not re-adding "
-                        f"{len(all_bq_picks)} BQ pick(s) into the halted JSON."
-                    )
-                for lookup, bq_pick in all_bq_picks.items():
-                    if not halted and lookup not in existing_lookups:
-                        new_pick = {
-                            'player_lookup': bq_pick['player_lookup'],
-                            'player': bq_pick['player_name'],
-                            'team': bq_pick['team'],
-                            'opponent': bq_pick['opponent'],
-                            'direction': bq_pick['direction'],
-                            'line': bq_pick['line'],
-                            'prediction': bq_pick['prediction'],
-                            'edge': bq_pick['edge'],
-                            'confidence': bq_pick['confidence'],
-                            'system_id': bq_pick['system_id'],
-                            'signals': bq_pick['signals'],
-                            'game_id': bq_pick['game_id'],
-                        }
-                        if bq_pick['actual'] is not None:
-                            new_pick['actual'] = bq_pick['actual']
-                            new_pick['result'] = 'WIN' if bq_pick['correct'] else 'LOSS'
-                            if bq_pick['correct']:
-                                wins += 1
-                            else:
-                                losses += 1
-                        bb_data.get('picks', []).append(new_pick)
-                        logger.info(
-                            f"[{correlation_id}] Added missing pick {lookup} "
-                            f"(system_id={bq_pick['system_id']}) to JSON"
-                        )
-
-                bb_data['total_picks'] = len(bb_data.get('picks', []))
-
-                # Update record
-                total = wins + losses
-                bb_data['record'] = {
-                    'season': bb_data.get('record', {}).get('season', {}),
-                    'month': bb_data.get('record', {}).get('month', {}),
-                    'week': bb_data.get('record', {}).get('week', {}),
-                    'day': {
-                        'wins': wins,
-                        'losses': losses,
-                        'pct': round(wins / total, 3) if total > 0 else 0.0,
-                    },
-                }
-                bb_data['graded_at'] = datetime.now(timezone.utc).isoformat()
-
+                wins, losses = patch_best_bets_json(
+                    bb_data, all_bq_picks, target_date, correlation_id)
                 blob.upload_from_string(
                     json.dumps(bb_data, indent=2, default=str),
                     content_type='application/json'

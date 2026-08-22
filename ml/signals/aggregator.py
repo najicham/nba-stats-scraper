@@ -885,6 +885,12 @@ class BestBetsAggregator:
             if pred_system_id in blocked_models:
                 if pred_system_id in LEGACY_MODEL_BLOCKLIST:
                     filter_counts['legacy_block'] += 1
+                else:
+                    # 2026-08-21: these guards used to drop candidates with no
+                    # counter at all — a zero-pick day caused by a sanity block
+                    # was indistinguishable from a genuinely empty slate in the
+                    # filter summary and in best_bets_filter_audit.
+                    filter_counts['model_sanity_block'] += 1
                 continue
 
             # Player blacklist (Session 284)

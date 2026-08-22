@@ -258,6 +258,16 @@ Examples:
     )
 
     parser.add_argument(
+        "--current-season",
+        action="store_true",
+        help=("Scrape the season in progress today, overriding --seasons. Use this "
+              "for the recurring daily refresh so no scheduler carries a hardcoded "
+              "year -- br-rosters-batch-daily was created with --seasons=2025 in "
+              "January 2026 and therefore refreshed the 2024-25 rosters every "
+              "morning for six months.")
+    )
+
+    parser.add_argument(
         "--teams",
         type=str,
         help=f"Comma-separated list of Basketball Reference team abbreviations",
@@ -312,8 +322,22 @@ def main():
             print()
         return
 
-    # Parse seasons
-    seasons = [int(year.strip()) for year in args.seasons.split(",")]
+    # Parse seasons.
+    # NOTE ON CONVENTION: --seasons takes ENDING years (2027 -> the 2026-27
+    # season), matching the scraper, which builds its GCS season string as
+    # f"{year-1}-{year[2:]}". BigQuery, the path extractor and the registry all
+    # key on the START year. Do not conflate the two.
+    if args.current_season:
+        from shared.utils.season_utils import get_current_season_year
+        seasons = [get_current_season_year() + 1]
+        # print(), not logger: logging.basicConfig() is not called until
+        # BasketballRefSeasonRosterBackfill.__init__ below, so a log line here is
+        # swallowed -- and this is the one line that tells an operator which
+        # season the scheduled run actually picked.
+        print(f"--current-season resolved to ending year {seasons[0]} "
+              f"(season {seasons[0] - 1}-{str(seasons[0])[2:]})", flush=True)
+    else:
+        seasons = [int(year.strip()) for year in args.seasons.split(",")]
 
     # Parse teams
     if args.all_teams:

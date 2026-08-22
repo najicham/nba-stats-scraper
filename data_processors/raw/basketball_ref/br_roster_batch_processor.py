@@ -18,37 +18,72 @@ Usage:
         "metadata": {
             "trigger_type": "batch_processing",
             "season": "2023-24",
-            "season_year": 2024,
+            "season_year": 2024,      # END year, from the scraper. NOT USED HERE.
             "teams_scraped": 30,
             "teams": ["LAL", "BOS", ...]
         }
     }
 
-Version: 1.0
+    ⚠️ Two season conventions meet in this file. The SCRAPER is end-year keyed
+    (`--year 2027` -> season "2026-27"), so `metadata['season_year']` is the END
+    year. `nba_raw.br_rosters_current`, `BasketballRefRosterExtractor` and
+    `roster_registry_processor` are all START-year keyed (2026 <-> "2026-27").
+    This processor derives the year from the season STRING and ignores the
+    metadata field. Do not "fix" it back to `+ 1`.
+
+Version: 2.0
 Created: 2026-01-06
+Repaired: 2026-08-21 — v1.0 never successfully wrote a row (see
+    `_transform_team_roster`); every BR roster row in BigQuery was written by
+    the per-file `BasketballRefRosterProcessor` before `129a5bf9` (2026-01-13)
+    routed roster files here.
 """
 
-import hashlib
 import json
 import logging
-from datetime import datetime, timezone
-from typing import Dict, List
+from datetime import date, datetime, timezone
 
 from google.cloud import bigquery, storage
 
 from data_processors.raw.processor_base import ProcessorBase
+from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
+from data_processors.raw.utils.name_utils import normalize_name
 from shared.clients.bigquery_pool import get_bigquery_client
+from shared.utils.bigquery_retry import QUOTA_RETRY, SERIALIZATION_RETRY
 
 logger = logging.getLogger(__name__)
 
 
-class BasketballRefRosterBatchProcessor(ProcessorBase):
+class BasketballRefRosterBatchProcessor(SmartIdempotencyMixin, ProcessorBase):
     """
     Batch processor for Basketball Reference season rosters.
 
     Reads all 30 team files from GCS and processes them in a single
     BigQuery MERGE operation for maximum efficiency.
+
+    Writes the SAME rows `BasketballRefRosterProcessor` writes, by design: both
+    target `nba_raw.br_rosters_current`, and a divergence between them shows up
+    as a silent no-op rather than an error. See `_transform_team_roster` for the
+    column parity and `_execute_merge` for the MATCHED-clause parity -- the
+    second is the easier one to lose, because a hash gate looks like a pure
+    optimisation and is actually a change to what `last_scraped_date` means.
     """
+
+    #: Must match `BasketballRefRosterProcessor.HASH_FIELDS` — the two writers
+    #: share a target table, so a different hash basis would make every row look
+    #: changed on the next run by the other processor.
+    HASH_FIELDS = [
+        'season_year',
+        'team_abbrev',
+        'player_full_name',
+        'position',
+        'jersey_number',
+        'height',
+        'weight',
+        'birth_date',
+        'college',
+        'experience_years',
+    ]
 
     def __init__(self):
         super().__init__()
@@ -92,7 +127,7 @@ class BasketballRefRosterBatchProcessor(ProcessorBase):
                 team_roster = json.loads(content)
 
                 # Transform team roster to BigQuery rows
-                self._transform_team_roster(team_roster, team_abbr, season)
+                self._transform_team_roster(team_roster, team_abbr, season, blob.name)
                 team_count += 1
 
             except Exception as e:
@@ -111,105 +146,118 @@ class BasketballRefRosterBatchProcessor(ProcessorBase):
         self.stats['players_loaded'] = len(self.team_data)
 
     def transform_data(self) -> None:
-        """Transform data - already done during load_data() via _transform_team_roster()."""
-        # Transformation happens during load_data() when we create BigQuery-ready rows
-        # Just set transformed_data to raw_data since it's already in the correct format
+        """Rows are built during load_data(); this only stamps the idempotency hash."""
         self.transformed_data = self.raw_data
+        if self.transformed_data:
+            self.add_data_hash()
 
-    def _transform_team_roster(self, roster_data: dict, team_abbr: str, season: str):
+    def _transform_team_roster(self, roster_data: dict, team_abbr: str, season: str,
+                               source_file_path: str = None):
         """
-        Transform Basketball Reference roster data to BigQuery schema.
+        Transform Basketball Reference roster data to the br_rosters_current schema.
+
+        ⚠️ This MUST stay field-for-field identical to
+        `BasketballRefRosterProcessor.transform_data`. Until 2026-08-21 it was not:
+        it emitted `player_name` / `player_name_ascii` / `last_name` / `suffix`
+        (no such columns), omitted the REQUIRED `season_display`,
+        `player_full_name`, `player_last_name` and `player_normalized`, and set
+        `season_year = start_year + 1` while the table, the path extractor and the
+        registry reader all use the START year. The MERGE could not parse, so this
+        processor never wrote a row. BR rosters went stale on 2026-01-13, the day
+        `129a5bf9` routed roster files here.
 
         Args:
             roster_data: Parsed JSON from GCS file
-            team_abbr: Team abbreviation (e.g., "LAL")
+            team_abbr: Team abbreviation from the file name (e.g., "LAL")
             season: Season string (e.g., "2023-24")
+            source_file_path: GCS object name, for provenance
         """
-        season_year = int(season.split('-')[0]) + 1  # "2023-24" → 2024
+        # "2025-26" -> 2025. START year, matching br_rosters_current, the path
+        # extractor and roster_registry_processor. Note metadata['season_year']
+        # from the scraper backfill is the END year (2026) and is NOT used here.
+        season_year = int(season.split('-')[0])
+        today = date.today().isoformat()
+
+        # Prefer the abbreviation the scraper recorded; fall back to the filename.
+        team_abbrev = roster_data.get('team_abbrev') or team_abbr
 
         for player in roster_data.get('players', []):
-            # Calculate data hash for change detection
-            player_hash = self._calculate_hash(player)
+            full_name = player.get('full_name')
+            if not full_name:
+                logger.warning(f"Skipping player without name on {team_abbrev}: {player}")
+                self.stats['players_skipped'] = self.stats.get('players_skipped', 0) + 1
+                continue
 
-            # Create BigQuery row
             self.team_data.append({
                 'season_year': season_year,
-                'team_abbrev': team_abbr,
-                'player_lookup': player.get('normalized', ''),  # Normalized name for matching
-                'player_name': player.get('full_name', ''),
-                'player_name_ascii': player.get('full_name_ascii', ''),
-                'last_name': player.get('last_name', ''),
-                'suffix': player.get('suffix', ''),
-                'jersey_number': player.get('jersey_number', ''),
-                'position': player.get('position', ''),
-                'height': player.get('height', ''),
-                'weight': player.get('weight', ''),
-                'data_hash': player_hash,
+                'season_display': season,
+                'team_abbrev': team_abbrev,
+
+                # Player identity
+                'player_full_name': full_name,
+                'player_last_name': player.get('last_name', ''),
+                'player_normalized': player.get('normalized', ''),
+                'player_lookup': normalize_name(full_name),
+
+                # Player details (strings, as the scraper emits them)
+                'position': player.get('position'),
+                'jersey_number': player.get('jersey_number'),
+                'height': player.get('height'),
+                'weight': player.get('weight'),
+
+                # The BR roster scraper does not emit these; kept for schema parity.
+                'birth_date': player.get('birth_date'),
+                'college': player.get('college'),
+                'experience_years': None,
+
+                # Tracking. first_seen_date is REQUIRED and is a DATE, not a
+                # TIMESTAMP; the MERGE preserves the existing value on match.
+                'first_seen_date': today,
+                'last_scraped_date': today,
+                'source_file_path': source_file_path,
+                'processed_at': datetime.now(timezone.utc).isoformat(),
             })
-
-    def _calculate_hash(self, player_data: dict) -> str:
-        """Calculate MD5 hash of player data for change detection."""
-        # Include fields that matter for detecting changes
-        hash_fields = {
-            'full_name': player_data.get('full_name', ''),
-            'position': player_data.get('position', ''),
-            'height': player_data.get('height', ''),
-            'weight': player_data.get('weight', ''),
-            'jersey_number': player_data.get('jersey_number', ''),
-        }
-
-        hash_string = json.dumps(hash_fields, sort_keys=True)
-        return hashlib.md5(hash_string.encode()).hexdigest()
 
     def save_data(self) -> None:
         """Save all teams in a single MERGE operation."""
-        if not self.team_data:
+        rows = self.transformed_data or self.team_data
+        if not rows:
             logger.warning("No data to save")
             self.stats['rows_inserted'] = 0
             return
 
-        project = self.opts.get('project', 'nba-props-platform')
+        project = self.opts.get('project') or self.opts.get('project_id') or 'nba-props-platform'
         dataset = 'nba_raw'
 
-        # Create single temp table for all teams
+        target_table_id = f"{project}.{dataset}.br_rosters_current"
         temp_table_id = f"{project}.{dataset}.br_rosters_temp_batch_{self.run_id}"
 
         logger.info(f"Creating temp table: {temp_table_id}")
 
-        # Define schema
-        schema = [
-            bigquery.SchemaField("season_year", "INTEGER", mode="REQUIRED"),
-            bigquery.SchemaField("team_abbrev", "STRING", mode="REQUIRED"),
-            bigquery.SchemaField("player_lookup", "STRING", mode="REQUIRED"),
-            bigquery.SchemaField("player_name", "STRING", mode="NULLABLE"),
-            bigquery.SchemaField("player_name_ascii", "STRING", mode="NULLABLE"),
-            bigquery.SchemaField("last_name", "STRING", mode="NULLABLE"),
-            bigquery.SchemaField("suffix", "STRING", mode="NULLABLE"),
-            bigquery.SchemaField("jersey_number", "STRING", mode="NULLABLE"),
-            bigquery.SchemaField("position", "STRING", mode="NULLABLE"),
-            bigquery.SchemaField("height", "STRING", mode="NULLABLE"),
-            bigquery.SchemaField("weight", "STRING", mode="NULLABLE"),
-            bigquery.SchemaField("data_hash", "STRING", mode="NULLABLE"),
-        ]
+        # Derive the temp schema from the target rather than restating it. The
+        # hand-written copy this replaced had drifted away from the real table
+        # and the MERGE could not parse.
+        target_table = self.bq_client.get_table(target_table_id)
 
-        # Load all teams to temp table
         job_config = bigquery.LoadJobConfig(
-            schema=schema,
-            write_disposition="WRITE_TRUNCATE"  # Replace temp table contents
+            schema=target_table.schema,
+            autodetect=False,
+            write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+            create_disposition=bigquery.CreateDisposition.CREATE_IF_NEEDED,
         )
 
         try:
             load_job = self.bq_client.load_table_from_json(
-                self.team_data,
+                rows,
                 temp_table_id,
                 job_config=job_config
             )
             load_job.result()  # Wait for completion
 
-            logger.info(f"✅ Loaded {len(self.team_data)} rows to {temp_table_id}")
+            logger.info(f"✅ Loaded {len(rows)} rows to {temp_table_id}")
 
             # Execute MERGE for all teams (SINGLE OPERATION)
-            self._execute_merge(temp_table_id, project, dataset)
+            self._execute_merge(temp_table_id, target_table_id)
 
             # Track stats
             self.stats['rows_inserted'] = self.stats.get('rows_merged', 0)
@@ -226,19 +274,19 @@ class BasketballRefRosterBatchProcessor(ProcessorBase):
         finally:
             # Clean up temp table
             try:
-                self.bq_client.delete_table(temp_table_id)
+                self.bq_client.delete_table(temp_table_id, not_found_ok=True)
                 logger.info(f"✅ Cleaned up temp table: {temp_table_id}")
             except Exception as e:
                 logger.warning(f"Failed to delete temp table: {e}")
 
-    def _execute_merge(self, temp_table_id: str, project: str, dataset: str):
+    def _execute_merge(self, temp_table_id: str, target_table_id: str):
         """
-        Execute single MERGE operation for all 30 teams.
+        Execute a single MERGE for all 30 teams (the point of this processor).
 
-        This is the key optimization: 30 teams = 1 MERGE instead of 30 MERGEs.
+        Column list is kept in lockstep with
+        `BasketballRefRosterProcessor.save_data`; `first_seen_date` is preserved
+        for existing players and only set on insert.
         """
-        target_table_id = f"{project}.{dataset}.br_rosters_current"
-
         merge_query = f"""
         MERGE `{target_table_id}` AS target
         USING `{temp_table_id}` AS source
@@ -246,46 +294,73 @@ class BasketballRefRosterBatchProcessor(ProcessorBase):
            AND target.team_abbrev = source.team_abbrev
            AND target.player_lookup = source.player_lookup
 
-        -- Update if data changed
-        WHEN MATCHED AND source.data_hash != target.data_hash THEN
+        -- UNCONDITIONAL, exactly like BasketballRefRosterProcessor. Do NOT add a
+        -- `AND source.data_hash != target.data_hash` gate here, however tempting
+        -- the DML saving looks on a ~600-row table:
+        --
+        --   * `nba_reference` reads this table by DATE, not by content.
+        --     `BRRosterSource.get_roster_players` runs
+        --     `WHERE last_scraped_date = @data_date` and treats a non-empty
+        --     result as a full match. Under a hash gate only the handful of
+        --     players who CHANGED that day carry today's date, so the registry
+        --     would silently seed itself from 3 players and report success.
+        --   * `data_hash` is NULL on 75 legacy rows, and `!=` against NULL is
+        --     NULL, so those rows would never be updated and never repaired.
+        WHEN MATCHED THEN
           UPDATE SET
-            player_name = source.player_name,
-            player_name_ascii = source.player_name_ascii,
-            last_name = source.last_name,
-            suffix = source.suffix,
-            jersey_number = source.jersey_number,
+            season_display = source.season_display,
+            player_full_name = source.player_full_name,
+            player_last_name = source.player_last_name,
+            player_normalized = source.player_normalized,
             position = source.position,
+            jersey_number = source.jersey_number,
             height = source.height,
             weight = source.weight,
-            data_hash = source.data_hash,
-            updated_at = CURRENT_TIMESTAMP()
+            birth_date = source.birth_date,
+            college = source.college,
+            experience_years = source.experience_years,
+            last_scraped_date = source.last_scraped_date,
+            source_file_path = source.source_file_path,
+            processed_at = source.processed_at,
+            data_hash = source.data_hash
 
-        -- Insert new players
         WHEN NOT MATCHED THEN
           INSERT (
-            season_year, team_abbrev, player_lookup, player_name, player_name_ascii,
-            last_name, suffix, jersey_number, position, height, weight, data_hash,
-            first_seen_date, created_at, updated_at
+            season_year, season_display, team_abbrev,
+            player_full_name, player_last_name, player_normalized, player_lookup,
+            position, jersey_number, height, weight, birth_date, college, experience_years,
+            first_seen_date, last_scraped_date, source_file_path, processed_at, data_hash
           )
           VALUES (
-            source.season_year, source.team_abbrev, source.player_lookup, source.player_name, source.player_name_ascii,
-            source.last_name, source.suffix, source.jersey_number, source.position, source.height, source.weight, source.data_hash,
-            CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()
+            source.season_year, source.season_display, source.team_abbrev,
+            source.player_full_name, source.player_last_name, source.player_normalized, source.player_lookup,
+            source.position, source.jersey_number, source.height, source.weight,
+            source.birth_date, source.college, source.experience_years,
+            COALESCE(source.first_seen_date, source.last_scraped_date),
+            source.last_scraped_date, source.source_file_path, source.processed_at, source.data_hash
           )
         """
 
         logger.info(f"Executing MERGE from {temp_table_id} to {target_table_id}")
 
-        merge_job = self.bq_client.query(merge_query)
-        result = merge_job.result()  # Wait for completion
+        @QUOTA_RETRY
+        @SERIALIZATION_RETRY
+        def execute_merge_with_retry():
+            query_job = self.bq_client.query(merge_query)
+            query_job.result()  # Wait for completion
+            return query_job
 
-        # Get row counts
-        rows_affected = result.total_rows if result.total_rows else 0
+        query_job = execute_merge_with_retry()
+
+        # `result().total_rows` is 0 for DML — the affected count lives on the job.
+        rows_affected = query_job.num_dml_affected_rows or 0
 
         logger.info(f"✅ MERGE complete - {rows_affected} rows affected")
 
         self.stats['rows_merged'] = rows_affected
-        self.stats['teams_processed'] = len(set(row['team_abbrev'] for row in self.team_data))
+        self.stats['teams_processed'] = len(
+            set(row['team_abbrev'] for row in (self.transformed_data or self.team_data))
+        )
 
     def validate_data(self) -> None:
         """Validate that we loaded a reasonable number of teams and players."""

@@ -3,7 +3,9 @@
 # COUNT CORRECTION: the manifest's summary line says "RESTORE 58 (waves A=19,
 # B=18, C=21)". Its Wave B table actually has 19 rows, so the real total is 59.
 # Counting the tables: A=19 (one row covers player-movement-registry-morning AND
-# -afternoon), B=19, C=21. This catalog has 59.
+# -afternoon), B=19, C=21. This catalog has 59 restored jobs, plus
+# br-rosters-batch-daily (2026-08-21), which was never in the purge list at all
+# -- see its notes. 60 entries total.
 #
 # READ THIS FIRST
 # ---------------
@@ -245,6 +247,35 @@ jobs:
     The original body hardcoded "year":"2026". Confirm the year-param semantics
     before resuming -- for the 2026-27 season this may need to be 2026 (season
     start year) or 2027. Do not blindly replay across a year boundary.
+
+- name: br-rosters-batch-daily
+  wave: A
+  schedule: "30 6 * * *"
+  timezone: America/New_York
+  method: POST
+  uri: "https://us-west2-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/nba-props-platform/jobs/br-rosters-backfill:run"
+  body:
+    overrides:
+      containerOverrides:
+        - args: ["--current-season", "--all-teams", "--group=prod"]
+  oauth: true
+  provenance: derived_from_code
+  verified: true   # 2026-08-21: exact definition recovered from commit 19eda492
+  notes: >-
+    NOT one of the 59 purged jobs -- it is in no catalog and no snapshot, and 400
+    days of audit logs have no trace of it. Its definition was recovered from the
+    commit message of 19eda492 (2026-01-10), which created it: schedule 30 6 * * *
+    ET, target the br-rosters-backfill Cloud Run job, args
+    "--seasons=2025 --all-teams --group=prod". TWO bugs are corrected here, do not
+    replay the original. (1) --seasons takes ENDING years, so --seasons=2025 meant
+    the 2024-25 season: for six months this job re-scraped LAST season's rosters
+    every morning. It is now --current-season, resolved at run time from
+    shared/utils/season_utils, so no year is ever hardcoded again. (2) The
+    processor it fed could not write at all -- see br_roster_batch_processor. Both
+    had to be fixed before this job was worth restoring. Cloud Run JOB execution
+    via the Admin API uses OAuth, not OIDC; the v1 namespaces :run endpoint does
+    accept overrides.containerOverrides[].args (verified against the live
+    discovery document, not assumed).
 
 - name: player-movement-registry-morning
   wave: A

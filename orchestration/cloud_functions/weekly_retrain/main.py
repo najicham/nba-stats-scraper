@@ -133,6 +133,24 @@ GOVERNANCE_SEASON_RESTART = {
 }
 
 
+def is_computed_edge_halt(halt_state: dict) -> bool:
+    """Does this halt_state row justify LOOSENING the governance gates?
+
+    Only a halt the edge-degeneracy guard computed itself does. Publishing and
+    governance have OPPOSITE safe directions: fail-closed for picks means halt,
+    but fail-closed for governance means TIGHTEN. `resolve_halt_state` never
+    returns "unknown" -- on a BigQuery failure it falls back to the last known
+    row and, failing that, halts -- so reading `halt_active` alone would inherit
+    the picks-side convention and let "BigQuery was briefly down at 5 AM Monday"
+    loosen the gates for every family's retrain. A carried-forward `manual`,
+    `between_rounds` or `off_season` row would read as "edge collapsed" too.
+
+    `?season_restart=true` remains the explicit operator override.
+    """
+    return (halt_state.get('halt_source') == 'computed'
+            and bool(halt_state.get('halt_active')))
+
+
 def get_catboost():
     """Lazy load catboost."""
     global cb
@@ -1050,10 +1068,7 @@ def weekly_retrain(request):
                 # `manual` / `between_rounds` / `off_season` row would read as
                 # "edge collapsed" too. Only a computed edge halt qualifies;
                 # ?season_restart=true remains the explicit operator override.
-                edge_collapsed = (
-                    halt_state.get('halt_source') == 'computed'
-                    and bool(halt_state['halt_active'])
-                )
+                edge_collapsed = is_computed_edge_halt(halt_state)
                 if halt_state.get('halt_source') != 'computed':
                     logger.info(
                         "Halt state not computed (source=%s); keeping normal "
