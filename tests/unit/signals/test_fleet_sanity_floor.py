@@ -3,13 +3,16 @@
 WHY THIS FILE EXISTS SEPARATELY FROM test_aggregator_model_sanity.py
 --------------------------------------------------------------------
 `aggregator.aggregate()` carries a fleet-wide safety floor, and on the
-production path it can never fire. `run_single_model_pipeline` calls
+signal-best-bets path it can never fire. `run_single_model_pipeline` calls
 `aggregate()` once per model with ONLY that model's predictions, so the
 aggregator's `n_models` is always 1 and its `1 > max(1, int(1*0.5))` test is
 `1 > 1` — False. From the guards shipping until 2026-08-21 the floor was inert
-exactly where it mattered, and the tests in the sibling file certify semantics
-that only the default-mode analysis callers (signal_annotator, backtest, replay,
-dry-run) ever reach.
+on the path that picks money.
+
+The sibling file's multi-model cases are not vacuous — `signal_annotator` is
+production (`subset-picks` ships in `TONIGHT_EXPORT_TYPES`) and passes a real
+multi-model list, as do the backtest/replay/dry-run tools. They just do not
+cover the signal-best-bets slate.
 
 The real floor is `_apply_fleet_sanity_floor` in `per_model_pipeline`, the only
 caller that sees the whole fleet. These tests cover THAT one.
@@ -54,6 +57,22 @@ def result(system_id, *, blocked, n_candidates=3):
     )
 
 
+def legacy_result(system_id):
+    """A model culled by LEGACY_MODEL_BLOCKLIST — it can never contribute picks,
+    so it is neither a sanity block nor part of the fleet the floor judges."""
+    return PipelineResult(
+        system_id=system_id, candidates=[], all_predictions=[],
+        filter_summary={'total_candidates': 25, 'rejected': {'legacy_block': 25}},
+        signal_results={})
+
+
+def errored_result(system_id):
+    return PipelineResult(
+        system_id=system_id, candidates=[], all_predictions=[],
+        filter_summary={'total_candidates': 0, 'rejected': {}, 'error': 'boom'},
+        signal_results={})
+
+
 class _Rerun:
     """Stands in for `_run_one`. Records what was re-run and with what flag."""
 
@@ -66,9 +85,19 @@ class _Rerun:
 
 
 def run(results):
+    """Invoke the floor with observability stubbed out.
+
+    ⚠️ The first version of this helper used a bare `mock.patch.dict('sys.modules')`,
+    which snapshots and restores sys.modules and mocks NOTHING. Every trip test
+    then executed the real `emit_metric`; it no-opped only because
+    google-cloud-monitoring is absent from this venv. On a CI image with the
+    package and ADC present, the unit suite would have written real
+    `model_sanity_fleet_wide_trip` time series into the production project.
+    """
     rerun = _Rerun()
-    with mock.patch.dict('sys.modules'):
+    with mock.patch('shared.observability.metrics.emit_metric') as emit:
         _apply_fleet_sanity_floor(results, rerun)
+    rerun.emit = emit
     return rerun
 
 
@@ -109,6 +138,19 @@ class TestFleetWideTrip:
                    'c': result('c', blocked=False, n_candidates=4)}
         run(results)
         assert len(results['c'].candidates) == 4
+
+    def test_the_trip_emits_the_metric(self):
+        results = {m: result(m, blocked=True) for m in ('a', 'b')}
+        rerun = run(results)
+        assert rerun.emit.called
+        assert rerun.emit.call_args[0][0] == 'model_sanity_fleet_wide_trip'
+        assert rerun.emit.call_args[0][1] == 2.0
+
+    def test_no_trip_emits_nothing(self):
+        results = {'a': result('a', blocked=True), 'b': result('b', blocked=False),
+                   'c': result('c', blocked=False)}
+        rerun = run(results)
+        assert not rerun.emit.called
 
     def test_the_trip_is_logged_as_an_error(self):
         """A silent recovery would be as bad as the silent drought — the whole
@@ -179,15 +221,11 @@ class TestPerModelPathologyStillBlocks:
 
 class TestDetectionSignal:
 
-    def test_missing_rejected_key_is_treated_as_not_blocked(self):
-        """A pipeline that raised returns `filter_summary` without the counter.
-        An errored model must not be read as a sanity block — otherwise a
-        transient exception in two of three pipelines would disarm the guards."""
-        errored = PipelineResult(
-            system_id='a', candidates=[], all_predictions=[],
-            filter_summary={'total_candidates': 0, 'rejected': {}, 'error': 'boom'},
-            signal_results={})
-        results = {'a': errored,
+    def test_errored_pipeline_is_not_read_as_a_sanity_block(self):
+        """A pipeline that raised returns `filter_summary` without the counter,
+        so it stays out of the numerator. Here the one real self-block is 1 of 2
+        eligible models — not a majority — so nothing is disarmed."""
+        results = {'a': errored_result('a'),
                    'b': result('b', blocked=True),
                    'c': result('c', blocked=False)}
         rerun = run(results)
@@ -202,17 +240,44 @@ class TestDetectionSignal:
 
     def test_legacy_block_is_not_a_sanity_block(self):
         """`catboost_v12` / `catboost_v9` are blocked by the legacy blocklist,
-        which is deliberately NOT subject to this floor. They must not count
-        toward the fraction, or two legacy models in a three-model fleet would
-        disarm the real guards."""
-        legacy = PipelineResult(
-            system_id='catboost_v9', candidates=[], all_predictions=[],
-            filter_summary={'rejected': {'legacy_block': 25}}, signal_results={})
-        results = {'catboost_v9': legacy,
+        which is deliberately NOT subject to this floor."""
+        results = {'catboost_v9': legacy_result('catboost_v9'),
                    'b': result('b', blocked=True),
                    'c': result('c', blocked=False)}
         rerun = run(results)
         assert rerun.calls == []
+
+    def test_legacy_models_do_not_dilute_the_denominator(self):
+        """THE dilution bug. Two real clones both self-block; two legacy
+        prediction sets are also on the date. Counting them gives n=4 and
+        `2 <= max(1,2)` — no trip, and an indefinite zero-pick day with
+        `halt_active: false`. The legacy models cannot contribute picks, so the
+        real fleet is 2 of 2 and the floor must trip."""
+        results = {'catboost_v9': legacy_result('catboost_v9'),
+                   'catboost_v12': legacy_result('catboost_v12'),
+                   'a': result('a', blocked=True),
+                   'b': result('b', blocked=True)}
+        rerun = run(results)
+        assert sorted(s for s, _ in rerun.calls) == ['a', 'b']
+
+    def test_errored_pipelines_do_not_dilute_the_denominator(self):
+        """Same one-sided error: an errored pipeline is already out of the
+        numerator, so leaving it in the denominator can only suppress a trip."""
+        results = {'boom': errored_result('boom'),
+                   'a': result('a', blocked=True),
+                   'b': result('b', blocked=True)}
+        rerun = run(results)
+        assert sorted(s for s, _ in rerun.calls) == ['a', 'b']
+
+    def test_forensics_survive_the_rerun(self):
+        """A fleet-wide trip must not be the one day whose audit shows nothing
+        was blocked. The pre-rerun count is carried onto the replacement."""
+        results = {m: result(m, blocked=True) for m in ('a', 'b')}
+        run(results)
+        for m in ('a', 'b'):
+            fs = results[m].filter_summary
+            assert fs['model_sanity_block_disarmed'] == 25
+            assert fs['model_sanity_fleet_wide_trip'] is True
 
 
 # --------------------------------------------------------------------------- #

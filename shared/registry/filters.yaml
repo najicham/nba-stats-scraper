@@ -536,7 +536,9 @@ stream_block_class:
     - blacklist
     - legacy_block
     # Model-sanity.
-    - model_sanity_block
+    # NOTE: `model_sanity_block` is deliberately NOT here. The header above names
+    # "sanity" as Class B, and picks culled from a provably pathological model are
+    # about as outcome-correlated as a block gets. `default: B` covers it.
     - model_direction_affinity
     - model_profile_would_block
     # Edge floors.

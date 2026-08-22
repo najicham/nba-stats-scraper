@@ -1727,11 +1727,16 @@ def _apply_fleet_sanity_floor(results, run_one) -> None:
     WHY THIS LIVES HERE AND NOT IN THE AGGREGATOR
     ---------------------------------------------
     `aggregator.aggregate()` carries a floor with the same intent, and on the
-    production path it can never fire: `run_single_model_pipeline` calls it once
-    per model with only that model's predictions, so its `n_models` is always 1
-    and `1 > max(1, 0)` is False. From the guards shipping until 2026-08-21 the
-    floor was inert exactly where it mattered. This function is the same policy
-    applied by the only caller that can see the fleet.
+    signal-best-bets path it can never fire: `run_single_model_pipeline` calls
+    it once per model with only that model's predictions, so its `n_models` is
+    always 1 and `1 > max(1, 0)` is False. From the guards shipping until
+    2026-08-21 the floor was inert on the path that picks money. This function
+    is the same policy applied by the only caller that can see the fleet.
+
+    The aggregator's copy is not dead code, though — `signal_annotator`
+    (production; `subset-picks` is in `TONIGHT_EXPORT_TYPES`) and the
+    backtest/replay/dry-run tools all pass multi-model lists, and the floor is
+    live for them. Keep the two thresholds equal.
 
     WHY THE POLICY EXISTS
     ---------------------
@@ -1748,11 +1753,37 @@ def _apply_fleet_sanity_floor(results, run_one) -> None:
 
     Mutates `results` in place. Re-runs only the models that self-blocked.
     """
+    def _rejected(r):
+        return (r.filter_summary.get('rejected') or {})
+
     self_blocked = sorted(
         sid for sid, r in results.items()
-        if (r.filter_summary.get('rejected') or {}).get('model_sanity_block', 0) > 0
+        if _rejected(r).get('model_sanity_block', 0) > 0
     )
-    n_models = len(results)
+
+    # The denominator is pipelines that COULD have contributed picks, not every
+    # entry in `results`. Two kinds cannot, and counting them dilutes the
+    # fraction in the dangerous direction — toward not tripping:
+    #
+    #   * legacy-blocklisted models. `catboost_v9` / `catboost_v12` are loaded
+    #     directly by the worker rather than via the registry, so the batch
+    #     prediction query cannot exclude them; their pipelines always return
+    #     zero candidates with a `legacy_block` count.
+    #   * pipelines that raised. Already excluded from the numerator (their
+    #     filter_summary carries no counter), so leaving them in the denominator
+    #     is a pure one-sided error.
+    #
+    # Concretely, without this: 2 enabled clones + 2 legacy prediction sets on
+    # the date gives n=4, both real models self-block, `2 <= max(1, 2)` holds,
+    # no trip — the exact indefinite zero-pick day this function exists to stop.
+    eligible = [
+        sid for sid, r in results.items()
+        if 'error' not in r.filter_summary
+        and _rejected(r).get('legacy_block', 0) == 0
+    ]
+    n_models = len(eligible)
+    self_blocked = [sid for sid in self_blocked if sid in eligible]
+
     if not n_models or len(self_blocked) <= max(1, int(n_models * MODEL_SANITY_MAX_BLOCK_FRACTION)):
         return
 
@@ -1773,7 +1804,16 @@ def _apply_fleet_sanity_floor(results, run_one) -> None:
         logger.warning(f"fleet-wide trip metric emit failed (non-fatal): {exc}")
 
     for system_id in self_blocked:
-        results[system_id] = run_one(system_id, True)
+        # Keep the forensics. The re-run's summary has no sanity counts by
+        # construction, so without this a fleet-wide trip is the ONE day whose
+        # filter audit and model_bb_candidates rows show nothing was ever
+        # blocked — the opposite of what a minority trip leaves behind.
+        pre = (results[system_id].filter_summary.get('rejected') or {}).get(
+            'model_sanity_block', 0)
+        rerun = run_one(system_id, True)
+        rerun.filter_summary['model_sanity_block_disarmed'] = pre
+        rerun.filter_summary['model_sanity_fleet_wide_trip'] = True
+        results[system_id] = rerun
 
 
 def run_all_model_pipelines(

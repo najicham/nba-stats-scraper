@@ -23,14 +23,15 @@ tests vacuous: each test asserts on the counter AND on which models survive into
 `picks`.
 
 ⚠️ SCOPE. The multi-model cases here — everything in `TestFleetWideSafetyFloor` —
-exercise DEFAULT mode, which production does not use. `run_single_model_pipeline`
-calls `aggregate()` once per model with only that model's predictions, so on the
-production path this class's `n_models` is always 1 and its fleet-wide floor
-cannot fire. Default mode is still real (signal_annotator, the backtest, replay
-and dry-run tools all pass a multi-model list), so these tests are not vacuous —
-but the floor that protects the LIVE slate is `_apply_fleet_sanity_floor` in
-`per_model_pipeline`, covered by `test_fleet_sanity_floor.py`. Read the two files
-together.
+exercise DEFAULT mode, which the signal-best-bets path does not use.
+`run_single_model_pipeline` calls `aggregate()` once per model with only that
+model's predictions, so there this class's `n_models` is always 1 and its
+fleet-wide floor cannot fire. Default mode IS production for other outputs —
+`signal_annotator._bridge_signal_picks` builds the published "Signal Picks"
+subset and passes a real multi-model list — so these tests are live coverage,
+not a museum piece. But the floor protecting the BEST-BETS slate is
+`_apply_fleet_sanity_floor` in `per_model_pipeline`, covered by
+`test_fleet_sanity_floor.py`. Read the two files together.
 """
 
 from unittest import mock

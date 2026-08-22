@@ -1,0 +1,134 @@
+# Cloud Monitoring Alert Policy — the model-sanity guards tripped fleet-wide
+#
+# WHY THIS IS CRITICAL AND WHY IT HAD TO SHIP WITH THE GUARD
+# ----------------------------------------------------------
+# `_apply_fleet_sanity_floor` (ml/signals/per_model_pipeline.py) DISARMS the
+# per-model sanity guards when they would block more than half the fleet, and
+# re-runs those pipelines with the guards off. The reasoning is that a
+# correlated trip is a halt-class event and an indefinite silent zero-pick
+# drought is worse than publishing.
+#
+# That reasoning only holds if somebody finds out. Without an alert the fix
+# trades a silent DROUGHT for a silent PUBLICATION of picks from models that
+# every guard just called pathological — which is strictly worse, because the
+# drawdown and volume breakers evaluate at 5 AM on yesterday's data and by
+# their own docstring cannot stop the first slate. The export-time cap in
+# pipeline_merger that could is not built.
+#
+# So: this metric is the only thing standing between a fleet-wide pathology and
+# a published slate. Treat a firing as "stop publishing and investigate", not
+# as an FYI.
+#
+# The metric is emitted ONLY on a trip — there is no healthy baseline series —
+# so an absence condition is meaningless here and a threshold at >0 is exactly
+# right. Contrast halt-state-stale, where the opposite is true.
+#
+# Added 2026-08-21 alongside the floor it guards.
+
+displayName: "[NBA Pipeline] Model sanity guards tripped FLEET-WIDE (Critical)"
+documentation:
+  content: |
+    ## Model Sanity Guards Tripped Across the Whole Fleet
+
+    **Severity:** Critical
+    **Impact:** Picks from models the sanity guards just condemned are being
+    **published**. The floor deliberately fails OPEN, because a correlated trip
+    means a shared upstream cause and an indefinite zero-pick day is the worse
+    failure. You are the mechanism that makes that trade safe.
+
+    ### What happened
+    More than half of the enabled fleet's pipelines blocked their own model on
+    one of the three per-model sanity guards:
+
+    | Guard | Trips when | Healthy 5-season range |
+    |---|---|---|
+    | direction imbalance | >95% one-way over >=20 predictions | — |
+    | median-edge cap | per-model median edge > 5.5 | tops out at 4.52 |
+    | prediction-spread floor | per-model stddev < 2.0 | minimum 4.18 |
+
+    The enabled fleet is three near-clones of one family (r >= 0.95), so these
+    guards trip together. A correlated trip is almost never three independent
+    broken models — it is one shared cause: a feature-store regression, a
+    scoring-regime shift, a bad shared artifact, or a line-feed problem.
+
+    ### Immediate actions
+    1. **Decide whether to halt.** This is the call the alert exists for:
+       ```bash
+       # Emergency stop — writes a manual halt row for today
+       # (see docs/02-operations/runbooks/halt-mode-operations.md)
+       ```
+    2. Find which guard tripped and on what values:
+       ```bash
+       gcloud logging read \
+         'resource.labels.service_name="phase6-export" AND "Model sanity guard"' \
+         --project=nba-props-platform --limit=50 --freshness=1d
+       ```
+    3. Check the disarmed counts that survived the re-run — a fleet-wide trip
+       stamps `model_sanity_block_disarmed` and
+       `model_sanity_fleet_wide_trip` onto each re-run pipeline's filter
+       summary, which lands in `best_bets_filter_audit`:
+       ```sql
+       SELECT game_date, system_id, rejected_json
+       FROM `nba-props-platform.nba_predictions.best_bets_filter_audit`
+       WHERE game_date >= CURRENT_DATE() - 2
+       ```
+    4. Look for the shared cause before looking at the models:
+       ```sql
+       -- Feature-store health first; a shared regression is the usual culprit
+       SELECT game_date,
+              COUNTIF(default_feature_count = 0) AS clean,
+              COUNTIF(default_feature_count > 0) AS blocked
+       FROM `nba-props-platform.nba_predictions.ml_feature_store_v2`
+       WHERE game_date >= CURRENT_DATE() - 3 GROUP BY 1 ORDER BY 1 DESC
+       ```
+    5. Per-model edge distribution for the date, to see which guard and how far
+       out of range:
+       ```sql
+       SELECT system_id,
+              APPROX_QUANTILES(ABS(predicted_points - current_points_line), 2)[OFFSET(1)] AS median_edge,
+              STDDEV(predicted_points) AS pred_stddev,
+              COUNTIF(recommendation = 'OVER') / COUNT(*) AS over_pct,
+              COUNT(*) AS n
+       FROM `nba-props-platform.nba_predictions.player_prop_predictions`
+       WHERE game_date = CURRENT_DATE()
+       GROUP BY 1 ORDER BY median_edge DESC
+       ```
+
+    ### What NOT to do
+    Do not raise `MODEL_MAX_MEDIAN_EDGE` or lower `MODEL_MIN_PRED_STDDEV` to
+    make the alert stop. Both thresholds sit outside five seasons of healthy
+    behaviour by a wide margin (5.5 vs a 4.52 maximum; 2.0 vs a 4.18 minimum).
+    A fleet-wide trip is evidence about the fleet, not about the thresholds.
+    Run `bin/validation/validate_guard_invariance.py` before touching either.
+
+    ### Reference
+    - Guard: `ml/signals/aggregator.py` (MODEL_SANITY_* constants)
+    - Floor: `ml/signals/per_model_pipeline.py::_apply_fleet_sanity_floor`
+    - Runbook: docs/02-operations/runbooks/halt-mode-operations.md
+  mimeType: text/markdown
+
+conditions:
+  - displayName: "model_sanity_fleet_wide_trip emitted"
+    # Emitted ONLY on a trip, so any point at all is the event. ALIGN_MAX over a
+    # 5-minute window with a >0 threshold and no sustain requirement: this must
+    # page on the first occurrence, not after it persists.
+    conditionThreshold:
+      filter: |
+        metric.type="custom.googleapis.com/nba_pipeline/model_sanity_fleet_wide_trip"
+        resource.type="global"
+      aggregations:
+        - alignmentPeriod: 300s
+          perSeriesAligner: ALIGN_MAX
+      comparison: COMPARISON_GT
+      thresholdValue: 0
+      duration: 0s
+
+combiner: OR
+
+enabled: true
+
+alertStrategy:
+  autoClose: 604800s
+
+notificationChannels:
+  - projects/nba-props-platform/notificationChannels/13444328261517403081

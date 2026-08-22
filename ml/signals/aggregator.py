@@ -791,16 +791,24 @@ class BestBetsAggregator:
         #: the model-health path handle it rather than silently emptying the
         #: slate. Mirrors the decay auto-disable's 3-model safety floor.
         #:
-        #: ⚠️ THIS BLOCK CANNOT FIRE ON THE PRODUCTION PATH, BY CONSTRUCTION.
-        #: `run_single_model_pipeline` calls `aggregate()` once per model with
-        #: only that model's predictions, so `n_models` is always 1 and
-        #: `1 > max(1, 0)` is False. Between the guards shipping and 2026-08-21
-        #: the floor was therefore inert exactly where it mattered. The real
-        #: floor now lives in `run_all_model_pipelines`, which is the only
-        #: caller that can see the whole fleet; when it trips it re-runs the
-        #: affected pipelines with `disable_model_sanity=True`. What remains
-        #: here covers the default-mode callers (signal_annotator, the
-        #: backtest/replay/dry-run tools), which do pass a multi-model list.
+        #: ⚠️ THIS BLOCK CANNOT FIRE ON THE SIGNAL-BEST-BETS PATH, BY
+        #: CONSTRUCTION. `run_single_model_pipeline` calls `aggregate()` once
+        #: per model with only that model's predictions, so `n_models` is
+        #: always 1 and `1 > max(1, 0)` is False. Between the guards shipping
+        #: and 2026-08-21 the floor was therefore inert on the path that picks
+        #: money. The real floor now lives in `run_all_model_pipelines`, the
+        #: only caller that can see the whole fleet; when it trips it re-runs
+        #: the affected pipelines with `disable_model_sanity=True`.
+        #:
+        #: Be precise about the scope, because an earlier draft of this note was
+        #: not: this block is NOT dead code. `signal_annotator._bridge_signal_picks`
+        #: is production too — `subset-picks` is in `TONIGHT_EXPORT_TYPES` — and
+        #: it passes a genuine multi-model list, so the floor here is live for
+        #: the published "Signal Picks" subset, as it is for the
+        #: backtest/replay/dry-run tools. Note its per-model view there is an
+        #: edge-selected subsample (highest-edge prediction per player across
+        #: families), which is pre-existing behaviour and worth knowing before
+        #: reading anything into its verdicts.
         MODEL_SANITY_MAX_BLOCK_FRACTION = 0.5
 
         model_preds: Dict[str, List[Dict[str, Any]]] = defaultdict(list)

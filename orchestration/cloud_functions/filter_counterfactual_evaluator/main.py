@@ -95,6 +95,7 @@ NEVER_DEMOTE = {
     # 2026-05-19 registry-drift reconciliation — additional structural gates.
     'regime_over_floor',                  # regime-raised edge floor variant
     'legacy_block',                       # hardcoded LEGACY_MODEL_BLOCKLIST
+    'model_sanity_block',                 # per-model sanity guards (2026-08-21)
     'team_cap',                           # correlated-exposure cap (merge-level)
     'anti_pattern',                       # structural anti-pattern combo gate
     'regime_rescue_blocked',              # regime gate on OVER rescue

@@ -142,14 +142,19 @@ the test was confirmed to fail.
 | Halted re-add guard + governance-loosening gate | `tests/unit/publishing/test_halt_downstream_guards.py` | 25 |
 | BR roster schema/writer/MERGE parity | `tests/unit/data_processors/test_br_roster_batch_processor.py` | 26 |
 
-### 3.1 The fleet-wide floor was inert on the production path
+### 3.1 The fleet-wide floor was inert on the best-bets path
 
 Writing the tests is what exposed this, and it is the most consequential finding in the
 section. `aggregate()` carries a fleet-wide safety floor; `run_single_model_pipeline`
 calls `aggregate()` **once per model with only that model's predictions**, so its
 `n_models` is always 1 and `1 > max(1, int(1*0.5))` is False. From the guards shipping
-until now, the floor could not fire where it mattered — and the first draft of the tests
-happily certified those dead semantics.
+until now, the floor could not fire on the path that picks money — and the first draft of
+the tests happily certified those dead semantics.
+
+(Scope, corrected after review: the aggregator's floor is not dead code in general.
+`signal_annotator._bridge_signal_picks` is production — `subset-picks` is in
+`TONIGHT_EXPORT_TYPES` — and passes a real multi-model list, so the floor is live for the
+published "Signal Picks" subset. It was dead only for signal-best-bets.)
 
 The failure it was supposed to prevent is specific: the enabled fleet is three near-clones
 of one family (r ≥ 0.95), so a shared feature regression trips the same guard on all three
@@ -168,9 +173,23 @@ a silent empty slate. The in-aggregator floor stays for the default-mode callers
 cannot fire in `per_model` mode.
 
 Detection is `filter_summary['rejected']['model_sanity_block'] > 0`, which is why the
-counter mattered beyond observability. Tests pin that an *errored* pipeline and a
-`legacy_block` are both correctly NOT read as sanity blocks — otherwise two transient
-exceptions in a three-model fleet would disarm the real guards.
+counter mattered beyond observability. Legacy-blocklisted and errored pipelines are
+excluded from BOTH the numerator and the **denominator** — counting them dilutes the
+fraction toward not tripping, which is the dangerous direction. Concretely: two enabled
+clones plus two legacy prediction sets gives `n=4`, both real models self-block,
+`2 <= max(1, 2)` holds, no trip — the exact zero-pick day the floor exists to stop.
+
+A fleet-wide trip stamps `model_sanity_block_disarmed` and
+`model_sanity_fleet_wide_trip` onto each re-run pipeline's filter summary, so the audit
+trail survives the replacement. Without it, a fleet-wide trip would be the one day whose
+`best_bets_filter_audit` shows nothing was ever blocked.
+
+**And a new Critical alert policy ships with it.** The floor deliberately fails OPEN. That
+is only defensible if someone finds out, and nothing was listening —
+`monitoring/alert-policies/model-sanity-fleet-wide-trip.yaml` closes that. Without it the
+fix would trade a silent drought for a silent *publication* of picks from models every
+guard just condemned, which is worse: the drawdown and volume breakers evaluate at 5 AM on
+yesterday's data and cannot stop the first slate.
 
 Three things worth knowing:
 
@@ -215,9 +234,12 @@ Three things worth knowing:
    re-scrapes. Encouraging side note: `nba-com/schedule/2026-27/` was written 2026-08-20,
    so the opener schedule is already in hand.
 
-4. **`model_sanity_block` is now in `shared/registry/filters.yaml`** and on the
-   core (non-demotable) list beside `legacy_block`. It was the only block reason in the
-   aggregator missing from the registry the pre-commit hook validates docs against.
+4. **`model_sanity_block` is now in `shared/registry/filters.yaml`** and in
+   `NEVER_DEMOTE` in `filter_counterfactual_evaluator`. First attempt put it in
+   `stream_block_class.class_a`, which is a *different* list — the C3 promotion-stream
+   Tier-1 classification, not the non-demotable set — and wrong on its own terms, since
+   that block's header names "sanity" as Class B and `default: B` already covers it.
+   Two lists containing `legacy_block` is how they got conflated.
 
 5. **27 pre-existing failures in `tests/cloud_functions/`** (mostly
    `test_phase5_to_phase6_handler.py`). Confirmed pre-existing by stashing — not caused by
@@ -300,6 +322,12 @@ season convention moved again.
 - **A refactor for testability is still a refactor.** Extracting a block above `main`
   moved a decorator onto the wrong function — the exact bug this repo fixed nine commits
   earlier.
+- **A mock that mocks nothing looks exactly like a mock.** `mock.patch.dict('sys.modules')`
+  with no arguments snapshots and restores the module table and patches nothing. The tests
+  passed, and executed the real `emit_metric` — harmless here only because
+  google-cloud-monitoring is absent from this venv. On CI with the package and ADC it
+  would have written real time series into the production project. Assert the mock was
+  *called*, not just that the test is green.
 - **Writing a test can reveal that the thing you are testing never ran.** The fleet-wide
   floor looked correct, read correctly, and was unreachable. The first draft of its tests
   passed, and would have entrenched dead semantics as verified behaviour. Ask what call

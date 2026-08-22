@@ -1,5 +1,5 @@
 #!/bin/bash
-# Deploy the 3 unified pipeline alert policies + supporting log-based metrics.
+# Deploy the unified pipeline alert policies + supporting log-based metrics.
 #
 # Usage:
 #   ./deploy-alert-policies.sh
@@ -45,7 +45,7 @@ create_log_metrics() {
 
 deploy_policies() {
   echo "==> Deploying alert policies..."
-  for yaml in "${SCRIPT_DIR}"/{expected-output-overdue,halt-state-stale,phase-error-rate,uptime-check-failed}.yaml; do
+  for yaml in "${SCRIPT_DIR}"/{expected-output-overdue,halt-state-stale,phase-error-rate,uptime-check-failed,model-sanity-fleet-wide-trip}.yaml; do
     name=$(basename "${yaml}" .yaml)
     echo "    Deploying ${name}..."
     # gcloud alpha monitoring policies create is idempotent on (displayName)
