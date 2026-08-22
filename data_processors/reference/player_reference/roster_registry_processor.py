@@ -572,7 +572,40 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                 allow_source_fallback=allow_source_fallback
             )
 
-            result['status'] = 'success'
+            # Status must reflect what reached BigQuery, not merely that no
+            # exception escaped. save_registry_data() returns write failures as
+            # DATA — {'rows_processed': 0, 'errors': [...]} — see
+            # database_strategies.py:230. Setting 'success' unconditionally here
+            # meant a MERGE that failed and inserted nothing still reported
+            # success; the 2026-08-22 seed rehearsal produced exactly that
+            # ("Status: success, Records processed: 0") on a failed MERGE.
+            #
+            # Oct 1-19 is a one-shot gate with no retry, so a write that silently
+            # reports success is the single most expensive failure available on
+            # this path. Fail loudly instead.
+            write_errors = result.get('errors') or []
+            rows_written = result.get('records_processed', 0) or 0
+            rows_built = result.get('records_created', 0) or 0
+
+            if write_errors:
+                result['status'] = 'failed'
+                result['reason'] = (
+                    f"registry write reported {len(write_errors)} error(s) after building "
+                    f"{rows_built} record(s); {rows_written} reached BigQuery: "
+                    f"{write_errors[0]}"
+                )
+                logger.error(result['reason'])
+            elif rows_built > 0 and rows_written == 0:
+                # No error surfaced but nothing landed — a silent no-op write.
+                result['status'] = 'failed'
+                result['reason'] = (
+                    f"registry built {rows_built} record(s) but wrote 0 to BigQuery "
+                    f"with no reported error"
+                )
+                logger.error(result['reason'])
+            else:
+                result['status'] = 'success'
+
             result['data_date'] = str(data_date)
 
             # Log source dates used
@@ -696,6 +729,7 @@ def process_daily_rosters(season_year: int = None, data_date: date = None,
 
 if __name__ == "__main__":
     import argparse
+    import sys
 
     parser = argparse.ArgumentParser(description="Process daily roster data")
     parser.add_argument("--season-year", type=int, help="NBA season starting year")
@@ -728,3 +762,11 @@ if __name__ == "__main__":
         print(f"Season: {result.get('season')}")
     else:
         print(f"Reason: {result.get('reason')}")
+
+    # Exit non-zero on anything but success. Until 2026-08-22 this returned 0
+    # for 'failed' and 'blocked' alike, so every caller — a shell operator on
+    # Oct 1-6, a Cloud Run job, a future wrapper — read a crash as a clean run.
+    # That is the third green layer described in the session-6 handoff, and it
+    # is the one that makes the other two invisible.
+    if result.get('status') != 'success':
+        sys.exit(1)
