@@ -38,7 +38,7 @@ class GamebookPrecedenceValidator:
         Args:
             bq_client: BigQuery client instance
             project_id: GCP project ID
-            run_history_table: Run history table name (e.g., "nba_raw.processor_run_history")
+            run_history_table: Run history table name (e.g., "nba_reference.processor_run_history")
         """
         self.bq_client = bq_client
         self.project_id = project_id

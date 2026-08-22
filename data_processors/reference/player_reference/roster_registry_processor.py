@@ -99,10 +99,18 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
             self.project_id,
             self.table_name
         )
+        # `nba_reference`, NOT `nba_raw`. The table has only ever existed in
+        # nba_reference (2.3M rows); `nba_raw.processor_run_history` does not
+        # exist, so this query raised NotFound on every call and the validator's
+        # deliberate fail-CLOSED except returned ("blocked", "check_failed") —
+        # making `build_registry_for_season` exit with status 'blocked' as a
+        # normal, non-error result. That is a SECOND independent blocker on the
+        # roster registry, distinct from the br_roster_batch_processor repair:
+        # fixing that one alone would not have let the Oct 1-19 seed write.
         self.gamebook_validator = GamebookPrecedenceValidator(
             self.bq_client,
             self.project_id,
-            "nba_raw.processor_run_history"
+            "nba_reference.processor_run_history"
         )
 
         # Initialize registry operations
