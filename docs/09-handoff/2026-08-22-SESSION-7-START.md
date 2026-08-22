@@ -213,12 +213,58 @@ Nothing else on this list is verifiable while the system cannot report its own f
   reconciler has nothing to flip and the Critical overdue alert can never fire.
 
 ### Phase C — mid/late Sept: rehearse the seed, then the money path
-**Rehearse the roster seed end-to-end.** Two independent silent blockers have already been
-found on this path, weeks apart. Assume a third until proven otherwise, and do not go hunting
-for it by reading code — *run the thing*. Suggested: build the registry for `--season-year 2025`
-(a season with data) against a scratch target and confirm it writes ~696 rows. If it does, the
-machinery works and Oct 1 becomes a pure data question. This is the highest-value September
-task and it is cheap.
+**✅ DONE 2026-08-22 — the seed rehearsal ran, and the machinery works.** Pulled forward from
+September because resolving §2 made it a local run. It found three more defects; the
+instruction to assume a third and *run the thing* rather than read code was correct.
+
+Final run: `Status: success, Records processed: 522`, exit 0, **522 rows / 522 players /
+29 teams** written to `nba_reference.nba_players_registry_test_FIXED2`. **The Oct 1-6 path is
+proven end-to-end.** Oct 1 is now a data question, not a machinery question.
+
+Command that works (note both env var and flags):
+
+```bash
+GCP_PROJECT_ID=nba-props-platform PYTHONPATH=. python \
+  data_processors/reference/player_reference/roster_registry_processor.py \
+  --season-year 2026 --date <YYYY-MM-DD> --allow-source-fallback
+```
+
+Found and fixed on the way (all pushed):
+
+1. `source_dates_used` never initialized → `AttributeError` at `:183` on **every** real run,
+   before a row was written. `6c712fde`. The test suite could not see it: the `processor`
+   fixture assigns `proc.source_dates_used = {}`, creating what the constructor never created.
+   Proven by mutation — 12 of that module's tests still pass with the fix reverted.
+2. A failed write reported `success` and exited 0. `19d731d6`. Status now derives from what
+   reached BigQuery; the CLI exits 1 on non-success. Verified live: the second rehearsal run
+   correctly reported `failed — 0 reached BigQuery` where it would previously have said
+   `success, Records processed: 0`.
+3. **`GCP_PROJECT_ID` must be set for local runs.** `registry_processor_base.py:160` calls
+   `bigquery.Client()` with no project and falls back to the ADC default — `urcwest` on this
+   machine. The Cloud Run job injects the var, so this only bites the local path, which is now
+   the chosen path. Without it the run queries the wrong project and reports `blocked`.
+
+Still open from the rehearsal:
+
+- **`unresolved_player_names` never gets written.** `registry_ops.py:299`
+  `load_table_from_json` is handed dicts containing `datetime.date` objects →
+  "Object of type date is not JSON serializable". Logged as ERROR, swallowed, does not affect
+  status. The table finished the run with 0 rows while the normalizer had reported 62
+  unresolved player-team combinations. Same code path in production, so the unresolved-player
+  signal is presumed lost there too. **Not fixed.**
+- **29 teams, not 30**, and 522 rows against a 676-player source union. Largely an artifact of
+  rehearsing a point-in-time process against `_current` snapshot tables: at 2025-10-20 only
+  ESPN returned data (584 players, falling back to 2025-10-18). NBA.com had exactly one scrape
+  in the whole Sep 25 - Nov 15 window (2025-10-01, 113 rows) so its 7-day fallback caught
+  nothing, and BR's season-2025 rows carry `last_scraped_date` 2026-01-13, i.e. after the
+  rehearsal date. Do not read 522 as the expected Oct-2026 number — but **do** check team
+  count and per-source contribution on the real run, because a single-source seed is exactly
+  what a partial failure looks like.
+- The stale-scratch-table trap: `registry_processor_base.py:184` hardcodes
+  `timestamp_suffix = "FIXED2"` despite the name, so all test runs share one table set. That
+  set had drifted 8 columns behind production (18 vs 26) and silently failed every MERGE. It
+  was recreated from the production schema on 2026-08-22. The processor does **not** create
+  its target table — dropping it makes MERGE fail outright.
 
 Also in Phase C:
 - The Nov-1 season-flip family (7 exporters): labels flip in October, windows flip Nov 1, so
