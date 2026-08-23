@@ -278,19 +278,43 @@ Still open from the rehearsal:
   a pipeline input, so the harm is low — but they are spurious `pending` rows. **Not deleted;
   needs a human call.** Do not confuse them with the 49 `source='player_game_summary'` rows
   created the same day by a different processor, or the 17 older `espn` rows.
-- **The seed path's test coverage is a facade.** The 16 red tests in
-  `tests/processors/reference/player_reference/` are not broken code — they exercise
-  `_get_espn_roster_players_strict`, `_get_nba_official_players_strict` and
-  `_get_basketball_reference_players_strict`, **none of which exist in any production file**.
-  `45953cb6` ("Extract roster registry source handlers and operations", 2026-01-25) moved that
-  logic into `sources/*.py` with a new API and never updated the tests. **209 days red.**
+- **✅ DONE 2026-08-23 — the seed path's test coverage was a facade; it now exists.** `9e115dc1`.
+  The directory went **16 failed / 48 passed → 4 failed / 91 passed** with **no production code
+  changed** (the handlers are byte-identical). Three independent defeats, all measured:
 
-  So the three source handlers — the actual Oct 1-6 data path — have had zero executing
-  coverage for seven months, including `test_fallback_within_7_days`, the exact NBA.com window
-  Phase D depends on. Together with the `source_dates_used` fixture (which passed by repairing
-  the object under test), that is how six defects survived on a path that looks tested.
-  **Rewriting those three handlers' fallback-window tests against the real API is the
-  highest-value coverage work left before October.**
+  1. **Nine tests dead for 209 days.** They called `_get_espn_roster_players_strict` and its two
+     siblings; `45953cb6` (2026-01-25) moved that logic into `sources/*.py` and never updated
+     them. The three handlers deciding whether Oct 1-19 finds 600 rows or 113 had zero
+     executing coverage for seven months — including `test_fallback_within_7_days`, the exact
+     NBA.com window Phase D depends on. Replaced by `test_roster_source_handlers.py`, keyed to
+     the public contract `get_roster_players(...) -> (players, actual_date, matched)` so the
+     next refactor cannot silently delete it again.
+  2. **Stubbing the `google` namespace made error paths untestable — and leaked session-wide.**
+     `except GoogleAPIError` against a MagicMock raises *"TypeError: catching classes that do
+     not inherit from BaseException"*. Both `pytest_configure` and module-level
+     `sys.modules[...] = MagicMock()` outlive the file that sets them. **Removing the two stubs
+     in this tree took a combined `reference + unit/signals` run from 7 failed / 528 passed to
+     4 failed / 531 passed — and the two contaminated tests were in `unit/signals`, nowhere
+     near this directory.** That is very likely the mechanism behind the repo-wide
+     *cross-suite pollution* the per-directory triage habit works around. **24 other test files
+     still carry the pattern** (`grep -rn "sys.modules\['google" tests/`); each needs its own
+     before/after measurement. `tests/processors/reference/README.md` had documented the stub
+     as recommended practice — that is how it reached 26 files — and now documents the opposite.
+  3. **The fixture repaired the object under test** (`proc.source_dates_used = {}`). Removed.
+
+  **Two of my own assertions were wrong until mutation testing caught them.** Both bounds
+  appear *twice* per fallback query — outer `WHERE` plus the `MAX()` subquery — so asserting
+  presence passed when a mutation dropped one. They assert counts now. Seven mutations, each
+  caught by exactly the intended test.
+
+  Two load-bearing behaviours are now pinned: the fallback must never select data recorded
+  **after** the requested date (a point-in-time seed borrowing future rosters is leakage), and
+  **NBA.com's 7-day window must stay stricter than the other two** — tidying all three into one
+  shared constant would silently let a three-week-old official player list count as current.
+
+  Remaining 4 failures are all `test_gamebook_registry.py` — a different processor, genuinely
+  different causes (date-vs-string assertions, empty enhancement maps, temporal ordering).
+  Separate work, not on the roster seed path.
 - **29 teams, not 30**, and 522 rows against a 676-player source union. Largely an artifact of
   rehearsing a point-in-time process against `_current` snapshot tables: at 2025-10-20 only
   ESPN returned data (584 players, falling back to 2025-10-18). NBA.com had exactly one scrape
