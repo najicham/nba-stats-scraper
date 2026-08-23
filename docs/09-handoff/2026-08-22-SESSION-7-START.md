@@ -129,9 +129,10 @@ where it was readable by every step of that build. Verified by listing the tarba
 `service-account-dev.json` entries (symlinks to the owner's live ADC) were stored as
 **symlinks, 0 bytes** — the refresh token content was NOT uploaded.
 
-Config is fixed in `631e5139`. Outstanding: rotate the key? delete the staging object? Neither
-was done — the first is a risk judgement, the second destroys evidence before the owner has
-looked.
+Config is fixed in `631e5139`. **Owner decision 2026-08-23: neither, for now.** No future build
+can upload `keys/`, the bucket is project-internal, and the exposure is treated as low risk.
+Revisit alongside the September BigDataBall pass renewal (Phase D), where rotating the key and
+proving delivery are one piece of work rather than two.
 
 Latent, not new: root `gcloud builds submit` had been *crashing* since 2026-05-11 on a dangling
 symlink, which masked the exposure. Repairing that (`a5992db7`) un-masked it.
@@ -272,12 +273,25 @@ Found and fixed on the way (all pushed):
 
 Still open from the rehearsal:
 
-- **⚠️ 62 rows of test data sit in production `nba_reference.unresolved_player_names`.**
-  Written 2026-08-22 15:05:31, `source='espn'`, `season='2025-26'`,
-  `notes='Found in espn_rosters but not in NBA.com canonical set'`. It is a review queue, not
-  a pipeline input, so the harm is low — but they are spurious `pending` rows. **Not deleted;
-  needs a human call.** Do not confuse them with the 49 `source='player_game_summary'` rows
-  created the same day by a different processor, or the 17 older `espn` rows.
+- **✅ RESOLVED 2026-08-23 — the 62 test rows are deleted.** Owner approved. Predicate
+  `DATE(created_at)='2026-08-22' AND source='espn'`, guarded on the batch being a single
+  0-second write window. Table 9,567 → 9,505 (60 new `player_game_summary` rows had arrived
+  overnight, which is why it does not equal 9,507 − 62). The three populations that had to
+  survive did: 49 `player_game_summary` on 08-22, 60 on 08-23, 17 older `espn`.
+
+  One thing to carry: **by the time they were deleted, their `notes` had been overwritten** —
+  60 of the 62 read `"AI call failed: Error code: 404 … model: claude-3…"`. An AI-assisted name
+  resolver had picked them up and spent calls on them. Test pollution in a review queue is not
+  inert; something downstream consumes it.
+
+- **⚠️ NEW, unowned: the AI name resolver is failing continuously and silently.**
+  `nba_reference.unresolved_player_names` holds **590 rows** whose `notes` begin
+  `"AI call failed: Error code: 400 … invalid_request_error … 'Your cred…'"` (credentials or
+  billing), plus 8 with `529 overloaded`. Ongoing daily — 7 on 08-23, 22 on 08-22, 19 on 08-21,
+  23 on 08-20. Nobody is being told: **the failure is written into a data column instead of
+  raised**, which is the exact Phase B pathology, just in a place Phase B does not currently
+  list. Not in `ops/scheduler-catalog-2026.yaml`, and no model id appears under
+  `tools/player_registry/`, so what invokes it and with what model is still unidentified.
 - **✅ DONE 2026-08-23 — the seed path's test coverage was a facade; it now exists.** `9e115dc1`.
   The directory went **16 failed / 48 passed → 4 failed / 91 passed** with **no production code
   changed** (the handlers are byte-identical). Three independent defeats, all measured:
