@@ -18,10 +18,6 @@ from typing import Dict, List
 import sys
 
 # Mock google.cloud modules before importing processor
-sys.modules['google.cloud'] = MagicMock()
-sys.modules['google.cloud.bigquery'] = MagicMock()
-sys.modules['google.api_core'] = MagicMock()
-sys.modules['google.api_core.exceptions'] = MagicMock()
 
 from data_processors.reference.player_reference.gamebook_registry_processor import (
     GamebookRegistryProcessor

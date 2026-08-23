@@ -17,10 +17,6 @@ from unittest.mock import Mock, MagicMock, patch
 import sys
 
 # Mock google.cloud modules before importing
-sys.modules['google.cloud'] = MagicMock()
-sys.modules['google.cloud.bigquery'] = MagicMock()
-sys.modules['google.api_core'] = MagicMock()
-sys.modules['google.api_core.exceptions'] = MagicMock()
 
 from data_processors.reference.player_reference.roster_registry_processor import (
     RosterRegistryProcessor,
@@ -66,7 +62,11 @@ def processor(mock_bq_client):
 
             proc.bq_client = mock_bq_client
             proc.universal_id_resolver = mock_resolver_instance
-            proc.source_dates_used = {}
+            # NOTE: `proc.source_dates_used = {}` used to be assigned here. It created
+            # an attribute the constructor never created, so this whole module passed
+            # against an object production could not build while every real run died
+            # at roster_registry_processor.py:183. Fixed in 6c712fde; the assignment
+            # is gone so this fixture can never hide that class of bug again.
 
             return proc
 
@@ -140,203 +140,6 @@ class TestTeamCodeNormalization:
         assert normalize_team_abbr('LAL') == 'LAL'
         assert normalize_team_abbr('GSW') == 'GSW'
         assert normalize_team_abbr('BOS') == 'BOS'
-
-
-# =============================================================================
-# TEST: GET ESPN ROSTER DATA (STRICT)
-# =============================================================================
-
-class TestGetEspnRosterPlayersStrict:
-    """Test ESPN roster data retrieval with strict date matching."""
-
-    def test_exact_date_match_returns_data(self, processor, mock_bq_client, sample_espn_roster_data):
-        """Test returns data when exact date matches."""
-        mock_result = Mock()
-        mock_result.to_dataframe.return_value = sample_espn_roster_data
-        mock_bq_client.query.return_value = mock_result
-
-        players, actual_date, matched = processor._get_espn_roster_players_strict(
-            season_year=2024,
-            data_date=date(2024, 12, 15),
-            allow_fallback=False
-        )
-
-        assert len(players) == 2
-        assert 'lebron-james' in players
-        assert matched is True
-        assert actual_date == date(2024, 12, 15)
-
-    def test_no_match_strict_mode_returns_empty(self, processor, mock_bq_client):
-        """Test strict mode returns empty when no exact match."""
-        mock_result = Mock()
-        mock_result.to_dataframe.return_value = pd.DataFrame()
-        mock_bq_client.query.return_value = mock_result
-
-        players, actual_date, matched = processor._get_espn_roster_players_strict(
-            season_year=2024,
-            data_date=date(2024, 12, 15),
-            allow_fallback=False
-        )
-
-        assert len(players) == 0
-        assert matched is False
-        assert actual_date is None
-
-    def test_fallback_mode_finds_nearest_data(self, processor, mock_bq_client):
-        """Test fallback mode finds nearest data within 30 days."""
-        # First query returns empty (no exact match)
-        empty_result = Mock()
-        empty_result.to_dataframe.return_value = pd.DataFrame()
-
-        # Second query (fallback) returns data from earlier date
-        fallback_data = pd.DataFrame([
-            {
-                'player_lookup': 'lebron-james',
-                'roster_date': date(2024, 12, 10)  # 5 days earlier
-            }
-        ])
-        fallback_result = Mock()
-        fallback_result.to_dataframe.return_value = fallback_data
-
-        mock_bq_client.query.side_effect = [empty_result, fallback_result]
-
-        players, actual_date, matched = processor._get_espn_roster_players_strict(
-            season_year=2024,
-            data_date=date(2024, 12, 15),
-            allow_fallback=True
-        )
-
-        assert len(players) == 1
-        assert 'lebron-james' in players
-        assert matched is False  # Fallback, not exact match
-        assert actual_date == date(2024, 12, 10)
-
-    def test_handles_query_exception(self, processor, mock_bq_client):
-        """Test error handling."""
-        mock_bq_client.query.side_effect = Exception("Query failed")
-
-        players, actual_date, matched = processor._get_espn_roster_players_strict(
-            season_year=2024,
-            data_date=date(2024, 12, 15),
-            allow_fallback=False
-        )
-
-        assert len(players) == 0
-        assert matched is False
-
-
-# =============================================================================
-# TEST: GET NBA.COM DATA (STRICT)
-# =============================================================================
-
-class TestGetNbaOfficialPlayersStrict:
-    """Test NBA.com player list retrieval with strict date matching."""
-
-    def test_exact_date_match_returns_data(self, processor, mock_bq_client, sample_nbacom_data):
-        """Test exact date match."""
-        mock_result = Mock()
-        mock_result.to_dataframe.return_value = sample_nbacom_data
-        mock_bq_client.query.return_value = mock_result
-
-        players, actual_date, matched = processor._get_nba_official_players_strict(
-            season_year=2024,
-            data_date=date(2024, 12, 15),
-            allow_fallback=False
-        )
-
-        assert len(players) == 2
-        assert 'stephen-curry' in players
-        assert matched is True
-
-    def test_fallback_within_7_days(self, processor, mock_bq_client):
-        """Test fallback window is 7 days for NBA.com."""
-        empty_result = Mock()
-        empty_result.to_dataframe.return_value = pd.DataFrame()
-
-        fallback_data = pd.DataFrame([
-            {
-                'player_lookup': 'lebron-james',
-                'source_file_date': date(2024, 12, 12)  # 3 days earlier
-            }
-        ])
-        fallback_result = Mock()
-        fallback_result.to_dataframe.return_value = fallback_data
-
-        mock_bq_client.query.side_effect = [empty_result, fallback_result]
-
-        players, actual_date, matched = processor._get_nba_official_players_strict(
-            season_year=2024,
-            data_date=date(2024, 12, 15),
-            allow_fallback=True
-        )
-
-        assert len(players) == 1
-        assert matched is False
-
-    def test_filters_active_players_only(self, processor, mock_bq_client):
-        """Test queries only active players."""
-        mock_result = Mock()
-        mock_result.to_dataframe.return_value = pd.DataFrame()
-        mock_bq_client.query.return_value = mock_result
-
-        processor._get_nba_official_players_strict(
-            season_year=2024,
-            data_date=date(2024, 12, 15),
-            allow_fallback=False
-        )
-
-        # Verify query includes is_active filter
-        query_call = mock_bq_client.query.call_args[0][0]
-        assert 'is_active = TRUE' in query_call
-
-
-# =============================================================================
-# TEST: GET BASKETBALL REFERENCE DATA (STRICT)
-# =============================================================================
-
-class TestGetBasketballReferencePlayersStrict:
-    """Test BR roster data retrieval with strict date matching."""
-
-    def test_exact_date_match_returns_data(self, processor, mock_bq_client, sample_br_data):
-        """Test exact date match."""
-        mock_result = Mock()
-        mock_result.to_dataframe.return_value = sample_br_data
-        mock_bq_client.query.return_value = mock_result
-
-        players, actual_date, matched = processor._get_basketball_reference_players_strict(
-            season_year=2024,
-            data_date=date(2024, 12, 15),
-            allow_fallback=False
-        )
-
-        assert len(players) == 2
-        assert 'kevin-durant' in players
-        assert matched is True
-
-    def test_fallback_within_30_days(self, processor, mock_bq_client):
-        """Test fallback window is 30 days for BR."""
-        empty_result = Mock()
-        empty_result.to_dataframe.return_value = pd.DataFrame()
-
-        fallback_data = pd.DataFrame([
-            {
-                'player_lookup': 'lebron-james',
-                'last_scraped_date': date(2024, 11, 20)  # 25 days earlier
-            }
-        ])
-        fallback_result = Mock()
-        fallback_result.to_dataframe.return_value = fallback_data
-
-        mock_bq_client.query.side_effect = [empty_result, fallback_result]
-
-        players, actual_date, matched = processor._get_basketball_reference_players_strict(
-            season_year=2024,
-            data_date=date(2024, 12, 15),
-            allow_fallback=True
-        )
-
-        assert len(players) == 1
-        assert matched is False
 
 
 # =============================================================================
@@ -436,8 +239,17 @@ class TestGetCurrentRosterData:
     def test_defaults_to_current_season(self, processor, mock_bq_client):
         """Test defaults to current season when not specified."""
         # Mock all sources returning data
+        # One frame is returned for every source query, so it must carry the date
+        # column each handler reads: ESPN roster_date, NBA.com source_file_date,
+        # BR last_scraped_date. Supplying only roster_date raised KeyError from
+        # the NBA handler and had done so since the handlers were extracted.
         sample_data = pd.DataFrame([
-            {'player_lookup': 'test', 'roster_date': date.today()}
+            {
+                'player_lookup': 'test',
+                'roster_date': date.today(),
+                'source_file_date': date.today(),
+                'last_scraped_date': date.today(),
+            }
         ])
 
         mock_bq_client.query.return_value = Mock(to_dataframe=Mock(return_value=sample_data))
@@ -483,8 +295,22 @@ class TestGetExistingRegistryPlayers:
         assert len(result) == 0
 
     def test_handles_query_exception(self, processor, mock_bq_client):
-        """Test error handling."""
-        mock_bq_client.query.side_effect = Exception("Query failed")
+        """Test error handling.
+
+        Must raise the class the code actually catches. This previously raised a
+        bare Exception and failed with "TypeError: catching classes that do not
+        inherit from BaseException" — not because the code was wrong, but because
+        this module stubbed google.api_core.exceptions with a MagicMock, so
+        `except GoogleAPIError` had no class to catch. The stub is gone.
+
+        NOTE the behaviour being pinned: a failed query returns an EMPTY set, so
+        the caller concludes there are no existing registry players. That is
+        fail-open on a read that drives insert-vs-update decisions. Pinned here as
+        current behaviour, not endorsed — see the seed-path notes in
+        docs/09-handoff/2026-08-22-SESSION-7-START.md.
+        """
+        from google.api_core.exceptions import GoogleAPIError
+        mock_bq_client.query.side_effect = GoogleAPIError("Query failed")
 
         result = processor.get_existing_registry_players(season='2024-25')
 

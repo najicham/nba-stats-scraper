@@ -10,23 +10,16 @@ import sys
 from unittest.mock import MagicMock
 
 
-def pytest_configure(config):
-    """Mock Google Cloud modules before any imports happen."""
-    # Create mock google package
-    google_mock = MagicMock()
-    sys.modules['google'] = google_mock
-    sys.modules['google.auth'] = MagicMock()
-    sys.modules['google.auth.credentials'] = MagicMock()
-    sys.modules['google.oauth2'] = MagicMock()
-    sys.modules['google.oauth2.service_account'] = MagicMock()
-    sys.modules['google.cloud'] = MagicMock()
-    sys.modules['google.cloud.bigquery'] = MagicMock()
-    sys.modules['google.cloud.storage'] = MagicMock()
-    sys.modules['google.cloud.exceptions'] = MagicMock()
-    sys.modules['google.api_core'] = MagicMock()
-    sys.modules['google.api_core.exceptions'] = MagicMock()
-    sys.modules['google.cloud.firestore'] = MagicMock()
-    sys.modules['google.cloud.pubsub_v1'] = MagicMock()
-    sys.modules['firebase_admin'] = MagicMock()
-    sys.modules['firebase_admin.firestore'] = MagicMock()
-    sys.modules['sentry_sdk'] = MagicMock()
+# NOTE (2026-08-23): the pytest_configure hook here used to replace the entire
+# `google` namespace in sys.modules with MagicMocks. It was removed because:
+#
+#   1. The real libraries ARE installed, so the stub bought nothing.
+#   2. It made `except GoogleAPIError` raise
+#      "TypeError: catching classes that do not inherit from BaseException",
+#      so every error-path test under this directory was structurally impossible.
+#   3. pytest_configure is a session hook. Replacing sys.modules there leaks into
+#      every test collected afterwards — a strong candidate for this repo's
+#      documented "cross-suite pollution" (full-run failures that vanish per-dir).
+#
+# Measured before removal: identical pass/fail sets for tests/processors/reference/.
+# If you need a Google module mocked, mock it in the test that needs it.

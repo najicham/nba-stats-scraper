@@ -130,17 +130,47 @@ Common fixtures in `conftest.py`:
 - `processor` - Configured processor instance
 - Sample data fixtures for gamebook, rosters, enhancement data
 
-## Module Mocking
+## Module Mocking — DO NOT stub the `google` namespace
 
-Reference tests require extensive Google Cloud mocking in `conftest.py`:
+**The pattern this section used to recommend has been removed. Do not reinstate it.**
+
 ```python
+# ANTI-PATTERN — this used to be documented here:
 def pytest_configure(config):
-    """Mock Google Cloud modules before imports."""
     sys.modules['google.cloud'] = MagicMock()
-    sys.modules['google.cloud.bigquery'] = MagicMock()
-    sys.modules['google.oauth2.service_account'] = MagicMock()
-    # ... etc
+    sys.modules['google.api_core.exceptions'] = MagicMock()
 ```
+
+Three things go wrong, all measured on 2026-08-23:
+
+1. **It makes error paths untestable.** `except GoogleAPIError` against a MagicMock
+   raises `TypeError: catching classes that do not inherit from BaseException`. Every
+   error-handling test under this directory failed for that reason rather than for
+   anything to do with the code.
+2. **It leaks across the whole session.** `pytest_configure` is a session hook, and a
+   module-level `sys.modules[...] = MagicMock()` in a test file runs at collection.
+   Either way the replacement outlives the file that made it. Removing the two stubs
+   in this tree took a combined `reference + unit/signals` run from 7 failed / 528
+   passed to 4 failed / 531 passed — the two contaminated tests were in
+   `unit/signals`, nowhere near this directory. This is the likely mechanism behind
+   the repo-wide "cross-suite pollution" that the per-directory triage habit works
+   around.
+3. **It buys nothing.** `google-cloud-bigquery` and `google-api-core` are installed.
+   Removing the stubs here fixed one test outright and broke none.
+
+Mock the client you inject, not the library:
+
+```python
+mock_bq_client = Mock()
+mock_bq_client.query.return_value.to_dataframe.return_value = pd.DataFrame(...)
+handler = ESPNSourceHandler(mock_bq_client, 'test-project')
+```
+
+See `test_roster_source_handlers.py` for the pattern applied end to end, including
+error paths that need the real exception classes.
+
+**24 other test files still carry this stubbing** (`grep -rn "sys.modules\['google" tests/`).
+They were left alone because each needs its own before/after measurement.
 
 ## Coverage Goals
 
