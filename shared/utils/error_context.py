@@ -152,11 +152,34 @@ class ErrorContext:
             exc_info=True
         )
 
-        # Also log using convenience function for Cloud Logging queries
+        # Also log using convenience function for Cloud Logging queries.
+        #
+        # error_context already carries "error_type" and "error_message", and
+        # log_error takes both as named parameters, so splatting the whole dict
+        # raised:
+        #     TypeError: log_error() got multiple values for keyword argument
+        #     'error_type'
+        #
+        # That TypeError was raised from __exit__, which means it REPLACED the
+        # exception being handled. Every error passing through an ErrorContext
+        # reached its caller as a TypeError, so:
+        #   - structured error logging never ran;
+        #   - `except <SpecificError>` downstream of an ErrorContext block could
+        #     never match, because the specific type no longer existed by then.
+        # The second is the damaging one. It is why the Session 478 BadRequest
+        # re-raise in prediction_accuracy_processor never took effect.
+        #
+        # Strip the duplicate keys rather than renaming them: the values in
+        # error_context are the accurate ones for the exception, while the named
+        # arguments describe the operation.
+        extra_context = {
+            k: v for k, v in error_context.items()
+            if k not in ("error_type", "error_message")
+        }
         log_error(
             error_type=f"{self.operation_name}_failed",
             error_message=str(exc_val) if exc_val else "Unknown error",
-            **error_context
+            **extra_context
         )
 
         self.error_logged = True

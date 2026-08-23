@@ -1106,6 +1106,27 @@ def halt_state_writer(request: Request):
         logger.warning(f"emit halt metrics failed (non-fatal): {e}")
 
     summary['written_at'] = datetime.now(timezone.utc).isoformat()
+
+    # Make the docstring true. It has always promised "500 on unrecoverable
+    # error" while the function had exactly one return, and it was 200.
+    #
+    # halt_state is the single source of truth for "is the system producing picks
+    # today?" and every Phase 6 exporter gates on it. A sport whose row was never
+    # written is not a neutral outcome: BaseExporter.halt_envelope() falls back
+    # through resolve_halt_state(), and the fail-closed branch is
+    # `edge_state_unknown`. Failing quietly here is how a publishing decision gets
+    # made by an error path instead of by the data.
+    #
+    # The absence-based halt-state-stale alert would eventually catch this, but
+    # its threshold is 30 hours. A scheduler failure is visible now.
+    failed = [sp for sp, r in summary['results'].items() if 'error' in r]
+    if failed:
+        logger.error(
+            f"halt_state_writer: no halt_state row written for {failed} on {today}; "
+            f"exporters for those sports will fall back to resolve_halt_state()"
+        )
+        return summary, 500
+
     return summary, 200
 
 

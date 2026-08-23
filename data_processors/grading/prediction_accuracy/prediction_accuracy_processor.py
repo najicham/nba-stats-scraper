@@ -595,13 +595,22 @@ class PredictionAccuracyProcessor:
             # was lumped with transient errors and returned []. Do NOT catch BadRequest here.
             raise
         except (gcp_exceptions.NotFound, gcp_exceptions.ServiceUnavailable,
-                gcp_exceptions.DeadlineExceeded, GoogleCloudError) as e:
-            # Transient errors — return [] to allow Pub/Sub retry with backoff
-            # Error already logged by ErrorContext with structured fields
-            return []
-        except Exception as e:
-            # Error already logged by ErrorContext with structured fields
-            return []
+                gcp_exceptions.DeadlineExceeded, GoogleCloudError):
+            # Re-raise. The old comment here said "return [] to allow Pub/Sub
+            # retry with backoff" -- that was not what happened. The caller does
+            # `if not predictions: return {'status': 'no_predictions'}` (see
+            # grade_date), so an empty list is a SUCCESS shape, indistinguishable
+            # from a day with genuinely nothing to grade. No retry was ever
+            # triggered; the run just reported that there was nothing to do.
+            #
+            # This is the same reasoning Session 478 applied to BadRequest one
+            # clause up, after a multi-column IN subquery caused a six-day silent
+            # grading outage. That fix stopped at BadRequest. Infrastructure
+            # errors are not data.
+            raise
+        except Exception:
+            # Same: an unexpected error is not "no predictions".
+            raise
 
     def get_actuals_for_date(self, game_date: date) -> Dict[str, Dict]:
         """
@@ -642,12 +651,18 @@ class PredictionAccuracyProcessor:
                 }
         except (gcp_exceptions.BadRequest, gcp_exceptions.NotFound,
                 gcp_exceptions.ServiceUnavailable, gcp_exceptions.DeadlineExceeded,
-                GoogleCloudError, KeyError, TypeError, ValueError) as e:
-            # Error already logged by ErrorContext with structured fields
-            return {}
-        except Exception as e:
-            # Error already logged by ErrorContext with structured fields
-            return {}
+                GoogleCloudError, KeyError, TypeError, ValueError):
+            # Re-raise, for the same reason as get_predictions_for_date above.
+            # The caller turns an empty dict into {'status': 'no_actuals'} -- a
+            # success shape. Note this clause also swallowed BadRequest, which
+            # Session 478 had already established must not be swallowed; that fix
+            # was applied to the sibling method and stopped there.
+            #
+            # Re-raising loses nothing: an empty actuals map grades zero rows
+            # anyway. It only changes whether anyone finds out.
+            raise
+        except Exception:
+            raise
 
     def compute_prediction_correct(
         self,

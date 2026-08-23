@@ -354,6 +354,23 @@ def expected_outputs_planner(request: Request):
         f"planner: {summary['rows_written']} rows merged across "
         f"{summary['dates_planned']} (date,sport) pairs"
     )
+
+    # Any failed (date, sport) means a hole in the expected_outputs grid, and the
+    # grid is what the whole safety net reasons over: phase_completion_reconciler
+    # can only flip rows that exist, and gap_detector can only escalate rows it
+    # can see. A date that was never planned is never missed. So a partial
+    # failure is not a partial success -- report it.
+    #
+    # plan_date MERGEs, so re-running is idempotent and a scheduler retry costs
+    # nothing but a little BigQuery.
+    if summary['errors']:
+        logger.error(
+            f"planner: {len(summary['errors'])} (date,sport) pairs failed to plan; "
+            f"the expected_outputs grid has holes and the reconciler will not "
+            f"notice them. First: {summary['errors'][0]}"
+        )
+        return summary, 500
+
     return summary, 200
 
 

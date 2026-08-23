@@ -1192,16 +1192,32 @@ def weekly_retrain(request):
     except Exception as e:
         logger.exception(f"Weekly retrain failed: {e}")
 
-        # Try to send error notification
+        # Try to send error notification. Failure to alert must itself be
+        # visible: `except Exception: pass` here meant a broken webhook made the
+        # only notification channel disappear without trace.
         try:
             send_slack_notification(
                 [{'family': 'ALL', 'status': 'error', 'reason': str(e)}],
                 'unknown'
             )
-        except Exception:
-            pass
+        except Exception as notify_exc:
+            logger.error(
+                f"weekly_retrain: failed to send failure alert: {notify_exc}",
+                exc_info=True,
+            )
 
-        return {'status': 'error', 'message': str(e)}, 200  # Return 200 so scheduler doesn't retry
+        # 500, not 200.
+        #
+        # This used to return 200 with the comment "so scheduler doesn't retry".
+        # That traded a retry for total invisibility: nothing else in the system
+        # watches model age, so a weekly retrain that died reported success and
+        # models silently aged into the "confidently wrong" state (high edge, low
+        # hit rate) documented in CLAUDE.md. A weekly job is exactly the kind that
+        # can afford a retry; it is not the kind that can afford to fail unseen.
+        #
+        # Retry behaviour is the scheduler's to configure, not ours to prevent by
+        # lying about the outcome.
+        return {'status': 'error', 'message': str(e)}, 500
 
 
 # Gen2 CF entry point alias (immutable after deploy)
