@@ -45,19 +45,51 @@ Working tree clean. Nothing is waiting to be committed.
 That is a bigger fan-out than the 8-commit batch that exhausted the Cloud Run CPU quota on
 2026-08-20 and left six functions green-but-stale.
 
-**Step A1 for session 8:**
+**Verified 2026-08-24 after the push. Result: partial, and two triggers silently did not fire.**
+
+Serving `bc57ecb` (correct): `prediction-worker`, `nba-grading-service`, `weekly-retrain`,
+`nba-scrapers`, `nba-phase2-raw-processors`, `nba-phase4-precompute-processors`.
+
+Serving older code, **correctly** — their triggers do not watch `shared/utils/**`:
+`phase6-export`, `post-grading-export`, `live-export` (all `c3fc8f6`).
+
+**⚠️ Serving older code and SHOULD NOT BE:**
+
+| Service | Serving | Trigger watches | Last build |
+|---|---|---|---|
+| `prediction-coordinator` | `c3fc8f6` | `…,shared/utils/**,ml/signals/**` | 08-22 21:04 |
+| `nba-phase3-analytics-processors` | `1a9ae03` | `…,shared/utils/**,…` | not in recent history |
+
+Both triggers are **enabled**, both watch `shared/utils/**`, and `bc57ecbc` changed
+`shared/utils/error_context.py` (confirmed with `git show --stat`). `deploy-nba-phase2-raw-processors`
+carries the *same* `shared/utils/**` pattern and did rebuild. So this is not a config difference —
+**two enabled triggers did not fire for a matching push, and nothing reported it.** Cause
+unidentified; a partially-delivered GitHub webhook under a 26-trigger fan-out is the leading
+guess. `nba-phase3-analytics-processors` on `1a9ae03` means it has been stale since well before
+today.
+
+Note also **2 EXPIRED builds** during the fan-out window (15:24, 15:25). Expired builds are
+nested sub-builds carrying no trigger name, which is why a `SHORT_SHA`-filtered query reports
+"no failures" — the same blind spot `bin/verify-deploy.sh`'s own docstring warns about: an
+expired nested build creates no revision, so `latestReady == latestCreated` still passes.
+
+**Step A1 for session 8 — deploy the two stragglers, then re-verify:**
 
 ```bash
-./bin/verify-deploy.sh                      # defaults to the halt-gate set
-# and widen it — this commit reaches far more than the default four:
-./bin/verify-deploy.sh phase6-export post-grading-export live-export \
-    prediction-worker prediction-coordinator nba-grading-service weekly-retrain \
-    nba-scrapers nba-phase2-raw-processors nba-phase3-analytics-processors \
-    nba-phase4-precompute-processors
+./bin/deploy-service.sh prediction-coordinator
+./bin/deploy-service.sh nba-phase3-analytics-processors
+
+./bin/verify-deploy.sh prediction-worker nba-grading-service weekly-retrain nba-scrapers \
+    nba-phase2-raw-processors nba-phase3-analytics-processors nba-phase4-precompute-processors \
+    prediction-coordinator
 ```
 
-A green build is not a deployment. Compare `BUILD_COMMIT` on the traffic-bearing revision
-against `bc57ecb`.
+`verify-deploy.sh` compares against `HEAD`, so once a docs-only commit is on top everything reads
+STALE. **Compare against the last commit that actually built** — `bc57ecb` — not against HEAD.
+A green build is not a deployment.
+
+**The generalisable lesson:** counting builds is not verifying deploys. 20 builds ran, 38 of the
+last 40 succeeded, and two services that needed the change still do not have it.
 
 **Two of the five Phase B fixes cannot deploy from a push at all** — `halt-state-writer` and
 `expected-outputs-planner` have no Cloud Build trigger:
