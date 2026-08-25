@@ -8,6 +8,40 @@ Previous: `2026-08-22-SESSION-7-START.md` — still the live plan document. Read
 
 ---
 
+## 0. First five minutes
+
+**Repo is clean and fully pushed at `07fc81d7`. Nothing is half-committed. There is exactly one
+piece of unfinished work: four deploys.**
+
+```bash
+# 1. Close out the deploy state (§2 explains why each is needed)
+./bin/deploy-service.sh prediction-coordinator            # trigger did not fire
+./bin/deploy-service.sh nba-phase3-analytics-processors   # trigger did not fire; stale since 1a9ae03
+./bin/deploy-function.sh halt-state-writer                # has no trigger at all
+./bin/deploy-function.sh expected-outputs-planner         # has no trigger at all
+
+# 2. Re-verify against the commit that BUILT, not against HEAD
+./bin/verify-deploy.sh prediction-coordinator nba-phase3-analytics-processors \
+    prediction-worker nba-grading-service weekly-retrain nba-scrapers \
+    nba-phase2-raw-processors nba-phase4-precompute-processors
+```
+
+Then pick up §5. If you only have time for one thing after the deploys, do **Phase B's alerting
+half** (§5 item 2) — it is what protects the Oct 20 → Nov 4 window where broken and healthy are
+indistinguishable and nothing pages anyone.
+
+**Environment gotchas that will waste your time otherwise:**
+- Local `gcloud` default project is **`urcwest`**, not `nba-props-platform`. Always pass
+  `--project=nba-props-platform`, and set `GCP_PROJECT_ID=nba-props-platform` for local Python.
+- `bq` CLI and `gcloud scheduler jobs list` hang in this WSL environment. Use the Python
+  BigQuery client and per-job `describe`. Wrap `gcloud` in `timeout`.
+- Run pytest **per directory** with `-p no:cacheprovider`. See §4 for why, and for the root cause
+  that is now partly fixed.
+- Never `git checkout --` to undo an experiment; it discarded uncommitted work twice in session 7.
+  `cp` to a backup and restore from that.
+
+---
+
 ## 1. The one thing to carry forward
 
 Session 7 set out to fix a signal alias and ended up finding **eleven defects**, of which
@@ -35,7 +69,7 @@ tests and two of its own mutations were silently vacuous until checked.
 
 ## 2. State right now
 
-### Everything is committed and pushed. HEAD `bc57ecbc`.
+### Everything is committed and pushed. HEAD `07fc81d7`, working tree clean.
 
 Working tree clean. Nothing is waiting to be committed.
 
@@ -232,7 +266,10 @@ would let a three-week-old official player list count as current.
 ## 5. Open items, ranked
 
 ### Do first (finishes work already started)
-1. **Verify the 26-build fan-out and run the two manual deploys** — §2.
+1. **Close the deploy state — four deploys, listed in §0.** The 26-build fan-out has been
+   verified: six services took `bc57ecb`, three correctly did not, and **two enabled triggers
+   silently did not fire**. Two further Cloud Functions have no trigger at all. Until all four
+   run, three of the five Phase B fixes are live and two are not.
 2. **Phase B, alerting half.** Rebuild the `[WARNING] NBA Stale Predictions` policy on a metric
    that exists (it matches the log string `"Prediction saved successfully"`, which appears
    nowhere in the repo). Wire the orphaned metrics, `halt_gate_overridden` above all — it is the
@@ -353,4 +390,5 @@ GCP_PROJECT_ID=nba-props-platform PYTHONPATH=. .venv/bin/python \
 **Playbook:** `docs/02-operations/agent-research-playbook.md` — 13 defect classes, 8 standing
 missions, a do-not-re-test list, and the day-one environment gotchas.
 
-*Session 7 closed 2026-08-24. HEAD `bc57ecbc`, pushed. Deploy verification outstanding — §2.*
+*Session 7 closed 2026-08-24. HEAD `07fc81d7`, pushed, tree clean. Deploy state measured and
+recorded in §2 — four deploys outstanding, commands in §0. Nothing else is in flight.*
