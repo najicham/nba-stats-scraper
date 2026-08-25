@@ -137,6 +137,71 @@ class TestGapDetectorFailedCount:
         assert status == 200
 
 
+class TestEmitterDependencyIsDeclared:
+    """A CF that emits metrics must ship the library that emits them.
+
+    `_get_monitoring_client` swallows ImportError and returns None, so
+    `emit_metric` degrades to a no-op with a single WARNING line. That is the
+    correct behaviour for a telemetry path -- it must never crash the caller --
+    but it means a missing `google-cloud-monitoring` in requirements.txt is
+    invisible: the function runs, reports success, and emits nothing.
+
+    Measured 2026-08-24: expected_outputs_planner had emitted metrics for
+    exactly zero of its lifetime for this reason. It reported 420 rows written
+    and no metric existed. Nothing anywhere would have caught that, because the
+    only symptom is the absence of data.
+
+    No allowlist. If a function calls emit_metric it declares the dependency.
+    """
+
+    CF_ROOT = REPO / 'orchestration' / 'cloud_functions'
+
+    # Every public entry point of shared.observability.metrics. emit_phase_completion
+    # is on this list because it calls emit_metric internally -- matching only the
+    # literal 'emit_metric' misses it, which is how the grading CF's phase_completion
+    # emission (the signal grading-low-coverage-alert.yaml filters on) went missing.
+    EMITTERS = ('emit_metric', 'emit_phase_completion')
+
+    @staticmethod
+    def _strip_comments(src: str) -> str:
+        """Drop `#` comment tails so a mention in prose is not read as a call.
+
+        The first version of this check matched the substring anywhere and hit a
+        comment in grading/main.py. It reached the right verdict by luck; luck is
+        not a test.
+        """
+        out = []
+        for line in src.splitlines():
+            hash_at = line.find('#')
+            out.append(line if hash_at == -1 else line[:hash_at])
+        return '\n'.join(out)
+
+    def _emitting_functions(self):
+        for main in sorted(self.CF_ROOT.glob('*/main.py')):
+            src = self._strip_comments(main.read_text())
+            if any(f'{e}(' in src for e in self.EMITTERS):
+                yield main.parent
+
+    def test_at_least_one_emitting_function_is_discovered(self):
+        """Guard the guard: a broken glob would make this suite vacuously pass."""
+        assert list(self._emitting_functions()), (
+            'discovered no metric-emitting Cloud Functions -- the check itself '
+            'is broken, not the codebase'
+        )
+
+    def test_every_emitting_function_declares_google_cloud_monitoring(self):
+        missing = []
+        for d in self._emitting_functions():
+            req = d / 'requirements.txt'
+            if not req.exists() or 'google-cloud-monitoring' not in req.read_text():
+                missing.append(d.name)
+        assert not missing, (
+            'these Cloud Functions call emit_metric but do not declare '
+            f'google-cloud-monitoring, so every metric they emit is silently '
+            f'dropped: {missing}'
+        )
+
+
 class TestPlannerHeartbeat:
 
     def test_heartbeat_emitted_on_clean_run(self):
