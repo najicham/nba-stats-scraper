@@ -77,6 +77,36 @@ through November 2026.
       reconciliation, rescue-cap behavior) NOW — at season resume, where live filter/halt traffic can validate
       them. Do not merge these during the shutdown window (unvalidatable redeploy).
 
+### Alerting deferred from 2026-08-24 (Phase B, volume-dependent half)
+
+The event-driven and contract-driven alerts were wired on 2026-08-24 and are live now. The items
+below were **deliberately not enabled**, because each one keys on game volume: through the
+off-season and the 2026-10-20 → ~11-04 ramp, zero is the *correct* value, and a naive version
+would fire continuously for weeks. An alert that cries wolf for a month is muted before it ever
+matters — which is precisely how `[WARNING] NBA Stale Predictions` came to sit enabled and green
+for 7 months covering nothing.
+
+- [ ] **Resume the two paused pipeline canaries** — `nba-pipeline-canary-trigger` (*/15) and
+      `nba-pipeline-canary-routine-trigger` (hourly). Both PAUSED, verified live 2026-08-24.
+      Every check in `bin/monitoring/pipeline_canary_queries.py` assumes in-season data
+      (`game_dates: min 1`, `games: min 2`, `players: min 20`), so they fail 100% off-season.
+      **Resume only once real games are producing data — after the first slate, not before it.**
+      `gcloud scheduler jobs resume JOB --location=us-west2 --project=nba-props-platform`
+- [ ] **Rebuild a real stale-predictions alert.** The old one is now DISABLED and carries its own
+      post-mortem in its `documentation` field. Do NOT rebuild it on a log string: build it on the
+      `expected_outputs` grid, so "no predictions expected today" and "predictions expected and
+      missing" are distinguishable states rather than the same silence.
+- [ ] **Re-check `[NBA Pipeline] expected_outputs rows FAILED`** once NBA rows exist. It is scoped
+      to `sport=nba` and NBA sat at 0 FAILED on 2026-08-24 while MLB carried 74. First real slates
+      are the first honest test of the threshold.
+- [ ] **Confirm `planning_horizon_days` still reads 14.** It is the planner's liveness signal and
+      the only thing standing between a dead planner and a safety net that reports perfect health.
+
+**Two duplicate alert policies await a delete decision** — `[WARNING] NBA Environment Variable
+Changes` exists twice with byte-identical conditions (policy ids `12842169831579599906` and
+`1771264843392742585`). Both left with zero notification channels rather than deleted, so neither
+double-pages. Delete one, wire the other, or leave as-is.
+
 ## ⚠️ OVER is a normal-season liability — UNDER-dominant posture (2026-06-23 finding)
 **"edge5+ is the money zone" is OVER-FALSE.** 5-season walk-forward: high-edge OVER has NO cross-season edge —
 edge≥6 OVER (the floor-allowed band) hit **38.9% in the prior 4 seasons** (below breakeven in all four), and
