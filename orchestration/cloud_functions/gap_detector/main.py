@@ -99,6 +99,39 @@ def select_overdue_rows(bq: bigquery.Client, limit: int) -> List[Any]:
     return list(job.result(timeout=60))
 
 
+def planning_horizon_days(bq: bigquery.Client) -> Optional[int]:
+    """How many days ahead the expected_outputs grid currently extends.
+
+    Planner liveness, measured without an absence condition. The planner runs
+    nightly and plans out to today+14, so a healthy grid sits at 14 and loses
+    exactly one day for each night the planner does not run. That makes this a
+    monotonically-degrading, cadence-independent signal.
+
+    Why not `conditionAbsent` on the planner's own heartbeat: Cloud Monitoring
+    caps absence duration at 23h30m, and the planner's cadence is 24h. Any
+    absence window short enough to be legal is shorter than the healthy gap
+    between heartbeats, so it would fire for ~1h every single day. An alert
+    that cries wolf daily is worse than no alert, which is the failure this
+    whole workstream exists to undo.
+
+    Why not max(updated_at): the reconciler and this function both bump it, so
+    it stays fresh even when the planner is dead. It measures the wrong thing.
+
+    Returns None on failure — never a number that would read as healthy.
+    """
+    query = f"""
+        SELECT DATE_DIFF(MAX(game_date), CURRENT_DATE(), DAY) AS horizon_days
+        FROM `{EXPECTED_OUTPUTS_TABLE}`
+    """
+    try:
+        job = bq.query(query)
+        horizon = next(iter(job.result(timeout=60))).horizon_days
+        return None if horizon is None else int(horizon)
+    except Exception as e:
+        logger.error(f"planning_horizon_days failed: {e}")
+        return None
+
+
 def count_failed_rows(
     bq: bigquery.Client, lookback_days: int = 14
 ) -> Optional[Dict[str, int]]:
@@ -285,6 +318,8 @@ def gap_detector(request: Request):
     # below is uncapped and is the one that measures how bad things are.
     failed_counts = count_failed_rows(bq)
     summary['failed_rows_14d'] = failed_counts
+    horizon = planning_horizon_days(bq)
+    summary['planning_horizon_days'] = horizon
 
     try:
         from shared.observability.metrics import emit_metric, MetricKind
@@ -305,6 +340,15 @@ def gap_detector(request: Request):
                     labels={'project': 'pipeline-state-redesign', 'sport': sport},
                     kind=MetricKind.GAUGE,
                 )
+        # Planner liveness, observed from here because this CF runs every 30 min
+        # and the planner runs every 24h -- too slow to alert on by absence.
+        if horizon is not None:
+            emit_metric(
+                metric_name='planning_horizon_days',
+                value=float(horizon),
+                labels={'project': 'pipeline-state-redesign'},
+                kind=MetricKind.GAUGE,
+            )
     except Exception as e:
         logger.warning(f"emit gap_detector metrics failed (non-fatal): {e}")
 

@@ -172,6 +172,60 @@ class TestGapDetectorFailedCount:
         assert status == 200
 
 
+class TestPlanningHorizon:
+    """Planner liveness measured as a level, not an absence.
+
+    Cloud Monitoring caps conditionAbsent at 23h30m and the planner's cadence is
+    24h, so every legal absence window is shorter than the healthy gap between
+    heartbeats and would fire ~1h a day, every day.
+    """
+
+    def test_horizon_is_emitted(self):
+        mod = _load('gap_detector')
+        with patch.object(mod, '_get_bq'), \
+             patch.object(mod, 'select_overdue_rows', return_value=[]), \
+             patch.object(mod, 'count_failed_rows', return_value={'nba': 0}), \
+             patch.object(mod, 'planning_horizon_days', return_value=14), \
+             patch('shared.observability.metrics.emit_metric') as emit:
+            summary, status = mod.gap_detector(_request())
+
+        assert status == 200
+        assert summary['planning_horizon_days'] == 14
+        assert _emitted(emit.call_args_list).get('planning_horizon_days') == 14.0
+
+    def test_horizon_failure_emits_nothing(self):
+        """Negative test: an unmeasured horizon must not publish a number.
+
+        Publishing 0 would read as "planner catastrophically behind" and page on
+        a BigQuery blip; publishing 14 would read as healthy. Neither is honest.
+        """
+        mod = _load('gap_detector')
+        with patch.object(mod, '_get_bq'), \
+             patch.object(mod, 'select_overdue_rows', return_value=[]), \
+             patch.object(mod, 'count_failed_rows', return_value={'nba': 0}), \
+             patch.object(mod, 'planning_horizon_days', return_value=None), \
+             patch('shared.observability.metrics.emit_metric') as emit:
+            _, status = mod.gap_detector(_request())
+
+        assert status == 200
+        assert 'planning_horizon_days' not in _emitted(emit.call_args_list)
+
+    def test_query_failure_returns_none(self):
+        mod = _load('gap_detector')
+        bq = Mock()
+        bq.query.side_effect = RuntimeError('bigquery unavailable')
+        assert mod.planning_horizon_days(bq) is None
+
+    def test_empty_table_returns_none_not_zero(self):
+        """MAX() over an empty table is NULL; that is 'unknown', not 'today'."""
+        mod = _load('gap_detector')
+        job = Mock()
+        job.result.return_value = iter([Mock(horizon_days=None)])
+        bq = Mock()
+        bq.query.return_value = job
+        assert mod.planning_horizon_days(bq) is None
+
+
 class TestEmitterDependencyIsDeclared:
     """A CF that emits metrics must ship the library that emits them.
 
