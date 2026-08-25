@@ -8,7 +8,16 @@ service subscribes and re-runs the appropriate scraper.
 Status transitions written by this CF:
   EXPECTED + attempts < cap        → no change (reconciler still owns this row)
   DEGRADED + attempts < cap        → publishes Pub/Sub message, attempts += 1
-  EXPECTED/DEGRADED + attempts cap → FAILED (gap_detector gives up; alert fires)
+  EXPECTED/DEGRADED + attempts cap → FAILED (gap_detector gives up; alert fires
+                                     on `failed_count`, NOT on `overdue_count`)
+
+Two metrics, and the difference matters. `overdue_count` counts EXPECTED +
+DEGRADED only, so a row that reaches the attempt cap and flips to FAILED
+*leaves* that set and drives the metric DOWN. Giving up looked like recovery.
+That is why 8 consecutive days of FAILED MLB rows (2026-08-17..24) paged nobody
+while this docstring claimed "alert fires". `failed_count` is the terminal-state
+metric and is deliberately NOT capped by MAX_PUBLISHES_PER_RUN, because a
+saturating gauge cannot express severity.
 
 The cap protects against runaway retries on permanently-unrecoverable data
 (e.g. paid Odds API historical that we don't have access to).
@@ -83,6 +92,35 @@ def select_overdue_rows(bq: bigquery.Client, limit: int) -> List[Any]:
         ),
     )
     return list(job.result(timeout=60))
+
+
+def count_failed_rows(bq: bigquery.Client, lookback_days: int = 14) -> Optional[int]:
+    """Count rows sitting in the terminal FAILED state.
+
+    Deliberately a COUNT(*) with no LIMIT: this is the severity signal, and
+    select_overdue_rows' LIMIT would saturate it. Returns None on query
+    failure so the caller can tell "no failures" apart from "did not measure" —
+    emitting 0.0 for an error is how a broken query reads as a healthy pipeline.
+    """
+    query = f"""
+        SELECT COUNT(*) AS failed_count
+        FROM `{EXPECTED_OUTPUTS_TABLE}`
+        WHERE status = 'FAILED'
+          AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL @lookback DAY)
+    """
+    try:
+        job = bq.query(
+            query,
+            job_config=bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter('lookback', 'INT64', lookback_days)
+                ]
+            ),
+        )
+        return int(next(iter(job.result(timeout=60))).failed_count)
+    except Exception as e:
+        logger.error(f"count_failed_rows failed: {e}")
+        return None
 
 
 def publish_backfill_message(
@@ -218,6 +256,14 @@ def gap_detector(request: Request):
 
     # Emit overdue_count metric for the expected-output-overdue alert policy.
     # Fail-open: telemetry failure never crashes the CF.
+    #
+    # NOTE: overdue_count saturates at MAX_PUBLISHES_PER_RUN because it is
+    # len(rows) from a LIMITed query. It is fine as a boolean-ish trip wire
+    # (threshold is 5) but must not be read as a severity gauge. failed_count
+    # below is uncapped and is the one that measures how bad things are.
+    failed_count = count_failed_rows(bq)
+    summary['failed_rows_14d'] = failed_count
+
     try:
         from shared.observability.metrics import emit_metric, MetricKind
         emit_metric(
@@ -226,8 +272,17 @@ def gap_detector(request: Request):
             labels={'project': 'pipeline-state-redesign'},
             kind=MetricKind.GAUGE,
         )
+        # Terminal-state metric. Only emitted when actually measured: a failed
+        # query must not publish 0.0, which would read as "nothing is broken".
+        if failed_count is not None:
+            emit_metric(
+                metric_name='failed_count',
+                value=float(failed_count),
+                labels={'project': 'pipeline-state-redesign'},
+                kind=MetricKind.GAUGE,
+            )
     except Exception as e:
-        logger.warning(f"emit overdue_count failed (non-fatal): {e}")
+        logger.warning(f"emit gap_detector metrics failed (non-fatal): {e}")
 
     return summary, 200
 

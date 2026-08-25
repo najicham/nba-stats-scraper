@@ -355,6 +355,27 @@ def expected_outputs_planner(request: Request):
         f"{summary['dates_planned']} (date,sport) pairs"
     )
 
+    # Heartbeat. This CF previously emitted no telemetry at all, which left the
+    # safety net with a blind spot at its root: if the planner stops producing
+    # rows, there are no EXPECTED rows, so `overdue_count` is 0 and the
+    # expected-outputs-overdue alert reads perfectly healthy. Total failure was
+    # indistinguishable from a quiet day.
+    #
+    # Emitted on BOTH the 200 and 500 paths, before the error branch below: a
+    # 500 means the planner ran and partially failed, which is a different fact
+    # from the planner not running at all. Absence of this metric is the second,
+    # and is what the absence alert keys on.
+    try:
+        from shared.observability.metrics import emit_metric, MetricKind
+        emit_metric(
+            metric_name='planner_rows_written',
+            value=float(summary['rows_written']),
+            labels={'project': 'pipeline-state-redesign'},
+            kind=MetricKind.GAUGE,
+        )
+    except Exception as e:
+        logger.warning(f"emit planner_rows_written failed (non-fatal): {e}")
+
     # Any failed (date, sport) means a hole in the expected_outputs grid, and the
     # grid is what the whole safety net reasons over: phase_completion_reconciler
     # can only flip rows that exist, and gap_detector can only escalate rows it
