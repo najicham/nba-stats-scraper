@@ -97,6 +97,12 @@ get_function_config() {
             FUNC_TRIGGER_TYPE="topic"
             FUNC_TRIGGER_TOPIC="nba-phase3-analytics-complete"
             FUNC_NEEDS_SHARED="true"
+            # 19 (p3->p4) and 16 (p4->p5) references to SLACK_WEBHOOK_URL, and the
+            # variable was never set on either function — so every "Phase 4 BLOCKED"
+            # data-quality and minutes-coverage alert took the
+            # `if not SLACK_WEBHOOK_URL: skip` branch and vanished into a log line.
+            # Bound here so it survives redeploys rather than out-of-band.
+            FUNC_SECRETS="SLACK_WEBHOOK_URL=slack-webhook-url:latest"
             ;;
         phase4-to-phase5-orchestrator)
             FUNC_SOURCE_DIR="orchestration/cloud_functions/phase4_to_phase5"
@@ -104,6 +110,12 @@ get_function_config() {
             FUNC_TRIGGER_TYPE="topic"
             FUNC_TRIGGER_TOPIC="nba-phase4-precompute-complete"
             FUNC_NEEDS_SHARED="true"
+            # 19 (p3->p4) and 16 (p4->p5) references to SLACK_WEBHOOK_URL, and the
+            # variable was never set on either function — so every "Phase 4 BLOCKED"
+            # data-quality and minutes-coverage alert took the
+            # `if not SLACK_WEBHOOK_URL: skip` branch and vanished into a log line.
+            # Bound here so it survives redeploys rather than out-of-band.
+            FUNC_SECRETS="SLACK_WEBHOOK_URL=slack-webhook-url:latest"
             ;;
         phase5-to-phase6-orchestrator)
             FUNC_SOURCE_DIR="orchestration/cloud_functions/phase5_to_phase6"
