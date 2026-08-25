@@ -60,6 +60,13 @@ def _emitted(calls):
 
 class TestGapDetectorFailedCount:
 
+    @staticmethod
+    def _row(sport, n):
+        r = Mock()
+        r.sport = sport
+        r.failed_count = n
+        return r
+
     def test_failed_query_is_uncapped_and_filters_terminal_state(self):
         """The severity gauge must not inherit select_overdue_rows' LIMIT.
 
@@ -72,18 +79,34 @@ class TestGapDetectorFailedCount:
         def fake_query(sql, job_config=None):
             captured['sql'] = sql
             job = Mock()
-            job.result.return_value = iter([Mock(failed_count=9)])
+            job.result.return_value = iter([self._row('nba', 9)])
             return job
 
         bq = Mock()
         bq.query.side_effect = fake_query
-        assert mod.count_failed_rows(bq) == 9
+        assert mod.count_failed_rows(bq)['nba'] == 9
 
         sql = captured['sql']
         assert "status = 'FAILED'" in sql, 'must count the terminal state'
         assert 'LIMIT' not in sql.upper(), (
             'a LIMITed count saturates and stops measuring severity'
         )
+
+    def test_sport_with_no_failures_still_reports_zero(self):
+        """A healthy sport must publish 0, not vanish.
+
+        If a recovered sport simply stopped appearing, "recovered" and "stopped
+        being measured" would be the same observation — the exact confusion this
+        change exists to remove.
+        """
+        mod = _load('gap_detector')
+        job = Mock()
+        job.result.return_value = iter([self._row('mlb', 74)])
+        bq = Mock()
+        bq.query.return_value = job
+
+        counts = mod.count_failed_rows(bq)
+        assert counts == {'mlb': 74, 'nba': 0}
 
     def test_query_failure_returns_none_not_zero(self):
         """0.0 for an unmeasured value reads as a healthy pipeline."""
@@ -92,17 +115,29 @@ class TestGapDetectorFailedCount:
         bq.query.side_effect = RuntimeError('bigquery unavailable')
         assert mod.count_failed_rows(bq) is None
 
-    def test_failed_count_is_emitted_when_measured(self):
+    def test_failed_count_is_emitted_per_sport(self):
+        """One time series per sport, so an NBA threshold is reachable.
+
+        MLB is a halted info-only product carrying a permanent backlog (74 rows
+        on 2026-08-24). Summed into one number it would hold any NBA-relevant
+        threshold permanently tripped.
+        """
         mod = _load('gap_detector')
         with patch.object(mod, '_get_bq'), \
              patch.object(mod, 'select_overdue_rows', return_value=[]), \
-             patch.object(mod, 'count_failed_rows', return_value=12), \
+             patch.object(mod, 'count_failed_rows', return_value={'nba': 0, 'mlb': 74}), \
              patch('shared.observability.metrics.emit_metric') as emit:
             summary, status = mod.gap_detector(_request())
 
         assert status == 200
-        assert summary['failed_rows_14d'] == 12
-        assert _emitted(emit.call_args_list).get('failed_count') == 12.0
+        assert summary['failed_rows_14d'] == {'nba': 0, 'mlb': 74}
+
+        by_sport = {
+            c.kwargs['labels']['sport']: c.kwargs['value']
+            for c in emit.call_args_list
+            if c.kwargs.get('metric_name') == 'failed_count'
+        }
+        assert by_sport == {'nba': 0.0, 'mlb': 74.0}
 
     def test_failed_count_is_NOT_emitted_when_unmeasured(self):
         """Negative test: a broken count must publish nothing, not 0.0.
@@ -130,7 +165,7 @@ class TestGapDetectorFailedCount:
         mod = _load('gap_detector')
         with patch.object(mod, '_get_bq'), \
              patch.object(mod, 'select_overdue_rows', return_value=[]), \
-             patch.object(mod, 'count_failed_rows', return_value=3), \
+             patch.object(mod, 'count_failed_rows', return_value={'nba': 3}), \
              patch('shared.observability.metrics.emit_metric',
                    side_effect=RuntimeError('monitoring down')):
             _, status = mod.gap_detector(_request())

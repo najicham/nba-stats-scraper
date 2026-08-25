@@ -53,6 +53,11 @@ MAX_BACKFILL_ATTEMPTS = int(os.environ.get('MAX_BACKFILL_ATTEMPTS', '3'))
 # all become eligible at once.
 MAX_PUBLISHES_PER_RUN = int(os.environ.get('MAX_PUBLISHES_PER_RUN', '50'))
 
+# The fixed sport roster, mirroring expected_outputs_planner's `sports` list.
+# Used to emit an explicit 0 for a sport with no FAILED rows, so that a healthy
+# sport is distinguishable from a sport that stopped being measured.
+SPORTS = ('nba', 'mlb')
+
 _bq_client = None
 _publisher = None
 
@@ -94,19 +99,28 @@ def select_overdue_rows(bq: bigquery.Client, limit: int) -> List[Any]:
     return list(job.result(timeout=60))
 
 
-def count_failed_rows(bq: bigquery.Client, lookback_days: int = 14) -> Optional[int]:
-    """Count rows sitting in the terminal FAILED state.
+def count_failed_rows(
+    bq: bigquery.Client, lookback_days: int = 14
+) -> Optional[Dict[str, int]]:
+    """Count rows in the terminal FAILED state, grouped by sport.
 
     Deliberately a COUNT(*) with no LIMIT: this is the severity signal, and
     select_overdue_rows' LIMIT would saturate it. Returns None on query
     failure so the caller can tell "no failures" apart from "did not measure" —
     emitting 0.0 for an error is how a broken query reads as a healthy pipeline.
+
+    Grouped by sport because the two sports have genuinely different operational
+    meanings: NBA is the money path, MLB is a halted info-only product that
+    carried 74 FAILED rows on 2026-08-24. A single cross-sport number would
+    make any NBA-relevant threshold unreachable under permanent MLB noise, and
+    an alert that is always firing is an alert nobody reads.
     """
     query = f"""
-        SELECT COUNT(*) AS failed_count
+        SELECT sport, COUNT(*) AS failed_count
         FROM `{EXPECTED_OUTPUTS_TABLE}`
         WHERE status = 'FAILED'
           AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL @lookback DAY)
+        GROUP BY sport
     """
     try:
         job = bq.query(
@@ -117,10 +131,18 @@ def count_failed_rows(bq: bigquery.Client, lookback_days: int = 14) -> Optional[
                 ]
             ),
         )
-        return int(next(iter(job.result(timeout=60))).failed_count)
+        counts = {r.sport: int(r.failed_count) for r in job.result(timeout=60)}
     except Exception as e:
         logger.error(f"count_failed_rows failed: {e}")
         return None
+
+    # A sport with zero failures returns no row, but its time series must still
+    # report 0 — otherwise "recovered" and "stopped measuring" look identical to
+    # an absence-sensitive alert, which is the bug this whole change exists to
+    # remove. SPORTS is the fixed roster, so the zero is a real observation.
+    for sport in SPORTS:
+        counts.setdefault(sport, 0)
+    return counts
 
 
 def publish_backfill_message(
@@ -261,8 +283,8 @@ def gap_detector(request: Request):
     # len(rows) from a LIMITed query. It is fine as a boolean-ish trip wire
     # (threshold is 5) but must not be read as a severity gauge. failed_count
     # below is uncapped and is the one that measures how bad things are.
-    failed_count = count_failed_rows(bq)
-    summary['failed_rows_14d'] = failed_count
+    failed_counts = count_failed_rows(bq)
+    summary['failed_rows_14d'] = failed_counts
 
     try:
         from shared.observability.metrics import emit_metric, MetricKind
@@ -272,15 +294,17 @@ def gap_detector(request: Request):
             labels={'project': 'pipeline-state-redesign'},
             kind=MetricKind.GAUGE,
         )
-        # Terminal-state metric. Only emitted when actually measured: a failed
-        # query must not publish 0.0, which would read as "nothing is broken".
-        if failed_count is not None:
-            emit_metric(
-                metric_name='failed_count',
-                value=float(failed_count),
-                labels={'project': 'pipeline-state-redesign'},
-                kind=MetricKind.GAUGE,
-            )
+        # Terminal-state metric, one time series per sport. Only emitted when
+        # actually measured: a failed query must publish nothing, because 0.0
+        # for an unmeasured value reads as "nothing is broken".
+        if failed_counts is not None:
+            for sport, n in sorted(failed_counts.items()):
+                emit_metric(
+                    metric_name='failed_count',
+                    value=float(n),
+                    labels={'project': 'pipeline-state-redesign', 'sport': sport},
+                    kind=MetricKind.GAUGE,
+                )
     except Exception as e:
         logger.warning(f"emit gap_detector metrics failed (non-fatal): {e}")
 
