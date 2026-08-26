@@ -14,6 +14,11 @@ from typing import Optional
 from google.cloud import bigquery
 from google.api_core.exceptions import GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded
 
+from shared.config.nba_season_dates import (
+    get_season_start_date,
+    get_season_year_from_date,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -39,6 +44,25 @@ class TeamContextCalculator:
         # Key: (opponent_abbr, game_date) -> dict of all metrics
         self._opponent_cache = {}
         self._team_cache = {}  # For team-specific metrics like pace_differential
+        # season_year -> season start date. get_season_start_date() consults the
+        # schedule service (DB/GCS) on every call, and the star-context queries
+        # run per team per date, so memoize per instance.
+        self._season_start_cache = {}
+
+    def _season_start_for(self, game_date: date) -> date:
+        """Opening night of the season that `game_date` belongs to.
+
+        The three "season average" CTEs below used a hardcoded '2025-10-22'.
+        That is correct only for the 2025-26 season: from 2026-10-20 the same
+        literal silently means "the last TWO seasons", so a player with three
+        games in the new season would get a season average dominated by last
+        year's 82. Star identification, and every stars-out feature built on it,
+        would then be computed against a blended regime with no visible symptom.
+        """
+        season_year = get_season_year_from_date(game_date)
+        if season_year not in self._season_start_cache:
+            self._season_start_cache[season_year] = get_season_start_date(season_year)
+        return self._season_start_cache[season_year]
 
     def precompute_opponent_metrics(self, opponent_abbrs: list, game_date: date) -> None:
         """
@@ -768,7 +792,7 @@ class TeamContextCalculator:
                     AVG(usage_rate) as avg_usage,
                     COUNT(*) as games_played
                 FROM `{self.project_id}.nba_analytics.player_game_summary`
-                WHERE game_date >= '2025-10-22'
+                WHERE game_date >= @season_start
                   AND game_date < @game_date
                   AND team_abbr = @team_abbr
                   AND (is_dnp IS NULL OR is_dnp = FALSE)
@@ -809,6 +833,9 @@ class TeamContextCalculator:
                 query_parameters=[
                     bigquery.ScalarQueryParameter("team_abbr", "STRING", team_abbr),
                     bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                    bigquery.ScalarQueryParameter(
+                        "season_start", "DATE", self._season_start_for(game_date)
+                    ),
                 ]
             )
 
@@ -874,7 +901,7 @@ class TeamContextCalculator:
                     AVG(usage_rate) as avg_usage,
                     COUNT(*) as games_played
                 FROM `{self.project_id}.nba_analytics.player_game_summary`
-                WHERE game_date >= '2025-10-22'
+                WHERE game_date >= @season_start
                   AND game_date < @game_date
                   AND team_abbr = @team_abbr
                   AND (is_dnp IS NULL OR is_dnp = FALSE)
@@ -912,6 +939,9 @@ class TeamContextCalculator:
                 query_parameters=[
                     bigquery.ScalarQueryParameter("team_abbr", "STRING", team_abbr),
                     bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                    bigquery.ScalarQueryParameter(
+                        "season_start", "DATE", self._season_start_for(game_date)
+                    ),
                 ]
             )
 
@@ -980,7 +1010,7 @@ class TeamContextCalculator:
                     AVG(minutes_played) as avg_minutes,
                     AVG(usage_rate) as avg_usage
                 FROM `{self.project_id}.nba_analytics.player_game_summary`
-                WHERE game_date >= '2025-10-22'
+                WHERE game_date >= @season_start
                   AND game_date < @game_date
                   AND team_abbr = @team_abbr
                 GROUP BY player_lookup
@@ -1019,6 +1049,9 @@ class TeamContextCalculator:
                 query_parameters=[
                     bigquery.ScalarQueryParameter("team_abbr", "STRING", team_abbr),
                     bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                    bigquery.ScalarQueryParameter(
+                        "season_start", "DATE", self._season_start_for(game_date)
+                    ),
                 ]
             )
 
