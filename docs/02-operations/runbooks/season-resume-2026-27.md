@@ -54,7 +54,11 @@ through November 2026.
 
 ## Pre-opener checklist (~early-to-mid Oct 2026, BEFORE first game)
 
-- [ ] **Add 2026 to `FALLBACK_SEASON_START_DATES`** in `shared/config/nba_season_dates.py` once the 2026-27
+- [x] **DONE (verified 2026-08-26).** `FALLBACK_SEASON_START_DATES` already carries
+      `2026: date(2026, 10, 20)`, marked CONFIRMED against the official schedule and against
+      MIN(game_date) over the 1,207 loaded regular-season rows. The season-flip fixes of
+      2026-08-26 depend on this value, so it is now load-bearing rather than advisory.
+      Original item: **Add 2026 to `FALLBACK_SEASON_START_DATES`** in `shared/config/nba_season_dates.py` once the 2026-27
       schedule is published. Until then the season-start helper falls to the Oct-22 *default* (safe — never
       blends seasons — but ~1-day imprecise). Verify: `get_season_start_date(2026, use_schedule_service=False)`
       returns the true opener. (Closes the residual of the season-start bug fixed 2026-06-22.)
