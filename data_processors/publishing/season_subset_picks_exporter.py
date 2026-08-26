@@ -30,6 +30,7 @@ SIGNAL_MAP = {
 
 # Champion model — used for signal queries
 from shared.config.model_selection import get_champion_model_id
+from shared.config.nba_season_dates import get_season_window
 CHAMPION_SYSTEM_ID = get_champion_model_id()
 
 
@@ -83,9 +84,7 @@ class SeasonSubsetPicksExporter(BaseExporter):
     def _get_season_bounds(self, ref_date: Optional[date] = None) -> tuple:
         """Get season start date and season label."""
         ref = ref_date or date.today()
-        start_year = ref.year if ref.month >= 11 else ref.year - 1
-        season_start = date(start_year, 11, 1)
-        season_label = f"{start_year}-{str(start_year + 1)[-2:]}"
+        season_start, season_label = get_season_window(ref)
         return season_start, season_label
 
     def generate_json(self, **kwargs) -> Dict[str, Any]:

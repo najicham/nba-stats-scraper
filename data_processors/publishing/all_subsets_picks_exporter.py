@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 # Champion model — used for signal and as fallback
 from shared.config.model_selection import get_champion_model_id
+from shared.config.nba_season_dates import get_season_window
 CHAMPION_SYSTEM_ID = get_champion_model_id()
 
 
@@ -704,9 +705,8 @@ class AllSubsetsPicksExporter(BaseExporter):
         target = date.fromisoformat(target_date) if isinstance(target_date, str) else target_date
 
         # Calculate calendar-aligned window boundaries
-        # Season start: Nov 1 of current NBA season
-        season_start_year = target.year if target.month >= 11 else target.year - 1
-        season_start = date(season_start_year, 11, 1)
+        # Season start: the season's real opening night, not a Nov-1 stand-in
+        season_start, _ = get_season_window(target)
 
         # Month start: 1st of current month
         month_start = target.replace(day=1)

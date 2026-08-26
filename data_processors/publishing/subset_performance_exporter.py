@@ -17,6 +17,7 @@ from google.cloud import bigquery
 from .base_exporter import BaseExporter
 from shared.config.model_codenames import get_model_codename, get_model_display_info, CHAMPION_CODENAME
 from shared.config.subset_public_names import get_public_name
+from shared.config.nba_season_dates import get_season_window
 
 logger = logging.getLogger(__name__)
 
@@ -172,9 +173,7 @@ class SubsetPerformanceExporter(BaseExporter):
         Returns:
             Dictionary with season metadata and group performance
         """
-        current_year = end_date.year
-        season_start_year = current_year if end_date.month >= 11 else current_year - 1
-        season_start = date(season_start_year, 11, 1)
+        season_start, _ = get_season_window(end_date)
 
         perf_data = self._query_window_performance(
             season_start.isoformat(),

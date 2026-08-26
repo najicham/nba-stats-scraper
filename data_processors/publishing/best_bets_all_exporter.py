@@ -41,6 +41,7 @@ from google.cloud import bigquery
 from data_processors.publishing.base_exporter import BaseExporter
 from data_processors.publishing.exporter_utils import safe_float, safe_int
 from ml.signals.aggregator import ALGORITHM_VERSION
+from shared.config.nba_season_dates import get_season_window
 
 logger = logging.getLogger(__name__)
 
@@ -76,8 +77,7 @@ class BestBetsAllExporter(BaseExporter):
             date.fromisoformat(target_date) if isinstance(target_date, str)
             else target_date
         )
-        season_start_year = target.year if target.month >= 11 else target.year - 1
-        season_start = date(season_start_year, 11, 1)
+        season_start, _ = get_season_window(target)
 
         # One query gets all picks for the season (including today's ungraded)
         all_picks = self._query_all_picks(target_date, season_start.isoformat())
@@ -315,10 +315,7 @@ class BestBetsAllExporter(BaseExporter):
         try:
             if target_str:
                 target = date.fromisoformat(target_str)
-                season_start_year = (
-                    target.year if target.month >= 11 else target.year - 1
-                )
-                season_start = date(season_start_year, 11, 1)
+                season_start, _ = get_season_window(target)
                 days_into_season = (target - season_start).days
         except (TypeError, ValueError):
             days_into_season = None

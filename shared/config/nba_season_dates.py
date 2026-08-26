@@ -6,7 +6,7 @@ Uses schedule service for dynamic season dates with hardcoded fallback.
 """
 
 from datetime import date, datetime
-from typing import Optional
+from typing import Optional, Tuple
 import logging
 
 logger = logging.getLogger(__name__)
@@ -159,3 +159,42 @@ def get_season_year_from_date(game_date: date) -> int:
         return game_date.year
     else:
         return game_date.year - 1
+
+
+# season_year -> opening night. See get_season_window() for why this is safe.
+_SEASON_START_CACHE: dict = {}
+
+
+def get_season_window(reference_date: date) -> Tuple[date, str]:
+    """Season start date and label for the season containing `reference_date`.
+
+    Returns:
+        (season_start, season_label), e.g. (date(2026, 10, 20), '2026-27')
+
+    Exists because the publishing layer carried TWO different season boundaries
+    and they disagreed for eleven days a year. Labels were computed at
+    `month >= 10`, but every season *window* was a hardcoded `date(year, 11, 1)`
+    chosen with `month >= 11`. So from 2026-10-20 through 2026-10-31 an exporter
+    would stamp `season: '2026-27'` on a query window starting 2025-11-01 —
+    publishing the previous season's results, on the public site, under the new
+    season's name, during opening week.
+
+    The Nov-1 literal was never a deliberate "skip early season" rule; no comment
+    or test ever justified it. It was a stand-in for "season start" that also
+    silently truncated opening week from every season record it computed, since
+    real openers fall in October.
+
+    Deriving both halves here means they cannot drift apart again: the label and
+    the window are computed from the same season year, by construction.
+
+    Cached per season year: get_season_start_date() consults the schedule
+    service (DB/GCS) on every call, measured at roughly a second each, and the
+    publishing layer calls this from nine sites. A season's opening night does
+    not change once set, so caching it cannot go stale in any way that matters.
+    """
+    season_year = get_season_year_from_date(reference_date)
+    if season_year not in _SEASON_START_CACHE:
+        _SEASON_START_CACHE[season_year] = get_season_start_date(season_year)
+    season_start = _SEASON_START_CACHE[season_year]
+    season_label = f"{season_year}-{str(season_year + 1)[-2:]}"
+    return season_start, season_label

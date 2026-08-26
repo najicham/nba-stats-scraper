@@ -40,6 +40,7 @@ from ml.signals.pipeline_merger import merge_model_pipelines, ALGORITHM_VERSION
 from shared.config.model_selection import get_best_bets_model_id
 # Shadow calibrated win-probability (informational only; does NOT affect ranking).
 from ml.calibration.win_prob_loader import attach_win_prob
+from shared.config.nba_season_dates import get_season_window
 
 logger = logging.getLogger(__name__)
 
@@ -1733,8 +1734,7 @@ class SignalBestBetsExporter(BaseExporter):
         target = date.fromisoformat(target_date) if isinstance(target_date, str) else target_date
 
         # Calendar-aligned windows (same logic as AllSubsetsPicksExporter)
-        season_start_year = target.year if target.month >= 11 else target.year - 1
-        season_start = date(season_start_year, 11, 1)
+        season_start, _ = get_season_window(target)
         month_start = target.replace(day=1)
         week_start = target - timedelta(days=target.weekday())
 

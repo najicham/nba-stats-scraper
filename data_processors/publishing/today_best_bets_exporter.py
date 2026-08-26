@@ -27,6 +27,7 @@ from google.cloud import bigquery
 from data_processors.publishing.base_exporter import BaseExporter
 from data_processors.publishing.exporter_utils import safe_float, safe_int
 from ml.signals.aggregator import ALGORITHM_VERSION
+from shared.config.nba_season_dates import get_season_window
 
 logger = logging.getLogger(__name__)
 
@@ -131,8 +132,7 @@ class TodayBestBetsExporter(BaseExporter):
             date.fromisoformat(target_date) if isinstance(target_date, str)
             else target_date
         )
-        season_start_year = target.year if target.month >= 11 else target.year - 1
-        season_start = date(season_start_year, 11, 1)
+        season_start, _ = get_season_window(target)
 
         query = """
         SELECT
@@ -148,7 +148,7 @@ class TodayBestBetsExporter(BaseExporter):
           AND pa.recommendation = b.recommendation
           AND pa.line_value = b.line_value
         WHERE b.game_date >= @season_start
-          AND b.game_date <= @target_date
+          AND b.game_date <= @target_date  -- <= is correct: closed season-to-date reporting range, not a feature window
           AND pa.prediction_correct IS NOT NULL
         """
 
