@@ -204,6 +204,24 @@ def compute_for_date(bq_client: bigquery.Client, target_date: date,
       WHERE game_date BETWEEN @window_start AND @target_date
         AND ABS(predicted_points - line_value) >= 3
         AND system_id IN UNNEST(@model_ids)
+        -- 2026-08-31: an UNGRADED prediction is not a loss.
+        --
+        -- Without this filter `CASE WHEN prediction_correct THEN 1 ELSE 0 END`
+        -- silently maps NULL to 0, so every not-yet-graded row counted against
+        -- the model. Measured on prediction_accuracy: 25.6% of edge>=3 rows were
+        -- ungraded over 2026-01-01..04-07 and 35.4% over 2026-02-22..03-01, which
+        -- made rolling_hr read 39.6% against a true 53.2%, and 34.1% against a
+        -- true 52.8% -- understated by 13.6 and 18.7 points.
+        --
+        -- That is not cosmetic. The decay thresholds are BLOCKED < 52.4,
+        -- DEGRADING < 55, WATCH < 58, and `decay_detection` AUTO-DISABLES BLOCKED
+        -- models. A 13-19 point understatement pushes healthy models to BLOCKED
+        -- on ungraded volume alone -- worst exactly when grading lags, i.e. when
+        -- the pipeline is already struggling.
+        --
+        -- Every other CTE in this query already filters on prediction_correct
+        -- IS NOT NULL; this one was the outlier.
+        AND prediction_correct IS NOT NULL
     ),
     model_date_stats AS (
       SELECT
@@ -332,6 +350,96 @@ def compute_for_date(bq_client: bigquery.Client, target_date: date,
         AND line_value IS NOT NULL
       GROUP BY system_id
     ),
+    -- Unconditional drift diagnostics (2026-08-31).
+    --
+    -- Every metric in bias_stats above is measured ONLY on rows where
+    -- ABS(predicted_points - line_value) >= 3 — i.e. on the subsample where the
+    -- model disagreed most with the market. That subsample is chosen BY THE
+    -- MODEL, so a drifting model reshapes its own measurement population.
+    --
+    -- Measured on 2026-01-01..2026-04-07: edge>=3 is 30.3% of graded rows, and
+    -- bias on it reads -2.236 against -0.978 unconditionally. The conditioned
+    -- number is 2.3x larger, and most of that gap is selection, not drift:
+    -- conditioning on |predicted - line| picks rows where the prediction is
+    -- extreme relative to the market, and extreme predictions regress. The
+    -- "-2.23 in Nov 2025" in the bias_stats comment above is inflated the same
+    -- way. Treat pred_bias_* as a directional flag, and these as the magnitude.
+    --
+    -- Sensitivity, same window: an 80%-power 3-day detection needs a 0.58 pt
+    -- shift here versus 1.04 pt on edge>=3 (360 vs 109 rows/day, resid sd 6.75).
+    -- Nearly double the resolution, which is the whole point -- staleness shows
+    -- up as a level shift in residuals days before it reaches hit rate.
+    --
+    -- realization_beta regresses market margin M = actual - line on claimed edge
+    -- E = predicted - line: realized points of cover per point of claimed edge.
+    -- A healthy model holds beta > 0. The "confidently wrong" staleness
+    -- signature is beta -> 0 while the spread of E stays wide, which no existing
+    -- column can express -- MAE, bias and HR all miss it.
+    uncond_stats AS (
+      SELECT
+        system_id AS model_id,
+        AVG(CASE WHEN game_date > DATE_SUB(@target_date, INTERVAL 7 DAY)
+                 THEN predicted_points - actual_points END) AS pred_bias_uncond_7d,
+        AVG(CASE WHEN game_date > DATE_SUB(@target_date, INTERVAL 14 DAY)
+                 THEN predicted_points - actual_points END) AS pred_bias_uncond_14d,
+        COUNTIF(game_date > DATE_SUB(@target_date, INTERVAL 7 DAY))
+          AS pred_bias_uncond_n_7d,
+        -- t = mean / (sd / sqrt(n)). SAFE_DIVIDE throughout: n<2 gives NULL sd,
+        -- and a NULL t is honest where a 0 would read as "no drift".
+        SAFE_DIVIDE(
+          AVG(CASE WHEN game_date > DATE_SUB(@target_date, INTERVAL 7 DAY)
+                   THEN predicted_points - actual_points END),
+          SAFE_DIVIDE(
+            STDDEV_SAMP(CASE WHEN game_date > DATE_SUB(@target_date, INTERVAL 7 DAY)
+                             THEN predicted_points - actual_points END),
+            SQRT(COUNTIF(game_date > DATE_SUB(@target_date, INTERVAL 7 DAY)))
+          )
+        ) AS pred_bias_uncond_t_7d,
+        -- Cover margin: the signed margin in the direction the model recommended.
+        -- prediction_correct is just (cover_margin > 0) -- hit rate is this
+        -- quantity with all magnitude thrown away. HR 55% at +2.5 is a different
+        -- health state from HR 55% at +0.4, and HR cannot tell them apart.
+        -- Kept on edge>=3 so it is comparable with rolling_hr_*.
+        AVG(CASE WHEN game_date > DATE_SUB(@target_date, INTERVAL 7 DAY)
+                      AND ABS(predicted_points - line_value) >= 3
+                 THEN (actual_points - line_value)
+                      * IF(recommendation = 'OVER', 1, -1) END) AS cover_margin_7d,
+        SAFE_DIVIDE(
+          AVG(CASE WHEN game_date > DATE_SUB(@target_date, INTERVAL 7 DAY)
+                        AND ABS(predicted_points - line_value) >= 3
+                   THEN (actual_points - line_value)
+                        * IF(recommendation = 'OVER', 1, -1) END),
+          SAFE_DIVIDE(
+            STDDEV_SAMP(CASE WHEN game_date > DATE_SUB(@target_date, INTERVAL 7 DAY)
+                                  AND ABS(predicted_points - line_value) >= 3
+                             THEN (actual_points - line_value)
+                                  * IF(recommendation = 'OVER', 1, -1) END),
+            SQRT(COUNTIF(game_date > DATE_SUB(@target_date, INTERVAL 7 DAY)
+                         AND ABS(predicted_points - line_value) >= 3))
+          )
+        ) AS cover_margin_t_7d,
+        -- Deliberately over ALL rows, no edge filter: beta is only meaningful
+        -- across the full edge range. Restricting it would be range restriction,
+        -- which attenuates the slope toward zero -- the very reading it exists
+        -- to detect.
+        SAFE_DIVIDE(
+          COVAR_SAMP(
+            CASE WHEN game_date > DATE_SUB(@target_date, INTERVAL 14 DAY)
+                 THEN actual_points - line_value END,
+            CASE WHEN game_date > DATE_SUB(@target_date, INTERVAL 14 DAY)
+                 THEN predicted_points - line_value END),
+          VAR_SAMP(CASE WHEN game_date > DATE_SUB(@target_date, INTERVAL 14 DAY)
+                        THEN predicted_points - line_value END)
+        ) AS realization_beta_14d
+      FROM `nba-props-platform.nba_predictions.prediction_accuracy`
+      WHERE game_date BETWEEN @window_start AND @target_date
+        AND system_id IN UNNEST(@model_ids)
+        AND prediction_correct IS NOT NULL
+        AND actual_points IS NOT NULL
+        AND line_value IS NOT NULL
+        AND predicted_points IS NOT NULL
+      GROUP BY system_id
+    ),
     -- Session 399: Brier score calibration tracking.
     -- Measures calibration quality: how well the model's implied edge maps to
     -- actual win probability. Lower = better calibrated. Formula:
@@ -378,11 +486,16 @@ def compute_for_date(bq_client: bigquery.Client, target_date: date,
            bs.brier_score_7d, bs.brier_score_14d, bs.brier_score_30d,
            bias.pred_bias_7d, bias.pred_bias_14d, bias.pred_bias_30d,
            bias.model_mae_7d, bias.model_mae_14d, bias.model_mae_30d,
-           bias.vegas_mae_7d, bias.vegas_mae_14d, bias.vegas_mae_30d
+           bias.vegas_mae_7d, bias.vegas_mae_14d, bias.vegas_mae_30d,
+           unc.pred_bias_uncond_7d, unc.pred_bias_uncond_14d,
+           unc.pred_bias_uncond_t_7d, unc.pred_bias_uncond_n_7d,
+           unc.cover_margin_7d, unc.cover_margin_t_7d,
+           unc.realization_beta_14d
     FROM model_date_stats mds
     LEFT JOIN best_bets_stats bbs ON bbs.model_id = mds.model_id
     LEFT JOIN brier_stats bs ON bs.model_id = mds.model_id
     LEFT JOIN bias_stats bias ON bias.model_id = mds.model_id
+    LEFT JOIN uncond_stats unc ON unc.model_id = mds.model_id
     """
 
     window_start = target_date - timedelta(days=30)
@@ -513,6 +626,17 @@ def compute_for_date(bq_client: bigquery.Client, target_date: date,
             'vegas_mae_7d': round(float(row.vegas_mae_7d), 3) if getattr(row, 'vegas_mae_7d', None) is not None else None,
             'vegas_mae_14d': round(float(row.vegas_mae_14d), 3) if getattr(row, 'vegas_mae_14d', None) is not None else None,
             'vegas_mae_30d': round(float(row.vegas_mae_30d), 3) if getattr(row, 'vegas_mae_30d', None) is not None else None,
+            # Unconditional drift diagnostics (2026-08-31). Measured on every
+            # graded prediction, not just the edge>=3 subsample the model picks
+            # for itself. None rather than 0 when unmeasurable: a 0 t-stat would
+            # read as "checked, no drift" when nothing was checked.
+            'pred_bias_uncond_7d': round(float(row.pred_bias_uncond_7d), 3) if getattr(row, 'pred_bias_uncond_7d', None) is not None else None,
+            'pred_bias_uncond_14d': round(float(row.pred_bias_uncond_14d), 3) if getattr(row, 'pred_bias_uncond_14d', None) is not None else None,
+            'pred_bias_uncond_t_7d': round(float(row.pred_bias_uncond_t_7d), 3) if getattr(row, 'pred_bias_uncond_t_7d', None) is not None else None,
+            'pred_bias_uncond_n_7d': int(row.pred_bias_uncond_n_7d) if getattr(row, 'pred_bias_uncond_n_7d', None) is not None else None,
+            'cover_margin_7d': round(float(row.cover_margin_7d), 3) if getattr(row, 'cover_margin_7d', None) is not None else None,
+            'cover_margin_t_7d': round(float(row.cover_margin_t_7d), 3) if getattr(row, 'cover_margin_t_7d', None) is not None else None,
+            'realization_beta_14d': round(float(row.realization_beta_14d), 4) if getattr(row, 'realization_beta_14d', None) is not None else None,
             'mae_gap_7d': (
                 round(float(row.model_mae_7d) - float(row.vegas_mae_7d), 3)
                 if getattr(row, 'model_mae_7d', None) is not None

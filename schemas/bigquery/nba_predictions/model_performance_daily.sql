@@ -102,7 +102,31 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.model_performance
   vegas_mae_30d  FLOAT64,
   mae_gap_7d     FLOAT64,
   mae_gap_14d    FLOAT64,
-  mae_gap_30d    FLOAT64
+  mae_gap_30d    FLOAT64,
+
+  -- Unconditional drift diagnostics (2026-08-31).
+  -- Every pred_bias_*/model_mae_* column above is measured ONLY on rows where
+  -- ABS(predicted - line) >= 3 -- a subsample the model selects for itself, so a
+  -- drifting model reshapes its own measurement population. Measured over
+  -- 2026-01-01..04-07: that subsample is 30.3% of graded rows and reads -2.236
+  -- against -0.978 unconditionally; most of the 2.3x gap is selection, because
+  -- conditioning on |predicted - line| picks extreme predictions and extreme
+  -- predictions regress. Read pred_bias_* as a direction, these as a magnitude.
+  pred_bias_uncond_7d    FLOAT64,  -- AVG(predicted - actual), ALL graded rows
+  pred_bias_uncond_14d   FLOAT64,
+  pred_bias_uncond_t_7d  FLOAT64,  -- mean / (sd/sqrt(n)); NULL when unmeasurable
+  pred_bias_uncond_n_7d  INT64,    -- sample behind the t-stat; never infer it
+  -- Hit rate is (cover_margin > 0) with the magnitude thrown away. HR 55% at
+  -- +2.5 is a different health state from HR 55% at +0.4; HR cannot tell them
+  -- apart. Kept on edge>=3 so it stays comparable with rolling_hr_*.
+  cover_margin_7d        FLOAT64,
+  cover_margin_t_7d      FLOAT64,
+  -- Realized points of cover per point of claimed edge: COVAR(actual-line,
+  -- predicted-line)/VAR(predicted-line), over ALL rows (restricting the range
+  -- would attenuate the slope toward zero -- the exact reading it detects).
+  -- Healthy model holds beta > 0; "confidently wrong" staleness is beta -> 0
+  -- while the spread of claimed edge stays wide.
+  realization_beta_14d   FLOAT64
 )
 PARTITION BY game_date
 CLUSTER BY model_id
