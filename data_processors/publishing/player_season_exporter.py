@@ -460,6 +460,12 @@ class PlayerSeasonExporter(BaseExporter):
         SELECT
             COUNT(*) as total,
             SUM(CASE WHEN recommendation IN ('OVER', 'UNDER') THEN 1 ELSE 0 END) as recommendations,
+            -- win_rate's denominator must be GRADED recommendations. `correct`
+            -- can only count graded rows, so dividing by all recommendations
+            -- mixes an ungraded backlog into the miss column. `recommendations`
+            -- is left alone so the number shown to users keeps its meaning.
+            SUM(CASE WHEN recommendation IN ('OVER', 'UNDER')
+                          AND prediction_correct IS NOT NULL THEN 1 ELSE 0 END) as graded,
             SUM(CASE WHEN prediction_correct = TRUE THEN 1 ELSE 0 END) as correct,
             SUM(CASE WHEN actual_points > line_value THEN 1 ELSE 0 END) as overs,
             SUM(CASE WHEN actual_points < line_value THEN 1 ELSE 0 END) as unders
@@ -467,7 +473,7 @@ class PlayerSeasonExporter(BaseExporter):
         WHERE player_lookup = @player_lookup
           AND system_id = @champion_model_id
           AND game_date >= @season_start
-          AND game_date <= @season_end
+          AND game_date <= @season_end  -- <= is correct: closed season range end, not a feature window
         """
 
         params = [
@@ -492,7 +498,8 @@ class PlayerSeasonExporter(BaseExporter):
             },
             'total_recommendations': r['recommendations'],
             'correct': r['correct'],
-            'win_rate': round(r['correct'] / r['recommendations'], 3) if r['recommendations'] > 0 else None,
+            'graded': r['graded'],
+            'win_rate': round(r['correct'] / r['graded'], 3) if r['graded'] > 0 else None,
         }
 
     def _query_game_log(self, player_lookup: str, season_year: int) -> List[Dict]:

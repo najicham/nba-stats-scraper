@@ -207,6 +207,12 @@ class BestBetsExporter(BaseExporter):
                 WHERE system_id = @champion_model_id
                   AND game_date >= DATE_SUB(@target_date, INTERVAL 730 DAY)
                   AND game_date < @target_date
+                  -- An ungraded prediction is not a miss. Without this,
+                  -- CASE WHEN prediction_correct THEN 1.0 ELSE 0.0 maps NULL to
+                  -- 0.0 and every not-yet-graded row drags historical_accuracy
+                  -- down. Same defect fixed in model_performance.py 2026-08-31,
+                  -- where it understated hit rate by 13-19 points.
+                  AND prediction_correct IS NOT NULL
                   AND recommendation = 'UNDER'
                 GROUP BY player_lookup
             ),
@@ -294,6 +300,12 @@ class BestBetsExporter(BaseExporter):
                 WHERE system_id = @champion_model_id
                   AND game_date >= DATE_SUB(@target_date, INTERVAL 730 DAY)
                   AND game_date < @target_date
+                  -- An ungraded prediction is not a miss. Without this,
+                  -- CASE WHEN prediction_correct THEN 1.0 ELSE 0.0 maps NULL to
+                  -- 0.0 and every not-yet-graded row drags historical_accuracy
+                  -- down. Same defect fixed in model_performance.py 2026-08-31,
+                  -- where it understated hit rate by 13-19 points.
+                  AND prediction_correct IS NOT NULL
                   AND recommendation = 'UNDER'
                 GROUP BY player_lookup
             ),
