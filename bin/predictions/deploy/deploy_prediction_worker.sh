@@ -214,11 +214,17 @@ configure_pubsub() {
         --project "$PROJECT_ID" &> /dev/null; then
 
         log "Updating existing subscription..."
+        # --expiration-period never: the default 31-day TTL silently deleted this
+        # subscription over the 2026 off-season. The coordinator's only dispatch path
+        # publishes here, and Pub/Sub discards messages on a topic with no subscription
+        # while still returning a message id, so Phase 5 reported success and produced
+        # nothing. Never let this subscription carry an expiry.
         gcloud pubsub subscriptions update "$PUBSUB_SUBSCRIPTION" \
             --project "$PROJECT_ID" \
             --push-endpoint "$PUSH_ENDPOINT" \
             --push-auth-service-account "prediction-worker@${PROJECT_ID}.iam.gserviceaccount.com" \
             --ack-deadline 300 \
+            --expiration-period never \
             --quiet
     else
         log "Creating new subscription..."
@@ -228,6 +234,11 @@ configure_pubsub() {
             --push-endpoint "$PUSH_ENDPOINT" \
             --push-auth-service-account "prediction-worker@${PROJECT_ID}.iam.gserviceaccount.com" \
             --ack-deadline 300 \
+            --expiration-period never \
+            --message-retention-duration 7d \
+            --dead-letter-topic "prediction-request-dlq" \
+            --dead-letter-topic-project "$PROJECT_ID" \
+            --max-delivery-attempts 5 \
             --quiet
     fi
 
