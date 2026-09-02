@@ -122,6 +122,23 @@ def get_target_date(target_date_str: str) -> str:
         return target_date_str
 
 
+def _count_or_zero(value) -> int:
+    """Coerce a BigQuery COUNT/COUNTIF cell to int, treating NULL/NA as 0.
+
+    to_dataframe() maps a SQL NULL in a nullable integer column to pandas.NA, and
+    int(pandas.NA) raises TypeError. On a date with no predictions the coverage
+    query returns exactly that, so validation crashed instead of reporting an
+    honest "nothing to grade" -- and it crashed hardest on the days the pipeline
+    was already unwell. Zero is what the callers below already treat as empty.
+    """
+    if value is None:
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
 def validate_grading_prerequisites(target_date: str) -> Dict:
     """
     Validate that prerequisites for grading are met using player-level matching.
@@ -228,14 +245,14 @@ def validate_grading_prerequisites(target_date: str) -> Dict:
         coverage_result = bq_client.query(coverage_query).to_dataframe()
         row = coverage_result.iloc[0]
 
-        total_gradable = int(row['total_gradable_predictions'])
-        predictions_with_actuals = int(row['predictions_with_actuals'])
-        total_games = int(row['total_games'])
-        games_with_actuals = int(row['games_with_actuals'])
+        total_gradable = _count_or_zero(row['total_gradable_predictions'])
+        predictions_with_actuals = _count_or_zero(row['predictions_with_actuals'])
+        total_games = _count_or_zero(row['total_games'])
+        games_with_actuals = _count_or_zero(row['games_with_actuals'])
 
         # Get total actuals for diagnostic logging
         actuals_result = bq_client.query(actuals_count_query).to_dataframe()
-        total_actuals = int(actuals_result.iloc[0]['cnt'])
+        total_actuals = _count_or_zero(actuals_result.iloc[0]['cnt'])
 
         # Calculate coverage percentages
         if total_gradable > 0:
