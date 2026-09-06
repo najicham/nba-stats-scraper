@@ -16,6 +16,19 @@
 >    scheduler doesn't retry" convention rests on a false premise.
 > 6. **Every `logger.info` in every Gen2 CF is discarded** (`basicConfig` is a no-op once
 >    functions-framework installs a root handler; root stays at WARNING). Verified across 5 CFs.
+> 7. **§4.3 is WRONG: the 2025-26 publish record was NOT destroyed.** GCS object versioning has
+>    been ON since bucket creation with no lifecycle rule (1,530 retained generations). The
+>    "overwritten" files have **exactly ONE generation each**, stamped `generated_at` 2026-02-15/22
+>    — they were *created* empty by a backfill, never overwritten. Verified: `2025-12-01.json` = 1
+>    generation; `2025-12-15.json` = 0 generations (never existed). The legacy `v1/best-bets/` path
+>    has own-day writes reading `total_picks: 0`. **The published-pick record genuinely begins
+>    2026-01-09.** The 415-235 → 105-70 join correction is unaffected and stands.
+> 8. **The 37.9% absent-build rate is an ARTIFACT of `gcloud builds list`** (server-side pagination
+>    + a 60 req/min quota). Against Cloud Build's audit log the expected trigger set matched
+>    **exactly, 5/5, at fan-outs of 26-30**. On 2026-08-30 all 30 fired; **9 FAILED**, and those 9
+>    are the components still stale. Do not use the build ledger as an oracle.
+> 9. **`roi_simulation` has 4,252 rows and `roi_summary` 95** — not 0. And `best_bets_export_audit`
+>    is already an append-only publish log (922 rows, 156 dates, `picks_snapshot` 100% non-null).
 
 Five independent reviewers (season-readiness, verification/trust, profitability, infrastructure,
 red team), all read-only, all measuring against live BigQuery/GCP rather than reading docs.
