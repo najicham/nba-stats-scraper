@@ -1,5 +1,22 @@
 # Five-agent review — 2026-09-01
 
+> ⚠️ **CORRECTIONS APPLIED 2026-09-05** (second review round, verified in-session):
+> 1. **The 08-20/08-21 scheduler snapshots were NOT truncated.** They hold 110 jobs because the
+>    estate genuinely was 110 then; the 08-22 restore added exactly 59 (0 removed). CLAUDE.md's
+>    "`weekly-retrain-trigger` was deleted" was **accurate when written** and went stale on
+>    2026-08-22. The actionable conclusion (it exists PAUSED, `resume` it) stands; §2's stated
+>    mechanism does not.
+> 2. **`br-rosters-batch-daily` EXISTS, PAUSED** (created 02:12Z, 54 min after the last snapshot).
+>    The only job that genuinely does not exist is **`nba-closing-lines-sweep`**.
+> 3. **`bq` and `gcloud scheduler jobs list` do NOT hang** — measured 2.1s each. The long-standing
+>    "hangs in WSL" note is wrong; the symptom was almost certainly `bq`'s interactive setup prompt
+>    triggered by the wrong default project (`urcwest`). Always pass `--project_id=`/`--project=`.
+> 4. **`AUTO_DISABLE_ENABLED=true`** on the deployed `decay-detection` CF — not "double-off".
+> 5. **All 170 scheduler jobs have `retryCount` unset (0 retries)** — the "return 200 so the
+>    scheduler doesn't retry" convention rests on a false premise.
+> 6. **Every `logger.info` in every Gen2 CF is discarded** (`basicConfig` is a no-op once
+>    functions-framework installs a root handler; root stays at WARNING). Verified across 5 CFs.
+
 Five independent reviewers (season-readiness, verification/trust, profitability, infrastructure,
 red team), all read-only, all measuring against live BigQuery/GCP rather than reading docs.
 
