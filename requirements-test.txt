@@ -12,3 +12,4 @@ hypothesis>=6.90       # property-based tests (tests/**/test_*_properties.py etc
 psutil>=5.9            # perf/benchmark + resource tests
 responses>=0.24        # HTTP mocking for scraper tests
 python-dotenv>=1.0     # env loading in a few test helpers
+pytest-timeout>=2.3      # CI passes --timeout=60; without this pytest exits 4 (usage error)

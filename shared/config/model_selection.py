@@ -81,6 +81,21 @@ def get_champion_model_id() -> str:
             _champion_cache['model_id'] = champion
             _champion_cache['expires'] = now + _CACHE_TTL_SECONDS
             return champion
+        # 2026-09-06: this path used to return silently. Zero rows matching
+        # (is_production AND enabled) made _DEFAULT_CHAMPION the steady state for
+        # months, and the literal resolves to a system_id that stopped predicting
+        # 2026-03-03 -- so 17 public exporters filtered on a dead model and emitted
+        # empty payloads with no error anywhere. Logged at ERROR on purpose: every
+        # logger.info in a Gen2 Cloud Function is discarded (functions-framework
+        # installs a root handler and the root level stays at WARNING).
+        logger.error(
+            "CHAMPION_MODEL_UNRESOLVED: no row matches is_production=TRUE AND "
+            "enabled=TRUE in %s.nba_predictions.model_registry; falling back to "
+            "the hardcoded %r. Every champion-filtered export is now querying a "
+            "model that may not be producing predictions. Fix with a one-row "
+            "UPDATE on model_registry.",
+            project, _DEFAULT_CHAMPION,
+        )
     except Exception as e:
         logger.warning(f"Failed to query champion from registry, using default: {e}")
 

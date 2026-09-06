@@ -16,6 +16,7 @@ Created: 2026-02-21 (Session 319)
 
 import json
 import logging
+import os
 from datetime import date
 from typing import Any, Dict, List
 
@@ -43,7 +44,31 @@ def _compute_season_label(d: date) -> str:
 
 
 class AdminDashboardExporter(BaseExporter):
-    """Export consolidated admin dashboard to a single GCS file."""
+    """Export consolidated admin dashboard to a single GCS file.
+
+    SECURITY (2026-09-06): the default API bucket grants `allUsers:objectViewer`
+    bucket-wide, so `v1/admin/dashboard.json` is anonymously readable — verified
+    HTTP 200, 14,469 bytes, carrying champion_model_state, model_health,
+    signal_health, subset_performance and picks. Uniform bucket-level access
+    cannot scope the public `v1/` grant away from `v1/admin/`, so the only clean
+    fix is a separate private bucket.
+
+    `ADMIN_BUCKET_NAME` selects that bucket. It intentionally defaults to the
+    current public bucket so that deploying this file alone changes nothing —
+    the cutover is: (1) private bucket exists, (2) frontend /admin reads it
+    through an authenticated path, (3) set ADMIN_BUCKET_NAME on phase6-export,
+    (4) delete the public copy of v1/admin/dashboard.json.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        admin_bucket = os.environ.get('ADMIN_BUCKET_NAME')
+        if admin_bucket:
+            logger.info(
+                "AdminDashboardExporter writing to private bucket %s (was %s)",
+                admin_bucket, self.bucket_name,
+            )
+            self.bucket_name = admin_bucket
 
     def generate_json(self, target_date: str, **kwargs) -> Dict[str, Any]:
         """Generate dashboard JSON with all admin data."""
@@ -171,7 +196,10 @@ class AdminDashboardExporter(BaseExporter):
             ROW_NUMBER() OVER (PARTITION BY model_id ORDER BY game_date DESC) AS rn
           FROM `nba-props-platform.nba_predictions.model_performance_daily`
           WHERE game_date >= DATE_SUB(@target_date, INTERVAL 2 DAY)
-            AND game_date <= @target_date
+            -- model_performance_daily rows are already-graded rolling summaries and
+            -- the dashboard reports through the target date; no feature is derived
+            -- from a same-day outcome.
+            AND game_date <= @target_date  -- <= is correct for range end
         )
         SELECT
           p.model_id,
@@ -270,7 +298,9 @@ class AdminDashboardExporter(BaseExporter):
             graded_picks
           FROM `nba-props-platform.nba_predictions.v_dynamic_subset_performance`
           WHERE game_date >= DATE_SUB(@target_date, INTERVAL 30 DAY)
-            AND game_date <= @target_date
+            -- v_dynamic_subset_performance rows are graded per-day results and the
+            -- dashboard reports through the target date inclusive.
+            AND game_date <= @target_date  -- <= is correct for range end
         )
         SELECT
           subset_id,

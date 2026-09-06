@@ -399,6 +399,15 @@ python bin/analysis/model_correlation.py         # Inter-model agreement
 
 ## Signal System [Keyword: SIGNALS]
 
+🧊 **CODE FREEZE ON `ml/signals/` — owner decision 2026-09-06.** No threshold, weight,
+filter, floor or rescue change until **100 graded 2026-27 picks exist**. Bug fixes and
+observability are still allowed; anything that changes selection is not. Rationale: the
+March-2026 autopsy attributes **-7.8pp** to tuning churn (the OVER floor moved 7 times in
+41 days; today's 6.0 was set 3 days after the last live pick), and every wrong call in the
+2026-09-05 corrections table came from an n≈30 sample. Unfreeze condition is a count, not
+a date — check `signal_best_bets_picks` for 100 graded 2026-27 rows first.
+
+
 **33 active signals + 50 shadow** (14 removed). **48 active filters + 20 observation** (6 removed). Counts verified against `shared/registry/{signals,filters}.yaml` on 2026-08-21; the previous numbers (28/32/25 and 25/11) were all wrong. ⚠️ **Six signals are `active` in the registry but listed in `aggregator.SHADOW_SIGNALS`, so the executing code excludes them from `real_sc`:** `b2b_boost_over`, `book_disagree_over`, `cold_3pt_over`, `extended_rest_under`, `fast_pace_over`, `line_rising_over`. The registry contradicts the code — trust the code.
 **Full inventory:** `docs/08-projects/current/signal-discovery-framework/SIGNAL-INVENTORY.md`
 

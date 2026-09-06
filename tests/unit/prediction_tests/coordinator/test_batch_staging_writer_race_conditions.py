@@ -64,9 +64,19 @@ except ImportError:
     else:
         predictions = sys.modules['predictions']
 
-if 'predictions.coordinator' not in sys.modules:
-    coordinator = type(sys)('predictions.coordinator')
-    sys.modules['predictions.coordinator'] = coordinator
+# predictions.coordinator is a REAL package. Import it rather than fabricating a
+# stub module: a synthetic module has no __path__, so it leaves sys.modules poisoned
+# for every later test that does `from predictions.coordinator.X import ...`
+# (ModuleNotFoundError: 'predictions.coordinator' is not a package). That single
+# stub was blocking collection of 4 test modules for the whole suite.
+try:
+    import predictions.coordinator as coordinator
+except ImportError:
+    coordinator = sys.modules.get('predictions.coordinator')
+    if coordinator is None:
+        coordinator = type(sys)('predictions.coordinator')
+        coordinator.__path__ = [os.path.join(project_root, 'predictions/coordinator')]
+        sys.modules['predictions.coordinator'] = coordinator
     predictions.coordinator = coordinator
 
 # Now load batch_staging_writer (can import distributed_lock properly)
