@@ -212,11 +212,53 @@ report success* — the same window that hides the missing feature store until N
    `line_source_api` SELECT fix; `pipeline_reconciliation` swallow; injury fail-open;
    `INSUFFICIENT_DATA` floor to n7≥30 **before** any 4th model.
 
-**Uncommitted working tree** (nothing pushed — a push auto-deploys from HEAD):
-`requirements-test.txt`, `.github/workflows/test.yml`,
-`tests/unit/prediction_tests/coordinator/test_batch_staging_writer_race_conditions.py`,
-`shared/config/model_selection.py`, `data_processors/publishing/admin_dashboard_exporter.py`,
-`CLAUDE.md`, this file.
+---
+
+## 5. Pushed and verified
+
+`1e44991f` (the fixes above) and `a3f3466f` (`pytz` + `functions-framework`, see below).
+
+**CI.** The first run got **past exit 4** — `collected 2825 items` — but died at exit 2 on 5
+collection errors that do not reproduce locally: `No module named 'pytz'` (3 orchestration
+tests) and `No module named 'functions_framework'` (2 publishing/halt tests). Neither is in
+`requirements.txt`; both happened to be present in `.venv`. `pip install -r requirements.txt ||
+true` did **not** mask a failure — that install succeeded. Added both to `requirements-test.txt`.
+
+**Second run — the suite executes end to end for the first time: `171 failed, 2704 passed,
+43 skipped, 22 errors`.**
+
+⚠️ CI has ~81 more failures than local (171 vs 90), and the gap is not flakiness:
+`google.auth.exceptions.DefaultCredentialsError`, **358 occurrences**. A large share of
+`tests/unit/` is **not hermetic** — it constructs real GCP clients and passes only where ADC
+exists. Corroborated independently: during the local run,
+`INFORMATION_SCHEMA.JOBS_BY_PROJECT` showed precompute-processor queries issued under
+`nchammas@gmail.com`, i.e. the "unit" suite was hitting live BigQuery. **The next step is not
+"fix 171 tests" — it is to make the suite hermetic, then judge what is genuinely broken.**
+
+**Deploy.** Fan-out measured before pushing: **29 triggers**. Wave outcome: 17 SUCCESS,
+7 FAILURE, 8 EXPIRED, 4 CANCELLED. The 7 CF failures were contention, not code — each one's
+*inner* function build was CANCELLED. Re-running the failed triggers in **batches of 3 after the
+wave drained** made all 9 succeed with no code change (`gcloud builds triggers run <name>
+--branch=main`; never re-push).
+
+⚠️ **Correction to the standing "verify by BUILD_COMMIT" rule.**
+`services describe --format="value(spec.template.spec.containers[0].env)"` returns the *latest
+created* revision — it read `1e44991` on three services that were still serving **`b81937e`
+from 2026-08-30**. `nba-scrapers`, `nba-phase3-analytics-processors` and `nba-grading-service`
+each had a revision stuck at `HealthCheckContainerError: Quota exceeded for total allowable CPU
+per project per region`. Read the **serving** revision instead:
+
+```bash
+ready=$(gcloud run services describe $S --region=us-west2 --format="value(status.latestReadyRevisionName)")
+gcloud run revisions describe $ready --region=us-west2 --format="value(spec.containers[0].env)" | grep BUILD_COMMIT
+```
+
+Fixed without a rebuild: `gcloud run services update $S --update-env-vars="BUILD_COMMIT=<same>"`
+once the wave drained. All three now serve `1e44991` with `latestReady == latestCreated`.
+**Final sweep: the only remaining mismatches are the three known permanent strays**
+(`analytics-processor`, `nba-reference-service`, `prediction-coordinator-dev`).
+
+Working tree clean.
 
 ## Do NOT
 Unchanged from the 09-05 review: no `model_performance_daily` backfill; do not delete signal
