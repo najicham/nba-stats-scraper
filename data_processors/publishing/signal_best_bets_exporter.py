@@ -734,8 +734,7 @@ class SignalBestBetsExporter(BaseExporter):
         # after tip-off returns early and never records provenance for that run. The scoped
         # (system_id, player_lookup) upsert makes this safe on re-export.
         model_bb_candidates = json_data.pop('_model_bb_candidates', [])
-        if model_bb_candidates:
-            self._write_model_bb_candidates(target_date, model_bb_candidates)
+        self._write_model_bb_candidates(target_date, model_bb_candidates)
 
         # Safety guard: don't overwrite existing JSON with 0 picks on re-export
         # of past dates (all games finished → all predictions filtered out).
@@ -1526,15 +1525,31 @@ class SignalBestBetsExporter(BaseExporter):
         pipeline_results: Dict,
         target_date: str,
     ) -> List[Dict]:
-        """Collect all candidates from all model pipelines for BQ write.
+        """Collect every FILTER-SURVIVING candidate from all model pipelines for BQ write.
 
-        Session 443: Every candidate from every model pipeline is recorded
-        with full provenance — whether it was selected by the merger or not.
-        The merger has already tagged each candidate with was_selected,
-        selection_reason, merge_rank, pipeline_agreement_count, etc.
+        Session 443: each surviving candidate is recorded with full provenance —
+        whether it was selected by the merger or not. The merger has already tagged
+        each one with was_selected, selection_reason, merge_rank,
+        pipeline_agreement_count, etc.
+
+        SCOPE (verified 2026-09-06, do not re-derive): `PipelineResult.candidates` is
+        the output of `BestBetsAggregator.aggregate()`, i.e. predictions that PASSED the
+        negative-filter stack. Candidates the filters rejected are NOT here — they are
+        recorded separately in `best_bets_filtered_picks`. So this table's grain is
+        "published + merge-rejected", which is exactly how
+        `v_bb_candidate_signal_stream` consumes it (leg 3 = 'merge_rejected'; leg 2 =
+        'filtered'). Widening this to include filter-rejected candidates would label
+        them 'merge_rejected' in that view and, because merge_rejected outranks filtered
+        in the disposition dedup, would silently corrupt the C4 promotion tracker.
+
+        Consequence, and the reason this docstring exists: on a day where the filter
+        stack rejects 100% of candidates, an EMPTY list here is CORRECT, not a writer
+        failure. Row counts confirm it — every day since 2026-03-01 has
+        COUNTIF(was_selected) == published pick count, and 0-pick days have no rows at
+        all while `best_bets_filtered_picks` has 2-29.
 
         Returns:
-            Flat list of candidate dicts ready for BQ batch write.
+            Flat list of candidate dicts ready for BQ batch write (possibly empty).
         """
         # One timestamp per export run (scoped-upsert stamp; distinguishes intraday re-exports).
         run_ts = datetime.now(timezone.utc).isoformat()
@@ -1646,6 +1661,15 @@ class SignalBestBetsExporter(BaseExporter):
         table_ref = f'{PROJECT_ID}.nba_predictions.model_bb_candidates'
 
         if not candidates:
+            # WARNING, not info: every logger.info in a Gen2 CF is discarded, so a silent
+            # return here reads downstream as "the writer is broken" when the true cause is
+            # that no candidate survived the filter stack. Say so explicitly.
+            logger.warning(
+                f"model_bb_candidates: 0 rows for {target_date} — no candidate survived the "
+                f"negative-filter stack in ANY model pipeline. This is expected on a 0-pick "
+                f"day; filter-rejected candidates are recorded in best_bets_filtered_picks, "
+                f"not here."
+            )
             return
 
         # Scoped delete keys: CONCAT(system_id,'|',player_lookup) for exactly this run's rows.
@@ -1704,10 +1728,17 @@ class SignalBestBetsExporter(BaseExporter):
                 rows_to_insert, table_ref, job_config=load_config
             )
             load_job.result(timeout=60)
-            logger.info(
-                f"Batch-loaded {len(rows_to_insert)} model_bb_candidates "
-                f"for {target_date} into {table_ref}"
-            )
+            written = load_job.output_rows
+            if written != len(rows_to_insert):
+                logger.warning(
+                    f"model_bb_candidates row-count mismatch for {target_date}: "
+                    f"handed {len(rows_to_insert)} rows, load job wrote {written}"
+                )
+            else:
+                logger.info(
+                    f"Batch-loaded {written} model_bb_candidates "
+                    f"for {target_date} into {table_ref}"
+                )
         except Exception as e:
             # Non-fatal — don't fail export if candidates write fails
             logger.warning(

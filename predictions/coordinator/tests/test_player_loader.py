@@ -14,6 +14,8 @@ from unittest.mock import Mock, patch, MagicMock
 from coordinator.player_loader import (
     PlayerLoader,
     validate_game_date,
+    check_game_date,
+    get_max_past_days,
     get_nba_season,
     create_manual_prediction_request
 )
@@ -309,10 +311,35 @@ class TestUtilityFunctions:
         far_future = date.today() + timedelta(days=30)
         assert validate_game_date(far_future) is False
 
-    def test_validate_game_date_past(self):
-        """Test validate_game_date rejects past dates"""
+    def test_validate_game_date_recent_past(self):
+        """Recent past dates are inside the default 90-day horizon"""
         past = date.today() - timedelta(days=2)
+        assert validate_game_date(past) is True
+
+    def test_validate_game_date_far_past(self):
+        """Test validate_game_date rejects dates beyond the past horizon"""
+        past = date.today() - timedelta(days=200)
         assert validate_game_date(past) is False
+
+    def test_check_game_date_reason_is_specific(self):
+        """The rejection reason must name the horizon, not 'no players found'"""
+        reason = check_game_date(date.today() - timedelta(days=200))
+        assert reason is not None
+        assert reason.startswith('invalid_game_date: >90d in past')
+        assert check_game_date(date.today()) is None
+
+    def test_past_horizon_is_configurable(self, monkeypatch):
+        """COORDINATOR_MAX_PAST_DAYS widens the horizon for backfills/rehearsals"""
+        past = date.today() - timedelta(days=200)
+        monkeypatch.setenv('COORDINATOR_MAX_PAST_DAYS', '400')
+        assert get_max_past_days() == 400
+        assert check_game_date(past) is None
+        assert validate_game_date(past) is True
+
+    def test_past_horizon_falls_back_on_garbage(self, monkeypatch):
+        """A non-integer override must not crash the coordinator"""
+        monkeypatch.setenv('COORDINATOR_MAX_PAST_DAYS', 'not-a-number')
+        assert get_max_past_days() == 90
 
     def test_get_nba_season_regular(self):
         """Test get_nba_season returns correct format"""

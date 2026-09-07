@@ -109,8 +109,9 @@ class PlayerLoader:
         logger.info(f"Creating prediction requests for {game_date} (min_minutes={min_minutes}, mode={mode_desc}, dataset_prefix={prefix or 'production'})")
 
         # Validate date before querying
-        if not validate_game_date(game_date):
-            logger.error(f"Invalid game date: {game_date}", exc_info=True)
+        date_error = check_game_date(game_date)
+        if date_error:
+            logger.error(f"Invalid game date: {game_date} — {date_error}")
             return []
 
         # Get all players with games on this date
@@ -2095,11 +2096,71 @@ class PlayerLoader:
 # UTILITY FUNCTIONS
 # ============================================================================
 
+# Default past-date horizon. Overridable so historical rehearsals and backfills are
+# possible from the off-season, when every date of the previous season is out of range.
+DEFAULT_MAX_PAST_DAYS = 90
+DEFAULT_MAX_FUTURE_DAYS = 14
+
+
+def get_max_past_days() -> int:
+    """Past-date horizon in days, from COORDINATOR_MAX_PAST_DAYS (default 90)."""
+    try:
+        return int(os.environ.get('COORDINATOR_MAX_PAST_DAYS', str(DEFAULT_MAX_PAST_DAYS)))
+    except (TypeError, ValueError):
+        logger.warning(
+            f"Invalid COORDINATOR_MAX_PAST_DAYS={os.environ.get('COORDINATOR_MAX_PAST_DAYS')!r}, "
+            f"using default {DEFAULT_MAX_PAST_DAYS}"
+        )
+        return DEFAULT_MAX_PAST_DAYS
+
+
+def get_max_future_days() -> int:
+    """Future-date horizon in days, from COORDINATOR_MAX_FUTURE_DAYS (default 14)."""
+    try:
+        return int(os.environ.get('COORDINATOR_MAX_FUTURE_DAYS', str(DEFAULT_MAX_FUTURE_DAYS)))
+    except (TypeError, ValueError):
+        logger.warning(
+            f"Invalid COORDINATOR_MAX_FUTURE_DAYS={os.environ.get('COORDINATOR_MAX_FUTURE_DAYS')!r}, "
+            f"using default {DEFAULT_MAX_FUTURE_DAYS}"
+        )
+        return DEFAULT_MAX_FUTURE_DAYS
+
+
+def check_game_date(game_date: date) -> Optional[str]:
+    """
+    Check a game date against the past/future horizons.
+
+    Returns None when the date is usable, otherwise a short machine-readable reason.
+    Callers should surface the reason verbatim: a bare "no players found" is what sent
+    a previous rehearsal to the feature store when the date had simply been rejected.
+
+    Args:
+        game_date: Date to validate
+
+    Returns:
+        Optional[str]: None if valid, else e.g. "invalid_game_date: >90d in past"
+    """
+    today = date.today()
+
+    max_past = get_max_past_days()
+    days_past = (today - game_date).days
+    if days_past > max_past:
+        return f"invalid_game_date: >{max_past}d in past ({game_date} is {days_past}d ago)"
+
+    max_future = get_max_future_days()
+    days_future = (game_date - today).days
+    if days_future > max_future:
+        return f"invalid_game_date: >{max_future}d in future ({game_date} is {days_future}d ahead)"
+
+    return None
+
+
 def validate_game_date(game_date: date) -> bool:
     """
     Validate game date is reasonable
 
-    Prevents querying dates too far in past or future
+    Prevents querying dates too far in past or future. Horizons are configurable via
+    COORDINATOR_MAX_PAST_DAYS / COORDINATOR_MAX_FUTURE_DAYS.
 
     Args:
         game_date: Date to validate
@@ -2107,19 +2168,10 @@ def validate_game_date(game_date: date) -> bool:
     Returns:
         bool: True if valid, False otherwise
     """
-    today = date.today()
-
-    # Allow dates up to 90 days in the past (extended for Phase 4 XGBoost regeneration)
-    # TEMPORARY: Increased from 30 to 90 days to allow Nov 2025 regeneration
-    if (today - game_date).days > 90:
-        logger.warning(f"Game date {game_date} is too far in the past (>90 days)")
+    reason = check_game_date(game_date)
+    if reason:
+        logger.warning(f"Game date {game_date} rejected: {reason}")
         return False
-
-    # Can't be too far in the future (more than 14 days)
-    if (game_date - today).days > 14:
-        logger.warning(f"Game date {game_date} is too far in the future")
-        return False
-
     return True
 
 

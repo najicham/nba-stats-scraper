@@ -45,6 +45,7 @@ nba_api>=1.5.0
 fuzzywuzzy>=0.18.0
 python-Levenshtein>=0.21.0
 pyyaml>=6.0
+google-cloud-monitoring>=2.27.2  # shared.observability.metrics.emit_metric(); without it emit_metric silently no-ops
 google-cloud-pubsub>=2.13.0
 
 # RSS feed parsing (news scraper)

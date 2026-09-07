@@ -17,6 +17,7 @@ google-api-python-client==2.189.0
 google-auth==2.48.0
 google-auth-httplib2==0.3.0
 google-auth-oauthlib==1.2.4
+google-cloud-monitoring==2.27.2  # shared.observability.metrics.emit_metric(); without it emit_metric silently no-ops
 google-cloud-pubsub==2.35.0
 google-cloud-secret-manager==2.16.0
 googleapis-common-protos==1.72.0

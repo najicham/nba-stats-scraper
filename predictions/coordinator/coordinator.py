@@ -61,7 +61,7 @@ for _module in _CRITICAL_IMPORTS:
 if TYPE_CHECKING:
     from google.cloud import bigquery, pubsub_v1
 
-from predictions.coordinator.player_loader import PlayerLoader
+from predictions.coordinator.player_loader import PlayerLoader, check_game_date
 from predictions.coordinator.progress_tracker import ProgressTracker
 from predictions.coordinator.run_history import CoordinatorRunHistory
 from predictions.coordinator.coverage_monitor import PredictionCoverageMonitor
@@ -936,6 +936,20 @@ def start_prediction_batch():
             from zoneinfo import ZoneInfo
             game_date = datetime.now(ZoneInfo('America/New_York')).date()
 
+        # Reject out-of-range dates here, with the reason. Previously an out-of-range
+        # date fell through to create_prediction_requests() returning [] and surfaced as
+        # a 404 "No players found" — while the same response body reported hundreds of
+        # players — which sends the reader to the feature store instead of the validator.
+        date_error = check_game_date(game_date)
+        if date_error:
+            logger.error(f"Rejecting /start for {game_date}: {date_error}")
+            return jsonify({
+                'status': 'invalid_game_date',
+                'message': date_error,
+                'game_date': str(game_date),
+                'hint': 'Set COORDINATOR_MAX_PAST_DAYS to widen the horizon for backfills/rehearsals'
+            }), 400
+
         min_minutes = request_data.get('min_minutes', 15)
         # Use orchestration config for default (Issue 4: enable multiple lines by default)
         orch_config = get_orchestration_config()
@@ -1115,10 +1129,17 @@ def start_prediction_batch():
                     'game_date': str(game_date),
                     'summary': summary_stats
                 }), 200
-            logger.error(f"No prediction requests created for {game_date} despite {total_games} games", exc_info=True)
+            total_players = summary_stats.get('total_players', 0) if summary_stats else 0
+            logger.error(
+                f"No prediction requests created for {game_date} despite {total_games} games "
+                f"and {total_players} players"
+            )
             return jsonify({
                 'status': 'error',
-                'message': f'No players found for {game_date}',
+                'message': (
+                    f'No eligible prediction requests for {game_date} '
+                    f'({total_players} players / {total_games} games seen)'
+                ),
                 'summary': summary_stats
             }), 404
 
@@ -2497,6 +2518,16 @@ def _generate_predictions_for_date(
         game_date_obj = datetime.strptime(game_date, '%Y-%m-%d').date()
         logger.info(f"Generating predictions for {game_date_obj}")
 
+        date_error = check_game_date(game_date_obj)
+        if date_error:
+            logger.error(f"Regeneration refused for {game_date}: {date_error}")
+            return {
+                'status': 'error',
+                'requests_published': 0,
+                'batch_id': None,
+                'error': date_error
+            }
+
         # Create batch ID for tracking
         batch_id = f"regen_{game_date}_{reason}_{int(time.time())}"
 
@@ -2690,6 +2721,16 @@ def _generate_predictions_for_players(
     try:
         game_date_obj = datetime.strptime(game_date, '%Y-%m-%d').date()
         target_set = set(player_lookups)
+
+        date_error = check_game_date(game_date_obj)
+        if date_error:
+            logger.error(f"Targeted generation refused for {game_date}: {date_error}")
+            return {
+                'status': 'error',
+                'requests_published': 0,
+                'batch_id': None,
+                'error': date_error
+            }
 
         batch_id = f"linecheck_{game_date}_{int(time.time())}"
         logger.info(

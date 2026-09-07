@@ -9,6 +9,7 @@ Flask==3.0.0
 google-api-core==2.29.0
 google-auth==2.49.0.dev0
 google-cloud-bigquery==3.13.0
+google-cloud-monitoring==2.27.2  # shared.observability.metrics.emit_metric(); without it emit_metric silently no-ops
 google-cloud-core==2.5.0
 google-cloud-firestore==2.14.0
 google-cloud-pubsub==2.18.4
