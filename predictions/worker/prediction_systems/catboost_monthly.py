@@ -274,9 +274,21 @@ def _get_bq_client():
 
 
 def get_enabled_models_from_registry() -> List[dict]:
-    """Load enabled shadow models from model_registry (BigQuery).
+    """Load every enabled model from model_registry (BigQuery).
 
-    Returns list of dicts with model metadata for each enabled non-production model.
+    `enabled = TRUE` is the whole contract: an enabled model predicts. There is
+    deliberately no `is_production` filter.
+
+    2026-09-07: there used to be `AND is_production = FALSE`, from when the champion
+    was loaded separately by the legacy CatBoostV12 path. That path is now gated behind
+    `ENABLE_LEGACY_V12` (default false), so the filter meant *promoting* a model to
+    champion silently REMOVED it from the fleet. Measured: after
+    `catboost_v12_noveg_train1205_0403` was promoted on 2026-09-06 the worker logged
+    "Loaded 2 monthly model(s)" and 20 staging tables from a 399-player batch contained
+    only lgbm + xgb — the production model generated zero predictions. Callers dedupe by
+    model_id (`get_enabled_monthly_models`), so a model reachable by both paths loads once.
+
+    Returns list of dicts with model metadata for each enabled model.
     """
     try:
         bq = _get_bq_client()
@@ -298,7 +310,6 @@ def get_enabled_models_from_registry() -> List[dict]:
             strengths_json
         FROM `nba-props-platform.nba_predictions.model_registry`
         WHERE enabled = TRUE
-          AND is_production = FALSE
           AND status IN ('active', 'shadow', 'blocked')
         ORDER BY model_family, training_end_date DESC
         """
