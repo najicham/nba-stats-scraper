@@ -1312,11 +1312,20 @@ def query_predictions_with_supplements(
           ORDER BY s.game_date DESC, s.game_id DESC
         ) AS rn
       FROM tonight_away ta
-      LEFT JOIN `{PROJECT_ID}.nba_raw.nbac_schedule` s
+      -- The date range MUST live in this subquery's WHERE, not in the LEFT JOIN's ON.
+      -- `nbac_schedule` has require_partition_filter, and BigQuery does not accept an
+      -- ON-clause predicate on the right side of a LEFT JOIN as partition elimination:
+      -- the whole export logged "Failed to query travel context: 400 Cannot query over
+      -- table ... without a filter over column(s) 'game_date'" on every run, which fails
+      -- open, so westward_road_trip_under and b2b_long_haul_under silently saw no data.
+      LEFT JOIN (
+        SELECT home_team_tricode, away_team_tricode, game_date, game_id
+        FROM `{PROJECT_ID}.nba_raw.nbac_schedule`
+        WHERE game_date < @target_date
+          AND game_date >= DATE_SUB(@target_date, INTERVAL 14 DAY)
+          AND game_status = 3
+      ) s
         ON (s.home_team_tricode = ta.away_team OR s.away_team_tricode = ta.away_team)
-        AND s.game_status = 3
-        AND s.game_date < @target_date
-        AND s.game_date >= DATE_SUB(@target_date, INTERVAL 14 DAY)
     ),
 
     last_location AS (
