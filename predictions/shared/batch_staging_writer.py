@@ -297,10 +297,22 @@ class BatchStagingWriter:
 
                 if not validation['valid']:
                     missing = validation['missing_from_bq']
-                    error_msg = (
-                        f"SCHEMA MISMATCH: Worker output has {len(missing)} fields not in BQ table: "
-                        f"{missing}. All writes will fail. Fix the BQ schema before retrying."
-                    )
+                    # validate_output_schema() also returns valid=False when the
+                    # check itself blew up (BQ unreachable, table missing, bad
+                    # permissions). Reporting that as "0 fields not in BQ: []"
+                    # sends the operator to ALTER TABLE for a problem that has
+                    # nothing to do with the schema — say what actually failed.
+                    if validation.get('error'):
+                        error_msg = (
+                            f"SCHEMA VALIDATION FAILED (not a schema mismatch): "
+                            f"{validation['error']}. Could not read the BQ table schema, "
+                            f"so the write was refused."
+                        )
+                    else:
+                        error_msg = (
+                            f"SCHEMA MISMATCH: Worker output has {len(missing)} fields not in BQ table: "
+                            f"{missing}. All writes will fail. Fix the BQ schema before retrying."
+                        )
                     logger.critical(error_msg)
                     return StagingWriteResult(
                         staging_table_name=staging_table_id,
@@ -1086,7 +1098,21 @@ class BatchConsolidator:
                     f"Checking for active duplicates after deactivation..."
                 )
                 active_dup_count = self._check_for_active_duplicates(game_date)
-                if active_dup_count > 0:
+                if active_dup_count < 0:
+                    # _check_for_active_duplicates returns -1 when the check
+                    # itself failed. `> 0` treated that as "no active
+                    # duplicates" and went on to DELETE the staging tables —
+                    # destroying the only evidence of a duplicate incident
+                    # because a validation query timed out. The MERGE has
+                    # already committed, so keep the consolidation successful,
+                    # but never clean up on an unverified result.
+                    logger.critical(
+                        f"Could not verify active duplicates for game_date={game_date} "
+                        f"({duplicate_count} total duplicates present). Preserving staging "
+                        f"tables for investigation."
+                    )
+                    cleanup = False
+                elif active_dup_count > 0:
                     error_msg = (
                         f"POST-CONSOLIDATION VALIDATION FAILED: {active_dup_count} ACTIVE duplicate "
                         f"business keys for game_date={game_date} after deactivation. "
