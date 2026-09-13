@@ -1,462 +1,321 @@
 """
-Unit Tests for HealthChecker Class
+Unit tests for shared/endpoints/health.py.
 
-Tests the shared health check module (shared/endpoints/health.py) comprehensively.
+History (2026-09-08): the previous version of this file was written against a
+`HealthChecker(project_id=..., check_bigquery=...)` API that has never existed.
+Both the test and the module arrived in the same merge (a7a8fb83) and the
+signatures disagreed on day one, so all 23 tests have failed continuously since
+then — the module that six orchestrator Cloud Functions mount their /health
+endpoints from had, in effect, zero coverage. This rewrite targets the API the
+module actually exposes.
 
 Run with:
     pytest tests/unit/test_health_checker.py -v
-    pytest tests/unit/test_health_checker.py::TestHealthChecker::test_environment_check -v
 """
 
-import os
-import sys
+import json
+import time
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import Mock, patch, MagicMock
-from typing import Dict, Any
 
-# Add project root to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
-
-from shared.endpoints.health import HealthChecker, create_health_blueprint
+from shared.endpoints.health import (
+    CachedHealthChecker,
+    DependencyHealth,
+    HealthChecker,
+    HealthMetrics,
+    create_bigquery_checker,
+    create_firestore_checker,
+    create_health_blueprint,
+    create_pubsub_checker,
+)
 
 
 class TestHealthCheckerInstantiation:
-    """Test HealthChecker class instantiation and configuration."""
+    def test_defaults(self):
+        checker = HealthChecker(service_name='test-service')
 
-    def test_basic_instantiation(self):
-        """Test basic instantiation with minimal parameters."""
-        checker = HealthChecker(
-            project_id='test-project',
-            service_name='test-service'
-        )
-
-        assert checker.project_id == 'test-project'
         assert checker.service_name == 'test-service'
-        assert checker.check_bigquery is True  # Default
-        assert checker.check_firestore is False  # Default
-        assert checker.check_gcs is False  # Default
+        assert checker.version == '1.0'
+        assert checker.request_count == 0
+        assert checker.total_latency_ms == 0.0
+        assert checker.last_request_at is None
+        assert checker.dependency_checkers == {}
 
-    def test_custom_configuration(self):
-        """Test instantiation with all options configured."""
-        checker = HealthChecker(
-            project_id='nba-props-platform',
-            service_name='my-service',
-            check_bigquery=True,
-            check_firestore=True,
-            check_gcs=True,
-            gcs_buckets=['bucket1', 'bucket2'],
-            required_env_vars=['VAR1', 'VAR2'],
-            optional_env_vars=['VAR3', 'VAR4']
+    def test_explicit_version(self):
+        checker = HealthChecker(service_name='svc', version='2.5')
+        assert checker.version == '2.5'
+
+
+class TestRequestMetrics:
+    def test_record_request_accumulates(self):
+        checker = HealthChecker(service_name='svc')
+        checker.record_request(latency_ms=10.0)
+        checker.record_request(latency_ms=30.0)
+
+        assert checker.request_count == 2
+        assert checker.total_latency_ms == 40.0
+        assert checker.get_avg_latency() == 20.0
+        assert checker.last_request_at is not None
+
+    def test_avg_latency_with_no_requests_does_not_divide_by_zero(self):
+        assert HealthChecker(service_name='svc').get_avg_latency() == 0.0
+
+    def test_uptime_is_positive_and_monotonic(self):
+        checker = HealthChecker(service_name='svc')
+        first = checker.get_uptime()
+        time.sleep(0.01)
+        assert 0 <= first <= checker.get_uptime()
+
+    def test_get_metrics_snapshot(self):
+        checker = HealthChecker(service_name='svc', version='3.0')
+        checker.record_request(latency_ms=12.345)
+
+        metrics = checker.get_metrics()
+
+        assert isinstance(metrics, HealthMetrics)
+        assert metrics.service_name == 'svc'
+        assert metrics.version == '3.0'
+        assert metrics.request_count == 1
+        assert metrics.avg_latency_ms == 12.35  # rounded to 2dp
+
+
+class TestDependencyChecks:
+    def test_healthy_dependency(self):
+        checker = HealthChecker(service_name='svc')
+        checker.add_dependency_checker('bigquery', lambda: True)
+
+        results = checker.check_dependencies()
+
+        assert set(results) == {'bigquery'}
+        assert isinstance(results['bigquery'], DependencyHealth)
+        assert results['bigquery'].healthy is True
+        assert results['bigquery'].error is None
+
+    def test_unhealthy_dependency_reports_false_without_error(self):
+        checker = HealthChecker(service_name='svc')
+        checker.add_dependency_checker('firestore', lambda: False)
+
+        results = checker.check_dependencies()
+
+        assert results['firestore'].healthy is False
+        assert results['firestore'].error is None
+
+    def test_raising_dependency_is_captured_not_propagated(self):
+        checker = HealthChecker(service_name='svc')
+
+        def boom():
+            raise RuntimeError('connection refused')
+
+        checker.add_dependency_checker('pubsub', boom)
+        results = checker.check_dependencies()
+
+        assert results['pubsub'].healthy is False
+        assert 'connection refused' in results['pubsub'].error
+
+    def test_add_dependency_checker_overwrites_same_name(self):
+        checker = HealthChecker(service_name='svc')
+        checker.add_dependency_checker('bq', lambda: True)
+        checker.add_dependency_checker('bq', lambda: False)
+
+        assert checker.check_dependencies()['bq'].healthy is False
+
+
+class TestHealthResponse:
+    def test_healthy_when_no_dependencies_registered(self):
+        response, status = HealthChecker(service_name='svc').get_health_response()
+
+        assert status == 200
+        assert response['status'] == 'healthy'
+        assert 'dependencies' not in response
+        assert response['metrics']['service_name'] == 'svc'
+
+    def test_all_dependencies_healthy_returns_200(self):
+        checker = HealthChecker(service_name='svc')
+        checker.add_dependency_checker('bq', lambda: True)
+
+        response, status = checker.get_health_response()
+
+        assert status == 200
+        assert response['status'] == 'healthy'
+        assert response['dependencies']['bq']['healthy'] is True
+
+    def test_one_bad_dependency_degrades_to_503(self):
+        checker = HealthChecker(service_name='svc')
+        checker.add_dependency_checker('bq', lambda: True)
+        checker.add_dependency_checker('firestore', lambda: False)
+
+        response, status = checker.get_health_response()
+
+        assert status == 503
+        assert response['status'] == 'degraded'
+        assert response['unhealthy_dependencies'] == ['firestore']
+
+    def test_include_dependencies_false_skips_the_checks(self):
+        called = []
+        checker = HealthChecker(service_name='svc')
+        checker.add_dependency_checker('bq', lambda: called.append(1) or False)
+
+        response, status = checker.get_health_response(include_dependencies=False)
+
+        assert called == []
+        assert status == 200
+        assert 'dependencies' not in response
+
+
+class TestHealthBlueprint:
+    def _client(self, **kwargs):
+        from flask import Flask
+
+        app = Flask(__name__)
+        app.register_blueprint(create_health_blueprint(**kwargs))
+        return app.test_client()
+
+    def test_service_name_is_required(self):
+        with pytest.raises(TypeError):
+            create_health_blueprint()
+
+    def test_health_endpoint(self):
+        resp = self._client(service_name='svc').get('/health')
+
+        assert resp.status_code == 200
+        assert resp.get_json() == {'status': 'healthy', 'service': 'svc'}
+
+    def test_liveness_does_not_consult_dependencies(self):
+        checker = HealthChecker(service_name='svc')
+        checker.add_dependency_checker('bq', lambda: False)
+
+        resp = self._client(service_name='svc', health_checker=checker).get('/health/live')
+
+        assert resp.status_code == 200
+        assert resp.get_json()['status'] == 'alive'
+
+    def test_metrics_endpoint_uses_the_injected_checker(self):
+        checker = HealthChecker(service_name='svc', version='9.9')
+        checker.record_request(latency_ms=5.0)
+
+        resp = self._client(service_name='svc', health_checker=checker).get('/health/metrics')
+
+        assert resp.status_code == 200
+        assert resp.get_json()['metrics']['request_count'] == 1
+        assert resp.get_json()['metrics']['version'] == '9.9'
+
+    def test_readiness_reports_not_ready_when_a_dependency_is_down(self):
+        checker = HealthChecker(service_name='svc')
+        checker.add_dependency_checker('bq', lambda: False)
+
+        resp = self._client(service_name='svc', health_checker=checker).get('/health/ready')
+
+        assert resp.status_code == 503
+        body = resp.get_json()
+        assert body['status'] == 'not ready'
+        assert body['reason'] == ['bq']
+
+    def test_readiness_ok_when_healthy(self):
+        resp = self._client(service_name='svc').get('/health/ready')
+
+        assert resp.status_code == 200
+        assert resp.get_json()['status'] == 'ready'
+
+
+class TestDependencyCheckerFactories:
+    """The factories must swallow failures and return False, never raise —
+    a health endpoint that 500s is worse than one that reports degraded."""
+
+    def test_bigquery_checker_true_on_success(self):
+        with patch('shared.clients.get_bigquery_client') as get_client:
+            get_client.return_value = MagicMock()
+            assert create_bigquery_checker('proj')() is True
+
+    def test_bigquery_checker_false_on_failure(self):
+        with patch('shared.clients.get_bigquery_client', side_effect=RuntimeError('nope')):
+            assert create_bigquery_checker('proj')() is False
+
+    def test_firestore_checker_false_on_failure(self):
+        with patch('shared.clients.get_firestore_client', side_effect=RuntimeError('nope')):
+            assert create_firestore_checker('proj')() is False
+
+    def test_pubsub_checker_false_on_failure(self):
+        with patch('shared.clients.get_pubsub_publisher', side_effect=RuntimeError('nope')):
+            assert create_pubsub_checker('proj')() is False
+
+
+class TestCachedHealthChecker:
+    def _checker(self, **kwargs):
+        kwargs.setdefault('service_name', 'svc')
+        kwargs.setdefault('project_id', 'proj')
+        return CachedHealthChecker(**kwargs)
+
+    def test_all_dependency_flags_off_is_healthy_and_hits_nothing(self):
+        checker = self._checker(
+            check_bigquery=False, check_firestore=False, check_pubsub=False
         )
 
-        assert checker.project_id == 'nba-props-platform'
-        assert checker.service_name == 'my-service'
-        assert checker.check_bigquery is True
-        assert checker.check_firestore is True
-        assert checker.check_gcs is True
-        assert checker.gcs_buckets == ['bucket1', 'bucket2']
-        assert checker.required_env_vars == ['VAR1', 'VAR2']
-        assert checker.optional_env_vars == ['VAR3', 'VAR4']
+        result = checker.get_health()
 
-    def test_lazy_client_initialization(self):
-        """Test that clients are not initialized until first use."""
-        checker = HealthChecker(
-            project_id='test-project',
-            service_name='test-service',
-            check_bigquery=True,
-            check_firestore=True,
-            check_gcs=True
+        assert result['status'] == 'healthy'
+        assert result['dependencies'] == {}
+        assert result['cached'] is False
+
+    def test_failing_dependency_degrades_and_truncates_the_error(self):
+        checker = self._checker(check_firestore=False, check_pubsub=False)
+        long_error = 'x' * 500
+
+        with patch('google.cloud.bigquery.Client', side_effect=RuntimeError(long_error)):
+            result = checker.get_health()
+
+        assert result['status'] == 'degraded'
+        assert result['unhealthy_dependencies'] == ['bigquery']
+        assert len(result['dependencies']['bigquery']['error']) == 100
+
+    def test_second_call_within_ttl_is_served_from_cache(self):
+        checker = self._checker(
+            check_bigquery=False, check_firestore=False, check_pubsub=False
         )
 
-        # Clients should be None until lazy-loaded
-        assert checker._bq_client is None
-        assert checker._firestore_client is None
-        assert checker._storage_client is None
-
-
-class TestEnvironmentVariableCheck:
-    """Test environment variable validation."""
-
-    def test_required_vars_present(self):
-        """Test when all required environment variables are present."""
-        with patch.dict(os.environ, {'VAR1': 'value1', 'VAR2': 'value2'}):
-            checker = HealthChecker(
-                project_id='test-project',
-                service_name='test-service',
-                check_bigquery=False,
-                required_env_vars=['VAR1', 'VAR2']
-            )
-
-            result = checker.check_environment_variables()
-
-            assert result['check'] == 'environment'
-            assert result['status'] == 'pass'
-            assert result['details']['VAR1']['status'] == 'pass'
-            assert result['details']['VAR1']['set'] is True
-            assert result['details']['VAR2']['status'] == 'pass'
-            assert result['details']['VAR2']['set'] is True
-
-    def test_required_var_missing(self):
-        """Test when a required environment variable is missing."""
-        with patch.dict(os.environ, {'VAR1': 'value1'}, clear=True):
-            checker = HealthChecker(
-                project_id='test-project',
-                service_name='test-service',
-                check_bigquery=False,
-                required_env_vars=['VAR1', 'VAR2']
-            )
-
-            result = checker.check_environment_variables()
-
-            assert result['check'] == 'environment'
-            assert result['status'] == 'fail'
-            assert result['details']['VAR1']['status'] == 'pass'
-            assert result['details']['VAR2']['status'] == 'fail'
-            assert result['details']['VAR2']['set'] is False
-
-    def test_optional_vars(self):
-        """Test optional environment variables (warnings only)."""
-        with patch.dict(os.environ, {'VAR1': 'value1'}, clear=True):
-            checker = HealthChecker(
-                project_id='test-project',
-                service_name='test-service',
-                check_bigquery=False,
-                required_env_vars=['VAR1'],
-                optional_env_vars=['VAR2', 'VAR3']
-            )
-
-            result = checker.check_environment_variables()
-
-            assert result['status'] == 'pass'  # Optional vars don't cause failure
-            assert result['details']['VAR2']['status'] == 'warn'
-            assert result['details']['VAR2']['set'] is False
-            assert result['details']['VAR3']['status'] == 'warn'
-
-
-class TestBigQueryCheck:
-    """Test BigQuery connectivity check."""
-
-    def test_bigquery_disabled(self):
-        """Test when BigQuery check is disabled."""
-        checker = HealthChecker(
-            project_id='test-project',
-            service_name='test-service',
-            check_bigquery=False
-        )
-
-        result = checker.check_bigquery_connectivity()
-
-        assert result['check'] == 'bigquery'
-        assert result['status'] == 'skip'
-        assert 'reason' in result
-
-    @patch('shared.endpoints.health.HealthChecker.bq_client')
-    def test_bigquery_success(self, mock_bq_client):
-        """Test successful BigQuery connectivity check."""
-        # Mock successful query
-        mock_job = Mock()
-        mock_job.result.return_value = []
-        mock_bq_client.query.return_value = mock_job
-
-        checker = HealthChecker(
-            project_id='test-project',
-            service_name='test-service',
-            check_bigquery=True
-        )
-        checker._bq_client = mock_bq_client
-
-        result = checker.check_bigquery_connectivity()
-
-        assert result['check'] == 'bigquery'
-        assert result['status'] == 'pass'
-        assert 'details' in result
-        assert result['details']['connection'] == 'successful'
-        mock_bq_client.query.assert_called_once()
-
-    @patch('shared.endpoints.health.HealthChecker.bq_client')
-    def test_bigquery_failure(self, mock_bq_client):
-        """Test BigQuery connectivity check failure."""
-        # Mock failed query
-        mock_bq_client.query.side_effect = Exception('Connection failed')
-
-        checker = HealthChecker(
-            project_id='test-project',
-            service_name='test-service',
-            check_bigquery=True
-        )
-        checker._bq_client = mock_bq_client
-
-        result = checker.check_bigquery_connectivity()
-
-        assert result['check'] == 'bigquery'
-        assert result['status'] == 'fail'
-        assert 'error' in result
-        assert 'Connection failed' in result['error']
-
-
-class TestFirestoreCheck:
-    """Test Firestore connectivity check."""
-
-    def test_firestore_disabled(self):
-        """Test when Firestore check is disabled."""
-        checker = HealthChecker(
-            project_id='test-project',
-            service_name='test-service',
-            check_firestore=False
-        )
-
-        result = checker.check_firestore_connectivity()
-
-        assert result['check'] == 'firestore'
-        assert result['status'] == 'skip'
-
-    @patch('shared.endpoints.health.HealthChecker.firestore_client')
-    def test_firestore_success(self, mock_firestore_client):
-        """Test successful Firestore connectivity check."""
-        # Mock successful collection query
-        mock_collection = Mock()
-        mock_collection.limit.return_value.get.return_value = []
-        mock_firestore_client.collection.return_value = mock_collection
-
-        checker = HealthChecker(
-            project_id='test-project',
-            service_name='test-service',
-            check_firestore=True
-        )
-        checker._firestore_client = mock_firestore_client
-
-        result = checker.check_firestore_connectivity()
-
-        assert result['check'] == 'firestore'
-        assert result['status'] == 'pass'
-        assert result['details']['connection'] == 'successful'
-
-    @patch('shared.endpoints.health.HealthChecker.firestore_client')
-    def test_firestore_failure(self, mock_firestore_client):
-        """Test Firestore connectivity check failure."""
-        # Mock failed query
-        mock_firestore_client.collection.side_effect = Exception('Permission denied')
-
-        checker = HealthChecker(
-            project_id='test-project',
-            service_name='test-service',
-            check_firestore=True
-        )
-        checker._firestore_client = mock_firestore_client
-
-        result = checker.check_firestore_connectivity()
-
-        assert result['check'] == 'firestore'
-        assert result['status'] == 'fail'
-        assert 'Permission denied' in result['error']
-
-
-class TestGCSCheck:
-    """Test GCS connectivity check."""
-
-    def test_gcs_disabled(self):
-        """Test when GCS check is disabled."""
-        checker = HealthChecker(
-            project_id='test-project',
-            service_name='test-service',
-            check_gcs=False
-        )
-
-        result = checker.check_gcs_connectivity()
-
-        assert result['check'] == 'gcs'
-        assert result['status'] == 'skip'
-
-    def test_gcs_no_buckets_configured(self):
-        """Test when GCS is enabled but no buckets configured."""
-        checker = HealthChecker(
-            project_id='test-project',
-            service_name='test-service',
-            check_gcs=True,
-            gcs_buckets=[]
-        )
-
-        result = checker.check_gcs_connectivity()
-
-        assert result['check'] == 'gcs'
-        assert result['status'] == 'skip'
-        assert 'No GCS buckets' in result['reason']
-
-    @patch('shared.endpoints.health.HealthChecker.storage_client')
-    def test_gcs_success(self, mock_storage_client):
-        """Test successful GCS connectivity check."""
-        # Mock successful bucket access
-        mock_bucket = Mock()
-        mock_bucket.list_blobs.return_value = []
-        mock_storage_client.bucket.return_value = mock_bucket
-
-        checker = HealthChecker(
-            project_id='test-project',
-            service_name='test-service',
-            check_gcs=True,
-            gcs_buckets=['test-bucket']
-        )
-        checker._storage_client = mock_storage_client
-
-        result = checker.check_gcs_connectivity()
-
-        assert result['check'] == 'gcs'
-        assert result['status'] == 'pass'
-        assert 'test-bucket' in result['details']
-        assert result['details']['test-bucket']['status'] == 'accessible'
-
-    @patch('shared.endpoints.health.HealthChecker.storage_client')
-    def test_gcs_failure(self, mock_storage_client):
-        """Test GCS connectivity check failure."""
-        # Mock failed bucket access - exception during list_blobs
-        mock_bucket = Mock()
-        mock_bucket.list_blobs.side_effect = Exception('403 Forbidden')
-        mock_storage_client.bucket.return_value = mock_bucket
-
-        checker = HealthChecker(
-            project_id='test-project',
-            service_name='test-service',
-            check_gcs=True,
-            gcs_buckets=['test-bucket']
-        )
-        checker._storage_client = mock_storage_client
-
-        result = checker.check_gcs_connectivity()
-
-        assert result['check'] == 'gcs'
-        assert result['status'] == 'fail'
-        # Error is in details for per-bucket failures
-        assert 'test-bucket' in result['details']
-        assert '403 Forbidden' in result['details']['test-bucket']['error']
-
-
-class TestRunAllChecks:
-    """Test running all health checks together."""
-
-    def test_all_checks_pass(self):
-        """Test when all configured checks pass."""
-        with patch.dict(os.environ, {'GCP_PROJECT_ID': 'test'}):
-            checker = HealthChecker(
-                project_id='test-project',
-                service_name='test-service',
-                check_bigquery=False,
-                check_firestore=False,
-                check_gcs=False,
-                required_env_vars=['GCP_PROJECT_ID']
-            )
-
-            result = checker.run_all_checks(parallel=False)
-
-            assert result['status'] == 'healthy'
-            assert result['service'] == 'test-service'
-            assert result['checks_run'] == 1  # Only environment check
-            assert result['checks_passed'] == 1
-            assert result['checks_failed'] == 0
-            assert 'total_duration_ms' in result
-
-    def test_some_checks_fail(self):
-        """Test when some checks fail."""
-        with patch.dict(os.environ, {}, clear=True):
-            checker = HealthChecker(
-                project_id='test-project',
-                service_name='test-service',
-                check_bigquery=False,
-                check_firestore=False,
-                check_gcs=False,
-                required_env_vars=['MISSING_VAR']
-            )
-
-            result = checker.run_all_checks(parallel=False)
-
-            assert result['status'] == 'unhealthy'
-            assert result['checks_failed'] > 0
-
-    def test_parallel_execution(self):
-        """Test parallel vs sequential execution produces same results."""
-        with patch.dict(os.environ, {'GCP_PROJECT_ID': 'test'}):
-            checker = HealthChecker(
-                project_id='test-project',
-                service_name='test-service',
-                check_bigquery=False,
-                required_env_vars=['GCP_PROJECT_ID']
-            )
-
-            result_parallel = checker.run_all_checks(parallel=True)
-            result_sequential = checker.run_all_checks(parallel=False)
-
-            assert result_parallel['status'] == result_sequential['status']
-            assert result_parallel['checks_run'] == result_sequential['checks_run']
-            assert result_parallel['checks_passed'] == result_sequential['checks_passed']
-
-
-class TestFlaskBlueprint:
-    """Test Flask blueprint creation and endpoints."""
-
-    def test_blueprint_creation_without_checker(self):
-        """Test creating blueprint without health checker."""
-        blueprint = create_health_blueprint()
-
-        assert blueprint is not None
-        assert blueprint.name == 'health'
-
-    def test_blueprint_creation_with_checker(self):
-        """Test creating blueprint with health checker."""
-        checker = HealthChecker(
-            project_id='test-project',
-            service_name='test-service'
-        )
-        blueprint = create_health_blueprint(checker)
-
-        assert blueprint is not None
-        assert blueprint.name == 'health'
-
-    def test_blueprint_endpoints(self):
-        """Test that blueprint has correct endpoints."""
-        blueprint = create_health_blueprint()
-
-        # Get all rules/endpoints from the blueprint
-        rules = [rule.rule for rule in blueprint.url_map.iter_rules()] if hasattr(blueprint, 'url_map') else []
-
-        # Note: Rules are registered when blueprint is registered with app
-        # We can't test URLs directly without a Flask app context
-        # This test validates blueprint structure
-        assert blueprint.name == 'health'
-
-
-class TestCustomChecks:
-    """Test custom health checks functionality."""
-
-    def test_custom_check_integration(self):
-        """Test that custom checks are integrated and executed."""
-        def custom_model_check() -> Dict[str, Any]:
-            """Example custom check."""
-            return {
-                'check': 'model_availability',
-                'status': 'pass',
-                'details': {'model_path': '/models/test.cbm'},
-                'duration_ms': 10
-            }
-
-        checker = HealthChecker(
-            project_id='test-project',
-            service_name='test-service',
+        first = checker.get_health()
+        second = checker.get_health()
+
+        assert first['cached'] is False
+        assert second['cached'] is True
+        assert 'cache_age_seconds' in second
+
+    def test_expired_cache_recomputes(self):
+        checker = self._checker(
+            cache_ttl_seconds=0,
             check_bigquery=False,
-            custom_checks={
-                'model_availability': custom_model_check
-            }
+            check_firestore=False,
+            check_pubsub=False,
         )
 
-        result = checker.run_all_checks(parallel=False)
+        checker.get_health()
+        assert checker.get_health()['cached'] is False
 
-        # Custom check should be included in results
-        check_names = [check['check'] for check in result['checks']]
-        assert 'model_availability' in check_names
+    def test_cache_does_not_mutate_the_stored_result(self):
+        checker = self._checker(
+            check_bigquery=False, check_firestore=False, check_pubsub=False
+        )
 
-        # Find the custom check result
-        model_check = next(c for c in result['checks'] if c['check'] == 'model_availability')
-        assert model_check['status'] == 'pass'
-        assert model_check['details']['model_path'] == '/models/test.cbm'
+        checker.get_health()
+        checker.get_health()
 
+        assert checker._cached_result['cached'] is False
 
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
+    def test_get_health_json_shape_and_status(self):
+        checker = self._checker(
+            check_bigquery=False, check_firestore=False, check_pubsub=False
+        )
+
+        body, status, headers = checker.get_health_json()
+
+        assert status == 200
+        assert headers == {'Content-Type': 'application/json'}
+        assert json.loads(body)['service'] == 'svc'
+
+    def test_get_health_json_returns_503_when_degraded(self):
+        checker = self._checker(check_firestore=False, check_pubsub=False)
+
+        with patch('google.cloud.bigquery.Client', side_effect=RuntimeError('down')):
+            _, status, _ = checker.get_health_json()
+
+        assert status == 503

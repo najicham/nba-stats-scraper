@@ -102,6 +102,19 @@ ConsolidationResult = batch_staging_writer.ConsolidationResult
 
 from google.api_core import exceptions as gcp_exceptions
 
+# 2026-09-08: `predictions/coordinator/distributed_lock.py` is now a
+# backward-compatibility shim that re-exports the classes from
+# `predictions/shared/distributed_lock.py`. The shim does NOT re-export the
+# module-level `_get_firestore_client` helper, and `DistributedLock` resolves
+# that name from its own (shared) module globals — so patching it on the shim
+# both raised AttributeError and would have patched the wrong module anyway.
+# That single stale patch target failed all 30 tests in this file at setUp.
+from predictions.shared import distributed_lock as shared_distributed_lock
+# Same story for batch_staging_writer: the coordinator module is a shim, and
+# `DistributedLock` lives in the shared module's namespace where the code
+# under test actually looks it up.
+from predictions.shared import batch_staging_writer as shared_batch_staging_writer
+
 
 class TestDistributedLock(unittest.TestCase):
     """
@@ -120,9 +133,13 @@ class TestDistributedLock(unittest.TestCase):
         self.mock_doc_ref = MagicMock()
 
         # Patch Firestore client
-        self.firestore_patcher = patch.object(distributed_lock, '_get_firestore_client')
+        self.firestore_patcher = patch.object(
+            shared_distributed_lock, '_get_firestore_client'
+        )
         self.mock_get_firestore = self.firestore_patcher.start()
-        self.mock_get_firestore.return_value = self.mock_firestore
+        # _get_firestore_client returns the CLIENT itself, not the module — so
+        # this is what `DistributedLock.db` becomes.
+        self.mock_get_firestore.return_value = self.mock_db
         self.mock_firestore.Client.return_value = self.mock_db
         self.mock_firestore.SERVER_TIMESTAMP = datetime.now(timezone.utc)
 
@@ -346,6 +363,13 @@ class TestDistributedLock(unittest.TestCase):
         mock_lock_ref.delete.assert_called_once()
 
 
+def _schema_field(name: str):
+    """A BigQuery SchemaField stand-in whose `.name` is a real string."""
+    field = MagicMock()
+    field.name = name
+    return field
+
+
 class TestBatchStagingWriter(unittest.TestCase):
     """
     Test batch staging writer implementation.
@@ -359,11 +383,16 @@ class TestBatchStagingWriter(unittest.TestCase):
         self.mock_bq_client = MagicMock()
         self.writer = BatchStagingWriter(self.mock_bq_client, self.project_id)
 
-        # Mock schema
+        # Mock schema.
+        # NOTE: `MagicMock(name='x')` sets the mock's *repr* name, not a `.name`
+        # attribute — `field.name` would still be a MagicMock. The writer's
+        # schema validation does `{field.name for field in schema}` and then
+        # sorts the set difference, which blew up on MagicMock comparison and
+        # was reported as a bogus "SCHEMA MISMATCH ... 0 fields ... []".
         self.mock_schema = [
-            MagicMock(name='prediction_id'),
-            MagicMock(name='game_id'),
-            MagicMock(name='player_lookup'),
+            _schema_field('prediction_id'),
+            _schema_field('game_id'),
+            _schema_field('player_lookup'),
         ]
 
     def test_write_to_staging_success(self):
@@ -489,7 +518,15 @@ class TestBatchStagingWriter(unittest.TestCase):
         self.assertIn("Table or dataset not found", result.error_message)
 
     def test_write_to_staging_schema_mismatch(self):
-        """Test write detects schema mismatch during load."""
+        """A field the BQ table lacks is caught BEFORE the load job runs.
+
+        Session 159 added validate_output_schema(), which short-circuits the
+        write when the first record carries a field the main table does not
+        have. The test previously asserted the generic "Invalid request" text
+        from the load-job failure path — that path is now unreachable for this
+        input, which is the point of the check: it names the offending field
+        instead of surfacing an opaque BadRequest.
+        """
         predictions = [
             {'prediction_id': 'pred1', 'invalid_field': 'value'}  # Extra field not in schema
         ]
@@ -499,16 +536,47 @@ class TestBatchStagingWriter(unittest.TestCase):
         mock_table.schema = self.mock_schema
         self.mock_bq_client.get_table.return_value = mock_table
 
-        # Mock load job failure
-        mock_load_job = MagicMock()
-        mock_load_job.result.side_effect = gcp_exceptions.BadRequest("Field invalid_field not in schema")
-        self.mock_bq_client.load_table_from_json.return_value = mock_load_job
-
         result = self.writer.write_to_staging(predictions, "batch123", "worker1")
 
-        # Verify failure
         self.assertFalse(result.success)
-        self.assertIn("Invalid request", result.error_message)
+        self.assertEqual(result.rows_written, 0)
+        self.assertIn("SCHEMA MISMATCH", result.error_message)
+        self.assertIn("invalid_field", result.error_message)
+        # Short-circuited: no load job should have been attempted at all.
+        self.mock_bq_client.load_table_from_json.assert_not_called()
+
+    def test_write_to_staging_reports_validation_failure_distinctly(self):
+        """A broken schema *lookup* must not be reported as a schema mismatch.
+
+        validate_output_schema() returns valid=False both for a genuine field
+        mismatch and for its own failure (BQ unreachable, bad permissions). The
+        caller used to render the second case as
+        "SCHEMA MISMATCH: ... 0 fields not in BQ table: []", sending the
+        operator to ALTER TABLE for an infrastructure problem.
+        """
+        predictions = [{'prediction_id': 'pred1'}]
+
+        with patch.object(
+            self.writer,
+            'validate_output_schema',
+            return_value={
+                'valid': False,
+                'bq_columns': set(),
+                'missing_from_bq': [],
+                'extra_in_bq': [],
+                'error': '403 Permission denied on table',
+            },
+        ):
+            mock_table = MagicMock()
+            mock_table.schema = self.mock_schema
+            self.mock_bq_client.get_table.return_value = mock_table
+
+            result = self.writer.write_to_staging(predictions, "batch123", "worker1")
+
+        self.assertFalse(result.success)
+        self.assertIn("SCHEMA VALIDATION FAILED", result.error_message)
+        self.assertIn("403 Permission denied", result.error_message)
+        self.assertNotIn("0 fields", result.error_message)
 
 
 class TestBatchConsolidator(unittest.TestCase):
@@ -545,7 +613,7 @@ class TestBatchConsolidator(unittest.TestCase):
                 )
 
                 # Mock distributed lock
-                with patch.object(batch_staging_writer, 'DistributedLock') as mock_lock_class:
+                with patch.object(shared_batch_staging_writer, 'DistributedLock') as mock_lock_class:
                     mock_lock = MagicMock()
                     mock_lock_class.return_value = mock_lock
                     mock_lock.acquire.return_value.__enter__ = Mock(return_value=None)
@@ -641,8 +709,11 @@ class TestBatchConsolidator(unittest.TestCase):
             mock_merge_job.num_dml_affected_rows = 100
             self.mock_bq_client.query.return_value = mock_merge_job
 
-            # Mock validation finding duplicates
-            with patch.object(self.consolidator, '_check_for_duplicates', return_value=5):
+            # Session 495 added a second gate: total duplicates no longer fail
+            # the run on their own, only duplicates still ACTIVE after
+            # deactivation do. Both have to be stubbed.
+            with patch.object(self.consolidator, '_check_for_duplicates', return_value=5), \
+                 patch.object(self.consolidator, '_check_for_active_duplicates', return_value=5):
                 result = self.consolidator._consolidate_with_lock(
                     batch_id="batch123",
                     game_date="2026-01-17",
@@ -654,6 +725,36 @@ class TestBatchConsolidator(unittest.TestCase):
                 self.assertFalse(result.success)
                 self.assertEqual(result.staging_tables_cleaned, 0)  # Not cleaned up
                 self.assertIn("duplicate business keys detected", result.error_message.lower())
+
+    def test_consolidate_preserves_staging_when_duplicate_check_errors(self):
+        """An UNVERIFIABLE duplicate check must not delete the evidence.
+
+        `_check_for_active_duplicates` returns -1 when its own query fails.
+        The `> 0` test read that as "no active duplicates" and went straight on
+        to drop the staging tables, so a timed-out validation query destroyed
+        the only record of a possible duplicate incident.
+        """
+        with patch.object(self.consolidator, '_find_staging_tables', return_value=self.staging_tables):
+            mock_merge_job = MagicMock()
+            mock_merge_job.result.return_value = None
+            mock_merge_job.num_dml_affected_rows = 100
+            self.mock_bq_client.query.return_value = mock_merge_job
+
+            with patch.object(self.consolidator, '_check_for_duplicates', return_value=5), \
+                 patch.object(self.consolidator, '_check_for_active_duplicates', return_value=-1), \
+                 patch.object(self.consolidator, '_cleanup_staging_tables') as mock_cleanup:
+                result = self.consolidator._consolidate_with_lock(
+                    batch_id="batch123",
+                    game_date="2026-01-17",
+                    cleanup=True,
+                    start_time=time.time()
+                )
+
+        # The MERGE committed, so the consolidation itself still succeeded...
+        self.assertTrue(result.success)
+        # ...but nothing was cleaned up.
+        mock_cleanup.assert_not_called()
+        self.assertEqual(result.staging_tables_cleaned, 0)
 
     def test_consolidate_validation_passed(self):
         """Test consolidation succeeds when validation passes."""
@@ -819,7 +920,12 @@ class TestBatchConsolidator(unittest.TestCase):
         self.assertIn("ORDER BY created_at DESC", merge_query)
         self.assertIn("WHEN MATCHED THEN", merge_query)
         self.assertIn("WHEN NOT MATCHED THEN", merge_query)
-        self.assertIn("INSERT ROW", merge_query)
+        # Session 39 replaced `INSERT ROW` with an explicit column list, so
+        # that a schema change in the staging table cannot silently shift
+        # values into the wrong columns.
+        self.assertIn("INSERT (", merge_query)
+        self.assertIn("VALUES (", merge_query)
+        self.assertNotIn("INSERT ROW", merge_query)
 
     def test_cleanup_orphaned_staging_tables(self):
         """Test cleanup of orphaned staging tables older than threshold."""
@@ -840,10 +946,14 @@ class TestBatchConsolidator(unittest.TestCase):
             f"{self.project_id}.nba_predictions._staging_recent_batch_worker1": recent_table
         }.get(table_id)
 
-        deleted_count = self.consolidator.cleanup_orphaned_staging_tables(max_age_hours=24)
+        result = self.consolidator.cleanup_orphaned_staging_tables(max_age_hours=24)
 
-        # Verify only old table deleted
-        self.assertEqual(deleted_count, 1)
+        # Returns a breakdown, not a bare count (the test asserted `== 1`
+        # against the whole dict and so could never pass).
+        self.assertEqual(result['tables_found'], 2)
+        self.assertEqual(result['tables_deleted'], 1)
+        self.assertEqual(result['tables_skipped'], 1)
+        self.assertEqual(result['errors'], [])
 
 
 class TestRaceConditionScenarios(unittest.TestCase):
@@ -874,7 +984,7 @@ class TestRaceConditionScenarios(unittest.TestCase):
                 lock_calls.append((game_date, operation_id))
 
             # Mock distributed lock
-            with patch.object(batch_staging_writer, 'DistributedLock') as mock_lock_class:
+            with patch.object(shared_batch_staging_writer, 'DistributedLock') as mock_lock_class:
                 mock_lock1 = MagicMock()
                 mock_lock_class.return_value = mock_lock1
 
@@ -913,7 +1023,7 @@ class TestRaceConditionScenarios(unittest.TestCase):
         game_date = "2026-01-17"
 
         # Mock successful consolidations with lock
-        with patch.object(batch_staging_writer, 'DistributedLock'):
+        with patch.object(shared_batch_staging_writer, 'DistributedLock'):
             # First consolidation inserts row
             # Second consolidation (with lock) waits and then updates
 
@@ -945,8 +1055,10 @@ class TestRaceConditionScenarios(unittest.TestCase):
             mock_merge_job.num_dml_affected_rows = 100
             self.mock_bq_client.query.return_value = mock_merge_job
 
-            # Mock validation finding duplicates
-            with patch.object(self.consolidator, '_check_for_duplicates', return_value=5):
+            # Session 495: only duplicates still ACTIVE after deactivation fail
+            # the run, so both gates have to be stubbed.
+            with patch.object(self.consolidator, '_check_for_duplicates', return_value=5), \
+                 patch.object(self.consolidator, '_check_for_active_duplicates', return_value=5):
                 result = self.consolidator.consolidate_batch(
                     batch_id="batch1",
                     game_date=game_date,
@@ -964,7 +1076,7 @@ class TestRaceConditionScenarios(unittest.TestCase):
         # First operation: Check → NOT MATCHED → INSERT
         # Second operation (waits for lock): Check → MATCHED → UPDATE
 
-        with patch.object(batch_staging_writer, 'DistributedLock') as mock_lock_class:
+        with patch.object(shared_batch_staging_writer, 'DistributedLock') as mock_lock_class:
             mock_lock = MagicMock()
             mock_lock_class.return_value = mock_lock
 
@@ -999,9 +1111,13 @@ class TestLockEdgeCases(unittest.TestCase):
         self.mock_db = MagicMock()
 
         # Patch Firestore client
-        self.firestore_patcher = patch.object(distributed_lock, '_get_firestore_client')
+        self.firestore_patcher = patch.object(
+            shared_distributed_lock, '_get_firestore_client'
+        )
         self.mock_get_firestore = self.firestore_patcher.start()
-        self.mock_get_firestore.return_value = self.mock_firestore
+        # _get_firestore_client returns the CLIENT itself, not the module — so
+        # this is what `DistributedLock.db` becomes.
+        self.mock_get_firestore.return_value = self.mock_db
         self.mock_firestore.Client.return_value = self.mock_db
 
     def tearDown(self):
@@ -1045,25 +1161,37 @@ class TestLockEdgeCases(unittest.TestCase):
         self.assertEqual(max_wait, 300)  # 5 minutes total
 
     def test_retry_delay_between_attempts(self):
-        """Test proper delay between lock acquisition attempts."""
+        """Each retry waits RETRY_DELAY_SECONDS.
+
+        The retry loop is bounded by wall-clock (`time.time() - start < max_wait`),
+        so stubbing time.sleep to a no-op turned this into a 15-second busy spin
+        — measured at 623,400 attempts, and slow enough to trip the 60s test
+        timeout under load. Break out after a few iterations instead, and assert
+        on the delay actually requested.
+        """
         lock = DistributedLock(self.project_id, lock_type="consolidation")
 
-        # Mock failed acquisition
+        class _StopSpinning(Exception):
+            pass
+
+        delays = []
+
+        def fake_sleep(seconds):
+            delays.append(seconds)
+            if len(delays) >= 3:
+                raise _StopSpinning
+
         with patch.object(lock, '_try_acquire', return_value=False):
-            with patch('time.sleep') as mock_sleep:
-                try:
+            with patch('time.sleep', side_effect=fake_sleep):
+                with self.assertRaises(_StopSpinning):
                     with lock.acquire(
                         game_date="2026-01-17",
                         operation_id="batch123",
-                        max_wait_seconds=15  # Short timeout for test
+                        max_wait_seconds=15
                     ):
                         pass
-                except LockAcquisitionError:
-                    pass
 
-                # Verify sleep was called with correct delay
-                if mock_sleep.call_count > 0:
-                    mock_sleep.assert_called_with(RETRY_DELAY_SECONDS)
+        self.assertEqual(delays, [RETRY_DELAY_SECONDS] * 3)
 
     def test_lock_expires_at_calculation(self):
         """Test lock expiration time is calculated correctly."""

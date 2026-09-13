@@ -14,6 +14,27 @@ import pytest
 from datetime import datetime
 from unittest.mock import Mock, MagicMock
 from predictions.worker.execution_logger import ExecutionLogger
+from predictions.worker import execution_logger as execution_logger_module
+
+
+@pytest.fixture(autouse=True)
+def _clear_log_buffer():
+    """Drain the module-global log buffer around every test.
+
+    2026-01-28 made ExecutionLogger buffer writes to stay under BigQuery's
+    ~5000 partition-modifications/table/day quota: log_execution() appends to
+    a process-global `_log_buffer` and only writes on flush_buffer(), on the
+    50-entry threshold, or at exit. The tests below predate that and asserted
+    on the mock client immediately, which is why they failed 17/21 — the
+    production behaviour is correct and the tests were stale, so they now
+    flush explicitly.
+
+    The buffer being process-global also means an unflushed entry leaks into
+    whichever test flushes next; this fixture keeps that from happening.
+    """
+    execution_logger_module._log_buffer.clear()
+    yield
+    execution_logger_module._log_buffer.clear()
 
 
 class MockBigQueryClient:
@@ -91,8 +112,10 @@ class TestLogExecution:
         )
 
         # Should have inserted one row
+        logger.flush_buffer()
         assert len(bq_client.inserted_rows) == 1
 
+        logger.flush_buffer()
         row = bq_client.inserted_rows[0]
         assert row['player_lookup'] == 'LeBron James'
         assert row['success'] is True
@@ -120,8 +143,10 @@ class TestLogExecution:
             systems_failed=['moving_average']
         )
 
+        logger.flush_buffer()
         assert len(bq_client.inserted_rows) == 1
 
+        logger.flush_buffer()
         row = bq_client.inserted_rows[0]
         assert row['success'] is False
         assert row['predictions_generated'] == 0
@@ -147,6 +172,7 @@ class TestLogExecution:
             )
 
         # Should have two different request IDs
+        logger.flush_buffer()
         assert len(bq_client.inserted_rows) == 2
         request_id_1 = bq_client.inserted_rows[0]['request_id']
         request_id_2 = bq_client.inserted_rows[1]['request_id']
@@ -169,6 +195,7 @@ class TestLogExecution:
             predictions_generated=1
         )
 
+        logger.flush_buffer()
         row = bq_client.inserted_rows[0]
 
         assert 'run_date' in row
@@ -198,11 +225,17 @@ class TestLogExecution:
             system_errors=system_errors
         )
 
+        logger.flush_buffer()
         row = bq_client.inserted_rows[0]
 
-        # Should be JSON string
-        assert isinstance(row['system_errors'], str)
-        assert 'moving_average' in row['system_errors']
+        # `prediction_worker_runs.system_errors` is a BigQuery JSON column
+        # (verified 2026-09-08), so the writer passes the dict through and
+        # load_table_from_json does the conversion. The old assertion here
+        # required a pre-serialised str, which was true when the column was
+        # STRING; serialising it now would double-encode the JSON.
+        assert isinstance(row['system_errors'], dict)
+        assert row['system_errors']['moving_average'] == 'Insufficient data'
+        assert row['system_errors']['xgboost_v1'] == 'Model not loaded'
 
     def test_default_empty_lists(self):
         """Test that empty lists are used for missing arrays"""
@@ -221,6 +254,7 @@ class TestLogExecution:
             # Not providing systems_attempted, systems_succeeded, etc.
         )
 
+        logger.flush_buffer()
         row = bq_client.inserted_rows[0]
 
         # Should have empty lists
@@ -263,8 +297,10 @@ class TestLogSuccessConvenience:
             }
         )
 
+        logger.flush_buffer()
         assert len(bq_client.inserted_rows) == 1
 
+        logger.flush_buffer()
         row = bq_client.inserted_rows[0]
         assert row['success'] is True
         assert row['predictions_generated'] == 1
@@ -295,6 +331,7 @@ class TestLogSuccessConvenience:
             performance_breakdown={}
         )
 
+        logger.flush_buffer()
         row = bq_client.inserted_rows[0]
 
         # All 5 systems should be in attempted list
@@ -329,8 +366,10 @@ class TestLogFailureConvenience:
             skip_reason='no_features'
         )
 
+        logger.flush_buffer()
         assert len(bq_client.inserted_rows) == 1
 
+        logger.flush_buffer()
         row = bq_client.inserted_rows[0]
         assert row['success'] is False
         assert row['predictions_generated'] == 0
@@ -358,6 +397,7 @@ class TestLogFailureConvenience:
             circuits_opened=['moving_average', 'xgboost_v1']
         )
 
+        logger.flush_buffer()
         row = bq_client.inserted_rows[0]
         assert row['circuit_breaker_triggered'] is True
         assert len(row['circuits_opened']) == 2
@@ -379,6 +419,7 @@ class TestLogFailureConvenience:
             error_type='ValueError'
         )
 
+        logger.flush_buffer()
         row = bq_client.inserted_rows[0]
         assert row['systems_succeeded'] == []
         assert row['systems_failed'] == []
@@ -407,6 +448,7 @@ class TestPerformanceBreakdown:
             pubsub_publish_seconds=0.2
         )
 
+        logger.flush_buffer()
         row = bq_client.inserted_rows[0]
 
         assert row['data_load_seconds'] == 0.5
@@ -444,6 +486,7 @@ class TestDataQualityTracking:
             missing_features=['rest_days', 'matchup_factor']
         )
 
+        logger.flush_buffer()
         row = bq_client.inserted_rows[0]
 
         assert row['feature_quality_score'] == 0.75
@@ -467,6 +510,7 @@ class TestDataQualityTracking:
             historical_games_count=15
         )
 
+        logger.flush_buffer()
         row = bq_client.inserted_rows[0]
 
         assert row['historical_games_count'] == 15
@@ -541,6 +585,7 @@ class TestWorkerVersion:
             predictions_generated=1
         )
 
+        logger.flush_buffer()
         row = bq_client.inserted_rows[0]
 
         assert row['worker_version'] == '2.1'
@@ -578,6 +623,7 @@ class TestIntegration:
             }
         )
 
+        logger.flush_buffer()
         row = bq_client.inserted_rows[0]
 
         # Verify comprehensive logging
@@ -620,6 +666,7 @@ class TestIntegration:
             circuits_opened=['moving_average', 'xgboost_v1']
         )
 
+        logger.flush_buffer()
         row = bq_client.inserted_rows[0]
 
         assert row['success'] is False

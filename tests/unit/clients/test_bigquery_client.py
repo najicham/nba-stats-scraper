@@ -218,9 +218,18 @@ class TestBigQueryClientThreadSafety:
         mock_client2 = Mock(spec=bigquery.Client)
         clients = {"project-1": mock_client1, "project-2": mock_client2}
 
+        # `dict.get(key, default)` evaluates the default EAGERLY. Once
+        # `bigquery.Client` is patched below, `Mock(spec=bigquery.Client)` is
+        # specced against a MagicMock and raises InvalidSpecError — on every
+        # call, whether or not the key is present. Every thread died in there,
+        # so nothing was ever cached and get_client_count() read 0.
+        real_client_cls = bigquery.Client
+
         def create_client(*args, **kwargs):
             project = kwargs.get("project", "test-project")
-            return clients.get(project, Mock(spec=bigquery.Client))
+            if project in clients:
+                return clients[project]
+            return Mock(spec=real_client_cls)
 
         with patch('shared.clients.bigquery_pool.bigquery.Client', side_effect=create_client):
             from shared.clients.bigquery_pool import get_bigquery_client, get_client_count

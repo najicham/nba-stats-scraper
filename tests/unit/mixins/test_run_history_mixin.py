@@ -289,22 +289,27 @@ class TestRecordRunComplete:
         processor.set_alert_sent('warning')
 
         # Record completion
-        processor.record_run_complete(
-            status='success',
-            records_processed=100,
-            summary={'test': 'data'}
-        )
+        with patch(
+            'shared.utils.bigquery_batch_writer.get_batch_writer'
+        ) as mock_get_writer:
+            mock_writer = Mock()
+            mock_get_writer.return_value = mock_writer
+            processor.record_run_complete(
+                status='success',
+                records_processed=100,
+                summary={'test': 'data'}
+            )
 
-        # Verify load_table_from_json was called (implementation uses batch loading)
-        assert processor.bq_client.load_table_from_json.called
-        call_args = processor.bq_client.load_table_from_json.call_args
-        records = call_args[0][0]  # First positional arg is the records list
-        table_id = call_args[0][1]  # Second positional arg is the table_id
+        # _insert_run_history() no longer writes through processor.bq_client:
+        # it queues the record on the shared BigQueryBatchWriter singleton
+        # (~100 records per load job instead of one job per record). Asserting
+        # on processor.bq_client.load_table_from_json described the pre-batching
+        # implementation and could never pass.
+        assert mock_get_writer.called
+        assert 'processor_run_history' in mock_get_writer.call_args[1]['table_id']
+        mock_writer.add_record.assert_called_once()
 
-        assert 'processor_run_history' in table_id
-        assert len(records) == 1
-
-        record = records[0]
+        record = mock_writer.add_record.call_args[0][0]
         assert record['processor_name'] == 'MockProcessor'
         assert record['status'] == 'success'
         assert record['phase'] == 'phase_3_analytics'
@@ -371,36 +376,53 @@ class TestInsertRunHistory:
     """Test BigQuery insertion logic"""
 
     def test_insert_filters_unknown_columns(self):
-        """Test that columns not in schema are filtered out"""
-        processor = MockProcessor()
-        processor.start_run_tracking(data_date='2025-11-27')
+        """Fields absent from the table schema are dropped before the write.
 
-        # Mock schema with limited fields
+        The filtering moved out of the mixin and into BigQueryBatchWriter's
+        flush (which also switched from load_table_from_json to streaming
+        insert_rows_json). This test follows it there — asserting on the
+        mixin's own client tested a code path that no longer exists.
+        """
+        from shared.utils.bigquery_batch_writer import BigQueryBatchWriter
+
         mock_table = Mock()
         mock_table.schema = [
             MockSchemaField('processor_name'),
             MockSchemaField('run_id'),
             MockSchemaField('status'),
         ]
-        processor.bq_client.get_table = Mock(return_value=mock_table)
+        mock_client = Mock()
+        mock_client.get_table = Mock(return_value=mock_table)
+        mock_client.insert_rows_json = Mock(return_value=[])
 
-        # Mock the load job for load_table_from_json (used instead of insert_rows_json)
-        mock_load_job = Mock()
-        mock_load_job.result = Mock(return_value=None)
-        mock_load_job.errors = None
-        processor.bq_client.load_table_from_json = Mock(return_value=mock_load_job)
+        with patch('shared.utils.bigquery_batch_writer.bigquery.Client', return_value=mock_client):
+            writer = BigQueryBatchWriter(
+                table_id='nba_reference.processor_run_history',
+                project_id='test-project',
+                batch_size=1000,
+                timeout_seconds=3600,
+            )
+            try:
+                writer.add_record({
+                    'processor_name': 'MockProcessor',
+                    'run_id': 'test-run-123',
+                    'status': 'success',
+                    'phase': 'phase_3_analytics',
+                    'cloud_run_service': 'irrelevant',
+                })
+                writer.flush()
+            finally:
+                writer.shutdown_flag.set()
 
-        processor.record_run_complete(status='success')
-
-        # Verify load_table_from_json was called and only schema fields are included
-        call_args = processor.bq_client.load_table_from_json.call_args
-        records = call_args[0][0]  # First positional arg is the records list
+        mock_client.insert_rows_json.assert_called_once()
+        records = mock_client.insert_rows_json.call_args[0][1]
+        assert len(records) == 1
         record = records[0]
 
-        assert 'processor_name' in record
-        assert 'run_id' in record
-        assert 'status' in record
-        # These should be filtered out since not in mock schema
+        assert record['processor_name'] == 'MockProcessor'
+        assert record['run_id'] == 'test-run-123'
+        assert record['status'] == 'success'
+        # Not in the schema -> filtered out.
         assert 'phase' not in record
         assert 'cloud_run_service' not in record
 
@@ -409,12 +431,16 @@ class TestInsertRunHistory:
         processor = MockProcessor()
         processor.start_run_tracking(data_date='2025-11-27')
 
-        # Make bq_client None to trigger the fallback path that creates a new client
-        processor.bq_client = None
-
-        # Should not raise - the mixin will try to create a new client and fail gracefully
-        with patch('shared.processors.mixins.run_history_mixin.bigquery.Client') as mock_bq_class:
-            mock_bq_class.side_effect = Exception("BQ Error")
+        # The write path is get_batch_writer(); the old version patched
+        # `bigquery.Client` and cleared bq_client, but MockProcessor sets
+        # project_id, so that fallback branch never ran and nothing raised —
+        # the test asserted on an error that could not happen.
+        with patch(
+            'shared.utils.bigquery_batch_writer.get_batch_writer',
+            side_effect=Exception("BQ Error"),
+        ):
             with patch('shared.processors.mixins.run_history_mixin.logger') as mock_logger:
+                # Must not propagate: run-history logging is never allowed to
+                # fail the processor it is instrumenting.
                 processor.record_run_complete(status='success')
                 mock_logger.error.assert_called()

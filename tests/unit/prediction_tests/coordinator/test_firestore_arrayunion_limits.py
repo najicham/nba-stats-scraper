@@ -81,6 +81,18 @@ class TestArrayUnionBoundaryLimits(unittest.TestCase):
         self.mock_get_firestore.return_value = self.mock_firestore
         self.mock_firestore.Client.return_value = self.mock_db
 
+        # BatchStateManager.__init__ does NOT go through `_get_firestore()` for
+        # its client — it calls `shared.clients.get_firestore_client(project_id)`.
+        # Patching only the lazy module loader left that call unpatched, so
+        # every test here constructed a REAL Firestore client and issued real
+        # RPCs against a project named "test-project" (visible as
+        # `403 SERVICE_DISABLED` in the failure output). Unit tests must not
+        # talk to GCP.
+        self.client_patcher = patch(
+            'shared.clients.get_firestore_client', return_value=self.mock_db
+        )
+        self.mock_get_client = self.client_patcher.start()
+
         # Setup collection/document chain
         self.mock_db.collection.return_value = self.mock_collection
         self.mock_collection.document.return_value = self.mock_doc_ref
@@ -111,6 +123,7 @@ class TestArrayUnionBoundaryLimits(unittest.TestCase):
     def tearDown(self):
         """Clean up patches."""
         self.firestore_patcher.stop()
+        self.client_patcher.stop()
         self.helpers_patcher.stop()
 
     def test_exactly_1000_players_boundary_success(self):
@@ -400,6 +413,18 @@ class TestCurrentProductionUsage(unittest.TestCase):
         self.mock_get_firestore.return_value = self.mock_firestore
         self.mock_firestore.Client.return_value = self.mock_db
 
+        # BatchStateManager.__init__ does NOT go through `_get_firestore()` for
+        # its client — it calls `shared.clients.get_firestore_client(project_id)`.
+        # Patching only the lazy module loader left that call unpatched, so
+        # every test here constructed a REAL Firestore client and issued real
+        # RPCs against a project named "test-project" (visible as
+        # `403 SERVICE_DISABLED` in the failure output). Unit tests must not
+        # talk to GCP.
+        self.client_patcher = patch(
+            'shared.clients.get_firestore_client', return_value=self.mock_db
+        )
+        self.mock_get_client = self.client_patcher.start()
+
         # Setup collection/document chain
         self.mock_db.collection.return_value = self.mock_collection
         self.mock_collection.document.return_value = self.mock_doc_ref
@@ -430,6 +455,7 @@ class TestCurrentProductionUsage(unittest.TestCase):
     def tearDown(self):
         """Clean up patches."""
         self.firestore_patcher.stop()
+        self.client_patcher.stop()
         self.helpers_patcher.stop()
 
     def test_production_258_players_capacity_headroom(self):
@@ -574,6 +600,18 @@ class TestMigrationBehavior(unittest.TestCase):
         self.mock_get_firestore.return_value = self.mock_firestore
         self.mock_firestore.Client.return_value = self.mock_db
 
+        # BatchStateManager.__init__ does NOT go through `_get_firestore()` for
+        # its client — it calls `shared.clients.get_firestore_client(project_id)`.
+        # Patching only the lazy module loader left that call unpatched, so
+        # every test here constructed a REAL Firestore client and issued real
+        # RPCs against a project named "test-project" (visible as
+        # `403 SERVICE_DISABLED` in the failure output). Unit tests must not
+        # talk to GCP.
+        self.client_patcher = patch(
+            'shared.clients.get_firestore_client', return_value=self.mock_db
+        )
+        self.mock_get_client = self.client_patcher.start()
+
         # Setup collection/document chain
         self.mock_db.collection.return_value = self.mock_collection
         self.mock_collection.document.return_value = self.mock_doc_ref
@@ -597,6 +635,7 @@ class TestMigrationBehavior(unittest.TestCase):
     def tearDown(self):
         """Clean up patches."""
         self.firestore_patcher.stop()
+        self.client_patcher.stop()
         self.helpers_patcher.stop()
 
     def test_migration_trigger_at_threshold_900_players_dual_write(self):
@@ -634,7 +673,8 @@ class TestMigrationBehavior(unittest.TestCase):
         self.mock_subcoll_ref.document.return_value.set.return_value = None
 
         # Disable random sampling in validation (always skip for test)
-        with patch('random.random', return_value=1.0):  # > 0.1, skip validation
+        with patch('random.random', return_value=1.0), \
+             patch.object(manager, '_record_completion_dual_write_transactional') as mock_dual:
             # Record 500th completion (dual-write mode active)
             is_complete = manager.record_completion(
                 batch_id=batch_id,
@@ -642,9 +682,13 @@ class TestMigrationBehavior(unittest.TestCase):
                 predictions_count=25
             )
 
-        # Verify dual-write: Both ArrayUnion and subcollection updated
-        # Dual-write calls: 1) ArrayUnion update, 2) subcollection counter update
-        self.assertEqual(self.mock_doc_ref.update.call_count, 2)  # Array + counter
+        # Dual-write is TRANSACTIONAL: the array and the subcollection counter
+        # move together inside one Firestore transaction, not as two separate
+        # doc_ref.update() calls. The old assertion (`update.call_count == 2`)
+        # described the pre-transactional implementation and could not pass.
+        mock_dual.assert_called_once_with(batch_id, "player_0499", 25)
+        self.assertEqual(self.mock_doc_ref.update.call_count, 0)
+        self.assertFalse(is_complete)  # 499 of 1000
 
     def test_dual_write_consistency_validation_sampling(self):
         """
@@ -794,6 +838,18 @@ class TestConcurrencyAndPerformance(unittest.TestCase):
         self.mock_get_firestore.return_value = self.mock_firestore
         self.mock_firestore.Client.return_value = self.mock_db
 
+        # BatchStateManager.__init__ does NOT go through `_get_firestore()` for
+        # its client — it calls `shared.clients.get_firestore_client(project_id)`.
+        # Patching only the lazy module loader left that call unpatched, so
+        # every test here constructed a REAL Firestore client and issued real
+        # RPCs against a project named "test-project" (visible as
+        # `403 SERVICE_DISABLED` in the failure output). Unit tests must not
+        # talk to GCP.
+        self.client_patcher = patch(
+            'shared.clients.get_firestore_client', return_value=self.mock_db
+        )
+        self.mock_get_client = self.client_patcher.start()
+
         # Setup collection/document chain
         self.mock_db.collection.return_value = self.mock_collection
         self.mock_collection.document.return_value = self.mock_doc_ref
@@ -824,6 +880,7 @@ class TestConcurrencyAndPerformance(unittest.TestCase):
     def tearDown(self):
         """Clean up patches."""
         self.firestore_patcher.stop()
+        self.client_patcher.stop()
         self.helpers_patcher.stop()
 
     def test_concurrent_arrayunion_updates_atomic_operations(self):

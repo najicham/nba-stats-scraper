@@ -17,7 +17,7 @@ import sys
 import os
 import unittest
 from unittest.mock import Mock, patch, MagicMock
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date
 from typing import Dict, List, Any
 
 # Add project root to path
@@ -180,7 +180,13 @@ class TestCheckDependencies(unittest.TestCase):
 
         self.processor._check_table_data = mock_check_table
 
-        result = self.processor.check_dependencies('2024-11-20', '2024-11-20')
+        # check_dependencies() deliberately SKIPS the freshness check when the
+        # end_date is itself older than max_age_hours_fail (backfills legitimately
+        # read old data). A hardcoded '2024-11-20' means these two tests stopped
+        # exercising the staleness path the moment that date aged past 72h — use
+        # today so the branch under test actually runs.
+        today = date.today().isoformat()
+        result = self.processor.check_dependencies(today, today)
 
         # Verify stale failure
         self.assertFalse(result['all_fresh'])
@@ -202,7 +208,13 @@ class TestCheckDependencies(unittest.TestCase):
 
         self.processor._check_table_data = mock_check_table
 
-        result = self.processor.check_dependencies('2024-11-20', '2024-11-20')
+        # check_dependencies() deliberately SKIPS the freshness check when the
+        # end_date is itself older than max_age_hours_fail (backfills legitimately
+        # read old data). A hardcoded '2024-11-20' means these two tests stopped
+        # exercising the staleness path the moment that date aged past 72h — use
+        # today so the branch under test actually runs.
+        today = date.today().isoformat()
+        result = self.processor.check_dependencies(today, today)
 
         # Verify warning but not failure
         self.assertTrue(result['all_critical_present'])

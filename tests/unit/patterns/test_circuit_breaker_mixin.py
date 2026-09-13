@@ -547,26 +547,35 @@ class TestBigQueryIntegration:
         except Exception:
             pytest.fail("Should handle missing bq_client gracefully")
 
-    def test_write_state_calls_load_table_from_json(self):
-        """Test that write_state calls BigQuery load_table_from_json"""
+    def test_write_state_queues_on_the_batch_writer(self):
+        """State changes are queued on the shared batch writer, not written direct.
+
+        `_write_circuit_state_to_bigquery` batches ~50 state changes into one
+        write instead of one job per change, so it never touches
+        processor.bq_client. The old assertion on
+        `processor.bq_client.load_table_from_json` described the pre-batching
+        implementation and could not pass.
+        """
         processor = MockProcessor()
         circuit_key = 'TestProcessor:2024-11-20:2024-11-20'
 
-        # Mock get_table to return a table with schema
-        mock_table = Mock()
-        mock_table.schema = []
-        processor.bq_client.get_table.return_value = mock_table
+        with patch(
+            'shared.utils.bigquery_batch_writer.get_batch_writer'
+        ) as mock_get_writer:
+            mock_writer = Mock()
+            mock_get_writer.return_value = mock_writer
 
-        # Mock load_table_from_json to return a job
-        mock_job = Mock()
-        mock_job.result.return_value = None
-        mock_job.errors = None
-        processor.bq_client.load_table_from_json.return_value = mock_job
+            processor._write_circuit_state_to_bigquery(circuit_key, 'CLOSED')
 
-        processor._write_circuit_state_to_bigquery(circuit_key, 'CLOSED')
+        assert mock_get_writer.call_args[1]['table_id'] == (
+            'nba_orchestration.circuit_breaker_state'
+        )
+        mock_writer.add_record.assert_called_once()
 
-        # Should have called load_table_from_json (not insert_rows_json)
-        assert processor.bq_client.load_table_from_json.called
+        record = mock_writer.add_record.call_args[0][0]
+        assert record['processor_name'] == 'TestProcessor'
+        assert record['state'] == 'CLOSED'
+        assert 'last_success' in record
 
 
 class TestAutoResetLogic:

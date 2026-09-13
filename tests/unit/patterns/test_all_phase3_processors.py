@@ -13,6 +13,8 @@ import logging
 import sys
 import os
 
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../..'))
 
 from data_processors.analytics.player_game_summary.player_game_summary_processor import PlayerGameSummaryProcessor
@@ -37,8 +39,8 @@ PROCESSORS = {
 }
 
 
-def test_processor_dependencies(processor_name, processor_class):
-    """Test a single processor's dependency configuration."""
+def _check_processor_dependencies(processor_name, processor_class):
+    """Inspect a single processor's dependency configuration. Returns bool."""
     logger.info("=" * 80)
     logger.info(f"Testing: {processor_name}")
     logger.info("=" * 80)
@@ -105,6 +107,20 @@ def test_processor_dependencies(processor_name, processor_class):
     except Exception as e:
         logger.error(f"\n❌ {processor_name}: Failed - {e}", exc_info=True)
         return False
+
+
+@pytest.mark.parametrize(
+    "processor_name,processor_class", sorted(PROCESSORS.items())
+)
+def test_processor_dependencies(processor_name, processor_class):
+    """Every Phase 3 processor must expose a usable dependency config.
+
+    The helper below used to be named `test_processor_dependencies` and took
+    two arguments, so pytest tried to collect it as a test and errored with
+    `fixture 'processor_name' not found` on every run. It is a helper driven by
+    __main__; this parametrized wrapper is the actual test.
+    """
+    assert _check_processor_dependencies(processor_name, processor_class)
 
 
 def test_hash_tracking_fields():
@@ -185,7 +201,9 @@ def test_hash_tracking_fields():
 
     logger.info(f"\n  Hash Tracking: {passed}/{total} processors passed")
 
-    return all(r in ('passed', 'skipped') for r in results.values())
+    # pytest treats a returned value as an error (PytestReturnNotNoneWarning
+    # today, a hard failure in pytest 9) — assert instead.
+    assert all(r in ('passed', 'skipped') for r in results.values()), results
 
 
 if __name__ == "__main__":
@@ -198,7 +216,7 @@ if __name__ == "__main__":
 
     # Test 1: Dependency configuration
     for processor_name, processor_class in PROCESSORS.items():
-        results[processor_name] = test_processor_dependencies(processor_name, processor_class)
+        results[processor_name] = _check_processor_dependencies(processor_name, processor_class)
 
     # Test 2: Hash tracking field generation
     hash_tracking_works = test_hash_tracking_fields()

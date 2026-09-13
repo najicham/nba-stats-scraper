@@ -53,3 +53,46 @@ def _reset_global_caches():
     except Exception:
         pass
     yield
+
+
+@pytest.fixture(autouse=True)
+def _stub_google_credentials(monkeypatch):
+    """No unit test may reach live GCP. See tests/conftest.py for the why."""
+    from tests.conftest import install_anonymous_credentials
+
+    install_anonymous_credentials(monkeypatch)
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _isolate_batch_writers():
+    """Keep the process-global BigQueryBatchWriter registry out of the tests.
+
+    `get_batch_writer()` is a singleton-per-table registry with an atexit hook
+    that flushes every buffered record. Unit tests that exercise any code path
+    calling it (RunHistoryMixin, circuit breakers, processor bases) leave real
+    records in that buffer, and at interpreter exit the hook tries to
+    `insert_rows_json` them into `nba_reference.processor_run_history`.
+
+    Without credentials that just logs a DefaultCredentialsError traceback
+    after the test summary. WITH credentials — i.e. on a developer machine — it
+    writes test rows into the production run-history table. Clearing the
+    registry around each test drops the buffer before anything can flush it.
+    """
+    try:
+        from shared.utils import bigquery_batch_writer as _bw
+    except Exception:
+        yield
+        return
+
+    def _drain():
+        with _bw._writers_lock:
+            for writer in _bw._writers.values():
+                writer.shutdown_flag.set()
+                with writer.lock:
+                    writer.buffer.clear()
+            _bw._writers.clear()
+
+    _drain()
+    yield
+    _drain()

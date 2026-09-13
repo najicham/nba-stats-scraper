@@ -1,18 +1,29 @@
 #!/usr/bin/env python3
 """
-Test script for historical backfill detection
+Live smoke check for historical backfill detection.
 
 Tests the enhanced Phase 3 dependency checking with:
 1. Hash tracking (4 fields per source)
 2. Historical backfill candidate detection
 
+⚠️ These are INTEGRATION tests, not unit tests: they run real BigQuery queries
+against nba-props-platform for yesterday's data. They lived under tests/unit/
+with no marker, so a plain `pytest tests/unit/` — including every local run and
+every CI run — issued live BQ jobs billed to whoever ran it, and failed with
+DefaultCredentialsError wherever credentials were absent.
+
+They are now skipped unless RUN_GCP_INTEGRATION_TESTS=1.
+
 Usage:
+    RUN_GCP_INTEGRATION_TESTS=1 pytest tests/unit/patterns/test_historical_backfill_detection.py
     python tests/unit/patterns/test_historical_backfill_detection.py
 """
 
 import logging
 import sys
 import os
+
+import pytest
 
 # Add project root to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../..'))
@@ -24,6 +35,15 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(
+        os.environ.get('RUN_GCP_INTEGRATION_TESTS') != '1',
+        reason='Hits live BigQuery; set RUN_GCP_INTEGRATION_TESTS=1 to run.',
+    ),
+]
 
 
 def test_hash_tracking():

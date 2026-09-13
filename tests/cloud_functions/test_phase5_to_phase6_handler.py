@@ -37,6 +37,20 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 # FIXTURES
 # ============================================================================
 
+
+def _bq_result(rows):
+    """A stand-in for QueryJob.result().
+
+    validate_predictions_exist() consumes it with `next(result, None)`, not
+    `iter(result)`. A MagicMock with only `__iter__` configured still answers
+    `__next__` with another MagicMock, so `count < MIN_PREDICTIONS_REQUIRED`
+    raised TypeError, the broad `except` swallowed it, and every one of these
+    tests silently exercised the "validation query failed" fallback (count=-1)
+    instead of the path it claimed to test.
+    """
+    return iter(rows)
+
+
 @pytest.fixture
 def mock_bigquery_client():
     """Mock BigQuery client for prediction validation."""
@@ -47,11 +61,8 @@ def mock_bigquery_client():
         mock_row = MagicMock()
         mock_row.prediction_count = 450
 
-        mock_result = MagicMock()
-        mock_result.__iter__ = Mock(return_value=iter([mock_row]))
-
         mock_query_job = MagicMock()
-        mock_query_job.result.return_value = mock_result
+        mock_query_job.result.return_value = _bq_result([mock_row])
 
         mock_client.query.return_value = mock_query_job
         mock_get.return_value = mock_client
@@ -257,24 +268,88 @@ def test_completion_above_threshold_triggers_export(
     mock_pubsub_publisher.publish.assert_called_once()
 
 
-def test_completion_below_threshold_skips_export(sample_cloud_event):
-    """Test export skipped when completion < 80%."""
-    from orchestration.cloud_functions.phase5_to_phase6.main import orchestrate_phase5_to_phase6
-
-    # Set completion to 75%
-    message = json.loads(base64.b64decode(sample_cloud_event.data['message']['data']))
-    message['metadata']['completion_pct'] = 75.0
-
-    sample_cloud_event.data['message']['data'] = base64.b64encode(
+def _with_completion(cloud_event, pct):
+    """Rewrite the sample event's completion_pct in place."""
+    message = json.loads(base64.b64decode(cloud_event.data['message']['data']))
+    message['metadata']['completion_pct'] = pct
+    cloud_event.data['message']['data'] = base64.b64encode(
         json.dumps(message).encode('utf-8')
     )
+    return cloud_event
+
+
+def _published_message(mock_pubsub_publisher):
+    """Decode the payload the orchestrator published to Phase 6."""
+    _, kwargs = mock_pubsub_publisher.publish.call_args
+    return json.loads(kwargs['data'].decode('utf-8'))
+
+
+def test_partial_slate_publishes_but_is_stamped(
+    sample_cloud_event,
+    mock_bigquery_client,
+    mock_pubsub_publisher
+):
+    """A slate below MIN_COMPLETION_PCT publishes, loudly and labelled.
+
+    Blocking Phase 6 on a partial slate trades a visible gap for an invisible
+    drought, so the default is to publish — but never silently. Before
+    2026-09-08 the partial was rewritten to 100.0% and nothing downstream could
+    tell; a slate published off 56.1% completion.
+    """
+    from orchestration.cloud_functions.phase5_to_phase6.main import orchestrate_phase5_to_phase6
+
+    _with_completion(sample_cloud_event, 56.1)
 
     with patch('orchestration.cloud_functions.phase5_to_phase6.main.logger') as mock_logger:
         orchestrate_phase5_to_phase6(sample_cloud_event)
 
-        # Should log skipping
-        warning_calls = [str(c) for c in mock_logger.warning.call_args_list]
-        assert any('completion too low' in str(c) for c in warning_calls)
+    mock_pubsub_publisher.publish.assert_called_once()
+    published = _published_message(mock_pubsub_publisher)
+    assert published['partial_slate'] is True
+    assert published['upstream_completion_pct'] == 56.1
+
+    critical_calls = [str(c) for c in mock_logger.critical.call_args_list]
+    assert any('PARTIAL SLATE' in c for c in critical_calls)
+
+
+def test_partial_slate_blocks_when_configured(
+    sample_cloud_event,
+    mock_bigquery_client,
+    mock_pubsub_publisher
+):
+    """PHASE6_BLOCK_ON_LOW_COMPLETION=true makes the threshold blocking."""
+    import orchestration.cloud_functions.phase5_to_phase6.main as m
+
+    _with_completion(sample_cloud_event, 56.1)
+
+    with patch.object(m, 'BLOCK_ON_LOW_COMPLETION', True):
+        m.orchestrate_phase5_to_phase6(sample_cloud_event)
+
+    mock_pubsub_publisher.publish.assert_not_called()
+
+
+def test_unknown_completion_pct_is_not_reported_as_complete(
+    sample_cloud_event,
+    mock_bigquery_client,
+    mock_pubsub_publisher
+):
+    """completion_pct=0 on a re-triggered batch means UNKNOWN, not 100%.
+
+    Re-triggered batches never called start_batch, so run_history has no
+    expected count and the coordinator reports 0.0. That case still publishes,
+    but the payload must carry None rather than a fabricated 100.0 — the old
+    code's blanket override is what made MIN_COMPLETION_PCT unreachable.
+    """
+    from orchestration.cloud_functions.phase5_to_phase6.main import orchestrate_phase5_to_phase6
+
+    _with_completion(sample_cloud_event, 0.0)
+
+    orchestrate_phase5_to_phase6(sample_cloud_event)
+
+    mock_pubsub_publisher.publish.assert_called_once()
+    published = _published_message(mock_pubsub_publisher)
+    assert published['upstream_completion_pct'] is None
+    assert published['partial_slate'] is False
 
 
 def test_completion_exactly_at_threshold_triggers(
@@ -322,10 +397,7 @@ def test_validate_predictions_exist_below_minimum(mock_bigquery_client):
     mock_row = MagicMock()
     mock_row.prediction_count = 5  # Below MIN_PREDICTIONS_REQUIRED (10)
 
-    mock_result = MagicMock()
-    mock_result.__iter__ = Mock(return_value=iter([mock_row]))
-
-    mock_bigquery_client.query.return_value.result.return_value = mock_result
+    mock_bigquery_client.query.return_value.result.return_value = _bq_result([mock_row])
 
     is_valid, count, message = validate_predictions_exist('2026-01-25')
 
@@ -342,10 +414,7 @@ def test_validate_predictions_exist_no_predictions(mock_bigquery_client):
     mock_row = MagicMock()
     mock_row.prediction_count = 0
 
-    mock_result = MagicMock()
-    mock_result.__iter__ = Mock(return_value=iter([mock_row]))
-
-    mock_bigquery_client.query.return_value.result.return_value = mock_result
+    mock_bigquery_client.query.return_value.result.return_value = _bq_result([mock_row])
 
     is_valid, count, message = validate_predictions_exist('2026-01-25')
 
@@ -376,10 +445,7 @@ def test_validation_blocks_export_when_insufficient(sample_cloud_event, mock_big
     mock_row = MagicMock()
     mock_row.prediction_count = 5
 
-    mock_result = MagicMock()
-    mock_result.__iter__ = Mock(return_value=iter([mock_row]))
-
-    mock_bigquery_client.query.return_value.result.return_value = mock_result
+    mock_bigquery_client.query.return_value.result.return_value = _bq_result([mock_row])
 
     with patch('orchestration.cloud_functions.phase5_to_phase6.main.logger') as mock_logger:
         orchestrate_phase5_to_phase6(sample_cloud_event)
@@ -527,8 +593,12 @@ def test_orchestrator_handles_publish_failure(
     # Simulate publish failure
     mock_pubsub_publisher.publish.side_effect = Exception("Publish failed")
 
-    # Should raise (for Pub/Sub NACK)
-    with pytest.raises(RuntimeError, match="Failed to publish Phase 6 trigger"):
+    # trigger_phase6_tonight_export deliberately lets the publish exception
+    # propagate so Pub/Sub NACKs and retries; it does not wrap it in
+    # RuntimeError. (The RuntimeError branch only fires when publish returns a
+    # falsy message id without raising.) Asserting on RuntimeError meant this
+    # test passed only by never reaching the assertion.
+    with pytest.raises(Exception, match="Publish failed"):
         orchestrate_phase5_to_phase6(sample_cloud_event)
 
 
@@ -548,7 +618,9 @@ def test_orchestrator_handles_parsing_error():
 # TEST: Metadata Extraction
 # ============================================================================
 
-def test_metadata_extraction_default_values(sample_cloud_event, mock_bigquery_client):
+def test_metadata_extraction_default_values(
+    sample_cloud_event, mock_bigquery_client, mock_pubsub_publisher
+):
     """Test metadata extraction uses defaults when fields missing."""
     from orchestration.cloud_functions.phase5_to_phase6.main import orchestrate_phase5_to_phase6
 
@@ -641,7 +713,9 @@ def test_get_export_status_files_exist():
     """Test export status query checks GCS files."""
     from orchestration.cloud_functions.phase5_to_phase6.main import get_export_status
 
-    with patch('orchestration.cloud_functions.phase5_to_phase6.main.storage.Client') as mock_storage:
+    # get_export_status() imports google.cloud.storage INSIDE the function, so
+    # there is no `main.storage` attribute to patch — patch it at the source.
+    with patch('google.cloud.storage.Client') as mock_storage:
         # Setup mock GCS client
         mock_bucket = MagicMock()
         mock_blob = MagicMock()
@@ -662,7 +736,9 @@ def test_get_export_status_handles_error():
     """Test export status query handles errors gracefully."""
     from orchestration.cloud_functions.phase5_to_phase6.main import get_export_status
 
-    with patch('orchestration.cloud_functions.phase5_to_phase6.main.storage.Client') as mock_storage:
+    # get_export_status() imports google.cloud.storage INSIDE the function, so
+    # there is no `main.storage` attribute to patch — patch it at the source.
+    with patch('google.cloud.storage.Client') as mock_storage:
         mock_storage.side_effect = Exception("Storage error")
 
         status = get_export_status('2026-01-25')
