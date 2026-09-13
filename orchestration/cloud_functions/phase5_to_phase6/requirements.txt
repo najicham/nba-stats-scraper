@@ -11,6 +11,11 @@ google-cloud-logging>=3.0.0
 google-cloud-storage>=2.0.0
 google-cloud-pubsub==2.*
 google-cloud-secret-manager==2.16.0
+# 2026-09-08: required by shared.observability.metrics.emit_metric, which
+# this function now calls for the partial-slate metric. emit_metric FAILS
+# OPEN — without this package it is a silent no-op and you cannot create an
+# alert policy on a metric that never fired.
+google-cloud-monitoring>=2.0.0
 
 # HTTP and alerting
 requests>=2.31.0

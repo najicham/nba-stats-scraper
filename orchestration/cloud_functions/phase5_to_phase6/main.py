@@ -85,6 +85,27 @@ TONIGHT_EXPORT_TYPES = ['tonight', 'tonight-players', 'predictions', 'best-bets'
 # Don't export if predictions largely failed
 MIN_COMPLETION_PCT = 80.0
 
+# 2026-09-08: MIN_COMPLETION_PCT was inert. The "re-triggered batch" override
+# below fired on ANY completion_pct under the threshold whenever the coordinator
+# reported status='success' with at least one prediction — and the coordinator
+# reports 'success' for stall-completed PARTIAL batches too. So the only batch
+# the gate could ever block was one with zero predictions, which the
+# `completed_predictions > 0` check already handles. A slate publishing off
+# 56.1% completion was observed.
+#
+# The fix is in two parts:
+#   1. The override now only fires when completion_pct is genuinely UNKNOWN
+#      (<= 0), which is the case it was written for, rather than merely low.
+#   2. A real partial slate no longer silently becomes 100%. By default it still
+#      publishes — blocking Phase 6 on a partial slate trades a visible gap for
+#      an invisible drought, and droughts have cost this system more — but it is
+#      logged at CRITICAL and the completion percentage is stamped onto the
+#      Phase 6 trigger message so downstream can see it.
+# Set PHASE6_BLOCK_ON_LOW_COMPLETION=true to make the threshold blocking.
+BLOCK_ON_LOW_COMPLETION = (
+    os.environ.get('PHASE6_BLOCK_ON_LOW_COMPLETION', 'false').lower() == 'true'
+)
+
 # Initialize clients (lazy - created on first use)
 _publisher = None
 _bq_client = None
@@ -197,24 +218,43 @@ def orchestrate_phase5_to_phase6(cloud_event):
         )
         return  # Acknowledge message
 
-    # If coordinator says success with real predictions but completion_pct is missing/zero,
-    # trust the status=success signal. This happens on manually re-triggered batches where
-    # start_batch was never called, so run_history doesn't compute completion_pct correctly.
-    if status == 'success' and completed_predictions > 0 and completion_pct < MIN_COMPLETION_PCT:
+    # completion_pct is genuinely UNKNOWN (not merely low) on manually
+    # re-triggered batches: start_batch was never called, so run_history has no
+    # expected count and the coordinator reports 0.0. Treat that as unknown, not
+    # as a failed slate. Note this is `<= 0`, NOT `< MIN_COMPLETION_PCT` — the
+    # broader form is what made the threshold below unreachable.
+    completion_pct_known = True
+    if status == 'success' and completed_predictions > 0 and completion_pct <= 0:
         logger.warning(
-            f"[{correlation_id}] completion_pct={completion_pct:.1f}% is below threshold but "
-            f"status=success with {completed_predictions} predictions — overriding to 100.0% "
+            f"[{correlation_id}] completion_pct is 0/unknown but status=success with "
+            f"{completed_predictions} predictions — treating completion as UNKNOWN "
             f"(likely re-triggered batch with incomplete run_history tracking)"
         )
-        completion_pct = 100.0
+        completion_pct_known = False
 
-    # Skip if completion too low - permanent, don't retry
-    if completion_pct < MIN_COMPLETION_PCT:
-        logger.warning(
-            f"[{correlation_id}] Skipping Phase 6 trigger - completion too low "
-            f"({completion_pct:.1f}% < {MIN_COMPLETION_PCT}%)"
+    # A real partial slate.
+    is_partial = completion_pct_known and completion_pct < MIN_COMPLETION_PCT
+    if is_partial:
+        logger.critical(
+            f"[{correlation_id}] PARTIAL SLATE for {game_date}: completion "
+            f"{completion_pct:.1f}% < {MIN_COMPLETION_PCT}% with "
+            f"{completed_predictions} predictions. "
+            + ("Blocking Phase 6 (PHASE6_BLOCK_ON_LOW_COMPLETION=true)."
+               if BLOCK_ON_LOW_COMPLETION else
+               "Publishing anyway; the payload is stamped partial_slate=true.")
         )
-        return  # Acknowledge message
+        try:
+            from shared.observability.metrics import emit_metric
+            emit_metric(
+                'phase6_partial_slate',
+                float(completion_pct),
+                labels={'sport': 'nba', 'game_date': str(game_date)},
+            )
+        except Exception:  # pragma: no cover — observability must never block
+            pass
+
+        if BLOCK_ON_LOW_COMPLETION:
+            return  # Acknowledge message - permanent, don't retry
 
     # Validate predictions actually exist in BigQuery (safety check)
     is_valid, actual_count, validation_msg = validate_predictions_exist(game_date)
@@ -232,7 +272,9 @@ def orchestrate_phase5_to_phase6(cloud_event):
         game_date=game_date,
         correlation_id=correlation_id,
         batch_id=batch_id,
-        completed_predictions=completed_predictions
+        completed_predictions=completed_predictions,
+        completion_pct=completion_pct if completion_pct_known else None,
+        partial_slate=is_partial,
     )
 
     if message_id:
@@ -249,7 +291,9 @@ def trigger_phase6_tonight_export(
     game_date: str,
     correlation_id: str,
     batch_id: str,
-    completed_predictions: int
+    completed_predictions: int,
+    completion_pct: Optional[float] = None,
+    partial_slate: bool = False,
 ) -> Optional[str]:
     """
     Trigger Phase 6 export for tonight's predictions.
@@ -262,6 +306,9 @@ def trigger_phase6_tonight_export(
         correlation_id: Correlation ID from upstream
         batch_id: Phase 5 batch ID
         completed_predictions: Number of predictions generated
+        completion_pct: Slate completion percentage, or None if it could not be
+            determined (re-triggered batch with no run_history baseline)
+        partial_slate: True when the slate published below MIN_COMPLETION_PCT
 
     Returns:
         Message ID if published successfully, None if failed
@@ -288,6 +335,11 @@ def trigger_phase6_tonight_export(
         # Upstream info for debugging
         'upstream_batch_id': batch_id,
         'upstream_predictions': completed_predictions,
+
+        # Slate completeness. `None` means the orchestrator could not determine
+        # it, which is NOT the same as complete — do not default it to 100.
+        'upstream_completion_pct': completion_pct,
+        'partial_slate': partial_slate,
     }
 
     # Publish to Pub/Sub - let exceptions propagate for retry
@@ -315,7 +367,9 @@ def trigger_phase6_tonight_export(
             "export_types": TONIGHT_EXPORT_TYPES,
             "completed_predictions": completed_predictions,
             "batch_id": batch_id,
-            "message_id": message_id
+            "message_id": message_id,
+            "completion_pct": completion_pct,
+            "partial_slate": partial_slate,
         }
     )
 
