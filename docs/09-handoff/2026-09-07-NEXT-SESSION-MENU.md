@@ -1,5 +1,13 @@
 # 2026-09-07 — Menu for the next session
 
+> **STATUS as of 2026-09-13 — items C, A, D and E are DONE.** See
+> `2026-09-08-MEASUREMENT-CI-GATES-TOPOLOGY.md` for what was found, including two places
+> where the analysis below turned out to be wrong: **D2's diagnosis** (`maxScale` is a hard
+> regional quota ceiling, not a stale value — concurrency is the lever) and **E's claim that
+> BDB retry is dead** (the live path was already fixed; three operator tools were not).
+> **B, F, G, H and I are still open** and the evidence for them below still stands.
+
+
 Companion to `2026-09-07-PHASE5-PROVEN-AND-THREE-P0S.md`, which records what happened. **This
 document does not tell you what to do.** It is a menu with evidence, effort and risk attached to
 each item, so you can choose. Read §1 and §5 first, then pick.
