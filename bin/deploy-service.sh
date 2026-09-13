@@ -63,6 +63,38 @@ get_min_instances() {
 
 MIN_INSTANCES=$(get_min_instances "$SERVICE")
 
+# Concurrency, per service. Same failure mode as minScale above: neither this
+# script nor cloudbuild.yaml used to pass --concurrency, so whatever value was
+# last set by hand became permanent and invisible.
+#
+# 2026-09-08: prediction-worker was found live at containerConcurrency=1 with
+# maxScale=10, i.e. TEN in-flight predictions for a whole slate. On 2026-09-07 a
+# 399-request slate put 107 requests (27%) into prediction-request-dlq inside two
+# minutes, and nothing consumes that DLQ. maxScale cannot be raised — us-west2 is
+# already at its regional Cloud Run ceiling (CpuAllocPerProjectRegion 20000,
+# MemAllocPerProjectRegion 40Gi; asking for 50 instances is refused outright).
+# Concurrency is the lever that costs no quota at all: 10 x 5 = 50 in flight for
+# the same allocation. Safe here because get_worker_id() mints a fresh UUID per
+# request, so concurrent requests on one instance still write separate staging
+# tables. Matches the prod value bin/predictions/deploy/deploy_prediction_worker.sh
+# has specified since Jan 2026.
+get_concurrency() {
+    case "$1" in
+        prediction-worker)
+            echo "5"
+            ;;
+        *)
+            echo ""   # empty = leave the service's current value alone
+            ;;
+    esac
+}
+
+CONCURRENCY=$(get_concurrency "$SERVICE")
+CONCURRENCY_FLAG=()
+if [ -n "$CONCURRENCY" ]; then
+    CONCURRENCY_FLAG=(--concurrency="$CONCURRENCY")
+fi
+
 # CPU throttling controls billing mode:
 #   --cpu-throttling (default) = request-based billing, CPU free when idle
 #   --no-cpu-throttling = instance-based billing, CPU charged 24/7
@@ -422,7 +454,7 @@ if [ "$SERVICE" = "prediction-worker" ]; then
 fi
 
 echo ""
-echo "[4/8] Deploying to Cloud Run (min-instances=$MIN_INSTANCES)..."
+echo "[4/8] Deploying to Cloud Run (min-instances=$MIN_INSTANCES${CONCURRENCY:+, concurrency=$CONCURRENCY})..."
 gcloud run deploy "$SERVICE" \
     --image="$REGISTRY/$SERVICE:latest" \
     --region="$REGION" \
@@ -430,6 +462,7 @@ gcloud run deploy "$SERVICE" \
     --update-env-vars="$ENV_VARS" \
     --update-labels="commit-sha=$BUILD_COMMIT,deployed-at=$(date -u +%Y%m%d-%H%M%S)" \
     --min-instances="$MIN_INSTANCES" \
+    "${CONCURRENCY_FLAG[@]}" \
     "$CPU_THROTTLE_FLAG" \
     --quiet
 
