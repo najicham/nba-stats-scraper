@@ -31,7 +31,6 @@ from typing import Dict, List, Optional, Tuple
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
 from google.cloud import bigquery
-from google.cloud import pubsub_v1
 
 # Configure logging
 logging.basicConfig(
@@ -49,13 +48,9 @@ class BDBPendingMonitor:
         self.project_id = self.client.project
         self.dry_run = dry_run
 
-        # Pub/Sub for triggering re-processing
-        if not dry_run:
-            self.publisher = pubsub_v1.PublisherClient()
-            self.topic_path = self.publisher.topic_path(
-                self.project_id,
-                'nba-phase3-trigger'  # Topic that triggers Phase 3 analytics
-            )
+        # Phase 3 re-processing is triggered over HTTP, not Pub/Sub — the
+        # `nba-phase3-trigger` topic has had no subscriptions since the
+        # Phase 2 -> 3 migration. See trigger_phase3_rerun() below.
 
     def check_pending_games(self, check_date: Optional[date] = None) -> List[Dict]:
         """
@@ -186,22 +181,22 @@ class BDBPendingMonitor:
             logger.info(f"[DRY-RUN] Would trigger Phase 3 re-run for {game_date} / {game_id}")
             return True
 
-        try:
-            import json
-            message = json.dumps({
-                'game_date': game_date.isoformat(),
-                'game_id': game_id,
-                'trigger_reason': 'bdb_data_available',
-                'triggered_by': 'bdb_pending_monitor'
-            }).encode('utf-8')
+        # 2026-09-08: this published to `nba-phase3-trigger`, which has no
+        # subscriptions — the publish succeeded and this logged success while
+        # nothing ran. Phase 3 is reached over HTTP; see shared/utils/phase3_trigger.
+        from shared.utils.phase3_trigger import trigger_phase3_rerun
 
-            future = self.publisher.publish(self.topic_path, message)
-            future.result(timeout=30)
-            logger.info(f"Triggered Phase 3 re-run for {game_date} / {game_id}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to trigger Phase 3 re-run: {e}")
-            return False
+        ok = trigger_phase3_rerun(
+            game_date=game_date.isoformat(),
+            source='bdb_pending_monitor',
+            trigger_reason='bdb_data_available',
+        )
+        if ok:
+            # Phase 3 reprocesses the whole date, not the single game.
+            logger.info(
+                f"Triggered Phase 3 re-run for {game_date} (prompted by {game_id})"
+            )
+        return ok
 
     def update_pending_status(
         self,

@@ -269,25 +269,22 @@ class BDBCriticalMonitor:
             logger.warning("Pub/Sub not available, cannot trigger re-run")
             return False
 
-        try:
-            topic_path = self.publisher.topic_path(
-                self.project_id,
-                'nba-phase3-trigger'
-            )
-            message = json.dumps({
-                'game_date': game_date.isoformat(),
-                'game_id': nba_game_id,
-                'trigger_reason': 'bdb_data_available',
-                'source': 'bdb_critical_monitor'
-            }).encode('utf-8')
+        # 2026-09-08: `nba-phase3-trigger` has no subscriptions — publishing to
+        # it returned a message id and this logged success while nothing ran.
+        # Phase 3 is reached over HTTP; see shared/utils/phase3_trigger.
+        from shared.utils.phase3_trigger import trigger_phase3_rerun
 
-            future = self.publisher.publish(topic_path, message)
-            future.result(timeout=30)
-            logger.info(f"Triggered Phase 3 re-run for {nba_game_id}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to trigger Phase 3 re-run: {e}")
-            return False
+        ok = trigger_phase3_rerun(
+            game_date=game_date.isoformat(),
+            source='bdb_critical_monitor',
+            trigger_reason='bdb_data_available',
+        )
+        if ok:
+            # Phase 3 reprocesses the whole date, not the single game.
+            logger.info(
+                f"Triggered Phase 3 re-run for {game_date} (prompted by {nba_game_id})"
+            )
+        return ok
 
     def record_gap(self, game: Dict) -> None:
         """Record the gap in the data_gaps table for tracking."""

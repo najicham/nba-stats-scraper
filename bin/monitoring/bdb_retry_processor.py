@@ -162,27 +162,27 @@ class BDBRetryProcessor:
             logger.warning("Pub/Sub not available, cannot trigger re-run")
             return False
 
-        try:
-            topic_path = self.publisher.topic_path(
-                self.project_id,
-                'nba-phase3-trigger'
-            )
-            message = json.dumps({
-                'game_date': game['game_date'].isoformat() if isinstance(game['game_date'], date) else str(game['game_date']),
-                'game_id': game['game_id'],
-                'trigger_reason': 'bdb_data_available',
-                'source': 'bdb_retry_processor',
-                'original_quality': game.get('quality_before_rerun', 'unknown'),
-                'priority': 'normal'
-            }).encode('utf-8')
+        # 2026-09-08: this used to publish to `nba-phase3-trigger`, which has had
+        # NO subscriptions since the Phase 2 -> 3 migration. The publish
+        # succeeded, a message id came back, and this logged "✅ Triggered" while
+        # nothing ran. Phase 3 is reached over HTTP; see shared/utils/phase3_trigger.
+        from shared.utils.phase3_trigger import trigger_phase3_rerun
 
-            future = self.publisher.publish(topic_path, message)
-            future.result(timeout=30)
-            logger.info(f"✅ Triggered Phase 3 re-run for {game['game_id']}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to trigger Phase 3 re-run for {game['game_id']}: {e}")
-            return False
+        raw_date = game['game_date']
+        game_date_str = raw_date.isoformat() if isinstance(raw_date, date) else str(raw_date)
+
+        ok = trigger_phase3_rerun(
+            game_date=game_date_str,
+            source='bdb_retry_processor',
+            trigger_reason='bdb_data_available',
+        )
+        if ok:
+            # Phase 3 reprocesses the whole date, not the single game.
+            logger.info(
+                f"Triggered Phase 3 re-run for {game_date_str} "
+                f"(prompted by {game['game_id']})"
+            )
+        return ok
 
     def _trigger_phase4_rerun(self, game_date: str) -> bool:
         """Trigger Phase 4 precompute processors for specific date."""
