@@ -88,6 +88,10 @@ class BestBetsRecordExporter(BaseExporter):
             AND pa.line_value = b.line_value
           WHERE b.game_date >= @season_start
             AND b.game_date <= @target_date  -- <= is correct: closed season-to-date reporting range, not a feature window
+            -- 2026-09-08: never count a pick written after tip-off. 63% of the
+            -- 2025-26 rows were generated retrospectively (64.6% HR) against
+            -- 46.8% for genuinely live picks. NULL = timing unknown, kept.
+            AND b.is_backfilled IS NOT TRUE
             AND pa.prediction_correct IS NOT NULL
         )
         SELECT
@@ -217,6 +221,10 @@ class BestBetsRecordExporter(BaseExporter):
           AND pa.line_value = b.line_value
         WHERE b.game_date >= @season_start
           AND b.game_date <= @target_date  -- <= is correct: closed season-to-date reporting range, not a feature window
+          -- 2026-09-08: never count a pick written after tip-off. 63% of the
+          -- 2025-26 rows were generated retrospectively (64.6% HR) against
+          -- 46.8% for genuinely live picks. NULL = timing unknown, kept.
+          AND b.is_backfilled IS NOT TRUE
           AND pa.prediction_correct IS NOT NULL
         ORDER BY b.game_date DESC, b.created_at DESC
         """
@@ -316,6 +324,10 @@ class BestBetsRecordExporter(BaseExporter):
           AND pa.line_value = b.line_value
         WHERE b.game_date >= @season_start
           AND b.game_date <= @target_date  -- <= is correct: closed season-to-date reporting range, not a feature window
+          -- 2026-09-08: never count a pick written after tip-off. 63% of the
+          -- 2025-26 rows were generated retrospectively (64.6% HR) against
+          -- 46.8% for genuinely live picks. NULL = timing unknown, kept.
+          AND b.is_backfilled IS NOT TRUE
         ORDER BY b.game_date DESC, b.edge DESC
         """
 

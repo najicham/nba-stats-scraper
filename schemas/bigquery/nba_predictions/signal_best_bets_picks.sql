@@ -110,6 +110,22 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.signal_best_bets_
   signal_status STRING,
   retracted_at TIMESTAMP,
 
+  -- Provenance / measurement honesty (2026-09-08)
+  -- bet_key: canonical identity of the BET, deliberately EXCLUDING system_id so
+  --   the same wager nominated by several models is one key. Format:
+  --   '{game_id}|{player_lookup}|{recommendation}|{line_value:.1f}'.
+  --   Use it as the join key against prediction_accuracy instead of
+  --   (player, date) alone — an unscoped join inflated the 2025-26 record 3.7x.
+  -- is_backfilled: TRUE when created_at >= the game's tip-off (nbac_schedule
+  --   .game_date_est, which is UTC despite the name), i.e. the pick was written
+  --   when the outcome was already knowable. NULL means the tip-off could not be
+  --   resolved, so timing is UNKNOWN — it is not the same as FALSE.
+  --   ⚠️ Any honest hit rate must filter `is_backfilled = FALSE`. As of the
+  --   2026-09-08 backfill: 69 live rows at 46.8% HR vs 134 retro rows at 64.6%.
+  --   All 45 rows with non-book line values (e.g. 8.9, 30.9) are retro.
+  bet_key STRING,
+  is_backfilled BOOL,
+
   -- Metadata
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
 )

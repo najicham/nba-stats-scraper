@@ -41,6 +41,7 @@ from shared.config.model_selection import get_best_bets_model_id
 # Shadow calibrated win-probability (informational only; does NOT affect ranking).
 from ml.calibration.win_prob_loader import attach_win_prob
 from shared.config.nba_season_dates import get_season_window
+from shared.utils.bet_key import build_bet_key as _build_bet_key
 
 logger = logging.getLogger(__name__)
 
@@ -879,6 +880,41 @@ class SignalBestBetsExporter(BaseExporter):
             logger.warning(f"Disabled model query failed (non-fatal): {e}")
             return set()
 
+    def _query_game_tipoffs(self, target_date: str) -> Dict[str, datetime]:
+        """Return {game_id: tip_off_utc} for target_date.
+
+        Used to stamp `is_backfilled` honestly. `nbac_schedule.game_date_est` is
+        a UTC timestamp despite its name (verified 2026-09-08: values cluster at
+        17:00-04:00 UTC, i.e. 12:00-23:00 ET tip-offs).
+
+        game_id is rebuilt in the same '{YYYYMMDD}_{away}_{home}' form the picks
+        table uses; the raw table's NBA game ids do not match it.
+        """
+        try:
+            query = f"""
+            SELECT
+              CONCAT(
+                REPLACE(CAST(game_date AS STRING), '-', ''), '_',
+                away_team_tricode, '_', home_team_tricode
+              ) AS game_id,
+              MAX(game_date_est) AS tip_utc
+            FROM `{PROJECT_ID}.nba_raw.nbac_schedule`
+            WHERE game_date = @target_date
+            GROUP BY game_id
+            """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+                ]
+            )
+            rows = self.bq_client.query(query, job_config=job_config).result(timeout=20)
+            return {r.game_id: r.tip_utc for r in rows if r.tip_utc is not None}
+        except Exception as e:
+            # Non-fatal: is_backfilled stays NULL, which reads as "timing unknown"
+            # rather than falsely claiming the pick was made pre-tip.
+            logger.warning(f"Tip-off lookup failed for {target_date} (non-fatal): {e}")
+            return {}
+
     def _write_to_bigquery(
         self,
         target_date: str,
@@ -1006,11 +1042,20 @@ class SignalBestBetsExporter(BaseExporter):
         # Session 386/403: Disabled model filtering now happens in export() before
         # both BQ and GCS writes for consistency. Kept as comment for history.
 
+        # Provenance (2026-09-08): stamp every row with a model-independent
+        # bet identity and with whether it was written after tip-off. Without
+        # the flag, every hit rate off this table silently mixes 69 live picks
+        # (46.8% HR) with 134 retrospectively generated ones (64.6%).
+        tipoffs = self._query_game_tipoffs(target_date)
+        now_utc = datetime.now(timezone.utc)
+
         rows_to_insert = []
         for pick in picks:
+            game_id = pick.get('game_id', '')
+            tip = tipoffs.get(game_id)
             rows_to_insert.append({
                 'player_lookup': pick['player_lookup'],
-                'game_id': pick.get('game_id', ''),
+                'game_id': game_id,
                 'game_date': target_date,
                 'system_id': pick.get('system_id') or pick.get('source_model') or get_best_bets_model_id(),
                 'player_name': pick.get('player', ''),
@@ -1072,7 +1117,18 @@ class SignalBestBetsExporter(BaseExporter):
                 'bet_size_units': pick.get('bet_size_units', 1.0),
                 # 2026-07-03: retraction lifecycle (CLV split-brain fix).
                 'signal_status': 'active',
-                'created_at': datetime.now(timezone.utc).isoformat(),
+                # 2026-09-08: measurement provenance. bet_key deliberately
+                # excludes system_id so one wager is one key across models.
+                'bet_key': _build_bet_key(
+                    game_id,
+                    pick.get('player_lookup'),
+                    pick.get('direction'),
+                    pick.get('line'),
+                ),
+                # NULL (not False) when the tip-off is unknown — "we don't know"
+                # must not read as "this was a live pick".
+                'is_backfilled': (now_utc >= tip) if tip is not None else None,
+                'created_at': now_utc.isoformat(),
             })
 
         if not rows_to_insert:
