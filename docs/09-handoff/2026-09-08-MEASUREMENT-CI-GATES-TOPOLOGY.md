@@ -333,7 +333,46 @@ quota ceiling. Deploy verification for this push is recorded in §7.
 
 ---
 
-## 7. Verify this push
+## 7. Deploy verification — done 2026-09-13
+
+**All 24 services and functions touched by this push serve `851f811`.** Verified by reading
+each one's *serving* revision's `BUILD_COMMIT`, not by build status. `latestReady ==
+latestCreated` on every core service; no half-failed revisions left behind.
+
+It did not get there in one go, and the way it failed is worth recording.
+
+Adding two files under `shared/utils/` fanned the deploy out to ~25 Cloud Build triggers
+simultaneously, and the project is at its regional Cloud Run CPU ceiling (§3.2). Several
+builds died with:
+
+```
+ERROR: (gcloud.run.deploy) Quota exceeded for total allowable CPU per project per region.
+… Quota-blocked (attempt 3/3); ERROR: still quota-blocked after 3 attempts.
+```
+
+This is `deploy-fanout-quota-silent-cf-failure` recurring — **except it was not silent this
+time.** `cloudbuild.yaml`'s quota-aware retry wrapper tried three times with backoff and then
+failed the build loudly, so the affected services went on serving their previous revision
+rather than going green on a deploy that never landed. That wrapper earned its keep here.
+
+The recovery is the documented one: **re-run the trigger, never re-push**, and do it
+**serially** — firing them all again just re-exhausts the same quota. Eight services needed a
+second pass (`prediction-worker`, `nba-phase3-analytics-processors`,
+`nba-phase4-precompute-processors`, `phase6-export`, `phase4-to-phase5-orchestrator`,
+`phase3-to-phase4-orchestrator`, `bias-decay-monitor`, `mlb-prediction-worker`,
+`filter-counterfactual-evaluator`); each succeeded first time once it had the quota to itself.
+
+Note `phase4-to-phase5-orchestrator` and `phase3-to-phase4-orchestrator` were found stale at
+`1e44991` / `a3f3466` — they had been stale *before* this push, from the 09-06 session. Worth
+assuming nothing about a service's deployed state without reading it.
+
+Live config survived the redeploys, which was not guaranteed: `cloudbuild.yaml` passes neither
+`--concurrency` nor `--max-instances`, so `gcloud run deploy` preserved
+`containerConcurrency=5` and `maxScale=10`. `prediction-request-prod` still carries the
+30s–600s retry policy and 20 delivery attempts.
+
+### How to verify it yourself next time
+
 
 Do not use `gcloud builds list` as a deploy oracle — it paginates misleadingly, and a build
 can go green while its revision never becomes ready. Read the **serving** revision's
